@@ -1,0 +1,52 @@
+{
+  "baseline": "Rust 1.99.1",
+  "source_commit": "58cf8f9c35b355199727627d07ae34a4e2846d67",
+  "public_pages": 35345,
+  "associated_items": 123118,
+  "implementations": 82270,
+  "redirects": 22022,
+  "canonical_contracts": 164041,
+  "canonical_required_contracts": 106125,
+  "public_stability": {
+    "stable": 19420,
+    "unstable": 15817,
+    "language_documentation": 108
+  },
+  "associated_stability": {
+    "unstable": 39399,
+    "stable": 83713,
+    "external_implementation": 6
+  },
+  "implementation_stability": {
+    "unstable": 25396,
+    "stable": 56862,
+    "external_implementation": 12
+  },
+  "const_stability": {
+    "not_const_callable": 161316,
+    "unstable": 71035,
+    "stable": 5863,
+    "nightly_runtime_const": 2519
+  },
+  "source_files_verified": 551,
+  "all_source_files_verified": 2976,
+  "source_constraints_retained": 107873,
+  "catalog_links_cross_checked": 34934,
+  "case_sensitive_archive_overrides": 14,
+  "archive_sha256": {
+    "docs": "f94e0e39c45d4517981d35cd695eef30aeead92a5875f1014cd851fda1b2321e",
+    "source": "e485a88c45db546b73571df7bebfcb4454ba4fb552c492e25fc5b00eeb5bf22d"
+  },
+  "operations_without_direct_source": {
+    "implementation": 17869,
+    "variant": 761,
+    "structfield": 673,
+    "primitive": 54
+  },
+  "failures": [],
+  "inventory_scope": "All core/alloc/std declaration pages, associated anchors and implementation relations in the pinned documentation archive; all Rust library source files checked against the source archive",
+  "documentation_inventory_extracted": true,
+  "native_declarations_typechecked": false,
+  "cfg_branches_compiled": false,
+  "note": "Run validate.py for declaration closure, stability contexts, supporting-protocol exceptions and rule-assignment checks. Extraction is not compiler, soundness or parity evidence."
+}

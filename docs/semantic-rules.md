@@ -1,0 +1,347 @@
+# Core typing and operational rules
+
+Status: selected semantic rules for the described subset; not a formal safety
+proof. These rules refine `core-semantics.md`. Unsupported cases must remain
+visible rather than be inferred from examples.
+
+## 1. Judgments and state
+
+Let Gamma map names to declaration identities, types, capabilities and access
+modes. Let Delta map tracked places to initialization state. Let Loans contain
+origin, projected place, read/exclusive mode, region and activation state.
+Let Effects record typed failure, panic capability and suspension for the CFG.
+
+`Gamma; Delta; Loans |- expression : T => Delta', Loans'` means that evaluation
+is valid at that program point and produces T with the stated successor state.
+It is a judgment schema; it is not an implemented solver or mechanically checked
+proof. Exceptional successors carry separate states.
+
+A place is a root plus field/tuple/index/dereference projections. Field-sensitive
+state is tracked only where object identity and disjointness are established.
+Raw pointer equality or inequality is not a sufficient alias proof.
+
+Initialization states are uninitialized, initialized, and path-dependent.
+Maintain definitely-initialized and maybe-initialized sets; at a CFG join take
+intersection for definite and union for possible initialization. A whole product
+is definitely initialized only if every required field is. Moving a field clears
+its initialized descendants and whole-object completeness.
+
+Every read, duplication, move or safe borrow requires definite initialization
+of the accessed value. Cleanup uses path-specific state, with flags if necessary,
+so a maybe-initialized value is never blindly destroyed.
+
+## 2. Value formation and parameter modes
+
+- Copy from place p: require Copy(T), initialized p, and legal read access;
+  leave p initialized and produce an independent T.
+- Move from p: require owned movable p, initialized p and no conflicting loan;
+  clear initialization of p and produce owned T.
+- Explicit take from p: use the move rule even if Copy(T).
+- Read borrow p: require valid initialized backing storage and no conflicting
+  active/reserved access; produce a region-bearing read view, not owned T.
+- Exclusive borrow p: require a mutable initialized place and no conflicting
+  live access; create the exclusive loan or an eligible reservation.
+
+Ordinary parameters with declaration-known Copy receive values. Ordinary
+unconstrained T read-borrows, including a later Copy instantiation. Constraints
+are elaborated at declaration checking, so generic specialization does not alter
+ownership permissions. An explicit mode overrides the default.
+
+An owned result requires an owned value or a permitted duplication. Returning
+a read view as owned non-copy T is invalid. No automatic deep copy, retain,
+dynamic type test or ownership upgrade repairs it.
+
+Function-type identity includes parameter access, typed failure, result regions,
+and relevant callable capability. Indirect invocation must preserve these
+contracts. Compatible adapters require explicit code, not silent mode erasure.
+
+## 3. Scalars and arithmetic
+
+Integer binary arithmetic requires matching operand types after literal
+inference; no general implicit narrowing, signedness conversion or truthiness.
+Use explicit numeric casts. Overloaded operations use declared interfaces.
+
+For N-bit integers:
+
+| Operation | Checks enabled | Checks disabled |
+| --- | --- | --- |
+| Add/subtract/multiply overflow | Panic | Result modulo 2^N, interpreted in the destination signedness |
+| Negating signed minimum | Panic, except well-formed minimum literal construction | Same minimum bit pattern |
+| Division/remainder by zero | Panic | Panic |
+| Signed minimum divided/remainder by -1 | Panic | Panic |
+| Out-of-range or negative shift count | Panic | Mask count to the N-bit operand's shift width |
+| Signed right shift | Arithmetic shift | Arithmetic shift |
+| Unsigned right shift | Logical shift | Logical shift |
+
+This table applies to primitive integer operators, not user-defined overloads.
+Explicit wrapping/checked/saturating/overflowing operations have their own
+profile-independent contracts. Constant evaluation reports invalid required
+constant computations at compile time; it does not execute a runtime panic.
+Required constants use checked evaluation in every profile, as specified by
+the numeric annex; folding runtime expressions preserves their runtime policy.
+
+Integer casts truncate when narrowing and sign/zero-extend when widening as
+determined by the source signedness. The signed interpretation of destination
+bits is defined, not undefined behavior. Float/integer casts, NaN conversion,
+floating rounding and fast-math are specified in
+[the numeric annex](specification-annex.md).
+
+Comparisons yield bool. `&&`/`||` require bool and short-circuit. Equal/different
+comparisons are not implicitly available for all user types. Unification must
+not invent conversions merely to make branches type-check.
+
+## 4. Control flow and generic checking
+
+A binding without an initializer has a declared type and begins uninitialized.
+Delayed let initialization is legal only once on each reachable dynamic path.
+Var permits replacement and reinitialization. Assignment after an initial let
+assignment is rejected even if the earlier value has moved.
+
+An if expression joins branch value types after permitted coercions, with `Never`
+coercing to the expected type. An absent else is a unit branch. Loop analysis
+reaches a fixed point across back edges; a use after one possibly moving
+iteration cannot rely solely on the first iteration's state.
+
+Return first constructs its result then traverses cleanup edges. A result view
+must refer to storage valid beyond cleanup. Break/continue traverse the scopes
+they leave, not necessarily every enclosing scope.
+
+For an omitted function result, introduce one result variable for the
+declaration, not one per call. Constrain it from reachable explicit returns and
+normal body completion. Bare returns/fallthrough contribute `Unit`; established
+divergence contributes `Never`. Use the existing joins and coercions, not an
+automatic union or numeric conversion. An explicit `: T` instead fixes the
+expected result. `Unit` is the type and `()` its value, never a type spelling.
+Solve recursive result components together; unresolved cycles require
+annotations rather than a `Unit`/`Never` default. Call-site context cannot supply
+a missing declaration result. Error effects and ambiguous returned-view sources
+remain explicit contracts under core-semantics section 8.
+
+Check generic bodies once against declarations. Solve type equalities,
+capability bounds and region obligations separately from code generation.
+Failure to terminate/resource exhaustion is distinct from an unsatisfied bound.
+Const parameters affect type identity; equal evaluated parameters unify.
+
+Interface implementation selection must be coherent. An impl cannot silently
+weaken input guarantees or strengthen caller obligations relative to its
+interface. Method result/error/region contracts must match the declared contract
+or an explicitly specified compatible substitution.
+
+## 5. Loans and two-phase receivers
+
+A loan conflicts when its possibly overlapping place is accessed in an
+incompatible way. Read loans coexist with reads. Exclusive active loans permit
+access through themselves and soundly derived reborrows, not arbitrary aliases.
+Field disjointness is structural; dynamic slice disjointness requires proof or
+a checked API.
+
+For eligible compiler-inserted exclusive receiver borrows only:
+
+1. Evaluate receiver place once and create a reservation.
+2. Permit read-only access during argument evaluation if it ends by activation.
+3. Reject moves, writes and competing exclusive loans overlapping the reservation.
+4. At invocation, require all conflicting read loans to have ended, then activate.
+5. On argument failure, cancel the reservation and clean up argument values.
+
+Explicit `mut place` borrowing is immediately active. Do not apply reservation
+to every explicit mutable reference merely to accept more programs. Nested
+reborrows carry parent authority; ending a child restores only permissions that
+remain valid under other outstanding loans.
+
+Loan liveness includes downstream views and destructor uses. It is not simply
+last textual mention of a variable. Solve liveness across branches and loops;
+ending a loan does not move the owner's drop point.
+
+## 6. Regions and variance
+
+Region r denotes a set of valid program points. A returned view from r may be
+used only within r and while the access contract remains valid. An outlives
+obligation r1:r2 requires r2's uses to be supported by r1.
+
+`from (a, b)` requires backing validity supported by both sources, without
+requiring their original regions to be equal. It does not retain either owner.
+Named independent regions remain independent unless constraints relate them.
+
+Read views are covariant in their validity region and in covariant payload
+positions. Exclusive views are invariant in their payload type and covariant
+in a shortened validity region through reborrowing. Interior-mutation cells
+are invariant in mutable payload positions. Function inputs are contravariant
+and outputs covariant where subtyping applies.
+
+Derive user-type variance structurally; generic occurrences in invariant
+positions prevent an unsound widening. Higher-ranked region variables cannot
+escape their binder or unify with a shorter local allocation to satisfy a
+universal contract. Higher-ranked solving and associated-type normalization
+follow the specification annex; these variance rules alone are insufficient.
+
+## 7. Pattern ownership and outcomes
+
+An ordinary match grants read access to selected payloads; a mutable match
+grants reborrows; a consuming match transfers chosen payloads after its guard
+succeeds. Guard failure must leave the scrutinee eligible for later arms.
+Remaining initialized owned fields drop according to the selected scope.
+
+An optional T? has absent and present(T) states; (T?)? has three distinguishable
+state shapes. Injection adds only the level demanded unambiguously by context.
+Explicit present is required when the requested level would be ambiguous.
+
+An outcome has distinct success(T) and failure(E) variants even when T equals E.
+Capture catches only the typed failure of its expression. Propagation transfers
+the error through ordinary cleanup; no hidden conversion or error erasure.
+Explicit mapping supplies a different error type.
+
+`??` evaluates its RHS only for absence. A consuming optional expression can
+yield its owned payload; borrowing access cannot produce a new owned non-copy
+payload. Optional chaining preserves access mode and does not retain owners.
+
+## 8. Replacement and unwind restoration
+
+Ordinary replacement evaluates RHS first, then resolves the destination exactly
+once. If either fails, unwind the completed operands; no rollback of their
+side effects is promised.
+
+Once replacement begins, its lowering owns a pending replacement value and the
+exclusive right to initialize the destination. Destroy the old initialized
+value, tracking field cleanup so it cannot be destroyed twice.
+
+On successful old-value cleanup, install the pending replacement. If old-value
+cleanup panics and unwinding remains possible, finish old field cleanup, install
+the pending replacement with a non-throwing store, mark the destination
+initialized, and continue the original unwind. If another destructor panics
+during that unwind, abort.
+
+Thus a catch outside the operation can observe a valid replacement, not an
+uninitialized referenced destination. A local leaving scope may immediately
+drop the installed value during outer cleanup. This is not transactional
+replacement and does not promise preserving the old value.
+
+The store cannot invoke user code, allocate, throw or call an overloaded
+assignment operator. Existing live aliases cannot access the destination during
+the exclusive operation. Pinned destinations require a compatible in-place
+replacement contract and may not be replaced through an ordinary movable path.
+
+This selected rule supersedes the earlier draft's ambiguous instruction to drop
+the replacement on every old-destructor unwind. It needs explicit exceptional
+CFG cases for externally borrowed storage, aggregate fields and catch scopes;
+it is not claimed to be formally proved.
+
+## 9. Native temporary scope table
+
+| Construct | Unmoved temporary destruction point |
+| --- | --- |
+| Ordinary expression statement | Statement end, reverse construction order |
+| Explicit call arguments/defaults | Enclosing statement end; moved arguments become callee-owned |
+| Plain if/while condition | After condition evaluation, before entering selected body |
+| Conditional pattern input | After selected success body; before else on failure |
+| Each short-circuit boolean operand | After evaluating that operand |
+| Match scrutinee | Enclosing statement end, after selected arm |
+| Match guard ordinary temporaries | Guard completion before arm body/next arm |
+| Block-tail temporaries | After tail evaluation, before enclosing block locals drop |
+| Direct borrowed let initializer | Enclosing binding block when the defined extension applies |
+| RHS of ?? not selected | Never constructed |
+| Optional-chain receiver temporary | Enclosing statement end; not extended by chaining |
+| Captured typed-outcome payload | Owned by outcome once transferred; other operands retain their scopes |
+
+Direct borrowed initialization extends an explicitly borrowed temporary operand,
+and corresponding direct tuple/array/product initializer positions, into the
+binding's block. It does not inspect a callee body, extend an arbitrary
+view-returning call, or promote mutable/destructible data to static storage.
+
+Scopes are assigned after syntax desugaring with source-level provenance retained.
+A value moved into a result is no longer an unmoved temporary. Destructuring
+assignments require their own temporary binding block, preserving RHS completion
+before per-destination assignments.
+
+## 10. Required adversarial obligations
+
+In addition to the core corpus, require:
+
+- A catch outside a function replacing an externally borrowed value observes
+  initialized replacement storage after its old destructor panics.
+- A second panic during old-field cleanup aborts without executing the store
+  as though unwind had completed normally.
+- A default argument borrowing an earlier argument cannot let that borrow escape
+  beyond its actual backing owner.
+- Receiver reservation accepts reading a length but rejects mutation/reallocation
+  of that same receiver during argument evaluation.
+- A copied read view keeps its loan live even after the original view's last use.
+- Same-typed success/error payloads and nested optional absence remain distinct.
+- A mutable view cannot be widened through a covariant-looking wrapper.
+- A required constant's arithmetic cannot silently change a type's layout between
+  development and release profiles.
+
+These are specification obligations, not passing tests. The specification annex
+and memory-and-concurrency document select the advanced contracts. Mechanization,
+sound lowering and adversarial execution remain separate technical work.
+
+## 11. Coercion sites and method selection
+
+Implicit coercions are limited to expected-type sites: annotated initializers,
+arguments, returns, aggregate fields/elements and branch joins. They may shorten
+a view under its variance/outlives rules, reborrow exclusive access as read,
+unsize an eligible view/owner, upcast an erased interface to a superinterface, or
+convert a function item/noncapturing closure to a compatible function pointer.
+`Never` may coerce to the expected type. Optional injection follows section 7.
+Safe function pointers may be used where an otherwise identical unsafe-call
+pointer is required, not the reverse.
+
+No general implicit numeric conversion, payload clone, retention, boxing,
+borrow-to-owned conversion or conversion of typed failure accompanies coercion.
+Ordinary argument borrowing follows the declared mode, not a user-defined
+conversion selected to repair a mode error. Explicit casts have the numeric,
+pointer, representation and ABI preconditions of their particular operation.
+
+Method search constructs receiver candidates from the receiver type, successive
+sound native/user-declared dereference targets, and permitted final unsizing.
+For each candidate T, consider T, read T, then mut T. Do not dereference a raw
+pointer implicitly or invent exclusive access through an ordinary shared owner.
+
+At each candidate, consider inherent methods, then visible applicable interface
+methods. Multiple applicable interface methods at the same priority are
+ambiguous; import order cannot decide. Select a method, then enforce its
+ownership, mutability, visibility and unsafe-call obligations. An unavailable
+move or mutable loan is an error, not permission to fall back to another method.
+
+Use `<T implements Interface>::method(receiver, arguments)` for explicit
+disambiguation. Static associated functions do not acquire a receiver by being
+spelled after an object. Dereference coercion can execute the declared user's
+projection method, whose behavior is not a compiler-inserted clone/retain.
+Cycles/resource exhaustion diagnose rather than changing search precedence.
+
+There is no general overload selection by argument count/default availability.
+Same-named inherent methods require provably disjoint receiver instantiations;
+overlapping declarations cannot win by where-clause specificity.
+Operator interfaces use their declared receiver/operand modes and the same
+coherent implementation selection, with the specified operand sequencing.
+
+## 12. Aggregate and iteration completion
+
+Native optionals/outcomes are Copy exactly when every possible payload is Copy,
+as are tuples/fixed arrays. Named product/enum types retain explicit opt-in.
+Zero-sized values have no payload bytes but retain initialization, alignment,
+destructor multiplicity and ownership obligations. A zero-sized destructor
+still executes once for each initialized owned value.
+
+A for loop obtains the corresponding consuming/read/exclusive iterator from its
+input mode, stores that iterator for the loop, and repeatedly mutably invokes
+next until absence. It does not clone the collection or yielded elements.
+Break, typed failure and unwind clean up remaining initialized iteration state
+at the appropriate scope. Iterator-associated regions constrain the loop body
+and any yielded views.
+
+Exhaustiveness treats guarded arms as non-covering, unions or-pattern coverage,
+and handles finite alternatives/ranges/slices under their actual type. External
+nonexhaustive types require a fallback. Reject unreachable duplicate alternatives
+according to native diagnostics; no missing case may silently become unsafe
+unreachable code.
+
+## Primary comparison sources
+
+- https://doc.rust-lang.org/1.99.1/reference/expressions/operator-expr.html
+- https://doc.rust-lang.org/1.99.1/reference/expressions.html
+- https://doc.rust-lang.org/1.99.1/reference/destructors.html
+- https://rustc-dev-guide.rust-lang.org/borrow_check/two_phase_borrows.html
+- https://doc.rust-lang.org/nomicon/subtyping.html
+
+Mettle rules above are design selections. Shared terminology does not make
+the Rust references a proof of the Mettle type system.

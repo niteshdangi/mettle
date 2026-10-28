@@ -1,0 +1,53 @@
+{
+  "status": "Extended-grammar specification examples; not compiled or executed",
+  "cases": [
+    {
+      "file": "nested-optionals.mt",
+      "expect": "accept",
+      "exit_status": 0,
+      "contract": "An outer present value with an absent payload is distinct from outer absence."
+    },
+    {
+      "file": "typed-outcome.mt",
+      "expect": "accept",
+      "exit_status": 0,
+      "contract": "capture stores typed failure; consuming matching does not erase the error type."
+    },
+    {
+      "file": "defaults-and-methods.mt",
+      "expect": "accept",
+      "exit_status": 0,
+      "contract": "Omitted argument defaults and an implicit read receiver compose without owning copies of self."
+    },
+    {
+      "file": "inferred-contracts.mt",
+      "expect": "accept",
+      "exit_status": 0,
+      "contract": "Public success types, method results and contextual closures infer while callable annotations, typed failure and stored-outcome parentheses remain explicit."
+    },
+    {
+      "file": "reject-bodyless-result.mt",
+      "expect": "reject",
+      "phase": "signature",
+      "contract": "An interface declaration without a body must explicitly specify a result, including Unit."
+    },
+    {
+      "file": "reject-inferred-error.mt",
+      "expect": "reject",
+      "phase": "effects",
+      "contract": "Inferring a result does not introduce an undeclared throws effect."
+    },
+    {
+      "file": "reject-ambiguous-result.mt",
+      "expect": "reject",
+      "phase": "result-inference",
+      "contract": "A bare none leaves its payload unknown; a caller's expected optional type cannot determine the declaration result."
+    },
+    {
+      "file": "reject-inferred-borrow-origin.mt",
+      "expect": "reject",
+      "phase": "regions",
+      "contract": "Multiple eligible input sources require an explicit borrowed result/source contract, even when the body returns a view of only one."
+    }
+  ]
+}

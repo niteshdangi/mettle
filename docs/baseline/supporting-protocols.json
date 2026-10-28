@@ -1,0 +1,83 @@
+{
+  "scope": "Native equivalents of conditional supporting declarations used by stable contracts; not blanket stabilization of experimental APIs",
+  "families": [
+    {
+      "id": "allocator",
+      "reference_items": ["struct.Global", "trait.Allocator", "trait.AllocatorClone", "trait.GlobalAllocator", "trait.StaticAllocator"],
+      "contract": "../library-surface.md#8-conditional-supporting-protocols",
+      "native": "Allocator identity and allocation/deallocation/clone capabilities; default Global remains usable without selecting a nightly parameter. Explicit native custom allocation is separately accepted."
+    },
+    {
+      "id": "sequence",
+      "reference_items": ["trait.Concat", "trait.Join", "trait.SlicePattern", "trait.GetDisjointMutIndex"],
+      "contract": "../library-surface.md#8-conditional-supporting-protocols",
+      "native": "Preserve the frozen eligible sequence/index shapes and associated outputs. Checked disjoint access rejects overlap before producing exclusive views."
+    },
+    {
+      "id": "text-pattern",
+      "reference_items": ["trait.Pattern", "trait.ReverseSearcher", "trait.DoubleEndedSearcher"],
+      "contract": "../library-surface.md#8-conditional-supporting-protocols",
+      "native": "Native sealed text-pattern/search capabilities preserve valid UTF-8 boundaries and forward/reverse/double-ended eligibility independently."
+    },
+    {
+      "id": "initializing-clone",
+      "reference_items": ["trait.CloneToUninit"],
+      "contract": "../library-surface.md#8-conditional-supporting-protocols",
+      "native": "Compiler/library initialization-clone capability tracks the initialized extent and cleans partial results on panic; no reference to uninitialized T is formed."
+    },
+    {
+      "id": "numeric",
+      "reference_items": ["trait.FloatToInt", "trait.NumBufferTrait", "trait.ZeroablePrimitive"],
+      "contract": "../library-surface.md#8-conditional-supporting-protocols",
+      "native": "Compiler-known primitive eligibility for unchecked conversions, formatting buffers and zero-valid values. Preserve each operation's exact unsafe range/validity preconditions."
+    },
+    {
+      "id": "range",
+      "reference_items": ["trait.Step", "trait.OneSidedRange"],
+      "contract": "../library-surface.md#8-conditional-supporting-protocols",
+      "native": "Sealed range/stepping protocols preserve the frozen valid scalar and one-sided range shapes, overflow and end-point contracts."
+    },
+    {
+      "id": "compiler-property",
+      "reference_items": ["trait.DiscriminantKind", "trait.FnPtr", "trait.MetaSized", "trait.PointeeSized", "trait.Tuple"],
+      "contract": "../library-surface.md#8-conditional-supporting-protocols",
+      "native": "Compiler-derived discriminant, callable-pointer, metadata-size, pointee and tuple eligibility; aliases do not change eligibility and users cannot forge property implementations."
+    },
+    {
+      "id": "async-call",
+      "reference_items": ["trait.AsyncFn", "trait.AsyncFnMut", "trait.AsyncFnOnce"],
+      "contract": "../library-surface.md#8-conditional-supporting-protocols",
+      "native": "Read/mutate/consume async callable capabilities preserve capture regions and concrete future identity; unstable explicit call methods/associated families remain excluded."
+    },
+    {
+      "id": "short-circuit",
+      "reference_items": ["trait.Try", "trait.Residual", "trait.FromResidual"],
+      "contract": "../library-surface.md#8-conditional-supporting-protocols",
+      "native": "Sealed short-circuit/output/residual protocol for the frozen eligible optional/outcome/control-flow/poll shapes; preserve residual identity without implicit error conversion."
+    },
+    {
+      "id": "uninhabited",
+      "reference_items": ["primitive.never"],
+      "contract": "../library-surface.md#8-conditional-supporting-protocols",
+      "native": "Native Never has no values; divergent coercion does not make an invalid constructed value valid."
+    },
+    {
+      "id": "atomic",
+      "reference_items": ["struct.Atomic"],
+      "contract": "../library-surface.md#8-conditional-supporting-protocols",
+      "native": "Stable scalar atomic aliases preserve their exact payload and target-supported lock-free operations without promising arbitrary generic Atomic instantiations."
+    },
+    {
+      "id": "varargs",
+      "reference_items": ["trait.VaArgSafe"],
+      "contract": "../library-surface.md#8-conditional-supporting-protocols",
+      "native": "Compiler-known variadic cursor eligibility preserves supported promoted scalar/pointer types and the selected C ABI. Reading the wrong actual argument type remains unsafe."
+    },
+    {
+      "id": "os-error",
+      "reference_items": ["type.RawOsError"],
+      "contract": "../library-surface.md#8-conditional-supporting-protocols",
+      "native": "The selected target's OS error representation preserves lossless raw-error round trips; the unstable alias spelling does not remove stable constructors/accessors."
+    }
+  ]
+}

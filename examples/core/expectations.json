@@ -1,0 +1,95 @@
+{
+  "status": "Full core specification fixtures; not all implemented/executed. Scalar, concrete-product and call-scoped ownership execution evidence is maintained separately.",
+  "cases": [
+    {
+      "file": "values.mt",
+      "expect": "accept",
+      "exit_status": 0,
+      "reason": "Explicitly copyable named values preserve the source after assignment and ordinary calls."
+    },
+    {
+      "file": "ownership.mt",
+      "expect": "accept",
+      "exit_status": 0,
+      "reason": "Wildcard discard does not move the existing owner; mutable/read access borrows it and a later consuming call transfers ownership."
+    },
+    {
+      "file": "generics.mt",
+      "expect": "accept",
+      "exit_status": 0,
+      "reason": "Unconstrained read, Copy-constrained value, and explicit consuming generic contracts remain distinct."
+    },
+    {
+      "file": "control-flow.mt",
+      "expect": "accept",
+      "exit_status": 0,
+      "reason": "Loop mutation and branch-complete delayed initialization satisfy the core rules."
+    },
+    {
+      "file": "return-inference.mt",
+      "expect": "accept",
+      "exit_status": 0,
+      "reason": "Explicit colon results and inferred tails/returns agree; anchored recursion and consuming generic results infer without callers, and Unit values remain Copy."
+    },
+    {
+      "file": "never-and-discard.mt",
+      "expect": "accept",
+      "exit_status": 0,
+      "reason": "Explicit/inferred Never results join with returning branches without becoming Unit; explicit wildcard discard has a Unit result on normal completion."
+    },
+    {
+      "file": "reject-lowercase-never.mt",
+      "expect": "reject",
+      "phase": "name-resolution",
+      "reason": "The lowercase spelling is not a predeclared type alias; use Never."
+    },
+    {
+      "file": "reject-return-conflict.mt",
+      "expect": "reject",
+      "phase": "result-inference",
+      "reason": "Reachable i32 and bool returns cannot determine one compatible result type."
+    },
+    {
+      "file": "reject-return-cycle.mt",
+      "expect": "reject",
+      "phase": "result-inference",
+      "reason": "An unanchored mutually recursive result cannot be inferred from main's expected i32 or defaulted to Unit/Never."
+    },
+    {
+      "file": "reject-unit-type-parens.mt",
+      "expect": "reject",
+      "phase": "parse",
+      "reason": "Empty parentheses are the unit value, not a result type; write Unit."
+    },
+    {
+      "file": "reject-result-arrow.mt",
+      "expect": "reject",
+      "phase": "parse",
+      "reason": "The old arrow result delimiter is rejected; explicit results use a colon."
+    },
+    {
+      "file": "reject-use-after-move.mt",
+      "expect": "reject",
+      "phase": "ownership",
+      "reason": "The tail expression accesses first after its non-copy value moved to second."
+    },
+    {
+      "file": "reject-generic-owned-return.mt",
+      "expect": "reject",
+      "phase": "generic-body",
+      "reason": "A declared read parameter cannot become an owned T; reject even without instantiation."
+    },
+    {
+      "file": "reject-copy-owner.mt",
+      "expect": "reject",
+      "phase": "copyability",
+      "reason": "Wrapper cannot opt into Copy because Counter did not opt in."
+    },
+    {
+      "file": "reject-take-copy.mt",
+      "expect": "reject",
+      "phase": "ownership",
+      "reason": "An explicit consuming parameter invalidates the caller source even when its type is copyable."
+    }
+  ]
+}

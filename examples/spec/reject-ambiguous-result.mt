@@ -1,0 +1,8 @@
+fn absent() {
+    none
+}
+
+fn main(): i32 {
+    let value: i32? = absent()
+    0
+}

@@ -1,0 +1,65 @@
+#include "driver/options.h"
+#include "llvm/TargetParser/Host.h"
+#include <iostream>
+
+namespace mettle::driver {
+Options::Options()
+    : target(llvm::sys::getDefaultTargetTriple()), cc(METTLE_CXX_PATH),
+      sysroot(METTLE_SYSROOT_PATH) {}
+void usage() {
+  std::cout
+      << "Usage: mettle check|tokens|syntax FILE\n"
+         "       mettle build FILE -o OUTPUT [--emit "
+         "executable|object|llvm|ir]\n"
+         "         [--profile debug|release] [--overflow-checks on|off]\n"
+         "         [--target TRIPLE] [--cc CXX] [--sysroot PATH]\n"
+         "Executable output requires the host runtime target; use --emit "
+         "object for other targets.\n"
+         "Scalar/product compiler with field initialization, owned moves, "
+         "read/mut/take calls and control flow.\n"
+         "Stored views, destructors and unwind cleanup remain incomplete.\n";
+}
+std::optional<Options> options(int argc, char **argv) {
+  if (argc < 3)
+    return std::nullopt;
+  Options result;
+  result.command = argv[1];
+  if (result.command != "build" && result.command != "check" &&
+      result.command != "tokens" && result.command != "syntax")
+    return std::nullopt;
+  for (int i = 2; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (!arg.empty() && arg[0] == '-') {
+      if (++i == argc)
+        return std::nullopt;
+      std::string value = argv[i];
+      if (arg == "-o")
+        result.output = value;
+      else if (arg == "--emit")
+        result.emit = value;
+      else if (arg == "--profile")
+        result.profile = value;
+      else if (arg == "--target")
+        result.target = value;
+      else if (arg == "--cc")
+        result.cc = value;
+      else if (arg == "--sysroot")
+        result.sysroot = value;
+      else if (arg == "--overflow-checks" && (value == "on" || value == "off"))
+        result.checks = value == "on";
+      else
+        return std::nullopt;
+    } else if (result.input.empty())
+      result.input = arg;
+    else
+      return std::nullopt;
+  }
+  if (result.input.empty() ||
+      (result.command == "build" && result.output.empty()) ||
+      (result.profile != "debug" && result.profile != "release") ||
+      (result.emit != "executable" && result.emit != "object" &&
+       result.emit != "llvm" && result.emit != "ir"))
+    return std::nullopt;
+  return result;
+}
+} // namespace mettle::driver

@@ -1,0 +1,255 @@
+# Mettle
+
+An independent systems language targeting Rust-level capabilities with simpler
+source structure and measured runtime parity.
+
+Status: I01 foundation, I02 scalar source compilation and I03 ownership/resource
+cleanup are complete within
+the recorded macOS ARM64 host / Linux x86-64 target scope. The compiler checks and builds
+single-file i32/bool/Unit programs with functions, result inference and control
+flow. I03 includes concrete products, projected initialization and
+moves, stored/returned views, receiver borrowing and native destructor/unwind
+cleanup. Generics, libraries, a package
+manager and release-qualified targets remain later work. No Rust-runtime parity
+is claimed.
+
+## Contributor quality gate
+
+The [compiler architecture](docs/compiler-architecture.md) defines component
+responsibilities, phase-owned representations and the full-language growth map.
+`compiler/modules.json` drives independent CMake targets and enforces source
+ownership, public headers and a dependency DAG. Future responsibilities are
+specified without pretending the corresponding features are implemented.
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[compiler/library standard](docs/code-quality.md) before changing the implementation.
+
+```sh
+python3 tools/check_quality.py
+python3 tools/check_quality.py --build-dir build/macos-arm64/Debug
+```
+
+Pinned formatting, safety-focused static analysis, warnings-as-errors and
+behavioral tests are required as applicable. A separate
+`python3 tools/build.py --configuration Debug --sanitizers` build instruments
+project C++ with ASan/UBSan. These checks do not prove a safety model or replace
+target execution/reproducibility gates.
+
+## Building the compiler
+
+From this directory, using Python 3.9+ and curl. The native macOS ARM64 build is
+validated; full Ubuntu x86-64 compiler-host linking remains unverified.
+macOS also needs the Command Line Tools SDK and zstd development library.
+Ubuntu needs `build-essential`, `zlib1g-dev`, `libzstd-dev` and `libxml2-dev`;
+the optional VM provisions these automatically:
+
+```sh
+python3 tools/bootstrap.py
+python3 tools/build.py --configuration Debug
+python3 tools/build.py --configuration Release
+```
+
+The bootstrap installs checksum-pinned tools into ignored `.tools/`, without
+replacing system compilers. The build script configures CMake/Ninja, runs CTest,
+then verifies a clean rebuild has byte-identical compiler artifacts in the same
+environment. Logs, source/tool/sysroot hashes, commands and results remain under
+`build/<platform>/<configuration>/foundation-evidence.json`. This is not a
+cross-machine hermetic-build or release reproducibility claim.
+The Linux LLVM archives contain ThinLTO bitcode. Their first native link can be
+slow under emulation; subsequent links reuse the ignored, content-keyed
+`build/linux-x86_64/llvm-thinlto-cache/` dependency cache.
+
+LLVM/Clang/LLD/compiler-rt are pinned together to 22.1.3 to fix Darwin sanitizer
+startup with the former 21.1.8 runtime. CMake/Ninja versions are unchanged.
+Existing installations must preserve the old `.tools/<platform>/llvm` cache
+under a versioned name before bootstrapping the new selection; the bootstrap
+deliberately refuses to overwrite an unrecognized cache. Use a fresh CMake
+build directory when the compiler version changes. This checkout retains the
+old tools as `llvm-21.1.8` and old builds with `-llvm21` suffixes.
+See the [compatibility record](docs/code-quality.md#5-unsafe-memory-and-concurrency).
+
+The three foundation checks retain their constructed-LLVM smoke test. Four
+source suites additionally compile actual Mettle programs, execute native code,
+check arithmetic traps/wrapping, and reject invalid or unsupported source.
+Evidence and retained programs live under each build's `scalar-evidence/`.
+Runtime and native cleanup integration suites additionally check exact drop
+traces, unwinding, replacement restoration and double-panic abort.
+
+```sh
+build/macos-arm64/Debug/mettle check examples/core/control-flow.mt
+build/macos-arm64/Debug/mettle build examples/core/control-flow.mt -o build/count
+./build/count
+```
+
+The example returns process status 0 on success; printing is not implemented.
+`--profile debug` checks integer overflow; `--profile release` wraps ordinary
+overflow and optimizes object/executable output. Division/remainder failure
+checks remain enabled in both. `--overflow-checks on|off` overrides that policy.
+`--emit object|llvm|ir` selects an object, pre-optimization LLVM or compiler-owned
+CFG instead of an executable. `tokens` and `syntax` expose lossless token text
+and span-bearing syntax as prototype JSON. These inspection formats are not
+stable tooling APIs.
+
+The compiler supports concrete methods with read/mut/take receivers, eligible
+two-phase mutable receivers, `drop { ... }`, first-class read/mut views and basic
+region-only declarations/result-source contracts. Ordinary generic declarations,
+modules, closures, typed errors, other numeric widths and uninhabited parameters
+remain unimplemented. This is not a reduction of the full V1 specification.
+
+```sh
+build/macos-arm64/Debug/mettle build examples/core/values.mt -o build/values
+./build/values
+```
+
+Named product types have compilation-owned nominal identities, not LLVM type
+identities. Checked syntax and CFG share an immutable type-store owner.
+Copy eligibility, duplicate fields, recursive by-value layouts and constructor
+arguments are checked before emission. Projected-place analysis checks partial
+initialization, partial moves/reinitialization, immutable assignment and conflicting
+live loans before LLVM lowering. Origin analysis follows copied/stored views,
+returned source dependencies and view-storage writes through calls/destructors.
+Direct borrowed initializers extend their owning temporary to the binding block;
+ordinary calls do not extend temporary lifetimes.
+
+The private native panic runtime uses C++ unwinding and compiler-owned cleanup
+plans with per-frame initialization flags. It is not a per-object runtime registry.
+Checked-IR catch probes establish replacement recovery; source panic-catching APIs,
+generic payloads, C-unwind interoperability and freestanding support remain later
+milestones, not additional source syntax.
+
+```sh
+build/macos-arm64/Debug/mettle build examples/core/ownership.mt -o build/ownership
+./build/ownership
+```
+
+For Linux execution on an ARM Mac, the optional isolated runner requires Lima,
+QEMU and Lima's additional x86-64 guest agents. It mounts this project, not the
+host home directory:
+
+```sh
+python3 tools/bootstrap.py --platform linux-x86_64
+export LIMA_HOME="$PWD/.tools/lima"
+limactl --tty=false start --name=mettle-linux-x64 --mount-only="$PWD:w" --timeout=10m tools/linux-vm.yaml
+python3 tools/test_linux_target.py --source
+limactl --tty=false stop mettle-linux-x64
+```
+
+The VM image is digest-pinned Ubuntu 24.04 AMD64. Guest packages are recorded in
+build evidence rather than claimed to be an immutable apt repository. Execution
+uses an actual Linux kernel under x86-64 emulation, not native x86 hardware or
+valid performance-comparison evidence.
+The target test uses the verified macOS Debug/Release object emitters and scalar
+compilers, then the pinned Linux Clang/LLD and Linux kernel. Its evidence is retained under
+`build/linux-target/`; it does not claim that a Linux-hosted LLVM compiler was
+built. An earlier emulated full compiler-host link was interrupted when its VM
+was killed before completing.
+
+Ordinary builds register twelve CTest suites; ASan/UBSan adds a thirteenth suite
+with actual sanitizer detector probes. Per compiler build, the source suites retain run-pass, compile-fail,
+arithmetic/profile and syntax/inspection cases with their actual counts/commands
+in the evidence receipts. The Linux runner additionally links and executes selected source cases
+across both compiler builds and source profiles, both foundation smokes and the
+native cleanup/recovery probes.
+The component-boundary suite additionally checks parsed/checked data ownership,
+in-memory compilation, malformed IR, SSA and independent initialization analysis.
+Debug/Release pass all twelve suites and ASan/UBSan all thirteen, with
+byte-identical clean rebuilds. Each compiler build executes 112 run-pass profile
+cases, rejects 104 invalid programs, and checks 24 arithmetic/profile cases.
+Linux execution passes 134 source/profile cases and six native cleanup probes per
+ordinary compiler configuration, plus both foundation smokes. Evidence is retained
+under the build/quality/target paths above; the dedicated VM is stopped.
+This qualifies I03's concrete ownership subset, not generic ownership, source
+panic-catching APIs, a Linux compiler host or a release platform.
+
+## Selected source syntax
+
+These function forms are accepted by the scalar compiler; a buildable hosted
+file also needs `fn main(): i32` or an inferred i32 entry result:
+
+```text
+fn double(value: i32): i32 {
+    value * 2
+}
+
+fn inferred_double(value: i32) {
+    value * 2
+}
+
+fn completed(): Unit {
+    ()
+}
+```
+
+An optional `: Type` declares a checked result; omission infers from body returns
+and tail values, not from callers. `Unit` is the type and `()` its sole value.
+`Never` names the type with no values, used for non-returning results.
+Prefer `let _ = expression` to make intentional non-Unit discards explicit.
+Callable types and bodyless declarations require explicit results. Parameter
+types, error effects and ambiguous borrow-source contracts stay explicit.
+The compiler does not yet implement callable types, bodyless declarations or
+typed errors; those contracts remain requirements for later milestones.
+
+An early integer-reduction experiment is available with an installed Rust
+compiler as an optional comparator:
+
+```sh
+python3 tools/run_p01.py --compiler build/macos-arm64/Release/mettle
+```
+
+It records paired process timings, compiler time/memory and source/binary hashes
+under `build/p01/`. It is one uncontrolled engineering session, not the registered
+pilot or release protocol. The installed comparator may differ from frozen
+Rust 1.99.1; its actual version and that mismatch are recorded.
+
+## Planning map
+
+- [Adoption rationale](docs/adoption-rationale.md): documented problems,
+  existing alternatives, and the new-language justification test.
+- [Core semantics](docs/core-semantics.md): ownership and execution rules.
+- [Semantic rules](docs/semantic-rules.md): typing/state judgments, arithmetic,
+  loans, region variance, temporary scopes and unwind restoration.
+- [Core grammar](docs/core-grammar.md): initial syntax subset and limitations.
+- [Extended grammar](docs/language-grammar.md): working full-language forms.
+- [Advanced contracts](docs/advanced-contracts.md): pinning, async scope
+  containment, compile-time execution and macros.
+- [Specification annex](docs/specification-annex.md): numeric conversions,
+  higher-ranked solving, closure destruction, macros, attributes and assembly.
+- [Memory and concurrency](docs/memory-and-concurrency.md): validity, provenance,
+  aliasing, atomics and poll-scoped borrowed-task execution.
+- [Examples](examples/core/expectations.json): full core expectations; the
+  I02 scalar corpus in `tests/scalars.py` is qualified separately.
+- [Extended examples](examples/spec/expectations.json): optional/outcome and
+  method/default-argument composition.
+- [Capability coverage](docs/capability-coverage.md): baseline inventory method
+  and [tracking matrix](docs/capabilities.csv).
+- [Native baseline mapping](docs/baseline-mapping.md): contract-preserving
+  translation rules and explicit native replacements.
+- [Native library surface](docs/library-surface.md): per-signature translation
+  rules, derives/compiler facilities, unsized types and foreign completion.
+- [Reproducible baseline audit](docs/baseline/README.md): verified source/docs
+  inputs, complete archived operation inventory and validation boundaries.
+- [Toolchain source pins](docs/toolchain-pins.json): immutable upstream source
+  identities and the separate binary archive/build-evidence policy.
+- [Implementation plan](docs/implementation-plan.md): dependency-ordered
+  milestones, compiler boundaries, and first executable-core exit criteria.
+- [Delivery milestones](docs/implementation-plan.md#8-delivery-milestones):
+  fourteen gates to V1, then self-hosting and the independent backend.
+- [Packages and development tools](docs/tooling-and-packages.md): manifests,
+  resolution/locks, build inputs, tests/doctests, editors and debugging.
+- [Platform and runtime contracts](docs/platform-contracts.md): target profiles
+  and feature-specific design gates.
+- [Reference profiles](docs/reference-profiles.md): selected deployment/SDK,
+  CPU/ABI, linker, Wasm and freestanding reference environments.
+- [Library and ABI](docs/library-and-abi.md): ownership-bearing APIs, storage,
+  foreign calls, package contracts and target lock schema.
+- [Performance protocol](docs/performance.md): Rust comparison and runtime gate.
+- [Decision register](docs/decisions.md): accepted choices and unresolved work.
+- [Documentation gate](docs/specification-status.md): current coverage and
+  completion checks, evidence and separate implementation/product gates.
+
+V1 is the full agreed capability release, implemented in C++ using LLVM.
+V1.1 is substantively self-hosted using LLVM. V1.2 uses Mettle's own production
+backend. Development subsets are not reduced V1 releases.
+
+No license has been selected. This repository does not yet grant a project
+open-source license. Dependency licenses remain separate.

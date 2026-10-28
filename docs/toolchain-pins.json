@@ -1,0 +1,59 @@
+{
+  "status": "Immutable upstream source identities and binary archive selections; execution is evidenced separately per build",
+  "cpp_standard": "C++20",
+  "sources": [
+    {
+      "component": "LLVM, Clang and LLD",
+      "repository": "https://github.com/llvm/llvm-project",
+      "tag": "llvmorg-22.1.3",
+      "tag_object": "123329d89b19f1e9c6d390576cc071fb0c12d3f0",
+      "commit": "e9846648fd6183ee6d8cbdb4502213fcf902a211"
+    },
+    {
+      "component": "CMake",
+      "repository": "https://github.com/Kitware/CMake",
+      "tag": "v3.31.6",
+      "tag_object": "a9b14138fe83e134bc3da139857b5616695bab54",
+      "commit": "859ca5c4d7396a011a462878179bc173e1283731"
+    },
+    {
+      "component": "Ninja",
+      "repository": "https://github.com/ninja-build/ninja",
+      "tag": "v1.12.1",
+      "commit": "2daa09ba270b0a43e1929d29b073348aa985dfaa"
+    }
+  ],
+  "build_policy": {
+    "llvm_targets": ["X86", "AArch64", "WebAssembly", "ARM"],
+    "configuration": "Release backend libraries; separate debug Mettle compiler configuration",
+    "linker": "LLD for supported ELF/COFF/Wasm profiles; platform linker permitted for Mach-O",
+    "automatic_dependency_updates": false,
+    "reason": "A fixed supported baseline, not a claim that these are the latest releases",
+    "upgrade_gate": "Document compatibility reason, update immutable source IDs, rerun build/ABI/semantic/runtime acceptance",
+    "compatibility_upgrade": {
+      "date": "2026-10-28",
+      "previous_llvm": "21.1.8",
+      "selected_llvm": "22.1.3",
+      "reason": "Resolve Darwin sanitizer reentrant initialization before main on macOS 26.4+ without disabling instrumentation or mixing host runtime versions",
+      "upstream_fix": "https://github.com/llvm/llvm-project/pull/182943",
+      "release_backport": "7b6514cd3089c0723cc755acd54efbde2cd8f90f",
+      "release_backport_review": "https://github.com/llvm/llvm-project/pull/188913"
+    }
+  },
+  "evidence_policy": {
+    "binary_archive_lock": "tools/toolchain-artifacts.json (project-relative)",
+    "per_build_manifest": "build/<platform>/<configuration>/foundation-evidence.json",
+    "required_records": [
+      "Archive digests and installed tool executable hashes/version output",
+      "Source input hashes, commands, exit statuses and logs",
+      "Host/target identity and selected SDK/sysroot file hashes",
+      "Object/link/run fixture result and same-environment clean rebuild artifact comparison"
+    ],
+    "limits": [
+      "Prebuilt upstream tools are not a local build from the selected source commits",
+      "Recorded guest package versions are not an immutable apt repository",
+      "Emulated Linux execution is not native hardware/performance evidence",
+      "Foundation checks do not establish Mettle source compilation or release/platform qualification"
+    ]
+  }
+}

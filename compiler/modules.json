@@ -1,0 +1,97 @@
+{
+  "schema": 1,
+  "modules": [
+    {
+      "name": "support", "directory": "support", "kind": "INTERFACE",
+      "dependencies": [], "public_headers": ["support/limits.h"],
+      "files": ["support/limits.h"]
+    },
+    {
+      "name": "source", "directory": "source", "kind": "STATIC",
+      "dependencies": [], "public_headers": ["source/source.h"],
+      "files": ["source/source.h", "source/source.cpp"]
+    },
+    {
+      "name": "diagnostics", "directory": "diagnostics", "kind": "INTERFACE",
+      "dependencies": ["source", "support"], "public_headers": ["diagnostics/diagnostics.h"],
+      "files": ["diagnostics/diagnostics.h"]
+    },
+    {
+      "name": "syntax", "directory": "syntax", "kind": "STATIC",
+      "dependencies": ["source", "diagnostics", "support"],
+      "public_headers": ["syntax/token.h", "syntax/ast.h", "syntax/lexer.h", "syntax/parser.h"],
+      "files": ["syntax/token.h", "syntax/token.cpp", "syntax/ast.h", "syntax/ast.cpp",
+        "syntax/lexer.h", "syntax/lexer.cpp", "syntax/parser.h", "syntax/parser.cpp",
+        "syntax/parser/detail.h", "syntax/parser/declarations.cpp",
+        "syntax/parser/statements.cpp", "syntax/parser/expressions.cpp"]
+    },
+    {
+      "name": "types", "directory": "types", "kind": "STATIC",
+      "dependencies": [], "public_headers": ["types/type.h"],
+      "files": ["types/type.h", "types/type.cpp"]
+    },
+    {
+      "name": "places", "directory": "places", "kind": "STATIC",
+      "dependencies": ["types"], "public_headers": ["places/place.h"],
+      "files": ["places/place.h", "places/place.cpp"]
+    },
+    {
+      "name": "semantics", "directory": "semantics", "kind": "STATIC",
+      "dependencies": ["syntax", "types", "places", "diagnostics", "support"],
+      "public_headers": ["semantics/check.h", "semantics/checked.h"],
+      "files": ["semantics/check.h", "semantics/checked.h", "semantics/checker.h",
+        "semantics/check.cpp", "semantics/inference.h", "semantics/inference.cpp",
+        "semantics/names.cpp", "semantics/flow.cpp", "semantics/literals.cpp", "semantics/expressions.cpp",
+        "semantics/products.cpp", "semantics/calls.cpp"]
+    },
+    {
+      "name": "ir", "directory": "ir", "kind": "STATIC",
+      "dependencies": ["source", "types", "places", "diagnostics"],
+      "public_headers": ["ir/ir.h", "ir/verify.h", "ir/verified.h"],
+      "files": ["ir/ir.h", "ir/print.cpp", "ir/verify.h", "ir/verify.cpp",
+        "ir/verified.h", "ir/dominance.h", "ir/dominance.cpp"]
+    },
+    {
+      "name": "lowering", "directory": "lowering", "kind": "STATIC",
+      "dependencies": ["semantics", "ir", "diagnostics", "support"],
+      "public_headers": ["lowering/scalar.h"],
+      "files": ["lowering/scalar.h", "lowering/scalar.cpp", "lowering/builder.h",
+        "lowering/expressions.cpp", "lowering/scopes.cpp", "lowering/calls.cpp"]
+    },
+    {
+      "name": "analysis", "directory": "analysis", "kind": "STATIC",
+      "dependencies": ["ir", "places", "support", "diagnostics"],
+      "public_headers": ["analysis/initialization.h", "analysis/loans.h"],
+      "files": ["analysis/initialization.h", "analysis/initialization.cpp",
+        "analysis/place_tree.h", "analysis/place_tree.cpp", "analysis/loans.h", "analysis/loans.cpp",
+        "analysis/origins.h", "analysis/origins.cpp",
+        "analysis/value_ownership.h", "analysis/value_ownership.cpp"]
+    },
+    {
+      "name": "pipeline", "directory": "pipeline", "kind": "STATIC",
+      "dependencies": ["syntax", "semantics", "ir", "lowering", "analysis", "diagnostics"],
+      "public_headers": ["pipeline/compile.h"],
+      "files": ["pipeline/compile.h", "pipeline/compile.cpp"]
+    },
+    {
+      "name": "cleanup", "directory": "cleanup", "kind": "STATIC",
+      "dependencies": ["ir", "types", "places", "support"], "public_headers": ["cleanup/plan.h"],
+      "files": ["cleanup/plan.h", "cleanup/plan.cpp"]
+    },
+    {
+      "name": "backend_llvm", "directory": "backend/llvm", "kind": "STATIC",
+      "dependencies": ["ir", "cleanup"], "llvm": true,
+      "public_headers": ["backend/llvm/lower.h", "backend/llvm/object.h"],
+      "files": ["backend/llvm/lower.h", "backend/llvm/lower.cpp",
+        "backend/llvm/object.h", "backend/llvm/object.cpp",
+        "backend/llvm/cleanup.h", "backend/llvm/cleanup.cpp"]
+    },
+    {
+      "name": "driver", "directory": "driver", "kind": "EXECUTABLE",
+      "dependencies": ["source", "diagnostics", "syntax", "ir", "pipeline", "backend_llvm"],
+      "llvm": true, "public_headers": [],
+      "files": ["driver/main.cpp", "driver/options.h", "driver/options.cpp", "driver/run.cpp",
+        "driver/inspect.h", "driver/inspect.cpp", "driver/output.h", "driver/output.cpp"]
+    }
+  ]
+}

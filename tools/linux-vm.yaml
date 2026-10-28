@@ -1,0 +1,22 @@
+vmType: qemu
+arch: x86_64
+cpus: 2
+memory: 2GiB
+disk: 30GiB
+images:
+  - location: https://cloud-images.ubuntu.com/minimal/releases/noble/release-20261027/ubuntu-24.04-minimal-cloudimg-amd64.img
+    arch: x86_64
+    digest: sha256:3839f148c5a3b4a736e7dbb0af75594743fa5ebee2a202424ba1a32e5d3b5d2c
+mounts: []
+mountType: 9p
+containerd:
+  system: false
+  user: false
+provision:
+  - mode: system
+    script: |
+      #!/bin/sh
+      set -eu
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends build-essential python3 ca-certificates curl zlib1g-dev libzstd-dev libxml2-dev

@@ -1,0 +1,55 @@
+{
+  "rust_version": "1.99.1",
+  "edition": "2024",
+  "source_commit": "58cf8f9c35b355199727627d07ae34a4e2846d67",
+  "tag_object": "213cfbe66a6da4e4b41bde365643286371af6e5a",
+  "distribution_date": "2026-10-15",
+  "rustdoc_identity": "1.99.1 (58cf8f9c3 2026-10-13)",
+  "channel_manifest_sha256": "fb152be80975c194aa5fc684b2aec3a6e14e2b855efe2faa4e5f8ae6e590f463",
+  "archives": [
+    {
+      "role": "source",
+      "url": "https://static.rust-lang.org/dist/2026-10-15/rust-src-1.99.1.tar.xz",
+      "sha256": "e485a88c45db546b73571df7bebfcb4454ba4fb552c492e25fc5b00eeb5bf22d"
+    },
+    {
+      "role": "docs",
+      "url": "https://static.rust-lang.org/dist/2026-10-15/rust-docs-1.99.1-x86_64-unknown-linux-gnu.tar.xz",
+      "sha256": "f94e0e39c45d4517981d35cd695eef30aeead92a5875f1014cd851fda1b2321e"
+    }
+  ],
+  "initial_web_catalog_status": "Historical discovery only; superseded by the verified archive inventory",
+  "sources": [
+    {
+      "url": "https://doc.rust-lang.org/1.99.1/core/all.html",
+      "sha256": "bc5d3b112c2cb4405ebbda818c74eeecdadba75e001691067b6f581a40aee228",
+      "catalog_links": 32667,
+      "scope": "Public item catalog; stability and associated items not audited"
+    },
+    {
+      "url": "https://doc.rust-lang.org/1.99.1/alloc/all.html",
+      "sha256": "cc230a8a32301a7cddacbaa28caf0afe49c9aa9b0512cfbdf8a8bd24a4422ec3",
+      "catalog_links": 263,
+      "scope": "Public item catalog; stability and associated items not audited"
+    },
+    {
+      "url": "https://doc.rust-lang.org/1.99.1/std/all.html",
+      "sha256": "439c7048c817b9eadcda69879567fc04ce4948aa8050447707f1386df3459b4f",
+      "catalog_links": 1938,
+      "scope": "Public item catalog; stability and associated items not audited"
+    }
+  ],
+  "initial_web_catalog_rows": 34868,
+  "current_audit": {
+    "page_provenance": "source-provenance.json",
+    "summary": "audit-summary.json",
+    "public_items": "public-items.csv",
+    "associated_items": "associated-items.csv",
+    "implementations": "implementations.csv",
+    "operations": "operations.jsonl.gz",
+    "source_constraints": "source-constraints.jsonl.gz",
+    "validation": "validation.json",
+    "scope": "Frozen documentation inventory and recursive operation contracts; source cfg retained but not compiled on all targets"
+  },
+  "implementation_or_runtime_parity_certified": false
+}
