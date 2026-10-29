@@ -28,10 +28,12 @@ llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
     LLVMInitializeX86Target();
     LLVMInitializeX86TargetMC();
     LLVMInitializeX86AsmPrinter();
+    LLVMInitializeX86AsmParser();
     LLVMInitializeAArch64TargetInfo();
     LLVMInitializeAArch64Target();
     LLVMInitializeAArch64TargetMC();
     LLVMInitializeAArch64AsmPrinter();
+    LLVMInitializeAArch64AsmParser();
     LLVMInitializeWebAssemblyTargetInfo();
     LLVMInitializeWebAssemblyTarget();
     LLVMInitializeWebAssemblyTargetMC();
@@ -44,6 +46,13 @@ llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
 
   std::string diagnostic;
   const llvm::Triple targetTriple(llvm::Triple::normalize(triple));
+  if (auto *identity = llvm::dyn_cast_or_null<llvm::MDString>(
+          module.getModuleFlag("mettle.target.triple"));
+      identity &&
+      llvm::Triple::normalize(identity->getString()) != targetTriple.str())
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "checked target facts disagree with the object target");
   const auto *target =
       llvm::TargetRegistry::lookupTarget(targetTriple, diagnostic);
   if (target == nullptr) {
@@ -61,6 +70,11 @@ llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
   }
   module.setTargetTriple(targetTriple);
   module.setDataLayout(machine->createDataLayout());
+  if (module.getModuleFlag("mettle.pointer.width") &&
+      module.getDataLayout().getPointerSizeInBits() != 64)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "this source compiler machine model requires a 64-bit target");
 
   llvm::raw_string_ostream diagnostics(diagnostic);
   if (llvm::verifyModule(module, &diagnostics)) {

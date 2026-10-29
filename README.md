@@ -3,15 +3,46 @@
 An independent systems language targeting Rust-level capabilities with simpler
 source structure and measured runtime parity.
 
-Status: I01 foundation, I02 scalar source compilation and I03 ownership/resource
-cleanup are complete within
-the recorded macOS ARM64 host / Linux x86-64 target scope. The compiler checks and builds
-single-file i32/bool/Unit programs with functions, result inference and control
+Status: I01-I06 are complete and qualified within the recorded macOS ARM64
+compiler-host / Linux x86-64 target-execution scope. The compiler checks and builds
+Mettle programs with functions, result inference and control
 flow. I03 includes concrete products, projected initialization and
 moves, stored/returned views, receiver borrowing and native destructor/unwind
-cleanup. Generics, libraries, a package
-manager and release-qualified targets remain later work. No Rust-runtime parity
+cleanup. Libraries, a package manager and release-qualified targets remain later
+work. No Rust-runtime parity
 is claimed.
+I04 adds multi-file modules/imports/reexports/visibility,
+transparent aliases, concrete enums and ownership-sensitive patterns, nested
+optionals/outcomes, typed propagation/capture, defaults/custom constructors,
+tuples/fixed arrays, integer ranges/iteration, scalar/byte literals and labeled
+value-producing loops.
+I05 adds declaration-checked type/const generics and specialization, interfaces
+and associated families, coherence, named/higher-ranked regions, operators,
+receiver projections, closures/function pointers, slices, borrowed erased
+dispatch and opaque returns. I05 qualification passed on 2026-10-29:
+Debug/Release 14/14 CTest suites each, ASan/UBSan 15/15, static analysis and
+byte-identical clean rebuilds, plus 632 Linux source/profile cases and twelve
+cleanup cases. The aggregate receipt is `build/i05-qualification.json`; the
+[implementation plan](docs/implementation-plan.md) records its scope and limits.
+This is not release-platform qualification or a Rust-runtime parity claim.
+
+I06's qualified initial machine boundary includes
+wide integers/floats, raw pointers and memory operations, manual/uninitialized
+storage, interior mutability, inline pinning, atomics, C layout/calls and
+freestanding object emission. Combined C/integer enum representations,
+transparent enum/payload ABI forwarding and unions pass native and target probes.
+Packed-field destruction relocates to aligned unwind-frame storage. Full-width
+constant composition, checked conversions, explicit floating policies, safe
+Cell/RefCell guards, conditional Unpin, statics/linkage and physical-entry
+variadic definitions are integrated. Inline/global/naked assembly and initial
+architecture-specific SIMD/feature dispatch are also integrated. I06 qualification
+passed on 2026-10-29: complete Debug coverage through a documented focused
+continuation, Release 16/16 CTest suites, ASan/UBSan 17/17, selected static analysis
+and byte-identical clean rebuilds, plus 1,240 Linux source/profile cases and twelve
+cleanup cases. The aggregate receipt is `build/i06-qualification.json`.
+This is initial-profile qualification, not I13's complete per-operation/profile
+closure, Linux compiler-host qualification or a runtime-parity claim.
+I05 receipts remain unchanged historical evidence.
 
 ## Contributor quality gate
 
@@ -50,8 +81,8 @@ python3 tools/build.py --configuration Release
 ```
 
 The bootstrap installs checksum-pinned tools into ignored `.tools/`, without
-replacing system compilers. The build script configures CMake/Ninja, runs CTest,
-then verifies a clean rebuild has byte-identical compiler artifacts in the same
+replacing system compilers. The build script configures CMake/Ninja, reuses valid build inputs, runs CTest,
+then requires a full clean rebuild to have byte-identical compiler artifacts in the same
 environment. Logs, source/tool/sysroot hashes, commands and results remain under
 `build/<platform>/<configuration>/foundation-evidence.json`. This is not a
 cross-machine hermetic-build or release reproducibility claim.
@@ -92,9 +123,14 @@ stable tooling APIs.
 
 The compiler supports concrete methods with read/mut/take receivers, eligible
 two-phase mutable receivers, `drop { ... }`, first-class read/mut views and basic
-region-only declarations/result-source contracts. Ordinary generic declarations,
-modules, closures, typed errors, other numeric widths and uninhabited parameters
-remain unimplemented. This is not a reduction of the full V1 specification.
+region declarations/result-source contracts. Generic bodies are checked before
+specialization; a Copy instantiation cannot grant undeclared ownership rights.
+Erased slice receivers retain count metadata, and opaque values expose only
+declared bounds. Erasing a witness-metadata implementor itself still needs an
+explicit sized adapter; structural tail unsizing and interface upcasts are
+supported. Owning library handles and the remaining numeric/foreign-machine
+surface remain later milestones. This is
+not a reduction of the full V1 specification.
 
 ```sh
 build/macos-arm64/Debug/mettle build examples/core/values.mt -o build/values
@@ -111,11 +147,57 @@ returned source dependencies and view-storage writes through calls/destructors.
 Direct borrowed initializers extend their owning temporary to the binding block;
 ordinary calls do not extend temporary lifetimes.
 
+Loops use the selected `label name` syntax. Unlabeled control targets the nearest
+loop; labels are lexical and select the nearest matching enclosing loop.
+`loop` joins its break value types, while `while` remains `Unit`:
+
+```text
+fn answer() {
+    label done: loop {
+        loop { break label done 42 }
+    }
+}
+```
+
+`continue label name` cleans up the exited scopes before restarting its target.
+Break values finish evaluation before scope cleanup; owned results remain
+protected during that cleanup and transfer once to the loop result.
+
+Aliases preserve the underlying type's nominal identity, Copy eligibility, view
+access and cleanup behavior. Forward alias references resolve before bodies;
+cycles diagnose. Static functions have no implicit `self`:
+
+```text
+alias Coordinate = Point
+copy type Point {
+    x: i32
+    static fn make(x: i32): Self { Self(x) }
+}
+fn main() { if Coordinate::make(42).x == 42 { 0 } else { 1 } }
+```
+
+`Type::method(receiver, arguments)` also supports an explicit receiver using its
+declared access mode. Only object-style eligible mutable receivers receive the
+two-phase reservation behavior; qualifying an ordinary call does not weaken it.
+
 The private native panic runtime uses C++ unwinding and compiler-owned cleanup
 plans with per-frame initialization flags. It is not a per-object runtime registry.
 Checked-IR catch probes establish replacement recovery; source panic-catching APIs,
 generic payloads, C-unwind interoperability and freestanding support remain later
 milestones, not additional source syntax.
+
+Typed failure is separate: `throws Error` stays explicit, `try` propagates only
+that declared error, and `capture` produces an ordinary success/failure outcome
+without catching panic. Matching retains alternative identity even when both
+payload types are equal. `none`, `present`, `??` and optional chaining preserve
+nested presence and skip unselected operands.
+
+Defaults are checked in declaration scope, including unused defaults. Supplied
+arguments evaluate in source order before omitted defaults in parameter order.
+Custom `init` replaces generated construction, establishes every field on success,
+and cleans initialized fields without invoking the unestablished whole-value
+destructor on failure. Fixed-array rest bindings preserve disjoint borrowed
+subarrays; consuming matches transfer only selected initialized fields.
 
 ```sh
 build/macos-arm64/Debug/mettle build examples/core/ownership.mt -o build/ownership
@@ -152,14 +234,21 @@ across both compiler builds and source profiles, both foundation smokes and the
 native cleanup/recovery probes.
 The component-boundary suite additionally checks parsed/checked data ownership,
 in-memory compilation, malformed IR, SSA and independent initialization analysis.
-Debug/Release pass all twelve suites and ASan/UBSan all thirteen, with
-byte-identical clean rebuilds. Each compiler build executes 112 run-pass profile
+At I03 closure, Debug/Release passed all twelve suites and ASan/UBSan all thirteen,
+with byte-identical clean rebuilds. Each compiler build executed 112 run-pass profile
 cases, rejects 104 invalid programs, and checks 24 arithmetic/profile cases.
-Linux execution passes 134 source/profile cases and six native cleanup probes per
+Linux execution passed 134 source/profile cases and six native cleanup probes per
 ordinary compiler configuration, plus both foundation smokes. Evidence is retained
 under the build/quality/target paths above; the dedicated VM is stopped.
-This qualifies I03's concrete ownership subset, not generic ownership, source
+That gate qualifies I03's concrete ownership subset, not generic ownership, source
 panic-catching APIs, a Linux compiler host or a release platform.
+The source suites now additionally cover I04 modules, sums, effects, defaults,
+constructors, literals, patterns and aggregate/control-flow composition;
+their revision-bound receipts contain the current counts and target results.
+The Linux runner also executes external multi-file module fixtures. I04's native
+gate passes fourteen ordinary suites and fifteen under ASan/UBSan, with
+byte-identical clean rebuilds; current quality/target receipts complete the
+revision-specific qualification record.
 
 ## Selected source syntax
 
@@ -186,8 +275,8 @@ and tail values, not from callers. `Unit` is the type and `()` its sole value.
 Prefer `let _ = expression` to make intentional non-Unit discards explicit.
 Callable types and bodyless declarations require explicit results. Parameter
 types, error effects and ambiguous borrow-source contracts stay explicit.
-The compiler does not yet implement callable types, bodyless declarations or
-typed errors; those contracts remain requirements for later milestones.
+The compiler does not yet implement callable types or bodyless interface/foreign
+declarations; those contracts remain requirements for later milestones.
 
 An early integer-reduction experiment is available with an installed Rust
 compiler as an optional comparator:

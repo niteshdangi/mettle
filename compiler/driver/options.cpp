@@ -13,6 +13,8 @@ void usage() {
          "executable|object|llvm|ir]\n"
          "         [--profile debug|release] [--overflow-checks on|off]\n"
          "         [--target TRIPLE] [--cc CXX] [--sysroot PATH]\n"
+         "         [--freestanding] (object/LLVM/IR output, aborting panics, "
+         "no implicit hosted entry)\n"
          "Executable output requires the host runtime target; use --emit "
          "object for other targets.\n"
          "Scalar/product compiler with field initialization, owned moves, "
@@ -29,6 +31,10 @@ std::optional<Options> options(int argc, char **argv) {
     return std::nullopt;
   for (int i = 2; i < argc; ++i) {
     std::string arg = argv[i];
+    if (arg == "--freestanding") {
+      result.freestanding = true;
+      continue;
+    }
     if (!arg.empty() && arg[0] == '-') {
       if (++i == argc)
         return std::nullopt;
@@ -55,6 +61,8 @@ std::optional<Options> options(int argc, char **argv) {
       return std::nullopt;
   }
   if (result.input.empty() ||
+      (result.freestanding && result.command == "build" &&
+       result.emit == "executable") ||
       (result.command == "build" && result.output.empty()) ||
       (result.profile != "debug" && result.profile != "release") ||
       (result.emit != "executable" && result.emit != "object" &&

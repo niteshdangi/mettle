@@ -4,24 +4,128 @@ namespace mettle::lowering {
 using ir::Exit;
 using ir::Op;
 ir::Value Builder::expression(const Node &node, bool consume, bool valueUsed) {
+  const auto &facts = module.facts(node);
+  if (facts.viewConversion) {
+    auto value = convertedView(node);
+    if (live())
+      for (auto type : facts.injections)
+        value = variant(type, 1, {value}, node.span);
+    return value;
+  }
+  bool adapted = module.typeStore()->isView(facts.type) &&
+                 (facts.erasedSource != Type::Unknown ||
+                  facts.unsizedSource != Type::Unknown ||
+                  facts.reborrowSource != Type::Unknown);
+  auto value =
+      adapted ? viewCoercion(node) : rawExpression(node, consume, valueUsed);
+  if (live() && facts.opaqueSource != Type::Unknown)
+    value = track(emit({Op::Construct,
+                        {},
+                        {use(value)},
+                        {},
+                        "",
+                        {-1, {}},
+                        -1,
+                        0,
+                        node.span},
+                       facts.type),
+                  node.span);
+  if (live() && facts.callableCoercion != Type::Unknown &&
+      value.type != facts.callableCoercion) {
+    if (module.typeStore()->isFunctionPointer(value.type))
+      value = emit(
+          {Op::CallableCoerce, {}, {value}, {}, "", {-1, {}}, -1, 0, node.span},
+          facts.callableCoercion);
+    else {
+      auto closure = module.typeStore()->callable(value.type).function;
+      Instruction address{Op::FunctionAddress,
+                          {},
+                          {},
+                          {},
+                          "",
+                          {-1, {}},
+                          closureIndex(static_cast<std::size_t>(closure)),
+                          0,
+                          node.span};
+      address.typeArguments = closureArguments(value.type);
+      value = emit(std::move(address), facts.callableCoercion);
+    }
+  }
+  if (live() && (node.kind == Kind::Call || facts.operatorCall) &&
+      module.facts(node).effect != Type::Unknown &&
+      !module.facts(node).optional && callHasFailure(node))
+    value = unwrapOutcome(value, node.span);
+  if (live())
+    for (auto type : module.facts(node).injections)
+      value = variant(type, 1, {value}, node.span);
+  return value;
+}
+ir::Value Builder::rawExpression(const Node &node, bool consume,
+                                 bool valueUsed) {
   if (!live())
     return {};
   const auto &facts = module.facts(node);
+  if (facts.operatorCall)
+    return operatorExpression(node);
   switch (node.kind) {
+  case Kind::Assembly:
+    return assemblyExpression(node);
+  case Kind::FeatureTest:
+    return emit(
+        {Op::FeatureTest, {}, {}, {}, node.text, {-1, {}}, -1, 0, node.span},
+        Type::Bool);
   case Kind::Integer:
+  case Kind::Floating:
+    if (facts.numeric) {
+      Instruction instruction{Op::Constant, {}, {}, {},       "",
+                              {-1, {}},     -1, 0,  node.span};
+      instruction.numeric = facts.numeric;
+      return emit(std::move(instruction), sourceType(node));
+    }
+    return constant(sourceType(node), facts.number);
   case Kind::Boolean:
-    return constant(facts.type, facts.number);
+  case Kind::Character:
+    return constant(sourceType(node), facts.number);
   case Kind::Unit:
     return unit();
+  case Kind::Unsafe: {
+    auto depth = unsafeDepth;
+    ++unsafeDepth;
+    auto value = expression(*node.children[0], consume, valueUsed);
+    unsafeDepth = depth;
+    return value;
+  }
   case Kind::Group:
     return expression(*node.children[0], consume, valueUsed);
   case Kind::Name:
   case Kind::Field: {
-    auto location = place(node);
+    if (facts.machineOperation == "marker.phantom_pinned")
+      return emit({Op::Construct, {}, {}, {}, "", {-1, {}}, -1, 0, node.span},
+                  sourceType(node));
+    if (facts.numeric) {
+      Instruction instruction{Op::Constant, {}, {}, {},       "",
+                              {-1, {}},     -1, 0,  node.span};
+      instruction.numeric = facts.numeric;
+      return emit(std::move(instruction), sourceType(node));
+    }
+    if (node.kind == Kind::Name && facts.callee >= 0)
+      return callableExpression(node);
+    if (facts.constantParameter != Type::Unknown) {
+      Instruction instruction{Op::Constant, {}, {}, {},       "",
+                              {-1, {}},     -1, 0,  node.span};
+      instruction.constantParameter = facts.constantParameter;
+      return emit(std::move(instruction), sourceType(node));
+    }
+    if (facts.optional)
+      return optionalExpression(node);
+    if (facts.variant >= 0)
+      return sumExpression(node);
+    auto location = place(node, false, false, false);
     if (!live())
       return {};
+    auto loadedType = sourceType(node);
     return track(
-        emit({consume || !module.typeStore()->isCopy(facts.type) ? Op::Move
+        emit({consume || !module.typeStore()->isCopy(loadedType) ? Op::Move
                                                                  : Op::Load,
               {},
               {},
@@ -31,9 +135,16 @@ ir::Value Builder::expression(const Node &node, bool consume, bool valueUsed) {
               -1,
               0,
               node.span},
-             facts.type),
+             loadedType),
         node.span);
   }
+  case Kind::Tuple:
+  case Kind::Array:
+  case Kind::Index:
+  case Kind::Range:
+  case Kind::For:
+  case Kind::Coalesce:
+    return aggregateExpression(node, valueUsed, consume);
   case Kind::Unary: {
     if (node.text == "take")
       return expression(*node.children[0], true);
@@ -41,13 +152,14 @@ ir::Value Builder::expression(const Node &node, bool consume, bool valueUsed) {
       return borrow(*node.children[0],
                     node.text == "read" ? ParameterMode::Read
                                         : ParameterMode::Mut,
-                    false, true, facts.type);
+                    false, true, sourceType(node));
     if (node.text == "*") {
-      auto location = place(node);
+      auto location = place(node, false, false, false);
       if (!live())
         return {};
+      auto loadedType = sourceType(node);
       return track(
-          emit({consume || !module.typeStore()->isCopy(facts.type) ? Op::Move
+          emit({consume || !module.typeStore()->isCopy(loadedType) ? Op::Move
                                                                    : Op::Load,
                 {},
                 {},
@@ -57,20 +169,51 @@ ir::Value Builder::expression(const Node &node, bool consume, bool valueUsed) {
                 -1,
                 0,
                 node.span},
-               facts.type),
+               loadedType),
           node.span);
     }
-    if (facts.foldedNegativeLiteral)
-      return constant(Type::I32, facts.number);
+    if (facts.foldedNegativeLiteral) {
+      Instruction instruction{Op::Constant, {}, {}, {},       "",
+                              {-1, {}},     -1, 0,  node.span};
+      instruction.numeric = facts.numeric;
+      return emit(std::move(instruction), sourceType(node));
+    }
     auto value = use(expression(*node.children[0]));
     if (!live())
       return {};
     return emit(
         {Op::Unary, {}, {value}, {}, node.text, {-1, {}}, -1, 0, node.span},
-        facts.type);
+        sourceType(node));
   }
   case Kind::Call:
+    if (!facts.machineOperation.empty())
+      return machineExpression(node);
+    if (facts.optional)
+      return optionalExpression(node);
+    if (facts.indirect)
+      return indirectCallExpression(node);
+    if (facts.variant >= 0)
+      return sumExpression(node);
     return callExpression(node);
+  case Kind::Cast: {
+    auto operand = use(expression(*node.children[0]));
+    if (!live())
+      return {};
+    return emit({Op::Cast, {}, {operand}, {}, "", {-1, {}}, -1, 0, node.span},
+                sourceType(node));
+  }
+  case Kind::Closure:
+    return callableExpression(node);
+  case Kind::None:
+  case Kind::Variant:
+  case Kind::Throw:
+  case Kind::Try:
+  case Kind::Capture:
+    return sumExpression(node);
+  case Kind::Match:
+    return matchExpression(node, valueUsed);
+  case Kind::Arm:
+    throw std::runtime_error("match arm lowered outside its match");
   case Kind::Block:
     return blockExpression(node, valueUsed);
   case Kind::Binary: {
@@ -98,7 +241,7 @@ ir::Value Builder::expression(const Node &node, bool consume, bool valueUsed) {
                    -1,
                    0,
                    node.span},
-                  facts.type);
+                  sourceType(node));
     }
     auto literal = booleanLiteral(*node.children[0]);
     if ((node.text == "&&" && literal == false) ||
@@ -127,6 +270,8 @@ ir::Value Builder::expression(const Node &node, bool consume, bool valueUsed) {
     return merge(Type::Bool, values, predecessors);
   }
   case Kind::If: {
+    if (!node.patterns.empty())
+      return conditionalPatternExpression(node, valueUsed);
     int savedTemporary = temporaryScope;
     temporaryScope = scope();
     auto condition = use(expression(*node.children[0]));
@@ -165,14 +310,17 @@ ir::Value Builder::expression(const Node &node, bool consume, bool valueUsed) {
       return {};
     }
     return track(
-        merge(valueUsed ? facts.type : Type::Unit, values, predecessors),
+        merge(valueUsed ? sourceType(node) : Type::Unit, values, predecessors),
         node.span);
   }
   case Kind::Binding: {
+    if (!node.patterns.empty())
+      return bindingPatternExpression(node);
     if (facts.slot >= 0) {
-      function.locals[facts.slot].scope = blockScope;
-      function.locals[facts.slot].order = order++;
-      emit({Op::Declare, {}, {}, {}, "", {facts.slot, {}}, -1, 0, node.span},
+      int slot = localSlot(facts.slot);
+      function.locals[slot].scope = blockScope;
+      function.locals[slot].order = order++;
+      emit({Op::Declare, {}, {}, {}, "", {slot, {}}, -1, 0, node.span},
            Type::Unit);
     }
     if (!node.children.empty()) {
@@ -188,7 +336,7 @@ ir::Value Builder::expression(const Node &node, bool consume, bool valueUsed) {
               {use(value)},
               {},
               "",
-              {facts.slot, {}},
+              {localSlot(facts.slot), {}},
               -1,
               0,
               node.span},
@@ -200,7 +348,7 @@ ir::Value Builder::expression(const Node &node, bool consume, bool valueUsed) {
     auto value = expression(*node.children[1]);
     if (!live())
       return {};
-    auto location = place(*node.children[0]);
+    auto location = place(*node.children[0], false, true);
     if (!live())
       return {};
     if (node.text != "=") {
@@ -228,43 +376,11 @@ ir::Value Builder::expression(const Node &node, bool consume, bool valueUsed) {
     return {};
   }
   case Kind::While:
-  case Kind::Loop: {
-    int header = block(), body = block(), done = block();
-    jump(header);
-    current = header;
-    if (node.kind == Kind::While) {
-      int savedTemporary = temporaryScope;
-      temporaryScope = scope();
-      auto condition = use(expression(*node.children[0]));
-      endScope();
-      temporaryScope = savedTemporary;
-      branch(*node.children[0], condition, body, done);
-    } else
-      jump(body);
-    current = body;
-    loops.push_back({header, done, scopes.size()});
-    if (node.kind == Kind::While &&
-        (!module.facts(*node.children[0]).flow.normal ||
-         booleanLiteral(*node.children[0]) == false))
-      terminate({Exit::Unreachable});
-    blockExpression(*node.children.back(), false);
-    loops.pop_back();
-    jump(header);
-    current = done;
-    if (!facts.flow.normal) {
-      terminate({Exit::Unreachable});
-      return {};
-    }
-    return unit();
-  }
+  case Kind::Loop:
+    return loopExpression(node);
   case Kind::Break:
-    exitTo(loops.back().depth);
-    jump(loops.back().done);
-    return {};
   case Kind::Continue:
-    exitTo(loops.back().depth);
-    jump(loops.back().header);
-    return {};
+    return transferExpression(node);
   }
   throw std::runtime_error("unhandled checked syntax node");
 }

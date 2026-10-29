@@ -21,14 +21,23 @@
       "dependencies": ["source", "diagnostics", "support"],
       "public_headers": ["syntax/token.h", "syntax/ast.h", "syntax/lexer.h", "syntax/parser.h"],
       "files": ["syntax/token.h", "syntax/token.cpp", "syntax/ast.h", "syntax/ast.cpp",
-        "syntax/lexer.h", "syntax/lexer.cpp", "syntax/parser.h", "syntax/parser.cpp",
-        "syntax/parser/detail.h", "syntax/parser/declarations.cpp",
-        "syntax/parser/statements.cpp", "syntax/parser/expressions.cpp"]
+        "syntax/lexer.h", "syntax/lexer.cpp", "syntax/characters.cpp", "syntax/parser.h", "syntax/parser.cpp",
+        "syntax/parser/detail.h", "syntax/parser/declarations.cpp", "syntax/parser/modules.cpp",
+        "syntax/parser/statements.cpp", "syntax/parser/expressions.cpp",
+        "syntax/parser/types.cpp", "syntax/parser/enumerations.cpp", "syntax/parser/machine.cpp", "syntax/parser/assembly.cpp",
+        "syntax/parser/patterns.cpp", "syntax/parser/closures.cpp", "syntax/parser/generics.cpp",
+        "syntax/parser/interfaces.cpp"]
+    },
+    {
+      "name": "resolution", "directory": "resolution", "kind": "STATIC",
+      "dependencies": ["syntax", "source", "diagnostics", "support"],
+      "public_headers": ["resolution/resolve.h", "resolution/load.h"],
+      "files": ["resolution/resolve.h", "resolution/resolve.cpp", "resolution/load.h", "resolution/load.cpp"]
     },
     {
       "name": "types", "directory": "types", "kind": "STATIC",
-      "dependencies": [], "public_headers": ["types/type.h"],
-      "files": ["types/type.h", "types/type.cpp"]
+      "dependencies": [], "public_headers": ["types/type.h", "types/regions.h", "types/machine.h", "types/layout.h", "types/target.h", "types/assembly.h"],
+      "files": ["types/type.h", "types/type.cpp", "types/numeric.cpp", "types/integer.cpp", "types/machine.h", "types/machine.cpp", "types/layout.h", "types/layout.cpp", "types/callables.cpp", "types/parameters.cpp", "types/regions.h", "types/regions.cpp", "types/target.h", "types/target.cpp", "types/assembly.h", "types/assembly.cpp", "types/region_types.cpp", "types/erasure.cpp", "types/metadata.cpp"]
     },
     {
       "name": "places", "directory": "places", "kind": "STATIC",
@@ -37,26 +46,39 @@
     },
     {
       "name": "semantics", "directory": "semantics", "kind": "STATIC",
-      "dependencies": ["syntax", "types", "places", "diagnostics", "support"],
-      "public_headers": ["semantics/check.h", "semantics/checked.h"],
+      "dependencies": ["syntax", "resolution", "types", "places", "diagnostics", "support"],
+      "public_headers": ["semantics/check.h", "semantics/checked.h", "semantics/interfaces.h"],
       "files": ["semantics/check.h", "semantics/checked.h", "semantics/checker.h",
         "semantics/check.cpp", "semantics/inference.h", "semantics/inference.cpp",
-        "semantics/names.cpp", "semantics/flow.cpp", "semantics/literals.cpp", "semantics/expressions.cpp",
-        "semantics/products.cpp", "semantics/calls.cpp"]
+        "semantics/names.cpp", "semantics/modules.cpp", "semantics/flow.cpp", "semantics/literals.cpp", "semantics/expressions.cpp",
+        "semantics/products.cpp", "semantics/calls.cpp", "semantics/declarations.cpp",
+        "semantics/control_flow.cpp", "semantics/sums.cpp", "semantics/patterns.cpp",
+        "semantics/exhaustiveness.cpp", "semantics/aggregates.cpp", "semantics/coercions.cpp",
+        "semantics/constants.cpp", "semantics/statics.cpp",
+        "semantics/defaults.cpp", "semantics/constructors.cpp",
+        "semantics/callables.cpp", "semantics/captures.cpp", "semantics/receivers.cpp", "semantics/machine.cpp", "semantics/machine_declarations.cpp", "semantics/machine_types.cpp", "semantics/layout.cpp", "semantics/assembly.cpp", "semantics/target.cpp",
+        "semantics/interfaces.h", "semantics/interface_solver.cpp",
+        "semantics/interfaces.cpp", "semantics/interface_implementations.cpp", "semantics/erasure.cpp", "semantics/operators.cpp", "semantics/unsizing.cpp",
+        "semantics/region_solver.h", "semantics/region_solver.cpp",
+        "semantics/regions.cpp", "semantics/generics.cpp", "semantics/generics_calls.cpp",
+        "semantics/generics_products.cpp", "semantics/generics_values.cpp",
+        "semantics/coherence.cpp"]
     },
     {
       "name": "ir", "directory": "ir", "kind": "STATIC",
       "dependencies": ["source", "types", "places", "diagnostics"],
       "public_headers": ["ir/ir.h", "ir/verify.h", "ir/verified.h"],
       "files": ["ir/ir.h", "ir/print.cpp", "ir/verify.h", "ir/verify.cpp",
-        "ir/verified.h", "ir/dominance.h", "ir/dominance.cpp"]
+        "ir/verified.h", "ir/dominance.h", "ir/dominance.cpp", "ir/target.h", "ir/target.cpp"]
     },
     {
       "name": "lowering", "directory": "lowering", "kind": "STATIC",
-      "dependencies": ["semantics", "ir", "diagnostics", "support"],
+      "dependencies": ["semantics", "ir", "types", "diagnostics", "support"],
       "public_headers": ["lowering/scalar.h"],
       "files": ["lowering/scalar.h", "lowering/scalar.cpp", "lowering/builder.h",
-        "lowering/expressions.cpp", "lowering/scopes.cpp", "lowering/calls.cpp"]
+        "lowering/expressions.cpp", "lowering/scopes.cpp", "lowering/calls.cpp", "lowering/machine.cpp", "lowering/assembly.cpp",
+        "lowering/control_flow.cpp", "lowering/defaults.cpp", "lowering/sums.cpp",
+        "lowering/patterns.cpp", "lowering/aggregates.cpp", "lowering/callables.cpp", "lowering/erasure.cpp", "lowering/operators.cpp", "lowering/opaque.cpp", "lowering/unsizing.cpp", "lowering/receivers.cpp"]
     },
     {
       "name": "analysis", "directory": "analysis", "kind": "STATIC",
@@ -68,8 +90,16 @@
         "analysis/value_ownership.h", "analysis/value_ownership.cpp"]
     },
     {
+      "name": "instances", "directory": "instances", "kind": "STATIC",
+      "dependencies": ["ir", "types", "diagnostics", "support"],
+      "public_headers": ["instances/specialize.h"],
+      "files": ["instances/specialize.h", "instances/specialize.cpp",
+        "instances/callables.h", "instances/callables.cpp",
+        "instances/arrays.h", "instances/arrays.cpp"]
+    },
+    {
       "name": "pipeline", "directory": "pipeline", "kind": "STATIC",
-      "dependencies": ["syntax", "semantics", "ir", "lowering", "analysis", "diagnostics"],
+      "dependencies": ["syntax", "resolution", "semantics", "ir", "types", "lowering", "analysis", "instances", "diagnostics"],
       "public_headers": ["pipeline/compile.h"],
       "files": ["pipeline/compile.h", "pipeline/compile.cpp"]
     },
@@ -80,15 +110,15 @@
     },
     {
       "name": "backend_llvm", "directory": "backend/llvm", "kind": "STATIC",
-      "dependencies": ["ir", "cleanup"], "llvm": true,
+      "dependencies": ["ir", "cleanup", "types"], "llvm": true,
       "public_headers": ["backend/llvm/lower.h", "backend/llvm/object.h"],
-      "files": ["backend/llvm/lower.h", "backend/llvm/lower.cpp",
+      "files": ["backend/llvm/lower.h", "backend/llvm/lower.cpp", "backend/llvm/abi.h", "backend/llvm/abi.cpp",
         "backend/llvm/object.h", "backend/llvm/object.cpp",
-        "backend/llvm/cleanup.h", "backend/llvm/cleanup.cpp"]
+        "backend/llvm/cleanup.h", "backend/llvm/cleanup.cpp", "backend/llvm/target.h", "backend/llvm/target.cpp"]
     },
     {
       "name": "driver", "directory": "driver", "kind": "EXECUTABLE",
-      "dependencies": ["source", "diagnostics", "syntax", "ir", "pipeline", "backend_llvm"],
+      "dependencies": ["source", "diagnostics", "syntax", "resolution", "ir", "types", "pipeline", "backend_llvm"],
       "llvm": true, "public_headers": [],
       "files": ["driver/main.cpp", "driver/options.h", "driver/options.cpp", "driver/run.cpp",
         "driver/inspect.h", "driver/inspect.cpp", "driver/output.h", "driver/output.cpp"]

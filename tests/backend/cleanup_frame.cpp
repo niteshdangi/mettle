@@ -2,6 +2,7 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 #include <functional>
+#include <utility>
 
 namespace {
 using namespace mettle;
@@ -85,10 +86,18 @@ int main(int argc, char **) {
   llvm::IRBuilder<> builder(context);
   std::vector<llvm::Function *> functions;
   LoweringContext lowering{program, context, module, builder, functions, {}};
-  for (auto name : {"mettle_test_leaf_drop", "mettle_test_parent_drop"})
+  for (auto [name, self] : {std::pair{"mettle_test_leaf_drop", leafType},
+                            std::pair{"mettle_test_parent_drop", parentType}}) {
+    ir::Function destructor{};
+    destructor.name = name;
+    destructor.result = Type::Unit;
+    destructor.parameters = 1;
+    destructor.locals = {{"self", self, true, {}, ParameterMode::Mut}};
+    program.functions.push_back(std::move(destructor));
     functions.push_back(llvm::cast<llvm::Function>(
         lowering.runtime(name, builder.getVoidTy(), {builder.getPtrTy()})
             .getCallee()));
+  }
   auto *main = llvm::Function::Create(
       llvm::FunctionType::get(builder.getInt32Ty(), false),
       llvm::GlobalValue::ExternalLinkage, "main", module);

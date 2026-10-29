@@ -13,10 +13,19 @@ void check(const ir::Function &function, const ir::Program &program,
   if (function.blocks.empty())
     return;
   auto info = origins(function, program, summaries);
+  auto overlapping = [&](const Place &first, const Place &second) {
+    auto root = first.root >= 0 ? std::int64_t{first.root}
+                                : -std::int64_t{first.root} - 1;
+    if (root < 0 || static_cast<std::size_t>(root) >= function.locals.size())
+      return overlaps(first, second);
+    return overlaps(*program.types, function.locals[root].type, first, second);
+  };
   for (const auto &[sources, span] : info.escapes)
     for (auto id : ancestors(sources, info.loans))
       for (const auto &target : info.loans.at(id).targets)
-        if (target.place.root >= 0)
+        if (target.place.root >= 0 &&
+            function.locals[target.place.root].storage !=
+                StorageDuration::Static)
           diagnostics.error(
               "ownership", span,
               "cannot store a view of local storage into caller-owned storage");
@@ -157,6 +166,10 @@ void check(const ir::Function &function, const ir::Program &program,
       continue;
     for (auto id : ancestors(info.returns[b], info.loans))
       for (const auto &target : info.loans.at(id).targets) {
+        if (target.place.root >= 0 &&
+            function.locals[target.place.root].storage ==
+                StorageDuration::Static)
+          continue;
         auto source = info.externalSources.find(target.place.root);
         if (source == info.externalSources.end() ||
             std::find(function.resultSources.begin(),
@@ -171,7 +184,9 @@ void check(const ir::Function &function, const ir::Program &program,
     for (std::size_t i = info.points[b].size(); i-- > 0;) {
       const auto &instruction = function.blocks[b].instructions[i];
       const auto &point = info.points[b][i];
-      if (instruction.op == ir::Op::Call || instruction.op == ir::Op::CatchCall)
+      if (instruction.op == ir::Op::Call ||
+          instruction.op == ir::Op::IndirectCall ||
+          instruction.op == ir::Op::CatchCall)
         for (auto operand : instruction.operands)
           for (const auto &[path, sources] : info.values[operand.id]) {
             (void)path;
@@ -190,12 +205,38 @@ void check(const ir::Function &function, const ir::Program &program,
       bool activation = instruction.op == ir::Op::Activate;
       bool reservation = instruction.op == ir::Op::ReserveMut;
       bool read = instruction.op == ir::Op::Load ||
+                  instruction.op == ir::Op::VariantTest ||
                   instruction.op == ir::Op::BorrowRead ||
                   instruction.op == ir::Op::ViewRead || reservation;
+      read |= instruction.op == ir::Op::ArrayBorrowRead;
+      read |= instruction.op == ir::Op::SliceBorrowRead;
+      read |= instruction.op == ir::Op::EraseView &&
+              program.types->view(instruction.result.type).mode ==
+                  ParameterMode::Read;
       bool write = instruction.op == ir::Op::Move ||
+                   instruction.op == ir::Op::DropPlace ||
                    instruction.op == ir::Op::Store ||
+                   instruction.op == ir::Op::StorageWrite ||
                    instruction.op == ir::Op::BorrowMut ||
                    instruction.op == ir::Op::ViewMut || activation;
+      write |= instruction.op == ir::Op::ArrayBorrowMut;
+      write |= instruction.op == ir::Op::SliceBorrowMut;
+      write |= instruction.op == ir::Op::ArrayTake;
+      write |= instruction.op == ir::Op::EraseView &&
+               program.types->view(instruction.result.type).mode ==
+                   ParameterMode::Mut;
+      read |= instruction.op == ir::Op::UnsizeView &&
+              program.types->view(instruction.result.type).mode ==
+                  ParameterMode::Read;
+      write |= instruction.op == ir::Op::UnsizeView &&
+               program.types->view(instruction.result.type).mode ==
+                   ParameterMode::Mut;
+      read |= instruction.op == ir::Op::ErasedUpcast &&
+              program.types->view(instruction.result.type).mode ==
+                  ParameterMode::Read;
+      write |= instruction.op == ir::Op::ErasedUpcast &&
+               program.types->view(instruction.result.type).mode ==
+                   ParameterMode::Mut;
       auto targets = point.targets;
       Origins activating;
       if (activation) {
@@ -216,6 +257,34 @@ void check(const ir::Function &function, const ir::Program &program,
       }
       bool conflict = false;
       bool exclusiveConflict = false;
+      auto disjoint = [&](const Origins &authority, int other) {
+        const auto relatives = ancestors({other}, info.loans);
+        for (auto source : authority) {
+          if (relatives.contains(source))
+            continue;
+          auto parents = ancestors({source}, info.loans);
+          for (auto sibling : info.loans.at(source).disjointOutputs)
+            if (relatives.contains(sibling) && !parents.contains(sibling))
+              return true;
+        }
+        return false;
+      };
+      auto dynamicPayload = [&](const Origins &sources) {
+        for (auto source : ancestors(sources, info.loans))
+          if (info.loans.at(source).interiorPayload)
+            return true;
+        return false;
+      };
+      bool interiorRead = false;
+      if (read && !write && instruction.place.root >= 0) {
+        auto type = projectedType(*program.types,
+                                  function.locals[instruction.place.root].type,
+                                  instruction.place.fields);
+        interiorRead =
+            type && program.types->isProduct(*type) &&
+            (program.types->product(*type).kind == AggregateKind::Cell ||
+             program.types->product(*type).kind == AggregateKind::RefCell);
+      }
       for (auto id : current) {
         bool priorConflict = conflict;
         const auto &loan = info.loans.at(id);
@@ -225,27 +294,38 @@ void check(const ir::Function &function, const ir::Program &program,
         if ((read || write) && !introduced)
           for (const auto &access : targets) {
             auto authority = ancestors(access.authority, info.loans);
-            if (authority.contains(id))
+            if (authority.contains(id) || disjoint(authority, id))
               continue;
             for (const auto &referent : loan.targets)
-              if (overlaps(access.place, referent.place) &&
+              if (overlapping(access.place, referent.place) &&
                   (write || exclusive ||
-                   (reservation && loan.mode == ParameterMode::Mut)))
-                conflict = true;
+                   (reservation && loan.mode == ParameterMode::Mut))) {
+                // A shared cell handle freezes its lifetime, not its payload.
+                // Only a checked guard can authorize the interior write.
+                bool interior = loan.interiorRoot &&
+                                dynamicPayload(access.authority) &&
+                                containsPlace(referent.place, access.place);
+                interior |= interiorRead && dynamicPayload({id}) &&
+                            containsPlace(access.place, referent.place);
+                if (!interior)
+                  conflict = true;
+              }
           }
         for (const auto &dead : point.dead)
           for (const auto &referent : loan.targets)
-            if (overlaps(dead, referent.place))
+            if (overlapping(dead, referent.place))
               conflict = true;
         for (auto dropped : point.drops) {
           auto authority = ancestors({dropped}, info.loans);
-          if (authority.contains(id))
+          if (authority.contains(id) || disjoint(authority, id))
             continue;
           const auto &destructorLoan = info.loans.at(dropped);
           for (const auto &access : destructorLoan.targets)
             for (const auto &referent : loan.targets)
-              if (overlaps(access.place, referent.place) &&
-                  (destructorLoan.mode == ParameterMode::Mut || exclusive))
+              if (overlapping(access.place, referent.place) &&
+                  (destructorLoan.mode == ParameterMode::Mut || exclusive) &&
+                  !(destructorLoan.interiorRoot && dynamicPayload({id}) &&
+                    containsPlace(access.place, referent.place)))
                 conflict = true;
         }
         for (auto moved : point.movedViews)

@@ -8,22 +8,41 @@ namespace mettle {
 void Checker::products() {
   std::vector<Type> identities;
   for (const auto &product : module.products) {
-    if (typeNames.contains(product.name)) {
-      error("name", product.span, "duplicate type '" + product.name + "'");
-      identities.push_back(Type::Unknown);
-    } else {
-      auto identity =
-          checked.types->declareProduct(product.name, product.copyRequested);
-      identities.push_back(identity);
-      typeNames.emplace(product.name, identity);
-    }
+    identities.push_back(
+        typeNames.at(definitionName(product.span, product.name)));
+    checked.types->setProductLayout(identities.back(), productLayout(product));
   }
-  if (!diagnostics.empty())
-    return;
   for (std::size_t i = 0; i < module.products.size(); ++i) {
     const auto &product = module.products[i];
+    auto savedEnvironment = genericEnvironment;
+    genericEnvironment = &productGenerics.at(&product);
     std::unordered_set<std::string> names;
     std::vector<TypeField> fields;
+    if (product.enumeration) {
+      fields.push_back({"<tag>", Type::I32});
+      std::vector<VariantType> variants;
+      for (const auto &variant : product.variants) {
+        if (!names.insert(variant.name).second)
+          error("name", variant.span,
+                "duplicate variant '" + variant.name + "'");
+        VariantType checkedVariant{variant.name, {}};
+        std::unordered_set<std::string> fieldNames;
+        for (const auto &field : variant.fields) {
+          if (!fieldNames.insert(field.name).second)
+            error("name", field.span,
+                  "duplicate variant field '" + field.name + "'");
+          checkedVariant.fields.push_back(
+              static_cast<std::uint32_t>(fields.size()));
+          fields.push_back({field.name, annotation(field.annotation, field.span,
+                                                   product.name)});
+        }
+        variants.push_back(std::move(checkedVariant));
+      }
+      checked.types->defineEnumeration(identities[i], std::move(variants),
+                                       std::move(fields));
+      genericEnvironment = savedEnvironment;
+      continue;
+    }
     for (const auto &field : product.fields) {
       if (!names.insert(field.name).second)
         error("name", field.span, "duplicate field '" + field.name + "'");
@@ -36,20 +55,11 @@ void Checker::products() {
       if (product.copyRequested)
         error("type", product.span, "a type with a destructor cannot be Copy");
     }
-    for (const auto &field : product.fields)
-      if (!field.annotation.view.empty()) {
-        if (field.annotation.sources.empty())
-          error("type", field.span,
-                "stored view field requires a declared region source");
-        for (const auto &source : field.annotation.sources)
-          if (std::find(product.regions.begin(), product.regions.end(),
-                        source) == product.regions.end())
-            error("name", field.span,
-                  "unknown stored-view region '" + source + "'");
-      }
+    genericEnvironment = savedEnvironment;
   }
   if (!diagnostics.empty())
     return;
+  checked.types->refreshProductInstances();
   std::vector<int> state(module.products.size());
   std::function<void(std::size_t, unsigned)> visit = [&](std::size_t index,
                                                          unsigned depth) {
@@ -68,13 +78,15 @@ void Checker::products() {
     state[index] = 1;
     const auto &type = checked.types->product(identities[index]);
     for (const auto &field : type.fields) {
-      auto found = std::find(identities.begin(), identities.end(), field.type);
+      auto origin = checked.types->isProduct(field.type) &&
+                            checked.types->product(field.type).genericOrigin !=
+                                Type::Unknown
+                        ? checked.types->product(field.type).genericOrigin
+                        : field.type;
+      auto found = std::find(identities.begin(), identities.end(), origin);
       if (found != identities.end())
         visit(static_cast<std::size_t>(found - identities.begin()), depth + 1);
-      if (field.type == Type::Never)
-        error("feature", module.products[index].span,
-              "uninhabited fields are not implemented yet");
-      else if (type.copyRequested && !checked.types->isCopy(field.type))
+      if (type.copyRequested && !checked.types->isCopy(field.type))
         error("type", module.products[index].span,
               "Copy product field '" + field.name + "' is not Copy");
     }

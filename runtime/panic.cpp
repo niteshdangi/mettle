@@ -42,6 +42,15 @@ extern "C" void mettle_rt_run(void *context, MettleAction body,
   }
 }
 
+extern "C" void mettle_rt_run_c(void *context, MettleAction body,
+                                MettleCleanup cleanup) noexcept {
+  try {
+    mettle_rt_run(context, body, cleanup);
+  } catch (...) {
+    std::abort();
+  }
+}
+
 extern "C" void mettle_rt_cleanup(void *context, MettleCleanup cleanup,
                                   std::int32_t unwinding) {
   bool alreadyUnwinding = unwinding != 0 || panicking();

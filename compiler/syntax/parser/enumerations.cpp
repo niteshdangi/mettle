@@ -1,0 +1,53 @@
+#include "syntax/parser/detail.h"
+
+namespace mettle::parsing {
+Module::Product Parser::enumeration() {
+  Module::Product result;
+  result.span = peek().span;
+  result.copyRequested = take("copy");
+  expect("enum");
+  result.enumeration = true;
+  result.name = name().text;
+  result.genericParameters = genericParameters(&result.regions);
+  result.constraints = genericConstraints();
+  newlines();
+  expect("{");
+  separators();
+  while (!is("}") && peek().kind != TokenKind::End) {
+    auto token = name();
+    Module::Product::Variant variant{token.text, {}, token.span};
+    if (take("(")) {
+      ++parens;
+      while (!is(")")) {
+        auto annotation = type();
+        variant.fields.push_back({std::to_string(variant.fields.size()),
+                                  std::move(annotation), token.span});
+        if (!take(","))
+          break;
+      }
+      variant.span.end = expect(")").span.end;
+      --parens;
+    } else if (take("{")) {
+      separators();
+      while (!is("}")) {
+        auto field = name();
+        expect(":");
+        variant.fields.push_back({field.text, type(), field.span});
+        if (!take(",") && !is("}") && peek().kind != TokenKind::Newline &&
+            !is(";"))
+          fail("expected a variant field separator");
+        separators();
+      }
+      variant.span.end = expect("}").span.end;
+    }
+    if (take("="))
+      variant.discriminant = std::shared_ptr<const Node>(expr());
+    result.variants.push_back(std::move(variant));
+    if (!take(",") && !is("}") && peek().kind != TokenKind::Newline && !is(";"))
+      fail("expected a variant separator");
+    separators();
+  }
+  result.span.end = expect("}").span.end;
+  return result;
+}
+} // namespace mettle::parsing

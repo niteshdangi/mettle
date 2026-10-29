@@ -10,17 +10,17 @@ bool contains(std::initializer_list<std::string_view> values,
 }
 } // namespace
 bool isReservedWord(std::string_view word) {
-  return contains({"fn",     "type",   "copy",    "let",      "var",
-                   "read",   "mut",    "take",    "if",       "else",
-                   "while",  "loop",   "break",   "continue", "return",
-                   "true",   "false",  "pub",     "enum",     "interface",
-                   "impl",   "throws", "throw",   "try",      "capture",
-                   "match",  "none",   "present", "success",  "failure",
-                   "async",  "await",  "for",     "in",       "module",
-                   "import", "unsafe", "extern",  "static",   "const",
-                   "init",   "drop",   "heap",    "shared",   "weak",
-                   "local",  "pinned", "as",      "_"},
-                  word);
+  return contains(
+      {"fn",      "type",      "copy",   "let",     "var",     "read",
+       "mut",     "take",      "if",     "else",    "while",   "loop",
+       "break",   "continue",  "return", "true",    "false",   "pub",
+       "enum",    "interface", "impl",   "throws",  "throw",   "try",
+       "capture", "match",     "none",   "present", "success", "failure",
+       "async",   "await",     "for",    "in",      "module",  "import",
+       "unsafe",  "extern",    "static", "const",   "init",    "drop",
+       "heap",    "shared",    "weak",   "local",   "pinned",  "as",
+       "alias",   "label",     "union",  "_"},
+      word);
 }
 bool isUnsupportedExpressionWord(std::string_view word) {
   return contains(
@@ -33,25 +33,29 @@ bool isUnsupportedExpressionWord(std::string_view word) {
       word);
 }
 int binaryPrecedence(std::string_view op) {
-  if (op == "||")
+  if (op == ".." || op == "..=")
     return 1;
-  if (op == "&&")
+  if (op == "??")
     return 2;
+  if (op == "||")
+    return 3;
+  if (op == "&&")
+    return 4;
   if (op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" ||
       op == ">=")
-    return 3;
-  if (op == "|")
-    return 4;
-  if (op == "^")
     return 5;
-  if (op == "&")
+  if (op == "|")
     return 6;
-  if (op == "<<" || op == ">>")
+  if (op == "^")
     return 7;
-  if (op == "+" || op == "-")
+  if (op == "&")
     return 8;
-  if (op == "*" || op == "/" || op == "%")
+  if (op == "<<" || op == ">>")
     return 9;
+  if (op == "+" || op == "-")
+    return 10;
+  if (op == "*" || op == "/" || op == "%")
+    return 11;
   return 0;
 }
 bool isAssignmentOperator(std::string_view op) {
@@ -60,9 +64,9 @@ bool isAssignmentOperator(std::string_view op) {
 }
 std::string_view compoundSymbol(std::string_view input) {
   for (std::string_view symbol :
-       {">>=", "<<=", "==", "!=", "<=", ">=", "&&", "||",
-        "+=",  "-=",  "*=", "/=", "%=", "&=", "|=", "^=",
-        "<<",  ">>",  "->", "::", "=>", "?.", "??"})
+       {"...", "..=", "..", ">>=", "<<=", "==", "!=", "<=", ">=",
+        "&&",  "||",  "+=", "-=",  "*=",  "/=", "%=", "&=", "|=",
+        "^=",  "<<",  ">>", "->",  "::",  "=>", "?.", "??"})
     if (input.starts_with(symbol))
       return symbol;
   return {};

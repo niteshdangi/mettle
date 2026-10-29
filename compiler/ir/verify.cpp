@@ -1,5 +1,8 @@
 #include "ir/verify.h"
 #include "ir/dominance.h"
+#include "ir/target.h"
+#include "types/layout.h"
+#include "types/machine.h"
 #include <algorithm>
 #include <functional>
 #include <numeric>
@@ -9,12 +12,16 @@
 namespace mettle::ir {
 namespace {
 bool scalar(Type type) {
-  return type == Type::I32 || type == Type::Bool || type == Type::Unit;
+  return isNumeric(type) || type == Type::Bool || type == Type::Unit ||
+         type == Type::Char || type == Type::U8;
 }
 
 bool function(const Function &f, const Program &program,
-              Diagnostics &diagnostics) {
-  auto known = [&](Type type) { return program.types->contains(type); };
+              Diagnostics &diagnostics, const TypeNormalizer &normalize,
+              const UnpinProof &unpinProof) {
+  auto known = [&](Type type) {
+    return program.types->contains(type) && !program.types->isConstant(type);
+  };
   auto concrete = [&](Type type) { return known(type) && type != Type::Never; };
   bool valid = true;
   auto fail = [&](Span span, std::string message) {
@@ -27,9 +34,33 @@ bool function(const Function &f, const Program &program,
     fail({}, "invalid function signature or empty block list");
     return false;
   }
-  for (const auto &local : f.locals)
+  for (const auto &local : f.locals) {
     if (!known(local.type))
       fail(local.span, "unresolved local type");
+    if (local.storage == StorageDuration::Static &&
+        (local.staticIndex < 0 ||
+         static_cast<std::size_t>(local.staticIndex) >=
+             program.statics.size() ||
+         local.type != program.statics[local.staticIndex].type ||
+         local.mutableBinding !=
+             program.statics[local.staticIndex].mutableBinding))
+      fail(local.span, "invalid static storage identity");
+  }
+  if (f.variadicCursor >= 0 &&
+      (!f.variadic || f.abi.empty() ||
+       f.variadicCursor < static_cast<int>(f.parameters) ||
+       static_cast<std::size_t>(f.variadicCursor) >= f.locals.size() ||
+       !program.types->isProduct(f.locals[f.variadicCursor].type) ||
+       program.types->product(f.locals[f.variadicCursor].type).kind !=
+           AggregateKind::VarArgs))
+    fail({}, "invalid hidden variadic invocation context");
+  if (!program.types->isSized(f.result))
+    fail({}, "unsized function result requires a view or owner");
+  for (std::size_t p = 0; p < f.locals.size(); ++p)
+    if (!program.types->isSized(f.locals[p].type) &&
+        !(p < f.parameters && (f.locals[p].mode == ParameterMode::Read ||
+                               f.locals[p].mode == ParameterMode::Mut)))
+      fail(f.locals[p].span, "unsized owned storage");
   for (std::size_t p = 0; p < f.parameters; ++p) {
     auto mode = f.locals[p].mode;
     if (mode != ParameterMode::Value && mode != ParameterMode::Take &&
@@ -43,15 +74,33 @@ bool function(const Function &f, const Program &program,
   if (f.twoPhaseReceiver &&
       (f.parameters == 0 || f.locals[0].mode != ParameterMode::Mut))
     fail({}, "invalid two-phase receiver signature");
+  if (f.constructorSelfSlot >= 0) {
+    auto slot = static_cast<std::size_t>(f.constructorSelfSlot);
+    if (slot < f.parameters || slot >= f.locals.size() ||
+        !program.types->isProduct(f.locals[slot].type))
+      fail({}, "invalid constructor storage");
+    else {
+      auto result = f.result;
+      if (program.types->isSum(result) &&
+          program.types->product(result).kind == AggregateKind::Outcome)
+        result = program.types->product(result).components[0];
+      if (result != f.locals[slot].type)
+        fail({}, "constructor result does not match self storage");
+    }
+  }
   for (std::size_t local = f.parameters; local < f.locals.size(); ++local)
     if (f.locals[local].mode != ParameterMode::Value)
       fail(f.locals[local].span,
            "parameter mode attached to owned local storage");
-  if (!f.externalName.empty()) {
+  if (f.exportedDefinition && (f.externalName.empty() || f.foreignDeclaration))
+    fail({}, "invalid exported function definition");
+  if (!f.externalName.empty() && !f.exportedDefinition) {
     if (!f.blocks.empty() || f.parameters != f.locals.size())
       fail({}, "external function has a body or owned locals");
     return valid;
   }
+  if (f.nakedAssembly)
+    return valid;
   if (f.scopes.empty() || f.scopes[0].parent != -1)
     fail({}, "invalid root scope");
   for (std::size_t s = 1; s < f.scopes.size(); ++s)
@@ -91,6 +140,9 @@ bool function(const Function &f, const Program &program,
         fail(n.span, "invalid value definition");
         continue;
       }
+      if (n.result.access == Access::Owned && n.result.type != Type::Never &&
+          !program.types->isSized(n.result.type))
+        fail(n.span, "unsized owned SSA value");
       auto &definition = definitions[n.result.id];
       if (definition.block >= 0)
         fail(n.span, "duplicate value definition");
@@ -152,24 +204,42 @@ bool function(const Function &f, const Program &program,
         if (!condition)
           fail(n.span, "invalid instruction types or operation");
       };
+      for (auto [subject, runtime] : n.unpinProofs)
+        require(unpinProof && unpinProof(subject, runtime, f, n.span));
       auto slot = [&] {
         if (n.place.root < 0 ||
             static_cast<std::size_t>(n.place.root) >= f.locals.size()) {
           fail(n.span, "invalid local slot");
           return false;
         }
-        if (!projectedType(*program.types, f.locals[n.place.root].type,
+        if (analysisOnly(n.place) ||
+            !projectedType(*program.types, f.locals[n.place.root].type,
                            n.place.fields)) {
           fail(n.span, "invalid projected place");
           return false;
         }
+        for (std::size_t p = 0; p < n.place.fields.size(); ++p) {
+          auto owner =
+              projectedType(*program.types, f.locals[n.place.root].type,
+                            std::span(n.place.fields).first(p));
+          bool directWrite =
+              n.op == Op::Store && p + 1 == n.place.fields.size();
+          if (owner && program.types->isProduct(*owner) &&
+              program.types->product(*owner).layout.unionType && !directWrite &&
+              n.op != Op::Declare && !n.unsafeAllowed) {
+            fail(n.span, "union field access lacks an unsafe context");
+            return false;
+          }
+        }
         return true;
       };
       bool borrow = n.op == Op::BorrowRead || n.op == Op::BorrowMut ||
-                    n.op == Op::ReserveMut;
+                    n.op == Op::ReserveMut || n.op == Op::OpaqueRepack;
       if (!borrow)
         require(n.result.access == Access::Owned);
-      if (n.op != Op::Call && n.op != Op::CatchCall && n.op != Op::Activate)
+      if (n.op != Op::Call && n.op != Op::IndirectCall &&
+          n.op != Op::CatchCall && n.op != Op::Activate &&
+          n.op != Op::WitnessMethod && n.op != Op::OpaqueRepack)
         for (auto operand : n.operands)
           require(operand.access == Access::Owned);
       if (n.op != Op::Phi) {
@@ -178,11 +248,308 @@ bool function(const Function &f, const Program &program,
           value(operand, static_cast<int>(b), i, n.span);
       }
       switch (n.op) {
+      case Op::FeatureTest:
+        arity(0);
+        require(result == Type::Bool);
+        break;
+      case Op::Assembly: {
+        require(n.assembly.has_value() && n.unsafeAllowed &&
+                n.assembly->variant == AssemblyVariant::Inline);
+        if (!n.assembly)
+          break;
+        std::vector<Type> inputs, outputs;
+        for (const auto &operand : n.assembly->operands) {
+          if (assemblyInput(operand.mode))
+            inputs.push_back(operand.inputType);
+          if (assemblyOutput(operand.mode) && !operand.discard)
+            outputs.push_back(operand.type);
+        }
+        if (arity(inputs.size()))
+          for (std::size_t i = 0; i < inputs.size(); ++i)
+            require(n.operands[i].type == inputs[i] &&
+                    n.operands[i].access == Access::Owned);
+        require(program.types->isProduct(result));
+        if (program.types->isProduct(result)) {
+          const auto &record = program.types->product(result);
+          require(record.kind == AggregateKind::Tuple &&
+                  record.fields.size() == outputs.size());
+          if (record.fields.size() == outputs.size())
+            for (std::size_t i = 0; i < outputs.size(); ++i)
+              require(record.fields[i].type == outputs[i]);
+        }
+        if (n.assembly->options.contains("noreturn"))
+          require(i + 1 == block.instructions.size() &&
+                  block.exit.kind == Exit::Unreachable);
+        break;
+      }
+      case Op::SliceLength:
+        arity(0);
+        require(result == Type::Usize);
+        if (slot())
+          require(program.types->isSlice(*projectedType(
+              *program.types, f.locals[n.place.root].type, n.place.fields)));
+        break;
+      case Op::UnsizeView:
+        require(program.types->isView(result));
+        if (arity(1))
+          require(n.operands[0].type == Type::I32);
+        if (slot() && program.types->isView(result) && n.operands.size() == 1) {
+          auto source = *projectedType(
+              *program.types, f.locals[n.place.root].type, n.place.fields);
+          auto array = program.types->unsizedArray(
+              source, program.types->view(result).payload);
+          require(array.has_value());
+          if (array && n.operands[0].id >= 0 &&
+              static_cast<std::size_t>(n.operands[0].id) < definitions.size()) {
+            const auto &where = definitions[n.operands[0].id];
+            if (where.block >= 0) {
+              const auto &length =
+                  f.blocks[where.block].instructions[where.position];
+              require(length.op == Op::Constant);
+              const auto &descriptor = program.types->product(*array);
+              if (descriptor.arrayCount != Type::Unknown &&
+                  program.types->isSymbolic(descriptor.arrayCount))
+                require(length.constantParameter == descriptor.arrayCount);
+              else {
+                auto actual = length.constantParameter == Type::Unknown
+                                  ? std::optional<std::int64_t>(length.number)
+                                  : program.types->constantValue(
+                                        length.constantParameter);
+                auto expected =
+                    descriptor.arrayCount == Type::Unknown
+                        ? std::optional<std::int64_t>(descriptor.fields.size())
+                        : program.types->constantValue(descriptor.arrayCount);
+                require(actual && expected && *actual == *expected &&
+                        *actual >= 0);
+              }
+            }
+          }
+        }
+        break;
+      case Op::SliceBorrowRead:
+      case Op::SliceBorrowMut:
+        require(program.types->isView(result));
+        if (arity(1))
+          require(n.operands[0].type == Type::I32 ||
+                  n.operands[0].type == Type::Usize);
+        if (slot() && program.types->isView(result)) {
+          auto slice = *projectedType(
+              *program.types, f.locals[n.place.root].type, n.place.fields);
+          require(program.types->isSlice(slice));
+          if (program.types->isSlice(slice))
+            require(program.types->view(result).payload ==
+                        program.types->slice(slice).element &&
+                    program.types->view(result).mode ==
+                        (n.op == Op::SliceBorrowRead ? ParameterMode::Read
+                                                     : ParameterMode::Mut));
+        }
+        if (n.number >= 0 && !n.operands.empty() && n.operands[0].id >= 0 &&
+            static_cast<std::size_t>(n.operands[0].id) < definitions.size()) {
+          const auto &where = definitions[n.operands[0].id];
+          if (where.block >= 0) {
+            const auto &index =
+                f.blocks[where.block].instructions[where.position];
+            bool ordinal = index.numeric
+                               ? !index.numeric->negative &&
+                                     index.numeric->magnitude[1] == 0 &&
+                                     index.numeric->magnitude[0] ==
+                                         static_cast<std::uint32_t>(n.number)
+                               : index.number == n.number;
+            require(index.op == Op::Constant &&
+                    index.constantParameter == Type::Unknown && ordinal);
+          }
+        }
+        break;
+      case Op::OpaqueRepack:
+        require(program.types->isOpaque(n.opaqueType));
+        if (arity(1) && program.types->isOpaque(n.opaqueType)) {
+          require(n.operands[0].access == n.result.access);
+          auto hidden = program.types->product(n.opaqueType).fields[0].type;
+          std::vector<TypeBinding> bindings{{n.opaqueType, hidden}};
+          require(program.types->matchesSubstitution(n.operands[0].type, result,
+                                                     bindings) ||
+                  program.types->matchesSubstitution(result, n.operands[0].type,
+                                                     bindings));
+        }
+        break;
+      case Op::EraseView:
+        require(program.types->isView(result));
+        if (slot() && program.types->isView(result)) {
+          auto source = *projectedType(
+              *program.types, f.locals[n.place.root].type, n.place.fields);
+          auto conversion = program.types->erasedTail(
+              source, program.types->view(result).payload);
+          require(conversion && conversion->first == n.interfaceSelf &&
+                  conversion->second == n.interfaceType &&
+                  program.types->pointerMetadata(n.interfaceSelf) !=
+                      PointerMetadata::Witness);
+          if (conversion && program.types->isErased(n.interfaceType)) {
+            const auto &descriptor = program.types->erased(n.interfaceType);
+            bool metadata =
+                descriptor.methodOwners.size() ==
+                    descriptor.methodTypes.size() &&
+                descriptor.methodSlots.size() == descriptor.methodTypes.size();
+            require(metadata);
+            require(n.witnessEntries.size() == n.operands.size());
+            if (arity(descriptor.methodTypes.size()) && metadata)
+              for (std::size_t method = 0; method < n.operands.size();
+                   ++method) {
+                require(n.operands[method].type ==
+                        (descriptor.methodTypes[method] == Type::Unknown
+                             ? Type::Unit
+                             : descriptor.methodTypes[method]));
+                if (descriptor.methodTypes[method] != Type::Unknown &&
+                    n.operands[method].id >= 0 &&
+                    static_cast<std::size_t>(n.operands[method].id) <
+                        definitions.size()) {
+                  const auto &definition = definitions[n.operands[method].id];
+                  if (definition.block >= 0) {
+                    const auto &address =
+                        f.blocks[definition.block]
+                            .instructions[definition.position];
+                    require(
+                        address.op == Op::FunctionAddress &&
+                        address.erasedDispatch &&
+                        address.interfaceSelf == n.interfaceSelf &&
+                        address.interfaceType ==
+                            descriptor.methodOwners[method] &&
+                        address.number ==
+                            static_cast<int>(descriptor.methodSlots[method]));
+                  }
+                }
+              }
+          }
+        }
+        break;
+      case Op::ErasedUpcast:
+        arity(0);
+        require(program.types->isView(result));
+        if (slot() && program.types->isView(result)) {
+          auto source = *projectedType(
+              *program.types, f.locals[n.place.root].type, n.place.fields);
+          auto conversion = program.types->erasedTail(
+              source, program.types->view(result).payload);
+          require(conversion && conversion->first == n.interfaceSelf &&
+                  conversion->second == n.interfaceType &&
+                  program.types->isErased(n.interfaceSelf));
+          if (program.types->isErased(n.interfaceSelf)) {
+            const auto &parents =
+                program.types->erased(n.interfaceSelf).parentInterfaces;
+            require(n.number >= 0 &&
+                    static_cast<std::size_t>(n.number) < parents.size());
+            if (n.number >= 0 &&
+                static_cast<std::size_t>(n.number) < parents.size())
+              require(parents[n.number] == n.interfaceType);
+          }
+        }
+        break;
+      case Op::WitnessMethod:
+        if (arity(1)) {
+          auto interface = n.operands[0].type;
+          require(program.types->isErased(interface) &&
+                  n.operands[0].access != Access::Owned);
+          if (program.types->isErased(interface)) {
+            const auto &methods = program.types->erased(interface).methodTypes;
+            require(n.number >= 0 &&
+                    static_cast<std::size_t>(n.number) < methods.size());
+            if (n.number >= 0 &&
+                static_cast<std::size_t>(n.number) < methods.size())
+              require(result == methods[n.number] &&
+                      program.types->isFunctionPointer(result));
+          }
+        }
+        break;
+      case Op::CallableCoerce:
+        require(program.types->isFunctionPointer(result));
+        if (arity(1)) {
+          require(program.types->isFunctionPointer(n.operands[0].type));
+          if (program.types->isFunctionPointer(result) &&
+              program.types->isFunctionPointer(n.operands[0].type)) {
+            const auto &source = program.types->callable(n.operands[0].type);
+            const auto &target = program.types->callable(result);
+            require(source.result == target.result &&
+                    source.error == target.error &&
+                    source.resultSources == target.resultSources &&
+                    source.parameters.size() == target.parameters.size());
+            if (source.parameters.size() == target.parameters.size())
+              for (std::size_t p = 0; p < source.parameters.size(); ++p)
+                require(source.parameters[p].type ==
+                            target.parameters[p].type &&
+                        source.parameters[p].mode == target.parameters[p].mode);
+            require(source.mode == target.mode ||
+                    source.mode == ParameterMode::Read ||
+                    (source.mode == ParameterMode::Mut &&
+                     target.mode == ParameterMode::Take));
+          }
+        }
+        break;
+      case Op::FunctionAddress:
+        arity(0);
+        require(program.types->isFunctionPointer(result));
+        if (n.callee < 0 ||
+            static_cast<std::size_t>(n.callee) >= program.functions.size()) {
+          fail(n.span, "invalid function address");
+          break;
+        }
+        if (program.types->isFunctionPointer(result)) {
+          const auto &signature = program.types->callable(result);
+          if (n.erasedDispatch)
+            require(!signature.parameters.empty() &&
+                    program.types->isErased(signature.parameters[0].type) &&
+                    (signature.parameters[0].mode == ParameterMode::Read ||
+                     signature.parameters[0].mode == ParameterMode::Mut));
+          const auto &callee = program.functions[n.callee];
+          require(!callee.indirectContract &&
+                  (!callee.declarationOnly ||
+                   (n.erasedDispatch && n.interfaceMethod >= 0)));
+          std::vector<TypeBinding> bindings;
+          require(n.typeArguments.size() == callee.genericParameters.size());
+          for (std::size_t p = 0; p < n.typeArguments.size() &&
+                                  p < callee.genericParameters.size();
+               ++p)
+            bindings.push_back(
+                {callee.genericParameters[p], n.typeArguments[p]});
+          auto matches = [&](Type pattern, Type actual) {
+            return normalize ? normalize(pattern, bindings, f) == actual
+                             : program.types->matchesSubstitution(
+                                   pattern, actual, bindings);
+          };
+          require(matches(callee.result, signature.abiResult) &&
+                  signature.parameters.size() == callee.parameters &&
+                  (signature.resultSources == callee.resultSources ||
+                   (n.erasedDispatch &&
+                    std::all_of(callee.resultSources.begin(),
+                                callee.resultSources.end(), [&](auto source) {
+                                  return std::find(
+                                             signature.resultSources.begin(),
+                                             signature.resultSources.end(),
+                                             source) !=
+                                         signature.resultSources.end();
+                                }))));
+          if (signature.parameters.size() == callee.parameters)
+            for (std::size_t p = 0; p < callee.parameters; ++p)
+              require(matches(callee.locals[p].type,
+                              n.erasedDispatch && p == 0
+                                  ? n.interfaceSelf
+                                  : signature.parameters[p].type) &&
+                      signature.parameters[p].mode == callee.locals[p].mode);
+        }
+        break;
       case Op::Constant:
         arity(0);
         require(scalar(result));
+        if (n.numeric)
+          require(isFloating(result) ? validFloatingLiteral(n.numeric->floating)
+                                     : integerLiteralFits(*n.numeric, result));
+        else
+          require(!isFloating(result));
         if (result == Type::Bool)
           require(n.number == 0 || n.number == 1);
+        if (result == Type::U8)
+          require(n.number >= 0 && n.number <= 255);
+        if (result == Type::Char)
+          require(n.number >= 0 && n.number <= 0x10ffff &&
+                  !(n.number >= 0xd800 && n.number <= 0xdfff));
         break;
       case Op::Declare:
         arity(0);
@@ -220,6 +587,108 @@ bool function(const Function &f, const Program &program,
                                                      : ParameterMode::Mut));
         }
         break;
+      case Op::ArrayBorrowRead:
+      case Op::ArrayBorrowMut:
+        require(program.types->isView(result));
+        if (arity(1))
+          require(n.operands[0].type == Type::I32 ||
+                  n.operands[0].type == Type::Usize);
+        if (slot() && program.types->isView(result)) {
+          auto array = *projectedType(
+              *program.types, f.locals[n.place.root].type, n.place.fields);
+          require(program.types->isProduct(array) &&
+                  program.types->product(array).kind == AggregateKind::Array);
+          if (program.types->isProduct(array) &&
+              program.types->product(array).kind == AggregateKind::Array) {
+            const auto &view = program.types->view(result);
+            require(view.payload ==
+                        program.types->product(array).components.at(0) &&
+                    view.mode == (n.op == Op::ArrayBorrowRead
+                                      ? ParameterMode::Read
+                                      : ParameterMode::Mut));
+          }
+        }
+        break;
+      case Op::ArrayRepeat:
+        require(program.types->isProduct(result) &&
+                program.types->product(result).kind == AggregateKind::Array);
+        if (arity(1) && program.types->isProduct(result)) {
+          const auto &array = program.types->product(result);
+          require(array.kind == AggregateKind::Array &&
+                  array.components.size() == 1 &&
+                  n.operands[0].type == array.components[0] &&
+                  program.types->isCopy(n.operands[0].type));
+        }
+        break;
+      case Op::ArrayTake: {
+        bool iteration = false;
+        for (const auto &loop : f.arrayLoops)
+          if (loop.body == static_cast<int>(b) && i == 0 &&
+              loop.element == n.result.id && loop.mode == ParameterMode::Take &&
+              loop.source == n.place && n.operands.size() == 1 &&
+              loop.index.id == n.operands[0].id && blockIndex(loop.header) &&
+              blockIndex(loop.step) && blockIndex(loop.done)) {
+            const auto &header = f.blocks[loop.header].exit;
+            const auto &step = f.blocks[loop.step].exit;
+            const auto &tests = f.blocks[loop.header].instructions;
+            const auto &advance = f.blocks[loop.step].instructions;
+            bool cursor = tests.size() == 3 && advance.size() == 3;
+            if (cursor) {
+              cursor = tests[0].op == Op::Load &&
+                       tests[0].result.id == loop.index.id &&
+                       tests[1].op == Op::Constant &&
+                       tests[1].constantParameter != Type::Unknown &&
+                       tests[2].op == Op::Binary && tests[2].text == "<" &&
+                       tests[2].operands.size() == 2 &&
+                       tests[2].operands[0].id == loop.index.id &&
+                       tests[2].operands[1].id == tests[1].result.id &&
+                       tests[2].result.id == header.value.id &&
+                       advance[0].op == Op::Constant &&
+                       advance[0].number == 1 && advance[1].op == Op::Binary &&
+                       advance[1].text == "+" &&
+                       advance[1].operands.size() == 2 &&
+                       advance[1].operands[0].id == loop.index.id &&
+                       advance[1].operands[1].id == advance[0].result.id &&
+                       advance[2].op == Op::Store &&
+                       advance[2].place == tests[0].place &&
+                       advance[2].operands.size() == 1 &&
+                       advance[2].operands[0].id == advance[1].result.id;
+              for (auto block : loop.blocks)
+                if (!blockIndex(block))
+                  cursor = false;
+                else
+                  for (const auto &operation : f.blocks[block].instructions)
+                    if (operation.place.root == tests[0].place.root)
+                      cursor = false;
+            }
+            iteration |= cursor && header.kind == Exit::Branch &&
+                         header.first == loop.body &&
+                         header.second == loop.done &&
+                         step.kind == Exit::Jump && step.first == loop.header &&
+                         graph.predecessors[b].size() == 1 &&
+                         graph.predecessors[b][0] == loop.header;
+          }
+        require(iteration && n.result.access == Access::Owned);
+        if (arity(1))
+          require(n.operands[0].type == Type::I32);
+        if (slot()) {
+          auto array = *projectedType(
+              *program.types, f.locals[n.place.root].type, n.place.fields);
+          require(program.types->isProduct(array) &&
+                  program.types->product(array).kind == AggregateKind::Array);
+          if (program.types->isProduct(array) &&
+              program.types->product(array).kind == AggregateKind::Array)
+            require(result == program.types->product(array).components.at(0));
+          require(f.locals[n.place.root].mode != ParameterMode::Read &&
+                  f.locals[n.place.root].mode != ParameterMode::Mut &&
+                  std::none_of(n.place.fields.begin(), n.place.fields.end(),
+                               [](const auto &projection) {
+                                 return projection.kind ==
+                                        Projection::Kind::Dereference;
+                               }));
+        }
+        break;
+      }
       case Op::Activate:
         if (arity(1)) {
           require(n.operands[0].access == Access::Mut);
@@ -238,6 +707,37 @@ bool function(const Function &f, const Program &program,
         require(result == Type::Unit && n.number >= 0 &&
                 n.number < static_cast<int>(f.scopes.size()));
         break;
+      case Op::VariantTest:
+        arity(0);
+        require(result == Type::Bool);
+        if (slot()) {
+          auto type = *projectedType(
+              *program.types, f.locals[n.place.root].type, n.place.fields);
+          require(program.types->isSum(type));
+          if (program.types->isSum(type))
+            require(n.number >= 0 &&
+                    static_cast<std::size_t>(n.number) <
+                        program.types->product(type).variants.size());
+        }
+        break;
+      case Op::Panic:
+        arity(0);
+        require(result == Type::Never && i + 1 == block.instructions.size() &&
+                block.exit.kind == Exit::Unreachable);
+        break;
+      case Op::VariantConstruct:
+        require(program.types->isSum(result));
+        if (program.types->isSum(result)) {
+          const auto &sum = program.types->product(result);
+          if (n.number < 0 ||
+              static_cast<std::size_t>(n.number) >= sum.variants.size())
+            fail(n.span, "invalid variant constructor");
+          else if (arity(sum.variants[n.number].fields.size()))
+            for (std::size_t field = 0; field < n.operands.size(); ++field)
+              require(n.operands[field].type ==
+                      sum.fields[sum.variants[n.number].fields[field]].type);
+        }
+        break;
       case Op::Store:
         if (arity(1) && slot())
           require(n.operands[0].type ==
@@ -245,14 +745,48 @@ bool function(const Function &f, const Program &program,
                                  n.place.fields));
         require(result == Type::Unit);
         break;
+      case Op::StorageWrite:
+        if (arity(1) && slot()) {
+          auto parent = n.place;
+          require(!parent.fields.empty());
+          if (!parent.fields.empty()) {
+            auto field = parent.fields.back();
+            parent.fields.pop_back();
+            auto owner = projectedType(
+                *program.types, f.locals[parent.root].type, parent.fields);
+            require(field.kind == Projection::Kind::Field && field.index == 0 &&
+                    owner && program.types->isProduct(*owner) &&
+                    program.types->product(*owner).kind ==
+                        AggregateKind::Uninit);
+            require(n.operands[0].access == Access::Owned &&
+                    n.operands[0].type ==
+                        *projectedType(*program.types,
+                                       f.locals[n.place.root].type,
+                                       n.place.fields));
+          }
+        }
+        require(result == Type::Unit);
+        break;
+      case Op::DropPlace:
+        arity(0);
+        if (slot()) {
+          bool owned =
+              n.place.fields.empty() &&
+              (static_cast<std::size_t>(n.place.root) >= f.parameters ||
+               (f.locals[n.place.root].mode != ParameterMode::Read &&
+                f.locals[n.place.root].mode != ParameterMode::Mut));
+          require(result == Type::Unit && (n.unsafeAllowed || owned));
+        }
+        break;
       case Op::Unary:
         if (arity(1)) {
           auto operand = n.operands[0].type;
-          require(
-              (n.text == "-" && operand == Type::I32 && result == Type::I32) ||
-              (n.text == "!" &&
-               (operand == Type::I32 || operand == Type::Bool) &&
-               result == operand));
+          require((n.text == "-" &&
+                   (isSignedInteger(operand) || isFloating(operand)) &&
+                   result == operand) ||
+                  (n.text == "!" &&
+                   (isInteger(operand) || operand == Type::Bool) &&
+                   result == operand));
         }
         break;
       case Op::Binary:
@@ -262,26 +796,122 @@ bool function(const Function &f, const Program &program,
                          n.text == "<=" || n.text == ">" || n.text == ">=";
           bool bit = n.text == "&" || n.text == "|" || n.text == "^";
           bool arithmetic = n.text == "+" || n.text == "-" || n.text == "*" ||
-                            n.text == "/" || n.text == "%" || n.text == "<<" ||
-                            n.text == ">>";
-          require(
-              a == c &&
-              ((compare && scalar(a) && result == Type::Bool) ||
-               (bit && (a == Type::Bool || a == Type::I32) && result == a) ||
-               (arithmetic && a == Type::I32 && result == Type::I32)));
+                            n.text == "/" || n.text == "%";
+          bool shift = n.text == "<<" || n.text == ">>";
+          require((shift && isInteger(a) && isInteger(c) && result == a) ||
+                  (a == c &&
+                   ((compare && (scalar(a) || program.types->isPointer(a)) &&
+                     result == Type::Bool) ||
+                    (bit && (a == Type::Bool || isInteger(a)) && result == a) ||
+                    (arithmetic && isNumeric(a) && result == a))));
         }
         break;
+      case Op::Cast:
+        if (arity(1))
+          require(
+              machineCastAllowed(*program.types, n.operands[0].type, result));
+        break;
+      case Op::Machine: {
+        if (n.text == "va.start")
+          require(f.variadicCursor >= 0 &&
+                  n.result.type == f.locals[f.variadicCursor].type);
+        std::vector<Type> operands;
+        for (auto operand : n.operands)
+          operands.push_back(operand.type);
+        require(n.typeArguments.size() <= 1);
+        std::vector<Type> proofs;
+        for (auto [subject, runtime] : n.unpinProofs) {
+          (void)subject;
+          proofs.push_back(runtime);
+        }
+        auto signature = machineSignature(
+            *program.types, n.text, operands,
+            n.typeArguments.empty() ? Type::Unknown : n.typeArguments[0],
+            proofs);
+        require(signature &&
+                machineResultMatches(*program.types, *signature, result));
+        if (signature && signature->unsafeCall)
+          require(n.unsafeAllowed);
+        if (auto operation = targetOperation(n.text);
+            operation && (operation->kind == TargetOperation::Kind::Extract ||
+                          operation->kind == TargetOperation::Kind::Insert)) {
+          auto lane =
+              operation->kind == TargetOperation::Kind::Extract ? 1u : 2u;
+          if (lane < n.operands.size()) {
+            auto id = n.operands[lane].id;
+            if (id >= 0 && static_cast<std::size_t>(id) < definitions.size() &&
+                definitions[id].block >= 0) {
+              const auto &definition =
+                  f.blocks[definitions[id].block]
+                      .instructions[definitions[id].position];
+              require(definition.op == Op::Constant && !definition.numeric &&
+                      definition.number >= 0 &&
+                      static_cast<unsigned>(definition.number) <
+                          operation->lanes);
+            } else
+              require(false);
+          }
+        }
+        break;
+      }
       case Op::Call:
+      case Op::IndirectCall:
       case Op::CatchCall:
+        if (n.erasedDispatch)
+          require(n.op == Op::IndirectCall && !n.operands.empty() &&
+                  program.types->isErased(n.operands[0].type) &&
+                  n.operands[0].access != Access::Owned);
+        if (n.op == Op::IndirectCall) {
+          value(n.target, static_cast<int>(b), i, n.span);
+          require(
+              program.types->isFunctionPointer(n.indirectType) &&
+              (n.target.type == n.indirectType ||
+               (program.types->isParameter(n.target.type) &&
+                program.types->parameter(n.target.type).callableConstraint ==
+                    n.indirectType)));
+          if (program.types->isFunctionPointer(n.indirectType)) {
+            const auto &signature = program.types->callable(n.indirectType);
+            require(n.target.access ==
+                    (signature.mode == ParameterMode::Read  ? Access::Read
+                     : signature.mode == ParameterMode::Mut ? Access::Mut
+                                                            : Access::Owned));
+            require(signature.abiResult == result);
+            bool matches =
+                signature.variadic
+                    ? n.operands.size() >= signature.parameters.size()
+                    : arity(signature.parameters.size());
+            require(matches);
+            if (matches)
+              for (std::size_t p = 0; p < signature.parameters.size(); ++p) {
+                const auto &parameter = signature.parameters[p];
+                require(n.operands[p].type == parameter.type &&
+                        n.operands[p].access ==
+                            (parameter.mode == ParameterMode::Read
+                                 ? Access::Read
+                             : parameter.mode == ParameterMode::Mut
+                                 ? Access::Mut
+                                 : Access::Owned));
+              }
+          }
+        }
         if (n.callee < 0 ||
             static_cast<std::size_t>(n.callee) >= program.functions.size()) {
           fail(n.span, "invalid callee");
           break;
         case Op::Construct:
-          require(program.types->isProduct(result));
+          require(program.types->isProduct(result) &&
+                  !program.types->isSum(result));
           if (program.types->isProduct(result)) {
             const auto &fields = program.types->product(result).fields;
-            if (arity(fields.size()))
+            if (program.types->product(result).layout.unionType) {
+              if (arity(1)) {
+                require(n.number >= 0 &&
+                        static_cast<std::size_t>(n.number) < fields.size());
+                if (n.number >= 0 &&
+                    static_cast<std::size_t>(n.number) < fields.size())
+                  require(n.operands[0].type == fields[n.number].type);
+              }
+            } else if (arity(fields.size()))
               for (std::size_t p = 0; p < fields.size(); ++p)
                 require(n.operands[p].type == fields[p].type);
           }
@@ -294,6 +924,7 @@ bool function(const Function &f, const Program &program,
               break;
             }
             const auto &fields = program.types->product(base).fields;
+            require(!program.types->isSum(base));
             if (n.number < 0 ||
                 static_cast<std::size_t>(n.number) >= fields.size()) {
               fail(n.span, "invalid field projection");
@@ -305,16 +936,43 @@ bool function(const Function &f, const Program &program,
           break;
         } else {
           const auto &callee = program.functions[n.callee];
-          require(n.op == Op::CatchCall
-                      ? result == Type::I32 && callee.result == Type::Unit
-                      : result == callee.result);
+          std::vector<TypeBinding> bindings;
+          require(n.typeArguments.size() == callee.genericParameters.size());
+          for (std::size_t p = 0; p < n.typeArguments.size() &&
+                                  p < callee.genericParameters.size();
+               ++p)
+            bindings.push_back(
+                {callee.genericParameters[p], n.typeArguments[p]});
+          require(callee.indirectContract == (n.op == Op::IndirectCall));
+          auto matches = [&](Type pattern, Type actual) {
+            return normalize ? normalize(pattern, bindings, f) == actual
+                             : program.types->matchesSubstitution(
+                                   pattern, actual, bindings);
+          };
+          if (n.op == Op::IndirectCall &&
+              program.types->isFunctionPointer(n.indirectType))
+            require(program.types->callable(n.indirectType).resultSources ==
+                    callee.resultSources);
+          require(n.op == Op::CatchCall ? result == Type::I32 &&
+                                              matches(callee.result, Type::Unit)
+                                        : matches(callee.result, result));
           if (callee.parameters > callee.locals.size()) {
             fail(n.span, "invalid callee signature");
             break;
           }
-          if (arity(callee.parameters))
+          bool countMatches = callee.variadic
+                                  ? n.operands.size() >= callee.parameters
+                                  : arity(callee.parameters);
+          require(countMatches);
+          if (countMatches)
             for (std::size_t p = 0; p < n.operands.size(); ++p) {
-              require(n.operands[p].type == callee.locals[p].type);
+              if (p >= callee.parameters) {
+                require(!callee.abi.empty() &&
+                        n.operands[p].access == Access::Owned &&
+                        cCompatible(*program.types, n.operands[p].type));
+                continue;
+              }
+              require(matches(callee.locals[p].type, n.operands[p].type));
               auto mode = callee.locals[p].mode;
               auto access = mode == ParameterMode::Read  ? Access::Read
                             : mode == ParameterMode::Mut ? Access::Mut
@@ -381,7 +1039,8 @@ bool function(const Function &f, const Program &program,
   return valid;
 }
 } // namespace
-bool verify(const Program &program, Diagnostics &diagnostics) {
+bool verify(const Program &program, Diagnostics &diagnostics,
+            const TypeNormalizer &normalize, const UnpinProof &unpinProof) {
   if (!program.types) {
     diagnostics.error("internal", {}, "CFG has no owned type store");
     return false;
@@ -394,7 +1053,8 @@ bool verify(const Program &program, Diagnostics &diagnostics) {
           diagnostics.error("internal", {}, "invalid CFG type: " + message);
           valid = false;
         };
-        if (!program.types->contains(current)) {
+        if (!program.types->contains(current) ||
+            program.types->isConstant(current)) {
           invalid("unresolved type");
           return;
         }
@@ -410,11 +1070,64 @@ bool verify(const Program &program, Diagnostics &diagnostics) {
               view.mode != ParameterMode::Mut)
             invalid("invalid view access");
           type(view.payload, {});
+        } else if (program.types->isSlice(current)) {
+          auto element = program.types->slice(current).element;
+          type(element, {});
+          if (valid && !program.types->isSized(element))
+            invalid("unsized slice element");
+        } else if (program.types->isFunctionPointer(current)) {
+          const auto &signature = program.types->callable(current);
+          if (signature.resultFromEnvironment)
+            invalid("thin callable result refers to a captured environment");
+          type(signature.result, {});
+          type(signature.abiResult, {});
+          if (signature.error == Type::Unknown) {
+            if (signature.abiResult != signature.result)
+              invalid("callable ABI result does not match success type");
+          } else if (!program.types->isProduct(signature.abiResult) ||
+                     program.types->product(signature.abiResult).kind !=
+                         AggregateKind::Outcome ||
+                     program.types->product(signature.abiResult).components !=
+                         std::vector<Type>{signature.result, signature.error})
+            invalid("callable ABI result does not preserve typed failure");
+          if (signature.error != Type::Unknown)
+            type(signature.error, {});
+          if (signature.mode != ParameterMode::Read &&
+              signature.mode != ParameterMode::Mut &&
+              signature.mode != ParameterMode::Take)
+            invalid("invalid callable capability");
+          for (const auto &parameter : signature.parameters) {
+            type(parameter.type, {});
+            if (parameter.mode == ParameterMode::Value &&
+                !program.types->isCopy(parameter.type))
+              invalid("non-Copy callable value parameter");
+          }
+          for (auto source : signature.resultSources)
+            if (source >= signature.parameters.size())
+              invalid("invalid callable result source");
         } else if (program.types->isProduct(current)) {
           owned.insert(current.index());
-          const auto &product = program.types->product(current);
-          for (const auto &field : product.fields) {
+          const auto product = program.types->product(current);
+          if (product.vector) {
+            auto descriptor = targetVector(product.name);
+            if (!descriptor || product.kind != AggregateKind::NativeVector ||
+                !product.fields.empty() || !product.copyRequested ||
+                product.hasDestructor ||
+                descriptor->element != product.vector->element ||
+                descriptor->lanes != product.vector->lanes ||
+                descriptor->alignment != product.vector->alignment)
+              invalid("invalid native target vector descriptor");
+            else if (!program.target.initialProfile() ||
+                     descriptor->arch != program.target.arch)
+              invalid("native vector is unavailable on the selected target");
+          } else if (product.kind == AggregateKind::NativeVector)
+            invalid("native vector is missing its element/lane shape");
+          for (std::size_t index = 0; index < product.fields.size(); ++index) {
+            const auto &field = product.fields[index];
             type(field.type, owned);
+            if (valid && !program.types->isSized(field.type) &&
+                index + 1 != product.fields.size())
+              invalid("unsized field is not the final field");
             if (product.copyRequested && !program.types->isCopy(field.type))
               invalid("non-Copy field in Copy product");
           }
@@ -427,10 +1140,36 @@ bool verify(const Program &program, Diagnostics &diagnostics) {
               invalid("invalid user destructor");
             else {
               const auto &destructor = program.functions[product.destructor];
+              Type parameter = destructor.locals.empty()
+                                   ? Type::Unknown
+                                   : destructor.locals[0].type;
+              if (normalize && !destructor.genericParameters.empty()) {
+                const auto &arguments = product.genericArguments.empty()
+                                            ? product.genericParameters
+                                            : product.genericArguments;
+                std::vector<TypeBinding> bindings;
+                if (arguments.size() == destructor.genericParameters.size())
+                  for (std::size_t p = 0; p < arguments.size(); ++p)
+                    bindings.push_back(
+                        {destructor.genericParameters[p], arguments[p]});
+                parameter = normalize(parameter, bindings, destructor);
+              }
+              bool self = !destructor.locals.empty() && parameter == current;
+              if (!destructor.locals.empty() &&
+                  !product.layout.pinnedFields.empty()) {
+                self = program.types->isProduct(parameter) &&
+                       program.types->product(parameter).kind ==
+                           AggregateKind::Pin;
+                if (self) {
+                  auto view = program.types->product(parameter).components[0];
+                  self = program.types->isView(view) &&
+                         program.types->view(view).mode == ParameterMode::Mut &&
+                         program.types->view(view).payload == current;
+                }
+              }
               if (destructor.result != Type::Unit ||
                   destructor.parameters != 1 || destructor.locals.empty() ||
-                  destructor.locals[0].type != current ||
-                  destructor.locals[0].mode != ParameterMode::Mut)
+                  !self || destructor.locals[0].mode != ParameterMode::Mut)
                 invalid("invalid user destructor signature");
             }
           }
@@ -444,6 +1183,95 @@ bool verify(const Program &program, Diagnostics &diagnostics) {
       for (const auto &instruction : block.instructions)
         type(instruction.result.type, {});
   }
+  std::function<bool(const StaticConstant &, Type)> constant =
+      [&](const StaticConstant &value, Type expected) {
+        if (value.type != expected || !program.types->contains(expected))
+          return false;
+        if (value.kind == StaticConstant::Kind::Address) {
+          if (value.symbol < 0 ||
+              static_cast<std::size_t>(value.symbol) >=
+                  program.statics.size() ||
+              !(program.types->isView(expected) ||
+                program.types->isPointer(expected)))
+            return false;
+          auto payload = program.statics[value.symbol].type;
+          for (auto field : value.projections) {
+            if (!program.types->isProduct(payload) ||
+                field >= program.types->product(payload).fields.size())
+              return false;
+            payload = program.types->product(payload).fields[field].type;
+          }
+          auto target = program.types->view(expected).payload;
+          if (program.types->isView(expected) &&
+              (program.types->view(expected).mode == ParameterMode::Mut ||
+               program.statics[value.symbol].mutableBinding))
+            return false;
+          if (program.types->view(expected).mode == ParameterMode::Mut &&
+              !program.statics[value.symbol].mutableBinding)
+            return false;
+          if (payload == target)
+            return true;
+          return program.types->isSlice(target) &&
+                 program.types->isProduct(payload) &&
+                 program.types->product(payload).kind == AggregateKind::Array &&
+                 program.types->slice(target).element ==
+                     program.types->product(payload).components[0] &&
+                 value.scalar.magnitude[0] ==
+                     program.types->product(payload).fields.size();
+        }
+        if (value.kind == StaticConstant::Kind::Function)
+          return program.types->isFunctionPointer(expected) &&
+                 value.symbol >= 0 &&
+                 static_cast<std::size_t>(value.symbol) <
+                     program.functions.size();
+        if (value.kind == StaticConstant::Kind::Aggregate) {
+          if (!program.types->isProduct(expected))
+            return false;
+          auto fields = staticConstantFields(*program.types, value);
+          if (!fields || fields->size() != value.fields.size())
+            return false;
+          const auto &record = program.types->product(expected);
+          if (program.types->isSum(expected) &&
+              record.layout.kind != LayoutKind::Transparent) {
+            NumericLiteral tag;
+            tag.magnitude[0] = value.selection;
+            if (!record.layout.discriminants.empty())
+              tag = record.layout.discriminants[value.selection];
+            if (value.fields[0].scalar.magnitude != tag.magnitude ||
+                value.fields[0].scalar.negative != tag.negative)
+              return false;
+          }
+          for (std::size_t i = 0; i < fields->size(); ++i)
+            if (!constant(value.fields[i], (*fields)[i].second))
+              return false;
+          return true;
+        }
+        if (isInteger(expected))
+          return integerLiteralFits(value.scalar, expected);
+        if (isFloating(expected))
+          return validFloatingLiteral(value.scalar.floating);
+        if (expected == Type::Bool)
+          return !value.scalar.negative && !value.scalar.magnitude[1] &&
+                 value.scalar.magnitude[0] <= 1;
+        if (expected == Type::Char) {
+          auto scalar = value.scalar.magnitude[0];
+          return !value.scalar.negative && !value.scalar.magnitude[1] &&
+                 scalar <= 0x10ffff && !(scalar >= 0xd800 && scalar <= 0xdfff);
+        }
+        return expected == Type::Unit;
+      };
+  for (const auto &storage : program.statics) {
+    type(storage.type, {});
+    if (!program.types->isSized(storage.type) ||
+        program.types->uninhabited(storage.type) ||
+        storage.foreignDeclaration == storage.initializer.has_value() ||
+        (storage.initializer &&
+         !constant(*storage.initializer, storage.type))) {
+      diagnostics.error("internal", storage.span,
+                        "invalid typed static initializer or storage contract");
+      valid = false;
+    }
+  }
   if (!valid)
     return false;
   bool entry = false;
@@ -455,12 +1283,12 @@ bool verify(const Program &program, Diagnostics &diagnostics) {
     }
     if (f.name == "main")
       entry = f.parameters == 0 && f.result == Type::I32;
-    valid = function(f, program, diagnostics) && valid;
+    valid = function(f, program, diagnostics, normalize, unpinProof) && valid;
   }
-  if (!entry) {
+  if (program.requireEntry && !entry) {
     diagnostics.error("internal", {}, "invalid or absent CFG entry function");
     valid = false;
   }
-  return valid;
+  return valid && verifyTarget(program, diagnostics);
 }
 } // namespace mettle::ir

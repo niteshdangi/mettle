@@ -1,39 +1,92 @@
 #include "semantics/checker.h"
 #include "support/limits.h"
+#include "types/machine.h"
+#include <algorithm>
 #include <functional>
+#include <stdexcept>
 
 namespace mettle {
 void Checker::error(std::string phase, Span span, std::string message) {
+  if (phase == "type" && std::any_of(staticStates.begin(), staticStates.end(),
+                                     [](auto state) { return state == 1; }))
+    phase = "constant";
   diagnostics.error(std::move(phase), span, std::move(message));
 }
 
 std::optional<CheckedModule> Checker::run() {
+  interfaceHeaders();
+  if (!diagnostics.empty())
+    return std::nullopt;
+  declarations();
+  if (!diagnostics.empty())
+    return std::nullopt;
   products();
   if (!diagnostics.empty())
     return std::nullopt;
+  interfaceSignatures();
   checked.functions.resize(module.functions.size());
   for (std::size_t i = 0; i < module.functions.size(); ++i) {
     auto &f = module.functions[i];
-    if (!names.emplace(f.name, i).second)
+    current = &f;
+    facts(f).genericParameters = genericBindings(f);
+    auto name = definitionName(f.span, f.name);
+    facts(f).canonicalName = name;
+    if (!names.emplace(name, i).second)
       error("name", f.span, "duplicate function '" + f.name + "'");
-    if (auto type = typeNames.find(f.name);
-        type != typeNames.end() && checked.types->isProduct(type->second))
+    if (auto type = typeNames.find(name);
+        type != typeNames.end() && checked.types->isProduct(type->second) &&
+        !checked.types->isSum(type->second))
       error("name", f.span,
             "function conflicts with type constructor '" + f.name + "'");
     functionVariables[&f] =
         inference.fresh(annotation(f.annotation, f.span, f.owner));
-    facts(f).diverges =
-        f.annotation.name == "Never" && f.annotation.view.empty();
+    facts(f).diverges = inference.value(functionVariables[&f]) == Type::Never;
+    if (f.explicitReceiver) {
+      if (f.owner.empty())
+        error("signature", f.span,
+              "explicit receiver requires an owning type or interface");
+      else {
+        auto self =
+            annotation(f.parameters.front().annotation, f.span, f.owner);
+        while (checked.types->isView(self))
+          self = checked.types->view(self).payload;
+        if (checked.types->isProduct(self) &&
+            checked.types->product(self).kind == AggregateKind::Pin)
+          self = checked.types->view(checked.types->product(self).components[0])
+                     .payload;
+        TypeSyntax expected;
+        expected.name = "Self";
+        if (checked.types->eraseRegions(self) !=
+            checked.types->eraseRegions(annotation(expected, f.span, f.owner)))
+          error("signature", f.span, "explicit receiver must wrap Self");
+      }
+    }
+    if (!f.error.empty())
+      facts(f).error = annotation(f.error, f.span, f.owner);
     if (f.destructor)
-      checked.types->setDestructor(typeNames.at(f.owner), static_cast<int>(i));
+      checked.types->setDestructor(typeNames.at(typeName(f.owner, f.span)),
+                                   static_cast<int>(i));
+    if (f.body.get())
+      if (f.body.get())
+        controlFlow(f);
   }
+  targetDeclarations();
+  interfaceImplementations();
+  staticDeclarations();
+  if (diagnostics.empty())
+    resolveRegionProjections();
   if (!diagnostics.empty())
     return std::nullopt;
   bool changed;
   do {
     changed = false;
     for (auto &f : module.functions) {
-      auto value = flow(*f.body);
+      if (!f.body.get())
+        continue;
+      genericBindings(f);
+      if (!f.body.get())
+        continue;
+      auto value = flow(*f.body, f.owner);
       if (f.annotation.empty() && !facts(f).diverges && !value.normal &&
           !value.returns) {
         facts(f).diverges = true;
@@ -43,13 +96,20 @@ std::optional<CheckedModule> Checker::run() {
     }
   } while (changed);
   for (auto &f : module.functions)
-    flow(*f.body);
+    if (f.body.get())
+      flow(*f.body, f.owner);
 
   std::vector<std::vector<std::size_t>> edges(module.functions.size());
-  std::function<void(Node &, std::vector<std::size_t> &)> calls =
-      [&](Node &n, std::vector<std::size_t> &out) {
-        if (n.kind == Kind::Call && n.children[0]->kind == Kind::Name) {
-          auto found = names.find(n.children[0]->text);
+  std::function<void(Node &, std::vector<std::size_t> &, std::string_view)>
+      calls = [&](Node &n, std::vector<std::size_t> &out,
+                  std::string_view owner) {
+        if (n.kind == Kind::Name) {
+          auto found = names.find(callableName(n.text, owner, n.span));
+          if (found != names.end())
+            out.push_back(found->second);
+        } else if (n.kind == Kind::Call && n.children[0]->kind == Kind::Name) {
+          auto found =
+              names.find(callableName(n.children[0]->text, owner, n.span));
           if (found != names.end())
             out.push_back(found->second);
         } else if (n.kind == Kind::Call && n.children[0]->kind == Kind::Field) {
@@ -58,10 +118,16 @@ std::optional<CheckedModule> Checker::run() {
               out.push_back(i);
         }
         for (auto &child : n.children)
-          calls(*child, out);
+          calls(*child, out, owner);
       };
-  for (std::size_t i = 0; i < edges.size(); ++i)
-    calls(*module.functions[i].body, edges[i]);
+  for (std::size_t i = 0; i < edges.size(); ++i) {
+    if (module.functions[i].body.get())
+      if (module.functions[i].body.get())
+        calls(*module.functions[i].body, edges[i], module.functions[i].owner);
+    for (auto &parameter : module.functions[i].parameters)
+      if (parameter.defaultValue.get())
+        calls(*parameter.defaultValue, edges[i], module.functions[i].owner);
+  }
   std::vector<int> index(edges.size(), -1), low(edges.size());
   std::vector<std::size_t> stack;
   std::vector<bool> active(edges.size());
@@ -90,10 +156,16 @@ std::optional<CheckedModule> Checker::run() {
     }
     for (auto w : component)
       function(module.functions[w]);
+    resolveGenericCalls();
     fields();
     for (auto w : component) {
       auto &f = module.functions[w];
       facts(f).result = inference.value(functionVariables[&f]);
+      facts(f).abiResult =
+          facts(f).error == Type::Unknown
+              ? facts(f).result
+              : checked.types->structural(AggregateKind::Outcome,
+                                          {facts(f).result, facts(f).error});
       if (facts(f).result == Type::Unknown)
         error("type", f.span, "cannot infer recursive result; add ': Type'");
     }
@@ -101,11 +173,23 @@ std::optional<CheckedModule> Checker::run() {
   for (std::size_t i = 0; i < edges.size(); ++i)
     if (index[i] == -1)
       visit(i);
+  resolveGenericCalls();
 
+  finishClosures();
   for (auto [variable, span] : integerOrBoolean) {
     auto t = inference.value(variable);
-    if (t != Type::Bool && t != Type::I32 && t != Type::Never)
-      error("type", span, "operation requires a resolved bool or i32 type");
+    if (t != Type::Bool && !isInteger(t) && t != Type::Never)
+      error("type", span, "operation requires a resolved bool or integer type");
+  }
+  for (const auto &operation : numericOperations) {
+    auto type = inference.value(operation.variable);
+    bool valid = operation.operation == "arithmetic" ? isNumeric(type)
+                 : operation.operation == "negate"
+                     ? isSignedInteger(type) || isFloating(type)
+                     : isInteger(type);
+    if (!valid && type != Type::Never)
+      error("type", operation.span,
+            "operator is not available for this scalar type");
   }
   for (auto [variable, span] : comparisons)
     if (checked.types->isProduct(inference.value(variable)))
@@ -114,19 +198,30 @@ std::optional<CheckedModule> Checker::run() {
   for (auto &f : module.functions) {
     facts(f).result = inference.value(functionVariables[&f]);
     std::function<void(Node &)> resolve = [&](Node &n) {
-      for (auto &child : n.children)
-        resolve(*child);
+      if (n.kind != Kind::Closure)
+        for (auto &child : n.children)
+          resolve(*child);
       if (nodeVariables.contains(&n))
         facts(n).type = inference.value(nodeVariables[&n]);
-      if (n.kind == Kind::Name && facts(n).slot >= 0)
+      if (facts(n).rebuiltType != Type::Unknown)
+        facts(n).type = facts(n).rebuiltType;
+      if (n.kind == Kind::Name && facts(n).slot >= 0) {
         facts(n).place = Place{facts(n).slot, {}};
-      else if (n.kind == Kind::Group)
-        facts(n).place = facts(*n.children[0]).place;
-      else if (n.kind == Kind::Unary && n.text == "*" &&
-               facts(*n.children[0]).place) {
+        if (facts(f).locals[facts(n).slot].patternView)
+          facts(n).place->fields.push_back(Projection::dereference());
+      } else if (n.kind == Kind::Group) {
+        const auto &child = facts(*n.children[0]);
+        if (facts(n).rebuiltType != Type::Unknown || child.viewConversion ||
+            child.rebuiltType != Type::Unknown || !child.injections.empty())
+          facts(n).place.reset();
+        else
+          facts(n).place = child.place;
+      } else if (n.kind == Kind::Unary && n.text == "*" &&
+                 facts(*n.children[0]).place) {
         facts(n).place = facts(*n.children[0]).place;
         facts(n).place->fields.push_back(Projection::dereference());
-      } else if (n.kind == Kind::Field && facts(n).field >= 0 &&
+      } else if ((n.kind == Kind::Field || n.kind == Kind::Index) &&
+                 !facts(n).optional && facts(n).field >= 0 &&
                  facts(*n.children[0]).place) {
         facts(n).place = facts(*n.children[0]).place;
         for (unsigned i = 0; i < facts(n).dereferences; ++i)
@@ -135,68 +230,132 @@ std::optional<CheckedModule> Checker::run() {
             Projection::field(static_cast<std::uint32_t>(facts(n).field)));
       }
     };
-    resolve(*f.body);
+    if (f.body.get())
+      if (f.body.get())
+        resolve(*f.body);
+    for (auto &parameter : f.parameters)
+      if (parameter.defaultValue.get())
+        resolve(*parameter.defaultValue);
     for (std::size_t i = 0; i < facts(f).locals.size(); ++i) {
       facts(f).locals[i].type = inference.value(localVariables[&f][i]);
       if (facts(f).locals[i].type == Type::Unknown)
         error("type", facts(f).locals[i].span,
               "cannot infer local type; add ': Type'");
-    }
-    if (checked.types->containsViews(facts(f).result)) {
-      std::vector<std::size_t> eligible;
-      for (std::size_t p = 0; p < f.parameters.size(); ++p) {
-        const auto &local = facts(f).locals[p];
-        if (local.mode == ParameterMode::Read ||
-            local.mode == ParameterMode::Mut ||
-            checked.types->containsViews(local.type))
-          eligible.push_back(p);
+      if (facts(f).locals[i].patternView) {
+        facts(f).locals[i].type = checked.types->viewType(
+            facts(f).locals[i].type, facts(f).locals[i].mode);
+        facts(f).locals[i].mode = ParameterMode::Value;
       }
-      if (!f.annotation.sources.empty()) {
-        for (const auto &source : f.annotation.sources) {
-          auto found = std::find_if(
-              f.parameters.begin(), f.parameters.end(),
-              [&](const auto &parameter) { return parameter.name == source; });
-          if (found == f.parameters.end())
-            error("name", f.span,
-                  "unknown borrowed result source '" + source + "'");
-          else {
-            auto index = static_cast<std::size_t>(found - f.parameters.begin());
-            if (std::find(eligible.begin(), eligible.end(), index) ==
-                eligible.end())
-              error("ownership", f.span,
-                    "borrowed result source is not borrowed input storage");
-            else
-              facts(f).resultSources.push_back(index);
-          }
-        }
-      } else if (eligible.size() == 1)
-        facts(f).resultSources = eligible;
-      else if (eligible.size() > 1)
-        error(
-            "type", f.span,
-            "ambiguous borrowed result requires an explicit from relationship");
-      else
-        error("ownership", f.span,
-              "borrowed result has no eligible input source");
+    }
+    resolvePatterns();
+    auto resultParameters = checked.types->typeParameters(facts(f).abiResult);
+    for (std::size_t p = 0;
+         p < f.parameters.size() && p < facts(f).locals.size(); ++p) {
+      auto parameters = checked.types->typeParameters(facts(f).locals[p].type);
+      bool transported = false;
+      for (auto parameter : parameters)
+        if (checked.types->isParameter(parameter) &&
+            std::find(resultParameters.begin(), resultParameters.end(),
+                      parameter) != resultParameters.end())
+          transported = true;
+      if (transported)
+        facts(f).genericResultSources.push_back(p);
     }
   }
+  if (diagnostics.empty())
+    staticInitializers();
+  for (const auto &[syntax, resolved] : checked.nodes) {
+    if (containsVarArgs(*checked.types, resolved.type) &&
+        !checked.types->isView(resolved.type) &&
+        !(checked.types->isProduct(resolved.type) &&
+          checked.types->product(resolved.type).kind == AggregateKind::VarArgs))
+      error(
+          "ownership", syntax->span,
+          "a variadic cursor cannot escape into aggregate or closure storage");
+    if (syntax->kind == Kind::Call && resolved.machineOperation.empty())
+      for (std::size_t i = 1; i < syntax->children.size(); ++i)
+        if (auto argument = checked.nodes.find(syntax->children[i].get());
+            argument != checked.nodes.end() &&
+            containsVarArgs(*checked.types, argument->second.type))
+          error("ownership", syntax->children[i]->span,
+                "a variadic cursor cannot be passed outside its invocation");
+    if (syntax->kind == Kind::Integer && resolved.numeric &&
+        !integerLiteralFits(*resolved.numeric, resolved.type))
+      error("type", syntax->span,
+            "integer literal is outside the " +
+                std::string(checked.types->name(resolved.type)) + " range");
+    if (syntax->kind == Kind::Cast) {
+      auto source = checked.nodes.at(syntax->children[0].get()).type;
+      if (source != Type::Never &&
+          !machineCastAllowed(*checked.types, source, resolved.type))
+        error("type", syntax->span, "invalid scalar conversion");
+    }
+    for (const auto &function : module.functions)
+      if (containsVarArgs(*checked.types, facts(function).result))
+        error("ownership", function.span,
+              "a variadic cursor cannot escape its invocation");
+  }
+  if (diagnostics.empty())
+    checkBorrowAlignment();
+  if (diagnostics.empty())
+    checkInterfaceContracts();
+  if (diagnostics.empty())
+    checkRegions();
+  if (!diagnostics.empty())
+    return std::nullopt;
+  machineDeclarations();
+  finishAssembly();
+  if (!diagnostics.empty())
+    return std::nullopt;
+  finalizeInterfaces();
+  exhaustiveness();
+  if (!requireEntry)
+    return diagnostics.empty()
+               ? std::optional<CheckedModule>(std::move(checked))
+               : std::nullopt;
   auto main = names.find("main");
   if (main == names.end())
     error("name", {}, "missing entry function 'main'");
   else {
     auto &f = module.functions[main->second];
+    if (!facts(f).targetFeatures.empty() &&
+        !featuresAvailable(checked.targetDescription, {},
+                           facts(f).targetFeatures))
+      error("feature", f.span,
+            "hosted entry requires baseline target feature availability");
     if (!f.parameters.empty() || facts(f).result != Type::I32)
       error("type", f.span,
             "entry function must have no parameters and return i32");
+    if (facts(f).error != Type::Unknown)
+      error("effects", f.span,
+            "entry function cannot expose an unhandled typed failure");
   }
   if (!diagnostics.empty())
     return std::nullopt;
   return std::move(checked);
 }
-std::optional<CheckedModule> check(Module module, Diagnostics &diagnostics) {
+std::optional<CheckedModule> check(Module module, Diagnostics &diagnostics,
+                                   bool requireEntry, TargetFacts target) {
   if (!diagnostics.empty())
     return std::nullopt;
-  return Checker(std::move(module), diagnostics).run();
+  auto symbols = resolution::resolve(module, diagnostics);
+  return check(std::move(module), diagnostics, std::move(symbols), requireEntry,
+               std::move(target));
+}
+std::optional<CheckedModule>
+check(Module module, Diagnostics &diagnostics,
+      std::shared_ptr<const resolution::Resolution> symbols, bool requireEntry,
+      TargetFacts target) {
+  if (!diagnostics.empty() || !symbols)
+    return std::nullopt;
+  try {
+    return Checker(std::move(module), diagnostics, std::move(symbols),
+                   requireEntry, std::move(target))
+        .run();
+  } catch (const std::length_error &failure) {
+    diagnostics.error("limit", {}, failure.what());
+    return std::nullopt;
+  }
 }
 
 } // namespace mettle

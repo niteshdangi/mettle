@@ -30,3 +30,51 @@ enforced source/dependency graph. Update both with architectural changes.
   milestone, target, safety property or speedup without current evidence.
 - Do not publish, choose a license, initialize/amend/commit Git history or
   configure paid services without the owner's explicit request.
+
+## Milestone execution gates
+
+These gates govern implementation order and validation timing; they do not
+weaken the quality standard or authorize dropping a selected contract.
+
+1. Before compiler edits, read the owning milestone and specifications and
+   reconcile its acceptance inventory with the existing task ledger. Record each
+   requirement's implementation state (missing, partial or implemented),
+   verification scope/revision, remaining work, owning files, required fixtures
+   and documentation. Do not equate implemented with verified. For I06, start
+   with the inventory in `docs/implementation-plan.md` section 8.3.
+2. Plan AST, type, IR, ownership, runtime and backend interfaces together before
+   changing shared headers. Batch their dependent implementations coherently.
+   Keep one source writer for shared compiler interfaces; independent work must
+   not produce competing headers, objects or source revisions.
+3. During implementation, use incremental compile checks, fast hygiene checks
+   and focused new/failing regressions. Before each rerun, name the changed
+   dependency and the failure or acceptance case it addresses. Reuse passing
+   results only while their relevant inputs, tools and configuration are
+   unchanged; do not rerun broad passing groups after unrelated local edits.
+4. After two failed fixes for the same issue, stop speculative edit/test cycles.
+   Trace and record the root cause and why the next change addresses it before
+   another attempt. This is a diagnosis trigger, not permission to abort a
+   healthy test run, weaken assertions or change timeouts.
+5. Do not start a full qualification matrix while known implementation gaps,
+   missing acceptance fixtures or incomplete documentation remain. The ledger's
+   source-freeze task must depend on all of them and be complete first.
+   Finalize documentation, freeze input identities, then run one consolidated
+   applicable quality/sanitizer/reproducibility/target sequence. Do not compete
+   heavy builds with timed source execution.
+6. If a failure requires further source changes, reopen the affected source
+   tasks and freeze gate, record which results are invalidated, and rerun the
+   affected checks before qualification resumes. Do not repeat an entire matrix
+   by ritual, or reuse stale passing receipts as current evidence.
+7. Classify newly discovered work against the existing scope. Add evidence and
+   dependencies for an existing obligation; obtain owner approval for a genuine
+   expansion. Do not silently add an I13 full-operation/all-profile closure
+   obligation to an earlier milestone, or silently defer an earlier obligation.
+   Report unresolved scope as a blocker, not approval.
+8. A completed sub-batch is not a completed milestone. Report missing
+   implementation, implemented-but-unverified work, verified scope and concrete
+   blockers separately. Mark the milestone done only after its complete gates
+   pass. Do not claim an imminent finish, speedup or ETA without evidence.
+
+Keep the repository inventory and task ledger synchronized at phase changes and
+after a context reset. These are execution rules, not an automated tool lock;
+checking the gate before a long command remains the executing agent's duty.

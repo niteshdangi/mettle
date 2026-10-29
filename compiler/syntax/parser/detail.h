@@ -21,23 +21,33 @@ public:
                                 token.text[i + 1] == '\n'
                             ? 2u
                             : 1u;
-            tokens.push_back(
-                {TokenKind::Newline,
-                 {token.span.begin + i, token.span.begin + i + size},
-                 "\n"});
+            tokens.push_back({TokenKind::Newline,
+                              {token.span.begin + i,
+                               token.span.begin + i + size, token.span.source},
+                              "\n"});
             i += size - 1;
           }
       }
     }
   }
 
-  void run(Module &module);
+  void run(Module &module, std::vector<std::string> scope = {},
+           bool nested = false);
 
 private:
   std::vector<Token> tokens;
   Diagnostics &diagnostics;
   std::size_t position = 0;
   unsigned parens = 0, nesting = 0;
+  unsigned genericExpressionLevel = 0;
+  VisibilitySyntax visibility();
+  std::vector<Attribute> attributes();
+  std::string textLiteral();
+  void foreignDeclaration(Module &module, ItemSyntax item);
+  void staticDeclaration(Module &module, ItemSyntax item, bool foreign);
+  std::vector<std::string> path();
+  void moduleDeclaration(Module &module, ItemSyntax item);
+  void importDeclaration(Module &module, ItemSyntax item);
 
   const Token &peek(std::size_t look = 0) {
     if (parens)
@@ -80,53 +90,25 @@ private:
   }
   Token name() {
     auto result = peek();
-    if (result.kind != TokenKind::Word || isReservedWord(result.text))
+    if ((result.kind != TokenKind::Word &&
+         result.kind != TokenKind::QuotedWord) ||
+        (result.kind != TokenKind::QuotedWord && isReservedWord(result.text)))
       fail("expected an identifier");
     ++position;
+    if (result.kind == TokenKind::QuotedWord)
+      result.text = result.text.substr(1, result.text.size() - 2);
     return result;
   }
-  TypeSyntax type() {
-    TypeSyntax result;
-    if (is("read") || is("mut"))
-      result.view = tokens[position++].text;
-    if (is("take") || is("heap") || is("shared"))
-      feature("owning runtime handle types are not implemented yet");
-    if (is("(") && peek(1).text == ")")
-      fail("use Unit in type positions; () is a value");
-    if (take("(")) {
-      ++parens;
-      auto grouped = type();
-      if (is(","))
-        feature("tuple types require their aggregate implementation");
-      expect(")");
-      --parens;
-      if (result.view.empty())
-        return grouped;
-      result.nested = std::make_shared<const TypeSyntax>(std::move(grouped));
-    } else {
-      if (is("[") || is("fn"))
-        feature("aggregate and callable types are not implemented in I02");
-      result.name = name().text;
-    }
-    if (take("<")) {
-      do {
-        expect("region");
-        result.regions.push_back(name().text);
-      } while (take(","));
-      expect(">");
-    }
-    if (take("from")) {
-      bool grouped = take("(");
-      do {
-        result.sources.push_back(name().text);
-      } while (grouped && take(","));
-      if (grouped)
-        expect(")");
-    }
-    if (is("?") || is("::"))
-      feature("extended types are not implemented in I02");
-    return result;
-  }
+  TypeSyntax type(bool effect = true);
+  TypeSyntax boundType();
+  TypeSyntax callableType();
+  std::unique_ptr<Node> closure();
+  std::vector<GenericParameter>
+  genericParameters(std::vector<std::string> *regions = nullptr);
+  std::vector<GenericArgument> genericArguments();
+  std::vector<GenericConstraint> genericConstraints();
+  bool genericClose();
+  std::shared_ptr<const Node> genericValue();
   std::unique_ptr<Node> node(Kind kind, Span span, std::string text = "") {
     auto result = std::make_unique<Node>();
     result->kind = kind;
@@ -142,12 +124,20 @@ private:
     if (value.depth > limits::syntaxDepth)
       fail("syntax nesting limit exceeded", "limit");
   }
-  Function function();
+  Function function(bool allowDeclaration = false);
+  std::unique_ptr<Node> loopExpression();
   Module::Product product();
+  Module::Product enumeration();
+  Module::Interface interfaceDeclaration();
+  Module::Implementation implementationDeclaration();
+  Module::Associated associatedDeclaration();
+  Pattern pattern(int minimum = 0);
+  std::unique_ptr<Node> matchExpression();
   std::unique_ptr<Node> block();
   std::unique_ptr<Node> stmt();
 
   std::unique_ptr<Node> expr(int minimum = 1);
   std::unique_ptr<Node> primary();
+  std::unique_ptr<Node> assemblyExpression(std::string variant, Span span);
 };
 } // namespace mettle::parsing

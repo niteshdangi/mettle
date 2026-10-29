@@ -2,60 +2,333 @@
 
 #include "semantics/check.h"
 #include "semantics/inference.h"
+#include "semantics/region_solver.h"
+#include <map>
 
 namespace mettle {
 class Checker {
 public:
-  Checker(Module module, Diagnostics &diagnostics)
-      : checked(std::move(module)), module(checked.tree),
-        diagnostics(diagnostics), inference(diagnostics, *checked.types) {}
+  Checker(Module module, Diagnostics &diagnostics,
+          std::shared_ptr<const resolution::Resolution> symbols,
+          bool requireEntry = true, TargetFacts target = {})
+      : checked(std::move(module), std::move(symbols)), module(checked.tree),
+        diagnostics(diagnostics), inference(diagnostics, *checked.types),
+        requireEntry(requireEntry) {
+    checked.targetDescription = std::move(target);
+  }
   std::optional<CheckedModule> run();
 
 private:
   struct Binding {
     int variable;
     int slot;
+    Function *owner = nullptr;
   };
   CheckedModule checked;
   Module &module;
   Diagnostics &diagnostics;
   TypeInference inference;
+  bool requireEntry = true;
+  unsigned unsafeDepth = 0;
+  void requireUnsafe(Span span);
+  void machineDeclarations();
+  void staticDeclarations();
+  void staticLocals();
+  void staticInitializers();
+  std::optional<StaticConstant> staticInitializer(const Node &node, Type type);
+  std::optional<StaticConstant> staticValue(std::size_t index);
+  std::optional<std::size_t> staticName(std::string_view name, Span span);
+  std::unordered_map<std::string, std::size_t> staticNames;
+  std::vector<unsigned char> staticStates;
+  void targetDeclarations();
+  std::set<std::string> guardedFeatures{};
+  std::set<std::string> availableFeatures() const;
+  void requireFeatures(const std::set<std::string> &features, Span span);
+  int assemblyExpression(Node &node, bool reachable);
+  void finishAssembly();
+  int featureTest(Node &node);
+  std::optional<int> targetCall(Node &node, bool reachable);
+  ProductLayout productLayout(const Module::Product &product);
+  std::optional<Type> machineAnnotation(const TypeSyntax &syntax, Span span,
+                                        std::string_view owner);
+  std::optional<int> machineValue(const Node &node);
+  void checkBorrowAlignment();
   std::unordered_map<std::string, std::size_t> names;
-  std::unordered_map<std::string, Type> typeNames{{"i32", Type::I32},
-                                                  {"bool", Type::Bool},
-                                                  {"Unit", Type::Unit},
-                                                  {"Never", Type::Never}};
+  std::unordered_map<std::string, std::size_t> aliases;
+  std::vector<unsigned char> aliasStates;
+  std::unordered_map<std::string, Type> typeNames{
+      {"i32", Type::I32},     {"bool", Type::Bool},   {"Unit", Type::Unit},
+      {"Never", Type::Never}, {"char", Type::Char},   {"u8", Type::U8},
+      {"i8", Type::I8},       {"i16", Type::I16},     {"i64", Type::I64},
+      {"i128", Type::I128},   {"isize", Type::Isize}, {"u16", Type::U16},
+      {"u32", Type::U32},     {"u64", Type::U64},     {"u128", Type::U128},
+      {"usize", Type::Usize}, {"f32", Type::F32},     {"f64", Type::F64}};
   std::vector<std::unordered_map<std::string, Binding>> scopes;
   std::unordered_map<Function *, std::vector<int>> localVariables;
   std::unordered_map<const Function *, int> functionVariables;
   std::unordered_map<const Node *, int> nodeVariables;
   Function *current = nullptr;
-  unsigned loops = 0;
+  std::unordered_map<int, int> loopResults;
   std::vector<std::pair<int, Span>> integerOrBoolean;
   std::vector<std::pair<int, Span>> comparisons;
+  struct NumericOperation {
+    int variable;
+    Span span;
+    std::string operation;
+  };
+  std::vector<NumericOperation> numericOperations;
   struct FieldRequest {
     Node *node;
     int base, result;
     bool resolved = false;
   };
   std::vector<FieldRequest> fieldRequests;
+  std::unordered_map<const Function *, std::size_t> closureFunctions;
+  std::unordered_map<const Node *, Type> closureContexts;
+  std::unordered_map<const Node *, Type> expectedTypes;
+  struct CaptureBinding {
+    Binding source;
+    int proxy;
+    Span span;
+  };
+  std::unordered_map<const Function *, std::vector<CaptureBinding>>
+      captureBindings;
+  std::vector<std::pair<Function *, std::size_t>> closureScopes;
 
   NodeFacts &facts(const Node &node) { return checked.nodes[&node]; }
   FunctionFacts &facts(const Function &function) {
+    if (auto found = closureFunctions.find(&function);
+        found != closureFunctions.end())
+      return checked.closureBodies.at(found->second)->function;
     return checked.functions.at(
         static_cast<std::size_t>(&function - module.functions.data()));
   }
   void error(std::string phase, Span span, std::string message);
+  void coerce(Node &expression, int actual, int expected, Span span);
+  int join(Node &left, int a, Node &right, int b, Span span);
   Type annotation(const TypeSyntax &syntax, Span span,
                   std::string_view owner = {});
+  Type semanticAnnotation(const TypeSyntax &syntax, Span span,
+                          std::string_view owner = {});
+  unsigned semanticAnnotationDepth = 0;
+  void checkRegions();
+  void resolveRegionProjections();
+  std::vector<RegionContract> regionContracts;
+  struct AnnotationRegions {
+    RegionScope scope;
+    RegionEnvironment environment;
+    std::unordered_map<std::string, RegionId> names;
+    std::vector<RegionId> parameters;
+    bool boundElision = false;
+    RegionId fallback = RegionId::Unspecified;
+  };
+  std::vector<AnnotationRegions> annotationRegionScopes;
+  std::unordered_map<const Function *, AnnotationRegions> functionRegionScopes;
+  std::unordered_map<const TypeSyntax *, Type> semanticRegionAnnotations;
+  RegionEnvironment emptyRegionEnvironment;
+  std::vector<RegionId>
+  pushRegionParameters(const std::vector<GenericParameter> &parameters,
+                       Span span);
+  void popRegionParameters();
+  const RegionEnvironment &regionEnvironment() const;
+  RegionId annotationRegion(const TypeSyntax &syntax, Span span);
+  RegionId regionReference(std::string_view name, Span span);
+  AnnotationRegions &functionRegions(const Function &function);
+  void
+  assumeRegionConstraints(const std::vector<GenericConstraint> &constraints,
+                          Span span);
+  Type callableAnnotation(const TypeSyntax &syntax, Span span,
+                          std::string_view owner);
+  Type callableRegionAnnotation(const TypeSyntax &syntax, Span span,
+                                std::string_view owner);
+  CallableType functionSignature(std::size_t index);
+  int functionValue(Node &node, std::size_t index);
+  int indirectCall(Node &node, bool reachable, int calleeVariable = -1);
+  int closure(Node &node, bool reachable);
+  void inferCaptures(ClosureFacts &closure);
+  void contextualize(Node &node, Type expected);
+  void resolveClosure(ClosureFacts &closure, bool final = false);
+  void completeClosure(ClosureFacts &closure, bool final = false);
+  void finishClosures();
+  bool compatibleCallable(Type source, Type target) const;
+  bool callableObligation(Type actual, Type contract, Span span);
+  std::optional<Type> genericAnnotation(const TypeSyntax &syntax, Span span,
+                                        std::string_view owner = {});
+  const std::vector<Type> &genericBindings(Function &function);
+  std::optional<int>
+  genericCall(Node &node, bool reachable, std::size_t callee,
+              std::size_t receiverOffset,
+              std::span<const TypeBinding> ownerBindings = {},
+              bool aliasConstructor = false);
+  std::optional<int> genericConstruction(Node &node, bool reachable,
+                                         std::string_view name);
+  std::optional<CallableType> genericFunctionValue(Node &node,
+                                                   std::size_t callee);
+  struct GenericEnvironment;
+  Type genericArgument(const GenericArgument &argument, Type parameter);
+  void explicitGenericBindings(const Function &function, const Node &callee,
+                               const GenericEnvironment &environment,
+                               std::vector<TypeBinding> &bindings, Span span);
+  Type constantType(const Node &node, Type expected = Type::Unknown);
+  Type constantContext(const Node &node);
+  struct GenericEnvironment {
+    std::unordered_map<std::string, Type> names;
+    std::map<Type, std::vector<TypeSyntax>> bounds;
+    std::vector<Type> parameters;
+    std::map<Type, Type> defaults;
+    std::vector<TypeBinding> equalities;
+    Span declarationSpan{};
+    std::set<const GenericConstraint *> boundConstraints;
+  };
+  void seedInterfaceBindings(const Node &node,
+                             const GenericEnvironment &environment,
+                             std::vector<TypeBinding> &bindings);
+  GenericEnvironment *genericEnvironment = nullptr;
+  std::unordered_map<const Function *, GenericEnvironment> functionGenerics;
+  std::unordered_map<const Module::Product *, GenericEnvironment>
+      productGenerics;
+  std::unordered_map<const Module::Alias *, GenericEnvironment> aliasGenerics;
+  GenericEnvironment
+  makeGenericEnvironment(const std::vector<GenericParameter> &parameters,
+                         const std::vector<GenericConstraint> &constraints,
+                         const GenericEnvironment *parent = nullptr);
+  std::vector<Type>
+  genericArguments(const std::vector<GenericParameter> &parameters,
+                   const std::vector<GenericArgument> &arguments,
+                   GenericEnvironment &environment, Span span);
+  bool genericObligations(const GenericEnvironment &environment,
+                          std::span<const TypeBinding> bindings, Span span,
+                          std::span<const RegionBinding> regions = {});
+  bool interfaceObligation(Type actual, const TypeSyntax &bound, Span span);
+  bool interfaceObligation(Type actual, Type interfaceType, Span span);
+  Type normalizeGenericType(Type type, std::span<const TypeBinding> bindings,
+                            Span span);
+  Type normalizeCallType(Type type, std::span<const TypeBinding> bindings,
+                         const Function &callee, Span span);
+  bool inferGeneric(Type pattern, Type actual,
+                    std::vector<TypeBinding> &bindings, Span span);
+  void prepareGenerics();
+  std::unordered_map<std::string, std::size_t> interfaceNames;
+  std::unordered_map<const Module::Interface *, GenericEnvironment>
+      interfaceGenerics;
+  std::unordered_map<const Module::Implementation *, GenericEnvironment>
+      implementationGenerics;
+  std::unordered_map<const TypeSyntax *, Type> implicitInterfaceParameters;
+  std::map<Type, Span> erasedUses;
+  unsigned interfaceDepth = 0;
+  bool interfacesReady = false;
+  struct ProjectionRequirement {
+    Type subject, interfaceType;
+    Span span;
+    std::vector<interfaces::Obligation> assumptions;
+    RegionEnvironment regions;
+  };
+  std::vector<ProjectionRequirement> projectionRequirements;
+  std::unordered_map<const TypeSyntax *, Type> opaqueDeclarations;
+  void interfaceHeaders();
+  void interfaceSignatures();
+  void interfaceImplementations();
+  void checkInterfaceContracts();
+  std::optional<Type> interfaceAnnotation(const TypeSyntax &syntax, Span span,
+                                          std::string_view owner = {});
+  Type interfaceBound(const TypeSyntax &bound, Span span,
+                      std::string_view owner = {},
+                      Type subject = Type::Unknown);
+  bool interfaceProperty(const TypeSyntax &bound, std::string_view property,
+                         Span span);
+  bool intrinsicProperty(const TypeSyntax &bound, std::string_view property,
+                         Span span) const;
+  std::vector<interfaces::Obligation> interfaceAssumptions();
+  bool unpinObligation(Type type, Span span);
+  std::optional<std::size_t> interfaceMethod(Type self, std::string_view method,
+                                             Node &call);
+  Type interfaceProjection(Type subject, Type interfaceType,
+                           std::string_view member,
+                           std::span<const GenericArgument> arguments,
+                           Span span);
+  std::optional<Type> associatedConstant(const Node &node);
+  void finalizeInterfaces();
+  void finalizeErasure();
+  bool eraseCoercion(Node &expression, Type source, Type target, Span span);
+  bool unsizeCoercion(Node &expression, Type source, Type target, Span span);
+  std::optional<int> operatorCall(Node &node, int left, int right = -1,
+                                  bool mutableIndex = false);
+  void requireMutablePlace(Node &node);
+  std::optional<std::size_t> receiverMethod(Type source, Node &call);
+  std::optional<std::size_t> receiverCandidate(Type self, ParameterMode mode,
+                                               std::string_view name,
+                                               Node &call);
+  std::optional<ReceiverStep> dereferenceStep(Type source, bool exclusive,
+                                              Span span);
+  bool mutableReceiverPlan(ReceiverPlan &plan, Span span, bool report = true);
+  std::optional<ReceiverPlan> receiverConversion(Type source, Type target,
+                                                 ParameterMode mode, Span span,
+                                                 bool report = true);
+  bool borrowCoercion(Node &node, int actual, Type target, ParameterMode mode);
+  void
+  validateGenericEnvironment(const std::vector<GenericParameter> &parameters,
+                             const std::vector<GenericConstraint> &constraints,
+                             GenericEnvironment &environment);
+  void completeGenericBindings(const GenericEnvironment &environment,
+                               std::vector<TypeBinding> &bindings, Span span);
+  unsigned genericDepth = 0;
+  std::map<std::pair<std::size_t, std::vector<Type>>, Type>
+      genericAliasInstances;
+  std::set<std::pair<std::size_t, std::vector<Type>>> activeGenericAliases;
+  struct GenericCallRequest {
+    Node *node;
+    Function *function;
+    int result;
+    std::vector<TypeBinding> bindings;
+    GenericEnvironment *environment;
+    Function *caller;
+  };
+  std::vector<GenericCallRequest> genericCallRequests;
+  void resolveGenericCalls();
+  void declarations();
+  Type resolveAlias(std::size_t index, unsigned depth = 0);
+  unsigned aliasDepth = 0;
+  unsigned effectContext = 0;
+  std::unordered_map<const Pattern *, int> patternVariables;
+  bool patternGuard = false;
+  std::vector<std::pair<Node *, int>> matches;
+  std::vector<std::pair<Pattern *, int>> irrefutable;
+  int bindingPattern(Node &node, bool reachable);
+  int conditionalPattern(Node &node, bool reachable);
+  std::string definitionName(Span span, std::string_view spelling) const;
+  std::string typeName(std::string_view spelling, Span span,
+                       std::string_view owner = {}) const;
+  std::string callableName(std::string_view spelling, std::string_view owner,
+                           Span span) const;
+  bool visibleField(Type type, std::size_t field, Span use);
   Binding lookup(const std::string &name, Span span);
   int local(std::string name, int variable, bool mutableBinding, Span span);
-  Flow flow(Node &node);
-  void literal(Node &node, bool negative = false);
+  Flow flow(Node &node, std::string_view owner = {});
+  void controlFlow(Function &function);
+  int loop(Node &node, bool reachable);
+  int transfer(Node &node, bool reachable);
+  Type literal(const Node &node, bool negative = false);
   void function(Function &function);
+  void parameterDefaults(Function &function);
+  void constructor(Function &function);
+  void completeArguments(Node &node, Function &function,
+                         const std::vector<bool> &used);
   int node(Node &node, bool reachable);
   int call(Node &node, bool reachable);
+  std::optional<int> machineCall(Node &node, bool reachable, int receiver = -1);
   void products();
   void fields(bool final = true);
+  int sumExpression(Node &node, bool reachable);
+  int aggregate(Node &node, bool reachable);
+  std::optional<std::int32_t> constantInteger(const Node &node);
+  std::optional<int> variantCall(Node &node, std::string_view name,
+                                 bool reachable);
+  int match(Node &node, bool reachable);
+  void pattern(Pattern &pattern, int variable, ParameterMode mode);
+  void resolvePatterns();
+  void exhaustiveness();
+  PatternFacts &facts(const Pattern &pattern) {
+    return checked.patterns[&pattern];
+  }
 };
 } // namespace mettle

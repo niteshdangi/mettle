@@ -51,6 +51,8 @@ void valueOwnership(const ir::Function &function, const TypeStore &types,
   auto apply = [&](State state, int block, bool report) {
     const auto &body = function.blocks[block];
     for (const auto &instruction : body.instructions) {
+      if (instruction.op == ir::Op::IndirectCall)
+        use(state, instruction.target, true, instruction.span, report);
       if (instruction.op != ir::Op::Phi)
         for (auto operand : instruction.operands)
           use(state, operand, instruction.op != ir::Op::Project,

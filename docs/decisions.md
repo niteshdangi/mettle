@@ -64,14 +64,14 @@ decisions; these source documents carry those subsequent refinements.
 
 | Work | Blocks | Resolution |
 | --- | --- | --- |
-| Grammar conflict/separator validation | Claim of parser-ready full grammar | I02 checks lossless scalar syntax/recovery; product/extended grammar qualification remains later |
+| Grammar conflict/separator validation | Claim of parser-ready full grammar | I02-I05 check implemented scalar, product, composition and generic syntax; future constructs remain gated by their owning milestones |
 | Scalar lowering | Full scalar operation matrix | I02 executes the selected i32/bool/Unit subset and profile failures; other widths/floats remain I06 |
-| CFG joins, loans, temporary/drop table | Sound ownership compiler | Implement/check the specified state transitions and exceptional paths |
-| Exceptional replacement and recovery | Safe panic catch around resources | Validate replacement restoration before resumed safe access |
+| CFG joins, loans, temporary/drop table | Sound ownership compiler | I03-I05 check implemented move/loan/drop transitions and exceptional paths; passing cases are not a full soundness proof |
+| Exceptional replacement and recovery | Safe panic catch around resources | I03 native cleanup probes validate replacement restoration before resumed access; public panic APIs remain later work |
 | Native declarations and full source cfg expansion | Implemented library parity | Typecheck/execute each applicable native contract, including source branches absent from rendered docs |
 | LLVM/compiler/sysroot artifact locks | Reproducible native build | I01 records archive/tool/sysroot identities and same-environment clean rebuilds; cross-machine/release reproducibility remains later work |
-| Linux x86-64 runner | First-target execution evidence | I01 cross-emitted objects link and execute under the actual Linux kernel; Linux-host compiler qualification remains separate |
-| Generic/interface/region checker | Advanced type-system claims | Implement solver, coherence and dispatch rules; run adversarial cases |
+| Linux x86-64 runner | First-target execution evidence | I01-I05 cross-emitted source and cleanup objects link and execute under the actual Linux kernel; Linux-host compiler qualification remains separate |
+| Generic/interface/region checker | Advanced type-system claims | I05 solver, coherence, region and dispatch cases pass native/sanitized and Linux target qualification within the recorded scope |
 | Memory/provenance and async containment | Unsafe/async safety claim | Model/review and execute the selected mechanisms |
 | OS/SDK/WASI/board execution | Supported-target claims | Probe selected reference profiles and publish release evidence |
 | Benchmark pilot and fixed release experiment | Runtime release verdict | Apply the specified plan with actual controlled measurements |

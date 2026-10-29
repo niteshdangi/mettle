@@ -7,6 +7,7 @@ import os
 import platform
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 from bootstrap import ROOT, artifacts, host_platform, sha256
@@ -16,6 +17,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--configuration", choices=("Debug", "Release"), default="Debug")
     parser.add_argument("--sanitizers", action="store_true", help="enable compiler ASan/UBSan")
+    parser.add_argument("--quality", action="store_true",
+                        help="run the build-directory quality gate, including CTest, once")
     arguments = parser.parse_args()
     selected = host_platform()
     items = artifacts(selected)
@@ -31,20 +34,29 @@ def main():
     directory = arguments.configuration + ("-sanitized" if arguments.sanitizers else "")
     build = ROOT / "build" / selected / directory
     build.mkdir(parents=True, exist_ok=True)
+    executable_names = (
+        "mettle", "mettle-object-smoke", "mettle-ir-tests", "mettle-module-tests",
+        "mettle-runtime-tests", "mettle-cleanup-frame-tests",
+        "mettle-cleanup-program-tests", "mettle-cleanup-source-tests")
+    modules = json.loads((ROOT / "compiler/modules.json").read_text())["modules"]
+    archive_names = ["libmettle_runtime.a", "libmettle_machine_callbacks.a", *(
+        "libmettle_" + module["name"] + ".a" for module in modules
+        if module["kind"] == "STATIC")]
     commands = [
         [str(cmake), "-S", str(ROOT), "-B", str(build), "-G", "Ninja",
          f"-DCMAKE_BUILD_TYPE={arguments.configuration}", f"-DCMAKE_C_COMPILER={clang}",
          f"-DCMAKE_CXX_COMPILER={cxx}", f"-DCMAKE_MAKE_PROGRAM={ninja}",
          f"-DLLVM_DIR={prefix / 'llvm/lib/cmake/llvm'}", "-DBUILD_TESTING=ON",
          f"-DMETTLE_ENABLE_SANITIZERS={'ON' if arguments.sanitizers else 'OFF'}"],
-        [str(cmake), "--build", str(build), "--target", "clean"],
         [str(cmake), "--build", str(build), "--parallel", str(min(os.cpu_count() or 1, 4))],
-        [str(ctest), "--test-dir", str(build), "--output-on-failure", "--verbose"],
+        ([sys.executable, str(ROOT / "tools/check_quality.py"), "--build-dir", str(build)]
+         if arguments.quality else
+         [str(ctest), "--test-dir", str(build), "--output-on-failure", "--verbose"]),
         [str(cmake), "--build", str(build), "--target", "clean"],
         [str(cmake), "--build", str(build), "--parallel", str(min(os.cpu_count() or 1, 4))],
     ]
     evidence = {
-        "scope": "Native compiler/runtime checks including I03 cleanup; not milestone qualification",
+        "scope": "Native compiler/runtime checks through the initial I06 machine boundary; not full milestone qualification",
         "system": platform.platform(), "machine": platform.machine(),
         "configuration": arguments.configuration, "commands": commands,
         "sanitizers": ["address", "undefined"] if arguments.sanitizers else [],
@@ -59,9 +71,10 @@ def main():
                  ROOT / ".clang-format", ROOT / ".clang-tidy", ROOT / ".editorconfig"] +
                 [path for directory in ("compiler", "runtime", "tests", "tools", "examples")
                  for path in (ROOT / directory).rglob("*")
-                 if path.is_file() and path.suffix in {".cpp", ".h", ".py", ".json", ".yaml", ".mt"}])
+                 if path.is_file() and path.suffix in {".cpp", ".c", ".h", ".py", ".json", ".yaml", ".mt"}])
         },
         "steps": [],
+        "first_build_mode": "incremental compilation and deterministic relink, compared with a clean rebuild",
         "status": "in_progress",
     }
     environment = os.environ.copy()
@@ -84,13 +97,7 @@ def main():
         return (result.stdout + result.stderr).strip()
 
     def binary_hashes():
-        modules = json.loads((ROOT / "compiler/modules.json").read_text())["modules"]
-        names = ["mettle", "mettle-object-smoke", "mettle-ir-tests",
-                 "libmettle_runtime.a", "mettle-runtime-tests",
-                 "mettle-cleanup-frame-tests", "mettle-cleanup-program-tests",
-                 "mettle-cleanup-source-tests"]
-        names.extend("libmettle_" + module["name"] + ".a" for module in modules
-                     if module["kind"] == "STATIC")
+        names = [*executable_names, *archive_names]
         return {name: sha256(build / name) for name in names}
 
     try:
@@ -134,6 +141,12 @@ def main():
             evidence["sanitizer_runtime_files"] = {
                 str(path): sha256(path) for path in sorted(runtime_files) if path.is_file()}
         for number, command in enumerate(commands, 1):
+            first_build = (command[:2] == [str(cmake), "--build"] and
+                           "--target" not in command and "first_build" not in evidence)
+            if first_build:
+                # Normalize archive/debug-map timestamps from ordinary local builds.
+                for name in (*executable_names, *archive_names):
+                    (build / name).unlink(missing_ok=True)
             print(subprocess.list2cmdline(command), flush=True)
             log = build / f"step-{number}.log"
             with log.open("w") as stream:
@@ -144,7 +157,7 @@ def main():
                 {"command": command, "exit_status": result.returncode, "log": str(log)})
             if result.returncode:
                 raise subprocess.CalledProcessError(result.returncode, command)
-            if number == 3:
+            if first_build:
                 evidence["first_build"] = binary_hashes()
                 if arguments.sanitizers:
                     command = [str(build / "mettle"), "--version"]

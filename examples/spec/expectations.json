@@ -1,5 +1,5 @@
 {
-  "status": "Extended-grammar specification examples; not compiled or executed",
+  "status": "The nested-optionals, typed-outcome and defaults-and-methods examples execute unchanged in the existing I04 source runner. Interface, generic and callable examples remain later-milestone specification fixtures; not all cases are executed.",
   "cases": [
     {
       "file": "nested-optionals.mt",

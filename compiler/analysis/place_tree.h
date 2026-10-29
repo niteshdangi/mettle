@@ -8,7 +8,7 @@ class PlaceTree {
 public:
   PlaceTree(const ir::Function &function, const TypeStore &types);
   std::size_t size() const { return entries.size(); }
-  int index(const Place &place) const { return indices.at(place); }
+  int index(const Place &place) const;
   void set(std::vector<bool> &state, int index, bool value) const;
   bool all(const std::vector<bool> &state, int index) const;
   bool any(const std::vector<bool> &state, int index) const;

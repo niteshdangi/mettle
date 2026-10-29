@@ -9,6 +9,7 @@ struct Options {
   std::string command, input, output, emit = "executable", profile = "debug";
   std::string target, cc, sysroot;
   std::optional<bool> checks;
+  bool freestanding = false;
 };
 std::optional<Options> options(int argc, char **argv);
 void usage();

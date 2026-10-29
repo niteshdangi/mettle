@@ -1,18 +1,204 @@
 #include "backend/llvm/cleanup.h"
 
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/Support/ErrorHandling.h"
 #include <algorithm>
 #include <limits>
 
 namespace mettle::backend {
+const ObjectLayout &LoweringContext::layout(Type type) {
+  if (auto found = layouts.find(type.index()); found != layouts.end())
+    return found->second;
+  auto result = objectLayout(*program.types, type);
+  if (!result)
+    llvm::report_fatal_error("unresolved object layout reached LLVM");
+  return layouts.emplace(type.index(), std::move(*result)).first->second;
+}
+std::uint64_t LoweringContext::alignment(Type type) {
+  return layout(type).alignment;
+}
+llvm::Type *LoweringContext::storageType(Type valueType) {
+  if (program.types->isOpaque(valueType))
+    return storageType(program.types->product(valueType).fields[0].type);
+  return valueType == Type::Bool ? builder.getInt8Ty() : type(valueType);
+}
+llvm::Value *LoweringContext::load(Type valueType, llvm::Value *address,
+                                   llvm::Align alignment) {
+  auto *loaded =
+      builder.CreateAlignedLoad(storageType(valueType), address, alignment);
+  return loaded->getType() == type(valueType)
+             ? loaded
+             : builder.CreateTrunc(loaded, type(valueType));
+}
+void LoweringContext::store(Type valueType, llvm::Value *value,
+                            llvm::Value *address, llvm::Align alignment) {
+  if (value->getType() != storageType(valueType))
+    value = builder.CreateZExt(value, storageType(valueType));
+  builder.CreateAlignedStore(value, address, alignment);
+}
+llvm::Type *LoweringContext::viewType(Type payload) {
+  auto metadata = program.types->pointerMetadata(payload);
+  if (metadata == PointerMetadata::ElementCount)
+    return llvm::StructType::get(context,
+                                 {builder.getPtrTy(), builder.getInt64Ty()});
+  if (metadata == PointerMetadata::Witness)
+    return llvm::StructType::get(
+        context,
+        {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy()});
+  if (metadata == PointerMetadata::Dependent)
+    llvm::report_fatal_error("uninstantiated pointer metadata reached LLVM");
+  return builder.getPtrTy();
+}
+llvm::AllocaInst *LoweringContext::temporary(llvm::Type *type) {
+  auto &entry = builder.GetInsertBlock()->getParent()->getEntryBlock();
+  llvm::IRBuilder<> allocation(&entry, entry.begin());
+  return allocation.CreateAlloca(type);
+}
+llvm::AllocaInst *LoweringContext::temporary(Type valueType) {
+  auto *result = temporary(type(valueType));
+  result->setAlignment(llvm::Align(alignment(valueType)));
+  return result;
+}
+llvm::Value *LoweringContext::fieldPointer(llvm::Value *address, Type owner,
+                                           unsigned index) {
+  if (program.types->isOpaque(owner))
+    return address;
+  if (customRepresentation(*program.types, owner))
+    return builder.CreateGEP(builder.getInt8Ty(), address,
+                             builder.getInt64(layout(owner).fields.at(index)));
+  return builder.CreateStructGEP(type(owner), address, index);
+}
+llvm::Value *LoweringContext::construct(Type valueType,
+                                        llvm::ArrayRef<llvm::Value *> values,
+                                        unsigned selected) {
+  if (!customRepresentation(*program.types, valueType)) {
+    llvm::Value *result = llvm::Constant::getNullValue(type(valueType));
+    for (unsigned i = 0; i < values.size(); ++i) {
+      auto *physical =
+          storageType(program.types->product(valueType).fields[i].type);
+      auto *value = values[i]->getType() == physical
+                        ? values[i]
+                        : builder.CreateZExt(values[i], physical);
+      result = builder.CreateInsertValue(result, value, i);
+    }
+    return result;
+  }
+  auto *storage = temporary(valueType);
+  builder.CreateStore(llvm::Constant::getNullValue(type(valueType)), storage);
+  for (unsigned i = 0; i < values.size(); ++i) {
+    auto field =
+        program.types->product(valueType).layout.unionType ? selected : i;
+    store(program.types->product(valueType).fields[field].type, values[i],
+          fieldPointer(storage, valueType, field), llvm::Align(1));
+  }
+  return builder.CreateLoad(type(valueType), storage);
+}
+llvm::Value *LoweringContext::extract(llvm::Value *value, Type owner,
+                                      unsigned field) {
+  if (program.types->isOpaque(owner))
+    return value;
+  if (program.types->isSum(owner) && field == 0 &&
+      !program.types->product(owner).layout.discriminants.empty()) {
+    auto *storage = temporary(owner);
+    builder.CreateStore(value, storage);
+    return enumTag(owner, storage);
+  }
+  if (!customRepresentation(*program.types, owner)) {
+    auto *result = builder.CreateExtractValue(value, field);
+    auto *target = type(program.types->product(owner).fields[field].type);
+    return result->getType() == target ? result
+                                       : builder.CreateTrunc(result, target);
+  }
+  auto *storage = temporary(owner);
+  builder.CreateStore(value, storage);
+  auto fieldType = program.types->product(owner).fields.at(field).type;
+  return load(fieldType, fieldPointer(storage, owner, field), llvm::Align(1));
+}
+llvm::Value *LoweringContext::enumTag(Type owner, llvm::Value *address,
+                                      bool ordinal) {
+  const auto &record = program.types->product(owner);
+  const auto &representation = record.layout;
+  if (representation.kind == LayoutKind::Transparent)
+    return builder.getInt32(0);
+  auto *tag = builder.CreateAlignedLoad(type(representation.tag), address,
+                                        llvm::Align(1));
+  if (!ordinal || representation.discriminants.empty())
+    return tag;
+  llvm::Value *result = llvm::PoisonValue::get(builder.getInt32Ty());
+  for (std::size_t i = 0; i < representation.discriminants.size(); ++i) {
+    const auto &value = representation.discriminants[i];
+    llvm::APInt bits(
+        integerWidth(representation.tag),
+        llvm::ArrayRef<std::uint64_t>(value.magnitude)
+            .take_front(integerWidth(representation.tag) > 64 ? 2 : 1));
+    if (value.negative)
+      bits = -bits;
+    result = builder.CreateSelect(
+        builder.CreateICmpEQ(tag, llvm::ConstantInt::get(context, bits)),
+        builder.getInt32(i), result);
+  }
+  return result;
+}
+llvm::Value *LoweringContext::variant(Type owner, unsigned ordinal,
+                                      llvm::ArrayRef<llvm::Value *> values) {
+  const auto &record = program.types->product(owner);
+  if (record.layout.discriminants.empty()) {
+    std::vector<llvm::Value *> fields;
+    for (const auto &field : record.fields)
+      fields.push_back(llvm::Constant::getNullValue(type(field.type)));
+    fields[0] = builder.getInt32(ordinal);
+    for (std::size_t i = 0; i < values.size(); ++i)
+      fields[record.variants[ordinal].fields[i]] = values[i];
+    return construct(owner, fields);
+  }
+  auto *storage = temporary(owner);
+  builder.CreateStore(llvm::Constant::getNullValue(type(owner)), storage);
+  if (record.layout.kind != LayoutKind::Transparent) {
+    const auto &discriminant = record.layout.discriminants[ordinal];
+    llvm::APInt bits(
+        integerWidth(record.layout.tag),
+        llvm::ArrayRef<std::uint64_t>(discriminant.magnitude)
+            .take_front(integerWidth(record.layout.tag) > 64 ? 2 : 1));
+    if (discriminant.negative)
+      bits = -bits;
+    builder.CreateAlignedStore(llvm::ConstantInt::get(context, bits), storage,
+                               llvm::Align(1));
+  }
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    auto field = record.variants[ordinal].fields[i];
+    store(record.fields[field].type, values[i],
+          fieldPointer(storage, owner, field), llvm::Align(1));
+  }
+  return builder.CreateLoad(type(owner), storage);
+}
 llvm::Type *LoweringContext::type(Type typeId) {
-  if (typeId == Type::I32)
-    return builder.getInt32Ty();
+  if (isInteger(typeId) || typeId == Type::Char)
+    return builder.getIntNTy(integerWidth(typeId));
+  if (isFloating(typeId))
+    return typeId == Type::F32 ? builder.getFloatTy() : builder.getDoubleTy();
   if (typeId == Type::Bool)
     return builder.getInt1Ty();
   if (typeId == Type::Unit || typeId == Type::Never)
     return llvm::StructType::get(context);
+  if (program.types->isOpaque(typeId))
+    return type(program.types->product(typeId).fields[0].type);
+  if (program.types->isErased(typeId))
+    return viewType(typeId);
   if (program.types->isView(typeId))
+    return viewType(program.types->view(typeId).payload);
+  if (program.types->isPointer(typeId))
+    return viewType(program.types->pointer(typeId).payload);
+  if (program.types->isSlice(typeId))
+    return llvm::ArrayType::get(type(program.types->slice(typeId).element), 0);
+  if (program.types->isFunctionPointer(typeId))
     return builder.getPtrTy();
+  if (program.types->isProduct(typeId) &&
+      program.types->product(typeId).vector) {
+    const auto &shape = *program.types->product(typeId).vector;
+    return llvm::FixedVectorType::get(type(shape.element), shape.lanes);
+  }
+  if (customRepresentation(*program.types, typeId))
+    return llvm::ArrayType::get(builder.getInt8Ty(), layout(typeId).size);
   if (auto found = products.find(typeId.index()); found != products.end())
     return found->second;
   const auto &product = program.types->product(typeId);
@@ -20,8 +206,14 @@ llvm::Type *LoweringContext::type(Type typeId) {
       llvm::StructType::create(context, "mettle.type." + product.name);
   products[typeId.index()] = result;
   std::vector<llvm::Type *> members;
-  for (const auto &member : product.fields)
-    members.push_back(type(member.type));
+  for (std::size_t field = 0; field < product.fields.size(); ++field) {
+    auto member = product.fields[field].type;
+    bool dynamicTail =
+        field + 1 == product.fields.size() && !program.types->isSized(member) &&
+        program.types->pointerMetadata(member) == PointerMetadata::Witness;
+    members.push_back(dynamicTail ? llvm::ArrayType::get(builder.getInt8Ty(), 0)
+                                  : storageType(member));
+  }
   result->setBody(members);
   return result;
 }
@@ -47,12 +239,24 @@ llvm::Function *LoweringContext::callback(const llvm::Twine &name,
       llvm::FunctionType::get(builder.getVoidTy(), parameters, false),
       llvm::GlobalValue::InternalLinkage, name, module);
   function->setUWTableKind(llvm::UWTableKind::Default);
+  if (freestanding)
+    function->addFnAttr(llvm::Attribute::NoUnwind);
   return function;
 }
 
-unsigned CleanupFrame::addField(llvm::Type *type) {
+unsigned CleanupFrame::addField(llvm::Type *type, std::uint64_t alignment) {
+  auto natural = lowering.module.getDataLayout().getABITypeAlign(type).value();
+  alignment = std::max(alignment, natural);
+  auto offset = (frameSize + alignment - 1) & ~(alignment - 1);
+  if (offset > frameSize)
+    fields.push_back(
+        llvm::ArrayType::get(lowering.builder.getInt8Ty(), offset - frameSize));
   unsigned index = fields.size();
   fields.push_back(type);
+  frameSize =
+      offset +
+      lowering.module.getDataLayout().getTypeAllocSize(type).getFixedValue();
+  frameAlignment = std::max(frameAlignment, alignment);
   return index;
 }
 
@@ -68,6 +272,22 @@ unsigned CleanupFrame::addNode(const cleanup::Plan &sourcePlan, int place,
                    parent,
                    path,
                    {}});
+  nodes[index].nativeAction = planned.nativeAction;
+  if (planned.destructor >= 0 || planned.nativeAction != NativeCleanup::None) {
+    auto type = roots[root].type;
+    auto alignment = lowering.alignment(type);
+    for (auto field : path) {
+      auto offset = lowering.layout(type).fields.at(field);
+      if (offset)
+        alignment = std::min(alignment, offset & (~offset + 1));
+      type = lowering.program.types->product(type).fields[field].type;
+    }
+    if (alignment < lowering.alignment(planned.type)) {
+      nodes[index].relocation = addField(lowering.type(planned.type),
+                                         lowering.alignment(planned.type));
+      nodes[index].relocatedFlag = addField(lowering.builder.getInt1Ty());
+    }
+  }
   if (&sourcePlan == &plan)
     planNodes[place] = index;
   for (unsigned i = 0; i < planned.fields.size(); ++i) {
@@ -88,7 +308,8 @@ unsigned CleanupFrame::addRoot(const cleanup::Plan &sourcePlan, int place,
   unsigned root = roots.size();
   auto field = local >= 0 ? localFields[local]
                           : addField(indirect ? lowering.builder.getPtrTy()
-                                              : lowering.type(type));
+                                              : lowering.type(type),
+                                     indirect ? 8 : lowering.alignment(type));
   roots.push_back({type, field, 0, local, indirect, planned.place});
   auto node = addNode(sourcePlan, place, root, -1, {});
   roots[root].node = node;
@@ -107,10 +328,13 @@ CleanupFrame::CleanupFrame(LoweringContext &lowering,
   for (std::size_t i = 0; i < source.locals.size(); ++i) {
     const auto &local = source.locals[i];
     bool borrowed =
-        i < source.parameters &&
-        (local.mode == ParameterMode::Read || local.mode == ParameterMode::Mut);
-    localFields.push_back(addField(borrowed ? lowering.builder.getPtrTy()
-                                            : lowering.type(local.type)));
+        local.storage == StorageDuration::Static ||
+        (i < source.parameters && (local.mode == ParameterMode::Read ||
+                                   local.mode == ParameterMode::Mut));
+    localFields.push_back(
+        addField(borrowed ? lowering.builder.getPtrTy()
+                          : lowering.storageType(local.type),
+                 borrowed ? 8 : lowering.alignment(local.type)));
   }
   planNodes.resize(plan.places.size());
   std::vector<bool> children(plan.places.size(), false);
@@ -125,7 +349,8 @@ CleanupFrame::CleanupFrame(LoweringContext &lowering,
       if (local >= 0)
         locals[local] = root;
     }
-  resultField = addField(lowering.type(source.result));
+  resultField = addField(lowering.storageType(source.result),
+                         lowering.alignment(source.result));
   ir::Function pendingSource{};
   std::vector<int> pendingIds;
   for (const auto &block : source.blocks)
@@ -176,16 +401,105 @@ llvm::Value *CleanupFrame::field(unsigned index) {
 llvm::Value *CleanupFrame::nodeAddress(unsigned node) {
   const auto &entry = nodes[node];
   const auto &root = roots[entry.root];
-  auto *address = field(root.field);
-  if (root.indirect)
-    address = lowering.builder.CreateLoad(lowering.builder.getPtrTy(), address);
-  auto type = root.type;
-  for (auto index : entry.path) {
-    address =
-        lowering.builder.CreateStructGEP(lowering.type(type), address, index);
-    type = lowering.program.types->product(type).fields[index].type;
+  llvm::Value *address;
+  if (entry.parent >= 0) {
+    address = nodeAddress(entry.parent);
+    auto type = nodes[entry.parent].type;
+    address = lowering.fieldAddress(address, type, entry.path.back());
+  } else {
+    address = field(root.field);
+    if (root.indirect)
+      address =
+          lowering.builder.CreateLoad(lowering.builder.getPtrTy(), address);
+  }
+  if (entry.relocation >= 0)
+    address = lowering.builder.CreateSelect(
+        lowering.builder.CreateLoad(lowering.builder.getInt1Ty(),
+                                    field(entry.relocatedFlag)),
+        field(entry.relocation), address);
+  return address;
+}
+llvm::Value *LoweringContext::fieldAddress(llvm::Value *address, Type &type,
+                                           unsigned index) {
+  auto &lowering = *this;
+  auto &builder = lowering.builder;
+  llvm::Value *length = nullptr, *witness = nullptr;
+  auto metadata = lowering.program.types->pointerMetadata(type);
+  if (metadata == PointerMetadata::ElementCount ||
+      metadata == PointerMetadata::Witness) {
+    auto *handle = builder.CreateAlignedLoad(lowering.viewType(type), address,
+                                             llvm::Align(1));
+    address = builder.CreateExtractValue(handle, 0);
+    length = builder.CreateExtractValue(handle, 1);
+    if (metadata == PointerMetadata::Witness)
+      witness = builder.CreateExtractValue(handle, 2);
+  }
+  auto fieldType = lowering.program.types->product(type).fields[index].type;
+  bool witnessTail = witness && lowering.program.types->pointerMetadata(
+                                    fieldType) == PointerMetadata::Witness;
+  if (witnessTail) {
+    auto *zero = llvm::ConstantPointerNull::get(builder.getPtrTy());
+    llvm::Value *offset =
+        customRepresentation(*lowering.program.types, type)
+            ? builder.getInt64(lowering.layout(type).fields.at(index))
+            : builder.CreatePtrToInt(
+                  builder.CreateGEP(
+                      lowering.type(type), zero,
+                      {builder.getInt32(0), builder.getInt32(index)}),
+                  builder.getInt64Ty());
+    auto *alignmentSlot =
+        builder.CreateGEP(builder.getPtrTy(), witness, builder.getInt32(1));
+    auto *alignment = builder.CreatePtrToInt(
+        builder.CreateLoad(builder.getPtrTy(), alignmentSlot),
+        builder.getInt64Ty());
+    llvm::Value *prefixAlignment =
+        lowering.program.types->isErased(fieldType)
+            ? builder.getInt64(1)
+            : builder.getInt64(lowering.alignment(fieldType));
+    alignment =
+        builder.CreateSelect(builder.CreateICmpUGT(alignment, prefixAlignment),
+                             alignment, prefixAlignment);
+    auto *mask = builder.CreateSub(alignment, builder.getInt64(1));
+    offset = builder.CreateAnd(builder.CreateAdd(offset, mask),
+                               builder.CreateNot(mask));
+    address = builder.CreateGEP(builder.getInt8Ty(), address, offset);
+  } else if (!lowering.program.types->isOpaque(type))
+    address = lowering.fieldPointer(address, type, index);
+  type = fieldType;
+  if (length && lowering.program.types->pointerMetadata(type) ==
+                    PointerMetadata::ElementCount) {
+    auto *handleType = lowering.viewType(type);
+    llvm::Value *handle = llvm::UndefValue::get(handleType);
+    handle = builder.CreateInsertValue(handle, address, 0);
+    handle = builder.CreateInsertValue(handle, length, 1);
+    auto *stored = lowering.temporary(handleType);
+    builder.CreateStore(handle, stored);
+    address = stored;
+  }
+  if (witnessTail) {
+    auto *handleType = lowering.viewType(type);
+    llvm::Value *handle = llvm::UndefValue::get(handleType);
+    handle = builder.CreateInsertValue(handle, address, 0);
+    handle = builder.CreateInsertValue(handle, length, 1);
+    handle = builder.CreateInsertValue(handle, witness, 2);
+    auto *stored = lowering.temporary(handleType);
+    builder.CreateStore(handle, stored);
+    address = stored;
   }
   return address;
+}
+llvm::Value *LoweringContext::projectField(llvm::Value *handle, Type owner,
+                                           unsigned index) {
+  auto *address = handle;
+  if (program.types->pointerMetadata(owner) != PointerMetadata::None) {
+    address = temporary(viewType(owner));
+    builder.CreateStore(handle, address);
+  }
+  auto type = owner;
+  auto *result = fieldAddress(address, type, index);
+  return program.types->pointerMetadata(type) != PointerMetadata::None
+             ? builder.CreateLoad(viewType(type), result)
+             : result;
 }
 
 unsigned CleanupFrame::placeNode(const Place &place) const {
@@ -195,38 +509,104 @@ unsigned CleanupFrame::placeNode(const Place &place) const {
 }
 
 llvm::Value *CleanupFrame::address(const Place &place) {
-  auto *address = field(localFields[place.root]);
   const auto &local = source.locals[place.root];
+  llvm::Value *address =
+      local.storage == StorageDuration::Static
+          ? static_cast<llvm::Value *>(lowering.statics.at(local.staticIndex))
+          : field(localFields[place.root]);
   if (static_cast<std::size_t>(place.root) < source.parameters &&
       (local.mode == ParameterMode::Read || local.mode == ParameterMode::Mut))
     address = lowering.builder.CreateLoad(lowering.builder.getPtrTy(), address);
   auto type = source.locals[place.root].type;
   for (auto projection : place.fields) {
-    if (projection.kind == Projection::Kind::Dereference) {
-      address =
-          lowering.builder.CreateLoad(lowering.builder.getPtrTy(), address);
-      type = lowering.program.types->view(type).payload;
+    if (projection.kind == Projection::Kind::Slice) {
+      const auto &array = lowering.program.types->product(type);
+      auto *elements = llvm::ArrayType::get(lowering.type(array.components[0]),
+                                            array.fields.size());
+      address = lowering.builder.CreateGEP(
+          elements, address,
+          {lowering.builder.getInt32(0),
+           lowering.builder.getInt32(projection.index)});
+      type = projection.type;
+    } else if (projection.kind == Projection::Kind::Dereference) {
+      auto payload = lowering.program.types->view(type).payload;
+      if (lowering.program.types->pointerMetadata(payload) ==
+          PointerMetadata::None)
+        address = lowering.builder.CreateAlignedLoad(
+            lowering.builder.getPtrTy(), address, llvm::Align(1));
+      type = payload;
     } else {
-      address = lowering.builder.CreateStructGEP(lowering.type(type), address,
-                                                 projection.index);
-      type =
-          lowering.program.types->product(type).fields[projection.index].type;
+      address = lowering.fieldAddress(address, type, projection.index);
     }
   }
   return address;
 }
+llvm::Align CleanupFrame::alignment(const Place &place) {
+  auto type = source.locals.at(place.root).type;
+  auto result = lowering.alignment(type);
+  for (auto projection : place.fields) {
+    if (projection.kind == Projection::Kind::Dereference) {
+      type = lowering.program.types->view(type).payload;
+      result = lowering.alignment(type);
+    } else if (projection.kind == Projection::Kind::Slice) {
+      auto element = lowering.program.types->product(type).components[0];
+      auto offset =
+          std::uint64_t{projection.index} * lowering.layout(element).size;
+      if (offset)
+        result = std::min(result, offset & (~offset + 1));
+      type = projection.type;
+    } else {
+      auto offset = lowering.layout(type).fields.at(projection.index);
+      if (offset)
+        result = std::min(result, offset & (~offset + 1));
+      type = lowering.program.types->product(type)
+                 .fields.at(projection.index)
+                 .type;
+    }
+  }
+  return llvm::Align(result);
+}
 
 void CleanupFrame::set(unsigned node, bool initialized) {
-  lowering.builder.CreateStore(lowering.builder.getInt1(initialized),
-                               field(nodes[node].flag));
-  for (auto child : nodes[node].children)
-    set(child, initialized);
+  initialize(node, lowering.builder.getInt1(initialized));
+}
+void CleanupFrame::initialize(unsigned node, llvm::Value *initialized) {
+  auto &builder = lowering.builder;
+  builder.CreateStore(initialized, field(nodes[node].flag));
+  if (nodes[node].relocation >= 0)
+    builder.CreateStore(builder.getFalse(), field(nodes[node].relocatedFlag));
+  if (auto *constant = llvm::dyn_cast<llvm::ConstantInt>(initialized);
+      constant && constant->isZero()) {
+    for (auto child : nodes[node].children)
+      initialize(child, initialized);
+    return;
+  }
+  if (!lowering.program.types->isSum(nodes[node].type)) {
+    for (auto child : nodes[node].children)
+      initialize(child, initialized);
+    return;
+  }
+  const auto &sum = lowering.program.types->product(nodes[node].type);
+  auto *tag = lowering.enumTag(nodes[node].type, nodeAddress(node));
+  if (!nodes[node].children.empty())
+    initialize(nodes[node].children[0], initialized);
+  for (std::size_t variant = 0; variant < sum.variants.size(); ++variant)
+    for (auto field : sum.variants[variant].fields)
+      initialize(nodes[node].children[field],
+                 builder.CreateAnd(
+                     initialized,
+                     builder.CreateICmpEQ(tag, builder.getInt32(variant))));
 }
 
 void CleanupFrame::updateParents(unsigned node) {
   for (int parent = nodes[node].parent; parent >= 0;
        parent = nodes[parent].parent) {
     llvm::Value *ready = lowering.builder.getTrue();
+    if (lowering.program.types->isSum(nodes[parent].type)) {
+      lowering.builder.CreateStore(lowering.builder.getFalse(),
+                                   field(nodes[parent].flag));
+      continue;
+    }
     for (auto child : nodes[parent].children)
       ready = lowering.builder.CreateAnd(
           ready, lowering.builder.CreateLoad(lowering.builder.getInt1Ty(),
@@ -272,11 +652,59 @@ void CleanupFrame::drop(unsigned node) {
       builder.CreateLoad(builder.getInt1Ty(), field(entry.flag)), destroy,
       next);
   builder.SetInsertPoint(destroy);
+  if (entry.relocation >= 0) {
+    auto *relocate =
+        llvm::BasicBlock::Create(lowering.context, "relocate", function);
+    auto *ready =
+        llvm::BasicBlock::Create(lowering.context, "aligned", function);
+    builder.CreateCondBr(
+        builder.CreateLoad(builder.getInt1Ty(), field(entry.relocatedFlag)),
+        ready, relocate);
+    builder.SetInsertPoint(relocate);
+    // The aligned copy lives in the unwind frame, including after this
+    // destructor panics and cleanup resumes with its remaining fields.
+    builder.CreateMemCpy(
+        field(entry.relocation), llvm::Align(lowering.alignment(entry.type)),
+        nodeAddress(node), llvm::Align(1), lowering.layout(entry.type).size);
+    builder.CreateStore(builder.getTrue(), field(entry.relocatedFlag));
+    builder.CreateBr(ready);
+    builder.SetInsertPoint(ready);
+  }
   // Re-entry after a panic must never repeat an already-started destructor.
   builder.CreateStore(builder.getFalse(), field(entry.flag));
-  if (entry.destructor >= 0)
-    builder.CreateCall(lowering.functions[entry.destructor],
-                       {nodeAddress(node)});
+  if (entry.nativeAction == NativeCleanup::RefRelease ||
+      entry.nativeAction == NativeCleanup::RefMutRelease) {
+    auto owner =
+        lowering.program.types
+            ->view(lowering.program.types->product(entry.type).components[0])
+            .payload;
+    auto *cell = lowering.load(
+        lowering.program.types->product(entry.type).fields[0].type,
+        nodeAddress(node), llvm::Align(lowering.alignment(entry.type)));
+    auto *counter = lowering.projectField(cell, owner, 0);
+    auto *count = builder.CreateLoad(builder.getInt64Ty(), counter);
+    builder.CreateStore(entry.nativeAction == NativeCleanup::RefRelease
+                            ? builder.CreateSub(count, builder.getInt64(1))
+                            : builder.getInt64(0),
+                        counter);
+  } else if (entry.nativeAction == NativeCleanup::VaListEnd) {
+    builder.CreateCall(
+        llvm::Intrinsic::getOrInsertDeclaration(
+            &lowering.module, llvm::Intrinsic::vaend, {builder.getPtrTy()}),
+        {nodeAddress(node)});
+  }
+  if (entry.destructor >= 0) {
+    auto parameter =
+        lowering.program.functions[entry.destructor].locals[0].type;
+    auto *self = nodeAddress(node);
+    if (lowering.program.types->isProduct(parameter) &&
+        lowering.program.types->product(parameter).kind == AggregateKind::Pin) {
+      auto *storage = lowering.temporary(parameter);
+      builder.CreateStore(lowering.construct(parameter, {self}), storage);
+      self = storage;
+    }
+    builder.CreateCall(lowering.functions[entry.destructor], {self});
+  }
   builder.CreateBr(next);
   builder.SetInsertPoint(next);
   for (auto child : entry.children)
@@ -302,6 +730,10 @@ llvm::Function *CleanupFrame::dropCallback(unsigned node) {
 
 void CleanupFrame::callDrop(unsigned node, llvm::Value *unwinding) {
   auto &builder = lowering.builder;
+  if (lowering.freestanding) {
+    builder.CreateCall(dropCallback(node), {frame, unwinding});
+    return;
+  }
   builder.CreateCall(lowering.runtime("mettle_rt_cleanup", builder.getVoidTy(),
                                       {builder.getPtrTy(), builder.getPtrTy(),
                                        builder.getInt32Ty()}),
@@ -357,24 +789,64 @@ llvm::Value *CleanupFrame::createWrapper() {
   builder.SetInsertPoint(
       llvm::BasicBlock::Create(lowering.context, "entry", wrapper));
   frame = builder.CreateAlloca(frameType, nullptr, "frame");
-  for (const auto &node : nodes)
+  llvm::cast<llvm::AllocaInst>(frame)->setAlignment(
+      llvm::Align(frameAlignment));
+  for (const auto &node : nodes) {
     builder.CreateStore(builder.getFalse(), field(node.flag));
+    if (node.relocation >= 0)
+      builder.CreateStore(builder.getFalse(), field(node.relocatedFlag));
+  }
+  if (source.variadicCursor >= 0) {
+    auto *cursor = field(localFields[source.variadicCursor]);
+    builder.CreateStore(llvm::Constant::getNullValue(lowering.type(
+                            source.locals[source.variadicCursor].type)),
+                        cursor);
+    builder.CreateCall(
+        llvm::Intrinsic::getOrInsertDeclaration(
+            &lowering.module, llvm::Intrinsic::vacopy, {builder.getPtrTy()}),
+        {cursor, wrapper->getArg(source.parameters)});
+    builder.CreateCall(
+        llvm::Intrinsic::getOrInsertDeclaration(
+            &lowering.module, llvm::Intrinsic::vaend, {builder.getPtrTy()}),
+        {wrapper->getArg(source.parameters)});
+    if (locals[source.variadicCursor] != std::numeric_limits<unsigned>::max())
+      set(roots[locals[source.variadicCursor]].node, true);
+  }
   for (unsigned i = 0; i < source.parameters; ++i) {
-    builder.CreateStore(wrapper->getArg(i), field(localFields[i]));
+    if (source.locals[i].mode == ParameterMode::Read ||
+        source.locals[i].mode == ParameterMode::Mut)
+      builder.CreateStore(wrapper->getArg(i), field(localFields[i]));
+    else
+      lowering.store(source.locals[i].type, wrapper->getArg(i),
+                     field(localFields[i]),
+                     llvm::Align(lowering.alignment(source.locals[i].type)));
     if (locals[i] != std::numeric_limits<unsigned>::max())
       set(roots[locals[i]].node, true);
   }
-  for (const auto &root : roots)
-    if (root.indirect)
-      set(root.node, true);
+  for (std::size_t i = 0; i < source.locals.size(); ++i)
+    if (source.locals[i].storage == StorageDuration::Static) {
+      builder.CreateStore(lowering.statics.at(source.locals[i].staticIndex),
+                          field(localFields[i]));
+      if (locals[i] != std::numeric_limits<unsigned>::max())
+        set(roots[locals[i]].node, true);
+    }
   auto *outerFrame = frame;
-  builder.CreateCall(lowering.runtime("mettle_rt_run", builder.getVoidTy(),
-                                      {builder.getPtrTy(), builder.getPtrTy(),
-                                       builder.getPtrTy()}),
-                     {frame, bodyFunction, cleanupFunction});
+  if (lowering.freestanding)
+    builder.CreateCall(bodyFunction, {frame});
+  else
+    builder.CreateCall(
+        lowering.runtime(
+            source.abi == "C" || source.abi == "system" ? "mettle_rt_run_c"
+                                                        : "mettle_rt_run",
+            builder.getVoidTy(),
+            {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()}),
+        {frame, bodyFunction, cleanupFunction});
   finishWrapper(outerFrame);
   frame = bodyFunction->getArg(0);
   return outerFrame;
+}
+llvm::Value *CleanupFrame::variadicContext() {
+  return field(localFields[source.variadicCursor]);
 }
 
 void CleanupFrame::finishWrapper(llvm::Value *outerFrame) {
@@ -384,8 +856,9 @@ void CleanupFrame::finishWrapper(llvm::Value *outerFrame) {
   else if (source.result == Type::Unit)
     lowering.builder.CreateRetVoid();
   else
-    lowering.builder.CreateRet(lowering.builder.CreateLoad(
-        lowering.type(source.result), field(resultField)));
+    lowering.builder.CreateRet(
+        lowering.load(source.result, field(resultField),
+                      llvm::Align(lowering.alignment(source.result))));
 }
 
 void CleanupFrame::store(const ir::Instruction &instruction,
@@ -400,13 +873,18 @@ void CleanupFrame::store(const ir::Instruction &instruction,
       builder.CreateStore(address(root.place), field(root.field));
       set(root.node, true);
     }
-    builder.CreateCall(lowering.runtime("mettle_rt_replace",
-                                        builder.getVoidTy(),
-                                        {builder.getPtrTy(), builder.getPtrTy(),
-                                         builder.getPtrTy()}),
-                       {frame, replacement.destroy, replacement.install});
+    if (lowering.freestanding) {
+      builder.CreateCall(replacement.destroy, {frame, builder.getInt32(0)});
+      builder.CreateCall(replacement.install, {frame});
+    } else
+      builder.CreateCall(
+          lowering.runtime(
+              "mettle_rt_replace", builder.getVoidTy(),
+              {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()}),
+          {frame, replacement.destroy, replacement.install});
   } else {
-    builder.CreateStore(value, address(instruction.place));
+    lowering.store(instruction.operands[0].type, value,
+                   address(instruction.place), alignment(instruction.place));
     auto node = placeNode(instruction.place);
     if (node != std::numeric_limits<unsigned>::max()) {
       set(node, true);
@@ -416,15 +894,33 @@ void CleanupFrame::store(const ir::Instruction &instruction,
 }
 
 void CleanupFrame::scopeExit(int scope) {
-  for (int node : plan.scopes.at(scope))
-    callDrop(planNodes[node],
-             lowering.builder.CreateCall(lowering.runtime(
-                 "mettle_rt_panicking", lowering.builder.getInt32Ty(), {})));
+  for (int node : plan.scopes.at(scope)) {
+    llvm::Value *unwinding = lowering.builder.getInt32(0);
+    if (!lowering.freestanding)
+      unwinding = lowering.builder.CreateCall(lowering.runtime(
+          "mettle_rt_panicking", lowering.builder.getInt32Ty(), {}));
+    callDrop(planNodes[node], unwinding);
+  }
+}
+void CleanupFrame::dropPlace(const Place &place) {
+  auto node = placeNode(place);
+  if (node == std::numeric_limits<unsigned>::max())
+    return;
+  const auto &root = roots[nodes[node].root];
+  if (root.indirect && root.local < 0)
+    lowering.builder.CreateStore(address(place), field(root.field));
+  set(node, true);
+  llvm::Value *unwinding = lowering.builder.getInt32(0);
+  if (!lowering.freestanding)
+    unwinding = lowering.builder.CreateCall(lowering.runtime(
+        "mettle_rt_panicking", lowering.builder.getInt32Ty(), {}));
+  callDrop(node, unwinding);
 }
 
 void CleanupFrame::returnValue(ir::Value value, llvm::Value *result) {
   if (source.result != Type::Unit && source.result != Type::Never) {
-    lowering.builder.CreateStore(result, field(resultField));
+    lowering.store(source.result, result, field(resultField),
+                   llvm::Align(lowering.alignment(source.result)));
     consume(value);
   }
   lowering.builder.CreateRetVoid();

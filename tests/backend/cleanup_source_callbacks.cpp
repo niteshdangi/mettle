@@ -15,18 +15,23 @@ extern "C" void mettle_test_cleanup_source_record(std::int32_t tag) {
 
 extern "C" std::int32_t mettle_test_cleanup_source_result(std::int32_t code,
                                                           std::int32_t mode) {
-  constexpr std::array<std::int32_t, 41> scopes{
-      102, 103, 101,           // statement temporaries
-      201, 202,                // if condition
-      301, 310, 302, 311, 303, // while conditions
-      401, 402, 403, 404, 406, 407, 409, 410,
-      411, 412,                              // short-circuit operands
-      502, 501, 503,                         // discarded block tail
-      605, 602, 603, 604, 601,               // reverse roots, ordered fields
-      701, 703, 702, 712, 711,               // owned return and early return
-      810, 830, 820, 811, 831, 821, 840, 801 // continue and break
+  constexpr std::array<std::int32_t, 60> scopes{
+      102,  103,  101,             // statement temporaries
+      201,  202,                   // if condition
+      301,  310,  302,  311,  303, // while conditions
+      401,  402,  403,  404,  406,  407, 409, 410,
+      411,  412,                   // short-circuit operands
+      502,  501,  503,             // discarded block tail
+      605,  602,  603,  604,  601, // reverse roots, ordered fields
+      701,  703,  702,  712,  711, // owned return and early return
+      810,  830,  820,  811,  831,  821, 840, 801, // continue and break
+      1002, 1001, 1004, 1003,       // protected labeled break result
+      1021, 1010, 1022, 1011, 1030, // cross-loop continue cleanup
+      1101, 1102, 1103,             // active variants only
+      1121, 1199, 1121, 1122,       // failed fields, established whole
+      1132, 1133, 1131              // consuming array rest
   };
-  constexpr std::array<std::int32_t, 3> arguments{902, 905, 901};
+  constexpr std::array<std::int32_t, 4> arguments{902, 903, 905, 901};
   std::span<const std::int32_t> expected(scopes);
   if (mode != 0)
     expected = arguments;

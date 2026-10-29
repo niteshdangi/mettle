@@ -134,6 +134,17 @@ tests expecting ordinary exit status 1 cannot count a report as a passing case.
 Sanitizer startup must pass before analysis/test execution; a failed startup is
 a failed sanitizer gate, never an exemption or evidence of memory safety.
 
+`tests/backend/memory.py` checks the emitted atomic code with the pinned TSan
+runtime. It first requires a clean startup and an actual intentional-race report
+with exit status 99. A test-only copy of emitted LLVM receives `sanitize_thread`
+function attributes and is instrumented at `-O1`; original IR and source hashes
+are retained. Independent C++ thread cases exercise release/acquire publication,
+acquiring failed CAS and a sequential-consistency store-buffering litmus, with
+an enumerated SC model excluding the forbidden outcome. This is not a complete
+memory-model proof or blanket TSan coverage of the compiler, libraries or
+uninstrumented emitted programs. Native thread implementation still requires
+its own race/failure validation when it lands.
+
 On the current macOS 27.0.1 host, the previous LLVM 21.1.8 ASan runtime stalled before
 `main`. A local startup sample shows reentrant initialization via dyld cache
 enumeration and malloc. The matching

@@ -3,7 +3,10 @@
 Status: I01 foundation is complete for the native macOS ARM64 compiler host and
 Linux x86-64 target execution. I02 scalar source compilation is qualified within
 that host/target scope. I03 concrete ownership and resource cleanup is qualified
-within the same scope; I04-I16 remain planned.
+within the same scope. I04 composition and I05 generic typing/dispatch are
+complete and qualified within that scope. I06's initial machine boundary is also
+complete and qualified; native, sanitizer, quality, reproducibility and target
+receipts record the exact scope. I07-I16 remain planned.
 The selected design is in the linked specifications. Scalar execution does not
 establish full language, library or release correctness.
 
@@ -197,8 +200,9 @@ or CI infrastructure purchase is implied by this plan.
 Each milestone ends in an executable or independently inspectable artifact,
 with positive/negative checks and retained evidence. Creating directories,
 emitting unchecked LLVM IR, assigning API mappings or counting source lines is
-not completion. I01-I03 are complete within their recorded host/target scope;
-I04-I16 are not started.
+not completion. I01-I05 are complete within their recorded host/target scope.
+Their revision-bound qualification receipts establish the completion gates;
+I06 is in progress; I07-I16 are not started.
 
 | ID | Milestone | Exit artifact / decisive check | Prerequisites |
 | --- | --- | --- | --- |
@@ -371,14 +375,96 @@ labels/ranges/arrays and exhaustive control flow. Consume all applicable existin
 example fixtures without weakening their expectations. A malformed program
 must not satisfy a fixture intended to reject ownership or generic-body use.
 
+The first I04 dependency implements non-generic transparent aliases and concrete
+static associated functions. Product identities are collected before forward
+alias expansion, and aliases preserve nominal/Copy/access/destruction behavior
+rather than defining wrapper types. Cycles, unknown targets and unbound
+region-specific aliases diagnose. `Type::function`, alias-qualified calls and
+`Self` construction/lookup resolve without changing source spelling; static
+functions have no implicit receiver. Explicit qualified read/mut/take method
+calls retain their access contracts and are not implicitly two-phase.
+Existing source/IR runners cover execution, intended rejection phases, inferred
+associated results, view origins, resource cleanup and checked-data lifetime.
+The next dependency adds lexical labeled break/continue targets and value-producing
+`loop` expressions. Target-aware flow summaries distinguish outer exits from inner
+ones; joined break values preserve declaration-based result inference and while
+loops remain unit-valued. Lowering cleans all exited scopes and protects owned
+break results during cleanup/unwind before transferring into the loop result.
+The existing native trace fixture now checks fifty ordered destructions across
+normal source scopes, including labeled jumps, and a pending break result destroyed
+when scope cleanup panics during later-argument evaluation.
+The remaining I04 work is integrated in one batch rather than separately
+requalifying each small syntax addition: source-preserving external/inline module
+assembly, imports/reexports/visibility, concrete enums and active-alternative
+cleanup, guarded read/mut/take patterns, nested coverage and scalar/range/or-patterns,
+conditional/destructuring/parameter patterns, nested optionals/outcomes and typed
+failure continuations, defaults/custom constructors, tuples/fixed arrays/rest
+borrows, bounded indexing, ranges/iteration, and Unicode scalar/byte literals.
+Required array lengths evaluate checked integer expressions independently of
+source arithmetic profile; the general const-function/package evaluator remains I09.
+
+The existing extended examples for nested optionals, typed outcomes and
+defaults/methods execute unchanged. Interface/generic/callable fixtures remain
+their I05 owners rather than being weakened to fit I04. Current behavioral,
+native-cleanup and multi-file module runners provide the implementation evidence;
+final native, sanitizer, reproducibility and Linux receipts remain the qualification
+authority. This does not claim generic typing, a stable foreign ABI, complete
+numeric/library behavior, release-platform coverage or Rust-runtime parity.
+
+I04 native qualification (2026-10-29): Debug/Release pass fourteen CTest suites
+each, including in-memory and multi-file module checks; ASan/UBSan passes fifteen.
+All three clean rebuilds are byte-identical, including the module-test executable
+and resolution archive. Each configuration executes 216 run-pass profile cases,
+168 intended compile-fail cases and 28 arithmetic/profile cases. The native source
+trace verifies sixty ordered drops, including active variants, consuming array
+rest bindings and constructor failure that must not invoke the whole destructor.
+The target runner selects 246 source/profile cases per ordinary compiler build,
+including external multi-file fixtures, plus six native cleanup probes and the
+foundation smoke. Completion requires that runner's passed, current-identity
+receipt as well as the ordinary/instrumented quality receipts; all are retained
+under `build/macos-arm64/`, `build/quality/` and `build/linux-target/`.
+
 I05 implements declaration-based generic bodies and specialization, named and
 higher-ranked regions, variance, const parameters, associated types/constants
-and GATs, coherence, lookup, operators, closures and callable modes. Add unsized
-constraints, explicit erased dispatch and opaque return identities. Prove with
-negative cases that a Copy instantiation grants no undeclared ownership rights,
-overlap cannot be selected by order and a region cannot escape its binder.
+and GATs, coherence, lookup, operators, closures and callable modes. It includes
+unsized constraints, explicit erased dispatch and opaque return identities.
+Negative cases check that a Copy instantiation grants no undeclared ownership
+rights, overlap cannot be selected by order and a region cannot escape its binder.
 The core constant expressions needed by const parameters precede the expanded
 const-function evaluator in I09.
+
+The I05 source corpus covers generic declaration rights, type/const defaults and
+specialization, associated families/constants, coherence and explicit lookup,
+receiver priority and once-only dereference projections, operators, callable
+modes, higher-ranked region obligations, slice/tail metadata, borrowed erased
+mutation/upcasts and opaque Self/associated results. Ownership regressions retain
+loans through generic erased results and unknown mutable writebacks. The compiler
+architecture records the private slice/witness representations and the explicit
+sized-adapter requirement for erasing a witness-metadata implementor itself.
+That conversion is not silently implemented with allocation.
+
+I05 closure requires current Debug/Release and ASan/UBSan CTest, byte-identical
+clean rebuilds, the fast and build-directory quality gates, and Linux x86-64
+source/module/cleanup execution. Revision-bound receipts under
+`build/macos-arm64/`, `build/quality/` and `build/linux-target/` are the authority;
+historical I04 counts or focused scratch runs do not establish I05 completion.
+This scope does not claim complete libraries, the I06 machine boundary, stable
+foreign ABI, Linux compiler-host qualification or Rust-runtime parity.
+
+I05 qualification passed on 2026-10-29: Debug/Release pass fourteen CTest suites
+each and ASan/UBSan passes fifteen, including detector probes. Each configuration
+executes 286 positive source/profile cases, 204 intended rejections and 28
+arithmetic/profile cases. Fast quality and ordinary/instrumented build-directory
+quality pass, including static analysis; all three clean rebuilds are
+byte-identical. Linux Debug/Release each execute 316 source/profile cases,
+including modules and arithmetic, six cleanup cases and the foundation smoke.
+The source execution uses two bounded lanes while retaining the original
+600-second whole-request deadline and per-link/program limits. All source,
+tool, sysroot, compiler and output identities were verified; the VM was stopped.
+`build/i05-qualification.json` records the underlying receipts. Documentation-only
+completion records are checked by the fast gate without rerunning unchanged
+compiler matrices; the aggregate receipt distinguishes those updates from the
+qualified compiler snapshot.
 
 ### 8.3. Native libraries and machine boundary: I06-I08
 
@@ -390,6 +476,167 @@ on their applicable first execution/reference environments. Never substitute
 an unsafe caller workaround for an unimplemented safe operation.
 Use C round trips, layout/calling probes and independent memory-model cases;
 sanitizer success alone is not a safety proof.
+
+Current I06 integration includes primitive widths, IEEE floats/conversions,
+raw pointers, volatile and memory-copy/swap/replacement operations,
+transmutation/zeroing with unsafe validity obligations, explicit uninitialized
+and manual-drop storage, interior mutation, inline pinning and scalar atomics.
+Native C scalar/aggregate/callback/varargs and compatible-unwind probes execute,
+as does a no-entry freestanding object with no undefined runtime symbols.
+Packed-field destruction now uses aligned storage that survives a destructor
+panic; remaining fields finish once on re-entry. Structural pin projections,
+pinned destructors, explicit pin receivers, Unpin properties, integer/C enum
+representations and overlapping unions have native and target evidence.
+I06's final qualified snapshot and its limits are recorded below; the older
+focused batches remain integration history, not substitutes for that gate.
+
+#### I06 acceptance inventory
+
+Reconciled on 2026-10-29 against section 8.3, the 24 I06-owned rows in
+`docs/capabilities.csv`, their linked specifications, current implementation
+paths and retained receipts. This inventories existing obligations; it does not
+add a new milestone or amend a language contract. Section 9's distinction
+between initial milestone delivery and I13's complete operation/profile closure
+still applies. Resolve an ambiguous boundary explicitly rather than silently
+expanding or deferring it.
+
+Implementation state is separate from evidence. **Partial** means a known
+implementation gap remains; **implemented** does not mean fully verified.
+Every row below passed its applicable initial-profile I06 gate on the recorded
+frozen snapshot. The last column names acceptance checks and explicit later
+limits, not an outstanding I06 source backlog. Historical/focused results alone
+cannot establish coverage after further compiler edits.
+
+| ID | Contract and implementation state | Implementation/evidence | Qualified acceptance scope and later limits |
+| --- | --- | --- | --- |
+| L001 | Integer widths/literals: implemented initial composition | Full-width typed constants, patterns/ranges and substitutions; checked array-count narrowing, usize inference/indexing and pointer-width slice iteration have focused evidence | Frozen-input qualification of boundaries and composition. Bounded const execution is not general I09 const programming. |
+| L002 | Overflow profiles: implemented | LLVM checked operations and focused debug/release arithmetic cases | Consolidated boundary/exception cases on the frozen compiler and qualified target. |
+| L003 | Explicit arithmetic families: implemented initial families | `types/machine.cpp`, LLVM numeric operations | Declared initial-family width/exception acceptance cases; I13 retains complete stable-operation inventory closure. |
+| L004 | Boolean/short-circuit behavior: implemented | Existing scalar corpus; boolean memory/atomic cases | Current-input short-circuit and byte-storage regressions; no effects from an unevaluated branch. |
+| L005 | Floating/conversion policy: implemented initial mechanisms | Direct rounding, strict defaults, checked integer-destination conversions and explicit inherited floating relaxations | Frozen-input NaN/signed-zero/rounding/conversion and policy qualification; no implicit relaxed release mode. |
+| L012 | Unsafe unions: implemented | `syntax/parser/declarations.cpp`, typed overlap checks, C union round trips | Current sanitizer/target validity, overlapping-loan, initialization and manual-destruction evidence. |
+| L014 | Raw pointers/provenance: implemented | Pointer signatures/lowering and focused raw-memory cases | Consolidated alignment, extent, provenance, validity and ownership cases; no inferred aliasing guarantees. |
+| L015 | Unsized metadata: implemented mechanisms | I05 metadata paths plus I06 pointer/cast lowering; raw slice/address/reborrow case passes in both source profiles | Frozen-input metadata-preserving target qualification; older I05 qualification is not current I06 evidence. |
+| L016 | Zero-sized values: implemented; focused cases pass | Zero-size owned-array iteration drops each element once; zero-size wrapping pointer extremes pass | Frozen-input sanitizer/target coverage of layout, iteration, arithmetic and destruction. |
+| L018 | Coercions/conversions: implemented initial composition | I05 coercions, I06 scalar/pointer/checked casts and typed integer contexts | Frozen-input qualification without hidden retain, erasure, lossy count narrowing or ownership upgrades. |
+| L031 | Interior mutability: implemented initial facilities | Safe Cell/RefCell exchange/guards and compiler-owned UnsafeCell, including view-writeback and native cleanup | Frozen-input safety, panic/forgetting and target qualification; raw access is not a replacement for a safe interface. |
+| L032 | Manual destruction/forgetting: implemented | Storage operations, in-place drop and aligned unwind-frame cleanup | Current sanitizer and failure/forgetting cases, including no repeated destruction after panic. |
+| L033 | Pinning: implemented initial contracts | Inline pinning/projections/destructors/receivers and solver-backed conditional Unpin; proof context is retained without shared assumption flags | Frozen-input generic/region/projection/writeback/destruction qualification. Heap-owner libraries remain I07 and future state machines I11. |
+| S015 | Cell/RefCell/UnsafeCell: implemented initial facilities | Safe cell operations, dynamic borrow/try-borrow guards, native release and conflict/forget/unwind cases | Frozen-input sanitizer/target and applicable operation qualification; native thread libraries remain I10. |
+| S016 | Uninitialized/manual-drop storage: implemented | `MaybeUninit`/`ManuallyDrop` signatures and focused ownership cases | Current partial-initialization, validity, explicit-drop, alignment and unwind evidence. |
+| S017 | Atomics/fences: implemented initial scalar mechanisms | Ordering validation, RMW/CAS/fences; C++ thread publication case | Independent memory-model/race evidence and applicable target width/order cases. A publication example or ASan alone is insufficient; native thread libraries remain I10. |
+| A001 | Initial C ABIs/callbacks/varargs: implemented mechanisms | Darwin ARM64/Linux x86-64 adapters, physical-entry cursor capture, independent copies, promoted/aggregate reads and cleanup | Frozen-input C round trips/cursor/cleanup qualification on Linux. Cursor transfers outside the represented initial contract are explicitly diagnosed; no new target ABI is implied. |
+| A002 | Layout/alignment: implemented initial combinations | Combined C/integer tags, transparent single-variant enums/products, unions and packed/aligned storage; exact transparent scalar ABI/callback/vararg forwarding has focused C evidence | Frozen-input sanitizer and Linux calling/layout/validity qualification; additional profile/operation closure remains I13. |
+| A003 | Symbols/linkage: implemented mechanisms | Function/static imports/exports/library selection, stable storage identities, full-width required initializers and relocations | Frozen-input symbol/link/lifetime/initialization and freestanding qualification. |
+| A004 | Compatible unwind: implemented initial boundary | Ordinary-C abort and compatible C-unwind cleanup probes | Current direct/indirect ABI rejection and cross-language cleanup/escape cases on the target. |
+| A005 | Assembly: implemented initial mechanisms | Inline/global/naked variants, typed full-width/generic constants, function/static symbols, operands/registers/clobbers/options and compiler-owned verification | Frozen-input execution, unwind/evaluation and rejection qualification; naked entries must remain physical non-inlined ABI entries. |
+| A006 | SIMD/target operations: implemented initial mechanisms | Native vector identity/layout/ABI, initial operation tables, explicit target facts, recognized feature contracts and guarded dispatch | Frozen-input sanitizer and Linux execution; distinguish unavailable optional instructions from baseline execution. Complete per-operation/profile closure remains I13. |
+| A007 | Volatile access: implemented | Explicit volatile loads/stores and raw-pointer cases | Preserve accesses under optimization without treating volatile as synchronization. |
+| A008 | Freestanding core: implemented mechanisms and fixture selection | No-entry abort, assembly/SIMD objects and undefined-symbol checks; Linux selection omits the hosted runtime | Frozen-input Linux execution and no accidental hosted dependencies for the delivered core boundary. |
+
+#### Focused integration history before qualification
+
+Evidence locations are `build/i06-focused/memory-layout/evidence.json` for the
+earlier native/sanitized batch and `build/i06-focused/pin-layout/` for the newer
+native layout/pin/union cases and localized follow-ups. The latter's selected
+35-translation-unit static analysis passed, but the newer batch has no completed
+I06 sanitizer, reproducibility or Linux qualification. Receipts retain their
+actual compiler hashes; no aggregate current-I06 approval is asserted.
+
+The shared-interface plan is recorded in `docs/compiler-architecture.md`.
+The subsequent representation-completion batch adds the combined/transparent
+cases above, raw slice metadata preservation and zero-size owned iteration.
+`build/i06-focused/representation-closure/` retains six source/profile positives,
+three source rejections, 22 C-interoperability/profile round trips and three
+foreign-ABI rejections on its Debug compiler snapshot. This is focused native
+evidence, not a new whole-milestone or sanitizer/target qualification.
+The 35-unit static-analysis result predates this representation change; the
+fresh final static, sanitizer, reproducibility and target gates were still required.
+
+The existing ledger groups the known source gaps into numeric composition and
+policy, cell/borrow guards, remaining pin conditions, representation combinations,
+static/linkage storage, variadic definitions, assembly, and SIMD/target features.
+The representation and numeric implementation workstreams now have focused
+completion evidence. Numeric integration retained 74 positive profiles, 39
+rejections and 16 arithmetic/override cases. Parent review corrected additional
+wide-count, usize-index and zero-array-alignment gaps directly; the original
+agent delta, parent fixes and evidence are retained under the session's
+`files/i06-parallel/results/numeric/`. Its temporary worktree was removed only
+after integration and checks. The ownership and FFI lanes have also been merged
+and checked, including their cross-lane native-cleanup, proof-context and static
+initialization seams. Their raw receipts retain 94 passing positive profiles and
+51 rejections; two corrected source fixtures and one owning diagnostic are covered
+by explicit passing follow-ups, without relabeling the raw failed batch. Eight
+arithmetic/trap cases, IR boundaries and 44 native C/profile round trips plus three
+ABI rejections passed. Source changes and exact scopes are retained in the
+session's `files/i06-parallel/results/ffi-ownership-integrated-evidence.json`.
+The cancelled assembly/SIMD worker's complete source was recovered and integrated
+by the parent without restarting it. Parent fixes connected static symbols and
+full-width/generic required constants, kept naked entries separate from static
+frames and variadic cursors, and corrected wide-vector variadic overflow reads.
+A release-only regression exposed LLVM inlining a naked physical entry; those
+entries now carry an explicit no-inline contract. Scoped native positives,
+32 rejections, IR boundaries and 20 C/profile round trips plus an assembler
+rejection passed, with exact follow-ups retained for the original failed receipt.
+The integrated Linux x86-64 cross-emission batch passed 91 cases; this is not
+Linux execution. Evidence is under `build/i06-focused/target-integration/`.
+Final parent review also found mismatched register ABIs across guarded vector
+calls. Storage-only bridges now cover direct/indirect calls, C calls and reverse
+transitions into baseline generic code. Linux AVX2 availability was confirmed;
+four affected source/profile cases and two independent C/profile follow-ups
+passed. The retained pre-fix compiler fails the independent C case. Its C
+translation unit uses an explicit AVX ABI profile; a per-function codegen
+attribute alone did not establish that ABI in the original fixture. Raw failed
+diagnostic receipts remain unchanged. The final affected native batch passed
+38 positive profiles, 20 C/profile round trips, one assembler rejection and IR
+boundaries. These are scoped integration checks, not whole-I06 qualification.
+The first frozen Debug gate completed static analysis and passed 14 of 16 CTest
+suites, but exposed a unit-result materialization crash in the new call bridge.
+The freeze was reopened: native Unit/Never calls must retain a real unit value,
+not a null LLVM value, for subsequent storage/cleanup lowering. The original
+failed receipts remain retained; only the affected cases and translation unit
+need repeating before qualification resumes.
+The independent constructed cleanup-frame fixture separately lacked the typed
+destructor descriptors now required to distinguish pinned receivers. Its
+ordinary runtime callbacks now have matching compiler-owned descriptors rather
+than weakening the backend's validated-program contract.
+The six affected source profiles, constructed cleanup-frame test and both
+changed translation units' static analysis now pass. Unchanged passing groups
+are retained with the conditional-unit-result dependency rationale; the failed
+original gate is not relabeled as passing.
+All four worker deltas and parent fixes are retained under the session's
+`files/i06-parallel/results/`; worktree cleanup is recorded separately.
+Linux fixture selection now explicitly uses x86-64 source templates rather than
+the compiler host's architecture and includes both standalone freestanding cases.
+Acceptance-fixture integration and documentation synchronization preceded freezing;
+these focused batches alone did not establish whole-I06 qualification.
+The source-freeze gate depends on these tasks; qualification depends on that gate,
+and milestone completion depends on qualification. Reopen affected gates and
+invalidate dependent evidence when a later source change is necessary.
+
+#### I06 qualification result
+
+I06 completed on 2026-10-29 for the native macOS ARM64 compiler host and Linux
+x86-64 target execution. `build/i06-qualification.json` binds the qualified source,
+tools, sysroots, artifacts, raw receipts and final documentation-only status delta.
+The historical `build/i05-qualification.json` remains unchanged.
+
+- Debug: all 247 source cases/494 profiles covered through the explicit continuation
+  of the original gate; fourteen originally passing suites were retained, three
+  repaired cases passed both profiles and the constructed cleanup fixture passed.
+  The original failed receipts remain unchanged.
+- Static analysis: 127 selected translation units, with both changed units refreshed.
+  Release passed 16/16 CTest suites; ASan/UBSan passed 17/17, including startup and
+  intentional detector probes. All three configurations rebuilt byte-identically.
+- Linux: Debug and Release each passed 620 source/profile cases and six cleanup
+  cases, plus object smoke execution. Both storage and assembly/SIMD freestanding
+  probes had no undefined symbols and linked without the Mettle runtime.
+- Selected emitted-code TSan/race/model checks passed; this is not a complete
+  memory-model proof. No Linux compiler-host, release-platform, runtime-parity or
+  I13 complete stable-operation/profile qualification is claimed.
+
+All four owned implementation worktrees were removed after retention and checked
+integration. The dedicated Linux VM was stopped and its stopped state verified.
 
 I07 implements core/alloc operation families against the pinned inventory:
 unique/local-shared/weak owners, allocator identity/failure, optional/outcome

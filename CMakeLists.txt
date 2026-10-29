@@ -186,6 +186,36 @@ if(BUILD_TESTING)
         PROPERTIES ENVIRONMENT
         "ASAN_OPTIONS=halt_on_error=1:abort_on_error=0:exitcode=99;UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:exitcode=99")
     endif()
+    add_library(mettle_machine_callbacks STATIC
+                tests/backend/machine_callbacks.c tests/backend/machine_unwind.cpp)
+    set_target_properties(mettle_machine_callbacks PROPERTIES C_STANDARD 11
+                          C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+    target_compile_options(mettle_machine_callbacks PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    set(METTLE_MACHINE_TEST_FLAGS "")
+    if(APPLE)
+      list(APPEND METTLE_MACHINE_TEST_FLAGS "--sysroot=${CMAKE_OSX_SYSROOT}")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      list(APPEND METTLE_MACHINE_TEST_FLAGS "--link-arg=-fuse-ld=lld")
+    endif()
+    if(METTLE_ENABLE_SANITIZERS)
+      list(APPEND METTLE_MACHINE_TEST_FLAGS --sanitizers)
+    endif()
+    add_test(NAME backend.machine-interop
+             COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/backend/machine.py"
+                     "$<TARGET_FILE:mettle>" "${CMAKE_CXX_COMPILER}"
+                     "$<TARGET_FILE:mettle_runtime>" "$<TARGET_FILE:mettle_machine_callbacks>"
+                     "${PROJECT_BINARY_DIR}/machine-evidence" ${METTLE_MACHINE_TEST_FLAGS})
+    set_tests_properties(backend.machine-interop PROPERTIES TIMEOUT 180)
+    add_test(NAME backend.machine-memory-model
+             COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/backend/memory.py"
+                     "$<TARGET_FILE:mettle>" "${CMAKE_CXX_COMPILER}"
+                     "${PROJECT_BINARY_DIR}/memory-model-evidence"
+                     ${METTLE_MACHINE_TEST_FLAGS})
+    set_tests_properties(backend.machine-memory-model PROPERTIES TIMEOUT 240)
+    if(METTLE_ENABLE_SANITIZERS)
+      set_tests_properties(backend.machine-memory-model PROPERTIES ENVIRONMENT
+        "ASAN_OPTIONS=halt_on_error=1:abort_on_error=0:exitcode=99;UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:exitcode=99")
+    endif()
   endif()
   add_executable(mettle-object-smoke tests/backend/object_smoke.cpp)
   target_link_libraries(mettle-object-smoke PRIVATE mettle_backend_llvm)
@@ -204,6 +234,15 @@ if(BUILD_TESTING)
   target_link_libraries(mettle-ir-tests PRIVATE mettle_ir mettle_analysis mettle_pipeline)
   target_compile_options(mettle-ir-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME compiler.boundaries COMMAND mettle-ir-tests)
+  add_executable(mettle-module-tests tests/modules.cpp)
+  target_link_libraries(mettle-module-tests PRIVATE mettle_pipeline mettle_resolution)
+  target_compile_options(mettle-module-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME compiler.modules-memory COMMAND mettle-module-tests)
+  add_test(NAME compiler.modules-source
+           COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/modules.py"
+                   "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/module-evidence")
+  set_tests_properties(compiler.modules-memory compiler.modules-source
+                       PROPERTIES TIMEOUT 120)
   set_tests_properties(compiler.boundaries PROPERTIES TIMEOUT 120)
   set_tests_properties(foundation.cli foundation.object-link-run foundation.backend-errors
                        PROPERTIES TIMEOUT 120)

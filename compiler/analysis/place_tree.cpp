@@ -2,6 +2,17 @@
 #include <algorithm>
 
 namespace mettle::analysis {
+int PlaceTree::index(const Place &place) const {
+  if (auto found = indices.find(place); found != indices.end())
+    return found->second;
+  Place canonical{place.root, {}};
+  for (auto projection : place.fields)
+    project(canonical, projection);
+  if (!canonical.fields.empty() &&
+      canonical.fields.back().kind == Projection::Kind::Slice)
+    canonical.fields.pop_back();
+  return indices.at(canonical);
+}
 PlaceTree::PlaceTree(const ir::Function &function, const TypeStore &types)
     : function(function), types(types) {
   for (std::size_t i = 0; i < function.locals.size(); ++i)
@@ -9,11 +20,23 @@ PlaceTree::PlaceTree(const ir::Function &function, const TypeStore &types)
   for (const auto &block : function.blocks)
     for (const auto &instruction : block.instructions)
       if (instruction.op == ir::Op::BorrowRead ||
+          instruction.op == ir::Op::VariantTest ||
           instruction.op == ir::Op::BorrowMut ||
           instruction.op == ir::Op::ReserveMut ||
           instruction.op == ir::Op::ViewRead ||
+          instruction.op == ir::Op::ArrayBorrowRead ||
+          instruction.op == ir::Op::ArrayBorrowMut ||
+          instruction.op == ir::Op::ArrayTake ||
+          instruction.op == ir::Op::EraseView ||
+          instruction.op == ir::Op::ErasedUpcast ||
+          instruction.op == ir::Op::UnsizeView ||
+          instruction.op == ir::Op::SliceLength ||
+          instruction.op == ir::Op::SliceBorrowRead ||
+          instruction.op == ir::Op::SliceBorrowMut ||
           instruction.op == ir::Op::ViewMut || instruction.op == ir::Op::Load ||
           instruction.op == ir::Op::Move || instruction.op == ir::Op::Store ||
+          instruction.op == ir::Op::StorageWrite ||
+          instruction.op == ir::Op::DropPlace ||
           instruction.op == ir::Op::Declare)
         add(instruction.place);
   for (std::size_t i = 0; i < function.locals.size(); ++i)
@@ -22,6 +45,22 @@ PlaceTree::PlaceTree(const ir::Function &function, const TypeStore &types)
 int PlaceTree::add(const Place &place) {
   if (auto found = indices.find(place); found != indices.end())
     return found->second;
+  Place canonical{place.root, {}};
+  for (auto projection : place.fields)
+    project(canonical, projection);
+  if (canonical != place) {
+    auto id = add(canonical);
+    indices.emplace(place, id);
+    return id;
+  }
+  if (!place.fields.empty() &&
+      place.fields.back().kind == Projection::Kind::Slice) {
+    auto root = place;
+    root.fields.pop_back();
+    int id = add(root);
+    indices.emplace(place, id);
+    return id;
+  }
   int parent = -1;
   if (!place.fields.empty()) {
     auto prefix = place;
@@ -48,6 +87,18 @@ void PlaceTree::linearize(int index) {
   entries[index].last = order.size();
 }
 void PlaceTree::set(std::vector<bool> &state, int index, bool value) const {
+  const auto &place = entries[index].place;
+  Place prefix{place.root, {}};
+  for (auto projection : place.fields) {
+    auto owner =
+        projectedType(types, function.locals[place.root].type, prefix.fields);
+    if (owner && types.isProduct(*owner) &&
+        types.product(*owner).layout.unionType) {
+      index = this->index(prefix);
+      break;
+    }
+    prefix.fields.push_back(projection);
+  }
   for (auto i = entries[index].first; i < entries[index].last; ++i)
     state[order[i]] = value;
 }

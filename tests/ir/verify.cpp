@@ -202,6 +202,25 @@ void phaseOwnership() {
       if (instruction.op == Op::Construct)
         instruction.operands.clear();
   rejected(malformed, "operand count");
+  mettle::Diagnostics aliases;
+  auto aliasSyntax = mettle::parse(
+      {"alias.mt", "alias Coordinate = Point\n"
+                   "copy type Point { value: i32; "
+                   "static fn make(value: i32): Self { Self(value) } }\n"
+                   "fn main() { Coordinate::make(42).value }\n"},
+      aliases);
+  auto aliasChecked = mettle::check(std::move(aliasSyntax), aliases);
+  require(aliasChecked.has_value(), "declaration aliases failed checking");
+  require(aliasChecked->syntax().aliases[0].target.name == "Point",
+          "alias checking changed target syntax");
+  const auto &aliasMain = aliasChecked->syntax().functions[0];
+  const auto &aliasCall = *aliasMain.body->children[0]->children[0];
+  require(aliasCall.children[0]->text == "Coordinate::make",
+          "associated lookup rewrote qualified source spelling");
+  auto aliasProgram = mettle::lowering::lower(*aliasChecked, aliases);
+  aliasChecked.reset();
+  require(verify(aliasProgram, aliases),
+          "alias/type identities depended on checked syntax lifetime");
 }
 void ownedValueCases() {
   mettle::Diagnostics diagnostics;
@@ -322,12 +341,86 @@ void ownedValueCases() {
   route.values = 4;
   rejectedOwner(std::move(branch), "already have been consumed");
 }
+void variantRefinementCases() {
+  mettle::Diagnostics diagnostics;
+  auto compiled = mettle::pipeline::compile(
+      {"variants.mt",
+       "copy enum Value { Empty; Held(i32) }\n"
+       "fn unpack(value: Value) { match value { Value::Empty => 0, "
+       "Value::Held(payload) => payload } }\n"
+       "fn main() { unpack(Value::Held(42)) }\n"},
+      diagnostics);
+  require(compiled.has_value(), "valid tagged pattern CFG rejected");
+  auto malformed = compiled->program();
+  for (auto &function : malformed.functions)
+    if (function.name == "unpack")
+      for (auto &block : function.blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.op == Op::VariantTest)
+            instruction = {Op::Constant,
+                           instruction.result,
+                           {},
+                           {},
+                           "",
+                           {-1, {}},
+                           -1,
+                           1,
+                           {}};
+  mettle::Diagnostics rejectedTag;
+  require(!mettle::pipeline::admit(std::move(malformed), rejectedTag),
+          "unrefined variant payload was admitted");
+  require(std::any_of(rejectedTag.items.begin(), rejectedTag.items.end(),
+                      [](const auto &item) {
+                        return item.phase == "internal" &&
+                               item.message.find("tag refinement") !=
+                                   std::string::npos;
+                      }),
+          "missing variant-refinement diagnostic");
+  malformed = compiled->program();
+  for (auto &function : malformed.functions)
+    for (auto &block : function.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.op == Op::VariantConstruct)
+          instruction.number = 999;
+  rejected(malformed, "variant constructor");
+}
+void conditionalUnpinProofCases() {
+  mettle::Diagnostics diagnostics;
+  auto compiled = mettle::pipeline::compile(
+      {"unpin.mt",
+       "interface Ready {}\n"
+       "impl i32 implements Ready {}\n"
+       "type Wrapper<T> { value: T; marker: core::marker::PhantomPinned }\n"
+       "unsafe impl<T: Ready> Wrapper<T> implements Unpin {}\n"
+       "fn main() { var handle = core::pin::pin("
+       "Wrapper(42,core::marker::PhantomPinned)); "
+       "let value = handle.get_mut(); 0 }\n"},
+      diagnostics);
+  require(compiled.has_value(), "validated conditional Unpin rejected");
+  auto program = compiled->program();
+  bool proof = false;
+  for (const auto &function : program.functions)
+    for (const auto &block : function.blocks)
+      for (const auto &instruction : block.instructions)
+        for (auto [subject, runtime] : instruction.unpinProofs) {
+          (void)subject;
+          proof = true;
+          require(!program.types->isUnpin(runtime),
+                  "conditional proof became an unconditional type flag");
+        }
+  require(proof, "conditional pin access lost its proof request");
+  mettle::Diagnostics unproven;
+  require(!mettle::pipeline::admit(std::move(program), unproven),
+          "conditional Unpin was admitted without its semantic proof context");
+}
 } // namespace
 int main() {
   try {
     verifierCases();
     phaseOwnership();
     ownedValueCases();
+    variantRefinementCases();
+    conditionalUnpinProofCases();
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return 1;

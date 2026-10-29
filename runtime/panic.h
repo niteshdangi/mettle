@@ -6,6 +6,8 @@ extern "C" {
 using MettleAction = void (*)(void *);
 using MettleCleanup = void (*)(void *, std::int32_t);
 void mettle_rt_run(void *context, MettleAction body, MettleCleanup cleanup);
+void mettle_rt_run_c(void *context, MettleAction body,
+                     MettleCleanup cleanup) noexcept;
 void mettle_rt_cleanup(void *context, MettleCleanup cleanup,
                        std::int32_t unwinding);
 void mettle_rt_replace(void *context, MettleCleanup destroyOld,

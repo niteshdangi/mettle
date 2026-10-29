@@ -10,6 +10,7 @@ struct DropPlace {
   int destructor = -1;
   std::vector<int> fields;
   bool indirect = false;
+  NativeCleanup nativeAction = NativeCleanup::None;
 };
 struct Plan {
   std::vector<DropPlace> places;

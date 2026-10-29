@@ -60,6 +60,7 @@ generic       = IDENT, [ ":", bounds ], [ "=", type ]
               | "const", IDENT, ":", type, [ "=", const_expression ] ;
 bounds        = bound, { "+", bound } ;
 bound         = [ "for", "<", region_list, ">" ], path, [ generic_args ]
+              | callable_type
               | "unsized" ;
 generic_args  = "<", generic_arg, { ",", generic_arg }, [ "," ], ">" ;
 generic_arg   = type | "region", region_reference
@@ -147,6 +148,12 @@ it is a type name, not a keyword. Lowercase `never` is not a built-in type alias
 The predeclared `Unit` names the unit type; `()` is its value and is not accepted
 in a type position. Callable types have no body, so their result annotation is
 required, including `fn(): Unit`.
+
+In a generic bound, the same callable syntax specifies an invocation capability,
+not a requirement that the concrete input have thin-pointer representation.
+For example, `F: fn(i32): i32` permits compatible capturing closures; `mut fn`
+and `take fn` bounds require exclusive and consuming invocation respectively.
+Satisfying such a bound does not coerce a capturing closure to a function pointer.
 
 An explicit function result parses as `: simple_type`, followed independently by
 optional `throws Error`. Returning an outcome as an ordinary value requires

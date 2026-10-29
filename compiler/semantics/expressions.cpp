@@ -1,32 +1,72 @@
 #include "semantics/checker.h"
 #include "support/limits.h"
+#include "syntax/lexer.h"
 
 namespace mettle {
 
+void Checker::requireUnsafe(Span span) {
+  if (!unsafeDepth)
+    error("unsafe", span,
+          "operation requires an unsafe block or unsafe function");
+}
 void Checker::function(Function &f) {
   current = &f;
+  guardedFeatures.clear();
+  unsafeDepth = f.unsafeFunction ? 1 : 0;
+  genericBindings(f);
+  for (const auto &obligation : interfaceAssumptions())
+    if (obligation.property == interfaces::Property::Interface)
+      facts(f).interfaceBounds.emplace_back(obligation.subject,
+                                            obligation.interfaceType);
+    else if (obligation.property == interfaces::Property::Unpin)
+      facts(f).unpinBounds.push_back(obligation.subject);
+  if (genericEnvironment)
+    facts(f).genericEqualities = genericEnvironment->equalities;
   scopes.clear();
   scopes.emplace_back();
-  loops = 0;
+  loopResults.clear();
   for (auto &p : f.parameters) {
     if (scopes.back().contains(p.name))
       error("name", p.span, "duplicate parameter '" + p.name + "'");
     auto t = annotation(p.annotation, p.span, f.owner);
-    if (t == Type::Never)
-      error("feature", p.span,
-            "uninhabited parameters are not implemented in I02");
     auto mode = p.mode == "take"           ? ParameterMode::Take
                 : p.mode == "read"         ? ParameterMode::Read
                 : p.mode == "mut"          ? ParameterMode::Mut
                 : checked.types->isCopy(t) ? ParameterMode::Value
                                            : ParameterMode::Read;
-    auto slot = local(p.name, inference.fresh(t), false, p.span);
+    auto slot = local(p.name, inference.fresh(t),
+                      f.explicitReceiver && p.name == "self" &&
+                          mode == ParameterMode::Take,
+                      p.span);
     if (slot >= 0)
       facts(f).locals[slot].mode = mode;
   }
+  if (!diagnostics.empty())
+    return;
+  if (f.body.get())
+    staticLocals();
+  parameterDefaults(f);
+  if (!f.body.get())
+    return;
+  if (!f.variadicCursor.empty()) {
+    if (f.abi.empty())
+      error("signature", f.variadicSpan,
+            "a variadic cursor requires a foreign definition");
+    if (scopes.back().contains(f.variadicCursor))
+      error("name", f.variadicSpan, "duplicate variadic cursor binding");
+    auto cursor = checked.types->structural(AggregateKind::VarArgs, {});
+    facts(f).variadicCursor =
+        local(f.variadicCursor, inference.fresh(cursor), true, f.variadicSpan);
+  }
+  constructor(f);
+  if (!f.body.get())
+    return;
+  contextualize(*f.body, inference.value(functionVariables[&f]));
   auto body = node(*f.body, true);
   if (facts(*f.body).flow.normal)
-    inference.equal(body, functionVariables[&f], f.body->span, true);
+    coerce(*f.body, body,
+           f.constructor ? inference.fresh(Type::Unit) : functionVariables[&f],
+           f.body->span);
   if (facts(f).diverges && f.annotation.empty())
     inference.equal(functionVariables[&f], inference.fresh(Type::Never),
                     f.span);
@@ -35,10 +75,36 @@ int Checker::node(Node &n, bool reachable) {
   auto unit = [&] { return inference.fresh(Type::Unit); };
   int result = inference.fresh();
   switch (n.kind) {
-  case Kind::Integer:
-    literal(n);
-    result = inference.fresh(Type::I32);
+  case Kind::Assembly:
+    result = assemblyExpression(n, reachable);
     break;
+  case Kind::FeatureTest:
+    result = featureTest(n);
+    break;
+  case Kind::Unsafe: {
+    auto depth = unsafeDepth;
+    ++unsafeDepth;
+    result = node(*n.children[0], reachable);
+    unsafeDepth = depth;
+    break;
+  }
+  case Kind::Integer:
+  case Kind::Floating:
+    result = inference.numeric(n.kind == Kind::Floating, literal(n));
+    break;
+  case Kind::Cast: {
+    node(*n.children[0], reachable);
+    auto target = annotation(n.annotation, n.span, current->owner);
+    result = inference.fresh(target);
+    break;
+  }
+  case Kind::Character: {
+    result = inference.fresh(n.flag ? Type::U8 : Type::Char);
+    auto value = characterLiteral(n.text, n.flag, diagnostics, n.span);
+    if (value)
+      facts(n).number = static_cast<std::int32_t>(*value);
+    break;
+  }
   case Kind::Boolean:
     result = inference.fresh(Type::Bool);
     facts(n).number = n.text == "true";
@@ -50,11 +116,40 @@ int Checker::node(Node &n, bool reachable) {
     result = node(*n.children[0], reachable);
     break;
   case Kind::Name: {
+    if (genericEnvironment) {
+      auto parameter = genericEnvironment->names.find(n.text);
+      if (parameter != genericEnvironment->names.end() &&
+          checked.types->isConstant(parameter->second)) {
+        facts(n).constantParameter = parameter->second;
+        result = inference.fresh(
+            checked.types->parameter(parameter->second).valueType);
+        break;
+      }
+    }
     bool localName = false;
     for (const auto &scope : scopes)
       localName |= scope.contains(n.text);
-    if (!localName && names.contains(n.text)) {
-      error("feature", n.span, "function values are not implemented in I02");
+    if (!localName)
+      if (auto primitive = machineValue(n)) {
+        result = *primitive;
+        break;
+      }
+    if (!localName)
+      if (auto constant = associatedConstant(n);
+          constant && checked.types->isConstant(*constant)) {
+        facts(n).constantParameter = *constant;
+        result = inference.fresh(checked.types->parameter(*constant).valueType);
+        break;
+      }
+    if (!localName)
+      if (auto variant = variantCall(n, n.text, reachable)) {
+        result = *variant;
+        break;
+      }
+    if (!localName &&
+        names.contains(callableName(n.text, current->owner, n.span))) {
+      result = functionValue(
+          n, names.at(callableName(n.text, current->owner, n.span)));
       break;
     }
     auto found = lookup(n.text, n.span);
@@ -64,6 +159,8 @@ int Checker::node(Node &n, bool reachable) {
   }
   case Kind::Unary: {
     if (n.text == "read" || n.text == "mut" || n.text == "*") {
+      if (n.text == "mut")
+        requireMutablePlace(*n.children[0]);
       auto operand = node(*n.children[0], reachable);
       fields(false);
       auto type = inference.value(operand);
@@ -76,7 +173,10 @@ int Checker::node(Node &n, bool reachable) {
         break;
       }
       if (n.text == "*") {
-        if (!checked.types->isView(type))
+        if (checked.types->isPointer(type)) {
+          requireUnsafe(n.span);
+          result = inference.fresh(checked.types->pointer(type).payload);
+        } else if (!checked.types->isView(type))
           error("type", n.span, "dereference requires a view");
         else
           result = inference.fresh(checked.types->view(type).payload);
@@ -92,22 +192,28 @@ int Checker::node(Node &n, bool reachable) {
     auto *literalNode = n.children[0].get();
     while (literalNode->kind == Kind::Group)
       literalNode = literalNode->children[0].get();
-    if (n.text == "-" && literalNode->kind == Kind::Integer) {
-      literal(*literalNode, true);
+    if (n.text == "-" && (literalNode->kind == Kind::Integer ||
+                          literalNode->kind == Kind::Floating)) {
+      auto suffix = literal(*literalNode, true);
       facts(n).number = facts(*literalNode).number;
+      facts(n).numeric = facts(*literalNode).numeric;
       facts(n).foldedNegativeLiteral = true;
+      result = inference.numeric(literalNode->kind == Kind::Floating, suffix);
       for (auto *child = n.children[0].get();;
            child = child->children[0].get()) {
-        nodeVariables[child] = inference.fresh(Type::I32);
+        nodeVariables[child] = result;
         if (child == literalNode)
           break;
       }
-      result = inference.fresh(Type::I32);
     } else {
       auto operand = node(*n.children[0], reachable);
+      if (auto overloaded = operatorCall(n, operand)) {
+        result = *overloaded;
+        break;
+      }
       if (n.text == "-") {
-        inference.equal(operand, inference.fresh(Type::I32), n.span, true);
-        result = inference.fresh(Type::I32);
+        numericOperations.push_back({operand, n.span, "negate"});
+        result = operand;
       } else {
         integerOrBoolean.emplace_back(operand, n.span);
         result = operand;
@@ -122,6 +228,10 @@ int Checker::node(Node &n, bool reachable) {
                     (n.text == "||" && literal == true);
     auto b = node(*n.children[1],
                   reachable && facts(*n.children[0]).flow.normal && !shortcut);
+    if (auto overloaded = operatorCall(n, a, b)) {
+      result = *overloaded;
+      break;
+    }
     if (n.text == "&&" || n.text == "||") {
       inference.equal(a, inference.fresh(Type::Bool), n.span, true);
       inference.equal(b, inference.fresh(Type::Bool), n.span, true);
@@ -134,10 +244,13 @@ int Checker::node(Node &n, bool reachable) {
       if (n.text == "&" || n.text == "|" || n.text == "^") {
         result = inference.joined(a, b, n.span);
         integerOrBoolean.emplace_back(result, n.span);
+      } else if (n.text == "<<" || n.text == ">>") {
+        numericOperations.push_back({a, n.span, "integer"});
+        numericOperations.push_back({b, n.span, "integer"});
+        result = a;
       } else {
-        inference.equal(a, inference.fresh(Type::I32), n.span, true);
-        inference.equal(b, inference.fresh(Type::I32), n.span, true);
-        result = inference.fresh(Type::I32);
+        result = inference.joined(a, b, n.span);
+        numericOperations.push_back({result, n.span, "arithmetic"});
       }
     }
     break;
@@ -145,9 +258,42 @@ int Checker::node(Node &n, bool reachable) {
   case Kind::Call:
     result = call(n, reachable);
     break;
+  case Kind::Closure:
+    result = closure(n, reachable);
+    break;
+  case Kind::None:
+  case Kind::Variant:
+  case Kind::Throw:
+  case Kind::Try:
+  case Kind::Capture:
+    result = sumExpression(n, reachable);
+    break;
+  case Kind::Match:
+    result = match(n, reachable);
+    break;
+  case Kind::Tuple:
+  case Kind::Array:
+  case Kind::Index:
+  case Kind::Range:
+  case Kind::For:
+  case Kind::Coalesce:
+    result = aggregate(n, reachable);
+    break;
+  case Kind::Arm:
+    throw std::runtime_error("match arm checked outside its match");
   case Kind::Field: {
+    facts(n).unsafeContext = unsafeDepth != 0;
     auto base = node(*n.children[0], reachable);
-    fieldRequests.push_back({&n, base, result});
+    if (n.flag) {
+      auto components =
+          inference.components(base, AggregateKind::Optional, n.span);
+      facts(n).optional = true;
+      auto payload = inference.fresh();
+      if (!components.empty())
+        fieldRequests.push_back({&n, components[0], payload});
+      result = inference.composite(AggregateKind::Optional, {payload});
+    } else
+      fieldRequests.push_back({&n, base, result});
     break;
   }
   case Kind::Block: {
@@ -166,30 +312,55 @@ int Checker::node(Node &n, bool reachable) {
     break;
   }
   case Kind::If: {
+    if (!n.patterns.empty()) {
+      result = conditionalPattern(n, reachable);
+      break;
+    }
     inference.equal(node(*n.children[0], reachable),
                     inference.fresh(Type::Bool), n.span, true);
     auto &condition = *n.children[0];
     auto literal = booleanLiteral(condition);
     bool yes = literal != false;
     bool no = literal != true;
+    auto savedFeatures = guardedFeatures;
+    if (condition.kind == Kind::FeatureTest)
+      guardedFeatures.insert(condition.text);
     auto a =
         node(*n.children[1], reachable && facts(condition).flow.normal && yes);
+    guardedFeatures = std::move(savedFeatures);
     auto b = n.children.size() == 3
                  ? node(*n.children[2],
                         reachable && facts(condition).flow.normal && no)
                  : unit();
-    result = inference.joined(a, b, n.span);
+    if (n.children.size() == 3 && expectedTypes.contains(&n)) {
+      result = inference.fresh(expectedTypes.at(&n));
+      coerce(*n.children[1], a, result, n.children[1]->span);
+      coerce(*n.children[2], b, result, n.children[2]->span);
+    } else
+      result = n.children.size() == 3
+                   ? join(*n.children[1], a, *n.children[2], b, n.span)
+                   : inference.joined(a, b, n.span);
     if (!facts(n).flow.normal)
       result = inference.fresh(Type::Never);
     break;
   }
   case Kind::Binding: {
+    if (!n.patterns.empty()) {
+      result = bindingPattern(n, reachable);
+      break;
+    }
+    if (!n.children.empty() && !n.annotation.empty())
+      contextualize(*n.children[0],
+                    annotation(n.annotation, n.span, current->owner));
     auto t = n.children.empty() ? inference.fresh()
                                 : node(*n.children[0], reachable);
     if (!n.annotation.empty()) {
       auto declared =
           inference.fresh(annotation(n.annotation, n.span, current->owner));
-      inference.equal(t, declared, n.span, true);
+      if (!n.children.empty())
+        coerce(*n.children[0], t, declared, n.span);
+      else
+        inference.equal(t, declared, n.span, true);
       t = declared;
     }
     if (n.text != "_")
@@ -199,50 +370,74 @@ int Checker::node(Node &n, bool reachable) {
   }
   case Kind::Assign: {
     auto &place = *n.children[0];
+    auto *written = &place;
+    while (written->kind == Kind::Group)
+      written = written->children[0].get();
+    if (n.text == "=" && written->kind == Kind::Field)
+      facts(*written).writeOnly = true;
+    requireMutablePlace(place);
     if (place.kind != Kind::Name && place.kind != Kind::Field &&
-        place.kind != Kind::Group &&
+        place.kind != Kind::Index && place.kind != Kind::Group &&
         !(place.kind == Kind::Unary && place.text == "*")) {
       error("type", place.span, "assignment requires a local place");
       break;
     }
     auto target = node(place, reachable);
     auto rhs = node(*n.children[1], reachable);
-    inference.equal(rhs, target, n.span, true);
+    if (n.text != "=")
+      if (auto overloaded = operatorCall(n, target, rhs)) {
+        result = *overloaded;
+        break;
+      }
+    if (n.text != "<<=" && n.text != ">>=")
+      coerce(*n.children[1], rhs, target, n.span);
     if (n.text == "&=" || n.text == "|=" || n.text == "^=")
       integerOrBoolean.emplace_back(target, n.span);
-    else if (n.text != "=")
-      inference.equal(target, inference.fresh(Type::I32), n.span, true);
+    else if (n.text == "<<=" || n.text == ">>=") {
+      numericOperations.push_back({target, n.span, "integer"});
+      numericOperations.push_back({rhs, n.span, "integer"});
+    } else if (n.text != "=")
+      numericOperations.push_back({target, n.span, "arithmetic"});
     result = unit();
     break;
   }
   case Kind::Return: {
+    if (!n.children.empty())
+      contextualize(*n.children[0],
+                    inference.value(functionVariables[current]));
     auto t = n.children.empty() ? unit() : node(*n.children[0], reachable);
-    if (reachable && (n.children.empty() || facts(*n.children[0]).flow.normal))
-      inference.equal(t, functionVariables[current], n.span, true);
+    if (reachable &&
+        (n.children.empty() || facts(*n.children[0]).flow.normal)) {
+      auto expected = current->constructor ? inference.fresh(Type::Unit)
+                                           : functionVariables[current];
+      if (n.children.empty())
+        inference.equal(t, expected, n.span, true);
+      else
+        coerce(*n.children[0], t, expected, n.span);
+    }
     result = inference.fresh(Type::Never);
     break;
   }
   case Kind::While:
   case Kind::Loop:
-    if (n.kind == Kind::While)
-      inference.equal(node(*n.children[0], reachable),
-                      inference.fresh(Type::Bool), n.span, true);
-    ++loops;
-    node(*n.children.back(),
-         reachable &&
-             (n.kind != Kind::While || facts(*n.children[0]).flow.normal) &&
-             !(n.kind == Kind::While &&
-               booleanLiteral(*n.children[0]) == false));
-    --loops;
-    result = facts(n).flow.normal ? unit() : inference.fresh(Type::Never);
+    result = loop(n, reachable);
     break;
   case Kind::Break:
   case Kind::Continue:
-    if (!loops)
-      error("type", n.span, "loop control outside a loop");
-    result = inference.fresh(Type::Never);
+    result = transfer(n, reachable);
     break;
   }
+  if (n.kind != Kind::Try && n.kind != Kind::Capture && n.kind != Kind::Closure)
+    for (const auto &child : n.children) {
+      auto effect = facts(*child).effect;
+      if (effect == Type::Unknown)
+        continue;
+      if (facts(n).effect != Type::Unknown && facts(n).effect != effect)
+        error("effects", n.span,
+              "expression combines incompatible typed failure types");
+      else
+        facts(n).effect = effect;
+    }
   nodeVariables[&n] = result;
   return result;
 }

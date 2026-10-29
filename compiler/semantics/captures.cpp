@@ -1,0 +1,516 @@
+#include "semantics/checker.h"
+#include "support/limits.h"
+#include <algorithm>
+#include <functional>
+#include <tuple>
+
+namespace mettle {
+namespace {
+ParameterMode stronger(ParameterMode a, ParameterMode b) {
+  if (a == ParameterMode::Take || b == ParameterMode::Take)
+    return ParameterMode::Take;
+  if (a == ParameterMode::Mut || b == ParameterMode::Mut)
+    return ParameterMode::Mut;
+  return ParameterMode::Read;
+}
+} // namespace
+int Checker::closure(Node &syntax, bool reachable) {
+  (void)reachable;
+  if (checked.closureBodies.size() + module.functions.size() >=
+      limits::functions) {
+    error("limit", syntax.span, "closure function limit exceeded");
+    return inference.fresh();
+  }
+  auto owned = std::make_unique<ClosureFacts>();
+  auto &closure = *owned;
+  closure.syntax = &syntax;
+  closure.parent = current;
+  closure.declaration.name =
+      "<closure-" + std::to_string(checked.closureBodies.size()) + ">";
+  closure.declaration.span = syntax.span;
+  closure.declaration.owner = current->owner;
+  closure.declaration.annotation = syntax.annotation;
+  closure.declaration.error = syntax.error;
+  auto index = checked.closureBodies.size();
+  checked.closureBodies.push_back(std::move(owned));
+  closureFunctions[&closure.declaration] = index;
+  facts(syntax).closure = static_cast<int>(index);
+  auto *outer = current;
+  closure.function.genericParameters = facts(*outer).genericParameters;
+  closure.function.interfaceBounds = facts(*outer).interfaceBounds;
+  closure.function.unpinBounds = facts(*outer).unpinBounds;
+  closure.function.genericEqualities = facts(*outer).genericEqualities;
+  auto savedScopes = scopes;
+  auto savedLoops = std::move(loopResults);
+  auto savedEffectContext = effectContext;
+  current = &closure.declaration;
+  closureScopes.emplace_back(current, scopes.size());
+  scopes.emplace_back();
+  effectContext = 0;
+  local("<environment>", inference.fresh(), false, syntax.span);
+  Type expected = Type::Unknown;
+  if (auto found = closureContexts.find(&syntax);
+      found != closureContexts.end())
+    expected = found->second;
+  const CallableType *context = checked.types->isCallable(expected)
+                                    ? &checked.types->callable(expected)
+                                    : nullptr;
+  // Interning annotations may grow callable storage.
+  std::optional<CallableType> contextCopy;
+  if (context) {
+    contextCopy = *context;
+    context = &*contextCopy;
+    if (context->parameters.size() != syntax.parameters.size())
+      error("type", syntax.span,
+            "closure parameter count does not match context");
+  }
+  auto resultType =
+      syntax.annotation.empty()
+          ? (context ? context->result : Type::Unknown)
+          : annotation(syntax.annotation, syntax.span, current->owner);
+  functionVariables[current] = inference.fresh(resultType);
+  if (!syntax.error.empty())
+    closure.function.error =
+        annotation(syntax.error, syntax.span, current->owner);
+  else if (context && context->error != Type::Unknown)
+    error("effects", syntax.span,
+          "closure typed failure requires an explicit throws annotation");
+  for (std::size_t p = 0; p < syntax.parameters.size(); ++p) {
+    const auto &parameter = syntax.parameters[p];
+    auto type =
+        parameter.annotation.empty()
+            ? (context && p < context->parameters.size()
+                   ? context->parameters[p].type
+                   : Type::Unknown)
+            : annotation(parameter.annotation, parameter.span, current->owner);
+    auto mode = parameter.mode == "take"   ? ParameterMode::Take
+                : parameter.mode == "read" ? ParameterMode::Read
+                : parameter.mode == "mut"  ? ParameterMode::Mut
+                : context && p < context->parameters.size()
+                    ? context->parameters[p].mode
+                : checked.types->isCopy(type) ? ParameterMode::Value
+                                              : ParameterMode::Read;
+    if (scopes.back().contains(parameter.name))
+      error("name", parameter.span, "duplicate closure parameter");
+    auto slot =
+        local(parameter.name, inference.fresh(type), false, parameter.span);
+    if (slot >= 0)
+      closure.function.locals[slot].mode = mode;
+    Parameter declaration{parameter.name, parameter.annotation, parameter.span,
+                          parameter.mode};
+    closure.declaration.parameters.push_back(std::move(declaration));
+  }
+  for (std::size_t p = 0; p < closure.declaration.parameters.size(); ++p) {
+    auto &parameter = syntax.parameters[p];
+    if (!parameter.pattern)
+      continue;
+    auto first = closure.function.locals.size();
+    pattern(*parameter.pattern, localVariables[current][p + 1],
+            closure.function.locals[p + 1].mode);
+    for (auto slot = first; slot < closure.function.locals.size(); ++slot)
+      closure.function.parameterBindings[static_cast<int>(slot)] = p + 1;
+    irrefutable.emplace_back(&*parameter.pattern,
+                             localVariables[current][p + 1]);
+  }
+  staticLocals();
+  flow(*syntax.children[0], current->owner);
+  contextualize(*syntax.children[0], resultType);
+  auto body = node(*syntax.children[0], true);
+  if (facts(*syntax.children[0]).flow.normal)
+    coerce(*syntax.children[0], body, functionVariables[current], syntax.span);
+  fields(false);
+  completeClosure(closure);
+  current = outer;
+  scopes = std::move(savedScopes);
+  loopResults = std::move(savedLoops);
+  effectContext = savedEffectContext;
+  closureScopes.pop_back();
+  if (context && compatibleCallable(closure.type, expected)) {
+    facts(syntax).callableCoercion = expected;
+    facts(syntax).callableSource = closure.type;
+    facts(syntax).rebuiltType = expected;
+    return inference.fresh(expected);
+  }
+  return inference.fresh(closure.type);
+}
+void Checker::completeClosure(ClosureFacts &closure, bool final) {
+  const auto &syntax = *closure.syntax;
+  closure.function.result =
+      inference.value(functionVariables.at(&closure.declaration));
+  closure.function.abiResult =
+      closure.function.error == Type::Unknown
+          ? closure.function.result
+          : checked.types->structural(
+                AggregateKind::Outcome,
+                {closure.function.result, closure.function.error});
+  resolveClosure(closure, final);
+  bool unresolved = closure.function.result == Type::Unknown;
+  for (std::size_t i = 1; i < closure.function.locals.size(); ++i)
+    unresolved |= closure.function.locals[i].type == Type::Unknown;
+  if (final && closure.function.result == Type::Unknown)
+    error("type", syntax.span, "cannot infer closure result; add ': Type'");
+  closure.deferred = unresolved;
+  closure.captures.clear();
+  closure.function.resultSources.clear();
+  if (!unresolved)
+    inferCaptures(closure);
+  CallableType descriptor;
+  descriptor.function =
+      static_cast<int>(closureFunctions.at(&closure.declaration));
+  descriptor.result = closure.function.result;
+  descriptor.error = closure.function.error;
+  descriptor.abiResult = closure.function.abiResult;
+  for (std::size_t p = 0; p < syntax.parameters.size(); ++p) {
+    auto &local = closure.function.locals[p + 1];
+    if (syntax.parameters[p].mode.empty() && !closureContexts.contains(&syntax))
+      local.mode = checked.types->isCopy(local.type) ? ParameterMode::Value
+                                                     : ParameterMode::Read;
+    descriptor.parameters.push_back(
+        {local.type, local.mode, syntax.parameters[p].name});
+  }
+  std::vector<TypeField> fields;
+  for (std::size_t c = 0; c < closure.captures.size(); ++c) {
+    auto &capture = closure.captures[c];
+    descriptor.mode = stronger(descriptor.mode, capture.mode);
+    if (final && !syntax.flag && capture.mode == ParameterMode::Take)
+      error("ownership", capture.span,
+            "moving a captured place requires a take closure");
+    capture.storedType =
+        syntax.flag ? capture.type
+                    : checked.types->viewType(capture.type,
+                                              capture.mode == ParameterMode::Mut
+                                                  ? ParameterMode::Mut
+                                                  : ParameterMode::Read);
+    fields.push_back(
+        {"<capture-" + std::to_string(c) + ">", capture.storedType});
+  }
+  if (checked.types->containsViews(closure.function.abiResult)) {
+    std::vector<std::size_t> eligible;
+    bool capturedViews = false;
+    for (const auto &field : fields)
+      capturedViews |= checked.types->containsViews(field.type);
+    if (!closure.captures.empty() &&
+        (descriptor.mode != ParameterMode::Take || capturedViews))
+      eligible.push_back(0);
+    for (std::size_t p = 0; p < syntax.parameters.size(); ++p) {
+      const auto &parameter = closure.function.locals[p + 1];
+      if (parameter.mode == ParameterMode::Read ||
+          parameter.mode == ParameterMode::Mut ||
+          checked.types->containsViews(parameter.type))
+        eligible.push_back(p + 1);
+    }
+    if (!syntax.annotation.sources.empty()) {
+      for (const auto &source : syntax.annotation.sources) {
+        bool found = source == "static";
+        for (auto p : eligible) {
+          if (p && syntax.parameters[p - 1].name == source) {
+            closure.function.resultSources.push_back(p);
+            found = true;
+          } else if (!p)
+            for (const auto &capture : closure.captures)
+              if (facts(*closure.parent).locals[capture.source.root].name ==
+                  source) {
+                closure.function.resultSources.push_back(0);
+                found = true;
+              }
+        }
+        if (final && !found)
+          error("ownership", syntax.span, "invalid closure result source");
+      }
+    } else if (eligible.size() == 1)
+      closure.function.resultSources = eligible;
+    else if (final && !unresolved)
+      error("ownership", syntax.span,
+            "borrowed closure result requires an unambiguous from contract");
+  }
+  for (auto source : closure.function.resultSources)
+    if (source)
+      descriptor.resultSources.push_back(source - 1);
+    else
+      descriptor.resultFromEnvironment = true;
+  descriptor.environmentMode =
+      !syntax.flag && descriptor.mode == ParameterMode::Read
+          ? ParameterMode::Value
+          : descriptor.mode;
+  if (closure.type == Type::Unknown)
+    closure.type = checked.types->closureType(closure.declaration.name,
+                                              std::move(fields), descriptor);
+  else
+    checked.types->defineClosure(closure.type, std::move(fields), descriptor);
+  checked.types->setGenericParameters(closure.type,
+                                      closure.function.genericParameters);
+  closure.function.canonicalName = closure.declaration.name;
+  closure.function.locals[0].type = closure.type;
+  closure.function.locals[0].mode = descriptor.environmentMode;
+}
+void Checker::finishClosures() {
+  bool changed = true;
+  unsigned rounds = 0;
+  while (changed) {
+    if (++rounds > limits::typeDepth) {
+      error("limit", {}, "closure capture capability inference limit exceeded");
+      return;
+    }
+    changed = false;
+    for (auto &closure : checked.closureBodies) {
+      const auto before = checked.types->callable(closure->type);
+      std::vector<std::tuple<Place, ParameterMode, Type>> captures;
+      for (const auto &capture : closure->captures)
+        captures.emplace_back(capture.proxy, capture.mode, capture.storedType);
+      completeClosure(*closure);
+      const auto &after = checked.types->callable(closure->type);
+      changed |= before.mode != after.mode || before.result != after.result ||
+                 before.parameters != after.parameters ||
+                 before.resultFromEnvironment != after.resultFromEnvironment ||
+                 before.resultSources != after.resultSources ||
+                 captures.size() != closure->captures.size();
+      for (std::size_t i = 0;
+           i < captures.size() && i < closure->captures.size(); ++i)
+        changed |=
+            captures[i] != std::make_tuple(closure->captures[i].proxy,
+                                           closure->captures[i].mode,
+                                           closure->captures[i].storedType);
+    }
+  }
+  for (auto &closure : checked.closureBodies)
+    completeClosure(*closure, true);
+  checked.types->refreshProductInstances();
+  for (const auto &[syntax, node] : checked.nodes)
+    if (node.callableCoercion != Type::Unknown &&
+        !compatibleCallable(node.callableSource, node.callableCoercion))
+      error("type", syntax->span,
+            "closure or function is not compatible with the function pointer");
+}
+void Checker::resolveClosure(ClosureFacts &closure, bool final) {
+  auto &function = closure.declaration;
+  for (std::size_t i = 1; i < closure.function.locals.size(); ++i) {
+    auto &local = closure.function.locals[i];
+    auto patternMode = checked.types->isView(local.type)
+                           ? checked.types->view(local.type).mode
+                           : local.mode;
+    local.type = inference.value(localVariables[&function][i]);
+    if (final && local.type == Type::Unknown)
+      error("type", local.span, "cannot infer closure parameter or local type");
+    if (local.patternView) {
+      local.type = checked.types->viewType(local.type, patternMode);
+      local.mode = ParameterMode::Value;
+    }
+  }
+  std::function<void(const Node &)> resolve = [&](const Node &node) {
+    if (node.kind != Kind::Closure)
+      for (auto &child : node.children)
+        resolve(*child);
+    auto &checkedNode = facts(node);
+    if (nodeVariables.contains(&node))
+      checkedNode.type = inference.value(nodeVariables.at(&node));
+    if (checkedNode.rebuiltType != Type::Unknown)
+      checkedNode.type = checkedNode.rebuiltType;
+    if (node.kind == Kind::Name && checkedNode.slot >= 0) {
+      checkedNode.place = Place{checkedNode.slot, {}};
+      if (closure.function.locals[checkedNode.slot].patternView)
+        checkedNode.place->fields.push_back(Projection::dereference());
+    } else if (node.kind == Kind::Group) {
+      const auto &child = facts(*node.children[0]);
+      if (checkedNode.rebuiltType != Type::Unknown || child.viewConversion ||
+          child.rebuiltType != Type::Unknown || !child.injections.empty())
+        checkedNode.place.reset();
+      else
+        checkedNode.place = child.place;
+    } else if (node.kind == Kind::Unary && node.text == "*" &&
+               facts(*node.children[0]).place) {
+      checkedNode.place = facts(*node.children[0]).place;
+      checkedNode.place->fields.push_back(Projection::dereference());
+    } else if ((node.kind == Kind::Field || node.kind == Kind::Index) &&
+               checkedNode.field >= 0 && facts(*node.children[0]).place) {
+      checkedNode.place = facts(*node.children[0]).place;
+      for (unsigned i = 0; i < checkedNode.dereferences; ++i)
+        checkedNode.place->fields.push_back(Projection::dereference());
+      checkedNode.place->fields.push_back(
+          Projection::field(static_cast<std::uint32_t>(checkedNode.field)));
+    }
+  };
+  resolve(*closure.syntax->children[0]);
+}
+void Checker::inferCaptures(ClosureFacts &closure) {
+  const auto &bindings = captureBindings[&closure.declaration];
+  auto record = [&](Place place, ParameterMode mode, Span span) {
+    auto binding = std::find_if(
+        bindings.begin(), bindings.end(),
+        [&](const auto &binding) { return binding.proxy == place.root; });
+    if (binding == bindings.end())
+      return;
+    ClosureCapture capture;
+    capture.proxy = place;
+    capture.source = place;
+    capture.source.root = binding->source.slot;
+    capture.mode = mode;
+    capture.span = span;
+    for (auto it = closure.captures.begin(); it != closure.captures.end();) {
+      if (!overlaps(it->proxy, capture.proxy)) {
+        ++it;
+        continue;
+      }
+      auto common = std::mismatch(
+          it->proxy.fields.begin(), it->proxy.fields.end(),
+          capture.proxy.fields.begin(), capture.proxy.fields.end());
+      capture.proxy.fields.resize(
+          static_cast<std::size_t>(common.first - it->proxy.fields.begin()));
+      capture.source.fields = capture.proxy.fields;
+      capture.mode = stronger(capture.mode, it->mode);
+      if (it->span.begin < capture.span.begin)
+        capture.span = it->span;
+      it = closure.captures.erase(it);
+    }
+    capture.type = *projectedType(
+        *checked.types, closure.function.locals[capture.proxy.root].type,
+        capture.proxy.fields);
+    closure.captures.push_back(std::move(capture));
+  };
+  auto recordReceiver = [&](const Node &source, const ReceiverPlan &plan,
+                            ParameterMode mode) {
+    if (!facts(source).place)
+      return false;
+    auto place = *facts(source).place;
+    if (!closure.syntax->flag)
+      for (const auto &step : plan.steps) {
+        if (step.kind != ReceiverStep::Kind::Native)
+          break;
+        place.fields.push_back(Projection::dereference());
+      }
+    record(std::move(place), mode, source.span);
+    return true;
+  };
+  std::function<void(const Node &, ParameterMode)> visit =
+      [&](const Node &node, ParameterMode use) {
+        const auto &conversion = facts(node);
+        if (conversion.viewConversion) {
+          use = checked.types->view(conversion.conversionView).mode;
+          if (recordReceiver(node, *conversion.viewConversion, use))
+            return;
+        }
+        if (conversion.borrowConversion &&
+            recordReceiver(node, *conversion.borrowConversion, use))
+          return;
+        auto nativeSource = conversion.unsizedSource != Type::Unknown
+                                ? conversion.unsizedSource
+                            : conversion.erasedSource != Type::Unknown
+                                ? conversion.erasedSource
+                                : conversion.reborrowSource;
+        if (nativeSource != Type::Unknown &&
+            checked.types->isView(nativeSource)) {
+          ReceiverPlan native{nativeSource, nativeSource, {}};
+          bool firstClass = checked.types->isView(conversion.type);
+          if (firstClass)
+            use = checked.types->view(conversion.type).mode;
+          do {
+            ReceiverStep step;
+            step.source = native.target;
+            step.target = checked.types->view(native.target).payload;
+            native.target = step.target;
+            native.steps.push_back(step);
+          } while (!firstClass && checked.types->isView(native.target));
+          if (recordReceiver(node, native, use))
+            return;
+        }
+        if (node.kind == Kind::Closure) {
+          const auto &nested = *checked.closureBodies.at(facts(node).closure);
+          for (const auto &capture : nested.captures)
+            record(capture.source,
+                   node.flag && !checked.types->isCopy(capture.type)
+                       ? ParameterMode::Take
+                       : capture.mode,
+                   capture.span);
+          return;
+        }
+        if (facts(node).operatorCall) {
+          const auto signature = functionSignature(facts(node).callee);
+          for (std::size_t i = 0; i < node.children.size(); ++i)
+            visit(*node.children[i], signature.parameters[i].mode);
+          return;
+        }
+        if (node.kind == Kind::Assign) {
+          visit(*node.children[0], ParameterMode::Mut);
+          visit(*node.children[1], ParameterMode::Value);
+          return;
+        }
+        if (node.kind == Kind::Unary &&
+            (node.text == "read" || node.text == "mut" ||
+             node.text == "take")) {
+          visit(*node.children[0], node.text == "read"  ? ParameterMode::Read
+                                   : node.text == "mut" ? ParameterMode::Mut
+                                                        : ParameterMode::Take);
+          return;
+        }
+        if (node.kind == Kind::Call) {
+          const auto &call = facts(node);
+          if (!call.machineOperation.empty()) {
+            std::size_t operand = 0;
+            if (call.method)
+              visit(*node.children[0]->children[0],
+                    call.machineBorrowModes.at(operand++));
+            for (std::size_t i = 1; i < node.children.size(); ++i)
+              visit(*node.children[i], call.machineBorrowModes.at(operand++));
+          } else if (call.indirect) {
+            auto type = facts(*node.children[0]).type;
+            while (checked.types->isView(type))
+              type = checked.types->view(type).payload;
+            const auto signature = checked.types->callable(type);
+            if (call.optional)
+              visit(*node.children[0]->children[0], ParameterMode::Read);
+            else
+              visit(*node.children[0], signature.mode);
+            for (std::size_t i = 1; i < node.children.size(); ++i)
+              visit(*node.children[i], i <= signature.parameters.size()
+                                           ? signature.parameters[i - 1].mode
+                                           : ParameterMode::Value);
+          } else {
+            if (call.method) {
+              const auto &receiver = *node.children[0]->children[0];
+              auto mode = functionSignature(call.callee).parameters[0].mode;
+              if (!call.receiverPlan ||
+                  !recordReceiver(receiver, *call.receiverPlan, mode))
+                visit(receiver, mode);
+            }
+            for (std::size_t i = 1; i < node.children.size(); ++i) {
+              auto mode = call.constructor
+                              ? ParameterMode::Value
+                              : functionSignature(call.callee)
+                                    .parameters[call.argumentOrder[i - 1]]
+                                    .mode;
+              visit(*node.children[i], mode);
+            }
+          }
+          return;
+        }
+        if ((node.kind == Kind::Index || node.kind == Kind::Field) &&
+            !facts(node).place) {
+          auto mode = use;
+          if (mode == ParameterMode::Value)
+            mode = checked.types->isCopy(facts(node).type)
+                       ? ParameterMode::Read
+                       : ParameterMode::Take;
+          visit(*node.children[0], mode);
+          if (node.kind == Kind::Index)
+            visit(*node.children[1], ParameterMode::Read);
+          return;
+        }
+        if (facts(node).place) {
+          auto mode = use;
+          if (mode == ParameterMode::Value)
+            mode = checked.types->isCopy(facts(node).type)
+                       ? ParameterMode::Read
+                       : ParameterMode::Take;
+          record(*facts(node).place, mode, node.span);
+          if (node.kind == Kind::Index)
+            visit(*node.children[1], ParameterMode::Read);
+          return;
+        }
+        for (const auto &child : node.children)
+          visit(*child, ParameterMode::Value);
+      };
+  visit(*closure.syntax->children[0], ParameterMode::Value);
+  std::stable_sort(
+      closure.captures.begin(), closure.captures.end(),
+      [](const auto &a, const auto &b) { return a.span.begin < b.span.begin; });
+}
+} // namespace mettle

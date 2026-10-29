@@ -1,11 +1,14 @@
 #include "driver/output.h"
 #include "backend/llvm/lower.h"
 #include "backend/llvm/object.h"
+#include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <sstream>
@@ -54,8 +57,60 @@ int emit(const Options &options, const Source &source,
       return 1;
     }
   } else {
+    struct BackendDiagnostics {
+      std::string text;
+      bool failed = false;
+    } backendDiagnostics;
     llvm::LLVMContext context;
-    auto module = mettle::backend::lower(program, context, checked);
+    context.setDiagnosticHandlerCallBack(
+        [](const llvm::DiagnosticInfo *diagnostic, void *opaque) {
+          auto &state = *static_cast<BackendDiagnostics *>(opaque);
+          llvm::raw_string_ostream text(state.text);
+          llvm::DiagnosticPrinterRawOStream printer(text);
+          diagnostic->print(printer);
+          text << '\n';
+          state.failed |= diagnostic->getSeverity() == llvm::DS_Error;
+        },
+        &backendDiagnostics);
+    auto target = llvm::Triple(llvm::Triple::normalize(options.target));
+    auto facts = targetFacts(options.target);
+    if (program.program().target.arch != facts.arch ||
+        program.program().target.system != facts.system ||
+        program.program().target.pointerBits != facts.pointerBits ||
+        program.program().target.baseline != facts.baseline) {
+      std::cerr
+          << "mettle: error[internal]: checked target facts disagree with "
+             "the selected backend target\n";
+      return 1;
+    }
+    bool foreign = false, foreignUnwind = false;
+    for (const auto &function : program.program().functions) {
+      foreign |= !function.abi.empty();
+      foreignUnwind |= function.abi == "C-unwind";
+      for (const auto &block : function.blocks)
+        for (const auto &instruction : block.instructions)
+          if (program.program().types->isFunctionPointer(
+                  instruction.indirectType)) {
+            const auto &abi =
+                program.program().types->callable(instruction.indirectType).abi;
+            foreign |= !abi.empty();
+            foreignUnwind |= abi == "C-unwind";
+          }
+    }
+    if (foreign &&
+        !((target.getArch() == llvm::Triple::x86_64 && target.isOSLinux()) ||
+          (target.getArch() == llvm::Triple::aarch64 && target.isOSDarwin()))) {
+      std::cerr << "mettle: error[feature]: this C ABI implementation supports "
+                   "Linux x86-64 and Darwin ARM64\n";
+      return 1;
+    }
+    if (options.freestanding && foreignUnwind) {
+      std::cerr << "mettle: error[feature]: freestanding abort mode cannot "
+                   "require a foreign unwind runtime\n";
+      return 1;
+    }
+    auto module = mettle::backend::lower(program, context, checked,
+                                         options.target, options.freestanding);
     module->setSourceFileName(source.path);
     module->setTargetTriple(
         llvm::Triple(llvm::Triple::normalize(options.target)));
@@ -87,6 +142,12 @@ int emit(const Options &options, const Source &source,
                   << llvm::toString(std::move(error)) << '\n';
         return 1;
       }
+      if (backendDiagnostics.failed) {
+        std::cerr << "mettle: error[assembly]: target assembly/code generation "
+                     "rejected the program:\n"
+                  << backendDiagnostics.text;
+        return 1;
+      }
       if (options.emit == "executable") {
         if (llvm::Triple::normalize(options.target) !=
             llvm::Triple::normalize(METTLE_RUNTIME_TARGET)) {
@@ -106,6 +167,8 @@ int emit(const Options &options, const Source &source,
             "-o",       output.path.str().str()};
         if (!options.sysroot.empty())
           arguments.push_back("--sysroot=" + options.sysroot);
+        for (const auto &library : program.program().libraries)
+          arguments.push_back("-l" + library);
         if (llvm::Triple(options.target).isOSLinux())
           arguments.push_back("-fuse-ld=lld");
 #if METTLE_RUNTIME_SANITIZED

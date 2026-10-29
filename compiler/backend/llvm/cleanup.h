@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cleanup/plan.h"
+#include "types/layout.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include <unordered_map>
@@ -13,8 +14,29 @@ struct LoweringContext {
   llvm::IRBuilder<> &builder;
   std::vector<llvm::Function *> &functions;
   std::unordered_map<std::uint32_t, llvm::StructType *> products;
+  std::unordered_map<std::uint32_t, ObjectLayout> layouts{};
+  bool freestanding = false;
+  std::vector<llvm::GlobalVariable *> statics{};
 
+  const ObjectLayout &layout(Type type);
+  std::uint64_t alignment(Type type);
   llvm::Type *type(Type type);
+  llvm::Type *storageType(Type type);
+  llvm::Value *load(Type type, llvm::Value *address, llvm::Align alignment);
+  void store(Type type, llvm::Value *value, llvm::Value *address,
+             llvm::Align alignment);
+  llvm::Type *viewType(Type payload);
+  llvm::AllocaInst *temporary(llvm::Type *type);
+  llvm::AllocaInst *temporary(Type type);
+  llvm::Value *fieldPointer(llvm::Value *address, Type owner, unsigned field);
+  llvm::Value *fieldAddress(llvm::Value *address, Type &owner, unsigned field);
+  llvm::Value *projectField(llvm::Value *handle, Type owner, unsigned field);
+  llvm::Value *construct(Type type, llvm::ArrayRef<llvm::Value *> fields,
+                         unsigned selected = 0);
+  llvm::Value *variant(Type type, unsigned ordinal,
+                       llvm::ArrayRef<llvm::Value *> fields);
+  llvm::Value *enumTag(Type type, llvm::Value *address, bool ordinal = true);
+  llvm::Value *extract(llvm::Value *value, Type owner, unsigned field);
   llvm::Type *resultType(Type type);
   llvm::FunctionCallee runtime(llvm::StringRef name, llvm::Type *result,
                                llvm::ArrayRef<llvm::Type *> parameters);
@@ -30,14 +52,17 @@ public:
   llvm::Function *body() const { return bodyFunction; }
   llvm::Value *createWrapper();
   llvm::Value *address(const Place &place);
+  llvm::Align alignment(const Place &place);
   void declare(const Place &place);
   void move(const Place &place);
   void store(const ir::Instruction &instruction, llvm::Value *value);
+  void dropPlace(const Place &place);
   void remember(ir::Value value, llvm::Value *result);
   void consume(ir::Value value);
   void scopeExit(int scope);
   void returnValue(ir::Value value, llvm::Value *result);
   void finishWrapper(llvm::Value *frame);
+  llvm::Value *variadicContext();
 
 private:
   struct Root {
@@ -56,6 +81,9 @@ private:
     int parent;
     std::vector<unsigned> path;
     std::vector<unsigned> children;
+    int relocation = -1;
+    int relocatedFlag = -1;
+    NativeCleanup nativeAction = NativeCleanup::None;
   };
   struct Replacement {
     unsigned destination;
@@ -74,6 +102,7 @@ private:
   unsigned resultField;
   cleanup::Plan plan;
   std::vector<llvm::Type *> fields;
+  std::uint64_t frameSize = 0, frameAlignment = 1;
   std::vector<Root> roots;
   std::vector<Node> nodes;
   std::vector<unsigned> locals;
@@ -84,7 +113,7 @@ private:
   std::unordered_map<const ir::Instruction *, unsigned> replacementIndices;
   std::unordered_map<unsigned, llvm::Function *> drops;
 
-  unsigned addField(llvm::Type *type);
+  unsigned addField(llvm::Type *type, std::uint64_t alignment = 0);
   unsigned addRoot(const cleanup::Plan &plan, int place, int local = -1);
   unsigned addNode(const cleanup::Plan &plan, int place, unsigned root,
                    int parent, std::vector<unsigned> path);
@@ -92,6 +121,7 @@ private:
   llvm::Value *field(unsigned index);
   llvm::Value *nodeAddress(unsigned node);
   void set(unsigned node, bool initialized);
+  void initialize(unsigned node, llvm::Value *initialized);
   void updateParents(unsigned node);
   void drop(unsigned node);
   llvm::Function *dropCallback(unsigned node);

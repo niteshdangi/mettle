@@ -11,7 +11,6 @@ std::optional<bool> booleanLiteral(const Node &node) {
 }
 bool isStatement(Kind kind) {
   return kind == Kind::Binding || kind == Kind::Assign ||
-         kind == Kind::Return || kind == Kind::While || kind == Kind::Loop ||
-         kind == Kind::Break || kind == Kind::Continue;
+         kind == Kind::Return || kind == Kind::Break || kind == Kind::Continue;
 }
 } // namespace mettle

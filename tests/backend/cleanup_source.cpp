@@ -11,6 +11,19 @@ using namespace mettle;
 constexpr auto scopes = R"(
 type Guard { tag: i32; drop {} }
 type Pair { tag: i32; first: Guard; second: Guard; drop {} }
+enum Owned { Empty; One(Guard); Two(Guard, Guard) }
+type Builder {
+    tag: i32
+    first: Guard
+    second: Guard
+    init(fail: bool) throws i32 {
+        self.tag = 1199
+        self.first = Guard(1121)
+        if fail { throw 7 }
+        self.second = Guard(1122)
+    }
+    drop {}
+}
 fn test(value: read Guard, answer: bool): bool { answer }
 fn statements(): Unit {
     let held = Guard(101)
@@ -72,6 +85,46 @@ fn jumps(): Unit {
     }
     Guard(840);
 }
+fn labeled_results(): Unit {
+    let result = label outer: loop {
+        let outer = Guard(1001)
+        loop {
+            let inner = Guard(1002)
+            break label outer Guard(1003)
+        }
+    }
+    Guard(1004);
+}
+fn labeled_continues(): Unit {
+    var count = 0
+    label outer: while count < 2 {
+        let first = Guard(1010 + count)
+        count += 1
+        loop {
+            let second = Guard(1020 + count)
+            continue label outer
+        }
+    }
+    Guard(1030);
+}
+fn variants(): Unit {
+    let one = Owned::One(Guard(1101))
+    let two = Owned::Two(Guard(1102), Guard(1103))
+    let empty = Owned::Empty
+    match take one {
+        Owned::Empty => {},
+        Owned::One(held) => {},
+        Owned::Two(_, _) => {}
+    }
+}
+fn constructors(): Unit {
+    let _ = capture Builder(true)
+    let _ = capture Builder(false)
+}
+fn array_rest(): Unit {
+    let values = [Guard(1131), Guard(1132), Guard(1133)]
+    match take values { [first, rest @ ..] => {} }
+}
 fn main() {
     statements()
     conditional()
@@ -82,17 +135,26 @@ fn main() {
     returned()
     early()
     jumps()
+    labeled_results()
+    labeled_continues()
+    variants()
+    constructors()
+    array_rest()
     0
 }
 )";
 
 constexpr auto arguments = R"(
 type Guard { tag: i32; drop {} }
+type Panicker {
+    tag: i32
+    drop { let zero = 0; let trapped = 1 / zero }
+}
 fn explode(): Guard {
-    let held = Guard(902)
-    let zero = 0
-    let trapped = 1 / zero
-    Guard(903)
+    loop {
+        let held = Panicker(902)
+        break Guard(903)
+    }
 }
 fn consume(first: take Guard, second: take Guard): Unit {
     Guard(904);
@@ -132,7 +194,8 @@ bool instrument(ir::Program &program, bool unwind) {
   program.functions.push_back(
       external("mettle_test_cleanup_source_result", Type::I32, 2));
   for (auto &function : program.functions)
-    if (function.name == "Guard.drop" || function.name == "Pair.drop")
+    if (function.name == "Guard.drop" || function.name == "Pair.drop" ||
+        function.name == "Builder.drop" || function.name == "Panicker.drop")
       observe(function, recorder);
   auto main = std::find_if(
       program.functions.begin(), program.functions.end(),

@@ -6,7 +6,20 @@
 #include <vector>
 
 namespace mettle {
-enum class TokenKind { Word, Integer, Symbol, Space, Comment, Newline, End };
+enum class TokenKind {
+  Word,
+  Integer,
+  Symbol,
+  Space,
+  Comment,
+  Newline,
+  End,
+  Character,
+  Byte,
+  Floating,
+  QuotedWord,
+  Text
+};
 struct Token {
   TokenKind kind;
   Span span;

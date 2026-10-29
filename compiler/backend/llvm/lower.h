@@ -5,5 +5,7 @@
 
 namespace mettle::backend {
 std::unique_ptr<llvm::Module> lower(const ir::VerifiedProgram &program,
-                                    llvm::LLVMContext &context, bool checked);
+                                    llvm::LLVMContext &context, bool checked,
+                                    llvm::StringRef target = {},
+                                    bool freestanding = false);
 }

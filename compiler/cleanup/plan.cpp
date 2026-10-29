@@ -22,8 +22,16 @@ Plan plan(const ir::Function &function, const TypeStore &types) {
          type,
          types.isProduct(type) ? types.product(type).destructor : -1,
          {},
-         indirect});
-    if (types.isProduct(type)) {
+         indirect,
+         types.isProduct(type) ? types.product(type).nativeCleanup
+                               : NativeCleanup::None});
+    if (types.isProduct(type) &&
+        types.product(type).kind == AggregateKind::VarArgs)
+      result.places[id].nativeAction = NativeCleanup::VaListEnd;
+    if (types.isProduct(type) &&
+        types.product(type).kind != AggregateKind::VarArgs &&
+        types.product(type).kind != AggregateKind::Uninit &&
+        types.product(type).kind != AggregateKind::ManualDrop) {
       const auto &fields = types.product(type).fields;
       for (std::size_t i = 0; i < fields.size(); ++i) {
         auto child = place;
@@ -46,9 +54,12 @@ Plan plan(const ir::Function &function, const TypeStore &types) {
     if (!types.needsDrop(local.type))
       continue;
     bool borrowed =
-        index < function.parameters &&
-        (local.mode == ParameterMode::Read || local.mode == ParameterMode::Mut);
+        local.storage == StorageDuration::Static ||
+        (index < function.parameters && (local.mode == ParameterMode::Read ||
+                                         local.mode == ParameterMode::Mut));
     int id = add({static_cast<int>(index), {}}, local.type, borrowed);
+    if (static_cast<int>(index) == function.constructorSelfSlot)
+      result.places[id].destructor = -1;
     if (!borrowed) {
       result.unwind.push_back(id);
       if (local.scope >= 0)
@@ -57,6 +68,19 @@ Plan plan(const ir::Function &function, const TypeStore &types) {
   }
   for (const auto &block : function.blocks)
     for (const auto &instruction : block.instructions) {
+      if (instruction.op == ir::Op::DropPlace) {
+        auto type = projectedType(
+                        types, function.locals.at(instruction.place.root).type,
+                        instruction.place.fields)
+                        .value();
+        if (types.needsDrop(type)) {
+          auto root = add(instruction.place, type, true);
+          if (std::find(result.unwind.begin(), result.unwind.end(), root) ==
+              result.unwind.end())
+            result.unwind.push_back(root);
+        }
+        continue;
+      }
       if (instruction.op != ir::Op::Store)
         continue;
       bool indirect =

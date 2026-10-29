@@ -11,9 +11,12 @@ using ViewOrigins = std::map<ViewPath, Origins>;
 using ViewEffects = std::map<Place, std::set<Place>>;
 struct FunctionEffects {
   ViewEffects writes;
+  ViewEffects wildWrites;
   ViewEffects writeDependencies;
   std::set<Place> overwrites;
   std::map<ViewPath, std::set<Place>> returns;
+  // These roots are resolved static identities, not callee-local slots.
+  std::map<ViewPath, std::set<Place>> staticReturns;
   bool operator==(const FunctionEffects &) const = default;
 };
 using EffectSummaries = std::vector<FunctionEffects>;
@@ -26,8 +29,11 @@ struct Loan {
   ParameterMode mode = ParameterMode::Read;
   std::set<Target> targets;
   Origins parents;
+  Origins disjointOutputs;
   int parameter = -1;
   bool reserved = false;
+  bool interiorRoot = false;
+  bool interiorPayload = false;
 };
 struct Point {
   Origins uses, defines;

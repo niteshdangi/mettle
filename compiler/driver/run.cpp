@@ -2,9 +2,12 @@
 #include "driver/options.h"
 #include "driver/output.h"
 #include "pipeline/compile.h"
+#include "resolution/load.h"
 #include "syntax/lexer.h"
 #include "syntax/parser.h"
+#include "types/target.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include <filesystem>
 #include <iostream>
 
 namespace mettle::driver {
@@ -15,7 +18,10 @@ int run(const Options &options) {
               << buffer.getError().message() << '\n';
     return 1;
   }
-  Source source{options.input, (*buffer)->getBuffer().str()};
+  std::error_code pathError;
+  auto rootPath = std::filesystem::canonical(options.input, pathError);
+  Source source{pathError ? options.input : rootPath.generic_string(),
+                (*buffer)->getBuffer().str()};
   Diagnostics diagnostics;
   if (options.command == "tokens" || options.command == "syntax") {
     Module tree;
@@ -27,7 +33,31 @@ int run(const Options &options) {
     diagnostics.print(source, std::cerr);
     return diagnostics.empty() ? 0 : 1;
   }
-  auto program = pipeline::compile(source, diagnostics);
+  resolution::SourceProvider provider =
+      [&](const std::string &path) -> std::optional<Source> {
+    std::error_code error;
+    bool exists = std::filesystem::exists(path, error);
+    if (!exists && !error)
+      return std::nullopt;
+    auto child = llvm::MemoryBuffer::getFile(path);
+    if (!child) {
+      diagnostics.error(
+          "io", {}, "cannot read " + path + ": " + child.getError().message());
+      return std::nullopt;
+    }
+    auto canonical = std::filesystem::canonical(path, error);
+    if (error) {
+      diagnostics.error("io", {},
+                        "cannot identify " + path + ": " + error.message());
+      return std::nullopt;
+    }
+    return Source{canonical.generic_string(), (*child)->getBuffer().str()};
+  };
+  auto tree = resolution::load(source, provider, diagnostics);
+  auto program = tree ? pipeline::compile(std::move(*tree), diagnostics,
+                                          !options.freestanding,
+                                          targetFacts(options.target))
+                      : std::nullopt;
   if (!program) {
     diagnostics.print(source, std::cerr);
     return 1;

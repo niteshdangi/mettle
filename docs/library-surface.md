@@ -82,6 +82,51 @@ Union fields have no automatic active-tag tracking or field destruction.
 Fields must be Copy or use explicit manual-drop storage; reading a field is
 unsafe unless the compiler can establish that exact initialized interpretation.
 
+### Allocation-free cells and pin properties
+
+The compiler-owned `core::cell::Cell<T>` provides `new`, Copy-only `get`,
+`set`, `replace`, `swap`, `get_mut`, `into_inner` and `as_ptr`.
+`RefCell<T>` provides `new`, `replace`, `swap`, `get_mut`, `into_inner`,
+`as_ptr`, `borrow`, `borrow_mut`, `try_borrow` and `try_borrow_mut`.
+These operations allocate nothing and require no OS or executor.
+`get_mut` requires exclusive access to the cell; other non-consuming cell
+operations accept a shared handle. Obtaining `as_ptr` is safe, but using it
+retains the ordinary unsafe raw-pointer obligations.
+
+`Ref<T>` and `RefMut<T>` are non-Copy, lifetime-bearing guards.
+Both provide `get_ref`; `RefMut` additionally provides `get_mut`, requiring
+exclusive access to the guard. `Ref.clone()` acquires another counted read
+guard, without cloning the payload. A guard stored in a nominal type declares
+its cell lifetime, for example `guard: core::cell::RefMut<T> from r`.
+Returned payload views borrow their guard, not merely its backing cell.
+The guards cannot be moved, forgotten or destroyed while such views remain
+live. A surviving guard keeps its cell immovable and alive until cleanup,
+including the interval between its last explicit use and destruction.
+
+Read guards coexist; an exclusive guard conflicts with every other guard.
+`borrow`/`borrow_mut`, conflicting `RefCell.replace`/`swap`, and read-counter
+exhaustion panic. Swapping a RefCell with itself also panics.
+Try-borrow operations return a native outcome: success contains the guard;
+failure contains the zero-sized `BorrowError` or `BorrowMutError`.
+Failure neither acquires nor releases a borrow. Dropping a guard releases its
+count once, including partial paths and unwind; it never destroys the payload.
+Forgetting it intentionally leaves the counter occupied, without extending the
+authority of any surviving reference. The state is not thread synchronization.
+
+Cell replacement returns the old owner or views and records the new value's
+view dependencies. `set` installs the replacement before dropping the old
+value, so an old destructor's panic or re-entry observes initialized new storage.
+Interior mutation does not manufacture ordinary mutable authority from a
+shared view: only a dynamically checked exclusive guard exposes RefCell payload
+mutation. Cells remain invariant in their contained view regions.
+
+Unsafe manual Unpin implementations may use interface, associated-item,
+generic and region requirements supported by the interface solver. Failed or
+recursive requirements do not prove Unpin. Function-local where assumptions
+are not global type facts. Native pin operations retain proof requests through
+lowering; instantiation and IR admission revalidate them rather than promoting
+an unresolved conditional property into an unconditional type flag.
+
 The default heap/shared constructors select the global allocator. Explicit
 allocator-bearing owner/container types carry their allocator value and use
 that same compatible allocator for deallocation. `into_raw`/reconstruction APIs
@@ -158,10 +203,110 @@ Foreign variadic calls apply the target C default integer/float promotions.
 Non-C-compatible native owners/closures/outcomes cannot be passed directly.
 Foreign definitions may receive a named VarArgs cursor tied to that call frame.
 Cursor reads are unsafe and require the actual promoted next type; copy uses
-the target va_copy operation, and each initialized cursor receives va_end.
+the target va_copy operation, and ordinary owned cleanup performs va_end.
 Cursors cannot outlive or cross threads away from their backing call frame.
 The target's actual register/save-area/stack classification is normative, not a
 generic sequence of native T objects.
+
+The initial source interface spells a definition's cursor `args: ...` after at
+least one fixed parameter. `args.arg::<T>()` is unsafe and requests the actual
+promoted C argument type: request `i32` rather than `i8`/`bool`, and `f64`
+rather than `f32`. C-compatible Copy aggregates retain their aggregate ABI;
+their fields do not undergo scalar default promotions individually.
+`args.copy()` initializes independent cursor state. Bind a cursor copy with
+`var` to advance it. `args.end()` consumes that cursor; otherwise scope/unwind
+cleanup ends it once. Moving a cursor transfers that obligation, not its backing
+call frame. Safe forgetting may omit that cleanup but never extends the backing
+frame's lifetime. The initial implementation rejects aggregate/closure storage,
+raw-storage exposure and cross-function cursor transfers that it cannot safely
+represent; these restrictions do not redefine the language's general transfer
+or forgetting contracts.
+The physical variadic entry captures its incoming ABI state before invoking
+any logical body or cleanup callback. A hidden context is not a named source
+parameter and does not change source argument counts or result-source contracts.
+
+Static declarations use `static NAME: Type = constant;` or
+`static mut NAME: Type = constant;`; foreign blocks admit the same declaration
+without an initializer. Module visibility, imports and local shadowing apply
+normally. Static storage has program lifetime, cannot be moved out, and is not
+implicitly scope-dropped. Immutable storage containing native interior mutation
+remains writable memory. Mutable-static access requires unsafe even when its
+value is Copy. Constant initialization admits typed scalar literals, required
+integer expressions, structural products/arrays/variants/unions, selected native
+storage constructors and resolved function/static addresses. Address constants
+retain relocation identity and slice length; ordinarily aligned views cannot
+refer to unaligned packed fields. Required value-dependency cycles and reads of
+mutable/unknown foreign storage are rejected. This does not execute user
+functions, macros or hosted startup hooks.
+
+`@export_name("symbol")` names a definition and `@link_name("symbol")` names an
+import. Declarations of one external static symbol share one storage identity;
+conflicting type/mutability contracts or duplicate definitions are errors.
+`@link("library")` on an imported function/static or foreign block records an
+explicit native library dependency for executable linking. Object-only emission
+does not supply a linker or implicitly load those libraries. Selecting an
+external name alone does not give a native-layout value a stable C calling ABI.
+
+### Initial assembly and architecture mechanisms
+
+The I06 implementation uses compiler-owned target facts for Linux x86-64
+(SSE/SSE2 baseline) and Darwin ARM64 (NEON baseline); it never selects host-native
+CPU tuning. This is an initial implementation inventory, not I13's complete
+per-operation/per-profile closure or a target-qualification receipt.
+
+`asm!` and `core::arch::asm!` implement the annex's ordered inputs, early/late
+outputs, split/same-place inouts, typed full-width/generic integer constants,
+resolved function/static symbols,
+register classes/aliases/modifiers, C/system clobbers and options. Linux also
+accepts the SysV64 clobber name. The x86 classes are `reg`, `reg_abcd`,
+`reg_byte`, `xmm_reg`, `ymm_reg`, `zmm_reg`, `kreg`, and the explicit-register
+clobber-only classes; ARM64 provides `reg`, `vreg`, `vreg_low16`, and explicit
+predicate-register clobbers. Reserved registers, conflicting aliases,
+incompatible types/features and invalid options diagnose before emission.
+Memory and flags are conservative unless the unsafe declaration explicitly
+narrows their effects. Ordinary assembly has no unwind permission.
+
+Module-scope `global_asm!` accepts const/sym operands. `@naked` requires an
+unsafe, non-generic, non-variadic physical C ABI definition containing exactly `naked_asm!`,
+with no defaults, parameter patterns, ordinary body, hidden frame or implicit
+return. Naked unwind metadata is not implemented and is diagnosed unsupported.
+The assembly author implements the declared ABI, including returning and
+preserving registers. The physical entry is never inlined into framed code.
+Function symbol IDs survive specialization; both function and static symbols
+use the backend's physical symbol/mangling and retain their referenced storage.
+
+Native vector aliases retain element/lane shape, alignment and Copy semantics:
+x86 `__m128{,d,i}`, `__m256{,d,i}`, `__m512{,d,i}` and ARM64
+integer/unsigned/floating 64- and 128-bit vector aliases; x86 mask aliases retain
+their fixed unsigned scalar widths. Vectors preserve their native identity
+through generic and region substitution, not an empty structural product.
+They do not introduce
+owners or portable SIMD. The initial operation mechanism covers x86 128/256-bit
+integer set/set1/add/sub, float set/set1/add/sub/mul, and integer
+and/or/xor/unaligned load/store; ARM64 covers the corresponding stable
+dup/add/sub/mul/bitwise/load/store/lane operations on their applicable element
+types. The checked operation table in `types/target.cpp` is authoritative;
+unimplemented operations are explicitly unsupported, not unchecked instructions.
+
+`@target_feature("feature",...)` records recognized function requirements.
+Calls, architecture operations and feature-sensitive assembly require the
+baseline, a function requirement or a supported dominating dispatch predicate.
+The initial predicates are direct positive `if
+is_x86_feature_detected!("feature")` / `is_aarch64_feature_detected!("feature")`
+conditions, including nested conditions. Requirements cannot be erased through
+a thin callable coercion. LLVM receives the same feature metadata; optional
+operation/assembly helpers pass storage rather than feature-dependent vector
+ABIs so a guarded operation cannot enable instructions in an unguarded caller
+prologue. Native vector physical entries require their ABI feature contract.
+Calls across feature-dependent vector ABIs use storage bridges, including
+indirect and generic calls. Foreign code must select the matching physical ABI;
+the independent wide-vector C probe uses an isolated `-mavx` translation unit
+rather than enabling optional instructions in all baseline fixtures.
+
+Core x86 detection uses CPUID and gates XGETBV on XSAVE/OSXSAVE/AVX; AVX and
+AVX-512 require their OS-enabled XCR0 state. Darwin ARM64 core detection supports
+the guaranteed baseline only; optional hosted detection is diagnosed unsupported
+rather than introducing sysctl, allocator or runtime dependencies.
 
 ## 6. Applicability, aliases and exclusions
 

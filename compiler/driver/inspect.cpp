@@ -13,6 +13,7 @@ llvm::json::Value syntax(const mettle::Node &node) {
   return llvm::json::Object{
       {"kind", static_cast<int>(node.kind)},
       {"text", node.text},
+      {"label", node.label},
       {"begin", static_cast<std::int64_t>(node.span.begin)},
       {"end", static_cast<std::int64_t>(node.span.end)},
       {"semicolon", node.semicolon},
@@ -29,8 +30,15 @@ void inspect(const Module &tree) {
         {"end", static_cast<std::int64_t>(token.span.end)}});
   llvm::json::Array functions;
   for (const auto &function : tree.functions)
-    functions.push_back(llvm::json::Object{{"name", function.name},
-                                           {"body", syntax(*function.body)}});
+    functions.push_back(llvm::json::Object{
+        {"name", function.name},
+        {"receiver", function.receiver},
+        {"body", function.body.get() ? syntax(*function.body)
+                                     : llvm::json::Value(nullptr)}});
+  llvm::json::Array aliases;
+  for (const auto &alias : tree.aliases)
+    aliases.push_back(llvm::json::Object{{"name", alias.name},
+                                         {"target", alias.target.name}});
   llvm::json::Array products;
   for (const auto &product : tree.products) {
     llvm::json::Array fields;
@@ -45,6 +53,7 @@ void inspect(const Module &tree) {
       "{0:2}\n",
       llvm::json::Value(llvm::json::Object{{"tokens", std::move(tokens)},
                                            {"functions", std::move(functions)},
+                                           {"aliases", std::move(aliases)},
                                            {"products", std::move(products)}}));
 }
 } // namespace mettle::driver

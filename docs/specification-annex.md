@@ -48,6 +48,27 @@ Overflow, invalid shift, zero division, invalid pointer construction or an
 unsupported required operation is a const-evaluation diagnostic. Constant folding
 of an ordinary runtime expression must instead preserve its runtime profile.
 
+The initial numeric composition surface admits every primitive integer type as
+a const parameter, including contextual unsuffixed arguments, checked integer
+expressions and full-width substitutions. Literal/range patterns and integer
+range iteration preserve the endpoint type; inclusive iteration never increments
+past its final endpoint. Required array counts retain their declared integer
+type and are checked against compiler resource limits before internal narrowing.
+Implementation restrictions do not establish new language-level index contracts.
+
+`value.checked_cast::<Integer>()` returns `present(converted)` or `none`.
+Integer sources must be in the destination range. Floating sources are truncated
+toward zero first; NaN, infinity and a truncated result outside the integer range
+return `none`. Ordinary `as` casts retain the clamping policy above.
+
+`@fast_math(...)` on a function or module lists individual relaxations:
+`reassociate`, `contract`, `no_nans`, `no_infinities`, `no_signed_zeros`,
+`reciprocal`, and `approximate_functions`. Module options apply to functions in
+that module and descendants; function options add to them. Unknown, duplicate or
+empty options are errors, not an implicit all-relaxations mode. Checked conversion
+validity checks remain strict even inside a relaxed function. These options do
+not alter literal rounding or enable process-wide flush-to-zero behavior.
+
 ## 2. Higher-ranked constraints and associated types
 
 Use declaration-based generic checking. The constraint environment consists of

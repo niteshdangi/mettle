@@ -2,6 +2,7 @@
 """Cross-emit on macOS, then link and execute source/cleanup objects on Linux x86-64."""
 
 import argparse
+import importlib.util
 import json
 import os
 import platform
@@ -32,14 +33,22 @@ print(json.dumps({
 """
 
 SOURCE_EXECUTION = """
-import hashlib, json, os, resource, subprocess, sys
+import concurrent.futures, hashlib, json, os, resource, subprocess, sys
 from pathlib import Path
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 cxx, runtime, cases = sys.argv[1], sys.argv[2], json.loads(Path(sys.argv[3]).read_text())
-results = []
-for case in cases:
+def execute(case):
+    libraries = case.get("libraries", []) + ([] if case.get("freestanding") else [runtime])
+    undefined = None
+    if case.get("freestanding"):
+        command = [str(Path(cxx).with_name("llvm-nm")), "--undefined-only", case["object"]]
+        symbols = subprocess.run(command, text=True, capture_output=True, timeout=30)
+        if symbols.returncode or symbols.stdout.strip():
+            raise RuntimeError("Freestanding object has unresolved dependencies: " +
+                               symbols.stdout + symbols.stderr)
+        undefined = []
     command = [cxx, "--target=x86_64-unknown-linux-gnu", "-fuse-ld=lld",
-               case["object"], runtime, "-o", case["program"]]
+               case["object"], *libraries, "-o", case["program"]]
     environment = dict(os.environ, TMPDIR=str(Path(case["program"]).parent))
     link = subprocess.run(command, text=True, capture_output=True, timeout=90, env=environment)
     if link.returncode:
@@ -49,8 +58,13 @@ for case in cases:
     if (expected == "trap" and result.returncode >= 0) or (
             expected != "trap" and result.returncode != expected):
         raise RuntimeError(str(case) + ": got " + str(result.returncode))
-    results.append(dict(case, exit_status=result.returncode, link_command=command,
-                        program_sha256=hashlib.sha256(Path(case["program"]).read_bytes()).hexdigest()))
+    output = dict(case, exit_status=result.returncode, link_command=command,
+                  program_sha256=hashlib.sha256(Path(case["program"]).read_bytes()).hexdigest())
+    if undefined is not None:
+        output["undefined_symbols"] = undefined
+    return output
+with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+    results = list(pool.map(execute, cases))
 print(json.dumps(results))
 """
 
@@ -109,6 +123,8 @@ def main():
             "clang++_sha256": sha256(llvm / "bin/clang++"),
             "llvm_ar_sha256": sha256(llvm / "bin/llvm-ar"),
             "llvm_ar_version": run([*remote, archiver, "--version"]),
+            "llvm_nm_sha256": sha256(llvm / "bin/llvm-nm"),
+            "llvm_nm_version": run([*remote, str(llvm / "bin/llvm-nm"), "--version"]),
             "lld_sha256": sha256(llvm / "bin/ld.lld"),
             "lld_version": run([*remote, str(llvm / "bin/ld.lld"), "--version"]),
         }
@@ -133,6 +149,25 @@ def main():
                 "object_sha256": sha256(runtime_object),
                 "archive_sha256": sha256(runtime_archive),
             }
+            callbacks_archive = runtime_archive.parent / "libmettle_machine_callbacks.a"
+            callbacks_sources = ("tests/backend/machine_callbacks.c",
+                                 "tests/backend/machine_unwind.cpp",
+                                 "tests/backend/machine_vectors.c")
+            callbacks_objects = []
+            for name in callbacks_sources:
+                obj = runtime_archive.parent / (ROOT / name).with_suffix(".o").name
+                tool = clang if name.endswith(".c") else cxx
+                standard = "-std=c11" if name.endswith(".c") else "-std=c++20"
+                run([*remote, "env", f"TMPDIR={runtime_archive.parent}", tool,
+                     "--target=x86_64-unknown-linux-gnu", standard, "-O2", "-g",
+                     "-Wall", "-Wextra", "-Wpedantic", "-Werror",
+                     *(["-mavx"] if name.endswith("machine_vectors.c") else []),
+                     "-c", str(ROOT / name), "-o", str(obj)])
+                callbacks_objects.append(str(obj))
+            run([*remote, archiver, "rcsD", str(callbacks_archive), *callbacks_objects])
+            evidence["machine_callbacks"] = {
+                "source_inputs": {name: sha256(ROOT / name) for name in callbacks_sources},
+                "archive_sha256": sha256(callbacks_archive)}
             evidence["host_tools"] = {
                 str(path): {"sha256": sha256(path), "version": run([str(path), "--version"])}
                 for path in (host_cxx, readobj)}
@@ -169,7 +204,18 @@ def main():
                   flush=True)
             if arguments.source:
                 sys.path.insert(0, str(ROOT / "tests"))
-                from scalars import POSITIVE, ARITHMETIC
+                from modules import TARGET_FILES
+                def target_cases(name, path):
+                    spec = importlib.util.spec_from_file_location(name, path)
+                    module = importlib.util.module_from_spec(spec)
+                    module.TARGET_ARCH = "x86_64"
+                    spec.loader.exec_module(module)
+                    return module
+                scalar = target_cases("scalar_cases", ROOT / "tests/scalars.py")
+                POSITIVE, ARITHMETIC = scalar.POSITIVE, scalar.ARITHMETIC
+                machine = target_cases("machine_cases", ROOT / "tests/backend/machine.py")
+                machine_sources = {"machine-" + name: text
+                                   for name, text in machine.SOURCES.items()}
                 compiler = host / "mettle"
                 if sha256(compiler) != previous["rebuilt_artifacts"]["mettle"]:
                     raise RuntimeError("Source compiler differs from passing build evidence")
@@ -178,14 +224,30 @@ def main():
                 selected_sources.update({
                     name: ("fn main(): i32 { " + body + " }\n", debug, release)
                     for name, (body, debug, release) in ARITHMETIC.items()})
+                selected_sources.update({
+                    "modules-" + name: (files["main.mt"], 0, 0)
+                    for name, files in TARGET_FILES.items()})
+                selected_sources.update({name: (text, 0, 0)
+                                         for name, text in machine_sources.items()})
                 evidence["cases"][configuration]["source_selection"] = {
-                    "positive": sorted(POSITIVE), "arithmetic": sorted(ARITHMETIC)}
+                    "positive": sorted(POSITIVE), "arithmetic": sorted(ARITHMETIC),
+                    "modules": sorted(TARGET_FILES), "machine": sorted(machine_sources),
+                    "freestanding": ["no-hosted-runtime", "assembly-simd-no-services"]}
                 for profile in ("debug", "release"):
                     for name, (text, debug, release) in selected_sources.items():
                         case_directory = output / "source" / profile / name
                         case_directory.mkdir(parents=True, exist_ok=True)
                         source = case_directory / "source.mt"
                         source.write_text(text)
+                        dependencies = {}
+                        if name.startswith("modules-"):
+                            for relative, content in TARGET_FILES[name[len("modules-"):]].items():
+                                if relative == "main.mt":
+                                    continue
+                                dependency = case_directory / relative
+                                dependency.parent.mkdir(parents=True, exist_ok=True)
+                                dependency.write_text(content)
+                                dependencies[relative] = sha256(dependency)
                         obj, executable = case_directory / "source.o", case_directory / "program"
                         run([str(compiler), "build", str(source), "-o", str(obj),
                              "--emit", "object", "--target", "x86_64-unknown-linux-gnu",
@@ -193,7 +255,32 @@ def main():
                         cases.append({"name": name, "profile": profile, "object": str(obj),
                                       "program": str(executable), "source_sha256": sha256(source),
                                       "object_sha256": sha256(obj),
+                                      "source_dependencies": dependencies,
+                                      "libraries": ([str(callbacks_archive)]
+                                                    if name in machine_sources else []),
                                       "expected": debug if profile == "debug" else release})
+                    for name, text in (
+                            ("freestanding-no-hosted-runtime", machine.FREESTANDING_SOURCE),
+                            ("freestanding-assembly-simd-no-services", machine.MACHINE_FREESTANDING_SOURCE)):
+                        standalone = output / "source" / profile / name
+                        standalone.mkdir(parents=True, exist_ok=True)
+                        source = standalone / "source.mt"
+                        source.write_text(text)
+                        driver = standalone / "driver.c"
+                        driver.write_text(machine.FREESTANDING_DRIVER)
+                        driver_object = standalone / "driver.o"
+                        run([*remote, clang, "-std=c11", "-c", str(driver),
+                             "-o", str(driver_object)])
+                        obj, executable = standalone / "source.o", standalone / "program"
+                        run([str(compiler), "build", str(source), "--freestanding",
+                             "--emit", "object", "--target", "x86_64-unknown-linux-gnu",
+                             "--profile", profile, "-o", str(obj)])
+                        cases.append({"name": name, "profile": profile,
+                                      "object": str(obj), "program": str(executable),
+                                      "source_sha256": sha256(source), "object_sha256": sha256(obj),
+                                      "source_dependencies": {"driver.c": sha256(driver)},
+                                      "libraries": [str(driver_object)], "freestanding": True,
+                                      "expected": 0})
                 cases_file = output / "source-cases.json"
                 cases_file.write_text(json.dumps(cases, indent=2) + "\n")
                 evidence["cases"][configuration]["source_cases_input_sha256"] = sha256(cases_file)

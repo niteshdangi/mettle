@@ -1,0 +1,239 @@
+#include "types/layout.h"
+#include <algorithm>
+#include <functional>
+#include <limits>
+#include <set>
+
+namespace mettle {
+std::optional<ObjectLayout> objectLayout(const TypeStore &types, Type type) {
+  std::set<Type> active;
+  auto align = [](std::uint64_t value, std::uint64_t alignment) {
+    return (value + alignment - 1) & ~(alignment - 1);
+  };
+  std::function<std::optional<ObjectLayout>(Type)> visit =
+      [&](Type current) -> std::optional<ObjectLayout> {
+    ObjectLayout result;
+    if (isInteger(current) || current == Type::Char || current == Type::Bool) {
+      result.size = std::max(1u, integerWidth(current) / 8);
+      result.alignment = result.size;
+      return result;
+    }
+    if (isFloating(current)) {
+      result.size = result.alignment = current == Type::F32 ? 4 : 8;
+      return result;
+    }
+    if (current == Type::Unit || current == Type::Never)
+      return result;
+    if (types.isFunctionPointer(current)) {
+      result.size = result.alignment = 8;
+      return result;
+    }
+    if (types.isSlice(current)) {
+      auto element = visit(types.slice(current).element);
+      if (!element)
+        return std::nullopt;
+      result.alignment = element->alignment;
+      return result;
+    }
+    if (types.isErased(current))
+      return result;
+    if (types.isView(current) || types.isPointer(current)) {
+      auto metadata = types.pointerMetadata(types.view(current).payload);
+      if (metadata == PointerMetadata::Dependent)
+        return std::nullopt;
+      result.size = metadata == PointerMetadata::ElementCount ? 16
+                    : metadata == PointerMetadata::Witness    ? 24
+                                                              : 8;
+      result.alignment = 8;
+      return result;
+    }
+    if (!types.isProduct(current) || active.size() >= 128 ||
+        !active.insert(current).second)
+      return std::nullopt;
+    const auto &record = types.product(current);
+    if (record.vector) {
+      auto element = visit(record.vector->element);
+      if (!element)
+        return std::nullopt;
+      result.size = element->size * record.vector->lanes;
+      result.alignment = record.vector->alignment;
+      active.erase(current);
+      return result;
+    }
+    if (record.kind == AggregateKind::Enumeration && record.variants.empty()) {
+      active.erase(current);
+      result.alignment = std::max<std::uint64_t>(1, record.layout.alignment);
+      return result;
+    }
+    if (record.kind == AggregateKind::Opaque) {
+      auto hidden = visit(record.fields[0].type);
+      active.erase(current);
+      if (hidden)
+        hidden->fields = {0};
+      return hidden;
+    }
+    std::vector<ObjectLayout> members;
+    for (const auto &field : record.fields) {
+      auto layout = visit(field.type);
+      if (!layout) {
+        active.erase(current);
+        return std::nullopt;
+      }
+      members.push_back(std::move(*layout));
+    }
+    if (record.kind == AggregateKind::Array && members.empty()) {
+      auto element = visit(record.components[0]);
+      active.erase(current);
+      if (!element)
+        return std::nullopt;
+      result.alignment = element->alignment;
+      return result;
+    }
+    if (record.kind == AggregateKind::Enumeration &&
+        !record.layout.discriminants.empty() &&
+        record.layout.kind != LayoutKind::Transparent) {
+      auto tag = visit(record.layout.tag);
+      if (!tag) {
+        active.erase(current);
+        return std::nullopt;
+      }
+      result.fields.resize(members.size());
+      result.alignment = tag->alignment;
+      std::uint64_t payloadAlignment = 1;
+      for (std::size_t i = 1; i < members.size(); ++i)
+        payloadAlignment = std::max(payloadAlignment, members[i].alignment);
+      result.alignment = std::max(result.alignment, payloadAlignment);
+      auto payload = record.layout.kind == LayoutKind::C
+                         ? align(tag->size, payloadAlignment)
+                         : tag->size;
+      result.size = tag->size;
+      for (const auto &variant : record.variants) {
+        auto size = payload;
+        for (auto field : variant.fields) {
+          size = align(size, members[field].alignment);
+          result.fields[field] = size;
+          result.unaligned |= members[field].unaligned;
+          if (size > std::numeric_limits<std::uint64_t>::max() -
+                         members[field].size - ((std::uint64_t{1} << 29) - 1)) {
+            active.erase(current);
+            return std::nullopt;
+          }
+          size += members[field].size;
+        }
+        result.size = std::max(result.size, size);
+      }
+      result.alignment = std::max(result.alignment, record.layout.alignment);
+      result.size = align(result.size, result.alignment);
+      active.erase(current);
+      return result;
+    }
+    if (record.layout.kind == LayoutKind::Transparent) {
+      std::size_t nonzero = 0;
+      auto first = record.kind == AggregateKind::Enumeration ? 1u : 0u;
+      for (std::size_t i = first; i < members.size(); ++i) {
+        const auto &member = members[i];
+        if (member.size) {
+          result = member;
+          ++nonzero;
+        } else if (member.alignment != 1) {
+          active.erase(current);
+          return std::nullopt;
+        }
+      }
+      if (nonzero != 1) {
+        active.erase(current);
+        return std::nullopt;
+      }
+      result.fields.assign(members.size(), 0);
+    } else {
+      result.fields.resize(members.size());
+      for (std::size_t i = 0; i < members.size(); ++i) {
+        auto alignment = record.layout.packing ? std::min(record.layout.packing,
+                                                          members[i].alignment)
+                                               : members[i].alignment;
+        result.alignment = std::max(result.alignment, alignment);
+        auto offset =
+            record.layout.unionType ? 0 : align(result.size, alignment);
+        result.fields[i] = offset;
+        result.unaligned |=
+            members[i].unaligned || offset % members[i].alignment != 0;
+        if (offset > std::numeric_limits<std::uint64_t>::max() -
+                         members[i].size - ((std::uint64_t{1} << 29) - 1)) {
+          active.erase(current);
+          return std::nullopt;
+        }
+        result.size = std::max(result.size, offset + members[i].size);
+      }
+      if (record.layout.alignment)
+        result.alignment = std::max(result.alignment, record.layout.alignment);
+      result.size = align(result.size, result.alignment);
+    }
+    active.erase(current);
+    return result;
+  };
+  return visit(type);
+}
+bool customRepresentation(const TypeStore &types, Type type) {
+  std::set<Type> visited;
+  std::function<bool(Type)> visit = [&](Type current) {
+    if (!types.isProduct(current) || !visited.insert(current).second)
+      return false;
+    const auto &record = types.product(current);
+    const auto &layout = record.layout;
+    if (record.kind == AggregateKind::Array && record.fields.empty())
+      return true;
+    if (layout.kind != LayoutKind::Native || layout.alignment ||
+        layout.packing || layout.unionType || !layout.discriminants.empty())
+      return true;
+    for (const auto &field : record.fields)
+      if (visit(field.type))
+        return true;
+    return false;
+  };
+  return visit(type);
+}
+bool cCompatible(const TypeStore &types, Type type) {
+  std::set<Type> active;
+  std::function<bool(Type)> visit = [&](Type current) {
+    if (isNumeric(current) || current == Type::Bool || current == Type::Char ||
+        current == Type::Unit || current == Type::Never)
+      return true;
+    if (types.isProduct(current) && types.product(current).vector)
+      return true;
+    if (types.isPointer(current) || types.isView(current))
+      return types.pointerMetadata(types.view(current).payload) ==
+             PointerMetadata::None;
+    if (!active.insert(current).second)
+      return true;
+    bool result = false;
+    if (types.isFunctionPointer(current)) {
+      const auto &signature = types.callable(current);
+      result = signature.abi == "C" || signature.abi == "C-unwind" ||
+               signature.abi == "system";
+      result &= visit(signature.result);
+      for (const auto &parameter : signature.parameters)
+        result &= parameter.mode == ParameterMode::Read ||
+                          parameter.mode == ParameterMode::Mut
+                      ? types.isSized(parameter.type)
+                      : visit(parameter.type);
+    } else if (types.isProduct(current)) {
+      const auto &record = types.product(current);
+      result = record.layout.kind != LayoutKind::Native ||
+               record.kind == AggregateKind::Array;
+      for (const auto &field : record.fields)
+        result &= visit(field.type);
+    }
+    active.erase(current);
+    return result;
+  };
+  return visit(type);
+}
+bool fieldlessEnumeration(const TypeStore &types, Type type) {
+  return types.isProduct(type) &&
+         types.product(type).kind == AggregateKind::Enumeration &&
+         std::all_of(
+             types.product(type).variants.begin(),
+             types.product(type).variants.end(),
+             [](const auto &variant) { return variant.fields.empty(); });
+}
+} // namespace mettle

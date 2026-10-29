@@ -7,6 +7,11 @@ enforced current component graph, not an inventory of unimplemented features.
 The [language specifications](docs/core-semantics.md) define behavior;
 implementation convenience does not override them.
 
+For milestone work, follow the
+[execution gates](AGENTS.md#milestone-execution-gates): inventory the complete
+scope before compiler edits, batch shared-interface changes, and separate
+focused implementation checks from frozen-source qualification.
+
 ## Local checks
 
 Run from the project root with the selected local toolchain installed:
@@ -28,11 +33,17 @@ component boundaries on builds, including individual component targets.
 For a new build configuration use the existing reproducibility workflow:
 
 ```sh
-python3 tools/build.py --configuration Debug
+python3 tools/build.py --configuration Debug --quality
 python3 tools/build.py --configuration Release
 python3 tools/build.py --configuration Debug --sanitizers
-python3 tools/check_quality.py --build-dir build/macos-arm64/Debug-sanitized
 ```
+
+`--quality` replaces the standalone CTest step with the build-directory quality
+gate, which includes CTest. This runs each configuration's tests once while
+retaining static analysis and clean-rebuild reproducibility checks.
+Run full static analysis in the selected build configuration; additionally use
+`--quality` for another configuration when its changed compiler definitions or
+sources require separate analysis, rather than repeating identical analysis.
 
 The selected LLVM 22.1.3 replaces 21.1.8 to resolve the Darwin sanitizer
 startup failure. The instrumented corpus and both detector probes pass; see the

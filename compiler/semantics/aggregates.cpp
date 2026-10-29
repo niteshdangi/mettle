@@ -1,0 +1,144 @@
+#include "semantics/checker.h"
+#include "support/limits.h"
+
+namespace mettle {
+int Checker::aggregate(Node &n, bool reachable) {
+  if (n.kind == Kind::Tuple) {
+    std::vector<int> children;
+    for (auto &child : n.children)
+      children.push_back(node(*child, reachable));
+    return inference.composite(AggregateKind::Tuple, std::move(children));
+  }
+  if (n.kind == Kind::Array) {
+    int payload = inference.fresh();
+    std::uint32_t count = n.children.size();
+    if (!n.flag && count > limits::cleanupPlaces)
+      error("limit", n.span, "array element limit exceeded");
+    if (n.flag) {
+      node(*n.children[1], reachable);
+      auto identity = constantType(*n.children[1]);
+      if (identity != Type::Unknown &&
+          !isInteger(checked.types->parameter(identity).valueType)) {
+        error("type", n.span, "array length requires an integer constant");
+        return inference.fresh();
+      }
+      auto evaluated = checked.types->constantValue(identity);
+      if (identity != Type::Unknown &&
+          checked.types->scalarConstantValue(identity) && !evaluated) {
+        error("limit", n.span, "array length limit exceeded");
+        return inference.fresh();
+      }
+      if (identity != Type::Unknown && !evaluated) {
+        inference.equal(payload, node(*n.children[0], reachable), n.span);
+        auto element = inference.value(payload);
+        if (element != Type::Unknown && !checked.types->isCopy(element))
+          error("ownership", n.span, "array repetition requires Copy elements");
+        facts(n).constantCount = identity;
+        return inference.composite(AggregateKind::Array, {payload}, 0,
+                                   identity);
+      }
+      auto length = evaluated;
+      if (!length || *length < 0 ||
+          static_cast<std::size_t>(*length) > limits::cleanupPlaces)
+        error(
+            "type", n.span,
+            "array repetition requires a bounded nonnegative integer constant");
+      count = length && *length >= 0 &&
+                      static_cast<std::size_t>(*length) <= limits::cleanupPlaces
+                  ? static_cast<std::uint32_t>(*length)
+                  : 0;
+      inference.equal(payload, node(*n.children[0], reachable), n.span);
+      if (count > 1 && !checked.types->isCopy(inference.value(payload)))
+        error("ownership", n.span, "array repetition requires Copy elements");
+    } else
+      for (auto &child : n.children)
+        inference.equal(payload, node(*child, reachable), child->span);
+    facts(n).number = static_cast<std::int32_t>(count);
+    return inference.composite(AggregateKind::Array, {payload}, count);
+  }
+  if (n.kind == Kind::Range) {
+    auto lower = node(*n.children[0], reachable);
+    auto upper = node(*n.children[1], reachable);
+    inference.equal(lower, upper, n.span);
+    inference.equal(lower, inference.numeric(false), n.span);
+    return inference.composite(AggregateKind::Range,
+                               {lower, upper, inference.fresh(Type::Bool)});
+  }
+  if (n.kind == Kind::Index) {
+    int base = node(*n.children[0], reachable);
+    int key = node(*n.children[1], reachable);
+    fields(false);
+    auto type = inference.value(base);
+    while (checked.types->isView(type))
+      type = checked.types->view(type).payload;
+    if (type != Type::Unknown && !checked.types->isSlice(type) &&
+        !(checked.types->isProduct(type) &&
+          checked.types->product(type).kind == AggregateKind::Array)) {
+      if (auto result = operatorCall(n, base, key)) {
+        auto view = inference.value(*result);
+        if (checked.types->isView(view)) {
+          facts(n).indexView = view;
+          facts(n).operatorCall = false;
+          if (facts(n).exclusivePlace)
+            requireMutablePlace(n);
+          return inference.fresh(checked.types->view(view).payload);
+        }
+        return *result;
+      }
+    }
+    auto keyType = inference.value(key);
+    if (keyType != Type::Usize)
+      inference.equal(key, inference.fresh(Type::I32), n.children[1]->span,
+                      true);
+    int result = inference.fresh();
+    fieldRequests.push_back({&n, base, result});
+    return result;
+  }
+  if (n.kind == Kind::Coalesce) {
+    int source = node(*n.children[0], reachable);
+    auto children =
+        inference.components(source, AggregateKind::Optional, n.span);
+    int fallback = node(*n.children[1], reachable);
+    if (children.empty())
+      return fallback;
+    return inference.joined(children[0], fallback, n.span);
+  }
+  int source = node(*n.children[0], reachable);
+  auto type = inference.value(source);
+  bool consumes =
+      n.children[0]->kind == Kind::Unary && n.children[0]->text == "take";
+  facts(n).iterationMode =
+      checked.types->isView(type) &&
+              checked.types->view(type).mode == ParameterMode::Mut
+          ? ParameterMode::Mut
+      : consumes && !checked.types->isView(type) ? ParameterMode::Take
+                                                 : ParameterMode::Read;
+  while (checked.types->isView(type))
+    type = checked.types->view(type).payload;
+  if (!checked.types->isSlice(type) &&
+      (!checked.types->isProduct(type) ||
+       (checked.types->product(type).kind != AggregateKind::Range &&
+        checked.types->product(type).kind != AggregateKind::Array))) {
+    error("type", n.span, "for requires a concrete range or array");
+    return inference.fresh(Type::Unit);
+  }
+  loopResults[facts(n).control] = inference.fresh(Type::Unit);
+  facts(n).readView = checked.types->viewType(
+      type, facts(n).iterationMode == ParameterMode::Mut ? ParameterMode::Mut
+                                                         : ParameterMode::Read);
+  auto payload = checked.types->isSlice(type)
+                     ? checked.types->slice(type).element
+                 : checked.types->product(type).kind == AggregateKind::Range
+                     ? checked.types->product(type).components[0]
+                     : checked.types->product(type).components[0];
+  if (facts(n).iterationMode != ParameterMode::Take)
+    facts(n).elementView =
+        checked.types->viewType(payload, facts(n).iterationMode);
+  scopes.emplace_back();
+  pattern(n.patterns[0], inference.fresh(payload), facts(n).iterationMode);
+  irrefutable.emplace_back(&n.patterns[0], patternVariables.at(&n.patterns[0]));
+  node(*n.children[1], reachable);
+  scopes.pop_back();
+  return inference.fresh(Type::Unit);
+}
+} // namespace mettle

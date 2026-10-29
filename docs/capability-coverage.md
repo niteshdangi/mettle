@@ -9,8 +9,11 @@ archive hashes and reproduction instructions are in
 [baseline/sources.json](baseline/sources.json).
 
 The specification has 107 capability requirements with explicit document/section
-owners in [capabilities.csv](capabilities.csv). All are specified; none is
-implemented. This is specification coverage, not a capability-parity score.
+owners in [capabilities.csv](capabilities.csv). All are specified. Its
+`implementation_status` fields retain the specification-freeze snapshot, not
+current compiler progress; see the [implementation plan](implementation-plan.md)
+and revision-bound qualification receipts for that evidence.
+This is specification coverage, not a capability-parity score.
 Language/compiler/ABI/tooling requirements are tracked separately from library
 declarations; a std catalog alone cannot define a language.
 
@@ -21,7 +24,7 @@ declarations; a std catalog alone cannot define a language.
 - `layer` / `phase`: dependency layer and earliest development phase, not a reduced V1 commitment.
 - `status`: specified means a selected native contract exists, directly or by explicit frozen-baseline incorporation.
 - `specification`: owning document/section links, separated by `|`.
-- `implementation_status`: not_implemented; no checking/execution evidence is implied.
+- `implementation_status`: not_implemented at specification freeze; no current checking/execution evidence is implied by this snapshot.
 - `required_evidence`: mandatory later positive/negative or integration evidence, not a passing result.
 
 ## Library operation inventory
