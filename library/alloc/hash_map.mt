@@ -1,5 +1,6 @@
 import package.core.iter.{Iterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
 import package.core.clone.Clone
+import package.core.default.Default
 import package.core.cmp.Eq
 import package.core.fmt
 import package.core.slice.SliceIter
@@ -443,3 +444,91 @@ extend<K: Hash + PartialEq> Set<K> implements FromItems<K> {
 // Owned storage moves or is shared exactly when its elements and allocator do.
 unsafe extend<K: Transferable, V: Transferable, A: Allocator + Transferable> Map<K, V, A> implements Transferable {}
 unsafe extend<K: Shareable, V: Shareable, A: Allocator + Shareable> Map<K, V, A> implements Shareable {}
+
+// An entry owns the query key and exclusively borrows its map until consumed.
+// The occupied index remains valid because the loan excludes map mutation.
+pub type OccupiedEntry<region r, K, V, A: Allocator = Global> {
+    map: mut Map<K, V, A> from r
+    key: K
+    index: usize
+}
+pub type VacantEntry<region r, K, V, A: Allocator = Global> {
+    map: mut Map<K, V, A> from r
+    key: K
+}
+pub enum Entry<region r, K, V, A: Allocator = Global> {
+    Occupied(OccupiedEntry<region r, K, V, A>);
+    Vacant(VacantEntry<region r, K, V, A>)
+}
+
+extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
+    pub mut fn entry(key: take K): Entry<region self, K, V, A> {
+        match self.find_entry(key) {
+            present(index) => Entry.Occupied(OccupiedEntry(mut self, key, index)),
+            none => Entry.Vacant(VacantEntry(mut self, key))
+        }
+    }
+}
+
+extend<region r, K: Hash + PartialEq, V, A: Allocator> OccupiedEntry<region r, K, V, A> {
+    pub fn get(): read V from self { read self.map.entries[self.index].value }
+    // The exclusive map loan preserves this initialized index; the returned
+    // view cannot outlive this reborrow of the entry.
+    pub mut fn get_mut(): mut V from self {
+        unsafe { mut (*self.map.entries.as_mut_ptr().add(self.index)).value }
+    }
+    pub mut fn insert(value: take V): V {
+        let slot = unsafe { core.ptr.from_mut((*self.map.entries.as_mut_ptr().add(self.index)).value) }
+        unsafe { core.ptr.replace(slot, value) }
+    }
+    pub take fn into_mut(): mut V from r {
+        unsafe { mut (*self.map.entries.as_mut_ptr().add(self.index)).value }
+    }
+    pub take fn remove(): V {
+        match self.map.remove(self.key) {
+            present(value) => value,
+            none => package.core.panic.unreachable()
+        }
+    }
+}
+
+extend<region r, K: Hash + PartialEq, V, A: Allocator> VacantEntry<region r, K, V, A> {
+    pub take fn insert(value: take V): mut V from r {
+        let slot = self.map.or_insert(self.key, value)
+        // The returned pointer is to the inserted value; the exclusive map
+        // loan outlives this consumed entry and prevents reallocations.
+        let p = core.ptr.from_mut(*slot)
+        unsafe { mut *p }
+    }
+}
+
+extend<region r, K: Hash + PartialEq, V, A: Allocator> Entry<region r, K, V, A> {
+    pub take fn or_insert(value: take V): mut V from r {
+        match take self {
+            Entry.Occupied(entry) => entry.into_mut(),
+            Entry.Vacant(entry) => entry.insert(value)
+        }
+    }
+    pub take fn or_insert_with<F: take fn(): V>(make: take F): mut V from r {
+        match take self {
+            Entry.Occupied(entry) => entry.into_mut(),
+            Entry.Vacant(entry) => entry.insert(make())
+        }
+    }
+    pub take fn and_modify<F: take fn(mut V): Unit>(modify: take F): Entry<region r, K, V, A> {
+        match take self {
+            Entry.Occupied(entry) => {
+                var occupied = entry
+                modify(occupied.get_mut())
+                Entry.Occupied(occupied)
+            },
+            Entry.Vacant(entry) => Entry.Vacant(entry)
+        }
+    }
+}
+
+extend<region r, K: Hash + PartialEq, V: Default, A: Allocator> Entry<region r, K, V, A> {
+    pub take fn or_default(): mut V from r {
+        self.or_insert_with(take fn(): V { V.(Default).default() })
+    }
+}
