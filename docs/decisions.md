@@ -86,6 +86,11 @@ status are tracked in [implementation-plan.md §8.7](implementation-plan.md#87-e
 
 ## Implementation and product gates
 
+- Owner decision (2026-10-31): Linux and Windows execution is excluded from all
+  gates run on the macOS development machine; the owner runs those targets on a
+  separate machine. Milestone closures here state their macOS host/Darwin
+  target scope and do not claim Linux or Windows execution.
+
 | Work | Blocks | Resolution |
 | --- | --- | --- |
 | Grammar conflict/separator validation | Claim of parser-ready full grammar | I02-I05 check implemented scalar, product, composition and generic syntax; future constructs remain gated by their owning milestones |

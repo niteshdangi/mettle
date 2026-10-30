@@ -1,16 +1,16 @@
 # Compiler implementation plan
 
-Status: the `c485aa1` correctness re-review has reopened I06 and its prerequisites'
-affected correctness claims. Historical green receipts are retained, not current
-approval; reported crashes, soundness/ABI defects and validation gaps must close
-before a new freeze and completion verdict.
+Status: I06 is closed for the native macOS ARM64 compiler host and Darwin
+target after the `c485aa1` re-review findings were repaired and requalified on
+frozen commit `ff1daa3`. By owner decision (2026-10-31), Linux and Windows
+execution is excluded from gates on this machine and runs separately.
 I01 foundation is recorded for the native macOS ARM64 compiler host and
 Linux x86-64 target execution. I02 scalar source compilation is qualified within
 that host/target scope. I03 concrete ownership and resource cleanup is qualified
 within the same scope. I04 composition and I05 generic typing/dispatch are
 covered by historical native, sanitizer, quality, reproducibility and target
-receipts. Those receipts do not close the newly confirmed correctness findings.
-I06 is reopened. I07-I11 are partially implemented on macOS arm64 (per-item
+receipts; their re-review findings are covered by the I06 requalification.
+I06 is complete within the scope above. I07-I11 are partially implemented on macOS arm64 (per-item
 status in sections 8.3-8.4); none is qualified. I12 workflow commands are in
 progress; I13-I16 are not started.
 The selected design is in the linked specifications. Scalar execution does not
@@ -207,9 +207,9 @@ Each milestone ends in an executable or independently inspectable artifact,
 with positive/negative checks and retained evidence. Creating directories,
 emitting unchecked LLVM IR, assigning API mappings or counting source lines is
 not completion. Historical I01-I06 receipts record their tested host/target scope,
-but the `c485aa1` re-review exposed missed correctness obligations. I06 is reopened
-for those repairs. I07-I11 items carry per-item implementation/verification
-status below; no milestone after I05 is complete.
+and the `c485aa1` re-review's missed obligations were repaired before I06's
+requalification. I07-I11 items carry per-item implementation/verification
+status below; no milestone after I06 is complete.
 
 | ID | Milestone | Exit artifact / decisive check | Prerequisites |
 | --- | --- | --- | --- |
@@ -505,9 +505,8 @@ Packed-field destruction now uses aligned storage that survives a destructor
 panic; remaining fields finish once on re-entry. Structural pin projections,
 pinned destructors, explicit pin receivers, Unpin properties, integer/C enum
 representations and overlapping unions have native and target evidence.
-I06's historical qualified snapshot and its limits are recorded below; the
-`c485aa1` re-review reopened I06, so that snapshot is not current approval. The
-older focused batches remain integration history, not substitutes for a new gate.
+I06's requalification after the `c485aa1` re-review and its limits are
+recorded below; the older snapshot and focused batches remain history.
 
 #### I06 acceptance inventory
 
@@ -639,7 +638,35 @@ The source-freeze gate depends on these tasks; qualification depends on that gat
 and milestone completion depends on qualification. Reopen affected gates and
 invalidate dependent evidence when a later source change is necessary.
 
-#### Historical I06 qualification result (superseded by reopening)
+#### I06 requalification result (2026-10-31)
+
+Frozen commit `ff1daa3` on the native macOS ARM64 host and Darwin target:
+
+- The `c485aa1` re-review corpus (crash, soundness, ABI, limit and diagnostic
+  findings) produces its expected acceptances and located rejections; the
+  doubling-specialization case now stops at `error[limit]` in about a second.
+- `tools/build.py --configuration Release --quality` on `ec000dd`: clean
+  build, static analysis of every owned translation unit, full CTest and a
+  byte-identical second clean build. The only later change (`ff1daa3`) is the
+  package-store fix below; for it the Release build, static analysis of
+  `store.cpp` and full CTest were rerun on `ff1daa3`.
+- The ASan/UBSan qualification exposed undefined behavior in package-store
+  pruning: an entry deleted by a concurrent build reported the minimum file
+  time, overflowing the age computation, and one shared error code silently
+  ended directory walks. `ff1daa3` skips vanished entries with per-entry error
+  codes; `tests/packages.py` (cache corruption and clean) adds dangling entries
+  that fail the old sanitized compiler.
+- ASan/UBSan on `ff1daa3`: sanitized build and full CTest. Two suites exceed
+  their wall-clock bounds only because the sanitized compiler is slow (a hosted
+  std program compiles in about 37s versus the 30s probe bound and 2.7s in
+  Release); `packages.resolution` (all 29 cases, sharded) and
+  `probe.broken-pipe` were rerun without the bound under halting ASan/UBSan and
+  passed. Front-end compile time is a recorded follow-up.
+- Not claimed: Linux/Windows execution (owner decision 2026-10-31: run on a
+  separate machine, excluded from gates here), emitted-code TSan, a complete
+  memory-model proof, or I13 complete stable-operation/profile closure.
+
+#### Earlier I06 qualification result (before the re-review)
 
 Before the `c485aa1` re-review reopened I06, it was recorded complete on 2026-10-29
 for the native macOS ARM64 compiler host and Linux x86-64 target execution. These
