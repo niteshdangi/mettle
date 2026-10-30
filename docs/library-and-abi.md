@@ -16,9 +16,29 @@ low-level memory facilities. It requires neither allocator nor OS.
 allocation-backed formatting and explicitly erased values. It depends on a
 provided allocator but does not require processes, files or an executor.
 
+`alloc::future::erase` (implemented, unverified) consumes a `Static` future
+and allocates a fixed-address payload using the global allocator. Its
+`Erased<T>` handle can move without moving the payload; polling dispatches
+through pinned exclusive access and dropping the handle destroys and frees the
+payload. Construction does not poll. This interface does not erase
+non-`Static` borrows or grant cross-thread transfer; it does not select an
+executor. Polling, allocation failure and destructor panics retain their
+underlying contracts.
+
 `std` adds hosted files/paths, OS strings, clocks, threads, synchronization,
 networking and processes. The official async runtime is separately selectable,
 not linked merely because a program imports core.
+
+The local `std::task` executor and its synchronous `scope` are implemented,
+unverified. `spawn` allocates a task, requires `Transferable + Static` future
+and output, and returns a non-transferable handle. Joining drives the executor;
+dropping or aborting the handle cancels, and poll/destructor panics become
+`JoinError::Panicked`. The executor retains registrations even if handles are
+forgotten and closes them on drop. A local scope permits `Within` borrows,
+drives ready children and cancels suspended ones before returning; it does not
+keep children running across an enclosing async future's polls. No fairness or
+bounded completion is promised. Completed task metadata is retained until the
+executor is destroyed.
 
 Working prelude: scalar names, Copy, Sized, iterator/call capabilities, Text,
 String when allocation is enabled, and native optional/outcome constructors.

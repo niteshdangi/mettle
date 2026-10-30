@@ -42,6 +42,10 @@ pub type Waker {
     drop { (self.raw.vtable.release)(self.raw.data) }
 }
 
+// All raw-waker constructors must provide thread-safe data and operations.
+unsafe impl Waker implements Transferable {}
+unsafe impl Waker implements Shareable {}
+
 impl Waker {
     pub take fn wake(): Unit {
         let raw = self.raw
@@ -62,7 +66,9 @@ fn noop_clone(data: ptr<mut u8>): RawWaker { RawWaker(data, noop_table()) }
 fn noop_call(data: ptr<mut u8>): Unit {}
 fn noop_table(): RawWakerVTable { RawWakerVTable(noop_clone, noop_call, noop_call, noop_call) }
 
-// Safety: the vtable must uphold the clone/wake/release contract for `raw.data`.
+// Safety: the data and all vtable operations must remain valid and thread-safe
+// for concurrent clone, wake, wake_by_ref and release calls. Each clone owns
+// an independent reference, consumed exactly once by wake or release.
 pub unsafe fn waker_from_raw(raw: RawWaker): Waker { Waker(raw) }
 
 // A waker that does nothing, for polling without an executor.
