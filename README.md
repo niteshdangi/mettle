@@ -100,8 +100,9 @@ startup with the former 21.1.8 runtime. CMake/Ninja versions are unchanged.
 Existing installations must preserve the old `.tools/<platform>/llvm` cache
 under a versioned name before bootstrapping the new selection; the bootstrap
 deliberately refuses to overwrite an unrecognized cache. Use a fresh CMake
-build directory when the compiler version changes. This checkout retains the
-old tools as `llvm-21.1.8` and old builds with `-llvm21` suffixes.
+build directory when the compiler version changes. The superseded LLVM 21.1.8
+tools and their `-llvm21` builds were retired on 2026-10-30 after an audit
+found no remaining consumers.
 See the [compatibility record](docs/code-quality.md#5-unsafe-memory-and-concurrency).
 
 The three foundation checks retain their constructed-LLVM smoke test. Four
