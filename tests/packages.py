@@ -303,13 +303,19 @@ def cache_corruption_and_clean():
     blob = cache_files("blobs")[0]
     blob.chmod(0o644)
     blob.write_bytes(b"corrupted")
+    # Scratch and entry files that vanish while the store prunes have no age.
+    cache = evidence / "cache"
+    gone = [cache / "tmp" / "gone", cache_files("entries")[0].parent / "gone"]
+    for link in gone:
+        link.symlink_to(cache / "missing")
     text, built = explained(app)
     assert "entry corrupt" in text, text
     assert exit_code(built) == 0
+    for link in gone:
+        link.unlink()
     text, _ = explained(app)
     assert "cache hit" in text, text
     # `clean` reports, then empties, only a directory that is a store.
-    cache = evidence / "cache"
     text = invoke(["clean", "--dry-run"], contains="would remove 1 entries")
     assert cache.exists()
     invoke(["clean"], contains="removed 1 entries")

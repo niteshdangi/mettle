@@ -241,13 +241,16 @@ std::vector<Store::Record> Store::records() const {
   std::error_code error;
   for (fs::recursive_directory_iterator it(directory / "entries", error), end;
        !error && it != end; it.increment(error)) {
-    if (!it->is_regular_file(error))
+    std::error_code vanished;
+    if (!it->is_regular_file(vanished))
       continue;
     Record record;
     record.path = it->path();
     record.key = it->path().filename().string();
     record.size = sizeOf(it->path());
-    record.used = fs::last_write_time(it->path(), error);
+    record.used = fs::last_write_time(it->path(), vanished);
+    if (vanished)
+      continue;
     if (auto content = readText(it->path()))
       if (auto entry = parseEntry(*content))
         record.blob = entry->blob;
@@ -263,8 +266,11 @@ std::vector<std::string> Store::prune(const std::string &keep) {
   // Scratch files left by a crashed build.
   for (fs::directory_iterator it(directory / "tmp", error), end;
        !error && it != end; it.increment(error)) {
+    // A concurrent build may remove its scratch file between listing and
+    // stat; such an entry has no meaningful age.
     std::error_code stale;
-    if (now - fs::last_write_time(it->path(), stale) > std::chrono::hours(1))
+    auto written = fs::last_write_time(it->path(), stale);
+    if (!stale && now - written > std::chrono::hours(1))
       fs::remove(it->path(), stale);
   }
   error.clear();
@@ -272,7 +278,8 @@ std::vector<std::string> Store::prune(const std::string &keep) {
   std::map<std::string, fs::path> blobPaths;
   for (fs::recursive_directory_iterator it(directory / "blobs", error), end;
        !error && it != end; it.increment(error))
-    if (it->is_regular_file(error) && hexName(it->path().filename().string())) {
+    if (std::error_code vanished; it->is_regular_file(vanished) &&
+                                  hexName(it->path().filename().string())) {
       sizes[it->path().filename().string()] = sizeOf(it->path());
       blobPaths[it->path().filename().string()] = it->path();
     }
@@ -342,7 +349,7 @@ StoreUsage Store::usage() const {
   }
   for (fs::recursive_directory_iterator it(directory / "blobs", error), end;
        !error && it != end; it.increment(error))
-    if (it->is_regular_file(error)) {
+    if (std::error_code vanished; it->is_regular_file(vanished)) {
       ++result.blobs;
       result.bytes += sizeOf(it->path());
     }
