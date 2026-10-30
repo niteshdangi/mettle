@@ -758,7 +758,11 @@ drop order only. Alloc/core integration (lane allocint): `library/alloc/support.
 `OwnedIterable` (`IntoIter` is double-ended), `Iterable`/`MutableIterable`
 (`for x in read v`, `for x in mut v`, `for x in take v`), `Deref`/`DerefMut` to
 `[T]`, `IndexRange`/`IndexRangeMut`, `Clone`, `PartialEq/Eq/PartialOrd/Ord` and
-`Hash`. `String` implements `fmt.Write` (`fmt.Error`), `Deref` to `Text`,
+`Hash`. Scalar `Index<usize>` on a `List` of region-bounded views preserves the
+element view's region separately from the temporary list borrow; focused
+acceptance and escaping-region regressions are added, but this fix is
+implemented and unverified pending lane integration. `String` implements
+`fmt.Write` (`fmt.Error`), `Deref` to `Text`,
 `IndexRange` (-> `Text`), `Display`, `Debug`, `Hash` (equal to `Text`'s hash),
 `Ord`. `Box` and `Rc` are transparent over `Deref`, comparison, `Hash`,
 `Display`/`Debug` (`Box` also `DerefMut`, `Clone`). `Map`/`Set`,
