@@ -57,6 +57,10 @@ private:
   std::unordered_map<SourceId, std::string> owner;
   std::string currentRoot;
   std::set<std::string> mounted, shadowed;
+  // Package being mounted, if any; its sources are user code.
+  const Library::Package *currentPackage = nullptr;
+  // Expansion facts per dependency package; the empty key is the libraries'.
+  std::unordered_map<std::string, expansion::Configuration> configurations;
   struct Names {
     bool any = false;
     std::set<std::string> names;
@@ -261,7 +265,9 @@ private:
     declaration.item.visibility.publicItem = true;
     result.modules.push_back(std::move(declaration));
     auto directory = fs::path(source->path).parent_path();
+    currentPackage = &package;
     read(std::move(*source), {package.name}, std::move(directory), 1);
+    currentPackage = nullptr;
   }
 
   void mountLibraries() {
@@ -330,6 +336,21 @@ private:
     currentRoot = saved;
   }
 
+  // The root source tests the requested features, a dependency package its
+  // resolved features and a standard library root none.
+  const expansion::Configuration &configuration() {
+    if (!currentPackage && currentRoot.empty())
+      return library.configuration;
+    auto key = currentPackage ? currentPackage->name : std::string{};
+    auto found = configurations.find(key);
+    if (found != configurations.end())
+      return found->second;
+    auto selected = library.configuration;
+    selected.features =
+        currentPackage ? currentPackage->features : std::set<std::string>{};
+    return configurations.emplace(key, std::move(selected)).first->second;
+  }
+
   void read(Source source, std::vector<std::string> prefix, fs::path directory,
             unsigned depth) {
     auto identity = fs::path(source.path).lexically_normal().generic_string();
@@ -346,9 +367,20 @@ private:
     source.id = nextSource++;
     if (!currentRoot.empty())
       owner[source.id] = currentRoot;
-    auto tree = parse(source, diagnostics);
+    auto tree = parseDeclarations(source, diagnostics);
     if (!diagnostics.empty())
       return;
+    // Expansion precedes member flattening and the external-module scan, so
+    // inactive modules are never read and generated impls are flattened too.
+    expansion::expand(tree, diagnostics, configuration(), [&] {
+      auto id = nextSource++;
+      if (!currentRoot.empty())
+        owner[id] = currentRoot;
+      return id;
+    });
+    if (!diagnostics.empty())
+      return;
+    completeDeclarations(tree);
     for (const auto &declaration : tree.modules) {
       if (!declaration.external)
         continue;

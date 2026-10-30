@@ -24,6 +24,8 @@ struct Mount {
   std::string name, source;
   // The package name and version that supply it (for build records).
   std::string package, version;
+  // Features the resolution enabled for this package, sorted.
+  std::vector<std::string> features;
 };
 
 struct Plan {
@@ -31,6 +33,8 @@ struct Plan {
   // Source file of the selected executable target.
   std::string root;
   std::vector<Mount> mounts;
+  // Features the resolution enabled for the root package, sorted.
+  std::vector<std::string> features;
   // Content identity of everything that selects this build's inputs: the
   // lock, selected features and target.
   std::string fingerprint;

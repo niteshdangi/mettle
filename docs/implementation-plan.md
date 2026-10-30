@@ -1213,6 +1213,8 @@ I14-I16 own qualification/evolution rather than additional baseline capability I
 | I07 | L009, S001-S004, S006-S014, S029 |
 | I08 | S024-S028 |
 | I09 | L054-L058, T001-T003 |
+
+I09 status: L057 implemented and verified by focused source cases (attribute parsing with spans, unknown-attribute diagnostics, `@derive` of Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash on products and enums including generic types, generated-code provenance diagnostics; `Default` is a feature gap because library/core has no Default interface). L058 implemented and verified (`@cfg` with `all`/`any`/`not`, `target_os/arch/family/endian/pointer_width/feature`, `feature`). Single-file builds take `--features a,b`; in a package build the root source tests its resolved features and each dependency its own (tests/packages.py `features`), while the standard libraries see none. Unions, empty enums and types with `init` constructors cannot derive; L055/L056 macros are not started.
 | I10 | S005, S018-S023 |
 | I11 | L052-L053, S030 |
 | I12 | L060, T004-T007 |

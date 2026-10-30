@@ -29,8 +29,14 @@
         "syntax/parser/interfaces.cpp"]
     },
     {
-      "name": "resolution", "directory": "resolution", "kind": "STATIC",
+      "name": "expansion", "directory": "expansion", "kind": "STATIC",
       "dependencies": ["syntax", "source", "diagnostics", "support"],
+      "public_headers": ["expansion/expand.h"],
+      "files": ["expansion/expand.h", "expansion/detail.h", "expansion/expand.cpp", "expansion/cfg.cpp", "expansion/derive.cpp"]
+    },
+    {
+      "name": "resolution", "directory": "resolution", "kind": "STATIC",
+      "dependencies": ["syntax", "expansion", "source", "diagnostics", "support"],
       "public_headers": ["resolution/resolve.h", "resolution/load.h"],
       "files": ["resolution/resolve.h", "resolution/resolve.cpp", "resolution/load.h", "resolution/load.cpp"]
     },
@@ -127,7 +133,7 @@
     },
     {
       "name": "driver", "directory": "driver", "kind": "EXECUTABLE",
-      "dependencies": ["source", "diagnostics", "syntax", "resolution", "packages", "ir", "types", "pipeline", "backend_llvm"],
+      "dependencies": ["source", "diagnostics", "syntax", "expansion", "resolution", "packages", "ir", "types", "pipeline", "backend_llvm"],
       "llvm": true, "public_headers": [],
       "files": ["driver/main.cpp", "driver/options.h", "driver/options.cpp", "driver/run.cpp",
         "driver/inspect.h", "driver/inspect.cpp", "driver/output.h", "driver/output.cpp"]

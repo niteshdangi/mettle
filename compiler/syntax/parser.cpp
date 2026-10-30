@@ -10,9 +10,6 @@ void Parser::run(Module &module, std::vector<std::string> scope, bool nested) {
     try {
       auto metadata = attributes();
       ItemSyntax item{scope, visibility(), std::move(metadata)};
-      if (!item.attributes.empty() && (is("import") || is("alias")))
-        feature("attributes on this declaration require its compile-time "
-                "implementation");
       if ((is("global_asm") && peek(1).text == "!") ||
           (is("core") && peek(1).text == "::" && peek(2).text == "arch" &&
            peek(3).text == "::" && peek(4).text == "global_asm" &&
@@ -95,7 +92,7 @@ void Parser::run(Module &module, std::vector<std::string> scope, bool nested) {
 } // namespace mettle::parsing
 
 namespace mettle {
-Module parse(const Source &source, Diagnostics &diagnostics) {
+Module parseDeclarations(const Source &source, Diagnostics &diagnostics) {
   Diagnostics::SourceContext context(diagnostics, source);
   Module module;
   module.tokens = tokenize(source, diagnostics);
@@ -104,6 +101,16 @@ Module parse(const Source &source, Diagnostics &diagnostics) {
     parser.run(module);
     module.textLiterals = parser.textLiterals();
   }
+  return module;
+}
+
+Module parse(const Source &source, Diagnostics &diagnostics) {
+  auto module = parseDeclarations(source, diagnostics);
+  completeDeclarations(module);
+  return module;
+}
+
+void completeDeclarations(Module &module) {
   for (auto &product : module.products) {
     std::vector<std::size_t> methods;
     for (auto &method : product.methods) {
@@ -195,6 +202,5 @@ Module parse(const Source &source, Diagnostics &diagnostics) {
     }
     implementation.methods.clear();
   }
-  return module;
 }
 } // namespace mettle

@@ -133,12 +133,17 @@ def offline():
 
 def features():
     app = packages("features/app")
-    invoke(["check", app], 1, "extra::value")
+    # Root and dependency `@cfg` test their own resolved feature sets.
+    build_and_run(app)
     build_and_run(app, "--features", "fancy")
     assert 'name = "extra"' in lock_of(app)
     invoke(["check", app, "--features", "nope"], 1, "no feature 'nope'")
     edit(app / "Mettle.toml", "default = []", 'default = ["fancy"]')
     build_and_run(app)
+    build_and_run(app, "--no-default-features")
+    main = app / "src/main.mt"
+    edit(main, "@cfg(not(feature = \"fancy\"))\nfn main(): i32 { widget::base() - 100 }\n", "")
+    edit(main, "@cfg(feature = \"fancy\")\n", "")
     invoke(["check", app, "--no-default-features"], 1, "extra::value")
 
 

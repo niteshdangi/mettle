@@ -403,15 +403,17 @@ private:
     std::error_code error;
     plan.root = fs::canonical(rootSource, error).generic_string();
     for (const auto &package : resolution->packages) {
-      if (package.candidate.kind == SourceKind::Root)
+      if (package.candidate.kind == SourceKind::Root) {
+        plan.features = package.features;
         continue;
+      }
       const auto &manifest = *package.candidate.manifest;
       plan.mounts.push_back(
           {moduleName(manifest.name),
            fs::canonical(
                fs::path(manifest.directory) / manifest.library()->source, error)
                .generic_string(),
-           manifest.name, toString(manifest.version)});
+           manifest.name, toString(manifest.version), package.features});
     }
     Sha256 hash;
     hash.update(text);

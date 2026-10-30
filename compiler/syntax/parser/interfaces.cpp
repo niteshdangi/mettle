@@ -63,14 +63,18 @@ Module::Interface Parser::interfaceDeclaration() {
   expect("{");
   separators();
   while (!is("}") && peek().kind != TokenKind::End) {
+    auto metadata = attributes();
     auto visible = visibility();
-    if (is("type") || is("const"))
+    if (is("type") || is("const")) {
+      if (!metadata.empty())
+        feature("attributes on associated items are not implemented");
       result.associated.push_back(associatedDeclaration());
-    else {
+    } else {
       std::string mode = "read";
       if (is("mut") || is("take") || is("static"))
         mode = tokens[position++].text;
       auto method = function(true);
+      method.item.attributes = std::move(metadata);
       method.owner = result.name;
       method.interfaceOwner = result.name;
       method.receiver = mode;
@@ -115,14 +119,18 @@ Module::Implementation Parser::implementationDeclaration() {
   expect("{");
   separators();
   while (!is("}") && peek().kind != TokenKind::End) {
+    auto metadata = attributes();
     auto visible = visibility();
-    if (is("type") || is("const"))
+    if (is("type") || is("const")) {
+      if (!metadata.empty())
+        feature("attributes on associated items are not implemented");
       result.associated.push_back(associatedDeclaration());
-    else {
+    } else {
       std::string mode = "read";
       if (is("mut") || is("take") || is("static"))
         mode = tokens[position++].text;
       auto method = function();
+      method.item.attributes = std::move(metadata);
       method.owner = result.target.name;
       method.receiver = mode;
       if (method.explicitReceiver) {

@@ -1,9 +1,11 @@
 #pragma once
 
 #include "diagnostics/diagnostics.h"
+#include "expansion/expand.h"
 #include "syntax/ast.h"
 #include <functional>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -27,8 +29,13 @@ struct Library {
   // user code (it may name the library roots and the prelude).
   struct Package {
     std::string name, source;
+    // Features the package resolution enabled for this package.
+    std::set<std::string> features;
   };
   std::vector<Package> packages;
+  // Target facts and the root source's features that `@cfg` predicates test;
+  // a dependency package tests its own features, the standard libraries none.
+  expansion::Configuration configuration{};
 };
 std::optional<Module> load(Source root, const SourceProvider &provider,
                            Diagnostics &diagnostics,

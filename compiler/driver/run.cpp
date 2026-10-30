@@ -10,6 +10,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include <filesystem>
 #include <iostream>
+#include <set>
 #include <vector>
 
 namespace mettle::driver {
@@ -24,6 +25,8 @@ bool packageInput(const Options &options) {
 int run(const Options &options) {
   std::string input = options.input;
   std::vector<resolution::Library::Package> dependencies;
+  std::set<std::string> rootFeatures(options.features.begin(),
+                                     options.features.end());
   if (packageInput(options)) {
     if (options.command != "build" && options.command != "check") {
       std::cerr << "mettle: error[package]: only 'check' and 'build' accept a "
@@ -41,11 +44,15 @@ int run(const Options &options) {
     }
     input = outcome.plan->root;
     for (const auto &mount : outcome.plan->mounts)
-      dependencies.push_back({mount.name, mount.source});
+      dependencies.push_back({mount.name,
+                              mount.source,
+                              {mount.features.begin(), mount.features.end()}});
+    rootFeatures = {outcome.plan->features.begin(),
+                    outcome.plan->features.end()};
   } else if (options.packageOptions) {
-    std::cerr << "mettle: error[package]: --bin, --features, "
-                 "--no-default-features, --registry, --locked, --offline and "
-                 "--frozen need a package directory or Mettle.toml\n";
+    std::cerr << "mettle: error[package]: --bin, --no-default-features, "
+                 "--registry, --locked, --offline and --frozen need a package "
+                 "directory or Mettle.toml\n";
     return 2;
   }
   auto buffer = llvm::MemoryBuffer::getFile(input);
@@ -96,12 +103,24 @@ int run(const Options &options) {
     }
     return Source{canonical.generic_string(), (*child)->getBuffer().str()};
   };
+  auto facts = targetFacts(options.target);
+  expansion::Configuration configuration;
+  configuration.os = facts.system == TargetSystem::Linux    ? "linux"
+                     : facts.system == TargetSystem::Darwin ? "macos"
+                                                            : "";
+  configuration.arch = facts.arch == TargetArch::X86_64    ? "x86_64"
+                       : facts.arch == TargetArch::Aarch64 ? "aarch64"
+                                                           : "";
+  configuration.family = configuration.os.empty() ? "" : "unix";
+  configuration.endian = facts.littleEndian ? "little" : "big";
+  configuration.pointerWidth = facts.pointerBits;
+  configuration.targetFeatures = facts.baseline;
+  configuration.features = std::move(rootFeatures);
   auto tree = resolution::load(source, provider, diagnostics,
                                {options.libraryDirectory, options.freestanding,
-                                std::move(dependencies)});
+                                std::move(dependencies), configuration});
   auto program = tree ? pipeline::compile(std::move(*tree), diagnostics,
-                                          !options.freestanding,
-                                          targetFacts(options.target))
+                                          !options.freestanding, facts)
                       : std::nullopt;
   if (!program) {
     diagnostics.print(source, std::cerr);

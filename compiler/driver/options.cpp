@@ -14,7 +14,7 @@ void usage() {
          "executable|object|llvm|ir]\n"
          "         [--profile debug|release] [--overflow-checks on|off]\n"
          "         [--target TRIPLE] [--cc CXX] [--sysroot PATH]\n"
-         "         [--library-dir PATH]\n"
+         "         [--library-dir PATH] [--features a,b]\n"
          "         [--freestanding] (object/LLVM/IR output, aborting panics, "
          "no implicit hosted entry)\n"
          "       mettle check|build PACKAGE_DIR|Mettle.toml [-o OUTPUT]\n"
@@ -68,21 +68,20 @@ std::optional<Options> options(int argc, char **argv) {
         result.libraryDirectory = value;
       else if (arg == "--sysroot")
         result.sysroot = value;
-      else if (arg == "--bin" || arg == "--registry" || arg == "--features") {
+      else if (arg == "--bin" || arg == "--registry") {
         result.packageOptions = true;
         if (arg == "--bin")
           result.bin = value;
-        else if (arg == "--registry")
-          result.registries.push_back(value);
         else
-          for (std::size_t begin = 0; begin <= value.size();) {
-            auto end = std::min(value.find(',', begin), value.size());
-            if (end > begin)
-              result.features.push_back(value.substr(begin, end - begin));
-            begin = end + 1;
-          }
-      } else if (arg == "--overflow-checks" &&
-                 (value == "on" || value == "off"))
+          result.registries.push_back(value);
+      } else if (arg == "--features")
+        for (std::size_t begin = 0; begin <= value.size();) {
+          auto end = std::min(value.find(',', begin), value.size());
+          if (end > begin)
+            result.features.push_back(value.substr(begin, end - begin));
+          begin = end + 1;
+        }
+      else if (arg == "--overflow-checks" && (value == "on" || value == "off"))
         result.checks = value == "on";
       else
         return std::nullopt;
