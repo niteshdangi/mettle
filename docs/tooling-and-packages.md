@@ -254,8 +254,7 @@ normalized after `,` `;` `:`, around `=`, comparison/compound-assignment/`=>`/`-
 inside one-line `{ }` and removed around `.` and inside `()`/`[]`; other
 gaps (`<`, `-`, `&`, ...) keep one space or none as written. Trailing whitespace
 goes, blank-line runs collapse to one (none after `{` or before `}`), the file
-ends in one newline. The new wrapping path (implemented, unverified, not yet
-built) attempts a 100-byte line width at commas inside parentheses and selected
+ends in one newline. The wrapping path (implemented and verified on macOS arm64) attempts a 100-byte line width at commas inside parentheses and selected
 binary operators. It leaves files with macro definitions/invocations,
 f-strings or multiline tokens, and lines with comments, unwrapped. Long
 unbreakable segments may exceed the width; when wrapping changes the parse it
@@ -293,8 +292,7 @@ warnings` makes all findings fail). The `@allow(RULE, ...)`, `@warn(...)`,
 `@deny(...)` and `@forbid(...)` attributes on a function override the flags inside
 that function; `RULE` may be spelled with `-` or `_`, and unknown names are
 ignored. Attributes on imports and on products/extensions and line breaking of
-findings are not implemented. JSON findings are implemented, unverified (not
-yet built): one JSON object per line on stdout, ordered as human findings, with
+findings are not implemented. JSON findings are implemented and verified on macOS arm64: one JSON object per line on stdout, ordered as human findings, with
 `code`, `level` (`warn` or `deny`), `span` (`file`, zero-based byte `begin`
 and exclusive `end`), and `message`. No suggestion field is emitted because
 the current rules do not provide structured suggestions. Front-end failures
@@ -423,9 +421,8 @@ omitted. A signature is the declaration header exactly as written
 (whitespace collapsed, no body) with its attributes, so an omitted result is
 not guessed. Output is deterministic (no timestamps, stable order, stale files
 are not removed). Not yet provided: resolved cross-package references, source
-hyperlinks (the page shows `file:line`) and inferred result types. The new
-cross-reference and search path is implemented, unverified (not
-yet built): dotted names matching unambiguous documented items are linked
+hyperlinks (the page shows `file:line`) and inferred result types. The
+cross-reference and search path is implemented and verified on macOS arm64: dotted names matching unambiguous documented items are linked
 lexically in signatures and prose, including inline code. This is not semantic
 resolution: aliases, imports and separately generated packages are not resolved.
 An index page searches deterministic item names using local `search-index.json`,
@@ -506,7 +503,8 @@ Moved/uninitialized values must not be presented as live valid values.
 Optimization may eliminate values; report optimized-out rather than inventing
 their contents. Static region analysis does not require runtime region objects.
 
-Status (I12/T006, partial; changes implemented, unverified and not yet built):
+Status (I12/T006, partial; the `debug_info` package test passes on macOS arm64,
+LLDB summaries not re-run interactively):
 `mettle build -g`
 emits DWARF 4 through `llvm::DIBuilder` in the LLVM adapter
 (`backend/llvm/debug.*`): a compile unit and file per source, a subprogram per

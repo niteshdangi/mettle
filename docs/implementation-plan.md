@@ -1165,10 +1165,11 @@ tooling-and-packages section 4.1; tests `doc_writes_deterministic_html` and
 implemented and verified on macOS arm64 (test `lint_reports_semantic_findings`):
 five semantic rules over checked facts, `--allow/--warn/--deny` and
 function-level `@allow/@warn/@deny` (tooling-and-packages section 3). Remaining
-I12 work includes line breaking/wrapping, doc references/search and debugger
-workflows. This tooling lane's JSON lint findings, conservative 100-byte
-wrapping, lexical dotted doc links and static search index are implemented,
-unverified (not yet built); see their limitations in tooling-and-packages.
+I12 work includes full line breaking, resolved doc references and debugger
+workflows. JSON lint findings, conservative 100-byte wrapping, lexical dotted
+doc links and the static search index are implemented and verified on macOS
+arm64 (`fmt_`, `lint_` and `doc` cases of `tests/packages.py`); see their
+limitations in tooling-and-packages.
 Section 3 currently selects the five existing lint rules; it names no additional
 rules. The benchmark contract explicitly provides `black_box` and excludes
 handles, so no handle API was invented. Resolved cross-package references,
