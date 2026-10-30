@@ -226,6 +226,10 @@ RegionId Checker::regionReference(std::string_view name, Span span) {
     if (auto found = scope->names.find(std::string(name));
         found != scope->names.end())
       return found->second;
+  if (current && !annotationRegionScopes.empty())
+    if (const auto &outer = functionRegions(*current);
+        outer.names.contains(std::string(name)))
+      return outer.names.at(std::string(name));
   for (const auto &function : module.functions)
     if (&function != current && function.span.source == span.source &&
         function.span.begin <= span.begin && span.end <= function.span.end &&

@@ -42,9 +42,16 @@
 //   the block or the joined branches become a sub-future yielding the state,
 //   and the following statements continue from it.
 //
+// - `return value` inside an awaiting loop of an async function that does not
+//   throw: the loop's result becomes `core::future::Exit`, `return` finishes
+//   the loop with `give_up` and the statements after the loop run only for
+//   `Exit::Leave`; `while let p = e` becomes `loop { match e { p => .., _ =>
+//   break } }`.
+//
 // Not lowered here (reported as unsupported): `await` in a lazily evaluated
-// operand, `return`/`throw`/`?` inside an awaiting loop, block or branch,
-// `while let` loops with an await, `for` over a borrowed place, an inner
+// operand, `throw`/`?` inside an awaiting loop, `return`/`throw`/`?` inside an
+// awaiting block or branch or nested awaiting loops, `for` over a borrowed
+// place, an inner
 // binding that shadows a carried `var`, and a loop used as a value other than
 // as a statement. Immutable locals used by a loop are captured, so values used
 // both inside and after it must be copyable.
@@ -65,6 +72,18 @@ const Node *findExit(const Node &node) {
   for (const auto &child : node.children)
     if (child.get())
       if (auto *found = findExit(*child))
+        return found;
+  return nullptr;
+}
+// A `throw` or `?`, which leaves the function with an error outcome.
+const Node *findThrowOrTry(const Node &node) {
+  if (node.kind == Kind::Closure)
+    return nullptr;
+  if (node.kind == Kind::Throw || node.kind == Kind::Try)
+    return &node;
+  for (const auto &child : node.children)
+    if (child.get())
+      if (auto *found = findThrowOrTry(*child))
         return found;
   return nullptr;
 }
@@ -552,6 +571,9 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
   // body, `nested` whether an unlabeled exit would target one of them.
   // The name of the `LoopKind` witness of the loop whose exits are rewritten.
   std::string loopKind;
+  // Whether the loop being lowered contains a `return`, so its result is a
+  // `core::future::Exit` that either leaves the loop or the whole function.
+  bool loopExits = false;
   std::function<void(Node &, const std::string &, bool,
                      std::vector<std::string> &,
                      const std::vector<std::string> &)>
@@ -563,6 +585,24 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
       if (!slot.get() || slot->kind == Kind::Closure)
         continue;
       Node &child = *slot;
+      if (child.kind == Kind::Return && loopExits) {
+        auto at = child.span;
+        std::vector<NodeOwner> give;
+        if (child.children.empty())
+          give.push_back(node(Kind::Unit, at));
+        else
+          give.push_back(std::move(child.children[0]));
+        give.push_back(name(loopKind, at));
+        std::vector<NodeOwner> arguments;
+        arguments.push_back(stateOf(carried, at));
+        arguments.push_back(call("core::future::give_up", at, std::move(give)));
+        auto exit = node(Kind::Return, at);
+        exit->children.push_back(
+            call("core::future::finish_loop", at, std::move(arguments)));
+        finish(*exit);
+        slot = NodeOwner(std::move(exit));
+        continue;
+      }
       if (child.kind == Kind::Break || child.kind == Kind::Continue) {
         bool mine =
             child.label.empty()
@@ -578,10 +618,16 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
             arguments.push_back(name(loopKind, at));
           if (child.kind == Kind::Break) {
             callee = "core::future::finish_loop";
-            if (child.children.empty())
-              arguments.push_back(node(Kind::Unit, at));
-            else
-              arguments.push_back(std::move(child.children[0]));
+            NodeOwner value = child.children.empty()
+                                  ? NodeOwner(node(Kind::Unit, at))
+                                  : std::move(child.children[0]);
+            if (loopExits) {
+              std::vector<NodeOwner> leave;
+              leave.push_back(std::move(value));
+              leave.push_back(name(loopKind, at));
+              value = call("core::future::leave", at, std::move(leave));
+            }
+            arguments.push_back(std::move(value));
           }
           auto exit = node(Kind::Return, at);
           exit->children.push_back(call(callee, at, std::move(arguments)));
@@ -591,6 +637,9 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
         }
       }
       if (isLoop(child)) {
+        if (loopExits && containsAwait(child) && findReturn(child))
+          refuse(child.span, "`return` inside a loop that awaits within "
+                             "another awaiting loop is not implemented");
         bool labeled = !child.label.empty();
         if (labeled)
           inner.push_back(child.label);
@@ -924,11 +973,22 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
     if (step == Step::Loop || step == Step::Join || step == Step::Nest) {
       auto &subject = *stmts[next];
       auto at = subject.span;
-      if (auto *exit = findExit(subject))
-        refuse(exit->span,
-               "`return`, `throw` and `?` are not supported inside a loop, "
-               "block or branch that awaits, nor is `break`/`continue` of an "
-               "enclosing loop from inside one");
+      bool exits = false;
+      if (auto *exit = findExit(subject)) {
+        // Only `return` of a plain result leaves an awaiting loop, and only
+        // when no enclosing sub-future has to be left as well.
+        bool supported = step == Step::Loop && !tailExit && !result.empty() &&
+                         result.form != TypeForm::Outcome &&
+                         !findThrowOrTry(subject);
+        if (!supported)
+          refuse(exit->span,
+                 "`return`, `throw` and `?` are not supported inside a "
+                 "block or branch that awaits, nor inside an awaiting loop "
+                 "of an `async` function that throws or is nested in "
+                 "another awaiting construct; `return` of a plain result is "
+                 "supported directly inside a loop");
+        exits = findReturn(subject) != nullptr;
+      }
       auto carried = carriedOf(variables);
       for (auto &variable : carried)
         if (declares(subject, variable))
@@ -948,11 +1008,28 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
       };
       std::unique_ptr<Node> first;
       if (step == Step::Loop) {
-        if (!subject.patterns.empty())
-          refuse(subject.span, "`await` in a `while let` loop is not "
-                               "implemented; use `loop` with a `match`");
         std::vector<NodeOwner> body;
-        if (subject.kind == Kind::While) {
+        if (subject.kind == Kind::While && !subject.patterns.empty()) {
+          // `while let p = e { body }` is `loop { match e { p => body,
+          // _ => break } }`.
+          bool place = borrowedSource(*subject.children[0]);
+          auto match = node(Kind::Match, at, place ? "read" : "take");
+          match->children.push_back(std::move(subject.children[0]));
+          auto matched = node(Kind::Arm, at);
+          matched->patterns.push_back(std::move(subject.patterns[0]));
+          matched->children.push_back(std::move(subject.children[1]));
+          finish(*matched);
+          std::vector<NodeOwner> leave;
+          leave.push_back(node(Kind::Break, at));
+          auto stop = node(Kind::Arm, at);
+          stop->patterns.push_back(Pattern{PatternKind::Wildcard, at});
+          stop->children.push_back(asBlock(at, std::move(leave)));
+          finish(*stop);
+          match->children.push_back(std::move(matched));
+          match->children.push_back(std::move(stop));
+          finish(*match);
+          body.push_back(std::move(match));
+        } else if (subject.kind == Kind::While) {
           auto negation = node(Kind::Unary, at, "!");
           negation->children.push_back(std::move(subject.children[0]));
           finish(*negation);
@@ -964,8 +1041,9 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
           finish(*guard);
           body.push_back(std::move(guard));
         }
-        for (auto &statement : subject.children.back()->children)
-          body.push_back(std::move(statement));
+        if (subject.patterns.empty())
+          for (auto &statement : subject.children.back()->children)
+            body.push_back(std::move(statement));
         auto holder = asBlock(at, std::move(body));
         // `let <loop-kind-N>: LoopKind<R> = LoopKind()`: R is the async
         // function's result for a loop that is its value, otherwise Unit.
@@ -976,6 +1054,19 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
         if (valueTail && !result.empty())
           loopResult =
               result.form == TypeForm::Outcome ? result.elements[0] : result;
+        if (exits) {
+          TypeSyntax exitType;
+          exitType.name = "core::future::Exit";
+          exitType.arguments.push_back(GenericArgument{
+              std::make_shared<const TypeSyntax>(std::move(loopResult)),
+              {},
+              {},
+              at,
+              {}});
+          exitType.arguments.push_back(GenericArgument{
+              std::make_shared<const TypeSyntax>(result), {}, {}, at, {}});
+          loopResult = std::move(exitType);
+        }
         TypeSyntax kindType;
         kindType.name = "core::future::LoopKind";
         kindType.arguments.push_back(GenericArgument{
@@ -991,8 +1082,10 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
         finish(*witness);
         block.push_back(std::move(witness));
         loopKind = kindName;
+        loopExits = exits;
         std::vector<std::string> inner;
         rewriteExits(*holder, subject.label, false, inner, carried);
+        loopExits = false;
         tailExit = [&stateOf, &call, &name, carried, kindName](Span here) {
           std::vector<NodeOwner> arguments;
           arguments.push_back(stateOf(carried, here));
@@ -1027,7 +1120,39 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
         tailExit = outer;
       }
       if (valueTail)
-        after.push_back(name("<loop-result>", at));
+        after.push_back(name(exits ? "<loop-payload>" : "<loop-result>", at));
+      if (exits) {
+        // `match take <loop-result> { Return(v) => return v, Leave(r) =>
+        // after }`: the statements after the loop continue only when the loop
+        // was left normally.
+        auto match = node(Kind::Match, at, "take");
+        match->children.push_back(name("<loop-result>", at));
+        auto leave = node(Kind::Arm, at);
+        leave->patterns.push_back(
+            Pattern{PatternKind::Variant, at, "core::future::Exit::Leave"});
+        leave->patterns[0].children.push_back(
+            valueTail ? Pattern{PatternKind::Binding, at, "<loop-payload>"}
+                      : Pattern{PatternKind::Wildcard, at});
+        leave->children.push_back(asBlock(at, std::move(after)));
+        finish(*leave);
+        auto give = node(Kind::Return, at);
+        give->children.push_back(name("<loop-return>", at));
+        finish(*give);
+        std::vector<NodeOwner> giveUp;
+        giveUp.push_back(std::move(give));
+        auto abandon = node(Kind::Arm, at);
+        abandon->patterns.push_back(
+            Pattern{PatternKind::Variant, at, "core::future::Exit::Return"});
+        abandon->patterns[0].children.push_back(
+            Pattern{PatternKind::Binding, at, "<loop-return>"});
+        abandon->children.push_back(asBlock(at, std::move(giveUp)));
+        finish(*abandon);
+        match->children.push_back(std::move(leave));
+        match->children.push_back(std::move(abandon));
+        finish(*match);
+        after.clear();
+        after.push_back(std::move(match));
+      }
       block.push_back(sequel(std::move(first), carried, step == Step::Loop,
                              after, variables, at));
       return asBlock(span, std::move(block));

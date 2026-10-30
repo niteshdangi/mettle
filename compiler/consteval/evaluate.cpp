@@ -752,7 +752,12 @@ private:
       return std::nullopt;
     if (declared && !coerce(*value, *declared, node.span))
       return std::nullopt;
-    if (!defaultTypes(*value, node.span))
+    // A mutable local keeps an unsuffixed integer open so later assignments
+    // and uses fix its type, as ordinary checking infers it.
+    bool open = node.flag && !declared && node.text != "<pattern>" &&
+                value->kind == Value::Kind::Integer &&
+                value->type == Type::Unknown;
+    if (!open && !defaultTypes(*value, node.span))
       return std::nullopt;
     if (node.text != "<pattern>") {
       frame().locals.push_back({node.text, std::move(*value), node.flag});
@@ -1092,8 +1097,14 @@ private:
     case Kind::Name: {
       auto &locals = frame().locals;
       for (auto it = locals.rbegin(); it != locals.rend(); ++it)
-        if (it->name == node.text)
+        if (it->name == node.text) {
+          if (want && want->kind == Shape::Kind::Scalar &&
+              it->value.kind == Value::Kind::Integer &&
+              it->value.type == Type::Unknown &&
+              !coerce(it->value, *want, node.span))
+            return std::nullopt;
           return it->value;
+        }
       auto found = host.lookup(node);
       switch (found.kind) {
       case Lookup::Kind::Constant: {

@@ -384,7 +384,19 @@ Type Checker::constantContext(const Node &node) {
   }
   return Type::Unknown;
 }
+static bool containsField(const Node &node) {
+  if (node.kind == Kind::Field && !node.flag)
+    return true;
+  return std::any_of(
+      node.children.begin(), node.children.end(),
+      [](const NodeOwner &child) { return containsField(*child); });
+}
 Type Checker::constantType(const Node &node, Type expected) {
+  // Dotted paths (`Mod.N`, `Type.N`) in associated-constant values, array
+  // lengths, constant arguments and discriminants qualify like their `::`
+  // spelling. The nodes are parser-owned and qualification is idempotent.
+  if (containsField(node))
+    qualifyDottedPaths(const_cast<Node &>(node));
   if (needsEvaluator(node))
     return evaluatedConstant(node, expected);
   if (node.kind == Kind::Name)
