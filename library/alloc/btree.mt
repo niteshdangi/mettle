@@ -1,5 +1,6 @@
 import package.core.iter.{Iterator, BidirectionalIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
 import package.core.clone.Clone
+import package.core.default.Default
 import package.core.cmp.{Eq, PartialEq, PartialOrd}
 import package.core.hash.{Hash, Hasher}
 import package.core.fmt
@@ -7,7 +8,7 @@ import super.alloc.{Allocator, Global, AllocError, layout_unchecked, layout_of, 
 import package.core.cmp.{Ord, Ordering}
 import package.core.borrow.KeyView
 
-pub type Entry<K, V> {
+pub type Bucket<K, V> {
     pub key: K
     pub value: V
 }
@@ -34,7 +35,7 @@ pub type Entry<K, V> {
 // - Entries are moved bitwise between slots; the source slot is afterwards
 //   treated as uninitialized, so each entry is dropped exactly once.
 type Node<K, V> {
-    entries: ptr<mut Entry<K, V>>
+    entries: ptr<mut Bucket<K, V>>
     children: ptr<mut ptr<mut Node<K, V>>>
     parent: ptr<mut Node<K, V>>
     len: usize
@@ -48,8 +49,8 @@ pub type SortedMap<K, V, A: Allocator = Global> {
     root: ptr<mut Node<K, V>>
     len: usize
     a: A
-    // A panicking key or value destructor leaks the nodes and entries not yet
-    // released instead of unwinding through the tree.
+    // Panics are runtime traps without unwinding or catch; cleanup cannot
+    // continue after a destructor traps.
     drop {
         let root = self.root
         self.root = null_node<K, V>()
@@ -67,7 +68,7 @@ fn null_node<K, V>(): ptr<mut Node<K, V>> { core.ptr.null_mut<Node<K, V>>() }
 
 // Safety (all raw helpers): `n`/`p` are live nodes and indices are within the
 // initialized range or, for slots being filled, within the node's capacity.
-unsafe fn node_entry<K, V>(n: ptr<mut Node<K, V>>, i: usize): ptr<mut Entry<K, V>> {
+unsafe fn node_entry<K, V>(n: ptr<mut Node<K, V>>, i: usize): ptr<mut Bucket<K, V>> {
     (*n).entries.add(i)
 }
 unsafe fn node_child<K, V>(n: ptr<mut Node<K, V>>, i: usize): ptr<mut Node<K, V>> {
@@ -78,7 +79,7 @@ unsafe fn set_child<K, V>(n: ptr<mut Node<K, V>>, i: usize, c: ptr<mut Node<K, V
     *(*n).children.add(i) = c
     (*c).parent = n
 }
-unsafe fn copy_entries<K, V>(src: ptr<mut Entry<K, V>>, dst: ptr<mut Entry<K, V>>, count: usize): Unit {
+unsafe fn copy_entries<K, V>(src: ptr<mut Bucket<K, V>>, dst: ptr<mut Bucket<K, V>>, count: usize): Unit {
     core.ptr.`copy`(src.cast_const(), dst, count)
 }
 unsafe fn copy_links<K, V>(src: ptr<mut ptr<mut Node<K, V>>>, dst: ptr<mut ptr<mut Node<K, V>>>, count: usize): Unit {
@@ -194,14 +195,14 @@ unsafe fn free_array<T, A: Allocator>(a: ptr<mut A>, p: ptr<mut T>, count: usize
 }
 // A fresh empty node; a failed step releases the blocks already taken.
 unsafe fn alloc_node<K, V, A: Allocator>(a: ptr<mut A>, leaf: bool): ptr<mut Node<K, V>> throws AllocError {
-    let entries = try alloc_array<Entry<K, V>, A>(a, max_entries())
+    let entries = try alloc_array<Bucket<K, V>, A>(a, max_entries())
     let links = if leaf {
         core.ptr.null_mut<ptr<mut Node<K, V>>>()
     } else {
         match capture alloc_array<ptr<mut Node<K, V>>, A>(a, max_entries() + 1usize) {
             success(p) => p,
             failure(e) => {
-                free_array<Entry<K, V>, A>(a, entries, max_entries())
+                free_array<Bucket<K, V>, A>(a, entries, max_entries())
                 throw e
             }
         }
@@ -210,7 +211,7 @@ unsafe fn alloc_node<K, V, A: Allocator>(a: ptr<mut A>, leaf: bool): ptr<mut Nod
         success(p) => p,
         failure(e) => {
             if !leaf { free_array<ptr<mut Node<K, V>>, A>(a, links, max_entries() + 1usize) }
-            free_array<Entry<K, V>, A>(a, entries, max_entries())
+            free_array<Bucket<K, V>, A>(a, entries, max_entries())
             throw e
         }
     }
@@ -220,7 +221,7 @@ unsafe fn alloc_node<K, V, A: Allocator>(a: ptr<mut A>, leaf: bool): ptr<mut Nod
 // Releases the blocks of `n` only; its entries and children are not touched.
 unsafe fn free_node<K, V, A: Allocator>(a: ptr<mut A>, n: ptr<mut Node<K, V>>): Unit {
     let leaf = (*n).leaf
-    free_array<Entry<K, V>, A>(a, (*n).entries, max_entries())
+    free_array<Bucket<K, V>, A>(a, (*n).entries, max_entries())
     if !leaf { free_array<ptr<mut Node<K, V>>, A>(a, (*n).children, max_entries() + 1usize) }
     free_array<Node<K, V>, A>(a, n, 1usize)
 }
@@ -373,7 +374,7 @@ extend<K, V, A: Allocator> SortedMap<K, V, A> {
 
     // Moves entry `i` of `node` out of the tree. An internal entry is replaced
     // by its in-order predecessor taken from a leaf.
-    mut unsafe fn take_entry(node: ptr<mut Node<K, V>>, i: usize): Entry<K, V> {
+    mut unsafe fn take_entry(node: ptr<mut Node<K, V>>, i: usize): Bucket<K, V> {
         let out = core.ptr.`read`(node_entry(node, i))
         var leaf = node
         if (*node).leaf {
@@ -438,7 +439,7 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
     // Inserts or replaces; a replaced value is returned (the stored key is
     // kept and the new key dropped). Full nodes are split on the way down, so
     // on allocation failure the tree stays valid and the pair is dropped.
-    pub mut fn try_insert(key: take K, value: take V): V? throws AllocError {
+    mut fn try_insert_with_slot(key: take K, value: take V): (V?, mut V from self) throws AllocError {
         let a = core.ptr.from_mut(self.a)
         unsafe {
             if self.root == null_node<K, V>() {
@@ -464,15 +465,17 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
                 var pos = found.0
                 if found.1 {
                     let slot = core.ptr.from_mut((*node_entry(node, pos)).value)
-                    return present(core.ptr.replace(slot, value))
+                    let old = core.ptr.replace(slot, value)
+                    return (present(old), mut (*node_entry(node, pos)).value)
                 }
                 if (*node).leaf {
                     let len = (*node).len
                     copy_entries(node_entry(node, pos), node_entry(node, pos + 1usize), len - pos)
-                    core.ptr.write(node_entry(node, pos), Entry(key, value))
+                    core.ptr.write(node_entry(node, pos), Bucket(key, value))
                     (*node).len = len + 1usize
                     self.len += 1usize
-                    return none
+                    let stored = mut (*node_entry(node, pos)).value
+                    return (none, stored)
                 }
                 var next = node_child(node, pos)
                 if (*next).len == max_entries() {
@@ -482,15 +485,20 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
                     let order = key.cmp((*middle).key)
                     if order.is_eq() {
                         let slot = core.ptr.from_mut((*middle).value)
-                        return present(core.ptr.replace(slot, value))
+                        let old = core.ptr.replace(slot, value)
+                        return (present(old), mut (*middle).value)
                     }
                     if order.is_gt() { pos += 1usize }
                     next = node_child(node, pos)
                 }
                 node = next
             }
-            none
+            package.core.panic.unreachable()
         }
+    }
+    pub mut fn try_insert(key: take K, value: take V): V? throws AllocError {
+        let inserted = try self.try_insert_with_slot(key, value)
+        inserted.0
     }
     pub mut fn insert(key: take K, value: take V): V? {
         let outcome = capture self.try_insert(key, value)
@@ -508,6 +516,105 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
             },
             none => none
         }
+    }
+}
+
+// An entry owns its lookup key and exclusively borrows the map until consumed.
+// Occupied node positions remain stable while that loan prevents map mutation.
+pub type OccupiedEntry<region r, K, V, A: Allocator = Global> {
+    map: mut SortedMap<K, V, A> from r
+    key: K
+    node: ptr<mut Node<K, V>>
+    index: usize
+}
+pub type VacantEntry<region r, K, V, A: Allocator = Global> {
+    map: mut SortedMap<K, V, A> from r
+    key: K
+}
+pub enum Entry<region r, K, V, A: Allocator = Global> {
+    Occupied(OccupiedEntry<region r, K, V, A>);
+    Vacant(VacantEntry<region r, K, V, A>)
+}
+
+extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
+    pub mut fn entry(key: take K): Entry<region self, K, V, A> {
+        match unsafe { find_slot(self.root, key) } {
+            present(at) => Entry.Occupied(OccupiedEntry(mut self, key, at.0, at.1)),
+            none => Entry.Vacant(VacantEntry(mut self, key))
+        }
+    }
+}
+
+extend<region r, K: Ord, V, A: Allocator> OccupiedEntry<region r, K, V, A> {
+    pub fn key(): read K from self {
+        unsafe { read (*node_entry(self.node, self.index)).key }
+    }
+    pub fn get(): read V from self {
+        unsafe { read (*node_entry(self.node, self.index)).value }
+    }
+    pub mut fn get_mut(): mut V from self {
+        unsafe { mut (*node_entry(self.node, self.index)).value }
+    }
+    pub mut fn insert(value: take V): V {
+        let slot = unsafe {
+            core.ptr.from_mut((*node_entry(self.node, self.index)).value)
+        }
+        unsafe { core.ptr.replace(slot, value) }
+    }
+    pub take fn into_mut(): mut V from r {
+        unsafe { mut (*node_entry(self.node, self.index)).value }
+    }
+    pub take fn remove(): V {
+        match take self.map.remove(read self.key) {
+            present(value) => value,
+            none => package.core.panic.unreachable()
+        }
+    }
+}
+
+extend<region r, K: Ord, V, A: Allocator> VacantEntry<region r, K, V, A> {
+    pub fn key(): read K from self { read self.key }
+    pub take fn insert(value: take V): mut V from r {
+        let outcome = capture self.map.try_insert_with_slot(self.key, value)
+        match take outcome {
+            success(result) => result.1,
+            failure(_) => handle_alloc_error(layout_of<Node<K, V>>())
+        }
+    }
+}
+
+extend<region r, K: Ord, V, A: Allocator> Entry<region r, K, V, A> {
+    pub take fn or_insert(value: take V): mut V from r {
+        match take self {
+            Entry.Occupied(entry) => entry.into_mut(),
+            Entry.Vacant(entry) => entry.insert(value)
+        }
+    }
+    pub take fn or_insert_with<F: take fn(): V>(make: take F): mut V from r {
+        match take self {
+            Entry.Occupied(entry) => entry.into_mut(),
+            Entry.Vacant(entry) => entry.insert(make())
+        }
+    }
+    pub take fn and_modify<F: take fn(mut V): Unit>(modify: take F): Entry<region r, K, V, A> {
+        match take self {
+            Entry.Occupied(entry) => {
+                // Use a raw slot pointer to avoid the get_mut() loan false
+                // positive; the exclusive entry loan keeps it live here.
+                let slot = unsafe {
+                    core.ptr.from_mut((*node_entry(entry.node, entry.index)).value)
+                }
+                unsafe { modify(mut *slot) }
+                Entry.Occupied(entry)
+            },
+            Entry.Vacant(entry) => Entry.Vacant(entry)
+        }
+    }
+}
+
+extend<region r, K: Ord, V: Default, A: Allocator> Entry<region r, K, V, A> {
+    pub take fn or_default(): mut V from r {
+        self.or_insert_with(take fn(): V { V.(Default).default() })
     }
 }
 
@@ -543,8 +650,8 @@ pub type EntryIter<region r, K, V, A: Allocator> {
     left: usize
 }
 extend<region r, K, V, A: Allocator> EntryIter<region r, K, V, A> implements Iterator {
-    type Item = read Entry<K, V> from r
-    mut fn next(): (read Entry<K, V> from r)? {
+    type Item = read Bucket<K, V> from r
+    mut fn next(): (read Bucket<K, V> from r)? {
         if self.left == 0usize { return none }
         let at = unsafe { node_entry(self.front_node, self.front_idx) }
         self.left -= 1usize
@@ -557,7 +664,7 @@ extend<region r, K, V, A: Allocator> EntryIter<region r, K, V, A> implements Ite
     }
 }
 extend<region r, K, V, A: Allocator> EntryIter<region r, K, V, A> implements BidirectionalIterator {
-    mut fn next_back(): (read Entry<K, V> from r)? {
+    mut fn next_back(): (read Bucket<K, V> from r)? {
         if self.left == 0usize { return none }
         let at = unsafe { node_entry(self.back_node, self.back_idx) }
         self.left -= 1usize
@@ -579,8 +686,8 @@ pub type KeyRange<region r, K, V, A: Allocator> {
     end_idx: usize
 }
 extend<region r, K, V, A: Allocator> KeyRange<region r, K, V, A> implements Iterator {
-    type Item = read Entry<K, V> from r
-    mut fn next(): (read Entry<K, V> from r)? {
+    type Item = read Bucket<K, V> from r
+    mut fn next(): (read Bucket<K, V> from r)? {
         if self.node == self.end_node && self.idx == self.end_idx { return none }
         let at = unsafe { node_entry(self.node, self.idx) }
         let after = unsafe { successor(self.node, self.idx) }
@@ -592,7 +699,7 @@ extend<region r, K, V, A: Allocator> KeyRange<region r, K, V, A> implements Iter
 
 // Iteration is in ascending key order.
 extend<K, V, A: Allocator> SortedMap<K, V, A> implements Iterable {
-    type Item = Entry<K, V>
+    type Item = Bucket<K, V>
     type Iter<region r> = EntryIter<region r, K, V, A>
     fn iter<region r>(receiver self: read Self from r): EntryIter<region r, K, V, A> {
         let first = unsafe { first_pos(self.root) }
@@ -601,7 +708,7 @@ extend<K, V, A: Allocator> SortedMap<K, V, A> implements Iterable {
     }
 }
 extend<K, A: Allocator> SortedSet<K, A> implements Iterable {
-    type Item = Entry<K, Unit>
+    type Item = Bucket<K, Unit>
     type Iter<region r> = EntryIter<region r, K, Unit, A>
     fn iter<region r>(receiver self: read Self from r): EntryIter<region r, K, Unit, A> {
         let first = unsafe { first_pos(self.map.root) }
@@ -637,7 +744,7 @@ pub type MapIntoIter<K, V, A: Allocator> {
     }
 }
 extend<K, V, A: Allocator> SortedMap<K, V, A> implements OwnedIterable {
-    type Item = Entry<K, V>
+    type Item = Bucket<K, V>
     type IntoIter = MapIntoIter<K, V, A>
     fn into_iter(receiver self: take Self): MapIntoIter<K, V, A> {
         unsafe {
@@ -651,8 +758,8 @@ extend<K, V, A: Allocator> SortedMap<K, V, A> implements OwnedIterable {
     }
 }
 extend<K, V, A: Allocator> MapIntoIter<K, V, A> implements Iterator {
-    type Item = Entry<K, V>
-    mut fn next(): Entry<K, V>? {
+    type Item = Bucket<K, V>
+    mut fn next(): Bucket<K, V>? {
         if self.left == 0usize { return none }
         let n = self.node
         let i = self.idx
@@ -764,7 +871,7 @@ unsafe fn clone_tree<K: Clone, V: Clone, A: Allocator>(a: ptr<mut A>, n: ptr<mut
     var i = 0usize
     while i < len {
         let e = node_entry(n, i)
-        core.ptr.write(node_entry(twin, i), Entry((*e).key.clone(), (*e).value.clone()))
+        core.ptr.write(node_entry(twin, i), Bucket((*e).key.clone(), (*e).value.clone()))
         i += 1usize
     }
     if !(*n).leaf {
