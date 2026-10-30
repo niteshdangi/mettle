@@ -124,7 +124,7 @@ type_atom     = path, [ generic_args ]
 projection_type = projection_subject, ".", "(", bound, ")", ".", IDENT,
                   [ generic_args ] ;
 projection_subject = path, [ generic_args ]
-                   | "[", type, "]"
+                   | "[", type, [ ";", const_expression ], "]"
                    | "(", type, ")" ;
 sources       = region_source | "(", region_source, { ",", region_source }, ")" ;
 region_source = path | "static" ;
