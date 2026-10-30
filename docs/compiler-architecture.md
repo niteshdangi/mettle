@@ -697,3 +697,5 @@ host and Linux x86-64 target, not a Linux compiler host, public ABI or runtime p
 ## F-string lowering
 
 The lexer emits `FormatOpen/Piece/HoleOpen/HoleClose/Close` tokens; the parser desugars an f-string into a labelled call chain `core::fmt::message(read [field(hole, piece)...], tail)` (labels `f-string`, `f-string-internal`). The checker (`calls.cpp`, `expressions.cpp`) confines these nodes to `format` argument positions; no new AST kind, IR or backend work.
+
+A hole's type is checked through the `core::fmt::Hole` bound of `core::fmt::field`: one blanket library implementation covers every sized `Display` type and `Text` has its own; when the bound fails, `Checker::interfaceObligation` reports a dedicated "cannot fill an f-string hole" error instead of the generic obligation message.

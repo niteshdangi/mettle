@@ -70,6 +70,7 @@ pub fn dangling_for<T>(): ptr<mut T> { dangling(core::mem::align_of::<T>()).cast
 pub copy type Global {}
 
 impl Global implements package::core::clone::Clone { fn clone(): Global { Global() } }
+impl Global implements package::core::default::Default { static fn default(): Global { Global() } }
 
 impl Global implements Allocator {
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {

@@ -1,5 +1,6 @@
 import super::alloc::{Allocator, Global, AllocError, Layout, layout_of, layout_unchecked, free_block, handle_alloc_error, panic_precondition, dangling_for};
 import package::core::clone::Clone;
+import package::core::default::Default;
 import package::core::cmp::{Eq, Ord, Ordering, PartialEq, PartialOrd};
 import package::core::hash::{Hash, Hasher};
 import package::core::fmt;
@@ -352,6 +353,10 @@ unsafe fn sort_run<T: Ord>(p: ptr<mut T>, tmp: ptr<mut T>, n: usize): Unit {
     while a < mid { core::ptr::`copy`(p.add(a).cast_const(), tmp.add(k), 1usize); a += 1usize; k += 1usize }
     while b < n { core::ptr::`copy`(p.add(b).cast_const(), tmp.add(k), 1usize); b += 1usize; k += 1usize }
     core::ptr::`copy`(tmp.cast_const(), p, n)
+}
+
+impl<T, A: Allocator + Default> Vec<T, A> implements Default {
+    static fn default(): Vec<T, A> { new_in::<T, A>(<A implements Default>::default()) }
 }
 
 impl<T: Clone, A: Allocator + Clone> Vec<T, A> implements Clone {

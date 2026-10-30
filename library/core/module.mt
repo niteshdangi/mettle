@@ -5,6 +5,8 @@ pub module any;
 pub module borrow;
 pub module clone;
 pub module cmp;
+pub module default;
+pub module float;
 pub module fmt;
 pub module future;
 pub module hash;

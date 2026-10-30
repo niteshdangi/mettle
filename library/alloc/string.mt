@@ -1,6 +1,7 @@
 import package::core::iter::Iterator;
 import super::alloc::{Allocator, Global, AllocError, panic_precondition};
 import package::core::clone::Clone;
+import package::core::default::Default;
 import package::core::fmt;
 import package::core::ops::{Deref, IndexRange};
 import package::core::hash::{Hash, Hasher};
@@ -202,6 +203,9 @@ impl<A: Allocator> String<A> {
 impl<A: Allocator + Clone> String<A> implements Clone {
     fn clone(): String<A> { String(self.v.clone()) }
 }
+impl<A: Allocator + Default> String<A> implements Default {
+    static fn default(): String<A> { new_in::<A>(<A implements Default>::default()) }
+}
 
 impl<A: Allocator> String<A> implements PartialEq {
     fn eq(other: read String<A>): bool { self.as_text() == other.as_text() }
@@ -242,9 +246,6 @@ impl<A: Allocator> String<A> implements IndexRange {
 }
 impl<A: Allocator> String<A> implements fmt::Display {
     fn fmt<W: fmt::Write>(f: mut fmt::Formatter<W>): Unit throws fmt::Error { try f.pad(self.as_text()) }
-}
-impl<A: Allocator> String<A> implements fmt::Hole {
-    fn hole(prefix: read Text): fmt::Field { fmt::text_field(self.as_text(), prefix) }
 }
 impl<A: Allocator> String<A> implements fmt::Debug {
     fn fmt<W: fmt::Write>(f: mut fmt::Formatter<W>): Unit throws fmt::Error { try <Text implements fmt::Debug>::fmt(self.as_text(), mut f) }
