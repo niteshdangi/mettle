@@ -3,10 +3,13 @@ fn main(): i32 {
     var i = 0
     while i < 200 { let k = (i * 37) % 200; let r = m.insert(k + 0, k * 2); i += 1 }
     if m.len() != 200usize { return 1 }
-    var j = 0usize
-    while j < 200usize { if m.as_entries()[j].key != (j as i32) { return 2 }; j += 1usize }
-    let rg = m.range(10 + 0, 20 + 0)
-    if rg.1 - rg.0 != 10usize { return 3 }
+    var j = 0
+    for e in read m { if e.key != j { return 2 }; j += 1 }
+    if j != 200 { return 2 }
+    var rg = m.range(10 + 0, 20 + 0)
+    var span = 0
+    while true { match rg.next() { present(e) => { span += 1 }, none => { break } } }
+    if span != 10 { return 3 }
     match m.remove(5 + 0) { present(v) => { if v != 10 { return 4 } }, none => { return 5 } }
     if m.contains_key(5 + 0) { return 6 }
     var h = alloc.binary_heap.new<i32>()

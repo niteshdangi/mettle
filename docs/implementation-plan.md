@@ -742,8 +742,18 @@ block it owns. Hosted builds link the `mettle_rt_alloc/dealloc/realloc` hooks in
 `tests/alloc/` (`library.alloc`): happy paths, large growth, hash collisions,
 a failing allocator, counted drops, a trap on a non-boundary `String.truncate`,
 a borrow-invalidation rejection and a structured parser + `Map<String,
-List<i64>>` workload built without std. Known gaps: `SortedMap` is a sorted array
-(O(n) updates), not a node B-tree; no entry API beyond `or_insert`; borrowed
+List<i64>>` workload built without std. Map `entry` operations are
+implemented, unverified (not yet built); their fixture is also unverified and
+dedicated entry loan-rejection fixtures remain required (the consumed entry's
+returned mutable view must retain its map loan; not yet validated).
+`SortedMap`/`SortedSet` are a node B-tree (minimum degree 6, nodes from the
+map's allocator, parent links, split on the way down and borrow/merge on
+removal): implemented, unverified (not yet built); `tests/alloc/btree_stress.mt`
+is the unverified fixture. Iteration is in key order (borrowing, values-only
+mutable, consuming and half-open `range`); the old contiguous `as_entries()`
+and the position-based `range` result are replaced by ordered iterators.
+Known gaps: no `SortedMap` entry API, no BTree-specific `try_` allocation
+tests, and a panicking key/value destructor leaks the remaining nodes. Borrowed
 iteration is implemented through the core interfaces: see the integration
 note below; `Box<[T]>`/unsized owners, `Arc`, `Pin` and
 the native `heap T`/`local shared T`/`weak` syntax (still a feature error) are
