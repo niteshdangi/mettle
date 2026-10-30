@@ -833,6 +833,20 @@ bool Checker::inferGeneric(Type pattern, Type actual,
       (checked.types->isPointer(pattern) && checked.types->isPointer(actual)))
     return inferGeneric(checked.types->view(pattern).payload,
                         checked.types->view(actual).payload, bindings, span);
+  if (checked.types->isSlice(pattern)) {
+    auto element = checked.types->slice(pattern).element;
+    if (checked.types->isSlice(actual))
+      return inferGeneric(element, checked.types->slice(actual).element,
+                          bindings, span);
+    if (checked.types->isProduct(actual)) {
+      const auto &array = checked.types->product(actual);
+      if (array.kind == AggregateKind::Array && array.components.size() == 1) {
+        auto actualElement = array.components.front();
+        return inferGeneric(element, actualElement, bindings, span);
+      }
+    }
+    return false;
+  }
   if (checked.types->isFunctionPointer(pattern) &&
       checked.types->isCallable(actual)) {
     const auto expected = checked.types->callable(pattern);

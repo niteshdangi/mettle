@@ -638,7 +638,7 @@ pub fn debug_slice<T: Debug, W: Write>(items: read [T], f: mut Formatter<W>): Un
     try f.debug_close("]", items.len() == 0usize)
 }
 extend<T: Debug> [T] implements Debug {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try debug_slice<T, W>(self, mut f) }
+    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try debug_slice(self, mut f) }
 }
 
 // Tuples print as `(a, b)`; a one-element tuple keeps its trailing comma.
@@ -986,6 +986,6 @@ extend<T: Debug, E: Debug> (T throws E) implements Debug {
 }
 extend<T: Debug, const N: usize> [T; N] implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
-        try debug_slice<T, W>(read self[..], mut f)
+        try debug_slice(read self[..], mut f)
     }
 }

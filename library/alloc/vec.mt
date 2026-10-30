@@ -508,7 +508,7 @@ extend<T> List<T> implements FromItems<T> {
 
 extend<T: fmt.Debug, A: Allocator> List<T, A> implements fmt.Debug {
     fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
-        try fmt.debug_slice<T, W>(self.as_slice(), mut f)
+        try fmt.debug_slice(self.as_slice(), mut f)
     }
 }
 

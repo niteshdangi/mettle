@@ -88,7 +88,7 @@ extend<T: Clone, A: Allocator + Clone> BinaryHeap<T, A> implements Clone {
 // Elements appear in heap (storage) order.
 extend<T: fmt.Debug, A: Allocator> BinaryHeap<T, A> implements fmt.Debug {
     fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
-        try fmt.debug_slice<T, W>(self.data.as_slice(), mut f)
+        try fmt.debug_slice(self.data.as_slice(), mut f)
     }
 }
 extend<T: Ord, A: Allocator> BinaryHeap<T, A> implements ExtendItems<T> {
