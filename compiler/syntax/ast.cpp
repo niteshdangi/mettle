@@ -10,6 +10,18 @@ std::optional<bool> booleanLiteral(const Node &node) {
     return value->text == "true";
   return std::nullopt;
 }
+std::optional<std::string> dottedPath(const Node &node) {
+  if (!node.genericArguments.empty() || !node.ownerGenericArguments.empty())
+    return std::nullopt;
+  if (node.kind == Kind::Name && node.annotation.form == TypeForm::Named)
+    return node.text;
+  if (node.kind != Kind::Field || node.flag || node.children.size() != 1)
+    return std::nullopt;
+  auto owner = dottedPath(*node.children[0]);
+  if (!owner)
+    return std::nullopt;
+  return *owner + "::" + node.text;
+}
 std::unique_ptr<Node> formatRecipe(Span span,
                                    std::vector<std::unique_ptr<Node>> holes,
                                    std::vector<std::unique_ptr<Node>> pieces) {

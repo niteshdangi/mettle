@@ -1,7 +1,41 @@
 #include "syntax/lexer.h"
 #include "syntax/parser/detail.h"
+#include <utility>
 
 namespace mettle::parsing {
+// `T.(Interface).member` builds the node of `<T implements Interface>::member`.
+std::unique_ptr<Node> Parser::interfaceMember(std::unique_ptr<Node> subject) {
+  TypeSyntax receiver;
+  if (subject->kind == Kind::Name &&
+      subject->annotation.form == TypeForm::Named &&
+      subject->ownerGenericArguments.empty())
+    receiver.name = subject->text;
+  else if (auto owner = subject->kind == Kind::Field && !subject->flag
+                            ? dottedPath(*subject->children[0])
+                            : std::nullopt)
+    receiver.name = *owner + "::" + subject->text;
+  else
+    fail("expected a type name before '.('");
+  receiver.arguments = subject->genericArguments;
+  for (const auto &argument : receiver.arguments)
+    if (!argument.region.empty())
+      receiver.regions.push_back(argument.region);
+  ++position;
+  expect("(");
+  ++parens;
+  auto interface = boundType();
+  expect(")");
+  --parens;
+  expect(".");
+  auto member = name();
+  auto result = node(Kind::Name, subject->span, member.text);
+  result->annotation.form = TypeForm::Projection;
+  result->annotation.name = member.text;
+  result->annotation.elements.push_back(std::move(receiver));
+  result->annotation.elements.push_back(std::move(interface));
+  result->span.end = member.span.end;
+  return result;
+}
 std::unique_ptr<Node> Parser::expr(int minimum) {
   StateGuard guard(*this);
   if (++nesting > limits::parserNesting)
@@ -298,11 +332,40 @@ std::unique_ptr<Node> Parser::primary() {
     } else
       feature("unsupported machine macro");
   }
+  // A name just specialized with `<...>`: a following `.member` or `::member`
+  // continues a type-qualified path (`List<T>.new` is `List::<T>::new`).
+  bool specialized = false;
   for (;;) {
+    const bool qualifies = std::exchange(specialized, false);
     if (is("::") && peek(1).text == "<") {
       ++position;
       result->genericArguments = genericArguments();
       result->span.end = tokens[position - 1].span.end;
+      continue;
+    }
+    if (is("<") &&
+        (result->kind == Kind::Name || result->kind == Kind::Field) &&
+        result->genericArguments.empty()) {
+      std::vector<GenericArgument> arguments;
+      if (genericApplication(arguments)) {
+        result->genericArguments = std::move(arguments);
+        result->span.end = tokens[position - 1].span.end;
+        specialized = result->kind == Kind::Name &&
+                      result->ownerGenericArguments.empty();
+        continue;
+      }
+    }
+    if (qualifies && (is("::") || (is(".") && nameToken(peek(1))))) {
+      ++position;
+      auto member = is("drop") ? tokens[position++] : name();
+      result->text += "::" + member.text;
+      result->span.end = member.span.end;
+      result->ownerGenericArguments = std::move(result->genericArguments);
+      result->genericArguments.clear();
+      continue;
+    }
+    if (is(".") && peek(1).text == "(") {
+      result = interfaceMember(std::move(result));
       continue;
     }
     if (take("[")) {

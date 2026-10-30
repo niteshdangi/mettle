@@ -34,7 +34,8 @@ void Parser::run(Module &module, std::vector<std::string> scope, bool nested) {
         for (auto &method : value.methods)
           method.item.scope = item.scope;
         module.interfaces.push_back(std::move(value));
-      } else if (is("impl") || (is("unsafe") && peek(1).text == "impl")) {
+      } else if (is("impl") || (is("unsafe") && peek(1).text == "impl") ||
+                 isExtension()) {
         auto value = implementationDeclaration();
         value.item = item;
         for (auto &method : value.methods)
@@ -88,7 +89,10 @@ void Parser::run(Module &module, std::vector<std::string> scope, bool nested) {
       while (peek().kind != TokenKind::End && !is("fn") && !is("type") &&
              !is("copy") && !is("alias") && !is("enum") && !is("union") &&
              !is("pub") && !is("module") && !is("import") && !is("interface") &&
-             !is("impl") && !(nested && is("}")))
+             !is("impl") &&
+             !(is("extend") && position && tokens[position - 1].text != "." &&
+               tokens[position - 1].text != "fn") &&
+             !(nested && is("}")))
         ++position;
     }
     separators();

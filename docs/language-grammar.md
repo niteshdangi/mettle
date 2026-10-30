@@ -633,6 +633,16 @@ and nested `>>` splits as in type arguments. Turbofish and `::` are not
 alternates. The parser shares one generic-argument parser and memoizes
 lookahead so nested suffixes are not rescanned.
 
+Implementation rule (parser, unverified): application is attempted only after a
+name or dotted member chain (not after a literal, call or `<<`); the generic
+argument list is parsed speculatively, and a rejected attempt rolls back
+position, `>>` splits, `<<` insertions and diagnostics state before the `<` is
+read as a comparison. `FormatHoleClose` also counts as a follower. The
+pre-cutover spellings (`::<`, `::`, `impl`, `<T implements I>::M`) remain
+accepted and produce the same AST; `mettle migrate FILE` rewrites them. The
+quirk diagnostic above, dotted names inside import groups, and dotted machine
+macro paths are not yet implemented.
+
 ### 13.4. Closures and call arguments
 
 ```ebnf

@@ -697,3 +697,5 @@ host and Linux x86-64 target, not a Linux compiler host, public ABI or runtime p
 ## F-string lowering
 
 The lexer emits `FormatOpen/Piece/HoleOpen/HoleClose/Close` tokens; the parser desugars an f-string into a labelled call chain `core::fmt::message(read [field(hole, piece)...], tail)` (labels `f-string`, `f-string-internal`). The checker (`calls.cpp`, `expressions.cpp`) confines these nodes to `format` argument positions; no new AST kind, IR or backend work.
+
+Target-syntax dual accept (grammar section 13; unverified, not yet built): the parser decides `a<b>(c)` generic application speculatively (`parser/generics.cpp`, journaled token edits, memoized rejections) and maps dotted paths, `extend`, `T.(I).Item` and `fn(x) => e` to the same AST as the old spellings. A dotted expression chain stays a syntax-only `Field` chain; `dottedPath` (`syntax/ast.h`) flattens it for the future resolver, which must decide field versus path where symbols exist. `syntax/migrate.{h,cpp}` is the parser-backed codemod behind `mettle migrate FILE`: it edits token spans and verifies the result re-parses to an equivalent AST.

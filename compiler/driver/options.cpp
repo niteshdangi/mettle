@@ -10,6 +10,9 @@ Options::Options()
 void usage() {
   std::cout
       << "Usage: mettle check|tokens|syntax FILE\n"
+         "       mettle migrate FILE [-o OUTPUT]\n"
+         "         (rewrites pre-cutover spellings to the target syntax of "
+         "language-grammar section 13; prints to stdout, never edits FILE)\n"
          "       mettle build FILE -o OUTPUT [--emit "
          "executable|object|llvm|ir]\n"
          "         [--profile debug|release] [--overflow-checks on|off]\n"
@@ -34,7 +37,8 @@ std::optional<Options> options(int argc, char **argv) {
   Options result;
   result.command = argv[1];
   if (result.command != "build" && result.command != "check" &&
-      result.command != "tokens" && result.command != "syntax")
+      result.command != "tokens" && result.command != "syntax" &&
+      result.command != "migrate")
     return std::nullopt;
   for (int i = 2; i < argc; ++i) {
     std::string arg = argv[i];

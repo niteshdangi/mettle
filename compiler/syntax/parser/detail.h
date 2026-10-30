@@ -3,6 +3,7 @@
 #include "syntax/parser.h"
 #include <optional>
 #include <set>
+#include <tuple>
 
 namespace mettle::parsing {
 struct ParseFailure {};
@@ -47,6 +48,18 @@ private:
   std::optional<std::size_t> failedAt;
   std::vector<Span> textSpans;
   unsigned genericExpressionLevel = 0;
+  // Speculative parsing (generic application): failures are silent and
+  // in-place token splits are journaled so they can be undone.
+  bool speculating = false;
+  struct TokenEdit {
+    std::size_t index;
+    Token before;
+    bool inserted;
+  };
+  std::vector<TokenEdit> tokenEdits;
+  // Rejected applications by (position, token count, parens, `>>` level).
+  std::set<std::tuple<std::size_t, std::size_t, unsigned, unsigned>>
+      rejectedApplications;
   // Parsing the body of an `async fn`, where `await` is accepted.
   bool inAsyncBody = false;
   // `async` consumed by a member dispatcher ahead of its receiver mode.
@@ -100,6 +113,8 @@ private:
   }
   [[noreturn]] void fail(std::string message, std::string phase = "parse") {
     // Recovery that fails again at the same token is a cascade, not news.
+    if (speculating)
+      throw ParseFailure{};
     auto span = peek().span;
     if (!failedAt || *failedAt != span.begin)
       diagnostics.error(std::move(phase), span, std::move(message));
@@ -142,10 +157,21 @@ private:
   TypeSyntax boundType();
   TypeSyntax callableType();
   std::unique_ptr<Node> closure();
+  std::unique_ptr<Node> interfaceMember(std::unique_ptr<Node> subject);
+  bool nameToken(const Token &token) const {
+    return token.kind == TokenKind::Word ||
+           token.kind == TokenKind::QuotedWord;
+  }
+  bool isExtension() {
+    return is("extend") || (is("unsafe") && peek(1).text == "extend");
+  }
   std::vector<GenericParameter>
   genericParameters(std::vector<std::string> *regions = nullptr);
   std::vector<GenericArgument> genericArguments();
   std::vector<GenericConstraint> genericConstraints();
+  bool genericApplication(std::vector<GenericArgument> &arguments);
+  bool followsGenericApplication();
+  void undoTokenEdits(std::size_t keep);
   bool genericClose();
   bool genericOpen();
   std::shared_ptr<const Node> genericValue();

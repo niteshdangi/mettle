@@ -90,6 +90,15 @@ std::unique_ptr<Node> Parser::closure() {
     result->annotation = type(false);
   if (take("throws"))
     result->error = type();
+  if (take("=>")) {
+    newlines();
+    auto body = node(Kind::Block, peek().span);
+    body->children.push_back(expr());
+    finish(*body);
+    result->children.push_back(std::move(body));
+    finish(*result);
+    return result;
+  }
   newlines();
   result->children.push_back(block());
   finish(*result);

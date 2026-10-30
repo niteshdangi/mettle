@@ -107,6 +107,22 @@ TypeSyntax Parser::type(bool effect) {
     }
   }
   result.binders = std::move(binders);
+  while (is(".") && peek(1).text == "(") {
+    TypeSyntax projection;
+    projection.form = TypeForm::Projection;
+    projection.elements.push_back(std::move(result));
+    ++position;
+    expect("(");
+    ++parens;
+    projection.elements.push_back(type(false));
+    expect(")");
+    --parens;
+    expect(".");
+    projection.name = name().text;
+    if (genericOpen())
+      projection.arguments = genericArguments();
+    result = std::move(projection);
+  }
   while (is("?") || is("??")) {
     auto depth = take("??") ? 2 : 1;
     if (depth == 1)
