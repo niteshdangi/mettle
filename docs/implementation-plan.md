@@ -942,7 +942,7 @@ result type inferred); and a structured diagnostic for a `let r = read x` /
 `tests/source/run/async-branches-and-subexpressions.mt`,
 `async-blocks-and-closures.mt` and `tests/source/fail/await-in-{loop,
 branch-not-last,lazy-operand}.mt`, `await-borrow-across.mt`.
-Await in loops and nested blocks (implemented, unverified; not yet built): a
+Await in loops and nested blocks (implemented and verified): a
 `while`/`loop`/`for` statement that contains an `await`, a nested block, and an
 `if`/`match` that is not last in its block lower in the same parser pass. The
 carried state is the tuple of the `var` locals in scope. A loop body becomes a
@@ -951,9 +951,16 @@ step closure over that state, driven by `core::future::Repeat`
 labeled, targeting the loop itself) are rewritten to returns of
 `finish_loop`/`next_iteration` and placed by the existing early-return
 lowering; the loop's final state (and `break` value) feeds the continuation of
-the statements after it. `for` desugars to
+the statements after it. Every loop binds a zero-size copyable witness
+`let <loop-kind>: core::future::LoopKind<R> = LoopKind()` (R is `Unit`, or the
+async function's result for a tail loop used as its value) and passes it to
+`repeat` and `next_iteration`, so all steps agree on the result type. The step
+future is polled through a raw place, so the next state holds no loan of the
+`Repeat` across its back edge. `for` desugars to
 `var <iter> = core::iter::into_iterator(source)` plus a `loop`/`match` over
-`next()`, so the iterator is one more carried `var`; a block or a joined branch
+`next()`, so the iterator is one more carried `var`; over a built-in
+`lo..hi`/`lo..=hi` range (not an iterator) it counts a carried `var` instead,
+and `..=` ends with a flag rather than stepping past `hi`; a block or a joined branch
 becomes a sub-future that yields the state. Cancellation needs no special
 code: `Repeat` holds either the state or the current iteration's future, and
 dropping it drops whichever is initialized. Tests:
@@ -967,10 +974,7 @@ used as a value other than a tail statement (`let n = loop { .. await .. }`);
 `while let` with an await; `for` over a borrowed place (use `take v`); an inner
 binding with the name of a carried `var`. Immutable locals and parameters used
 by a loop are captured by the step closure, so one used after an await in the
-body, or both inside and after the loop, must be copyable. Unverified: whether
-the checker accepts the generated step closure as repeatedly callable, mutation
-of a moved-in `var` capture inside `lazy`, and inference of `Flow`'s result type
-across branches. The general design (a checker/IR-level state machine over
+body, or both inside and after the loop, must be copyable. The general design (a checker/IR-level state machine over
 typed liveness with locals as fields of one state, loops as back-edges and
 borrows across an await as pinned self-references) remains open. Also not
 done: borrows of locals across an await beyond the explicit-binding diagnostic

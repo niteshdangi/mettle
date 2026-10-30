@@ -68,6 +68,17 @@ async fn ranged_break(n: i32): i32 {
     total
 }
 
+// An inclusive range ending at the type's maximum must not step past it.
+async fn inclusive(low: i32, high: i32): i32 {
+    var total = 0
+    for i in low..=high {
+        let v = await Count(1)
+        if i == low + 1 { continue }
+        total = total + 1
+    }
+    total
+}
+
 async fn block_scope(): i32 {
     var total = 1
     let base = 10
@@ -145,6 +156,10 @@ fn main(): i32 {
     if d.0 != 42 * 6 || d.1 != 4 { return 4 }
     let e = drive(ranged_break(5))
     if e.0 != 42 || e.1 != 3 { return 5 }
+    let i = drive(inclusive(1, 4))
+    if i.0 != 3 || i.1 != 4 { return 11 }
+    let j = drive(inclusive(2147483645, 2147483647))
+    if j.0 != 2 || j.1 != 3 { return 12 }
     let f = drive(block_scope())
     if f.0 != 43 + 42 + 10 || f.1 != 1 { return 6 }
     let g = drive(join(true))

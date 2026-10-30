@@ -501,8 +501,8 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
     state.kind = PatternKind::Tuple;
     state.span = at;
     for (std::size_t i = 0; i < carried.size(); ++i)
-      state.children.push_back(Pattern{
-          PatternKind::Binding, at, "<carry-" + std::to_string(i) + ">"});
+      state.children.push_back(Pattern{PatternKind::Binding, at,
+                                       "<carry-" + std::to_string(i) + ">"});
     state.children.push_back(Pattern{PatternKind::Wildcard, at});
     if (state.children.size() < 2)
       state.children.push_back(Pattern{PatternKind::Wildcard, at});
@@ -540,9 +540,8 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
     unpack(carried, at, "<joined>", withResult, lead);
     std::vector<ClosureParameter> parameters;
     parameters.push_back(std::move(parameter));
-    auto continuation =
-        closure(at, build(after, 0, std::move(lead), variables),
-                std::move(parameters));
+    auto continuation = closure(at, build(after, 0, std::move(lead), variables),
+                                std::move(parameters));
     std::vector<NodeOwner> arguments;
     arguments.push_back(std::move(first));
     arguments.push_back(std::move(continuation));
@@ -551,6 +550,8 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
   // Turns the `break`/`continue` that leave the loop labeled `label` into
   // returns of the loop step; `inner` holds the labels of loops nested in the
   // body, `nested` whether an unlabeled exit would target one of them.
+  // The name of the `LoopKind` witness of the loop whose exits are rewritten.
+  std::string loopKind;
   std::function<void(Node &, const std::string &, bool,
                      std::vector<std::string> &,
                      const std::vector<std::string> &)>
@@ -563,16 +564,18 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
         continue;
       Node &child = *slot;
       if (child.kind == Kind::Break || child.kind == Kind::Continue) {
-        bool mine = child.label.empty()
-                        ? !nested
-                        : child.label == label &&
-                              std::find(inner.begin(), inner.end(),
-                                        child.label) == inner.end();
+        bool mine =
+            child.label.empty()
+                ? !nested
+                : child.label == label && std::find(inner.begin(), inner.end(),
+                                                    child.label) == inner.end();
         if (mine) {
           auto at = child.span;
           std::vector<NodeOwner> arguments;
           arguments.push_back(stateOf(carried, at));
           const char *callee = "core::future::next_iteration";
+          if (child.kind == Kind::Continue)
+            arguments.push_back(name(loopKind, at));
           if (child.kind == Kind::Break) {
             callee = "core::future::finish_loop";
             if (child.children.empty())
@@ -602,10 +605,98 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
   //   var <for-iter> = into_iterator(source)
   //   loop { match take <for-iter>.next() {
   //     present(p) => body, none => break } }
-  // spliced in place of the `for`.
+  // spliced in place of the `for`. A built-in `lo..hi` / `lo..=hi` range
+  // (not an iterator) instead counts a carried `var`:
+  //   var <for-next> = lo; let <for-end> = hi; [var <for-done> = false]
+  //   loop { if !(<for-next> < <for-end>) { break }   // `..=`: done/`>`
+  //          let p = <for-next>; <for-next> = <for-next> + 1; body }
+  // and `..=` sets <for-done> instead of stepping past `hi`.
   auto desugarFor = [&](std::vector<NodeOwner> &list, std::size_t at) {
     Node &source = *list[at];
     auto span = source.span;
+    if (auto &range = *source.children[0];
+        range.kind == Kind::Range && range.children.size() == 2) {
+      bool inclusive = range.text == "..=";
+      auto suffix = std::to_string(awaitTemporaries++) + ">";
+      auto next = "<for-next-" + suffix, end = "<for-end-" + suffix,
+           done = "<for-done-" + suffix;
+      auto bind = [&](const std::string &text, bool mutable_, NodeOwner value) {
+        auto binding = node(Kind::Binding, span, text);
+        binding->flag = mutable_;
+        binding->children.push_back(std::move(value));
+        finish(*binding);
+        return binding;
+      };
+      auto binary = [&](const char *op, NodeOwner left, NodeOwner right) {
+        auto value = node(Kind::Binary, span, op);
+        value->children.push_back(std::move(left));
+        value->children.push_back(std::move(right));
+        finish(*value);
+        return value;
+      };
+      auto assign = [&](const std::string &target, NodeOwner value) {
+        auto assignment = node(Kind::Assign, span, "=");
+        assignment->children.push_back(name(target, span));
+        assignment->children.push_back(std::move(value));
+        finish(*assignment);
+        return assignment;
+      };
+      auto one = [&] { return node(Kind::Integer, span, "1"); };
+      auto conditional = [&](NodeOwner condition, std::vector<NodeOwner> then,
+                             std::vector<NodeOwner> otherwise) {
+        auto guard = node(Kind::If, span);
+        guard->children.push_back(std::move(condition));
+        guard->children.push_back(asBlock(span, std::move(then)));
+        if (!otherwise.empty())
+          guard->children.push_back(asBlock(span, std::move(otherwise)));
+        finish(*guard);
+        return guard;
+      };
+      std::vector<NodeOwner> prelude;
+      prelude.push_back(bind(next, true, std::move(range.children[0])));
+      prelude.push_back(bind(end, false, std::move(range.children[1])));
+      if (inclusive)
+        prelude.push_back(bind(done, true, node(Kind::Boolean, span, "false")));
+      std::vector<NodeOwner> body;
+      std::vector<NodeOwner> leave;
+      leave.push_back(node(Kind::Break, span));
+      auto stop = inclusive
+                      ? binary("||", name(done, span),
+                               binary(">", name(next, span), name(end, span)))
+                      : binary(">=", name(next, span), name(end, span));
+      body.push_back(conditional(std::move(stop), std::move(leave), {}));
+      auto &pattern = source.patterns[0];
+      auto element = node(Kind::Binding, span,
+                          pattern.kind == PatternKind::Binding ? pattern.text
+                                                               : "<pattern>");
+      if (pattern.kind != PatternKind::Binding)
+        element->patterns.push_back(std::move(pattern));
+      element->children.push_back(name(next, span));
+      finish(*element);
+      body.push_back(std::move(element));
+      if (inclusive) {
+        std::vector<NodeOwner> last, step;
+        last.push_back(assign(done, node(Kind::Boolean, span, "true")));
+        step.push_back(assign(next, binary("+", name(next, span), one())));
+        body.push_back(
+            conditional(binary("==", name(next, span), name(end, span)),
+                        std::move(last), std::move(step)));
+      } else
+        body.push_back(assign(next, binary("+", name(next, span), one())));
+      for (auto &statement : source.children[1]->children)
+        body.push_back(std::move(statement));
+      auto iteration = node(Kind::Loop, span);
+      iteration->label = source.label;
+      iteration->semicolon = source.semicolon;
+      iteration->children.push_back(asBlock(span, std::move(body)));
+      finish(*iteration);
+      prelude.push_back(std::move(iteration));
+      list.erase(list.begin() + static_cast<std::ptrdiff_t>(at));
+      list.insert(list.begin() + static_cast<std::ptrdiff_t>(at),
+                  std::make_move_iterator(prelude.begin()),
+                  std::make_move_iterator(prelude.end()));
+      return;
+    }
     if (borrowedSource(*source.children[0]))
       refuse(span, "`await` in a `for` over a borrowed place is not "
                    "implemented: the iterator would borrow across the "
@@ -876,11 +967,36 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
         for (auto &statement : subject.children.back()->children)
           body.push_back(std::move(statement));
         auto holder = asBlock(at, std::move(body));
+        // `let <loop-kind-N>: LoopKind<R> = LoopKind()`: R is the async
+        // function's result for a loop that is its value, otherwise Unit.
+        auto kindName =
+            "<loop-kind-" + std::to_string(awaitTemporaries++) + ">";
+        TypeSyntax loopResult;
+        loopResult.name = "Unit";
+        if (valueTail && !result.empty())
+          loopResult =
+              result.form == TypeForm::Outcome ? result.elements[0] : result;
+        TypeSyntax kindType;
+        kindType.name = "core::future::LoopKind";
+        kindType.arguments.push_back(GenericArgument{
+            std::make_shared<const TypeSyntax>(std::move(loopResult)),
+            {},
+            {},
+            at,
+            {}});
+        auto witness = node(Kind::Binding, at, kindName);
+        witness->annotation = std::move(kindType);
+        witness->children.push_back(
+            call("core::future::LoopKind", at, std::vector<NodeOwner>{}));
+        finish(*witness);
+        block.push_back(std::move(witness));
+        loopKind = kindName;
         std::vector<std::string> inner;
         rewriteExits(*holder, subject.label, false, inner, carried);
-        tailExit = [&stateOf, &call, carried](Span here) {
+        tailExit = [&stateOf, &call, &name, carried, kindName](Span here) {
           std::vector<NodeOwner> arguments;
           arguments.push_back(stateOf(carried, here));
+          arguments.push_back(name(kindName, here));
           return call("core::future::next_iteration", here,
                       std::move(arguments));
         };
@@ -895,8 +1011,9 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
         parameters.push_back(std::move(parameter));
         std::vector<NodeOwner> arguments;
         arguments.push_back(stateOf(carried, at));
-        arguments.push_back(closure(at, std::move(iteration),
-                                    std::move(parameters)));
+        arguments.push_back(
+            closure(at, std::move(iteration), std::move(parameters)));
+        arguments.push_back(name(kindName, at));
         first = call("core::future::repeat", at, std::move(arguments));
       } else {
         tailExit = state;

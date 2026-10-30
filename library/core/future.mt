@@ -182,14 +182,17 @@ impl<B: Future, F: take fn(): B> Defer<B, F> implements Future {
 // One step of a loop whose body awaits: either the next iteration's state (the
 // loop-carried locals) or the final state together with the `break` value.
 pub enum Flow<S, R> { Next(S); Done((S, R)) }
-pub fn next_iteration<S, R>(state: take S): Flow<S, R> { Flow::Next(state) }
+// Names a loop's result type where no `break` value is in sight, so every step
+// of the loop agrees on `R` (`Unit` for a loop used as a statement).
+pub copy type LoopKind<R> {}
+pub fn next_iteration<S, R>(state: take S, kind: LoopKind<R>): Flow<S, R> { Flow::Next(state) }
 pub fn finish_loop<S, R>(state: take S, value: take R): Flow<S, R> { Flow::Done((state, value)) }
 
 // Runs `step` over the state until it reports `Done`. The state or the future
 // of the current iteration is inline, never both; dropping an unfinished loop
 // drops whichever is initialized.
 pub type Repeat<S, R, B, F> { state: S?; step: F; current: B?; done: bool; result: super::iter::Phantom<R> }
-pub fn repeat<S, R, B: Future<Output = Flow<S, R>>, F: fn(take S): B>(state: take S, step: take F): Repeat<S, R, B, F> {
+pub fn repeat<S, R, B: Future<Output = Flow<S, R>>, F: fn(take S): B>(state: take S, step: take F, kind: LoopKind<R>): Repeat<S, R, B, F> {
     Repeat(present(state), step, none, false, super::iter::Phantom::<R>())
 }
 impl<S, R, B: Future<Output = Flow<S, R>>, F: fn(take S): B> Repeat<S, R, B, F> implements Future {
@@ -202,7 +205,10 @@ impl<S, R, B: Future<Output = Flow<S, R>>, F: fn(take S): B> Repeat<S, R, B, F> 
                 let state = me.state.take_value().unwrap()
                 me.current = present((me.step)(state))
             }
-            let polled = poll_slot(mut me.current, mut cx)
+            // Polled through a raw place, so the step's output (the next
+            // state) holds no loan of `me` across the loop's back edge.
+            let slot = core::ptr::from_mut(mut me.current)
+            let polled = unsafe { poll_slot(mut *slot, mut cx) }
             match take polled {
                 present(flow) => match take flow {
                     Flow::Next(state) => { me.state = present(state) },
