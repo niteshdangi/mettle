@@ -1,0 +1,11 @@
+[package]
+name = "feature-app"
+version = "0.1.0"
+language = "mettle-1"
+
+[features]
+default = []
+fancy = ["widget/fancy"]
+
+[dependencies]
+widget = { path = "../widget", default_features = false }

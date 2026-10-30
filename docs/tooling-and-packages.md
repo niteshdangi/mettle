@@ -1,7 +1,47 @@
 # Packages, tools and development contracts
 
-Status: selected design, not available commands or an installed toolchain.
+Status: selected design. Only the subset in section 1.1 is implemented
+(`mettle check|build` on a package directory); other commands and an
+installed toolchain are not available.
 These operations are native equivalents, not Cargo-manifest compatibility.
+
+### 1.1. Implemented subset (I09 T001)
+
+`mettle check|build DIR_OR_Mettle.toml` plans the package in the `packages`
+component, then compiles the selected executable target with each resolved
+dependency library mounted as a public root module named after the package
+(`-` becomes `_`). Inside a dependency's own submodules, reach other packages
+with `import package::name`.
+
+- Manifest: `[package] name/version/language="mettle-1"`, `[targets.NAME]`
+  (`kind`, `source`; defaults `src/main.mt` executable, `src/lib.mt` library),
+  `[dependencies]` (version string/array, or `{path, version, optional,
+  default_features}`), `[features]` (`feature`, `dep:x`, `x/f`; optional
+  dependencies imply a feature), `[registry] path` (root only) and parsed but
+  unused `[dev-dependencies]`. Unknown keys are errors. `git` and
+  `build-dependencies` are rejected as unsupported.
+- Versions: SemVer requirements (`^`, `~`, comparators, `*`, comma
+  intersections, arrays as unions). Highest non-yanked version wins; a
+  lock-recorded version is preferred (even if yanked); conflicts backtrack
+  chronologically and report each requirement with its requiring package.
+- Local registry: `<registry>/<name>/<version>/Mettle.toml` plus sources; a
+  `YANKED` file yanks a version. Select with `--registry DIR` (repeatable,
+  before the manifest `[registry]`). No network fetch exists; `--offline` only
+  changes the diagnostic.
+- `Mettle.lock`: `version = 1` plus `[[package]]` entries (name, version,
+  `source` = `root`/`path+REL`/`registry+REL`, `checksum`, resolved
+  `features`, dependencies). Checksum is SHA-256 over sorted relative paths,
+  sizes and contents of `*.mt` and `Mettle.toml` (hidden, `target`, `build`
+  skipped). Registry checksum mismatches always fail; other drift is
+  re-locked, or fails under `--locked`/`--frozen`. Missing lock fails under
+  `--locked`.
+- Flags: `--bin NAME`, `--features a,b`, `--no-default-features`,
+  `--registry DIR`, `--locked`, `--offline`, `--frozen`.
+- Limits: all packages share one flat module namespace, so one version per
+  package name and no coexisting majors; no git/remote registries, build
+  scripts, host/target feature separation or source-level `cfg`; library-only
+  roots cannot be built; incremental builds (T003) are not implemented (the
+  plan only computes a fingerprint). Tests: `tests/packages.py`.
 
 ## 1. Manifest and identity
 

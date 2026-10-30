@@ -26,6 +26,7 @@ for them.
 | `diagnostics` | Structured failures and source rendering | Parsing/recovery decisions or process exit |
 | `syntax` | Tokens, keyword/operator metadata, lexer, parsed AST and parser/recovery | Resolved bindings, inferred types, CFG slots, LLVM |
 | `resolution` | Compilation-local module identities, item/import scopes, visibility and canonical declaration names; source-provider-driven module assembly | Inference, backend types or filesystem I/O |
+| `packages` | Manifest/lock TOML, SemVer requirements, dependency solving with features, checksums and the package build plan (mounts handed to the driver) | Source parsing, semantics, network access or artifact publication |
 | `types` | Compiler-owned language type identities/operations, target facts and target-layout results | Parsed AST, LLVM types/target machines, toolchain state |
 | `places` | Function-local storage roots, typed field paths and structural overlap | AST traversal, CFG control flow, mutability/loan policy |
 | `semantics` | Lexical resolution, module-resolution consumption, inference, flow facts and checked syntax | LLVM, code emission, filesystem/linker side effects |
@@ -629,7 +630,9 @@ public C ABI. It uses C++ exceptions, a thread-local unwind-depth indicator and
 integer panic codes. Internal checked-IR catch integration proves cleanup/recovery;
 it does not implement generic hosted panic APIs or C-unwind interoperability.
 
-Package resolution/build planning, documentation, formatting and editor protocol
+Package resolution/build planning (`packages`, planned before compilation and
+handed to the loader as `Library::packages` mounts; failures carry the
+`manifest`, `package`, `lock` or `feature` phase), documentation, formatting and editor protocol
 handling are clients of the compiler, not branches in semantic analysis.
 Expose internal library interfaces first; stabilize external APIs only with an
 explicit compatibility decision. The native compiler remains independent of

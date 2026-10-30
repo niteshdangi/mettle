@@ -869,6 +869,13 @@ must fail verification; untracked host inputs must trigger conservative reruns;
 incremental and clean builds must agree. Host Mettle extensions can use the
 services delivered in I08, avoiding an undeclared compiler-bootstrap dependency.
 
+I09 T001 status: manifest parsing, SemVer solving over path and local-registry
+sources, `Mettle.lock` with checksums, features, `--locked/--offline/--frozen`
+and `mettle check|build` on a package directory are implemented and covered by
+`tests/packages.py`. Open: git/remote registries, coexisting versions (flat
+module namespace), feature/host/target separation, build scripts, and T003
+incremental reuse.
+
 I10 can progress alongside I08/I09 after I07. The initial I10 surface is
 implemented (see S018-S023) with `library.std`, `runtime.thread` and scalar
 compiler cases; Linux-target and TSan qualification of the library remain open

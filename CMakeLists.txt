@@ -268,6 +268,11 @@ if(BUILD_TESTING)
   add_test(NAME compiler.modules-source
            COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/modules.py"
                    "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/module-evidence")
+  add_test(NAME packages.resolution
+           COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/packages.py"
+                   "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/packages-evidence"
+                   "${PROJECT_SOURCE_DIR}/tests/packages")
+  set_tests_properties(packages.resolution PROPERTIES TIMEOUT 600)
   add_test(NAME library.alloc
            COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/alloc.py"
                    "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/alloc-evidence"

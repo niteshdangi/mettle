@@ -120,6 +120,13 @@ build/macos-arm64/Debug/mettle build examples/core/control-flow.mt -o build/coun
 ./build/count
 ```
 
+A directory with a `Mettle.toml` builds as a package (dependencies, features,
+`Mettle.lock`; see `docs/tooling-and-packages.md`):
+
+```sh
+build/macos-arm64/Debug/mettle build tests/packages/path-dependency/app -o build/app --locked
+```
+
 The example returns process status 0 on success. Hosted programs can print
 through `std::io` (see `tests/std/`).
 `--profile debug` checks integer overflow; `--profile release` wraps ordinary

@@ -60,7 +60,7 @@ int ioFailure(const std::string &action, const std::error_code &error) {
 int emit(const Options &options, const Source &source,
          const ir::VerifiedProgram &program) {
   std::error_code fileError;
-  auto inputPath = std::filesystem::weakly_canonical(options.input, fileError);
+  auto inputPath = std::filesystem::weakly_canonical(source.path, fileError);
   if (!fileError && inputPath == std::filesystem::weakly_canonical(
                                      options.output, fileError)) {
     std::cerr << "mettle: error[io]: output would overwrite the source\n";

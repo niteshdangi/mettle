@@ -22,6 +22,13 @@ struct Library {
   // `alloc` stays available (it only needs a provided allocator); `std` does
   // not.
   bool freestanding = false;
+  // Dependency packages: each library source is mounted as the public root
+  // module `name` before library references are scanned, and is treated as
+  // user code (it may name the library roots and the prelude).
+  struct Package {
+    std::string name, source;
+  };
+  std::vector<Package> packages;
 };
 std::optional<Module> load(Source root, const SourceProvider &provider,
                            Diagnostics &diagnostics,

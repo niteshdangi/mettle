@@ -1,5 +1,6 @@
 #include "driver/options.h"
 #include "backend/llvm/object.h"
+#include <algorithm>
 #include <iostream>
 
 namespace mettle::driver {
@@ -16,6 +17,11 @@ void usage() {
          "         [--library-dir PATH]\n"
          "         [--freestanding] (object/LLVM/IR output, aborting panics, "
          "no implicit hosted entry)\n"
+         "       mettle check|build PACKAGE_DIR|Mettle.toml [-o OUTPUT]\n"
+         "         [--bin NAME] [--features a,b] [--no-default-features]\n"
+         "         [--registry DIR]... [--locked] [--offline] [--frozen]\n"
+         "         (resolves Mettle.toml, verifies or writes Mettle.lock and "
+         "mounts dependencies)\n"
          "Executable output requires the runtime target (the default); use "
          "--emit object for other targets.\n"
          "Scalar/product compiler with field initialization, owned moves, "
@@ -36,6 +42,14 @@ std::optional<Options> options(int argc, char **argv) {
       result.freestanding = true;
       continue;
     }
+    if (arg == "--no-default-features" || arg == "--locked" ||
+        arg == "--offline" || arg == "--frozen") {
+      result.packageOptions = true;
+      result.defaultFeatures &= arg != "--no-default-features";
+      result.locked |= arg == "--locked" || arg == "--frozen";
+      result.offline |= arg == "--offline" || arg == "--frozen";
+      continue;
+    }
     if (!arg.empty() && arg[0] == '-') {
       if (++i == argc)
         return std::nullopt;
@@ -54,7 +68,21 @@ std::optional<Options> options(int argc, char **argv) {
         result.libraryDirectory = value;
       else if (arg == "--sysroot")
         result.sysroot = value;
-      else if (arg == "--overflow-checks" && (value == "on" || value == "off"))
+      else if (arg == "--bin" || arg == "--registry" || arg == "--features") {
+        result.packageOptions = true;
+        if (arg == "--bin")
+          result.bin = value;
+        else if (arg == "--registry")
+          result.registries.push_back(value);
+        else
+          for (std::size_t begin = 0; begin <= value.size();) {
+            auto end = std::min(value.find(',', begin), value.size());
+            if (end > begin)
+              result.features.push_back(value.substr(begin, end - begin));
+            begin = end + 1;
+          }
+      } else if (arg == "--overflow-checks" &&
+                 (value == "on" || value == "off"))
         result.checks = value == "on";
       else
         return std::nullopt;
