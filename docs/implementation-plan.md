@@ -903,15 +903,42 @@ I11 status (partial; built and run on macOS arm64 Release and Debug): `core::fut
 has `Future`/`Poll`/`Context`/`Waker` (vtable protocol, no allocation) and the
 inline state types `Lazy`, `Then`, `Defer`; `std::task` is the optional executor
 (`block_on`, `Executor` with spawn/run, `yield_now`). The parser lowers
-`async fn` (free functions and methods) to `some Future<Output = T>` built from
-those states (`compiler/syntax/parser/async.cpp`), so there is no separate
-state-machine IR pass. Not done: `await` outside whole-statement position
-(`await e`, `let x = await e`, `var x = await e`, `x = await e`), `await`
-inside branches/loops, `return` before the last await, pattern bindings from
-await, async closures/blocks, async interface methods and explicit erased
-futures, borrowing a local across an await (the continuation captures by move),
-locals not used after an await are dropped at the await instead of at function
-exit, scoped/borrowed tasks, cancellation, panic isolation in workers, P10.
+`async fn` (free functions and methods), `async { .. }` blocks and
+`async fn(..) { .. }` closures to `some Future<Output = T>` built from those
+states (`compiler/syntax/parser/async.cpp`), so there is no separate
+state-machine IR pass. Implemented, unverified (not yet built or run; the
+earlier whole-statement forms above were verified): `await` in any eagerly
+evaluated subexpression (`f(await a) + 1`, `let (p, q) = await e`,
+`if await c {..}`) by hoisting into temporaries in evaluation order, with
+effectful operands evaluated before the await hoisted too; `await` inside the
+branches of an `if`/`else if`/`match` that is the last statement of its block
+(each branch is its own future, joined by the allocation-free
+`core::future::Either`); `return` before the last await when it ends a branch
+of an `if`/`match` with exactly one continuing branch (the statements after it
+move into that branch); async blocks and async closures (captured by move, the
+result type inferred); and a structured diagnostic for a `let r = read x` /
+`mut x` borrow still used after an await. Tests:
+`tests/source/run/async-branches-and-subexpressions.mt`,
+`async-blocks-and-closures.mt` and `tests/source/fail/await-in-{loop,
+branch-not-last,lazy-operand}.mt`, `await-borrow-across.mt`.
+Not done: `await` in a loop (`while`/`loop`/`for`), in a branch that is not the
+last statement of its block, or in a lazily evaluated operand (`&&`, `||`,
+`??`); these are diagnosed. They need the locals of the enclosing scope carried
+between iterations or joined after the branch, and syntactic lowering cannot
+know which locals are moved or mutated. The sound design is a checker/IR-level
+state-machine transform over typed liveness (a generator-style layout where
+locals live across suspension points are fields of one state, loops are
+back-edges and borrows across an await are pinned self-references). Also not
+done: borrows of locals across an await beyond the explicit-binding diagnostic
+(the continuation captures by move, so the checker rejects the rest), async
+interface methods and explicit erased futures, scoped/borrowed tasks,
+cancellation, panic isolation in workers, P10. Drop order deviation, accepted
+and documented: a local that no continuation uses is dropped when its segment
+ends at the await, not at function exit, because keeping it alive needs a move
+analysis of which locals are still initialized (a rebinding of an already
+moved local would be an error), which the parser does not have; the same
+analysis belongs to the checker/IR transform above. Pattern bindings from an
+await now work through the temporary.
 `recursive region inference` now accepts a revisited type pair (function-pointer
 cycle) instead of reporting a limit error. Verified by
 `tests/source/run/async-fn-state-machine.mt`, `tests/std/async_executor.mt` and

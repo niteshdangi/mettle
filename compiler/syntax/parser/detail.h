@@ -49,6 +49,8 @@ private:
   unsigned genericExpressionLevel = 0;
   // Parsing the body of an `async fn`, where `await` is accepted.
   bool inAsyncBody = false;
+  // Numbers the temporaries that hoisting an `await` introduces.
+  unsigned awaitTemporaries = 0;
   // `async` consumed by a member dispatcher ahead of its receiver mode.
   bool pendingAsync = false;
   struct StateGuard {
@@ -166,6 +168,10 @@ private:
   }
   Function function(bool allowDeclaration = false);
   void lowerAsync(Function &function);
+  // The future expression for an async body; `result` is empty when inferred.
+  std::unique_ptr<Node> asyncBody(Node &body, TypeSyntax result, Span span);
+  TypeSyntax asyncResult(TypeSyntax result, TypeSyntax error,
+                         bool unitIfEmpty);
   std::unique_ptr<Node> loopExpression();
   Module::Product product();
   Module::Product enumeration();
