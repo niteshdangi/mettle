@@ -202,6 +202,124 @@ pub fn write_with<W: Write, T: Display>(sink: mut W, value: read T, options: Spe
     try value.fmt(mut f)
 }
 
+
+// Format recipes. An f-string passed to a `format` parameter is built by the
+// compiler from `message`/`literal`/`field`: a fixed borrowed descriptor of
+// literal pieces and a caller-stack array of fields (value pointer, renderer,
+// metadata). It owns nothing and allocates nothing; `Field` carries no region,
+// so these constructors are unsafe and only compiler-built recipes call them.
+pub copy type Piece { data: ptr<read u8>; len: usize }
+
+// Byte sink with a fixed shape, so renderers do not depend on the writer type.
+pub type Sink { context: ptr<mut u8>; write: fn(ptr<mut u8>, read Text): Unit throws Error }
+impl Sink implements Write {
+    mut fn write_str(text: read Text): Unit throws Error { try (self.write)(self.context, text) }
+}
+fn sink_write<W: Write>(context: ptr<mut u8>, text: read Text): Unit throws Error {
+    try (unsafe { mut *context.cast::<W>() }).write_str(text)
+}
+
+pub copy type Field {
+    prefix: Piece
+    value: ptr<read u8>
+    meta: usize
+    render: fn(ptr<read u8>, usize, mut Sink): Unit throws Error
+}
+pub type Message<region r> { fields: read [Field] from r; tail: Piece }
+
+fn piece(text: read Text): Piece {
+    let bytes = text.as_bytes()
+    Piece(slice::data(bytes), bytes.len())
+}
+// Safety: `data`/`len` describe UTF-8 text that outlives region `r`.
+unsafe fn piece_text<region r>(p: Piece): read Text from r {
+    unsafe { from_utf8_unchecked(unsafe { slice::from_raw_parts(p.data, p.len) }) }
+}
+fn render_sized<T: Display>(value: ptr<read u8>, meta: usize, sink: mut Sink): Unit throws Error {
+    var f = formatter(mut sink, spec())
+    try (unsafe { read *value.cast::<T>() }).fmt(mut f)
+}
+fn render_text(value: ptr<read u8>, meta: usize, sink: mut Sink): Unit throws Error {
+    try sink.write_str(unsafe { piece_text(Piece(value, meta)) })
+}
+fn sized<T: Display>(value: read T, prefix: read Text): Field {
+    Field(piece(prefix), core::ptr::from_ref(read value).cast::<u8>(), 0usize, render_sized::<T>)
+}
+pub fn text_field(value: read Text, prefix: read Text): Field {
+    let bytes = value.as_bytes()
+    Field(piece(prefix), slice::data(bytes), bytes.len(), render_text)
+}
+
+// Values that can fill a `{hole}`: primitives and text in the first slice.
+pub interface Hole { fn hole(prefix: read Text): Field; }
+impl i8 implements Hole {
+    fn hole(prefix: read Text): Field { sized(read self, prefix) }
+}
+impl i16 implements Hole {
+    fn hole(prefix: read Text): Field { sized(read self, prefix) }
+}
+impl i32 implements Hole {
+    fn hole(prefix: read Text): Field { sized(read self, prefix) }
+}
+impl i64 implements Hole {
+    fn hole(prefix: read Text): Field { sized(read self, prefix) }
+}
+impl isize implements Hole {
+    fn hole(prefix: read Text): Field { sized(read self, prefix) }
+}
+impl u8 implements Hole {
+    fn hole(prefix: read Text): Field { sized(read self, prefix) }
+}
+impl u16 implements Hole {
+    fn hole(prefix: read Text): Field { sized(read self, prefix) }
+}
+impl u32 implements Hole {
+    fn hole(prefix: read Text): Field { sized(read self, prefix) }
+}
+impl u64 implements Hole {
+    fn hole(prefix: read Text): Field { sized(read self, prefix) }
+}
+impl usize implements Hole {
+    fn hole(prefix: read Text): Field { sized(read self, prefix) }
+}
+impl bool implements Hole {
+    fn hole(prefix: read Text): Field { sized(read self, prefix) }
+}
+impl char implements Hole {
+    fn hole(prefix: read Text): Field { sized(read self, prefix) }
+}
+impl Text implements Hole {
+    fn hole(prefix: read Text): Field { text_field(self, prefix) }
+}
+
+// Safety: the pointers in the result must not outlive `value`; the compiler
+// keeps `value` alive through the enclosing call.
+pub unsafe fn field<T: Hole + unsized>(value: read T, prefix: read Text): Field { value.hole(prefix) }
+pub unsafe fn message<region r>(fields: read [Field] from r, tail: read Text): Message<region r> {
+    Message(read fields, piece(tail))
+}
+unsafe fn no_fields<region r>(anchor: read Text): read [Field] from r {
+    unsafe { slice::from_raw_parts(slice::data(anchor.as_bytes()).cast::<Field>(), 0usize) }
+}
+pub unsafe fn literal<region r>(tail: read Text): Message<region r> {
+    unsafe { message(no_fields(tail), tail) }
+}
+
+impl<region r> Message<region r> {
+    // Renders pieces and fields in order into `sink`, stopping at the first failure.
+    pub fn write_to<W: Write>(sink: mut W): Unit throws Error {
+        var out = Sink(core::ptr::from_mut(mut sink).cast::<u8>(), sink_write::<W>)
+        var i = 0usize
+        while i < self.fields.len() {
+            let f = self.fields[i]
+            try out.write_str(unsafe { piece_text(f.prefix) })
+            try (f.render)(f.value, f.meta, mut out)
+            i += 1usize
+        }
+        try out.write_str(unsafe { piece_text(self.tail) })
+    }
+}
+
 // Writes into a caller-owned byte buffer; fails (without partial characters) when full.
 pub type BufferWriter<region r> { buffer: mut [u8] from r; length: usize }
 pub fn buffer_writer(buffer: mut [u8]): BufferWriter<region buffer> { BufferWriter(mut buffer, 0usize) }

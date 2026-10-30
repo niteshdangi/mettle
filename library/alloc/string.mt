@@ -235,6 +235,9 @@ impl<A: Allocator> String<A> implements IndexRange {
 impl<A: Allocator> String<A> implements fmt::Display {
     fn fmt<W: fmt::Write>(f: mut fmt::Formatter<W>): Unit throws fmt::Error { try f.pad(self.as_text()) }
 }
+impl<A: Allocator> String<A> implements fmt::Hole {
+    fn hole(prefix: read Text): fmt::Field { fmt::text_field(self.as_text(), prefix) }
+}
 impl<A: Allocator> String<A> implements fmt::Debug {
     fn fmt<W: fmt::Write>(f: mut fmt::Formatter<W>): Unit throws fmt::Error { try <Text implements fmt::Debug>::fmt(self.as_text(), mut f) }
 }

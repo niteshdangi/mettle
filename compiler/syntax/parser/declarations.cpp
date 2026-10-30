@@ -179,10 +179,17 @@ Function Parser::function(bool allowDeclaration) {
         break;
       }
       std::string mode;
-      if (is("take") || is("read") || is("mut"))
+      // `format` is contextual: it is a modifier only before a type name.
+      const bool format = is("format") && (peek(1).kind == TokenKind::Word ||
+                                           peek(1).kind == TokenKind::QuotedWord);
+      if (format) {
+        ++position;
+        mode = "read";
+      } else if (is("take") || is("read") || is("mut"))
         mode = tokens[position++].text;
       result.parameters.push_back(
           {std::move(parameterName), type(), parameter.span, mode});
+      result.parameters.back().format = format;
       if (!named)
         result.parameters.back().pattern = std::move(parameter);
       if (take("="))

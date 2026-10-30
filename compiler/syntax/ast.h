@@ -17,6 +17,9 @@ public:
   // A non-owning reference, so semantic elaborations can share syntax nodes
   // that remain owned by the parsed tree.
   static NodeOwner borrow(Node &node);
+  bool owns() const { return owning; }
+  // Hands over an owned node, leaving this reference empty.
+  std::unique_ptr<Node> release() { return std::move(value); }
   Node *get() { return value.get(); }
   const Node *get() const { return value.get(); }
   Node &operator*() { return *value; }
@@ -244,6 +247,8 @@ struct Parameter {
   VisibilitySyntax visibility{};
   std::optional<Pattern> pattern{};
   std::vector<Attribute> attributes{};
+  // `format Message`: the argument is a recipe that cannot escape the call.
+  bool format = false;
 };
 struct Function {
   std::string name;
@@ -385,5 +390,14 @@ struct Module {
   } prelude;
 };
 std::optional<bool> booleanLiteral(const Node &node);
+// Labels of the calls that build a format recipe (see `formatRecipe`).
+inline constexpr std::string_view formatRecipeLabel = "f-string";
+inline constexpr std::string_view formatInternalLabel = "f-string-internal";
+// The recipe call for interpolations `holes`: `pieces` holds the literal text
+// before each hole plus the tail, as text-literal nodes. It lowers to the
+// core::fmt constructors, which only marked calls may use outside unsafe code.
+std::unique_ptr<Node> formatRecipe(Span span,
+                                   std::vector<std::unique_ptr<Node>> holes,
+                                   std::vector<std::unique_ptr<Node>> pieces);
 bool isStatement(Kind kind);
 } // namespace mettle

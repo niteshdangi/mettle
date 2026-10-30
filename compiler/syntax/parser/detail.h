@@ -174,6 +174,7 @@ private:
 
   std::unique_ptr<Node> expr(int minimum = 1);
   std::unique_ptr<Node> primary();
+  std::unique_ptr<Node> formatString();
   std::unique_ptr<Node> assemblyExpression(std::string variant, Span span);
 };
 } // namespace mettle::parsing

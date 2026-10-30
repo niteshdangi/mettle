@@ -962,3 +962,5 @@ it in later milestones; do not defer all correctness or performance work to I14.
 No calendar duration is asserted before measured prototype throughput exists.
 No implementation, package installation or target infrastructure was started
 by dividing this plan.
+
+F1 (f-strings and `format` parameters): implemented, not yet verified (no build/test run); see library-surface F1 notes for gaps.

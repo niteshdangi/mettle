@@ -77,6 +77,12 @@ private:
   std::vector<int> poisonedVariables;
   std::size_t reportedErrors = 0;
   std::unordered_set<const Node *> reusedNodes;
+  // `format` parameter bindings (by inference variable) and the nodes that may
+  // hold a recipe or name one: arguments of `format` parameters, receivers.
+  std::unordered_set<int> formatVariables;
+  std::unordered_set<const Node *> permittedRecipes;
+  bool formatMessage(Type type) const;
+  void formatArguments(Node &call, const Function &callee, std::size_t offset);
   Function *current = nullptr;
   std::unordered_map<int, int> loopResults;
   std::vector<std::pair<int, Span>> integerOrBoolean;

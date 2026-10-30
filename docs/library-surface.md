@@ -380,3 +380,12 @@ reference to name one of these families. It separately rejects a stable
 implementation member whose interface member is experimental. Thus Error
 provider/Request, experimental buffered-reader cursors and experimental Windows
 process-attribute methods are not smuggled in as supporting-protocol exceptions.
+
+## F1 formatted output (implemented, unverified)
+
+- `f"text {expr} text"` is an f-string; `{{`/`}}` are literal braces. It is accepted only as an argument to a `format` parameter (type must be `core::fmt::Message`).
+- `format` parameters are read-only, cannot be bound, returned, captured or passed to ordinary parameters; they may only be forwarded to another `format` parameter or used as a method receiver. Functions with a `format` parameter cannot be used as values.
+- A non-f-string argument at a `format` position is lifted to a one-hole message (any `core::fmt::Hole` type: integers, bool, char, Text, String).
+- `Message` is shape-independent (borrowed field array plus tail), so forwarders have one instantiation. Holes are raw-pointer based; region tracking of hole loans is a known gap.
+- `Write::write`/`write_line` render a message; `io::print`/`io::eprint` take `format` parameters, no implicit newline. EPIPE on `print` exits quietly with 141; other failures panic.
+- Known gaps: no float holes; build/tests for this lane were not run.

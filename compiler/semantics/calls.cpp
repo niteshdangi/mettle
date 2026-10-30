@@ -2,7 +2,66 @@
 #include "types/layout.h"
 
 namespace mettle {
+bool Checker::formatMessage(Type type) const {
+  return checked.types->isProduct(type) &&
+         checked.types->product(type).name == "core::fmt::Message";
+}
+// Recipes may reach only `format` parameters: an f-string, a forwarded
+// `format` parameter, or any other expression, which becomes the single hole
+// of a recipe (a Text or String argument, say). Nothing else can hold one.
+void Checker::formatArguments(Node &n, const Function &callee,
+                              std::size_t offset) {
+  for (std::size_t i = 1; i < n.children.size(); ++i) {
+    auto &argument = *n.children[i];
+    std::size_t target = i - 1 + offset;
+    if (!argument.name.empty())
+      for (std::size_t j = 0; j < callee.parameters.size(); ++j)
+        if (callee.parameters[j].name == argument.name)
+          target = j;
+    if (target >= callee.parameters.size() || !callee.parameters[target].format)
+      continue;
+    if (argument.label == formatRecipeLabel) {
+      permittedRecipes.insert(&argument);
+      continue;
+    }
+    if (argument.kind == Kind::Name) {
+      bool forwarded = false;
+      for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope)
+        if (auto found = scope->find(argument.text); found != scope->end()) {
+          forwarded = formatVariables.contains(found->second.variable);
+          break;
+        }
+      if (forwarded) {
+        permittedRecipes.insert(&argument);
+        continue;
+      }
+    }
+    if (!n.children[i].owns())
+      continue;
+    const auto span = argument.span;
+    auto label = std::move(argument.name);
+    argument.name.clear();
+    std::vector<std::unique_ptr<Node>> holes, pieces;
+    for (int piece = 0; piece < 2; ++piece) {
+      auto empty = std::make_unique<Node>();
+      empty->kind = Kind::Text;
+      empty->span = {span.begin, span.begin, span.source};
+      empty->text = "\"\"";
+      pieces.push_back(std::move(empty));
+    }
+    holes.push_back(n.children[i].release());
+    auto recipe = formatRecipe(span, std::move(holes), std::move(pieces));
+    recipe->name = std::move(label);
+    permittedRecipes.insert(recipe.get());
+    n.children[i] = NodeOwner(std::move(recipe));
+  }
+}
 int Checker::call(Node &n, bool reachable) {
+  if (n.label == formatRecipeLabel && !permittedRecipes.contains(&n)) {
+    error("type", n.span,
+          "an f-string can only be passed to a 'format' parameter");
+    return inference.fresh();
+  }
   bool localCallee = false;
   for (const auto &scope : scopes)
     localCallee |= n.children[0]->kind == Kind::Name &&
@@ -21,6 +80,8 @@ int Checker::call(Node &n, bool reachable) {
   bool directDestructor = false;
   if (n.children[0]->kind == Kind::Field) {
     auto &member = *n.children[0];
+    if (member.children[0]->kind == Kind::Name)
+      permittedRecipes.insert(member.children[0].get());
     auto receiver = node(*member.children[0], reachable);
     facts(member).effect = facts(*member.children[0]).effect;
     if (member.flag) {
@@ -218,6 +279,7 @@ int Checker::call(Node &n, bool reachable) {
       return result;
     }
     facts(n).callee = static_cast<int>(found->second);
+    formatArguments(n, module.functions[found->second], offset);
     if (const auto &declared = module.functions[found->second];
         !declared.body.get() && !declared.foreignDeclaration &&
         !declared.interfaceOwner.empty() && declared.implementation < 0 &&
@@ -231,7 +293,8 @@ int Checker::call(Node &n, bool reachable) {
     }
     requireFeatures(facts(module.functions[found->second]).targetFeatures,
                     n.span);
-    if (module.functions[found->second].unsafeFunction)
+    if (module.functions[found->second].unsafeFunction &&
+        n.label != formatInternalLabel)
       requireUnsafe(n.span);
     if (auto generic = genericCall(n, reachable, found->second, offset))
       return *generic;
