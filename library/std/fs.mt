@@ -9,7 +9,7 @@ import super::ffi;
 import super::ffi::{OsStr, OsString};
 import super::io;
 import super::io::{Error, ErrorKind, Read, Write};
-import super::path::{Path, PathBuf};
+import super::path::{Path, PathBuf, PathInput};
 import super::sys;
 import super::time::SystemTime;
 
@@ -66,11 +66,11 @@ fn stat_path(p: read Path, follow: i32): Metadata throws Error {
 }
 
 // Follows symbolic links.
-pub fn metadata(p: read Path): Metadata throws Error { try stat_path(p, 1) }
-pub fn symlink_metadata(p: read Path): Metadata throws Error { try stat_path(p, 0) }
+pub fn metadata(input: read PathInput): Metadata throws Error { try stat_path(input.as_path(), 1) }
+pub fn symlink_metadata(input: read PathInput): Metadata throws Error { try stat_path(input.as_path(), 0) }
 
-pub fn exists(p: read Path): bool {
-    let r = capture metadata(p)
+pub fn exists(input: read PathInput): bool {
+    let r = capture metadata(input)
     r.is_success()
 }
 
@@ -93,27 +93,27 @@ impl OpenOptions {
         if on { self.flags = self.flags | flag } else { self.flags = self.flags & (-1 - flag) }
     }
 
-    pub fn open(p: read Path): File throws Error {
-        let c = try ffi::cstring(p.as_bytes())
+    pub fn open(input: read PathInput): File throws Error {
+        let c = try ffi::cstring(input.as_path().as_bytes())
         let fd = unsafe { sys::mettle_rt_open(c.as_ptr(), self.flags, self.mode) }
         if fd < 0 { throw io::last_os_error() }
         File(fd)
     }
 }
 
-pub fn open(p: read Path): File throws Error {
+pub fn open(input: read PathInput): File throws Error {
     var o = open_options()
     o.set_read(true)
-    try o.open(p)
+    try o.open(input)
 }
 
 // Creates or truncates for writing.
-pub fn create(p: read Path): File throws Error {
+pub fn create(input: read PathInput): File throws Error {
     var o = open_options()
     o.set_write(true)
     o.set_create(true)
     o.set_truncate(true)
-    try o.open(p)
+    try o.open(input)
 }
 
 impl File {
@@ -154,16 +154,16 @@ impl File implements Write {
 }
 
 // The whole file.
-pub fn read_bytes(p: read Path): Vec<u8> throws Error {
-    var f = try open(p)
+pub fn read_bytes(input: read PathInput): Vec<u8> throws Error {
+    var f = try open(input)
     var out = vec::new::<u8>()
     let n = try f.read_to_end(out)
     out
 }
 
 // The whole file as text; ill-formed UTF-8 fails with `InvalidData`.
-pub fn read_to_string(p: read Path): String throws Error {
-    let bytes = try read_bytes(p)
+pub fn read_to_string(input: read PathInput): String throws Error {
+    let bytes = try read_bytes(input)
     let decoded = capture package::alloc::string::from_utf8(bytes)
     match take decoded {
         success(s) => s,
@@ -172,8 +172,8 @@ pub fn read_to_string(p: read Path): String throws Error {
 }
 
 // Replaces the file's contents.
-pub fn write(p: read Path, bytes: read [u8]): Unit throws Error {
-    var f = try create(p)
+pub fn write(input: read PathInput, bytes: read [u8]): Unit throws Error {
+    var f = try create(input)
     try f.write_all(bytes)
 }
 
@@ -186,12 +186,14 @@ fn path_call(p: read Path, which: i32): Unit throws Error {
     if r != 0 { throw io::last_os_error() }
 }
 
-pub fn remove_file(p: read Path): Unit throws Error { try path_call(p, 0) }
-pub fn remove_dir(p: read Path): Unit throws Error { try path_call(p, 1) }
-pub fn create_dir(p: read Path): Unit throws Error { try path_call(p, 2) }
+pub fn remove_file(input: read PathInput): Unit throws Error { try path_call(input.as_path(), 0) }
+pub fn remove_dir(input: read PathInput): Unit throws Error { try path_call(input.as_path(), 1) }
+pub fn create_dir(input: read PathInput): Unit throws Error { try path_call(input.as_path(), 2) }
 
-// Creates `p` and any missing parents; an existing directory is not an error.
-pub fn create_dir_all(p: read Path): Unit throws Error {
+// Creates the path and any missing parents; an existing directory is not an error.
+pub fn create_dir_all(input: read PathInput): Unit throws Error { try create_dirs(input.as_path()) }
+
+fn create_dirs(p: read Path): Unit throws Error {
     let made = capture path_call(p, 2)
     match take made {
         success(u) => { return },
@@ -203,7 +205,7 @@ pub fn create_dir_all(p: read Path): Unit throws Error {
             }
             if !e.kind().is(ErrorKind::NotFound) { throw e }
             match p.parent() {
-                present(parent) => { try create_dir_all(parent) },
+                present(parent) => { try create_dirs(parent) },
                 none => { throw e }
             }
             try path_call(p, 2)
@@ -211,9 +213,9 @@ pub fn create_dir_all(p: read Path): Unit throws Error {
     }
 }
 
-pub fn rename(old: read Path, new: read Path): Unit throws Error {
-    let a = try ffi::cstring(old.as_bytes())
-    let b = try ffi::cstring(new.as_bytes())
+pub fn rename(old: read PathInput, new: read PathInput): Unit throws Error {
+    let a = try ffi::cstring(old.as_path().as_bytes())
+    let b = try ffi::cstring(new.as_path().as_bytes())
     if unsafe { sys::rename(a.as_ptr(), b.as_ptr()) } != 0 { throw io::last_os_error() }
 }
 
@@ -240,7 +242,8 @@ pub type ReadDir {
     }
 }
 
-pub fn read_dir(p: read Path): ReadDir throws Error {
+pub fn read_dir(input: read PathInput): ReadDir throws Error {
+    let p = input.as_path()
     let c = try ffi::cstring(p.as_bytes())
     let h = unsafe { sys::opendir(c.as_ptr()) }
     if h == core::ptr::null_mut::<u8>() { throw io::last_os_error() }

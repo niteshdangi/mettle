@@ -141,6 +141,10 @@ Named sources in function results may name parameters/receiver; stored-field
 sources name declared regions, not out-of-scope variable names.
 
 Bare interface parameter types denote independently generic concrete inputs.
+A bare interface parameter accessed through `read` or `mut` (or with no mode)
+only borrows its argument, so its implicit parameter is not required to be
+Sized and unsized implementors such as `Text` or slices are accepted; `take`
+keeps the Sized requirement.
 `any Interface` is erased dispatch; `some Interface` is an opaque concrete return.
 Associated bindings, including types and constants, use where constraints.
 `Self` is the enclosing type/implementation. The predeclared `Never` has no values;

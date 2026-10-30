@@ -198,6 +198,26 @@ impl<T> [T] {
     pub mut fn iter_mut(): SliceIterMut<region self, T> { SliceIterMut(mut self, 0usize) }
 }
 
+// Copy-valued iteration over the bytes of a slice: yields `u8` while holding a
+// read loan on the slice; allocates nothing.
+pub type SliceBytes<region r> { items: read [u8] from r; index: usize }
+impl<region r> SliceBytes<region r> implements Iterator {
+    type Item = u8
+    mut fn next(): u8? {
+        if self.index < self.items.len() {
+            let value = self.items[self.index]
+            self.index += 1usize
+            present(value)
+        } else {
+            none
+        }
+    }
+}
+
+impl [u8] {
+    pub fn bytes(): SliceBytes<region self> { SliceBytes(read self, 0usize) }
+}
+
 copy type RawRead<T> { data: ptr<read T>; len: usize }
 
 // Safety: start <= end <= xs.len().

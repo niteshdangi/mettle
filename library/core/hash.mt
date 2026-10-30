@@ -37,7 +37,7 @@ pub interface Hash {
 }
 
 // Hashes one value with the default keyed SipHash-1-3 (zero key).
-pub fn hash_one<T: Hash>(value: read T): u64 {
+pub fn hash_one<T: Hash + unsized>(value: read T): u64 {
     var hasher = sip13(0u64, 0u64)
     value.hash(mut hasher)
     hasher.finish()

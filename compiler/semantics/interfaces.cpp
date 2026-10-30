@@ -556,8 +556,11 @@ void Checker::interfaceSignatures() {
       environment.names["Self"] =
           annotation(module.implementations[function.implementation].target,
                      function.span);
-    std::function<void(const TypeSyntax &, Span)> implicit =
-        [&](const TypeSyntax &type, Span span) {
+    // A bare interface parameter accessed through `read` or `mut` is only
+    // borrowed, so its implicit parameter may be unsized; by-value use keeps
+    // the default Sized requirement.
+    std::function<void(const TypeSyntax &, Span, bool)> implicit =
+        [&](const TypeSyntax &type, Span span, bool borrowed) {
           if (type.form == TypeForm::Erased || type.form == TypeForm::Opaque ||
               type.form == TypeForm::Projection)
             return;
@@ -569,19 +572,21 @@ void Checker::interfaceSignatures() {
               auto subject = checked.types->declareParameter(
                   definitionName(function.span, function.name) + ".<input." +
                       std::to_string(environment.parameters.size()) + ">",
-                  interfaceProperty(type, "Copy", span));
+                  interfaceProperty(type, "Copy", span), !borrowed);
               implicitInterfaceParameters[&type] = subject;
               environment.parameters.push_back(subject);
               environment.bounds[subject].push_back(type);
             }
           }
           if (type.nested)
-            implicit(*type.nested, span);
+            implicit(*type.nested, span, false);
           for (const auto &element : type.elements)
-            implicit(element, span);
+            implicit(element, span, false);
         };
     for (const auto &parameter : function.parameters)
-      implicit(parameter.annotation, parameter.span);
+      implicit(parameter.annotation, parameter.span,
+               parameter.mode == "read" || parameter.mode == "mut" ||
+                   parameter.mode.empty());
   }
   genericEnvironment = saved;
 }

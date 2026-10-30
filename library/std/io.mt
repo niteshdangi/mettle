@@ -8,6 +8,7 @@ import package::core::cmp::PartialEq;
 import package::core::slice;
 import package::alloc::string::String;
 import super::sys;
+import super::path::PathInput;
 
 pub copy enum ErrorKind {
     NotFound, PermissionDenied, ConnectionRefused, ConnectionReset, ConnectionAborted,
@@ -153,6 +154,11 @@ pub interface Write {
             done += n
         }
     }
+
+    // Displays a native path: POSIX output is the path's bytes unchanged.
+    mut fn write_path(input: read PathInput): Unit throws Error {
+        try self.write_all(input.as_path().as_bytes())
+    }
 }
 
 fn fd_read(fd: i32, buf: mut [u8]): usize throws Error {
@@ -294,6 +300,37 @@ impl<R: Read> BufReader<R> {
 
     // Appends one line, including its newline, to `out`; zero means end of input.
     pub mut fn read_line(out: mut Vec<u8>): usize throws Error { try self.read_until(10u8, out) }
+
+    // Replaces `buf` with the next line, LF or CRLF included, and views it;
+    // none only at end of input with no bytes left. The last line may lack a
+    // terminator. The view depends on `buf`, so `buf` cannot be changed while
+    // it lives. Memory is the longest line plus this reader's buffer. Bytes that
+    // are not UTF-8 fail with `InvalidData` after consuming the line, leaving
+    // `buf` empty. An I/O failure also leaves `buf` empty (consumed input is lost).
+    pub mut fn read_line_into(buf: mut String): (read Text from buf)? throws Error {
+        buf.clear()
+        let read_result = capture self.read_until(10u8, unsafe { buf.as_mut_vec() })
+        let n = match take read_result {
+            success(count) => count,
+            failure(e) => { buf.clear(); throw e }
+        }
+        if n == 0usize { return none }
+        let valid = match package::core::text::from_utf8(buf.as_bytes()) {
+            present(_) => true,
+            none => false
+        }
+        if !valid { buf.clear(); throw from_kind(ErrorKind::InvalidData) }
+        present(buf.as_text())
+    }
+
+    // As `read_line_into` for arbitrary bytes: no validation, so only an I/O
+    // failure (which leaves the bytes read so far in `buf`) can fail.
+    pub mut fn read_bytes_line_into(buf: mut Vec<u8>): (read [u8] from buf)? throws Error {
+        buf.clear()
+        let n = try self.read_until(10u8, buf)
+        if n == 0usize { return none }
+        present(buf.as_slice())
+    }
 }
 
 impl<R: Read> BufReader<R> implements Read {

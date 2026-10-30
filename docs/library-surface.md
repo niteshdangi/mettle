@@ -380,3 +380,30 @@ reference to name one of these families. It separately rejects a stable
 implementation member whose interface member is experimental. Thus Error
 provider/Request, experimental buffered-reader cursors and experimental Windows
 process-attribute methods are not smuggled in as supporting-protocol exceptions.
+
+## 9. Experience APIs (R2 library parts)
+
+Current-syntax names are used here; the rename cutover is separate.
+
+- `BufReader::read_line_into(buf: mut String): (read Text from buf)? throws Error`
+  clears `buf`, appends one line (LF or CRLF kept; a final unterminated line is
+  a line) and views it; `none` only at end of input with no bytes. Non-UTF-8
+  input throws `InvalidData` after consuming the line and leaves `buf` empty and
+  valid. An I/O failure also leaves `buf` empty. `read_bytes_line_into(buf: mut
+  Vec<u8>): (read [u8] from buf)? throws Error` is the unvalidated form. The
+  view borrows `buf`, so refilling it while the view lives is rejected.
+  `String::as_mut_vec` is an unsafe helper for this purpose.
+- `[u8].bytes()` yields `u8` by value under a read loan on the slice, without
+  allocation.
+- `core::borrow::KeyView<Q: unsized>` (`fn key_view(): read Q from self`) lets a
+  stored key lend a `read Q`. Every type views as itself and `String` views as
+  `Text`. Coherence: a view and the query equal to it must hash identically
+  (`Q: Hash`) and order consistently (`Q: Ord`). `HashMap`/`BTreeMap`/sets
+  `get`, `get_mut`, `contains_key`/`contains` and `remove` take
+  `key: read Q where K: KeyView<Q>`, so `map.get("a")` on a `String`-keyed map
+  allocates nothing.
+- `std::path::PathInput` (`fn as_path(): read Path from self`) is implemented
+  for `Path`, `PathBuf`, `OsStr` and `OsString` (POSIX bytes, no allocation).
+  `std::fs` path functions, `env::set_current_dir` and `Command::current_dir`
+  take `read PathInput`. `Write::write_path(read PathInput)` writes the native
+  path bytes.

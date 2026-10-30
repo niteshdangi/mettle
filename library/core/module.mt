@@ -2,6 +2,7 @@
 // Names declared here must not collide with compiler built-in modules
 // (`ptr`, `mem`, `cell`, `sync`, `pin`, `arch`, `intrinsics`, `ffi`, `marker`).
 pub module any;
+pub module borrow;
 pub module clone;
 pub module cmp;
 pub module fmt;

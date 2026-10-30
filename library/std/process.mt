@@ -10,7 +10,7 @@ import super::ffi;
 import super::ffi::{OsStr, OsString};
 import super::io;
 import super::io::{Error, ErrorKind, Read, Write};
-import super::path::{Path, PathBuf};
+import super::path::{PathBuf, PathInput};
 import package::core::text::Text;
 import super::sys;
 
@@ -188,8 +188,8 @@ impl Command {
     }
     // Starts the child with an empty environment (plus later `env` calls).
     pub mut fn env_clear(): Unit { self.clear_env = true; self.changes.clear() }
-    pub mut fn current_dir(p: read Path): Unit {
-        self.cwd = p.to_path_buf()
+    pub mut fn current_dir(input: read PathInput): Unit {
+        self.cwd = input.as_path().to_path_buf()
         self.has_cwd = true
     }
     pub mut fn stdin(s: Stdio): Unit { self.stdin = s }

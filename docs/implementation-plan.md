@@ -929,6 +929,15 @@ System linkers/SDKs remain explicit profile dependencies; LLVM code generation
 cannot remain a hidden fallback. Compare both backend paths and Rust under
 equivalent semantics and requalify every accepted profile.
 
+### 8.7. Experience revision R2: library parts
+
+Implemented, with focused tests in `tests/source` and
+`tests/std/cli_wordcount_lines.mt`: borrowed-line readers, `[u8].bytes()`,
+`KeyView` borrowed collection lookups, `PathInput` with hosted path APIs and
+`write_path`, and the checker rule that read/mut bare-interface parameters
+permit unsized implementors. Verification across the full suites is pending the
+orchestrator's batch run.
+
 ## 9. Capability ownership and completion evidence
 
 The primary implementation owner for each of the 107 capability rows is below.
