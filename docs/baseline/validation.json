@@ -1,5 +1,5 @@
 {
-  "status": "passed",
+  "status": "failed",
   "operations_checked": 240733,
   "native_unit_mappings_checked": 118,
   "native_never_mappings_checked": 140,
@@ -23,14 +23,14 @@
     "milestone_capabilities_checked": 107,
     "grammar_productions": {
       "core-grammar.md": 49,
-      "language-grammar.md": 109
+      "language-grammar.md": 100
     },
-    "composed_grammar_productions": 138,
+    "composed_grammar_productions": 129,
     "function_result_and_unit_policies_checked": true,
     "fixture_expectations_checked": 23,
     "fixtures_executed": false
   },
-  "documentation_sha256": "c04ce79eadae3dc26efd180efa8f05b801a20afd1de4e52228d50c9166b22df7",
+  "documentation_sha256": "f780fc01b9382790f1adb3ccd6a5cf70163b97699586809deeaa2c07192472b0",
   "documentation_inputs": {
     "AGENTS.md": "33d2c795b34b8f4328f1df6e463cfdb2ec9e5c7ea4a14bad07e7cd5fd4b02c66",
     "CONTRIBUTING.md": "48e922caaaf6b55ebe4dcd05f79cba26ad3cfc9f7b9c69cb6e3d010309cb68f2",
@@ -47,15 +47,15 @@
     "docs/capabilities.csv": "682c5ac9b6850d3eddc173d1025d454a89923ac78bf863f444902efcd2576916",
     "docs/capability-coverage.md": "2e8a60129b57a10064b3cd16de8876d8806cea1ae6249dbb5afdceb462c88455",
     "docs/code-quality.md": "6320958b979db50c46b40d5a60272630f9330d1dcf002cd64c1cccdcc698342d",
-    "docs/compiler-architecture.md": "416ad370b210cdacf37abb2e95d9fb2fb5b47d50d8ee2b57974b0c5094430780",
+    "docs/compiler-architecture.md": "cb4bb53fde88926ef6fe12ed6ad558e85063c725510c21894b62e60e2a0728b1",
     "docs/core-grammar.md": "cd649922bcb7b777e76323d4b486166e5fab9d3c09686c9b5e4291bd76aca7e9",
     "docs/core-semantics.md": "a2998fdc3a7f118f35e4c0f82c8dda7633b0ca4b95882fab90138825c050f1ef",
     "docs/decisions.md": "143ca13f192a3642cf88a69d71a3ac50f8c90350c8d23a265781522401ac5340",
-    "docs/implementation-plan.md": "54c9b00b8ab676bdc426973eb6aaf61ca3c52e942219c11a65336466424404d0",
-    "docs/language-grammar.md": "564ef6b94971fc767e54950f2fbfcc3b3a51e88e28ebebba3db6a0e2a81ca6e0",
+    "docs/implementation-plan.md": "a2b936236dc34e4732ed76a75101af579c6f68687a3a58ebe782ee9b282a068b",
+    "docs/language-grammar.md": "7452a2cfc0df0cf8810793e02072f6142bec124c0612ac0472b7a19413e8d0a2",
     "docs/language-identity.md": "7febf4dec2af3cf08e0852a2eaea4a427a884ebdaf72dae993991625ded37ab3",
     "docs/library-and-abi.md": "5db1ef4bd00dab55b2d469c3fd5e3b25e1cb9cfd79b807f65cc9a5a7b632e91f",
-    "docs/library-surface.md": "5b031348d872f0fa4af14b916897a891d9553ecc489ae025f07defbf25191709",
+    "docs/library-surface.md": "15a3e1b9a9648eb2a8fe944bd6f382bfc1bc811a42a236ded39879ff2d6ae3eb",
     "docs/memory-and-concurrency.md": "4dd1b7d98e32bfc3a7b7ad13a13e563df2e18097945c4423ae333318102735ad",
     "docs/performance.md": "1233a12a2c47de6bef2cb331b58b16dac35069befa553aaa3c06293fb129f6db",
     "docs/platform-contracts.md": "9f9aec940ef5cc451c611a3f7e268fcc148490846bae3782059dc6478497ff95",
@@ -163,7 +163,38 @@
     "uninhabited": 9,
     "varargs": 2
   },
-  "failures": [],
+  "failures": [
+    {
+      "file": "docs/decisions.md",
+      "problem": "Missing heading anchor",
+      "target": "language-grammar.md#131-dotted-paths-and-imports"
+    },
+    {
+      "file": "docs/decisions.md",
+      "problem": "Missing heading anchor",
+      "target": "language-grammar.md#133-generic-application"
+    },
+    {
+      "file": "docs/decisions.md",
+      "problem": "Missing heading anchor",
+      "target": "language-grammar.md#132-contextual-extend-declarations"
+    },
+    {
+      "file": "docs/decisions.md",
+      "problem": "Missing heading anchor",
+      "target": "language-grammar.md#135-format-parameters-and-interpolated-text"
+    },
+    {
+      "file": "docs/decisions.md",
+      "problem": "Missing heading anchor",
+      "target": "language-grammar.md#134-closures-and-call-arguments"
+    },
+    {
+      "file": "docs/decisions.md",
+      "problem": "Missing heading anchor",
+      "target": "language-grammar.md#134-closures-and-call-arguments"
+    }
+  ],
   "scope": "Documentation data, source identities, stability contexts, declaration-link closure and rule assignment; not compiler/soundness/runtime validation",
   "manifest_sha256": "fb6bdf95c62f23b3bba8baee134c948e85df8fbccbe04766dfa9ab5bffec26eb"
 }

@@ -4,6 +4,7 @@ import package::core::clone::Clone;
 import package::core::fmt;
 import package::core::ops::{Deref, IndexRange};
 import package::core::hash::{Hash, Hasher};
+import package::core::borrow::KeyView;
 import super::vec::{Vec, slice_ptr};
 import package::core::cmp::{Ordering, PartialEq, Eq, PartialOrd, Ord};
 import package::core::text::{Text, from_utf8_unchecked};
@@ -103,6 +104,9 @@ impl<A: Allocator> String<A> {
             v
         }
     }
+    // Safety: the bytes must be well-formed UTF-8 again before the string is
+    // next observed as text (including on drop-free early exits such as errors).
+    pub mut unsafe fn as_mut_vec(): mut Vec<u8, A> from self { mut self.v }
     pub mut fn try_reserve(extra: usize): Unit throws AllocError { try self.v.try_reserve(extra) }
     pub mut fn reserve(extra: usize): Unit { self.v.reserve(extra) }
 
@@ -211,6 +215,10 @@ impl<A: Allocator> String<A> implements Ord {
     fn cmp(other: read String<A>): Ordering { self.as_text().cmp(other.as_text()) }
 }
 
+// A String key can be searched by its Text; String hashes as Text does.
+impl<A: Allocator> String<A> implements KeyView<Text> {
+    fn key_view(): read Text from self { self.as_text() }
+}
 impl<A: Allocator> String<A> implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { self.as_text().hash(mut state) }
 }

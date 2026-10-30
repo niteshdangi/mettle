@@ -5,7 +5,7 @@ import package::alloc::vec::Vec;
 import super::ffi;
 import super::ffi::{OsStr, OsString};
 import super::io;
-import super::path::{Path, PathBuf};
+import super::path::{PathBuf, PathInput};
 import super::sys;
 
 // The command line, program name first.
@@ -89,7 +89,7 @@ pub fn current_dir(): PathBuf throws io::Error {
     super::path::new_path_buf()
 }
 
-pub fn set_current_dir(p: read Path): Unit throws io::Error {
-    let c = try ffi::cstring(p.as_bytes())
+pub fn set_current_dir(input: read PathInput): Unit throws io::Error {
+    let c = try ffi::cstring(input.as_path().as_bytes())
     if unsafe { sys::chdir(c.as_ptr()) } != 0 { throw io::last_os_error() }
 }

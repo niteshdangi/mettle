@@ -7,6 +7,7 @@ import super::alloc::{Allocator, Global, AllocError, Layout, layout_unchecked, h
 import package::core::hash::{Hash, hash_one};
 import super::vec::Vec;
 import package::core::cmp::PartialEq;
+import package::core::borrow::KeyView;
 
 fn empty(): usize { 0xffffffffffffffffusize }
 
@@ -36,7 +37,7 @@ pub fn new_in<K, V, A: Allocator>(a: take A): HashMap<K, V, A> {
 }
 pub fn new<K, V>(): HashMap<K, V> { new_in(Global()) }
 
-fn hash_of<K: Hash>(k: read K): u64 { hash_one(k) }
+fn hash_of<Q: Hash + unsized>(k: read Q): u64 { hash_one(k) }
 
 impl<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> {
     pub fn len(): usize { self.entries.len() }
@@ -49,8 +50,8 @@ impl<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> {
     fn slot(pos: usize): usize { unsafe { *self.idx.add(pos) } }
     fn set_slot(pos: usize, entry: usize): Unit { unsafe { *self.idx.add(pos) = entry } }
 
-    // Index-table position holding the entry for `key`.
-    fn find_pos(hash: u64, key: read K): usize? {
+    // Index-table position holding the entry whose key views as `key`.
+    fn find_pos<Q: PartialEq + unsized>(hash: u64, key: read Q): usize? where K: KeyView<Q> {
         if self.icap == 0usize { return none }
         let mask = self.icap - 1usize
         var pos = (hash as usize) & mask
@@ -58,7 +59,7 @@ impl<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> {
             let s = self.slot(pos)
             if s == empty() { return none }
             let hit = match self.entries.get(s) {
-                present(e) => e.hash == hash && e.key.eq(key),
+                present(e) => e.hash == hash && e.key.key_view().eq(key),
                 none => false
             }
             if hit { return present(pos) }
@@ -66,7 +67,7 @@ impl<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> {
         }
         none
     }
-    fn find_entry(key: read K): usize? {
+    fn find_entry<Q: Hash + PartialEq + unsized>(key: read Q): usize? where K: KeyView<Q> {
         let hash = hash_of(key)
         match self.find_pos(hash, key) {
             present(pos) => present(self.slot(pos)),
@@ -116,16 +117,19 @@ impl<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> {
         if ncap != self.icap { try self.rebuild(ncap) }
     }
 
-    pub fn contains_key(key: read K): bool {
+    // Lookups take a borrowed query `Q` that the stored key views as (a
+    // `String` key is searched with a `Text`); equal keys and queries must hash
+    // alike (see `KeyView`).
+    pub fn contains_key<Q: Hash + PartialEq + unsized>(key: read Q): bool where K: KeyView<Q> {
         match self.find_entry(key) { present(_) => true, none => false }
     }
-    pub fn get(key: read K): (read V from self)? {
+    pub fn get<Q: Hash + PartialEq + unsized>(key: read Q): (read V from self)? where K: KeyView<Q> {
         match self.find_entry(key) {
             present(s) => match self.entries.get(s) { present(e) => present(read e.value), none => none },
             none => none
         }
     }
-    pub mut fn get_mut(key: read K): (mut V from self)? {
+    pub mut fn get_mut<Q: Hash + PartialEq + unsized>(key: read Q): (mut V from self)? where K: KeyView<Q> {
         match self.find_entry(key) {
             present(s) => present(unsafe { mut (*self.entries.as_mut_ptr().add(s)).value }),
             none => none
@@ -174,7 +178,7 @@ impl<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> {
         unsafe { mut (*self.entries.as_mut_ptr().add(s)).value }
     }
 
-    pub mut fn remove(key: read K): V? {
+    pub mut fn remove<Q: Hash + PartialEq + unsized>(key: read Q): V? where K: KeyView<Q> {
         let hash = hash_of(key)
         let pos = match self.find_pos(hash, key) { present(p) => p, none => { return none } }
         let s = self.slot(pos)
@@ -222,7 +226,7 @@ pub fn set_new<K>(): HashSet<K> { HashSet(new::<K, Unit>()) }
 impl<K: Hash + PartialEq, A: Allocator> HashSet<K, A> {
     pub fn len(): usize { self.map.len() }
     pub fn is_empty(): bool { self.map.is_empty() }
-    pub fn contains(key: read K): bool { self.map.contains_key(key) }
+    pub fn contains<Q: Hash + PartialEq + unsized>(key: read Q): bool where K: KeyView<Q> { self.map.contains_key(key) }
     // True when the key was newly added.
     pub mut fn insert(key: take K): bool {
         match self.map.insert(key, ()) { present(_) => false, none => true }
@@ -230,7 +234,7 @@ impl<K: Hash + PartialEq, A: Allocator> HashSet<K, A> {
     pub mut fn try_insert(key: take K): bool throws AllocError {
         match try self.map.try_insert(key, ()) { present(_) => false, none => true }
     }
-    pub mut fn remove(key: read K): bool {
+    pub mut fn remove<Q: Hash + PartialEq + unsized>(key: read Q): bool where K: KeyView<Q> {
         match self.map.remove(key) { present(_) => true, none => false }
     }
     pub mut fn clear(): Unit { self.map.clear() }
@@ -312,8 +316,8 @@ impl<K: Hash + PartialEq, V: PartialEq, A: Allocator> HashMap<K, V, A> implement
         var i = 0usize
         while i < self.entries.len() {
             let e = read self.entries[i]
-            match other.get(e.key) {
-                present(v) => { if !e.value.eq(v) { return false } },
+            match other.find_entry(e.key) {
+                present(s) => { if !e.value.eq(other.entries[s].value) { return false } },
                 none => { return false }
             }
             i += 1usize
@@ -366,7 +370,10 @@ impl<K: Hash + PartialEq, A: Allocator> HashSet<K, A> implements PartialEq {
         if self.len() != other.len() { return false }
         var i = 0usize
         while i < self.map.entries.len() {
-            if !other.contains(self.map.entries[i].key) { return false }
+            match other.map.find_entry(self.map.entries[i].key) {
+                present(_) => {},
+                none => { return false }
+            }
             i += 1usize
         }
         true

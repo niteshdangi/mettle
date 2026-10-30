@@ -22,6 +22,14 @@ pub fn path_from_text(text: read Text): read Path from text { path(text.as_bytes
 
 pub fn path_from_os_str(s: read OsStr): read Path from s { path(s.as_bytes()) }
 
+// Anything that views as a native path without allocation or conversion.
+// Hosted path-taking functions accept `read PathInput`, so callers pass a
+// `Path`, `PathBuf`, `OsStr` or `OsString` directly; the borrow never outlives
+// the source. On POSIX the path is the unmodified OS-string bytes.
+pub interface PathInput {
+    fn as_path(): read Path from self;
+}
+
 fn is_sep(b: u8): bool { b == 47u8 }
 
 // End (exclusive) of `bytes` once trailing separators are removed; a root
@@ -172,4 +180,17 @@ impl PathBuf {
         }
     }
     pub fn same(other: read PathBuf): bool { ffi::bytes_equal(self.v.as_slice(), other.as_bytes()) }
+}
+
+impl Path implements PathInput {
+    fn as_path(): read Path from self { path(self.as_bytes()) }
+}
+impl PathBuf implements PathInput {
+    fn as_path(): read Path from self { path(self.v.as_slice()) }
+}
+impl OsStr implements PathInput {
+    fn as_path(): read Path from self { path(self.as_bytes()) }
+}
+impl OsString implements PathInput {
+    fn as_path(): read Path from self { path(self.as_bytes()) }
 }

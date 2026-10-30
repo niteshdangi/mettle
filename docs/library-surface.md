@@ -528,7 +528,11 @@ explicit `let _ = capture ...` so their exit-status policy does not become 101.
 
 ## 11. Lending lines and byte iteration
 
-Status: accepted target (decision D25). Std buffered readers provide:
+Status: accepted target (decision D25); implemented in current spelling
+(`BufReader::read_line_into`/`read_bytes_line_into`, `[u8].bytes()`; fixtures
+`tests/source/{run,fail}/read-line-into*`, `tests/std/cli_wordcount_lines.mt`).
+The unsafe `String::as_mut_vec` helper supports the line reader. Std buffered
+readers provide:
 
 ```text
 mut fn read_line_into(buf: mut String): (read Text from buf)? throws io.Error
@@ -553,11 +557,15 @@ generic-loop ownership from a later Copy instantiation.
 
 ## 12. Borrowed keys and path input
 
-Status: accepted target (decisions D28-D29).
+Status: accepted target (decisions D28-D29); implemented in current spelling as
+`core::borrow::KeyView<Q: unsized>` (identity and `String` to `Text`) on the
+hash/B-tree maps and sets, and `std::path::PathInput` for Path/PathBuf/OsStr/
+OsString accepted by fs, env, process and `Write::write_path`. Windows path
+input is not delivered.
 
 **KeyView.** `KeyView<Q>` exposes `read Q from self` without allocation or
 retention. `Map<K,V>.get<Q>(key: read Q)` requires `K: KeyView<Q>` and
-`Q: Hash + Eq`, so an unsized query such as Text is allowed, and returns a view
+`Q: Hash + PartialEq`, so an unsized query such as Text is allowed, and returns a view
 of the map's value, not of the query. Equal stored and query keys must hash
 identically under the selected hasher with equality consistent across both
 representations. Identity views and `String -> Text` are provided (String's hash

@@ -124,6 +124,7 @@ identity, with cycle/depth diagnostics. Qualified associated lookup canonicalize
 only semantic names, preserving parsed source spelling. Static functions have no
 receiver parameter; explicit qualified method calls retain declared parameter
 access without acquiring an implicit two-phase receiver. Module/import identities live in the backend-independent `resolution` component.
+Bare interface parameters desugar to implicit generic parameters; one accessed through `read`/`mut` omits the default Sized bound so unsized implementors are accepted.
 Parsed declarations retain source spelling, lexical module paths and visibility
 syntax; immutable resolution side tables own canonical names and compilation-local
 module identities. Generic aliases expand under their declaration environment and preserve their

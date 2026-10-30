@@ -7,6 +7,7 @@ import package::core::slice::SliceIter;
 import super::alloc::{Allocator, Global, AllocError};
 import super::vec::Vec;
 import package::core::cmp::{Ord, Ordering};
+import package::core::borrow::KeyView;
 
 pub type Entry<K, V> {
     pub key: K
@@ -57,20 +58,28 @@ impl<K: Ord, V, A: Allocator> BTreeMap<K, V, A> {
         let end = self.lower_bound(to)
         if end < start { (start, start) } else { (start, end) }
     }
-    fn position(key: read K): usize? {
-        let i = self.lower_bound(key)
-        if i < self.entries.len() && self.entries[i].key.cmp(key).is_eq() { present(i) } else { none }
+    // Position of the entry whose key views as `key`, by binary search.
+    fn position<Q: Ord + unsized>(key: read Q): usize? where K: KeyView<Q> {
+        var lo = 0usize
+        var hi = self.entries.len()
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2usize
+            if self.entries[mid].key.key_view().cmp(key).is_lt() { lo = mid + 1usize } else { hi = mid }
+        }
+        if lo < self.entries.len() && self.entries[lo].key.key_view().cmp(key).is_eq() { present(lo) } else { none }
     }
-    pub fn contains_key(key: read K): bool {
+    // Lookups take a borrowed query `Q` that the stored key views as (a
+    // `String` key is searched with a `Text`); `Q`'s order must agree with `K`'s.
+    pub fn contains_key<Q: Ord + unsized>(key: read Q): bool where K: KeyView<Q> {
         match self.position(key) { present(_) => true, none => false }
     }
-    pub fn get(key: read K): (read V from self)? {
+    pub fn get<Q: Ord + unsized>(key: read Q): (read V from self)? where K: KeyView<Q> {
         match self.position(key) {
             present(i) => present(unsafe { read (*self.entries.as_ptr().add(i)).value }),
             none => none
         }
     }
-    pub mut fn get_mut(key: read K): (mut V from self)? {
+    pub mut fn get_mut<Q: Ord + unsized>(key: read Q): (mut V from self)? where K: KeyView<Q> {
         match self.position(key) {
             present(i) => present(unsafe { mut (*self.entries.as_mut_ptr().add(i)).value }),
             none => none
@@ -103,7 +112,7 @@ impl<K: Ord, V, A: Allocator> BTreeMap<K, V, A> {
         self.entries.insert(i, Entry(key, value))
         none
     }
-    pub mut fn remove(key: read K): V? {
+    pub mut fn remove<Q: Ord + unsized>(key: read Q): V? where K: KeyView<Q> {
         match self.position(key) {
             present(i) => {
                 let e = self.entries.remove(i)
@@ -123,11 +132,11 @@ pub fn set_new<K>(): BTreeSet<K> { BTreeSet(new::<K, Unit>()) }
 impl<K: Ord, A: Allocator> BTreeSet<K, A> {
     pub fn len(): usize { self.map.len() }
     pub fn is_empty(): bool { self.map.is_empty() }
-    pub fn contains(key: read K): bool { self.map.contains_key(key) }
+    pub fn contains<Q: Ord + unsized>(key: read Q): bool where K: KeyView<Q> { self.map.contains_key(key) }
     pub mut fn insert(key: take K): bool {
         match self.map.insert(key, ()) { present(_) => false, none => true }
     }
-    pub mut fn remove(key: read K): bool {
+    pub mut fn remove<Q: Ord + unsized>(key: read Q): bool where K: KeyView<Q> {
         match self.map.remove(key) { present(_) => true, none => false }
     }
     pub fn first(): (read K from self)? { self.map.first_key() }
