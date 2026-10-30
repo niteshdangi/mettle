@@ -633,10 +633,13 @@ and builds `DISubprogram`, `DILocalVariable` and type metadata (layout offsets
 come from `types/layout.h`). The driver supplies the diagnostics provenance
 mapping: copied text retains its source offset and macro-produced tokens use
 the invocation span. Closure environment fields use captured place names.
-Sums use a discriminator and per-variant payload structures in a DWARF variant
-part; offsets come from the compiler layout, including overlapping payloads.
-A final pass drops locations that would not verify. Without `-g` the adapter
-emits no metadata. These changes are implemented but not yet built or verified.
+Type names use dotted display paths and instantiated TypeStore names.
+Length-bearing views expose `data_ptr` and `length`; erased views expose their
+data pointer, alignment and witness fields. Sums use a discriminator and
+per-variant payload structures in a DWARF variant part; offsets come from the
+compiler layout, including overlapping payloads. A final pass drops locations
+that would not verify. Without `-g` the adapter emits no metadata. These
+changes are implemented but not yet built or verified.
 
 ## 6. Compilation state, errors and side effects
 

@@ -202,17 +202,37 @@ llvm::DIType *DebugInfo::build(Type type) {
     if (metadata == PointerMetadata::None)
       return dib.createPointerType(describe(payload), pointerBits, 0,
                                    std::nullopt, name);
-    if (metadata != PointerMetadata::ElementCount)
+    const auto metadataFields =
+        metadata == PointerMetadata::ElementCount ? 2u : 3u;
+    if (layout->fields.size() != metadataFields)
       return opaque();
     auto element =
         store.isSlice(payload) ? store.slice(payload).element : payload;
-    auto *pointer = dib.createPointerType(describe(element), pointerBits);
+    auto *pointee = metadata == PointerMetadata::ElementCount
+                        ? describe(element)
+                        : nullptr;
+    if (metadata == PointerMetadata::ElementCount && !pointee)
+      return opaque();
+    auto *pointer = dib.createPointerType(pointee, pointerBits);
     auto *length = describe(Type::Usize);
-    std::vector<llvm::Metadata *> members{
-        dib.createMemberType(unit, "ptr", rootFile, 0, pointerBits, pointerBits,
-                             0, llvm::DINode::FlagZero, pointer),
-        dib.createMemberType(unit, "len", rootFile, 0, pointerBits, pointerBits,
-                             pointerBits, llvm::DINode::FlagZero, length)};
+    std::vector<llvm::Metadata *> members;
+    members.push_back(dib.createMemberType(
+        unit, "data_ptr", rootFile, 0, pointerBits, pointerBits,
+        layout->fields[0] * 8, llvm::DINode::FlagZero, pointer));
+    auto lengthLayout = objectLayout(store, Type::Usize);
+    if (!length || !lengthLayout)
+      return opaque();
+    members.push_back(dib.createMemberType(
+        unit,
+        metadata == PointerMetadata::ElementCount ? "length" : "alignment",
+        rootFile, 0, lengthLayout->size * 8,
+        static_cast<std::uint32_t>(lengthLayout->alignment * 8),
+        layout->fields[1] * 8, llvm::DINode::FlagZero, length));
+    if (metadata == PointerMetadata::Witness)
+      members.push_back(dib.createMemberType(
+          unit, "witness", rootFile, 0, pointerBits, pointerBits,
+          layout->fields[2] * 8, llvm::DINode::FlagZero,
+          dib.createPointerType(nullptr, pointerBits)));
     return dib.createStructType(unit, name, rootFile, 0, bits, alignment,
                                 llvm::DINode::FlagZero, nullptr,
                                 dib.getOrCreateArray(members));
@@ -241,33 +261,49 @@ llvm::DIType *DebugInfo::build(Type type) {
   std::vector<llvm::Metadata *> members;
   if (store.isSum(type) && !record.fields.empty() &&
       record.layout.kind != LayoutKind::Transparent) {
-    auto tagIdentity = record.layout.discriminants.empty()
-                           ? record.fields[0].type
-                           : record.layout.tag;
+    auto tagIdentity = record.layout.tag;
     auto *tagType = describe(tagIdentity);
     auto tagLayout = objectLayout(store, tagIdentity);
-    if (tagType && tagLayout) {
+    if (tagType && tagLayout && !layout->fields.empty()) {
       auto *tag = dib.createMemberType(
           temporary, "discriminant", rootFile, 0, tagLayout->size * 8,
           static_cast<std::uint32_t>(tagLayout->alignment * 8),
           layout->fields[0] * 8, llvm::DINode::FlagZero, tagType);
       std::vector<llvm::Metadata *> variants;
+      auto payloadOffset = layout->size;
+      for (const auto &variant : record.variants)
+        for (auto fieldIndex : variant.fields)
+          payloadOffset =
+              std::min(payloadOffset, layout->fields[fieldIndex]);
       for (std::size_t index = 0; index < record.variants.size(); ++index) {
         const auto &variant = record.variants[index];
         std::vector<llvm::Metadata *> fields;
+        auto variantOffset = layout->size;
+        for (auto fieldIndex : variant.fields)
+          variantOffset =
+              std::min(variantOffset, layout->fields[fieldIndex]);
+        if (variant.fields.empty())
+          variantOffset = payloadOffset;
+        const auto variantBits = (layout->size - variantOffset) * 8;
+        auto *payloadTemporary = dib.createReplaceableCompositeType(
+            llvm::dwarf::DW_TAG_structure_type, variant.name, unit, rootFile,
+            0, 0, variantBits, alignment);
         for (auto fieldIndex : variant.fields) {
           const auto &field = record.fields[fieldIndex];
           auto fieldLayout = objectLayout(store, field.type);
           if (auto *member = describe(field.type); member && fieldLayout)
             fields.push_back(dib.createMemberType(
-                temporary, field.name, rootFile, 0, fieldLayout->size * 8,
+                payloadTemporary, field.name, rootFile, 0,
+                fieldLayout->size * 8,
                 static_cast<std::uint32_t>(fieldLayout->alignment * 8),
-                layout->fields[fieldIndex] * 8, llvm::DINode::FlagZero,
-                member));
+                (layout->fields[fieldIndex] - variantOffset) * 8,
+                llvm::DINode::FlagZero, member));
         }
-        auto *payload = dib.createStructType(
-            unit, variant.name, rootFile, 0, bits, alignment,
+        auto *payloadComposite = dib.createStructType(
+            unit, variant.name, rootFile, 0, variantBits, alignment,
             llvm::DINode::FlagZero, nullptr, dib.getOrCreateArray(fields));
+        auto *payload = dib.replaceTemporary(
+            llvm::TempMDNode(payloadTemporary), payloadComposite);
         auto width = static_cast<unsigned>(tagLayout->size * 8);
         llvm::APInt value(width, index);
         if (!record.layout.discriminants.empty()) {
@@ -278,8 +314,9 @@ llvm::DIType *DebugInfo::build(Type type) {
         }
         auto *constant = llvm::ConstantInt::get(module.getContext(), value);
         variants.push_back(dib.createVariantMemberType(
-            temporary, variant.name, rootFile, 0, bits, alignment, 0, constant,
-            llvm::DINode::FlagZero, payload));
+            temporary, variant.name, rootFile, 0, variantBits, alignment,
+            variantOffset * 8, constant, llvm::DINode::FlagZero,
+            payload));
       }
       members.push_back(dib.createVariantPart(
           temporary, "", rootFile, 0, bits, alignment, llvm::DINode::FlagZero,

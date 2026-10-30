@@ -1112,13 +1112,15 @@ and verified on macOS arm64 (test `language_server`); see
 `docs/tooling-and-packages.md` section 5. The milestone is not complete.
 
 I12/T006 status, source-level debug info: the earlier basic `-g` DWARF
-implementation was verified. Product/generic/closure capture, sum variant and
-length-bearing pointer metadata, macro invocation locations and LLDB summaries
-are implemented and verified on macOS arm64 (packages test `debug_info`; LLDB
-summaries checked manually: `List len=2 cap=4`, `String` text; optionals show
-only the variant name). Async combinator fields and optional tags describe nested state,
-but a source await-point discriminator/display is not yet established;
-erasure, moved-value liveness, scopes, inlining and CodeView remain open.
+implementation was verified. This lane's layout-based sum variants,
+length-bearing pointer fields and corresponding LLDB summary updates are
+implemented, unverified (not yet built); the `debug_info` package test now
+asserts variant and slice metadata. Product/generic/closure capture and macro
+invocation locations have prior macOS arm64 verification. Re-run the package
+test and LLDB summaries against this revision before treating these changes as
+verified. Async combinator fields and optional tags describe nested state, but
+a source await-point discriminator/display is not yet established; erasure,
+moved-value liveness, scopes, inlining and CodeView remain open.
 T006 and I12 are not complete.
 
 I13 closes remaining operation mappings with compiled native declarations and

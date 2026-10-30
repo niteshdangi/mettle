@@ -500,10 +500,12 @@ location on every instruction from the IR instruction spans, and a
 `DW_TAG_variable`/`DW_TAG_formal_parameter` per named local with basic,
 pointer, array and product (members at the compiler layout offsets) types.
 The new metadata describes captured places by name, generic products with
-their instantiated Mettle spelling, length-bearing pointers as `{ptr, len}`,
-and tagged sums using a DWARF variant part with the physical discriminator and
-per-variant fields. Explicit integer enum representations use their actual
-discriminants; transparent enums retain a product-like description. Macro
+their instantiated Mettle spelling, and length-bearing pointers as
+`{data_ptr, length}`; erased pointers expose `{data_ptr, alignment, witness}`.
+Tagged sums use a DWARF variant part with the physical discriminator and
+per-variant fields at offsets from the shared payload storage. Explicit integer
+enum representations use their actual discriminants; transparent enums retain a
+product-like description. Macro
 tokens use the invocation location in line tables. The current async lowering
 uses library combinators such as `Then` and `Defer`, whose named members and
 optional tags expose their nested state; it does not provide a single

@@ -56,6 +56,10 @@ std::optional<ObjectLayout> objectLayout(const TypeStore &types, Type type) {
                     : metadata == PointerMetadata::Witness    ? 24
                                                               : 8;
       result.alignment = 8;
+      if (metadata == PointerMetadata::ElementCount)
+        result.fields = {0, 8};
+      else if (metadata == PointerMetadata::Witness)
+        result.fields = {0, 8, 16};
       return result;
     }
     if (!types.isProduct(current) || active.size() >= 128 ||

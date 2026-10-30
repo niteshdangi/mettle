@@ -20,8 +20,8 @@ def list_summary(value, _internal_dict):
 
 
 def _text(value):
-    pointer = _unsigned(value.GetChildMemberWithName("ptr"))
-    length = _unsigned(value.GetChildMemberWithName("len"))
+    pointer = _unsigned(value.GetChildMemberWithName("data_ptr"))
+    length = _unsigned(value.GetChildMemberWithName("length"))
     if pointer is None or length is None:
         return "<unavailable>"
     if not length:
@@ -47,11 +47,8 @@ def string_summary(value, _internal_dict):
 
 
 def sum_summary(value, _internal_dict):
-    # Native optional/outcome values begin with the 32-bit ordinal. Read only
-    # the discriminator; inactive payload fields are not safe to inspect.
-    error = lldb.SBError()
-    tag = value.GetData().GetUnsignedInt32(error, 0)
-    if not error.Success():
+    tag = _unsigned(value.GetChildMemberWithName("discriminant"))
+    if tag is None:
         return "<variant unavailable>"
     name = value.GetTypeName() or ""
     labels = (("none", "present") if name.endswith("?")
