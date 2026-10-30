@@ -35,7 +35,13 @@ void Checker::function(Function &f) {
                 : p.mode == "mut"          ? ParameterMode::Mut
                 : checked.types->isCopy(t) ? ParameterMode::Value
                                            : ParameterMode::Read;
-    auto slot = local(p.name, inference.fresh(t),
+    if (p.format && !formatMessage(t))
+      error("signature", p.span,
+            "a 'format' parameter must have type core::fmt::Message");
+    auto variable = inference.fresh(t);
+    if (p.format)
+      formatVariables.insert(variable);
+    auto slot = local(p.name, variable,
                       f.explicitReceiver && p.name == "self" &&
                           mode == ParameterMode::Take,
                       p.span);
@@ -204,6 +210,14 @@ int Checker::checkNode(Node &n, bool reachable) {
     auto found = lookup(n.text, n.span);
     result = found.variable;
     facts(n).slot = found.slot;
+    if (formatVariables.contains(found.variable) &&
+        !permittedRecipes.contains(&n))
+      error("type", n.span,
+            "a 'format' parameter can only be forwarded to another 'format' "
+            "parameter or used as a method receiver");
+    else if (formatVariables.contains(found.variable) &&
+             closureFunctions.contains(current))
+      error("type", n.span, "a closure cannot capture a 'format' parameter");
     break;
   }
   case Kind::Unary: {

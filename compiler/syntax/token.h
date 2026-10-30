@@ -19,7 +19,13 @@ enum class TokenKind {
   Floating,
   QuotedWord,
   Text,
-  PrefixedText
+  PrefixedText,
+  // f"...": open, literal pieces, `{` expression `}` holes, close.
+  FormatOpen,
+  FormatPiece,
+  FormatHoleOpen,
+  FormatHoleClose,
+  FormatClose
 };
 struct Token {
   TokenKind kind;

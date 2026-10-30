@@ -4,6 +4,8 @@
   syntax      lexer/syntax-tree/recovery/diagnostic-budget checks through `mettle tokens|syntax|check`
   fast-math   LLVM floating-point flag inspection of
               tests/source/run/machine-numeric-explicit-function-and-module-relaxations.mt
+  broken-pipe `print` to a closed stdout: SIGPIPE under the default disposition,
+              a quiet exit status 141 when SIGPIPE is ignored
 """
 
 import argparse
@@ -87,9 +89,34 @@ def run_suite(mode, executable, directory):
                 raise AssertionError(f"{owner}: missing floating operations {operations - found}")
         evidence["cases"].append({"file": str(path), "source_sha256": digest(path),
                                   "profile": profile, "llvm_sha256": digest(output)})
+    def broken_pipe():
+        program = source("print-to-closed-pipe",
+                         "import std::io;\nfn main(): i32 {\n"
+                         "    var i = 0\n"
+                         "    while i < 1000000 { io::print(f\"line {i}\\n\"); i += 1 }\n"
+                         "    0\n}\n")
+        binary = directory / "print-to-closed-pipe"
+        run([executable, "build", str(program), "-o", str(binary)])
+        for ignored, expected in ((False, -signal.SIGPIPE), (True, 141)):
+            def disposition(ignored=ignored):
+                signal.signal(signal.SIGPIPE, signal.SIG_IGN if ignored else signal.SIG_DFL)
+            child = subprocess.Popen([str(binary)], stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, preexec_fn=disposition)
+            child.stdout.read(16)
+            child.stdout.close()
+            stderr = child.stderr.read()
+            status = child.wait(timeout=30)
+            evidence["cases"].append({"sigpipe_ignored": ignored, "exit_status": status,
+                                      "stderr": stderr.decode(errors="replace")})
+            if status != expected or stderr:
+                raise AssertionError(f"closed stdout (SIGPIPE ignored={ignored}): expected "
+                                     f"{expected} and no output, got {status}: {stderr!r}")
+
     try:
         if mode == "fast-math":
             inspect_fast_math()
+        elif mode == "broken-pipe":
+            broken_pipe()
         elif mode == "syntax":
             pure = source("no-cleanup-trampoline",
                           "fn add(a:i32,b:i32):i32 {a+b}\nfn main(){add(20,22)-42}\n")
@@ -241,7 +268,7 @@ def run_suite(mode, executable, directory):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("syntax", "fast-math"))
+    parser.add_argument("mode", choices=("syntax", "fast-math", "broken-pipe"))
     parser.add_argument("executable")
     parser.add_argument("directory")
     args = parser.parse_args()

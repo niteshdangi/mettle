@@ -6,6 +6,7 @@ import package::alloc::vec::Vec;
 import package::core::text::Text;
 import package::core::cmp::PartialEq;
 import package::core::slice;
+import package::core::fmt;
 import package::alloc::string::String;
 import super::sys;
 import super::path::PathInput;
@@ -159,6 +160,42 @@ pub interface Write {
     mut fn write_path(input: read PathInput): Unit throws Error {
         try self.write_all(input.as_path().as_bytes())
     }
+    // Formatted output: renders `message` through a borrowed sink adapter. The
+    // first sink error is returned unchanged; a formatter failure without one
+    // is `InvalidData`. Partial output is possible.
+    mut fn write(message: format fmt::Message): Unit throws Error {
+        try format_to(mut self, message, false)
+    }
+    mut fn write_line(message: format fmt::Message): Unit throws Error {
+        try format_to(mut self, message, true)
+    }
+}
+
+// Adapts a byte writer to the formatting sink, keeping the first writer error.
+type FormatSink<region r, W: Write + unsized> { inner: mut W from r; first_error: Error? }
+impl<region r, W: Write + unsized> FormatSink<region r, W> implements fmt::Write {
+    mut fn write_str(text: read Text): Unit throws fmt::Error {
+        let done = capture self.inner.write_all(text.as_bytes())
+        match take done {
+            success(_) => {},
+            failure(e) => { self.first_error = present(e); throw fmt::Error() }
+        }
+    }
+}
+
+fn format_to<W: Write + unsized>(writer: mut W, message: format fmt::Message, newline: bool): Unit throws Error {
+    var sink = FormatSink(mut writer, none)
+    let outcome = capture message.write_to(mut sink)
+    match take outcome {
+        success(_) => {},
+        failure(_) => {
+            match sink.first_error {
+                present(e) => { throw e },
+                none => { throw from_kind(ErrorKind::InvalidData) }
+            }
+        }
+    }
+    if newline { try sink.inner.write_all("\n".as_bytes()) }
 }
 
 fn fd_read(fd: i32, buf: mut [u8]): usize throws Error {
@@ -205,14 +242,29 @@ impl Stderr implements Write {
     mut fn flush(): Unit throws Error {}
 }
 
-// Writes `text` to standard output, ignoring failures like a closed pipe.
-pub fn print(text: read Text): Unit {
+// Writes the formatted message to standard output without a newline. An
+// ordinary failure panics. A closed pipe (EPIPE) ends the process quietly with
+// status 141 and runs no destructors, like `process::exit`; callers needing
+// cleanup use `stdout().write(...)` and handle the error.
+pub fn print(message: format fmt::Message): Unit {
     var out = stdout()
-    let ignored = capture out.write_all(text.as_bytes())
+    let outcome = capture out.write(message)
+    match take outcome {
+        success(_) => {},
+        failure(e) => {
+            if e.kind().is(ErrorKind::BrokenPipe) { unsafe { sys::exit(141) } }
+            package::core::panic::panic("failed to write to standard output")
+        }
+    }
 }
-pub fn eprint(text: read Text): Unit {
+// Like `print` for standard error; every failure panics.
+pub fn eprint(message: format fmt::Message): Unit {
     var err = stderr()
-    let ignored = capture err.write_all(text.as_bytes())
+    let outcome = capture err.write(message)
+    match take outcome {
+        success(_) => {},
+        failure(e) => { package::core::panic::panic("failed to write to standard error") }
+    }
 }
 
 // Appends the bytes of `src` to a growable buffer: `Vec<u8>` is a sink.

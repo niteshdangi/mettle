@@ -308,7 +308,7 @@ if(BUILD_TESTING)
     set_tests_properties(source.${kind} PROPERTIES TIMEOUT 1800
                          PROCESSORS ${METTLE_SOURCE_TEST_JOBS})
   endforeach()
-  foreach(mode syntax fast-math)
+  foreach(mode syntax fast-math broken-pipe)
     add_test(NAME probe.${mode}
              COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/probes.py"
                      "${mode}" "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/probe-evidence")

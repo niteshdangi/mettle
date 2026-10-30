@@ -1255,3 +1255,5 @@ it in later milestones; do not defer all correctness or performance work to I14.
 No calendar duration is asserted before measured prototype throughput exists.
 No implementation, package installation or target infrastructure was started
 by dividing this plan.
+
+F1 (f-strings and `format` parameters): partial, verified on macOS arm64; status and gaps in library-surface section 10.3.

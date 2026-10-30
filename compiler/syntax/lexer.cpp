@@ -28,11 +28,61 @@ std::vector<Token> tokenize(const Source &source, Diagnostics &diagnostics) {
   std::vector<Token> tokens;
   std::size_t i = 0;
   bool afterDot = false;
+  // Open `{expression}` holes of f-strings, innermost last; each counts the
+  // braces nested inside the hole so only the matching `}` ends it.
+  std::vector<std::size_t> holes;
   auto add = [&](TokenKind kind, std::size_t start) {
     tokens.push_back({kind, {start, i, source.id}, s.substr(start, i - start)});
     if (kind != TokenKind::Space && kind != TokenKind::Newline &&
         kind != TokenKind::Comment)
       afterDot = kind == TokenKind::Symbol && tokens.back().text == ".";
+  };
+  // Scans f-string literal text from `i` up to the next hole or the closing
+  // quote; `{{` and `}}` are literal braces.
+  auto formatText = [&]() {
+    auto start = i;
+    std::string piece;
+    bool escaped = false;
+    auto flush = [&]() {
+      if (piece.empty())
+        return;
+      tokens.push_back({TokenKind::FormatPiece, {start, i, source.id}, piece});
+      piece.clear();
+    };
+    while (i < s.size() && s[i] != '\n' && s[i] != '\r') {
+      auto value = s[i];
+      if (value == '"' && !escaped) {
+        flush();
+        tokens.push_back({TokenKind::FormatClose, {i, i + 1, source.id}, "\""});
+        ++i;
+        return;
+      }
+      if (!escaped && (value == '{' || value == '}')) {
+        if (i + 1 < s.size() && s[i + 1] == value) {
+          piece += value;
+          i += 2;
+          continue;
+        }
+        if (value == '}') {
+          diagnostics.error("lex", {i, i + 1},
+                            "a single '}' in an f-string must be written '}}'");
+          ++i;
+          continue;
+        }
+        flush();
+        tokens.push_back(
+            {TokenKind::FormatHoleOpen, {i, i + 1, source.id}, "{"});
+        ++i;
+        holes.push_back(0);
+        return;
+      }
+      piece += value;
+      escaped = value == '\\' && !escaped;
+      ++i;
+    }
+    flush();
+    diagnostics.error("lex", {start, i}, "unterminated f-string literal");
+    holes.clear();
   };
   while (i < s.size() && tokens.size() < limits::tokens) {
     auto start = i;
@@ -43,6 +93,10 @@ std::vector<Token> tokenize(const Source &source, Diagnostics &diagnostics) {
         ++i;
       add(TokenKind::Space, start);
     } else if (c == '\n' || c == '\r') {
+      if (!holes.empty()) {
+        diagnostics.error("lex", {start, i}, "unterminated f-string literal");
+        holes.clear();
+      }
       ++i;
       if (c == '\r' && i < s.size() && s[i] == '\n')
         ++i;
@@ -111,6 +165,11 @@ std::vector<Token> tokenize(const Source &source, Diagnostics &diagnostics) {
       if (!closed)
         diagnostics.error("lex", {start, i}, "unterminated raw text literal");
       add(TokenKind::PrefixedText, start);
+    } else if (c == 'f' && i + 1 < s.size() && s[i + 1] == '"') {
+      i += 2;
+      tokens.push_back({TokenKind::FormatOpen, {start, i, source.id}, "f\""});
+      afterDot = false;
+      formatText();
     } else if (c == '"' || (c == 'b' && i + 1 < s.size() && s[i + 1] == '"')) {
       const bool bytes = c == 'b';
       i += bytes ? 2 : 1;
@@ -197,8 +256,22 @@ std::vector<Token> tokenize(const Source &source, Diagnostics &diagnostics) {
                        : "unsupported character or literal");
       }
       add(TokenKind::Symbol, start);
+      if (!holes.empty() && tokens.back().text == "{")
+        ++holes.back();
+      else if (!holes.empty() && tokens.back().text == "}") {
+        if (holes.back())
+          --holes.back();
+        else {
+          tokens.back().kind = TokenKind::FormatHoleClose;
+          holes.pop_back();
+          formatText();
+        }
+      }
     }
   }
+  if (!holes.empty())
+    diagnostics.error("lex", {s.size(), s.size()},
+                      "unterminated f-string literal");
   if (i != s.size())
     diagnostics.error("limit", {i, i}, "token limit exceeded");
   tokens.push_back({TokenKind::End, {s.size(), s.size(), source.id}, ""});

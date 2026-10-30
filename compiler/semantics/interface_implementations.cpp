@@ -691,7 +691,9 @@ void Checker::checkInterfaceContracts() {
            ++parameter)
         if (shape(expected.locals[parameter].type, substitutions) !=
                 shape(actual.locals[parameter].type, {}) ||
-            expected.locals[parameter].mode != actual.locals[parameter].mode)
+            expected.locals[parameter].mode != actual.locals[parameter].mode ||
+            declaration.parameters[parameter].format !=
+                provided.parameters[parameter].format)
           fail();
       if (shape(expected.result, substitutions) != shape(actual.result, {}) ||
           shape(expected.error, substitutions) != shape(actual.error, {}))

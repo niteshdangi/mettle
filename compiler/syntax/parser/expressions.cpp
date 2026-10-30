@@ -76,6 +76,48 @@ std::unique_ptr<Node> Parser::expr(int minimum) {
   --nesting;
   return left;
 }
+// An f-string is a recipe call built by `formatRecipe`; the checker accepts
+// it only as the argument of a `format` parameter.
+std::unique_ptr<Node> Parser::formatString() {
+  const auto open = tokens[position++];
+  std::vector<std::unique_ptr<Node>> holes, pieces;
+  auto at = [&]() -> const Token & {
+    return tokens[std::min(position, tokens.size() - 1)];
+  };
+  auto literal = [&](const std::string &text, Span span) {
+    textSpans.push_back(span);
+    return node(Kind::Text, span, "\"" + text + "\"");
+  };
+  std::string text;
+  Span span{open.span.end, open.span.end, open.span.source};
+  for (;;) {
+    const auto &token = at();
+    if (token.kind == TokenKind::FormatPiece) {
+      text = token.text;
+      span = token.span;
+      ++position;
+    } else if (token.kind == TokenKind::FormatHoleOpen) {
+      pieces.push_back(literal(text, span));
+      text.clear();
+      span = {token.span.end, token.span.end, token.span.source};
+      ++position;
+      ++parens;
+      holes.push_back(expr());
+      if (at().kind != TokenKind::FormatHoleClose)
+        fail("expected '}' to close the interpolation");
+      ++position;
+      --parens;
+    } else if (token.kind == TokenKind::FormatClose) {
+      pieces.push_back(literal(text, span));
+      ++position;
+      break;
+    } else
+      fail("expected '}' to close the interpolation");
+  }
+  return formatRecipe(
+      {open.span.begin, tokens[position - 1].span.end, open.span.source},
+      std::move(holes), std::move(pieces));
+}
 std::unique_ptr<Node> Parser::primary() {
   StateGuard guard(*this);
   if (++nesting > limits::parserNesting)
@@ -193,6 +235,8 @@ std::unique_ptr<Node> Parser::primary() {
     result->annotation.elements.push_back(std::move(subject));
     result->annotation.elements.push_back(std::move(interface));
     result->span.end = member.span.end;
+  } else if (token.kind == TokenKind::FormatOpen) {
+    result = formatString();
   } else if (token.kind == TokenKind::Character ||
              token.kind == TokenKind::Byte) {
     ++position;

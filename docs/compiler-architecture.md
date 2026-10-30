@@ -693,3 +693,7 @@ compiler, runtime, tool and artifact identities are checked.
 `build/i05-qualification.json` records the evidence and any separately checked
 documentation-only completion update. This qualifies the macOS ARM64 compiler
 host and Linux x86-64 target, not a Linux compiler host, public ABI or runtime parity.
+
+## F-string lowering
+
+The lexer emits `FormatOpen/Piece/HoleOpen/HoleClose/Close` tokens; the parser desugars an f-string into a labelled call chain `core::fmt::message(read [field(hole, piece)...], tail)` (labels `f-string`, `f-string-internal`). The checker (`calls.cpp`, `expressions.cpp`) confines these nodes to `format` argument positions; no new AST kind, IR or backend work.

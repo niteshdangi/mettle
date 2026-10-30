@@ -290,6 +290,12 @@ int Checker::functionValue(Node &node, std::size_t index) {
     error("ownership", node.span, "cannot form a destructor function pointer");
     return inference.fresh();
   }
+  for (const auto &parameter : function.parameters)
+    if (parameter.format) {
+      error("type", node.span,
+            "a function with a 'format' parameter cannot be used as a value");
+      return inference.fresh();
+    }
   if (!checked.symbols->accessible(function.span,
                                    checked.symbols->moduleOf(node.span)))
     error("name", node.span, "function is inaccessible");

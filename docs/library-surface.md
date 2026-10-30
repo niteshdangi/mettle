@@ -526,6 +526,19 @@ deprecated, and the actual cutover date is recorded after lane-owner approval.
 Each old call migrates by intent: the CLI's error-reporting branches keep an
 explicit `let _ = capture ...` so their exit-status policy does not become 101.
 
+### 10.3. Implementation status
+
+F1 is partially implemented and verified on macOS arm64 (Release and Debug):
+pre-cutover `f"..{expr}.."` holes for integers, `bool`, `char`, `Text` and
+`String`; a non-f-string argument lifted to a one-hole message; two-level
+forwarding; the no-escape rules (no binding, return, capture, ordinary-parameter
+use, or function value); `Write.write`/`write_line` and `print`/`eprint`,
+including both broken-pipe dispositions (`probe.broken-pipe`). Not done: float
+holes, format specifiers, `Display`/`Debug` holes for user types, region tracking
+of hole loans (holes use raw pointers kept alive by the enclosing call), a
+dedicated diagnostic for a type that cannot fill a hole, and the indirect-call,
+code-size and check-cost measurements.
+
 ## 11. Lending lines and byte iteration
 
 Status: accepted target (decision D25); implemented in current spelling
