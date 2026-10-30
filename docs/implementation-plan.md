@@ -1088,7 +1088,7 @@ ergonomics, API composition, precise new contracts and their verification.
 | R2 | Lending lines, Copy-valued `[u8].bytes()`, KeyView, PathInput/`write_path` and equivalent workloads within qualified profiles; reconcile `library-and-abi.md` POSIX path statements with the native Windows path contract before delivering that profile. Status: implemented for POSIX in current spelling, focused fixtures pass; Windows paths and collision stress pending | Now (independent of the new spellings; migrates at cutover) |
 | Cutover | Lane-owner freeze, parser-backed migration, focused checks, then resume writers | After R1 and active lanes integrate |
 | R3 | Expression-bodied `fn`, diagnostics, formatter/editor completion | After cutover |
-| Qualification | Frozen-input quality, target, safety and performance checks, including performance.md sections 5.1-5.2 | After R3 |
+| Qualification | Frozen-input quality, target, safety and performance checks, including performance.md sections 5.1-5.2. D17 comparison harness (`tools/bench_compare.py`, `benchmarks/`, performance.md section 5.3): implemented, not yet run, not yet built; its `.mt` workloads are unchecked against the compiler and no result is claimed | After R3 |
 | WP-S | Storage audit work package of tooling-and-packages.md section 7.1; operational, no dependency on an artifact store | Now |
 
 Reconcile this work with the I06 repair and I07-I08 obligations; a design
