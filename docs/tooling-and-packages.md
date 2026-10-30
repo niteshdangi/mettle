@@ -254,9 +254,13 @@ normalized after `,` `;` `:`, around `=`, comparison/compound-assignment/`=>`/`-
 inside one-line `{ }` and removed around `.` and inside `()`/`[]`; other
 gaps (`<`, `-`, `&`, ...) keep one space or none as written. Trailing whitespace
 goes, blank-line runs collapse to one (none after `{` or before `}`), the file
-ends in one newline. Line breaks are never added or removed; comments, text
-literals, multi-line raw text and f-strings keep their bytes, and declarative
-macro bodies keep their gaps. Each result is re-lexed and re-parsed and must have
+ends in one newline. The new wrapping path (implemented, unverified, not yet
+built) attempts a 100-byte line width at commas inside parentheses and selected
+binary operators. It leaves files with macro definitions/invocations,
+f-strings or multiline tokens, and lines with comments, unwrapped. Long
+unbreakable segments may exceed the width; when wrapping changes the parse it
+falls back to the unwrapped layout. Comments, text literals and macro gaps
+remain intact. Each result is re-lexed and re-parsed and must have
 the same token sequence, the same syntax-tree fingerprint and be a fixed point;
 otherwise the file is reported and left untouched. Files that define
 declarative macros are parsed after expansion for both fingerprints. Over the
@@ -265,7 +269,7 @@ report the same phase, line and message (columns may move). `--check` prints eac
 that would change with its first differing line and exits 1 without writing;
 otherwise changed files are replaced atomically (temporary file and rename).
 
-`mettle lint FILE|PACKAGE [--allow|--warn|--deny RULE]... [build options]` is
+`mettle lint FILE|PACKAGE [--format human|json] [--allow|--warn|--deny RULE]... [build options]` is
 implemented and verified. It runs the same front end as `check`
 (parse, expansion, resolution, typing, ownership; any error is reported as usual
 and no lint runs) and then semantic lints over the checked program, never over
@@ -288,8 +292,13 @@ set a rule, the rule name `warnings` sets the default for every rule (`--deny
 warnings` makes all findings fail). The `@allow(RULE, ...)`, `@warn(...)`,
 `@deny(...)` and `@forbid(...)` attributes on a function override the flags inside
 that function; `RULE` may be spelled with `-` or `_`, and unknown names are
-ignored. Attributes on imports and on products/extensions, line breaking of findings
-and machine-readable output are not implemented.
+ignored. Attributes on imports and on products/extensions and line breaking of
+findings are not implemented. JSON findings are implemented, unverified (not
+yet built): one JSON object per line on stdout, ordered as human findings, with
+`code`, `level` (`warn` or `deny`), `span` (`file`, zero-based byte `begin`
+and exclusive `end`), and `message`. No suggestion field is emitted because
+the current rules do not provide structured suggestions. Front-end failures
+remain human diagnostics on stderr; denied findings still return status 1.
 
 Target, profile, feature, package/workspace and lock/offline selections are
 shared options. Unknown or unavailable requested capabilities fail explicitly;
@@ -403,7 +412,7 @@ file, default `.`. A file that does not lex, expand and parse is reported
 (`error[parse]` ...), skipped and makes the exit status 1; documentation is
 never produced from an invalid tree. The output (default
 `target/mettle/doc` below a single directory argument, else below the current
-directory) is plain HTML with no script, font or network use: `index.html`,
+directory) is static HTML with no font or network use: `index.html`,
 one `<module>.html` per file (`net/http.mt` is `net.http`; a directory's
 `module.mt` names the directory) and one shared `style.css`. Items are the
 `pub` types, enums, unions, interfaces, functions, constants, aliases,
@@ -413,9 +422,15 @@ and sorted by name; fields, variants and the members of an interface or of an
 omitted. A signature is the declaration header exactly as written
 (whitespace collapsed, no body) with its attributes, so an omitted result is
 not guessed. Output is deterministic (no timestamps, stable order, stale files
-are not removed). Not yet provided: cross-module links, package cross
-references, source hyperlinks (the page shows `file:line`), inferred result
-types and search.
+are not removed). Not yet provided: resolved cross-package references, source
+hyperlinks (the page shows `file:line`) and inferred result types. The new
+cross-reference and search path is implemented, unverified (not
+yet built): dotted names matching unambiguous documented items are linked
+lexically in signatures and prose, including inline code. This is not semantic
+resolution: aliases, imports and separately generated packages are not resolved.
+An index page searches deterministic item names using local `search-index.json`,
+`search-index.js` and `search.js`; the JS copy allows search when opened from
+the filesystem without a local web server. Fenced code remains unlinked.
 
 `mettle test FILE|PACKAGE` also runs fenced examples from every source file in
 the selected package (all items, `pub` or not) after its `@test` functions;

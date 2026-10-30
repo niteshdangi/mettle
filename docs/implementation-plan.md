@@ -1109,9 +1109,15 @@ tooling-and-packages section 4.1; tests `doc_writes_deterministic_html` and
 implemented and verified on macOS arm64 (test `lint_reports_semantic_findings`):
 five semantic rules over checked facts, `--allow/--warn/--deny` and
 function-level `@allow/@warn/@deny` (tooling-and-packages section 3). Remaining
-I12 work: further lint rules and machine-readable findings, line
-breaking/wrapping in `fmt`, doc cross-references and search, benchmark handles
-and debugger workflows. The language server (`mettle lsp`, T005) is implemented
+I12 work includes line breaking/wrapping, doc references/search and debugger
+workflows. This tooling lane's JSON lint findings, conservative 100-byte
+wrapping, lexical dotted doc links and static search index are implemented,
+unverified (not yet built); see their limitations in tooling-and-packages.
+Section 3 currently selects the five existing lint rules; it names no additional
+rules. The benchmark contract explicitly provides `black_box` and excludes
+handles, so no handle API was invented. Resolved cross-package references,
+full wrapping coverage and debugger metadata/workflows remain open. The language
+server (`mettle lsp`, T005) is implemented
 and verified on macOS arm64 (test `language_server`); see
 `docs/tooling-and-packages.md` section 5. The milestone is not complete.
 

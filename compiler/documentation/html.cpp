@@ -3,8 +3,10 @@
 #include "documentation/markdown.h"
 #include "support/path.h"
 #include <algorithm>
+#include <map>
 #include <set>
 #include <string_view>
+#include <utility>
 
 namespace mettle::documentation {
 namespace {
@@ -56,19 +58,67 @@ std::string escape(std::string_view text) {
   return out;
 }
 
+using Links = std::map<std::string, std::string>;
+
+bool pathChar(char c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+         (c >= '0' && c <= '9') || c == '_' || c == '.';
+}
+
+std::string linkedText(std::string_view text, const Links &links,
+                       std::string_view page) {
+  std::string out;
+  for (std::size_t i = 0; i < text.size();) {
+    if (!pathChar(text[i])) {
+      put(out, text[i++]);
+      continue;
+    }
+    auto end = i + 1;
+    while (end < text.size() && pathChar(text[end]))
+      ++end;
+    while (end > i + 1 && text[end - 1] == '.')
+      --end;
+    auto name = std::string(text.substr(i, end - i));
+    auto target = links.end();
+    if (name.find('.') != std::string::npos) {
+      target = links.find(name);
+      if (target == links.end())
+        target = links.find(std::string(page) + "." + name);
+    }
+    if (target != links.end() && !target->second.empty())
+      out += "<a href=\"" + escape(target->second) + "\">" + escape(name) +
+             "</a>";
+    else
+      out += escape(name);
+    i = end;
+  }
+  return out;
+}
+
 // Text with `code` spans.
-std::string inlineText(std::string_view text) {
+std::string inlineText(std::string_view text, const Links &links = {},
+                       std::string_view page = {}) {
   std::string out;
   for (std::size_t i = 0; i < text.size(); ++i) {
     if (text[i] == '`') {
       auto close = text.find('`', i + 1);
       if (close != std::string_view::npos) {
-        out += "<code>" + escape(text.substr(i + 1, close - i - 1)) + "</code>";
+        out += "<code>" +
+               linkedText(text.substr(i + 1, close - i - 1), links, page) +
+               "</code>";
         i = close;
         continue;
       }
     }
-    put(out, text[i]);
+    auto end = text.find('`', i);
+    if (end == std::string_view::npos)
+      end = text.size();
+    if (end == i) {
+      put(out, text[i]);
+      continue;
+    }
+    out += linkedText(text.substr(i, end - i), links, page);
+    i = end - 1;
   }
   return out;
 }
@@ -80,23 +130,26 @@ std::string joined(const std::vector<std::string> &lines, char separator) {
   return result;
 }
 
-std::string renderDoc(const Doc &doc) {
+std::string renderDoc(const Doc &doc, const Links &links,
+                      std::string_view page) {
   std::string out;
   for (const auto &block : blocks(doc)) {
     switch (block.kind) {
     case Block::Kind::Paragraph:
-      out += "<p>" + inlineText(joined(block.lines, ' ')) + "</p>\n";
+      out += "<p>" + inlineText(joined(block.lines, ' '), links, page) +
+             "</p>\n";
       break;
     case Block::Kind::Heading: {
       auto level = std::to_string(std::min(block.level + 3, 6u));
-      out += "<h" + level + ">" + inlineText(block.lines.front()) + "</h" +
-             level + ">\n";
+      out += "<h" + level + ">" +
+             inlineText(block.lines.front(), links, page) + "</h" + level +
+             ">\n";
       break;
     }
     case Block::Kind::List:
       out += "<ul>\n";
       for (const auto &entry : block.lines)
-        out += "<li>" + inlineText(entry) + "</li>\n";
+        out += "<li>" + inlineText(entry, links, page) + "</li>\n";
       out += "</ul>\n";
       break;
     case Block::Kind::Code: {
@@ -191,7 +244,8 @@ std::string slug(std::string_view text) {
 
 class PageWriter {
 public:
-  explicit PageWriter(const Page &page) : page(page) {}
+  PageWriter(const Page &page, std::string file, Links &links, bool collect)
+      : page(page), file(std::move(file)), links(links), collect(collect) {}
 
   std::string render() {
     std::string out =
@@ -202,13 +256,16 @@ public:
         "</title>\n<link rel=\"stylesheet\" href=\"style.css\">\n<main>\n"
         "<nav><a href=\"index.html\">All modules</a></nav>\n<h1>" +
         escape(page.name) + "</h1>\n<p class=\"src\">" + escape(page.path) +
-        "</p>\n" + renderDoc(page.doc);
+        "</p>\n" + renderDoc(page.doc, links, page.name);
     items(out, page.items);
     return out + "</main>\n";
   }
 
 private:
   const Page &page;
+  std::string file;
+  Links &links;
+  bool collect;
   std::set<std::string> used;
 
   std::string identifier(std::string_view prefix, std::string_view name) {
@@ -218,6 +275,15 @@ private:
     auto id = base;
     for (unsigned n = 2; !used.insert(id).second; ++n)
       id = base + "-" + std::to_string(n);
+    if (collect) {
+      auto key = page.name + "." +
+                 (prefix.empty() ? std::string(name)
+                                 : std::string(prefix) + "." +
+                                       std::string(name));
+      auto [it, inserted] = links.emplace(key, file + "#" + id);
+      if (!inserted)
+        it->second.clear();
+    }
     return id;
   }
 
@@ -226,11 +292,12 @@ private:
            std::to_string(item.line) + "</span>";
   }
 
-  static std::string declaration(const Item &item) {
+  std::string declaration(const Item &item) {
     std::string out = "<pre class=\"sig\"><code>";
     for (const auto &attribute : item.attributes)
       out += escape(attribute) + "\n";
-    return out + escape(item.signature) + "</code></pre>\n";
+    return out + linkedText(item.signature, links, page.name) +
+           "</code></pre>\n";
   }
 
   void items(std::string &out, const std::vector<Item> &all,
@@ -260,7 +327,7 @@ private:
            escape(item.kind == Kind::Implementation ? "extend" : item.name) +
            "</a><span class=\"kind\">" + std::string(word(item.kind)) +
            "</span>" + location(item) + "</h3>\n" + declaration(item) +
-           renderDoc(item.doc);
+           renderDoc(item.doc, links, page.name);
     if (item.kind == Kind::Module) {
       out += "<div class=\"nested\">\n";
       items(out, item.members, id);
@@ -269,8 +336,10 @@ private:
       out += "<dl class=\"members\">\n";
       for (const auto &member : item.members) {
         auto memberId = identifier(id, member.name);
-        out += "<dt id=\"" + memberId + "\"><code>" + escape(member.signature) +
-               "</code></dt>\n<dd>" + renderDoc(member.doc) + "</dd>\n";
+        out += "<dt id=\"" + memberId + "\"><code>" +
+               linkedText(member.signature, links, page.name) +
+               "</code></dt>\n<dd>" +
+               renderDoc(member.doc, links, page.name) + "</dd>\n";
       }
       out += "</dl>\n";
     }
@@ -292,6 +361,24 @@ std::string fileName(const std::string &name, std::set<std::string> &taken) {
     file = base + "-" + std::to_string(n) + ".html";
   return file;
 }
+
+std::string jsonString(std::string_view text) {
+  static constexpr char hex[] = "0123456789abcdef";
+  std::string out = "\"";
+  for (unsigned char c : text) {
+    if (c == '"' || c == '\\') {
+      out += '\\';
+      out += static_cast<char>(c);
+    } else if (c < 0x20) {
+      out += "\\u00";
+      out += hex[c >> 4];
+      out += hex[c & 15];
+    } else {
+      out += static_cast<char>(c);
+    }
+  }
+  return out + '"';
+}
 } // namespace
 
 std::vector<File> render(std::vector<Page> pages) {
@@ -302,23 +389,65 @@ std::vector<File> render(std::vector<Page> pages) {
                      return left.name < right.name;
                    });
   std::set<std::string> taken{"index.html"};
+  Links links;
+  std::vector<std::string> names;
+  for (const auto &page : pages) {
+    names.push_back(fileName(page.name, taken));
+    auto [it, inserted] = links.emplace(page.name, names.back());
+    if (!inserted)
+      it->second.clear();
+  }
+  for (std::size_t i = 0; i < pages.size(); ++i)
+    PageWriter(pages[i], names[i], links, true).render();
   std::string index =
       "<!doctype html>\n<html lang=\"en\">\n<meta charset=\"utf-8\">\n"
       "<meta name=\"viewport\" content=\"width=device-width,"
       "initial-scale=1\">\n<title>Documentation</title>\n"
       "<link rel=\"stylesheet\" href=\"style.css\">\n<main>\n"
-      "<h1>Documentation</h1>\n<ul class=\"modules\">\n";
+      "<h1>Documentation</h1>\n"
+      "<label>Search <input id=\"search\" type=\"search\"></label>\n"
+      "<ul id=\"results\"></ul>\n<ul class=\"modules\">\n";
   std::vector<File> files;
-  for (const auto &page : pages) {
-    auto name = fileName(page.name, taken);
+  for (std::size_t i = 0; i < pages.size(); ++i) {
+    const auto &page = pages[i];
+    const auto &name = names[i];
     index += "<li><a href=\"" + name + "\"><code>" + escape(page.name) +
              "</code></a>";
     if (auto summary = firstSentence(page.doc); !summary.empty())
       index += "<span>" + inlineText(summary) + "</span>";
     index += "</li>\n";
-    files.push_back({name, PageWriter(page).render()});
+    files.push_back({name, PageWriter(page, name, links, false).render()});
   }
-  index += "</ul>\n</main>\n";
+  index += "</ul>\n</main>\n<script src=\"search-index.js\"></script>\n"
+           "<script src=\"search.js\"></script>\n";
+  std::string search = "[";
+  for (const auto &[name, href] : links) {
+    if (href.empty())
+      continue;
+    if (search.size() > 1)
+      search += ',';
+    search += "{\"name\":" + jsonString(name) + ",\"href\":" +
+              jsonString(href) + "}";
+  }
+  search += "]\n";
+  files.push_back({"search-index.json", search});
+  files.push_back({"search-index.js", "const mettleSearch = " + search + ";\n"});
+  files.push_back(
+      {"search.js",
+       "const input = document.getElementById('search');\n"
+       "const results = document.getElementById('results');\n"
+       "input.addEventListener('input', () => {\n"
+       "  results.replaceChildren();\n"
+       "  const query = input.value.trim().toLowerCase();\n"
+       "  if (!query) return;\n"
+       "  for (const item of mettleSearch) {\n"
+       "    if (!item.name.toLowerCase().includes(query)) continue;\n"
+       "    const li = document.createElement('li');\n"
+       "    const link = document.createElement('a');\n"
+       "    link.href = item.href; link.textContent = item.name;\n"
+       "    li.append(link); results.append(li);\n"
+       "  }\n"
+       "});\n"});
   files.insert(files.begin(), File{"style.css", std::string(style)});
   files.insert(files.begin(), File{"index.html", std::move(index)});
   return files;
