@@ -250,42 +250,11 @@ pub fn text_field(value: read Text, prefix: read Text): Field {
     Field(piece(prefix), slice::data(bytes), bytes.len(), render_text)
 }
 
-// Values that can fill a `{hole}`: primitives and text in the first slice.
+// Values that can fill a `{hole}`: any sized `Display` type (integers, floats,
+// `bool`, `char`, `String` and user types) through one blanket implementation,
+// and `Text`, whose unsized view is carried directly.
 pub interface Hole { fn hole(prefix: read Text): Field; }
-impl i8 implements Hole {
-    fn hole(prefix: read Text): Field { sized(read self, prefix) }
-}
-impl i16 implements Hole {
-    fn hole(prefix: read Text): Field { sized(read self, prefix) }
-}
-impl i32 implements Hole {
-    fn hole(prefix: read Text): Field { sized(read self, prefix) }
-}
-impl i64 implements Hole {
-    fn hole(prefix: read Text): Field { sized(read self, prefix) }
-}
-impl isize implements Hole {
-    fn hole(prefix: read Text): Field { sized(read self, prefix) }
-}
-impl u8 implements Hole {
-    fn hole(prefix: read Text): Field { sized(read self, prefix) }
-}
-impl u16 implements Hole {
-    fn hole(prefix: read Text): Field { sized(read self, prefix) }
-}
-impl u32 implements Hole {
-    fn hole(prefix: read Text): Field { sized(read self, prefix) }
-}
-impl u64 implements Hole {
-    fn hole(prefix: read Text): Field { sized(read self, prefix) }
-}
-impl usize implements Hole {
-    fn hole(prefix: read Text): Field { sized(read self, prefix) }
-}
-impl bool implements Hole {
-    fn hole(prefix: read Text): Field { sized(read self, prefix) }
-}
-impl char implements Hole {
+impl<T: Display> T implements Hole {
     fn hole(prefix: read Text): Field { sized(read self, prefix) }
 }
 impl Text implements Hole {

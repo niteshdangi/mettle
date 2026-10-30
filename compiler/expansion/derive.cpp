@@ -16,7 +16,8 @@ const std::map<std::string, DeriveInfo> &catalog() {
       {"Clone", {"clone", "Clone"}}, {"Copy", {"marker", "Copy"}},
       {"Debug", {"fmt", "Debug"}},   {"PartialEq", {"cmp", "PartialEq"}},
       {"Eq", {"cmp", "Eq"}},         {"PartialOrd", {"cmp", "PartialOrd"}},
-      {"Ord", {"cmp", "Ord"}},       {"Hash", {"hash", "Hash"}}};
+      {"Ord", {"cmp", "Ord"}},       {"Hash", {"hash", "Hash"}},
+      {"Default", {"default", "Default"}}};
   return entries;
 }
 const std::string core = "package::core::";
@@ -62,6 +63,8 @@ public:
     header();
     if (interface == "Clone")
       clone();
+    else if (interface == "Default")
+      defaultValue();
     else if (interface == "Debug")
       debug();
     else if (interface == "PartialEq")
@@ -223,6 +226,21 @@ private:
           construct(shape);
       });
     put("}\n");
+  }
+
+  void defaultValue() {
+    put("static fn default(): " + target + " {\n");
+    const auto &shape = shapes().front();
+    put(shape.constructor + "(");
+    for (std::size_t i = 0; i < shape.fields->size(); ++i) {
+      const auto &field = (*shape.fields)[i];
+      if (i)
+        put(", ");
+      if (!shape.positional)
+        put(identifier(field.name) + ": ");
+      mapped(field, [&] { put(projection(field) + "::default()"); });
+    }
+    put(")\n}\n");
   }
 
   void debug() {
@@ -508,19 +526,15 @@ std::vector<DeriveRequest> deriveRequests(const Attribute &attribute,
         path.rfind(':') == std::string::npos ? 0 : path.rfind(':') + 1);
     auto found = catalog().find(name);
     auto qualified = name != path;
-    if (name == "Default" && !qualified)
-      diagnostics.error("feature", span,
-                        "derive(Default) requires a Default interface in "
-                        "library/core, which does not exist yet");
-    else if (found == catalog().end() ||
-             (qualified &&
-              path !=
-                  "core::" + std::string(found->second.module) + "::" + name &&
-              path != core + std::string(found->second.module) + "::" + name))
-      diagnostics.error("attribute", span,
-                        "unknown derive '" + path +
-                            "'; derivable interfaces are Clone, Copy, Debug, "
-                            "PartialEq, Eq, PartialOrd, Ord and Hash");
+    if (found == catalog().end() ||
+        (qualified &&
+         path != "core::" + std::string(found->second.module) + "::" + name &&
+         path != core + std::string(found->second.module) + "::" + name))
+      diagnostics.error(
+          "attribute", span,
+          "unknown derive '" + path +
+              "'; derivable interfaces are Clone, Copy, Debug, PartialEq, Eq, "
+              "PartialOrd, Ord, Hash and Default");
     else if (!requested.insert(name).second)
       diagnostics.error("attribute", span,
                         "'" + name + "' is already derived on this type");
@@ -555,7 +569,10 @@ void generateDerives(Module &module, std::size_t index,
       product.copyRequested = true;
       continue;
     }
-    if (product.unionType)
+    if (request.name == "Default" && product.enumeration)
+      unsupported(request, "is not implemented for enums; implement Default "
+                           "manually to choose the default variant");
+    else if (product.unionType)
       unsupported(request, "is not implemented for unions");
     else if (product.enumeration && product.variants.empty())
       unsupported(request, "is not implemented for enums without variants");

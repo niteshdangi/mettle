@@ -378,6 +378,17 @@ bool Checker::interfaceObligation(Type actual, Type interfaceType, Span span) {
                             std::move(assumptions), regionEnvironment());
   if (solver.prove({actual, interfaceType}, span, false))
     return true;
+  // An f-string hole is filled through core::fmt::Hole; say what is missing in
+  // the user's terms rather than naming that internal interface.
+  if (checked.types->isErased(interfaceType) &&
+      checked.interfaceData
+              ->definitions[checked.types->erased(interfaceType).declaration]
+              .name == "core::fmt::Hole") {
+    error("type", span,
+          "a value of this type cannot fill an f-string hole; it must be "
+          "Text or implement core::fmt::Display");
+    return false;
+  }
   error("type", span, "unsatisfied interface obligation");
   return false;
 }

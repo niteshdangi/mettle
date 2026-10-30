@@ -533,11 +533,23 @@ pre-cutover `f"..{expr}.."` holes for integers, `bool`, `char`, `Text` and
 `String`; a non-f-string argument lifted to a one-hole message; two-level
 forwarding; the no-escape rules (no binding, return, capture, ordinary-parameter
 use, or function value); `Write.write`/`write_line` and `print`/`eprint`,
-including both broken-pipe dispositions (`probe.broken-pipe`). Not done: float
-holes, format specifiers, `Display`/`Debug` holes for user types, region tracking
-of hole loans (holes use raw pointers kept alive by the enclosing call), a
-dedicated diagnostic for a type that cannot fill a hole, and the indirect-call,
-code-size and check-cost measurements.
+including both broken-pipe dispositions (`probe.broken-pipe`).
+
+Implemented, unverified (not yet built or run): float holes (`f32`/`f64`
+`Display`/`Debug` in `library/core/float.mt`: shortest round-trip digits by
+exact big-integer arithmetic, no libc, plain positional notation, `NaN`/`inf`,
+`-0`; `Spec::precision` is not applied to floats); holes for any sized type
+implementing `core::fmt::Display` through one blanket `Hole` implementation
+(the per-primitive and `String` implementations were removed; `Text` keeps its
+own because it is unsized); and a dedicated type error ("a value of this type
+cannot fill an f-string hole; it must be Text or implement core::fmt::Display")
+replacing "unsatisfied interface obligation" for a hole. Fixtures:
+`tests/source/run/fstring-float-and-display-holes.mt`,
+`tests/source/fail/fstring-hole-type-cannot-be-formatted.mt`.
+
+Not done: format specifiers, `Debug` holes, region tracking of hole loans
+(holes use raw pointers kept alive by the enclosing call), and the
+indirect-call, code-size and check-cost measurements.
 
 ## 11. Lending lines and byte iteration
 
