@@ -190,8 +190,8 @@ void Checker::completeClosure(ClosureFacts &closure, bool final) {
           projection.index < checked.types->product(current).fields.size())
         name +=
             "." + checked.types->product(current).fields[projection.index].name;
-      auto next = projectedType(*checked.types, current,
-                                std::span(&projection, 1));
+      auto next =
+          projectedType(*checked.types, current, std::span(&projection, 1));
       if (!next)
         break;
       current = *next;

@@ -73,8 +73,7 @@ int ioFailure(const std::string &action, const std::error_code &error) {
 }
 } // namespace
 int emit(const Options &options, const Source &source,
-         const ir::VerifiedProgram &program,
-         const Diagnostics &diagnostics) {
+         const ir::VerifiedProgram &program, const Diagnostics &diagnostics) {
   std::error_code fileError;
   auto inputPath = std::filesystem::weakly_canonical(source.path, fileError);
   if (!fileError && inputPath == std::filesystem::weakly_canonical(

@@ -57,12 +57,13 @@ llvm::DISubprogram *DebugInfo::attach(llvm::Function &function,
                                       bool artificial) {
   auto *file = rootFile;
   unsigned line = 0;
-  auto span = request.sourceSpan ? request.sourceSpan(source.span) : source.span;
+  auto span =
+      request.sourceSpan ? request.sourceSpan(source.span) : source.span;
   if (auto *found = known(span) ? info(span.source) : nullptr) {
     file = found->file;
-    line = position(found->lines,
-                    std::min(span.begin, found->source->text.size()))
-               .first;
+    line =
+        position(found->lines, std::min(span.begin, found->source->text.size()))
+            .first;
   }
   auto local = function.hasLocalLinkage();
   auto flags = local ? (llvm::DISubprogram::SPFlagDefinition |
@@ -202,8 +203,8 @@ llvm::DIType *DebugInfo::build(Type type) {
                                    std::nullopt, name);
     if (metadata != PointerMetadata::ElementCount)
       return opaque();
-    auto element = store.isSlice(payload) ? store.slice(payload).element
-                                          : payload;
+    auto element =
+        store.isSlice(payload) ? store.slice(payload).element : payload;
     auto *pointer = dib.createPointerType(describe(element), pointerBits);
     auto *length = describe(Type::Usize);
     std::vector<llvm::Metadata *> members{
@@ -288,9 +289,9 @@ llvm::DIType *DebugInfo::build(Type type) {
         nullptr, dib.getOrCreateArray(members));
     return dib.replaceTemporary(llvm::TempMDNode(temporary), composite);
   }
-  auto first = store.isSum(type) && record.layout.kind == LayoutKind::Transparent
-                   ? 1u
-                   : 0u;
+  auto first =
+      store.isSum(type) && record.layout.kind == LayoutKind::Transparent ? 1u
+                                                                         : 0u;
   for (std::size_t i = first; i < record.fields.size(); ++i)
     if (auto *member = describe(record.fields[i].type)) {
       const auto &field = record.fields[i];

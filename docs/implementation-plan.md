@@ -1039,8 +1039,9 @@ not complete.
 I12/T006 status, source-level debug info: the earlier basic `-g` DWARF
 implementation was verified. Product/generic/closure capture, sum variant and
 length-bearing pointer metadata, macro invocation locations and LLDB summaries
-are implemented, unverified (not yet built). The new package DWARF regression
-has not run. Async combinator fields and optional tags describe nested state,
+are implemented and verified on macOS arm64 (packages test `debug_info`; LLDB
+summaries checked manually: `Vec len=2 cap=4`, `String` text; optionals show
+only the variant name). Async combinator fields and optional tags describe nested state,
 but a source await-point discriminator/display is not yet established;
 erasure, moved-value liveness, scopes, inlining and CodeView remain open.
 T006 and I12 are not complete.

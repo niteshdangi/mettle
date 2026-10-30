@@ -492,8 +492,10 @@ For LLDB, import `tools/debug/mettle_lldb.py` with
 `command script import /path/to/mettle/tools/debug/mettle_lldb.py`. It registers
 best-effort summaries for native `Vec`, `String`, text views, optionals and
 outcomes; text reads are capped at 256 bytes. Summaries do not execute program
-code and report unavailable data rather than guessing. LLDB support and the
-updated DWARF regression have not yet been built or run.
+code and report unavailable data rather than guessing. The updated `debug_info`
+regression passes on macOS arm64; LLDB summaries were checked manually (Vec
+length/capacity and String text display; an optional shows only its variant,
+not its payload). No automated LLDB test exists.
 
 The comp dir is the root source's directory; without `-g` the adapter emits no
 debug metadata. `-g` is explicit (the `debug` profile does not
@@ -504,9 +506,8 @@ object. Gaps: subprogram types lack parameter/return types; locals are
 visible from function entry (no lexical scopes, so values before
 initialization are garbage); erased/witness pointers, some unsupported layouts
 and async await-point identity remain incomplete; no inlining/monomorphization
-records, no CodeView/PDB, no moved-value liveness. Prior baseline evidence
-covered the original packages `debug_info` case and host run cases under `-g`;
-it does not verify the new metadata or formatter.
+records, no CodeView/PDB, no moved-value liveness. The packages `debug_info`
+case covers the new metadata.
 
 Optional Rust bridges build as separate interoperability packages with explicit
 Rust toolchain/ABI adapters. They do not introduce a mandatory rustc dependency
