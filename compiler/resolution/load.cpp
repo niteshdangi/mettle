@@ -189,9 +189,10 @@ private:
           methods.emplace(function.name.substr(function.name.rfind('.') + 1),
                           module);
     }
-    if (auto source = provider((fs::path(library.directory) / "core" / "iter.mt")
-                                   .lexically_normal()
-                                   .generic_string())) {
+    if (auto source =
+            provider((fs::path(library.directory) / "core" / "iter.mt")
+                         .lexically_normal()
+                         .generic_string())) {
       Diagnostics scratch;
       auto tree = parse(*source, scratch);
       if (scratch.empty())

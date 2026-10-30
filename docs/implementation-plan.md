@@ -742,19 +742,20 @@ bidirectional) wherever the range is not the direct source of a `for`, when
 `core` is mounted; the checker rewrites the node to that call (calls chained on
 `)` with an Iterator method name mount `core`). A range that is the source of a
 `for` keeps the structural counted-loop form, and without `core` a range stays
-structural. An iterator held in a local is consumed by `for x in it`. Implemented,
-unverified (not yet built); open-ended range values and non-integer bounds are
+structural. An iterator held in a local is consumed by `for x in it`. Implemented
+and verified by `tests/library/range_value.mt`; open-ended range values and non-integer bounds are
 unchanged (not implemented).
 Core slice `sort_unstable`, `sort_unstable_by` and `sort_unstable_by_key` are an
 allocation-free introsort (median-of-three quicksort, insertion sort for short
 ranges, heapsort fallback; fixed pending-range stack). Allocation-backed
 slice and `List` `sort`/`sort_by`/`sort_by_key` use a stable index merge sort,
 two index buffers from the global allocator and only swap initialized elements after all
-comparisons; these APIs are implemented, unverified (not yet built). Slice
+comparisons; verified by `tests/alloc/stable_sort.mt` and
+`tests/library/range_value.mt`. Slice
 stable methods are provided by `alloc.vec`, which must be mounted. Slice
-`Iterable`/`MutableIterable` implementations now use the associated iterator
-region families; they are implemented, unverified (not yet built), including
-generic use with an unsized slice. Composite Debug implementations and the
+`Iterable`/`MutableIterable` implementations remain open: interface
+implementations on built-in slice types are not yet supported by the checker,
+so slice `iter()`/`iter_mut()` stay inherent. Composite Debug implementations and the
 generic mutable-formatter loan correction are already present, with nested
 collection coverage described below; they have not been reverified by this
 lane. Unicode whitespace/case remain unimplemented; mounting compiles the
@@ -1159,11 +1160,10 @@ and verified on macOS arm64 (test `language_server`); see
 I12/T006 status, source-level debug info: the earlier basic `-g` DWARF
 implementation was verified. This lane's layout-based sum variants,
 length-bearing pointer fields and corresponding LLDB summary updates are
-implemented, unverified (not yet built); the `debug_info` package test now
-asserts variant and slice metadata. Product/generic/closure capture and macro
-invocation locations have prior macOS arm64 verification. Re-run the package
-test and LLDB summaries against this revision before treating these changes as
-verified. Async combinator fields and optional tags describe nested state, but
+implemented; the `debug_info` package test, which asserts variant and slice
+metadata, passes on the I06 freeze. Product/generic/closure capture and macro
+invocation locations have prior macOS arm64 verification. The updated LLDB
+summaries have not been re-run interactively. Async combinator fields and optional tags describe nested state, but
 a source await-point discriminator/display is not yet established; erasure,
 moved-value liveness, scopes, inlining and CodeView remain open.
 T006 and I12 are not complete.
@@ -1230,10 +1230,10 @@ ergonomics, API composition, precise new contracts and their verification.
 | Order | Deliverable and gate | Status |
 | --- | --- | --- |
 | Cutover | Dotted paths, `extend` implementation blocks, D21 vocabulary, and optional item-level semicolons | Implemented and verified |
-| R1 | Bounded lookup, associated namespace, constructor selection, inference, vocabulary and the `experience-1` prelude | Associated-namespace resolution, dotted-path resolution, and the syntax/vocabulary cutover are implemented and verified. Generic inference from slice elements and fixed-array arguments to slice parameters is implemented, unverified here. Constructor shape selection, extension applicability, overlap checks and the collection and String inits in semantic-rules section 13.4 are implemented, unverified (not yet built). The existing parser and annotation paths appear to support slice, array, tuple and parenthesized-view projection subjects; the grammar now records fixed-array subjects, but behavior remains unverified. Remaining: bounded method lookup through interfaces on slice views; focused R1 verification |
+| R1 | Bounded lookup, associated namespace, constructor selection, inference, vocabulary and the `experience-1` prelude | Associated-namespace resolution, dotted-path resolution, and the syntax/vocabulary cutover are implemented and verified. Generic inference from slice elements and fixed-array arguments to slice parameters is implemented, unverified here. Constructor shape selection, extension applicability, overlap checks and the collection and String inits in semantic-rules section 13.4 are implemented and verified by `custom-init-shapes`, `collection-inits` and the constructor fail fixtures; private adopting inits currently need marker parameters because shape overlap is arity-only. The existing parser and annotation paths appear to support slice, array, tuple and parenthesized-view projection subjects; the grammar now records fixed-array subjects, but behavior remains unverified. Remaining: bounded method lookup through interfaces on slice views; focused R1 verification |
 | F1 | Fixed borrowed `Message`, `format` parameters, two-level forwarding and the std Writer adapter (library-surface section 10); lifetime, error and code-size tests; measure indirect-call cost, renderer/code size and check cost | In progress |
 | R2 | Lending lines, Copy-valued `[u8].bytes()`, KeyView, PathInput/`write_path` and equivalent workloads within qualified profiles; reconcile `library-and-abi.md` POSIX path statements with the native Windows path contract before delivering that profile | Implemented for POSIX in current spelling, focused fixtures pass; Windows paths and collision stress pending |
-| R3 | Expression-bodied `fn`, diagnostics, formatter/editor completion | Expression-bodied named functions (`=> expression`, the closure body form) are implemented, including methods and interface default methods; source and formatter regressions added, but unverified (not yet built). R3 does not select specific diagnostic improvements or completion behaviors: readable type display/notes/help and LSP completion remain gaps pending a more specific selection. |
+| R3 | Expression-bodied `fn`, diagnostics, formatter/editor completion | Expression-bodied named functions (`=> expression`, the closure body form) are implemented, including methods and interface default methods; verified by source and formatter regressions. R3 does not select specific diagnostic improvements or completion behaviors: readable type display/notes/help and LSP completion remain gaps pending a more specific selection. |
 | Qualification | Frozen-input quality, target, safety and performance checks, including performance.md sections 5.1-5.2. D17 comparison harness (`tools/bench_compare.py`, `benchmarks/`, performance.md section 5.3): implemented; its `.mt` workloads type-check, but the harness has not been run and no result is claimed | After R1-R3 |
 | WP-S | Storage audit work package of tooling-and-packages.md section 7.1; operational, no dependency on an artifact store | Open |
 

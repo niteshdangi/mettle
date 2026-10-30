@@ -1,5 +1,5 @@
 import super.cmp.{PartialEq, PartialOrd, Ord, Ordering}
-import super.iter.{Iterator, Iterable, MutableIterable}
+import super.iter.Iterator
 
 copy type Raw { data: ptr<read u8>; len: usize }
 
@@ -295,22 +295,6 @@ extend<region r, T> SliceIterMut<region r, T> implements Iterator {
 extend<T> [T] {
     pub fn iter(): SliceIter<region self, T> { SliceIter(read self, 0usize) }
     pub mut fn iter_mut(): SliceIterMut<region self, T> { SliceIterMut(mut self, 0usize) }
-}
-
-extend<T> [T] implements Iterable {
-    type Item = T
-    type Iter<region r> = SliceIter<region r, T>
-    fn iter<region r>(receiver self: read Self from r): SliceIter<region r, T> {
-        SliceIter(read self, 0usize)
-    }
-}
-
-extend<T> [T] implements MutableIterable {
-    type Item = T
-    type IterMut<region r> = SliceIterMut<region r, T>
-    fn iter_mut<region r>(receiver self: mut Self from r): SliceIterMut<region r, T> {
-        SliceIterMut(mut self, 0usize)
-    }
 }
 
 // Copy-valued iteration over the bytes of a slice: yields `u8` while holding a

@@ -30,7 +30,7 @@
     "fixture_expectations_checked": 23,
     "fixtures_executed": false
   },
-  "documentation_sha256": "cf9251e2653282f1e36dcf97c5b3d5f3babc83b7ddf5d9db94a2742793a06002",
+  "documentation_sha256": "659308dd56566c8fbb7779c720a79c0f7d29a4f6d7a2c150560fad223978af4e",
   "documentation_inputs": {
     "AGENTS.md": "33d2c795b34b8f4328f1df6e463cfdb2ec9e5c7ea4a14bad07e7cd5fd4b02c66",
     "CONTRIBUTING.md": "48e922caaaf6b55ebe4dcd05f79cba26ad3cfc9f7b9c69cb6e3d010309cb68f2",
@@ -47,11 +47,11 @@
     "docs/capabilities.csv": "682c5ac9b6850d3eddc173d1025d454a89923ac78bf863f444902efcd2576916",
     "docs/capability-coverage.md": "2e8a60129b57a10064b3cd16de8876d8806cea1ae6249dbb5afdceb462c88455",
     "docs/code-quality.md": "e56a6b8d70f2b6dcf0edb13bcc08f63a5761bf6337963a3c6568c0fa38995830",
-    "docs/compiler-architecture.md": "e251524e25a2197553a274dbc5e413627265a444b8a053569b94be536872879e",
+    "docs/compiler-architecture.md": "23aec50630c592b835294a5bfa467842c7e29af50a7b8c827bf5bfd87475cbfb",
     "docs/core-grammar.md": "24c851e523e7690ffc3a52dc971e2783c9aa198512c93f878fc3b797f78c500d",
     "docs/core-semantics.md": "ac5ba48bfc6e36d3ea7908d34998fb5e3d62085b54d0a882ed8f7468441e6c91",
     "docs/decisions.md": "fb5ead15b95191a55579fcb071229526633432c5129f5d00f678dbc6f623e27a",
-    "docs/implementation-plan.md": "045dd969a485122dd155b11fcc7ffcd10bd46165c708657216f003e674ff7df2",
+    "docs/implementation-plan.md": "9b8e3dc8a1bb8001923eed8b4b2d3aee8350d12c27dd7f0ecc9f27addb466a47",
     "docs/language-grammar.md": "0c56f5017d9ab4746663a3777560c1f60bc6746dc408b196e1920050f0ca9fb4",
     "docs/language-identity.md": "7febf4dec2af3cf08e0852a2eaea4a427a884ebdaf72dae993991625ded37ab3",
     "docs/library-and-abi.md": "31fc1284e94e220177d067b50f0d0a57fa0b0dcbe5c28cc0c0c171db7842a031",

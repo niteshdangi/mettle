@@ -764,6 +764,9 @@ Type TypeStore::substitute(Type type, std::span<const TypeBinding> bindings) {
     auto arguments = record.genericParameters;
     for (auto &argument : arguments)
       argument = substitute(argument, bindings);
+    // An identity substitution names the closure itself, not a new instance.
+    if (arguments == record.genericParameters)
+      return type;
     return instantiateProduct(type, std::move(arguments));
   }
   if (record.genericOrigin != Type::Unknown) {
