@@ -1,4 +1,5 @@
 #include "resolution/load.h"
+#include "expansion/macros.h"
 #include "support/limits.h"
 #include "syntax/parser.h"
 #include <filesystem>
@@ -367,6 +368,16 @@ private:
     source.id = nextSource++;
     if (!currentRoot.empty())
       owner[source.id] = currentRoot;
+    // Declarative macros expand on the token level, before parsing.
+    if (auto generated = expansion::expandMacros(source, diagnostics, [&] {
+          auto id = nextSource++;
+          if (!currentRoot.empty())
+            owner[id] = currentRoot;
+          return id;
+        }))
+      source = std::move(*generated);
+    if (!diagnostics.empty())
+      return;
     auto tree = parseDeclarations(source, diagnostics);
     if (!diagnostics.empty())
       return;

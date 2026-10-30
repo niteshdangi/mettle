@@ -124,3 +124,17 @@ No arbitrary calendar dates or staffing estimates are included. Estimate from
 measured prototype progress and actual team capacity. Do not create a public
 repository, install tools, choose a legal license, or reserve domains merely
 because a planning document lists them.
+
+## Proposed (not accepted): declarative macro surface
+
+Status: proposed for owner review; implemented unverified in I09 (L055).
+
+- Definitions use the documented working form `macro name { (matcher) => { expansion }; }`;
+  invocations are `name!(...)`, `name![...]` or `name!{...}`. Definitions are
+  file-local and order independent until a macro namespace and export rule is selected.
+- Fragment kinds are `expr stmt pat ty path ident literal tt block item`
+  (the spelling of the specification-annex follow-set table).
+- Hygiene: identifiers an expansion binds (`let`, `var`, `for`, closure
+  parameters) are unique per expansion; `$capture(name)` is the explicit capture.
+- An `expr` fragment substitutes as one parenthesized operand.
+- Expansion depth is limited to 256 and reports the expansion path.

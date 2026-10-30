@@ -21,6 +21,13 @@ struct Generation {
   struct Mapping {
     std::size_t begin = 0, end = 0;
     Span target;
+    // Unchanged text copied from `target`: positions inside keep their offset
+    // and no generation note is printed.
+    bool exact = false;
+    // A mapping with its own provenance (a macro expansion) overrides the
+    // generation's origin and description.
+    Span origin{};
+    std::string description{};
   };
   SourceId source = 0;
   Span origin;
@@ -82,18 +89,27 @@ public:
         continue;
       }
       auto target = generation->origin;
+      auto origin = generation->origin;
+      auto description = generation->description;
+      bool exact = false;
       for (const auto &mapping : generation->mappings)
         if (mapping.begin <= item.span.begin && item.span.begin < mapping.end) {
           target = mapping.target;
+          exact = mapping.exact;
+          if (exact)
+            target.begin += item.span.begin - mapping.begin;
+          if (!mapping.description.empty()) {
+            origin = mapping.origin;
+            description = mapping.description;
+          }
           break;
         }
       printItem(sourceOf(source, target), target.begin,
                 "error[" + item.phase + "]", item.message, out);
-      if (target.begin != generation->origin.begin ||
-          target.source != generation->origin.source)
-        printItem(sourceOf(source, generation->origin),
-                  generation->origin.begin, "note",
-                  "in generated code for " + generation->description, out);
+      if (!exact && (target.begin != origin.begin ||
+                     target.source != origin.source))
+        printItem(sourceOf(source, origin), origin.begin, "note",
+                  "in generated code for " + description, out);
     }
     if (suppressed)
       out << "mettle: " << suppressed
