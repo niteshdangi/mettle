@@ -124,9 +124,9 @@ struct Integer {
 std::optional<Integer> parseInteger(std::string spelling, bool negative) {
   Integer result;
   result.number.negative = negative;
-  for (auto type : {Type::I128, Type::U128, Type::Isize, Type::Usize, Type::I64,
-                    Type::U64, Type::I32, Type::U32, Type::I16, Type::U16,
-                    Type::I8, Type::U8}) {
+  for (auto type :
+       {Type::I128, Type::U128, Type::Isize, Type::Usize, Type::I64, Type::U64,
+        Type::I32, Type::U32, Type::I16, Type::U16, Type::I8, Type::U8}) {
     auto name = typeName(type);
     if (spelling.ends_with(name)) {
       spelling.resize(spelling.size() - name.size());
@@ -426,10 +426,10 @@ private:
     } catch (const std::invalid_argument &error) {
       std::string message = error.what();
       if (message == "required integer constant overflows")
-        message = "integer overflow in constant expression (" + op + " on " +
-                  (type == Type::Unknown ? "integer"
-                                         : std::string(typeName(type))) +
-                  ")";
+        message =
+            "integer overflow in constant expression (" + op + " on " +
+            (type == Type::Unknown ? "integer" : std::string(typeName(type))) +
+            ")";
       return fail("constant", span, message);
     }
   }
@@ -480,12 +480,12 @@ private:
       return fail("type", node.span, "casts apply to scalar types only");
     auto to = target->type;
     if (value.kind == Value::Kind::Integer && isInteger(to))
-      return integerValue(to, castInteger(value.number, to,
-                                          options.pointerBits));
+      return integerValue(to,
+                          castInteger(value.number, to, options.pointerBits));
     if ((value.kind == Value::Kind::Bool || value.kind == Value::Kind::Char) &&
         isInteger(to))
-      return integerValue(to, castInteger(value.number, to,
-                                          options.pointerBits));
+      return integerValue(to,
+                          castInteger(value.number, to, options.pointerBits));
     if (value.kind == Value::Kind::Bool && to == Type::Bool)
       return value;
     if (value.kind == Value::Kind::Char && to == Type::Char)
@@ -643,12 +643,11 @@ private:
       auto rest = std::find_if(
           pattern.children.begin(), pattern.children.end(),
           [](const Pattern &child) { return child.kind == PatternKind::Rest; });
-      auto prefix =
-          static_cast<std::size_t>(rest - pattern.children.begin());
-      auto suffix = rest == pattern.children.end()
-                        ? 0
-                        : static_cast<std::size_t>(pattern.children.end() -
-                                                   rest - 1);
+      auto prefix = static_cast<std::size_t>(rest - pattern.children.begin());
+      auto suffix =
+          rest == pattern.children.end()
+              ? 0
+              : static_cast<std::size_t>(pattern.children.end() - rest - 1);
       auto fixed = rest == pattern.children.end() ? pattern.children.size()
                                                   : prefix + suffix;
       if (rest == pattern.children.end() ? value.elements.size() != fixed
@@ -658,17 +657,16 @@ private:
         return false;
       }
       for (std::size_t i = 0; i < prefix; ++i) {
-        auto matched =
-            matches(pattern.children[i], value.elements[i], binds,
-                    mutableBinding);
+        auto matched = matches(pattern.children[i], value.elements[i], binds,
+                               mutableBinding);
         if (!matched || !*matched)
           return matched;
       }
       for (std::size_t i = 0; i < suffix; ++i) {
-        auto matched = matches(pattern.children[prefix + 1 + i],
-                               value.elements[value.elements.size() - suffix +
-                                              i],
-                               binds, mutableBinding);
+        auto matched =
+            matches(pattern.children[prefix + 1 + i],
+                    value.elements[value.elements.size() - suffix + i], binds,
+                    mutableBinding);
         if (!matched || !*matched)
           return matched;
       }
@@ -686,9 +684,8 @@ private:
   Opt patternLiteral(const Pattern &pattern) {
     if (pattern.literalKind == TokenKind::Integer) {
       bool negative = pattern.text.starts_with("-");
-      auto parsed = parseInteger(negative ? pattern.text.substr(1)
-                                          : pattern.text,
-                                 negative);
+      auto parsed = parseInteger(
+          negative ? pattern.text.substr(1) : pattern.text, negative);
       if (!parsed)
         return fail("lex", pattern.span, "malformed integer literal");
       return integerValue(parsed->suffix, parsed->number);
@@ -696,9 +693,9 @@ private:
     if (pattern.literalKind == TokenKind::Character ||
         pattern.literalKind == TokenKind::Byte) {
       Diagnostics scratch;
-      auto code = characterLiteral(pattern.text,
-                                   pattern.literalKind == TokenKind::Byte,
-                                   scratch, pattern.span);
+      auto code =
+          characterLiteral(pattern.text, pattern.literalKind == TokenKind::Byte,
+                           scratch, pattern.span);
       if (!code)
         return fail("lex", pattern.span, "malformed character literal");
       return pattern.literalKind == TokenKind::Byte
@@ -887,9 +884,9 @@ private:
         if (!step(iterable.span))
           return std::nullopt;
         items.push_back(current);
-        current.number = evaluateIntegerConstant(
-            "+", kernel, current.number, integerLiteral(1),
-            options.pointerBits);
+        current.number =
+            evaluateIntegerConstant("+", kernel, current.number,
+                                    integerLiteral(1), options.pointerBits);
       }
     } else if (iterable.kind == Kind::Range) {
       return unsupported(iterable.span, "an unbounded range");
@@ -986,8 +983,9 @@ private:
                       "' in a constant expression");
     if (!function.genericParameters.empty() || function.constructor ||
         !function.owner.empty() || function.variadic ||
-        function.explicitReceiver || !function.body.get() || function.destructor ||
-        !function.error.empty() || function.foreignDeclaration)
+        function.explicitReceiver || !function.body.get() ||
+        function.destructor || !function.error.empty() ||
+        function.foreignDeclaration)
       return unsupported(callee.span,
                          "calling '" + callee.text +
                              "' (generic, method, variadic or fallible "
@@ -1002,8 +1000,8 @@ private:
       if (parameter.mode == "mut" ||
           (parameter.pattern.has_value() &&
            parameter.pattern->kind != PatternKind::Binding))
-        return unsupported(callee.span, "this parameter of '" + callee.text +
-                                            "'");
+        return unsupported(callee.span,
+                           "this parameter of '" + callee.text + "'");
       auto parameterShape = shape(parameter.annotation, parameter.span);
       if (!parameterShape)
         return std::nullopt;
@@ -1023,11 +1021,11 @@ private:
       const Node &argument = *node.children[i];
       std::size_t slot = position;
       if (!argument.name.empty()) {
-        auto named = std::find_if(function.parameters.begin(),
-                                  function.parameters.end(),
-                                  [&](const Parameter &parameter) {
-                                    return parameter.name == argument.name;
-                                  });
+        auto named =
+            std::find_if(function.parameters.begin(), function.parameters.end(),
+                         [&](const Parameter &parameter) {
+                           return parameter.name == argument.name;
+                         });
         if (named == function.parameters.end())
           return fail("type", argument.span,
                       "'" + callee.text + "' has no parameter '" +
@@ -1136,9 +1134,9 @@ private:
                     "operator '" + node.text + "' does not apply to " +
                         describe(*operand));
       if (node.text == "-")
-        return integerOperation("-", operand->type, integerValue(Type::Unknown,
-                                                                  {}),
-                                *operand, node.span);
+        return integerOperation("-", operand->type,
+                                integerValue(Type::Unknown, {}), *operand,
+                                node.span);
       if (operand->type == Type::Unknown &&
           !coerce(*operand, scalarShape(Type::I32), node.span))
         return std::nullopt;
@@ -1249,8 +1247,7 @@ private:
         carried = std::move(*value);
       }
       if (node.kind == Kind::Return && !frame().inFunction)
-        return fail("constant", node.span,
-                    "'return' outside a const function");
+        return fail("constant", node.span, "'return' outside a const function");
       signal = node.kind == Kind::Break      ? Signal::Break
                : node.kind == Kind::Continue ? Signal::Continue
                                              : Signal::Return;
@@ -1355,8 +1352,8 @@ private:
     }
     std::optional<Shape> agreed;
     for (const auto &child : node.children) {
-      auto value = eval(*child, element ? element : (agreed ? &*agreed
-                                                            : nullptr));
+      auto value =
+          eval(*child, element ? element : (agreed ? &*agreed : nullptr));
       if (!value)
         return std::nullopt;
       if (!agreed) {

@@ -486,12 +486,12 @@ Type Checker::constantType(const Node &node, Type expected) {
     try {
       return checked.types->constantExpression(
           valueType == Type::Bool ? "==" : "^",
-          {operand, checked.types->constant(
-                        valueType, valueType == Type::Bool ? integerLiteral(0)
-                                   : isSignedInteger(valueType)
-                                       ? integerLiteral(-1)
-                                       : integerMaximum(valueType,
-                                                        pointerBits()))});
+          {operand,
+           checked.types->constant(
+               valueType, valueType == Type::Bool ? integerLiteral(0)
+                          : isSignedInteger(valueType)
+                              ? integerLiteral(-1)
+                              : integerMaximum(valueType, pointerBits()))});
     } catch (const std::invalid_argument &failure) {
       error("type", node.span, failure.what());
       return Type::Unknown;

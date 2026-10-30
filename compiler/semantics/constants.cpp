@@ -246,8 +246,8 @@ std::optional<Value> Checker::constantValueOf(const StaticConstant &constant) {
   return value;
 }
 
-std::optional<StaticConstant>
-Checker::staticFromValue(const Value &value, Type type, Span span) {
+std::optional<StaticConstant> Checker::staticFromValue(const Value &value,
+                                                       Type type, Span span) {
   StaticConstant result;
   result.type = type;
   auto mismatch = [&]() -> std::optional<StaticConstant> {
@@ -277,8 +277,8 @@ Checker::staticFromValue(const Value &value, Type type, Span span) {
     result.kind = StaticConstant::Kind::Aggregate;
     for (std::size_t i = 0; i < value.elements.size(); ++i) {
       auto element = staticFromValue(
-          value.elements[i], tuple ? record.fields[i].type : record.components[0],
-          span);
+          value.elements[i],
+          tuple ? record.fields[i].type : record.components[0], span);
       if (!element)
         return std::nullopt;
       result.fields.push_back(std::move(*element));

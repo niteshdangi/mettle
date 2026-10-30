@@ -860,7 +860,7 @@ on-disk there; hosted names avoid reserved words (`read_some`, `write_some`,
 
 ### 8.4. Builds, concurrency and async: I09-I11
 
-**L054 status (const evaluation): implemented, unverified.** The `compiler/consteval` evaluator and `const fn` are written and wired into constants, array lengths and statics, with tests in `tests/source/{run,fail}/const-eval-*.mt` and `tests/consteval/target_width.cpp`; the lane could not build or run them, so no verification is claimed. The driver admits no 32-bit target, so target-width evidence is the checker-level unit test. A recursion-depth-limit case segfaulted in an earlier build (possibly stale binary) and is unresolved.
+**L054 status (const evaluation): implemented and verified on macOS ARM64.** The `compiler/consteval` evaluator and `const fn` are wired into constants, array lengths, constant generic arguments and statics. Evidence: `tests/source/{run,fail}/const-eval-*.mt` (Debug and Release, including the recursion-depth limit, which evaluates on a dedicated large stack) and `compiler.consteval-target` (`tests/consteval/target_width.cpp`); the driver admits no 32-bit target, so target-width evidence is that checker-level unit test. Known gap: an unsuffixed integer local in a `const fn` (`var i = 0`) is fixed to `i32` instead of being inferred from later use as ordinary checking does.
 
 I09 completes required constant evaluation, hygienic declarative macros, host
 procedural extensions, attribute/derive/cfg phases and versioned token APIs.

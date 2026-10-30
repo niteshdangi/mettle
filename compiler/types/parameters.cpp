@@ -95,7 +95,7 @@ Type TypeStore::constantExpression(std::string operation,
     throw std::invalid_argument("invalid shift in constant expression");
   if (left && right) {
     auto value = evaluateIntegerConstant(operation, operandType, *left, *right,
-                                        pointerBits);
+                                         pointerBits);
     return constant(comparison || logical ? Type::Bool : operandType,
                     std::move(value));
   }
