@@ -220,7 +220,7 @@ Function Parser::function(bool allowDeclaration) {
       (is(";") || peek().kind == TokenKind::Newline || is("}"))) {
     auto saved = position;
     newlines();
-    if (!is("{")) {
+    if (!is("{") && !is("=>")) {
       position = saved;
       if (asyncFunction)
         feature("async functions without a body are not implemented");
@@ -242,7 +242,18 @@ Function Parser::function(bool allowDeclaration) {
     bool saved;
     ~Restore() { flag = saved; }
   } restore{inAsyncBody, savedAsync};
-  result.body = block();
+  if (take("=>")) {
+    if (result.constructor)
+      fail("constructors require a block body");
+    newlines();
+    auto expression = expr();
+    auto body = node(Kind::Block, expression->span);
+    body->children.push_back(std::move(expression));
+    finish(*body);
+    result.body = NodeOwner(std::move(body));
+  } else {
+    result.body = block();
+  }
   result.span.end = result.body->span.end;
   if (asyncFunction)
     lowerAsync(result);

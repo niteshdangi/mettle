@@ -190,7 +190,7 @@ function      = attributes, [ visibility ], [ "unsafe" ], [ "const" ],
                 [ "async" ], [ "mut" | "take" | "static" ],
                 "fn", IDENT, [ generics ], "(", [ parameters ], ")",
                 [ result_annotation ], [ "throws", type ],
-                [ where_clause ], ( block | ";" ) ;
+                [ where_clause ], ( block | "=>", expression | ";" ) ;
 associated_type = attributes, [ visibility ], "type", IDENT, [ generics ],
                   [ ":", bounds ], [ where_clause ], [ "=", type ], [ ";" ] ;
 constant      = [ visibility ], "const", IDENT, ":", type,
@@ -207,6 +207,12 @@ implies a default result. Definitions with bodies, including methods, generic
 functions and public functions, may omit the result under core-semantics
 section 8. Resolve and publish their complete inferred signatures before use;
 an implementation cannot change an interface's declared contract by inference.
+An expression body `=> expression`, as for closures (section 13.4), is
+equivalent to a block whose tail is that expression. It is supported for named
+functions, methods, and interface default method bodies; constructors still use
+blocks. The expression ends at the item
+separator or unsuppressed newline, while its nested delimiters and operators
+retain ordinary expression parsing.
 
 Implicit receiver conventions remain: read `fn`, exclusive `mut fn`, consuming
 `take fn`, and no receiver for `static fn`. Advanced receivers use a first
