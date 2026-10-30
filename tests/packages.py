@@ -470,6 +470,52 @@ def fmt_normalizes_layout_only():
         macro.read_text()
 
 
+def lint_reports_semantic_findings():
+    source = evidence / "lint.mt"
+    source.write_text(
+        "import core::iter::{Iterator, Iterable};\n"
+        "copy enum Error { Bad }\n"
+        "fn value(input: i32): i32 throws Error {\n"
+        "    if input < 0 { throw Error::Bad }\n"
+        "    input\n"
+        "}\n"
+        "fn spare(): i32 {\n"
+        "    let unused = 1\n"
+        "    var counter = 2\n"
+        "    return counter\n"
+        "    3\n"
+        "}\n"
+        "@allow(unused-binding)\n"
+        "fn quiet(): i32 {\n"
+        "    let ignored = 1\n"
+        "    0\n"
+        "}\n"
+        "fn main(): i32 {\n"
+        "    capture value(1)\n"
+        "    let _ = capture value(2)\n"
+        "    0\n"
+        "}\n")
+    text = invoke(["lint", source], 0,
+                  ["warning[unused-binding]", "binding 'unused'",
+                   "warning[unused-mutability]", "'var counter'",
+                   "warning[unused-import]", "core::iter::Iterator",
+                   "core::iter::Iterable", "warning[unreachable-code]",
+                   "warning[unused-outcome]"])
+    # The function-level @allow wins; discarded results and `_` are fine.
+    assert "'ignored'" not in text, text
+    invoke(["lint", source, "--deny", "unused-outcome"], 1,
+           ["error[unused-outcome]", "warning[unused-binding]"])
+    invoke(["lint", source, "--deny", "warnings", "--allow", "unused-import"], 1,
+           ["error[unused-binding]"])
+    text = invoke(["lint", source, "--allow", "warnings"])
+    assert "warning[" not in text and "error[" not in text, text
+    # Lint runs the whole front end: a type error is an ordinary error.
+    broken = evidence / "broken-lint.mt"
+    broken.write_text("fn main(): i32 {\n    true\n}\n")
+    invoke(["lint", broken], 1, ["error[type]"])
+    invoke(["lint", source, "--deny", "no-such-rule"], 2)
+
+
 def run_forwards_args_and_exit_status():
     directory = evidence / "run-case"
     directory.mkdir()
@@ -626,7 +672,7 @@ CASES = [path_dependency, missing_lock_locked, lock_corruption,
          migrate_preserves_syntax_tree, run_forwards_args_and_exit_status,
          test_reports_pass_fail_ignored_and_isolates_panics,
          test_filter_exact, bench_reports_timing, fmt_normalizes_layout_only,
-         debug_info]
+         lint_reports_semantic_findings, debug_info]
 
 failures = []
 for case in CASES:

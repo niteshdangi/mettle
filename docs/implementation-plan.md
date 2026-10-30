@@ -1010,7 +1010,7 @@ I12 status: `mettle fmt FILE... [--check]` implemented and verified (see
 checked by token sequence, syntax-tree fingerprint and idempotence. `mettle run`,
 `mettle test` and `mettle bench` are implemented and verified (driver
 `execute.cpp`, expansion `harness.cpp`; contract in tooling-and-packages sections
-3 and 4). Remaining I12 work: `doc`, `lint`, line breaking/wrapping in `fmt`,
+3 and 4). `mettle lint` is implemented, unverified (not yet built): five semantic rules over checked facts, `--allow/--warn/--deny` and function-level `@allow/@warn/@deny` (tooling-and-packages section 3). Remaining I12 work: `doc`, further lint rules and machine-readable findings, line breaking/wrapping in `fmt`,
 doctests, machine-readable test results, test timeouts, tests and benchmarks
 outside the root module, benchmark handles, LSP and debugger
 workflows. The milestone is not complete.

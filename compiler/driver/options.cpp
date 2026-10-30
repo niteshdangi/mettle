@@ -1,5 +1,6 @@
 #include "driver/options.h"
 #include "backend/llvm/object.h"
+#include "lint/lint.h"
 #include <algorithm>
 #include <iostream>
 
@@ -16,6 +17,13 @@ void usage() {
          "       mettle fmt FILE... [--check]\n"
          "         (canonical layout, rewriting files in place; --check lists "
          "files that would change and exits 1 without rewriting)\n"
+         "       mettle lint FILE|PACKAGE [--allow|--warn|--deny RULE]... "
+         "[build options]\n"
+         "         (runs the front end, then semantic lints over the checked "
+         "program: unused-binding, unused-mutability, unused-import, "
+         "unreachable-code, unused-outcome; RULE `warnings` selects all; "
+         "exits 1 on a denied finding; @allow/@warn/@deny(RULE) on a function "
+         "overrides the flags inside it)\n"
          "       mettle build FILE -o OUTPUT [--emit "
          "executable|object|llvm|ir]\n"
          "         [--profile debug|release] [--overflow-checks on|off]\n"
@@ -62,7 +70,8 @@ std::optional<Options> options(int argc, char **argv) {
       result.command != "tokens" && result.command != "syntax" &&
       result.command != "clean" && result.command != "migrate" &&
       result.command != "fmt" && result.command != "run" &&
-      result.command != "test" && result.command != "bench")
+      result.command != "test" && result.command != "bench" &&
+      result.command != "lint")
     return std::nullopt;
   bool selection = result.command == "test" || result.command == "bench";
   bool profileGiven = false;
@@ -120,7 +129,12 @@ std::optional<Options> options(int argc, char **argv) {
       if (++i == argc)
         return std::nullopt;
       std::string value = argv[i];
-      if (arg == "-o")
+      if (result.command == "lint" &&
+          (arg == "--allow" || arg == "--warn" || arg == "--deny")) {
+        if (value != "warnings" && !lint::known(value))
+          return std::nullopt;
+        result.lintLevels.emplace_back(arg.substr(2), value);
+      } else if (arg == "-o")
         result.output = value;
       else if (arg == "--emit")
         result.emit = value;

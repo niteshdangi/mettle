@@ -200,6 +200,16 @@ public:
   const PatternFacts &facts(const Pattern &pattern) const {
     return patterns.at(&pattern);
   }
+  // Non-throwing lookups for consumers that visit syntax the checker may not
+  // have reached.
+  const NodeFacts *find(const Node &node) const {
+    auto found = nodes.find(&node);
+    return found == nodes.end() ? nullptr : &found->second;
+  }
+  const PatternFacts *find(const Pattern &pattern) const {
+    auto found = patterns.find(&pattern);
+    return found == patterns.end() ? nullptr : &found->second;
+  }
   const FunctionFacts &function(std::size_t index) const {
     return functions.at(index);
   }

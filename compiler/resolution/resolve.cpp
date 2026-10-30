@@ -140,11 +140,20 @@ std::vector<std::size_t> Resolution::find(ModuleId module,
         (space == Namespace::Module && !definition.target) ||
         (space == Namespace::Type && definition.target))
       continue;
+    if (binding.import && !binding.prelude)
+      usedImports.emplace(*binding.import, std::string(name));
     if (std::find(result.begin(), result.end(), binding.definition) ==
         result.end())
       result.push_back(binding.definition);
   }
   return result;
+}
+
+bool Resolution::importUsed(std::size_t index, std::string_view name) const {
+  if (!name.empty())
+    return usedImports.contains({index, std::string(name)});
+  auto first = usedImports.lower_bound({index, std::string()});
+  return first != usedImports.end() && first->first == index;
 }
 
 std::optional<std::string>
@@ -506,7 +515,7 @@ private:
 
   bool bind(ModuleId module, std::string_view name, Target target,
             ModuleId visible, bool explicitBinding, Span span,
-            std::size_t importIndex) {
+            std::size_t importIndex, bool prelude = false) {
     const auto &definition = result.definitions[target.definition];
     auto &bindings =
         result.scopes[module].bindings[key(definition.space, name)];
@@ -535,7 +544,7 @@ private:
       return false;
     }
     bindings.push_back(
-        {target.definition, visible, explicitBinding, importIndex});
+        {target.definition, visible, explicitBinding, importIndex, prelude});
     return true;
   }
 
@@ -621,7 +630,7 @@ private:
           const auto &definition = result.definitions[target.definition];
           if (!result.scopes[module].bindings.contains(
                   key(definition.space, path.back())))
-            bind(module, path.back(), target, module, false, {}, 0);
+            bind(module, path.back(), target, module, false, {}, 0, true);
         }
       }
     }

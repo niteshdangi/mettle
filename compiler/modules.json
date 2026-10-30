@@ -119,6 +119,12 @@
       "files": ["pipeline/compile.h", "pipeline/compile.cpp"]
     },
     {
+      "name": "lint", "directory": "lint", "kind": "STATIC",
+      "dependencies": ["semantics", "syntax", "types", "source"],
+      "public_headers": ["lint/lint.h"],
+      "files": ["lint/lint.h", "lint/lint.cpp"]
+    },
+    {
       "name": "cleanup", "directory": "cleanup", "kind": "STATIC",
       "dependencies": ["ir", "types", "places", "support"], "public_headers": ["cleanup/plan.h"],
       "files": ["cleanup/plan.h", "cleanup/plan.cpp"]
@@ -143,7 +149,7 @@
     },
     {
       "name": "driver", "directory": "driver", "kind": "EXECUTABLE",
-      "dependencies": ["source", "diagnostics", "syntax", "expansion", "resolution", "packages", "ir", "types", "pipeline", "backend_llvm"],
+      "dependencies": ["source", "diagnostics", "syntax", "expansion", "resolution", "packages", "ir", "types", "semantics", "lint", "pipeline", "backend_llvm"],
       "llvm": true, "public_headers": [],
       "files": ["driver/main.cpp", "driver/options.h", "driver/options.cpp", "driver/run.cpp",
         "driver/inspect.h", "driver/inspect.cpp", "driver/output.h", "driver/output.cpp",

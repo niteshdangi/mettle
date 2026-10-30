@@ -76,7 +76,9 @@ public:
   static std::optional<ir::VerifiedProgram> run(Module tree,
                                                 Diagnostics &diagnostics,
                                                 bool requireEntry = true,
-                                                TargetFacts target = {}) {
+                                                TargetFacts target = {},
+                                                const CheckedObserver &observe =
+                                                    {}) {
     if (!diagnostics.empty())
       return std::nullopt;
     auto resolved = resolution::resolve(tree, diagnostics);
@@ -86,6 +88,8 @@ public:
                          requireEntry, std::move(target));
     if (!checked)
       return std::nullopt;
+    if (observe)
+      observe(*checked);
     auto program = lowering::lower(*checked, diagnostics);
     program.requireEntry = requireEntry;
     auto types = std::make_shared<TypeStore>(*program.types);
@@ -327,8 +331,9 @@ std::optional<ir::VerifiedProgram> compile(const std::vector<Source> &sources,
 std::optional<ir::VerifiedProgram> compile(Module module,
                                            Diagnostics &diagnostics,
                                            bool requireEntry,
-                                           TargetFacts target) {
+                                           TargetFacts target,
+                                           const CheckedObserver &observe) {
   return Compiler::run(std::move(module), diagnostics, requireEntry,
-                       std::move(target));
+                       std::move(target), observe);
 }
 } // namespace mettle::pipeline

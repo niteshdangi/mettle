@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -30,6 +31,10 @@ public:
                                     Namespace space, Span use,
                                     Diagnostics *diagnostics = nullptr) const;
   const std::vector<ModuleInfo> &modules() const { return moduleInfos; }
+  // Whether a lookup resolved through the binding that import `index` (the
+  // position in `Module::imports`) made under `name`; an empty `name` asks
+  // about any of its bindings (glob imports).
+  bool importUsed(std::size_t index, std::string_view name = {}) const;
 
 private:
   friend std::shared_ptr<const Resolution> resolve(const Module &,
@@ -48,6 +53,8 @@ private:
     ModuleId boundary;
     bool explicitBinding;
     std::optional<std::size_t> import;
+    // Bound by the prelude, not by an import declaration.
+    bool prelude = false;
   };
   struct Scope {
     std::unordered_map<std::string, std::vector<Binding>> bindings;
@@ -63,6 +70,8 @@ private:
   std::vector<Definition> definitions;
   std::vector<Scope> scopes;
   std::vector<Item> items;
+  // Bindings that lookups went through, as (import index, local name).
+  mutable std::set<std::pair<std::size_t, std::string>> usedImports;
   // Lookup indexes over `items`, built once after resolution completes.
   struct Interval {
     std::size_t begin, end, item;

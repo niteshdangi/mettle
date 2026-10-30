@@ -5,9 +5,11 @@
 #include "driver/options.h"
 #include "driver/output.h"
 #include "expansion/macros.h"
+#include "lint/lint.h"
 #include "packages/plan.h"
 #include "pipeline/compile.h"
 #include "resolution/load.h"
+#include "semantics/checked.h"
 #include "syntax/format.h"
 #include "syntax/lexer.h"
 #include "syntax/migrate.h"
@@ -159,6 +161,79 @@ int formatFiles(const Options &options) {
   }
   return status;
 }
+
+// Lint levels from the command line; `include` keeps findings out of the
+// standard library, dependency packages and generated code.
+lint::Configuration
+lintConfiguration(const Options &options, const Diagnostics &diagnostics,
+                  const std::string &rootPath,
+                  const std::vector<resolution::Library::Package> &mounts) {
+  namespace fs = std::filesystem;
+  lint::Configuration configuration;
+  for (const auto &[name, rule] : options.lintLevels) {
+    auto level = name == "allow"  ? lint::Level::Allow
+                 : name == "warn" ? lint::Level::Warn
+                                  : lint::Level::Deny;
+    if (rule == "warnings") {
+      configuration.defaultLevel = level;
+      continue;
+    }
+    configuration.levels[rule] = level;
+  }
+  auto canonical = [](const std::string &path) {
+    std::error_code error;
+    return fs::weakly_canonical(path, error);
+  };
+  auto inside = [](const fs::path &path, const fs::path &directory) {
+    auto relative = path.lexically_relative(directory);
+    return !relative.empty() && *relative.begin() != "..";
+  };
+  auto root = canonical(rootPath);
+  std::vector<fs::path> external{canonical(options.libraryDirectory)};
+  for (const auto &mount : mounts)
+    external.push_back(canonical(mount.source).parent_path());
+  configuration.include = [&diagnostics, root, external, inside,
+                           canonical](Span span) {
+    if (span.source == 0)
+      return true;
+    if (diagnostics.isGenerated(span.source))
+      return false;
+    for (const auto &source : diagnostics.registeredSources()) {
+      if (source.id != span.source)
+        continue;
+      auto path = canonical(source.path);
+      return std::none_of(external.begin(), external.end(),
+                          [&](const fs::path &directory) {
+                            return !directory.empty() &&
+                                   !inside(root, directory) &&
+                                   inside(path, directory);
+                          });
+    }
+    return true;
+  };
+  return configuration;
+}
+
+// Prints the findings with the front end's provenance rules; true when none is
+// denied.
+bool reportFindings(const std::vector<lint::Finding> &findings,
+                    Diagnostics &diagnostics, const Source &source) {
+  std::size_t warnings = 0, denied = 0;
+  for (const auto &finding : findings) {
+    if (finding.level == lint::Level::Deny) {
+      diagnostics.error(finding.rule, finding.span, finding.message);
+      ++denied;
+    } else {
+      diagnostics.warning(finding.rule, finding.span, finding.message);
+      ++warnings;
+    }
+  }
+  diagnostics.print(source, std::cerr);
+  if (warnings || denied)
+    std::cerr << "mettle: lint: " << warnings << " warning(s), " << denied
+              << " denied finding(s)\n";
+  return denied == 0;
+}
 } // namespace
 
 int run(const Options &requested) {
@@ -181,9 +256,10 @@ int build(const Options &requested,
   std::set<std::string> rootFeatures(options.features.begin(),
                                      options.features.end());
   if (packageInput(options)) {
-    if (options.command != "build" && options.command != "check") {
-      std::cerr << "mettle: error[package]: only 'check' and 'build' accept a "
-                   "package\n";
+    if (options.command != "build" && options.command != "check" &&
+        options.command != "lint") {
+      std::cerr << "mettle: error[package]: only 'check', 'lint' and 'build' "
+                   "accept a package\n";
       return 2;
     }
     Diagnostics planning;
@@ -367,13 +443,25 @@ int build(const Options &requested,
                   << cacheKey->substr(0, 12) << '\n';
     }
   }
+  std::vector<lint::Finding> findings;
+  pipeline::CheckedObserver observer;
+  if (options.command == "lint") {
+    auto configuration = lintConfiguration(options, diagnostics, source.path,
+                                           mounts);
+    observer = [&findings, configuration](const CheckedModule &checked) {
+      findings = lint::run(checked, configuration);
+    };
+  }
   auto program = tree ? pipeline::compile(std::move(*tree), diagnostics,
-                                          !options.freestanding, facts)
+                                          !options.freestanding, facts,
+                                          observer)
                       : std::nullopt;
   if (!program) {
     diagnostics.print(source, std::cerr);
     return 1;
   }
+  if (options.command == "lint")
+    return reportFindings(findings, diagnostics, source) ? 0 : 1;
   if (options.command == "check")
     return 0;
   int status = emit(options, source, *program, diagnostics.registeredSources());
