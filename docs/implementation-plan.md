@@ -1015,6 +1015,11 @@ doctests, machine-readable test results, test timeouts, tests and benchmarks
 outside the root module, benchmark handles, LSP and debugger
 workflows. The milestone is not complete.
 
+I12 status, source-level debug info: `-g` DWARF (compile unit, subprograms,
+line table, locals/parameters with basic/pointer/array/product types) is
+implemented and verified; sums, owners, erased values and
+async states are opaque, and scopes/inlining/CodeView remain open.
+
 I13 closes remaining operation mappings with compiled native declarations and
 per-operation semantic evidence, including supporting protocols, reexports,
 deprecated stable APIs and target cfg branches missing from rendered docs.

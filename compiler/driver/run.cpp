@@ -341,7 +341,9 @@ int build(const Options &requested,
   // Executables and objects are reused when every input of the build,
   // as gathered while loading, matches a stored result.
   std::optional<std::string> cacheKey;
-  if (tree && options.command == "build" &&
+  // `-g` builds are never cached: paths and the Darwin dSYM are outputs that
+  // the cache does not store.
+  if (tree && options.command == "build" && !options.debugInfo &&
       (options.emit == "executable" || options.emit == "object")) {
     if (!store)
       store = openStore(options);
@@ -374,7 +376,7 @@ int build(const Options &requested,
   }
   if (options.command == "check")
     return 0;
-  int status = emit(options, source, *program);
+  int status = emit(options, source, *program, diagnostics.registeredSources());
   if (status == 0 && cacheKey && store) {
     bool stored =
         store->put(*cacheKey, options.output, options.emit == "executable");

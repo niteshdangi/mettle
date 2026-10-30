@@ -16,6 +16,9 @@ struct Options {
   std::string target, cc, sysroot, libraryDirectory;
   std::optional<bool> checks;
   bool freestanding = false;
+  // `-g`: source-level DWARF (not implied by any profile, so default output
+  // stays byte-identical).
+  bool debugInfo = false;
   // Package builds (the input is a package directory or its Mettle.toml).
   std::string bin;
   // Requested features: a package's solver input, or for a single source

@@ -117,6 +117,8 @@ public:
           << ")\n";
   }
   std::vector<Diagnostic> items;
+  // Every source whose text was read, for consumers mapping spans to lines.
+  const std::vector<Source> &registeredSources() const { return sources; }
 
 private:
   SourceId currentSource = 0;

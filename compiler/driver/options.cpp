@@ -21,6 +21,8 @@ void usage() {
          "         [--profile debug|release] [--overflow-checks on|off]\n"
          "         [--target TRIPLE] [--cc CXX] [--sysroot PATH]\n"
          "         [--library-dir PATH] [--features a,b]\n"
+         "         [-g] (source-level DWARF; on Darwin an executable also gets "
+         "OUTPUT.dSYM from dsymutil)\n"
          "         [--freestanding] (object/LLVM/IR output, aborting panics, "
          "no implicit hosted entry)\n"
          "       mettle check|build PACKAGE_DIR|Mettle.toml [-o OUTPUT]\n"
@@ -94,6 +96,10 @@ std::optional<Options> options(int argc, char **argv) {
     }
     if (arg == "--check") {
       result.check = true;
+      continue;
+    }
+    if (arg == "-g") {
+      result.debugInfo = true;
       continue;
     }
     if (arg == "--no-cache" || arg == "--explain" || arg == "--dry-run") {

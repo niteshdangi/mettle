@@ -89,6 +89,7 @@ ir::Function Builder::runClosure(std::size_t index) {
   function.regionSignature = checked.regionSignature;
   function.genericEqualities = checked.genericEqualities;
   function.floatingPolicy = checked.floatingPolicy;
+  function.span = closure.syntax->span;
   for (std::size_t i = environment ? 0 : 1; i < checked.locals.size(); ++i) {
     const auto &local = checked.locals[i];
     localRemap[static_cast<int>(i)] = static_cast<int>(function.locals.size());

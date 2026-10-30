@@ -21,7 +21,8 @@ namespace {
 class Lowerer {
 public:
   Lowerer(const ir::Program &program, llvm::LLVMContext &context,
-          llvm::StringRef target, bool freestanding)
+          llvm::StringRef target, bool freestanding,
+          const DebugInfoRequest *debug)
       : program(program), context(context),
         module(std::make_unique<llvm::Module>("mettle", context)),
         builder(context),
@@ -46,8 +47,16 @@ public:
           llvm::Module::Error, "mettle.target.triple",
           llvm::MDString::get(context, program.target.triple));
     lowering.freestanding = freestanding;
+    if (debug)
+      debugInfo = std::make_unique<DebugInfo>(*module, program, *debug);
   }
   std::unique_ptr<llvm::Module> run() {
+    auto result = build();
+    if (debugInfo)
+      debugInfo->finalize();
+    return result;
+  }
+  std::unique_ptr<llvm::Module> build() {
     for (const auto &storage : program.statics) {
       auto name = storage.externalName.empty() ? "mettle.static." + storage.name
                                                : storage.externalName;
@@ -177,6 +186,8 @@ public:
     for (std::size_t i = 0; i < functions.size(); ++i)
       if (!program.functions[i].blocks.empty())
         function(program.functions[i], functions[i]);
+    if (debugInfo)
+      debugInfo->clear(builder);
     for (std::size_t i = 0; i < functions.size(); ++i)
       if (externals[i] && !program.functions[i].blocks.empty() &&
           !program.functions[i].nakedAssembly)
@@ -232,6 +243,7 @@ private:
       std::tuple<Type, Type, Type, std::vector<llvm::Constant *>>;
   std::map<WitnessKey, llvm::GlobalVariable *> witnesses;
   std::map<std::string, llvm::GlobalVariable *> textLiterals;
+  std::unique_ptr<DebugInfo> debugInfo;
 
   bool interiorMutable(Type value) {
     if (!program.types->isProduct(value))
@@ -1646,9 +1658,17 @@ private:
     flags.setAllowReciprocal(policy.reciprocal);
     flags.setApproxFunc(policy.approximateFunctions);
     builder.setFastMathFlags(flags);
+    if (debugInfo)
+      debugInfo->clear(builder);
     CleanupFrame frame(lowering, source, target);
+    if (debugInfo)
+      debugInfo->begin(builder, debugInfo->attach(*target, source, true),
+                       false);
     frame.createWrapper();
     target = frame.body();
+    if (debugInfo)
+      debugInfo->begin(builder, debugInfo->attach(*target, source, false),
+                       true);
     targetAttributes(*target, program.target, source.targetFeatures);
     std::vector<llvm::BasicBlock *> blocks, ends;
     for (std::size_t i = 0; i < source.blocks.size(); ++i)
@@ -1710,6 +1730,22 @@ private:
       int block;
     };
     std::vector<Pending> pending;
+    if (debugInfo && !source.name.starts_with('<')) {
+      builder.SetInsertPoint(blocks[0]);
+      for (std::size_t i = 0; i < source.locals.size(); ++i) {
+        const auto &local = source.locals[i];
+        if (local.name.empty() || local.name.starts_with('<'))
+          continue;
+        bool borrowed =
+            local.storage == StorageDuration::Static ||
+            (i < source.parameters && (local.mode == ParameterMode::Read ||
+                                       local.mode == ParameterMode::Mut));
+        debugInfo->declare(builder, local,
+                           i < source.parameters ? static_cast<unsigned>(i + 1)
+                                                 : 0,
+                           borrowed, frame.localStorage(i));
+      }
+    }
     for (std::size_t b = 0; b < blocks.size(); ++b) {
       builder.SetInsertPoint(blocks[b]);
       for (const auto &n : source.blocks[b].instructions)
@@ -1721,6 +1757,8 @@ private:
       std::size_t position = static_cast<std::size_t>(-1);
       for (const auto &n : source.blocks[b].instructions) {
         ++position;
+        if (debugInfo)
+          debugInfo->locate(builder, n.span);
         llvm::Value *result = unit();
         auto get = [&](std::size_t i) { return values[n.operands[i].id]; };
         switch (n.op) {
@@ -2139,6 +2177,8 @@ private:
         values[n.result.id] = result;
       }
       const auto &exit = source.blocks[b].exit;
+      if (debugInfo)
+        debugInfo->locate(builder, exit.span);
       switch (exit.kind) {
       case ir::Exit::Jump:
         builder.CreateBr(blocks[exit.first]);
@@ -2197,11 +2237,12 @@ private:
 
 std::unique_ptr<llvm::Module> lower(const ir::VerifiedProgram &program,
                                     llvm::LLVMContext &context, bool checked,
-                                    llvm::StringRef target, bool freestanding) {
+                                    llvm::StringRef target, bool freestanding,
+                                    const DebugInfoRequest *debug) {
   auto selected = program.program().target.triple.empty()
                       ? target
                       : llvm::StringRef(program.program().target.triple);
-  Lowerer lowerer(program.program(), context, selected, freestanding);
+  Lowerer lowerer(program.program(), context, selected, freestanding, debug);
   lowerer.checked = checked;
   return lowerer.run();
 }

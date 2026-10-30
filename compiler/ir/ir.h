@@ -157,6 +157,8 @@ struct Function {
     ParameterMode mode;
   };
   std::vector<ArrayLoop> arrayLoops{};
+  // Declaration span of the source function; empty for synthesized ones.
+  Span span{};
 };
 struct Program {
   struct Static {

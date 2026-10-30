@@ -540,6 +540,17 @@ syntax extensions are not a public plugin system. Keep these identities distinct
 The language remains the complete agreed V1 scope; future placement is not
 permission to remove capabilities.
 
+## Source spans and debug information
+
+Every IR instruction, terminator and function (`ir::Function::span`, set by
+lowering from the declaration, closure or default body) carries one source
+`Span`; IR transforms and generic instantiation copy it. Spans are LLVM-free.
+Only the LLVM adapter (`backend/llvm/debug.*`, active under the driver's `-g`)
+turns spans into `DILocation`s with line tables built from the loaded sources,
+and builds `DISubprogram`, `DILocalVariable` and type metadata (layout offsets
+come from `types/layout.h`). A final pass drops locations that would not
+verify. Without `-g` the adapter emits no metadata.
+
 ## 6. Compilation state, errors and side effects
 
 One compilation owns its source, parsed/checked data, type/definition identities,

@@ -566,6 +566,58 @@ def bench_reports_timing():
     assert median > 100, text
 
 
+def find_dwarfdump():
+    for base in (mettle, Path(__file__).resolve()):
+        for parent in base.parents:
+            # Pinned toolchains of several hosts may sit side by side; take
+            # the one that runs here.
+            for tool in sorted(parent.glob(".tools/*/llvm/bin/llvm-dwarfdump")):
+                try:
+                    subprocess.run([str(tool), "--version"], check=True,
+                                   capture_output=True)
+                    return tool
+                except (OSError, subprocess.SubprocessError):
+                    continue
+    return shutil.which("llvm-dwarfdump")
+
+
+def debug_info():
+    dwarfdump = find_dwarfdump()
+    if dwarfdump is None:
+        print("SKIP debug_info: llvm-dwarfdump not found")
+        return
+    source = evidence / "debuggee.mt"
+    source.write_text(
+        "fn add_up(base: i32): i32 {\n"
+        "    let doubled: i32 = base * 2\n"
+        "    doubled + 1\n"
+        "}\n"
+        "fn main(): i32 {\n"
+        "    add_up(20) - 41\n"
+        "}\n")
+    plain = [evidence / "plain1.o", evidence / "plain2.o"]
+    debug = [evidence / "debug1.o", evidence / "debug2.o"]
+    for output in plain:
+        invoke(["build", source, "-o", output, "--emit", "object"])
+    for output in debug:
+        invoke(["build", source, "-o", output, "--emit", "object", "-g"])
+    assert plain[0].read_bytes() == plain[1].read_bytes()
+    assert debug[0].read_bytes() == debug[1].read_bytes()
+    assert plain[0].read_bytes() != debug[0].read_bytes()
+    assert b"debuggee.mt" not in plain[0].read_bytes()
+    info = subprocess.run([str(dwarfdump), "--debug-info", str(debug[0])],
+                          text=True, capture_output=True, check=True).stdout
+    assert "DW_TAG_compile_unit" in info, info
+    assert "DW_TAG_subprogram" in info and '"add_up"' in info, info
+    assert "DW_TAG_variable" in info and '"doubled"' in info, info
+    assert "DW_TAG_formal_parameter" in info and '"base"' in info, info
+    assert "debuggee.mt" in info, info
+    lines = subprocess.run([str(dwarfdump), "--debug-line", str(debug[0])],
+                           text=True, capture_output=True, check=True).stdout
+    assert any(row.split()[1:2] == ["3"] for row in lines.splitlines()
+               if row.startswith("0x")), lines
+
+
 CASES = [path_dependency, missing_lock_locked, lock_corruption,
          registry_resolution, version_conflict, backtracking, offline, features,
          manifest_diagnostics, package_options_need_package, incremental_reuse,
@@ -573,7 +625,8 @@ CASES = [path_dependency, missing_lock_locked, lock_corruption,
          build_script, build_script_untracked_inputs,
          migrate_preserves_syntax_tree, run_forwards_args_and_exit_status,
          test_reports_pass_fail_ignored_and_isolates_panics,
-         test_filter_exact, bench_reports_timing, fmt_normalizes_layout_only]
+         test_filter_exact, bench_reports_timing, fmt_normalizes_layout_only,
+         debug_info]
 
 failures = []
 for case in CASES:
