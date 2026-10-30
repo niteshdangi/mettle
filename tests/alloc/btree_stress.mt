@@ -1,3 +1,5 @@
+import core.clone.Clone
+import core.cmp.PartialEq
 type Counted {
     count: ptr<mut i32>
     drop { unsafe { *self.count += 1 } }
@@ -80,7 +82,7 @@ fn main(): i32 {
     var small = alloc.btree.new<i32, i32>()
     var k = 0
     while k < 40 {
-        let old = small.insert((k * 13) % 40, k)
+        let old = small.insert((k * 13) % 40, k + 0)
         k += 1
     }
     let dup = small.clone()

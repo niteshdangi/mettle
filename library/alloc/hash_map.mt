@@ -485,7 +485,7 @@ extend<region r, K: Hash + PartialEq, V, A: Allocator> OccupiedEntry<region r, K
         unsafe { mut (*self.map.entries.as_mut_ptr().add(self.index)).value }
     }
     pub take fn remove(): V {
-        match self.map.remove(self.key) {
+        match take self.map.remove(read self.key) {
             present(value) => value,
             none => package.core.panic.unreachable()
         }
@@ -518,9 +518,10 @@ extend<region r, K: Hash + PartialEq, V, A: Allocator> Entry<region r, K, V, A> 
     pub take fn and_modify<F: take fn(mut V): Unit>(modify: take F): Entry<region r, K, V, A> {
         match take self {
             Entry.Occupied(entry) => {
-                var occupied = entry
-                modify(occupied.get_mut())
-                Entry.Occupied(occupied)
+                // The entry's exclusive map loan keeps this initialized slot valid.
+                let slot = unsafe { core.ptr.from_mut((*entry.map.entries.as_mut_ptr().add(entry.index)).value) }
+                unsafe { modify(mut *slot) }
+                Entry.Occupied(entry)
             },
             Entry.Vacant(entry) => Entry.Vacant(entry)
         }

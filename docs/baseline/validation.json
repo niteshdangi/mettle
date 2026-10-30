@@ -30,7 +30,7 @@
     "fixture_expectations_checked": 23,
     "fixtures_executed": false
   },
-  "documentation_sha256": "659308dd56566c8fbb7779c720a79c0f7d29a4f6d7a2c150560fad223978af4e",
+  "documentation_sha256": "3d5a0299746b6be6f1a20b944d7f950b7324b603f5909e88c121ecd7e1f923f9",
   "documentation_inputs": {
     "AGENTS.md": "33d2c795b34b8f4328f1df6e463cfdb2ec9e5c7ea4a14bad07e7cd5fd4b02c66",
     "CONTRIBUTING.md": "48e922caaaf6b55ebe4dcd05f79cba26ad3cfc9f7b9c69cb6e3d010309cb68f2",
@@ -51,7 +51,7 @@
     "docs/core-grammar.md": "24c851e523e7690ffc3a52dc971e2783c9aa198512c93f878fc3b797f78c500d",
     "docs/core-semantics.md": "ac5ba48bfc6e36d3ea7908d34998fb5e3d62085b54d0a882ed8f7468441e6c91",
     "docs/decisions.md": "fb5ead15b95191a55579fcb071229526633432c5129f5d00f678dbc6f623e27a",
-    "docs/implementation-plan.md": "9b8e3dc8a1bb8001923eed8b4b2d3aee8350d12c27dd7f0ecc9f27addb466a47",
+    "docs/implementation-plan.md": "6ab9c7fc2c211cd907f8e4ff418d9eecc8ae74da2c80cb1864e830b164319835",
     "docs/language-grammar.md": "0c56f5017d9ab4746663a3777560c1f60bc6746dc408b196e1920050f0ca9fb4",
     "docs/language-identity.md": "7febf4dec2af3cf08e0852a2eaea4a427a884ebdaf72dae993991625ded37ab3",
     "docs/library-and-abi.md": "31fc1284e94e220177d067b50f0d0a57fa0b0dcbe5c28cc0c0c171db7842a031",

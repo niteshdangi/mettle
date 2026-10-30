@@ -268,14 +268,18 @@ private:
         if (source >= function.parameters)
           throw std::invalid_argument(
               "generic result source is not a parameter");
+        // Only views carried by the instantiated argument can flow into the
+        // result; the borrow of a `read`/`mut` parameter itself does not.
         const auto &parameter = function.locals[source];
-        if ((types->containsViews(parameter.type) ||
-             parameter.mode == ParameterMode::Read ||
-             parameter.mode == ParameterMode::Mut) &&
+        if (!types->containsViews(parameter.type) ||
             std::find(function.resultSources.begin(),
                       function.resultSources.end(),
-                      source) == function.resultSources.end())
-          function.resultSources.push_back(source);
+                      source) != function.resultSources.end())
+          continue;
+        function.resultSources.push_back(source);
+        if (parameter.mode == ParameterMode::Read ||
+            parameter.mode == ParameterMode::Mut)
+          function.resultContents.push_back(source);
       }
     function.genericResultSources.clear();
     if (function.nakedAssembly)

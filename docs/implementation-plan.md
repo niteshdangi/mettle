@@ -784,14 +784,18 @@ block it owns. Hosted builds link the `mettle_rt_alloc/dealloc/realloc` hooks in
 `tests/alloc/` (`library.alloc`): happy paths, large growth, hash collisions,
 a failing allocator, counted drops, a trap on a non-boundary `String.truncate`,
 a borrow-invalidation rejection and a structured parser + `Map<String,
-List<i64>>` workload built without std. Map `entry` operations are
-implemented, unverified (not yet built); their fixture is also unverified and
-dedicated entry loan-rejection fixtures remain required (the consumed entry's
-returned mutable view must retain its map loan; not yet validated).
+List<i64>>` workload built without std. Map `entry` operations are verified
+by `tests/alloc/map_entry.mt` on macOS; `Entry.and_modify` writes through a
+raw slot pointer because the `get_mut()` form is rejected with a likely false
+"view of local storage into caller-owned storage" diagnostic (open), and
+dedicated entry loan-rejection fixtures remain required.
 `SortedMap`/`SortedSet` are a node B-tree (minimum degree 6, nodes from the
 map's allocator, parent links, split on the way down and borrow/merge on
-removal): implemented, unverified (not yet built); `tests/alloc/btree_stress.mt`
-is the unverified fixture. Iteration is in key order (borrowing, values-only
+removal), verified on macOS by `tests/alloc/btree_stress.mt` and
+`btree_heap.mt`. Generic specialization no longer treats a `read K`/`mut K`
+parameter's own borrow as a result source when `K` merely appears in the
+result; only views carried by the instantiated argument flow
+(`generic-read-argument-*` source fixtures). Iteration is in key order (borrowing, values-only
 mutable, consuming and half-open `range`); the old contiguous `as_entries()`
 and the position-based `range` result are replaced by ordered iterators.
 Known gaps: no `SortedMap` entry API, no BTree-specific `try_` allocation
