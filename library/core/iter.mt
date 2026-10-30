@@ -135,6 +135,11 @@ pub fn collect<T, I: IntoIterator<Item = T>, C: FromIterator<T>>(items: take I):
     <C implements FromIterator<T>>::from_iter(items)
 }
 
+// The iterator of an owned `for` source; async loops keep it in their state.
+pub fn into_iterator<T: IntoIterator>(items: take T): T::IntoIter {
+    <T implements IntoIterator>::into_iter(items)
+}
+
 // Iterators that can also yield from the back.
 pub interface DoubleEndedIterator: Iterator {
     mut fn next_back(): <Self implements Iterator>::Item?;

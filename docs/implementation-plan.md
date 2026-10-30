@@ -942,14 +942,37 @@ result type inferred); and a structured diagnostic for a `let r = read x` /
 `tests/source/run/async-branches-and-subexpressions.mt`,
 `async-blocks-and-closures.mt` and `tests/source/fail/await-in-{loop,
 branch-not-last,lazy-operand}.mt`, `await-borrow-across.mt`.
-Not done: `await` in a loop (`while`/`loop`/`for`), in a branch that is not the
-last statement of its block, or in a lazily evaluated operand (`&&`, `||`,
-`??`); these are diagnosed. They need the locals of the enclosing scope carried
-between iterations or joined after the branch, and syntactic lowering cannot
-know which locals are moved or mutated. The sound design is a checker/IR-level
-state-machine transform over typed liveness (a generator-style layout where
-locals live across suspension points are fields of one state, loops are
-back-edges and borrows across an await are pinned self-references). Also not
+Await in loops and nested blocks (implemented, unverified; not yet built): a
+`while`/`loop`/`for` statement that contains an `await`, a nested block, and an
+`if`/`match` that is not last in its block lower in the same parser pass. The
+carried state is the tuple of the `var` locals in scope. A loop body becomes a
+step closure over that state, driven by `core::future::Repeat`
+(`repeat`/`Flow`/`next_iteration`/`finish_loop`); `break`/`continue` (also
+labeled, targeting the loop itself) are rewritten to returns of
+`finish_loop`/`next_iteration` and placed by the existing early-return
+lowering; the loop's final state (and `break` value) feeds the continuation of
+the statements after it. `for` desugars to
+`var <iter> = core::iter::into_iterator(source)` plus a `loop`/`match` over
+`next()`, so the iterator is one more carried `var`; a block or a joined branch
+becomes a sub-future that yields the state. Cancellation needs no special
+code: `Repeat` holds either the state or the current iteration's future, and
+dropping it drops whichever is initialized. Tests:
+`tests/source/run/async-await-in-loops.mt` and the
+`tests/source/fail/await-in-{loop,loop-return,branch-not-last}.mt` cases.
+Still diagnosed (feature errors): `await` in a lazily evaluated operand
+(`&&`, `||`, `??`); `return`/`throw`/`?` inside an awaiting loop, block or
+joined branch, and `break`/`continue` of an enclosing loop from inside a
+nested awaiting loop, block or branch (they cannot leave a sub-future); a loop
+used as a value other than a tail statement (`let n = loop { .. await .. }`);
+`while let` with an await; `for` over a borrowed place (use `take v`); an inner
+binding with the name of a carried `var`. Immutable locals and parameters used
+by a loop are captured by the step closure, so one used after an await in the
+body, or both inside and after the loop, must be copyable. Unverified: whether
+the checker accepts the generated step closure as repeatedly callable, mutation
+of a moved-in `var` capture inside `lazy`, and inference of `Flow`'s result type
+across branches. The general design (a checker/IR-level state machine over
+typed liveness with locals as fields of one state, loops as back-edges and
+borrows across an await as pinned self-references) remains open. Also not
 done: borrows of locals across an await beyond the explicit-binding diagnostic
 (the continuation captures by move, so the checker rejects the rest), async
 interface methods and explicit erased futures, scoped/borrowed tasks,

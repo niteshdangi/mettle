@@ -1,12 +1,11 @@
-// expect-error: feature 7:25 `await` inside a loop or nested block is not implemented
+// expect-error: feature 6:15 `await` in a loop is supported only when the loop is a statement of its own
 async fn g(): i32 { 1 }
 
 async fn f(): i32 {
-    var total = 0
-    while total < 3 {
-        total = total + await g()
+    let n = loop {
+        break await g()
     }
-    total
+    n
 }
 
 fn main(): i32 { 0 }

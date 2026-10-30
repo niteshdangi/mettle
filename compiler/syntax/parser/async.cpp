@@ -31,12 +31,76 @@
 //   after it move into that branch, the returning branch becomes a ready
 //   future.
 //
-// Not lowered here (reported as unsupported): `await` in a loop, in a branch
-// that is not last in its block, or in a lazily evaluated operand. They need
-// the locals of the enclosing scope carried between iterations or joined
-// after the branch, which is a checker/IR-level state-machine transform.
+// - `await` inside `while`, `loop` and `for` statements: the body becomes a
+//   step closure over the loop-carried state, a tuple of the enclosing `var`
+//   locals, run by `core::future::repeat`; `break`/`continue` (labeled or not)
+//   become `return`s of `finish_loop`/`next_iteration` (the existing early
+//   return lowering then places the statements after them), and the statements
+//   after the loop continue from the final state. `for` keeps the iterator of
+//   an owned source in the state as one more `var`;
+// - `await` in a nested block or in a branch that is not last in its block:
+//   the block or the joined branches become a sub-future yielding the state,
+//   and the following statements continue from it.
+//
+// Not lowered here (reported as unsupported): `await` in a lazily evaluated
+// operand, `return`/`throw`/`?` inside an awaiting loop, block or branch,
+// `while let` loops with an await, `for` over a borrowed place, an inner
+// binding that shadows a carried `var`, and a loop used as a value other than
+// as a statement. Immutable locals used by a loop are captured, so values used
+// both inside and after it must be copyable.
 namespace mettle::parsing {
 namespace {
+bool isLoop(const Node &node) {
+  return node.kind == Kind::While || node.kind == Kind::Loop ||
+         node.kind == Kind::For;
+}
+// A `return`, `throw` or `?` leaves the whole function, which a nested
+// sub-future cannot do.
+const Node *findExit(const Node &node) {
+  if (node.kind == Kind::Closure)
+    return nullptr;
+  if (node.kind == Kind::Return || node.kind == Kind::Throw ||
+      node.kind == Kind::Try)
+    return &node;
+  for (const auto &child : node.children)
+    if (child.get())
+      if (auto *found = findExit(*child))
+        return found;
+  return nullptr;
+}
+bool bindsName(const Pattern &pattern, const std::string &name) {
+  if ((pattern.kind == PatternKind::Binding ||
+       pattern.kind == PatternKind::At) &&
+      pattern.text == name)
+    return true;
+  return std::any_of(
+      pattern.children.begin(), pattern.children.end(),
+      [&](const Pattern &child) { return bindsName(child, name); });
+}
+bool declares(const Node &node, const std::string &name) {
+  if (node.kind == Kind::Closure)
+    return false;
+  if (node.kind == Kind::Binding && node.text == name)
+    return true;
+  for (const auto &pattern : node.patterns)
+    if (bindsName(pattern, name))
+      return true;
+  return std::any_of(node.children.begin(), node.children.end(),
+                     [&](const NodeOwner &child) {
+                       return child.get() && declares(*child, name);
+                     });
+}
+// A `for` source that the checker would iterate by borrowing.
+bool borrowedSource(const Node &node) {
+  const Node *current = &node;
+  while (current->kind == Kind::Group)
+    current = current->children[0].get();
+  return current->kind == Kind::Name || current->kind == Kind::Field ||
+         current->kind == Kind::Index ||
+         (current->kind == Kind::Unary &&
+          (current->text == "*" || current->text == "mut" ||
+           current->text == "read"));
+}
 bool isAwait(const Node &node) {
   return node.kind == Kind::Unary && node.text == "await";
 }
@@ -272,14 +336,14 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
     case Kind::While:
     case Kind::Loop:
     case Kind::For:
-      reject(current, "`await` inside a loop is not implemented: the loop "
-                      "future would have to carry the locals of the scope "
-                      "between iterations");
+      reject(current, "`await` in a loop is supported only when the loop is "
+                      "a statement of its own, not inside an expression");
       return;
     case Kind::If:
     case Kind::Match:
       reject(current, "`await` in a branch is supported only when the "
-                      "`if`/`match` is the last statement of its block");
+                      "`if`/`match` is a statement of its own, not inside an "
+                      "expression");
       return;
     default:
       eager = 0;
@@ -349,9 +413,8 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
     case Kind::For:
     case Kind::Block:
     case Kind::Unsafe:
-      reject(current, "`await` inside a loop or nested block is not "
-                      "implemented; the statement must be a whole `await`, "
-                      "or the `if`/`match` last in its block");
+      reject(current, "`await` inside an `unsafe` block is not implemented; "
+                      "await before or after it");
       break;
     default:
       if (isAwait(current)) {
@@ -402,6 +465,193 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
   std::function<std::unique_ptr<Node>(Node &, std::vector<NodeOwner> &,
                                       const std::vector<std::string> &)>
       branchFuture;
+  // Builds the statement that ends a sub-future (the next loop iteration, or
+  // the carried state of a block or joined branch); unset outside of those.
+  std::function<std::unique_ptr<Node>(Span)> tailExit;
+
+  auto refuse = [&](Span at, const std::string &message) {
+    diagnostics.error("feature", at, message);
+    throw ParseFailure{};
+  };
+  // The `var` locals in scope, each once: the state a sub-future carries.
+  auto carriedOf = [&](const std::vector<std::string> &variables) {
+    std::vector<std::string> result;
+    for (auto it = variables.rbegin(); it != variables.rend(); ++it)
+      if (std::find(result.begin(), result.end(), *it) == result.end())
+        result.push_back(*it);
+    return result;
+  };
+  // At least two elements, so the state is always a real tuple.
+  auto stateOf = [&](const std::vector<std::string> &carried, Span at) {
+    auto value = node(Kind::Tuple, at);
+    for (auto &variable : carried)
+      value->children.push_back(name(variable, at));
+    value->children.push_back(node(Kind::Unit, at));
+    if (value->children.size() < 2)
+      value->children.push_back(node(Kind::Unit, at));
+    finish(*value);
+    return value;
+  };
+  // `let (<carry-0>, .., _) = <source>` (with the loop result when
+  // `withResult`) followed by `var x = <carry-i>` for every carried local.
+  auto unpack = [&](const std::vector<std::string> &carried, Span at,
+                    const char *source, bool withResult,
+                    std::vector<NodeOwner> &out) {
+    Pattern state;
+    state.kind = PatternKind::Tuple;
+    state.span = at;
+    for (std::size_t i = 0; i < carried.size(); ++i)
+      state.children.push_back(Pattern{
+          PatternKind::Binding, at, "<carry-" + std::to_string(i) + ">"});
+    state.children.push_back(Pattern{PatternKind::Wildcard, at});
+    if (state.children.size() < 2)
+      state.children.push_back(Pattern{PatternKind::Wildcard, at});
+    Pattern whole = state;
+    if (withResult) {
+      whole = Pattern{PatternKind::Tuple, at};
+      whole.children.push_back(std::move(state));
+      whole.children.push_back(
+          Pattern{PatternKind::Binding, at, "<loop-result>"});
+    }
+    auto binding = node(Kind::Binding, at, "<pattern>");
+    binding->patterns.push_back(std::move(whole));
+    binding->children.push_back(name(source, at));
+    finish(*binding);
+    out.push_back(std::move(binding));
+    for (std::size_t i = 0; i < carried.size(); ++i) {
+      auto rebinding = node(Kind::Binding, at, carried[i]);
+      rebinding->flag = true;
+      rebinding->children.push_back(
+          name("<carry-" + std::to_string(i) + ">", at));
+      finish(*rebinding);
+      out.push_back(std::move(rebinding));
+    }
+  };
+  // The sub-future `first` followed by `after`, which continues from the
+  // carried state (and the loop result) that `first` produced.
+  auto sequel = [&](std::unique_ptr<Node> first,
+                    const std::vector<std::string> &carried, bool withResult,
+                    std::vector<NodeOwner> &after,
+                    const std::vector<std::string> &variables, Span at) {
+    ClosureParameter parameter;
+    parameter.span = at;
+    parameter.name = "<joined>";
+    std::vector<NodeOwner> lead;
+    unpack(carried, at, "<joined>", withResult, lead);
+    std::vector<ClosureParameter> parameters;
+    parameters.push_back(std::move(parameter));
+    auto continuation =
+        closure(at, build(after, 0, std::move(lead), variables),
+                std::move(parameters));
+    std::vector<NodeOwner> arguments;
+    arguments.push_back(std::move(first));
+    arguments.push_back(std::move(continuation));
+    return call("core::future::then", at, std::move(arguments));
+  };
+  // Turns the `break`/`continue` that leave the loop labeled `label` into
+  // returns of the loop step; `inner` holds the labels of loops nested in the
+  // body, `nested` whether an unlabeled exit would target one of them.
+  std::function<void(Node &, const std::string &, bool,
+                     std::vector<std::string> &,
+                     const std::vector<std::string> &)>
+      rewriteExits;
+  rewriteExits = [&](Node &parent, const std::string &label, bool nested,
+                     std::vector<std::string> &inner,
+                     const std::vector<std::string> &carried) {
+    for (auto &slot : parent.children) {
+      if (!slot.get() || slot->kind == Kind::Closure)
+        continue;
+      Node &child = *slot;
+      if (child.kind == Kind::Break || child.kind == Kind::Continue) {
+        bool mine = child.label.empty()
+                        ? !nested
+                        : child.label == label &&
+                              std::find(inner.begin(), inner.end(),
+                                        child.label) == inner.end();
+        if (mine) {
+          auto at = child.span;
+          std::vector<NodeOwner> arguments;
+          arguments.push_back(stateOf(carried, at));
+          const char *callee = "core::future::next_iteration";
+          if (child.kind == Kind::Break) {
+            callee = "core::future::finish_loop";
+            if (child.children.empty())
+              arguments.push_back(node(Kind::Unit, at));
+            else
+              arguments.push_back(std::move(child.children[0]));
+          }
+          auto exit = node(Kind::Return, at);
+          exit->children.push_back(call(callee, at, std::move(arguments)));
+          finish(*exit);
+          slot = NodeOwner(std::move(exit));
+          continue;
+        }
+      }
+      if (isLoop(child)) {
+        bool labeled = !child.label.empty();
+        if (labeled)
+          inner.push_back(child.label);
+        rewriteExits(child, label, true, inner, carried);
+        if (labeled)
+          inner.pop_back();
+      } else
+        rewriteExits(child, label, nested, inner, carried);
+    }
+  };
+  // `for p in source { body }` over an owned source becomes
+  //   var <for-iter> = into_iterator(source)
+  //   loop { match take <for-iter>.next() {
+  //     present(p) => body, none => break } }
+  // spliced in place of the `for`.
+  auto desugarFor = [&](std::vector<NodeOwner> &list, std::size_t at) {
+    Node &source = *list[at];
+    auto span = source.span;
+    if (borrowedSource(*source.children[0]))
+      refuse(span, "`await` in a `for` over a borrowed place is not "
+                   "implemented: the iterator would borrow across the "
+                   "await; iterate an owned value (`for x in take v`, "
+                   "`v.into_iter()`)");
+    auto iterator = "<for-iter-" + std::to_string(awaitTemporaries++) + ">";
+    std::vector<NodeOwner> arguments;
+    arguments.push_back(std::move(source.children[0]));
+    auto binding = node(Kind::Binding, span, iterator);
+    binding->flag = true;
+    binding->children.push_back(
+        call("core::iter::into_iterator", span, std::move(arguments)));
+    finish(*binding);
+    auto next = node(Kind::Field, span, "next");
+    next->children.push_back(name(iterator, span));
+    finish(*next);
+    auto advance = node(Kind::Call, span);
+    advance->children.push_back(std::move(next));
+    finish(*advance);
+    auto present = node(Kind::Arm, span);
+    present->patterns.push_back(Pattern{PatternKind::Variant, span, "present"});
+    present->patterns[0].children.push_back(std::move(source.patterns[0]));
+    present->children.push_back(std::move(source.children[1]));
+    finish(*present);
+    std::vector<NodeOwner> leave;
+    leave.push_back(node(Kind::Break, span));
+    auto done = node(Kind::Arm, span);
+    done->patterns.push_back(Pattern{PatternKind::Variant, span, "none"});
+    done->children.push_back(asBlock(span, std::move(leave)));
+    finish(*done);
+    auto match = node(Kind::Match, span, "take");
+    match->children.push_back(std::move(advance));
+    match->children.push_back(std::move(present));
+    match->children.push_back(std::move(done));
+    finish(*match);
+    std::vector<NodeOwner> body;
+    body.push_back(std::move(match));
+    auto iteration = node(Kind::Loop, span);
+    iteration->label = source.label;
+    iteration->semicolon = source.semicolon;
+    iteration->children.push_back(asBlock(span, std::move(body)));
+    finish(*iteration);
+    list[at] = NodeOwner(std::move(binding));
+    list.insert(list.begin() + static_cast<std::ptrdiff_t>(at) + 1,
+                NodeOwner(std::move(iteration)));
+  };
 
   // The future of one branch; `rest` (statements that followed an early-exit
   // branch statement) joins the branch that continues.
@@ -483,7 +733,7 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
               std::vector<std::string> variables) -> std::unique_ptr<Node> {
     if (from == 0)
       checkBorrows(stmts);
-    enum class Step { Rest, Await, Branch, Exit };
+    enum class Step { Rest, Await, Branch, Exit, Loop, Join, Nest };
     auto step = Step::Rest;
     std::size_t next = from;
     while (next < stmts.size()) {
@@ -493,10 +743,35 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
           step = Step::Await;
           break;
         }
+        if (current.kind == Kind::For) {
+          desugarFor(stmts, next);
+          continue;
+        }
+        if (current.kind == Kind::While || current.kind == Kind::Loop) {
+          step = Step::Loop;
+          break;
+        }
+        if (current.kind == Kind::Block) {
+          if (next + 1 == stmts.size() && !tailExit) {
+            auto inner = std::move(current.children);
+            stmts.erase(stmts.begin() + static_cast<std::ptrdiff_t>(next));
+            stmts.insert(stmts.begin() + static_cast<std::ptrdiff_t>(next),
+                         std::make_move_iterator(inner.begin()),
+                         std::make_move_iterator(inner.end()));
+            continue;
+          }
+          step = Step::Nest;
+          break;
+        }
         if (isBranch(current) && !containsAwait(*current.children[0])) {
-          if (next + 1 != stmts.size())
-            reject(current, "`await` in a branch is supported only when the "
-                            "`if`/`match` is the last statement of its block");
+          if (next + 1 != stmts.size()) {
+            if (findReturn(current))
+              reject(current, "`await` in a branch that is not last in its "
+                              "block cannot also contain `return`, `break` "
+                              "or `continue`");
+            step = Step::Join;
+            break;
+          }
           step = Step::Branch;
           break;
         }
@@ -532,8 +807,11 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
       std::vector<NodeOwner> rest;
       for (auto i = from; i < stmts.size(); ++i)
         rest.push_back(std::move(stmts[i]));
+      if (tailExit && !endsWithReturn(rest))
+        rest.push_back(tailExit(span));
       auto lazyBody = closure(span, asBlock(span, std::move(rest)), {});
-      lazyBody->annotation = result;
+      if (!tailExit)
+        lazyBody->annotation = result;
       std::vector<NodeOwner> arguments;
       arguments.push_back(std::move(lazyBody));
       block.push_back(call("core::future::lazy", span, std::move(arguments)));
@@ -552,6 +830,91 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
       block.push_back(branchFuture(*stmts[next], rest, variables));
       return asBlock(span, std::move(block));
     }
+    if (step == Step::Loop || step == Step::Join || step == Step::Nest) {
+      auto &subject = *stmts[next];
+      auto at = subject.span;
+      if (auto *exit = findExit(subject))
+        refuse(exit->span,
+               "`return`, `throw` and `?` are not supported inside a loop, "
+               "block or branch that awaits, nor is `break`/`continue` of an "
+               "enclosing loop from inside one");
+      auto carried = carriedOf(variables);
+      for (auto &variable : carried)
+        if (declares(subject, variable))
+          refuse(subject.span,
+                 "`" + variable +
+                     "` is declared again inside an `await`ing loop, block "
+                     "or branch; its state is carried by name, so use "
+                     "another name");
+      bool valueTail = subject.kind == Kind::Loop && next + 1 == stmts.size() &&
+                       !tailExit && !subject.semicolon;
+      std::vector<NodeOwner> after;
+      for (auto i = next + 1; i < stmts.size(); ++i)
+        after.push_back(std::move(stmts[i]));
+      auto outer = tailExit;
+      auto state = [&stateOf, carried](Span here) {
+        return stateOf(carried, here);
+      };
+      std::unique_ptr<Node> first;
+      if (step == Step::Loop) {
+        if (!subject.patterns.empty())
+          refuse(subject.span, "`await` in a `while let` loop is not "
+                               "implemented; use `loop` with a `match`");
+        std::vector<NodeOwner> body;
+        if (subject.kind == Kind::While) {
+          auto negation = node(Kind::Unary, at, "!");
+          negation->children.push_back(std::move(subject.children[0]));
+          finish(*negation);
+          std::vector<NodeOwner> leave;
+          leave.push_back(node(Kind::Break, at));
+          auto guard = node(Kind::If, at);
+          guard->children.push_back(std::move(negation));
+          guard->children.push_back(asBlock(at, std::move(leave)));
+          finish(*guard);
+          body.push_back(std::move(guard));
+        }
+        for (auto &statement : subject.children.back()->children)
+          body.push_back(std::move(statement));
+        auto holder = asBlock(at, std::move(body));
+        std::vector<std::string> inner;
+        rewriteExits(*holder, subject.label, false, inner, carried);
+        tailExit = [&stateOf, &call, carried](Span here) {
+          std::vector<NodeOwner> arguments;
+          arguments.push_back(stateOf(carried, here));
+          return call("core::future::next_iteration", here,
+                      std::move(arguments));
+        };
+        std::vector<NodeOwner> lead;
+        unpack(carried, at, "<state>", false, lead);
+        auto iteration = build(holder->children, 0, std::move(lead), carried);
+        tailExit = outer;
+        ClosureParameter parameter;
+        parameter.span = at;
+        parameter.name = "<state>";
+        std::vector<ClosureParameter> parameters;
+        parameters.push_back(std::move(parameter));
+        std::vector<NodeOwner> arguments;
+        arguments.push_back(stateOf(carried, at));
+        arguments.push_back(closure(at, std::move(iteration),
+                                    std::move(parameters)));
+        first = call("core::future::repeat", at, std::move(arguments));
+      } else {
+        tailExit = state;
+        if (step == Step::Nest) {
+          std::vector<NodeOwner> inner = std::move(subject.children);
+          first = build(inner, 0, {}, variables);
+        } else {
+          std::vector<NodeOwner> nothing;
+          first = branchFuture(subject, nothing, variables);
+        }
+        tailExit = outer;
+      }
+      if (valueTail)
+        after.push_back(name("<loop-result>", at));
+      block.push_back(sequel(std::move(first), carried, step == Step::Loop,
+                             after, variables, at));
+      return asBlock(span, std::move(block));
+    }
     auto &statement = stmts[next];
     auto at = statement->span;
     Node *await = &*statement;
@@ -561,7 +924,7 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
       await = &*statement->children[1];
     auto operand = std::move(await->children[0]);
     bool tail = next + 1 == stmts.size() && isAwait(*statement) &&
-                !statement->semicolon;
+                !statement->semicolon && !tailExit;
     if (tail) {
       block.push_back(std::move(operand));
       return asBlock(span, std::move(block));
