@@ -1,11 +1,20 @@
 #include "sys.h"
 
+#include <algorithm>
 #include <cerrno>
+#include <chrono>
+#include <climits>
 #include <cstring>
 #include <ctime>
+#include <limits>
+#include <memory>
+#include <new>
+#include <string>
+#include <vector>
 
 #include <dirent.h>
 #include <fcntl.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -66,24 +75,179 @@ void setCloseOnExec(int fd) {
     fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
 }
 
-sockaddr_in socketAddress(std::uint32_t address, std::uint16_t port) {
-  sockaddr_in value;
-  std::memset(&value, 0, sizeof value);
-  value.sin_family = AF_INET;
-  value.sin_port = htons(port);
-  value.sin_addr.s_addr = htonl(address);
+bool socketAddress(std::int32_t family, const std::uint8_t *address,
+                   std::size_t addressSize, std::uint16_t port,
+                   std::uint32_t flowinfo, std::uint32_t scopeId,
+                   sockaddr_storage &storage, socklen_t &size) {
+  std::memset(&storage, 0, sizeof storage);
+  if (!address) {
+    errno = EINVAL;
+    return false;
+  }
+  if (family == 4 && addressSize == 4) {
+    auto *value = reinterpret_cast<sockaddr_in *>(&storage);
+    value->sin_family = AF_INET;
+    value->sin_port = htons(port);
+    std::memcpy(&value->sin_addr, address, 4);
 #ifdef __APPLE__
-  value.sin_len = sizeof value;
+    value->sin_len = sizeof *value;
 #endif
-  return value;
+    size = sizeof *value;
+    return true;
+  }
+  if (family == 6 && addressSize == 16) {
+    auto *value = reinterpret_cast<sockaddr_in6 *>(&storage);
+    value->sin6_family = AF_INET6;
+    value->sin6_port = htons(port);
+    value->sin6_flowinfo = htonl(flowinfo);
+    value->sin6_scope_id = scopeId;
+    std::memcpy(&value->sin6_addr, address, 16);
+#ifdef __APPLE__
+    value->sin6_len = sizeof *value;
+#endif
+    size = sizeof *value;
+    return true;
+  }
+  errno = family == 4 || family == 6 ? EINVAL : EAFNOSUPPORT;
+  return false;
 }
 
-void readAddress(const sockaddr_in &value, std::uint32_t *address,
-                 std::uint16_t *port) {
-  if (address)
-    *address = ntohl(value.sin_addr.s_addr);
-  if (port)
-    *port = ntohs(value.sin_port);
+bool readSocketAddress(const sockaddr *raw, socklen_t size,
+                       std::int32_t *family, std::uint8_t *address,
+                       std::size_t addressCapacity, std::uint16_t *port,
+                       std::uint32_t *flowinfo, std::uint32_t *scopeId) {
+  if (!raw || !family || !address || !port || !flowinfo || !scopeId) {
+    errno = EINVAL;
+    return false;
+  }
+  if (raw->sa_family == AF_INET) {
+    if (size < sizeof(sockaddr_in) || addressCapacity < 4) {
+      errno = EINVAL;
+      return false;
+    }
+    const auto *value = reinterpret_cast<const sockaddr_in *>(raw);
+    *family = 4;
+    std::memcpy(address, &value->sin_addr, 4);
+    *port = ntohs(value->sin_port);
+    *flowinfo = 0;
+    *scopeId = 0;
+    return true;
+  }
+  if (raw->sa_family == AF_INET6) {
+    if (size < sizeof(sockaddr_in6) || addressCapacity < 16) {
+      errno = EINVAL;
+      return false;
+    }
+    const auto *value = reinterpret_cast<const sockaddr_in6 *>(raw);
+    *family = 6;
+    std::memcpy(address, &value->sin6_addr, 16);
+    *port = ntohs(value->sin6_port);
+    *flowinfo = ntohl(value->sin6_flowinfo);
+    *scopeId = value->sin6_scope_id;
+    return true;
+  }
+  errno = EAFNOSUPPORT;
+  return false;
+}
+
+struct ResolvedAddress {
+  sockaddr_storage value{};
+  socklen_t size = 0;
+};
+
+struct ResolveHandle {
+  std::vector<ResolvedAddress> addresses;
+};
+
+std::int32_t timedConnect(std::int32_t fd, const sockaddr *address,
+                          socklen_t size, std::uint64_t timeoutMicros) {
+  int flags = fcntl(fd, F_GETFL);
+  if (flags < 0)
+    return -1;
+  if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+    return -1;
+
+  int result = connect(fd, address, size);
+  int failure = errno;
+  if (result != 0 &&
+      (failure == EINPROGRESS || failure == EWOULDBLOCK || failure == EINTR)) {
+    using Clock = std::chrono::steady_clock;
+    using Micros = std::chrono::microseconds;
+    const auto now = Clock::now();
+    const auto maxMicros =
+        std::chrono::duration_cast<Micros>(Clock::time_point::max() - now)
+            .count();
+    const auto boundedMicros =
+        std::min(timeoutMicros, static_cast<std::uint64_t>(maxMicros));
+    const auto deadline = now + Micros(static_cast<Micros::rep>(boundedMicros));
+
+    while (true) {
+      const auto current = Clock::now();
+      if (current >= deadline) {
+        failure = ETIMEDOUT;
+        result = -1;
+        break;
+      }
+      const auto remaining =
+          std::chrono::duration_cast<Micros>(deadline - current);
+      auto millis = remaining.count() / 1000;
+      if (remaining.count() % 1000 != 0)
+        ++millis;
+      const int waitMillis =
+          static_cast<int>(std::min<std::int64_t>(millis, INT_MAX));
+      pollfd request{fd, POLLOUT, 0};
+      const int ready = poll(&request, 1, waitMillis);
+      if (ready < 0 && errno == EINTR)
+        continue;
+      if (ready < 0) {
+        failure = errno;
+        result = -1;
+        break;
+      }
+      if (ready == 0)
+        continue;
+
+      int socketError = 0;
+      socklen_t errorSize = sizeof socketError;
+      if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &socketError, &errorSize) < 0) {
+        failure = errno;
+        result = -1;
+      } else if (socketError != 0) {
+        failure = socketError;
+        result = -1;
+      } else {
+        result = 0;
+      }
+      break;
+    }
+  } else if (result != 0) {
+    failure = errno;
+  }
+
+  const int restore = fcntl(fd, F_SETFL, flags);
+  if (restore < 0 && result == 0) {
+    result = -1;
+    failure = errno;
+  }
+  if (result < 0)
+    errno = failure;
+  return result;
+}
+
+std::int32_t resolverErrno(int result) {
+  if (result == EAI_MEMORY)
+    return ENOMEM;
+#ifdef EAI_SYSTEM
+  if (result == EAI_SYSTEM)
+    return errno;
+#endif
+  if (result == EAI_NONAME || result == EAI_AGAIN)
+    return EHOSTUNREACH;
+  return EINVAL;
+}
+
+void setResolverError(int result) {
+  errno = resolverErrno(result);
 }
 
 // Closes both ends of a pipe on scope exit unless released.
@@ -308,8 +472,16 @@ extern "C" std::int32_t mettle_rt_poll_pair(std::int32_t first,
          (requests[1].revents != 0 && second >= 0 ? 2 : 0);
 }
 
-extern "C" std::int32_t mettle_rt_sock_new(std::int32_t kind) {
-  int fd = socket(AF_INET, kind == 0 ? SOCK_STREAM : SOCK_DGRAM, 0);
+extern "C" std::int32_t mettle_rt_sock_new(std::int32_t kind,
+                                           std::int32_t family) {
+  const int nativeFamily =
+      family == 4 ? AF_INET : family == 6 ? AF_INET6 : AF_UNSPEC;
+  if (nativeFamily == AF_UNSPEC) {
+    errno = EAFNOSUPPORT;
+    return -1;
+  }
+  int fd =
+      socket(nativeFamily, kind == 0 ? SOCK_STREAM : SOCK_DGRAM, 0);
   if (fd < 0)
     return -1;
   setCloseOnExec(fd);
@@ -321,27 +493,60 @@ extern "C" std::int32_t mettle_rt_sock_new(std::int32_t kind) {
 }
 
 extern "C" std::int32_t mettle_rt_sock_bind(std::int32_t fd,
-                                            std::uint32_t address,
-                                            std::uint16_t port) {
+                                            std::int32_t family,
+                                            const std::uint8_t *address,
+                                            std::size_t addressSize,
+                                            std::uint16_t port,
+                                            std::uint32_t flowinfo,
+                                            std::uint32_t scopeId) {
   int on = 1;
   setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on);
-  auto value = socketAddress(address, port);
-  return bind(fd, reinterpret_cast<sockaddr *>(&value), sizeof value);
+  sockaddr_storage value;
+  socklen_t size = 0;
+  if (!socketAddress(family, address, addressSize, port, flowinfo, scopeId,
+                     value, size))
+    return -1;
+  return bind(fd, reinterpret_cast<sockaddr *>(&value), size);
 }
 
 extern "C" std::int32_t mettle_rt_sock_connect(std::int32_t fd,
-                                               std::uint32_t address,
-                                               std::uint16_t port) {
-  auto value = socketAddress(address, port);
+                                               std::int32_t family,
+                                               const std::uint8_t *address,
+                                               std::size_t addressSize,
+                                               std::uint16_t port,
+                                               std::uint32_t flowinfo,
+                                               std::uint32_t scopeId) {
+  sockaddr_storage value;
+  socklen_t size = 0;
+  if (!socketAddress(family, address, addressSize, port, flowinfo, scopeId,
+                     value, size))
+    return -1;
   return retry([&] {
-    return connect(fd, reinterpret_cast<sockaddr *>(&value), sizeof value);
+    return connect(fd, reinterpret_cast<sockaddr *>(&value), size);
   });
+}
+
+extern "C" std::int32_t mettle_rt_sock_connect_timeout(
+    std::int32_t fd, std::int32_t family, const std::uint8_t *address,
+    std::size_t addressSize, std::uint16_t port, std::uint32_t flowinfo,
+    std::uint32_t scopeId, std::uint64_t timeoutMicros) {
+  sockaddr_storage value;
+  socklen_t size = 0;
+  if (!socketAddress(family, address, addressSize, port, flowinfo, scopeId,
+                     value, size))
+    return -1;
+  return timedConnect(fd, reinterpret_cast<sockaddr *>(&value), size,
+                      timeoutMicros);
 }
 
 extern "C" std::int32_t mettle_rt_sock_accept(std::int32_t fd,
                                               std::int32_t timeoutMillis,
-                                              std::uint32_t *address,
-                                              std::uint16_t *port) {
+                                              std::int32_t *family,
+                                              std::uint8_t *address,
+                                              std::size_t addressCapacity,
+                                              std::uint16_t *port,
+                                              std::uint32_t *flowinfo,
+                                              std::uint32_t *scopeId) {
   if (timeoutMillis >= 0) {
     std::int32_t ready = mettle_rt_poll(fd, 0, timeoutMillis);
     if (ready < 0)
@@ -351,7 +556,7 @@ extern "C" std::int32_t mettle_rt_sock_accept(std::int32_t fd,
       return -1;
     }
   }
-  sockaddr_in value;
+  sockaddr_storage value;
   socklen_t size = sizeof value;
   int accepted = retry(
       [&] { return accept(fd, reinterpret_cast<sockaddr *>(&value), &size); });
@@ -362,20 +567,32 @@ extern "C" std::int32_t mettle_rt_sock_accept(std::int32_t fd,
   int on = 1;
   setsockopt(accepted, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof on);
 #endif
-  readAddress(value, address, port);
+  if (!readSocketAddress(reinterpret_cast<sockaddr *>(&value), size, family,
+                         address, addressCapacity, port, flowinfo, scopeId)) {
+    const int failure = errno;
+    close(accepted);
+    errno = failure;
+    return -1;
+  }
   return accepted;
 }
 
 extern "C" std::int32_t mettle_rt_sock_name(std::int32_t fd, std::int32_t peer,
-                                            std::uint32_t *address,
-                                            std::uint16_t *port) {
-  sockaddr_in value;
+                                            std::int32_t *family,
+                                            std::uint8_t *address,
+                                            std::size_t addressCapacity,
+                                            std::uint16_t *port,
+                                            std::uint32_t *flowinfo,
+                                            std::uint32_t *scopeId) {
+  sockaddr_storage value;
   socklen_t size = sizeof value;
   auto *raw = reinterpret_cast<sockaddr *>(&value);
   if ((peer ? getpeername(fd, raw, &size) : getsockname(fd, raw, &size)) != 0)
     return -1;
-  readAddress(value, address, port);
-  return 0;
+  return readSocketAddress(raw, size, family, address, addressCapacity, port,
+                           flowinfo, scopeId)
+             ? 0
+             : -1;
 }
 
 extern "C" std::int64_t mettle_rt_sock_send(std::int32_t fd,
@@ -392,38 +609,133 @@ extern "C" std::int64_t mettle_rt_sock_send(std::int32_t fd,
 extern "C" std::int64_t mettle_rt_sock_sendto(std::int32_t fd,
                                               const std::uint8_t *data,
                                               std::size_t size,
-                                              std::uint32_t address,
-                                              std::uint16_t port) {
-  auto value = socketAddress(address, port);
+                                              std::int32_t family,
+                                              const std::uint8_t *address,
+                                              std::size_t addressSize,
+                                              std::uint16_t port,
+                                              std::uint32_t flowinfo,
+                                              std::uint32_t scopeId) {
+  sockaddr_storage value;
+  socklen_t addressLength = 0;
+  if (!socketAddress(family, address, addressSize, port, flowinfo, scopeId,
+                     value, addressLength))
+    return -1;
   return retry([&] {
     return sendto(fd, data, size, 0, reinterpret_cast<sockaddr *>(&value),
-                  sizeof value);
+                  addressLength);
   });
 }
 
 extern "C" std::int64_t
 mettle_rt_sock_recvfrom(std::int32_t fd, std::uint8_t *data, std::size_t size,
-                        std::uint32_t *address, std::uint16_t *port) {
-  sockaddr_in value;
+                        std::int32_t *family, std::uint8_t *address,
+                        std::size_t addressCapacity, std::uint16_t *port,
+                        std::uint32_t *flowinfo, std::uint32_t *scopeId) {
+  sockaddr_storage value;
   std::memset(&value, 0, sizeof value);
   socklen_t length = sizeof value;
   auto received = retry([&] {
     return recvfrom(fd, data, size, 0, reinterpret_cast<sockaddr *>(&value),
                     &length);
   });
-  if (received >= 0)
-    readAddress(value, address, port);
+  if (received >= 0 &&
+      !readSocketAddress(reinterpret_cast<sockaddr *>(&value), length, family,
+                         address, addressCapacity, port, flowinfo, scopeId))
+    return -1;
   return received;
 }
 
 extern "C" std::int32_t mettle_rt_sock_timeout(std::int32_t fd,
                                                std::int32_t send,
                                                std::uint64_t micros) {
+  const auto seconds = micros / 1000000;
+  if (seconds >
+      static_cast<std::uint64_t>(std::numeric_limits<time_t>::max())) {
+    errno = EINVAL;
+    return -1;
+  }
   timeval value;
-  value.tv_sec = static_cast<time_t>(micros / 1000000);
+  value.tv_sec = static_cast<time_t>(seconds);
   value.tv_usec = static_cast<suseconds_t>(micros % 1000000);
   return setsockopt(fd, SOL_SOCKET, send ? SO_SNDTIMEO : SO_RCVTIMEO, &value,
                     sizeof value);
+}
+
+extern "C" std::uint8_t *
+mettle_rt_resolve(const std::uint8_t *host, std::size_t hostSize,
+                  std::uint16_t port, std::size_t *count) {
+  if (!count || (!host && hostSize != 0) ||
+      (hostSize != 0 && std::memchr(host, 0, hostSize) != nullptr)) {
+    errno = EINVAL;
+    return nullptr;
+  }
+  *count = 0;
+  try {
+    std::string name;
+    if (hostSize != 0)
+      name.assign(reinterpret_cast<const char *>(host), hostSize);
+    const std::string service = std::to_string(port);
+    addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    addrinfo *rawResults = nullptr;
+    const int status =
+        getaddrinfo(name.c_str(), service.c_str(), &hints, &rawResults);
+    std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> results(rawResults,
+                                                               freeaddrinfo);
+    if (status != 0) {
+      setResolverError(status);
+      return nullptr;
+    }
+
+    std::unique_ptr<ResolveHandle> handle(new (std::nothrow) ResolveHandle);
+    if (!handle) {
+      errno = ENOMEM;
+      return nullptr;
+    }
+    for (const addrinfo *entry = results.get(); entry; entry = entry->ai_next) {
+      if ((entry->ai_family != AF_INET && entry->ai_family != AF_INET6) ||
+          entry->ai_addrlen > sizeof(sockaddr_storage))
+        continue;
+      ResolvedAddress address;
+      address.size = static_cast<socklen_t>(entry->ai_addrlen);
+      std::memcpy(&address.value, entry->ai_addr, address.size);
+      handle->addresses.push_back(address);
+    }
+    *count = handle->addresses.size();
+    return reinterpret_cast<std::uint8_t *>(handle.release());
+  } catch (const std::bad_alloc &) {
+    errno = ENOMEM;
+    return nullptr;
+  } catch (...) {
+    errno = EINVAL;
+    return nullptr;
+  }
+}
+
+extern "C" std::int32_t mettle_rt_resolve_get(
+    std::uint8_t *rawHandle, std::size_t index, std::int32_t *family,
+    std::uint8_t *address, std::size_t addressCapacity, std::uint16_t *port,
+    std::uint32_t *flowinfo, std::uint32_t *scopeId) {
+  if (!rawHandle) {
+    errno = EINVAL;
+    return -1;
+  }
+  const auto *handle = reinterpret_cast<const ResolveHandle *>(rawHandle);
+  if (index >= handle->addresses.size()) {
+    errno = EINVAL;
+    return -1;
+  }
+  const auto &entry = handle->addresses[index];
+  return readSocketAddress(reinterpret_cast<const sockaddr *>(&entry.value),
+                           entry.size, family, address, addressCapacity, port,
+                           flowinfo, scopeId)
+             ? 0
+             : -1;
+}
+
+extern "C" void mettle_rt_resolve_free(std::uint8_t *rawHandle) {
+  delete reinterpret_cast<ResolveHandle *>(rawHandle);
 }
 
 extern "C" std::int32_t mettle_rt_clock(std::int32_t clock, std::int64_t *out) {

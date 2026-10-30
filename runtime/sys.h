@@ -48,29 +48,69 @@ std::int32_t mettle_rt_poll(std::int32_t fd, std::int32_t write,
 // hung up; bit 0 and bit 1 of the result name the ready descriptors.
 std::int32_t mettle_rt_poll_pair(std::int32_t first, std::int32_t second);
 
-// IPv4 sockets: kind 0 stream, 1 datagram. Addresses are host-order words.
-std::int32_t mettle_rt_sock_new(std::int32_t kind);
-std::int32_t mettle_rt_sock_bind(std::int32_t fd, std::uint32_t address,
-                                 std::uint16_t port);
-std::int32_t mettle_rt_sock_connect(std::int32_t fd, std::uint32_t address,
-                                    std::uint16_t port);
+// POSIX sockets: kind 0 stream, 1 datagram; family is 4 or 6. Address bytes
+// are in network order and have explicit lengths (4 for IPv4, 16 for IPv6).
+std::int32_t mettle_rt_sock_new(std::int32_t kind, std::int32_t family);
+std::int32_t mettle_rt_sock_bind(std::int32_t fd, std::int32_t family,
+                                 const std::uint8_t *address,
+                                 std::size_t addressSize, std::uint16_t port,
+                                 std::uint32_t flowinfo,
+                                 std::uint32_t scopeId);
+std::int32_t mettle_rt_sock_connect(std::int32_t fd, std::int32_t family,
+                                    const std::uint8_t *address,
+                                    std::size_t addressSize, std::uint16_t port,
+                                    std::uint32_t flowinfo,
+                                    std::uint32_t scopeId);
+// A timed nonblocking connect; timeout is in microseconds.
+std::int32_t mettle_rt_sock_connect_timeout(
+    std::int32_t fd, std::int32_t family, const std::uint8_t *address,
+    std::size_t addressSize, std::uint16_t port, std::uint32_t flowinfo,
+    std::uint32_t scopeId, std::uint64_t timeoutMicros);
 // Waits at most `timeoutMillis` (negative: forever) for a connection; a
 // timeout fails with EAGAIN because SO_RCVTIMEO does not cover accept.
 std::int32_t mettle_rt_sock_accept(std::int32_t fd, std::int32_t timeoutMillis,
-                                   std::uint32_t *address, std::uint16_t *port);
+                                   std::int32_t *family, std::uint8_t *address,
+                                   std::size_t addressCapacity,
+                                   std::uint16_t *port,
+                                   std::uint32_t *flowinfo,
+                                   std::uint32_t *scopeId);
 std::int32_t mettle_rt_sock_name(std::int32_t fd, std::int32_t peer,
-                                 std::uint32_t *address, std::uint16_t *port);
+                                 std::int32_t *family, std::uint8_t *address,
+                                 std::size_t addressCapacity,
+                                 std::uint16_t *port,
+                                 std::uint32_t *flowinfo,
+                                 std::uint32_t *scopeId);
 std::int64_t mettle_rt_sock_send(std::int32_t fd, const std::uint8_t *data,
                                  std::size_t size);
 std::int64_t mettle_rt_sock_sendto(std::int32_t fd, const std::uint8_t *data,
-                                   std::size_t size, std::uint32_t address,
-                                   std::uint16_t port);
+                                   std::size_t size, std::int32_t family,
+                                   const std::uint8_t *address,
+                                   std::size_t addressSize, std::uint16_t port,
+                                   std::uint32_t flowinfo,
+                                   std::uint32_t scopeId);
 std::int64_t mettle_rt_sock_recvfrom(std::int32_t fd, std::uint8_t *data,
-                                     std::size_t size, std::uint32_t *address,
-                                     std::uint16_t *port);
+                                     std::size_t size, std::int32_t *family,
+                                     std::uint8_t *address,
+                                     std::size_t addressCapacity,
+                                     std::uint16_t *port,
+                                     std::uint32_t *flowinfo,
+                                     std::uint32_t *scopeId);
 // Receive (send == 0) or send timeout in microseconds; zero disables it.
 std::int32_t mettle_rt_sock_timeout(std::int32_t fd, std::int32_t send,
                                     std::uint64_t micros);
+
+// Resolution handles own their getaddrinfo-derived address list. The caller
+// must release a non-null handle with `mettle_rt_resolve_free`.
+std::uint8_t *mettle_rt_resolve(const std::uint8_t *host, std::size_t hostSize,
+                                std::uint16_t port, std::size_t *count);
+std::int32_t mettle_rt_resolve_get(std::uint8_t *handle, std::size_t index,
+                                   std::int32_t *family,
+                                   std::uint8_t *address,
+                                   std::size_t addressCapacity,
+                                   std::uint16_t *port,
+                                   std::uint32_t *flowinfo,
+                                   std::uint32_t *scopeId);
+void mettle_rt_resolve_free(std::uint8_t *handle);
 
 // Clock 0 monotonic, 1 wall; fills seconds and nanoseconds.
 std::int32_t mettle_rt_clock(std::int32_t clock, std::int64_t *out);

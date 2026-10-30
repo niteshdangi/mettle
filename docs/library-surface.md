@@ -616,3 +616,26 @@ is platform-neutral, but Windows storage, sink dispatch and output expectations
 are target prerequisites, not established support. The POSIX byte-view statements
 in library-and-abi.md section 6 are reconciled with the native Windows path
 contract before that profile is delivered (implementation-plan section 8.7, R2).
+
+## 13. Hosted networking
+
+Status: IPv6 addresses and sockets, timed TCP connection, and name resolution
+are implemented, unverified (not yet built), for the existing POSIX hosted
+profile. The selected `std.net` names are `Ipv6Addr`, `IpAddr`, and
+`SocketAddr`; constructors are `ipv6`, `ipv6_localhost`, `ipv6_unspecified`,
+`Ipv6Addr.localhost`, `Ipv6Addr.unspecified`, `socket_addr_v6`, and
+`socket_addr_ip`. Text entry points are `Ipv6Addr.parse`, `SocketAddr.parse`,
+`parse_ipv6`, `parse_ip_addr`, and `parse_socket_addr`; malformed input throws
+`std.io.ErrorKind.InvalidInput`.
+
+`Ipv6Addr` stores the 16 network-order address bytes, is constructed from eight
+16-bit segments, and formats as lowercase RFC 5952 text (compressing the
+longest run of at least two zero segments, choosing the first run on ties).
+`SocketAddr` stores an `IpAddr`, port, flowinfo and scope id. IPv6 socket text
+uses brackets (`[::1]:8080`) and an optional decimal `%scope_id`; flowinfo is
+preserved by socket operations but is not part of this text form. `resolve`
+accepts a `Text` host and port and returns all IPv4/IPv6 stream addresses from
+POSIX `getaddrinfo` in resolver order. TCP/UDP address operations preserve the
+family and IPv6 flow/scope fields. Connect timeout expiry is reported as an
+I/O timeout; read/write socket timeouts retain the existing `set_*_timeout`
+names and behavior. No Windows socket profile is claimed.
