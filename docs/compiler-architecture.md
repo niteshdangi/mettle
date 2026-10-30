@@ -520,6 +520,84 @@ New files enter `compiler/modules.json` only with their implementation and
 component-owned dependencies. No full qualification matrix starts until the
 inventory, fixtures and documentation satisfy the source-freeze gate.
 
+### I11 async state-machine interface plan
+
+Status: partial, unverified (not yet built); the parser-combinator
+implementation remains in use. `analysis/liveness` computes SSA block-boundary
+liveness with phi uses on incoming edges, but does not yet analyze suspended
+places, loans or cleanup and is not connected to a coroutine transform.
+The current parser path also moves live immutable locals through an awaiting
+loop's carried state rather than recapturing them in each step; this does not
+enable borrowed locals across suspension.
+No coroutine IR, generated poll function or new cancellation path described
+below has been implemented or verified. The I11 inventory and the existing
+feature diagnostics remain in `implementation-plan.md` section 8.4.
+
+The shared interfaces must be implemented together, not enabled one at a time
+for source programs:
+
+- **Syntax and checking.** Preserve async function, closure and block bodies
+  and their `await` expressions as syntax, with their original spans. Checking
+  records the body result and error, captured input regions, resolved
+  `Future::Output` and poll dispatch in side tables. It must create a
+  compiler-owned future identity and a usable `Future` implementation before
+  checking callers, while keeping the hidden representation behind the
+  existing opaque return contract. An async call captures its arguments but
+  does not execute its body. The implementation must resolve how generic
+  future identities and interface witnesses are declared before CFG analysis
+  supplies their fields; the current parser lowering avoids that cycle.
+- **CFG and analyses.** Lower the checked body into a typed CFG retaining
+  explicit suspension and its resume edge, evaluation order, source scopes and
+  source spans. Extend structural verification, initialization, SSA ownership,
+  origin and loan analyses to understand that edge before they inspect it.
+  Their checked suspension facts must include live loans and their referents,
+  partially initialized owned places and cleanup obligations, not just locals
+  read after suspension. Values live across the edge, including SSA operands
+  and phi-edge transfers, need persistent storage. Symbolic bodies must still
+  be checked before specialization; generated concrete CFGs must be verified
+  and analyzed again before backend admission.
+- **State and pinning.** Form one inline state with captured parameters,
+  retained places and temporaries, an active suspension identity and persistent
+  initialization/drop flags. A started child future remains in a stable,
+  structurally pinned field until its in-place completion or destruction.
+  Loans into state storage are created only after the parent has pinned access;
+  they cannot escape the parent or authorize moving, replacing or destroying a
+  borrowed referent. The generated type must not acquire `Unpin` when its
+  state can contain an address-sensitive loan or child. Moving an unpinned
+  future before first poll remains subject to its ordinary type rules.
+  Transferability must account for captures, retained fields, loans and child
+  futures rather than treating the opaque result or executor as a proof.
+- **Poll and cleanup.** Generate a constructor, a pinned poll body and
+  destructor/cleanup integration using ordinary compiler-owned types and CFG
+  operations wherever possible. Poll dispatch resumes the recorded edge;
+  pending preserves initialized state and its loans, while ready transfers the
+  output and marks completion. Poll after completion must remain memory-safe.
+  Preserve the checked loop back-edges, branch joins, typed failure and lexical
+  exits rather than encoding them as separate continuation closures.
+  Suspension is not scope exit: normal exit and cancellation use the original
+  lexical cleanup order, and cancellation destroys only initialized state,
+  exactly once. Per-place flags must survive polls, partial moves and unwind;
+  an instruction-level liveness set or a suspension tag alone is insufficient.
+  The design must account for destructor panics, re-entry and the lifetimes of
+  references and referents during cleanup.
+- **Pipeline and backend.** Add a backend-independent transform after checking
+  the symbolic suspension CFG and before concrete executable admission.
+  Transformation must not mutate a published `VerifiedProgram`; revalidate
+  its generated constructor, poll and cleanup paths. The LLVM adapter only
+  consumes the verified resulting representation and must not infer pinning or
+  repair missing cleanup semantics. Introduce module dependencies only with
+  their actual implementation. `core::future` remains executor-free and the
+  existing optional executor consumes the same `Future` protocol.
+
+Required fixtures cover read and mutable self-borrows, non-Copy locals,
+borrowed iteration, nested exits and typed failures, lexical drop order,
+cancellation at each initialization state, partial moves and panic cleanup.
+Negative cases must reject moves while loans remain live and invalid
+cross-thread state at the intended ownership/type phase. Existing unsupported
+fixtures must be migrated when their cases are implemented, not merely removed.
+Until these interfaces, fixtures and documentation are complete, no source-freeze
+or I11 qualification gate is satisfied.
+
 ## 5. Full-language growth map
 
 These are component responsibilities to instantiate when the relevant milestone

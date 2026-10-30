@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <functional>
 #include <iterator>
+#include <string>
 
 // Lowers `async fn`, `async { .. }` and `async fn(..) { .. }` onto the typed
 // state machines of `core::future`:
@@ -33,7 +34,8 @@
 //
 // - `await` inside `while`, `loop` and `for` statements: the body becomes a
 //   step closure over the loop-carried state, a tuple of the enclosing `var`
-//   locals, run by `core::future::repeat`; `break`/`continue` (labeled or not)
+//   locals and live immutable locals, run by `core::future::repeat`;
+//   `break`/`continue` (labeled or not)
 //   become `return`s of `finish_loop`/`next_iteration` (the existing early
 //   return lowering then places the statements after them), and the statements
 //   after the loop continue from the final state. `for` keeps the iterator of
@@ -52,11 +54,18 @@
 // operand, `throw`/`?` inside an awaiting loop, `return`/`throw`/`?` inside an
 // awaiting block or branch or nested awaiting loops, `for` over a borrowed
 // place, an inner
-// binding that shadows a carried `var`, and a loop used as a value other than
-// as a statement. Immutable locals used by a loop are captured, so values used
-// both inside and after it must be copyable.
+// binding that shadows a carried local, and a loop used as a value other than
+// as a statement. Live immutable locals are moved through the loop state
+// instead of being recaptured by every step.
 namespace mettle::parsing {
 namespace {
+struct AsyncBinding {
+  std::string name;
+  bool mutableBinding = false;
+  bool loopCarryable = true;
+  bool inState = false;
+};
+
 bool isLoop(const Node &node) {
   return node.kind == Kind::While || node.kind == Kind::Loop ||
          node.kind == Kind::For;
@@ -262,7 +271,7 @@ TypeSyntax Parser::asyncResult(TypeSyntax result, TypeSyntax error,
 }
 
 std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
-                                        Span span) {
+                                        Span span, TypeSyntax error) {
   auto &statements = body.children;
   auto reject = [&](const Node &at, const std::string &message) {
     auto *inner = findAwait(at);
@@ -461,6 +470,15 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
       auto suspend = i + 1;
       while (suspend < list.size() && !containsAwait(*list[suspend]))
         ++suspend;
+      if (suspend < list.size() && isLoop(*list[suspend]) &&
+          usesName(*list[suspend], statement.text)) {
+        diagnostics.error(
+            "feature", statement.span,
+            "`" + statement.text +
+                "` is a borrow that is used by an awaiting loop; a borrow "
+                "of a local cannot live in the future state");
+        throw ParseFailure{};
+      }
       for (auto k = suspend + 1; k < list.size(); ++k) {
         if (usesName(*list[k], statement.text)) {
           diagnostics.error(
@@ -479,10 +497,10 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
 
   std::function<std::unique_ptr<Node>(std::vector<NodeOwner> &, std::size_t,
                                       std::vector<NodeOwner>,
-                                      std::vector<std::string>)>
+                                      std::vector<AsyncBinding>)>
       build;
   std::function<std::unique_ptr<Node>(Node &, std::vector<NodeOwner> &,
-                                      const std::vector<std::string> &)>
+                                      const std::vector<AsyncBinding> &)>
       branchFuture;
   // Builds the statement that ends a sub-future (the next loop iteration, or
   // the carried state of a block or joined branch); unset outside of those.
@@ -492,19 +510,26 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
     diagnostics.error("feature", at, message);
     throw ParseFailure{};
   };
-  // The `var` locals in scope, each once: the state a sub-future carries.
-  auto carriedOf = [&](const std::vector<std::string> &variables) {
-    std::vector<std::string> result;
-    for (auto it = variables.rbegin(); it != variables.rend(); ++it)
-      if (std::find(result.begin(), result.end(), *it) == result.end())
-        result.push_back(*it);
+  // Mutable locals and locals already in an enclosing state must be threaded
+  // through every nested future; each name appears only once.
+  auto carriedOf = [&](const std::vector<AsyncBinding> &variables) {
+    std::vector<AsyncBinding> result;
+    std::vector<std::string> seen;
+    for (auto it = variables.rbegin(); it != variables.rend(); ++it) {
+      if (std::find(seen.begin(), seen.end(), it->name) != seen.end())
+        continue;
+      seen.push_back(it->name);
+      if (it->mutableBinding || it->inState)
+        result.push_back({it->name, it->mutableBinding, it->loopCarryable,
+                          true});
+    }
     return result;
   };
   // At least two elements, so the state is always a real tuple.
-  auto stateOf = [&](const std::vector<std::string> &carried, Span at) {
+  auto stateOf = [&](const std::vector<AsyncBinding> &carried, Span at) {
     auto value = node(Kind::Tuple, at);
     for (auto &variable : carried)
-      value->children.push_back(name(variable, at));
+      value->children.push_back(name(variable.name, at));
     value->children.push_back(node(Kind::Unit, at));
     if (value->children.size() < 2)
       value->children.push_back(node(Kind::Unit, at));
@@ -512,8 +537,8 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
     return value;
   };
   // `let (<carry-0>, .., _) = <source>` (with the loop result when
-  // `withResult`) followed by `var x = <carry-i>` for every carried local.
-  auto unpack = [&](const std::vector<std::string> &carried, Span at,
+  // `withResult`) followed by a binding matching each carried local.
+  auto unpack = [&](const std::vector<AsyncBinding> &carried, Span at,
                     const char *source, bool withResult,
                     std::vector<NodeOwner> &out) {
     Pattern state;
@@ -538,8 +563,8 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
     finish(*binding);
     out.push_back(std::move(binding));
     for (std::size_t i = 0; i < carried.size(); ++i) {
-      auto rebinding = node(Kind::Binding, at, carried[i]);
-      rebinding->flag = true;
+      auto rebinding = node(Kind::Binding, at, carried[i].name);
+      rebinding->flag = carried[i].mutableBinding;
       rebinding->children.push_back(
           name("<carry-" + std::to_string(i) + ">", at));
       finish(*rebinding);
@@ -549,9 +574,9 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
   // The sub-future `first` followed by `after`, which continues from the
   // carried state (and the loop result) that `first` produced.
   auto sequel = [&](std::unique_ptr<Node> first,
-                    const std::vector<std::string> &carried, bool withResult,
+                    const std::vector<AsyncBinding> &carried, bool withResult,
                     std::vector<NodeOwner> &after,
-                    const std::vector<std::string> &variables, Span at) {
+                    const std::vector<AsyncBinding> &variables, Span at) {
     ClosureParameter parameter;
     parameter.span = at;
     parameter.name = "<joined>";
@@ -576,11 +601,11 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
   bool loopExits = false;
   std::function<void(Node &, const std::string &, bool,
                      std::vector<std::string> &,
-                     const std::vector<std::string> &)>
+                     const std::vector<AsyncBinding> &)>
       rewriteExits;
   rewriteExits = [&](Node &parent, const std::string &label, bool nested,
                      std::vector<std::string> &inner,
-                     const std::vector<std::string> &carried) {
+                     const std::vector<AsyncBinding> &carried) {
     for (auto &slot : parent.children) {
       if (!slot.get() || slot->kind == Kind::Closure)
         continue;
@@ -797,7 +822,7 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
   // branch statement) joins the branch that continues.
   auto pathFuture = [&](std::vector<NodeOwner> path,
                         std::vector<NodeOwner> &rest,
-                        const std::vector<std::string> &variables) {
+                        const std::vector<AsyncBinding> &variables) {
     if (!rest.empty() && !endsWithReturn(path)) {
       for (auto &statement : rest)
         path.push_back(std::move(statement));
@@ -806,7 +831,7 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
     return build(path, 0, {}, variables);
   };
   auto futureOf = [&](NodeOwner &path, std::vector<NodeOwner> &rest,
-                      const std::vector<std::string> &variables) {
+                      const std::vector<AsyncBinding> &variables) {
     if (isBranch(*path))
       return branchFuture(*path, rest, variables);
     if (path->kind == Kind::Block)
@@ -820,7 +845,8 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
   // the futures of the branches; `match` nests the pair to the right.
   branchFuture =
       [&](Node &statement, std::vector<NodeOwner> &rest,
-          const std::vector<std::string> &variables) -> std::unique_ptr<Node> {
+          const std::vector<AsyncBinding> &variables)
+          -> std::unique_ptr<Node> {
     auto at = statement.span;
     auto result = node(statement.kind, at, statement.text);
     result->patterns = std::move(statement.patterns);
@@ -870,7 +896,7 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
   // `lazy` of the remainder or the next await/branch.
   build = [&](std::vector<NodeOwner> &stmts, std::size_t from,
               std::vector<NodeOwner> block,
-              std::vector<std::string> variables) -> std::unique_ptr<Node> {
+              std::vector<AsyncBinding> variables) -> std::unique_ptr<Node> {
     if (from == 0)
       checkBorrows(stmts);
     enum class Step { Rest, Await, Branch, Exit, Loop, Join, Nest };
@@ -966,9 +992,18 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
       return asBlock(span, std::move(block));
     }
     for (auto i = from; i < next; ++i) {
-      if (stmts[i]->kind == Kind::Binding && stmts[i]->flag &&
-          stmts[i]->text != "<pattern>")
-        variables.push_back(stmts[i]->text);
+      if (stmts[i]->kind == Kind::Binding &&
+          stmts[i]->text != "<pattern>" && stmts[i]->text != "_") {
+        bool loopCarryable = true;
+        if (!stmts[i]->children.empty()) {
+          const auto &initializer = *stmts[i]->children[0];
+          loopCarryable =
+              initializer.kind != Kind::Unary ||
+              (initializer.text != "read" && initializer.text != "mut");
+        }
+        variables.push_back(
+            {stmts[i]->text, stmts[i]->flag, loopCarryable});
+      }
       block.push_back(std::move(stmts[i]));
     }
     if (step == Step::Branch || step == Step::Exit) {
@@ -998,18 +1033,41 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
         exits = findReturn(subject) != nullptr;
       }
       auto carried = carriedOf(variables);
+      if (step == Step::Loop) {
+        std::vector<std::string> seen;
+        for (auto it = variables.rbegin(); it != variables.rend(); ++it) {
+          if (std::find(seen.begin(), seen.end(), it->name) != seen.end())
+            continue;
+          seen.push_back(it->name);
+          if (it->mutableBinding || !it->loopCarryable)
+            continue;
+          bool live = usesName(subject, it->name);
+          for (auto i = next + 1; i < stmts.size(); ++i)
+            live = live || usesName(*stmts[i], it->name);
+          if (live) {
+            carried.push_back(
+                {it->name, false, it->loopCarryable, true});
+          }
+        }
+      }
       for (auto &variable : carried)
-        if (declares(subject, variable))
+        if (declares(subject, variable.name))
           refuse(subject.span,
-                 "`" + variable +
-                     "` is declared again inside an `await`ing loop, block "
-                     "or branch; its state is carried by name, so use "
-                     "another name");
+                 "`" + variable.name +
+                     "` is declared again inside an `await`ing construct; "
+                     "its state is carried by name, so use another name");
       bool valueTail = subject.kind == Kind::Loop && next + 1 == stmts.size() &&
                        !tailExit && !subject.semicolon;
       std::vector<NodeOwner> after;
       for (auto i = next + 1; i < stmts.size(); ++i)
         after.push_back(std::move(stmts[i]));
+      auto continuationVariables = variables;
+      for (auto &variable : continuationVariables)
+        if (std::any_of(carried.begin(), carried.end(),
+                        [&](const auto &local) {
+                          return local.name == variable.name;
+                        }))
+          variable.inState = true;
       auto outer = tailExit;
       auto state = [&stateOf, carried](Span here) {
         return stateOf(carried, here);
@@ -1162,7 +1220,7 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
         after.push_back(std::move(match));
       }
       block.push_back(sequel(std::move(first), carried, step == Step::Loop,
-                             after, variables, at));
+                             after, continuationVariables, at));
       return asBlock(span, std::move(block));
     }
     auto &statement = stmts[next];
@@ -1184,12 +1242,14 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
     std::vector<NodeOwner> leading;
     std::vector<std::string> seen;
     for (auto it = variables.rbegin(); it != variables.rend(); ++it) {
-      if (std::find(seen.begin(), seen.end(), *it) != seen.end())
+      if (std::find(seen.begin(), seen.end(), it->name) != seen.end())
         continue;
-      seen.push_back(*it);
-      auto rebinding = node(Kind::Binding, at, *it);
-      rebinding->flag = true;
-      rebinding->children.push_back(name(*it, at));
+      seen.push_back(it->name);
+      if (!it->mutableBinding && !it->inState)
+        continue;
+      auto rebinding = node(Kind::Binding, at, it->name);
+      rebinding->flag = it->mutableBinding;
+      rebinding->children.push_back(name(it->name, at));
       finish(*rebinding);
       leading.push_back(std::move(rebinding));
     }
@@ -1201,12 +1261,11 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
       parameter.name = "<awaited>";
       if (statement->kind == Kind::Binding && statement->text != "_") {
         auto binding = node(Kind::Binding, at, statement->text);
-        binding->flag = true;
+        binding->flag = statement->flag;
         binding->annotation = statement->annotation;
         binding->children.push_back(name("<awaited>", at));
         finish(*binding);
         leading.push_back(std::move(binding));
-        variables.push_back(statement->text);
       } else if (statement->kind == Kind::Assign) {
         auto assignment = node(Kind::Assign, at, "=");
         assignment->children.push_back(std::move(statement->children[0]));
@@ -1215,6 +1274,9 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
         leading.push_back(std::move(assignment));
       }
     }
+    if (statement->kind == Kind::Binding && statement->text != "_" &&
+        statement->text != "<pattern>")
+      variables.push_back({statement->text, statement->flag, true, false});
     std::vector<ClosureParameter> parameters;
     parameters.push_back(std::move(parameter));
     auto continuation =
@@ -1234,6 +1296,21 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
     std::vector<NodeOwner> all;
     for (auto &statement : statements)
       all.push_back(std::move(statement));
+    if (!error.empty()) {
+      // Capture the throwing body in its own callable so source returns leave
+      // that body, not the non-throwing callable that produces its outcome.
+      auto throwing = closure(span, asBlock(span, std::move(all)), {});
+      throwing->annotation = result.elements[0];
+      throwing->error = std::move(error);
+      auto invoke = node(Kind::Call, span);
+      invoke->children.push_back(std::move(throwing));
+      finish(*invoke);
+      auto capture = node(Kind::Capture, span);
+      capture->children.push_back(std::move(invoke));
+      finish(*capture);
+      all.clear();
+      all.push_back(std::move(capture));
+    }
     auto lazyBody = closure(span, asBlock(span, std::move(all)), {});
     lazyBody->annotation = result;
     std::vector<NodeOwner> arguments;
@@ -1248,7 +1325,7 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
 void Parser::lowerAsync(Function &function) {
   auto bodySpan = function.body->span;
   auto result = asyncResult(function.annotation, function.error, true);
-  auto future = asyncBody(*function.body, result, function.span);
+  auto future = asyncBody(*function.body, result, function.span, function.error);
   TypeSyntax interface;
   interface.name = "core::future::Future";
   GenericArgument output;
