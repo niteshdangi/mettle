@@ -115,6 +115,9 @@ private:
   std::vector<int> poisonedVariables;
   std::size_t reportedErrors = 0;
   std::unordered_set<const Node *> reusedNodes;
+  // Built-in `lo..hi` ranges that are the source of a `for`: they keep the
+  // structural counted-loop form; every other range value is a library range.
+  std::unordered_set<const Node *> loopRanges;
   // `format` parameter bindings (by inference variable) and the nodes that may
   // hold a recipe or name one: arguments of `format` parameters, receivers.
   std::unordered_set<int> formatVariables;

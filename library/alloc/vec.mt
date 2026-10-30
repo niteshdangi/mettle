@@ -307,52 +307,108 @@ extend<T: PartialEq, A: Allocator> List<T, A> {
     }
 }
 
-extend<T: Ord, A: Allocator> List<T, A> {
-    // Stable merge sort using a scratch buffer from the vector's own element type.
-    pub mut fn sort(): Unit {
-        let n = self.len
-        if n < 2usize { return () }
-        var tmp = with_capacity<T>(n)
-        unsafe { sort_run(self.ptr, tmp.ptr, n) }
+// Sort indices first, then apply their permutation with swaps. Comparisons
+// never observe a moved-from slot, even if they panic.
+pub fn stable_sort_by<T, F: fn(read T, read T): Ordering>(items: mut [T], compare: take F): Unit {
+    let n = items.len()
+    if n < 2usize { return () }
+    var order = with_capacity<usize>(n)
+    var scratch = with_capacity<usize>(n)
+    var i = 0usize
+    while i < n {
+        order.push(i + 0usize)
+        scratch.push(0usize)
+        i += 1usize
+    }
+    var width = 1usize
+    while width < n {
+        var start = 0usize
+        while start < n {
+            let mid = if n - start < width { n } else { start + width }
+            let end = if n - mid < width { n } else { mid + width }
+            var left = start
+            var right = mid
+            var out = start
+            while left < mid && right < end {
+                let l = order[left]
+                let r = order[right]
+                if compare(read items[r], read items[l]).is_lt() {
+                    scratch[out] = r
+                    right += 1usize
+                } else {
+                    scratch[out] = l
+                    left += 1usize
+                }
+                out += 1usize
+            }
+            while left < mid {
+                scratch[out] = order[left]
+                left += 1usize
+                out += 1usize
+            }
+            while right < end {
+                scratch[out] = order[right]
+                right += 1usize
+                out += 1usize
+            }
+            start = end
+        }
+        i = 0usize
+        while i < n { order[i] = scratch[i]; i += 1usize }
+        if width >= n - width { break }
+        width += width
+    }
+    // `order[destination]` names the original element; invert it before
+    // swapping so each entry follows the element currently in that slot.
+    i = 0usize
+    while i < n { scratch[order[i]] = i; i += 1usize }
+    i = 0usize
+    while i < n {
+        while scratch[i] != i {
+            let destination = scratch[i]
+            items.swap(i, destination)
+            scratch.swap(i, destination)
+        }
+        i += 1usize
     }
 }
 
-// Safety: `p` holds `n` initialized values, `tmp` has room for `n`.
-// Elements are moved bitwise, so a panicking comparison during a merge can
-// duplicate or lose ownership; `sort` therefore requires non-panicking `cmp`.
-unsafe fn sort_run<T: Ord>(p: ptr<mut T>, tmp: ptr<mut T>, n: usize): Unit {
-    if n < 2usize { return () }
-    if n <= 16usize {
-        var i = 1usize
-        while i < n {
-            var j = i
-            while j > 0usize && unsafe { read *p.add(j) }.cmp(unsafe { read *p.add(j - 1usize) }).is_lt() {
-                core.ptr.swap(p.add(j), p.add(j - 1usize))
-                j -= 1usize
-            }
-            i += 1usize
-        }
-        return ()
+extend<T: Ord, A: Allocator> List<T, A> {
+    pub mut fn sort(): Unit {
+        stable_sort_by(self.as_mut_slice(), fn(a: read T, b: read T): Ordering { a.cmp(b) })
     }
-    let mid = n / 2usize
-    sort_run(p, tmp, mid)
-    sort_run(p.add(mid), tmp, n - mid)
-    var a = 0usize
-    var b = mid
-    var k = 0usize
-    while a < mid && b < n {
-        if unsafe { read *p.add(b) }.cmp(unsafe { read *p.add(a) }).is_lt() {
-            core.ptr.`copy`(p.add(b).cast_const(), tmp.add(k), 1usize)
-            b += 1usize
-        } else {
-            core.ptr.`copy`(p.add(a).cast_const(), tmp.add(k), 1usize)
-            a += 1usize
-        }
-        k += 1usize
+}
+
+extend<T, A: Allocator> List<T, A> {
+    pub mut fn sort_by<F: fn(read T, read T): Ordering>(compare: take F): Unit {
+        stable_sort_by(self.as_mut_slice(), take compare)
     }
-    while a < mid { core.ptr.`copy`(p.add(a).cast_const(), tmp.add(k), 1usize); a += 1usize; k += 1usize }
-    while b < n { core.ptr.`copy`(p.add(b).cast_const(), tmp.add(k), 1usize); b += 1usize; k += 1usize }
-    core.ptr.`copy`(tmp.cast_const(), p, n)
+    pub mut fn sort_by_key<K: Ord, F: fn(read T): K>(key: take F): Unit {
+        self.sort_by(fn(a: read T, b: read T): Ordering {
+            let left = key(a)
+            let right = key(b)
+            left.cmp(read right)
+        })
+    }
+}
+
+extend<T: Ord> [T] {
+    pub mut fn sort(): Unit {
+        stable_sort_by(mut self, fn(a: read T, b: read T): Ordering { a.cmp(b) })
+    }
+}
+
+extend<T> [T] {
+    pub mut fn sort_by<F: fn(read T, read T): Ordering>(compare: take F): Unit {
+        stable_sort_by(mut self, take compare)
+    }
+    pub mut fn sort_by_key<K: Ord, F: fn(read T): K>(key: take F): Unit {
+        self.sort_by(fn(a: read T, b: read T): Ordering {
+            let left = key(a)
+            let right = key(b)
+            left.cmp(read right)
+        })
+    }
 }
 
 extend<T, A: Allocator + Default> List<T, A> implements Default {

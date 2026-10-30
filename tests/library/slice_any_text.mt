@@ -48,14 +48,14 @@ fn count<I: Iterator>(it: take I): usize {
 fn main(): i32 {
     var xs = [5, 3, 9, 1, 7, 3, 0]
     let v = mut xs
-    v.sort()
+    v.sort_unstable()
     if !xs.is_sorted() || xs[0] != 0 || xs[6] != 9 { return 1 }
     var e = [0; 0]
     let ev = mut e
-    ev.sort()
+    ev.sort_unstable()
     var one = [4]
     let ov = mut one
-    ov.sort()
+    ov.sort_unstable()
     let r = read xs
     let k7 = 7
     let k4 = 4
