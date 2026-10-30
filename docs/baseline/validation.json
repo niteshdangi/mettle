@@ -30,7 +30,7 @@
     "fixture_expectations_checked": 23,
     "fixtures_executed": false
   },
-  "documentation_sha256": "03d2c955686ab0fb2bfc0ada46f0b3b7d5ebc1fc4cf75ce33ddd2defe7308d1b",
+  "documentation_sha256": "8b57c7ee8a657d29bc2162dee71e04ae69b93fdff6d27cce665e34e5704004b3",
   "documentation_inputs": {
     "AGENTS.md": "33d2c795b34b8f4328f1df6e463cfdb2ec9e5c7ea4a14bad07e7cd5fd4b02c66",
     "CONTRIBUTING.md": "48e922caaaf6b55ebe4dcd05f79cba26ad3cfc9f7b9c69cb6e3d010309cb68f2",
@@ -51,10 +51,10 @@
     "docs/core-grammar.md": "cd649922bcb7b777e76323d4b486166e5fab9d3c09686c9b5e4291bd76aca7e9",
     "docs/core-semantics.md": "a2998fdc3a7f118f35e4c0f82c8dda7633b0ca4b95882fab90138825c050f1ef",
     "docs/decisions.md": "90a9588978ab8a0b7dc169f51afd312bab121d8746ecf2f844d6ce531ffd8f96",
-    "docs/implementation-plan.md": "48ed2795c5ceee0eb23f50b926730249fbb1bc7678aa180d62ecf47ebec8e164",
+    "docs/implementation-plan.md": "70f11ab0d07ac1d6fe59ea7fe3a2cb81172ece5d7b9c12fc34ca2c9a0d95321b",
     "docs/language-grammar.md": "ff6ff51c061c2348f62dad6c41b1aff8c5cdabf289bc67a7d5a29114c0741082",
     "docs/language-identity.md": "7febf4dec2af3cf08e0852a2eaea4a427a884ebdaf72dae993991625ded37ab3",
-    "docs/library-and-abi.md": "5db1ef4bd00dab55b2d469c3fd5e3b25e1cb9cfd79b807f65cc9a5a7b632e91f",
+    "docs/library-and-abi.md": "e06fbf3527626cd7e5986c8c4581b4d9953015d89eda730f15e0e0dd0bbacb5c",
     "docs/library-surface.md": "30c79bdb8cd5dc968f6887f945d7e5eb746719819fc8d94dd103d4a64311d718",
     "docs/memory-and-concurrency.md": "4dd1b7d98e32bfc3a7b7ad13a13e563df2e18097945c4423ae333318102735ad",
     "docs/performance.md": "61a60a81c7c68803fd8c4478e4a96363283134b62e1452c300a3fc14331365eb",

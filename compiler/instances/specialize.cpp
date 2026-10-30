@@ -221,6 +221,10 @@ private:
         function.name += types->name(arguments[i]);
       }
       function.name += ">";
+      // A generic indirect contract is declared by external name; each
+      // instance has its own signature, so it needs its own symbol.
+      if (function.indirectContract)
+        function.externalName += "." + std::to_string(id);
     }
     // Instructions repeat a handful of types; a result is cached only after
     // it was fully validated without diagnostics.

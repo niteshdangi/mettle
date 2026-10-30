@@ -153,7 +153,10 @@ type ErasedFuture {
 }
 
 fn poll_erased<T, F: Future<Output = T>>(data: ptr<mut u8>, waker_slot: ptr<mut u8>): bool {
-    let waker = unsafe { read *waker_slot.cast::<Waker>() }
+    // The caller owns the Waker for the whole call.
+    unsafe { poll_packet::<T, F>(data, read *waker_slot.cast::<Waker>()) }
+}
+fn poll_packet<T, F: Future<Output = T>>(data: ptr<mut u8>, waker: read Waker): bool {
     var cx = Context::from_waker(waker)
     let packet = data.cast::<Packet<F, T>>()
     let polled = unsafe { core::pin::Pin::new_unchecked(mut (*packet).future).poll(mut cx) }
@@ -461,7 +464,7 @@ fn poll_task(task: take Arc<Task>): bool {
         match mut guard.get_mut() {
             present(slot) => {
                 polled = true
-                var call = PollCall(core::ptr::from_mut(*slot), core::ptr::from_mut(waker), false)
+                var call = PollCall(core::ptr::from_mut(slot), core::ptr::from_mut(waker), false)
                 task.get().polling.store(true, core::sync::atomic::Ordering::Release)
                 task.get().hub.get().polling.store(true, core::sync::atomic::Ordering::Release)
                 let action: fn(ptr<mut u8>): Unit = poll_call

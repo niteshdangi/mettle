@@ -258,16 +258,23 @@ Checker::AnnotationRegions &Checker::functionRegions(const Function &function) {
       found != functionRegionScopes.end())
     return found->second;
   AnnotationRegions scope;
+  // A closure inherits its parent's regions; its copied generic parameters
+  // name the same regions and are not new declarations.
+  std::unordered_set<std::string> inherited;
   if (auto closure = closureFunctions.find(&function);
       closure != closureFunctions.end()) {
-    if (const auto *parent = checked.closureBodies[closure->second]->parent)
+    if (const auto *parent = checked.closureBodies[closure->second]->parent) {
       scope = functionRegions(*parent);
+      for (const auto &[name, region] : scope.names)
+        inherited.insert(name);
+    }
   }
   scope.scope = checked.types->regions().binder(scope.environment.universe);
   auto add = [&](const std::vector<GenericParameter> &parameters,
                  const std::vector<GenericConstraint> &constraints) {
     for (const auto &parameter : parameters) {
-      if (parameter.kind != GenericParameterKind::Region)
+      if (parameter.kind != GenericParameterKind::Region ||
+          inherited.contains(parameter.name))
         continue;
       auto identity =
           checked.types->regions().bound(scope.scope, parameter.name);
@@ -3047,11 +3054,31 @@ void RegionPass::run() {
     }
     for (std::size_t p = 0; p < syntax.parameters.size(); ++p) {
       const auto *annotation = &syntax.parameters[p].annotation;
-      if (syntax.parameters[p].name == "self" && syntax.implementation >= 0)
+      auto type = functions[i].locals[p].type;
+      if (syntax.parameters[p].name == "self" && syntax.implementation >= 0) {
         annotation = &module.implementations[syntax.implementation].target;
-      signature.parameters.push_back(
-          decorate(functions[i].locals[p].type, *annotation, context,
-                   syntax.parameters[p].span, signature.backing[p]));
+        // A pinned receiver's target annotation describes the pinned view's
+        // payload, not the structural `Pin` wrapper.
+        if (types.isProduct(type) &&
+            types.product(type).kind == AggregateKind::Pin &&
+            types.isView(types.product(type).fields[0].type)) {
+          auto view = types.view(types.product(type).fields[0].type);
+          auto region = view.region == RegionId::Unspecified
+                            ? signature.backing[p]
+                            : view.region;
+          if (region == RegionId::Unspecified)
+            region = store.inference(context.scope);
+          auto payload = decorate(view.payload, *annotation, context,
+                                  syntax.parameters[p].span, region);
+          signature.parameters.push_back(
+              types.structural(AggregateKind::Pin,
+                               {types.viewType(payload, view.mode, region)}));
+          continue;
+        }
+      }
+      signature.parameters.push_back(decorate(type, *annotation, context,
+                                              syntax.parameters[p].span,
+                                              signature.backing[p]));
     }
     for (std::size_t p = 0; p < signature.parameters.size(); ++p)
       for (auto region : contained(signature.parameters[p]))
@@ -3147,13 +3174,21 @@ void RegionPass::run() {
             "self" &&
         !module.functions[contract.declaration].parameters.empty() &&
         module.functions[contract.declaration].parameters[0].name == "self" &&
-        !functions[contract.declaration].genericParameters.empty() &&
-        !(types.isProduct(actual.parameters[0].type) &&
-          types.product(actual.parameters[0].type).kind == AggregateKind::Pin))
-      for (auto &binding : bindings)
-        if (binding.parameter ==
-            functions[contract.declaration].genericParameters[0])
-          binding.argument = actual.parameters[0].type;
+        !functions[contract.declaration].genericParameters.empty()) {
+      // `Self` is the receiver's region-decorated type; for a pinned
+      // receiver, the payload of its pinned view.
+      auto self = actual.parameters[0].type;
+      if (types.isProduct(self) &&
+          types.product(self).kind == AggregateKind::Pin)
+        self = types.isView(types.product(self).fields[0].type)
+                   ? types.view(types.product(self).fields[0].type).payload
+                   : Type::Unknown;
+      if (self != Type::Unknown)
+        for (auto &binding : bindings)
+          if (binding.parameter ==
+              functions[contract.declaration].genericParameters[0])
+            binding.argument = self;
+    }
     auto providedType = types.callableType(std::move(actual));
     auto requiredType = types.callableType(std::move(expected));
     const auto &implementation = module.functions[contract.implementation];

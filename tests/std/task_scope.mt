@@ -2,16 +2,15 @@ import alloc::arc;
 import alloc::rc;
 import alloc::rc::Rc;
 import core::future::{Context, Future, Poll, Waker};
-import core::sync::atomic::{AtomicUsize, Ordering};
 import std::task;
 import std::thread;
 
 type Child<region r> {
     value: read i32 from r
-    drops: read AtomicUsize from r
+    drops: read core::sync::atomic::AtomicUsize from r
     saved: ptr<mut Waker?>
     pending: bool
-    drop { let _old = self.drops.fetch_add(1usize, Ordering::SeqCst) }
+    drop { let _old = self.drops.fetch_add(1usize, core::sync::atomic::Ordering::SeqCst) }
 }
 impl<region r> Child<region r> implements Future {
     type Output = i32
@@ -28,7 +27,7 @@ impl<region r> Child<region r> implements Future {
 
 type Parent<region r> {
     value: read i32 from r
-    drops: read AtomicUsize from r
+    drops: read core::sync::atomic::AtomicUsize from r
     saved: ptr<mut Waker?>
 }
 impl<region r> Parent<region r> implements Future {
@@ -48,8 +47,8 @@ impl<region r> Parent<region r> implements Future {
 
 type SelfCancel<region r> {
     holder: Rc<core::cell::RefCell<task::JoinHandle<Unit>?>>
-    drops: read AtomicUsize from r
-    drop { let _old = self.drops.fetch_add(1usize, Ordering::SeqCst) }
+    drops: read core::sync::atomic::AtomicUsize from r
+    drop { let _old = self.drops.fetch_add(1usize, core::sync::atomic::Ordering::SeqCst) }
 }
 impl<region r> SelfCancel<region r> implements Future {
     type Output = Unit
@@ -65,7 +64,7 @@ impl<region r> SelfCancel<region r> implements Future {
 
 fn main(): i32 {
     let value = 42
-    let drops = AtomicUsize::new(0usize)
+    let drops = core::sync::atomic::AtomicUsize::new(0usize)
     var saved: Waker? = none
     let saved_ptr = core::ptr::from_mut(saved)
     let result = task::scope(fn(s: read task::Scope): i32 {
@@ -75,13 +74,13 @@ fn main(): i32 {
             failure(error) => -1
         }
     })
-    if result != 42 || drops.load(Ordering::SeqCst) != 1usize { return 1 }
+    if result != 42 || drops.load(core::sync::atomic::Ordering::SeqCst) != 1usize { return 1 }
 
     task::scope(fn(s: read task::Scope): Unit {
         let forgotten = s.spawn(Child(read value, read drops, saved_ptr, true))
         core::mem::forget(take forgotten)
     })
-    if drops.load(Ordering::SeqCst) != 2usize { return 2 }
+    if drops.load(core::sync::atomic::Ordering::SeqCst) != 2usize { return 2 }
     match mut saved {
         present(waker) => { waker.wake_by_ref(); waker.wake_by_ref() },
         none => { return 3 }
@@ -89,14 +88,14 @@ fn main(): i32 {
     saved = none
 
     // Unwinding the parent still cancels a forgotten borrowing child.
-    let count = arc::new(AtomicUsize::new(0usize))
+    let count = arc::new(core::sync::atomic::AtomicUsize::new(0usize))
     let probe = count.retain()
     let worker = thread::spawn(take fn(): Unit {
-        let local = 8
+        let borrowed_local = 8
         var no_waker: Waker? = none
         let ptr = core::ptr::from_mut(no_waker)
         task::scope(fn(s: read task::Scope): Unit {
-            let forgotten = s.spawn(Child(read local, probe.get(), ptr, true))
+            let forgotten = s.spawn(Child(read borrowed_local, probe.get(), ptr, true))
             core::mem::forget(take forgotten)
             panic("scope parent panic")
         })
@@ -105,7 +104,7 @@ fn main(): i32 {
         failure(error) => { if error.code != 101 { return 4 } },
         success(value) => { return 5 }
     }
-    if count.get().load(Ordering::SeqCst) != 1usize { return 6 }
+    if count.get().load(core::sync::atomic::Ordering::SeqCst) != 1usize { return 6 }
 
     // Forgetting a parent after Pending leaves no child able to use its
     // expired external borrow, even if a retained wake arrives later.
@@ -123,7 +122,7 @@ fn main(): i32 {
         }
         core::mem::forget(take parent)
     }
-    if drops.load(Ordering::SeqCst) != 3usize { return 8 }
+    if drops.load(core::sync::atomic::Ordering::SeqCst) != 3usize { return 8 }
     match mut saved {
         present(waker) => { waker.wake_by_ref(); waker.wake_by_ref() },
         none => { return 9 }
@@ -139,6 +138,6 @@ fn main(): i32 {
         var guard = holder.get().borrow_mut()
         *guard.get_mut() = present(child)
     })
-    if drops.load(Ordering::SeqCst) != 4usize { return 10 }
+    if drops.load(core::sync::atomic::Ordering::SeqCst) != 4usize { return 10 }
     0
 }

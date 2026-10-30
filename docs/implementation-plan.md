@@ -918,7 +918,8 @@ parent destruction and an uncooperative child poll. Check actual cleanup versus
 cancellation requests; no hidden mandatory boxing or default executor in core.
 Exercise an async network service and P10 without weaker lifetime guarantees.
 
-I11 library sub-batch, implemented, unverified (not yet built): `alloc::future`
+I11 library sub-batch, implemented and verified on macOS arm64 by the std
+programs (Release ctest 23/23): `alloc::future`
 adds explicitly heap-erased `Static` futures with a fixed-address payload and
 typed poll/drop dispatch. The local `std::task::Executor` retains task
 registrations independently of handles and wakes; owned `spawn` requires

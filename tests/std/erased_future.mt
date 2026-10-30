@@ -2,7 +2,6 @@ import alloc::future;
 import alloc::arc;
 import alloc::arc::Arc;
 import core::future::{Context, Future, Poll};
-import core::sync::atomic::{AtomicUsize, Ordering};
 import std::task;
 import std::thread;
 
@@ -30,8 +29,8 @@ impl Stable implements Future {
 }
 
 type Panics {
-    drops: Arc<AtomicUsize>
-    drop { let _old = self.drops.get().fetch_add(1usize, Ordering::SeqCst) }
+    drops: Arc<core::sync::atomic::AtomicUsize>
+    drop { let _old = self.drops.get().fetch_add(1usize, core::sync::atomic::Ordering::SeqCst) }
 }
 impl Panics implements Future {
     type Output = Unit
@@ -68,16 +67,16 @@ fn main(): i32 {
     }
     if drops != 2 { return 4 }
 
-    let count = arc::new(AtomicUsize::new(0usize))
+    let count = arc::new(core::sync::atomic::AtomicUsize::new(0usize))
     let other = count.retain()
     let worker = thread::spawn(take fn(): Unit {
-        task::block_on(future::erase(Panics(other)))
+        task::block_on(future::erase(Panics(other.retain())))
     })
     let result = capture worker.join()
     match take result {
         success(value) => { return 5 },
         failure(error) => { if error.code != 101 { return 6 } }
     }
-    if count.get().load(Ordering::SeqCst) != 1usize { return 7 }
+    if count.get().load(core::sync::atomic::Ordering::SeqCst) != 1usize { return 7 }
     0
 }

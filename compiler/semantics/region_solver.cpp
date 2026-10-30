@@ -339,6 +339,17 @@ RegionAnswer RegionTypeSolver::compare(
         from.kind == AggregateKind::Ref || from.kind == AggregateKind::RefMut ||
         from.kind == AggregateKind::Pin;
     if (from.kind == to.kind && from.fields.size() == to.fields.size() &&
+        !structural && from.regionArguments.empty() &&
+        to.regionArguments.empty() && from.genericArguments.empty() &&
+        to.genericArguments.empty() &&
+        nominalOrigin(types, source) == nominalOrigin(types, target)) {
+      // A nominal type without region or generic arguments has fixed region
+      // content; distinct decorations (for example through a self-referential
+      // function-pointer field) are the same type.
+      active.pop_back();
+      return RegionAnswer::Proven;
+    }
+    if (from.kind == to.kind && from.fields.size() == to.fields.size() &&
         (structural ||
          nominalOrigin(types, source) == nominalOrigin(types, target))) {
       answer = RegionAnswer::Proven;

@@ -16,7 +16,7 @@ low-level memory facilities. It requires neither allocator nor OS.
 allocation-backed formatting and explicitly erased values. It depends on a
 provided allocator but does not require processes, files or an executor.
 
-`alloc::future::erase` (implemented, unverified) consumes a `Static` future
+`alloc::future::erase` (implemented, verified on macOS arm64) consumes a `Static` future
 and allocates a fixed-address payload using the global allocator. Its
 `Erased<T>` handle can move without moving the payload; polling dispatches
 through pinned exclusive access and dropping the handle destroys and frees the
@@ -30,7 +30,7 @@ networking and processes. The official async runtime is separately selectable,
 not linked merely because a program imports core.
 
 The local `std::task` executor and its synchronous `scope` are implemented,
-unverified. `spawn` allocates a task, requires `Transferable + Static` future
+verified on macOS arm64. `spawn` allocates a task, requires `Transferable + Static` future
 and output, and returns a non-transferable handle. Joining drives the executor;
 dropping or aborting the handle cancels, and poll/destructor panics become
 `JoinError::Panicked`. The executor retains registrations even if handles are

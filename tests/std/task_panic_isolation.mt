@@ -1,12 +1,11 @@
 import alloc::arc;
 import alloc::arc::Arc;
 import core::future::{Context, Future, Poll};
-import core::sync::atomic::{AtomicUsize, Ordering};
 import std::task;
 
 type Panics {
-    drops: Arc<AtomicUsize>
-    drop { let _old = self.drops.get().fetch_add(1usize, Ordering::SeqCst) }
+    drops: Arc<core::sync::atomic::AtomicUsize>
+    drop { let _old = self.drops.get().fetch_add(1usize, core::sync::atomic::Ordering::SeqCst) }
 }
 impl Panics implements Future {
     type Output = i32
@@ -28,7 +27,7 @@ impl Ready implements Future {
 }
 
 fn main(): i32 {
-    let drops = arc::new(AtomicUsize::new(0usize))
+    let drops = arc::new(core::sync::atomic::AtomicUsize::new(0usize))
     let ex = task::executor()
     let bad = ex.spawn(Panics(drops.retain()))
     let bad_drop = ex.spawn(DropPanics())
@@ -47,6 +46,6 @@ fn main(): i32 {
         success(value) => { if value != 42 { return 5 } },
         failure(error) => { return 6 }
     }
-    if drops.get().load(Ordering::SeqCst) != 1usize { return 7 }
+    if drops.get().load(core::sync::atomic::Ordering::SeqCst) != 1usize { return 7 }
     0
 }

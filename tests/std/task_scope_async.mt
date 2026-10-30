@@ -1,8 +1,9 @@
 import std::task;
+import core::future::Future;
 
 async fn borrowed(value: read i32): i32 {
     await task::yield_now();
-    *value
+    value
 }
 
 fn main(): i32 {

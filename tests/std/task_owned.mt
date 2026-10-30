@@ -121,7 +121,7 @@ fn main(): i32 {
     let racing = ex.spawn(Probe(core::ptr::from_mut(drops), core::ptr::from_mut(saved), 0, false))
     let _polls = ex.run_until_stalled()
     let sender = saved.take_value().unwrap()
-    let worker = thread::spawn(take fn(): Unit { hammer(sender) })
+    let worker = thread::spawn(take fn(): Unit { hammer(sender.clone()) })
     racing.abort()
     let outcome = capture worker.join()
     match take outcome { success(value) => {}, failure(error) => { return 17 } }
