@@ -69,9 +69,83 @@ void Checker::staticNamesAndTypes() {
     storage.identity = i;
     storage.name = definitionName(source.span, source.name);
     staticNames.emplace(storage.name, i);
+  }
+  inherentConstantNamesAndTypes();
+  for (std::size_t i = 0; i < module.statics.size(); ++i) {
+    const auto &source = module.statics[i];
+    auto &storage = checked.staticStorage[i];
     storage.type = annotation(source.annotation, source.span);
   }
   staticsDeclared = true;
+  // Resolve any values not forced by type annotations after storage types are
+  // registered; this checks unused constants and catches forward-reference
+  // cycles.
+  for (std::size_t i = 0; i < inherentConstants.size(); ++i)
+    (void)inherentConstantValue(i, inherentConstants[i].target);
+}
+
+void Checker::inherentConstantNamesAndTypes() {
+  auto *saved = genericEnvironment;
+  for (const auto &syntax : module.implementations) {
+    if (!syntax.interface.empty() || syntax.negative ||
+        std::none_of(syntax.associated.begin(), syntax.associated.end(),
+                     [](const auto &item) { return item.constant; }))
+      continue;
+
+    auto environment =
+        makeGenericEnvironment(syntax.genericParameters, syntax.constraints);
+    environment.declarationSpan = syntax.span;
+    genericEnvironment = &environment;
+    pushRegionParameters(syntax.genericParameters, syntax.span);
+    assumeRegionConstraints(syntax.constraints, syntax.span);
+    auto target = annotation(syntax.target, syntax.span);
+    environment.names["Self"] = target;
+    auto [registered, inserted] =
+        implementationGenerics.emplace(&syntax, std::move(environment));
+    (void)inserted;
+    genericEnvironment = &registered->second;
+
+    if (!checked.types->isProduct(target) ||
+        (checked.types->product(target).kind != AggregateKind::Product &&
+         checked.types->product(target).kind != AggregateKind::Enumeration)) {
+      for (const auto &item : syntax.associated)
+        if (item.constant)
+          error("type", item.span,
+                "inherent associated constants require a nominal type");
+      popRegionParameters();
+      genericEnvironment = saved;
+      continue;
+    }
+
+    auto ownerType = target;
+    if (checked.types->product(ownerType).genericOrigin != Type::Unknown)
+      ownerType = checked.types->product(ownerType).genericOrigin;
+    const auto owner = checked.types->product(ownerType).name;
+    for (const auto &item : syntax.associated) {
+      if (!item.constant)
+        continue;
+      auto declaredType = annotation(item.annotation, item.span);
+      if (declaredType == Type::Unknown)
+        continue;
+      if (!isInteger(declaredType) && declaredType != Type::Bool &&
+          declaredType != Type::Char) {
+        error("type", item.span,
+              "associated constant requires a supported scalar type");
+        continue;
+      }
+      if (!item.constantValue) {
+        error("type", item.span,
+              "associated constant requires a definition");
+        continue;
+      }
+      auto index = inherentConstants.size();
+      inherentConstants.push_back(
+          {&syntax, &item, target, declaredType, Type::Unknown, 0});
+      inherentConstantNames.emplace(owner + "::" + item.name, index);
+    }
+    popRegionParameters();
+    genericEnvironment = saved;
+  }
 }
 
 void Checker::staticDeclarations() {

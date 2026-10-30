@@ -57,6 +57,7 @@ private:
   void requireUnsafe(Span span);
   void machineDeclarations();
   void staticNamesAndTypes();
+  void inherentConstantNamesAndTypes();
   void staticDeclarations();
   void staticLocals();
   void staticInitializers();
@@ -68,6 +69,17 @@ private:
   std::optional<std::size_t> staticName(std::string_view name, Span span);
   std::unordered_map<std::string, std::size_t> staticNames;
   bool staticsDeclared = false;
+  struct InherentConstant {
+    const Module::Implementation *implementation = nullptr;
+    const Module::Associated *declaration = nullptr;
+    Type target = Type::Unknown;
+    Type declaredType = Type::Unknown;
+    Type value = Type::Unknown;
+    unsigned char state = 0;
+  };
+  std::vector<InherentConstant> inherentConstants;
+  std::unordered_map<std::string, std::size_t> inherentConstantNames;
+  std::optional<Type> inherentConstantValue(std::size_t index, Type subject);
   std::vector<const Module::Product *> deferredLayouts;
   std::vector<unsigned char> staticStates;
   void targetDeclarations();

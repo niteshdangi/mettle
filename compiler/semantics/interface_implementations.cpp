@@ -99,11 +99,16 @@ void Checker::interfaceImplementations() {
   }
   for (std::size_t i = 0; i < module.implementations.size(); ++i) {
     const auto &syntax = module.implementations[i];
-    auto environment =
-        makeGenericEnvironment(syntax.genericParameters, syntax.constraints);
-    environment.declarationSpan = syntax.span;
-    implementationGenerics.emplace(&syntax, std::move(environment));
-    genericEnvironment = &implementationGenerics.at(&syntax);
+    auto foundEnvironment = implementationGenerics.find(&syntax);
+    if (foundEnvironment == implementationGenerics.end()) {
+      auto environment =
+          makeGenericEnvironment(syntax.genericParameters, syntax.constraints);
+      environment.declarationSpan = syntax.span;
+      foundEnvironment =
+          implementationGenerics.emplace(&syntax, std::move(environment))
+              .first;
+    }
+    genericEnvironment = &foundEnvironment->second;
     auto implementationRegions =
         pushRegionParameters(syntax.genericParameters, syntax.span);
     assumeRegionConstraints(syntax.constraints, syntax.span);
@@ -734,8 +739,62 @@ std::optional<Type> Checker::associatedConstant(const Node &node) {
     return interfaceProjection(subject, interface, node.annotation.name,
                                node.genericArguments, node.span);
   }
-  if (node.kind != Kind::Name || node.text.find("::") == std::string::npos)
+  if (node.kind != Kind::Name)
     return std::nullopt;
+  if (node.text.find("::") == std::string::npos) {
+    auto canonical = checked.symbols->lookup(
+        checked.symbols->moduleOf(node.span), node.text,
+        resolution::Namespace::Value, node.span);
+    auto resolved = canonical ? inherentConstantNames.find(*canonical)
+                              : inherentConstantNames.end();
+    return resolved == inherentConstantNames.end()
+               ? std::nullopt
+               : inherentConstantValue(
+                     resolved->second,
+                     inherentConstants[resolved->second].target);
+  }
+
+  auto delimiter = node.text.rfind("::");
+  auto prefix = node.text.substr(0, delimiter);
+  auto member = node.text.substr(delimiter + 2);
+  Type subject = Type::Unknown;
+  auto owner = current ? current->owner : std::string_view{};
+  if (genericEnvironment) {
+    auto parameter = genericEnvironment->names.find(prefix);
+    if (parameter != genericEnvironment->names.end() &&
+        !checked.types->isConstant(parameter->second))
+      subject = parameter->second;
+  }
+  if (subject == Type::Unknown) {
+    auto canonicalType = typeName(prefix, node.span, owner);
+    if (!canonicalType.empty()) {
+      TypeSyntax syntax;
+      syntax.name = prefix;
+      syntax.arguments = node.ownerGenericArguments;
+      subject = annotation(syntax, node.span, owner);
+    }
+  }
+  if (checked.types->isProduct(subject)) {
+    auto ownerType = subject;
+    if (checked.types->product(ownerType).genericOrigin != Type::Unknown)
+      ownerType = checked.types->product(ownerType).genericOrigin;
+    auto key = checked.types->product(ownerType).name + "::" + member;
+    auto candidate = inherentConstantNames.find(key);
+    auto lookupName = prefix == "Self" ? key : node.text;
+    auto canonical = checked.symbols->lookup(
+        checked.symbols->moduleOf(node.span), lookupName,
+        resolution::Namespace::Value, node.span);
+    auto resolved = canonical ? inherentConstantNames.find(*canonical)
+                              : inherentConstantNames.end();
+    if (resolved != inherentConstantNames.end())
+      return inherentConstantValue(resolved->second, subject);
+    if (candidate != inherentConstantNames.end()) {
+      error("name", node.span,
+            "unresolved or inaccessible name '" + lookupName + "'");
+      return std::nullopt;
+    }
+  }
+
   TypeSyntax syntax;
   syntax.name = node.text;
   auto type = interfaceAnnotation(

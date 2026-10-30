@@ -698,8 +698,9 @@ declarations, explicit imports and globs shadow them; libraries are mounted
 lazily when a prelude name or a core inherent method name appears. There is no
 opt-out attribute (unspecified). `const` items reuse the static evaluator
 (immutable statics; usable in expressions, array lengths, integer/bool
-patterns and associated `T::NAME` forms; inherent `impl S { const }` is not
-supported). Panic: `core::panic::{panic, assert, unreachable}` lower through
+patterns and associated `T::NAME` forms; inherent `impl S { const }` is
+implemented, unverified (not yet built)). Panic:
+`core::panic::{panic, assert, unreachable}` lower through
 `core::intrinsics::panic_message`, which is `llvm.trap` freestanding and the
 runtime hook `mettle_rt_panic_message` when hosted (stderr `panicked: msg`,
 exit status 101); core `unwrap`/`expect`/slice-split failures use it. Builtin

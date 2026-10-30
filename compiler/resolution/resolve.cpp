@@ -265,10 +265,14 @@ public:
   std::shared_ptr<const Resolution> run() {
     collectModules();
     collectItems();
+    collectAssociatedConstants();
     imports();
     if (!diagnostics.empty())
       return {};
     prelude();
+    collectAssociatedConstants();
+    if (!diagnostics.empty())
+      return {};
     result.index();
     return std::make_shared<const Resolution>(std::move(result));
   }
@@ -279,6 +283,7 @@ private:
   Resolution result;
   std::unordered_map<std::string, ModuleId> moduleNames;
   std::unordered_set<std::string> diagnosed;
+  std::unordered_set<const Module::Associated *> collectedAssociatedConstants;
 
   ModuleId scope(const std::vector<std::string> &path) {
     std::vector<std::string> prefix;
@@ -483,6 +488,45 @@ private:
                                       {}});
         result.associatedItems[itemName(module, function.owner)].push_back(
             index);
+      }
+    }
+  }
+
+  void collectAssociatedConstants() {
+    for (const auto &implementation : tree.implementations) {
+      if (!implementation.interface.empty() || implementation.negative)
+        continue;
+      auto module = scope(implementation.item.scope);
+      auto owner = result.lookup(module, implementation.target.name,
+                                 Namespace::Type, implementation.span, nullptr);
+      if (!owner)
+        continue;
+      auto canonicalOwner = result.associatedType(*owner);
+      if (!canonicalOwner)
+        continue;
+      auto &members = result.associatedItems[*canonicalOwner];
+      for (const auto &associated : implementation.associated) {
+        if (!associated.constant ||
+            !collectedAssociatedConstants.insert(&associated).second)
+          continue;
+        if (std::any_of(members.begin(), members.end(), [&](auto index) {
+              return result.definitions[index].name == associated.name;
+            })) {
+          diagnostics.error("name", associated.span,
+                            "duplicate associated item '" + associated.name +
+                                "'");
+          continue;
+        }
+        ItemSyntax item{implementation.item.scope, associated.visibility, {}};
+        auto visible = boundary(item, module, associated.span);
+        auto canonical = *canonicalOwner + "::" + associated.name;
+        auto index = result.definitions.size();
+        result.definitions.push_back({Namespace::Value, module, visible,
+                                      associated.name, canonical,
+                                      associated.span, {}});
+        members.push_back(index);
+        result.items.push_back(
+            {associated.span, module, std::move(canonical), visible});
       }
     }
   }

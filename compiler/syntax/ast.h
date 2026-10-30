@@ -298,6 +298,7 @@ struct Module {
   struct Associated {
     std::string name;
     Span span;
+    VisibilitySyntax visibility{};
     bool constant = false;
     TypeSyntax annotation{}, value{};
     std::shared_ptr<const Node> constantValue{};
