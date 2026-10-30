@@ -647,14 +647,18 @@ def debug_info():
         "    let doubled: i32 = twice!(base)\n"
         "    doubled + 1\n"
         "}\n"
+        "fn first(values: read [i32]): i32 { values[0] }\n"
         "fn main(): i32 {\n"
         "    let pair: Pair<i64> = Pair<i64>(20i64, 22i64)\n"
+        "    let data: [i32; 1] = [42; 1]\n"
+        "    let data_view: read [i32] = read data\n"
         "    let seed: i32 = 7\n"
         "    let closure = fn(): i32 { seed }\n"
         "    let choice = Choice.Value(42i64)\n"
         "    match choice {\n"
         "        Choice.Empty => 1,\n"
-        "        Choice.Value(_) => add_up(20) - 41 + closure() - 7\n"
+        "        Choice.Value(_) => add_up(20) - 41 + closure() - 7 + "
+        "first(data_view) - 42\n"
         "    }\n"
         "}\n")
     plain = [evidence / "plain1.o", evidence / "plain2.o"]
@@ -678,7 +682,13 @@ def debug_info():
     assert '"Pair<i64>"' in info, info
     assert re.search(r'DW_TAG_member(?:(?!DW_TAG_).)*"seed"',
                      info, re.DOTALL), info
+    assert '"read [i32]"' in info, info
+    assert re.search(r'DW_TAG_member(?:(?!DW_TAG_).)*"data_ptr"',
+                     info, re.DOTALL), info
+    assert re.search(r'DW_TAG_member(?:(?!DW_TAG_).)*"length"',
+                     info, re.DOTALL), info
     assert "DW_TAG_variant_part" in info and '"Value"' in info, info
+    assert '"discriminant"' in info, info
     for discriminant in ("7", "9"):
         assert re.search(r"DW_AT_discr_value\s*\(\s*(?:0x0*)?" +
                          discriminant + r"\b", info), info
