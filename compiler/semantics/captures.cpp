@@ -181,8 +181,24 @@ void Checker::completeClosure(ClosureFacts &closure, bool final) {
                                               capture.mode == ParameterMode::Mut
                                                   ? ParameterMode::Mut
                                                   : ParameterMode::Read);
-    fields.push_back(
-        {"<capture-" + std::to_string(c) + ">", capture.storedType});
+    const auto &local = closure.function.locals[capture.proxy.root];
+    std::string name = local.name;
+    auto current = local.type;
+    for (const auto &projection : capture.proxy.fields) {
+      if (projection.kind == Projection::Kind::Field &&
+          checked.types->isProduct(current) &&
+          projection.index < checked.types->product(current).fields.size())
+        name +=
+            "." + checked.types->product(current).fields[projection.index].name;
+      auto next = projectedType(*checked.types, current,
+                                std::span(&projection, 1));
+      if (!next)
+        break;
+      current = *next;
+    }
+    if (name.empty())
+      name = "<capture-" + std::to_string(c) + ">";
+    fields.push_back({std::move(name), capture.storedType});
   }
   if (checked.types->containsViews(closure.function.abiResult)) {
     std::vector<std::size_t> eligible;
