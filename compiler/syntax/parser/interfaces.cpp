@@ -103,7 +103,9 @@ Module::Interface Parser::interfaceDeclaration() {
 Module::Implementation Parser::implementationDeclaration() {
   Module::Implementation result;
   result.unsafeImplementation = take("unsafe");
-  result.span = expect("impl").span;
+  result.span = peek().span;
+  if (!take("impl"))
+    expect("extend");
   result.genericParameters = genericParameters();
   result.target = type(false);
   if (take("not")) {

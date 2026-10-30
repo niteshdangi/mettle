@@ -392,6 +392,12 @@ struct Module {
   } prelude;
 };
 std::optional<bool> booleanLiteral(const Node &node);
+// The `::`-joined spelling of a plain Name or Field chain (`a.b.c`), or
+// nullopt when a link carries generic arguments, an optional access or any
+// other form. The parser keeps `a.b` as Field nodes because whether it names a
+// module, type or value needs name resolution; this is the syntactic view a
+// resolver uses to retry a chain as a qualified path.
+std::optional<std::string> dottedPath(const Node &node);
 // Labels of the calls that build a format recipe (see `formatRecipe`).
 inline constexpr std::string_view formatRecipeLabel = "f-string";
 inline constexpr std::string_view formatInternalLabel = "f-string-internal";

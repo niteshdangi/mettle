@@ -1,10 +1,17 @@
 #include "syntax/parser/detail.h"
 
 namespace mettle::parsing {
+// `a::b` and `a.b` qualify the same way; `.{` and `.*` end an import path and
+// `.(` selects an interface item, so none of them extend the path.
 std::vector<std::string> Parser::path() {
   std::vector<std::string> result{name().text};
-  while (is("::") && peek(1).text != "{" && peek(1).text != "*") {
-    ++position;
+  for (;;) {
+    if (is("::") && peek(1).text != "{" && peek(1).text != "*")
+      ++position;
+    else if (is(".") && nameToken(peek(1)))
+      ++position;
+    else
+      break;
     result.push_back(name().text);
   }
   return result;
@@ -59,7 +66,7 @@ void Parser::importDeclaration(Module &module, ItemSyntax item) {
   declaration.path = path();
   if (take("as")) {
     declaration.alias = name().text;
-  } else if (take("::")) {
+  } else if (take("::") || take(".")) {
     if (take("*")) {
       declaration.glob = true;
     } else {
@@ -72,6 +79,8 @@ void Parser::importDeclaration(Module &module, ItemSyntax item) {
         if (is("}"))
           break;
         auto token = name();
+        if (is(".") && nameToken(peek(1)))
+          feature("dotted names in import groups are not implemented");
         Module::Import::Name entry{token.text, "", token.span};
         if (take("as"))
           entry.alias = name().text;

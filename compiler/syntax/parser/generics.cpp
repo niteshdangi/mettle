@@ -21,6 +21,8 @@ bool Parser::genericClose() {
     return true;
   if (is(">>") || is(">=") || is(">>=")) {
     auto &token = tokens[position];
+    if (speculating)
+      tokenEdits.push_back({position, token, false});
     token.text.erase(token.text.begin());
     ++token.span.begin;
     return true;
@@ -42,6 +44,8 @@ bool Parser::genericOpen() {
         token.text == ";" || token.text == "{" || token.text == "}")
       return false;
   }
+  if (speculating)
+    tokenEdits.push_back({position, tokens[position], true});
   auto first = tokens[position];
   first.text = "<";
   first.span.end = first.span.begin + 1;
@@ -49,6 +53,72 @@ bool Parser::genericOpen() {
   ++tokens[position].span.begin;
   tokens.insert(tokens.begin() + static_cast<std::ptrdiff_t>(position), first);
   return true;
+}
+void Parser::undoTokenEdits(std::size_t keep) {
+  while (tokenEdits.size() > keep) {
+    auto &edit = tokenEdits.back();
+    if (edit.inserted)
+      tokens.erase(tokens.begin() + static_cast<std::ptrdiff_t>(edit.index));
+    tokens[edit.index] = std::move(edit.before);
+    tokenEdits.pop_back();
+  }
+}
+// What may follow a generic application (language-grammar section 13.3). A
+// newline is a follower only where it is not suppressed by an open bracket,
+// which `peek` already guarantees.
+bool Parser::followsGenericApplication() {
+  const auto &next = peek();
+  return next.kind == TokenKind::Newline || next.kind == TokenKind::End ||
+         next.kind == TokenKind::FormatHoleClose || next.text == "(" ||
+         next.text == "." || next.text == ")" || next.text == "]" ||
+         next.text == "}" || next.text == "," || next.text == ";";
+}
+// Decides whether the `<` at the current position starts a generic
+// application: a nonempty generic argument list followed by a follower. The
+// decision is syntactic and never consults symbols. On rejection the parser
+// state, including split `>>` tokens, is restored and the `<` is a comparison.
+bool Parser::genericApplication(std::vector<GenericArgument> &arguments) {
+  const auto start = position;
+  const auto key = std::make_tuple(start, tokens.size(), parens,
+                                   genericExpressionLevel);
+  if (rejectedApplications.contains(key))
+    return false;
+  const auto savedParens = parens, savedNesting = nesting,
+             savedLevel = genericExpressionLevel;
+  const auto savedFailure = failedAt;
+  const auto savedRejected = rejectedNames;
+  const auto savedText = textSpans.size();
+  const auto savedEdits = tokenEdits.size();
+  const auto savedSpeculating = speculating;
+  const auto savedAsync = inAsyncBody;
+  const auto savedPending = pendingAsync;
+  speculating = true;
+  bool applied = false;
+  try {
+    auto parsed = genericArguments();
+    applied = !parsed.empty() && followsGenericApplication();
+    if (applied)
+      arguments = std::move(parsed);
+  } catch (ParseFailure &) {
+  }
+  speculating = savedSpeculating;
+  if (applied) {
+    if (!speculating)
+      tokenEdits.clear();
+    return true;
+  }
+  undoTokenEdits(savedEdits);
+  parens = savedParens;
+  nesting = savedNesting;
+  genericExpressionLevel = savedLevel;
+  failedAt = savedFailure;
+  rejectedNames = savedRejected;
+  textSpans.resize(savedText);
+  inAsyncBody = savedAsync;
+  pendingAsync = savedPending;
+  position = start;
+  rejectedApplications.insert(key);
+  return false;
 }
 std::vector<GenericParameter>
 Parser::genericParameters(std::vector<std::string> *regions) {
