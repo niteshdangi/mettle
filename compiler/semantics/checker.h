@@ -5,6 +5,7 @@
 #include "semantics/inference.h"
 #include "semantics/region_solver.h"
 #include <map>
+#include <set>
 #include <span>
 #include <unordered_map>
 #include <unordered_set>
@@ -408,6 +409,11 @@ private:
   int local(std::string name, int variable, bool mutableBinding, Span span);
   Flow flow(Node &node, std::string_view owner = {});
   void controlFlow(Function &function);
+  bool pathContainer(std::string_view spelling, const Function *function,
+                     Span span) const;
+  void qualifyDottedPath(Node &node, const std::set<std::string> &lexical,
+                         const Function *function);
+  void qualifyDottedPaths(Node &node);
   int loop(Node &node, bool reachable);
   bool implementsProtocol(Type type, std::string_view interface, Span span);
   bool desugarIteration(Node &node, Type source);

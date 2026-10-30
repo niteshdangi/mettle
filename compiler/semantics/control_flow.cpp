@@ -14,6 +14,7 @@ void Checker::controlFlow(Function &function) {
   };
   int next = 0;
   std::function<void(Node &)> visit = [&](Node &node) {
+    qualifyDottedPath(node, lexical, &function);
     if (node.kind == Kind::Name)
       facts(node).lexicallyBound = lexical.contains(node.text);
     if (node.kind == Kind::Block) {

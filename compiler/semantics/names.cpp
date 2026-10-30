@@ -55,6 +55,92 @@ Checker::Binding Checker::lookup(const std::string &name, Span span) {
   error("name", span, "unresolved value '" + name + "'");
   return {inference.fresh(), -1};
 }
+// A path container qualifies a following segment: a module, a type (including
+// builtin, `Self` and generic parameters) or an interface.
+bool Checker::pathContainer(std::string_view spelling,
+                            const Function *function, Span span) const {
+  std::string_view owner;
+  if (function)
+    owner = function->owner;
+  if (function && spelling.find("::") == std::string_view::npos) {
+    if (spelling == "Self" && !owner.empty())
+      return true;
+    for (const auto &parameter : function->genericParameters)
+      if (parameter.kind == GenericParameterKind::Type &&
+          parameter.name == spelling)
+        return true;
+  }
+  if (!typeName(spelling, span, owner).empty())
+    return true;
+  return checked.symbols
+      ->lookup(checked.symbols->moduleOf(span), spelling,
+               resolution::Namespace::Module, span)
+      .has_value();
+}
+
+// Target-syntax dotted paths (`Opt.Some`, `core.pin.Pin.new`, `Slot.empty`)
+// parse as syntax-only `Field` chains. Unless a binding in `lexical` names the
+// root, the longest prefix whose leading segments are path containers is the
+// same path as its `::` spelling; the node of its last segment becomes that
+// qualified `Name` (carrying per-segment generic arguments) and any remaining
+// links stay ordinary field or method accesses. A value binding therefore
+// shadows a type or module of the same name.
+void Checker::qualifyDottedPath(Node &node,
+                                const std::set<std::string> &lexical,
+                                const Function *function) {
+  if (node.kind != Kind::Field || node.flag || node.children.size() != 1)
+    return;
+  std::vector<Node *> chain;
+  Node *root = &node;
+  while (root->kind == Kind::Field && !root->flag &&
+         root->children.size() == 1) {
+    chain.push_back(root);
+    root = root->children[0].get();
+  }
+  if (root->kind != Kind::Name || root->annotation.form != TypeForm::Named ||
+      !root->ownerGenericArguments.empty() ||
+      root->text.find("::") != std::string::npos ||
+      lexical.contains(root->text))
+    return;
+  std::reverse(chain.begin(), chain.end());
+  // Segment 0 is the root; segment i is chain[i - 1].
+  const std::size_t total = chain.size() + 1;
+  std::string spelling = root->text;
+  std::size_t containers = 0;
+  while (containers < chain.size() &&
+         pathContainer(spelling, function, root->span)) {
+    ++containers;
+    spelling += "::" + chain[containers - 1]->text;
+  }
+  if (containers == 0)
+    return;
+  const std::size_t length = std::min(containers + 1, total);
+  auto generics = [&](std::size_t segment) -> std::vector<GenericArgument> & {
+    return segment == 0 ? root->genericArguments
+                        : chain[segment - 1]->genericArguments;
+  };
+  for (std::size_t segment = 0; segment + 2 < length; ++segment)
+    if (!generics(segment).empty())
+      return;
+  spelling = root->text;
+  for (std::size_t segment = 1; segment < length; ++segment)
+    spelling += "::" + chain[segment - 1]->text;
+  auto last = std::move(generics(length - 1));
+  auto owner = std::move(generics(length - 2));
+  auto &target = *chain[length - 2];
+  target.kind = Kind::Name;
+  target.text = std::move(spelling);
+  target.genericArguments = std::move(last);
+  target.ownerGenericArguments = std::move(owner);
+  target.children.clear();
+}
+// Constant initializers have no function context: only module-level names and
+// the dotted paths among them need qualifying.
+void Checker::qualifyDottedPaths(Node &node) {
+  qualifyDottedPath(node, {}, nullptr);
+  for (auto &child : node.children)
+    qualifyDottedPaths(*child);
+}
 int Checker::local(std::string name, int variable, bool mutableBinding,
                    Span span) {
   if (facts(*current).locals.size() >= limits::locals) {
