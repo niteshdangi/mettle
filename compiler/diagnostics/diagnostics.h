@@ -106,8 +106,8 @@ public:
         }
       printItem(sourceOf(source, target), target.begin,
                 "error[" + item.phase + "]", item.message, out);
-      if (!exact && (target.begin != origin.begin ||
-                     target.source != origin.source))
+      if (!exact &&
+          (target.begin != origin.begin || target.source != origin.source))
         printItem(sourceOf(source, origin), origin.begin, "note",
                   "in generated code for " + description, out);
     }

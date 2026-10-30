@@ -53,7 +53,7 @@ bool pairing(const Pieces &pieces, std::vector<std::size_t> &close) {
         return false;
       auto start = open.back();
       open.pop_back();
-      auto expected = pieces[start].text == "(" ? ")"
+      auto expected = pieces[start].text == "("   ? ")"
                       : pieces[start].text == "[" ? "]"
                                                   : "}";
       if (pieces[i].text != expected)
@@ -139,8 +139,8 @@ struct Node {
 };
 
 bool knownFragment(const std::string &fragment) {
-  static const std::set<std::string> known{"expr", "stmt", "pat",  "ty",
-                                           "path", "ident", "literal", "tt",
+  static const std::set<std::string> known{"expr",  "stmt",  "pat",     "ty",
+                                           "path",  "ident", "literal", "tt",
                                            "block", "item"};
   return known.contains(fragment);
 }
@@ -293,12 +293,11 @@ void verify(const std::string &macro, const std::vector<Node> &nodes,
                             "' in an expansion of macro '" + macro + "'");
       ok = false;
     } else if (found->second > depth) {
-      diagnostics.error(
-          "macro", node.piece.origin,
-          "metavariable '$" + node.name + "' is bound " +
-              std::to_string(found->second) +
-              " repetition level(s) deep but used at depth " +
-              std::to_string(depth) + "; repeat it with $(...)");
+      diagnostics.error("macro", node.piece.origin,
+                        "metavariable '$" + node.name + "' is bound " +
+                            std::to_string(found->second) +
+                            " repetition level(s) deep but used at depth " +
+                            std::to_string(depth) + "; repeat it with $(...)");
       ok = false;
     }
   }
@@ -336,15 +335,14 @@ bool allowedAfter(const std::string &fragment, const Follower &follower) {
   if (follower.variable)
     return false;
   const auto &text = follower.text;
-  if (text.empty() || text == ")" || text == "]" || text == "}" ||
-      text == "=>")
+  if (text.empty() || text == ")" || text == "]" || text == "}" || text == "=>")
     return true;
   if (fragment == "expr" || fragment == "stmt")
     return text == "," || text == ";";
   if (fragment == "pat")
     return text == "," || text == "=" || text == "if" || text == "in";
-  static const std::set<std::string> typed{",", "=", ";", ":", ">", ">>",
-                                           "{", "[", "where"};
+  static const std::set<std::string> typed{",",  "=", ";", ":",    ">",
+                                           ">>", "{", "[", "where"};
   return typed.contains(text);
 }
 
@@ -549,8 +547,8 @@ private:
            in[j + 1].kind == TokenKind::Floating))
         ++j;
       auto kind = in[j].kind;
-      bool literal = kind == TokenKind::Integer || kind == TokenKind::Floating ||
-                     kind == TokenKind::Text ||
+      bool literal = kind == TokenKind::Integer ||
+                     kind == TokenKind::Floating || kind == TokenKind::Text ||
                      kind == TokenKind::PrefixedText ||
                      kind == TokenKind::Character || kind == TokenKind::Byte ||
                      (j == position && kind == TokenKind::Word &&
@@ -664,8 +662,7 @@ public:
       return std::nullopt;
     for (std::size_t i = 0; i + 2 < pieces.size(); ++i)
       if (pieces[i].kind == TokenKind::Word && pieces[i].text == "macro" &&
-          pieces[i + 1].kind == TokenKind::Word &&
-          symbol(pieces[i + 2], "{")) {
+          pieces[i + 1].kind == TokenKind::Word && symbol(pieces[i + 2], "{")) {
         definitions.push_back({i, close[i + 2]});
         i = close[i + 2];
       }
@@ -710,11 +707,9 @@ private:
     }
     Macro macro;
     macro.name = name.text;
-    macro.span = {pieces[at].origin.begin, pieces[last].origin.end,
-                  source.id};
+    macro.span = {pieces[at].origin.begin, pieces[last].origin.end, source.id};
     auto i = at + 3;
-    auto expect = [&](bool condition, const Piece &where,
-                      const char *message) {
+    auto expect = [&](bool condition, const Piece &where, const char *message) {
       if (!condition)
         error(where.origin, message);
       return condition;
@@ -729,8 +724,8 @@ private:
         break;
       auto matcherEnd = close[i];
       Rule rule;
-      auto ok = parseNodes(pieces, close, i + 1, matcherEnd, true,
-                           diagnostics, rule.matcher);
+      auto ok = parseNodes(pieces, close, i + 1, matcherEnd, true, diagnostics,
+                           rule.matcher);
       i = matcherEnd + 1;
       while (i < last && newline(pieces[i]))
         ++i;
@@ -830,8 +825,8 @@ private:
       return false;
     std::vector<std::size_t> grouping;
     if (!pairing(expanded, grouping)) {
-      error(use, "unbalanced delimiters in the arguments of '" + macro.name +
-                     "!'");
+      error(use,
+            "unbalanced delimiters in the arguments of '" + macro.name + "!'");
       return false;
     }
     for (const auto &rule : macro.rules) {
@@ -872,7 +867,8 @@ private:
         const auto &binding = *found->second;
         if (binding.list) {
           error(use, "metavariable '$" + node.name + "' of macro '" +
-                         macro.name + "' repeats and must be used inside $(...)");
+                         macro.name +
+                         "' repeats and must be used inside $(...)");
           ok = false;
           continue;
         }
@@ -917,15 +913,15 @@ private:
         error(use, "macro '" + macro.name + "': metavariables '$" +
                        repeating.front() + "' and '$" + name +
                        "' repeat a different number of times (" +
-                       std::to_string(count) + " and " +
-                       std::to_string(size) + ")");
+                       std::to_string(count) + " and " + std::to_string(size) +
+                       ")");
         return false;
       }
     }
     if (repeating.empty()) {
-      error(node.piece.origin,
-            "a repetition in an expansion of macro '" + macro.name +
-                "' contains no repeating metavariable");
+      error(node.piece.origin, "a repetition in an expansion of macro '" +
+                                   macro.name +
+                                   "' contains no repeating metavariable");
       return false;
     }
     bool ok = true;
@@ -959,9 +955,11 @@ private:
         ++depth;
       else if (closer(out[k]) && --depth == 0)
         return;
-      if (!bindable(out[k]) || (parameters && depth != 1) || k + 1 >= out.size())
+      if (!bindable(out[k]) || (parameters && depth != 1) ||
+          k + 1 >= out.size())
         continue;
-      auto before = k > 0 && (symbol(out[k - 1], "(") || symbol(out[k - 1], ","));
+      auto before =
+          k > 0 && (symbol(out[k - 1], "(") || symbol(out[k - 1], ","));
       auto next = symbol(out[k + 1], ",") || symbol(out[k + 1], ")") ||
                   symbol(out[k + 1], ":");
       if (before && next)
