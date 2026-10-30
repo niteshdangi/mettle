@@ -10,7 +10,9 @@ that host/target scope. I03 concrete ownership and resource cleanup is qualified
 within the same scope. I04 composition and I05 generic typing/dispatch are
 covered by historical native, sanitizer, quality, reproducibility and target
 receipts. Those receipts do not close the newly confirmed correctness findings.
-I06 is reopened; I07-I16 remain planned.
+I06 is reopened. I07-I11 are partially implemented on macOS arm64 (per-item
+status in sections 8.3-8.4); none is qualified. I12 workflow commands are in
+progress; I13-I16 are not started.
 The selected design is in the linked specifications. Scalar execution does not
 establish full language, library or release correctness.
 
@@ -206,7 +208,8 @@ with positive/negative checks and retained evidence. Creating directories,
 emitting unchecked LLVM IR, assigning API mappings or counting source lines is
 not completion. Historical I01-I06 receipts record their tested host/target scope,
 but the `c485aa1` re-review exposed missed correctness obligations. I06 is reopened
-for those repairs; I07-I16 are not started.
+for those repairs. I07-I11 items carry per-item implementation/verification
+status below; no milestone after I05 is complete.
 
 | ID | Milestone | Exit artifact / decisive check | Prerequisites |
 | --- | --- | --- | --- |
