@@ -343,6 +343,30 @@ void Checker::inferCaptures(ClosureFacts &closure) {
         [&](const auto &binding) { return binding.proxy == place.root; });
     if (binding == bindings.end())
       return;
+    // Precise capture paths stop at a raw-pointer dereference (capture the
+    // pointer, not a copy of its target) and, in a take closure, at a field
+    // of a value with a destructor (own the whole value).
+    auto base = closure.function.locals[place.root].type;
+    for (std::size_t i = 0; i < place.fields.size(); ++i) {
+      if (place.fields[i].kind == Projection::Kind::Dereference &&
+          checked.types->isPointer(base)) {
+        place.fields.resize(i);
+        mode = ParameterMode::Value;
+        break;
+      }
+      if (closure.syntax->flag &&
+          place.fields[i].kind == Projection::Kind::Field &&
+          checked.types->isProduct(base) &&
+          checked.types->product(base).hasDestructor) {
+        place.fields.resize(i);
+        break;
+      }
+      auto next = projectedType(*checked.types, base,
+                                std::span(place.fields).subspan(i, 1));
+      if (!next)
+        break;
+      base = *next;
+    }
     ClosureCapture capture;
     capture.proxy = place;
     capture.source = place;

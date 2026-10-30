@@ -28,8 +28,8 @@ Module::Product Parser::product() {
       separators();
       continue;
     }
-    if (is("fn") || is("unsafe") || is("mut") || is("take") || is("static") ||
-        is("drop") || is("init")) {
+    if (is("fn") || is("unsafe") || is("async") || is("mut") || is("take") ||
+        is("static") || is("drop") || is("init")) {
       if (result.unionType)
         fail("union declarations contain fields only");
       Function method;
@@ -46,6 +46,7 @@ Module::Product Parser::product() {
         method.destructor = true;
         mode = "mut";
       } else {
+        pendingAsync = take("async");
         if (take("mut"))
           mode = "mut";
         else if (take("take"))
@@ -134,6 +135,10 @@ Function Parser::function(bool allowDeclaration) {
   Function result;
   result.unsafeFunction = take("unsafe");
   result.constFunction = take("const");
+  bool asyncFunction = take("async") || pendingAsync;
+  pendingAsync = false;
+  if (result.constFunction && asyncFunction)
+    feature("a function cannot be both const and async");
   result.constructor = is("init");
   if (result.constructor) {
     result.span = expect("init").span;
@@ -207,6 +212,8 @@ Function Parser::function(bool allowDeclaration) {
     newlines();
     if (!is("{")) {
       position = saved;
+      if (asyncFunction)
+        feature("async functions without a body are not implemented");
       if (result.annotation.empty())
         fail("interface method declarations require an explicit result type",
              "signature");
@@ -216,8 +223,19 @@ Function Parser::function(bool allowDeclaration) {
     }
   }
   newlines();
+  if (asyncFunction && result.constructor)
+    fail("a constructor cannot be async", "signature");
+  auto savedAsync = inAsyncBody;
+  inAsyncBody = asyncFunction;
+  struct Restore {
+    bool &flag;
+    bool saved;
+    ~Restore() { flag = saved; }
+  } restore{inAsyncBody, savedAsync};
   result.body = block();
   result.span.end = result.body->span.end;
+  if (asyncFunction)
+    lowerAsync(result);
   return result;
 }
 std::unique_ptr<Node> Parser::block() {

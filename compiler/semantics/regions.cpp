@@ -975,10 +975,11 @@ void RegionPass::infer(Type actual, Type formal,
     return;
   auto pair = std::pair{actual, formal};
   if (std::find(inferringTypes.begin(), inferringTypes.end(), pair) !=
-      inferringTypes.end()) {
-    error(current->span, "recursive region inference is inconclusive", true);
+      inferringTypes.end())
+    // A cycle through a recursive type (a function-pointer result naming its
+    // own aggregate) revisits a pair whose bindings are already being
+    // collected by the active frame; repeating it adds nothing.
     return;
-  }
   inferringTypes.push_back(pair);
   struct Pop {
     std::vector<std::pair<Type, Type>> &active;
@@ -3142,7 +3143,9 @@ void RegionPass::run() {
             "self" &&
         !module.functions[contract.declaration].parameters.empty() &&
         module.functions[contract.declaration].parameters[0].name == "self" &&
-        !functions[contract.declaration].genericParameters.empty())
+        !functions[contract.declaration].genericParameters.empty() &&
+        !(types.isProduct(actual.parameters[0].type) &&
+          types.product(actual.parameters[0].type).kind == AggregateKind::Pin))
       for (auto &binding : bindings)
         if (binding.parameter ==
             functions[contract.declaration].genericParameters[0])

@@ -129,6 +129,13 @@ std::unique_ptr<Node> Parser::primary() {
                                               : Kind::Throw;
     result = node(kind, operation.span);
     result->children.push_back(kind == Kind::Throw ? expr(1) : primary());
+  } else if (is("await")) {
+    if (!inAsyncBody)
+      fail("`await` is only valid inside an async function body");
+    ++position;
+    result = node(Kind::Unary, token.span, "await");
+    newlines();
+    result->children.push_back(primary());
   } else if (take("-") || take("!") || take("take") || take("read") ||
              take("mut") || take("*")) {
     result = node(Kind::Unary, token.span, token.text);

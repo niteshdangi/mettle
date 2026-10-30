@@ -47,6 +47,10 @@ private:
   std::optional<std::size_t> failedAt;
   std::vector<Span> textSpans;
   unsigned genericExpressionLevel = 0;
+  // Parsing the body of an `async fn`, where `await` is accepted.
+  bool inAsyncBody = false;
+  // `async` consumed by a member dispatcher ahead of its receiver mode.
+  bool pendingAsync = false;
   struct StateGuard {
     Parser &parser;
     unsigned parens, nesting, genericExpressionLevel;
@@ -161,6 +165,7 @@ private:
       fail("syntax nesting limit exceeded", "limit");
   }
   Function function(bool allowDeclaration = false);
+  void lowerAsync(Function &function);
   std::unique_ptr<Node> loopExpression();
   Module::Product product();
   Module::Product enumeration();

@@ -246,9 +246,9 @@ void Checker::proveDeferredObligations() {
   }
   genericEnvironment = saved;
 }
-void Checker::completeGenericBindings(const GenericEnvironment &environment,
-                                      std::vector<TypeBinding> &bindings,
-                                      Span span) {
+void Checker::propagateGenericBindings(const GenericEnvironment &environment,
+                                       std::vector<TypeBinding> &bindings,
+                                       Span span) {
   auto solve = [&](Type left, Type right) {
     bool unresolved = false;
     for (const auto &binding : bindings)
@@ -326,6 +326,11 @@ void Checker::completeGenericBindings(const GenericEnvironment &environment,
       changed |= solve(equality.argument, left);
     }
   } while (changed);
+}
+void Checker::completeGenericBindings(const GenericEnvironment &environment,
+                                      std::vector<TypeBinding> &bindings,
+                                      Span span) {
+  propagateGenericBindings(environment, bindings, span);
   for (auto &binding : bindings)
     if (binding.argument == Type::Unknown)
       if (auto found = environment.defaults.find(binding.parameter);

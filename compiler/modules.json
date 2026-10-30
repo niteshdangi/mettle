@@ -26,7 +26,7 @@
         "syntax/parser/statements.cpp", "syntax/parser/expressions.cpp",
         "syntax/parser/types.cpp", "syntax/parser/enumerations.cpp", "syntax/parser/machine.cpp", "syntax/parser/assembly.cpp",
         "syntax/parser/patterns.cpp", "syntax/parser/closures.cpp", "syntax/parser/generics.cpp",
-        "syntax/parser/interfaces.cpp"]
+        "syntax/parser/interfaces.cpp", "syntax/parser/async.cpp"]
     },
     {
       "name": "expansion", "directory": "expansion", "kind": "STATIC",

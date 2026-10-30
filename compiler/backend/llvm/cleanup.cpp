@@ -761,6 +761,10 @@ void CleanupFrame::drop(unsigned node) {
     builder.CreateBr(ready);
     builder.SetInsertPoint(ready);
   }
+  // A whole sum may have changed variant through a borrow since its flags were
+  // derived, so its payload flags are re-derived from the current tag.
+  if (lowering.program.types->isSum(entry.type))
+    initialize(node, builder.getTrue());
   // Re-entry after a panic must never repeat an already-started destructor.
   builder.CreateStore(builder.getFalse(), field(entry.flag));
   if (entry.nativeAction == NativeCleanup::RefRelease ||

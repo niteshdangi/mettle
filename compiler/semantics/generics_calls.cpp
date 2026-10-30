@@ -78,6 +78,12 @@ std::optional<int> Checker::genericCall(
     auto known = nodeVariables.find(&argument);
     if (known == nodeVariables.end() && argument.name.empty() &&
         i - 1 + receiverOffset < signature.size()) {
+      if (argument.kind == Kind::Closure) {
+        // A closure's parameters may be fixed only through other bounds.
+        genericEnvironment = &environment;
+        propagateGenericBindings(environment, bindings, argument.span);
+        genericEnvironment = caller;
+      }
       std::vector<TypeBinding> solved, open;
       for (const auto &binding : bindings)
         (binding.argument == Type::Unknown ? open : solved).push_back(binding);

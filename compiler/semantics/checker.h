@@ -332,6 +332,10 @@ private:
   validateGenericEnvironment(const std::vector<GenericParameter> &parameters,
                              const std::vector<GenericConstraint> &constraints,
                              GenericEnvironment &environment);
+  // Binds parameters that bounds and equalities determine from those already
+  // bound (`A: Future<Output = X>` fixes `X` once `A` is known).
+  void propagateGenericBindings(const GenericEnvironment &environment,
+                                std::vector<TypeBinding> &bindings, Span span);
   void completeGenericBindings(const GenericEnvironment &environment,
                                std::vector<TypeBinding> &bindings, Span span);
   unsigned genericDepth = 0;

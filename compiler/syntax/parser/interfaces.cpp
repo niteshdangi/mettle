@@ -71,6 +71,7 @@ Module::Interface Parser::interfaceDeclaration() {
       result.associated.push_back(associatedDeclaration());
     } else {
       std::string mode = "read";
+      pendingAsync = take("async");
       if (is("mut") || is("take") || is("static"))
         mode = tokens[position++].text;
       auto method = function(true);
@@ -127,6 +128,7 @@ Module::Implementation Parser::implementationDeclaration() {
       result.associated.push_back(associatedDeclaration());
     } else {
       std::string mode = "read";
+      pendingAsync = take("async");
       if (is("mut") || is("take") || is("static"))
         mode = tokens[position++].text;
       auto method = function();
