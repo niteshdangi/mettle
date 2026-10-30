@@ -13,6 +13,9 @@ void usage() {
          "       mettle migrate FILE [-o OUTPUT]\n"
          "         (rewrites pre-cutover spellings to the target syntax of "
          "language-grammar section 13; prints to stdout, never edits FILE)\n"
+         "       mettle fmt FILE... [--check]\n"
+         "         (canonical layout, rewriting files in place; --check lists "
+         "files that would change and exits 1 without rewriting)\n"
          "       mettle build FILE -o OUTPUT [--emit "
          "executable|object|llvm|ir]\n"
          "         [--profile debug|release] [--overflow-checks on|off]\n"
@@ -44,12 +47,17 @@ std::optional<Options> options(int argc, char **argv) {
   result.command = argv[1];
   if (result.command != "build" && result.command != "check" &&
       result.command != "tokens" && result.command != "syntax" &&
-      result.command != "clean" && result.command != "migrate")
+      result.command != "clean" && result.command != "migrate" &&
+      result.command != "fmt")
     return std::nullopt;
   for (int i = 2; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--freestanding") {
       result.freestanding = true;
+      continue;
+    }
+    if (arg == "--check") {
+      result.check = true;
       continue;
     }
     if (arg == "--no-cache" || arg == "--explain" || arg == "--dry-run") {
@@ -111,10 +119,13 @@ std::optional<Options> options(int argc, char **argv) {
         return std::nullopt;
     } else if (result.input.empty())
       result.input = arg;
+    else if (result.command == "fmt")
+      result.moreInputs.push_back(arg);
     else
       return std::nullopt;
   }
   if ((result.input.empty() && result.command != "clean") ||
+      (result.check && result.command != "fmt") ||
       (result.freestanding && result.command == "build" &&
        result.emit == "executable") ||
       (result.command == "build" && result.output.empty()) ||

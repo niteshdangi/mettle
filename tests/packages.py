@@ -393,12 +393,88 @@ def migrate_preserves_syntax_tree():
     invoke(["migrate", broken], 1)
 
 
+def fmt_normalizes_layout_only():
+    # Indentation, spacing, trailing whitespace and blank runs change; the
+    # comments, the multi-line raw text and the line structure do not.
+    messy = (
+        "// header comment   \n"
+        "fn   add(a:i32,b: i32) : i32 {\n"
+        "        a   +   b\n"
+        "}\n"
+        "\n\n\n\n"
+        "/* block\n"
+        "     comment */\n"
+        "fn main(): i32 {\n"
+        "  let text = r\"raw one\n"
+        "   raw two  \"\n"
+        "\tlet total = add( 1,2 )    // note  \n"
+        "  let list = [1,\n"
+        "  2,\n"
+        "      3]\n"
+        "    if total == 3 && list.len() == 3usize {\n"
+        "   return  0\n"
+        "      }\n"
+        "  let sum = add(\n"
+        "add(1, 2),\n"
+        "         3\n"
+        "    )\n"
+        "    total  +  sum\n"
+        "}   \n\n\n")
+    expected = (
+        "// header comment\n"
+        "fn add(a: i32, b: i32): i32 {\n"
+        "    a + b\n"
+        "}\n"
+        "\n"
+        "/* block\n"
+        "     comment */\n"
+        "fn main(): i32 {\n"
+        "    let text = r\"raw one\n"
+        "   raw two  \"\n"
+        "    let total = add(1, 2) // note\n"
+        "    let list = [1,\n"
+        "        2,\n"
+        "        3]\n"
+        "    if total == 3 && list.len() == 3usize {\n"
+        "        return 0\n"
+        "    }\n"
+        "    let sum = add(\n"
+        "        add(1, 2),\n"
+        "        3\n"
+        "    )\n"
+        "    total + sum\n"
+        "}\n")
+    source = evidence / "messy.mt"
+    source.write_text(messy)
+    invoke(["fmt", source, "--check"], 1,
+           ["messy.mt", "would be reformatted", "line 1)"])
+    assert source.read_text() == messy
+    invoke(["fmt", source])
+    assert source.read_text() == expected, source.read_text()
+    text = invoke(["fmt", source])
+    assert "formatted" not in text, text
+    invoke(["fmt", source, "--check"])
+    assert source.read_text() == expected
+    broken = evidence / "broken.mt"
+    broken.write_text("fn main(): i32 {  0\n")
+    invoke(["fmt", broken], 1)
+    assert broken.read_text() == "fn main(): i32 {  0\n"
+    # Files that define declarative macros are checked after expansion.
+    macro = evidence / "macro.mt"
+    macro.write_text("macro square {\n    ($x:expr)  =>  { $x*$x };\n}\n"
+                     "fn main(): i32 {\n  square!(3)  -  9\n}\n")
+    invoke(["fmt", macro])
+    assert macro.read_text() == ("macro square {\n    ($x:expr) => { $x*$x };\n}\n"
+                                 "fn main(): i32 {\n    square!(3) - 9\n}\n"), \
+        macro.read_text()
+
+
 CASES = [path_dependency, missing_lock_locked, lock_corruption,
          registry_resolution, version_conflict, backtracking, offline, features,
          manifest_diagnostics, package_options_need_package, incremental_reuse,
          edit_invalidation, cache_dedup_and_bound, cache_corruption_and_clean,
          build_script, build_script_untracked_inputs,
-         migrate_preserves_syntax_tree]
+         migrate_preserves_syntax_tree, fmt_normalizes_layout_only]
 
 failures = []
 for case in CASES:

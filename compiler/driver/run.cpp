@@ -3,9 +3,11 @@
 #include "driver/inspect.h"
 #include "driver/options.h"
 #include "driver/output.h"
+#include "expansion/macros.h"
 #include "packages/plan.h"
 #include "pipeline/compile.h"
 #include "resolution/load.h"
+#include "syntax/format.h"
 #include "syntax/lexer.h"
 #include "syntax/migrate.h"
 #include "syntax/parser.h"
@@ -15,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <set>
 #include <vector>
 
@@ -63,11 +66,105 @@ int clean(const Options &options) {
   }
   return 0;
 }
+
+std::string lineAt(const std::string &text, std::size_t line) {
+  std::size_t begin = 0;
+  for (std::size_t index = 1; index < line && begin != std::string::npos;
+       ++index) {
+    begin = text.find('\n', begin);
+    if (begin != std::string::npos)
+      ++begin;
+  }
+  if (begin == std::string::npos || begin >= text.size())
+    return "<end of file>";
+  auto end = text.find('\n', begin);
+  return text.substr(begin, end == std::string::npos ? end : end - begin);
+}
+
+// `mettle fmt FILE... [--check]`: rewrites each file in its canonical layout
+// (atomically, only when it changes) or, with --check, lists the files that
+// would change. A file that cannot be formatted safely is reported and left
+// untouched. Exit status: 0 clean, 1 drift or an error.
+int formatFiles(const Options &options) {
+  namespace fs = std::filesystem;
+  std::vector<std::string> inputs{options.input};
+  inputs.insert(inputs.end(), options.moreInputs.begin(),
+                options.moreInputs.end());
+  int status = 0;
+  for (const auto &input : inputs) {
+    std::ifstream in(input, std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(in)),
+                     std::istreambuf_iterator<char>());
+    if (!in && !in.eof()) {
+      std::cerr << "mettle: error[io]: cannot read " << input << '\n';
+      status = 1;
+      continue;
+    }
+    Source source{input, text};
+    Diagnostics diagnostics;
+    auto formatted =
+        format(source, diagnostics, [](const Source &input, Diagnostics &sink) {
+          SourceId next = input.id + 1;
+          return expansion::expandMacros(input, sink, [&] { return next++; });
+        });
+    if (!formatted) {
+      diagnostics.print(source, std::cerr);
+      status = 1;
+      continue;
+    }
+    if (*formatted == text)
+      continue;
+    if (options.check) {
+      status = 1;
+      auto limit = std::min(text.size(), formatted->size());
+      std::size_t at = 0;
+      while (at < limit && text[at] == (*formatted)[at])
+        ++at;
+      // The identical prefix has the same number of lines in both texts.
+      auto line =
+          1 + static_cast<std::size_t>(std::count(
+                  text.begin(), text.begin() + static_cast<std::ptrdiff_t>(at),
+                  '\n'));
+      std::cout << input << ": would be reformatted (first difference at line "
+                << line << ")\n- " << lineAt(text, line) << "\n+ "
+                << lineAt(*formatted, line) << '\n';
+      continue;
+    }
+    auto temporary = fs::path(input + ".mettle-fmt.tmp");
+    {
+      std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+      out << *formatted;
+      out.flush();
+      if (!out) {
+        std::cerr << "mettle: error[io]: cannot write " << input << '\n';
+        status = 1;
+        std::error_code ignored;
+        fs::remove(temporary, ignored);
+        continue;
+      }
+    }
+    std::error_code error;
+    fs::permissions(temporary, fs::status(input, error).permissions(), error);
+    error.clear();
+    fs::rename(temporary, input, error);
+    if (error) {
+      std::cerr << "mettle: error[io]: cannot replace " << input << ": "
+                << error.message() << '\n';
+      status = 1;
+      fs::remove(temporary, error);
+      continue;
+    }
+    std::cout << "mettle: formatted " << input << '\n';
+  }
+  return status;
+}
 } // namespace
 
 int run(const Options &requested) {
   if (requested.command == "clean")
     return clean(requested);
+  if (requested.command == "fmt")
+    return formatFiles(requested);
   Options options = requested;
   std::optional<packages::Store> store;
   std::string input = options.input;
