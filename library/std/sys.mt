@@ -17,15 +17,19 @@ extern "C" {
     pub unsafe fn mettle_rt_spawn(program: ptr<read u8>, argv: ptr<read ptr<read u8>>, envp: ptr<read ptr<read u8>>, cwd: ptr<read u8>, modes: ptr<read i32>, fds: ptr<mut i32>): i32;
     pub unsafe fn mettle_rt_poll(fd: i32, write: i32, timeout_millis: i32): i32;
     pub unsafe fn mettle_rt_poll_pair(first: i32, second: i32): i32;
-    pub unsafe fn mettle_rt_sock_new(kind: i32): i32;
-    pub unsafe fn mettle_rt_sock_bind(fd: i32, address: u32, port: u16): i32;
-    pub unsafe fn mettle_rt_sock_connect(fd: i32, address: u32, port: u16): i32;
-    pub unsafe fn mettle_rt_sock_accept(fd: i32, timeout_millis: i32, address: ptr<mut u32>, port: ptr<mut u16>): i32;
-    pub unsafe fn mettle_rt_sock_name(fd: i32, peer: i32, address: ptr<mut u32>, port: ptr<mut u16>): i32;
+    pub unsafe fn mettle_rt_sock_new(kind: i32, family: i32): i32;
+    pub unsafe fn mettle_rt_sock_bind(fd: i32, family: i32, address: ptr<read u8>, address_size: usize, port: u16, flowinfo: u32, scope_id: u32): i32;
+    pub unsafe fn mettle_rt_sock_connect(fd: i32, family: i32, address: ptr<read u8>, address_size: usize, port: u16, flowinfo: u32, scope_id: u32): i32;
+    pub unsafe fn mettle_rt_sock_connect_timeout(fd: i32, family: i32, address: ptr<read u8>, address_size: usize, port: u16, flowinfo: u32, scope_id: u32, timeout_micros: u64): i32;
+    pub unsafe fn mettle_rt_sock_accept(fd: i32, timeout_millis: i32, family: ptr<mut i32>, address: ptr<mut u8>, address_capacity: usize, port: ptr<mut u16>, flowinfo: ptr<mut u32>, scope_id: ptr<mut u32>): i32;
+    pub unsafe fn mettle_rt_sock_name(fd: i32, peer: i32, family: ptr<mut i32>, address: ptr<mut u8>, address_capacity: usize, port: ptr<mut u16>, flowinfo: ptr<mut u32>, scope_id: ptr<mut u32>): i32;
     pub unsafe fn mettle_rt_sock_send(fd: i32, data: ptr<read u8>, size: usize): isize;
-    pub unsafe fn mettle_rt_sock_sendto(fd: i32, data: ptr<read u8>, size: usize, address: u32, port: u16): isize;
-    pub unsafe fn mettle_rt_sock_recvfrom(fd: i32, data: ptr<mut u8>, size: usize, address: ptr<mut u32>, port: ptr<mut u16>): isize;
+    pub unsafe fn mettle_rt_sock_sendto(fd: i32, data: ptr<read u8>, size: usize, family: i32, address: ptr<read u8>, address_size: usize, port: u16, flowinfo: u32, scope_id: u32): isize;
+    pub unsafe fn mettle_rt_sock_recvfrom(fd: i32, data: ptr<mut u8>, size: usize, family: ptr<mut i32>, address: ptr<mut u8>, address_capacity: usize, port: ptr<mut u16>, flowinfo: ptr<mut u32>, scope_id: ptr<mut u32>): isize;
     pub unsafe fn mettle_rt_sock_timeout(fd: i32, send: i32, micros: u64): i32;
+    pub unsafe fn mettle_rt_resolve(host: ptr<read u8>, host_size: usize, port: u16, count: ptr<mut usize>): ptr<mut u8>;
+    pub unsafe fn mettle_rt_resolve_get(handle: ptr<mut u8>, index: usize, family: ptr<mut i32>, address: ptr<mut u8>, address_capacity: usize, port: ptr<mut u16>, flowinfo: ptr<mut u32>, scope_id: ptr<mut u32>): i32;
+    pub unsafe fn mettle_rt_resolve_free(handle: ptr<mut u8>): Unit;
     pub unsafe fn mettle_rt_clock(clock: i32, out: ptr<mut i64>): i32;
     pub unsafe fn mettle_rt_sleep(seconds: u64, nanos: u32): Unit;
 

@@ -209,6 +209,14 @@ permits it. Process exit status, environment encoding, handle inheritance and
 thread-local destructors remain profile-specific obligations outside the hosted
 pthread profiles.
 
+The POSIX hosted `std.net` surface includes IPv4/IPv6 TCP and UDP, RFC 5952
+IPv6 text formatting, `getaddrinfo`-based `resolve`, and a poll-backed
+`TcpStream.connect_timeout`; these additions are implemented, unverified (not
+yet built). IPv6 `SocketAddr` preserves port, flowinfo and scope id in socket
+operations; its bracketed text form includes the optional scope id but not
+flowinfo. DNS errors map to the portable I/O error kind while preserving the
+runtime's errno-style error value. Windows networking is not included.
+
 The native `std` modules are `io`, `ffi`, `path`, `fs`, `process`, `env`,
 `time`, `net` and `panic`. Raw OS errors are kept in `io.Error` unchanged next
 to a portable kind; operations that time out report kind `TimedOut` and keep the

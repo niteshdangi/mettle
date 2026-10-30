@@ -901,8 +901,10 @@ I08 status (initial macOS ARM64 hosted profile): `library/std` provides `io`
 (Reader/Writer with visible partial transfers, `write_all`/`read_exact`/
 `read_to_end`, buffered reader/writer, an `io.Error` that round-trips the raw
 errno), `ffi` (`OsStr`/`OsString`), `path`, `fs`, `process`, `env`, `time`,
-`net` (synchronous IPv4 TCP and UDP with timeouts) and `panic` (hook around the
-runtime's exit-101 path). The POSIX layer is the libc calls declared in
+`net` (synchronous IPv4/IPv6 TCP and UDP, socket timeouts, timed TCP connects
+and DNS; the IPv6/connect-timeout/DNS additions are implemented, unverified
+(not yet built)) and `panic` (hook around the runtime's exit-101 path). The
+POSIX layer is the libc calls declared in
 `library/std/sys.mt` plus the thin shims in `runtime/sys.cpp`. `tests/std` is
 run as `library.std` and holds the file-processing CLI (`cli_wordcount`), the
 loopback socket programs (`net_loopback`, `net_process`) and the child-process
@@ -917,13 +919,13 @@ when the non-UTF-8 name really lives on disk (asserted on Linux) and accepts
 EILSEQ 84 as well as 92. The same Debug-compiler run passed 740 source/profile
 cases and the six cleanup cases. Official evidence (`build/linux-target/
 foundation-evidence.json`) for both configurations is pending a fresh
-`tools/build.py` receipt, which the runner requires. Gaps: IPv6, connect timeouts and DNS are absent; a panic in a spawned thread is caught and reported by
-`join()`, but there is no general panic recovery (S028), so a main-thread panic
-still ends the process; macOS file systems
-may reject non-UTF-8 names (EILSEQ), which the tests check but cannot exercise
-on-disk there; hosted names avoid reserved words (`read_some`, `write_some`,
-`read_bytes`, `var_os`, `set_*` open options). `ReadDir` implements `Iterator`
-(`next_entry` remains).
+`tools/build.py` receipt, which the runner requires. Remaining I08 gaps:
+a panic in a spawned thread is caught and reported by `join()`, but there is no
+general panic recovery (S028), so a main-thread panic still ends the process;
+macOS file systems may reject non-UTF-8 names (EILSEQ), which the tests check
+but cannot exercise on-disk there; hosted names avoid reserved words
+(`read_some`, `write_some`, `read_bytes`, `var_os`, `set_*` open options).
+`ReadDir` implements `Iterator` (`next_entry` remains).
 
 ### 8.4. Builds, concurrency and async: I09-I11
 
