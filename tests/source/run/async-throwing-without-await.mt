@@ -1,4 +1,4 @@
-import core::future::{Future, Poll, Context, noop_waker};
+import core.future.{Future, Poll, Context, noop_waker};
 
 async fn compute(value: i32): i32 throws i32 {
     if value < 0 { throw 7 }
@@ -10,12 +10,12 @@ async fn outcome_value(): (i32 throws i32) { failure(9) }
 
 fn drive<F: Future<Output = (i32 throws i32)>>(future: take F): (i32 throws i32) {
     let waker = noop_waker()
-    var slot = core::pin::pin(future)
+    var slot = core.pin.pin(future)
     loop {
-        var cx = Context::from_waker(read waker)
+        var cx = Context.from_waker(read waker)
         match take slot.as_mut().poll(mut cx) {
-            Poll::Ready(value) => { return value },
-            Poll::Pending => {}
+            Poll.Ready(value) => { return value },
+            Poll.Pending => {}
         }
     }
 }

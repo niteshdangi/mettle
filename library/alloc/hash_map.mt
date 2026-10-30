@@ -1,13 +1,13 @@
-import package::core::iter::{Iterator, IntoIterator, Iterable, IterableMut, FromIterator, Extend};
-import package::core::clone::Clone;
-import package::core::cmp::Eq;
-import package::core::fmt;
-import package::core::slice::SliceIter;
-import super::alloc::{Allocator, Global, AllocError, Layout, layout_unchecked, handle_alloc_error, layout_of};
-import package::core::hash::{Hash, hash_one};
-import super::vec::Vec;
-import package::core::cmp::PartialEq;
-import package::core::borrow::KeyView;
+import package.core.iter.{Iterator, IntoIterator, Iterable, IterableMut, FromIterator, Extend};
+import package.core.clone.Clone;
+import package.core.cmp.Eq;
+import package.core.fmt;
+import package.core.slice.SliceIter;
+import super.alloc.{Allocator, Global, AllocError, Layout, layout_unchecked, handle_alloc_error, layout_of};
+import package.core.hash.{Hash, hash_one};
+import super.vec.Vec;
+import package.core.cmp.PartialEq;
+import package.core.borrow.KeyView;
 
 fn empty(): usize { 0xffffffffffffffffusize }
 
@@ -27,19 +27,19 @@ pub type HashMap<K, V, A: Allocator = Global> {
     drop {
         if self.icap != 0usize {
             let layout = unsafe { layout_unchecked(self.icap * 8usize, 8usize) }
-            unsafe { self.entries.allocator_mut().deallocate(self.idx.cast::<u8>(), layout) }
+            unsafe { self.entries.allocator_mut().deallocate(self.idx.cast<u8>(), layout) }
         }
     }
 }
 
 pub fn new_in<K, V, A: Allocator>(a: take A): HashMap<K, V, A> {
-    HashMap(super::vec::new_in::<Bucket<K, V>, A>(a), core::ptr::null_mut::<usize>(), 0usize)
+    HashMap(super.vec.new_in<Bucket<K, V>, A>(a), core.ptr.null_mut<usize>(), 0usize)
 }
 pub fn new<K, V>(): HashMap<K, V> { new_in(Global()) }
 
 fn hash_of<Q: Hash + unsized>(k: read Q): u64 { hash_one(k) }
 
-impl<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> {
+extend<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> {
     pub fn len(): usize { self.entries.len() }
     pub fn is_empty(): bool { self.entries.is_empty() }
     pub fn capacity(): usize { self.icap / 4usize * 3usize }
@@ -83,7 +83,7 @@ impl<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> {
         }
         let layout = unsafe { layout_unchecked(bytes, 8usize) }
         let np = try self.entries.allocator_mut().allocate(layout)
-        let nidx = np.cast::<usize>()
+        let nidx = np.cast<usize>()
         var i = 0usize
         while i < ncap {
             unsafe { *nidx.add(i) = empty() }
@@ -91,7 +91,7 @@ impl<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> {
         }
         if self.icap != 0usize {
             let old = unsafe { layout_unchecked(self.icap * 8usize, 8usize) }
-            unsafe { self.entries.allocator_mut().deallocate(self.idx.cast::<u8>(), old) }
+            unsafe { self.entries.allocator_mut().deallocate(self.idx.cast<u8>(), old) }
         }
         self.idx = nidx
         self.icap = ncap
@@ -143,8 +143,8 @@ impl<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> {
         match self.find_pos(hash, key) {
             present(pos) => {
                 let s = self.slot(pos)
-                let slot = unsafe { core::ptr::from_mut((*self.entries.as_mut_ptr().add(s)).value) }
-                return present(unsafe { core::ptr::replace(slot, value) })
+                let slot = unsafe { core.ptr.from_mut((*self.entries.as_mut_ptr().add(s)).value) }
+                return present(unsafe { core.ptr.replace(slot, value) })
             },
             none => {}
         }
@@ -161,7 +161,7 @@ impl<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> {
         let outcome = capture self.try_insert(key, value)
         match take outcome {
             success(old) => old,
-            failure(_) => handle_alloc_error(layout_of::<Bucket<K, V>>())
+            failure(_) => handle_alloc_error(layout_of<Bucket<K, V>>())
         }
     }
 
@@ -220,10 +220,10 @@ impl<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> {
 // Set of keys backed by a map with unit values.
 pub type HashSet<K, A: Allocator = Global> { map: HashMap<K, Unit, A> }
 
-pub fn set_new_in<K, A: Allocator>(a: take A): HashSet<K, A> { HashSet(new_in::<K, Unit, A>(a)) }
-pub fn set_new<K>(): HashSet<K> { HashSet(new::<K, Unit>()) }
+pub fn set_new_in<K, A: Allocator>(a: take A): HashSet<K, A> { HashSet(new_in<K, Unit, A>(a)) }
+pub fn set_new<K>(): HashSet<K> { HashSet(new<K, Unit>()) }
 
-impl<K: Hash + PartialEq, A: Allocator> HashSet<K, A> {
+extend<K: Hash + PartialEq, A: Allocator> HashSet<K, A> {
     pub fn len(): usize { self.map.len() }
     pub fn is_empty(): bool { self.map.is_empty() }
     pub fn contains<Q: Hash + PartialEq + unsized>(key: read Q): bool where K: KeyView<Q> { self.map.contains_key(key) }
@@ -244,12 +244,12 @@ impl<K: Hash + PartialEq, A: Allocator> HashSet<K, A> {
 
 // Iteration is in insertion order and yields the stored buckets; keys are not
 // mutably iterable because that could break the table's hash invariants.
-impl<K, V, A: Allocator> HashMap<K, V, A> implements Iterable {
+extend<K, V, A: Allocator> HashMap<K, V, A> implements Iterable {
     type Item = Bucket<K, V>
     type Iter<region r> = SliceIter<region r, Bucket<K, V>>
     fn iter<region r>(receiver self: read Self from r): SliceIter<region r, Bucket<K, V>> { self.entries.as_slice().iter() }
 }
-impl<K, A: Allocator> HashSet<K, A> implements Iterable {
+extend<K, A: Allocator> HashSet<K, A> implements Iterable {
     type Item = Bucket<K, Unit>
     type Iter<region r> = SliceIter<region r, Bucket<K, Unit>>
     fn iter<region r>(receiver self: read Self from r): SliceIter<region r, Bucket<K, Unit>> { self.map.entries.as_slice().iter() }
@@ -257,7 +257,7 @@ impl<K, A: Allocator> HashSet<K, A> implements Iterable {
 
 // Mutable iteration visits the values only: mutable keys could break the table's hash invariants.
 pub type ValuesMut<region r, K, V, A: Allocator> { map: mut HashMap<K, V, A> from r; index: usize }
-impl<region r, K, V, A: Allocator> ValuesMut<region r, K, V, A> implements Iterator {
+extend<region r, K, V, A: Allocator> ValuesMut<region r, K, V, A> implements Iterator {
     type Item = mut V from r
     mut fn next(): (mut V from r)? {
         if self.index < self.map.entries.len() {
@@ -271,35 +271,35 @@ impl<region r, K, V, A: Allocator> ValuesMut<region r, K, V, A> implements Itera
 }
 // Borrowed iterators over the keys or the values only.
 pub type Keys<region r, K, V> { inner: SliceIter<region r, Bucket<K, V>> }
-impl<region r, K, V> Keys<region r, K, V> implements Iterator {
+extend<region r, K, V> Keys<region r, K, V> implements Iterator {
     type Item = read K from r
     mut fn next(): (read K from r)? {
         match self.inner.next() { present(e) => present(read e.key), none => none }
     }
 }
 pub type Values<region r, K, V> { inner: SliceIter<region r, Bucket<K, V>> }
-impl<region r, K, V> Values<region r, K, V> implements Iterator {
+extend<region r, K, V> Values<region r, K, V> implements Iterator {
     type Item = read V from r
     mut fn next(): (read V from r)? {
         match self.inner.next() { present(e) => present(read e.value), none => none }
     }
 }
-impl<K, V, A: Allocator> HashMap<K, V, A> {
+extend<K, V, A: Allocator> HashMap<K, V, A> {
     pub fn keys(): Keys<region self, K, V> { Keys(self.entries.as_slice().iter()) }
     pub fn values(): Values<region self, K, V> { Values(self.entries.as_slice().iter()) }
 }
-impl<K, V, A: Allocator> HashMap<K, V, A> implements IterableMut {
+extend<K, V, A: Allocator> HashMap<K, V, A> implements IterableMut {
     type Item = V
     type IterMut<region r> = ValuesMut<region r, K, V, A>
     fn iter_mut<region r>(receiver self: mut Self from r): ValuesMut<region r, K, V, A> { ValuesMut(mut self, 0usize) }
 }
-impl<K, V, A: Allocator> HashMap<K, V, A> {
+extend<K, V, A: Allocator> HashMap<K, V, A> {
     pub mut fn values_mut(): ValuesMut<region self, K, V, A> { ValuesMut(mut self, 0usize) }
 }
 
-impl<K: Hash + PartialEq + Clone, V: Clone, A: Allocator + Clone> HashMap<K, V, A> implements Clone {
+extend<K: Hash + PartialEq + Clone, V: Clone, A: Allocator + Clone> HashMap<K, V, A> implements Clone {
     fn clone(): HashMap<K, V, A> {
-        var out = new_in::<K, V, A>(self.entries.allocator().clone())
+        var out = new_in<K, V, A>(self.entries.allocator().clone())
         var i = 0usize
         while i < self.entries.len() {
             let e = read self.entries[i]
@@ -310,7 +310,7 @@ impl<K: Hash + PartialEq + Clone, V: Clone, A: Allocator + Clone> HashMap<K, V, 
     }
 }
 // Equal when both hold the same keys with equal values, in any order.
-impl<K: Hash + PartialEq, V: PartialEq, A: Allocator> HashMap<K, V, A> implements PartialEq {
+extend<K: Hash + PartialEq, V: PartialEq, A: Allocator> HashMap<K, V, A> implements PartialEq {
     fn eq(other: read HashMap<K, V, A>): bool {
         if self.len() != other.len() { return false }
         var i = 0usize
@@ -325,24 +325,24 @@ impl<K: Hash + PartialEq, V: PartialEq, A: Allocator> HashMap<K, V, A> implement
         true
     }
 }
-impl<K: Hash + PartialEq, V: Eq, A: Allocator> HashMap<K, V, A> implements Eq {}
-impl<K: fmt::Debug, V: fmt::Debug, A: Allocator> HashMap<K, V, A> implements fmt::Debug {
-    fn fmt<W: fmt::Write>(f: mut fmt::Formatter<W>): Unit throws fmt::Error {
+extend<K: Hash + PartialEq, V: Eq, A: Allocator> HashMap<K, V, A> implements Eq {}
+extend<K: fmt.Debug, V: fmt.Debug, A: Allocator> HashMap<K, V, A> implements fmt.Debug {
+    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
         try f.debug_open("{")
         var i = 0usize
         while i < self.entries.len() {
             let e = read self.entries[i]
             try f.debug_item_start(i == 0usize)
-            try <K implements fmt::Debug>::fmt(e.key, mut f)
+            try K.(fmt.Debug).fmt(e.key, mut f)
             try f.write_str(": ")
-            try <V implements fmt::Debug>::fmt(e.value, mut f)
+            try V.(fmt.Debug).fmt(e.value, mut f)
             try f.debug_item_end()
             i += 1usize
         }
         try f.debug_close("}", self.entries.len() == 0usize)
     }
 }
-impl<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> implements Extend<(K, V)> {
+extend<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> implements Extend<(K, V)> {
     mut fn extend<I: IntoIterator<Item = (K, V)>>(items: take I): Unit {
         var source = items.into_iter()
         while true {
@@ -353,19 +353,19 @@ impl<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> implements Extend<(K
         }
     }
 }
-impl<K: Hash + PartialEq, V> HashMap<K, V> implements FromIterator<(K, V)> {
+extend<K: Hash + PartialEq, V> HashMap<K, V> implements FromIterator<(K, V)> {
     static fn from_iter<I: IntoIterator<Item = (K, V)>>(items: take I): HashMap<K, V> {
-        var out = new::<K, V>()
+        var out = new<K, V>()
         out.extend(items)
         out
     }
 }
 
-impl<K: Hash + PartialEq + Clone, A: Allocator + Clone> HashSet<K, A> implements Clone {
+extend<K: Hash + PartialEq + Clone, A: Allocator + Clone> HashSet<K, A> implements Clone {
     fn clone(): HashSet<K, A> { HashSet(self.map.clone()) }
 }
 // Equal when both hold the same elements, in any order.
-impl<K: Hash + PartialEq, A: Allocator> HashSet<K, A> implements PartialEq {
+extend<K: Hash + PartialEq, A: Allocator> HashSet<K, A> implements PartialEq {
     fn eq(other: read HashSet<K, A>): bool {
         if self.len() != other.len() { return false }
         var i = 0usize
@@ -379,21 +379,21 @@ impl<K: Hash + PartialEq, A: Allocator> HashSet<K, A> implements PartialEq {
         true
     }
 }
-impl<K: Hash + PartialEq, A: Allocator> HashSet<K, A> implements Eq {}
-impl<K: fmt::Debug, A: Allocator> HashSet<K, A> implements fmt::Debug {
-    fn fmt<W: fmt::Write>(f: mut fmt::Formatter<W>): Unit throws fmt::Error {
+extend<K: Hash + PartialEq, A: Allocator> HashSet<K, A> implements Eq {}
+extend<K: fmt.Debug, A: Allocator> HashSet<K, A> implements fmt.Debug {
+    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
         try f.debug_open("{")
         var i = 0usize
         while i < self.map.entries.len() {
             try f.debug_item_start(i == 0usize)
-            try <K implements fmt::Debug>::fmt(self.map.entries[i].key, mut f)
+            try K.(fmt.Debug).fmt(self.map.entries[i].key, mut f)
             try f.debug_item_end()
             i += 1usize
         }
         try f.debug_close("}", self.map.entries.len() == 0usize)
     }
 }
-impl<K: Hash + PartialEq, A: Allocator> HashSet<K, A> implements Extend<K> {
+extend<K: Hash + PartialEq, A: Allocator> HashSet<K, A> implements Extend<K> {
     mut fn extend<I: IntoIterator<Item = K>>(items: take I): Unit {
         var source = items.into_iter()
         while true {
@@ -401,14 +401,14 @@ impl<K: Hash + PartialEq, A: Allocator> HashSet<K, A> implements Extend<K> {
         }
     }
 }
-impl<K: Hash + PartialEq> HashSet<K> implements FromIterator<K> {
+extend<K: Hash + PartialEq> HashSet<K> implements FromIterator<K> {
     static fn from_iter<I: IntoIterator<Item = K>>(items: take I): HashSet<K> {
-        var out = set_new::<K>()
+        var out = set_new<K>()
         out.extend(items)
         out
     }
 }
 
 // Owned storage moves or is shared exactly when its elements and allocator do.
-unsafe impl<K: Transferable, V: Transferable, A: Allocator + Transferable> HashMap<K, V, A> implements Transferable {}
-unsafe impl<K: Shareable, V: Shareable, A: Allocator + Shareable> HashMap<K, V, A> implements Shareable {}
+unsafe extend<K: Transferable, V: Transferable, A: Allocator + Transferable> HashMap<K, V, A> implements Transferable {}
+unsafe extend<K: Shareable, V: Shareable, A: Allocator + Shareable> HashMap<K, V, A> implements Shareable {}

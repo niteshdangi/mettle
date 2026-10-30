@@ -1,8 +1,8 @@
-import alloc::vec::Vec;
-import core::iter::{Iterator, IntoIterator, DoubleEndedIterator};
+import alloc.vec.Vec;
+import core.iter.{Iterator, IntoIterator, DoubleEndedIterator};
 
 fn main(): i32 {
-    var v = alloc::vec::new::<i32>()
+    var v = alloc.vec.new<i32>()
     v.push(1); v.push(2); v.push(3)
     var s = 0
     for x in read v { s += *x }

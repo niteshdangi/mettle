@@ -5,17 +5,17 @@
 // As cli_wordcount, using the borrowed-line API: read_bytes_line_into reuses
 // one buffer, [u8].bytes() iterates Copy bytes, paths are passed as OsString
 // through PathInput, and write_path prints the input name.
-import std::io::{Error, Read, Write};
-import std::ffi;
-import std::path::PathInput;
-import alloc::vec::Vec;
+import std.io.{Error, Read, Write};
+import std.ffi;
+import std.path.PathInput;
+import alloc.vec.Vec;
 
 fn decimal(v: usize): Vec<u8> {
-    var digits = alloc::vec::new::<u8>()
+    var digits = alloc.vec.new<u8>()
     var x = v
     if x == 0usize { digits.push(48u8) }
     while x > 0usize { digits.push((48usize + x % 10usize) as u8); x = x / 10usize }
-    var out = alloc::vec::new::<u8>()
+    var out = alloc.vec.new<u8>()
     var i = digits.len()
     while i > 0usize { i -= 1usize; let d = digits[i]; out.push(d) }
     out
@@ -39,12 +39,12 @@ fn field(out: mut Vec<u8>, name: read Text, value: usize): Unit {
 }
 
 fn count(input: read PathInput, report: read PathInput): i32 throws Error {
-    let file = try std::fs::open(input)
-    var reader = std::io::buf_reader(file)
+    let file = try std.fs.open(input)
+    var reader = std.io.buf_reader(file)
     var lines = 0usize
     var words = 0usize
     var bytes = 0usize
-    var line = alloc::vec::new::<u8>()
+    var line = alloc.vec.new<u8>()
     while true {
         match try reader.read_bytes_line_into(line) {
             present(l) => {
@@ -55,18 +55,18 @@ fn count(input: read PathInput, report: read PathInput): i32 throws Error {
             none => { break }
         }
     }
-    var body = alloc::vec::new::<u8>()
+    var body = alloc.vec.new<u8>()
     field(body, "lines=", lines)
     field(body, "words=", words)
     field(body, "bytes=", bytes)
     {
-        var w = std::io::buf_writer(try std::fs::create(report))
+        var w = std.io.buf_writer(try std.fs.create(report))
         try w.write_all(body.as_slice())
         try w.flush()
     }
-    var out = std::io::stdout()
+    var out = std.io.stdout()
     try out.write_path(input)
-    var tail = alloc::vec::new::<u8>()
+    var tail = alloc.vec.new<u8>()
     tail.extend_from_slice(": ".as_bytes())
     tail.extend_from_slice(decimal(lines).as_slice())
     tail.extend_from_slice(" lines, ".as_bytes())
@@ -79,14 +79,14 @@ fn count(input: read PathInput, report: read PathInput): i32 throws Error {
 }
 
 fn main(): i32 {
-    let args = std::env::args()
+    let args = std.env.args()
     if args.len() != 3usize {
-        std::io::eprint("usage: wordcount INPUT REPORT\n")
+        std.io.eprint("usage: wordcount INPUT REPORT\n")
         return 2
     }
     let r = capture count(args[1usize], args[2usize])
     match take r {
         success(code) => code,
-        failure(e) => { std::io::eprint("wordcount: "); std::io::eprint(e.message().as_text()); std::io::eprint("\n"); 1 }
+        failure(e) => { std.io.eprint("wordcount: "); std.io.eprint(e.message().as_text()); std.io.eprint("\n"); 1 }
     }
 }

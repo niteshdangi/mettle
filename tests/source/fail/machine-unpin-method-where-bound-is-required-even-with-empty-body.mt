@@ -1,7 +1,7 @@
 // expect-error: type 11:5 Unpin
 
 type Blocked { value: i32 }
-impl Blocked not Unpin;
+extend Blocked not Unpin;
 type Parent<T> {
     value: T
     fn demand(): Unit where T: Unpin {}

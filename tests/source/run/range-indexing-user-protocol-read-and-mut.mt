@@ -1,17 +1,17 @@
 
 module core { pub module ops {
-    pub interface IndexRange { type Output: unsized; fn index_range(start: usize, end: usize): read Self::Output from self; }
-    pub interface IndexRangeMut { type Output: unsized; mut fn index_range_mut(start: usize, end: usize): mut Self::Output from self; }
+    pub interface IndexRange { type Output: unsized; fn index_range(start: usize, end: usize): read Self.Output from self; }
+    pub interface IndexRangeMut { type Output: unsized; mut fn index_range_mut(start: usize, end: usize): mut Self.Output from self; }
 } }
 type Buf { cells: [i32; 4] }
-impl Buf implements core::ops::IndexRange {
+extend Buf implements core.ops.IndexRange {
     type Output = [i32]
     fn index_range(start: usize, end: usize): read [i32] from self {
         let stop = if end > 4usize { 4usize } else { end }
         read self.cells[start..stop]
     }
 }
-impl Buf implements core::ops::IndexRangeMut {
+extend Buf implements core.ops.IndexRangeMut {
     type Output = [i32]
     mut fn index_range_mut(start: usize, end: usize): mut [i32] from self {
         let stop = if end > 4usize { 4usize } else { end }

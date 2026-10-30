@@ -5,7 +5,7 @@ fn access<T: Unpin>(value: mut pinned mut T): mut T from value {
 fn main() {
     var value = 41
     {
-        var handle = core::pin::Pin::new(mut value)
+        var handle = core.pin.Pin.new(mut value)
         let view = access(handle)
         *view += 1
     }

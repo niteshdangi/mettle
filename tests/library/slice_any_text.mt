@@ -1,34 +1,34 @@
-import core::slice;
-import core::iter;
-import core::iter::Iterator;
-import core::option;
-import core::any;
-import core::text;
+import core.slice;
+import core.iter;
+import core.iter.Iterator;
+import core.option;
+import core.any;
+import core.text;
 
 type P { x: i32 }
 
 interface Arity { fn arity(): usize; }
-impl<T> [T; 3] implements Arity { fn arity(): usize { 3usize } }
+extend<T> [T; 3] implements Arity { fn arity(): usize { 3usize } }
 
-fn pick(c: bool): read text::Text from static { if c { "a" } else { "b" } }
+fn pick(c: bool): read text.Text from static { if c { "a" } else { "b" } }
 
 copy type Raw { data: ptr<read u8>; len: usize }
 type Cursor<region r> { buffer: mut [u8] from r; length: usize }
-impl<region r> Cursor<region r> {
-    fn view(): read text::Text from self {
-        let fat = core::ptr::from_ref(read *self.buffer)
-        let raw = unsafe { core::mem::transmute::<Raw>(fat) }
-        let out = unsafe { core::mem::transmute::<ptr<read text::Text>>(Raw(raw.data, self.length)) }
+extend<region r> Cursor<region r> {
+    fn view(): read text.Text from self {
+        let fat = core.ptr.from_ref(read *self.buffer)
+        let raw = unsafe { core.mem.transmute<Raw>(fat) }
+        let out = unsafe { core.mem.transmute<ptr<read text.Text>>(Raw(raw.data, self.length)) }
         unsafe { read *out }
     }
 }
 
 // A sub-slice rebuilt from raw parts keeps the iterator's declared region.
 pub type Pairs<region r> { items: read [u8] from r; base: ptr<read u8>; index: usize }
-impl<region r> Pairs<region r> implements Iterator {
+extend<region r> Pairs<region r> implements Iterator {
     type Item = read [u8] from r
     mut fn next(): (read [u8] from r)? {
-        let part = unsafe { core::mem::transmute::<ptr<read [u8]>>(Raw(self.base, 1usize)) }
+        let part = unsafe { core.mem.transmute<ptr<read [u8]>>(Raw(self.base, 1usize)) }
         present(unsafe { read *part })
     }
 }
@@ -107,12 +107,12 @@ fn main(): i32 {
     if total != 10 + 8 + 30 + 6 + 5 || a[0] != 11 { return 15 }
     // any
     let num = 5
-    if !any::is::<i32, i32>(read num) || any::is::<u32, i32>(read num) { return 16 }
-    match any::downcast_ref::<i32, i32>(read num) { present(d) => { if *d != 5 { return 17 } }, none => { return 17 } }
-    match any::downcast_ref::<u8, i32>(read num) { present(d) => { return 18 }, none => {} }
+    if !any.is<i32, i32>(read num) || any.is<u32, i32>(read num) { return 16 }
+    match any.downcast_ref<i32, i32>(read num) { present(d) => { if *d != 5 { return 17 } }, none => { return 17 } }
+    match any.downcast_ref<u8, i32>(read num) { present(d) => { return 18 }, none => {} }
     var p = P(1)
-    match take any::downcast_mut::<P, P>(mut p) { present(d) => { d.x = 9 }, none => { return 19 } }
-    if p.x != 9 || any::type_id::<P>() == any::type_id::<i32>() { return 20 }
+    match take any.downcast_mut<P, P>(mut p) { present(d) => { d.x = 9 }, none => { return 19 } }
+    if p.x != 9 || any.type_id<P>() == any.type_id<i32>() { return 20 }
     // text
     let s = "  h\u{e9}llo, w\u{f6}rld \n"
     if s.trim() != "h\u{e9}llo, w\u{f6}rld" || s.trim_end().len() != s.len() - 2usize || "   ".trim() != "" { return 21 }
@@ -138,6 +138,6 @@ fn main(): i32 {
     let cursor = Cursor(mut bytes, 2usize)
     if cursor.view() != "hi" { return 35 }
     let pair = [7, 8]
-    match first_item::<i32>(read pair) { present(q) => { if *q != 7 { return 36 } }, none => { return 36 } }
+    match first_item<i32>(read pair) { present(q) => { if *q != 7 { return 36 } }, none => { return 36 } }
     0
 }

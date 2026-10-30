@@ -2,7 +2,7 @@
 
 fn main() {
     var value = 0i32
-    let pointer = core::ptr::from_mut(value)
+    let pointer = core.ptr.from_mut(value)
     unsafe {
         asm!("mov dword ptr [{pointer}], 42", pointer = in(reg) pointer,
 

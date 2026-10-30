@@ -1,15 +1,15 @@
 // Synchronous byte I/O: `Read`/`Write` expose partial transfers (the count a
 // single call moved), the `*_all`/`read_exact`/`read_to_end` helpers loop over
 // them, and `Error` keeps the raw OS error number so it round-trips unchanged.
-import package::alloc::vec;
-import package::alloc::vec::Vec;
-import package::core::text::Text;
-import package::core::cmp::PartialEq;
-import package::core::slice;
-import package::core::fmt;
-import package::alloc::string::String;
-import super::sys;
-import super::path::PathInput;
+import package.alloc.vec;
+import package.alloc.vec.Vec;
+import package.core.text.Text;
+import package.core.cmp.PartialEq;
+import package.core.slice;
+import package.core.fmt;
+import package.alloc.string.String;
+import super.sys;
+import super.path.PathInput;
 
 pub copy enum ErrorKind {
     NotFound, PermissionDenied, ConnectionRefused, ConnectionReset, ConnectionAborted,
@@ -20,25 +20,25 @@ pub copy enum ErrorKind {
 
 fn kind_from_index(index: i32): ErrorKind {
     match index {
-        0 => ErrorKind::NotFound,
-        1 => ErrorKind::PermissionDenied,
-        2 => ErrorKind::ConnectionRefused,
-        3 => ErrorKind::ConnectionReset,
-        4 => ErrorKind::ConnectionAborted,
-        5 => ErrorKind::NotConnected,
-        6 => ErrorKind::AddrInUse,
-        7 => ErrorKind::AddrNotAvailable,
-        8 => ErrorKind::BrokenPipe,
-        9 => ErrorKind::AlreadyExists,
-        10 => ErrorKind::WouldBlock,
-        11 => ErrorKind::InvalidInput,
-        12 => ErrorKind::TimedOut,
-        13 => ErrorKind::Interrupted,
-        14 => ErrorKind::OutOfMemory,
-        15 => ErrorKind::IsADirectory,
-        16 => ErrorKind::NotADirectory,
-        17 => ErrorKind::DirectoryNotEmpty,
-        _ => ErrorKind::Other
+        0 => ErrorKind.NotFound,
+        1 => ErrorKind.PermissionDenied,
+        2 => ErrorKind.ConnectionRefused,
+        3 => ErrorKind.ConnectionReset,
+        4 => ErrorKind.ConnectionAborted,
+        5 => ErrorKind.NotConnected,
+        6 => ErrorKind.AddrInUse,
+        7 => ErrorKind.AddrNotAvailable,
+        8 => ErrorKind.BrokenPipe,
+        9 => ErrorKind.AlreadyExists,
+        10 => ErrorKind.WouldBlock,
+        11 => ErrorKind.InvalidInput,
+        12 => ErrorKind.TimedOut,
+        13 => ErrorKind.Interrupted,
+        14 => ErrorKind.OutOfMemory,
+        15 => ErrorKind.IsADirectory,
+        16 => ErrorKind.NotADirectory,
+        17 => ErrorKind.DirectoryNotEmpty,
+        _ => ErrorKind.Other
     }
 }
 
@@ -53,11 +53,11 @@ pub copy type Error {
 }
 
 pub fn from_raw_os_error(code: i32): Error {
-    let kind = kind_from_index(unsafe { sys::mettle_rt_errno_kind(code) })
+    let kind = kind_from_index(unsafe { sys.mettle_rt_errno_kind(code) })
     Error(code, true, kind)
 }
 
-pub fn last_os_error(): Error { from_raw_os_error(sys::errno()) }
+pub fn last_os_error(): Error { from_raw_os_error(sys.errno()) }
 
 pub fn from_kind(kind: ErrorKind): Error { Error(0, false, kind) }
 
@@ -66,28 +66,28 @@ pub fn from_kind(kind: ErrorKind): Error { Error(0, false, kind) }
 pub fn with_kind(code: i32, kind: ErrorKind): Error { Error(code, true, kind) }
 
 fn kind_description(kind: ErrorKind): String {
-    var s = package::alloc::string::new()
+    var s = package.alloc.string.new()
     match kind {
-        ErrorKind::InvalidInput => s.push_str("invalid input"),
-        ErrorKind::InvalidData => s.push_str("invalid data"),
-        ErrorKind::WriteZero => s.push_str("failed to write whole buffer"),
-        ErrorKind::UnexpectedEof => s.push_str("unexpected end of file"),
-        ErrorKind::TimedOut => s.push_str("timed out"),
-        ErrorKind::Unsupported => s.push_str("unsupported"),
+        ErrorKind.InvalidInput => s.push_str("invalid input"),
+        ErrorKind.InvalidData => s.push_str("invalid data"),
+        ErrorKind.WriteZero => s.push_str("failed to write whole buffer"),
+        ErrorKind.UnexpectedEof => s.push_str("unexpected end of file"),
+        ErrorKind.TimedOut => s.push_str("timed out"),
+        ErrorKind.Unsupported => s.push_str("unsupported"),
         _ => s.push_str("other error")
     }
     s
 }
 
-impl ErrorKind {
+extend ErrorKind {
     pub fn is(other: ErrorKind): bool { (self as i32) == (other as i32) }
 }
 
-impl ErrorKind implements PartialEq {
+extend ErrorKind implements PartialEq {
     fn eq(other: read ErrorKind): bool { self.is(other) }
 }
 
-impl Error {
+extend Error {
     pub fn kind(): ErrorKind { self.kind }
     pub fn raw_os_error(): i32? { if self.os { present(self.code) } else { none } }
     pub fn is_os(): bool { self.os }
@@ -95,12 +95,12 @@ impl Error {
     // Human-readable description: the C library message for OS errors.
     pub fn message(): String {
         if self.os {
-            let p = unsafe { sys::strerror(self.code) }
-            let bytes = unsafe { sys::bytes_from_c(p) }
-            let decoded = capture package::alloc::string::from_utf8(bytes)
+            let p = unsafe { sys.strerror(self.code) }
+            let bytes = unsafe { sys.bytes_from_c(p) }
+            let decoded = capture package.alloc.string.from_utf8(bytes)
             match take decoded {
                 success(s) => { return s },
-                failure(e) => { return package::alloc::string::from_text("unknown error") }
+                failure(e) => { return package.alloc.string.from_text("unknown error") }
             }
         }
         kind_description(self.kind)
@@ -120,7 +120,7 @@ pub interface Read {
         while done < total {
             let rest = buf.split_at_mut(done).1
             let n = try self.read_some(rest)
-            if n == 0usize { throw from_kind(ErrorKind::UnexpectedEof) }
+            if n == 0usize { throw from_kind(ErrorKind.UnexpectedEof) }
             done += n
         }
     }
@@ -151,7 +151,7 @@ pub interface Write {
         let total = buf.len()
         while done < total {
             let n = try self.write_some(buf.split_at(done).1)
-            if n == 0usize { throw from_kind(ErrorKind::WriteZero) }
+            if n == 0usize { throw from_kind(ErrorKind.WriteZero) }
             done += n
         }
     }
@@ -163,27 +163,27 @@ pub interface Write {
     // Formatted output: renders `message` through a borrowed sink adapter. The
     // first sink error is returned unchanged; a formatter failure without one
     // is `InvalidData`. Partial output is possible.
-    mut fn write(message: format fmt::Message): Unit throws Error {
+    mut fn write(message: format fmt.Message): Unit throws Error {
         try format_to(mut self, message, false)
     }
-    mut fn write_line(message: format fmt::Message): Unit throws Error {
+    mut fn write_line(message: format fmt.Message): Unit throws Error {
         try format_to(mut self, message, true)
     }
 }
 
 // Adapts a byte writer to the formatting sink, keeping the first writer error.
 type FormatSink<region r, W: Write + unsized> { inner: mut W from r; first_error: Error? }
-impl<region r, W: Write + unsized> FormatSink<region r, W> implements fmt::Write {
-    mut fn write_str(text: read Text): Unit throws fmt::Error {
+extend<region r, W: Write + unsized> FormatSink<region r, W> implements fmt.Write {
+    mut fn write_str(text: read Text): Unit throws fmt.Error {
         let done = capture self.inner.write_all(text.as_bytes())
         match take done {
             success(_) => {},
-            failure(e) => { self.first_error = present(e); throw fmt::Error() }
+            failure(e) => { self.first_error = present(e); throw fmt.Error() }
         }
     }
 }
 
-fn format_to<W: Write + unsized>(writer: mut W, message: format fmt::Message, newline: bool): Unit throws Error {
+fn format_to<W: Write + unsized>(writer: mut W, message: format fmt.Message, newline: bool): Unit throws Error {
     var sink = FormatSink(mut writer, none)
     let outcome = capture message.write_to(mut sink)
     match take outcome {
@@ -191,7 +191,7 @@ fn format_to<W: Write + unsized>(writer: mut W, message: format fmt::Message, ne
         failure(_) => {
             match sink.first_error {
                 present(e) => { throw e },
-                none => { throw from_kind(ErrorKind::InvalidData) }
+                none => { throw from_kind(ErrorKind.InvalidData) }
             }
         }
     }
@@ -201,10 +201,10 @@ fn format_to<W: Write + unsized>(writer: mut W, message: format fmt::Message, ne
 fn fd_read(fd: i32, buf: mut [u8]): usize throws Error {
     if buf.len() == 0usize { return 0usize }
     while true {
-        let n = unsafe { sys::`read`(fd, sys::data_mut(buf), buf.len()) }
+        let n = unsafe { sys.`read`(fd, sys.data_mut(buf), buf.len()) }
         if n >= 0isize { return n as usize }
         let e = last_os_error()
-        if !e.kind().is(ErrorKind::Interrupted) { throw e }
+        if !e.kind().is(ErrorKind.Interrupted) { throw e }
     }
     0usize
 }
@@ -212,10 +212,10 @@ fn fd_read(fd: i32, buf: mut [u8]): usize throws Error {
 fn fd_write(fd: i32, buf: read [u8]): usize throws Error {
     if buf.len() == 0usize { return 0usize }
     while true {
-        let n = unsafe { sys::write(fd, slice::data(buf), buf.len()) }
+        let n = unsafe { sys.write(fd, slice.data(buf), buf.len()) }
         if n >= 0isize { return n as usize }
         let e = last_os_error()
-        if !e.kind().is(ErrorKind::Interrupted) { throw e }
+        if !e.kind().is(ErrorKind.Interrupted) { throw e }
     }
     0usize
 }
@@ -230,14 +230,14 @@ pub fn stdin(): Stdin { Stdin() }
 pub fn stdout(): Stdout { Stdout() }
 pub fn stderr(): Stderr { Stderr() }
 
-impl Stdin implements Read {
+extend Stdin implements Read {
     mut fn read_some(buf: mut [u8]): usize throws Error { try fd_read(0, buf) }
 }
-impl Stdout implements Write {
+extend Stdout implements Write {
     mut fn write_some(buf: read [u8]): usize throws Error { try fd_write(1, buf) }
     mut fn flush(): Unit throws Error {}
 }
-impl Stderr implements Write {
+extend Stderr implements Write {
     mut fn write_some(buf: read [u8]): usize throws Error { try fd_write(2, buf) }
     mut fn flush(): Unit throws Error {}
 }
@@ -246,29 +246,29 @@ impl Stderr implements Write {
 // ordinary failure panics. A closed pipe (EPIPE) ends the process quietly with
 // status 141 and runs no destructors, like `process::exit`; callers needing
 // cleanup use `stdout().write(...)` and handle the error.
-pub fn print(message: format fmt::Message): Unit {
+pub fn print(message: format fmt.Message): Unit {
     var out = stdout()
     let outcome = capture out.write(message)
     match take outcome {
         success(_) => {},
         failure(e) => {
-            if e.kind().is(ErrorKind::BrokenPipe) { unsafe { sys::exit(141) } }
-            package::core::panic::panic("failed to write to standard output")
+            if e.kind().is(ErrorKind.BrokenPipe) { unsafe { sys.exit(141) } }
+            package.core.panic.panic("failed to write to standard output")
         }
     }
 }
 // Like `print` for standard error; every failure panics.
-pub fn eprint(message: format fmt::Message): Unit {
+pub fn eprint(message: format fmt.Message): Unit {
     var err = stderr()
     let outcome = capture err.write(message)
     match take outcome {
         success(_) => {},
-        failure(e) => { package::core::panic::panic("failed to write to standard error") }
+        failure(e) => { package.core.panic.panic("failed to write to standard error") }
     }
 }
 
 // Appends the bytes of `src` to a growable buffer: `Vec<u8>` is a sink.
-impl Vec<u8> implements Write {
+extend Vec<u8> implements Write {
     mut fn write_some(buf: read [u8]): usize throws Error {
         self.extend_from_slice(buf)
         buf.len()
@@ -279,7 +279,7 @@ impl Vec<u8> implements Write {
 // Reads from an in-memory slice, advancing past what was consumed.
 pub type SliceReader<region r> { data: read [u8] from r; pos: usize }
 pub fn slice_reader<region r>(data: read [u8] from r): SliceReader<region r> { SliceReader(read data, 0usize) }
-impl<region r> SliceReader<region r> implements Read {
+extend<region r> SliceReader<region r> implements Read {
     mut fn read_some(buf: mut [u8]): usize throws Error {
         let left = self.data.len() - self.pos
         var n = buf.len()
@@ -306,12 +306,12 @@ pub type BufReader<R: Read> {
 pub fn buf_reader<R: Read>(inner: take R): BufReader<R> { buf_reader_with_capacity(8192usize, inner) }
 
 pub fn buf_reader_with_capacity<R: Read>(capacity: usize, inner: take R): BufReader<R> {
-    var buf = vec::with_capacity::<u8>(capacity)
+    var buf = vec.with_capacity<u8>(capacity)
     buf.resize(capacity, 0u8)
     BufReader(inner, buf, 0usize, 0usize)
 }
 
-impl<R: Read> BufReader<R> {
+extend<R: Read> BufReader<R> {
     // The unread bytes, refilling from the source when the buffer is drained.
     pub mut fn fill_buf(): read [u8] from self throws Error {
         if self.pos >= self.filled {
@@ -367,11 +367,11 @@ impl<R: Read> BufReader<R> {
             failure(e) => { buf.clear(); throw e }
         }
         if n == 0usize { return none }
-        let valid = match package::core::text::from_utf8(buf.as_bytes()) {
+        let valid = match package.core.text.from_utf8(buf.as_bytes()) {
             present(_) => true,
             none => false
         }
-        if !valid { buf.clear(); throw from_kind(ErrorKind::InvalidData) }
+        if !valid { buf.clear(); throw from_kind(ErrorKind.InvalidData) }
         present(buf.as_text())
     }
 
@@ -385,7 +385,7 @@ impl<R: Read> BufReader<R> {
     }
 }
 
-impl<R: Read> BufReader<R> implements Read {
+extend<R: Read> BufReader<R> implements Read {
     mut fn read_some(buf: mut [u8]): usize throws Error {
         if buf.len() == 0usize { return 0usize }
         let avail = try self.fill_buf()
@@ -414,10 +414,10 @@ pub type BufWriter<W: Write> {
 pub fn buf_writer<W: Write>(inner: take W): BufWriter<W> { buf_writer_with_capacity(8192usize, inner) }
 
 pub fn buf_writer_with_capacity<W: Write>(capacity: usize, inner: take W): BufWriter<W> {
-    BufWriter(inner, vec::with_capacity::<u8>(capacity), capacity)
+    BufWriter(inner, vec.with_capacity<u8>(capacity), capacity)
 }
 
-impl<W: Write> BufWriter<W> {
+extend<W: Write> BufWriter<W> {
     mut fn flush_buf(): Unit throws Error {
         if self.buf.len() > 0usize {
             try self.inner.write_all(self.buf.as_slice())
@@ -428,7 +428,7 @@ impl<W: Write> BufWriter<W> {
     pub fn buffered(): usize { self.buf.len() }
 }
 
-impl<W: Write> BufWriter<W> implements Write {
+extend<W: Write> BufWriter<W> implements Write {
     mut fn write_some(buf: read [u8]): usize throws Error {
         if self.buf.len() + buf.len() > self.capacity { try self.flush_buf() }
         if buf.len() >= self.capacity {

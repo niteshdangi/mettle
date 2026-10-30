@@ -32,20 +32,20 @@ pub fn layout_from_size_align(size: usize, align: usize): Layout throws LayoutEr
 pub unsafe fn layout_unchecked(size: usize, align: usize): Layout { Layout(size, align) }
 
 pub fn layout_of<T>(): Layout {
-    Layout(core::mem::size_of::<T>(), core::mem::align_of::<T>())
+    Layout(core.mem.size_of<T>(), core.mem.align_of<T>())
 }
 
 // Layout of `count` contiguous values of `T`.
 pub fn layout_array<T>(count: usize): Layout throws LayoutError {
-    let each = core::mem::size_of::<T>()
-    let align = core::mem::align_of::<T>()
+    let each = core.mem.size_of<T>()
+    let align = core.mem.align_of<T>()
     match each.checked_mul(count) {
         present(size) => try layout_from_size_align(size, align),
         none => throw LayoutError(0usize, align)
     }
 }
 
-impl Layout {
+extend Layout {
     pub fn size(): usize { self.size }
     pub fn align(): usize { self.align }
 }
@@ -61,22 +61,22 @@ pub interface Allocator {
 }
 
 // Dangling, well-aligned address used for zero-sized blocks; never dereferenced.
-fn dangling(align: usize): ptr<mut u8> { unsafe { core::mem::transmute::<ptr<mut u8>>(align) } }
+fn dangling(align: usize): ptr<mut u8> { unsafe { core.mem.transmute<ptr<mut u8>>(align) } }
 
 // Well-aligned non-null placeholder for empty storage of `T`; never dereferenced.
-pub fn dangling_for<T>(): ptr<mut T> { dangling(core::mem::align_of::<T>()).cast::<T>() }
+pub fn dangling_for<T>(): ptr<mut T> { dangling(core.mem.align_of<T>()).cast<T>() }
 
 // The process-wide allocator. Stateless and freely copyable.
 pub copy type Global {}
 
-impl Global implements package::core::clone::Clone { fn clone(): Global { Global() } }
-impl Global implements package::core::default::Default { static fn default(): Global { Global() } }
+extend Global implements package.core.clone.Clone { fn clone(): Global { Global() } }
+extend Global implements package.core.default.Default { static fn default(): Global { Global() } }
 
-impl Global implements Allocator {
+extend Global implements Allocator {
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {
         if layout.size == 0usize { return dangling(layout.align) }
         let p = unsafe { mettle_rt_alloc(layout.size, layout.align) }
-        if p == core::ptr::null_mut::<u8>() { throw AllocError(layout.size, layout.align) }
+        if p == core.ptr.null_mut<u8>() { throw AllocError(layout.size, layout.align) }
         p
     }
     mut fn deallocate(p: ptr<mut u8>, layout: Layout): Unit {
@@ -87,7 +87,7 @@ impl Global implements Allocator {
             return try self.allocate(Layout(new_size, old.align))
         }
         let q = unsafe { mettle_rt_realloc(p, old.size, old.align, new_size) }
-        if q == core::ptr::null_mut::<u8>() { throw AllocError(new_size, old.align) }
+        if q == core.ptr.null_mut<u8>() { throw AllocError(new_size, old.align) }
         q
     }
     mut fn shrink(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
@@ -96,7 +96,7 @@ impl Global implements Allocator {
             return dangling(old.align)
         }
         let q = unsafe { mettle_rt_realloc(p, old.size, old.align, new_size) }
-        if q == core::ptr::null_mut::<u8>() { throw AllocError(new_size, old.align) }
+        if q == core.ptr.null_mut<u8>() { throw AllocError(new_size, old.align) }
         q
     }
 }
@@ -121,7 +121,7 @@ pub unsafe fn free_block<A: Allocator>(p: ptr<mut u8>, layout: Layout, a: ptr<mu
 // (non-`try_`) operations route here; policy is abort, never unwinding through
 // allocator callbacks.
 pub fn handle_alloc_error(layout: Layout): Never {
-    core::intrinsics::abort()
+    core.intrinsics.abort()
 }
 
 // Panic used for precondition violations (bounds, boundaries, capacity
@@ -130,7 +130,7 @@ pub fn handle_alloc_error(layout: Layout): Never {
 pub fn panic_precondition(): Never {
     let empty: [u8; 1] = [0u8]
     let one = 1usize
-    let at = unsafe { core::ptr::`read_volatile`(core::ptr::from_ref(one)) }
+    let at = unsafe { core.ptr.`read_volatile`(core.ptr.from_ref(one)) }
     let _unused = empty[at]
-    core::intrinsics::abort()
+    core.intrinsics.abort()
 }

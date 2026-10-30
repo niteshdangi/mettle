@@ -1,9 +1,9 @@
-import alloc::vec::Vec;
-import core::iter::{Iterator, IntoIterator};
+import alloc.vec.Vec;
+import core.iter.{Iterator, IntoIterator};
 type D { c: ptr<mut i32>; id: i32
     drop { unsafe { *self.c += self.id } } }
 fn main(): i32 {
-    var v = alloc::vec::new::<i32>()
+    var v = alloc.vec.new<i32>()
     var i = 0
     while i < 100 { v.push(i * 3 % 17); i += 1 }
     if v.len() != 100usize { return 1 }
@@ -27,10 +27,10 @@ fn main(): i32 {
     if sum != 16 + 1 + 2 { return 8 + sum }
     var n = 0
     {
-        var d = alloc::vec::new::<D>()
-        d.push(D(core::ptr::from_mut(n), 1))
-        d.push(D(core::ptr::from_mut(n), 10))
-        d.push(D(core::ptr::from_mut(n), 100))
+        var d = alloc.vec.new<D>()
+        d.push(D(core.ptr.from_mut(n), 1))
+        d.push(D(core.ptr.from_mut(n), 10))
+        d.push(D(core.ptr.from_mut(n), 100))
         d.truncate(2usize)
         if n != 100 { return 20 }
     }

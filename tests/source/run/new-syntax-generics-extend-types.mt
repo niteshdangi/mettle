@@ -1,7 +1,7 @@
 // expect-exit: 43
 type Vec<T> { a: T; n: usize }
 enum Opt<T> { Some(T), Nothing }
-fn nothing<T>(): Opt<T> { Opt::Nothing }
+fn nothing<T>(): Opt<T> { Opt.Nothing }
 fn id<T>(x: take T): T { x }
 type Slot<K> { v: K? }
 extend<K> Slot<K> {
@@ -14,6 +14,6 @@ fn main(): i32 {
     let a = 3
     let b = 4
     let cmp = if a < b { 1 } else { 0 }
-    let base = match s { Opt::Nothing => 2, Opt::Some(_) => 0 }
+    let base = match s { Opt.Nothing => 2, Opt.Some(_) => 0 }
     base + wrapped.a.a + cmp
 }

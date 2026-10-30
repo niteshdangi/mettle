@@ -1,6 +1,6 @@
 
 type Bag { n: i32 }
-impl Bag {
+extend Bag {
     mut fn add(item: take i32) { self.n += item }
 }
 fn gen<T>(x: take T): T { x }

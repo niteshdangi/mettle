@@ -13,7 +13,7 @@ fn main() {
     let slice: mut [i32] = mut values
     let n = counted(slice, count).len()
     slice[0] += 1
-    if length::<i32>(slice) == 2usize && identity(slice).len() == 2usize &&
+    if length<i32>(slice) == 2usize && identity(slice).len() == 2usize &&
        zero.len() == 0usize && n == 2usize && count == 1 &&
        slice[0] == 21 { 0 } else { 1 }
 }

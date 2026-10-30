@@ -1,6 +1,6 @@
 
 fn value<const N:isize=9223372036854775807>():isize { N }
-fn increment<const N:isize>():isize { value::<{N+1}>() }
+fn increment<const N:isize>():isize { value<{N+1}>() }
 fn classify(input:isize):i32 {
     match input { -9223372036854775808..=9223372036854775807 => 42 }
 }
@@ -19,10 +19,10 @@ fn main() {
     let shift = match maximum.checked_shl(64u32) {
         none => true, present(item) => false
     }
-    let converted = match maximum.checked_cast::<isize>() {
+    let converted = match maximum.checked_cast<isize>() {
         none => false, present(item) => item == maximum
     }
-    if value() == maximum && increment::<{9223372036854775806}>() == maximum &&
+    if value() == maximum && increment<{9223372036854775806}>() == maximum &&
        classify(minimum) == 42 && classify(maximum) == 42 && count == 2 &&
        overflow.0 == minimum && overflow.1 &&
        maximum.wrapping_add(1) == minimum &&

@@ -2,7 +2,7 @@
 
 fn main() {
     var value:i32? = none
-    var handle = core::pin::Pin::new(mut value)
+    var handle = core.pin.Pin.new(mut value)
     let inner = handle.project_value()
     0
 }

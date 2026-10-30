@@ -1,10 +1,10 @@
 
 interface Readable { fn value(): i32; }
-interface Factory { type Item: Readable; fn create(): Self::Item; }
+interface Factory { type Item: Readable; fn create(): Self.Item; }
 copy type Number { value: i32 }
-impl Number implements Readable { fn value(): i32 { self.value } }
+extend Number implements Readable { fn value(): i32 { self.value } }
 type Maker {}
-impl Maker implements Factory {
+extend Maker implements Factory {
     type Item = Number
     fn create(): Number { Number(42) }
 }

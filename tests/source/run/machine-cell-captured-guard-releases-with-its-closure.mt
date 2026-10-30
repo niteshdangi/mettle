@@ -1,6 +1,6 @@
 
 fn main() {
-    let cell = core::cell::RefCell::new(42)
+    let cell = core.cell.RefCell.new(42)
     {
         let guard = cell.borrow()
         let inspect = take fn(): i32 { *guard.get_ref() }

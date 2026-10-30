@@ -1,12 +1,12 @@
-import super::alloc::{Allocator, Global, AllocError, Layout, layout_of, layout_unchecked, free_block, handle_alloc_error, panic_precondition, dangling_for};
-import package::core::clone::Clone;
-import package::core::default::Default;
-import package::core::cmp::{Eq, Ord, Ordering, PartialEq, PartialOrd};
-import package::core::hash::{Hash, Hasher};
-import package::core::fmt;
-import package::core::ops::{Deref, DerefMut, IndexRange, IndexRangeMut};
-import package::core::iter::{Iterator, DoubleEndedIterator, IntoIterator, Iterable, IterableMut, FromIterator, Extend};
-import package::core::slice::{SliceIter, SliceIterMut};
+import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, layout_unchecked, free_block, handle_alloc_error, panic_precondition, dangling_for};
+import package.core.clone.Clone;
+import package.core.default.Default;
+import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd};
+import package.core.hash.{Hash, Hasher};
+import package.core.fmt;
+import package.core.ops.{Deref, DerefMut, IndexRange, IndexRangeMut};
+import package.core.iter.{Iterator, DoubleEndedIterator, IntoIterator, Iterable, IterableMut, FromIterator, Extend};
+import package.core.slice.{SliceIter, SliceIterMut};
 
 copy type RawSlice<T> { data: ptr<read T>; len: usize }
 
@@ -14,11 +14,11 @@ copy type RawSlice<T> { data: ptr<read T>; len: usize }
 // the owner's own storage.
 pub fn slice_ptr<T>(p: ptr<mut T>, n: usize): ptr<read [T]> {
     let raw = RawSlice(p.cast_const(), n)
-    unsafe { core::mem::transmute::<ptr<read [T]>>(raw) }
+    unsafe { core.mem.transmute<ptr<read [T]>>(raw) }
 }
 pub fn slice_ptr_mut<T>(p: ptr<mut T>, n: usize): ptr<mut [T]> {
     let raw = RawSlice(p.cast_const(), n)
-    unsafe { core::mem::transmute::<ptr<mut [T]>>(raw) }
+    unsafe { core.mem.transmute<ptr<mut [T]>>(raw) }
 }
 
 // Drops `n` consecutive values. If one destructor panics the guard's own
@@ -31,7 +31,7 @@ type DropRun<T> {
             let current = self.p
             self.p = unsafe { self.p.add(1usize) }
             self.n -= 1usize
-            unsafe { core::ptr::drop_in_place(current) }
+            unsafe { core.ptr.drop_in_place(current) }
         }
     }
 }
@@ -49,31 +49,31 @@ pub type Vec<T, A: Allocator = Global> {
     drop {
         let n = self.len
         self.len = 0usize
-        let layout = unsafe { layout_unchecked(self.cap * core::mem::size_of::<T>(), core::mem::align_of::<T>()) }
-        let _free = unsafe { free_block(self.ptr.cast::<u8>(), layout, core::ptr::from_mut(self.a)) }
+        let layout = unsafe { layout_unchecked(self.cap * core.mem.size_of<T>(), core.mem.align_of<T>()) }
+        let _free = unsafe { free_block(self.ptr.cast<u8>(), layout, core.ptr.from_mut(self.a)) }
         let _run = DropRun(self.ptr, n)
     }
 }
 
 pub fn new_in<T, A: Allocator>(a: take A): Vec<T, A> {
-    let cap = if core::mem::size_of::<T>() == 0usize { 0xffffffffffffffffusize } else { 0usize }
-    Vec(dangling_for::<T>(), 0usize, cap, a)
+    let cap = if core.mem.size_of<T>() == 0usize { 0xffffffffffffffffusize } else { 0usize }
+    Vec(dangling_for<T>(), 0usize, cap, a)
 }
 pub fn new<T>(): Vec<T> { new_in(Global()) }
 
 pub fn try_with_capacity_in<T, A: Allocator>(n: usize, a: take A): Vec<T, A> throws AllocError {
-    var v = new_in::<T, A>(a)
+    var v = new_in<T, A>(a)
     try v.try_reserve_exact(n)
     v
 }
 pub fn with_capacity_in<T, A: Allocator>(n: usize, a: take A): Vec<T, A> {
-    var v = new_in::<T, A>(a)
+    var v = new_in<T, A>(a)
     v.reserve_exact(n)
     v
 }
 pub fn with_capacity<T>(n: usize): Vec<T> { with_capacity_in(n, Global()) }
 
-impl<T, A: Allocator> Vec<T, A> {
+extend<T, A: Allocator> Vec<T, A> {
     pub fn len(): usize { self.len }
     pub fn capacity(): usize { self.cap }
     pub fn is_empty(): bool { self.len == 0usize }
@@ -90,7 +90,7 @@ impl<T, A: Allocator> Vec<T, A> {
 
     // Grows to at least `need` slots; failure leaves the vector unchanged.
     mut fn grow_to(need: usize, exact: bool): Unit throws AllocError {
-        let size = core::mem::size_of::<T>()
+        let size = core.mem.size_of<T>()
         if size == 0usize || need <= self.cap { return () }
         var ncap = need
         if !exact {
@@ -98,7 +98,7 @@ impl<T, A: Allocator> Vec<T, A> {
             if doubled > ncap { ncap = doubled }
             if ncap < 4usize { ncap = 4usize }
         }
-        let align = core::mem::align_of::<T>()
+        let align = core.mem.align_of<T>()
         let bytes = match ncap.checked_mul(size) {
             present(b) => b,
             none => throw AllocError(0xffffffffffffffffusize, align)
@@ -107,44 +107,44 @@ impl<T, A: Allocator> Vec<T, A> {
         let np = if self.cap == 0usize {
             try self.a.allocate(unsafe { layout_unchecked(bytes, align) })
         } else {
-            try self.a.grow(self.ptr.cast::<u8>(), unsafe { layout_unchecked(self.cap * size, align) }, bytes)
+            try self.a.grow(self.ptr.cast<u8>(), unsafe { layout_unchecked(self.cap * size, align) }, bytes)
         }
-        self.ptr = np.cast::<T>()
+        self.ptr = np.cast<T>()
         self.cap = ncap
     }
     pub mut fn try_reserve(extra: usize): Unit throws AllocError {
         match self.len.checked_add(extra) {
             present(need) => try self.grow_to(need, false),
-            none => throw AllocError(0xffffffffffffffffusize, core::mem::align_of::<T>())
+            none => throw AllocError(0xffffffffffffffffusize, core.mem.align_of<T>())
         }
     }
     pub mut fn try_reserve_exact(extra: usize): Unit throws AllocError {
         match self.len.checked_add(extra) {
             present(need) => try self.grow_to(need, true),
-            none => throw AllocError(0xffffffffffffffffusize, core::mem::align_of::<T>())
+            none => throw AllocError(0xffffffffffffffffusize, core.mem.align_of<T>())
         }
     }
     pub mut fn reserve(extra: usize): Unit {
         match capture self.try_reserve(extra) {
             success(_) => (),
-            failure(_) => handle_alloc_error(layout_of::<T>())
+            failure(_) => handle_alloc_error(layout_of<T>())
         }
     }
     pub mut fn reserve_exact(extra: usize): Unit {
         match capture self.try_reserve_exact(extra) {
             success(_) => (),
-            failure(_) => handle_alloc_error(layout_of::<T>())
+            failure(_) => handle_alloc_error(layout_of<T>())
         }
     }
     // Releases spare capacity; failure keeps the larger block.
     pub mut fn shrink_to_fit(): Unit {
-        let size = core::mem::size_of::<T>()
+        let size = core.mem.size_of<T>()
         if size == 0usize || self.cap == self.len || self.cap == 0usize { return () }
-        let align = core::mem::align_of::<T>()
+        let align = core.mem.align_of<T>()
         let old = unsafe { layout_unchecked(self.cap * size, align) }
-        match capture self.a.shrink(self.ptr.cast::<u8>(), old, self.len * size) {
+        match capture self.a.shrink(self.ptr.cast<u8>(), old, self.len * size) {
             success(np) => {
-                self.ptr = np.cast::<T>()
+                self.ptr = np.cast<T>()
                 self.cap = self.len
             },
             failure(_) => ()
@@ -154,26 +154,26 @@ impl<T, A: Allocator> Vec<T, A> {
     // Fallible append: on failure the value is dropped and the vector is unchanged.
     pub mut fn try_push(value: take T): Unit throws AllocError {
         try self.try_reserve(1usize)
-        unsafe { core::ptr::write(self.ptr.add(self.len), value) }
+        unsafe { core.ptr.write(self.ptr.add(self.len), value) }
         self.len += 1usize
     }
     pub mut fn push(value: take T): Unit {
         if self.len == self.cap { self.reserve(1usize) }
-        unsafe { core::ptr::write(self.ptr.add(self.len), value) }
+        unsafe { core.ptr.write(self.ptr.add(self.len), value) }
         self.len += 1usize
     }
     pub mut fn pop(): T? {
         if self.len == 0usize { return none }
         self.len -= 1usize
-        present(unsafe { core::ptr::`read`(self.ptr.add(self.len)) })
+        present(unsafe { core.ptr.`read`(self.ptr.add(self.len)) })
     }
     pub mut fn insert(index: usize, value: take T): Unit {
         if index > self.len { panic_precondition() }
         if self.len == self.cap { self.reserve(1usize) }
         unsafe {
             let p = self.ptr.add(index)
-            core::ptr::`copy`(p.cast_const(), p.add(1usize), self.len - index)
-            core::ptr::write(p, value)
+            core.ptr.`copy`(p.cast_const(), p.add(1usize), self.len - index)
+            core.ptr.write(p, value)
         }
         self.len += 1usize
     }
@@ -181,8 +181,8 @@ impl<T, A: Allocator> Vec<T, A> {
         if index >= self.len { panic_precondition() }
         unsafe {
             let p = self.ptr.add(index)
-            let value = core::ptr::`read`(p)
-            core::ptr::`copy`(p.add(1usize).cast_const(), p, self.len - index - 1usize)
+            let value = core.ptr.`read`(p)
+            core.ptr.`copy`(p.add(1usize).cast_const(), p, self.len - index - 1usize)
             self.len -= 1usize
             value
         }
@@ -191,9 +191,9 @@ impl<T, A: Allocator> Vec<T, A> {
         if index >= self.len { panic_precondition() }
         unsafe {
             let p = self.ptr.add(index)
-            let value = core::ptr::`read`(p)
+            let value = core.ptr.`read`(p)
             self.len -= 1usize
-            if index != self.len { core::ptr::`copy`(self.ptr.add(self.len).cast_const(), p, 1usize) }
+            if index != self.len { core.ptr.`copy`(self.ptr.add(self.len).cast_const(), p, 1usize) }
             value
         }
     }
@@ -215,14 +215,14 @@ impl<T, A: Allocator> Vec<T, A> {
     }
     pub mut fn swap(i: usize, j: usize): Unit {
         if i >= self.len || j >= self.len { panic_precondition() }
-        if i != j { unsafe { core::ptr::swap(self.ptr.add(i), self.ptr.add(j)) } }
+        if i != j { unsafe { core.ptr.swap(self.ptr.add(i), self.ptr.add(j)) } }
     }
     pub mut fn reverse(): Unit {
         var i = 0usize
         var j = self.len
         while i + 1usize < j {
             j -= 1usize
-            unsafe { core::ptr::swap(self.ptr.add(i), self.ptr.add(j)) }
+            unsafe { core.ptr.swap(self.ptr.add(i), self.ptr.add(j)) }
             i += 1usize
         }
     }
@@ -231,7 +231,7 @@ impl<T, A: Allocator> Vec<T, A> {
     pub mut fn append(other: mut Vec<T, A>): Unit {
         self.reserve(other.len)
         unsafe {
-            core::ptr::`copy`(other.ptr.cast_const(), self.ptr.add(self.len), other.len)
+            core.ptr.`copy`(other.ptr.cast_const(), self.ptr.add(self.len), other.len)
         }
         self.len += other.len
         other.len = 0usize
@@ -250,17 +250,17 @@ impl<T, A: Allocator> Vec<T, A> {
             let alive = keep(unsafe { read *p })
             read_at += 1usize
             if alive {
-                if kept != read_at - 1usize { unsafe { core::ptr::`copy`(p.cast_const(), self.ptr.add(kept), 1usize) } }
+                if kept != read_at - 1usize { unsafe { core.ptr.`copy`(p.cast_const(), self.ptr.add(kept), 1usize) } }
                 kept += 1usize
             } else {
-                unsafe { core::ptr::drop_in_place(p) }
+                unsafe { core.ptr.drop_in_place(p) }
             }
         }
         self.len = kept
     }
 }
 
-impl<T: Clone, A: Allocator> Vec<T, A> {
+extend<T: Clone, A: Allocator> Vec<T, A> {
     pub mut fn extend_from_slice(items: read [T]): Unit {
         self.reserve(items.len())
         var i = 0usize
@@ -276,7 +276,7 @@ impl<T: Clone, A: Allocator> Vec<T, A> {
     }
 }
 
-impl<T: PartialEq, A: Allocator> Vec<T, A> {
+extend<T: PartialEq, A: Allocator> Vec<T, A> {
     pub fn contains(x: read T): bool {
         var i = 0usize
         while i < self.len {
@@ -297,9 +297,9 @@ impl<T: PartialEq, A: Allocator> Vec<T, A> {
             let same = unsafe { read *p } == unsafe { read *self.ptr.add(kept - 1usize) }
             read_at += 1usize
             if same {
-                unsafe { core::ptr::drop_in_place(p) }
+                unsafe { core.ptr.drop_in_place(p) }
             } else {
-                if kept != read_at - 1usize { unsafe { core::ptr::`copy`(p.cast_const(), self.ptr.add(kept), 1usize) } }
+                if kept != read_at - 1usize { unsafe { core.ptr.`copy`(p.cast_const(), self.ptr.add(kept), 1usize) } }
                 kept += 1usize
             }
         }
@@ -307,12 +307,12 @@ impl<T: PartialEq, A: Allocator> Vec<T, A> {
     }
 }
 
-impl<T: Ord, A: Allocator> Vec<T, A> {
+extend<T: Ord, A: Allocator> Vec<T, A> {
     // Stable merge sort using a scratch buffer from the vector's own element type.
     pub mut fn sort(): Unit {
         let n = self.len
         if n < 2usize { return () }
-        var tmp = with_capacity::<T>(n)
+        var tmp = with_capacity<T>(n)
         unsafe { sort_run(self.ptr, tmp.ptr, n) }
     }
 }
@@ -327,7 +327,7 @@ unsafe fn sort_run<T: Ord>(p: ptr<mut T>, tmp: ptr<mut T>, n: usize): Unit {
         while i < n {
             var j = i
             while j > 0usize && unsafe { read *p.add(j) }.cmp(unsafe { read *p.add(j - 1usize) }).is_lt() {
-                core::ptr::swap(p.add(j), p.add(j - 1usize))
+                core.ptr.swap(p.add(j), p.add(j - 1usize))
                 j -= 1usize
             }
             i += 1usize
@@ -342,26 +342,26 @@ unsafe fn sort_run<T: Ord>(p: ptr<mut T>, tmp: ptr<mut T>, n: usize): Unit {
     var k = 0usize
     while a < mid && b < n {
         if unsafe { read *p.add(b) }.cmp(unsafe { read *p.add(a) }).is_lt() {
-            core::ptr::`copy`(p.add(b).cast_const(), tmp.add(k), 1usize)
+            core.ptr.`copy`(p.add(b).cast_const(), tmp.add(k), 1usize)
             b += 1usize
         } else {
-            core::ptr::`copy`(p.add(a).cast_const(), tmp.add(k), 1usize)
+            core.ptr.`copy`(p.add(a).cast_const(), tmp.add(k), 1usize)
             a += 1usize
         }
         k += 1usize
     }
-    while a < mid { core::ptr::`copy`(p.add(a).cast_const(), tmp.add(k), 1usize); a += 1usize; k += 1usize }
-    while b < n { core::ptr::`copy`(p.add(b).cast_const(), tmp.add(k), 1usize); b += 1usize; k += 1usize }
-    core::ptr::`copy`(tmp.cast_const(), p, n)
+    while a < mid { core.ptr.`copy`(p.add(a).cast_const(), tmp.add(k), 1usize); a += 1usize; k += 1usize }
+    while b < n { core.ptr.`copy`(p.add(b).cast_const(), tmp.add(k), 1usize); b += 1usize; k += 1usize }
+    core.ptr.`copy`(tmp.cast_const(), p, n)
 }
 
-impl<T, A: Allocator + Default> Vec<T, A> implements Default {
-    static fn default(): Vec<T, A> { new_in::<T, A>(<A implements Default>::default()) }
+extend<T, A: Allocator + Default> Vec<T, A> implements Default {
+    static fn default(): Vec<T, A> { new_in<T, A>(A.(Default).default()) }
 }
 
-impl<T: Clone, A: Allocator + Clone> Vec<T, A> implements Clone {
+extend<T: Clone, A: Allocator + Clone> Vec<T, A> implements Clone {
     fn clone(): Vec<T, A> {
-        var out = with_capacity_in::<T, A>(self.len, self.a.clone())
+        var out = with_capacity_in<T, A>(self.len, self.a.clone())
         var i = 0usize
         while i < self.len {
             out.push(unsafe { read *self.ptr.add(i) }.clone())
@@ -371,14 +371,14 @@ impl<T: Clone, A: Allocator + Clone> Vec<T, A> implements Clone {
     }
 }
 
-impl<T, A: Allocator> Vec<T, A> implements package::core::ops::Index<usize> {
+extend<T, A: Allocator> Vec<T, A> implements package.core.ops.Index<usize> {
     type Output = T
     fn index(i: read usize): read T from self {
         if i >= self.len { panic_precondition() }
         unsafe { read *self.ptr.add(i) }
     }
 }
-impl<T, A: Allocator> Vec<T, A> implements package::core::ops::IndexMut<usize> {
+extend<T, A: Allocator> Vec<T, A> implements package.core.ops.IndexMut<usize> {
     type Output = T
     mut fn index_mut(i: read usize): mut T from self {
         if i >= self.len { panic_precondition() }
@@ -386,15 +386,15 @@ impl<T, A: Allocator> Vec<T, A> implements package::core::ops::IndexMut<usize> {
     }
 }
 
-impl<T, A: Allocator> Vec<T, A> implements Deref {
+extend<T, A: Allocator> Vec<T, A> implements Deref {
     type Target = [T]
     fn deref(): read [T] from self { self.as_slice() }
 }
-impl<T, A: Allocator> Vec<T, A> implements DerefMut {
+extend<T, A: Allocator> Vec<T, A> implements DerefMut {
     type Target = [T]
     mut fn deref_mut(): mut [T] from self { self.as_mut_slice() }
 }
-impl<T, A: Allocator> Vec<T, A> implements IndexRange {
+extend<T, A: Allocator> Vec<T, A> implements IndexRange {
     type Output = [T]
     fn index_range(start: usize, end: usize): read [T] from self {
         let stop = if end == 0xffffffffffffffffusize { self.len } else { end }
@@ -402,7 +402,7 @@ impl<T, A: Allocator> Vec<T, A> implements IndexRange {
         unsafe { read *slice_ptr(self.ptr.add(start), stop - start) }
     }
 }
-impl<T, A: Allocator> Vec<T, A> implements IndexRangeMut {
+extend<T, A: Allocator> Vec<T, A> implements IndexRangeMut {
     type Output = [T]
     mut fn index_range_mut(start: usize, end: usize): mut [T] from self {
         let stop = if end == 0xffffffffffffffffusize { self.len } else { end }
@@ -411,18 +411,18 @@ impl<T, A: Allocator> Vec<T, A> implements IndexRangeMut {
     }
 }
 
-impl<T: PartialEq, A: Allocator> Vec<T, A> implements PartialEq {
+extend<T: PartialEq, A: Allocator> Vec<T, A> implements PartialEq {
     fn eq(other: read Vec<T, A>): bool { self.as_slice() == other.as_slice() }
 }
-impl<T: Eq, A: Allocator> Vec<T, A> implements Eq {}
-impl<T: PartialOrd, A: Allocator> Vec<T, A> implements PartialOrd {
+extend<T: Eq, A: Allocator> Vec<T, A> implements Eq {}
+extend<T: PartialOrd, A: Allocator> Vec<T, A> implements PartialOrd {
     fn partial_cmp(other: read Vec<T, A>): Ordering? { self.as_slice().partial_cmp(other.as_slice()) }
 }
-impl<T: Ord, A: Allocator> Vec<T, A> implements Ord {
+extend<T: Ord, A: Allocator> Vec<T, A> implements Ord {
     fn cmp(other: read Vec<T, A>): Ordering { self.as_slice().cmp(other.as_slice()) }
 }
 // Hashes exactly like the slice view, so `Vec<T>` and `[T]` agree.
-impl<T: Hash, A: Allocator> Vec<T, A> implements Hash {
+extend<T: Hash, A: Allocator> Vec<T, A> implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { self.as_slice().hash(mut state) }
 }
 // By-value iterator; remaining elements and the buffer are released on drop.
@@ -436,13 +436,13 @@ pub type IntoIter<T, A: Allocator = Global> {
         let rest = self.back - self.front
         let p = unsafe { self.buf.add(self.front) }
         self.front = self.back
-        let layout = unsafe { layout_unchecked(self.cap * core::mem::size_of::<T>(), core::mem::align_of::<T>()) }
-        let _free = unsafe { free_block(self.buf.cast::<u8>(), layout, core::ptr::from_mut(self.a)) }
+        let layout = unsafe { layout_unchecked(self.cap * core.mem.size_of<T>(), core.mem.align_of<T>()) }
+        let _free = unsafe { free_block(self.buf.cast<u8>(), layout, core.ptr.from_mut(self.a)) }
         let _run = DropRun(p, rest)
     }
 }
 
-impl<T, A: Allocator> Vec<T, A> implements IntoIterator {
+extend<T, A: Allocator> Vec<T, A> implements IntoIterator {
     type Item = T
     type IntoIter = IntoIter<T, A>
     fn into_iter(receiver self: take Self): IntoIter<T, A> {
@@ -450,47 +450,47 @@ impl<T, A: Allocator> Vec<T, A> implements IntoIterator {
             let buf = self.ptr
             let cap = self.cap
             let n = self.len
-            let a = core::ptr::`read`(core::ptr::from_ref(self.a))
-            core::mem::forget(take self)
+            let a = core.ptr.`read`(core.ptr.from_ref(self.a))
+            core.mem.forget(take self)
             IntoIter(buf, cap, 0usize, n, a)
         }
     }
 }
 
-impl<T, A: Allocator> IntoIter<T, A> implements Iterator {
+extend<T, A: Allocator> IntoIter<T, A> implements Iterator {
     type Item = T
     mut fn next(): T? {
         if self.front == self.back { return none }
         let i = self.front
         self.front += 1usize
-        present(unsafe { core::ptr::`read`(self.buf.add(i)) })
+        present(unsafe { core.ptr.`read`(self.buf.add(i)) })
     }
 }
-impl<T, A: Allocator> IntoIter<T, A> implements DoubleEndedIterator {
+extend<T, A: Allocator> IntoIter<T, A> implements DoubleEndedIterator {
     mut fn next_back(): T? {
         if self.front == self.back { return none }
         self.back -= 1usize
-        present(unsafe { core::ptr::`read`(self.buf.add(self.back)) })
+        present(unsafe { core.ptr.`read`(self.buf.add(self.back)) })
     }
 }
-impl<T, A: Allocator> IntoIter<T, A> {
+extend<T, A: Allocator> IntoIter<T, A> {
     pub fn len(): usize { self.back - self.front }
 }
 
 // Borrowed iteration: `for x in read v` yields `read T from v`, `for x in mut v`
 // yields `mut T from v`; the loop keeps the vector borrowed.
-impl<T, A: Allocator> Vec<T, A> implements Iterable {
+extend<T, A: Allocator> Vec<T, A> implements Iterable {
     type Item = T
     type Iter<region r> = SliceIter<region r, T>
     fn iter<region r>(receiver self: read Self from r): SliceIter<region r, T> { self.as_slice().iter() }
 }
-impl<T, A: Allocator> Vec<T, A> implements IterableMut {
+extend<T, A: Allocator> Vec<T, A> implements IterableMut {
     type Item = T
     type IterMut<region r> = SliceIterMut<region r, T>
     fn iter_mut<region r>(receiver self: mut Self from r): SliceIterMut<region r, T> { self.as_mut_slice().iter_mut() }
 }
 
-impl<T, A: Allocator> Vec<T, A> implements Extend<T> {
+extend<T, A: Allocator> Vec<T, A> implements Extend<T> {
     mut fn extend<I: IntoIterator<Item = T>>(items: take I): Unit {
         var source = items.into_iter()
         while true {
@@ -498,20 +498,20 @@ impl<T, A: Allocator> Vec<T, A> implements Extend<T> {
         }
     }
 }
-impl<T> Vec<T> implements FromIterator<T> {
+extend<T> Vec<T> implements FromIterator<T> {
     static fn from_iter<I: IntoIterator<Item = T>>(items: take I): Vec<T> {
-        var out = new::<T>()
+        var out = new<T>()
         out.extend(items)
         out
     }
 }
 
-impl<T: fmt::Debug, A: Allocator> Vec<T, A> implements fmt::Debug {
-    fn fmt<W: fmt::Write>(f: mut fmt::Formatter<W>): Unit throws fmt::Error {
-        try <[T] implements fmt::Debug>::fmt(self.as_slice(), mut f)
+extend<T: fmt.Debug, A: Allocator> Vec<T, A> implements fmt.Debug {
+    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
+        try <[T] implements fmt.Debug>::fmt(self.as_slice(), mut f)
     }
 }
 
 // Owned storage moves or is shared exactly when its elements and allocator do.
-unsafe impl<T: Transferable, A: Allocator + Transferable> Vec<T, A> implements Transferable {}
-unsafe impl<T: Shareable, A: Allocator + Shareable> Vec<T, A> implements Shareable {}
+unsafe extend<T: Transferable, A: Allocator + Transferable> Vec<T, A> implements Transferable {}
+unsafe extend<T: Shareable, A: Allocator + Shareable> Vec<T, A> implements Shareable {}

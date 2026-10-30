@@ -4,9 +4,9 @@ type Affine { scale: i32; offset: i32 }
 type Xor { mask: i32 }
 type Fold { modulus: i32 }
 
-impl Affine implements Step { fn apply(value: i32): i32 { (value * self.scale + self.offset) % 1000003 } }
-impl Xor implements Step { fn apply(value: i32): i32 { (value ^ self.mask) % 1000003 } }
-impl Fold implements Step { fn apply(value: i32): i32 { value % self.modulus + value / 3 } }
+extend Affine implements Step { fn apply(value: i32): i32 { (value * self.scale + self.offset) % 1000003 } }
+extend Xor implements Step { fn apply(value: i32): i32 { (value ^ self.mask) % 1000003 } }
+extend Fold implements Step { fn apply(value: i32): i32 { value % self.modulus + value / 3 } }
 
 fn seed(): i32 { 12345 } // bench-edit-point
 

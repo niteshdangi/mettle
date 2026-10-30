@@ -1,10 +1,10 @@
 // A bare interface parameter accessed through read or mut is only borrowed,
 // so unsized implementors (Text, slices) are accepted.
 interface Weigh { fn weight(): usize; }
-impl Text implements Weigh { fn weight(): usize { self.len() } }
-impl<T> [T] implements Weigh { fn weight(): usize { self.len() } }
+extend Text implements Weigh { fn weight(): usize { self.len() } }
+extend<T> [T] implements Weigh { fn weight(): usize { self.len() } }
 type Counter { n: usize }
-impl Counter implements Weigh { fn weight(): usize { self.n } }
+extend Counter implements Weigh { fn weight(): usize { self.n } }
 
 fn by_read(item: read Weigh): usize { item.weight() }
 fn by_default(item: Weigh): usize { item.weight() }

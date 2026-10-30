@@ -1,8 +1,8 @@
 // Explicit heap erasure for owned futures. The dispatch table and allocation
 // are private implementation details, not a stable ABI.
-import super::alloc::Global;
-import super::boxed;
-import package::core::future::{Context, Future, Poll};
+import super.alloc.Global;
+import super.boxed;
+import package.core.future.{Context, Future, Poll};
 
 // Owns a single, permanently located future. Moving this handle does not
 // move its payload. The constructor accepts only Static futures because the
@@ -16,21 +16,21 @@ pub type Erased<T> {
 
 // Allocates once; no polling or body effects occur during construction.
 pub fn erase<T, F: Future<Output = T> + Static>(future: take F): Erased<T> {
-    let storage = boxed::new(future).into_raw()
-    Erased(storage.0.cast::<u8>(), poll_impl::<T, F>, release_impl::<F>)
+    let storage = boxed.new(future).into_raw()
+    Erased(storage.0.cast<u8>(), poll_impl<T, F>, release_impl<F>)
 }
 
 fn poll_impl<T, F: Future<Output = T>>(data: ptr<mut u8>, cx: mut Context): Poll<T> {
     // The allocation remains owned by Erased even if poll unwinds. Its unique
     // payload is never moved and is destroyed there before the block is freed.
-    unsafe { core::pin::Pin::new_unchecked(mut *data.cast::<F>()).poll(mut cx) }
+    unsafe { core.pin.Pin.new_unchecked(mut *data.cast<F>()).poll(mut cx) }
 }
 
 fn release_impl<F>(data: ptr<mut u8>): Unit {
-    unsafe { let _owner = boxed::from_raw_in(data.cast::<F>(), Global()) }
+    unsafe { let _owner = boxed.from_raw_in(data.cast<F>(), Global()) }
 }
 
-impl<T> Erased<T> implements Future {
+extend<T> Erased<T> implements Future {
     type Output = T
     fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<T> {
         let me = unsafe { self.get_unchecked_mut() }

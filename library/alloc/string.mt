@@ -1,14 +1,14 @@
-import package::core::iter::Iterator;
-import super::alloc::{Allocator, Global, AllocError, panic_precondition};
-import package::core::clone::Clone;
-import package::core::default::Default;
-import package::core::fmt;
-import package::core::ops::{Deref, IndexRange};
-import package::core::hash::{Hash, Hasher};
-import package::core::borrow::KeyView;
-import super::vec::{Vec, slice_ptr};
-import package::core::cmp::{Ordering, PartialEq, Eq, PartialOrd, Ord};
-import package::core::text::{Text, from_utf8_unchecked};
+import package.core.iter.Iterator;
+import super.alloc.{Allocator, Global, AllocError, panic_precondition};
+import package.core.clone.Clone;
+import package.core.default.Default;
+import package.core.fmt;
+import package.core.ops.{Deref, IndexRange};
+import package.core.hash.{Hash, Hasher};
+import package.core.borrow.KeyView;
+import super.vec.{Vec, slice_ptr};
+import package.core.cmp.{Ordering, PartialEq, Eq, PartialOrd, Ord};
+import package.core.text.{Text, from_utf8_unchecked};
 
 // Owned, growable UTF-8 text: a `Vec<u8>` whose bytes are always well formed.
 pub type String<A: Allocator = Global> {
@@ -21,9 +21,9 @@ pub type FromUtf8Error<A: Allocator = Global> {
     pub valid_up_to: usize
 }
 
-pub fn new_in<A: Allocator>(a: take A): String<A> { String(super::vec::new_in::<u8, A>(a)) }
+pub fn new_in<A: Allocator>(a: take A): String<A> { String(super.vec.new_in<u8, A>(a)) }
 pub fn new(): String { new_in(Global()) }
-pub fn with_capacity(n: usize): String { String(super::vec::with_capacity::<u8>(n)) }
+pub fn with_capacity(n: usize): String { String(super.vec.with_capacity<u8>(n)) }
 pub fn from_text(t: read Text): String {
     var s = new()
     s.push_str(t)
@@ -37,7 +37,7 @@ pub fn from_text_in<A: Allocator>(t: read Text, a: take A): String<A> {
 
 // Validates `bytes`; on failure the buffer comes back in the error.
 pub fn from_utf8<A: Allocator>(bytes: take Vec<u8, A>): String<A> throws FromUtf8Error<A> {
-    let ok = match package::core::text::from_utf8(bytes.as_slice()) {
+    let ok = match package.core.text.from_utf8(bytes.as_slice()) {
         present(_) => true,
         none => false
     }
@@ -52,8 +52,8 @@ pub fn from_utf8<A: Allocator>(bytes: take Vec<u8, A>): String<A> throws FromUtf
 fn valid_prefix(bytes: read [u8]): usize {
     var end = bytes.len()
     while end > 0usize {
-        let ok = match package::core::slice::subslice(bytes, 0usize, end) {
-            present(part) => match package::core::text::from_utf8(part) { present(_) => true, none => false },
+        let ok = match package.core.slice.subslice(bytes, 0usize, end) {
+            present(part) => match package.core.text.from_utf8(part) { present(_) => true, none => false },
             none => false
         }
         if ok { return end }
@@ -91,7 +91,7 @@ fn first_char(t: read Text): char {
     match it.next() { present(c) => c, none => panic_precondition() }
 }
 
-impl<A: Allocator> String<A> {
+extend<A: Allocator> String<A> {
     pub fn len(): usize { self.v.len() }
     pub fn capacity(): usize { self.v.capacity() }
     pub fn is_empty(): bool { self.v.is_empty() }
@@ -100,8 +100,8 @@ impl<A: Allocator> String<A> {
     pub fn as_text(): read Text from self { unsafe { from_utf8_unchecked(self.v.as_slice()) } }
     pub take fn into_bytes(): Vec<u8, A> {
         unsafe {
-            let v = core::ptr::`read`(core::ptr::from_ref(self.v))
-            core::mem::forget(take self)
+            let v = core.ptr.`read`(core.ptr.from_ref(self.v))
+            core.mem.forget(take self)
             v
         }
     }
@@ -200,55 +200,55 @@ impl<A: Allocator> String<A> {
     pub mut fn clear(): Unit { self.v.clear() }
 }
 
-impl<A: Allocator + Clone> String<A> implements Clone {
+extend<A: Allocator + Clone> String<A> implements Clone {
     fn clone(): String<A> { String(self.v.clone()) }
 }
-impl<A: Allocator + Default> String<A> implements Default {
-    static fn default(): String<A> { new_in::<A>(<A implements Default>::default()) }
+extend<A: Allocator + Default> String<A> implements Default {
+    static fn default(): String<A> { new_in<A>(A.(Default).default()) }
 }
 
-impl<A: Allocator> String<A> implements PartialEq {
+extend<A: Allocator> String<A> implements PartialEq {
     fn eq(other: read String<A>): bool { self.as_text() == other.as_text() }
 }
-impl<A: Allocator> String<A> implements Eq {}
+extend<A: Allocator> String<A> implements Eq {}
 
-impl<A: Allocator> String<A> implements PartialOrd {
+extend<A: Allocator> String<A> implements PartialOrd {
     fn partial_cmp(other: read String<A>): Ordering? { self.as_text().partial_cmp(other.as_text()) }
 }
-impl<A: Allocator> String<A> implements Ord {
+extend<A: Allocator> String<A> implements Ord {
     fn cmp(other: read String<A>): Ordering { self.as_text().cmp(other.as_text()) }
 }
 
 // A String key can be searched by its Text; String hashes as Text does.
-impl<A: Allocator> String<A> implements KeyView<Text> {
+extend<A: Allocator> String<A> implements KeyView<Text> {
     fn key_view(): read Text from self { self.as_text() }
 }
-impl<A: Allocator> String<A> implements Hash {
+extend<A: Allocator> String<A> implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { self.as_text().hash(mut state) }
 }
 
 // Appends formatted output to the string; allocation failure aborts like push.
-impl<A: Allocator> String<A> implements fmt::Write {
-    mut fn write_str(s: read Text): Unit throws fmt::Error {
+extend<A: Allocator> String<A> implements fmt.Write {
+    mut fn write_str(s: read Text): Unit throws fmt.Error {
         self.push_str(s)
     }
 }
 
 // `String` views as `Text`: every `Text` method applies, and `s[a..b]` slices
 // with the same boundary checks.
-impl<A: Allocator> String<A> implements Deref {
+extend<A: Allocator> String<A> implements Deref {
     type Target = Text
     fn deref(): read Text from self { self.as_text() }
 }
-impl<A: Allocator> String<A> implements IndexRange {
+extend<A: Allocator> String<A> implements IndexRange {
     type Output = Text
     fn index_range(start: usize, end: usize): read Text from self { self.as_text().index_range(start, end) }
 }
-impl<A: Allocator> String<A> implements fmt::Display {
-    fn fmt<W: fmt::Write>(f: mut fmt::Formatter<W>): Unit throws fmt::Error { try f.pad(self.as_text()) }
+extend<A: Allocator> String<A> implements fmt.Display {
+    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error { try f.pad(self.as_text()) }
 }
-impl<A: Allocator> String<A> implements fmt::Debug {
-    fn fmt<W: fmt::Write>(f: mut fmt::Formatter<W>): Unit throws fmt::Error { try <Text implements fmt::Debug>::fmt(self.as_text(), mut f) }
+extend<A: Allocator> String<A> implements fmt.Debug {
+    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error { try Text.(fmt.Debug).fmt(self.as_text(), mut f) }
 }
 
 // Concatenation: a new string holding `a` followed by `b`.

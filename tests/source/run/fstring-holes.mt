@@ -2,8 +2,8 @@
 // Hole boundaries and escapes: comparisons stay inside one hole, a `>` in one
 // hole cannot close a `<` in another, `{{`/`}}` are literal braces, and each
 // hole is evaluated exactly once in source order.
-import core::fmt::Message;
-import core::fmt::buffer_writer;
+import core.fmt.Message;
+import core.fmt.buffer_writer;
 
 fn emit(message: format Message, buffer: mut [u8]): usize {
     var out = buffer_writer(mut buffer)

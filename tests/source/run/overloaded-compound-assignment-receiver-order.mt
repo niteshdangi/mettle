@@ -7,7 +7,7 @@ module core {
     }
 }
 type Number { value: i32 }
-impl Number implements core::ops::AddAssign<Number> {
+extend Number implements core.ops.AddAssign<Number> {
     mut fn add_assign(rhs: read Number): Unit { self.value += rhs.value }
 }
 fn select(values: mut [Number;1], trace: mut i32): mut Number from values {

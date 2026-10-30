@@ -1,10 +1,10 @@
 
 interface Add<Rhs> {
     type Output;
-    fn add(rhs: read Rhs): Self::Output;
+    fn add(rhs: read Rhs): Self.Output;
 }
 type Number { value: i32 }
-impl Number implements Add<Number> {
+extend Number implements Add<Number> {
     type Output = Number
     fn add(rhs: read Number): Number { Number(self.value + rhs.value) }
 }

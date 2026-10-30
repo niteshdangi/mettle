@@ -8,7 +8,7 @@ type Counter {
 }
 fn main() {
     var counter = Counter(20)
-    RoomCounter::add(counter, 22)
-    let observed = Counter::get(counter)
-    if observed == 42 && RoomCounter::finish(counter) == 42 { 0 } else { 1 }
+    RoomCounter.add(counter, 22)
+    let observed = Counter.get(counter)
+    if observed == 42 && RoomCounter.finish(counter) == 42 { 0 } else { 1 }
 }

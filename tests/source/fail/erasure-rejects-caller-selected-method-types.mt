@@ -2,7 +2,7 @@
 
 interface Generic { fn accept<T>(value: T): Unit; }
 type Number {}
-impl Number implements Generic { fn accept<T>(value: T): Unit {} }
+extend Number implements Generic { fn accept<T>(value: T): Unit {} }
 fn main() {
     let value = Number()
     let erased: read any Generic = read value

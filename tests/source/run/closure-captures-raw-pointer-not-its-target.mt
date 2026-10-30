@@ -2,7 +2,7 @@
 // the original storage and reads observe later changes.
 fn main(): i32 {
     var counter = 5
-    let p = core::ptr::from_mut(counter)
+    let p = core.ptr.from_mut(counter)
     let bump = take fn(): i32 {
         unsafe { *p = *p + 1 }
         unsafe { *p }

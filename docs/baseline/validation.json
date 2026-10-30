@@ -30,7 +30,7 @@
     "fixture_expectations_checked": 23,
     "fixtures_executed": false
   },
-  "documentation_sha256": "e1e72eeefabc9a6f9520abc5afd9e5dd77cb9864b3f7082cc32ff26abf65fa33",
+  "documentation_sha256": "611ea0a3bab038d239d3bbc53a62aa2ffb8761a89b44572ac05d8c3416e2b457",
   "documentation_inputs": {
     "AGENTS.md": "33d2c795b34b8f4328f1df6e463cfdb2ec9e5c7ea4a14bad07e7cd5fd4b02c66",
     "CONTRIBUTING.md": "48e922caaaf6b55ebe4dcd05f79cba26ad3cfc9f7b9c69cb6e3d010309cb68f2",
@@ -83,13 +83,13 @@
     "examples/core/values.mt": "98da91d30f07c82b8b9930e2bb774d71d7b6938c60644afdde95ba4c4652faa1",
     "examples/spec/defaults-and-methods.mt": "c6231d92aa4d306a30487e2934e5fe3c61af2ef7d4a330377bb5ffba3637b3ed",
     "examples/spec/expectations.json": "5f117f76fcf844c4ed674c86f63325bee0742242f2284b6c0edad0edc3ebf97d",
-    "examples/spec/inferred-contracts.mt": "b4364cd8555da878b0eac6848c2734f412dac6adde3fe399e15b8117503bce54",
+    "examples/spec/inferred-contracts.mt": "3a3a89a921826e4f54b187c116d1c6382b02c0fc68d468b21bf63cd43ee85fb9",
     "examples/spec/nested-optionals.mt": "ee692032bc66c1c1324a5722f8892a39a41a109483166f23c9e8b966e9b2a32f",
     "examples/spec/reject-ambiguous-result.mt": "6498c19c5965541039e7a83cad5d93070f99702713d38c63ef57c61eebcdfad7",
     "examples/spec/reject-bodyless-result.mt": "f27662e527eb6cd87eb4919e16f22d58e8a5a4ef4445f93dc4e0c0cdadd1b19c",
     "examples/spec/reject-inferred-borrow-origin.mt": "419093cd80175873e1c81e267190f34a8d2b97b489192faecb3edc6142feb3d1",
-    "examples/spec/reject-inferred-error.mt": "625779f3c3b77b0b6ca63899d12c5cab305810da2bdbe63b05e23a93c749be11",
-    "examples/spec/typed-outcome.mt": "4463442c009e99cd0c4ffaa087b5c198e7b2532d48cd2047b98532b911bb3636",
+    "examples/spec/reject-inferred-error.mt": "aa12301ce610a58e2eff0773e483e0686c95d5480f6e7e6f9aab941127061863",
+    "examples/spec/typed-outcome.mt": "a6abf2d1492d343e31c3e043d8adcd0855a28ed061a543e858076bfba06ebdb8",
     "tools/vscode/README.md": "b7763c777868f57509ffaa9f4f94b2789d490ec23b0d6db1a45b57f9c21b46b0"
   },
   "source_constraints_checked": 107873,

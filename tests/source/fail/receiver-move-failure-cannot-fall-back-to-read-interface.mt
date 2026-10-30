@@ -2,7 +2,7 @@
 
 interface Choose { fn choose(): i32; }
 type Value { take fn choose(): i32 { 1 } }
-impl Value implements Choose { fn choose(): i32 { 2 } }
+extend Value implements Choose { fn choose(): i32 { 2 } }
 fn main() {
     let value = Value()
     let borrowed = read value

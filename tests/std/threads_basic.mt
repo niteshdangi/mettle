@@ -1,24 +1,24 @@
-import std::thread;
-import std::sync::mutex;
-import alloc::arc;
+import std.thread;
+import std.sync.mutex;
+import alloc.arc;
 
 fn main(): i32 {
-  let h = thread::spawn(take fn(): i32 { 7 })
+  let h = thread.spawn(take fn(): i32 { 7 })
   let r = capture h.join()
   match take r { success(v) => { if v != 7 { return 1 } }, failure(e) => { return 2 } }
 
   // a panic ends only its thread and join reports it
-  let p = thread::spawn(take fn(): i32 { panic("boom") })
+  let p = thread.spawn(take fn(): i32 { panic("boom") })
   let pr = capture p.join()
   match take pr { success(v) => { return 3 }, failure(e) => { if e.code != 101 { return 4 } } }
 
   // contended counter behind Arc<Mutex>
-  let counter = arc::new(mutex::new(0))
-  var handles = alloc::vec::new::<thread::JoinHandle<i32>>()
+  let counter = arc.new(mutex.new(0))
+  var handles = alloc.vec.new<thread.JoinHandle<i32>>()
   var t = 0
   while t < 4 {
     let mine = counter.retain()
-    handles.push(thread::spawn(take fn(): i32 {
+    handles.push(thread.spawn(take fn(): i32 {
       var i = 0
       while i < 2000 {
         let o = capture mine.get().lock()

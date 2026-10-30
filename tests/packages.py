@@ -190,9 +190,9 @@ def features():
     build_and_run(app)
     build_and_run(app, "--no-default-features")
     main = app / "src/main.mt"
-    edit(main, "@cfg(not(feature = \"fancy\"))\nfn main(): i32 { widget::base() - 100 }\n", "")
+    edit(main, "@cfg(not(feature = \"fancy\"))\nfn main(): i32 { widget.base() - 100 }\n", "")
     edit(main, "@cfg(feature = \"fancy\")\n", "")
-    invoke(["check", app, "--no-default-features"], 1, "extra::value")
+    invoke(["check", app, "--no-default-features"], 1, "unresolved value \'extra\'")
 
 
 def manifest_diagnostics():
@@ -283,7 +283,7 @@ def cache_dedup_and_bound():
     # With a budget that holds one artifact, the least recently used goes.
     edit(app / "src/math.mt", "pub fn answer(): i32 { 42 }",
          "pub fn answer(): i32 { 42 }\npub fn zero(): i32 { 0 }")
-    edit(app / "src/main.mt", "- 42 }", "- 42 + math::zero() }")
+    edit(app / "src/main.mt", "- 42 }", "- 42 + math.zero() }")
     limit = (blob * 3 // 2) // 1024 + 1
     text, built = explained(app, "--cache-limit-kib", limit)
     assert "evicted" in text and "least recently used" in text, text
@@ -291,7 +291,7 @@ def cache_dedup_and_bound():
     assert exit_code(built) == 0
     assert len(cache_files("blobs")) == 1, cache_files("blobs")
     # A budget below a single artifact keeps nothing, yet builds still work.
-    edit(app / "src/main.mt", "math::zero() }", "math::zero() + 0 }")
+    edit(app / "src/main.mt", "math.zero() }", "math.zero() + 0 }")
     text, built = explained(app, "--cache-limit-kib", 1)
     assert cache_bytes() <= 1024, cache_bytes()
     assert exit_code(built) == 0
@@ -351,12 +351,12 @@ def build_script():
 def build_script_untracked_inputs():
     app = packages("build-script/app")
     script = app / "build.mt"
-    edit(script, '    std::io::print("mettle:reproducible\\n")\n', "")
+    edit(script, '    std.io.print("mettle:reproducible\\n")\n', "")
     for _ in range(2):
         text, built = explained(app)
         assert "rerun (no reproducible record)" in text, text
         assert exit_code(built) == 0
-    edit(script, '    0\n}', '    std::io::print("mettle:bogus=1\\n")\n    0\n}')
+    edit(script, '    0\n}', '    std.io.print("mettle:bogus=1\\n")\n    0\n}')
     explained(app, expected=1, contains="unknown or malformed declaration")
 
 

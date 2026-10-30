@@ -1,7 +1,7 @@
 
 static VALUES: [i32;2] = [21;2];
 static SLICE: read [i32] from static = read VALUES;
-static ADDRESS: ptr<read i32> = core::ptr::from_ref(ANSWER);
+static ADDRESS: ptr<read i32> = core.ptr.from_ref(ANSWER);
 static ANSWER: i32 = 42;
 fn identity(value: i32): i32 { value }
 static CALLBACK: fn(i32): i32 = identity;

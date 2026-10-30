@@ -8,14 +8,14 @@ fn clear(slot: mut Guard?) { slot = none }
 
 fn main(): i32 {
     var filled = 0
-    { var o: Guard? = none; fill(mut o, core::ptr::from_mut(filled)) }
+    { var o: Guard? = none; fill(mut o, core.ptr.from_mut(filled)) }
     if filled != 1 { return 1 }
     var nested = 0
-    { var h = Holder(none); fill_field(mut h, core::ptr::from_mut(nested)) }
+    { var h = Holder(none); fill_field(mut h, core.ptr.from_mut(nested)) }
     if nested != 1 { return 2 }
     var cleared = 0
     {
-        var o: Guard? = present(Guard(core::ptr::from_mut(cleared)))
+        var o: Guard? = present(Guard(core.ptr.from_mut(cleared)))
         clear(mut o)
         if cleared != 1 { return 3 }
     }

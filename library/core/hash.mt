@@ -2,8 +2,8 @@
 // equal under `Eq` must feed identical bytes, so every implementation below
 // hashes exactly what its `PartialEq` compares. Integers are written as
 // little-endian bytes, so results do not depend on the host byte order.
-import super::cmp::Ordering;
-import super::text::Text;
+import super.cmp.Ordering;
+import super.text.Text;
 
 pub interface Hasher {
     mut fn write(bytes: read [u8]): Unit;
@@ -46,7 +46,7 @@ pub fn hash_one<T: Hash + unsized>(value: read T): u64 {
 // FNV-1a, 64 bit: tiny and unkeyed (not collision-attack resistant).
 pub type Fnv1a { state: u64 }
 pub fn fnv1a(): Fnv1a { Fnv1a(0xcbf29ce484222325u64) }
-impl Fnv1a implements Hasher {
+extend Fnv1a implements Hasher {
     mut fn write(bytes: read [u8]): Unit {
         var i = 0usize
         while i < bytes.len() {
@@ -89,7 +89,7 @@ fn sip_absorb(hasher: mut SipHasher, word: u64): Unit {
     while round < hasher.compression { sip_round(mut hasher); round += 1u32 }
     hasher.v0 = hasher.v0 ^ word
 }
-impl SipHasher implements Hasher {
+extend SipHasher implements Hasher {
     mut fn write(bytes: read [u8]): Unit {
         var i = 0usize
         while i < bytes.len() {
@@ -117,59 +117,59 @@ impl SipHasher implements Hasher {
         scratch.v0 ^ scratch.v1 ^ scratch.v2 ^ scratch.v3
     }
 }
-impl u8 implements Hash {
+extend u8 implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { state.write_u8(self) }
 }
-impl u16 implements Hash {
+extend u16 implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { state.write_u16(self) }
 }
-impl u32 implements Hash {
+extend u32 implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { state.write_u32(self) }
 }
-impl u64 implements Hash {
+extend u64 implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { state.write_u64(self) }
 }
-impl usize implements Hash {
+extend usize implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { state.write_usize(self) }
 }
-impl i8 implements Hash {
+extend i8 implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { state.write_u8(self as u8) }
 }
-impl i16 implements Hash {
+extend i16 implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { state.write_u16(self as u16) }
 }
-impl i32 implements Hash {
+extend i32 implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { state.write_u32(self as u32) }
 }
-impl i64 implements Hash {
+extend i64 implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { state.write_u64(self as u64) }
 }
-impl isize implements Hash {
+extend isize implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { state.write_usize(self as usize) }
 }
-impl bool implements Hash {
+extend bool implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { state.write_u8(self as u8) }
 }
-impl char implements Hash {
+extend char implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { state.write_u32(self as u32) }
 }
-impl Unit implements Hash {
+extend Unit implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit {}
 }
 // The 0xff terminator keeps ("ab", "c") distinct from ("a", "bc").
-impl Text implements Hash {
+extend Text implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit {
         state.write(self.as_bytes())
         state.write_u8(0xffu8)
     }
 }
-impl Ordering implements Hash {
+extend Ordering implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit {
-        state.write_u8(match self { Ordering::Less => 0u8, Ordering::Equal => 1u8, Ordering::Greater => 2u8 })
+        state.write_u8(match self { Ordering.Less => 0u8, Ordering.Equal => 1u8, Ordering.Greater => 2u8 })
     }
 }
 // Length-prefixed so nested slices cannot collide by regrouping.
-impl<T: Hash> [T] implements Hash {
+extend<T: Hash> [T] implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit {
         state.write_usize(self.len())
         var i = 0usize
@@ -179,13 +179,13 @@ impl<T: Hash> [T] implements Hash {
         }
     }
 }
-impl<A: Hash, B: Hash> (A, B) implements Hash {
+extend<A: Hash, B: Hash> (A, B) implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit {
         self.0.hash(mut state)
         self.1.hash(mut state)
     }
 }
-impl<T: Hash> T? implements Hash {
+extend<T: Hash> T? implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit {
         match self {
             present(value) => { state.write_u8(1u8); value.hash(mut state) },

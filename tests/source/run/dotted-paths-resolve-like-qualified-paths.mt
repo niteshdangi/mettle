@@ -19,7 +19,7 @@ fn unwrap(o: Opt<i32>): i32 {
 fn main(): i32 {
     let a: Opt<i32> = Opt.Some(40)
     let b = Opt<i32>.Nothing
-    let c = Opt::<i32>::Nothing
+    let c = Opt<i32>.Nothing
     let s: Slot<i32> = Slot.empty()
     let t = Slot<i32>.empty()
     let started = util.Counter.start(7)

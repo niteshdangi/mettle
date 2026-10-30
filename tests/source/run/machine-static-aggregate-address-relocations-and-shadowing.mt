@@ -8,7 +8,7 @@ static INDEXED: i32 = VALUES[1];
 static NEGATIVE: i64 = -9223372036854775808i64;
 static REAL: f64 = 1.25f64;
 static mut COUNT: i32 = 1;
-static MUT_ADDRESS: ptr<mut i32> = unsafe { core::ptr::from_mut(COUNT) };
+static MUT_ADDRESS: ptr<mut i32> = unsafe { core.ptr.from_mut(COUNT) };
 fn main() {
     unsafe { *MUT_ADDRESS = 42 }
     let before = PAIR.first

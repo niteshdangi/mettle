@@ -1,6 +1,6 @@
 
 fn value<const N:i16=32767>():i16 { N }
-fn increment<const N:i16>():i16 { value::<{N+1}>() }
+fn increment<const N:i16>():i16 { value<{N+1}>() }
 fn classify(input:i16):i32 {
     match input { -32768..=32767 => 42 }
 }
@@ -19,10 +19,10 @@ fn main() {
     let shift = match maximum.checked_shl(16u32) {
         none => true, present(item) => false
     }
-    let converted = match maximum.checked_cast::<i16>() {
+    let converted = match maximum.checked_cast<i16>() {
         none => false, present(item) => item == maximum
     }
-    if value() == maximum && increment::<{32766}>() == maximum &&
+    if value() == maximum && increment<{32766}>() == maximum &&
        classify(minimum) == 42 && classify(maximum) == 42 && count == 2 &&
        overflow.0 == minimum && overflow.1 &&
        maximum.wrapping_add(1) == minimum &&

@@ -1,6 +1,6 @@
 // Monotonic and wall-clock time. `Instant` never goes backwards; `SystemTime`
 // can (clock adjustments), so differences are fallible.
-import super::sys;
+import super.sys;
 
 // A length of time: whole seconds plus nanoseconds below one second.
 pub copy type Duration { secs: u64; nanos: u32 }
@@ -13,7 +13,7 @@ pub fn from_millis(millis: u64): Duration { Duration(millis / 1000u64, ((millis 
 pub fn from_micros(micros: u64): Duration { Duration(micros / 1000000u64, ((micros % 1000000u64) * 1000u64) as u32) }
 pub fn from_nanos(nanos: u64): Duration { Duration(nanos / 1000000000u64, (nanos % 1000000000u64) as u32) }
 
-impl Duration {
+extend Duration {
     pub fn as_secs(): u64 { self.secs }
     pub fn subsec_nanos(): u32 { self.nanos }
     pub fn subsec_millis(): u32 { self.nanos / 1000000u32 }
@@ -62,8 +62,8 @@ impl Duration {
 
 fn clock(which: i32): Duration {
     var out = [0i64; 2]
-    let r = unsafe { sys::mettle_rt_clock(which, core::ptr::from_mut(out).cast::<i64>()) }
-    if r != 0 { package::core::panic::panic("clock_gettime failed") }
+    let r = unsafe { sys.mettle_rt_clock(which, core.ptr.from_mut(out).cast<i64>()) }
+    if r != 0 { package.core.panic.panic("clock_gettime failed") }
     Duration(out[0usize] as u64, out[1usize] as u32)
 }
 
@@ -72,7 +72,7 @@ pub copy type Instant { since_start: Duration }
 
 pub fn now(): Instant { Instant(clock(0)) }
 
-impl Instant {
+extend Instant {
     pub fn elapsed(): Duration { now().duration_since(self) }
     // Zero if `earlier` is later (the clock is monotonic, so only for misuse).
     pub fn duration_since(earlier: Instant): Duration { self.since_start.saturating_sub(earlier.since_start) }
@@ -92,14 +92,14 @@ pub fn unix_epoch(): SystemTime { SystemTime(0i64, 0u32) }
 
 pub fn system_now(): SystemTime {
     var out = [0i64; 2]
-    let r = unsafe { sys::mettle_rt_clock(1, core::ptr::from_mut(out).cast::<i64>()) }
-    if r != 0 { package::core::panic::panic("clock_gettime failed") }
+    let r = unsafe { sys.mettle_rt_clock(1, core.ptr.from_mut(out).cast<i64>()) }
+    if r != 0 { package.core.panic.panic("clock_gettime failed") }
     SystemTime(out[0usize], out[1usize] as u32)
 }
 
 pub copy type SystemTimeError { backwards_by: Duration }
 
-impl SystemTime {
+extend SystemTime {
     pub fn unix_secs(): i64 { self.secs }
     pub fn subsec_nanos(): u32 { self.nanos }
 
@@ -133,5 +133,5 @@ fn from_total(n: i128): SystemTime {
 
 // Blocks the calling thread for at least `d`.
 pub fn sleep(d: Duration): Unit {
-    unsafe { sys::mettle_rt_sleep(d.secs, d.nanos) }
+    unsafe { sys.mettle_rt_sleep(d.secs, d.nanos) }
 }

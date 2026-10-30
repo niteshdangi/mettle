@@ -3,5 +3,5 @@
 
 interface Family { type Item; }
 type Unrelated {}
-fn invalid(value: <Unrelated implements Family>::Item): Unit {}
+fn invalid(value: Unrelated.(Family).Item): Unit {}
 fn main() { 0 }

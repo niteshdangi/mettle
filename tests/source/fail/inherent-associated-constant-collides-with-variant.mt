@@ -2,7 +2,7 @@
 enum Status {
     ready
 }
-impl Status {
+extend Status {
     const ready: i32 = 1
 }
 fn main() { 0 }

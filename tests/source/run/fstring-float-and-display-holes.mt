@@ -2,8 +2,8 @@
 // Float holes print the shortest decimal that reads back as the same value, in
 // plain positional notation; user types with a Display implementation fill
 // holes through the same path as primitives.
-import core::fmt::{Message, Display, Debug, Formatter, Write, Error};
-import core::fmt::{buffer_writer, formatter, spec};
+import core.fmt.{Message, Display, Debug, Formatter, Write, Error};
+import core.fmt.{buffer_writer, formatter, spec};
 
 fn emit(message: format Message, buffer: mut [u8]): usize {
     var out = buffer_writer(mut buffer)
@@ -23,10 +23,10 @@ fn same(buffer: read [u8], length: usize, expected: read Text): bool {
 }
 
 type Meters { value: i32 }
-impl Meters implements Display {
+extend Meters implements Display {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         try f.write_str("m=")
-        try <i32 implements Display>::fmt(self.value, mut f)
+        try i32.(Display).fmt(self.value, mut f)
     }
 }
 
@@ -58,8 +58,8 @@ fn main(): i32 {
     if !same(read buffer, n8, "m=42 m=-7!") { return 8 }
     var out = buffer_writer(mut buffer)
     var f = formatter(mut out, spec())
-    let first = capture <f64 implements Debug>::fmt(1.0f64, mut f)
-    let second = capture <f32 implements Debug>::fmt(0.5f32, mut f)
+    let first = capture f64.(Debug).fmt(1.0f64, mut f)
+    let second = capture f32.(Debug).fmt(0.5f32, mut f)
     let n9 = out.len()
     if !same(read buffer, n9, "1.00.5") { return 9 }
     0

@@ -1,5 +1,5 @@
 // Monotonic and wall clocks, durations and sleep.
-import std::time::{from_millis, from_secs, from_nanos, duration};
+import std.time.{from_millis, from_secs, from_nanos, duration};
 
 fn main(): i32 {
     let d = duration(1u64, 500000000u32)
@@ -11,18 +11,18 @@ fn main(): i32 {
         present(x) => { if !x.same(from_millis(1200u64)) { return 5 } },
         none => { return 6 }
     }
-    let t0 = std::time::now()
-    std::time::sleep(from_millis(30u64))
+    let t0 = std.time.now()
+    std.time.sleep(from_millis(30u64))
     let waited = t0.elapsed()
     if waited.lt(from_millis(30u64)) { return 7 }
     if !waited.lt(from_secs(10u64)) { return 8 }
-    let t1 = std::time::now()
+    let t1 = std.time.now()
     if t1.lt(t0) { return 9 }
     // The wall clock is after 2020 and orders against the epoch.
-    let wall = std::time::system_now()
-    let since = capture wall.duration_since(std::time::unix_epoch())
+    let wall = std.time.system_now()
+    let since = capture wall.duration_since(std.time.unix_epoch())
     match take since { success(s) => { if s.as_secs() < 1577836800u64 { return 10 } }, failure(e) => { return 11 } }
-    let back = capture std::time::unix_epoch().duration_since(wall)
+    let back = capture std.time.unix_epoch().duration_since(wall)
     if back.is_success() { return 12 }
     0
 }

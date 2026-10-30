@@ -2,9 +2,9 @@
 // inherent methods below visible. Absence-panicking operations call
 // `core::panic::panic`.
 
-import super::text::Text;
+import super.text.Text;
 
-impl<T> T? {
+extend<T> T? {
     pub fn is_present(): bool { match self { present(value) => true, none => false } }
     pub fn is_none(): bool { match self { present(value) => false, none => true } }
 
@@ -16,10 +16,10 @@ impl<T> T? {
     }
 
     pub take fn unwrap(): T {
-        match take self { present(value) => value, none => super::panic::panic("called `unwrap` on an absent value") }
+        match take self { present(value) => value, none => super.panic.panic("called `unwrap` on an absent value") }
     }
     pub take fn expect(message: read Text): T {
-        match take self { present(value) => value, none => super::panic::panic(message) }
+        match take self { present(value) => value, none => super.panic.panic(message) }
     }
     pub take fn unwrap_or(fallback: take T): T {
         match take self { present(value) => value, none => fallback }
@@ -58,10 +58,10 @@ impl<T> T? {
 
     // Moves the payload out, leaving `none`.
     pub mut fn take_value(): T? {
-        unsafe { core::ptr::replace(core::ptr::from_mut(self), none) }
+        unsafe { core.ptr.replace(core.ptr.from_mut(self), none) }
     }
     // Installs `value`, returning the previous contents.
     pub mut fn replace(value: take T): T? {
-        unsafe { core::ptr::replace(core::ptr::from_mut(self), present(value)) }
+        unsafe { core.ptr.replace(core.ptr.from_mut(self), present(value)) }
     }
 }

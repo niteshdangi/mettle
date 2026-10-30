@@ -10,8 +10,8 @@ fn main() {
     var delayed: Bits
     delayed.integer = 42u32
     let answer = unsafe { delayed.integer }
-    let generic = Generic::<i32>(value: 42)
+    let generic = Generic<i32>(value: 42)
     let value = unsafe { generic.value }
     if first == 1.0f32 && second == 0x40000000u32 && answer == 42u32 &&
-       value == 42 && core::mem::size_of::<Bits>() == 4usize { 0 } else { 1 }
+       value == 42 && core.mem.size_of<Bits>() == 4usize { 0 } else { 1 }
 }

@@ -1,5 +1,5 @@
 
-fn choose(cell: read core::cell::RefCell<i32>, condition: bool): i32 {
+fn choose(cell: read core.cell.RefCell<i32>, condition: bool): i32 {
     if condition {
         var guard = cell.borrow_mut()
         *guard.get_mut() += 1
@@ -9,7 +9,7 @@ fn choose(cell: read core::cell::RefCell<i32>, condition: bool): i32 {
     *guard.get_ref()
 }
 fn main() {
-    let cell = core::cell::RefCell::new(40)
+    let cell = core.cell.RefCell.new(40)
     let first = choose(cell,true)
     let second = choose(cell,false)
     let outcome = cell.try_borrow_mut()

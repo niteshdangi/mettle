@@ -2,6 +2,6 @@
 
 interface Lifetime<region r> {}
 type StaticOnly {}
-impl StaticOnly implements Lifetime<region static> {}
+extend StaticOnly implements Lifetime<region static> {}
 fn accept<T: for<region r> Lifetime<region r>>(value: read T): i32 { 42 }
 fn main() { let value = StaticOnly(); accept(value) }

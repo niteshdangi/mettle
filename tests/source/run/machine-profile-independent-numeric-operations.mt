@@ -7,7 +7,7 @@ fn main() {
     let (remainder,rem_overflow) = minimum.overflowing_rem(-1)
     let a = 1.0000000000000002f64
     let b = 0.9999999999999998f64
-    let nan = f64::from_bits(0x7ff8000000000042u64)
+    let nan = f64.from_bits(0x7ff8000000000042u64)
     if wrapped == -128i8 && overflow && checked == 42 &&
        minimum.wrapping_neg() == minimum && minimum.saturating_neg() == 127i8 &&
        250u8.saturating_add(20) == 255u8 &&

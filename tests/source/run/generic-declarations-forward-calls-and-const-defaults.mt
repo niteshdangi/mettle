@@ -8,5 +8,5 @@ fn answer<const VALUE: i32 = 20 + 22>(): i32 { VALUE }
 fn main(): i32 {
     let owned = identity(Owned(answer()))
     if owned.value == 42 && count(42,3) == 42 &&
-       answer::<{20 + 22}>() == answer::<42>() { 0 } else { 1 }
+       answer<{20 + 22}>() == answer<42>() { 0 } else { 1 }
 }

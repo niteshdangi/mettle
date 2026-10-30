@@ -1,10 +1,10 @@
-import alloc::alloc::{Allocator, Layout, AllocError, Global};
-import alloc::vec::Vec;
+import alloc.alloc.{Allocator, Layout, AllocError, Global};
+import alloc.vec.Vec;
 
 // Allocator that fails once the shared budget of successful allocations runs out.
 copy type Limited { budget: ptr<mut i32>; live: ptr<mut i32> }
 
-impl Limited implements Allocator {
+extend Limited implements Allocator {
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {
         if unsafe { *self.budget } <= 0 { throw AllocError(layout.size(), layout.align()) }
         unsafe { *self.budget -= 1 }
@@ -33,9 +33,9 @@ impl Limited implements Allocator {
 fn main(): i32 {
     var budget = 3
     var live = 0
-    let a = Limited(core::ptr::from_mut(budget), core::ptr::from_mut(live))
+    let a = Limited(core.ptr.from_mut(budget), core.ptr.from_mut(live))
     {
-        var v = alloc::vec::new_in::<i32, Limited>(a)
+        var v = alloc.vec.new_in<i32, Limited>(a)
         var i = 0
         var failed = 0
         while i < 1000 {
@@ -56,12 +56,12 @@ fn main(): i32 {
 
     var budget2 = 0
     var live2 = 0
-    let b = Limited(core::ptr::from_mut(budget2), core::ptr::from_mut(live2))
-    match capture alloc::boxed::try_new_in(5, b) {
+    let b = Limited(core.ptr.from_mut(budget2), core.ptr.from_mut(live2))
+    match capture alloc.boxed.try_new_in(5, b) {
         success(_) => { return 6 },
         failure(_) => {}
     }
-    var m = alloc::hash_map::new_in::<i32, i32, Limited>(Limited(core::ptr::from_mut(budget2), core::ptr::from_mut(live2)))
+    var m = alloc.hash_map.new_in<i32, i32, Limited>(Limited(core.ptr.from_mut(budget2), core.ptr.from_mut(live2)))
     match capture m.try_insert(1, 2) { success(_) => { return 7 }, failure(_) => {} }
     if m.len() != 0usize { return 8 }
     0

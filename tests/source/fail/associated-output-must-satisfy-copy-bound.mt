@@ -1,7 +1,7 @@
-// expect-error: type 6:33 Copy
+// expect-error: type 6:35 Copy
 
 interface Family { type Item: Copy; }
 type Owned { value: i32 }
 type Number {}
-impl Number implements Family { type Item = Owned }
+extend Number implements Family { type Item = Owned }
 fn main() { 0 }

@@ -1,6 +1,6 @@
 
 interface Total { fn value(): i32; }
-impl [i32] implements Total {
+extend [i32] implements Total {
     fn value(): i32 {
         var result = 0
         for value in self { result += value }

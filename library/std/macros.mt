@@ -5,14 +5,14 @@
 // on. The compiler re-lexes and re-parses the text; every generated token is
 // attributed to the invocation. The wire format is documented in
 // compiler/expansion/procedural.h; a different major version is rejected.
-import package::alloc::vec;
-import package::alloc::vec::Vec;
-import package::alloc::string;
-import package::alloc::string::String;
-import package::core::iter::Iterator;
-import package::core::text::Text;
-import super::io;
-import super::io::{Error, ErrorKind, Read, Write};
+import package.alloc.vec;
+import package.alloc.vec.Vec;
+import package.alloc.string;
+import package.alloc.string.String;
+import package.core.iter.Iterator;
+import package.core.text.Text;
+import super.io;
+import super.io.{Error, ErrorKind, Read, Write};
 
 // One argument token. `kind` is the compiler's token kind (`word`, `integer`,
 // `symbol`, `newline`, `text`, ...); `spaced` tells whether whitespace preceded
@@ -22,10 +22,10 @@ pub type Token { pub kind: String; pub text: String; pub spaced: bool }
 // What the invocation passed: the macro's name and its argument tokens.
 pub type Invocation { pub name: String; pub tokens: Vec<Token> }
 
-impl Invocation {
+extend Invocation {
     // The argument tokens as source text, spaced as written.
     pub fn text(): String {
-        var out = string::new()
+        var out = string.new()
         var i = 0usize
         while i < self.tokens.len() {
             match self.tokens.get(i) {
@@ -41,13 +41,13 @@ impl Invocation {
     }
 }
 
-fn invalid(): Error { io::from_kind(ErrorKind::InvalidData) }
+fn invalid(): Error { io.from_kind(ErrorKind.InvalidData) }
 
 fn read_request(): String throws Error {
-    var bytes = vec::new::<u8>()
-    var input = io::stdin()
+    var bytes = vec.new<u8>()
+    var input = io.stdin()
     let n = try input.read_to_end(bytes)
-    let decoded = capture package::alloc::string::from_utf8(bytes)
+    let decoded = capture package.alloc.string.from_utf8(bytes)
     match take decoded {
         success(s) => s,
         failure(e) => throw invalid()
@@ -56,7 +56,7 @@ fn read_request(): String throws Error {
 
 fn unescape(text: read Text): String throws Error {
     let bytes = text.as_bytes()
-    var out = vec::with_capacity::<u8>(bytes.len())
+    var out = vec.with_capacity<u8>(bytes.len())
     var i = 0usize
     while i < bytes.len() {
         let b = bytes[i]
@@ -69,7 +69,7 @@ fn unescape(text: read Text): String throws Error {
         }
         i += 1usize
     }
-    let decoded = capture package::alloc::string::from_utf8(out)
+    let decoded = capture package.alloc.string.from_utf8(out)
     match take decoded {
         success(s) => s,
         failure(e) => throw invalid()
@@ -78,7 +78,7 @@ fn unescape(text: read Text): String throws Error {
 
 fn escape(text: read Text): Vec<u8> {
     let bytes = text.as_bytes()
-    var out = vec::with_capacity::<u8>(bytes.len())
+    var out = vec.with_capacity<u8>(bytes.len())
     var i = 0usize
     while i < bytes.len() {
         let b = bytes[i]
@@ -92,8 +92,8 @@ fn escape(text: read Text): Vec<u8> {
 // request is malformed or speaks another major API version.
 pub fn read_invocation(): Invocation throws Error {
     let raw = try read_request()
-    var name = string::new()
-    var tokens = vec::new::<Token>()
+    var name = string.new()
+    var tokens = vec.new<Token>()
     var versioned = false
     let view = raw.as_text()
     var lines = view.lines()
@@ -106,7 +106,7 @@ pub fn read_invocation(): Invocation throws Error {
                     versioned = true
                 } else if line.starts_with("name ") {
                     match line.split_once(" ") {
-                        present(a) => { name = string::from_text(a.1) },
+                        present(a) => { name = string.from_text(a.1) },
                         none => { throw invalid() }
                     }
                 } else if line.starts_with("tok ") {
@@ -115,7 +115,7 @@ pub fn read_invocation(): Invocation throws Error {
                             present(b) => match b.1.split_once(" ") {
                                 present(c) => {
                                     let text = try unescape(c.1)
-                                    tokens.push(Token(string::from_text(b.0), text, c.0.starts_with("1")))
+                                    tokens.push(Token(string.from_text(b.0), text, c.0.starts_with("1")))
                                 },
                                 none => { throw invalid() }
                             },
@@ -133,7 +133,7 @@ pub fn read_invocation(): Invocation throws Error {
 }
 
 fn put(key: read Text, value: read Text): Unit throws Error {
-    var out = io::stdout()
+    var out = io.stdout()
     let body = escape(value)
     try out.write_all("mettle:".as_bytes())
     try out.write_all(key.as_bytes())
@@ -159,6 +159,6 @@ pub fn depends_on_env(name: read Text): Unit throws Error { try put("rerun-if-en
 // inputs, which lets the compiler reuse it. Without this the macro reruns on
 // every build.
 pub fn reproducible(): Unit throws Error {
-    var out = io::stdout()
+    var out = io.stdout()
     try out.write_all("mettle:reproducible\n".as_bytes())
 }

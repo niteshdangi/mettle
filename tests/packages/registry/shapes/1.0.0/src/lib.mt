@@ -1,3 +1,3 @@
-import package::util;
+import package.util;
 
-pub fn corners(): i32 { util::value() + 100 }
+pub fn corners(): i32 { util.value() + 100 }

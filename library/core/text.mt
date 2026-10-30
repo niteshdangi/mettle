@@ -1,9 +1,9 @@
-import super::cmp::Eq;
-import super::cmp::Ord;
-import super::cmp::Ordering;
-import super::cmp::PartialEq;
-import super::cmp::PartialOrd;
-import super::iter::Iterator;
+import super.cmp.Eq;
+import super.cmp.Ord;
+import super.cmp.Ordering;
+import super.cmp.PartialEq;
+import super.cmp.PartialOrd;
+import super.iter.Iterator;
 
 // Unsized, validated UTF-8 view; the view metadata is the byte count. Only
 // the checked constructors below create views of Text, which keeps the
@@ -48,7 +48,7 @@ fn scalar_at(bytes: read [u8], i: usize, width: usize): char {
         value = (value << 6u32) | ((bytes[i + offset] as u32) & 0x3fu32)
         offset += 1usize
     }
-    unsafe { core::mem::transmute::<char>(value) }
+    unsafe { core.mem.transmute<char>(value) }
 }
 
 pub fn from_utf8(bytes: read [u8]): (read Text from bytes)? {
@@ -63,20 +63,20 @@ pub fn from_utf8(bytes: read [u8]): (read Text from bytes)? {
 
 // Safety: `bytes` is well-formed UTF-8.
 pub unsafe fn from_utf8_unchecked(bytes: read [u8]): read Text from bytes {
-    let fat = core::ptr::from_ref(bytes)
-    let view = unsafe { core::mem::transmute::<ptr<read Text>>(fat) }
+    let fat = core.ptr.from_ref(bytes)
+    let view = unsafe { core.mem.transmute<ptr<read Text>>(fat) }
     unsafe { read *view }
 }
 
 // Safety: `bytes` is well-formed UTF-8 and stays so while the view is live.
 pub unsafe fn from_utf8_unchecked_mut(bytes: mut [u8]): mut Text from bytes {
-    let fat = core::ptr::from_mut(bytes)
-    let view = unsafe { core::mem::transmute::<ptr<mut Text>>(fat) }
+    let fat = core.ptr.from_mut(bytes)
+    let view = unsafe { core.mem.transmute<ptr<mut Text>>(fat) }
     unsafe { mut *view }
 }
 
 pub type Chars<region r> { bytes: read [u8] from r; position: usize }
-impl<region r> Chars<region r> implements Iterator {
+extend<region r> Chars<region r> implements Iterator {
     type Item = char
     mut fn next(): char? {
         if self.position >= self.bytes.len() { return none }
@@ -88,7 +88,7 @@ impl<region r> Chars<region r> implements Iterator {
 }
 
 pub type CharIndices<region r> { bytes: read [u8] from r; position: usize }
-impl<region r> CharIndices<region r> implements Iterator {
+extend<region r> CharIndices<region r> implements Iterator {
     type Item = (usize, char)
     mut fn next(): (usize, char)? {
         if self.position >= self.bytes.len() { return none }
@@ -102,7 +102,7 @@ impl<region r> CharIndices<region r> implements Iterator {
 
 // Pieces between occurrences of `separator`; an empty separator yields the whole text.
 pub type Split<region r> { rest: read Text from r; separator: read Text from r; done: bool }
-impl<region r> Split<region r> implements Iterator {
+extend<region r> Split<region r> implements Iterator {
     type Item = read Text from r
     mut fn next(): (read Text from r)? {
         if self.done { return none }
@@ -120,7 +120,7 @@ impl<region r> Split<region r> implements Iterator {
 // Lines ended by `\n` or `\r\n`; a final line without a terminator is kept and
 // a trailing terminator does not produce an empty line.
 pub type Lines<region r> { rest: read Text from r; newline: read Text from r }
-impl<region r> Lines<region r> implements Iterator {
+extend<region r> Lines<region r> implements Iterator {
     type Item = read Text from r
     mut fn next(): (read Text from r)? {
         if self.rest.is_empty() { return none }
@@ -147,7 +147,7 @@ fn is_ascii_space(byte: u8): bool {
 }
 
 pub type Bytes<region r> { bytes: read [u8] from r; position: usize }
-impl<region r> Bytes<region r> implements Iterator {
+extend<region r> Bytes<region r> implements Iterator {
     type Item = u8
     mut fn next(): u8? {
         if self.position >= self.bytes.len() { return none }
@@ -157,7 +157,7 @@ impl<region r> Bytes<region r> implements Iterator {
     }
 }
 
-impl Text {
+extend Text {
     pub fn len(): usize { self.bytes.len() }
     pub fn is_empty(): bool { self.bytes.len() == 0usize }
     pub fn as_bytes(): read [u8] from self { read self.bytes }
@@ -170,7 +170,7 @@ impl Text {
         if start > end || !self.is_char_boundary(start) || !self.is_char_boundary(end) {
             return none
         }
-        match super::slice::subslice(read self.bytes, start, end) {
+        match super.slice.subslice(read self.bytes, start, end) {
             present(part) => present(unsafe { from_utf8_unchecked(part) }),
             none => none
         }
@@ -259,7 +259,7 @@ impl Text {
     pub fn bytes(): Bytes<region self> { Bytes(read self.bytes, 0usize) }
 }
 
-impl Text implements PartialEq {
+extend Text implements PartialEq {
     fn eq(other: read Text): bool {
         if self.bytes.len() != other.bytes.len() { return false }
         var i = 0usize
@@ -273,28 +273,28 @@ impl Text implements PartialEq {
 
 // Checked slicing: panics when the range is reversed, out of bounds or does
 // not start and end on a UTF-8 scalar boundary.
-impl Text implements super::ops::IndexRange {
+extend Text implements super.ops.IndexRange {
     type Output = Text
     fn index_range(start: usize, end: usize): read Text from self {
         let stop = if end == 0xffffffffffffffffusize { self.bytes.len() } else { end }
         match self.get(start, stop) {
             present(part) => part,
-            none => super::panic::panic("text slice is out of bounds or not on a character boundary")
+            none => super.panic.panic("text slice is out of bounds or not on a character boundary")
         }
     }
 }
 
-impl Text implements Eq {}
-impl Text implements PartialOrd {
+extend Text implements Eq {}
+extend Text implements PartialOrd {
     fn partial_cmp(other: read Text): Ordering? { present(self.cmp(other)) }
 }
 // UTF-8 byte order equals scalar value order.
-impl Text implements Ord {
+extend Text implements Ord {
     fn cmp(other: read Text): Ordering {
         var i = 0usize
         while i < self.bytes.len() && i < other.bytes.len() {
             if self.bytes[i] != other.bytes[i] {
-                return if self.bytes[i] < other.bytes[i] { Ordering::Less } else { Ordering::Greater }
+                return if self.bytes[i] < other.bytes[i] { Ordering.Less } else { Ordering.Greater }
             }
             i += 1usize
         }

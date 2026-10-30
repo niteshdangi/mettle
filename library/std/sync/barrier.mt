@@ -1,5 +1,5 @@
-import super::mutex;
-import super::condvar;
+import super.mutex;
+import super.condvar;
 
 type State {
     count: usize
@@ -9,17 +9,17 @@ type State {
 // Blocks `parties` threads until all have arrived; reusable across rounds.
 pub type Barrier {
     parties: usize
-    state: mutex::Mutex<State>
-    arrived: condvar::Condvar
+    state: mutex.Mutex<State>
+    arrived: condvar.Condvar
 }
-unsafe impl Barrier implements Transferable {}
-unsafe impl Barrier implements Shareable {}
+unsafe extend Barrier implements Transferable {}
+unsafe extend Barrier implements Shareable {}
 
 pub fn new(parties: usize): Barrier {
-    Barrier(parties, mutex::new(State(0usize, 0usize)), condvar::new())
+    Barrier(parties, mutex.new(State(0usize, 0usize)), condvar.new())
 }
 
-impl Barrier {
+extend Barrier {
     // Returns true for exactly one thread per round (the last to arrive).
     pub fn wait(): bool {
         let locked = capture self.state.lock()

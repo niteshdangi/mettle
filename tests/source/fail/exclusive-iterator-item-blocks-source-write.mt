@@ -2,7 +2,7 @@
 
 type Bag { a: i32; b: i32 }
 type Cursor<region r> { bag: mut Bag from r; at: i32 }
-impl<region r> Cursor<region r> {
+extend<region r> Cursor<region r> {
     mut fn next(): (mut i32 from r)? {
         let i = self.at
         self.at += 1

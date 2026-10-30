@@ -6,9 +6,9 @@
 // part (`1`); Debug keeps `1.0`. NaN prints `NaN`, infinities `inf`/`-inf`, and
 // negative zero `-0`. `Spec::precision` is not applied to floats yet. Width,
 // fill, alignment, `plus` and `zero` follow the integer rules.
-import super::fmt::{Formatter, Write, Display, Debug, Error};
-import super::slice;
-import super::text::from_utf8_unchecked;
+import super.fmt.{Formatter, Write, Display, Debug, Error};
+import super.slice;
+import super.text.from_utf8_unchecked;
 
 // 40 little-endian 32-bit limbs hold every intermediate value for f64 (about
 // 1100 bits at most); `len` counts the significant limbs, so zero has none.
@@ -52,7 +52,7 @@ fn big_sum_compare(value: read Big, extra: read Big, limit: read Big): i32 {
     big_compare(read sum, limit)
 }
 
-impl Big {
+extend Big {
     mut fn trim(): Unit {
         while self.len > 0usize && self.limbs[self.len - 1usize] == 0u32 {
             self.len -= 1usize
@@ -293,29 +293,29 @@ fn fmt_float<W: Write>(f: mut Formatter<W>, negative: bool, fraction: u64, biase
         }
     }
     // ASCII digits and '.' only.
-    let text = unsafe { from_utf8_unchecked(unsafe { slice::subslice_unchecked(read out, 0usize, n) }) }
+    let text = unsafe { from_utf8_unchecked(unsafe { slice.subslice_unchecked(read out, 0usize, n) }) }
     try f.pad_integral(!negative, "", text)
 }
 
 fn fmt_f64<W: Write>(f: mut Formatter<W>, value: f64, keep_point: bool): Unit throws Error {
-    let bits = unsafe { core::mem::transmute::<u64>(value) }
+    let bits = unsafe { core.mem.transmute<u64>(value) }
     try fmt_float(mut f, (bits >> 63u64) != 0u64, bits & 0xfffffffffffffu64, (bits >> 52u64) & 0x7ffu64, 52u64, 1075, 0x7ffu64, keep_point)
 }
 
 fn fmt_f32<W: Write>(f: mut Formatter<W>, value: f32, keep_point: bool): Unit throws Error {
-    let bits = unsafe { core::mem::transmute::<u32>(value) }
+    let bits = unsafe { core.mem.transmute<u32>(value) }
     try fmt_float(mut f, (bits >> 31u32) != 0u32, (bits & 0x7fffffu32) as u64, ((bits >> 23u32) & 0xffu32) as u64, 23u64, 150, 0xffu64, keep_point)
 }
 
-impl f64 implements Display {
+extend f64 implements Display {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_f64(mut f, self, false) }
 }
-impl f64 implements Debug {
+extend f64 implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_f64(mut f, self, true) }
 }
-impl f32 implements Display {
+extend f32 implements Display {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_f32(mut f, self, false) }
 }
-impl f32 implements Debug {
+extend f32 implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_f32(mut f, self, true) }
 }

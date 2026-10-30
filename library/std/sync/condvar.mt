@@ -1,4 +1,4 @@
-import super::mutex::MutexGuard;
+import super.mutex.MutexGuard;
 
 extern "C" {
     unsafe fn mettle_rt_cond_new(): ptr<mut u8>;
@@ -15,19 +15,19 @@ pub type Condvar {
     raw: ptr<mut u8>
     drop { unsafe { mettle_rt_cond_free(self.raw) } }
 }
-unsafe impl Condvar implements Transferable {}
-unsafe impl Condvar implements Shareable {}
+unsafe extend Condvar implements Transferable {}
+unsafe extend Condvar implements Shareable {}
 
 pub fn new(): Condvar {
     let raw = unsafe { mettle_rt_cond_new() }
-    if raw == core::ptr::null_mut::<u8>() { core::intrinsics::abort() }
+    if raw == core.ptr.null_mut<u8>() { core.intrinsics.abort() }
     Condvar(raw)
 }
 
 // Whether a timed wait ended by its deadline.
 pub copy type TimedOut { pub timed_out: bool }
 
-impl Condvar {
+extend Condvar {
     pub fn wait<T, region r>(guard: take MutexGuard<T, region r>): MutexGuard<T, region r> {
         let _status = unsafe { mettle_rt_cond_wait(self.raw, guard.lock.raw) }
         guard

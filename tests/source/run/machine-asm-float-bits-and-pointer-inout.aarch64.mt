@@ -3,7 +3,7 @@
 fn main() {
     var floating = 0.0f64
     var storage = 42
-    let pointer = core::ptr::from_mut(storage)
+    let pointer = core.ptr.from_mut(storage)
     var address = 0usize
     unsafe {
         asm!("mov {out}, {input}",out = out(reg) floating,input = in(reg) 1.25f64,

@@ -1,4 +1,4 @@
-import package::core::panic::panic;
+import package.core.panic.panic;
 
 extern "C" {
     unsafe fn mettle_rt_rwlock_new(): ptr<mut u8>;
@@ -16,11 +16,11 @@ pub copy type WouldBlock {}
 // `T` to be Shareable as well as Transferable.
 pub type RwLock<T> {
     raw: ptr<mut u8>
-    value: core::cell::UnsafeCell<T>
+    value: core.cell.UnsafeCell<T>
     drop { unsafe { mettle_rt_rwlock_free(self.raw) } }
 }
-unsafe impl<T: Transferable> RwLock<T> implements Transferable {}
-unsafe impl<T: Transferable + Shareable> RwLock<T> implements Shareable {}
+unsafe extend<T: Transferable> RwLock<T> implements Transferable {}
+unsafe extend<T: Transferable + Shareable> RwLock<T> implements Shareable {}
 
 pub type ReadGuard<T, region r> {
     lock: read RwLock<T> from r
@@ -30,16 +30,16 @@ pub type WriteGuard<T, region r> {
     lock: read RwLock<T> from r
     drop { let _status = unsafe { mettle_rt_rwlock_unlock(self.lock.raw) } }
 }
-impl<T, region r> ReadGuard<T, region r> not Transferable;
-impl<T, region r> WriteGuard<T, region r> not Transferable;
+extend<T, region r> ReadGuard<T, region r> not Transferable;
+extend<T, region r> WriteGuard<T, region r> not Transferable;
 
 pub fn new<T>(value: take T): RwLock<T> {
     let raw = unsafe { mettle_rt_rwlock_new() }
-    if raw == core::ptr::null_mut::<u8>() { core::intrinsics::abort() }
-    RwLock(raw, core::cell::UnsafeCell::new(value))
+    if raw == core.ptr.null_mut<u8>() { core.intrinsics.abort() }
+    RwLock(raw, core.cell.UnsafeCell.new(value))
 }
 
-impl<T> RwLock<T> {
+extend<T> RwLock<T> {
     pub fn reader(): ReadGuard<T, region self> {
         if unsafe { mettle_rt_rwlock_read(self.raw) } != 0 { panic("rwlock read lock failed") }
         ReadGuard(read self)
@@ -57,10 +57,10 @@ impl<T> RwLock<T> {
         WriteGuard(read self)
     }
 }
-impl<T, region r> ReadGuard<T, region r> {
+extend<T, region r> ReadGuard<T, region r> {
     pub fn get(): read T from self { unsafe { read *self.lock.value.get() } }
 }
-impl<T, region r> WriteGuard<T, region r> {
+extend<T, region r> WriteGuard<T, region r> {
     pub fn get(): read T from self { unsafe { read *self.lock.value.get() } }
     pub mut fn get_mut(): mut T from self { unsafe { mut *self.lock.value.get() } }
 }

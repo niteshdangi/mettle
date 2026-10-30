@@ -11,4 +11,4 @@ unsafe fn answer<const N:i64>(value:i32):i32 {
          options(nomem,nostack))
     result
 }
-fn main() { if unsafe { answer::<1i64>(-1) } == 42 { 0 } else { 1 } }
+fn main() { if unsafe { answer<1i64>(-1) } == 42 { 0 } else { 1 } }

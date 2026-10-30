@@ -1,6 +1,6 @@
 // expect-error: name 4:5 duplicate associated item
 type Grid {}
-impl Grid {
+extend Grid {
     const selected: i32 = 1
     static fn selected(): i32 { 0 }
 }

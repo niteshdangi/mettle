@@ -11,7 +11,7 @@ unsafe extern "C" fn answer():i32 {
                callee = sym read_value)
 }
 fn main() {
-    var pointer: ptr<read i32> = core::ptr::null::<i32>()
+    var pointer: ptr<read i32> = core.ptr.null<i32>()
     unsafe {
         asm!("lea {out}, [rip + {value}]",
              out = out(reg) pointer, value = sym VALUE, options(nomem,nostack))

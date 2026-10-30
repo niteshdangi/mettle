@@ -3,20 +3,20 @@ module core {
     pub module ops {
         pub interface Index<Key> {
             type Output;
-            fn index(key: take Key): read Self::Output;
+            fn index(key: take Key): read Self.Output;
         }
         pub interface IndexMut<Key> {
             type Output;
-            mut fn index_mut(key: take Key): mut Self::Output;
+            mut fn index_mut(key: take Key): mut Self.Output;
         }
     }
 }
 type Slot<T> { value: T }
-impl<T> Slot<T> implements core::ops::Index<i32> {
+extend<T> Slot<T> implements core.ops.Index<i32> {
     type Output = T
     fn index(key: take i32): read T { read self.value }
 }
-impl<T> Slot<T> implements core::ops::IndexMut<i32> {
+extend<T> Slot<T> implements core.ops.IndexMut<i32> {
     type Output = T
     mut fn index_mut(key: take i32): mut T { mut self.value }
 }

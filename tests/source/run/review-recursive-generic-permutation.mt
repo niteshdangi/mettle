@@ -2,7 +2,7 @@
 copy type Pair<A:Copy,B:Copy> { first:A; second:B }
 fn recurse<T:Copy,U:Copy>(p:Pair<T,U>,q:Pair<U,T>,n:i32):T {
     if n == 0 { p.first } else {
-        let other = recurse::<U,T>(q,p,n-1)
+        let other = recurse<U,T>(q,p,n-1)
         p.first
     }
 }

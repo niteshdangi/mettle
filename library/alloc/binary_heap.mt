@@ -1,26 +1,26 @@
-import package::core::iter::{Iterator, IntoIterator, Iterable, FromIterator, Extend};
-import package::core::clone::Clone;
-import package::core::fmt;
-import package::core::slice::SliceIter;
-import super::alloc::{Allocator, Global, AllocError};
-import super::vec::Vec;
-import package::core::cmp::Ord;
+import package.core.iter.{Iterator, IntoIterator, Iterable, FromIterator, Extend};
+import package.core.clone.Clone;
+import package.core.fmt;
+import package.core.slice.SliceIter;
+import super.alloc.{Allocator, Global, AllocError};
+import super.vec.Vec;
+import package.core.cmp.Ord;
 
 // Max-heap on a `Vec`.
 pub type BinaryHeap<T, A: Allocator = Global> { data: Vec<T, A> }
 
-pub fn new_in<T, A: Allocator>(a: take A): BinaryHeap<T, A> { BinaryHeap(super::vec::new_in::<T, A>(a)) }
+pub fn new_in<T, A: Allocator>(a: take A): BinaryHeap<T, A> { BinaryHeap(super.vec.new_in<T, A>(a)) }
 pub fn new<T>(): BinaryHeap<T> { new_in(Global()) }
 
-impl<T: Ord, A: Allocator> BinaryHeap<T, A> {
+extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
     pub fn len(): usize { self.data.len() }
     pub fn is_empty(): bool { self.data.is_empty() }
     pub fn peek(): (read T from self)? { self.data.get(0usize) }
     pub fn as_slice(): read [T] from self { self.data.as_slice() }
     pub take fn into_vec(): Vec<T, A> {
         unsafe {
-            let v = core::ptr::`read`(core::ptr::from_ref(self.data))
-            core::mem::forget(take self)
+            let v = core.ptr.`read`(core.ptr.from_ref(self.data))
+            core.mem.forget(take self)
             v
         }
     }
@@ -76,22 +76,22 @@ impl<T: Ord, A: Allocator> BinaryHeap<T, A> {
 
 
 // Iteration is in heap (storage) order, not sorted order.
-impl<T, A: Allocator> BinaryHeap<T, A> implements Iterable {
+extend<T, A: Allocator> BinaryHeap<T, A> implements Iterable {
     type Item = T
     type Iter<region r> = SliceIter<region r, T>
     fn iter<region r>(receiver self: read Self from r): SliceIter<region r, T> { self.data.as_slice().iter() }
 }
 
-impl<T: Clone, A: Allocator + Clone> BinaryHeap<T, A> implements Clone {
+extend<T: Clone, A: Allocator + Clone> BinaryHeap<T, A> implements Clone {
     fn clone(): BinaryHeap<T, A> { BinaryHeap(self.data.clone()) }
 }
 // Elements appear in heap (storage) order.
-impl<T: fmt::Debug, A: Allocator> BinaryHeap<T, A> implements fmt::Debug {
-    fn fmt<W: fmt::Write>(f: mut fmt::Formatter<W>): Unit throws fmt::Error {
-        try <[T] implements fmt::Debug>::fmt(self.data.as_slice(), mut f)
+extend<T: fmt.Debug, A: Allocator> BinaryHeap<T, A> implements fmt.Debug {
+    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
+        try <[T] implements fmt.Debug>::fmt(self.data.as_slice(), mut f)
     }
 }
-impl<T: Ord, A: Allocator> BinaryHeap<T, A> implements Extend<T> {
+extend<T: Ord, A: Allocator> BinaryHeap<T, A> implements Extend<T> {
     mut fn extend<I: IntoIterator<Item = T>>(items: take I): Unit {
         var source = items.into_iter()
         while true {
@@ -99,9 +99,9 @@ impl<T: Ord, A: Allocator> BinaryHeap<T, A> implements Extend<T> {
         }
     }
 }
-impl<T: Ord> BinaryHeap<T> implements FromIterator<T> {
+extend<T: Ord> BinaryHeap<T> implements FromIterator<T> {
     static fn from_iter<I: IntoIterator<Item = T>>(items: take I): BinaryHeap<T> {
-        var out = new::<T>()
+        var out = new<T>()
         out.extend(items)
         out
     }

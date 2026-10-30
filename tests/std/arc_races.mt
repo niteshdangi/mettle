@@ -1,22 +1,22 @@
-import std::thread;
-import alloc::arc;
+import std.thread;
+import alloc.arc;
 
 type Tracker {
-  drops: arc::Arc<core::sync::atomic::AtomicUsize>
-  drop { let _old = self.drops.get().fetch_add(1usize, core::sync::atomic::Ordering::SeqCst) }
+  drops: arc.Arc<core.sync.atomic.AtomicUsize>
+  drop { let _old = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst) }
 }
 
 fn discard<T>(value: take T): Unit {}
 
 // Weak::upgrade races the final strong drop: each round the value must be
 // destroyed exactly once and upgrades must never observe a dead value.
-fn round(drops: read arc::Arc<core::sync::atomic::AtomicUsize>): i32 {
-  let owner = arc::new(Tracker(drops.retain()))
-  var handles = alloc::vec::new::<thread::JoinHandle<i32>>()
+fn round(drops: read arc.Arc<core.sync.atomic.AtomicUsize>): i32 {
+  let owner = arc.new(Tracker(drops.retain()))
+  var handles = alloc.vec.new<thread.JoinHandle<i32>>()
   var k = 0
   while k < 3 {
     let observer = owner.downgrade()
-    handles.push(thread::spawn(take fn(): i32 {
+    handles.push(thread.spawn(take fn(): i32 {
       var i = 0
       var bad = 0
       while i < 200 {
@@ -42,13 +42,13 @@ fn round(drops: read arc::Arc<core::sync::atomic::AtomicUsize>): i32 {
 }
 
 fn main(): i32 {
-  let drops = arc::new(core::sync::atomic::AtomicUsize::new(0usize))
+  let drops = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
   var r = 0
   while r < 20 {
     let result = round(drops)
     if result != 0 { return 1 }
     r = r + 1
   }
-  if drops.get().load(core::sync::atomic::Ordering::SeqCst) != 20usize { return 2 }
+  if drops.get().load(core.sync.atomic.Ordering.SeqCst) != 20usize { return 2 }
   0
 }

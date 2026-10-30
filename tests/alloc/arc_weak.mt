@@ -1,12 +1,12 @@
-import alloc::arc::{Arc, Weak};
+import alloc.arc.{Arc, Weak};
 type D { c: ptr<mut i32>
     drop { unsafe { *self.c += 1 } } }
 fn main(): i32 {
     var n = 0
-    let cp = core::ptr::from_mut(n)
+    let cp = core.ptr.from_mut(n)
     var w: Weak<D>? = none
     {
-        let a = alloc::arc::new(D(cp))
+        let a = alloc.arc.new(D(cp))
         let b = a.retain()
         if a.strong_count() != 2usize || a.weak_count() != 0usize { return 90 }
         w = present(a.downgrade())
@@ -16,14 +16,14 @@ fn main(): i32 {
     }
     if n != 1 { return 95 }
     match w { present(ww) => { match ww.upgrade() { present(_) => { return 96 }, none => {} } }, none => { return 97 } }
-    let u = alloc::arc::new(D(cp))
+    let u = alloc.arc.new(D(cp))
     let q = u.retain()
     let r = capture u.try_unwrap()
     match take r { success(_) => { return 98 }, failure(back) => { if back.strong_count() != 2usize { return 99 } } }
     drop_check(cp)
 }
 fn drop_check(cp: ptr<mut i32>): i32 {
-    let s = alloc::arc::new(D(cp))
+    let s = alloc.arc.new(D(cp))
     match capture s.try_unwrap() { success(d) => {}, failure(_) => { return 100 } }
     0
 }

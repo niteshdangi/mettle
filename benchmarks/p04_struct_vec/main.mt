@@ -1,4 +1,4 @@
-import alloc::vec;
+import alloc.vec;
 
 copy type Particle {
     x: i32
@@ -9,8 +9,8 @@ copy type Particle {
 
 fn seed(): i32 { 12345 } // bench-edit-point
 
-fn spawn(count: i32): vec::Vec<Particle> {
-    var particles = vec::with_capacity::<Particle>(count as usize)
+fn spawn(count: i32): vec.Vec<Particle> {
+    var particles = vec.with_capacity<Particle>(count as usize)
     var state = seed()
     var index = 0
     while index < count {
@@ -24,7 +24,7 @@ fn spawn(count: i32): vec::Vec<Particle> {
     particles
 }
 
-fn step(particles: mut vec::Vec<Particle>) {
+fn step(particles: mut vec.Vec<Particle>) {
     var index = 0usize
     while index < particles.len() {
         let p = particles[index]

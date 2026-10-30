@@ -1,13 +1,13 @@
 
-fn expose(value: read core::mem::MaybeUninit<i32>): read i32 from value {
+fn expose(value: read core.mem.MaybeUninit<i32>): read i32 from value {
     unsafe { value.assume_init_ref() }
 }
 fn main() {
-    let zero = core::mem::MaybeUninit::<i64>::zeroed()
+    let zero = core.mem.MaybeUninit<i64>.zeroed()
     let scalar = unsafe { zero.assume_init() }
-    let storage = core::mem::MaybeUninit::new(42)
+    let storage = core.mem.MaybeUninit.new(42)
     let reference = expose(storage)
-    let cell = core::cell::UnsafeCell::new(40i32)
+    let cell = core.cell.UnsafeCell.new(40i32)
     let pointer = cell.get()
     unsafe { pointer.write(42) }
     let inner = unsafe { cell.get_ref() }

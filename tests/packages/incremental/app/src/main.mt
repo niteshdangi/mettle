@@ -1,2 +1,2 @@
 module math;
-fn main(): i32 { math::answer() - 42 }
+fn main(): i32 { math.answer() - 42 }

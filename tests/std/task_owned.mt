@@ -1,6 +1,6 @@
-import core::future::{Context, Future, Poll, Waker};
-import std::task;
-import std::thread;
+import core.future.{Context, Future, Poll, Waker};
+import std.task;
+import std.thread;
 
 // These raw pointers remain valid on the executor thread until all tasks and
 // saved wakers have been dropped. The test never transfers the task itself.
@@ -11,8 +11,8 @@ type Probe {
     complete: bool
     drop { unsafe { *self.drops += 1 } }
 }
-unsafe impl Probe implements Transferable {}
-impl Probe implements Future {
+unsafe extend Probe implements Transferable {}
+extend Probe implements Future {
     type Output = i32
     fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> {
         let me = unsafe { self.get_unchecked_mut() }
@@ -23,9 +23,9 @@ impl Probe implements Future {
                 cx.waker().wake_by_ref()
                 cx.waker().wake_by_ref()
             }
-            Poll::Pending
+            Poll.Pending
         } else {
-            Poll::Ready(42)
+            Poll.Ready(42)
         }
     }
 }
@@ -35,11 +35,11 @@ type Dormant {
     drops: ptr<mut i32>
     drop { unsafe { *self.drops += 1 } }
 }
-unsafe impl Dormant implements Transferable {}
-impl Dormant implements Future {
+unsafe extend Dormant implements Transferable {}
+extend Dormant implements Future {
     type Output = Unit
     fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Unit> {
-        Poll::Pending
+        Poll.Pending
     }
 }
 
@@ -54,10 +54,10 @@ fn hammer(waker: take Waker): Unit {
 fn main(): i32 {
     var drops = 0
     var saved: Waker? = none
-    let ex = task::executor()
+    let ex = task.executor()
 
     // join drives the executor and coalesces repeated wakeups.
-    let ready = ex.spawn(Probe(core::ptr::from_mut(drops), core::ptr::from_mut(saved), 0, true))
+    let ready = ex.spawn(Probe(core.ptr.from_mut(drops), core.ptr.from_mut(saved), 0, true))
     let result = capture ready.join()
     match take result {
         success(value) => { if value != 42 { return 1 } },
@@ -72,13 +72,13 @@ fn main(): i32 {
     saved = none
 
     // An abort after Pending drops the future once; retained wakes are inert.
-    let pending = ex.spawn(Probe(core::ptr::from_mut(drops), core::ptr::from_mut(saved), 0, false))
+    let pending = ex.spawn(Probe(core.ptr.from_mut(drops), core.ptr.from_mut(saved), 0, false))
     if ex.run_until_stalled() != 1usize || drops != 1 { return 6 }
     pending.abort()
     pending.abort()
     if drops != 2 || ex.pending() != 0usize { return 7 }
     match take capture pending.join() {
-        failure(task::JoinError::Cancelled) => {},
+        failure(task.JoinError.Cancelled) => {},
         _ => { return 8 }
     }
     match mut saved {
@@ -90,15 +90,15 @@ fn main(): i32 {
 
     // Dropping a handle cancels even before its first poll.
     {
-        let abandoned = ex.spawn(Probe(core::ptr::from_mut(drops), core::ptr::from_mut(saved), 0, false))
+        let abandoned = ex.spawn(Probe(core.ptr.from_mut(drops), core.ptr.from_mut(saved), 0, false))
     }
     if drops != 3 || ex.pending() != 0usize { return 11 }
 
     // A forgotten pending handle cannot remove the executor's registration.
     {
-        let other = task::executor()
-        let forgotten = other.spawn(Probe(core::ptr::from_mut(drops), core::ptr::from_mut(saved), 0, false))
-        core::mem::forget(take forgotten)
+        let other = task.executor()
+        let forgotten = other.spawn(Probe(core.ptr.from_mut(drops), core.ptr.from_mut(saved), 0, false))
+        core.mem.forget(take forgotten)
         if other.run_until_stalled() != 1usize || drops != 3 { return 12 }
     }
     if drops != 4 { return 13 }
@@ -110,18 +110,18 @@ fn main(): i32 {
 
     // A task which retains no waker is still owned by the executor.
     {
-        let other = task::executor()
-        let forgotten = other.spawn(Dormant(core::ptr::from_mut(drops)))
-        core::mem::forget(take forgotten)
+        let other = task.executor()
+        let forgotten = other.spawn(Dormant(core.ptr.from_mut(drops)))
+        core.mem.forget(take forgotten)
         if other.run_until_stalled() != 1usize || drops != 4 { return 15 }
     }
     if drops != 5 { return 16 }
 
     // Foreign wake calls can race cancellation, but cannot revive the task.
-    let racing = ex.spawn(Probe(core::ptr::from_mut(drops), core::ptr::from_mut(saved), 0, false))
+    let racing = ex.spawn(Probe(core.ptr.from_mut(drops), core.ptr.from_mut(saved), 0, false))
     let _polls = ex.run_until_stalled()
     let sender = saved.take_value().unwrap()
-    let worker = thread::spawn(take fn(): Unit { hammer(sender.clone()) })
+    let worker = thread.spawn(take fn(): Unit { hammer(sender.clone()) })
     racing.abort()
     let outcome = capture worker.join()
     match take outcome { success(value) => {}, failure(error) => { return 17 } }
@@ -129,7 +129,7 @@ fn main(): i32 {
     if drops != 6 || ex.pending() != 0usize || ex.run_until_stalled() != 0usize { return 18 }
 
     {
-        let abandoned = ex.spawn(Probe(core::ptr::from_mut(drops), core::ptr::from_mut(saved), 0, false))
+        let abandoned = ex.spawn(Probe(core.ptr.from_mut(drops), core.ptr.from_mut(saved), 0, false))
         if ex.run_until_stalled() != 1usize { return 19 }
     }
     if drops != 7 || ex.pending() != 0usize { return 20 }

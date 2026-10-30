@@ -243,8 +243,10 @@ private:
           i + 1 >= significant.size() ||
           (significant[i + 1]->text != "::" && significant[i + 1]->text != "."))
         continue;
-      // `package::core::...` names the mounted root like a bare `core::...`.
-      bool packageRooted = i > 1 && significant[i - 1]->text == "::" &&
+      // `package.core...` names the mounted root like a bare `core...`.
+      bool packageRooted = i > 1 &&
+                           (significant[i - 1]->text == "::" ||
+                            significant[i - 1]->text == ".") &&
                            significant[i - 2]->text == "package";
       if (i > 0 && !packageRooted &&
           (significant[i - 1]->text == "::" || significant[i - 1]->text == "."))

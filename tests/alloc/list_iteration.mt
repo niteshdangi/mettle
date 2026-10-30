@@ -1,6 +1,6 @@
-import alloc::linked_list;
+import alloc.linked_list;
 fn main(): i32 {
-    var l = linked_list::new::<i32>()
+    var l = linked_list.new<i32>()
     l.push_back(1)
     l.push_back(2)
     l.push_front(10)

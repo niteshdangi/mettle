@@ -2,13 +2,13 @@
 
 module core {
     pub module ops {
-        pub interface Deref { type Target; fn deref(): read Self::Target; }
+        pub interface Deref { type Target; fn deref(): read Self.Target; }
     }
 }
-import core::ops::Deref
+import core.ops.Deref
 type Inner { mut fn increment(): Unit {} }
 type Wrapper { inner: Inner }
-impl Wrapper implements core::ops::Deref {
+extend Wrapper implements core.ops.Deref {
     type Target = Inner
     fn deref(): read Inner { read self.inner }
 }

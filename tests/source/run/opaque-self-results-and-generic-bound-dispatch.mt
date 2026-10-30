@@ -4,7 +4,7 @@ interface Doubled {
     fn doubled(): Self where Self: Sized;
 }
 type Number { value: i32 }
-impl Number implements Doubled {
+extend Number implements Doubled {
     fn value(): i32 { self.value }
     fn doubled(): Number { Number(self.value * 2) }
 }

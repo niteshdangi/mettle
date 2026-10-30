@@ -1,6 +1,6 @@
 
-static mut CELL: core::cell::Cell<i32> = core::cell::Cell::new(0);
-static mut STATE: core::cell::RefCell<i32> = core::cell::RefCell::new(41);
+static mut CELL: core.cell.Cell<i32> = core.cell.Cell.new(0);
+static mut STATE: core.cell.RefCell<i32> = core.cell.RefCell.new(41);
 fn main() {
     unsafe {
         CELL.set(42)

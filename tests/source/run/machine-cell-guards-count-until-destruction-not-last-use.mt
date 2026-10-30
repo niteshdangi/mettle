@@ -1,6 +1,6 @@
 
 fn main() {
-    let cell = core::cell::RefCell::new(42)
+    let cell = core.cell.RefCell.new(42)
     {
         let first = cell.borrow()
         let second = first.clone()

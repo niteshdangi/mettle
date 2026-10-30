@@ -1,13 +1,13 @@
-import alloc::arc;
-import alloc::arc::Arc;
-import core::future::{Context, Future, Poll};
-import std::task;
+import alloc.arc;
+import alloc.arc.Arc;
+import core.future.{Context, Future, Poll};
+import std.task;
 
 type Panics {
-    drops: Arc<core::sync::atomic::AtomicUsize>
-    drop { let _old = self.drops.get().fetch_add(1usize, core::sync::atomic::Ordering::SeqCst) }
+    drops: Arc<core.sync.atomic.AtomicUsize>
+    drop { let _old = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst) }
 }
-impl Panics implements Future {
+extend Panics implements Future {
     type Output = i32
     fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> {
         panic("task poll panic")
@@ -15,37 +15,37 @@ impl Panics implements Future {
 }
 
 type DropPanics { drop { panic("task destructor panic") } }
-impl DropPanics implements Future {
+extend DropPanics implements Future {
     type Output = i32
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> { Poll::Ready(5) }
+    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> { Poll.Ready(5) }
 }
 
 type Ready {}
-impl Ready implements Future {
+extend Ready implements Future {
     type Output = i32
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> { Poll::Ready(42) }
+    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> { Poll.Ready(42) }
 }
 
 fn main(): i32 {
-    let drops = arc::new(core::sync::atomic::AtomicUsize::new(0usize))
-    let ex = task::executor()
+    let drops = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
+    let ex = task.executor()
     let bad = ex.spawn(Panics(drops.retain()))
     let bad_drop = ex.spawn(DropPanics())
     let good = ex.spawn(Ready())
     ex.run()
 
     match take capture bad.join() {
-        failure(task::JoinError::Panicked(code)) => { if code != 101 { return 1 } },
+        failure(task.JoinError.Panicked(code)) => { if code != 101 { return 1 } },
         _ => { return 2 }
     }
     match take capture bad_drop.join() {
-        failure(task::JoinError::Panicked(code)) => { if code != 101 { return 3 } },
+        failure(task.JoinError.Panicked(code)) => { if code != 101 { return 3 } },
         _ => { return 4 }
     }
     match take capture good.join() {
         success(value) => { if value != 42 { return 5 } },
         failure(error) => { return 6 }
     }
-    if drops.get().load(core::sync::atomic::Ordering::SeqCst) != 1usize { return 7 }
+    if drops.get().load(core.sync.atomic.Ordering.SeqCst) != 1usize { return 7 }
     0
 }

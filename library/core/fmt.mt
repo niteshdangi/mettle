@@ -2,11 +2,11 @@
 // the sink propagate as `Error` through `try`. `BufferWriter` formats into a
 // caller-provided byte buffer. Format specifications are built explicitly with
 // `Spec` since text-interpolation syntax is not part of `core`.
-import super::cmp::Ordering;
-import super::iter::Iterator;
-import super::slice;
-import super::text::Text;
-import super::text::from_utf8_unchecked;
+import super.cmp.Ordering;
+import super.iter.Iterator;
+import super.slice;
+import super.text.Text;
+import super.text.from_utf8_unchecked;
 
 pub copy type Error {}
 
@@ -36,7 +36,7 @@ pub interface Write {
             used = 4usize
         }
         // The bytes were just encoded from a scalar value.
-        try self.write_str(unsafe { from_utf8_unchecked(unsafe { slice::subslice_unchecked(read bytes, 0usize, used) }) })
+        try self.write_str(unsafe { from_utf8_unchecked(unsafe { slice.subslice_unchecked(read bytes, 0usize, used) }) })
     }
 }
 
@@ -54,12 +54,12 @@ pub copy type Spec {
     pub alternate: bool
     pub zero: bool
 }
-pub fn spec(): Spec { Spec(' ', Align::Unknown, none, none, false, false, false) }
+pub fn spec(): Spec { Spec(' ', Align.Unknown, none, none, false, false, false) }
 
 pub type Formatter<region r, W: Write> { sink: mut W from r; options: Spec; indent: usize; line_start: bool }
 pub fn formatter<W: Write>(sink: mut W, options: Spec): Formatter<W> { Formatter(mut sink, options, 0usize, false) }
 
-impl<region r, W: Write> Formatter<region r, W> {
+extend<region r, W: Write> Formatter<region r, W> {
     pub fn options(): Spec { self.options }
     pub mut fn write_str(text: read Text): Unit throws Error { try self.emit_str(text) }
     pub mut fn write_char(value: char): Unit throws Error { try self.emit_char(value) }
@@ -145,8 +145,8 @@ impl<region r, W: Write> Formatter<region r, W> {
         let width = match self.options.width { present(w) => w, none => 0usize }
         if length >= width { return try self.emit_str(content) }
         let gap = width - length
-        let chosen = match self.options.align { Align::Unknown => default_align, Align::Left => Align::Left, Align::Right => Align::Right, Align::Center => Align::Center }
-        let before = match chosen { Align::Right => gap, Align::Center => gap / 2usize, Align::Left => 0usize, Align::Unknown => 0usize }
+        let chosen = match self.options.align { Align.Unknown => default_align, Align.Left => Align.Left, Align.Right => Align.Right, Align.Center => Align.Center }
+        let before = match chosen { Align.Right => gap, Align.Center => gap / 2usize, Align.Left => 0usize, Align.Unknown => 0usize }
         try self.fill_run(before)
         try self.emit_str(content)
         try self.fill_run(gap - before)
@@ -157,7 +157,7 @@ impl<region r, W: Write> Formatter<region r, W> {
         let counted = prefix_extent(content, self.options.precision)
         let length = counted.0
         let end = counted.1
-        match content.get(0usize, end) { present(part) => { try self.padded(part, length, Align::Left) }, none => {} }
+        match content.get(0usize, end) { present(part) => { try self.padded(part, length, Align.Left) }, none => {} }
     }
 
     // Numbers: `digits` has no sign or prefix; zero-padding goes after them.
@@ -177,7 +177,7 @@ impl<region r, W: Write> Formatter<region r, W> {
             return try self.emit_str(digits)
         }
         // Not zero-padded: build sign, prefix and digits as one padded unit.
-        let before = if width > length { match self.options.align { Align::Left => 0usize, Align::Center => (width - length) / 2usize, Align::Right => width - length, Align::Unknown => width - length } } else { 0usize }
+        let before = if width > length { match self.options.align { Align.Left => 0usize, Align.Center => (width - length) / 2usize, Align.Right => width - length, Align.Unknown => width - length } } else { 0usize }
         try self.fill_run(before)
         match sign { present(c) => { try self.emit_char(c) }, none => {} }
         if has_prefix { try self.emit_str(prefix) }
@@ -212,11 +212,11 @@ pub copy type Piece { data: ptr<read u8>; len: usize }
 
 // Byte sink with a fixed shape, so renderers do not depend on the writer type.
 pub type Sink { context: ptr<mut u8>; write: fn(ptr<mut u8>, read Text): Unit throws Error }
-impl Sink implements Write {
+extend Sink implements Write {
     mut fn write_str(text: read Text): Unit throws Error { try (self.write)(self.context, text) }
 }
 fn sink_write<W: Write>(context: ptr<mut u8>, text: read Text): Unit throws Error {
-    try (unsafe { mut *context.cast::<W>() }).write_str(text)
+    try (unsafe { mut *context.cast<W>() }).write_str(text)
 }
 
 pub copy type Field {
@@ -229,35 +229,35 @@ pub type Message<region r> { fields: read [Field] from r; tail: Piece }
 
 fn piece(text: read Text): Piece {
     let bytes = text.as_bytes()
-    Piece(slice::data(bytes), bytes.len())
+    Piece(slice.data(bytes), bytes.len())
 }
 // Safety: `data`/`len` describe UTF-8 text that outlives region `r`.
 unsafe fn piece_text<region r>(p: Piece): read Text from r {
-    unsafe { from_utf8_unchecked(unsafe { slice::from_raw_parts(p.data, p.len) }) }
+    unsafe { from_utf8_unchecked(unsafe { slice.from_raw_parts(p.data, p.len) }) }
 }
 fn render_sized<T: Display>(value: ptr<read u8>, meta: usize, sink: mut Sink): Unit throws Error {
     var f = formatter(mut sink, spec())
-    try (unsafe { read *value.cast::<T>() }).fmt(mut f)
+    try (unsafe { read *value.cast<T>() }).fmt(mut f)
 }
 fn render_text(value: ptr<read u8>, meta: usize, sink: mut Sink): Unit throws Error {
     try sink.write_str(unsafe { piece_text(Piece(value, meta)) })
 }
 fn sized<T: Display>(value: read T, prefix: read Text): Field {
-    Field(piece(prefix), core::ptr::from_ref(read value).cast::<u8>(), 0usize, render_sized::<T>)
+    Field(piece(prefix), core.ptr.from_ref(read value).cast<u8>(), 0usize, render_sized<T>)
 }
 pub fn text_field(value: read Text, prefix: read Text): Field {
     let bytes = value.as_bytes()
-    Field(piece(prefix), slice::data(bytes), bytes.len(), render_text)
+    Field(piece(prefix), slice.data(bytes), bytes.len(), render_text)
 }
 
 // Values that can fill a `{hole}`: any sized `Display` type (integers, floats,
 // `bool`, `char`, `String` and user types) through one blanket implementation,
 // and `Text`, whose unsized view is carried directly.
 pub interface Hole { fn hole(prefix: read Text): Field; }
-impl<T: Display> T implements Hole {
+extend<T: Display> T implements Hole {
     fn hole(prefix: read Text): Field { sized(read self, prefix) }
 }
-impl Text implements Hole {
+extend Text implements Hole {
     fn hole(prefix: read Text): Field { text_field(self, prefix) }
 }
 
@@ -268,16 +268,16 @@ pub unsafe fn message<region r>(fields: read [Field] from r, tail: read Text): M
     Message(read fields, piece(tail))
 }
 unsafe fn no_fields<region r>(anchor: read Text from r): read [Field] from r {
-    unsafe { slice::from_raw_parts(slice::data(anchor.as_bytes()).cast::<Field>(), 0usize) }
+    unsafe { slice.from_raw_parts(slice.data(anchor.as_bytes()).cast<Field>(), 0usize) }
 }
 pub unsafe fn literal<region r>(tail: read Text from r): Message<region r> {
     unsafe { message(no_fields(tail), tail) }
 }
 
-impl<region r> Message<region r> {
+extend<region r> Message<region r> {
     // Renders pieces and fields in order into `sink`, stopping at the first failure.
     pub fn write_to<W: Write>(sink: mut W): Unit throws Error {
-        var out = Sink(core::ptr::from_mut(mut sink).cast::<u8>(), sink_write::<W>)
+        var out = Sink(core.ptr.from_mut(mut sink).cast<u8>(), sink_write<W>)
         var i = 0usize
         while i < self.fields.len() {
             let f = self.fields[i]
@@ -292,10 +292,10 @@ impl<region r> Message<region r> {
 // Writes into a caller-owned byte buffer; fails (without partial characters) when full.
 pub type BufferWriter<region r> { buffer: mut [u8] from r; length: usize }
 pub fn buffer_writer(buffer: mut [u8]): BufferWriter<region buffer> { BufferWriter(mut buffer, 0usize) }
-impl<region r> BufferWriter<region r> {
+extend<region r> BufferWriter<region r> {
     pub fn len(): usize { self.length }
 }
-impl<region r> BufferWriter<region r> implements Write {
+extend<region r> BufferWriter<region r> implements Write {
     mut fn write_str(text: read Text): Unit throws Error {
         let bytes = text.as_bytes()
         if self.buffer.len() - self.length < bytes.len() { throw Error() }
@@ -311,15 +311,15 @@ impl<region r> BufferWriter<region r> implements Write {
 // The text a `BufferWriter` produced: the first `length` bytes of its buffer,
 // which the writer no longer borrows once it is last used.
 pub fn written_text(buffer: read [u8], length: usize): (read Text from buffer)? {
-    match slice::subslice(buffer, 0usize, length) {
-        present(bytes) => super::text::from_utf8(bytes),
+    match slice.subslice(buffer, 0usize, length) {
+        present(bytes) => super.text.from_utf8(bytes),
         none => none
     }
 }
 
 // Counts the bytes that would be written.
 pub type Counter { pub bytes: usize }
-impl Counter implements Write {
+extend Counter implements Write {
     mut fn write_str(text: read Text): Unit throws Error { self.bytes += text.len() }
 }
 
@@ -362,215 +362,215 @@ pub fn fmt_radix<W: Write>(f: mut Formatter<W>, magnitude: u64, negative: bool, 
         if rest == 0u64 { break }
     }
     // ASCII digits only.
-    let text = unsafe { from_utf8_unchecked(unsafe { slice::subslice_unchecked(read digits, start, 64usize) }) }
+    let text = unsafe { from_utf8_unchecked(unsafe { slice.subslice_unchecked(read digits, start, 64usize) }) }
     try f.pad_integral(!negative, prefix, text)
 }
-impl i8 implements Display {
+extend i8 implements Display {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         let wide = self as i64
         try fmt_radix(mut f, (if wide < 0i64 { wide.wrapping_neg() } else { wide }) as u64, wide < 0i64, 10u64, false, "")
     }
 }
-impl i8 implements Debug {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try <i8 implements Display>::fmt(self, mut f) }
+extend i8 implements Debug {
+    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try i8.(Display).fmt(self, mut f) }
 }
-impl i8 implements Binary {
+extend i8 implements Binary {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u8) as u64, false, 2u64, false, "0b") }
 }
-impl i8 implements Octal {
+extend i8 implements Octal {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u8) as u64, false, 8u64, false, "0o") }
 }
-impl i8 implements LowerHex {
+extend i8 implements LowerHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u8) as u64, false, 16u64, false, "0x") }
 }
-impl i8 implements UpperHex {
+extend i8 implements UpperHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u8) as u64, false, 16u64, true, "0x") }
 }
-impl i16 implements Display {
+extend i16 implements Display {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         let wide = self as i64
         try fmt_radix(mut f, (if wide < 0i64 { wide.wrapping_neg() } else { wide }) as u64, wide < 0i64, 10u64, false, "")
     }
 }
-impl i16 implements Debug {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try <i16 implements Display>::fmt(self, mut f) }
+extend i16 implements Debug {
+    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try i16.(Display).fmt(self, mut f) }
 }
-impl i16 implements Binary {
+extend i16 implements Binary {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u16) as u64, false, 2u64, false, "0b") }
 }
-impl i16 implements Octal {
+extend i16 implements Octal {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u16) as u64, false, 8u64, false, "0o") }
 }
-impl i16 implements LowerHex {
+extend i16 implements LowerHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u16) as u64, false, 16u64, false, "0x") }
 }
-impl i16 implements UpperHex {
+extend i16 implements UpperHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u16) as u64, false, 16u64, true, "0x") }
 }
-impl i32 implements Display {
+extend i32 implements Display {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         let wide = self as i64
         try fmt_radix(mut f, (if wide < 0i64 { wide.wrapping_neg() } else { wide }) as u64, wide < 0i64, 10u64, false, "")
     }
 }
-impl i32 implements Debug {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try <i32 implements Display>::fmt(self, mut f) }
+extend i32 implements Debug {
+    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try i32.(Display).fmt(self, mut f) }
 }
-impl i32 implements Binary {
+extend i32 implements Binary {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u32) as u64, false, 2u64, false, "0b") }
 }
-impl i32 implements Octal {
+extend i32 implements Octal {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u32) as u64, false, 8u64, false, "0o") }
 }
-impl i32 implements LowerHex {
+extend i32 implements LowerHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u32) as u64, false, 16u64, false, "0x") }
 }
-impl i32 implements UpperHex {
+extend i32 implements UpperHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u32) as u64, false, 16u64, true, "0x") }
 }
-impl i64 implements Display {
+extend i64 implements Display {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         let wide = self as i64
         try fmt_radix(mut f, (if wide < 0i64 { wide.wrapping_neg() } else { wide }) as u64, wide < 0i64, 10u64, false, "")
     }
 }
-impl i64 implements Debug {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try <i64 implements Display>::fmt(self, mut f) }
+extend i64 implements Debug {
+    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try i64.(Display).fmt(self, mut f) }
 }
-impl i64 implements Binary {
+extend i64 implements Binary {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u64) as u64, false, 2u64, false, "0b") }
 }
-impl i64 implements Octal {
+extend i64 implements Octal {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u64) as u64, false, 8u64, false, "0o") }
 }
-impl i64 implements LowerHex {
+extend i64 implements LowerHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u64) as u64, false, 16u64, false, "0x") }
 }
-impl i64 implements UpperHex {
+extend i64 implements UpperHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u64) as u64, false, 16u64, true, "0x") }
 }
-impl isize implements Display {
+extend isize implements Display {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         let wide = self as i64
         try fmt_radix(mut f, (if wide < 0i64 { wide.wrapping_neg() } else { wide }) as u64, wide < 0i64, 10u64, false, "")
     }
 }
-impl isize implements Debug {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try <isize implements Display>::fmt(self, mut f) }
+extend isize implements Debug {
+    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try isize.(Display).fmt(self, mut f) }
 }
-impl isize implements Binary {
+extend isize implements Binary {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as usize) as u64, false, 2u64, false, "0b") }
 }
-impl isize implements Octal {
+extend isize implements Octal {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as usize) as u64, false, 8u64, false, "0o") }
 }
-impl isize implements LowerHex {
+extend isize implements LowerHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as usize) as u64, false, 16u64, false, "0x") }
 }
-impl isize implements UpperHex {
+extend isize implements UpperHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as usize) as u64, false, 16u64, true, "0x") }
 }
-impl u8 implements Display {
+extend u8 implements Display {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, self as u64, false, 10u64, false, "") }
 }
-impl u8 implements Debug {
+extend u8 implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, self as u64, false, 10u64, false, "") }
 }
-impl u8 implements Binary {
+extend u8 implements Binary {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u8) as u64, false, 2u64, false, "0b") }
 }
-impl u8 implements Octal {
+extend u8 implements Octal {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u8) as u64, false, 8u64, false, "0o") }
 }
-impl u8 implements LowerHex {
+extend u8 implements LowerHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u8) as u64, false, 16u64, false, "0x") }
 }
-impl u8 implements UpperHex {
+extend u8 implements UpperHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u8) as u64, false, 16u64, true, "0x") }
 }
-impl u16 implements Display {
+extend u16 implements Display {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, self as u64, false, 10u64, false, "") }
 }
-impl u16 implements Debug {
+extend u16 implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, self as u64, false, 10u64, false, "") }
 }
-impl u16 implements Binary {
+extend u16 implements Binary {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u16) as u64, false, 2u64, false, "0b") }
 }
-impl u16 implements Octal {
+extend u16 implements Octal {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u16) as u64, false, 8u64, false, "0o") }
 }
-impl u16 implements LowerHex {
+extend u16 implements LowerHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u16) as u64, false, 16u64, false, "0x") }
 }
-impl u16 implements UpperHex {
+extend u16 implements UpperHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u16) as u64, false, 16u64, true, "0x") }
 }
-impl u32 implements Display {
+extend u32 implements Display {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, self as u64, false, 10u64, false, "") }
 }
-impl u32 implements Debug {
+extend u32 implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, self as u64, false, 10u64, false, "") }
 }
-impl u32 implements Binary {
+extend u32 implements Binary {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u32) as u64, false, 2u64, false, "0b") }
 }
-impl u32 implements Octal {
+extend u32 implements Octal {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u32) as u64, false, 8u64, false, "0o") }
 }
-impl u32 implements LowerHex {
+extend u32 implements LowerHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u32) as u64, false, 16u64, false, "0x") }
 }
-impl u32 implements UpperHex {
+extend u32 implements UpperHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u32) as u64, false, 16u64, true, "0x") }
 }
-impl u64 implements Display {
+extend u64 implements Display {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, self as u64, false, 10u64, false, "") }
 }
-impl u64 implements Debug {
+extend u64 implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, self as u64, false, 10u64, false, "") }
 }
-impl u64 implements Binary {
+extend u64 implements Binary {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u64) as u64, false, 2u64, false, "0b") }
 }
-impl u64 implements Octal {
+extend u64 implements Octal {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u64) as u64, false, 8u64, false, "0o") }
 }
-impl u64 implements LowerHex {
+extend u64 implements LowerHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u64) as u64, false, 16u64, false, "0x") }
 }
-impl u64 implements UpperHex {
+extend u64 implements UpperHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as u64) as u64, false, 16u64, true, "0x") }
 }
-impl usize implements Display {
+extend usize implements Display {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, self as u64, false, 10u64, false, "") }
 }
-impl usize implements Debug {
+extend usize implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, self as u64, false, 10u64, false, "") }
 }
-impl usize implements Binary {
+extend usize implements Binary {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as usize) as u64, false, 2u64, false, "0b") }
 }
-impl usize implements Octal {
+extend usize implements Octal {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as usize) as u64, false, 8u64, false, "0o") }
 }
-impl usize implements LowerHex {
+extend usize implements LowerHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as usize) as u64, false, 16u64, false, "0x") }
 }
-impl usize implements UpperHex {
+extend usize implements UpperHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as usize) as u64, false, 16u64, true, "0x") }
 }
 
-impl bool implements Display {
+extend bool implements Display {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { if self { try f.pad("true") } else { try f.pad("false") } }
 }
-impl bool implements Debug {
+extend bool implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { if self { try f.pad("true") } else { try f.pad("false") } }
 }
-impl Text implements Display {
+extend Text implements Display {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try f.pad(self) }
 }
-impl char implements Display {
+extend char implements Display {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         var buffer = [0u8; 4]
         var sink = buffer_writer(mut buffer)
@@ -590,7 +590,7 @@ fn escape_char<W: Write>(f: mut Formatter<W>, value: char, quote: char): Unit th
     if value == '\t' { return try f.write_str("\\t") }
     try f.write_char(value)
 }
-impl Text implements Debug {
+extend Text implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         try f.write_char('"')
         var scan = self.chars()
@@ -600,38 +600,38 @@ impl Text implements Debug {
         try f.write_char('"')
     }
 }
-impl char implements Debug {
+extend char implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         try f.write_char('\'')
         try escape_char(mut f, self, '\'')
         try f.write_char('\'')
     }
 }
-impl Unit implements Debug {
+extend Unit implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try f.write_str("()") }
 }
-impl Ordering implements Debug {
+extend Ordering implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         match self {
-            Ordering::Less => { try f.write_str("Less") },
-            Ordering::Equal => { try f.write_str("Equal") },
-            Ordering::Greater => { try f.write_str("Greater") }
+            Ordering.Less => { try f.write_str("Less") },
+            Ordering.Equal => { try f.write_str("Equal") },
+            Ordering.Greater => { try f.write_str("Greater") }
         }
     }
 }
-impl Error implements Debug {
+extend Error implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try f.write_str("Error") }
 }
-impl Error implements Display {
+extend Error implements Display {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try f.write_str("an error occurred when formatting an argument") }
 }
-impl<T: Debug> [T] implements Debug {
+extend<T: Debug> [T] implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         try f.debug_open("[")
         var i = 0usize
         while i < self.len() {
             try f.debug_item_start(i == 0usize)
-            try <T implements Debug>::fmt(self[i], mut f)
+            try T.(Debug).fmt(self[i], mut f)
             try f.debug_item_end()
             i += 1usize
         }
@@ -640,321 +640,321 @@ impl<T: Debug> [T] implements Debug {
 }
 
 // Tuples print as `(a, b)`; a one-element tuple keeps its trailing comma.
-impl<A: Debug> (A,) implements Debug {
+extend<A: Debug> (A,) implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         try f.debug_open("(")
         try f.debug_item_start(true)
-        try <A implements Debug>::fmt(self.0, mut f)
+        try A.(Debug).fmt(self.0, mut f)
         try f.debug_item_end()
         if !f.options.alternate { try f.write_char(',') }
         try f.debug_close(")", false)
     }
 }
-impl<A: Debug, B: Debug> (A, B) implements Debug {
+extend<A: Debug, B: Debug> (A, B) implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         try f.debug_open("(")
         try f.debug_item_start(true)
-        try <A implements Debug>::fmt(self.0, mut f)
+        try A.(Debug).fmt(self.0, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <B implements Debug>::fmt(self.1, mut f)
+        try B.(Debug).fmt(self.1, mut f)
         try f.debug_item_end()
         try f.debug_close(")", false)
     }
 }
-impl<A: Debug, B: Debug, C: Debug> (A, B, C) implements Debug {
+extend<A: Debug, B: Debug, C: Debug> (A, B, C) implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         try f.debug_open("(")
         try f.debug_item_start(true)
-        try <A implements Debug>::fmt(self.0, mut f)
+        try A.(Debug).fmt(self.0, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <B implements Debug>::fmt(self.1, mut f)
+        try B.(Debug).fmt(self.1, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <C implements Debug>::fmt(self.2, mut f)
+        try C.(Debug).fmt(self.2, mut f)
         try f.debug_item_end()
         try f.debug_close(")", false)
     }
 }
-impl<A: Debug, B: Debug, C: Debug, D: Debug> (A, B, C, D) implements Debug {
+extend<A: Debug, B: Debug, C: Debug, D: Debug> (A, B, C, D) implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         try f.debug_open("(")
         try f.debug_item_start(true)
-        try <A implements Debug>::fmt(self.0, mut f)
+        try A.(Debug).fmt(self.0, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <B implements Debug>::fmt(self.1, mut f)
+        try B.(Debug).fmt(self.1, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <C implements Debug>::fmt(self.2, mut f)
+        try C.(Debug).fmt(self.2, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <D implements Debug>::fmt(self.3, mut f)
+        try D.(Debug).fmt(self.3, mut f)
         try f.debug_item_end()
         try f.debug_close(")", false)
     }
 }
-impl<A: Debug, B: Debug, C: Debug, D: Debug, E: Debug> (A, B, C, D, E) implements Debug {
+extend<A: Debug, B: Debug, C: Debug, D: Debug, E: Debug> (A, B, C, D, E) implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         try f.debug_open("(")
         try f.debug_item_start(true)
-        try <A implements Debug>::fmt(self.0, mut f)
+        try A.(Debug).fmt(self.0, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <B implements Debug>::fmt(self.1, mut f)
+        try B.(Debug).fmt(self.1, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <C implements Debug>::fmt(self.2, mut f)
+        try C.(Debug).fmt(self.2, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <D implements Debug>::fmt(self.3, mut f)
+        try D.(Debug).fmt(self.3, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <E implements Debug>::fmt(self.4, mut f)
+        try E.(Debug).fmt(self.4, mut f)
         try f.debug_item_end()
         try f.debug_close(")", false)
     }
 }
-impl<A: Debug, B: Debug, C: Debug, D: Debug, E: Debug, F: Debug> (A, B, C, D, E, F) implements Debug {
+extend<A: Debug, B: Debug, C: Debug, D: Debug, E: Debug, F: Debug> (A, B, C, D, E, F) implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         try f.debug_open("(")
         try f.debug_item_start(true)
-        try <A implements Debug>::fmt(self.0, mut f)
+        try A.(Debug).fmt(self.0, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <B implements Debug>::fmt(self.1, mut f)
+        try B.(Debug).fmt(self.1, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <C implements Debug>::fmt(self.2, mut f)
+        try C.(Debug).fmt(self.2, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <D implements Debug>::fmt(self.3, mut f)
+        try D.(Debug).fmt(self.3, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <E implements Debug>::fmt(self.4, mut f)
+        try E.(Debug).fmt(self.4, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <F implements Debug>::fmt(self.5, mut f)
+        try F.(Debug).fmt(self.5, mut f)
         try f.debug_item_end()
         try f.debug_close(")", false)
     }
 }
-impl<A: Debug, B: Debug, C: Debug, D: Debug, E: Debug, F: Debug, G: Debug> (A, B, C, D, E, F, G) implements Debug {
+extend<A: Debug, B: Debug, C: Debug, D: Debug, E: Debug, F: Debug, G: Debug> (A, B, C, D, E, F, G) implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         try f.debug_open("(")
         try f.debug_item_start(true)
-        try <A implements Debug>::fmt(self.0, mut f)
+        try A.(Debug).fmt(self.0, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <B implements Debug>::fmt(self.1, mut f)
+        try B.(Debug).fmt(self.1, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <C implements Debug>::fmt(self.2, mut f)
+        try C.(Debug).fmt(self.2, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <D implements Debug>::fmt(self.3, mut f)
+        try D.(Debug).fmt(self.3, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <E implements Debug>::fmt(self.4, mut f)
+        try E.(Debug).fmt(self.4, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <F implements Debug>::fmt(self.5, mut f)
+        try F.(Debug).fmt(self.5, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <G implements Debug>::fmt(self.6, mut f)
+        try G.(Debug).fmt(self.6, mut f)
         try f.debug_item_end()
         try f.debug_close(")", false)
     }
 }
-impl<A: Debug, B: Debug, C: Debug, D: Debug, E: Debug, F: Debug, G: Debug, H: Debug> (A, B, C, D, E, F, G, H) implements Debug {
+extend<A: Debug, B: Debug, C: Debug, D: Debug, E: Debug, F: Debug, G: Debug, H: Debug> (A, B, C, D, E, F, G, H) implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         try f.debug_open("(")
         try f.debug_item_start(true)
-        try <A implements Debug>::fmt(self.0, mut f)
+        try A.(Debug).fmt(self.0, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <B implements Debug>::fmt(self.1, mut f)
+        try B.(Debug).fmt(self.1, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <C implements Debug>::fmt(self.2, mut f)
+        try C.(Debug).fmt(self.2, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <D implements Debug>::fmt(self.3, mut f)
+        try D.(Debug).fmt(self.3, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <E implements Debug>::fmt(self.4, mut f)
+        try E.(Debug).fmt(self.4, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <F implements Debug>::fmt(self.5, mut f)
+        try F.(Debug).fmt(self.5, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <G implements Debug>::fmt(self.6, mut f)
+        try G.(Debug).fmt(self.6, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <H implements Debug>::fmt(self.7, mut f)
+        try H.(Debug).fmt(self.7, mut f)
         try f.debug_item_end()
         try f.debug_close(")", false)
     }
 }
-impl<A: Debug, B: Debug, C: Debug, D: Debug, E: Debug, F: Debug, G: Debug, H: Debug, I: Debug> (A, B, C, D, E, F, G, H, I) implements Debug {
+extend<A: Debug, B: Debug, C: Debug, D: Debug, E: Debug, F: Debug, G: Debug, H: Debug, I: Debug> (A, B, C, D, E, F, G, H, I) implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         try f.debug_open("(")
         try f.debug_item_start(true)
-        try <A implements Debug>::fmt(self.0, mut f)
+        try A.(Debug).fmt(self.0, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <B implements Debug>::fmt(self.1, mut f)
+        try B.(Debug).fmt(self.1, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <C implements Debug>::fmt(self.2, mut f)
+        try C.(Debug).fmt(self.2, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <D implements Debug>::fmt(self.3, mut f)
+        try D.(Debug).fmt(self.3, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <E implements Debug>::fmt(self.4, mut f)
+        try E.(Debug).fmt(self.4, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <F implements Debug>::fmt(self.5, mut f)
+        try F.(Debug).fmt(self.5, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <G implements Debug>::fmt(self.6, mut f)
+        try G.(Debug).fmt(self.6, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <H implements Debug>::fmt(self.7, mut f)
+        try H.(Debug).fmt(self.7, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <I implements Debug>::fmt(self.8, mut f)
+        try I.(Debug).fmt(self.8, mut f)
         try f.debug_item_end()
         try f.debug_close(")", false)
     }
 }
-impl<A: Debug, B: Debug, C: Debug, D: Debug, E: Debug, F: Debug, G: Debug, H: Debug, I: Debug, J: Debug> (A, B, C, D, E, F, G, H, I, J) implements Debug {
+extend<A: Debug, B: Debug, C: Debug, D: Debug, E: Debug, F: Debug, G: Debug, H: Debug, I: Debug, J: Debug> (A, B, C, D, E, F, G, H, I, J) implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         try f.debug_open("(")
         try f.debug_item_start(true)
-        try <A implements Debug>::fmt(self.0, mut f)
+        try A.(Debug).fmt(self.0, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <B implements Debug>::fmt(self.1, mut f)
+        try B.(Debug).fmt(self.1, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <C implements Debug>::fmt(self.2, mut f)
+        try C.(Debug).fmt(self.2, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <D implements Debug>::fmt(self.3, mut f)
+        try D.(Debug).fmt(self.3, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <E implements Debug>::fmt(self.4, mut f)
+        try E.(Debug).fmt(self.4, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <F implements Debug>::fmt(self.5, mut f)
+        try F.(Debug).fmt(self.5, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <G implements Debug>::fmt(self.6, mut f)
+        try G.(Debug).fmt(self.6, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <H implements Debug>::fmt(self.7, mut f)
+        try H.(Debug).fmt(self.7, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <I implements Debug>::fmt(self.8, mut f)
+        try I.(Debug).fmt(self.8, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <J implements Debug>::fmt(self.9, mut f)
+        try J.(Debug).fmt(self.9, mut f)
         try f.debug_item_end()
         try f.debug_close(")", false)
     }
 }
-impl<A: Debug, B: Debug, C: Debug, D: Debug, E: Debug, F: Debug, G: Debug, H: Debug, I: Debug, J: Debug, K: Debug> (A, B, C, D, E, F, G, H, I, J, K) implements Debug {
+extend<A: Debug, B: Debug, C: Debug, D: Debug, E: Debug, F: Debug, G: Debug, H: Debug, I: Debug, J: Debug, K: Debug> (A, B, C, D, E, F, G, H, I, J, K) implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         try f.debug_open("(")
         try f.debug_item_start(true)
-        try <A implements Debug>::fmt(self.0, mut f)
+        try A.(Debug).fmt(self.0, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <B implements Debug>::fmt(self.1, mut f)
+        try B.(Debug).fmt(self.1, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <C implements Debug>::fmt(self.2, mut f)
+        try C.(Debug).fmt(self.2, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <D implements Debug>::fmt(self.3, mut f)
+        try D.(Debug).fmt(self.3, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <E implements Debug>::fmt(self.4, mut f)
+        try E.(Debug).fmt(self.4, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <F implements Debug>::fmt(self.5, mut f)
+        try F.(Debug).fmt(self.5, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <G implements Debug>::fmt(self.6, mut f)
+        try G.(Debug).fmt(self.6, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <H implements Debug>::fmt(self.7, mut f)
+        try H.(Debug).fmt(self.7, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <I implements Debug>::fmt(self.8, mut f)
+        try I.(Debug).fmt(self.8, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <J implements Debug>::fmt(self.9, mut f)
+        try J.(Debug).fmt(self.9, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <K implements Debug>::fmt(self.10, mut f)
+        try K.(Debug).fmt(self.10, mut f)
         try f.debug_item_end()
         try f.debug_close(")", false)
     }
 }
-impl<A: Debug, B: Debug, C: Debug, D: Debug, E: Debug, F: Debug, G: Debug, H: Debug, I: Debug, J: Debug, K: Debug, L: Debug> (A, B, C, D, E, F, G, H, I, J, K, L) implements Debug {
+extend<A: Debug, B: Debug, C: Debug, D: Debug, E: Debug, F: Debug, G: Debug, H: Debug, I: Debug, J: Debug, K: Debug, L: Debug> (A, B, C, D, E, F, G, H, I, J, K, L) implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         try f.debug_open("(")
         try f.debug_item_start(true)
-        try <A implements Debug>::fmt(self.0, mut f)
+        try A.(Debug).fmt(self.0, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <B implements Debug>::fmt(self.1, mut f)
+        try B.(Debug).fmt(self.1, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <C implements Debug>::fmt(self.2, mut f)
+        try C.(Debug).fmt(self.2, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <D implements Debug>::fmt(self.3, mut f)
+        try D.(Debug).fmt(self.3, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <E implements Debug>::fmt(self.4, mut f)
+        try E.(Debug).fmt(self.4, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <F implements Debug>::fmt(self.5, mut f)
+        try F.(Debug).fmt(self.5, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <G implements Debug>::fmt(self.6, mut f)
+        try G.(Debug).fmt(self.6, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <H implements Debug>::fmt(self.7, mut f)
+        try H.(Debug).fmt(self.7, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <I implements Debug>::fmt(self.8, mut f)
+        try I.(Debug).fmt(self.8, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <J implements Debug>::fmt(self.9, mut f)
+        try J.(Debug).fmt(self.9, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <K implements Debug>::fmt(self.10, mut f)
+        try K.(Debug).fmt(self.10, mut f)
         try f.debug_item_end()
         try f.debug_item_start(false)
-        try <L implements Debug>::fmt(self.11, mut f)
+        try L.(Debug).fmt(self.11, mut f)
         try f.debug_item_end()
         try f.debug_close(")", false)
     }
 }
 
-impl<T: Debug> T? implements Debug {
+extend<T: Debug> T? implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         match self {
             present(value) => {
                 try f.debug_open("present(")
                 try f.debug_item_start(true)
-                try <T implements Debug>::fmt(value, mut f)
+                try T.(Debug).fmt(value, mut f)
                 try f.debug_item_end()
                 try f.debug_close(")", false)
             },
@@ -962,27 +962,27 @@ impl<T: Debug> T? implements Debug {
         }
     }
 }
-impl<T: Debug, E: Debug> (T throws E) implements Debug {
+extend<T: Debug, E: Debug> (T throws E) implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         match self {
             success(value) => {
                 try f.debug_open("success(")
                 try f.debug_item_start(true)
-                try <T implements Debug>::fmt(value, mut f)
+                try T.(Debug).fmt(value, mut f)
                 try f.debug_item_end()
                 try f.debug_close(")", false)
             },
             failure(error) => {
                 try f.debug_open("failure(")
                 try f.debug_item_start(true)
-                try <E implements Debug>::fmt(error, mut f)
+                try E.(Debug).fmt(error, mut f)
                 try f.debug_item_end()
                 try f.debug_close(")", false)
             }
         }
     }
 }
-impl<T: Debug, const N: usize> [T; N] implements Debug {
+extend<T: Debug, const N: usize> [T; N] implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         try <[T] implements Debug>::fmt(read self[..], mut f)
     }

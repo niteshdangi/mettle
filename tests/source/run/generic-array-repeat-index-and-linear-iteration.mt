@@ -15,8 +15,8 @@ fn first<const N: i32>(values: take [Owned;N]): i32 {
     answer
 }
 fn main(): i32 {
-    var values = make::<2>(20)
+    var values = make<2>(20)
     increment(values)
-    if sum(values) == 42 && values[0] == 21 && sum::<0>([]) == 0 &&
+    if sum(values) == 42 && values[0] == 21 && sum<0>([]) == 0 &&
        first([Owned(42),Owned(1)]) == 42 { 0 } else { 1 }
 }

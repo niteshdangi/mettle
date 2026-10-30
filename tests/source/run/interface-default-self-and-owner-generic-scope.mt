@@ -2,10 +2,10 @@
 interface Add<Rhs = Self> { fn add(rhs: read Rhs): i32; }
 interface Pair<A = i32, B = A> { fn combine(value: read B): i32; }
 type Number { value: i32 }
-impl Number implements Add {
+extend Number implements Add {
     fn add(rhs: read Number): i32 { self.value + rhs.value }
 }
-impl Number implements Pair {
+extend Number implements Pair {
     fn combine(value: read i32): i32 { self.value + value }
 }
 fn add<T: Add>(left: T, right: T): i32 { left.add(right) }

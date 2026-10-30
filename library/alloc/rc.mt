@@ -1,9 +1,9 @@
-import package::core::cmp::{Eq, Ord, Ordering, PartialEq, PartialOrd};
-import package::core::fmt;
-import package::core::hash::{Hash, Hasher};
-import package::core::ops::Deref;
-import super::alloc::{Allocator, Global, AllocError, Layout, layout_of, handle_alloc_error};
-import package::core::clone::Clone;
+import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd};
+import package.core.fmt;
+import package.core.hash.{Hash, Hasher};
+import package.core.ops.Deref;
+import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, handle_alloc_error};
+import package.core.clone.Clone;
 
 // Shared header and payload. `wk` counts every Weak plus one implicit
 // reference held collectively by all strong owners, so the block is released
@@ -11,7 +11,7 @@ import package::core::clone::Clone;
 type RcBox<T> {
     strong: usize
     wk: usize
-    value: core::mem::MaybeUninit<T>
+    value: core.mem.MaybeUninit<T>
 }
 
 // Single-threaded shared owner; the allocator travels with each handle.
@@ -23,8 +23,8 @@ pub type Rc<T, A: Allocator = Global> {
             let b = self.p
             (*b).strong -= 1usize
             if (*b).strong == 0usize {
-                let _implicit = WeakRelease(b, core::ptr::from_mut(self.a))
-                core::ptr::drop_in_place((*b).value.as_mut_ptr())
+                let _implicit = WeakRelease(b, core.ptr.from_mut(self.a))
+                core.ptr.drop_in_place((*b).value.as_mut_ptr())
             }
         }
     }
@@ -36,7 +36,7 @@ pub type Weak<T, A: Allocator = Global> {
     a: A
     drop {
         unsafe {
-            let _guard = WeakRelease(self.p, core::ptr::from_mut(self.a))
+            let _guard = WeakRelease(self.p, core.ptr.from_mut(self.a))
         }
     }
 }
@@ -49,23 +49,23 @@ type WeakRelease<T, A: Allocator> {
         unsafe {
             let b = self.p
             (*b).wk -= 1usize
-            if (*b).wk == 0usize { (*self.a).deallocate(b.cast::<u8>(), layout_of::<RcBox<T>>()) }
+            if (*b).wk == 0usize { (*self.a).deallocate(b.cast<u8>(), layout_of<RcBox<T>>()) }
         }
     }
 }
 
 pub fn try_new_in<T, A: Allocator>(value: take T, allocator: take A): Rc<T, A> throws AllocError {
     var a = allocator
-    let raw = try a.allocate(layout_of::<RcBox<T>>())
-    let b = raw.cast::<RcBox<T>>()
-    unsafe { core::ptr::write(b, RcBox(1usize, 1usize, core::mem::MaybeUninit::new(value))) }
+    let raw = try a.allocate(layout_of<RcBox<T>>())
+    let b = raw.cast<RcBox<T>>()
+    unsafe { core.ptr.write(b, RcBox(1usize, 1usize, core.mem.MaybeUninit.new(value))) }
     Rc(b, a)
 }
 pub fn new_in<T, A: Allocator>(value: take T, allocator: take A): Rc<T, A> {
     let outcome = capture try_new_in(value, allocator)
     match take outcome {
         success(r) => r,
-        failure(e) => handle_alloc_error(layout_of::<RcBox<T>>())
+        failure(e) => handle_alloc_error(layout_of<RcBox<T>>())
     }
 }
 pub fn new<T>(value: take T): Rc<T> { new_in(value, Global()) }
@@ -73,11 +73,11 @@ pub fn try_new<T>(value: take T): Rc<T> throws AllocError { try try_new_in(value
 
 fn bump(count: usize): usize {
     // Overflow would let a count wrap to zero and free a live payload.
-    if count == 0xffffffffffffffffusize { core::intrinsics::abort() }
+    if count == 0xffffffffffffffffusize { core.intrinsics.abort() }
     count + 1usize
 }
 
-impl<T, A: Allocator + Clone> Rc<T, A> {
+extend<T, A: Allocator + Clone> Rc<T, A> {
     // Another strong owner of the same payload; the payload is not cloned.
     pub fn retain(): Rc<T, A> {
         unsafe { (*self.p).strong = bump((*self.p).strong) }
@@ -88,11 +88,11 @@ impl<T, A: Allocator + Clone> Rc<T, A> {
         Weak(self.p, self.a.clone())
     }
 }
-impl<T, A: Allocator + Clone> Rc<T, A> implements Clone {
+extend<T, A: Allocator + Clone> Rc<T, A> implements Clone {
     fn clone(): Rc<T, A> { self.retain() }
 }
 
-impl<T, A: Allocator> Rc<T, A> {
+extend<T, A: Allocator> Rc<T, A> {
     pub fn get(): read T from self { unsafe { read *(*self.p).value.as_ptr() } }
     pub fn strong_count(): usize { unsafe { (*self.p).strong } }
     pub fn weak_count(): usize { unsafe { (*self.p).wk - 1usize } }
@@ -109,11 +109,11 @@ impl<T, A: Allocator> Rc<T, A> {
         if unsafe { (*self.p).strong } != 1usize { throw self }
         unsafe {
             let b = self.p
-            let value = core::ptr::`read`((*b).value.as_ptr())
+            let value = core.ptr.`read`((*b).value.as_ptr())
             (*b).strong = 0usize
-            var a = core::ptr::`read`(core::ptr::from_ref(self.a))
-            core::mem::forget(take self)
-            let _implicit = WeakRelease(b, core::ptr::from_mut(a))
+            var a = core.ptr.`read`(core.ptr.from_ref(self.a))
+            core.mem.forget(take self)
+            let _implicit = WeakRelease(b, core.ptr.from_mut(a))
             value
         }
     }
@@ -128,7 +128,7 @@ impl<T, A: Allocator> Rc<T, A> {
     }
 }
 
-impl<T, A: Allocator + Clone> Weak<T, A> {
+extend<T, A: Allocator + Clone> Weak<T, A> {
     pub fn upgrade(): Rc<T, A>? {
         unsafe {
             let b = self.p
@@ -142,32 +142,32 @@ impl<T, A: Allocator + Clone> Weak<T, A> {
         Weak(self.p, self.a.clone())
     }
 }
-impl<T, A: Allocator> Weak<T, A> {
+extend<T, A: Allocator> Weak<T, A> {
     pub fn strong_count(): usize { unsafe { (*self.p).strong } }
 }
 
 
 // Shared handles compare, hash and format as their payload; `ptr_eq` tests identity.
-impl<T, A: Allocator> Rc<T, A> implements Deref {
+extend<T, A: Allocator> Rc<T, A> implements Deref {
     type Target = T
     fn deref(): read T from self { self.get() }
 }
-impl<T: PartialEq, A: Allocator> Rc<T, A> implements PartialEq {
+extend<T: PartialEq, A: Allocator> Rc<T, A> implements PartialEq {
     fn eq(other: read Rc<T, A>): bool { self.get().eq(other.get()) }
 }
-impl<T: Eq, A: Allocator> Rc<T, A> implements Eq {}
-impl<T: PartialOrd, A: Allocator> Rc<T, A> implements PartialOrd {
+extend<T: Eq, A: Allocator> Rc<T, A> implements Eq {}
+extend<T: PartialOrd, A: Allocator> Rc<T, A> implements PartialOrd {
     fn partial_cmp(other: read Rc<T, A>): Ordering? { self.get().partial_cmp(other.get()) }
 }
-impl<T: Ord, A: Allocator> Rc<T, A> implements Ord {
+extend<T: Ord, A: Allocator> Rc<T, A> implements Ord {
     fn cmp(other: read Rc<T, A>): Ordering { self.get().cmp(other.get()) }
 }
-impl<T: Hash, A: Allocator> Rc<T, A> implements Hash {
+extend<T: Hash, A: Allocator> Rc<T, A> implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { self.get().hash(mut state) }
 }
-impl<T: fmt::Display, A: Allocator> Rc<T, A> implements fmt::Display {
-    fn fmt<W: fmt::Write>(f: mut fmt::Formatter<W>): Unit throws fmt::Error { try <T implements fmt::Display>::fmt(self.get(), mut f) }
+extend<T: fmt.Display, A: Allocator> Rc<T, A> implements fmt.Display {
+    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error { try T.(fmt.Display).fmt(self.get(), mut f) }
 }
-impl<T: fmt::Debug, A: Allocator> Rc<T, A> implements fmt::Debug {
-    fn fmt<W: fmt::Write>(f: mut fmt::Formatter<W>): Unit throws fmt::Error { try <T implements fmt::Debug>::fmt(self.get(), mut f) }
+extend<T: fmt.Debug, A: Allocator> Rc<T, A> implements fmt.Debug {
+    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error { try T.(fmt.Debug).fmt(self.get(), mut f) }
 }

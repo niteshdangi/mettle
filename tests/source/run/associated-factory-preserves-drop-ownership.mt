@@ -8,9 +8,9 @@ type Guard<region r> {
 fn main() {
     var counter = 40
     {
-        let first = OwnedGuard::make(counter)
+        let first = OwnedGuard.make(counter)
         let moved = first
     }
-    { let second = Guard::make(counter) }
+    { let second = Guard.make(counter) }
     if counter == 42 { 0 } else { 1 }
 }

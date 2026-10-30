@@ -1,8 +1,8 @@
 
 module core {
     pub module ops {
-        pub interface Deref { type Target; fn deref(): read Self::Target; }
-        pub interface DerefMut { type Target; mut fn deref_mut(): mut Self::Target; }
+        pub interface Deref { type Target; fn deref(): read Self.Target; }
+        pub interface DerefMut { type Target; mut fn deref_mut(): mut Self.Target; }
     }
 }
 type Inner {
@@ -11,11 +11,11 @@ type Inner {
     mut fn increment(): Unit { self.value += 1 }
 }
 type Wrapper { inner: Inner; projections: i32 }
-impl Wrapper implements core::ops::Deref {
+extend Wrapper implements core.ops.Deref {
     type Target = Inner
     fn deref(): read Inner { read self.inner }
 }
-impl Wrapper implements core::ops::DerefMut {
+extend Wrapper implements core.ops.DerefMut {
     type Target = Inner
     mut fn deref_mut(): mut Inner {
         self.projections += 1

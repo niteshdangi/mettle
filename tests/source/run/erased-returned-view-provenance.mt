@@ -2,7 +2,7 @@
 copy type Pair { first: i32; second: i32 }
 interface Reader { fn pair(): read Pair from self; }
 type Holder { value: Pair }
-impl Holder implements Reader {
+extend Holder implements Reader {
     fn pair(): read Pair from self { read self.value }
 }
 fn total(holder: read any Reader): i32 {

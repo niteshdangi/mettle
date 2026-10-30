@@ -1,14 +1,14 @@
-import core::future::{Future, Poll, Context, noop_waker};
+import core.future.{Future, Poll, Context, noop_waker};
 
 type Count { left: i32 }
-impl Count implements Future {
+extend Count implements Future {
     type Output = i32
     fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> {
         let me = unsafe { self.get_unchecked_mut() }
-        if me.left == 0 { Poll::Ready(42) } else {
+        if me.left == 0 { Poll.Ready(42) } else {
             me.left = me.left - 1
             cx.waker().wake_by_ref()
-            Poll::Pending
+            Poll.Pending
         }
     }
 }
@@ -149,13 +149,13 @@ async fn while_let(n: i32): i32 {
 // Returns the output and the number of Pending polls.
 fn drive<F: Future<Output = i32>>(future: take F): (i32, i32) {
     let waker = noop_waker()
-    var slot = core::pin::pin(future)
+    var slot = core.pin.pin(future)
     var spins = 0
     loop {
-        var cx = Context::from_waker(read waker)
+        var cx = Context.from_waker(read waker)
         match take slot.as_mut().poll(mut cx) {
-            Poll::Ready(value) => { return (value, spins) },
-            Poll::Pending => { spins = spins + 1 }
+            Poll.Ready(value) => { return (value, spins) },
+            Poll.Pending => { spins = spins + 1 }
         }
     }
 }
@@ -163,13 +163,13 @@ fn drive<F: Future<Output = i32>>(future: take F): (i32, i32) {
 // Polls twice and drops the unfinished future.
 fn abandon<F: Future<Output = i32>>(future: take F): Unit {
     let waker = noop_waker()
-    var slot = core::pin::pin(future)
+    var slot = core.pin.pin(future)
     var polls = 0
     while polls < 2 {
-        var cx = Context::from_waker(read waker)
+        var cx = Context.from_waker(read waker)
         match take slot.as_mut().poll(mut cx) {
-            Poll::Ready(value) => { return },
-            Poll::Pending => { polls = polls + 1 }
+            Poll.Ready(value) => { return },
+            Poll.Pending => { polls = polls + 1 }
         }
     }
 }
@@ -199,10 +199,10 @@ fn main(): i32 {
     // The saved local is dropped exactly once, whether the loop finishes or
     // the future is dropped between iterations.
     var counter = 0
-    let done = drive(guarded(core::ptr::from_mut(counter)))
+    let done = drive(guarded(core.ptr.from_mut(counter)))
     if done.0 != 5 || counter != 5 + 100 { return 9 }
     var cancelled = 0
-    abandon(guarded(core::ptr::from_mut(cancelled)))
+    abandon(guarded(core.ptr.from_mut(cancelled)))
     if cancelled != 2 + 100 { return 10 }
     let k = drive(early_return(50))
     if k.0 != 1084 || k.1 != 2 { return 13 }

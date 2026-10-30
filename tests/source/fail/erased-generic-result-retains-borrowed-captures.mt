@@ -3,7 +3,7 @@
 copy type Pair { first: i32; second: i32 }
 interface Readable<T: Copy> { fn value(): T; }
 copy type Reader<region r> { value: read Pair from r }
-impl<region r> Reader<region r> implements Readable<read Pair from r> {
+extend<region r> Reader<region r> implements Readable<read Pair from r> {
     fn value(): read Pair from r { self.value }
 }
 fn main() {

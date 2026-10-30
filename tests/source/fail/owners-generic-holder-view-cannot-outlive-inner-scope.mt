@@ -1,7 +1,7 @@
 // expect-error: ownership 14:5 live read loan
 
 type Holder<T> { item: T? }
-impl<T> Holder<T> {
+extend<T> Holder<T> {
     mut fn put(value: take T) { self.item = present(value) }
 }
 fn fill<region a>(h: mut Holder<read i32 from a>, v: read i32 from a) { h.put(read v) }

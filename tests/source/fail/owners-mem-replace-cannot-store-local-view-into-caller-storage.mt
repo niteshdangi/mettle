@@ -3,6 +3,6 @@
 type H<T> { v: T }
 fn bad(slot: mut H<read i32>): Unit {
     let x = 5
-    let old = core::mem::replace(slot, H(read x))
+    let old = core.mem.replace(slot, H(read x))
 }
 fn main() { 0 }

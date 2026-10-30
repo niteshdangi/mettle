@@ -3,7 +3,7 @@
 
 interface Accept { fn accept<T>(value: T): Unit; }
 type Number {}
-impl Number implements Accept {
+extend Number implements Accept {
     fn accept<T: Copy>(value: T): Unit { let first = value; let second = value }
 }
 fn main() { 0 }

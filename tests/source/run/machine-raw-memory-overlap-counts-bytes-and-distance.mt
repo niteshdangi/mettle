@@ -1,23 +1,23 @@
 
 fn copy_values<T>(source: ptr<read T>, target: ptr<mut T>, count: usize) {
-    unsafe { core::ptr::copy_nonoverlapping(source,target,count) }
+    unsafe { core.ptr.copy_nonoverlapping(source,target,count) }
 }
 fn main() {
     var values = [1u32,2u32,3u32,4u32]
     var output = [0u32,0u32,0u32,0u32]
-    let pointer = core::ptr::from_mut(values).cast::<u32>()
-    let target = core::ptr::from_mut(output).cast::<u32>()
+    let pointer = core.ptr.from_mut(values).cast<u32>()
+    let target = core.ptr.from_mut(output).cast<u32>()
     unsafe {
-        core::ptr::`copy`(pointer,pointer.add(1),3)
-        core::ptr::swap(pointer,pointer.add(3))
+        core.ptr.`copy`(pointer,pointer.add(1),3)
+        core.ptr.swap(pointer,pointer.add(3))
     }
     copy_values(pointer.cast_const(),target,4)
     let copied = output[0] == 3u32 && output[1] == 1u32 &&
                  output[2] == 2u32 && output[3] == 1u32
     unsafe {
-        core::ptr::swap_nonoverlapping(pointer,target,4)
-        core::ptr::write_bytes(target,42,1)
-        core::ptr::copy_nonoverlapping(pointer,target,0)
+        core.ptr.swap_nonoverlapping(pointer,target,4)
+        core.ptr.write_bytes(target,42,1)
+        core.ptr.copy_nonoverlapping(pointer,target,0)
     }
     let distance = unsafe { pointer.add(3).offset_from(pointer) }
     let bytes = unsafe { pointer.add(3).byte_offset_from_unsigned(pointer) }

@@ -1,9 +1,9 @@
 
 module core { pub module iter {
-  pub interface Iterator { type Item; mut fn next(): Self::Item?; } } }
-import core::iter::Iterator;
+  pub interface Iterator { type Item; mut fn next(): Self.Item?; } } }
+import core.iter.Iterator;
 type Counter { n: i32; max: i32 }
-impl Counter implements Iterator {
+extend Counter implements Iterator {
     type Item = i32
     mut fn next(): i32? {
         if self.n < self.max { let v = self.n; self.n += 1; present(v) } else { none }
@@ -11,15 +11,15 @@ impl Counter implements Iterator {
 }
 type Box<T> { v: T }
 type Map<I, F> { iter: I; f: F }
-impl<B, I: Iterator, F: fn(<I implements Iterator>::Item): B> Map<I, F> implements Iterator {
+extend<B, I: Iterator, F: fn(I.(Iterator).Item): B> Map<I, F> implements Iterator {
     type Item = B
     mut fn next(): B? {
         match self.iter.next() { present(x) => present(self.f(x)), none => none }
     }
 }
-fn map<B, I: Iterator, F: fn(<I implements Iterator>::Item): B>(it: take I, f: take F): Map<I, F> { Map(it, f) }
+fn map<B, I: Iterator, F: fn(I.(Iterator).Item): B>(it: take I, f: take F): Map<I, F> { Map(it, f) }
 type Take<I> { iter: I; n: usize }
-impl<T, I: Iterator<Item = T>> Take<I> implements Iterator {
+extend<T, I: Iterator<Item = T>> Take<I> implements Iterator {
     type Item = T
     mut fn next(): T? {
         if self.n == 0usize { return none }
@@ -27,7 +27,7 @@ impl<T, I: Iterator<Item = T>> Take<I> implements Iterator {
         self.iter.next()
     }
 }
-fn wrap<I: Iterator>(it: take I, w: take Box<<I implements Iterator>::Item>): Box<<I implements Iterator>::Item> { w }
+fn wrap<I: Iterator>(it: take I, w: take Box<I.(Iterator).Item>): Box<I.(Iterator).Item> { w }
 fn apply<B, F: fn(i32): B>(f: take F): B { f(1) }
 fn apply_ptr<B>(f: fn(i32): B, x: i32): B { f(x) }
 fn plus(x: i32): i32 { x + 1 }

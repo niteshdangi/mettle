@@ -1,9 +1,9 @@
 // Operations on the native stored outcome `(T throws E)`.
 // `import core::outcome;` makes the inherent methods below visible.
 
-import super::text::Text;
+import super.text.Text;
 
-impl<T, E> (T throws E) {
+extend<T, E> (T throws E) {
     pub fn is_success(): bool { match self { success(value) => true, failure(error) => false } }
     pub fn is_failure(): bool { match self { success(value) => false, failure(error) => true } }
 
@@ -15,13 +15,13 @@ impl<T, E> (T throws E) {
     }
 
     pub take fn unwrap(): T {
-        match take self { success(value) => value, failure(error) => super::panic::panic("called `unwrap` on a failed outcome") }
+        match take self { success(value) => value, failure(error) => super.panic.panic("called `unwrap` on a failed outcome") }
     }
     pub take fn expect(message: read Text): T {
-        match take self { success(value) => value, failure(error) => super::panic::panic(message) }
+        match take self { success(value) => value, failure(error) => super.panic.panic(message) }
     }
     pub take fn unwrap_failure(): E {
-        match take self { success(value) => super::panic::panic("called `unwrap_failure` on a successful outcome"), failure(error) => error }
+        match take self { success(value) => super.panic.panic("called `unwrap_failure` on a successful outcome"), failure(error) => error }
     }
     pub take fn unwrap_or(fallback: take T): T {
         match take self { success(value) => value, failure(error) => fallback }

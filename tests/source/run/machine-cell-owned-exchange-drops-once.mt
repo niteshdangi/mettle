@@ -5,9 +5,9 @@ type Counted {
 }
 fn main() {
     var count = 0
-    let counter = core::ptr::from_mut(count)
+    let counter = core.ptr.from_mut(count)
     {
-        let cell = core::cell::Cell::new(Counted(counter,1))
+        let cell = core.cell.Cell.new(Counted(counter,1))
         let old = cell.replace(Counted(counter,10))
         cell.set(Counted(counter,100))
         if count != 10 { return 1 }

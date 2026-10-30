@@ -11,8 +11,8 @@ fn destination(counter: ptr<mut i32>, output: ptr<mut i32>): ptr<mut i32> {
 fn main() {
     var order = 0
     var result = 0
-    let counter = core::ptr::from_mut(order)
-    let output = core::ptr::from_mut(result)
+    let counter = core.ptr.from_mut(order)
+    let output = core.ptr.from_mut(result)
     unsafe {
         asm!("mov {out:e}, {left:e}; add {out:e}, {right:e}",
              left = in(reg) step(counter,1),

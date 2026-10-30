@@ -1,10 +1,10 @@
-import package::core::iter::{Iterator, IntoIterator, Iterable, IterableMut, FromIterator, Extend};
-import package::core::clone::Clone;
-import package::core::cmp::{Eq, Ord, Ordering, PartialEq, PartialOrd};
-import package::core::hash::{Hash, Hasher};
-import package::core::fmt;
+import package.core.iter.{Iterator, IntoIterator, Iterable, IterableMut, FromIterator, Extend};
+import package.core.clone.Clone;
+import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd};
+import package.core.hash.{Hash, Hasher};
+import package.core.fmt;
 
-import super::alloc::{Allocator, Global, AllocError, layout_of, handle_alloc_error};
+import super.alloc.{Allocator, Global, AllocError, layout_of, handle_alloc_error};
 
 type Node<T> {
     value: T
@@ -26,68 +26,68 @@ pub type LinkedList<T, A: Allocator = Global> {
 }
 
 pub fn new_in<T, A: Allocator>(a: take A): LinkedList<T, A> {
-    LinkedList(core::ptr::null_mut::<Node<T>>(), core::ptr::null_mut::<Node<T>>(), 0usize, a)
+    LinkedList(core.ptr.null_mut<Node<T>>(), core.ptr.null_mut<Node<T>>(), 0usize, a)
 }
 pub fn new<T>(): LinkedList<T> { new_in(Global()) }
 
-impl<T, A: Allocator> LinkedList<T, A> {
+extend<T, A: Allocator> LinkedList<T, A> {
     pub fn len(): usize { self.len }
     pub fn is_empty(): bool { self.len == 0usize }
 
     mut fn alloc_node(value: take T, prev: ptr<mut Node<T>>, next: ptr<mut Node<T>>): ptr<mut Node<T>> throws AllocError {
-        let raw = try self.a.allocate(layout_of::<Node<T>>())
-        let n = raw.cast::<Node<T>>()
-        unsafe { core::ptr::write(n, Node(value, prev, next)) }
+        let raw = try self.a.allocate(layout_of<Node<T>>())
+        let n = raw.cast<Node<T>>()
+        unsafe { core.ptr.write(n, Node(value, prev, next)) }
         n
     }
     pub mut fn try_push_back(value: take T): Unit throws AllocError {
-        let n = try self.alloc_node(value, self.tail, core::ptr::null_mut::<Node<T>>())
-        if self.tail == core::ptr::null_mut::<Node<T>>() { self.head = n } else { unsafe { (*self.tail).next = n } }
+        let n = try self.alloc_node(value, self.tail, core.ptr.null_mut<Node<T>>())
+        if self.tail == core.ptr.null_mut<Node<T>>() { self.head = n } else { unsafe { (*self.tail).next = n } }
         self.tail = n
         self.len += 1usize
     }
     pub mut fn try_push_front(value: take T): Unit throws AllocError {
-        let n = try self.alloc_node(value, core::ptr::null_mut::<Node<T>>(), self.head)
-        if self.head == core::ptr::null_mut::<Node<T>>() { self.tail = n } else { unsafe { (*self.head).prev = n } }
+        let n = try self.alloc_node(value, core.ptr.null_mut<Node<T>>(), self.head)
+        if self.head == core.ptr.null_mut<Node<T>>() { self.tail = n } else { unsafe { (*self.head).prev = n } }
         self.head = n
         self.len += 1usize
     }
     pub mut fn push_back(value: take T): Unit {
-        let n = match capture self.alloc_node(value, self.tail, core::ptr::null_mut::<Node<T>>()) {
+        let n = match capture self.alloc_node(value, self.tail, core.ptr.null_mut<Node<T>>()) {
             success(n) => n,
-            failure(_) => handle_alloc_error(layout_of::<Node<T>>())
+            failure(_) => handle_alloc_error(layout_of<Node<T>>())
         }
-        if self.tail == core::ptr::null_mut::<Node<T>>() { self.head = n } else { unsafe { (*self.tail).next = n } }
+        if self.tail == core.ptr.null_mut<Node<T>>() { self.head = n } else { unsafe { (*self.tail).next = n } }
         self.tail = n
         self.len += 1usize
     }
     pub mut fn push_front(value: take T): Unit {
-        let n = match capture self.alloc_node(value, core::ptr::null_mut::<Node<T>>(), self.head) {
+        let n = match capture self.alloc_node(value, core.ptr.null_mut<Node<T>>(), self.head) {
             success(n) => n,
-            failure(_) => handle_alloc_error(layout_of::<Node<T>>())
+            failure(_) => handle_alloc_error(layout_of<Node<T>>())
         }
-        if self.head == core::ptr::null_mut::<Node<T>>() { self.tail = n } else { unsafe { (*self.head).prev = n } }
+        if self.head == core.ptr.null_mut<Node<T>>() { self.tail = n } else { unsafe { (*self.head).prev = n } }
         self.head = n
         self.len += 1usize
     }
     pub mut fn pop_front(): T? {
         if self.len == 0usize { return none }
         let n = self.head
-        let node = unsafe { core::ptr::`read`(n.cast_const()) }
+        let node = unsafe { core.ptr.`read`(n.cast_const()) }
         self.head = node.next
-        if self.head == core::ptr::null_mut::<Node<T>>() { self.tail = core::ptr::null_mut::<Node<T>>() } else { unsafe { (*self.head).prev = core::ptr::null_mut::<Node<T>>() } }
+        if self.head == core.ptr.null_mut<Node<T>>() { self.tail = core.ptr.null_mut<Node<T>>() } else { unsafe { (*self.head).prev = core.ptr.null_mut<Node<T>>() } }
         self.len -= 1usize
-        unsafe { self.a.deallocate(n.cast::<u8>(), layout_of::<Node<T>>()) }
+        unsafe { self.a.deallocate(n.cast<u8>(), layout_of<Node<T>>()) }
         present(node.value)
     }
     pub mut fn pop_back(): T? {
         if self.len == 0usize { return none }
         let n = self.tail
-        let node = unsafe { core::ptr::`read`(n.cast_const()) }
+        let node = unsafe { core.ptr.`read`(n.cast_const()) }
         self.tail = node.prev
-        if self.tail == core::ptr::null_mut::<Node<T>>() { self.head = core::ptr::null_mut::<Node<T>>() } else { unsafe { (*self.tail).next = core::ptr::null_mut::<Node<T>>() } }
+        if self.tail == core.ptr.null_mut<Node<T>>() { self.head = core.ptr.null_mut<Node<T>>() } else { unsafe { (*self.tail).next = core.ptr.null_mut<Node<T>>() } }
         self.len -= 1usize
-        unsafe { self.a.deallocate(n.cast::<u8>(), layout_of::<Node<T>>()) }
+        unsafe { self.a.deallocate(n.cast<u8>(), layout_of<Node<T>>()) }
         present(node.value)
     }
     pub fn front(): (read T from self)? {
@@ -122,16 +122,16 @@ impl<T, A: Allocator> LinkedList<T, A> {
 
 // Borrowed front-to-back iterator; `node` is null once the list is exhausted.
 pub type ListIter<region r, T, A: Allocator> { list: read LinkedList<T, A> from r; node: ptr<mut Node<T>> }
-impl<region r, T, A: Allocator> ListIter<region r, T, A> implements Iterator {
+extend<region r, T, A: Allocator> ListIter<region r, T, A> implements Iterator {
     type Item = read T from r
     mut fn next(): (read T from r)? {
-        if self.node == core::ptr::null_mut::<Node<T>>() { return none }
+        if self.node == core.ptr.null_mut<Node<T>>() { return none }
         let n = self.node
         self.node = unsafe { (*n).next }
         present(unsafe { read (*n).value })
     }
 }
-impl<T, A: Allocator> LinkedList<T, A> implements Iterable {
+extend<T, A: Allocator> LinkedList<T, A> implements Iterable {
     type Item = T
     type Iter<region r> = ListIter<region r, T, A>
     fn iter<region r>(receiver self: read Self from r): ListIter<region r, T, A> { ListIter(read self, self.head) }
@@ -139,16 +139,16 @@ impl<T, A: Allocator> LinkedList<T, A> implements Iterable {
 
 // Mutable front-to-back iterator; `node` is null once the list is exhausted.
 pub type ListIterMut<region r, T, A: Allocator> { list: mut LinkedList<T, A> from r; node: ptr<mut Node<T>> }
-impl<region r, T, A: Allocator> ListIterMut<region r, T, A> implements Iterator {
+extend<region r, T, A: Allocator> ListIterMut<region r, T, A> implements Iterator {
     type Item = mut T from r
     mut fn next(): (mut T from r)? {
-        if self.node == core::ptr::null_mut::<Node<T>>() { return none }
+        if self.node == core.ptr.null_mut<Node<T>>() { return none }
         let n = self.node
         self.node = unsafe { (*n).next }
         present(unsafe { mut (*n).value })
     }
 }
-impl<T, A: Allocator> LinkedList<T, A> implements IterableMut {
+extend<T, A: Allocator> LinkedList<T, A> implements IterableMut {
     type Item = T
     type IterMut<region r> = ListIterMut<region r, T, A>
     fn iter_mut<region r>(receiver self: mut Self from r): ListIterMut<region r, T, A> {
@@ -157,23 +157,23 @@ impl<T, A: Allocator> LinkedList<T, A> implements IterableMut {
     }
 }
 
-impl<T: Clone, A: Allocator + Clone> LinkedList<T, A> implements Clone {
+extend<T: Clone, A: Allocator + Clone> LinkedList<T, A> implements Clone {
     fn clone(): LinkedList<T, A> {
-        var out = new_in::<T, A>(self.a.clone())
+        var out = new_in<T, A>(self.a.clone())
         var p = self.head
-        while p != core::ptr::null_mut::<Node<T>>() {
+        while p != core.ptr.null_mut<Node<T>>() {
             out.push_back(unsafe { read (*p).value }.clone())
             p = unsafe { (*p).next }
         }
         out
     }
 }
-impl<T: PartialEq, A: Allocator> LinkedList<T, A> implements PartialEq {
+extend<T: PartialEq, A: Allocator> LinkedList<T, A> implements PartialEq {
     fn eq(other: read LinkedList<T, A>): bool {
         if self.len != other.len { return false }
         var p = self.head
         var q = other.head
-        while p != core::ptr::null_mut::<Node<T>>() {
+        while p != core.ptr.null_mut<Node<T>>() {
             if !unsafe { read (*p).value }.eq(unsafe { read (*q).value }) { return false }
             p = unsafe { (*p).next }
             q = unsafe { (*q).next }
@@ -181,12 +181,12 @@ impl<T: PartialEq, A: Allocator> LinkedList<T, A> implements PartialEq {
         true
     }
 }
-impl<T: Eq, A: Allocator> LinkedList<T, A> implements Eq {}
-impl<T: PartialOrd, A: Allocator> LinkedList<T, A> implements PartialOrd {
+extend<T: Eq, A: Allocator> LinkedList<T, A> implements Eq {}
+extend<T: PartialOrd, A: Allocator> LinkedList<T, A> implements PartialOrd {
     fn partial_cmp(other: read LinkedList<T, A>): Ordering? {
         var p = self.head
         var q = other.head
-        while p != core::ptr::null_mut::<Node<T>>() && q != core::ptr::null_mut::<Node<T>>() {
+        while p != core.ptr.null_mut<Node<T>>() && q != core.ptr.null_mut<Node<T>>() {
             match unsafe { read (*p).value }.partial_cmp(unsafe { read (*q).value }) {
                 present(o) => { if !o.is_eq() { return present(o) } },
                 none => { return none }
@@ -197,11 +197,11 @@ impl<T: PartialOrd, A: Allocator> LinkedList<T, A> implements PartialOrd {
         self.len.partial_cmp(other.len)
     }
 }
-impl<T: Ord, A: Allocator> LinkedList<T, A> implements Ord {
+extend<T: Ord, A: Allocator> LinkedList<T, A> implements Ord {
     fn cmp(other: read LinkedList<T, A>): Ordering {
         var p = self.head
         var q = other.head
-        while p != core::ptr::null_mut::<Node<T>>() && q != core::ptr::null_mut::<Node<T>>() {
+        while p != core.ptr.null_mut<Node<T>>() && q != core.ptr.null_mut<Node<T>>() {
             let o = unsafe { read (*p).value }.cmp(unsafe { read (*q).value })
             if !o.is_eq() { return o }
             p = unsafe { (*p).next }
@@ -210,24 +210,24 @@ impl<T: Ord, A: Allocator> LinkedList<T, A> implements Ord {
         self.len.cmp(other.len)
     }
 }
-impl<T: Hash, A: Allocator> LinkedList<T, A> implements Hash {
+extend<T: Hash, A: Allocator> LinkedList<T, A> implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit {
         state.write_usize(self.len)
         var p = self.head
-        while p != core::ptr::null_mut::<Node<T>>() {
+        while p != core.ptr.null_mut<Node<T>>() {
             unsafe { read (*p).value }.hash(mut state)
             p = unsafe { (*p).next }
         }
     }
 }
-impl<T: fmt::Debug, A: Allocator> LinkedList<T, A> implements fmt::Debug {
-    fn fmt<W: fmt::Write>(f: mut fmt::Formatter<W>): Unit throws fmt::Error {
+extend<T: fmt.Debug, A: Allocator> LinkedList<T, A> implements fmt.Debug {
+    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
         try f.debug_open("[")
         var p = self.head
         var first = true
-        while p != core::ptr::null_mut::<Node<T>>() {
+        while p != core.ptr.null_mut<Node<T>>() {
             try f.debug_item_start(first)
-            try <T implements fmt::Debug>::fmt(unsafe { read (*p).value }, mut f)
+            try T.(fmt.Debug).fmt(unsafe { read (*p).value }, mut f)
             try f.debug_item_end()
             first = false
             p = unsafe { (*p).next }
@@ -235,7 +235,7 @@ impl<T: fmt::Debug, A: Allocator> LinkedList<T, A> implements fmt::Debug {
         try f.debug_close("]", self.len == 0usize)
     }
 }
-impl<T, A: Allocator> LinkedList<T, A> implements Extend<T> {
+extend<T, A: Allocator> LinkedList<T, A> implements Extend<T> {
     mut fn extend<I: IntoIterator<Item = T>>(items: take I): Unit {
         var source = items.into_iter()
         while true {
@@ -243,14 +243,14 @@ impl<T, A: Allocator> LinkedList<T, A> implements Extend<T> {
         }
     }
 }
-impl<T> LinkedList<T> implements FromIterator<T> {
+extend<T> LinkedList<T> implements FromIterator<T> {
     static fn from_iter<I: IntoIterator<Item = T>>(items: take I): LinkedList<T> {
-        var out = new::<T>()
+        var out = new<T>()
         out.extend(items)
         out
     }
 }
 
 // Owned storage moves or is shared exactly when its elements and allocator do.
-unsafe impl<T: Transferable, A: Allocator + Transferable> LinkedList<T, A> implements Transferable {}
-unsafe impl<T: Shareable, A: Allocator + Shareable> LinkedList<T, A> implements Shareable {}
+unsafe extend<T: Transferable, A: Allocator + Transferable> LinkedList<T, A> implements Transferable {}
+unsafe extend<T: Shareable, A: Allocator + Shareable> LinkedList<T, A> implements Shareable {}

@@ -1,6 +1,6 @@
-import alloc::hash_map::HashMap;
+import alloc.hash_map.HashMap;
 fn main(): i32 {
-    var m = alloc::hash_map::new::<i32, i64>()
+    var m = alloc.hash_map.new<i32, i64>()
     var i = 0
     while i < 1000 { let r = m.insert(i + 0, (i as i64) * 3i64); i += 1 }
     if m.len() != 1000usize { return 1 }

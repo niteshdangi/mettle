@@ -1,8 +1,8 @@
 // Raw operating-system boundary of `std`: the libc calls and the
 // `runtime/sys.cpp` shims (see `runtime/sys.h`), plus checked helpers shared by
 // the hosted modules. Nothing here is a stable public surface.
-import package::alloc::vec;
-import package::alloc::vec::Vec;
+import package.alloc.vec;
+import package.alloc.vec.Vec;
 
 extern "C" {
     pub unsafe fn mettle_rt_errno(): i32;
@@ -68,7 +68,7 @@ pub fn errno(): i32 { unsafe { mettle_rt_errno() } }
 // Safety: `p` points at a NUL-terminated string that outlives the copy.
 pub unsafe fn bytes_from_c(p: ptr<read u8>): Vec<u8> {
     let n = unsafe { strlen(p) }
-    var out = vec::with_capacity::<u8>(n)
+    var out = vec.with_capacity<u8>(n)
     var i = 0usize
     while i < n {
         out.push(unsafe { *p.add(i) })
@@ -81,7 +81,7 @@ copy type RawMut { data: ptr<mut u8>; len: usize }
 
 // Base address of a mutable byte slice.
 pub fn data_mut(bytes: mut [u8]): ptr<mut u8> {
-    let fat = core::ptr::from_mut(bytes)
-    let raw = unsafe { core::mem::transmute::<RawMut>(fat) }
+    let fat = core.ptr.from_mut(bytes)
+    let raw = unsafe { core.mem.transmute<RawMut>(fat) }
     raw.data
 }

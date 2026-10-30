@@ -9,13 +9,13 @@
 // rely on this to find the stored key from the query's hash, and ordered
 // collections rely on `Q: Ord` agreeing with `K: Ord`. A type relates to a
 // given `Q` at most once; every type relates to itself.
-import super::text::Text;
+import super.text.Text;
 
 pub interface KeyView<Q: unsized> {
     fn key_view(): read Q from self;
 }
 
 // Identity: every key is its own view.
-impl<T: unsized> T implements KeyView<T> {
+extend<T: unsized> T implements KeyView<T> {
     fn key_view(): read T from self { read self }
 }

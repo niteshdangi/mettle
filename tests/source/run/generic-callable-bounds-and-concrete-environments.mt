@@ -16,7 +16,7 @@ fn main(): i32 {
     var writer = fn(extra: i32): i32 { count += extra; count }
     let item = Item(42)
     let consumer = take fn(): i32 { let owned = take item; owned.value }
-    let pointer: fn(take i32): i32 = identity::<i32>
+    let pointer: fn(take i32): i32 = identity<i32>
     let returned = make(42)
     if apply(reader,22) == 42 && change(writer,22) == 42 &&
        once(consumer) == 42 && pointer(42) == 42 &&

@@ -1,9 +1,9 @@
-import alloc::hash_map;
+import alloc.hash_map;
 
 fn seed(): i64 { 12345i64 } // bench-edit-point
 
 fn main(): i32 {
-    var counts = hash_map::new::<i32, i32>()
+    var counts = hash_map.new<i32, i32>()
     var state = seed()
     var index = 0
     while index < 2000000 {

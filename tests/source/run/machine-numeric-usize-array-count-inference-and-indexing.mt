@@ -8,7 +8,7 @@ fn sum<const N: usize>(values: read [i32;N]): i32 {
 fn at<const N: usize>(values: read [i32;N],index: usize): i32 { values[index] }
 fn from_slice(values: read [i32],index: usize): i32 { values[index] }
 fn main() {
-    let values = repeated::<2usize>()
+    let values = repeated<2usize>()
     let index = 1usize
     let slice: read [i32] = read values
     if sum(values) == 42 && at(values,index) == 21 &&

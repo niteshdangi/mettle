@@ -1,6 +1,6 @@
 
 fn main() {
-    let cell = core::cell::RefCell::new(42)
+    let cell = core.cell.RefCell.new(42)
     {
         var exclusive = cell.borrow_mut()
         { let failed = cell.try_borrow() }

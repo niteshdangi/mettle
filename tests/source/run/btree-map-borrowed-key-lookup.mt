@@ -1,10 +1,10 @@
-import alloc::btree;
-import alloc::string;
+import alloc.btree;
+import alloc.string;
 
 fn main(): i32 {
-    var m = btree::new::<string::String, i32>()
-    let a = m.insert(string::from_text("a"), 1)
-    let b = m.insert(string::from_text("b"), 2)
+    var m = btree.new<string.String, i32>()
+    let a = m.insert(string.from_text("a"), 1)
+    let b = m.insert(string.from_text("b"), 2)
     var n = 0
     match m.get("b") { present(v) => { n += *v }, none => {} }
     if m.contains_key("a") { n += 10 }

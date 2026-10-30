@@ -1,6 +1,6 @@
 
 interface Readable { fn value(): i32; }
-impl i32 implements Readable { fn value(): i32 { self } }
+extend i32 implements Readable { fn value(): i32 { self } }
 type Tail<T: unsized> { header: bool; value: T }
 fn inspect(value: read Tail<any Readable>): i32 {
     if value.header { value.value.value() } else { 1 }

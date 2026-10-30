@@ -1,11 +1,11 @@
 
 interface Lending { type Item<region r>; }
 type Owner {}
-impl Owner implements Lending { type Item<region r> = read i32 from r; }
+extend Owner implements Lending { type Item<region r> = read i32 from r; }
 fn preserve<region r, T: Lending>(
-    value: take <T implements Lending>::Item<region r>
-): <T implements Lending>::Item<region r> { value }
+    value: take T.(Lending).Item<region r>
+): T.(Lending).Item<region r> { value }
 fn main() {
     let value = 42
-    if *preserve::<Owner>(read value) == 42 { 0 } else { 1 }
+    if *preserve<Owner>(read value) == 42 { 0 } else { 1 }
 }

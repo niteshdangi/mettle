@@ -1,10 +1,10 @@
-import super::mutex;
-import super::condvar;
-import super::super::time;
-import package::alloc::arc::Arc;
-import package::alloc::vec::Vec;
-import package::alloc::vec_deque::VecDeque;
-import package::core::iter::Iterator;
+import super.mutex;
+import super.condvar;
+import super.super.time;
+import package.alloc.arc.Arc;
+import package.alloc.vec.Vec;
+import package.alloc.vec_deque.VecDeque;
+import package.core.iter.Iterator;
 
 extern "C" {
     unsafe fn mettle_rt_select_epoch(): u64;
@@ -13,13 +13,13 @@ extern "C" {
 }
 
 type Shared<T> {
-    queue: mutex::Mutex<VecDeque<T>>
-    ready: condvar::Condvar
-    space: condvar::Condvar
+    queue: mutex.Mutex<VecDeque<T>>
+    ready: condvar.Condvar
+    space: condvar.Condvar
     bound: usize
-    waiting_receivers: core::sync::atomic::AtomicUsize
-    senders: core::sync::atomic::AtomicUsize
-    open: core::sync::atomic::AtomicBool
+    waiting_receivers: core.sync.atomic.AtomicUsize
+    senders: core.sync.atomic.AtomicUsize
+    open: core.sync.atomic.AtomicBool
 }
 
 pub type SendError<T> { pub value: T }
@@ -38,7 +38,7 @@ pub copy type EmptySelect {}
 pub type Sender<T> {
     chan: Arc<Shared<T>>
     drop {
-        let previous = self.chan.get().senders.fetch_sub(1usize, core::sync::atomic::Ordering::AcqRel)
+        let previous = self.chan.get().senders.fetch_sub(1usize, core.sync.atomic.Ordering.AcqRel)
         if previous == 1usize {
             let locked = capture self.chan.get().queue.lock()
             let _guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
@@ -54,19 +54,19 @@ pub type Receiver<T> {
     drop {
         let locked = capture self.chan.get().queue.lock()
         let _guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
-        self.chan.get().open.store(false, core::sync::atomic::Ordering::Release)
+        self.chan.get().open.store(false, core.sync.atomic.Ordering.Release)
         self.chan.get().ready.notify_all()
         self.chan.get().space.notify_all()
         unsafe { mettle_rt_select_notify() }
     }
 }
-impl<T> Receiver<T> not Shareable;
+extend<T> Receiver<T> not Shareable;
 
 // Sender for a bounded channel; capacity zero requires a waiting receiver.
 pub type SyncSender<T> {
     chan: Arc<Shared<T>>
     drop {
-        let previous = self.chan.get().senders.fetch_sub(1usize, core::sync::atomic::Ordering::AcqRel)
+        let previous = self.chan.get().senders.fetch_sub(1usize, core.sync.atomic.Ordering.AcqRel)
         if previous == 1usize {
             let locked = capture self.chan.get().queue.lock()
             let _guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
@@ -77,19 +77,19 @@ pub type SyncSender<T> {
 }
 
 fn new_shared<T>(bound: usize): Arc<Shared<T>> {
-    package::alloc::arc::new(Shared(
-        mutex::new(package::alloc::vec_deque::new::<T>()),
-        condvar::new(),
-        condvar::new(),
+    package.alloc.arc.new(Shared(
+        mutex.new(package.alloc.vec_deque.new<T>()),
+        condvar.new(),
+        condvar.new(),
         bound,
-        core::sync::atomic::AtomicUsize::new(0usize),
-        core::sync::atomic::AtomicUsize::new(1usize),
-        core::sync::atomic::AtomicBool::new(true)
+        core.sync.atomic.AtomicUsize.new(0usize),
+        core.sync.atomic.AtomicUsize.new(1usize),
+        core.sync.atomic.AtomicBool.new(true)
     ))
 }
 
 pub fn channel<T>(): (Sender<T>, Receiver<T>) {
-    let chan = new_shared::<T>(0usize)
+    let chan = new_shared<T>(0usize)
     let other = chan.retain()
     (Sender(chan), Receiver(other))
 }
@@ -97,16 +97,16 @@ pub fn channel<T>(): (Sender<T>, Receiver<T>) {
 // A zero bound is a rendezvous: send returns only after a receiver takes the
 // message.
 pub fn sync_channel<T>(bound: usize): (SyncSender<T>, Receiver<T>) {
-    let chan = new_shared::<T>(bound)
+    let chan = new_shared<T>(bound)
     let other = chan.retain()
     (SyncSender(chan), Receiver(other))
 }
 
-impl<T> Sender<T> {
+extend<T> Sender<T> {
     pub fn send(value: take T): Unit throws SendError<T> {
         let locked = capture self.chan.get().queue.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
-        if !self.chan.get().open.load(core::sync::atomic::Ordering::Acquire) {
+        if !self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) {
             throw SendError(value)
         }
         guard.get_mut().push_back(value)
@@ -117,7 +117,7 @@ impl<T> Sender<T> {
     pub fn try_send(value: take T): Unit throws TrySendError<T> {
         let locked = capture self.chan.get().queue.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
-        if !self.chan.get().open.load(core::sync::atomic::Ordering::Acquire) {
+        if !self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) {
             throw TrySendError(value, true)
         }
         guard.get_mut().push_back(value)
@@ -126,25 +126,25 @@ impl<T> Sender<T> {
     }
 
     pub fn duplicate(): Sender<T> {
-        let _previous = self.chan.get().senders.fetch_add(1usize, core::sync::atomic::Ordering::Relaxed)
+        let _previous = self.chan.get().senders.fetch_add(1usize, core.sync.atomic.Ordering.Relaxed)
         Sender(self.chan.retain())
     }
 }
 
-impl<T> SyncSender<T> {
+extend<T> SyncSender<T> {
     pub fn send(value: take T): Unit throws SendError<T> {
         let locked = capture self.chan.get().queue.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
         let rendezvous = self.chan.get().bound == 0usize
-        while self.chan.get().open.load(core::sync::atomic::Ordering::Acquire) &&
+        while self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) &&
               (if rendezvous {
-                  !guard.get().is_empty() || self.chan.get().waiting_receivers.load(core::sync::atomic::Ordering::Relaxed) == 0usize
+                  !guard.get().is_empty() || self.chan.get().waiting_receivers.load(core.sync.atomic.Ordering.Relaxed) == 0usize
               } else {
                   guard.get().len() >= self.chan.get().bound
               }) {
             guard = self.chan.get().space.wait(guard)
         }
-        if !self.chan.get().open.load(core::sync::atomic::Ordering::Acquire) {
+        if !self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) {
             throw SendError(value)
         }
         guard.get_mut().push_back(value)
@@ -152,7 +152,7 @@ impl<T> SyncSender<T> {
         unsafe { mettle_rt_select_notify() }
         if rendezvous {
             while !guard.get().is_empty() &&
-                  self.chan.get().open.load(core::sync::atomic::Ordering::Acquire) {
+                  self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) {
                 guard = self.chan.get().space.wait(guard)
             }
             if !guard.get().is_empty() {
@@ -160,7 +160,7 @@ impl<T> SyncSender<T> {
                 self.chan.get().space.notify_all()
                 match take returned {
                     present(unsent) => throw SendError(unsent),
-                    none => core::intrinsics::abort()
+                    none => core.intrinsics.abort()
                 }
             }
         }
@@ -169,12 +169,12 @@ impl<T> SyncSender<T> {
     pub fn try_send(value: take T): Unit throws TrySendError<T> {
         let locked = capture self.chan.get().queue.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
-        if !self.chan.get().open.load(core::sync::atomic::Ordering::Acquire) {
+        if !self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) {
             throw TrySendError(value, true)
         }
         let rendezvous = self.chan.get().bound == 0usize
         let full = if rendezvous {
-            !guard.get().is_empty() || self.chan.get().waiting_receivers.load(core::sync::atomic::Ordering::Relaxed) == 0usize
+            !guard.get().is_empty() || self.chan.get().waiting_receivers.load(core.sync.atomic.Ordering.Relaxed) == 0usize
         } else {
             guard.get().len() >= self.chan.get().bound
         }
@@ -191,18 +191,18 @@ impl<T> SyncSender<T> {
         let locked = capture self.chan.get().queue.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
         let rendezvous = self.chan.get().bound == 0usize
-        let started = time::now()
+        let started = time.now()
         while true {
-            if !self.chan.get().open.load(core::sync::atomic::Ordering::Acquire) {
+            if !self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) {
                 throw SendTimeoutError(value, false, true)
             }
             let available = if rendezvous {
-                guard.get().is_empty() && self.chan.get().waiting_receivers.load(core::sync::atomic::Ordering::Relaxed) != 0usize
+                guard.get().is_empty() && self.chan.get().waiting_receivers.load(core.sync.atomic.Ordering.Relaxed) != 0usize
             } else {
                 guard.get().len() < self.chan.get().bound
             }
             if available { break }
-            let elapsed = time::now().duration_since(started).as_nanos()
+            let elapsed = time.now().duration_since(started).as_nanos()
             if elapsed >= timeout_nanos as u128 {
                 throw SendTimeoutError(value, true, false)
             }
@@ -215,14 +215,14 @@ impl<T> SyncSender<T> {
         unsafe { mettle_rt_select_notify() }
         if rendezvous {
             while !guard.get().is_empty() &&
-                  self.chan.get().open.load(core::sync::atomic::Ordering::Acquire) {
-                let elapsed = time::now().duration_since(started).as_nanos()
+                  self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) {
+                let elapsed = time.now().duration_since(started).as_nanos()
                 if elapsed >= timeout_nanos as u128 {
                     let returned = guard.get_mut().pop_back()
                     self.chan.get().space.notify_all()
                     match take returned {
                         present(unsent) => throw SendTimeoutError(unsent, true, false),
-                        none => core::intrinsics::abort()
+                        none => core.intrinsics.abort()
                     }
                 }
                 let remaining = (timeout_nanos as u128 - elapsed) as u64
@@ -234,19 +234,19 @@ impl<T> SyncSender<T> {
                 self.chan.get().space.notify_all()
                 match take returned {
                     present(unsent) => throw SendTimeoutError(unsent, false, true),
-                    none => core::intrinsics::abort()
+                    none => core.intrinsics.abort()
                 }
             }
         }
     }
 
     pub fn duplicate(): SyncSender<T> {
-        let _previous = self.chan.get().senders.fetch_add(1usize, core::sync::atomic::Ordering::Relaxed)
+        let _previous = self.chan.get().senders.fetch_add(1usize, core.sync.atomic.Ordering.Relaxed)
         SyncSender(self.chan.retain())
     }
 }
 
-impl<T> Receiver<T> {
+extend<T> Receiver<T> {
     pub fn recv(): T throws RecvError {
         let locked = capture self.chan.get().queue.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
@@ -261,13 +261,13 @@ impl<T> Receiver<T> {
                     self.chan.get().space.notify_all()
                 },
                 none => {
-                    if self.chan.get().senders.load(core::sync::atomic::Ordering::Acquire) == 0usize {
+                    if self.chan.get().senders.load(core.sync.atomic.Ordering.Acquire) == 0usize {
                         waiting = false
                     } else {
-                        let _previous = self.chan.get().waiting_receivers.fetch_add(1usize, core::sync::atomic::Ordering::Relaxed)
+                        let _previous = self.chan.get().waiting_receivers.fetch_add(1usize, core.sync.atomic.Ordering.Relaxed)
                         self.chan.get().space.notify_one()
                         guard = self.chan.get().ready.wait(guard)
-                        let _previous = self.chan.get().waiting_receivers.fetch_sub(1usize, core::sync::atomic::Ordering::Relaxed)
+                        let _previous = self.chan.get().waiting_receivers.fetch_sub(1usize, core.sync.atomic.Ordering.Relaxed)
                     }
                 }
             }
@@ -281,7 +281,7 @@ impl<T> Receiver<T> {
         let next = guard.get_mut().pop_front()
         match take next {
             present(value) => { self.chan.get().space.notify_all(); value },
-            none => throw TryRecvError(self.chan.get().senders.load(core::sync::atomic::Ordering::Acquire) == 0usize)
+            none => throw TryRecvError(self.chan.get().senders.load(core.sync.atomic.Ordering.Acquire) == 0usize)
         }
     }
 
@@ -289,31 +289,31 @@ impl<T> Receiver<T> {
     pub fn recv_timeout(timeout_nanos: u64): T throws RecvTimeoutError {
         let locked = capture self.chan.get().queue.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
-        let started = time::now()
+        let started = time.now()
         var waiting = false
         while guard.get().is_empty() {
-            if self.chan.get().senders.load(core::sync::atomic::Ordering::Acquire) == 0usize {
+            if self.chan.get().senders.load(core.sync.atomic.Ordering.Acquire) == 0usize {
                 throw RecvTimeoutError(false, true)
             }
-            let elapsed = time::now().duration_since(started).as_nanos()
+            let elapsed = time.now().duration_since(started).as_nanos()
             if elapsed >= timeout_nanos as u128 {
                 throw RecvTimeoutError(true, false)
             }
             if !waiting {
-                let _previous = self.chan.get().waiting_receivers.fetch_add(1usize, core::sync::atomic::Ordering::Relaxed)
+                let _previous = self.chan.get().waiting_receivers.fetch_add(1usize, core.sync.atomic.Ordering.Relaxed)
                 self.chan.get().space.notify_one()
                 waiting = true
             }
             let remaining = (timeout_nanos as u128 - elapsed) as u64
             let waited = self.chan.get().ready.wait_timeout(guard, remaining)
             guard = waited.0
-            let _previous = self.chan.get().waiting_receivers.fetch_sub(1usize, core::sync::atomic::Ordering::Relaxed)
+            let _previous = self.chan.get().waiting_receivers.fetch_sub(1usize, core.sync.atomic.Ordering.Relaxed)
             waiting = false
         }
         let next = guard.get_mut().pop_front()
         match take next {
             present(value) => { self.chan.get().space.notify_all(); value },
-            none => core::intrinsics::abort()
+            none => core.intrinsics.abort()
         }
     }
 }
@@ -322,25 +322,25 @@ fn channel_ready<T>(chan: read Shared<T>): bool {
     let locked = capture chan.queue.lock()
     let guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
     !guard.get().is_empty() ||
-        chan.senders.load(core::sync::atomic::Ordering::Acquire) == 0usize ||
-        !chan.open.load(core::sync::atomic::Ordering::Acquire)
+        chan.senders.load(core.sync.atomic.Ordering.Acquire) == 0usize ||
+        !chan.open.load(core.sync.atomic.Ordering.Acquire)
 }
 
 fn register_select_waiter<T>(chan: read Shared<T>): Unit {
     let locked = capture chan.queue.lock()
     let _guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
-    let _previous = chan.waiting_receivers.fetch_add(1usize, core::sync::atomic::Ordering::Relaxed)
+    let _previous = chan.waiting_receivers.fetch_add(1usize, core.sync.atomic.Ordering.Relaxed)
     chan.space.notify_one()
 }
 
 fn unregister_select_waiter<T>(chan: read Shared<T>): Unit {
     let locked = capture chan.queue.lock()
     let _guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
-    let _previous = chan.waiting_receivers.fetch_sub(1usize, core::sync::atomic::Ordering::Relaxed)
+    let _previous = chan.waiting_receivers.fetch_sub(1usize, core.sync.atomic.Ordering.Relaxed)
     chan.space.notify_one()
 }
 
-impl<T> Receiver<T> implements Iterator {
+extend<T> Receiver<T> implements Iterator {
     type Item = T
     mut fn next(): T? {
         let result = capture self.recv()
@@ -358,12 +358,12 @@ pub type Select<region r, T> {
 }
 
 pub fn select<T, region r>(source: read Receiver<T> from r): Select<region r, T> {
-    var selected = Select(package::alloc::vec::new::<read Receiver<T> from r>(), 0usize)
+    var selected = Select(package.alloc.vec.new<read Receiver<T> from r>(), 0usize)
     let _first = selected.add(source)
     selected
 }
 
-impl<region r, T> Select<region r, T> {
+extend<region r, T> Select<region r, T> {
     pub mut fn add(source: read Receiver<T> from r): usize {
         let index = self.receivers.len()
         self.receivers.push(read source)

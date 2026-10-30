@@ -1,6 +1,6 @@
-import core::fmt::{Debug, Error, Write, Formatter, buffer_writer, formatter, spec, written_text}
-import core::hash::{Hash, hash_one}
-import core::clone::Clone
+import core.fmt.{Debug, Error, Write, Formatter, buffer_writer, formatter, spec, written_text}
+import core.hash.{Hash, hash_one}
+import core.clone.Clone
 
 @derive(Clone, Copy, Debug, Hash)
 type Point { x: i32; y: i32 }
@@ -27,13 +27,13 @@ fn run(): i32 throws Error {
         present(t) => { if t != "Point { x: 1, y: 2 }" { return 1 } },
         none => { return 2 }
     }
-    let m = try render(read Token::Num(7), mut buffer)
+    let m = try render(read Token.Num(7), mut buffer)
     match written_text(read buffer, m) {
         present(t) => { if t != "Num(7)" { return 3 } },
         none => { return 4 }
     }
     if hash_one(read p) != hash_one(read Point(1, 2)) { return 5 }
-    if hash_one(read Token::Num(1)) == hash_one(read Token::Eof) { return 6 }
+    if hash_one(read Token.Num(1)) == hash_one(read Token.Eof) { return 6 }
     let b = Boxed(Point(3, 4)).clone()
     let k = try render(read b, mut buffer)
     match written_text(read buffer, k) {

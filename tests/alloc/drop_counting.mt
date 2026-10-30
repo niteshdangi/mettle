@@ -1,10 +1,10 @@
-import alloc::vec::Vec;
-import alloc::rc::Rc;
-import alloc::hash_map::HashMap;
-import alloc::vec_deque::VecDeque;
-import alloc::linked_list::LinkedList;
-import alloc::btree::BTreeMap;
-import alloc::boxed::Box;
+import alloc.vec.Vec;
+import alloc.rc.Rc;
+import alloc.hash_map.HashMap;
+import alloc.vec_deque.VecDeque;
+import alloc.linked_list.LinkedList;
+import alloc.btree.BTreeMap;
+import alloc.boxed.Box;
 
 // Adds its id to a shared counter when dropped; each drop must happen exactly once.
 type D { c: ptr<mut i32>; id: i32
@@ -12,9 +12,9 @@ type D { c: ptr<mut i32>; id: i32
 
 fn main(): i32 {
     var n = 0
-    let c = core::ptr::from_mut(n)
+    let c = core.ptr.from_mut(n)
     {
-        var v = alloc::vec::new::<D>()
+        var v = alloc.vec.new<D>()
         var i = 0
         while i < 50 { v.push(D(c, 1)); i += 1 }
         let x = v.remove(10usize)
@@ -24,7 +24,7 @@ fn main(): i32 {
     if n != 50 { return 2 }
     n = 0
     {
-        var m = alloc::hash_map::new::<i32, D>()
+        var m = alloc.hash_map.new<i32, D>()
         var i = 0
         while i < 100 { let r = m.insert(i + 0, D(c, 1)); i += 1 }
         let r = m.insert(5, D(c, 1000))
@@ -35,7 +35,7 @@ fn main(): i32 {
     if n != 1100 { return 9 }
     n = 0
     {
-        var d = alloc::vec_deque::new::<D>()
+        var d = alloc.vec_deque.new<D>()
         var i = 0
         while i < 20 { d.push_back(D(c, 1)); d.push_front(D(c, 1)); i += 1 }
         let a = d.pop_front()
@@ -44,14 +44,14 @@ fn main(): i32 {
     if n != 40 { return 5 }
     n = 0
     {
-        var l = alloc::linked_list::new::<D>()
+        var l = alloc.linked_list.new<D>()
         var i = 0
         while i < 10 { l.push_back(D(c, 1)); i += 1 }
     }
     if n != 10 { return 6 }
     n = 0
     {
-        var t = alloc::btree::new::<i32, D>()
+        var t = alloc.btree.new<i32, D>()
         var i = 0
         while i < 10 { let r = t.insert(i + 0, D(c, 1)); i += 1 }
         let r = t.insert(3, D(c, 100))
@@ -59,8 +59,8 @@ fn main(): i32 {
     if n != 110 { return 7 }
     n = 0
     {
-        let b = alloc::boxed::new(D(c, 7))
-        let r1 = alloc::rc::new(D(c, 9))
+        let b = alloc.boxed.new(D(c, 7))
+        let r1 = alloc.rc.new(D(c, 9))
         let r2 = r1.retain()
     }
     if n != 16 { return 8 }

@@ -82,6 +82,7 @@ int Checker::call(Node &n, bool reachable) {
     auto &member = *n.children[0];
     if (member.children[0]->kind == Kind::Name)
       permittedRecipes.insert(member.children[0].get());
+    auto receiverErrors = diagnostics.items.size();
     auto receiver = node(*member.children[0], reachable);
     facts(member).effect = facts(*member.children[0]).effect;
     if (member.flag) {
@@ -110,7 +111,9 @@ int Checker::call(Node &n, bool reachable) {
         ++facts(n).dereferences;
       }
       if (!checked.types->isProduct(type)) {
-        error("type", n.span, "unresolved method for this receiver type");
+        // A receiver that already failed to check is not reported again.
+        if (diagnostics.items.size() == receiverErrors)
+          error("type", n.span, "unresolved method for this receiver type");
         return result;
       }
       const auto &product = checked.types->product(type);
