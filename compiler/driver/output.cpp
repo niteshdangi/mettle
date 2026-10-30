@@ -73,7 +73,8 @@ int ioFailure(const std::string &action, const std::error_code &error) {
 }
 } // namespace
 int emit(const Options &options, const Source &source,
-         const ir::VerifiedProgram &program) {
+         const ir::VerifiedProgram &program,
+         const std::vector<Source> &sources) {
   std::error_code fileError;
   auto inputPath = std::filesystem::weakly_canonical(source.path, fileError);
   if (!fileError && inputPath == std::filesystem::weakly_canonical(
@@ -167,8 +168,12 @@ int emit(const Options &options, const Source &source,
                 << llvm::toString(std::move(error)) << '\n';
       return 1;
     }
-    auto module = mettle::backend::lower(program, context, checked,
-                                         options.target, options.freestanding);
+    // The comp_dir is the root source's directory, never a temporary path.
+    mettle::backend::DebugInfoRequest debugRequest{
+        sources, std::filesystem::path(source.path).parent_path().string()};
+    auto module = mettle::backend::lower(
+        program, context, checked, options.target, options.freestanding,
+        options.debugInfo && options.emit != "ir" ? &debugRequest : nullptr);
     module->setSourceFileName(source.path);
     module->setTargetTriple(
         llvm::Triple(llvm::Triple::normalize(options.target)));
@@ -237,6 +242,33 @@ int emit(const Options &options, const Source &source,
         if (llvm::sys::ExecuteAndWait(linker, refs) != 0) {
           std::cerr << "mettle: error[link]: native link failed\n";
           return 1;
+        }
+        if (options.debugInfo && llvm::Triple(options.target).isOSDarwin()) {
+          // ld64 only records a debug map to the temporary main.o, which is
+          // deleted below; dsymutil folds the DWARF into OUTPUT.dSYM first.
+          std::string tool;
+          auto dir = std::filesystem::path(linker).parent_path().string();
+          if (!dir.empty())
+            if (auto found = llvm::sys::findProgramByName("dsymutil", {dir}))
+              tool = *found;
+          if (tool.empty())
+            if (auto found = llvm::sys::findProgramByName("dsymutil"))
+              tool = *found;
+          if (tool.empty()) {
+            std::cerr << "mettle: warning[debug]: dsymutil not found; the "
+                         "executable has no debug symbols\n";
+          } else {
+            std::error_code absoluteError;
+            const auto bundle =
+                std::filesystem::absolute(options.output, absoluteError)
+                    .string() +
+                ".dSYM";
+            std::filesystem::remove_all(bundle, absoluteError);
+            std::vector<llvm::StringRef> symbolArguments{tool, linked, "-o",
+                                                         bundle};
+            if (llvm::sys::ExecuteAndWait(tool, symbolArguments) != 0)
+              std::cerr << "mettle: warning[debug]: dsymutil failed\n";
+          }
         }
         if (auto error = llvm::sys::fs::rename(linked, output.path))
           return ioFailure("cannot move linked output", error);

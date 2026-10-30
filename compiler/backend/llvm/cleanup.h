@@ -72,6 +72,11 @@ public:
   void returnValue(ir::Value value, llvm::Value *result);
   void finishWrapper(llvm::Value *frame);
   llvm::Value *variadicContext();
+  // Storage of a source local in the body callback; a borrowed local's
+  // storage holds the pointer to its value.
+  llvm::Value *localStorage(std::size_t local) {
+    return field(localFields.at(local));
+  }
 
 private:
   struct Root {

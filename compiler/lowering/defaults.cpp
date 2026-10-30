@@ -39,6 +39,7 @@ ir::Function Builder::runDefault(const mettle::Function &source,
   function.genericEqualities = checked.genericEqualities;
   function.targetFeatures = checked.targetFeatures;
   function.unsafeFunction = source.unsafeFunction;
+  function.span = body.span;
   unsafeDepth = source.unsafeFunction ? 1 : 0;
   for (std::size_t i = 0; i < checked.locals.size(); ++i) {
     const auto &local = checked.locals[i];

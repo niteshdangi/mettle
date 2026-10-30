@@ -388,12 +388,57 @@ def migrate_preserves_syntax_tree():
     invoke(["migrate", broken], 1)
 
 
+def find_dwarfdump():
+    for base in (mettle, Path(__file__).resolve()):
+        for parent in base.parents:
+            for tool in parent.glob(".tools/*/llvm/bin/llvm-dwarfdump"):
+                return tool
+    return shutil.which("llvm-dwarfdump")
+
+
+def debug_info():
+    dwarfdump = find_dwarfdump()
+    if dwarfdump is None:
+        print("SKIP debug_info: llvm-dwarfdump not found")
+        return
+    source = evidence / "debuggee.mt"
+    source.write_text(
+        "fn add_up(base: i32): i32 {\n"
+        "    let doubled: i32 = base * 2\n"
+        "    doubled + 1\n"
+        "}\n"
+        "fn main(): i32 {\n"
+        "    add_up(20) - 41\n"
+        "}\n")
+    plain = [evidence / "plain1.o", evidence / "plain2.o"]
+    debug = [evidence / "debug1.o", evidence / "debug2.o"]
+    for output in plain:
+        invoke(["build", source, "-o", output, "--emit", "object"])
+    for output in debug:
+        invoke(["build", source, "-o", output, "--emit", "object", "-g"])
+    assert plain[0].read_bytes() == plain[1].read_bytes()
+    assert debug[0].read_bytes() == debug[1].read_bytes()
+    assert plain[0].read_bytes() != debug[0].read_bytes()
+    assert b"debuggee.mt" not in plain[0].read_bytes()
+    info = subprocess.run([str(dwarfdump), "--debug-info", str(debug[0])],
+                          text=True, capture_output=True, check=True).stdout
+    assert "DW_TAG_compile_unit" in info, info
+    assert "DW_TAG_subprogram" in info and '"add_up"' in info, info
+    assert "DW_TAG_variable" in info and '"doubled"' in info, info
+    assert "DW_TAG_formal_parameter" in info and '"base"' in info, info
+    assert "debuggee.mt" in info, info
+    lines = subprocess.run([str(dwarfdump), "--debug-line", str(debug[0])],
+                           text=True, capture_output=True, check=True).stdout
+    assert any(row.split()[1:2] == ["3"] for row in lines.splitlines()
+               if row.startswith("0x")), lines
+
+
 CASES = [path_dependency, missing_lock_locked, lock_corruption,
          registry_resolution, version_conflict, backtracking, offline, features,
          manifest_diagnostics, package_options_need_package, incremental_reuse,
          edit_invalidation, cache_dedup_and_bound, cache_corruption_and_clean,
          build_script, build_script_untracked_inputs,
-         migrate_preserves_syntax_tree]
+         migrate_preserves_syntax_tree, debug_info]
 
 failures = []
 for case in CASES:

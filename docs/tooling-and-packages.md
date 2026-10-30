@@ -244,6 +244,24 @@ Moved/uninitialized values must not be presented as live valid values.
 Optimization may eliminate values; report optimized-out rather than inventing
 their contents. Static region analysis does not require runtime region objects.
 
+Status (I12, implemented, unverified: not yet built or run): `mettle build -g`
+emits DWARF 4 through `llvm::DIBuilder` in the LLVM adapter
+(`backend/llvm/debug.*`): a compile unit and file per source, a subprogram per
+source function (source name; linkage name is the symbol), a line-table
+location on every instruction from the IR instruction spans, and a
+`DW_TAG_variable`/`DW_TAG_formal_parameter` per named local with basic,
+pointer, array and product (members at the compiler layout offsets) types. The
+comp dir is the root source's directory, so output is deterministic; without
+`-g` output is byte-identical. `-g` is explicit (the `debug` profile does not
+imply it), and `-g` builds bypass the build cache. On Darwin an executable's
+DWARF stays in the temporary object, so the link step runs `dsymutil` to write
+`OUTPUT.dSYM` (warning if it is missing); `--emit object` keeps DWARF in the
+object. Gaps: subprogram types lack parameter/return types; locals are
+visible from function entry (no lexical scopes, so values before
+initialization are garbage); sums, optionals, owners, erased values, fat
+pointers and async states are opaque sized structs; no inlining/monomorphization
+records, no CodeView/PDB, no moved-value liveness.
+
 Optional Rust bridges build as separate interoperability packages with explicit
 Rust toolchain/ABI adapters. They do not introduce a mandatory rustc dependency
 into native Mettle builds.

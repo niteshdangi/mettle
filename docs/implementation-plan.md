@@ -973,6 +973,11 @@ Build minimal formatting/editor/debug support as the relevant syntax and IR land
 do not wait until I12 to preserve spans or discover uninspectable values.
 I12 is the completion gate, not the first tooling work.
 
+I12 status, source-level debug info: `-g` DWARF (compile unit, subprograms,
+line table, locals/parameters with basic/pointer/array/product types) is
+implemented but unverified (not yet built); sums, owners, erased values and
+async states are opaque, and scopes/inlining/CodeView remain open.
+
 I13 closes remaining operation mappings with compiled native declarations and
 per-operation semantic evidence, including supporting protocols, reexports,
 deprecated stable APIs and target cfg branches missing from rendered docs.

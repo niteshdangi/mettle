@@ -31,6 +31,7 @@ ir::Function Builder::run(const mettle::Function &source, std::size_t index) {
   function.resultSources = module.function(index).resultSources;
   function.resultContents = module.function(index).resultContents;
   function.twoPhaseReceiver = source.receiver == "mut";
+  function.span = source.span;
 
   for (const auto &local : module.function(index).locals)
     function.locals.push_back({local.name, local.type, local.mutableBinding,
