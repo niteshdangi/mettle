@@ -24,6 +24,7 @@
 #include <iterator>
 #include <map>
 #include <set>
+#include <string_view>
 #include <vector>
 
 namespace mettle::driver {
@@ -217,10 +218,47 @@ lintConfiguration(const Options &options, const Diagnostics &diagnostics,
 
 // Prints the findings with the front end's provenance rules; true when none is
 // denied.
+std::string jsonString(std::string_view value) {
+  static constexpr char hex[] = "0123456789abcdef";
+  std::string out = "\"";
+  for (unsigned char c : value) {
+    if (c == '"' || c == '\\') {
+      out += '\\';
+      out += static_cast<char>(c);
+    } else if (c < 0x20) {
+      out += "\\u00";
+      out += hex[c >> 4];
+      out += hex[c & 15];
+    } else {
+      out += static_cast<char>(c);
+    }
+  }
+  return out + '"';
+}
+
 bool reportFindings(const std::vector<lint::Finding> &findings,
-                    Diagnostics &diagnostics, const Source &source) {
+                    Diagnostics &diagnostics, const Source &source,
+                    bool json) {
   std::size_t warnings = 0, denied = 0;
   for (const auto &finding : findings) {
+    if (json) {
+      const Source *owner = &source;
+      for (const auto &candidate : diagnostics.registeredSources())
+        if (candidate.id == finding.span.source) {
+          owner = &candidate;
+          break;
+        }
+      std::cout << "{\"code\":" << jsonString(finding.rule)
+                << ",\"level\":"
+                << jsonString(finding.level == lint::Level::Deny ? "deny"
+                                                                : "warn")
+                << ",\"span\":{\"file\":" << jsonString(owner->path)
+                << ",\"begin\":" << finding.span.begin
+                << ",\"end\":" << finding.span.end
+                << "},\"message\":" << jsonString(finding.message) << "}\n";
+      denied += finding.level == lint::Level::Deny;
+      continue;
+    }
     if (finding.level == lint::Level::Deny) {
       diagnostics.error(finding.rule, finding.span, finding.message);
       ++denied;
@@ -229,6 +267,8 @@ bool reportFindings(const std::vector<lint::Finding> &findings,
       ++warnings;
     }
   }
+  if (json)
+    return denied == 0;
   diagnostics.print(source, std::cerr);
   if (warnings || denied)
     std::cerr << "mettle: lint: " << warnings << " warning(s), " << denied
@@ -453,7 +493,10 @@ int build(const Options &requested,
     return 1;
   }
   if (options.command == "lint")
-    return reportFindings(findings, diagnostics, source) ? 0 : 1;
+    return reportFindings(findings, diagnostics, source,
+                          options.format == "json")
+               ? 0
+               : 1;
   if (options.command == "check")
     return 0;
   int status = emit(options, source, *program, diagnostics);

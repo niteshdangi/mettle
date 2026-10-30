@@ -495,6 +495,23 @@ def fmt_normalizes_layout_only():
     assert macro.read_text() == ("macro square {\n    ($x:expr) => { $x*$x };\n}\n"
                                  "fn main(): i32 {\n    square!(3) - 9\n}\n"), \
         macro.read_text()
+    long = evidence / "long-layout.mt"
+    long.write_text(
+        "fn total(first_value: i32, second_value: i32, third_value: i32, "
+        "fourth_value: i32, fifth_value: i32, sixth_value: i32): i32 {\n"
+        "    first_value + second_value + third_value + fourth_value + "
+        "fifth_value + sixth_value + first_value + second_value\n"
+        "}\n"
+        "fn main(): i32 {\n"
+        "    total(100000000 + 100, 200000000 + 100, 300000000 + 100, "
+        "400000000 + 100, 500000000 + 100, 600000000 + 100)\n"
+        "}\n")
+    invoke(["fmt", long])
+    formatted = long.read_text()
+    assert all(len(line) <= 100 for line in formatted.splitlines()), formatted
+    assert formatted.count("\n") > 6, formatted
+    invoke(["fmt", long, "--check"])
+    assert long.read_text() == formatted
 
 
 def lint_reports_semantic_findings():
@@ -532,6 +549,17 @@ def lint_reports_semantic_findings():
     assert "'ignored'" not in text, text
     invoke(["lint", source, "--deny", "unused-outcome"], 1,
            ["error[unused-outcome]", "warning[unused-binding]"])
+    findings = invoke_json(["lint", source, "--format", "json",
+                            "--deny", "unused-outcome"], 1)
+    outcome = next(item for item in findings
+                   if item["code"] == "unused-outcome")
+    assert outcome["level"] == "deny"
+    span = outcome["span"]
+    assert Path(span["file"]) == source
+    assert "capture value(1)" in source.read_text()[span["begin"]:span["end"]]
+    assert "Outcome" in outcome["message"]
+    assert invoke_json(["lint", source, "--format", "json",
+                        "--allow", "warnings"]) == []
     invoke(["lint", source, "--deny", "warnings", "--allow", "unused-import"], 1,
            ["error[unused-binding]"])
     text = invoke(["lint", source, "--allow", "warnings"])
@@ -774,7 +802,8 @@ def doc_writes_deterministic_html():
     invoke(["doc", source, "-o", first], 0, "documented 1 module")
     invoke(["doc", source, "-o", second], 0, "documented 1 module")
     names = sorted(path.name for path in first.iterdir())
-    assert names == ["index.html", "maths.html", "style.css"], names
+    assert names == ["index.html", "maths.html", "search-index.js",
+                     "search-index.json", "search.js", "style.css"], names
     for name in names:
         assert (first / name).read_bytes() == (second / name).read_bytes(), name
     page = (first / "maths.html").read_text()
@@ -789,12 +818,20 @@ def doc_writes_deterministic_html():
     for needle in ["unused", "a + b", "private_helper"]:
         assert needle not in page, needle
     assert "maths" in (first / "index.html").read_text()
+    search = json.loads((first / "search-index.json").read_text())
+    assert {"name": "maths.add", "href": "maths.html#add"} in search
     invoke(["doc", source, "-o", first, "--private"], 0)
     assert "private_helper" in (first / "maths.html").read_text()
     # A source that does not parse is reported, not documented.
     broken = evidence / "broken.mt"
     broken.write_text("pub fn (\n")
     invoke(["doc", broken, "-o", evidence / "doc-c"], 1, "error[parse]")
+    linked = evidence / "linked.mt"
+    linked.write_text("/// Refers to `maths.add`.\n"
+                      "pub fn example(value: maths.add) {}\n")
+    invoke(["doc", source, linked, "-o", evidence / "doc-links"])
+    page = (evidence / "doc-links" / "linked.html").read_text()
+    assert page.count('<a href="maths.html#add">maths.add</a>') == 2, page
 
 
 def doctests_run_isolated_examples():

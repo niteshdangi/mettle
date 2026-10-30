@@ -22,7 +22,8 @@ void usage() {
          "         (writes static HTML documentation of the `pub` items of "
          "the .mt files under each PATH, default `.`, to DIR, default "
          "target/mettle/doc; fenced examples are run by mettle test)\n"
-         "       mettle lint FILE|PACKAGE [--allow|--warn|--deny RULE]... "
+         "       mettle lint FILE|PACKAGE [--format human|json] "
+         "[--allow|--warn|--deny RULE]... "
          "[build options]\n"
          "         (runs the front end, then semantic lints over the checked "
          "program: unused-binding, unused-mutability, unused-import, "
@@ -98,7 +99,7 @@ std::optional<Options> options(int argc, char **argv) {
       result.onlyIgnored |= arg == "--ignored";
       continue;
     }
-    if (selection && arg == "--format") {
+    if ((selection || result.command == "lint") && arg == "--format") {
       if (++i == argc)
         return std::nullopt;
       result.format = argv[i];

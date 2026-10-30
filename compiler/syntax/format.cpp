@@ -153,7 +153,7 @@ bool continued(const Line &previous, const Piece &first) {
       continue;
     return oneOf(*piece, {"=",  "==", "!=", "<=", ">=", "+=", "-=",
                           "*=", "/=", "%=", "&=", "|=", "^=", "&&",
-                          "||", "+",  "-",  "/",  "%",  "=>", "??"});
+                          "||", "+",  "-",  "*",  "/",  "%", "=>", "??"});
   }
   return false;
 }
@@ -239,16 +239,13 @@ std::string layout(const Source &source, const std::vector<Token> &tokens) {
 struct Signature {
   TokenKind kind;
   std::string text;
-  bool breakBefore;
   bool operator==(const Signature &) const = default;
 };
-// Tokens with their texts and whether a line break separates them from the
-// previous one: everything the formatter must leave alone. A line-ending `;`
-// is left out; the syntax fingerprint keeps the ones that matter.
+// A line-ending `;` is left out; the syntax fingerprint keeps the ones that
+// matter. The fingerprint also checks that inserted line breaks are safe.
 std::vector<Signature> signature(const Source &source,
                                  const std::vector<Token> &tokens) {
   std::vector<Signature> result;
-  bool breaks = false;
   for (std::size_t n = 0; n < tokens.size(); ++n) {
     const auto &token = tokens[n];
     if (token.kind == TokenKind::Space || token.kind == TokenKind::End)
@@ -263,12 +260,89 @@ std::vector<Signature> signature(const Source &source,
         continue;
     }
     if (token.kind == TokenKind::Newline) {
-      breaks = !result.empty();
       continue;
     }
-    result.push_back({token.kind, tokenText(source, token), breaks});
-    breaks = false;
+    result.push_back({token.kind, tokenText(source, token)});
   }
+  return result;
+}
+
+// Wrap only at token boundaries where the parser may continue. Macro token
+// trees and multiline tokens are left untouched because their trivia matters.
+std::string wrap(const Source &source, const std::vector<Token> &tokens) {
+  for (std::size_t i = 0; i < tokens.size(); ++i) {
+    const auto &token = tokens[i];
+    if ((token.kind == TokenKind::Word && token.text == "macro") ||
+        token.kind == TokenKind::FormatOpen ||
+        (token.kind != TokenKind::Newline &&
+         token.text.find('\n') != std::string::npos))
+      return source.text;
+    if (token.kind == TokenKind::Symbol && token.text == "!") {
+      auto previous = i;
+      while (previous && tokens[previous - 1].kind == TokenKind::Space)
+        --previous;
+      if (previous && tokens[previous - 1].kind == TokenKind::Word)
+        return source.text;
+    }
+  }
+  std::vector<std::size_t> breaks, candidates;
+  std::size_t start = 0, parens = 0;
+  bool comment = false;
+  auto line = [&](std::size_t end) {
+    if (!comment && end - start > 100 && !candidates.empty()) {
+      std::size_t indent = 0;
+      while (start + indent < end && source.text[start + indent] == ' ')
+        ++indent;
+      auto segment = start;
+      auto target = start + 100;
+      std::size_t candidate = 0;
+      while (candidate < candidates.size() && end > target) {
+        std::size_t chosen = candidate;
+        while (chosen + 1 < candidates.size() &&
+               candidates[chosen + 1] <= target)
+          ++chosen;
+        auto position = candidates[chosen];
+        if (position <= segment || position >= end)
+          break;
+        breaks.push_back(position);
+        segment = position;
+        target = position + (100 > indent + indentWidth
+                                 ? 100 - indent - indentWidth
+                                 : 1);
+        candidate = chosen + 1;
+      }
+    }
+    candidates.clear();
+    comment = false;
+    start = end + 1;
+  };
+  for (const auto &token : tokens) {
+    if (token.kind == TokenKind::Newline) {
+      line(token.span.begin);
+      continue;
+    }
+    if (token.kind == TokenKind::Comment)
+      comment = true;
+    if (token.kind != TokenKind::Symbol)
+      continue;
+    if (token.text == "(")
+      ++parens;
+    else if (token.text == ")" && parens)
+      --parens;
+    else if ((token.text == "," && parens) ||
+             token.text == "&&" || token.text == "||" ||
+             token.text == "+" || token.text == "-" || token.text == "*" ||
+             token.text == "/" || token.text == "??")
+      candidates.push_back(token.span.end);
+  }
+  std::string result;
+  std::size_t at = 0;
+  for (auto position : breaks) {
+    result.append(source.text, at, position - at);
+    result += '\n';
+    at = position;
+  }
+  result.append(source.text, at, std::string::npos);
   return result;
 }
 } // namespace
@@ -289,6 +363,30 @@ std::optional<std::string> format(const Source &source,
   if (!diagnostics.empty())
     return std::nullopt;
   auto text = layout(source, tokens);
+  const auto unwrapped = text;
+  // Every iteration adds at least one break; layout canonicalizes its
+  // indentation before deciding whether another break is needed.
+  for (;;) {
+    Source current{source.path, text, source.id};
+    Diagnostics scratch;
+    auto currentTokens = tokenize(current, scratch);
+    auto broken = wrap(current, currentTokens);
+    if (broken == text)
+      break;
+    Source next{source.path, broken, source.id};
+    auto nextTokens = tokenize(next, scratch);
+    text = layout(next, nextTokens);
+  }
+  if (text != unwrapped) {
+    Source candidate{source.path, text, source.id};
+    Diagnostics scratch;
+    auto candidateTokens = tokenize(candidate, scratch);
+    auto candidateTree = parsed(candidate, scratch);
+    if (!scratch.empty() ||
+        signature(source, tokens) != signature(candidate, candidateTokens) ||
+        fingerprint(before) != fingerprint(candidateTree))
+      text = unwrapped;
+  }
   Source result{source.path, text, source.id};
   Diagnostics check;
   auto after = tokenize(result, check);
