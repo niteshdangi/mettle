@@ -297,7 +297,7 @@ partial compiler milestones cannot count unsupported programs as passed tests.
 
 Implemented and verified: `check`, `build`, `run`, `test`, `bench` and `fmt`
 (plus `clean`, `migrate` and the inspection commands). The T007 runner
-extensions in section 4 are implemented, unverified. `lint` is implemented and
+extensions in section 4 are implemented and verified on macOS arm64. `lint` is implemented and
 verified (test `lint_reports_semantic_findings`). `doc` and doctests are
 implemented and verified (see section 4.1).
 
@@ -325,8 +325,8 @@ reports pass/fail/ignored, process termination and infrastructure failure
 separately. Test ordering is not a language guarantee. `--jobs` selects test
 concurrency; a deterministic seed option is not yet provided.
 
-Runner extensions in this T007 work are implemented, unverified (not yet
-built). `@test` marks a function in any module of the selected package with no
+Runner extensions in this T007 work are implemented and verified on macOS
+arm64 (test `test_json_timeout_and_modules`). `@test` marks a function in any module of the selected package with no
 parameters and result `Unit`, or `Unit throws E` (returning the failure fails
 the test). Inline and file modules (`module name;`) are included; displayed
 names are fully qualified, such as `network::connect`. `@ignore` /

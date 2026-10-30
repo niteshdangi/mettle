@@ -402,8 +402,7 @@ int build(const Options &requested,
     }
     auto text = (*child)->getBuffer().str();
     if (sourceOverrides)
-      if (auto replacement =
-              sourceOverrides->find(canonical.generic_string());
+      if (auto replacement = sourceOverrides->find(canonical.generic_string());
           replacement != sourceOverrides->end())
         text = replacement->second;
     Source loaded{canonical.generic_string(), std::move(text)};

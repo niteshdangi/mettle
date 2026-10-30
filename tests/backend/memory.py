@@ -92,6 +92,7 @@ def main():
                 "cxx_sha256": digest(args.cxx), "commands": [], "cases": [],
                 "source_inputs": {name: digest(ROOT / name) for name in
                                   ("runtime/panic.cpp", "runtime/panic.h",
+                                   "runtime/thread.cpp", "runtime/thread.h",
                                    "tests/backend/memory.py",
                                    "tests/backend/machine.py",
                                    "tests/backend/machine_callbacks.c",
@@ -131,7 +132,8 @@ def main():
             if expected and "ThreadSanitizer: data race" not in result.stderr:
                 raise AssertionError("TSan detector did not report the intentional race")
         objects = []
-        for name in ("runtime/panic.cpp", "tests/backend/machine_callbacks.c",
+        for name in ("runtime/panic.cpp", "runtime/thread.cpp",
+                     "tests/backend/machine_callbacks.c",
                      "tests/backend/machine_unwind.cpp"):
             source = ROOT / name
             obj = directory / (source.stem + ".o")

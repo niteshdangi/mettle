@@ -180,7 +180,8 @@ void valueLivenessCases() {
   require(verify(loop, diagnostics), "liveness loop is invalid");
   live = mettle::analysis::valueLiveness(function);
   require(live.out[0] == std::set<int>{0}, "entry phi operand was not live");
-  require(live.out[2] == std::set<int>{3}, "back-edge phi operand was not live");
+  require(live.out[2] == std::set<int>{3},
+          "back-edge phi operand was not live");
   require(live.out[1] == std::set<int>{1}, "loop result was not live");
 }
 void phaseOwnership() {

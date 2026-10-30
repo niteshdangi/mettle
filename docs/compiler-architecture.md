@@ -522,7 +522,8 @@ inventory, fixtures and documentation satisfy the source-freeze gate.
 
 ### I11 async state-machine interface plan
 
-Status: partial, unverified (not yet built); the parser-combinator
+Status: partial; the awaiting-loop change is verified on macOS arm64
+(`async-await-loop-retains-local`, `await-borrow-in-loop`); the parser-combinator
 implementation remains in use. `analysis/liveness` computes SSA block-boundary
 liveness with phi uses on incoming edges, but does not yet analyze suspended
 places, loans or cleanup and is not connected to a coroutine transform.

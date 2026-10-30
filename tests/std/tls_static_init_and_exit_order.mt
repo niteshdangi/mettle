@@ -2,9 +2,8 @@
 import std::thread;
 import std::sync::tls;
 import std::io;
-import core::sync::atomic::{AtomicUsize, Ordering};
 
-static MAIN_THREAD: AtomicUsize = AtomicUsize::new(0usize);
+static MAIN_THREAD: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0usize);
 static FIRST: tls::LocalKey<Marker> = tls::LocalKey(make_first);
 static SECOND: tls::LocalKey<Marker> = tls::LocalKey(make_second);
 
@@ -23,11 +22,11 @@ type Marker {
 }
 
 fn make_first(): Marker {
-    Marker(thread::current().raw == MAIN_THREAD.load(Ordering::Relaxed), 1u8)
+    Marker(thread::current().raw == MAIN_THREAD.load(core::sync::atomic::Ordering::Relaxed), 1u8)
 }
 
 fn make_second(): Marker {
-    Marker(thread::current().raw == MAIN_THREAD.load(Ordering::Relaxed), 2u8)
+    Marker(thread::current().raw == MAIN_THREAD.load(core::sync::atomic::Ordering::Relaxed), 2u8)
 }
 
 fn write_line(text: read [u8]): Unit {
@@ -35,7 +34,7 @@ fn write_line(text: read [u8]): Unit {
 }
 
 fn main(): i32 {
-    MAIN_THREAD.store(thread::current().raw, Ordering::Relaxed)
+    MAIN_THREAD.store(thread::current().raw, core::sync::atomic::Ordering::Relaxed)
     let first = FIRST.with(take fn(value: read Marker): bool { value.main })
     match take first {
         present(value) => { if !value { return 1 } },

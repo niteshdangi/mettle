@@ -4,8 +4,8 @@
 #include <bit>
 #include <cerrno>
 #include <cstddef>
-#include <ctime>
 #include <cstdlib>
+#include <ctime>
 #include <exception>
 #include <limits.h>
 #include <memory>
@@ -89,12 +89,10 @@ TlsThreadState *tlsThreadState(bool create) {
   if (pthread_once(&tlsStateOnce, initializeTlsStateKey) != 0 ||
       tlsStateStatus != 0)
     return nullptr;
-  auto *state =
-      static_cast<TlsThreadState *>(pthread_getspecific(tlsStateKey));
+  auto *state = static_cast<TlsThreadState *>(pthread_getspecific(tlsStateKey));
   if (state || !create)
     return state;
-  std::unique_ptr<TlsThreadState> owned(
-      new (std::nothrow) TlsThreadState);
+  std::unique_ptr<TlsThreadState> owned(new (std::nothrow) TlsThreadState);
   if (!owned)
     return nullptr;
   if (pthread_setspecific(tlsStateKey, owned.get()) != 0)
@@ -123,8 +121,7 @@ void removeActiveKey(TlsThreadState &state, std::uintptr_t handle) {
 }
 
 void tlsThreadExitBody(void *raw) {
-  std::unique_ptr<TlsThreadState> state(
-      static_cast<TlsThreadState *>(raw));
+  std::unique_ptr<TlsThreadState> state(static_cast<TlsThreadState *>(raw));
   if (!state)
     return;
   if (pthread_setspecific(tlsStateKey, state.get()) != 0)
@@ -198,9 +195,7 @@ void tlsThreadExit(void *raw) {
 void tlsThreadExitAction(void *) { mettle_rt_tls_thread_exit(); }
 } // namespace
 
-extern "C" void mettleRtTlsThreadDestructor(void *raw) {
-  tlsThreadExit(raw);
-}
+extern "C" void mettleRtTlsThreadDestructor(void *raw) { tlsThreadExit(raw); }
 
 extern "C" {
 std::int32_t mettle_rt_thread_spawn(MettleThreadEntry entry, void *argument,
@@ -338,8 +333,7 @@ std::uintptr_t mettle_rt_tls_key_new(MettleTlsDestructor destructor) {
     return 0;
   }
   try {
-    tlsKeys.push_back(
-        TlsKeyInfo{handle, key, destructor, nullptr, 0, false});
+    tlsKeys.push_back(TlsKeyInfo{handle, key, destructor, nullptr, 0, false});
   } catch (...) {
     pthread_mutex_unlock(&tlsKeyMutex);
     pthread_key_delete(key);
@@ -348,8 +342,8 @@ std::uintptr_t mettle_rt_tls_key_new(MettleTlsDestructor destructor) {
   pthread_mutex_unlock(&tlsKeyMutex);
   return handle;
 }
-std::uintptr_t mettle_rt_tls_static_key_new(
-    const void *identity, MettleTlsDestructor destructor) {
+std::uintptr_t mettle_rt_tls_static_key_new(const void *identity,
+                                            MettleTlsDestructor destructor) {
   if (!identity || pthread_once(&tlsStateOnce, initializeTlsStateKey) != 0 ||
       tlsStateStatus != 0)
     return 0;
@@ -369,8 +363,7 @@ std::uintptr_t mettle_rt_tls_static_key_new(
   }
   const auto handle = static_cast<std::uintptr_t>(key) + 1;
   try {
-    tlsKeys.push_back(
-        TlsKeyInfo{handle, key, destructor, identity, 0, false});
+    tlsKeys.push_back(TlsKeyInfo{handle, key, destructor, identity, 0, false});
   } catch (...) {
     pthread_mutex_unlock(&tlsKeyMutex);
     pthread_key_delete(key);

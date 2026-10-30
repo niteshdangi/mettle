@@ -326,8 +326,7 @@ std::optional<Type> Checker::inherentConstantValue(std::size_t index,
     auto *savedEnvironment = genericEnvironment;
     auto *savedFunction = current;
     auto savedUnsafeDepth = unsafeDepth;
-    genericEnvironment =
-        &implementationGenerics.at(constant.implementation);
+    genericEnvironment = &implementationGenerics.at(constant.implementation);
     current = nullptr;
     unsafeDepth = 0;
     auto value = constant.declaration->constantValue
@@ -357,9 +356,8 @@ std::optional<Type> Checker::inherentConstantValue(std::size_t index,
     const auto &actual = checked.types->product(subject);
     const auto &parameters =
         implementationGenerics.at(constant.implementation).parameters;
-    for (std::size_t i = 0;
-         i < pattern.genericArguments.size() &&
-         i < actual.genericArguments.size();
+    for (std::size_t i = 0; i < pattern.genericArguments.size() &&
+                            i < actual.genericArguments.size();
          ++i)
       if (std::find(parameters.begin(), parameters.end(),
                     pattern.genericArguments[i]) != parameters.end())

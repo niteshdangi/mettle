@@ -520,8 +520,8 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
         continue;
       seen.push_back(it->name);
       if (it->mutableBinding || it->inState)
-        result.push_back({it->name, it->mutableBinding, it->loopCarryable,
-                          true});
+        result.push_back(
+            {it->name, it->mutableBinding, it->loopCarryable, true});
     }
     return result;
   };
@@ -845,8 +845,7 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
   // the futures of the branches; `match` nests the pair to the right.
   branchFuture =
       [&](Node &statement, std::vector<NodeOwner> &rest,
-          const std::vector<AsyncBinding> &variables)
-          -> std::unique_ptr<Node> {
+          const std::vector<AsyncBinding> &variables) -> std::unique_ptr<Node> {
     auto at = statement.span;
     auto result = node(statement.kind, at, statement.text);
     result->patterns = std::move(statement.patterns);
@@ -992,8 +991,8 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
       return asBlock(span, std::move(block));
     }
     for (auto i = from; i < next; ++i) {
-      if (stmts[i]->kind == Kind::Binding &&
-          stmts[i]->text != "<pattern>" && stmts[i]->text != "_") {
+      if (stmts[i]->kind == Kind::Binding && stmts[i]->text != "<pattern>" &&
+          stmts[i]->text != "_") {
         bool loopCarryable = true;
         if (!stmts[i]->children.empty()) {
           const auto &initializer = *stmts[i]->children[0];
@@ -1001,8 +1000,7 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
               initializer.kind != Kind::Unary ||
               (initializer.text != "read" && initializer.text != "mut");
         }
-        variables.push_back(
-            {stmts[i]->text, stmts[i]->flag, loopCarryable});
+        variables.push_back({stmts[i]->text, stmts[i]->flag, loopCarryable});
       }
       block.push_back(std::move(stmts[i]));
     }
@@ -1045,8 +1043,7 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
           for (auto i = next + 1; i < stmts.size(); ++i)
             live = live || usesName(*stmts[i], it->name);
           if (live) {
-            carried.push_back(
-                {it->name, false, it->loopCarryable, true});
+            carried.push_back({it->name, false, it->loopCarryable, true});
           }
         }
       }
@@ -1063,10 +1060,9 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
         after.push_back(std::move(stmts[i]));
       auto continuationVariables = variables;
       for (auto &variable : continuationVariables)
-        if (std::any_of(carried.begin(), carried.end(),
-                        [&](const auto &local) {
-                          return local.name == variable.name;
-                        }))
+        if (std::any_of(carried.begin(), carried.end(), [&](const auto &local) {
+              return local.name == variable.name;
+            }))
           variable.inState = true;
       auto outer = tailExit;
       auto state = [&stateOf, carried](Span here) {
@@ -1325,7 +1321,8 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
 void Parser::lowerAsync(Function &function) {
   auto bodySpan = function.body->span;
   auto result = asyncResult(function.annotation, function.error, true);
-  auto future = asyncBody(*function.body, result, function.span, function.error);
+  auto future =
+      asyncBody(*function.body, result, function.span, function.error);
   TypeSyntax interface;
   interface.name = "core::future::Future";
   GenericArgument output;

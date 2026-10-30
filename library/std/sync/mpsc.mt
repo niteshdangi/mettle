@@ -343,7 +343,8 @@ fn unregister_select_waiter<T>(chan: read Shared<T>): Unit {
 impl<T> Receiver<T> implements Iterator {
     type Item = T
     mut fn next(): T? {
-        match capture self.recv() {
+        let result = capture self.recv()
+        match take result {
             success(value) => present(value),
             failure(error) => none
         }
@@ -356,16 +357,16 @@ pub type Select<region r, T> {
     cursor: usize
 }
 
-pub fn select<T, region r>(receiver: read Receiver<T> from r): Select<region r, T> {
+pub fn select<T, region r>(source: read Receiver<T> from r): Select<region r, T> {
     var selected = Select(package::alloc::vec::new::<read Receiver<T> from r>(), 0usize)
-    let _first = selected.add(receiver)
+    let _first = selected.add(source)
     selected
 }
 
 impl<region r, T> Select<region r, T> {
-    pub mut fn add(receiver: read Receiver<T> from r): usize {
+    pub mut fn add(source: read Receiver<T> from r): usize {
         let index = self.receivers.len()
-        self.receivers.push(receiver)
+        self.receivers.push(read source)
         index
     }
 
@@ -376,7 +377,7 @@ impl<region r, T> Select<region r, T> {
             var checked = 0usize
             var index = self.cursor
             while checked < self.receivers.len() {
-                if channel_ready(self.receivers[index].chan.get()) {
+                if channel_ready(self.receivers.as_slice()[index].chan.get()) {
                     self.cursor = if index + 1usize == self.receivers.len() { 0usize } else { index + 1usize }
                     return index
                 }
@@ -385,14 +386,14 @@ impl<region r, T> Select<region r, T> {
             }
             var registered = 0usize
             while registered < self.receivers.len() {
-                register_select_waiter(self.receivers[registered].chan.get())
+                register_select_waiter(self.receivers.as_slice()[registered].chan.get())
                 registered += 1usize
             }
             checked = 0usize
             index = self.cursor
             var chosen: usize? = none
             while checked < self.receivers.len() {
-                if channel_ready(self.receivers[index].chan.get()) {
+                if channel_ready(self.receivers.as_slice()[index].chan.get()) {
                     chosen = present(index)
                     checked = self.receivers.len()
                 } else {
@@ -404,7 +405,7 @@ impl<region r, T> Select<region r, T> {
                 present(found) => {
                     registered = 0usize
                     while registered < self.receivers.len() {
-                        unregister_select_waiter(self.receivers[registered].chan.get())
+                        unregister_select_waiter(self.receivers.as_slice()[registered].chan.get())
                         registered += 1usize
                     }
                     self.cursor = if found + 1usize == self.receivers.len() { 0usize } else { found + 1usize }
@@ -415,7 +416,7 @@ impl<region r, T> Select<region r, T> {
             unsafe { mettle_rt_select_wait(epoch) }
             registered = 0usize
             while registered < self.receivers.len() {
-                unregister_select_waiter(self.receivers[registered].chan.get())
+                unregister_select_waiter(self.receivers.as_slice()[registered].chan.get())
                 registered += 1usize
             }
         }

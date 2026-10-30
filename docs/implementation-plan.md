@@ -548,8 +548,8 @@ verdict. The last column names acceptance checks and explicit later limits.
 | S019 | Thread spawn and scope: implemented initial library | `std::thread` (`spawn`, `JoinHandle::join` reporting `Panicked`, `scope` joining on panic) over `runtime/thread.cpp`; owned threads require Transferable + Static, scoped ones Transferable | Linux target execution of `library.std`, sanitizer/TSan evidence of the shim, stress on the target. Race freedom is not a fairness or deadlock-freedom claim. |
 | S020 | Mutex and RwLock: implemented initial library | `std::sync::{mutex,rwlock}` with poisoning, thread-affine guards (`not Transferable`) and an error-checking mutex that reports relock | Target stress and applicable poison/failure-policy cases. |
 | S021 | Condition variables, barriers, once: implemented initial library | `std::sync::{condvar,barrier,once}`; a panicking initialiser re-arms `Once` | Target stress. |
-| S022 | Channels: implemented, unverified (not yet built) | `std::sync::mpsc` unbounded FIFO, bounded channels including zero-capacity rendezvous, nonblocking and timed operations, blocking receiver iteration, and a condvar-backed multi-receiver `Select` | Run focused hosted channel cases, then Linux-target and TSan qualification; no build or runtime evidence is claimed for this change. |
-| S023 | Thread-local storage: implemented, unverified (not yet built) | Static `std::sync::tls::LocalKey<T>` aggregate declarations with lazy native-key creation, plus owned dynamic keys, per-thread initialization and reverse first-installation destruction at thread exit and hosted main exit | Run static initializer and thread/main exit destructor cases, then qualify destructor iteration/order and target profiles; no build or runtime evidence is claimed for this change. |
+| S022 | Channels: implemented, verified on macOS arm64 (`tests/std/channel_rendezvous_select_timeouts_iterator.mt`) | `std::sync::mpsc` unbounded FIFO, bounded channels including zero-capacity rendezvous, nonblocking and timed operations, blocking receiver iteration, and a condvar-backed multi-receiver `Select` | Run focused hosted channel cases, then Linux-target and TSan qualification; no build or runtime evidence is claimed for this change. |
+| S023 | Thread-local storage: implemented, verified on macOS arm64 (`tests/std/tls_static_init_and_exit_order.mt`) | Static `std::sync::tls::LocalKey<T>` aggregate declarations with lazy native-key creation, plus owned dynamic keys, per-thread initialization and reverse first-installation destruction at thread exit and hosted main exit | Run static initializer and thread/main exit destructor cases, then qualify destructor iteration/order and target profiles; no build or runtime evidence is claimed for this change. |
 | A001 | Initial C ABIs/callbacks/varargs: implemented mechanisms | Darwin ARM64/Linux x86-64 adapters, physical-entry cursor capture, independent copies, promoted/aggregate reads and cleanup | Frozen-input C round trips/cursor/cleanup qualification on Linux. Cursor transfers outside the represented initial contract are explicitly diagnosed; no new target ABI is implied. |
 | A002 | Layout/alignment: implemented initial combinations | Combined C/integer tags, transparent single-variant enums/products, unions and packed/aligned storage; exact transparent scalar ABI/callback/vararg forwarding has focused C evidence | Frozen-input sanitizer and Linux calling/layout/validity qualification; additional profile/operation closure remains I13. |
 | A003 | Symbols/linkage: implemented mechanisms | Function/static imports/exports/library selection, stable storage identities, full-width required initializers and relocations | Frozen-input symbol/link/lifetime/initialization and freestanding qualification. |
@@ -699,7 +699,8 @@ lazily when a prelude name or a core inherent method name appears. There is no
 opt-out attribute (unspecified). `const` items reuse the static evaluator
 (immutable statics; usable in expressions, array lengths, integer/bool
 patterns and associated `T::NAME` forms; inherent `impl S { const }` is
-implemented, unverified (not yet built)). Panic:
+implemented and verified on macOS arm64 by the inherent-associated-constant
+run and fail cases). Panic:
 `core::panic::{panic, assert, unreachable}` lower through
 `core::intrinsics::panic_message`, which is `llvm.trap` freestanding and the
 runtime hook `mettle_rt_panic_message` when hosted (stderr `panicked: msg`,
@@ -902,8 +903,8 @@ I10 can progress alongside I08/I09 after I07. The initial I10 surface is
 implemented (see S018-S023) with `library.std`, `runtime.thread` and scalar
 compiler cases; Linux-target and TSan qualification of the library remain open
 (a manual out-of-tree TSan run of five threaded programs reported nothing; the
-driver has no TSan link mode). This lane's S022/S023 additions are implemented,
-unverified (not yet built). Channels provide an unbounded `channel`, bounded
+driver has no TSan link mode). The S022/S023 additions are implemented and
+verified on macOS arm64 (std programs). Channels provide an unbounded `channel`, bounded
 `sync_channel` including zero-capacity rendezvous, timeout/try operations,
 receiver iteration and `Select`. TLS supports static lazy-initialized keys and
 documented thread/main-exit destruction ordering. Static keys use aggregate
@@ -1050,7 +1051,7 @@ changed through a `mut` borrow drops by its current variant.
 #### I11 coroutine replacement inventory
 
 The state-machine replacement is **not implemented**. Initial code changes are
-implemented, unverified (not yet built): `analysis/liveness` adds SSA
+implemented and verified on macOS arm64 (`tests/ir/verify.cpp`): `analysis/liveness` adds SSA
 block-boundary liveness with edge-specific phi uses; the parser's existing
 combinator path wraps a non-awaiting throwing body in a throwing closure
 captured as an outcome; and a live, immutable local is moved through the state
@@ -1069,9 +1070,9 @@ their documented revisions and scopes. The interface plan is in
 | Requirement | State and owning files | Remaining work and required fixtures |
 | --- | --- | --- |
 | Preserve async source; type future and await | Partial: `syntax/parser/async.cpp` rewrites bodies; `semantics/checked.h` has no await facts. | Preserve source in `syntax`, resolve captures, regions, output, hidden future identity and poll witness in `semantics`/`types`; cover functions, methods, blocks, closures, generics and borrowed inputs. |
-| Ownership-checked suspension CFG | Partial, unverified: `analysis/liveness` computes SSA block-boundary facts including phi edges; `ir/ir.h` has no suspension edge and initialization/loans do not publish suspension facts. | Add checked suspension, structural validation, initialization, loan/origin liveness including loops, retained destructors and partially moved fields; cover read/mut loans, non-Copy locals and moving a borrowed local. |
+| Ownership-checked suspension CFG | Partial (liveness verified by `tests/ir/verify.cpp`): `analysis/liveness` computes SSA block-boundary facts including phi edges; `ir/ir.h` has no suspension edge and initialization/loans do not publish suspension facts. | Add checked suspension, structural validation, initialization, loan/origin liveness including loops, retained destructors and partially moved fields; cover read/mut loans, non-Copy locals and moving a borrowed local. |
 | Inline pinned state and poll | Missing: `lowering` has ordinary closure environments but no coroutine transform. | Generate constructor/poll, stable child slots, self-loans, correct `Unpin` and Transferable properties, and verified CFG in `lowering`/`types`/`instances`/`pipeline`; cover repeated pending, nested awaits and move-before-pin. |
-| Control flow | Partial: parser `Repeat`/`Either` handles selected loops and branches; live immutable locals are now moved through awaiting-loop state (implemented, unverified (not yet built)). | Replace parser lowering; preserve CFG back-edges and exits; cover nested return, throw, `?`, labeled break/continue, lazy operands and `for` over borrowed Vec/slice; migrate obsolete `await-*` feature-fail cases. |
+| Control flow | Partial: parser `Repeat`/`Either` handles selected loops and branches; live immutable locals are now moved through awaiting-loop state (verified on macOS arm64). | Replace parser lowering; preserve CFG back-edges and exits; cover nested return, throw, `?`, labeled break/continue, lazy operands and `for` over borrowed Vec/slice; migrate obsolete `await-*` feature-fail cases. |
 | Cleanup and cancellation | Partial: combinator fields drop, but segment-local drop order deviates. `cleanup/plan.cpp` and `backend/llvm/cleanup.cpp` use per-frame plans/flags. | Make initialized-place flags persistent across polls; preserve lexical order and pinned addresses on success, typed failure, cancellation and unwind. Cover never-polled and suspended cancellation, partial moves and exactly-once drops. |
 | Integration and qualification | Missing for the new path; existing `core::future`/`std::task` exercise the parser path. | Reuse existing executors and protocol; complete focused run/fail, generic, cleanup and backend tests, update both architecture and this inventory, then freeze sources. The owner must run applicable quality, Debug/Release, ASan/UBSan, reproducibility and Linux-target gates after integration. |
 
@@ -1094,7 +1095,7 @@ checked by token sequence, syntax-tree fingerprint and idempotence. `mettle run`
 `execute.cpp`, expansion `harness.cpp`; contract in tooling-and-packages sections
 3 and 4). T007's package-wide test/benchmark collection, qualified names,
 newline-delimited JSON results, optional per-test timeout and doctests from
-every package module file are implemented, unverified (regression
+every package module file are implemented and verified on macOS arm64 (regression
 `test_json_timeout_and_modules`). `mettle doc` (static HTML from `///`/`//!`)
 and doctests (`mettle test [--doc]`, fence annotations `no_run`/`ignore`/
 `should_panic`/`compile_fail(PHASE)`) are implemented and verified on macOS
@@ -1188,7 +1189,7 @@ ergonomics, API composition, precise new contracts and their verification.
 | R2 | Lending lines, Copy-valued `[u8].bytes()`, KeyView, PathInput/`write_path` and equivalent workloads within qualified profiles; reconcile `library-and-abi.md` POSIX path statements with the native Windows path contract before delivering that profile. Status: implemented for POSIX in current spelling, focused fixtures pass; Windows paths and collision stress pending | Now (independent of the new spellings; migrates at cutover) |
 | Cutover | Lane-owner freeze, parser-backed migration, focused checks, then resume writers | After R1 and active lanes integrate |
 | R3 | Expression-bodied `fn`, diagnostics, formatter/editor completion | After cutover |
-| Qualification | Frozen-input quality, target, safety and performance checks, including performance.md sections 5.1-5.2. D17 comparison harness (`tools/bench_compare.py`, `benchmarks/`, performance.md section 5.3): implemented, not yet run, not yet built; its `.mt` workloads are unchecked against the compiler and no result is claimed | After R3 |
+| Qualification | Frozen-input quality, target, safety and performance checks, including performance.md sections 5.1-5.2. D17 comparison harness (`tools/bench_compare.py`, `benchmarks/`, performance.md section 5.3): implemented; its `.mt` workloads type-check, but the harness has not been run and no result is claimed | After R3 |
 | WP-S | Storage audit work package of tooling-and-packages.md section 7.1; operational, no dependency on an artifact store | Now |
 
 Reconcile this work with the I06 repair and I07-I08 obligations; a design

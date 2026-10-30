@@ -335,10 +335,10 @@ void runSelected(const Options &options, const WorkDirectory &work,
       auto captured = work.file("output-" + std::to_string(index) + ".txt");
       const auto &target = targets[index];
       auto startedAt = std::chrono::steady_clock::now();
-      auto outcome = spawn(
-          target.program,
-          {expansion::harnessTestSelector, std::to_string(target.index)},
-          captured.string(), options.timeoutSeconds);
+      auto outcome =
+          spawn(target.program,
+                {expansion::harnessTestSelector, std::to_string(target.index)},
+                captured.string(), options.timeoutSeconds);
       results[index] = classify(tests[index], outcome, contents(captured));
       results[index].durationNs = static_cast<std::uint64_t>(
           std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -396,8 +396,7 @@ std::string jsonString(const std::string &value) {
 void jsonSuiteStart(const std::string &suite, std::size_t total,
                     std::size_t filtered) {
   std::cout << "{\"event\":\"suite\",\"name\":" << jsonString(suite)
-            << ",\"total\":" << total << ",\"filtered\":" << filtered
-            << "}\n";
+            << ",\"total\":" << total << ",\"filtered\":" << filtered << "}\n";
 }
 
 void jsonTest(const std::string &test, const std::string &outcome,
@@ -437,8 +436,7 @@ bool report(const std::vector<Module::TestFunction> &tests,
   if (machineReadable)
     jsonSuiteStart(suite, total, selection.filtered);
   else
-    std::cout << "running " << total
-              << (total == 1 ? " test\n" : " tests\n");
+    std::cout << "running " << total << (total == 1 ? " test\n" : " tests\n");
   for (std::size_t i = 0; i < tests.size(); ++i) {
     if (tests[i].bench)
       continue;
@@ -461,8 +459,7 @@ bool report(const std::vector<Module::TestFunction> &tests,
     const auto &result = results[i];
     ++counts[static_cast<int>(result.verdict)];
     if (machineReadable) {
-      const auto &message =
-          result.reason.empty() ? result.note : result.reason;
+      const auto &message = result.reason.empty() ? result.note : result.reason;
       jsonTest(name(tests[i]), jsonOutcome(result.verdict), result.durationNs,
                result.output, message);
     } else
@@ -639,8 +636,7 @@ int runDoctests(const Options &requested,
       pageName += (pageName.empty() ? "" : "::") + part;
     if (pageName.empty())
       pageName = fs::path(source.source.path).stem().string();
-    auto page =
-        documentation::extract(source.source, pageName, true);
+    auto page = documentation::extract(source.source, pageName, true);
     for (auto &example : documentation::examples(page)) {
       examples.push_back(std::move(example));
       sourceForExample.push_back(sourceIndex);
@@ -676,9 +672,8 @@ int runDoctests(const Options &requested,
     std::map<std::string, std::string> overrides;
     for (const auto &[sourceIndex, sourcePicks] : grouped) {
       const auto &source = sourceModules[sourceIndex].source;
-      overrides.emplace(
-          source.path,
-          documentation::withTests(source.text, examples, sourcePicks));
+      overrides.emplace(source.path, documentation::withTests(
+                                         source.text, examples, sourcePicks));
     }
     return overrides;
   };
@@ -817,11 +812,10 @@ int runBenchmarks(const Options &options) {
             static_cast<std::size_t>(expansion::harnessBenchSamples)) {
       result.verdict = Verdict::Failed;
       result.reason =
-          !outcome.started ? "cannot start: " + outcome.problem
-          : outcome.signaled ? "terminated by " + signalName(outcome.signal)
-          : outcome.code != 0
-              ? "exit status " + std::to_string(outcome.code)
-              : "invalid benchmark output";
+          !outcome.started    ? "cannot start: " + outcome.problem
+          : outcome.signaled  ? "terminated by " + signalName(outcome.signal)
+          : outcome.code != 0 ? "exit status " + std::to_string(outcome.code)
+                              : "invalid benchmark output";
       if (!machineReadable)
         std::cout << "bench " << name(benches[index]) << " ... FAILED ("
                   << result.reason << ")\n"

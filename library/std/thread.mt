@@ -90,20 +90,15 @@ unsafe fn release(header: ptr<mut Header>): Unit {
     }
 }
 
-extern "C" fn caught_thread_body(raw: ptr<mut u8>): Unit {
+// Runs the closure and then its TLS destructors under runtime catch
+// boundaries, so a panic stays on this thread; records its code and drops
+// its reference.
+extern "C" fn thread_entry(raw: ptr<mut u8>): Unit {
     unsafe {
         let header = raw.cast::<Header>()
         let run = (*header).run
         let body = core::mem::transmute::<extern "C" fn(ptr<mut u8>): Unit>(run)
-        body((*header).data)
-    }
-}
-
-// Runs the closure and then its TLS destructors under runtime catch boundaries.
-extern "C" fn thread_entry(raw: ptr<mut u8>): Unit {
-    unsafe {
-        let header = raw.cast::<Header>()
-        (*header).code = mettle_rt_thread_catch(header.cast::<u8>(), caught_thread_body)
+        (*header).code = mettle_rt_thread_catch((*header).data, body)
         release(header)
     }
 }

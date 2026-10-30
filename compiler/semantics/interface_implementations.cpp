@@ -105,8 +105,7 @@ void Checker::interfaceImplementations() {
           makeGenericEnvironment(syntax.genericParameters, syntax.constraints);
       environment.declarationSpan = syntax.span;
       foundEnvironment =
-          implementationGenerics.emplace(&syntax, std::move(environment))
-              .first;
+          implementationGenerics.emplace(&syntax, std::move(environment)).first;
     }
     genericEnvironment = &foundEnvironment->second;
     auto implementationRegions =
@@ -742,9 +741,9 @@ std::optional<Type> Checker::associatedConstant(const Node &node) {
   if (node.kind != Kind::Name)
     return std::nullopt;
   if (node.text.find("::") == std::string::npos) {
-    auto canonical = checked.symbols->lookup(
-        checked.symbols->moduleOf(node.span), node.text,
-        resolution::Namespace::Value, node.span);
+    auto canonical =
+        checked.symbols->lookup(checked.symbols->moduleOf(node.span), node.text,
+                                resolution::Namespace::Value, node.span);
     auto resolved = canonical ? inherentConstantNames.find(*canonical)
                               : inherentConstantNames.end();
     return resolved == inherentConstantNames.end()
@@ -765,7 +764,16 @@ std::optional<Type> Checker::associatedConstant(const Node &node) {
         !checked.types->isConstant(parameter->second))
       subject = parameter->second;
   }
-  if (subject == Type::Unknown) {
+  // Only annotate the prefix when some inherent constant has this member;
+  // otherwise `Generic::Variant` would report missing generic arguments.
+  bool memberDeclared = false;
+  for (const auto &[name, index] : inherentConstantNames)
+    if (name.size() > member.size() + 2 && name.ends_with(member) &&
+        name.compare(name.size() - member.size() - 2, 2, "::") == 0) {
+      memberDeclared = true;
+      break;
+    }
+  if (subject == Type::Unknown && memberDeclared) {
     auto canonicalType = typeName(prefix, node.span, owner);
     if (!canonicalType.empty()) {
       TypeSyntax syntax;

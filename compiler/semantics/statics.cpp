@@ -134,8 +134,7 @@ void Checker::inherentConstantNamesAndTypes() {
         continue;
       }
       if (!item.constantValue) {
-        error("type", item.span,
-              "associated constant requires a definition");
+        error("type", item.span, "associated constant requires a definition");
         continue;
       }
       auto index = inherentConstants.size();

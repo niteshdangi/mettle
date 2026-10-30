@@ -1,5 +1,4 @@
 import package::core::panic::panic;
-import package::core::sync::atomic::{AtomicUsize, Ordering};
 
 extern "C" {
     unsafe fn mettle_rt_tls_key_new(destructor: extern "C" fn(ptr<mut u8>): Unit): usize;
@@ -24,12 +23,12 @@ unsafe impl<T> LocalKey<T> implements Transferable {}
 unsafe impl<T> LocalKey<T> implements Shareable {}
 
 pub type OwnedLocalKey<T> {
-    key: AtomicUsize
+    key: core::sync::atomic::AtomicUsize
     initialize: (fn(): T)?
     owned: bool
     drop {
         if self.owned {
-            let state = self.key.load(Ordering::Acquire)
+            let state = self.key.load(core::sync::atomic::Ordering::Acquire)
             if state > 1usize { unsafe { mettle_rt_tls_key_free(state - 1usize) } }
         }
     }
@@ -45,7 +44,7 @@ pub fn new<T>(): OwnedLocalKey<T> {
     let destructor = unsafe { core::mem::transmute::<extern "C" fn(ptr<mut u8>): Unit>(drop_value::<T>) }
     let key = unsafe { mettle_rt_tls_key_new(destructor) }
     if key == 0usize { panic("out of thread-local keys") }
-    OwnedLocalKey(AtomicUsize::new(key + 1usize), none, true)
+    OwnedLocalKey(core::sync::atomic::AtomicUsize::new(key + 1usize), none, true)
 }
 
 impl<T> LocalKey<T> {
@@ -65,7 +64,7 @@ impl<T> LocalKey<T> {
             let value = package::alloc::boxed::new(initialize()).into_raw().0
             raw = value.cast::<u8>()
             if unsafe { mettle_rt_tls_set(key, raw) } != 0 {
-                let _owned = unsafe { package::alloc::boxed::from_raw_in(value, package::alloc::Global()) }
+                let _owned = unsafe { package::alloc::boxed::from_raw_in(value, package::alloc::alloc::Global()) }
                 panic("failed to set thread-local value")
             }
         }
@@ -78,7 +77,7 @@ impl<T> LocalKey<T> {
         unsafe {
             let old = mettle_rt_tls_get(key)
             if mettle_rt_tls_set(key, raw) != 0 {
-                let _owned = package::alloc::boxed::from_raw_in(raw.cast::<T>(), package::alloc::Global())
+                let _owned = package::alloc::boxed::from_raw_in(raw.cast::<T>(), package::alloc::alloc::Global())
                 panic("failed to set thread-local value")
             }
             if old != core::ptr::null_mut::<u8>() { drop_value::<T>(old) }
@@ -101,18 +100,18 @@ impl<T> LocalKey<T> {
 impl<T> OwnedLocalKey<T> {
     fn key(): usize {
         while true {
-            let state = self.key.load(Ordering::Acquire)
+            let state = self.key.load(core::sync::atomic::Ordering::Acquire)
             if state > 1usize { return state - 1usize }
             if state == 0usize {
-                let claimed = self.key.compare_exchange(0usize, 1usize, Ordering::AcqRel, Ordering::Acquire)
+                let claimed = self.key.compare_exchange(0usize, 1usize, core::sync::atomic::Ordering::AcqRel, core::sync::atomic::Ordering::Acquire)
                 if claimed.is_success() {
                     let destructor = unsafe { core::mem::transmute::<extern "C" fn(ptr<mut u8>): Unit>(drop_value::<T>) }
                     let key = unsafe { mettle_rt_tls_key_new(destructor) }
                     if key == 0usize {
-                        self.key.store(0usize, Ordering::Release)
+                        self.key.store(0usize, core::sync::atomic::Ordering::Release)
                         panic("out of thread-local keys")
                     }
-                    self.key.store(key + 1usize, Ordering::Release)
+                    self.key.store(key + 1usize, core::sync::atomic::Ordering::Release)
                     return key
                 }
             } else {
@@ -131,7 +130,7 @@ impl<T> OwnedLocalKey<T> {
                     let value = package::alloc::boxed::new(make()).into_raw().0
                     raw = value.cast::<u8>()
                     if unsafe { mettle_rt_tls_set(key, raw) } != 0 {
-                        let _owned = unsafe { package::alloc::boxed::from_raw_in(value, package::alloc::Global()) }
+                        let _owned = unsafe { package::alloc::boxed::from_raw_in(value, package::alloc::alloc::Global()) }
                         panic("failed to set thread-local value")
                     }
                 },
@@ -147,7 +146,7 @@ impl<T> OwnedLocalKey<T> {
         unsafe {
             let old = mettle_rt_tls_get(key)
             if mettle_rt_tls_set(key, raw) != 0 {
-                let _owned = package::alloc::boxed::from_raw_in(raw.cast::<T>(), package::alloc::Global())
+                let _owned = package::alloc::boxed::from_raw_in(raw.cast::<T>(), package::alloc::alloc::Global())
                 panic("failed to set thread-local value")
             }
             if old != core::ptr::null_mut::<u8>() { drop_value::<T>(old) }
@@ -155,10 +154,10 @@ impl<T> OwnedLocalKey<T> {
     }
 
     pub fn is_set(): bool {
-        var state = self.key.load(Ordering::Acquire)
+        var state = self.key.load(core::sync::atomic::Ordering::Acquire)
         while state == 1usize {
             unsafe { mettle_rt_thread_yield() }
-            state = self.key.load(Ordering::Acquire)
+            state = self.key.load(core::sync::atomic::Ordering::Acquire)
         }
         if state == 0usize { return false }
         unsafe { mettle_rt_tls_get(state - 1usize) != core::ptr::null_mut::<u8>() }

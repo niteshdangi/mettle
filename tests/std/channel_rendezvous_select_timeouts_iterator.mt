@@ -1,7 +1,6 @@
 import std::thread;
 import std::sync::mpsc;
 import alloc::arc;
-import core::sync::atomic::{AtomicUsize, Ordering};
 import core::iter::Iterator;
 
 fn main(): i32 {
@@ -34,22 +33,22 @@ fn main(): i32 {
             if error.value != 6 || error.disconnected { return 7 }
         }
     }
-    let started = AtomicUsize::new(0usize)
+    let started = core::sync::atomic::AtomicUsize::new(0usize)
     let probe = arc::new(started)
     let worker_probe = probe.retain()
     let worker = thread::spawn(take fn(): i32 {
-        worker_probe.get().store(1usize, Ordering::Release)
+        worker_probe.get().store(1usize, core::sync::atomic::Ordering::Release)
         let sent = capture tx.send(7)
         match take sent {
             success(_) => {
-                worker_probe.get().store(2usize, Ordering::Release)
+                worker_probe.get().store(2usize, core::sync::atomic::Ordering::Release)
                 0
             },
             failure(_) => 1
         }
     })
     thread::sleep_nanos(20000000u64)
-    if probe.get().load(Ordering::Acquire) != 1usize { return 8 }
+    if probe.get().load(core::sync::atomic::Ordering::Acquire) != 1usize { return 8 }
     let received = capture rx.recv()
     match take received {
         success(value) => { if value != 7 { return 9 } },
@@ -60,7 +59,7 @@ fn main(): i32 {
         success(value) => { if value != 0 { return 11 } },
         failure(_) => { return 12 }
     }
-    if probe.get().load(Ordering::Acquire) != 2usize { return 13 }
+    if probe.get().load(core::sync::atomic::Ordering::Acquire) != 2usize { return 13 }
 
     let empty = mpsc::channel::<i32>()
     let timeout = capture empty.1.recv_timeout(1000000u64)

@@ -129,8 +129,7 @@ private:
 
   // Records a function annotated for the harness (the attributes as written,
   // before `@cfg` consumption).
-  void collect(Function &function,
-               const std::vector<Attribute> &attributes) {
+  void collect(Function &function, const std::vector<Attribute> &attributes) {
     Module::TestFunction found;
     bool marked = false, modifiers = false;
     for (const auto &attribute : attributes) {

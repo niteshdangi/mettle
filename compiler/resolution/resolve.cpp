@@ -521,9 +521,13 @@ private:
         auto visible = boundary(item, module, associated.span);
         auto canonical = *canonicalOwner + "::" + associated.name;
         auto index = result.definitions.size();
-        result.definitions.push_back({Namespace::Value, module, visible,
-                                      associated.name, canonical,
-                                      associated.span, {}});
+        result.definitions.push_back({Namespace::Value,
+                                      module,
+                                      visible,
+                                      associated.name,
+                                      canonical,
+                                      associated.span,
+                                      {}});
         members.push_back(index);
         result.items.push_back(
             {associated.span, module, std::move(canonical), visible});
