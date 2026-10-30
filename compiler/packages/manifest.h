@@ -43,6 +43,10 @@ struct Manifest {
   std::vector<Feature> features;
   // Local registry directory declared by the root package, if any.
   std::optional<std::string> registry;
+  // `[build] script`: a Mettle program, relative to the package directory,
+  // that runs on the host before this package's consumers compile.
+  std::optional<std::string> buildScript;
+  Span buildScriptSpan;
   // Absolute, normalized package directory.
   std::string directory;
   SourceId source = 0;

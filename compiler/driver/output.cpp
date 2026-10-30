@@ -202,6 +202,8 @@ int emit(const Options &options, const Source &source,
           arguments.push_back("--sysroot=" + options.sysroot);
         for (const auto &library : program.program().libraries)
           arguments.push_back("-l" + library);
+        for (const auto &library : options.extraLibraries)
+          arguments.push_back("-l" + library);
         if (llvm::Triple(options.target).isOSLinux()) {
           arguments.push_back("-fuse-ld=lld");
           arguments.push_back("-pthread");

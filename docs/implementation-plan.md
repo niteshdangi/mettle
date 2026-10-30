@@ -875,8 +875,22 @@ I09 T001 status: manifest parsing, SemVer solving over path and local-registry
 sources, `Mettle.lock` with checksums, features, `--locked/--offline/--frozen`
 and `mettle check|build` on a package directory are implemented and covered by
 `tests/packages.py`. Open: git/remote registries, coexisting versions (flat
-module namespace), feature/host/target separation, build scripts, and T003
-incremental reuse.
+module namespace) and feature/host/target separation.
+
+I09 T002/T003 status: implemented, unverified (not yet built or run).
+`[build] script` programs run on the host with declared `mettle:` outputs
+(generated modules, features, link libraries) and a `reproducible` input
+contract, otherwise rerun conservatively (`compiler/driver/build_script.cpp`);
+`mettle build` reuses executables/objects through a content-addressed,
+deduplicated, byte/age-bounded store keyed by token-level source inputs and
+build options (`compiler/packages/store.cpp`, `compiler/driver/cache.cpp`),
+with `mettle clean`. Tests: the `incremental_reuse`, `edit_invalidation`,
+`cache_dedup_and_bound`, `cache_corruption_and_clean`, `build_script` and
+`build_script_untracked_inputs` cases of `tests/packages.py`. Open: reuse is
+whole-program, not per-query (parse/name/type/ownership/instantiation
+dependency separation); no live-build leases; build-dependencies, the I09
+multi-package extension demonstration, retained-byte/compile-time
+measurement (performance.md 5.1.1) and Linux evidence.
 
 I10 can progress alongside I08/I09 after I07. The initial I10 surface is
 implemented (see S018-S023) with `library.std`, `runtime.thread` and scalar

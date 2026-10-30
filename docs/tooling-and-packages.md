@@ -38,10 +38,55 @@ with `import package::name`.
 - Flags: `--bin NAME`, `--features a,b`, `--no-default-features`,
   `--registry DIR`, `--locked`, `--offline`, `--frozen`.
 - Limits: all packages share one flat module namespace, so one version per
-  package name and no coexisting majors; no git/remote registries, build
-  scripts, host/target feature separation or source-level `cfg`; library-only
-  roots cannot be built; incremental builds (T003) are not implemented (the
-  plan only computes a fingerprint). Tests: `tests/packages.py`.
+  package name and no coexisting majors; no git/remote registries,
+  host/target feature separation or build-dependencies; library-only roots
+  cannot be built. Build scripts (T002) and the content-addressed build cache
+  (T003) follow; both are implemented but unverified (not yet built).
+  Tests: `tests/packages.py`.
+
+### Build scripts (T002)
+
+`[build] script = "build.mt"` names a Mettle program (compiled for the host
+with the hosted `std`, cached like any other program) that runs with the
+package directory as its working directory before consumers compile. Its
+environment adds `METTLE_OUT_DIR` (`target/mettle/out` in the package),
+`METTLE_PACKAGE_DIR`, `METTLE_PACKAGE_NAME`, `METTLE_PACKAGE_VERSION`,
+`METTLE_TARGET`, `METTLE_PROFILE` and `METTLE_FEATURES`. Stdout lines
+`mettle:KEY=VALUE` are the only way to affect the build:
+`module=NAME=FILE` mounts a generated file as root module `NAME`,
+`feature=NAME` enables that `@cfg(feature = ...)` value for the package,
+`link-lib=NAME` adds `-lNAME`, and `rerun-if-changed=PATH`,
+`rerun-if-env-changed=VAR` and `reproducible` form the input contract below.
+Other lines are ignored; an unknown `mettle:` line is a `build` error. Generated
+files are ordinary sources of the compile, so they are hashed by content and
+participate in dependency analysis before consumers compile. Scripts run with
+ordinary host capabilities and are never sandboxed, but their execution,
+decisions and outputs are visible with `--explain`.
+
+A script is rerun on every build unless it declares `reproducible` (its output
+is a function of the declared files and variables, its compiled binary and
+the target/profile/features). Undeclared inputs therefore always force a rerun;
+a rerun that regenerates unchanged tokens still reuses the compiled program.
+The contract is recorded in the build cache and rechecked (input hashes,
+variable values, hashes of every generated file) before reuse.
+
+### Incremental builds and the build cache (T003)
+
+`mettle build` (executables and objects) keys its output by a SHA-256 over: the
+compiler identity (version, runtime target, size and mtime of the compiler and
+runtime library), emit/profile/overflow policy/target/linker/sysroot, enabled
+features, mounts, link libraries, and every source the load step read. User
+sources count by token stream (comments, spacing and blank lines do not
+matter), library sources by content, and probed-but-absent paths as absent. A
+hit copies the stored artifact and skips checking, lowering, code generation and
+linking; any miss does the full build, which is the same code path as a clean
+build, so incremental and clean results agree. Reuse is whole-program: an edit
+to any loaded source (including a dependency package or generated file)
+recompiles; unloaded files, comments and layout do not. Finer
+parse/name/type/ownership/instantiation query reuse inside the compiler remains
+open. Storage design: performance.md section 5.1.1. Flags: `--cache-dir DIR`,
+`--no-cache`, `--cache-limit-kib N`, `--cache-max-age-days N`, `--explain`;
+`METTLE_CACHE_DIR`; `mettle clean [PACKAGE] [--dry-run]`.
 
 ## 1. Manifest and identity
 
@@ -270,8 +315,9 @@ account for all symbol files, since moving debug data alone does not reduce
 total size. Budget changes must not silently change overflow, panic,
 specialization or ABI.
 
-The `mettle storage` and cache-pruning commands are deferred until a managed
-store exists whose ownership, accounting and deletion they can implement; until
-then use filesystem reports and explicit maintenance scripts. Measure
+The managed store now exists for build outputs (performance.md section 5.1.1)
+and `mettle clean` implements its deletion and accounting. A separate
+`mettle storage` report, dependency-source and debug-data pruning, and
+live-build leases remain deferred; until then use filesystem reports. Measure
 cold/warm retained bytes, peak scratch, rebuild cost and matched runtime behavior
 before selecting default budgets or claiming savings.

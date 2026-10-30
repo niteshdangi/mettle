@@ -146,6 +146,43 @@ byte metrics are deterministic per build state and are compared directly with
 repeat runs confirming stability. An unqualified runner, missing counter or
 inconclusive result does not count as a pass.
 
+#### 5.1.1. Build-cache storage design
+
+The user build cache is built to retain less than Cargo's `target/` directory:
+
+- **One store for all projects.** Artifacts live in one user-level directory
+  (`--cache-dir`, `METTLE_CACHE_DIR`, then `~/.cache/mettle`), not in a
+  per-project tree, so projects, profiles and worktrees do not each keep a
+  copy.
+- **Content-addressed and deduplicated.** Blobs are named by the SHA-256 of
+  their bytes; entries (key to blob) are ~100-byte files. Different keys that
+  yield identical bytes (for example a feature that changes no code) share one
+  blob. Blobs are read-only; outputs are private copies, never links into the
+  store.
+- **No incidental data.** Only final executables/objects and tiny build-script
+  records are stored; there are no per-crate metadata, dependency-info,
+  incremental or debug side trees. Comment and layout edits reuse the existing
+  entry instead of adding one.
+- **Bounded.** After every publication the store applies a byte budget
+  (default 512 MiB, `--cache-limit-kib`) and an age limit (default 30 days,
+  `--cache-max-age-days`): entries unused longest are evicted first, the entry
+  just published last, then blobs without references and stale scratch files
+  are removed. Each eviction is reported with `--explain` and its reason.
+- **Verified and atomic.** Writes go to `tmp/` and are published by rename; a
+  hit re-hashes the blob and a mismatch deletes the entry and blob and
+  rebuilds (`entry corrupt`).
+- **Clear removal.** `mettle clean` deletes only the store's own directories
+  and refuses a directory lacking its `VERSION` marker; `--dry-run` reports
+  the entries, blobs and bytes; `mettle clean PACKAGE` also removes that
+  package's `target/mettle` build-script outputs.
+
+Accounting uses logical file sizes; allocated bytes are at least as large, so
+the gate comparison must use allocated bytes per the definition above. Not yet
+done: live-build leases (concurrent builds rely on atomic rename and treat a
+vanished blob as a miss), per-query/incremental data, and any measured claim:
+no retained-byte or compile-time advantage over Cargo is asserted until the
+qualified-runner measurement exists.
+
 ### 5.2. Compiler-work regression guard
 
 In addition, guard the compiler's own work with retired user instructions on a

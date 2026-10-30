@@ -131,18 +131,19 @@
     {
       "name": "packages", "directory": "packages", "kind": "STATIC",
       "dependencies": ["source", "diagnostics", "support"],
-      "public_headers": ["packages/plan.h"],
+      "public_headers": ["packages/plan.h", "packages/store.h", "packages/sha256.h"],
       "files": ["packages/plan.h", "packages/plan.cpp", "packages/toml.h", "packages/toml.cpp",
         "packages/semver.h", "packages/semver.cpp", "packages/sha256.h", "packages/sha256.cpp",
         "packages/manifest.h", "packages/manifest.cpp", "packages/solver.h", "packages/solver.cpp",
-        "packages/lock.h", "packages/lock.cpp"]
+        "packages/lock.h", "packages/lock.cpp", "packages/store.h", "packages/store.cpp"]
     },
     {
       "name": "driver", "directory": "driver", "kind": "EXECUTABLE",
       "dependencies": ["source", "diagnostics", "syntax", "expansion", "resolution", "packages", "ir", "types", "pipeline", "backend_llvm"],
       "llvm": true, "public_headers": [],
       "files": ["driver/main.cpp", "driver/options.h", "driver/options.cpp", "driver/run.cpp",
-        "driver/inspect.h", "driver/inspect.cpp", "driver/output.h", "driver/output.cpp"]
+        "driver/inspect.h", "driver/inspect.cpp", "driver/output.h", "driver/output.cpp",
+        "driver/cache.h", "driver/cache.cpp", "driver/build_script.h", "driver/build_script.cpp"]
     }
   ]
 }

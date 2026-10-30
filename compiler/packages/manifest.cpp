@@ -201,7 +201,7 @@ std::optional<Manifest> parseManifest(const toml::Value &root,
   manifest.source = source.id;
   reader.known(root, "Mettle.toml",
                {"package", "targets", "dependencies", "dev-dependencies",
-                "features", "registry"});
+                "features", "registry", "build"});
   if (const auto *bad = root.find("build-dependencies"))
     reader.error(bad->key,
                  "build-dependencies need build programs, which are not "
@@ -309,6 +309,17 @@ std::optional<Manifest> parseManifest(const toml::Value &root,
     else if (const auto *path = registry->find("path")) {
       if (const auto *text = reader.string(*path, "'path'"))
         manifest.registry = *text;
+    }
+  }
+  if (const auto *build = root.find("build")) {
+    if (build->kind != Kind::Table ||
+        !reader.known(*build, "[build]", {"script"}))
+      reader.error(build->span, "[build] must be a table with 'script'");
+    else if (const auto *script = build->find("script")) {
+      if (const auto *text = reader.string(*script, "'script'")) {
+        manifest.buildScript = *text;
+        manifest.buildScriptSpan = script->span;
+      }
     }
   }
   if (const auto *features = root.find("features")) {

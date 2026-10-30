@@ -1,0 +1,11 @@
+[package]
+name = "script-app"
+version = "0.1.0"
+language = "mettle-1"
+
+[targets.app]
+kind = "executable"
+source = "src/main.mt"
+
+[build]
+script = "build.mt"
