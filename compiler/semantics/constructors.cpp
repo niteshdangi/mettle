@@ -21,8 +21,8 @@ bool Checker::constructorShapeMatches(const Function &function,
     if (!argument.name.empty()) {
       named = true;
       auto found = labels.find(argument.name);
-      target = found == labels.end() ? function.parameters.size()
-                                     : found->second;
+      target =
+          found == labels.end() ? function.parameters.size() : found->second;
     } else if (named)
       return false;
     if (target >= used.size() || used[target])
@@ -136,21 +136,18 @@ void Checker::registerConstructors() {
         if (!bindings)
           continue;
         auto intersection = later.applicability;
-        intersection.parameters.insert(
-            intersection.parameters.end(),
-            earlier.applicability.parameters.begin(),
-            earlier.applicability.parameters.end());
-        intersection.equalities.insert(
-            intersection.equalities.end(),
-            earlier.applicability.equalities.begin(),
-            earlier.applicability.equalities.end());
+        intersection.parameters.insert(intersection.parameters.end(),
+                                       earlier.applicability.parameters.begin(),
+                                       earlier.applicability.parameters.end());
+        intersection.equalities.insert(intersection.equalities.end(),
+                                       earlier.applicability.equalities.begin(),
+                                       earlier.applicability.equalities.end());
         intersection.requirements.insert(
             intersection.requirements.end(),
             earlier.applicability.requirements.begin(),
             earlier.applicability.requirements.end());
         if (solver.constraints(intersection, *bindings,
-                               module.functions[later.function].span, {},
-                               true))
+                               module.functions[later.function].span, {}, true))
           error("type", module.functions[later.function].span,
                 "overlapping constructor argument shapes for '" +
                     displayPath(checked.types->name(origin)) + "'");
@@ -172,8 +169,7 @@ std::optional<std::vector<TypeBinding>> Checker::constructorApplicability(
   auto checkedBindings = known;
   if (!solver.constraints(boundParameters, checkedBindings, span, {}, false))
     return std::nullopt;
-  applicability.target =
-      checked.types->substitute(applicability.target, known);
+  applicability.target = checked.types->substitute(applicability.target, known);
   for (auto &requirement : applicability.requirements) {
     requirement.subject = checked.types->substitute(requirement.subject, known);
     requirement.interfaceType =
@@ -196,8 +192,8 @@ std::optional<std::vector<TypeBinding>> Checker::constructorApplicability(
       identities.push_back(parameter);
   for (auto parameter : identities)
     if (std::find(applicability.parameters.begin(),
-                  applicability.parameters.end(), parameter) ==
-        applicability.parameters.end())
+                  applicability.parameters.end(),
+                  parameter) == applicability.parameters.end())
       applicability.parameters.push_back(parameter);
   auto bindings = solver.applicable(applicability, type, span);
   if (bindings) {
@@ -240,12 +236,12 @@ int Checker::genericCustomConstruction(Node &call, bool reachable, Type origin,
   std::vector<TypeBinding> selectedOwner;
   bool missingType = false;
   bool shapeFound = false;
-  const auto shapeCount = std::count_if(
-      constructors.at(origin).begin(), constructors.at(origin).end(),
-      [&](const auto &candidate) {
-        return constructorShapeMatches(module.functions[candidate.function],
-                                       call);
-      });
+  const auto shapeCount =
+      std::count_if(constructors.at(origin).begin(),
+                    constructors.at(origin).end(), [&](const auto &candidate) {
+                      return constructorShapeMatches(
+                          module.functions[candidate.function], call);
+                    });
   const auto ownerPattern =
       alias ? checked.types->product(patternType).genericArguments
             : checked.types->product(origin).genericParameters;
@@ -349,12 +345,11 @@ int Checker::genericCustomConstruction(Node &call, bool reachable, Type origin,
     std::set<Type> inferred;
     if (inspectArguments) {
       std::function<std::optional<std::vector<TypeBinding>>(Type, Type)> match;
-      match = [&](Type pattern, Type actual)
-          -> std::optional<std::vector<TypeBinding>> {
+      match = [&](Type pattern,
+                  Type actual) -> std::optional<std::vector<TypeBinding>> {
         if (auto direct = solver.match(pattern, actual))
           return direct;
-        if ((checked.types->isView(pattern) &&
-             checked.types->isView(actual)) ||
+        if ((checked.types->isView(pattern) && checked.types->isView(actual)) ||
             (checked.types->isPointer(pattern) &&
              checked.types->isPointer(actual))) {
           const auto left = checked.types->view(pattern);
@@ -478,10 +473,9 @@ int Checker::genericCustomConstruction(Node &call, bool reachable, Type origin,
         auto actual = inference.value(known->second);
         auto pattern = substituteTrial(signature[target]);
         const auto &parameter = function.parameters[target];
-        bool borrowed =
-            parameter.mode == "read" || parameter.mode == "mut" ||
-            (parameter.mode.empty() &&
-             !checked.types->isCopy(signature[target]));
+        bool borrowed = parameter.mode == "read" || parameter.mode == "mut" ||
+                        (parameter.mode.empty() &&
+                         !checked.types->isCopy(signature[target]));
         if (borrowed && checked.types->isView(actual) &&
             !checked.types->isView(pattern))
           actual = checked.types->view(actual).payload;
@@ -544,12 +538,10 @@ int Checker::genericCustomConstruction(Node &call, bool reachable, Type origin,
     }
     auto owner = explicitBindings;
     for (std::size_t i = 0; i < requestedArguments.size(); ++i) {
-      const auto parameters =
-          checked.types->typeParameters(targetArguments[i]);
-      if (std::none_of(parameters.begin(), parameters.end(),
-                       [&](Type parameter) {
-                         return inferred.contains(parameter);
-                       }))
+      const auto parameters = checked.types->typeParameters(targetArguments[i]);
+      if (std::none_of(
+              parameters.begin(), parameters.end(),
+              [&](Type parameter) { return inferred.contains(parameter); }))
         continue;
       auto inferredType = substituteTrial(targetArguments[i]);
       auto remaining = checked.types->typeParameters(inferredType);
@@ -602,11 +594,10 @@ int Checker::genericCustomConstruction(Node &call, bool reachable, Type origin,
     std::vector<Type> ownerArguments;
     for (const auto &binding : owner)
       ownerArguments.push_back(binding.argument);
-    auto type =
-        alias ? checked.types->substitute(patternType, owner)
-        : ownerArguments.empty()
-            ? origin
-            : checked.types->instantiateProduct(origin, ownerArguments);
+    auto type = alias ? checked.types->substitute(patternType, owner)
+                : ownerArguments.empty()
+                    ? origin
+                    : checked.types->instantiateProduct(origin, ownerArguments);
     type = solver.normalize(type, {}, call.span);
     auto applicable =
         constructorApplicability(candidate, type, call.span, solver, trial);
