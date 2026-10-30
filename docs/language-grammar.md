@@ -594,13 +594,16 @@ several items of one module (`import std.io.{Reader, Writer as Sink}`); a glob
 (`import std.io.*`) binds every exported item at glob priority, below explicit
 imports and above the prelude, and an ambiguous glob name is diagnosed at use.
 
-Implementation rule (checker, implemented, unverified (not yet built)): a dotted
+Implementation rule (checker, verified): a dotted
 expression chain is a field or method access when its root is a local value or
 parameter in scope, so a value shadows a type or module of the same name.
 Otherwise the longest prefix whose leading segments are modules, types,
 interfaces, `Self` or generic parameters is the qualified path of the old `::`
 spelling (`Slot.empty()` is `Slot::empty()`, `core.pin.Pin.new(x)` is
-`core::pin::Pin::new(x)`); remaining links are ordinary accesses. Generic
+`core::pin::Pin::new(x)`); remaining links are ordinary accesses. An
+unshadowed `core`, `alloc` or `std` chain is a path through its last link, since
+those roots also name compiler intrinsics, and `self` is the receiver inside a
+type or extension and the current module elsewhere. Generic
 arguments on a segment map to the owner or function arguments of that path
 (`Opt<i32>.Nothing` is `Opt::<i32>::Nothing`). Patterns and types qualify with
 dots in the parser.

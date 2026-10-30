@@ -383,6 +383,11 @@ def migrate_preserves_syntax_tree():
     again = evidence / "again.mt"
     invoke(["migrate", migrated, "-o", again])
     assert again.read_text() == expected, again.read_text()
+    shadow = evidence / "shadow.mt"
+    shadow.write_text("module m { pub fn f(): i32 { 1 } }\n"
+                      "fn main(): i32 { let m = 2; m::f() + m }\n")
+    kept = invoke(["migrate", shadow])
+    assert "m::f()" in kept and "local name" in kept, kept
     broken = evidence / "broken.mt"
     broken.write_text("fn main(): i32 { 0\n")
     invoke(["migrate", broken], 1)

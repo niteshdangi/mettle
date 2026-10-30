@@ -226,8 +226,11 @@ private:
               found.push_back({name[0], name[1], "", token.span, false});
             break;
           }
+      // Both `core::x` and the target spelling `core.x` name a library
+      // module; a value named like a root only mounts an unused library.
       if (token.kind != TokenKind::Word || !libraryRoot(token.text) ||
-          i + 1 >= significant.size() || significant[i + 1]->text != "::")
+          i + 1 >= significant.size() ||
+          (significant[i + 1]->text != "::" && significant[i + 1]->text != "."))
         continue;
       // `package::core::...` names the mounted root like a bare `core::...`.
       bool packageRooted = i > 1 && significant[i - 1]->text == "::" &&

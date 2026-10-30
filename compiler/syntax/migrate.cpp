@@ -1,7 +1,9 @@
 #include "syntax/migrate.h"
 #include "syntax/parser.h"
 #include <algorithm>
+#include <functional>
 #include <iterator>
+#include <set>
 
 namespace mettle {
 namespace {
@@ -401,10 +403,53 @@ std::optional<Migration> migrate(const Source &source,
          scan.at(member).span.begin, ")."});
   }
 
+  // A dotted path whose root is also a local name would read the local, so
+  // such paths (and module-relative `self::`) keep `::`. The check is
+  // file-wide, which is conservative but needs no scope analysis.
+  std::set<std::string> locals{"self"};
+  std::function<void(const Pattern &)> bindPattern = [&](const Pattern &p) {
+    if (p.kind == PatternKind::Binding || p.kind == PatternKind::At ||
+        p.kind == PatternKind::Rest)
+      locals.insert(p.text);
+    for (const auto &child : p.children)
+      bindPattern(child);
+  };
+  std::function<void(const Node &)> bindNode = [&](const Node &node) {
+    if (node.kind == Kind::Binding && node.patterns.empty())
+      locals.insert(node.text);
+    for (const auto &pattern : node.patterns)
+      bindPattern(pattern);
+    for (const auto &parameter : node.parameters) {
+      locals.insert(parameter.name);
+      if (parameter.pattern)
+        bindPattern(*parameter.pattern);
+    }
+    for (const auto &child : node.children)
+      bindNode(*child);
+  };
+  for (const auto &function : before.functions) {
+    for (const auto &parameter : function.parameters) {
+      locals.insert(parameter.name);
+      if (parameter.pattern)
+        bindPattern(*parameter.pattern);
+    }
+    if (function.body.get())
+      bindNode(*function.body);
+  }
+
   // `::` becomes `.`; turbofish `::<` drops the separator.
   for (std::size_t k = 0; k < count; ++k) {
     if (scan.text(k) != "::" || settled[k])
       continue;
+    auto root = k;
+    while (root >= 2 && scan.name(root - 1) && scan.text(root - 2) == "::")
+      root -= 2;
+    if (root >= 1 && scan.name(root - 1) &&
+        locals.contains(scan.text(root - 1))) {
+      skip(k, "'" + scan.text(root - 1) +
+                  "' is also a local name; a dotted path would read it");
+      continue;
+    }
     auto last = k;
     while (last + 3 < count && scan.name(last + 1) &&
            scan.text(last + 2) == "::" && scan.name(last + 3))

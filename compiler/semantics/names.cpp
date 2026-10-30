@@ -57,13 +57,14 @@ Checker::Binding Checker::lookup(const std::string &name, Span span) {
 }
 // A path container qualifies a following segment: a module, a type (including
 // builtin, `Self` and generic parameters) or an interface.
-bool Checker::pathContainer(std::string_view spelling,
-                            const Function *function, Span span) const {
+bool Checker::pathContainer(std::string_view spelling, const Function *function,
+                            Span span) const {
   std::string_view owner;
   if (function)
     owner = function->owner;
   if (function && spelling.find("::") == std::string_view::npos) {
-    if (spelling == "Self" && !owner.empty())
+    // Outside a type, `Self.x` still reaches the `Self::x` diagnostic.
+    if (spelling == "Self")
       return true;
     for (const auto &parameter : function->genericParameters)
       if (parameter.kind == GenericParameterKind::Type &&
@@ -100,6 +101,7 @@ void Checker::qualifyDottedPath(Node &node,
   if (root->kind != Kind::Name || root->annotation.form != TypeForm::Named ||
       !root->ownerGenericArguments.empty() ||
       root->text.find("::") != std::string::npos ||
+      (root->text == "self" && function && !function->owner.empty()) ||
       lexical.contains(root->text))
     return;
   std::reverse(chain.begin(), chain.end());
@@ -107,8 +109,13 @@ void Checker::qualifyDottedPath(Node &node,
   const std::size_t total = chain.size() + 1;
   std::string spelling = root->text;
   std::size_t containers = 0;
+  // Library roots may name compiler intrinsics (`core.mem.forget`) whose
+  // modules are never mounted, so an unshadowed `core`/`alloc`/`std` chain is
+  // a path through its last link, exactly like its `::` spelling.
+  const bool library =
+      root->text == "core" || root->text == "alloc" || root->text == "std";
   while (containers < chain.size() &&
-         pathContainer(spelling, function, root->span)) {
+         (library || pathContainer(spelling, function, root->span))) {
     ++containers;
     spelling += "::" + chain[containers - 1]->text;
   }
