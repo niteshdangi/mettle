@@ -70,8 +70,8 @@ void fromDoc(const Doc &doc, const std::string &page, const std::string &owner,
     }
     if (blank)
       continue;
-    example.name = page + " - " + owner + " (line " +
-                   std::to_string(example.line) + ")";
+    example.name =
+        page + " - " + owner + " (line " + std::to_string(example.line) + ")";
     out.push_back(std::move(example));
   }
 }

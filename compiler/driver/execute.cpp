@@ -261,8 +261,8 @@ struct Target {
 // entries whose result is already `done` are left alone.
 void runSelected(const Options &options, const WorkDirectory &work,
                  const std::vector<Module::TestFunction> &tests,
-                 const std::vector<Target> &targets,
-                 const Selection &selection, std::vector<Result> &results) {
+                 const std::vector<Target> &targets, const Selection &selection,
+                 std::vector<Result> &results) {
   std::atomic<std::size_t> next{0};
   auto worker = [&] {
     for (auto turn = next++; turn < selection.run.size(); turn = next++) {
@@ -271,10 +271,10 @@ void runSelected(const Options &options, const WorkDirectory &work,
         continue;
       auto captured = work.file("output-" + std::to_string(index) + ".txt");
       const auto &target = targets[index];
-      auto outcome = spawn(
-          target.program,
-          {expansion::harnessTestSelector, std::to_string(target.index)},
-          captured.string());
+      auto outcome =
+          spawn(target.program,
+                {expansion::harnessTestSelector, std::to_string(target.index)},
+                captured.string());
       results[index] = classify(tests[index], outcome, contents(captured));
     }
   };
@@ -463,9 +463,9 @@ int runDoctests(const Options &requested) {
     std::cerr << "mettle: error[io]: cannot read " << requested.input << '\n';
     return 1;
   }
-  auto page = documentation::extract(
-      Source{requested.input, text},
-      fs::path(requested.input).stem().string(), true);
+  auto page =
+      documentation::extract(Source{requested.input, text},
+                             fs::path(requested.input).stem().string(), true);
   auto examples = documentation::examples(page);
   if (examples.empty())
     return 0;
@@ -495,10 +495,9 @@ int runDoctests(const Options &requested) {
     if (examples[index].mode == documentation::Mode::CompileFail) {
       std::vector<Module::TestFunction> ignored;
       auto stem = "doctest-" + std::to_string(index);
-      auto compiled = compile(
-          options, work, stem,
-          documentation::withTests(text, examples, {index}),
-          work.file(stem).string(), ignored);
+      auto compiled = compile(options, work, stem,
+                              documentation::withTests(text, examples, {index}),
+                              work.file(stem).string(), ignored);
       results[index] = judgeCompileFail(examples[index], compiled);
     } else
       built.push_back(index);

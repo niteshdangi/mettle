@@ -1022,7 +1022,7 @@ checked by token sequence, syntax-tree fingerprint and idempotence. `mettle run`
 `execute.cpp`, expansion `harness.cpp`; contract in tooling-and-packages sections
 3 and 4). `mettle doc` (static HTML from `///`/`//!`) and doctests (`mettle
 test [--doc]`, fence annotations `no_run`/`ignore`/`should_panic`/
-`compile_fail(PHASE)`) are implemented, unverified (not yet built; driver
+`compile_fail(PHASE)`) are implemented and verified on macOS arm64 (driver
 `document.cpp`/`execute.cpp`, component `compiler/documentation`; tooling-and-
 packages section 4.1; tests `doc_writes_deterministic_html` and
 `doctests_run_isolated_examples` in `tests/packages.py`). Remaining I12 work:

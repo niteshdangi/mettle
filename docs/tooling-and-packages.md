@@ -292,7 +292,7 @@ Benchmark runners do not weaken the performance protocol's registered metrics.
 
 ### 4.1. Documentation comments, `mettle doc` and doctests
 
-Status: implemented, unverified (not yet built).
+Status: implemented and verified on macOS arm64 (packages cases `doc_writes_deterministic_html`, `doctests_run_isolated_examples`).
 
 `///` documents the item that follows it (before or between its attributes) and
 `//!` the enclosing file or inline module. The lexer already keeps comments as

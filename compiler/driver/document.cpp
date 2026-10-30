@@ -103,24 +103,24 @@ int document(const Options &options) {
     Source source{display, text};
     Diagnostics diagnostics;
     SourceId next = source.id + 1;
-    auto expanded = expansion::expandMacros(source, diagnostics,
-                                            [&] { return next++; });
+    auto expanded =
+        expansion::expandMacros(source, diagnostics, [&] { return next++; });
     parse(expanded ? *expanded : source, diagnostics);
     if (!diagnostics.empty()) {
       diagnostics.print(source, std::cerr);
       status = 1;
       continue;
     }
-    pages.push_back(documentation::extract(source, input.name,
-                                           options.documentPrivate));
+    pages.push_back(
+        documentation::extract(source, input.name, options.documentPrivate));
   }
   fs::path directory = options.output;
   if (directory.empty()) {
     std::error_code error;
-    auto base = fs::is_directory(options.input, error) &&
-                        options.moreInputs.empty()
-                    ? fs::path(options.input)
-                    : fs::path();
+    auto base =
+        fs::is_directory(options.input, error) && options.moreInputs.empty()
+            ? fs::path(options.input)
+            : fs::path();
     directory = base / "target" / "mettle" / "doc";
   }
   std::error_code error;

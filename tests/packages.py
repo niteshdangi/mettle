@@ -672,8 +672,10 @@ def doc_writes_deterministic_html():
                    '<pre class="sig"><code>pub fn add(a: i32, b: i32): i32'
                    "</code></pre>", "<figcaption>compile_fail(type)"]:
         assert needle in page, needle
-    # Hidden lines, bodies and private items stay out of the page.
-    for needle in ["unused", "a + b", "private_helper", "not code"]:
+    # Non-Mettle fences are shown as text; hidden lines, bodies and private
+    # items stay out of the page.
+    assert "not code" in page
+    for needle in ["unused", "a + b", "private_helper"]:
         assert needle not in page, needle
     assert "maths" in (first / "index.html").read_text()
     invoke(["doc", source, "-o", first, "--private"], 0)
@@ -718,8 +720,12 @@ CASES = [path_dependency, missing_lock_locked, lock_corruption,
          doc_writes_deterministic_html, doctests_run_isolated_examples,
          debug_info]
 
+# Optional fourth argument: a regular expression selecting cases by name.
+selected = re.compile(sys.argv[4]) if len(sys.argv) > 4 else None
 failures = []
 for case in CASES:
+    if selected and not selected.search(case.__name__):
+        continue
     reset()
     try:
         case()

@@ -7,7 +7,8 @@
 
 namespace mettle::documentation {
 namespace {
-constexpr std::string_view style = R"(:root{color-scheme:light dark;--fg:#1d1f21;--bg:#fff;--dim:#6b7280;--rule:#e5e7eb;--code:#f4f5f7;--accent:#b45309}
+constexpr std::string_view style =
+    R"(:root{color-scheme:light dark;--fg:#1d1f21;--bg:#fff;--dim:#6b7280;--rule:#e5e7eb;--code:#f4f5f7;--accent:#b45309}
 @media(prefers-color-scheme:dark){:root{--fg:#e5e7eb;--bg:#15171a;--dim:#9ca3af;--rule:#2a2e35;--code:#1e2227;--accent:#f59e0b}}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,sans-serif}
 main{max-width:50rem;margin:0 auto;padding:1.5rem 1.25rem 4rem}
@@ -61,8 +62,7 @@ std::string inlineText(std::string_view text) {
     if (text[i] == '`') {
       auto close = text.find('`', i + 1);
       if (close != std::string_view::npos) {
-        out += "<code>" + escape(text.substr(i + 1, close - i - 1)) +
-               "</code>";
+        out += "<code>" + escape(text.substr(i + 1, close - i - 1)) + "</code>";
         i = close;
         continue;
       }
@@ -211,9 +211,9 @@ private:
   std::set<std::string> used;
 
   std::string identifier(std::string_view prefix, std::string_view name) {
-    auto base = slug(prefix.empty() ? std::string(name)
-                                    : std::string(prefix) + "." +
-                                          std::string(name));
+    auto base =
+        slug(prefix.empty() ? std::string(name)
+                            : std::string(prefix) + "." + std::string(name));
     auto id = base;
     for (unsigned n = 2; !used.insert(id).second; ++n)
       id = base + "-" + std::to_string(n);
@@ -268,9 +268,8 @@ private:
       out += "<dl class=\"members\">\n";
       for (const auto &member : item.members) {
         auto memberId = identifier(id, member.name);
-        out += "<dt id=\"" + memberId + "\"><code>" +
-               escape(member.signature) + "</code></dt>\n<dd>" +
-               renderDoc(member.doc) + "</dd>\n";
+        out += "<dt id=\"" + memberId + "\"><code>" + escape(member.signature) +
+               "</code></dt>\n<dd>" + renderDoc(member.doc) + "</dd>\n";
       }
       out += "</dl>\n";
     }
