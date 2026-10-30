@@ -1,11 +1,11 @@
 #include "driver/options.h"
-#include "llvm/TargetParser/Host.h"
+#include "backend/llvm/object.h"
 #include <iostream>
 
 namespace mettle::driver {
 Options::Options()
-    : target(llvm::sys::getDefaultTargetTriple()), cc(METTLE_CXX_PATH),
-      sysroot(METTLE_SYSROOT_PATH) {}
+    : target(backend::defaultTargetTriple()), cc(METTLE_CXX_PATH),
+      sysroot(METTLE_SYSROOT_PATH), libraryDirectory(METTLE_LIBRARY_PATH) {}
 void usage() {
   std::cout
       << "Usage: mettle check|tokens|syntax FILE\n"
@@ -13,10 +13,11 @@ void usage() {
          "executable|object|llvm|ir]\n"
          "         [--profile debug|release] [--overflow-checks on|off]\n"
          "         [--target TRIPLE] [--cc CXX] [--sysroot PATH]\n"
+         "         [--library-dir PATH]\n"
          "         [--freestanding] (object/LLVM/IR output, aborting panics, "
          "no implicit hosted entry)\n"
-         "Executable output requires the host runtime target; use --emit "
-         "object for other targets.\n"
+         "Executable output requires the runtime target (the default); use "
+         "--emit object for other targets.\n"
          "Scalar/product compiler with field initialization, owned moves, "
          "read/mut/take calls and control flow.\n"
          "Stored views, destructors and unwind cleanup remain incomplete.\n";
@@ -49,6 +50,8 @@ std::optional<Options> options(int argc, char **argv) {
         result.target = value;
       else if (arg == "--cc")
         result.cc = value;
+      else if (arg == "--library-dir")
+        result.libraryDirectory = value;
       else if (arg == "--sysroot")
         result.sysroot = value;
       else if (arg == "--overflow-checks" && (value == "on" || value == "off"))

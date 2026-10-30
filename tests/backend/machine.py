@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import platform
+import re
 import subprocess
 from pathlib import Path
 
@@ -335,6 +336,35 @@ unsafe extern "C" fn acquire_flag(context: ptr<mut Unit>): u32 {
 """
 
 SOURCES = {
+    "review-aligned-wide-aggregate-stack-and-varargs": PRELUDE + """
+@layout(C)
+copy type AlignedWide { value:i128 }
+unsafe extern "C" fn aligned_callback(a:i64,b:i64,c:i64,d:i64,e:i64,f:i64,g:i64,h:i64,
+                              marker:i32,q:AlignedWide):i32 {
+    if a+b+c+d+e+f+g+h == 36i64 && marker == 9 && q.value == 77i128 { 1 } else { 0 }
+}
+unsafe extern "C" fn inspect(first:i32,args: ...):i32 {
+    let marker = args.arg::<i32>()
+    let q = args.arg::<AlignedWide>()
+    let tail = args.arg::<i32>()
+    if first == 1 && marker == 5 && q.value == 77i128 && tail == 6 { 1 } else { 0 }
+}
+extern "C" {
+    unsafe fn mettle_c_aligned_wide_stack(
+        a:i64,b:i64,c:i64,d:i64,e:i64,f:i64,g:i64,h:i64,marker:i32,q:AlignedWide):i32;
+    unsafe fn mettle_c_aligned_wide_callback(
+        callback:unsafe extern "C" fn(i64,i64,i64,i64,i64,i64,i64,i64,i32,AlignedWide):i32):i32;
+    unsafe fn mettle_c_aligned_wide_varargs(first:i32,...):i32;
+}
+fn main() {
+    unsafe {
+        if mettle_c_aligned_wide_stack(1,2,3,4,5,6,7,8,9,AlignedWide(77)) == 1 &&
+           mettle_c_aligned_wide_callback(aligned_callback) == 1 &&
+           mettle_c_aligned_wide_varargs(1,5,AlignedWide(77),6) == 1 &&
+           inspect(1,5,AlignedWide(77),6) == 1 { 0 } else { 1 }
+    }
+}
+""",
     "c-thread-failed-cas-acquire-publication": PRELUDE + """
 extern "C" {
     unsafe fn mettle_atomic_failed_acquire(
@@ -763,6 +793,147 @@ int main(void) { return mettle_core_count(40) == 42 ? 0 : 1; }
 def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
+TRIVIAL_SOURCE = """
+fn add(a: i32, b: i32): i32 { a + b }
+fn main(): i32 { if add(1, 2) == 3 { 0 } else { 1 } }
+"""
+CLEANUP_SOURCE = """
+type Guard {
+    counter: ptr<mut i32>
+    drop { unsafe { *self.counter += 1 } }
+}
+fn run(value: i32): i32 {
+    var count = value
+    { let guard = Guard(core::ptr::from_mut(count)) }
+    count
+}
+fn main(): i32 { if run(1) == 2 { 0 } else { 1 } }
+"""
+VARIADIC_SOURCE = """
+unsafe extern "C" fn sum(count: i32, args: ...): i32 { args.arg::<i32>() + count }
+fn main(): i32 { 0 }
+"""
+INVALID_ASM_SOURCE = 'fn main() { unsafe { asm!("mettle_invalid_instruction",options(nostack)) }; 0 }\n'
+
+
+def functions(text):
+    return re.findall(r"^define [^\n]*?(@[^\s(]+)\(([^)]*)\)[^\n]*\{\n(.*?)^\}", text,
+                      re.M | re.S)
+
+
+def check_ir_shape(run, args, directory, evidence):
+    def emit_llvm(name, source, *extra):
+        path = directory / (name + ".mt")
+        path.write_text(source)
+        out = directory / (name + ".ll")
+        run([args.compiler, "build", path, "--emit", "llvm", "-o", out, *extra])
+        return out.read_text()
+
+    # A function with no cleanup obligation must not pay for the unwind runtime.
+    trivial = emit_llvm("shape-trivial", TRIVIAL_SOURCE, "--profile", "release")
+    for forbidden in ("mettle_rt_run", "mettle_rt_replace", "mettle_rt_cleanup",
+                      "mettle_rt_panicking", "invoke ", "landingpad"):
+        if forbidden in trivial:
+            raise AssertionError(f"Trivial release module uses {forbidden}:\n{trivial}")
+    obj = directory / "shape-trivial.o"
+    run([args.compiler, "build", directory / "shape-trivial.mt", "--emit", "object",
+         "-o", obj, "--profile", "release"])
+    undefined = run([args.cxx.with_name("llvm-nm"), "--undefined-only", obj]).stdout
+    if "mettle_rt_run" in undefined or "mettle_rt_panicking" in undefined:
+        raise AssertionError("Trivial release object links the unwind runtime:\n" + undefined)
+    cleanup = emit_llvm("shape-cleanup", CLEANUP_SOURCE, "--profile", "release")
+    if "mettle_rt_run" not in cleanup:
+        raise AssertionError("A function with a destructor lost its cleanup frame")
+    evidence["cases"].append({"name": "ir-shape-no-cleanup-no-unwind-runtime",
+                              "phase": "backend"})
+
+    # va_start and va_end of the incoming cursor must share one function.
+    variadic = emit_llvm("shape-variadic", VARIADIC_SOURCE)
+    starts = 0
+    for name, parameters, body in functions(variadic):
+        arguments = set(re.findall(r"%\d+(?=[,)]|$)", parameters))
+        started = set(re.findall(r"llvm\.va_start\.p0\(ptr (%\w+)\)", body))
+        starts += len(started)
+        for cursor in re.findall(r"llvm\.va_end\.p0\(ptr (%\w+)\)", body):
+            if cursor in arguments and cursor not in started:
+                raise AssertionError(f"{name} ends a cursor it did not start:\n{variadic}")
+        for cursor in started:
+            if f"llvm.va_end.p0(ptr {cursor})" not in body:
+                raise AssertionError(f"{name} starts a cursor it never ends:\n{variadic}")
+    if starts != 1:
+        raise AssertionError("Expected exactly one physical va_start:\n" + variadic)
+    evidence["cases"].append({"name": "variadic-va-start-end-same-function",
+                              "phase": "backend"})
+
+    # The module data layout is the target machine's, not a hand-written one.
+    empty = directory / "empty.c"
+    empty.write_text("")
+    path = directory / "layout.mt"
+    path.write_text(TRIVIAL_SOURCE)
+    for triple in ("x86_64-unknown-linux-gnu", "arm64-apple-macosx15.0"):
+        expected = run([args.cxx.with_name("clang"), "-S", "-emit-llvm", "-x", "c", empty,
+                        "--target=" + triple, "-o", directory / "layout.ll"])
+        reference = re.search(r'target datalayout = "([^"]*)"',
+                              (directory / "layout.ll").read_text()).group(1)
+        out = directory / "layout-module.ll"
+        run([args.compiler, "build", path, "--emit", "llvm", "--target", triple, "-o", out])
+        actual = re.search(r'target datalayout = "([^"]*)"', out.read_text()).group(1)
+        if actual != reference:
+            raise AssertionError(f"{triple}: data layout {actual!r} != target {reference!r}")
+    evidence["cases"].append({"name": "data-layout-from-target-machine", "phase": "backend"})
+
+
+def check_driver_outputs(run, args, directory, evidence):
+    path = directory / "driver-output.mt"
+    path.write_text(TRIVIAL_SOURCE)
+    for emission in ("executable", "object", "llvm", "ir"):
+        missing = directory / "missing-directory" / "out"
+        result = run([args.compiler, "build", path, "--emit", emission, "-o", missing],
+                     expected=1)
+        if "error[io]" not in result.stderr or missing.parent.exists():
+            raise AssertionError(f"{emission}: unclear or partial output failure:\n{result.stderr}")
+        target = directory / "output-is-a-directory"
+        target.mkdir(exist_ok=True)
+        result = run([args.compiler, "build", path, "--emit", emission, "-o", target],
+                     expected=1)
+        leftovers = [entry.name for entry in directory.iterdir() if ".mettle-" in entry.name
+                     or ".object-" in entry.name]
+        if "error[io]" not in result.stderr or leftovers:
+            raise AssertionError(f"{emission}: failed publish left {leftovers}:\n{result.stderr}")
+    evidence["cases"].append({"name": "driver-output-write-failures", "phase": "io"})
+
+    # An executable for a target without the runtime fails before code generation
+    # (this source would otherwise be rejected by the target assembler).
+    rejected = directory / "early-link.mt"
+    rejected.write_text(INVALID_ASM_SOURCE)
+    output = directory / "early-link.out"
+    output.write_bytes(b"preserve existing output")
+    result = run([args.compiler, "build", rejected, "--emit", "executable", "--target",
+                  "x86_64-unknown-linux-gnu" if ARM64 else "arm64-apple-macosx15.0",
+                  "-o", output], expected=1)
+    if "error[link]" not in result.stderr or "error[assembly]" in result.stderr:
+        raise AssertionError("Unsupported executable target was not rejected early:\n" + result.stderr)
+    if output.read_bytes() != b"preserve existing output":
+        raise AssertionError("Early link rejection damaged an existing output")
+    evidence["cases"].append({"name": "executable-target-rejected-before-codegen",
+                              "phase": "link"})
+
+    if platform.system() == "Darwin":
+        # The default target uses the documented deployment target and the
+        # resulting executable links without deployment-version warnings.
+        out = directory / "default-target.ll"
+        run([args.compiler, "build", path, "--emit", "llvm", "-o", out])
+        triple = re.search(r'target triple = "([^"]*)"', out.read_text()).group(1)
+        if not re.fullmatch(r"arm64-apple-macosx\d+\.\d+(\.\d+)?", triple):
+            raise AssertionError("Default target embeds a kernel version: " + triple)
+        program = directory / "default-target"
+        result = run([args.compiler, "build", path, "-o", program])
+        if result.stderr.strip():
+            raise AssertionError("Linking emitted diagnostics:\n" + result.stderr)
+        run([program])
+        evidence["cases"].append({"name": "darwin-default-target-links-cleanly",
+                                  "phase": "link"})
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -941,6 +1112,8 @@ extern "C" fn invoke(callback: unsafe extern "C-unwind" fn(): i32): i32 {
             evidence["cases"].append({"name": "freestanding-reject-" + name,
                                       "source_sha256": digest(path),
                                       "phase": "feature"})
+        check_ir_shape(run, args, directory, evidence)
+        check_driver_outputs(run, args, directory, evidence)
         path = directory / "unsupported-indirect-abi.mt"
         path.write_text("""
 fn invoke(callback: unsafe extern "C" fn(): i32): i32 {
@@ -951,7 +1124,9 @@ fn invoke(callback: unsafe extern "C" fn(): i32): i32 {
         result = run([args.compiler, "build", path, "--freestanding",
                       "--emit", "object", "--target", "x86_64-pc-windows-msvc",
                       "-o", obj], expected=1)
-        if "error[feature]" not in result.stderr or "C ABI implementation" not in result.stderr:
+        if "error[feature]" not in result.stderr or not any(
+                gate in result.stderr
+                for gate in ("C ABI implementation", "source compilation supports")):
             raise AssertionError("Indirect foreign call bypassed the target ABI gate:\n" + result.stderr)
         if obj.exists():
             raise AssertionError("Unsupported indirect ABI published an object")

@@ -17,6 +17,10 @@ bool containsVarArgs(const TypeStore &types, Type type) {
       return false;
     if (types.product(current).kind == AggregateKind::VarArgs)
       return true;
+    // Array elements share one type.
+    if (types.product(current).kind == AggregateKind::Array &&
+        !types.product(current).components.empty())
+      return visit(types.product(current).components[0]);
     for (const auto &field : types.product(current).fields)
       if (visit(field.type))
         return true;
@@ -233,6 +237,41 @@ machineSignature(const TypeStore &types, std::string_view operation,
   for (auto operand : operands)
     if (containsVarArgs(types, operand))
       return std::nullopt;
+  if (operation == "intrinsics.abort")
+    return operands.empty() ? signature(Type::Never) : std::nullopt;
+  if (operation == "intrinsics.panic_message")
+    return operands.size() == 1 && types.isView(operands[0]) &&
+                   types.view(operands[0]).mode == ParameterMode::Read &&
+                   types.isSlice(types.view(operands[0]).payload) &&
+                   types.slice(types.view(operands[0]).payload).element ==
+                       Type::U8
+               ? signature(Type::Never)
+               : std::nullopt;
+  auto exclusive = [&](Type type) {
+    return types.isView(type) && types.view(type).mode == ParameterMode::Mut &&
+           types.view(type).payload == argument && types.contains(argument) &&
+           types.isSized(argument);
+  };
+  if (operation == "mem.replace")
+    return operands.size() == 2 && exclusive(operands[0]) &&
+                   operands[1] == argument
+               ? signature(argument)
+               : std::nullopt;
+  if (operation == "mem.swap")
+    return operands.size() == 2 && exclusive(operands[0]) &&
+                   operands[1] == operands[0]
+               ? signature(Type::Unit)
+               : std::nullopt;
+  if (operation == "mem.size_of_val" || operation == "mem.align_of_val")
+    return operands.size() == 1 && types.isView(operands[0]) &&
+                   types.view(operands[0]).mode == ParameterMode::Read &&
+                   types.view(operands[0]).payload == argument &&
+                   types.contains(argument) &&
+                   (types.isSized(argument) ||
+                    (types.isSlice(argument) &&
+                     types.isSized(types.slice(argument).element)))
+               ? signature(Type::Usize)
+               : std::nullopt;
   if (operation == "mem.zeroed")
     return operands.empty() && types.contains(argument) &&
                    types.isSized(argument)
@@ -372,7 +411,8 @@ machineSignature(const TypeStore &types, std::string_view operation,
       return signature(payload, Shape::ViewRead);
     bool exclusive = types.view(view).mode == ParameterMode::Mut &&
                      types.view(operands[0]).mode == ParameterMode::Mut;
-    if (method.starts_with("project.") && types.isProduct(payload)) {
+    if (method.starts_with("project.") && types.isProduct(payload) &&
+        !types.isSum(payload)) {
       const auto &record = types.product(payload);
       auto name = method.substr(8);
       for (std::size_t field = 0; field < record.fields.size(); ++field)
@@ -482,11 +522,13 @@ machineSignature(const TypeStore &types, std::string_view operation,
     return std::nullopt;
   }
   if (operation == "size_of" || operation == "align_of" ||
-      operation == "needs_drop") {
+      operation == "needs_drop" || operation == "type_id") {
     if (!operands.empty() || !types.contains(argument) ||
         !types.isSized(argument))
       return std::nullopt;
-    return signature(operation == "needs_drop" ? Type::Bool : Type::Usize);
+    return signature(operation == "needs_drop" ? Type::Bool
+                     : operation == "type_id"  ? Type::U64
+                                               : Type::Usize);
   }
   if (operation == "ptr.null" || operation == "ptr.null_mut" ||
       operation == "ptr.without_provenance" ||

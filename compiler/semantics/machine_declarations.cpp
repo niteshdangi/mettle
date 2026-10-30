@@ -1,4 +1,5 @@
 #include "semantics/checker.h"
+#include "support/limits.h"
 #include "types/layout.h"
 #include <algorithm>
 #include <bit>
@@ -231,6 +232,38 @@ void Checker::machineDeclarations() {
       }
     }
   }
+  std::set<Type> validatedLayouts;
+  auto validateLayout = [&](Type type, Span span) {
+    if (!checked.types->isProduct(type) ||
+        !validatedLayouts.insert(type).second ||
+        checked.types->isSymbolic(type) || !checked.types->isSized(type))
+      return;
+    auto layout = objectLayout(*checked.types, type);
+    if (!layout)
+      error(
+          checked.types->product(type).kind == AggregateKind::Array
+              ? "limit"
+              : "attribute",
+          span,
+          checked.types->product(type).kind == AggregateKind::Array
+              ? "array size exceeds target address space"
+              : "object layout cannot be established for this representation");
+    else if (layout->size > limits::objectBytes)
+      error("limit", span, "array size exceeds target address space");
+  };
+  for (const auto &[syntax, resolved] : checked.nodes) {
+    validateLayout(resolved.type, syntax->span);
+    validateLayout(resolved.machineType, syntax->span);
+    for (auto type : resolved.typeArguments)
+      validateLayout(type, syntax->span);
+  }
+  for (std::size_t i = 0; i < module.functions.size(); ++i) {
+    validateLayout(checked.functions[i].result, module.functions[i].span);
+    for (const auto &local : checked.functions[i].locals)
+      validateLayout(local.type, local.span);
+  }
+  for (std::size_t i = 0; i < checked.staticStorage.size(); ++i)
+    validateLayout(checked.staticStorage[i].type, module.statics[i].span);
   auto floatingPolicy = [&](const Attribute &attribute,
                             FloatingPolicy &policy) {
     std::set<std::string> seen;
@@ -457,10 +490,12 @@ void Checker::machineDeclarations() {
     const auto &storage = checked.staticStorage[i];
     if (storage.externalName.empty())
       continue;
-    if (functionSymbols.contains(storage.externalName))
+    if (functionSymbols.contains(storage.externalName)) {
       error("signature", module.statics[i].span,
             "conflicting external function and storage symbol '" +
                 storage.externalName + "'");
+      continue;
+    }
     if (requireEntry && storage.externalName == "main")
       error("signature", module.statics[i].span,
             "static symbol conflicts with the hosted entry point");

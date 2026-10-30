@@ -1,13 +1,17 @@
 #include "panic.h"
 
+#include <atomic>
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
 
 namespace {
+constexpr std::int32_t messagePanicCode = 101;
 struct Panic {
   std::int32_t code;
 };
 thread_local unsigned unwindDepth = 0;
+std::atomic<MettlePanicHook> panicHook{nullptr};
 class Unwinding {
 public:
   Unwinding() { ++unwindDepth; }
@@ -106,11 +110,37 @@ extern "C" [[noreturn]] void mettle_rt_panic(std::int32_t code) {
   throw Panic{code == 0 ? 1 : code};
 }
 
+extern "C" [[noreturn]] void
+mettle_rt_panic_message(const std::uint8_t *message, std::uint64_t length) {
+  if (panicking())
+    std::abort();
+  if (auto *hook = panicHook.load()) {
+    hook(message, length);
+    throw Panic{messagePanicCode};
+  }
+  std::fputs("panicked: ", stderr);
+  if (length)
+    std::fwrite(message, 1, static_cast<std::size_t>(length), stderr);
+  std::fputc('\n', stderr);
+  std::fflush(stderr);
+  throw Panic{messagePanicCode};
+}
+
+extern "C" void mettle_rt_set_panic_hook(MettlePanicHook hook) {
+  panicHook.store(hook);
+}
+
+extern "C" void mettle_rt_clear_panic_hook() { panicHook.store(nullptr); }
+
 extern "C" std::int32_t mettle_rt_panicking() { return panicking() ? 1 : 0; }
 
 extern "C" std::int32_t mettle_rt_main(void *context, MettleAction body) {
   try {
     body(context);
+  } catch (const Panic &panic) {
+    if (panic.code != messagePanicCode)
+      std::abort();
+    return messagePanicCode;
   } catch (...) {
     std::abort();
   }

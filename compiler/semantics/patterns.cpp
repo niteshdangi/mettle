@@ -15,6 +15,27 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
     error("type", p.span, "rest pattern requires an array context");
     return;
   }
+  if (p.kind == PatternKind::Binding && p.children.empty())
+    if (auto storage = staticName(p.text, p.span);
+        storage && module.statics[*storage].constant) {
+      // A scalar `const` name in a pattern matches its value, like a literal.
+      auto value = staticValue(*storage);
+      if (!value)
+        return;
+      const auto valueType = value->type;
+      if (valueType == Type::Bool) {
+        p.text = value->scalar.magnitude[0] ? "true" : "false";
+        p.literalKind = TokenKind::Word;
+      } else if (isInteger(valueType)) {
+        p.text = integerLiteralName(value->scalar);
+        p.literalKind = TokenKind::Integer;
+      } else {
+        error("type", p.span,
+              "only integer and bool constants can be used as patterns");
+        return;
+      }
+      p.kind = PatternKind::Literal;
+    }
   if (p.kind == PatternKind::Binding || p.kind == PatternKind::At) {
     auto prior = scopes.back().find(p.text);
     if (prior != scopes.back().end()) {
@@ -124,6 +145,11 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
     auto shape = p.kind == PatternKind::Tuple ? AggregateKind::Tuple
                                               : AggregateKind::Array;
     std::vector<int> payloads;
+    if (type != Type::Unknown && checked.types->compactArray(type)) {
+      error("feature", p.span,
+            "array patterns over large arrays are not implemented");
+      return;
+    }
     if (type != Type::Unknown && checked.types->isProduct(type) &&
         checked.types->product(type).kind == shape) {
       for (const auto &field : checked.types->product(type).fields)
@@ -177,6 +203,7 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
     return;
   }
   std::vector<int> payloads;
+  auto diagnosticsBefore = diagnostics.count();
   if (p.text == "none" || p.text == "present") {
     auto components =
         inference.components(variable, AggregateKind::Optional, p.span);
@@ -211,6 +238,21 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
     if (found == typeNames.end() || !checked.types->isProduct(found->second)) {
       error("name", p.span, "unknown pattern constructor '" + p.text + "'");
       return;
+    }
+    if (type == Type::Unknown) {
+      std::set<int> roots;
+      for (auto poisoned : poisonedVariables)
+        roots.insert(inference.representative(poisoned));
+      // The scrutinee already failed to check; instantiating the pattern's
+      // generic type with its own parameters would only add a second error.
+      if (inference.depends(variable, roots)) {
+        for (auto &child : p.children) {
+          auto binding = inference.fresh();
+          poisonedVariables.push_back(binding);
+          pattern(child, binding, mode);
+        }
+        return;
+      }
     }
     auto expected = type;
     type = found->second;
@@ -267,7 +309,14 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
     }
   }
   if (payloads.size() != p.children.size()) {
-    error("type", p.span, "pattern payload count does not match");
+    if (diagnostics.count() == diagnosticsBefore)
+      error("type", p.span, "pattern payload count does not match");
+    // Bind the names anyway so uses of them do not cascade.
+    for (auto &child : p.children) {
+      auto poisoned = inference.fresh();
+      poisonedVariables.push_back(poisoned);
+      pattern(child, poisoned, mode);
+    }
     return;
   }
   for (std::size_t i = 0; i < payloads.size(); ++i)
@@ -276,6 +325,9 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
 
 int Checker::match(Node &n, bool reachable) {
   int source = node(*n.children[0], reachable);
+  // A pending field access may still name the scrutinee's instantiated type.
+  if (inference.value(source) == Type::Unknown)
+    fields(false);
   auto type = inference.value(source);
   while (checked.types->isView(type)) {
     type = checked.types->view(type).payload;
@@ -361,6 +413,14 @@ int Checker::bindingPattern(Node &n, bool reachable) {
       error("type", n.children[1]->span, "let-else branch must diverge");
   } else
     irrefutable.emplace_back(&n.patterns[0], input);
+  std::function<void(const Pattern &)> shadow = [&](const Pattern &pattern) {
+    if (pattern.kind == PatternKind::Binding ||
+        pattern.kind == PatternKind::At || pattern.kind == PatternKind::Rest)
+      scopes.back().erase(pattern.text);
+    for (const auto &child : pattern.children)
+      shadow(child);
+  };
+  shadow(n.patterns[0]);
   pattern(n.patterns[0], input, ParameterMode::Take);
   if (n.flag) {
     std::function<void(Pattern &)> mutableBindings = [&](Pattern &p) {

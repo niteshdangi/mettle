@@ -12,8 +12,6 @@ int Checker::aggregate(Node &n, bool reachable) {
   if (n.kind == Kind::Array) {
     int payload = inference.fresh();
     std::uint32_t count = n.children.size();
-    if (!n.flag && count > limits::cleanupPlaces)
-      error("limit", n.span, "array element limit exceeded");
     if (n.flag) {
       node(*n.children[1], reachable);
       auto identity = constantType(*n.children[1]);
@@ -38,15 +36,22 @@ int Checker::aggregate(Node &n, bool reachable) {
                                    identity);
       }
       auto length = evaluated;
-      if (!length || *length < 0 ||
-          static_cast<std::size_t>(*length) > limits::cleanupPlaces)
+      if (!length || *length < 0)
         error(
             "type", n.span,
             "array repetition requires a bounded nonnegative integer constant");
-      count = length && *length >= 0 &&
-                      static_cast<std::size_t>(*length) <= limits::cleanupPlaces
-                  ? static_cast<std::uint32_t>(*length)
-                  : 0;
+      if (length &&
+          *length > static_cast<std::int64_t>(TypeStore::expandedArrayLimit)) {
+        // Large repetitions stay one symbolic repeat over a compact array.
+        inference.equal(payload, node(*n.children[0], reachable), n.span);
+        auto element = inference.value(payload);
+        if (element != Type::Unknown && !checked.types->isCopy(element))
+          error("ownership", n.span, "array repetition requires Copy elements");
+        facts(n).constantCount = identity;
+        return inference.composite(AggregateKind::Array, {payload}, 0,
+                                   checked.types->canonicalCount(identity));
+      }
+      count = length && *length >= 0 ? static_cast<std::uint32_t>(*length) : 0;
       inference.equal(payload, node(*n.children[0], reachable), n.span);
       if (count > 1 && !checked.types->isCopy(inference.value(payload)))
         error("ownership", n.span, "array repetition requires Copy elements");
@@ -57,6 +62,12 @@ int Checker::aggregate(Node &n, bool reachable) {
     return inference.composite(AggregateKind::Array, {payload}, count);
   }
   if (n.kind == Kind::Range) {
+    if (!n.name.empty()) {
+      error("feature", n.span,
+            "open-ended range values are not implemented yet; a range with a "
+            "missing bound is only valid as an index");
+      return inference.fresh();
+    }
     auto lower = node(*n.children[0], reachable);
     auto upper = node(*n.children[1], reachable);
     inference.equal(lower, upper, n.span);
@@ -66,7 +77,14 @@ int Checker::aggregate(Node &n, bool reachable) {
   }
   if (n.kind == Kind::Index) {
     int base = node(*n.children[0], reachable);
-    int key = node(*n.children[1], reachable);
+    const bool sliced = n.children[1]->kind == Kind::Range;
+    int key = -1;
+    if (sliced)
+      for (auto &bound : n.children[1]->children)
+        inference.equal(node(*bound, reachable), inference.fresh(Type::Usize),
+                        bound->span, true);
+    else
+      key = node(*n.children[1], reachable);
     fields(false);
     auto type = inference.value(base);
     while (checked.types->isView(type))
@@ -85,8 +103,14 @@ int Checker::aggregate(Node &n, bool reachable) {
         }
         return *result;
       }
+      if (sliced) {
+        error("type", n.span,
+              "range indexing requires an array, slice or a type "
+              "implementing core::ops::IndexRange");
+        return inference.fresh();
+      }
     }
-    auto keyType = inference.value(key);
+    auto keyType = sliced ? Type::Usize : inference.value(key);
     if (keyType != Type::Usize)
       inference.equal(key, inference.fresh(Type::I32), n.children[1]->span,
                       true);
@@ -105,6 +129,10 @@ int Checker::aggregate(Node &n, bool reachable) {
   }
   int source = node(*n.children[0], reachable);
   auto type = inference.value(source);
+  if (type == Type::Unknown) {
+    fields(false);
+    type = inference.value(source);
+  }
   bool consumes =
       n.children[0]->kind == Kind::Unary && n.children[0]->text == "take";
   facts(n).iterationMode =
@@ -119,7 +147,12 @@ int Checker::aggregate(Node &n, bool reachable) {
       (!checked.types->isProduct(type) ||
        (checked.types->product(type).kind != AggregateKind::Range &&
         checked.types->product(type).kind != AggregateKind::Array))) {
-    error("type", n.span, "for requires a concrete range or array");
+    if (type != Type::Unknown && desugarIteration(n, inference.value(source)))
+      return node(*checked.iterations.at(&n).elaboration, reachable);
+    error("type", n.span,
+          "for requires a concrete range or array, or an iterator, "
+          "collection or view implementing core::iter::Iterator, IntoIterator, "
+          "Iterable or IterableMut for its mode");
     return inference.fresh(Type::Unit);
   }
   loopResults[facts(n).control] = inference.fresh(Type::Unit);

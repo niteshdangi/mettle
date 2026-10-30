@@ -15,13 +15,22 @@ struct LoweringContext {
   std::vector<llvm::Function *> &functions;
   std::unordered_map<std::uint32_t, llvm::StructType *> products;
   std::unordered_map<std::uint32_t, ObjectLayout> layouts{};
+  std::unordered_map<std::uint32_t, bool> indirects{};
   bool freestanding = false;
   std::vector<llvm::GlobalVariable *> statics{};
 
   const ObjectLayout &layout(Type type);
   std::uint64_t alignment(Type type);
+  // Aggregates above this size are passed as pointers to immutable snapshots
+  // in stack temporaries instead of first-class LLVM values.
+  static constexpr std::uint64_t indirectThreshold = 1024;
+  bool indirect(Type type);
+  llvm::Type *layoutType(Type type);
   llvm::Type *type(Type type);
   llvm::Type *storageType(Type type);
+  llvm::Value *zero(Type type);
+  Type fieldType(Type owner, unsigned field);
+  std::uint64_t fieldOffset(Type owner, unsigned field);
   llvm::Value *load(Type type, llvm::Value *address, llvm::Align alignment);
   void store(Type type, llvm::Value *value, llvm::Value *address,
              llvm::Align alignment);

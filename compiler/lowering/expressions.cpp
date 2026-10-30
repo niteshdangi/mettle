@@ -60,6 +60,13 @@ ir::Value Builder::expression(const Node &node, bool consume, bool valueUsed) {
       value = variant(type, 1, {value}, node.span);
   return value;
 }
+// Reading a Copy value through a view copies it; only owned places move.
+static bool throughView(const Place &place) {
+  return std::any_of(place.fields.begin(), place.fields.end(),
+                     [](const Projection &projection) {
+                       return projection.kind == Projection::Kind::Dereference;
+                     });
+}
 ir::Value Builder::rawExpression(const Node &node, bool consume,
                                  bool valueUsed) {
   if (!live())
@@ -83,6 +90,10 @@ ir::Value Builder::rawExpression(const Node &node, bool consume,
       return emit(std::move(instruction), sourceType(node));
     }
     return constant(sourceType(node), facts.number);
+  case Kind::Text:
+    return emit(
+        {Op::TextLiteral, {}, {}, {}, facts.text, {-1, {}}, -1, 0, node.span},
+        sourceType(node));
   case Kind::Boolean:
   case Kind::Character:
     return constant(sourceType(node), facts.number);
@@ -124,19 +135,20 @@ ir::Value Builder::rawExpression(const Node &node, bool consume,
     if (!live())
       return {};
     auto loadedType = sourceType(node);
-    return track(
-        emit({consume || !module.typeStore()->isCopy(loadedType) ? Op::Move
-                                                                 : Op::Load,
-              {},
-              {},
-              {},
-              "",
-              location,
-              -1,
-              0,
-              node.span},
-             loadedType),
-        node.span);
+    return track(emit({(consume && !throughView(location)) ||
+                               !module.typeStore()->isCopy(loadedType)
+                           ? Op::Move
+                           : Op::Load,
+                       {},
+                       {},
+                       {},
+                       "",
+                       location,
+                       -1,
+                       0,
+                       node.span},
+                      loadedType),
+                 node.span);
   }
   case Kind::Tuple:
   case Kind::Array:
@@ -158,19 +170,20 @@ ir::Value Builder::rawExpression(const Node &node, bool consume,
       if (!live())
         return {};
       auto loadedType = sourceType(node);
-      return track(
-          emit({consume || !module.typeStore()->isCopy(loadedType) ? Op::Move
-                                                                   : Op::Load,
-                {},
-                {},
-                {},
-                "",
-                location,
-                -1,
-                0,
-                node.span},
-               loadedType),
-          node.span);
+      return track(emit({(consume && !throughView(location)) ||
+                                 !module.typeStore()->isCopy(loadedType)
+                             ? Op::Move
+                             : Op::Load,
+                         {},
+                         {},
+                         {},
+                         "",
+                         location,
+                         -1,
+                         0,
+                         node.span},
+                        loadedType),
+                   node.span);
     }
     if (facts.foldedNegativeLiteral) {
       Instruction instruction{Op::Constant, {}, {}, {},       "",

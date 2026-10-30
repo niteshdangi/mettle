@@ -4,6 +4,7 @@
 #include "semantics/inference.h"
 #include "semantics/region_solver.h"
 #include <map>
+#include <unordered_set>
 
 namespace mettle {
 class Checker {
@@ -35,6 +36,9 @@ private:
   void staticDeclarations();
   void staticLocals();
   void staticInitializers();
+  // Type of a text or byte-text literal; records its bytes. A malformed
+  // literal is diagnosed and still typed so its uses do not cascade.
+  Type textLiteralType(const Node &node);
   std::optional<StaticConstant> staticInitializer(const Node &node, Type type);
   std::optional<StaticConstant> staticValue(std::size_t index);
   std::optional<std::size_t> staticName(std::string_view name, Span span);
@@ -56,6 +60,8 @@ private:
   std::unordered_map<std::string, std::size_t> names;
   std::unordered_map<std::string, std::size_t> aliases;
   std::vector<unsigned char> aliasStates;
+  mutable std::unordered_map<std::string, std::vector<const Module::Product *>>
+      productIndex;
   std::unordered_map<std::string, Type> typeNames{
       {"i32", Type::I32},     {"bool", Type::Bool},   {"Unit", Type::Unit},
       {"Never", Type::Never}, {"char", Type::Char},   {"u8", Type::U8},
@@ -67,6 +73,10 @@ private:
   std::unordered_map<Function *, std::vector<int>> localVariables;
   std::unordered_map<const Function *, int> functionVariables;
   std::unordered_map<const Node *, int> nodeVariables;
+  // Expression results whose evaluation already reported an error.
+  std::vector<int> poisonedVariables;
+  std::size_t reportedErrors = 0;
+  std::unordered_set<const Node *> reusedNodes;
   Function *current = nullptr;
   std::unordered_map<int, int> loopResults;
   std::vector<std::pair<int, Span>> integerOrBoolean;
@@ -81,6 +91,7 @@ private:
     Node *node;
     int base, result;
     bool resolved = false;
+    Type origin = Type::Unknown;
   };
   std::vector<FieldRequest> fieldRequests;
   std::unordered_map<const Function *, std::size_t> closureFunctions;
@@ -184,6 +195,22 @@ private:
                              const GenericEnvironment &environment,
                              std::vector<TypeBinding> &bindings);
   GenericEnvironment *genericEnvironment = nullptr;
+  // Bounds on arguments that mention no type parameter (including defaults)
+  // are proved once every implementation is registered.
+  struct DeferredObligation {
+    const GenericEnvironment *environment;
+    GenericEnvironment *context;
+    std::vector<TypeBinding> bindings;
+    std::vector<Type> parameters;
+    Span span;
+  };
+  // While set, genericObligations proves (`deferredOnly`) or skips only the
+  // listed parameters.
+  const std::vector<Type> *obligationParameters = nullptr;
+  bool obligationsOnly = false;
+  std::vector<DeferredObligation> deferredObligations;
+  bool implementationsRegistered = false;
+  void proveDeferredObligations();
   std::unordered_map<const Function *, GenericEnvironment> functionGenerics;
   std::unordered_map<const Module::Product *, GenericEnvironment>
       productGenerics;
@@ -205,10 +232,17 @@ private:
                             Span span);
   Type normalizeCallType(Type type, std::span<const TypeBinding> bindings,
                          const Function &callee, Span span);
+  static bool inferredArgument(const GenericArgument &argument);
+  bool agreesWherePartial(Type bound, Type partial);
+  void inferFromExpected(Type pattern, Type expected,
+                         std::vector<TypeBinding> &bindings);
   bool inferGeneric(Type pattern, Type actual,
                     std::vector<TypeBinding> &bindings, Span span);
   void prepareGenerics();
   std::unordered_map<std::string, std::size_t> interfaceNames;
+  // Per method name: interface declarations whose hierarchy declares it.
+  std::unordered_map<std::string, std::vector<bool>> methodInterfaces;
+  const std::vector<bool> &interfacesDeclaring(const std::string &name);
   std::unordered_map<const Module::Interface *, GenericEnvironment>
       interfaceGenerics;
   std::unordered_map<const Module::Implementation *, GenericEnvironment>
@@ -216,6 +250,9 @@ private:
   std::unordered_map<const TypeSyntax *, Type> implicitInterfaceParameters;
   std::map<Type, Span> erasedUses;
   unsigned interfaceDepth = 0;
+  // Bounds whose assumptions are being elaborated; a bound that mentions a
+  // projection of its own environment is proven coinductively, not re-expanded.
+  std::set<const TypeSyntax *> elaboratingBounds;
   bool interfacesReady = false;
   struct ProjectionRequirement {
     Type subject, interfaceType;
@@ -238,8 +275,14 @@ private:
                          Span span);
   bool intrinsicProperty(const TypeSyntax &bound, std::string_view property,
                          Span span) const;
+  void concurrencyDeclaration(const Module::Implementation &syntax,
+                              interfaces::Property property,
+                              interfaces::Implementation &implementation);
+  std::optional<interfaces::Property> propertyBound(const TypeSyntax &bound,
+                                                    Span span) const;
   std::vector<interfaces::Obligation> interfaceAssumptions();
   bool unpinObligation(Type type, Span span);
+  bool shareable(Type type, Span span);
   std::optional<std::size_t> interfaceMethod(Type self, std::string_view method,
                                              Node &call);
   Type interfaceProjection(Type subject, Type interfaceType,
@@ -282,6 +325,8 @@ private:
     std::vector<TypeBinding> bindings;
     GenericEnvironment *environment;
     Function *caller;
+    // Declaration result last resolved; an unchanged one needs no rework.
+    Type resolvedDeclaration = Type::Unknown;
   };
   std::vector<GenericCallRequest> genericCallRequests;
   void resolveGenericCalls();
@@ -296,6 +341,9 @@ private:
   int bindingPattern(Node &node, bool reachable);
   int conditionalPattern(Node &node, bool reachable);
   std::string definitionName(Span span, std::string_view spelling) const;
+  // Product declarations with this canonical name, in declaration order.
+  const std::vector<const Module::Product *> &
+  productsNamed(const std::string &name) const;
   std::string typeName(std::string_view spelling, Span span,
                        std::string_view owner = {}) const;
   std::string callableName(std::string_view spelling, std::string_view owner,
@@ -306,14 +354,19 @@ private:
   Flow flow(Node &node, std::string_view owner = {});
   void controlFlow(Function &function);
   int loop(Node &node, bool reachable);
+  bool implementsProtocol(Type type, std::string_view interface, Span span);
+  bool desugarIteration(Node &node, Type source);
+  std::optional<int> genericUnitVariant(Node &node);
   int transfer(Node &node, bool reachable);
   Type literal(const Node &node, bool negative = false);
   void function(Function &function);
   void parameterDefaults(Function &function);
   void constructor(Function &function);
   void completeArguments(Node &node, Function &function,
-                         const std::vector<bool> &used);
+                         const std::vector<bool> &used,
+                         bool reportMissing = true);
   int node(Node &node, bool reachable);
+  int checkNode(Node &node, bool reachable);
   int call(Node &node, bool reachable);
   std::optional<int> machineCall(Node &node, bool reachable, int receiver = -1);
   void products();

@@ -21,6 +21,8 @@ Place Builder::indexPlace(const Node &node, bool exclusive) {
     return {-1, {}};
   for (unsigned i = 0; i < module.facts(node).dereferences; ++i)
     source.fields.push_back(Projection::dereference());
+  if (node.children[1]->kind == Kind::Range)
+    return rangePlace(node, std::move(source), exclusive);
   auto index = use(expression(*node.children[1]));
   if (!live())
     return {-1, {}};
@@ -51,75 +53,85 @@ Place Builder::indexPlace(const Node &node, bool exclusive) {
     result.fields.push_back(Projection::dereference());
     return result;
   }
-  auto size = module.typeStore()->product(arrayType).fields.size();
+  const auto &record = module.typeStore()->product(arrayType);
   auto reference =
       exclusive ? module.facts(node).mutView : module.facts(node).readView;
-  if (module.typeStore()->product(arrayType).arrayCount != Type::Unknown) {
-    Instruction borrow{exclusive ? Op::ArrayBorrowMut : Op::ArrayBorrowRead,
-                       {},
-                       {index},
-                       {},
-                       "",
-                       source,
-                       -1,
-                       -1,
-                       node.span};
-    if (node.children[1]->kind == Kind::Integer) {
-      const auto &facts = module.facts(*node.children[1]);
-      if (facts.numeric && !facts.numeric->negative &&
-          !facts.numeric->magnitude[1] &&
-          facts.numeric->magnitude[0] <=
-              std::numeric_limits<std::int32_t>::max())
-        borrow.number = static_cast<std::int32_t>(facts.numeric->magnitude[0]);
-    }
-    auto selected = emit(std::move(borrow), reference);
-    auto result = materialize(selected, node.span, temporaryScope);
-    result.fields.push_back(Projection::dereference());
-    return result;
+  Instruction borrow{exclusive ? Op::ArrayBorrowMut : Op::ArrayBorrowRead,
+                     {},
+                     {index},
+                     {},
+                     "",
+                     source,
+                     -1,
+                     -1,
+                     node.span};
+  if (node.children[1]->kind == Kind::Integer) {
+    const auto &facts = module.facts(*node.children[1]);
+    if (facts.numeric && !facts.numeric->negative &&
+        !facts.numeric->magnitude[1] &&
+        (record.arrayCount != Type::Unknown ||
+         facts.numeric->magnitude[0] < record.fields.size()) &&
+        facts.numeric->magnitude[0] <= std::numeric_limits<std::int32_t>::max())
+      borrow.number = static_cast<std::int32_t>(facts.numeric->magnitude[0]);
   }
-  int done = block();
-  std::vector<Value> values;
-  std::vector<int> predecessors;
-  for (std::size_t field = 0; field < size; ++field) {
-    auto expected = constant(index.type, static_cast<std::int32_t>(field));
-    auto test = emit({Op::Binary,
-                      {},
-                      {index, expected},
-                      {},
-                      "==",
-                      {-1, {}},
-                      -1,
-                      0,
-                      node.span},
-                     Type::Bool);
-    int yes = block(), no = block();
-    terminate({ir::Exit::Branch, test, yes, no});
-    current = yes;
-    auto element = source;
-    element.fields.push_back(
-        Projection::field(static_cast<std::uint32_t>(field)));
-    values.push_back(emit({exclusive ? Op::ViewMut : Op::ViewRead,
-                           {},
-                           {},
-                           {},
-                           "",
-                           element,
-                           -1,
-                           0,
-                           node.span},
-                          reference));
-    predecessors.push_back(current);
-    jump(done);
-    current = no;
-  }
-  emit({Op::Panic, {}, {}, {}, "", {-1, {}}, -1, 2, node.span}, Type::Never);
-  terminate({ir::Exit::Unreachable});
-  current = done;
-  if (values.empty()) {
-    terminate({ir::Exit::Unreachable});
+  auto selected = emit(std::move(borrow), reference);
+  auto result = materialize(selected, node.span, temporaryScope);
+  result.fields.push_back(Projection::dereference());
+  return result;
+}
+
+// `base[a..b]`, `base[a..]`, `base[..b]`, `base[..=b]` and `base[..]` borrow
+// the unsized subslice place; the backend checks start <= end <= length.
+Place Builder::rangePlace(const Node &node, Place source, bool exclusive) {
+  const auto &range = *node.children[1];
+  const bool bounded = range.name.empty();
+  const bool hasStart = bounded || range.name == "from";
+  const bool hasEnd = bounded || range.name == "to";
+  Value start = hasStart ? use(expression(*range.children.front()))
+                         : constant(Type::Usize, 0);
+  if (!live())
     return {-1, {}};
+  Value end;
+  if (hasEnd) {
+    end = use(expression(*range.children.back()));
+    if (!live())
+      return {-1, {}};
+    if (range.text == "..=")
+      end = emit({Op::Binary,
+                  {},
+                  {end, constant(Type::Usize, 1)},
+                  {},
+                  "+",
+                  {-1, {}},
+                  -1,
+                  0,
+                  node.span},
+                 Type::Usize);
   }
-  auto selected = merge(reference, values, predecessors);
+  const auto &facts = module.facts(node);
+  auto view = exclusive ? facts.mutView : facts.readView;
+  auto sourceType = *projectedType(
+      *module.typeStore(), function.locals[source.root].type, source.fields);
+  if (!module.typeStore()->isSlice(sourceType)) {
+    source = capturePlace(std::move(source));
+    auto value =
+        unsizedView(std::move(source), view, facts.rangeArrayCount, node.span);
+    source = materialize(value, node.span, temporaryScope);
+    source.fields.push_back(Projection::dereference());
+  }
+  if (!hasEnd)
+    end = emit({Op::SliceLength, {}, {}, {}, "", source, -1, 0, node.span},
+               Type::Usize);
+  auto selected = emit({exclusive ? Op::SliceBorrowMut : Op::SliceBorrowRead,
+                        {},
+                        {start, end},
+                        {},
+                        "",
+                        std::move(source),
+                        -1,
+                        -1,
+                        node.span},
+                       view);
   auto result = materialize(selected, node.span, temporaryScope);
   result.fields.push_back(Projection::dereference());
   return result;
@@ -129,6 +141,9 @@ Builder::Value Builder::aggregateExpression(const Node &node, bool valueUsed,
                                             bool consume) {
   const auto &facts = module.facts(node);
   auto produced = sourceType(node);
+  if (node.kind == Kind::For)
+    if (const auto *plan = module.iteration(node))
+      return expression(*plan->elaboration, valueUsed, consume);
   if (node.kind == Kind::Index) {
     auto source = place(node, false, false, false);
     if (!live())

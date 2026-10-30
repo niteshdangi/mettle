@@ -88,6 +88,29 @@ struct MettleLarge {
   int64_t second;
   int64_t third;
 };
+struct MettleAlignedWide {
+  __int128 value;
+};
+int32_t mettle_c_aligned_wide_stack(int64_t a, int64_t b, int64_t c, int64_t d,
+                                    int64_t e, int64_t f, int64_t g, int64_t h,
+                                    int32_t marker,
+                                    struct MettleAlignedWide q) {
+  return a + b + c + d + e + f + g + h == 36 && marker == 9 && q.value == 77;
+}
+int32_t mettle_c_aligned_wide_callback(
+    int32_t (*callback)(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t,
+                        int64_t, int64_t, int32_t, struct MettleAlignedWide)) {
+  return callback(1, 2, 3, 4, 5, 6, 7, 8, 9, (struct MettleAlignedWide){77});
+}
+int32_t mettle_c_aligned_wide_varargs(int32_t first, ...) {
+  va_list arguments;
+  va_start(arguments, first);
+  int32_t marker = va_arg(arguments, int);
+  struct MettleAlignedWide q = va_arg(arguments, struct MettleAlignedWide);
+  int32_t tail = va_arg(arguments, int);
+  va_end(arguments);
+  return first == 1 && marker == 5 && q.value == 77 && tail == 6;
+}
 struct __attribute__((packed)) MettlePacked {
   uint8_t first;
   int32_t second;

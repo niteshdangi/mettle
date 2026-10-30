@@ -1,6 +1,7 @@
 #include "backend/llvm/lower.h"
 #include "backend/llvm/abi.h"
 #include "backend/llvm/cleanup.h"
+#include "backend/llvm/object.h"
 #include "backend/llvm/target.h"
 #include "llvm/IR/InlineAsm.h"
 
@@ -9,9 +10,10 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
+#include <algorithm>
 #include <map>
+#include <optional>
 #include <tuple>
 
 namespace mettle::backend {
@@ -24,20 +26,20 @@ public:
         module(std::make_unique<llvm::Module>("mettle", context)),
         builder(context),
         lowering{program, context, *module, builder, functions, {}},
-        abi(lowering,
-            program.target.arch != TargetArch::Unknown
-                ? program.target.arch == TargetArch::Aarch64
-                : llvm::Triple(target.empty()
-                                   ? llvm::sys::getDefaultTargetTriple()
-                                   : target.str())
-                      .isAArch64()) {
-    auto mangling = program.target.system == TargetSystem::Darwin  ? "e-m:o"
-                    : program.target.system == TargetSystem::Linux ? "e-m:e"
-                                                                   : "e";
-    module->setDataLayout(std::string(mangling) +
-                          "-p:64:64-i64:64-i128:128-n8:16:32:64-S128");
-    module->setTargetTriple(llvm::Triple(
-        target.empty() ? llvm::sys::getDefaultTargetTriple() : target.str()));
+        abi(lowering, program.target.arch != TargetArch::Unknown
+                          ? program.target.arch == TargetArch::Aarch64
+                          : llvm::Triple(target.empty() ? defaultTargetTriple()
+                                                        : target.str())
+                                .isAArch64()) {
+    const auto triple = target.empty() ? defaultTargetTriple() : target.str();
+    auto layout = targetDataLayout(triple);
+    if (!layout)
+      llvm::report_fatal_error(llvm::Twine("target data layout unavailable: ") +
+                               llvm::toString(layout.takeError()));
+    if (auto error = checkTargetLayout(*program.types, triple))
+      llvm::report_fatal_error(llvm::Twine(llvm::toString(std::move(error))));
+    module->setDataLayout(*layout);
+    module->setTargetTriple(llvm::Triple(triple));
     module->addModuleFlag(llvm::Module::Error, "mettle.pointer.width", 64);
     if (!program.target.triple.empty())
       module->addModuleFlag(
@@ -77,6 +79,8 @@ public:
                                  ? builder.getPtrTy()
                                  : type(f.locals[i].type));
       if (f.variadicCursor >= 0)
+        parameters.push_back(builder.getPtrTy());
+      if (lowering.indirect(f.result))
         parameters.push_back(builder.getPtrTy());
       auto *signature =
           llvm::FunctionType::get(resultType(f.result), parameters, false);
@@ -200,11 +204,14 @@ public:
         builder.restoreIP(saved);
         auto *resultSlot = builder.CreateAlloca(builder.getInt32Ty());
         builder.CreateStore(builder.getInt32(0), resultSlot);
-        builder.CreateCall(
+        // A nonzero runtime status (uncaught source panic) replaces the result.
+        auto *status = builder.CreateCall(
             lowering.runtime("mettle_rt_main", builder.getInt32Ty(),
                              {builder.getPtrTy(), builder.getPtrTy()}),
             {resultSlot, callback});
-        builder.CreateRet(builder.CreateLoad(builder.getInt32Ty(), resultSlot));
+        builder.CreateRet(builder.CreateSelect(
+            builder.CreateICmpNE(status, builder.getInt32(0)), status,
+            builder.CreateLoad(builder.getInt32Ty(), resultSlot)));
         break;
       }
     return std::move(module);
@@ -224,6 +231,7 @@ private:
   using WitnessKey =
       std::tuple<Type, Type, Type, std::vector<llvm::Constant *>>;
   std::map<WitnessKey, llvm::GlobalVariable *> witnesses;
+  std::map<std::string, llvm::GlobalVariable *> textLiterals;
 
   bool interiorMutable(Type value) {
     if (!program.types->isProduct(value))
@@ -261,20 +269,33 @@ private:
     if (program.types->isSum(value) ||
         program.types->product(value).layout.unionType)
       shape.selection = 0;
+    if (initializer && initializer->kind == StaticConstant::Kind::Repeat)
+      return llvm::ArrayType::get(
+          staticType(program.types->product(value).components[0],
+                     &initializer->fields[0]),
+          *program.types->arrayLength(value));
     auto members =
         staticConstantFields(*program.types, initializer ? *initializer : shape)
             .value();
     const auto &layout = lowering.layout(value);
+    auto offsetOf = [&](unsigned field) {
+      return program.types->compactArray(value)
+                 ? field *
+                       lowering
+                           .layout(program.types->product(value).components[0])
+                           .size
+                 : layout.fields[field];
+    };
     std::vector<llvm::Type *> fields;
     std::uint64_t offset = 0;
     for (std::size_t i = 0; i < members.size(); ++i) {
       auto [field, type] = members[i];
-      if (layout.fields[field] > offset)
+      if (offsetOf(field) > offset)
         fields.push_back(llvm::ArrayType::get(builder.getInt8Ty(),
-                                              layout.fields[field] - offset));
+                                              offsetOf(field) - offset));
       fields.push_back(
           staticType(type, initializer ? &initializer->fields[i] : nullptr));
-      offset = layout.fields[field] + lowering.layout(type).size;
+      offset = offsetOf(field) + lowering.layout(type).size;
     }
     if (layout.size > offset)
       fields.push_back(
@@ -282,7 +303,27 @@ private:
     auto *result = llvm::StructType::get(context, fields, true);
     return result;
   }
+  llvm::GlobalVariable *textGlobal(const std::string &text) {
+    auto &global = textLiterals[text];
+    if (!global) {
+      global = new llvm::GlobalVariable(
+          *module, llvm::ArrayType::get(builder.getInt8Ty(), text.size()), true,
+          llvm::GlobalValue::PrivateLinkage,
+          llvm::ConstantDataArray::getString(context, text, false),
+          "mettle.text");
+      global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+      global->setAlignment(llvm::Align(1));
+    }
+    return global;
+  }
   llvm::Constant *staticConstant(const StaticConstant &value) {
+    if (value.kind == StaticConstant::Kind::Text) {
+      auto *global = textGlobal(value.text);
+      if (auto *fat = llvm::dyn_cast<llvm::StructType>(staticType(value.type)))
+        return llvm::ConstantStruct::get(
+            fat, {global, builder.getInt64(value.text.size())});
+      return global;
+    }
     if (value.kind == StaticConstant::Kind::Function)
       return externals.at(value.symbol) ? externals[value.symbol]
                                         : functions.at(value.symbol);
@@ -304,20 +345,37 @@ private:
             {address, builder.getInt64(value.scalar.magnitude[0])});
       return address;
     }
+    if (value.kind == StaticConstant::Kind::Repeat) {
+      auto *array = llvm::cast<llvm::ArrayType>(staticType(value.type, &value));
+      auto *element = staticConstant(value.fields[0]);
+      if (element->isNullValue())
+        return llvm::ConstantAggregateZero::get(array);
+      return llvm::ConstantArray::get(
+          array,
+          std::vector<llvm::Constant *>(array->getNumElements(), element));
+    }
     if (value.kind == StaticConstant::Kind::Aggregate) {
       auto members = staticConstantFields(*program.types, value).value();
       const auto &layout = lowering.layout(value.type);
+      auto offsetOf = [&](unsigned field) {
+        return program.types->compactArray(value.type)
+                   ? field * lowering
+                                 .layout(program.types->product(value.type)
+                                             .components[0])
+                                 .size
+                   : layout.fields[field];
+      };
       auto *representation =
           llvm::cast<llvm::StructType>(staticType(value.type, &value));
       std::vector<llvm::Constant *> fields;
       std::uint64_t offset = 0;
       for (std::size_t i = 0; i < members.size(); ++i) {
         auto [field, type] = members[i];
-        if (layout.fields[field] > offset)
+        if (offsetOf(field) > offset)
           fields.push_back(llvm::Constant::getNullValue(
               representation->getElementType(fields.size())));
         fields.push_back(staticConstant(value.fields.at(i)));
-        offset = layout.fields[field] + lowering.layout(type).size;
+        offset = offsetOf(field) + lowering.layout(type).size;
       }
       if (layout.size > offset)
         fields.push_back(llvm::Constant::getNullValue(
@@ -385,6 +443,8 @@ private:
     return table;
   }
 
+  // Set while lowering a large result that the next store would only copy.
+  llvm::Value *resultDestination = nullptr;
   llvm::Type *type(Type t) { return lowering.type(t); }
   llvm::Type *resultType(Type t) { return lowering.resultType(t); }
   llvm::Value *unit() { return llvm::Constant::getNullValue(type(Type::Unit)); }
@@ -404,9 +464,18 @@ private:
           argumentTypes.push_back(operand.type);
         return abi.call(called, *signatures[index], parameters, argumentTypes);
       }
+      std::vector<llvm::Value *> actual(parameters.begin(), parameters.end());
+      llvm::Value *returned = nullptr;
+      if (lowering.indirect(instruction.result.type)) {
+        returned = resultDestination
+                       ? resultDestination
+                       : lowering.temporary(instruction.result.type);
+        actual.push_back(returned);
+      }
       auto *result = builder.CreateCall(functions[index]->getFunctionType(),
-                                        called, parameters);
-      return instruction.result.type == Type::Unit ||
+                                        called, actual);
+      return returned ? returned
+             : instruction.result.type == Type::Unit ||
                      instruction.result.type == Type::Never
                  ? unit()
                  : result;
@@ -477,7 +546,9 @@ private:
                      : unit();
   }
   llvm::Value *repack(llvm::Value *value, Type source, Type target) {
-    if (source == target || type(source) == type(target))
+    if (source == target ||
+        (!lowering.indirect(source) && !lowering.indirect(target) &&
+         type(source) == type(target)))
       return value;
     if (program.types->isOpaque(source))
       return repack(value, program.types->product(source).fields[0].type,
@@ -496,6 +567,61 @@ private:
     }
     llvm::report_fatal_error("invalid checked opaque representation adapter");
   }
+  llvm::Value *repeatArray(Type array, llvm::Value *value,
+                           llvm::Value *destination) {
+    auto element = program.types->product(array).components[0];
+    auto count = *program.types->arrayLength(array);
+    auto stride = lowering.layout(element).size;
+    auto *storage = destination ? destination : lowering.temporary(array);
+    auto alignment = llvm::Align(lowering.alignment(array));
+    auto *base = storage;
+    std::optional<std::uint8_t> pattern;
+    if (auto *constant = llvm::dyn_cast<llvm::Constant>(value)) {
+      if (constant->isNullValue())
+        pattern = 0;
+      else if (auto *integer = llvm::dyn_cast<llvm::ConstantInt>(constant);
+               integer && integer->getBitWidth() % 8 == 0 &&
+               integer->getBitWidth() / 8 == stride) {
+        auto bits = integer->getValue();
+        auto byte = bits.trunc(8).getZExtValue();
+        bool uniform = true;
+        for (unsigned at = 8; at < bits.getBitWidth(); at += 8)
+          uniform &= bits.extractBitsAsZExtValue(8, at) == byte;
+        if (uniform)
+          pattern = static_cast<std::uint8_t>(byte);
+      }
+    }
+    if (pattern || !count) {
+      builder.CreateMemSet(base, builder.getInt8(pattern.value_or(0)),
+                           count * stride, alignment);
+    } else {
+      auto *function = builder.GetInsertBlock()->getParent();
+      auto *before = builder.GetInsertBlock();
+      auto *loop = llvm::BasicBlock::Create(context, "repeat.loop", function);
+      auto *body = llvm::BasicBlock::Create(context, "repeat.body", function);
+      auto *done = llvm::BasicBlock::Create(context, "repeat.done", function);
+      builder.CreateMemSet(base, builder.getInt8(0), count * stride, alignment);
+      builder.CreateBr(loop);
+      builder.SetInsertPoint(loop);
+      auto *index = builder.CreatePHI(builder.getInt64Ty(), 2);
+      index->addIncoming(builder.getInt64(0), before);
+      builder.CreateCondBr(
+          builder.CreateICmpULT(index, builder.getInt64(count)), body, done);
+      builder.SetInsertPoint(body);
+      auto *slot =
+          builder.CreateGEP(builder.getInt8Ty(), base,
+                            builder.CreateMul(index, builder.getInt64(stride)));
+      lowering.store(element, value, slot,
+                     llvm::Align(lowering.alignment(element)));
+      auto *next = builder.CreateAdd(index, builder.getInt64(1));
+      builder.CreateBr(loop);
+      index->addIncoming(next, body);
+      builder.SetInsertPoint(done);
+    }
+    return lowering.indirect(array)
+               ? storage
+               : builder.CreateLoad(lowering.layoutType(array), storage);
+  }
   void emitPanic(std::int32_t code = 1) {
     if (lowering.freestanding) {
       builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
@@ -508,13 +634,13 @@ private:
         ->addFnAttr(llvm::Attribute::NoReturn);
     builder.CreateCall(function, {builder.getInt32(code)});
   }
-  void panicIf(llvm::Value *condition) {
+  void panicIf(llvm::Value *condition, std::int32_t code = 1) {
     auto *function = builder.GetInsertBlock()->getParent();
     auto *panic = llvm::BasicBlock::Create(context, "panic", function);
     auto *next = llvm::BasicBlock::Create(context, "checked", function);
     builder.CreateCondBr(condition, panic, next);
     builder.SetInsertPoint(panic);
-    emitPanic();
+    emitPanic(code);
     builder.CreateUnreachable();
     builder.SetInsertPoint(next);
   }
@@ -1065,9 +1191,11 @@ private:
       return builder.CreateCall(function, values);
     };
     if (operation == "storage.uninit")
-      return llvm::UndefValue::get(type(instruction.result.type));
+      return lowering.indirect(instruction.result.type)
+                 ? lowering.zero(instruction.result.type)
+                 : llvm::UndefValue::get(type(instruction.result.type));
     if (operation == "storage.zeroed")
-      return llvm::Constant::getNullValue(type(instruction.result.type));
+      return lowering.zero(instruction.result.type);
     if (operation == "storage.assume_init" ||
         operation == "storage.into_inner" || operation == "pin.into_inner" ||
         operation == "pin.into_inner_unchecked")
@@ -1085,10 +1213,68 @@ private:
       return builder.getInt64(lowering.alignment(argument));
     if (operation == "needs_drop")
       return builder.getInt1(program.types->needsDrop(argument));
+    if (operation == "type_id") {
+      // FNV-1a over the canonical type name: equal types share one identity in
+      // every package of a program.
+      std::uint64_t identity = 0xcbf29ce484222325ull;
+      for (unsigned char byte : program.types->name(argument))
+        identity = (identity ^ byte) * 0x100000001b3ull;
+      return builder.getInt64(identity);
+    }
     if (operation == "mem.forget")
       return unit();
+    if (operation == "intrinsics.abort") {
+      builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
+          module.get(), llvm::Intrinsic::trap));
+      return unit();
+    }
+    if (operation == "intrinsics.panic_message") {
+      // The single runtime hook: hosted programs report the message and
+      // unwind; freestanding programs have no sink and trap.
+      if (lowering.freestanding) {
+        builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
+            module.get(), llvm::Intrinsic::trap));
+        return unit();
+      }
+      auto function =
+          lowering.runtime("mettle_rt_panic_message", builder.getVoidTy(),
+                           {builder.getPtrTy(), builder.getInt64Ty()});
+      llvm::cast<llvm::Function>(function.getCallee())
+          ->addFnAttr(llvm::Attribute::NoReturn);
+      builder.CreateCall(function,
+                         {builder.CreateExtractValue(arguments[0], 0),
+                          builder.CreateExtractValue(arguments[0], 1)});
+      return unit();
+    }
+    if (operation == "mem.replace" || operation == "mem.swap") {
+      auto alignment = llvm::Align(lowering.alignment(argument));
+      auto *data = arguments[0];
+      if (operation == "mem.replace") {
+        auto *old = lowering.load(argument, data, alignment);
+        lowering.store(argument, arguments[1], data, alignment);
+        return old;
+      }
+      auto *temporary = lowering.temporary(argument);
+      auto size = lowering.layout(argument).size;
+      builder.CreateMemCpy(temporary, alignment, data, alignment, size);
+      builder.CreateMemMove(data, alignment, arguments[1], alignment, size);
+      builder.CreateMemCpy(arguments[1], alignment, temporary, alignment, size);
+      return unit();
+    }
+    if (operation == "mem.size_of_val" || operation == "mem.align_of_val") {
+      auto element = program.types->isSlice(argument)
+                         ? program.types->slice(argument).element
+                         : argument;
+      if (operation == "mem.align_of_val")
+        return builder.getInt64(lowering.alignment(element));
+      auto *size = builder.getInt64(lowering.layout(element).size);
+      return program.types->isSlice(argument)
+                 ? builder.CreateMul(
+                       builder.CreateExtractValue(arguments[0], 1), size)
+                 : size;
+    }
     if (operation == "mem.zeroed")
-      return llvm::Constant::getNullValue(type(instruction.result.type));
+      return lowering.zero(instruction.result.type);
     if (operation == "mem.transmute") {
       auto source = instruction.operands[0].type;
       auto *storage = lowering.temporary(source);
@@ -1373,6 +1559,22 @@ private:
         panicIf(builder.CreateICmpSLT(distance, builder.getInt64(0)));
       return builder.CreateSDiv(distance, builder.getInt64(size));
     }
+    if (method.starts_with("read") &&
+        lowering.indirect(instruction.result.type))
+      return lowering.load(
+          instruction.result.type, data,
+          method == "read_unaligned"
+              ? llvm::Align(1)
+              : llvm::Align(lowering.alignment(instruction.result.type)));
+    if (method.starts_with("write") &&
+        lowering.indirect(instruction.operands[1].type)) {
+      lowering.store(
+          instruction.operands[1].type, arguments[1], data,
+          method == "write_unaligned"
+              ? llvm::Align(1)
+              : llvm::Align(lowering.alignment(instruction.operands[1].type)));
+      return unit();
+    }
     if (method.starts_with("read")) {
       auto *load = builder.CreateLoad(
           lowering.storageType(instruction.result.type), data);
@@ -1409,8 +1611,8 @@ private:
       if (method == "sub")
         offset = builder.CreateNeg(offset);
       if (!bytes)
-        element =
-            type(program.types->pointer(instruction.operands[0].type).payload);
+        element = lowering.storageType(
+            program.types->pointer(instruction.operands[0].type).payload);
     }
     auto *result = wrapping || method == "with_addr"
                        ? builder.CreateGEP(element, data, offset)
@@ -1444,6 +1646,50 @@ private:
       return frame.address(place);
     };
     std::vector<llvm::Value *> values(source.values, nullptr);
+    std::vector<unsigned> uses(source.values, 0);
+    for (const auto &block : source.blocks) {
+      for (const auto &instruction : block.instructions) {
+        for (const auto &operand : instruction.operands)
+          if (operand.id >= 0)
+            ++uses[operand.id];
+        if (instruction.target.id >= 0)
+          ++uses[instruction.target.id];
+      }
+      if (block.exit.value.id >= 0)
+        ++uses[block.exit.value.id];
+    }
+    // A large value consumed only by the next instruction can alias its
+    // source: that instruction reads it before anything else can write.
+    auto aliasable = [&](const ir::Block &block, std::size_t position) {
+      const auto &n = block.instructions[position];
+      if (!lowering.indirect(n.result.type) || uses[n.result.id] != 1 ||
+          position + 1 >= block.instructions.size() ||
+          frame.alignment(n.place).value() < lowering.alignment(n.result.type))
+        return false;
+      const auto &next = block.instructions[position + 1];
+      return next.op != ir::Op::Phi &&
+             std::any_of(next.operands.begin(), next.operands.end(),
+                         [&](const ir::Value &operand) {
+                           return operand.id == n.result.id;
+                         });
+    };
+    auto directDestination = [&](const ir::Block &block,
+                                 std::size_t position) -> llvm::Value * {
+      const auto &n = block.instructions[position];
+      if (!lowering.indirect(n.result.type) ||
+          program.types->needsDrop(n.result.type) || uses[n.result.id] != 1 ||
+          position + 1 >= block.instructions.size())
+        return nullptr;
+      const auto &next = block.instructions[position + 1];
+      if (next.op != ir::Op::Store || next.operands.size() != 1 ||
+          next.operands[0].id != n.result.id ||
+          *projectedType(*program.types, source.locals[next.place.root].type,
+                         next.place.fields) != n.result.type ||
+          frame.alignment(next.place).value() <
+              lowering.alignment(n.result.type))
+        return nullptr;
+      return address(next.place);
+    };
     struct Pending {
       llvm::PHINode *phi;
       const ir::Instruction *instruction;
@@ -1458,13 +1704,25 @@ private:
           pending.push_back({phi, &n, static_cast<int>(b)});
           values[n.result.id] = phi;
         }
+      std::size_t position = static_cast<std::size_t>(-1);
       for (const auto &n : source.blocks[b].instructions) {
+        ++position;
         llvm::Value *result = unit();
         auto get = [&](std::size_t i) { return values[n.operands[i].id]; };
         switch (n.op) {
         case ir::Op::FeatureTest:
           result = detectFeature(lowering, n.text);
           break;
+        case ir::Op::TextLiteral: {
+          auto *global = textGlobal(n.text);
+          // Byte text of a known length is a thin pointer to the array.
+          if (auto *fat = llvm::dyn_cast<llvm::StructType>(type(n.result.type)))
+            result = llvm::ConstantStruct::get(
+                fat, {global, builder.getInt64(n.text.size())});
+          else
+            result = global;
+          break;
+        }
         case ir::Op::Assembly: {
           std::vector<llvm::Value *> inputs;
           std::vector<llvm::Function *> symbols;
@@ -1506,6 +1764,22 @@ private:
               builder.CreateLoad(lowering.viewType(slice), address(n.place));
           auto *data = builder.CreateExtractValue(handle, 0);
           auto *length = builder.CreateExtractValue(handle, 1);
+          if (n.operands.size() == 2) {
+            auto *start =
+                builder.CreateZExtOrTrunc(get(0), builder.getInt64Ty());
+            auto *end = builder.CreateZExtOrTrunc(get(1), builder.getInt64Ty());
+            panicIf(builder.CreateOr(builder.CreateICmpUGT(start, end),
+                                     builder.CreateICmpUGT(end, length)));
+            result = llvm::UndefValue::get(type(n.result.type));
+            result = builder.CreateInsertValue(
+                result,
+                builder.CreateGEP(type(program.types->slice(slice).element),
+                                  data, start),
+                0);
+            result = builder.CreateInsertValue(
+                result, builder.CreateSub(end, start), 1);
+            break;
+          }
           auto *index = builder.CreateZExtOrTrunc(get(0), builder.getInt64Ty());
           auto *negative =
               n.operands[0].type == Type::I32
@@ -1513,8 +1787,9 @@ private:
                   : builder.getFalse();
           panicIf(
               builder.CreateOr(negative, builder.CreateICmpUGE(index, length)));
-          result = builder.CreateGEP(type(program.types->slice(slice).element),
-                                     data, index);
+          result = builder.CreateGEP(
+              lowering.storageType(program.types->slice(slice).element), data,
+              index);
           break;
         }
         case ir::Op::OpaqueRepack:
@@ -1648,13 +1923,13 @@ private:
           frame.declare(n.place);
           break;
         case ir::Op::Load:
-          result = lowering.load(n.result.type, address(n.place),
-                                 frame.alignment(n.place));
-          break;
         case ir::Op::Move:
-          result = lowering.load(n.result.type, address(n.place),
-                                 frame.alignment(n.place));
-          frame.move(n.place);
+          result = aliasable(source.blocks[b], position)
+                       ? address(n.place)
+                       : lowering.load(n.result.type, address(n.place),
+                                       frame.alignment(n.place));
+          if (n.op == ir::Op::Move)
+            frame.move(n.place);
           break;
         case ir::Op::BorrowRead:
         case ir::Op::BorrowMut:
@@ -1671,11 +1946,42 @@ private:
         case ir::Op::Activate:
           break;
         case ir::Op::ArrayBorrowRead:
-        case ir::Op::ArrayBorrowMut:
+        case ir::Op::ArrayBorrowMut: {
+          auto array = *projectedType(
+              *program.types, source.locals[n.place.root].type, n.place.fields);
+          const auto &record = program.types->product(array);
+          auto length = *program.types->arrayLength(array);
+          auto *elements = llvm::ArrayType::get(
+              lowering.storageType(record.components.at(0)), length);
+          // A signed index is sign-extended so negatives fail the unsigned
+          // bounds comparison.
+          auto *index =
+              n.operands[0].type == Type::I32
+                  ? builder.CreateSExt(get(0), builder.getInt64Ty())
+                  : builder.CreateZExtOrTrunc(get(0), builder.getInt64Ty());
+          panicIf(builder.CreateICmpUGE(index, builder.getInt64(length)), 2);
+          result = builder.CreateGEP(elements, address(n.place),
+                                     {builder.getInt64(0), index});
+          break;
+        }
         case ir::Op::ArrayRepeat:
-        case ir::Op::ArrayTake:
-          llvm::report_fatal_error(
-              "uninstantiated array operation reached LLVM lowering");
+          result = repeatArray(n.result.type, get(0),
+                               directDestination(source.blocks[b], position));
+          break;
+        case ir::Op::ArrayTake: {
+          auto array = *projectedType(
+              *program.types, source.locals[n.place.root].type, n.place.fields);
+          auto stride = lowering.layout(n.result.type).size;
+          auto *index = builder.CreateSExt(get(0), builder.getInt64Ty());
+          auto *element = builder.CreateGEP(
+              builder.getInt8Ty(), address(n.place),
+              builder.CreateMul(index, builder.getInt64(stride)));
+          auto alignment = std::min<std::uint64_t>(
+              lowering.alignment(array), lowering.alignment(n.result.type));
+          result =
+              lowering.load(n.result.type, element, llvm::Align(alignment));
+          break;
+        }
         case ir::Op::Store:
         case ir::Op::StorageWrite:
           frame.store(n, get(0));
@@ -1742,6 +2048,9 @@ private:
               loaded.push_back(builder.CreateLoad(
                   members[i], builder.CreateStructGEP(contextType,
                                                       callback->getArg(0), i)));
+            if (lowering.indirect(program.functions[n.callee].result))
+              loaded.push_back(
+                  lowering.temporary(program.functions[n.callee].result));
             builder.CreateCall(functions[n.callee], loaded);
             builder.CreateRetVoid();
             builder.restoreIP(saved);
@@ -1764,7 +2073,9 @@ private:
             if (n.op == ir::Op::IndirectCall &&
                 n.target.access != ir::Access::Owned)
               target = builder.CreateLoad(type(n.target.type), target);
+            resultDestination = directDestination(source.blocks[b], position);
             result = call(n, target, arguments, source.targetFeatures);
+            resultDestination = nullptr;
           }
           break;
         }

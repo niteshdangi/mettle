@@ -220,6 +220,7 @@ Function Parser::function(bool allowDeclaration) {
   return result;
 }
 std::unique_ptr<Node> Parser::block() {
+  StateGuard guard(*this);
   if (++nesting > limits::parserNesting)
     fail("block nesting limit exceeded", "limit");
   auto start = expect("{").span;
@@ -229,6 +230,8 @@ std::unique_ptr<Node> Parser::block() {
   separators();
   while (!is("}") && peek().kind != TokenKind::End) {
     auto before = position;
+    auto savedNesting = nesting;
+    auto savedExpressionLevel = genericExpressionLevel;
     try {
       auto statement = stmt();
       bool separated = false;
@@ -241,11 +244,34 @@ std::unique_ptr<Node> Parser::block() {
         fail("expected a newline or ';' between statements");
       result->children.push_back(std::move(statement));
     } catch (ParseFailure &) {
+      parens = 0;
+      nesting = savedNesting;
+      genericExpressionLevel = savedExpressionLevel;
       if (position == before && peek().kind != TokenKind::End && !is("}"))
         ++position;
-      while (peek().kind != TokenKind::End && !is("}") &&
-             peek().kind != TokenKind::Newline && !is(";"))
+      // Resume after the statement that failed, not inside its open braces.
+      std::size_t open = 0;
+      auto brace = [&](std::size_t index, std::string_view text) {
+        return tokens[index].kind == TokenKind::Symbol &&
+               tokens[index].text == text;
+      };
+      for (auto index = before; index < position; ++index)
+        if (brace(index, "{"))
+          ++open;
+        else if (brace(index, "}") && open)
+          --open;
+      while (peek().kind != TokenKind::End) {
+        if (brace(position, "{"))
+          ++open;
+        else if (brace(position, "}")) {
+          if (!open)
+            break;
+          --open;
+        } else if (!open &&
+                   (tokens[position].kind == TokenKind::Newline || is(";")))
+          break;
         ++position;
+      }
       separators();
     }
   }

@@ -209,10 +209,26 @@ int Checker::call(Node &n, bool reachable) {
         return *primitive;
       error("name", n.span,
             "unresolved or inaccessible function '" + n.children[0]->text +
-                "'");
+                "'" +
+                (current->owner.empty() &&
+                         n.children[0]->text.starts_with("Self::")
+                     ? "; 'Self' is only available inside a type or impl "
+                       "body"
+                     : ""));
       return result;
     }
     facts(n).callee = static_cast<int>(found->second);
+    if (const auto &declared = module.functions[found->second];
+        !declared.body.get() && !declared.foreignDeclaration &&
+        !declared.interfaceOwner.empty() && declared.implementation < 0 &&
+        facts(n).interfaceMethod < 0) {
+      error("type", n.span,
+            "an interface method without a body cannot be called through the "
+            "interface name; call it as a method or as "
+            "'<Type implements Interface>::" +
+                declared.name.substr(declared.name.rfind('.') + 1) + "'");
+      return result;
+    }
     requireFeatures(facts(module.functions[found->second]).targetFeatures,
                     n.span);
     if (module.functions[found->second].unsafeFunction)
@@ -269,7 +285,7 @@ int Checker::call(Node &n, bool reachable) {
   std::vector<bool> used(signature.size());
   if (offset && !used.empty())
     used[0] = true;
-  bool named = false;
+  bool named = false, misbound = false;
   for (std::size_t i = 0; i < count; ++i) {
     auto &argument = *n.children[i + 1];
     auto contextualTarget = i + offset;
@@ -289,22 +305,28 @@ int Checker::call(Node &n, bool reachable) {
     fields(false);
     reachable &= facts(argument).flow.normal;
     std::size_t target = i + offset;
+    bool misordered = false;
     if (!argument.name.empty()) {
       named = true;
       target = signature.size();
       for (std::size_t j = 0; j < signature.size(); ++j)
         if (signature[j].name == argument.name)
           target = j;
-    } else if (named)
+    } else if (named) {
+      misbound = misordered = true;
       error("type", argument.span,
             "positional arguments must precede named arguments");
+    }
     if (target >= signature.size()) {
+      misbound = true;
       error("type", argument.span, "unknown or excess argument");
       facts(n).argumentOrder.push_back(0);
       continue;
     }
-    if (used[target])
+    if (used[target] && !misordered) {
+      misbound = true;
       error("type", argument.span, "duplicate argument");
+    }
     used[target] = true;
     facts(n).argumentOrder.push_back(target);
     if (variadic &&
@@ -338,7 +360,7 @@ int Checker::call(Node &n, bool reachable) {
            argument.span);
   }
   if (!facts(n).constructor)
-    completeArguments(n, module.functions[facts(n).callee], used);
+    completeArguments(n, module.functions[facts(n).callee], used, !misbound);
   if (facts(n).optional)
     return inference.composite(AggregateKind::Optional, {result});
   return result;
@@ -356,6 +378,18 @@ void Checker::fields(bool final) {
         continue;
       request.resolved = true;
       changed = true;
+      if (request.origin != Type::Unknown) {
+        const auto &instance = checked.types->isProduct(base)
+                                   ? checked.types->product(base)
+                                   : checked.types->product(request.origin);
+        if (!checked.types->isProduct(base) ||
+            (base != request.origin &&
+             instance.genericOrigin != request.origin))
+          error("type", request.node->span,
+                "generic variant '" + request.node->text +
+                    "' does not construct the expected type");
+        continue;
+      }
       if (base == Type::Never) {
         inference.equal(request.result, inference.fresh(Type::Never),
                         request.node->span);
@@ -382,6 +416,32 @@ void Checker::fields(bool final) {
         while (checked.types->isView(base)) {
           base = checked.types->view(base).payload;
           ++facts(*request.node).dereferences;
+        }
+        const bool sliced = request.node->children[1]->kind == Kind::Range;
+        if (sliced) {
+          // A subslice is the unsized place `[T]`; `read`/`mut` borrow it.
+          auto slice = base;
+          if (!checked.types->isSlice(base) && checked.types->isProduct(base) &&
+              checked.types->product(base).kind == AggregateKind::Array) {
+            const auto &array = checked.types->product(base);
+            slice = checked.types->sliceType(array.components[0]);
+            facts(*request.node).rangeArrayCount =
+                array.arrayCount == Type::Unknown
+                    ? checked.types->constant(Type::I32, array.fields.size())
+                    : array.arrayCount;
+          } else if (!checked.types->isSlice(base)) {
+            error("type", request.node->span,
+                  "range indexing requires an array, slice or a type "
+                  "implementing core::ops::IndexRange");
+            continue;
+          }
+          inference.equal(request.result, inference.fresh(slice),
+                          request.node->span);
+          facts(*request.node).readView =
+              checked.types->viewType(slice, ParameterMode::Read);
+          facts(*request.node).mutView =
+              checked.types->viewType(slice, ParameterMode::Mut);
+          continue;
         }
         if (checked.types->isSlice(base)) {
           auto element = checked.types->slice(base).element;
@@ -454,10 +514,16 @@ void Checker::fields(bool final) {
   } while (changed);
   if (!final)
     return;
+  std::set<int> poisonedRoots;
+  for (auto variable : poisonedVariables)
+    poisonedRoots.insert(inference.representative(variable));
   for (const auto &request : fieldRequests)
-    if (!request.resolved)
+    if (!request.resolved && !inference.depends(request.base, poisonedRoots))
       error("type", request.node->span,
-            "cannot infer field source type; add ': Type'");
+            request.origin != Type::Unknown
+                ? "cannot infer generic arguments of variant '" +
+                      request.node->text + "'; add ': Type' or ::<...>"
+                : "cannot infer field source type; add ': Type'");
   fieldRequests.clear();
 }
 } // namespace mettle

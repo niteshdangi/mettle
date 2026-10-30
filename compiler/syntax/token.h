@@ -18,7 +18,8 @@ enum class TokenKind {
   Byte,
   Floating,
   QuotedWord,
-  Text
+  Text,
+  PrefixedText
 };
 struct Token {
   TokenKind kind;

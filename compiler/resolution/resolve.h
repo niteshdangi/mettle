@@ -63,6 +63,14 @@ private:
   std::vector<Definition> definitions;
   std::vector<Scope> scopes;
   std::vector<Item> items;
+  // Lookup indexes over `items`, built once after resolution completes.
+  struct Interval {
+    std::size_t begin, end, item;
+    int parent;
+  };
+  std::unordered_map<SourceId, std::vector<Interval>> intervals;
+  void index();
+  const Item *exact(Span span) const;
   std::unordered_map<std::string, std::vector<std::size_t>> associatedItems;
   std::unordered_map<std::string, std::pair<ModuleId, std::string>>
       aliasTargets;

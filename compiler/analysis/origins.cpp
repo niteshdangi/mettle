@@ -336,6 +336,24 @@ Origins ancestors(const Origins &origins, const std::map<int, Loan> &loans) {
   return result;
 }
 
+Origins strongAncestors(const Origins &origins,
+                        const std::map<int, Loan> &loans) {
+  Origins result = origins;
+  std::vector<int> work(origins.begin(), origins.end());
+  while (!work.empty()) {
+    int id = work.back();
+    work.pop_back();
+    auto found = loans.find(id);
+    if (found == loans.end())
+      continue;
+    for (auto parent : found->second.parents)
+      if (!found->second.borrowed.contains(parent) &&
+          result.insert(parent).second)
+        work.push_back(parent);
+  }
+  return result;
+}
+
 OriginInfo origins(const ir::Function &function, const ir::Program &program,
                    const EffectSummaries &summaries) {
   const auto &types = *program.types;
@@ -348,8 +366,9 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
       for (std::size_t p = 0; p < function.parameters; ++p) {
         const auto &parameter = function.locals[p];
         auto &sources = parameterInputs[static_cast<int>(p)];
-        if (parameter.mode == ParameterMode::Read ||
-            parameter.mode == ParameterMode::Mut)
+        const auto own = parameter.mode == ParameterMode::Read ||
+                         parameter.mode == ParameterMode::Mut;
+        if (own)
           sources.insert({static_cast<int>(p), {}});
         for (const auto &[path, type] : viewPaths(parameter.type, types)) {
           (void)type;
@@ -357,7 +376,21 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
           source.fields.push_back(Projection::dereference());
           sources.insert(std::move(source));
         }
-        inputs.insert(sources.begin(), sources.end());
+        // An access view with no declared region is call-local, so an erased
+        // receiver cannot retain it. Declared regions and every contained
+        // view may flow.
+        auto transient = false;
+        if (own && types.isFunctionPointer(function.regionSignature)) {
+          const auto &signature = types.callable(function.regionSignature);
+          if (p < signature.parameterRegions.size()) {
+            transient =
+                types.regions().get(signature.parameterRegions[p]).name ==
+                parameter.name;
+          }
+        }
+        for (const auto &source : sources)
+          if (!transient || !source.fields.empty())
+            inputs.insert(source);
       }
       for (std::size_t p = 0; p < function.parameters; ++p)
         if (function.locals[p].mode == ParameterMode::Mut &&
@@ -384,13 +417,19 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
               if (types.isView(type)) {
                 if (write && external) {
                   Place destination{static_cast<int>(p), path};
-                  for (auto backing : inputs) {
+                  // A view of an object that holds the destination cannot be
+                  // stored in that destination.
+                  std::set<Place> others;
+                  for (const auto &input : inputs)
+                    if (!prefix(input, destination))
+                      others.insert(input);
+                  for (auto backing : others) {
                     backing.fields.push_back(
                         Projection::opaque(types.view(type).payload));
                     result.effects.writes[destination].insert(
                         std::move(backing));
                   }
-                  result.effects.writeDependencies[destination] = inputs;
+                  result.effects.writeDependencies[destination] = others;
                 }
                 const auto &view = types.view(type);
                 path.push_back(Projection::dereference());
@@ -416,6 +455,35 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
   result.points.resize(function.blocks.size());
   result.returns.resize(function.blocks.size());
   result.values.resize(function.values);
+  // A view stored through a raw pointer is untracked: the destination is
+  // unknown, so every exclusive parameter may now retain the views contained
+  // in the inputs.
+  const auto storesViewsThroughPointer = [&] {
+    for (const auto &block : function.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.op == ir::Op::Machine &&
+            (instruction.text.starts_with("ptr.write") ||
+             instruction.text == "ptr.replace") &&
+            instruction.text != "ptr.write_bytes" &&
+            instruction.operands.size() == 2 &&
+            types.containsViews(instruction.operands[1].type))
+          return true;
+    return false;
+  }();
+  if (storesViewsThroughPointer) {
+    std::set<Place> contained;
+    for (std::size_t p = 0; p < function.parameters; ++p)
+      for (const auto &[path, type] :
+           viewPaths(function.locals[p].type, types)) {
+        (void)type;
+        Place source{static_cast<int>(p), path};
+        source.fields.push_back(Projection::dereference());
+        contained.insert(std::move(source));
+      }
+    for (std::size_t p = 0; p < function.parameters; ++p)
+      if (function.locals[p].mode == ParameterMode::Mut)
+        result.effects.wildWrites[{static_cast<int>(p), {}}] = contained;
+  }
   const auto cyclic = cyclicBlocks(function);
   int synthetic = function.values, external = -1;
   std::vector<Place> bases(function.locals.size());
@@ -483,10 +551,19 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
           result.loans.emplace(id, std::move(loan));
           entry[destination].insert(id);
         }
+        if (constant.kind == StaticConstant::Kind::Repeat) {
+          auto child = destination;
+          child.fields.push_back(
+              Projection::opaque(types.product(constant.type).components[0]));
+          constantOrigins(constant.fields[0], std::move(child));
+          return;
+        }
         auto fields = staticConstantFields(types, constant);
         for (std::size_t i = 0; i < constant.fields.size(); ++i) {
           auto child = destination;
-          child.fields.push_back(Projection::field(fields->at(i).first));
+          child.fields.push_back(types.compactArray(constant.type)
+                                     ? Projection::opaque(fields->at(i).second)
+                                     : Projection::field(fields->at(i).first));
           constantOrigins(constant.fields[i], std::move(child));
         }
       };
@@ -545,8 +622,11 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
   }
   std::vector<Memory> outputs(function.blocks.size());
   bool changed;
+  // Result paths some return leaves without any tracked loan (raw storage).
+  std::set<ViewPath> untracked;
   do {
     changed = false;
+    untracked.clear();
     for (std::size_t b = 0; b < function.blocks.size(); ++b) {
       Memory memory = b == 0 ? entry : Memory{};
       for (auto predecessor : predecessors[b])
@@ -602,6 +682,31 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
           }
         }
         return targets;
+      };
+      // A raw pointer does not carry loans: a view read through one is backed
+      // by the object that owns the pointer, so cut the place at the last view.
+      auto viewBacking = [&](Place place) {
+        auto type = function.locals.at(place.root).type;
+        std::size_t kept = 0;
+        for (std::size_t i = 0; i < place.fields.size(); ++i) {
+          const auto &projection = place.fields[i];
+          if (projection.kind == Projection::Kind::Opaque)
+            return place;
+          if (projection.kind == Projection::Kind::Dereference) {
+            if (!types.isView(type)) {
+              place.fields.resize(kept);
+              return place;
+            }
+            type = types.view(type).payload;
+            kept = i + 1;
+          } else if (projection.type != Type::Unknown)
+            type = projection.type;
+          else if (types.isProduct(type))
+            type = types.product(type).fields.at(projection.index).type;
+          else
+            return place;
+        }
+        return place;
       };
       auto relative = [&](const Place &place) {
         auto source = result.externalPlaces.at(place.root);
@@ -840,11 +945,17 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
             }
           }
         } else if (instruction.op == ir::Op::Machine &&
-                   instruction.text.starts_with("cell.") &&
-                   instruction.text != "cell.into_inner" &&
-                   instruction.text != "cell.as_ptr") {
+                   ((instruction.text.starts_with("cell.") &&
+                     instruction.text != "cell.into_inner" &&
+                     instruction.text != "cell.as_ptr") ||
+                    instruction.text == "mem.replace" ||
+                    instruction.text == "mem.swap")) {
+          // mem.replace/swap exchange the referents of their exclusive views
+          // directly; cells exchange their payload fields.
+          const bool direct = instruction.text.starts_with("mem.");
           auto wrapper = instruction.typeArguments[0];
-          auto kind = types.product(wrapper).kind;
+          auto kind =
+              direct ? AggregateKind::Product : types.product(wrapper).kind;
           auto operandTargets = [&](std::size_t operand) {
             std::set<Target> referents;
             for (auto id :
@@ -918,10 +1029,13 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
           } else {
             std::set<Target> payloads;
             for (auto target : referents) {
-              project(target.place, Projection::field(cellPayloadField(kind)));
+              if (!direct)
+                project(target.place,
+                        Projection::field(cellPayloadField(kind)));
               payloads.insert(std::move(target));
             }
-            auto payload = types.product(wrapper).components[0];
+            auto payload =
+                direct ? wrapper : types.product(wrapper).components[0];
             // Exchange snapshots the old sources before installing the new
             // ones.
             value = readValue(payloads, payload);
@@ -945,13 +1059,16 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                 }
               }
             };
-            if (instruction.text == "cell.replace")
+            if (instruction.text == "cell.replace" ||
+                instruction.text == "mem.replace")
               install(payloads, result.values[instruction.operands[1].id]);
-            else if (instruction.text == "cell.swap") {
+            else if (instruction.text == "cell.swap" ||
+                     instruction.text == "mem.swap") {
               std::set<Target> other;
               for (auto target : operandTargets(1)) {
-                project(target.place,
-                        Projection::field(cellPayloadField(kind)));
+                if (!direct)
+                  project(target.place,
+                          Projection::field(cellPayloadField(kind)));
                 other.insert(std::move(target));
               }
               auto right = readValue(other, payload);
@@ -985,8 +1102,40 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
           loan.targets.insert(targets.begin(), targets.end());
           for (const auto &target : targets)
             join(loan.parents, target.authority);
+          const auto oldFrozen = loan.frozen.size();
+          const bool borrowsPlace = instruction.op == ir::Op::BorrowRead ||
+                                    instruction.op == ir::Op::BorrowMut ||
+                                    instruction.op == ir::Op::ReserveMut ||
+                                    instruction.op == ir::Op::ViewRead ||
+                                    instruction.op == ir::Op::ViewMut;
+          if (borrowsPlace) {
+            std::set<Place> visited;
+            std::vector<Target> work(targets.begin(), targets.end());
+            while (!work.empty()) {
+              auto target = std::move(work.back());
+              work.pop_back();
+              if (!visited.insert(target.place).second)
+                continue;
+              for (const auto &[location, stored] : memory)
+                if (prefix(target.place, location))
+                  for (auto content : stored) {
+                    if (content == id ||
+                        result.loans.at(content).mode != ParameterMode::Mut)
+                      continue;
+                    for (auto referent : result.loans.at(content).targets) {
+                      referent.authority.insert(content);
+                      loan.parents.insert(content);
+                      loan.frozen.insert(referent);
+                      work.push_back(std::move(referent));
+                    }
+                  }
+              if (visited.size() > limits::activeLoans)
+                throw std::length_error("frozen referent limit exceeded");
+            }
+          }
           if (oldTargets != loan.targets.size() ||
-              oldParents != loan.parents.size())
+              oldParents != loan.parents.size() ||
+              oldFrozen != loan.frozen.size())
             changed = true;
           value[{}].insert(id);
           point.defines.insert(id);
@@ -1006,7 +1155,8 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                   : types.product(instruction.result.type).layout.unionType
                       ? static_cast<std::uint32_t>(instruction.number)
                       : static_cast<std::uint32_t>(field);
-              if (instruction.op == ir::Op::ArrayRepeat)
+              if (instruction.op == ir::Op::ArrayRepeat ||
+                  types.compactArray(instruction.result.type))
                 projected.insert(
                     projected.begin(),
                     Projection::opaque(
@@ -1363,9 +1513,11 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                   source.root = staticSlot(source.root);
                   loan.targets.insert({source, {}});
                 }
+            Origins shadowed, retained;
             for (auto source : callee.resultSources) {
-              auto parents =
+              const auto borrow =
                   flatten(result.values[instruction.operands[source].id]);
+              auto parents = borrow;
               std::vector<int> work(parents.begin(), parents.end());
               while (!work.empty()) {
                 auto id = work.back();
@@ -1379,9 +1531,45 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                         if (parents.insert(content).second)
                           work.push_back(content);
               }
+              // A result that names only regions carried inside a borrowed
+              // value depends on the shared loans stored there, not on the
+              // borrow of the value itself.
+              if (std::find(callee.resultContents.begin(),
+                            callee.resultContents.end(),
+                            source) != callee.resultContents.end() &&
+                  callee.locals[source].mode != ParameterMode::Value &&
+                  callee.locals[source].mode != ParameterMode::Take) {
+                Origins carried;
+                std::set_difference(parents.begin(), parents.end(),
+                                    borrow.begin(), borrow.end(),
+                                    std::inserter(carried, carried.end()));
+                if (!carried.empty() &&
+                    std::all_of(carried.begin(), carried.end(), [&](auto id) {
+                      return result.loans.at(id).mode == ParameterMode::Read;
+                    }))
+                  parents = std::move(carried);
+                else if (!carried.empty()) {
+                  // Exclusive contents stay reachable only through the
+                  // container borrow while it is live, but the result does not
+                  // borrow the container's own storage.
+                  join(shadowed, borrow);
+                  std::set_difference(parents.begin(), parents.end(),
+                                      borrow.begin(), borrow.end(),
+                                      std::inserter(retained, retained.end()));
+                  join(loan.parents, parents);
+                  continue;
+                }
+              }
+              join(retained, parents);
               join(loan.parents, parents);
             }
-            if (oldTargets != loan.targets.size() ||
+            Origins borrowed;
+            std::set_difference(shadowed.begin(), shadowed.end(),
+                                retained.begin(), retained.end(),
+                                std::inserter(borrowed, borrowed.end()));
+            const bool borrowedChanged = borrowed != loan.borrowed;
+            loan.borrowed = std::move(borrowed);
+            if (borrowedChanged || oldTargets != loan.targets.size() ||
                 oldParents != loan.parents.size())
               changed = true;
           }
@@ -1429,10 +1617,32 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                 *projectedType(types, callee.locals[destination.root].type,
                                destination.fields);
             loan.mode = types.view(viewType).mode;
+            // Views moved within the written argument were reached through
+            // loans of the object that holds the destination; those loans
+            // govern the access to it, not the stored views.
+            const auto &holders = arguments.at(destination);
+            auto holds = [&](int parent) {
+              const auto &targets = result.loans.at(parent).targets;
+              return !targets.empty() &&
+                     std::all_of(targets.begin(), targets.end(),
+                                 [&](const Target &target) {
+                                   return std::any_of(
+                                       holders.begin(), holders.end(),
+                                       [&](const Target &holder) {
+                                         return containsPlace(target.place,
+                                                              holder.place);
+                                       });
+                                 });
+            };
+            auto inherit = [&](const Place &source, const Target &referent) {
+              for (auto parent : referent.authority)
+                if (source.root != destination.root || !holds(parent))
+                  loan.parents.insert(parent);
+            };
             for (const auto &source : sources)
               for (const auto &referent : arguments.at(source)) {
                 loan.targets.insert(referent);
-                join(loan.parents, referent.authority);
+                inherit(source, referent);
               }
             if (auto dependencies =
                     summaries[instruction.callee].writeDependencies.find(
@@ -1441,7 +1651,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                 summaries[instruction.callee].writeDependencies.end())
               for (const auto &source : dependencies->second)
                 for (const auto &referent : arguments.at(source))
-                  join(loan.parents, referent.authority);
+                  inherit(source, referent);
             const auto &destinations = arguments.at(destination);
             for (const auto &target : destinations)
               memory[target.place].insert(id);
@@ -1483,12 +1693,20 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
       if (function.blocks[b].exit.kind == ir::Exit::Return) {
         join(result.returns[b],
              flatten(result.values[function.blocks[b].exit.value.id]));
+        const auto &returned = result.values[function.blocks[b].exit.value.id];
+        for (const auto &[path, type] : viewPaths(function.result, types)) {
+          (void)type;
+          auto found = returned.find(path);
+          if (found == returned.end() || found->second.empty())
+            untracked.insert(path);
+        }
         for (const auto &[path, sources] :
              result.values[function.blocks[b].exit.value.id])
           for (auto id : sources)
             for (const auto &target : result.loans.at(id).targets)
               if (target.place.root < 0)
-                result.effects.returns[path].insert(relative(target.place));
+                result.effects.returns[path].insert(
+                    viewBacking(relative(target.place)));
               else if (function.locals[target.place.root].storage ==
                        StorageDuration::Static) {
                 auto storage = target.place;
@@ -1502,6 +1720,34 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
       }
     }
   } while (changed);
+  // A result built from raw-pointer storage carries no tracked targets, yet its
+  // declared regions promise it stays within the declared inputs: back it with
+  // every place those inputs borrow so later access through them conflicts.
+  for (const auto &[path, type] : viewPaths(function.result, types)) {
+    if ((!result.effects.returns[path].empty() && !untracked.contains(path)) ||
+        result.effects.staticReturns.contains(path))
+      continue;
+    for (auto source : function.resultSources) {
+      const auto &parameter = function.locals[source];
+      std::set<Place> backing;
+      const bool contents = std::find(function.resultContents.begin(),
+                                      function.resultContents.end(),
+                                      source) != function.resultContents.end();
+      if (!contents && (parameter.mode == ParameterMode::Read ||
+                        parameter.mode == ParameterMode::Mut))
+        backing.insert({static_cast<int>(source), {}});
+      for (const auto &[inner, view] : viewPaths(parameter.type, types)) {
+        (void)view;
+        Place place{static_cast<int>(source), inner};
+        place.fields.push_back(Projection::dereference());
+        backing.insert(std::move(place));
+      }
+      for (auto place : backing) {
+        place.fields.push_back(Projection::opaque(types.view(type).payload));
+        result.effects.returns[path].insert(std::move(place));
+      }
+    }
+  }
   for (const auto &place : overwrites(function, result.points))
     if (place.root < 0) {
       auto relative = result.externalPlaces.at(place.root);

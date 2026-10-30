@@ -48,6 +48,7 @@ def main():
          f"-DCMAKE_CXX_COMPILER={cxx}", f"-DCMAKE_MAKE_PROGRAM={ninja}",
          f"-DLLVM_DIR={prefix / 'llvm/lib/cmake/llvm'}", "-DBUILD_TESTING=ON",
          f"-DMETTLE_ENABLE_SANITIZERS={'ON' if arguments.sanitizers else 'OFF'}"],
+        [str(cmake), "--build", str(build), "--target", "clean"],
         [str(cmake), "--build", str(build), "--parallel", str(min(os.cpu_count() or 1, 4))],
         ([sys.executable, str(ROOT / "tools/check_quality.py"), "--build-dir", str(build)]
          if arguments.quality else
@@ -74,7 +75,7 @@ def main():
                  if path.is_file() and path.suffix in {".cpp", ".c", ".h", ".py", ".json", ".yaml", ".mt"}])
         },
         "steps": [],
-        "first_build_mode": "incremental compilation and deterministic relink, compared with a clean rebuild",
+        "first_build_mode": "clean build, compared byte-for-byte with a second clean build",
         "status": "in_progress",
     }
     environment = os.environ.copy()
@@ -143,10 +144,6 @@ def main():
         for number, command in enumerate(commands, 1):
             first_build = (command[:2] == [str(cmake), "--build"] and
                            "--target" not in command and "first_build" not in evidence)
-            if first_build:
-                # Normalize archive/debug-map timestamps from ordinary local builds.
-                for name in (*executable_names, *archive_names):
-                    (build / name).unlink(missing_ok=True)
             print(subprocess.list2cmdline(command), flush=True)
             log = build / f"step-{number}.log"
             with log.open("w") as stream:

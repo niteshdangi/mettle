@@ -70,11 +70,27 @@ bool Checker::intrinsicProperty(const TypeSyntax &bound,
                                 std::string_view property, Span span) const {
   return bound.form == TypeForm::Named &&
          (bound.name == property ||
-          (property == "Unpin" && bound.name == "core::marker::Unpin")) &&
+          ((property == "Unpin" || property == "Transferable" ||
+            property == "Shareable" || property == "Static") &&
+           bound.name == "core::marker::" + std::string(property))) &&
          bound.arguments.empty() &&
          !checked.namespaces().lookup(checked.namespaces().moduleOf(span),
                                       bound.name, resolution::Namespace::Type,
                                       span);
+}
+
+std::optional<interfaces::Property>
+Checker::propertyBound(const TypeSyntax &bound, Span span) const {
+  using interfaces::Property;
+  for (auto [name, property] : {std::pair{"Copy", Property::Copy},
+                                {"Sized", Property::Sized},
+                                {"Unpin", Property::Unpin},
+                                {"Transferable", Property::Transferable},
+                                {"Shareable", Property::Shareable},
+                                {"Static", Property::Static}})
+    if (intrinsicProperty(bound, name, span))
+      return property;
+  return std::nullopt;
 }
 
 bool Checker::interfaceProperty(const TypeSyntax &bound,
@@ -287,16 +303,16 @@ std::vector<interfaces::Obligation> Checker::interfaceAssumptions() {
       if (bound.name == "unsized")
         continue;
       auto context = genericEnvironment->declarationSpan;
-      auto property = intrinsicProperty(bound, "Copy", context)
-                          ? interfaces::Property::Copy
-                      : intrinsicProperty(bound, "Sized", context)
-                          ? interfaces::Property::Sized
-                      : intrinsicProperty(bound, "Unpin", context)
-                          ? interfaces::Property::Unpin
-                          : interfaces::Property::Interface;
+      auto property = propertyBound(bound, context)
+                          .value_or(interfaces::Property::Interface);
+      if (property == interfaces::Property::Interface &&
+          !elaboratingBounds.insert(&bound).second)
+        continue;
       auto type = property == interfaces::Property::Interface
                       ? interfaceBound(bound, context, {}, subject)
                       : Type::Unknown;
+      if (property == interfaces::Property::Interface)
+        elaboratingBounds.erase(&bound);
       result.push_back({subject, type, property});
     }
   std::set<std::pair<Type, Type>> expanded;
@@ -344,11 +360,7 @@ bool Checker::interfaceObligation(Type actual, const TypeSyntax &bound,
     return true;
   interfaces::Obligation obligation{
       actual, Type::Unknown,
-      intrinsicProperty(bound, "Copy", span)    ? interfaces::Property::Copy
-      : intrinsicProperty(bound, "Sized", span) ? interfaces::Property::Sized
-      : intrinsicProperty(bound, "Unpin", span)
-          ? interfaces::Property::Unpin
-          : interfaces::Property::Interface};
+      propertyBound(bound, span).value_or(interfaces::Property::Interface)};
   if (obligation.property == interfaces::Property::Interface)
     obligation.interfaceType = interfaceBound(bound, span, {}, actual);
   interfaces::Solver solver(*checked.types, *checked.interfaceData, diagnostics,
@@ -455,16 +467,15 @@ void Checker::interfaceSignatures() {
       compiled.parameters.assign(family.parameters.begin() + prefix,
                                  family.parameters.end());
       compiled.requirements = interfaceAssumptions();
+      auto outerRequirements = regionEnvironment().assumptions.size();
+      compiled.regions =
+          pushRegionParameters(item.genericParameters, item.span);
+      assumeRegionConstraints(item.constraints, item.span);
       for (const auto &bound : item.bounds) {
         if (bound.name == "unsized")
           continue;
-        auto property = intrinsicProperty(bound, "Copy", item.span)
-                            ? interfaces::Property::Copy
-                        : intrinsicProperty(bound, "Sized", item.span)
-                            ? interfaces::Property::Sized
-                        : intrinsicProperty(bound, "Unpin", item.span)
-                            ? interfaces::Property::Unpin
-                            : interfaces::Property::Interface;
+        auto property = propertyBound(bound, item.span)
+                            .value_or(interfaces::Property::Interface);
         compiled.bounds.push_back(
             {compiled.parameter,
              property == interfaces::Property::Interface
@@ -472,10 +483,6 @@ void Checker::interfaceSignatures() {
                  : Type::Unknown,
              property});
       }
-      auto outerRequirements = regionEnvironment().assumptions.size();
-      compiled.regions =
-          pushRegionParameters(item.genericParameters, item.span);
-      assumeRegionConstraints(item.constraints, item.span);
       const auto &requirements = regionEnvironment().assumptions;
       compiled.regionRequirements.assign(
           requirements.begin() + outerRequirements, requirements.end());
@@ -506,16 +513,9 @@ void Checker::interfaceSignatures() {
       genericEnvironment = outer;
     }
     for (const auto &parentBound : syntax.superinterfaces) {
-      if (intrinsicProperty(parentBound, "Copy", syntax.span) ||
-          intrinsicProperty(parentBound, "Sized", syntax.span) ||
-          intrinsicProperty(parentBound, "Unpin", syntax.span))
+      if (auto property = propertyBound(parentBound, syntax.span))
         definition.superinterfaces.push_back(
-            {definition.self, Type::Unknown,
-             intrinsicProperty(parentBound, "Copy", syntax.span)
-                 ? interfaces::Property::Copy
-             : intrinsicProperty(parentBound, "Sized", syntax.span)
-                 ? interfaces::Property::Sized
-                 : interfaces::Property::Unpin});
+            {definition.self, Type::Unknown, *property});
       else
         definition.superinterfaces.push_back(
             {definition.self,
@@ -693,9 +693,7 @@ std::optional<Type> Checker::interfaceAnnotation(const TypeSyntax &syntax,
     }
     std::vector<Type> bounds;
     for (const auto &bound : syntax.elements)
-      if (!intrinsicProperty(bound, "Copy", span) &&
-          !intrinsicProperty(bound, "Sized", span) &&
-          !intrinsicProperty(bound, "Unpin", span))
+      if (!propertyBound(bound, span))
         bounds.push_back(interfaceBound(bound, span, owner, type));
     checked.types->setOpaqueBounds(type, std::move(bounds));
     if (current) {
@@ -720,10 +718,7 @@ std::optional<Type> Checker::interfaceAnnotation(const TypeSyntax &syntax,
         if (bounds != genericEnvironment->bounds.end()) {
           Type projection = Type::Unknown;
           for (const auto &bound : bounds->second) {
-            if (intrinsicProperty(bound, "Copy", span) ||
-                intrinsicProperty(bound, "Sized", span) ||
-                intrinsicProperty(bound, "Unpin", span) ||
-                bound.name == "unsized")
+            if (propertyBound(bound, span) || bound.name == "unsized")
               continue;
             auto interface =
                 interfaceBound(bound, span, owner, subject->second);

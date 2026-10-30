@@ -27,11 +27,19 @@ bool sameSignature(const CallableType &a, const CallableType &b) {
   return true;
 }
 } // namespace
+std::vector<Type> TypeStore::callableKey(const CallableType &descriptor) {
+  std::vector<Type> key{descriptor.result, descriptor.error};
+  for (const auto &parameter : descriptor.parameters)
+    key.push_back(parameter.type);
+  return key;
+}
 Type TypeStore::callableType(CallableType descriptor) {
-  for (std::size_t i = 0; i < entries.size(); ++i)
-    if (entries[i].kind == EntryKind::Callable &&
-        sameSignature(callables[entries[i].index], descriptor))
-      return Type(builtins + static_cast<std::uint32_t>(i));
+  syncLookup();
+  if (auto existing = findIndexed(
+          found(lookup.callables, callableKey(descriptor)), [&](std::size_t i) {
+            return sameSignature(callables[entries[i].index], descriptor);
+          }))
+    return *existing;
   if (entries.size() >= std::numeric_limits<std::uint32_t>::max() - builtins)
     throw std::length_error("type identity limit exceeded");
   descriptor.environment = Type::Unknown;

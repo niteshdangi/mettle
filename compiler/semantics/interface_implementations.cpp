@@ -1,7 +1,76 @@
 #include "semantics/checker.h"
 #include <algorithm>
+#include <utility>
 
 namespace mettle {
+// Manual declarations of the structural cross-thread properties: a negative
+// `impl T not Transferable;` or an `unsafe impl ... implements Transferable {}`
+// whose bounds state the conditions the implementer has verified.
+void Checker::concurrencyDeclaration(
+    const Module::Implementation &syntax, interfaces::Property property,
+    interfaces::Implementation &implementation) {
+  auto &database = *checked.interfaceData;
+  const std::string name =
+      property == interfaces::Property::Transferable ? "Transferable"
+      : property == interfaces::Property::Shareable  ? "Shareable"
+                                                     : "Static";
+  if (property == interfaces::Property::Static) {
+    error("type", syntax.span, "Static is derived and cannot be declared");
+    return;
+  }
+  auto target = implementation.target;
+  if (!checked.types->isProduct(target) || checked.types->isOpaque(target) ||
+      (checked.types->product(target).kind != AggregateKind::Product &&
+       checked.types->product(target).kind != AggregateKind::Enumeration) ||
+      checked.types->product(target).callable >= 0) {
+    error("type", syntax.span,
+          name + " declarations require a local nominal type");
+    return;
+  }
+  auto origin = checked.types->product(target).genericOrigin;
+  if (origin == Type::Unknown)
+    origin = target;
+  if (checked.types->product(origin).package != 0)
+    error("type", syntax.span,
+          name + " declaration must belong to the type's package");
+  if (!syntax.negative && !syntax.unsafeImplementation)
+    error("unsafe", syntax.span,
+          "manual " + name + " implementation requires unsafe impl");
+  if (syntax.negative && syntax.unsafeImplementation)
+    error("type", syntax.span, "negative " + name + " declarations are safe");
+  if (!syntax.associated.empty() || !syntax.methodFunctions.empty())
+    error("type", syntax.span,
+          name + " declarations cannot contain associated items");
+  const auto &arguments = checked.types->product(target).genericArguments;
+  const auto &parameters = checked.types->product(origin).genericParameters;
+  if (arguments.size() != parameters.size())
+    error("type", syntax.span,
+          name + " declaration must cover every type parameter");
+  std::set<Type> used;
+  for (auto argument : arguments) {
+    bool constant =
+        checked.types->isConstant(argument) &&
+        checked.types->parameter(argument).kind == TypeParameterKind::Constant;
+    if ((!checked.types->isParameter(argument) && !constant) ||
+        !used.insert(argument).second)
+      error("type", syntax.span,
+            "specialized " + name + " declarations are not coherent");
+  }
+  if (syntax.negative &&
+      (!syntax.constraints.empty() ||
+       std::any_of(syntax.genericParameters.begin(),
+                   syntax.genericParameters.end(),
+                   [](const auto &p) { return !p.bounds.empty(); })))
+    error("type", syntax.span,
+          "negative " + name + " declarations cannot specialize bounds");
+  implementation.requirements = interfaceAssumptions();
+  auto [position, inserted] = database.concurrencyDeclarations.emplace(
+      std::make_pair(property, origin),
+      interfaces::ConcurrencyDeclaration{syntax.negative, implementation});
+  if (!inserted)
+    error("type", syntax.span, "overlapping " + name + " declarations");
+}
+
 void Checker::interfaceImplementations() {
   auto &database = *checked.interfaceData;
   auto *saved = genericEnvironment;
@@ -118,6 +187,14 @@ void Checker::interfaceImplementations() {
         checked.types->setProductLayout(origin, std::move(layout));
         checked.types->refreshProductInstances();
       }
+      popRegionParameters();
+      continue;
+    }
+    if (auto property = propertyBound(syntax.interface, syntax.span);
+        property && (*property == interfaces::Property::Transferable ||
+                     *property == interfaces::Property::Shareable ||
+                     *property == interfaces::Property::Static)) {
+      concurrencyDeclaration(syntax, *property, implementation);
       popRegionParameters();
       continue;
     }
@@ -369,12 +446,7 @@ Checker::interfaceMethod(Type self, std::string_view name, Node &call) {
       consider(bound);
   else if (genericEnvironment && genericEnvironment->bounds.contains(self)) {
     for (const auto &bound : genericEnvironment->bounds.at(self))
-      if (!intrinsicProperty(bound, "Copy",
-                             genericEnvironment->declarationSpan) &&
-          !intrinsicProperty(bound, "Sized",
-                             genericEnvironment->declarationSpan) &&
-          !intrinsicProperty(bound, "Unpin",
-                             genericEnvironment->declarationSpan) &&
+      if (!propertyBound(bound, genericEnvironment->declarationSpan) &&
           bound.name != "unsized")
         consider(interfaceBound(bound, genericEnvironment->declarationSpan, {},
                                 self));
@@ -424,8 +496,8 @@ void Checker::checkInterfaceContracts() {
   for (const auto &implementation : checked.interfaceData->implementations) {
     if (!checked.types->isErased(implementation.interfaceType))
       continue;
-    const auto &descriptor =
-        checked.types->erased(implementation.interfaceType);
+    // Copied: interning substituted types below may grow the erased-type store.
+    const auto descriptor = checked.types->erased(implementation.interfaceType);
     const auto &definition =
         checked.interfaceData->definitions[descriptor.declaration];
     for (const auto &[ordinal, provided] : implementation.associated) {
@@ -474,11 +546,17 @@ void Checker::checkInterfaceContracts() {
         error("type", implementation.span,
               "associated item does not satisfy its Sized contract");
       bindings.push_back({required.parameter, value});
+      std::vector<RegionBinding> familyRegions;
+      for (std::size_t r = 0;
+           r < provided.regions.size() && r < required.regions.size(); ++r)
+        familyRegions.push_back({required.regions[r], provided.regions[r]});
       for (auto obligation : required.bounds) {
         obligation.subject =
             checked.types->substitute(obligation.subject, bindings);
         obligation.interfaceType =
             checked.types->substitute(obligation.interfaceType, bindings);
+        obligation.interfaceType = checked.types->substituteRegions(
+            obligation.interfaceType, familyRegions);
         if (!associated.prove(obligation, implementation.span, false))
           error("type", implementation.span,
                 "associated item does not satisfy its interface bounds");
@@ -530,9 +608,11 @@ void Checker::checkInterfaceContracts() {
               ? actual.genericParameters.size() -
                     implementation.parameters.size()
               : 0;
+      bool contractReported = false;
       auto fail = [&] {
-        error("type", provided.span,
-              "implementation method contract does not match interface");
+        if (!std::exchange(contractReported, true))
+          error("type", provided.span,
+                "implementation method contract does not match interface");
       };
       if (!actual.targetFeatures.empty() &&
           !featuresAvailable(checked.targetDescription, expected.targetFeatures,
@@ -580,7 +660,8 @@ void Checker::checkInterfaceContracts() {
             checked.types->substitute(obligation.subject, publicParameters);
         obligation.interfaceType = checked.types->substitute(
             obligation.interfaceType, publicParameters);
-        if (!contracts.prove(obligation, provided.span, false))
+        if (!contracts.prove(obligation, provided.span, false) &&
+            !std::exchange(contractReported, true))
           error("type", provided.span,
                 "implementation method strengthens its interface bounds");
       }
@@ -589,7 +670,8 @@ void Checker::checkInterfaceContracts() {
                 actual
                     .genericParameters[implementation.parameters.size() + p]) &&
             !checked.types->isSized(
-                expected.genericParameters[required.implicitParameters + p]))
+                expected.genericParameters[required.implicitParameters + p]) &&
+            !std::exchange(contractReported, true))
           error("type", provided.span,
                 "implementation method strengthens Sized requirements");
       for (auto &contract : regionContracts)

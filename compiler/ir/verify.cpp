@@ -248,6 +248,18 @@ bool function(const Function &f, const Program &program,
           value(operand, static_cast<int>(b), i, n.span);
       }
       switch (n.op) {
+      case Op::TextLiteral:
+        arity(0);
+        require(
+            program.types->isView(result) &&
+            program.types->view(result).mode == ParameterMode::Read &&
+            (program.types->pointerMetadata(
+                 program.types->view(result).payload) ==
+                 PointerMetadata::ElementCount ||
+             (program.types->isProduct(program.types->view(result).payload) &&
+              program.types->product(program.types->view(result).payload)
+                      .kind == AggregateKind::Array)));
+        break;
       case Op::FeatureTest:
         arity(0);
         require(result == Type::Bool);
@@ -327,9 +339,14 @@ bool function(const Function &f, const Program &program,
         }
         break;
       case Op::SliceBorrowRead:
-      case Op::SliceBorrowMut:
+      case Op::SliceBorrowMut: {
         require(program.types->isView(result));
-        if (arity(1))
+        // One operand borrows an element; start and end borrow a subslice.
+        const bool range = n.operands.size() == 2;
+        if (range)
+          require(n.operands[0].type == Type::Usize &&
+                  n.operands[1].type == Type::Usize);
+        else if (arity(1))
           require(n.operands[0].type == Type::I32 ||
                   n.operands[0].type == Type::Usize);
         if (slot() && program.types->isView(result)) {
@@ -338,12 +355,13 @@ bool function(const Function &f, const Program &program,
           require(program.types->isSlice(slice));
           if (program.types->isSlice(slice))
             require(program.types->view(result).payload ==
-                        program.types->slice(slice).element &&
+                        (range ? slice : program.types->slice(slice).element) &&
                     program.types->view(result).mode ==
                         (n.op == Op::SliceBorrowRead ? ParameterMode::Read
                                                      : ParameterMode::Mut));
         }
-        if (n.number >= 0 && !n.operands.empty() && n.operands[0].id >= 0 &&
+        if (!range && n.number >= 0 && !n.operands.empty() &&
+            n.operands[0].id >= 0 &&
             static_cast<std::size_t>(n.operands[0].id) < definitions.size()) {
           const auto &where = definitions[n.operands[0].id];
           if (where.block >= 0) {
@@ -360,6 +378,7 @@ bool function(const Function &f, const Program &program,
           }
         }
         break;
+      }
       case Op::OpaqueRepack:
         require(program.types->isOpaque(n.opaqueType));
         if (arity(1) && program.types->isOpaque(n.opaqueType)) {
@@ -637,7 +656,12 @@ bool function(const Function &f, const Program &program,
               cursor = tests[0].op == Op::Load &&
                        tests[0].result.id == loop.index.id &&
                        tests[1].op == Op::Constant &&
-                       tests[1].constantParameter != Type::Unknown &&
+                       (tests[1].constantParameter != Type::Unknown ||
+                        (tests[1].result.type == Type::I32 &&
+                         program.types->arrayLength(*projectedType(
+                             *program.types, f.locals[loop.source.root].type,
+                             loop.source.fields)) ==
+                             static_cast<std::uint64_t>(tests[1].number))) &&
                        tests[2].op == Op::Binary && tests[2].text == "<" &&
                        tests[2].operands.size() == 2 &&
                        tests[2].operands[0].id == loop.index.id &&
@@ -903,7 +927,13 @@ bool function(const Function &f, const Program &program,
                   !program.types->isSum(result));
           if (program.types->isProduct(result)) {
             const auto &fields = program.types->product(result).fields;
-            if (program.types->product(result).layout.unionType) {
+            if (program.types->compactArray(result)) {
+              auto element = program.types->product(result).components[0];
+              if (arity(static_cast<std::size_t>(
+                      *program.types->arrayLength(result))))
+                for (const auto &operand : n.operands)
+                  require(operand.type == element);
+            } else if (program.types->product(result).layout.unionType) {
               if (arity(1)) {
                 require(n.number >= 0 &&
                         static_cast<std::size_t>(n.number) < fields.size());
@@ -1217,13 +1247,31 @@ bool verify(const Program &program, Diagnostics &diagnostics,
                  program.types->slice(target).element ==
                      program.types->product(payload).components[0] &&
                  value.scalar.magnitude[0] ==
-                     program.types->product(payload).fields.size();
+                     program.types->arrayLength(payload);
+        }
+        if (value.kind == StaticConstant::Kind::Text) {
+          if (!program.types->isView(expected) ||
+              program.types->view(expected).mode != ParameterMode::Read)
+            return false;
+          auto payload = program.types->view(expected).payload;
+          return program.types->pointerMetadata(payload) ==
+                     PointerMetadata::ElementCount ||
+                 (program.types->isProduct(payload) &&
+                  program.types->product(payload).kind ==
+                      AggregateKind::Array &&
+                  program.types->product(payload).fields.size() ==
+                      value.text.size());
         }
         if (value.kind == StaticConstant::Kind::Function)
           return program.types->isFunctionPointer(expected) &&
                  value.symbol >= 0 &&
                  static_cast<std::size_t>(value.symbol) <
                      program.functions.size();
+        if (value.kind == StaticConstant::Kind::Repeat)
+          return program.types->compactArray(expected) &&
+                 value.fields.size() == 1 &&
+                 constant(value.fields[0],
+                          program.types->product(expected).components[0]);
         if (value.kind == StaticConstant::Kind::Aggregate) {
           if (!program.types->isProduct(expected))
             return false;

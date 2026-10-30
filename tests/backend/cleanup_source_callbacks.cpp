@@ -15,7 +15,7 @@ extern "C" void mettle_test_cleanup_source_record(std::int32_t tag) {
 
 extern "C" std::int32_t mettle_test_cleanup_source_result(std::int32_t code,
                                                           std::int32_t mode) {
-  constexpr std::array<std::int32_t, 60> scopes{
+  constexpr std::array<std::int32_t, 72> scopes{
       102,  103,  101,             // statement temporaries
       201,  202,                   // if condition
       301,  310,  302,  311,  303, // while conditions
@@ -29,9 +29,13 @@ extern "C" std::int32_t mettle_test_cleanup_source_result(std::int32_t code,
       1021, 1010, 1022, 1011, 1030, // cross-loop continue cleanup
       1101, 1102, 1103,             // active variants only
       1121, 1199, 1121, 1122,       // failed fields, established whole
-      1132, 1133, 1131              // consuming array rest
+      1132, 1133, 1131,             // consuming array rest
+      1201, 1211, 1201, 1212, 1210, // iterator exhaustion
+      1221, 1220,                   // break drops element then iterator
+      1231, 1232, 1230,             // continue drops each element
+      1241, 1240                    // return drops element then iterator
   };
-  constexpr std::array<std::int32_t, 4> arguments{902, 903, 905, 901};
+  constexpr std::array<std::int32_t, 6> arguments{902, 903, 905, 907, 906, 901};
   std::span<const std::int32_t> expected(scopes);
   if (mode != 0)
     expected = arguments;

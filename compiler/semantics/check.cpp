@@ -3,6 +3,7 @@
 #include "types/machine.h"
 #include <algorithm>
 #include <functional>
+#include <map>
 #include <stdexcept>
 
 namespace mettle {
@@ -10,6 +11,7 @@ void Checker::error(std::string phase, Span span, std::string message) {
   if (phase == "type" && std::any_of(staticStates.begin(), staticStates.end(),
                                      [](auto state) { return state == 1; }))
     phase = "constant";
+  ++reportedErrors;
   diagnostics.error(std::move(phase), span, std::move(message));
 }
 
@@ -72,6 +74,7 @@ std::optional<CheckedModule> Checker::run() {
   }
   targetDeclarations();
   interfaceImplementations();
+  proveDeferredObligations();
   staticDeclarations();
   if (diagnostics.empty())
     resolveRegionProjections();
@@ -103,11 +106,12 @@ std::optional<CheckedModule> Checker::run() {
   std::function<void(Node &, std::vector<std::size_t> &, std::string_view)>
       calls = [&](Node &n, std::vector<std::size_t> &out,
                   std::string_view owner) {
-        if (n.kind == Kind::Name) {
+        if (n.kind == Kind::Name && !facts(n).lexicallyBound) {
           auto found = names.find(callableName(n.text, owner, n.span));
           if (found != names.end())
             out.push_back(found->second);
-        } else if (n.kind == Kind::Call && n.children[0]->kind == Kind::Name) {
+        } else if (n.kind == Kind::Call && n.children[0]->kind == Kind::Name &&
+                   !facts(*n.children[0]).lexicallyBound) {
           auto found =
               names.find(callableName(n.children[0]->text, owner, n.span));
           if (found != names.end())
@@ -117,6 +121,9 @@ std::optional<CheckedModule> Checker::run() {
             if (module.functions[i].name.ends_with("." + n.children[0]->text))
               out.push_back(i);
         }
+        if (auto plan = checked.iterations.find(&n);
+            plan != checked.iterations.end())
+          calls(*plan->second.elaboration, out, owner);
         for (auto &child : n.children)
           calls(*child, out, owner);
       };
@@ -166,7 +173,7 @@ std::optional<CheckedModule> Checker::run() {
               ? facts(f).result
               : checked.types->structural(AggregateKind::Outcome,
                                           {facts(f).result, facts(f).error});
-      if (facts(f).result == Type::Unknown)
+      if (facts(f).result == Type::Unknown && diagnostics.empty())
         error("type", f.span, "cannot infer recursive result; add ': Type'");
     }
   };
@@ -192,15 +199,23 @@ std::optional<CheckedModule> Checker::run() {
             "operator is not available for this scalar type");
   }
   for (auto [variable, span] : comparisons)
-    if (checked.types->isProduct(inference.value(variable)))
+    if (checked.types->isView(inference.value(variable)))
+      error("type", span,
+            "view comparisons require explicitly comparing the referenced "
+            "values");
+    else if (checked.types->isProduct(inference.value(variable)))
       error("type", span,
             "product comparisons require a declared comparison interface");
   for (auto &f : module.functions) {
     facts(f).result = inference.value(functionVariables[&f]);
     std::function<void(Node &)> resolve = [&](Node &n) {
-      if (n.kind != Kind::Closure)
+      if (n.kind != Kind::Closure) {
+        if (auto plan = checked.iterations.find(&n);
+            plan != checked.iterations.end())
+          resolve(*plan->second.elaboration);
         for (auto &child : n.children)
           resolve(*child);
+      }
       if (nodeVariables.contains(&n))
         facts(n).type = inference.value(nodeVariables[&n]);
       if (facts(n).rebuiltType != Type::Unknown)
@@ -236,9 +251,21 @@ std::optional<CheckedModule> Checker::run() {
     for (auto &parameter : f.parameters)
       if (parameter.defaultValue.get())
         resolve(*parameter.defaultValue);
+    std::optional<std::set<int>> poisonedRoots;
+    auto poisoned = [&](std::size_t local) {
+      if (!poisonedRoots) {
+        poisonedRoots.emplace();
+        for (auto variable : poisonedVariables)
+          poisonedRoots->insert(inference.representative(variable));
+      }
+      return inference.depends(localVariables[&f][local], *poisonedRoots);
+    };
     for (std::size_t i = 0; i < facts(f).locals.size(); ++i) {
       facts(f).locals[i].type = inference.value(localVariables[&f][i]);
-      if (facts(f).locals[i].type == Type::Unknown)
+      // A parameter's annotation is mandatory, so its failure is already
+      // reported.
+      if (facts(f).locals[i].type == Type::Unknown &&
+          i >= f.parameters.size() && !poisoned(i))
         error("type", facts(f).locals[i].span,
               "cannot infer local type; add ': Type'");
       if (facts(f).locals[i].patternView) {
@@ -247,7 +274,6 @@ std::optional<CheckedModule> Checker::run() {
         facts(f).locals[i].mode = ParameterMode::Value;
       }
     }
-    resolvePatterns();
     auto resultParameters = checked.types->typeParameters(facts(f).abiResult);
     for (std::size_t p = 0;
          p < f.parameters.size() && p < facts(f).locals.size(); ++p) {
@@ -262,11 +288,18 @@ std::optional<CheckedModule> Checker::run() {
         facts(f).genericResultSources.push_back(p);
     }
   }
+  resolvePatterns();
   if (diagnostics.empty())
     staticInitializers();
+  std::map<Type, bool> varArgs;
+  auto holdsVarArgs = [&](Type type) {
+    auto [entry, inserted] = varArgs.try_emplace(type, false);
+    if (inserted)
+      entry->second = containsVarArgs(*checked.types, type);
+    return entry->second;
+  };
   for (const auto &[syntax, resolved] : checked.nodes) {
-    if (containsVarArgs(*checked.types, resolved.type) &&
-        !checked.types->isView(resolved.type) &&
+    if (holdsVarArgs(resolved.type) && !checked.types->isView(resolved.type) &&
         !(checked.types->isProduct(resolved.type) &&
           checked.types->product(resolved.type).kind == AggregateKind::VarArgs))
       error(
@@ -276,7 +309,7 @@ std::optional<CheckedModule> Checker::run() {
       for (std::size_t i = 1; i < syntax->children.size(); ++i)
         if (auto argument = checked.nodes.find(syntax->children[i].get());
             argument != checked.nodes.end() &&
-            containsVarArgs(*checked.types, argument->second.type))
+            holdsVarArgs(argument->second.type))
           error("ownership", syntax->children[i]->span,
                 "a variadic cursor cannot be passed outside its invocation");
     if (syntax->kind == Kind::Integer && resolved.numeric &&
@@ -286,15 +319,15 @@ std::optional<CheckedModule> Checker::run() {
                 std::string(checked.types->name(resolved.type)) + " range");
     if (syntax->kind == Kind::Cast) {
       auto source = checked.nodes.at(syntax->children[0].get()).type;
-      if (source != Type::Never &&
+      if (source != Type::Never && source != Type::Unknown &&
           !machineCastAllowed(*checked.types, source, resolved.type))
         error("type", syntax->span, "invalid scalar conversion");
     }
-    for (const auto &function : module.functions)
-      if (containsVarArgs(*checked.types, facts(function).result))
-        error("ownership", function.span,
-              "a variadic cursor cannot escape its invocation");
   }
+  for (const auto &function : module.functions)
+    if (holdsVarArgs(facts(function).result))
+      error("ownership", function.span,
+            "a variadic cursor cannot escape its invocation");
   if (diagnostics.empty())
     checkBorrowAlignment();
   if (diagnostics.empty())

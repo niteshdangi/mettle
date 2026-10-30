@@ -26,13 +26,13 @@ for them.
 | `diagnostics` | Structured failures and source rendering | Parsing/recovery decisions or process exit |
 | `syntax` | Tokens, keyword/operator metadata, lexer, parsed AST and parser/recovery | Resolved bindings, inferred types, CFG slots, LLVM |
 | `resolution` | Compilation-local module identities, item/import scopes, visibility and canonical declaration names; source-provider-driven module assembly | Inference, backend types or filesystem I/O |
-| `types` | Compiler-owned language type identities and operations | Parsed AST, LLVM types, target layouts |
+| `types` | Compiler-owned language type identities/operations, target facts and target-layout results | Parsed AST, LLVM types/target machines, toolchain state |
 | `places` | Function-local storage roots, typed field paths and structural overlap | AST traversal, CFG control flow, mutability/loan policy |
 | `semantics` | Lexical resolution, module-resolution consumption, inference, flow facts and checked syntax | LLVM, code emission, filesystem/linker side effects |
 | `ir` | Typed CFG model, structural/type/SSA verification and inspection | AST traversal, ownership policy implemented in a printer, LLVM |
 | `lowering` | Checked syntax to typed CFG with explicit evaluation order | Accepting unchecked AST or invoking the linker |
 | `analysis` | CFG initialization/moves, view origins, call/destructor effects and loan liveness | Mutating the parsed tree or inferring semantics from LLVM |
-| `instances` | Canonical concrete function planning, type/const substitution, callable ABI adapters and const-array CFG expansion | Rechecking source under stronger instantiated ownership rights or selecting LLVM representations |
+| `instances` | Canonical concrete function planning, type/const substitution, callable ABI adapters and const-array repeat/iteration expansion | Rechecking source under stronger instantiated ownership rights or selecting LLVM representations |
 | `cleanup` | Static owned-place flag hierarchy, lexical/unwind cleanup plans and ordering | LLVM types, per-object runtime registration, region inference |
 | `pipeline` | Backend-independent compilation entry points and stage ordering | CLI parsing, output publication, package downloads |
 | `backend` | LLVM adapter, target-machine setup, optimization and object emission | Discovering unresolved names/types or deciding ownership |
@@ -98,6 +98,12 @@ Normalized semantic annotation facts are retained before runtime region erasure.
 Explicit borrowed erasure preserves the source view's access and region, while
 opaque values retain region-bearing hidden fields.
 Generic associated-region calls substitute declaration-owned family binders.
+`Within<region s>` bounds (used by scoped spawn) are enforced by the region
+pass (`withinBounds`): every region captured by the argument must outlive `s`,
+and closures checked against a callable bound receive a higher-ranked binder.
+Concurrency properties (Transferable/Shareable/Static) are structural proofs in
+`semantics/interface_solver`; immutable statics must be Shareable. Interface
+implementation candidates are indexed by interface declaration.
 Runtime normalization erases regions only after the semantic region checks;
 it never substitutes for those checks. Slice identities describe element-count
 metadata and lower through explicit unsizing, length and checked-index operations.
@@ -207,15 +213,42 @@ hidden representation after source checking, including associated result types;
 source lookup still exposes only the opaque declaration's public bounds.
 Concrete instances discard declaration-only proof metadata.
 
-Const-array repeats and indexed borrows have explicit symbolic CFG operations.
-Generic array iteration checks one bounded-cursor loop body with ordinary
+Compact arrays: a concrete array of non-droppable elements with more than 64
+elements (1024 expanded when nested; `TypeStore::compactArrayShape`) is a
+single leaf place carrying an element type and a constant length instead of one
+field per element. It keeps `ArrayRepeat`, `ArrayBorrow*` and `ArrayTake`
+loops unexpanded, so initialization, loan and cleanup dataflow is O(1) per
+statement; constant-index projection, array patterns and by-value loops over
+droppable elements are rejected with `error[feature]`. Arrays of droppable
+elements stay expanded (capped at `droppableArrayElements`). The LLVM adapter
+treats aggregates over `LoweringContext::indirectThreshold` bytes as memory:
+the SSA value is a pointer to a snapshot temporary, copies are memcpy/memmove,
+repeat is memset or a store loop, large results use a trailing `sret`
+parameter, and static repeats emit `zeroinitializer`/constant arrays.
+Const-array repeats have an explicit symbolic operation that concrete expansion
+replaces with a construction when the array is not compact. A dynamically indexed array element is one
+`ArrayBorrowRead/Mut` operation for every array, concrete or generic; it never
+expands into a per-element CFG, and analyses treat it as a conservative access
+to the whole array unless the index is an in-range literal. The LLVM adapter
+lowers it to one unsigned bounds comparison (a negative signed index is
+sign-extended so it fails the comparison) with the out-of-bounds panic, followed
+by a single element GEP. Generic array iteration checks one bounded-cursor loop body with ordinary
 back-edge ownership/loan analysis. A consuming element transfer is valid only
 inside its verified iteration cursor. Concrete expansion clones each iteration's
 SSA and locals, retaining break/continue destinations, remaining-element cleanup
 and evaluation order. Resource bounds diagnose excessive instance/CFG growth.
 
+`for` over a user iterator is not rewritten in the AST. The checker stores an
+iteration plan in `CheckedModule::iterations` (mode, protocol, selected method
+and a synthetic elaboration block that borrows the original body through
+`NodeOwner::borrow`); ownership, region, capture and lowering passes walk the
+elaboration, and lowering emits the loop, `next` call, match and cleanup from it.
+
 Borrowed slices use a private `{data, count}` representation. Borrowed erased
 interfaces use `{data, count, witness}`; the count is zero for sized implementors.
+The slice `len()` primitive reads element-count metadata through the existing
+verified `SliceLength` operation; it evaluates its receiver once and returns
+`usize`. This does not yet provide the remaining I07 slice or text surface.
 Immutable witness tables record the receiver metadata kind and concrete alignment,
 then method entries and verified parent-interface links. Calls reconstruct a
 slice handle when needed, rather than retaining an address into a temporary
@@ -491,10 +524,10 @@ tests in the same change.
 | Products, ownership and destruction (I03) | Products/views in `types`; access/source contracts in `semantics`; canonical `places`; loan/move/init/effects in `analysis`; scope elaboration in `lowering`; static plans in `cleanup` |
 | Modules, enums, patterns, errors and methods (I04) | `resolution` owns modules/imports; parser families own syntax; semantics owns coverage/effects/default plans; lowering owns guarded binding and typed-failure continuations |
 | Generics, interfaces, regions and dispatch (I05) | Declaration-checked bodies, canonical type/region identities, constraint/coherence solver and instance planning; backend consumes instances rather than solving bounds |
-| Layout, unsafe operations and C ABI (I06) | Target description/layout/ABI lowering separate from language types; unsafe validity checks and explicit intrinsics; target-specific probes |
-| Core/alloc/hosted libraries (I07-I08) | Native Mettle modules and minimal runtime contracts, not hardcoded collections or OS calls inside the parser/checker |
+| Layout, unsafe operations and C ABI (I06) | Target facts and object layout in `types`, distinct from language type identity; physical ABI lowering in `backend`; unsafe validity checks and explicit intrinsics; target-specific probes |
+| Core/alloc/hosted libraries (I07-I08) | Native Mettle modules and minimal runtime contracts, not hardcoded collections or OS calls inside the parser/checker. `alloc` reaches memory only through the `mettle_rt_alloc/dealloc/realloc` hooks (`runtime/alloc.cpp`). `std` reaches the OS through declared libc externs and the shims in `runtime/sys.cpp` (errno, flags, `stat`, `readdir`, `spawn`, sockets, clocks); the panic hook lives in `runtime/panic.cpp` |
 | Constants, macros and packages (I09) | Const evaluator over defined IR; hygienic expansion with source ancestry; package graph/build planner outside compiler semantics |
-| Threads and async (I10-I11) | Concurrency contracts in types/semantics; task state-machine and cancellation/cleanup lowering; separately selected executor/runtime |
+| Threads and async (I10-I11) | Transferable/Shareable/Static are intrinsic properties proved structurally by `semantics/interface_solver.cpp` (`proveConcurrency`), with manual `unsafe impl`/`impl X not P` recorded in `interfaces::Database::concurrencyDeclarations`; thread/lock/TLS operations reach pthreads only through the `mettle_rt_thread_*`/`mettle_rt_mutex_*`/`mettle_rt_cond_*`/`mettle_rt_rwlock_*`/`mettle_rt_tls_*` hooks (`runtime/thread.cpp`), and `std::thread`/`std::sync` and `alloc::arc` are native Mettle modules. Task state-machine and cancellation/cleanup lowering; separately selected executor/runtime |
 | IDE/tooling/incremental (I12) | Reusable in-memory pipeline, immutable inputs/results and revision-bound diagnostics; module/item query boundaries and dependency tracking |
 | Additional backends/self-hosting (I15-I16) | Preserve checked/runtime/ABI boundaries; replace compiler implementation/backend without importing LLVM into language representations |
 
@@ -533,12 +566,41 @@ source identity and byte spans through diagnostics and lowering. External module
 discovery requires exactly one candidate, and rejects repeated canonical file
 identities rather than synthesizing duplicate module instances.
 
+The loader also mounts the native libraries `core`, `alloc` and `std` from a
+library directory (`<dir>/<name>/module.mt`). The driver defaults it to the
+source-tree `library/` (a CMake definition) and `--library-dir` overrides it;
+the in-memory pipeline passes a directory prefix and supplies the files in its
+catalog, so no filesystem access is added. A root is mounted on demand, only
+when the loaded program (or an already mounted library) names it by a
+`core|alloc|std ::` path: `core::x` mounts core only if `x` is declared or
+re-exported by `library/core/module.mt`, so compiler built-ins such as
+`core::ptr`, `core::mem` and the by-path interfaces needed by tests never pay
+for library loading. Text literals reference `core::text`. Detection is lexical
+and may over-load but never under-loads. Mounted roots are ordinary modules with
+their own source identities, so diagnostics point into library files and bodies
+are fully checked. A user root module with the same name shadows the library
+(freestanding and test setups define their own `core`); library and built-in
+`core` submodule names must not collide. Layering is enforced structurally:
+`core` may not name `alloc` or `std`, `alloc` may not name `std`. `std` is
+rejected in `--freestanding` builds; `core` and `alloc` are accepted.
+
 ## 7. Target and backend independence
 
-Language types are not target layouts. Introduce explicit target descriptions
-for widths/endianness/features and an owned layout/ABI result before expanding
-FFI/platform support. The LLVM adapter maps checked operations to LLVM; it cannot
-invent lifetime, aliasing or overflow assumptions.
+Language type identity is distinct from physical layout. The `types` component
+owns explicit target descriptions for widths/endianness/features and separate
+`ObjectLayout` results; the LLVM adapter owns physical ABI classification and
+maps checked operations to LLVM. It cannot
+invent lifetime, aliasing or overflow assumptions. The module data layout is
+taken from the LLVM target machine, and the driver verifies that the
+compiler-owned scalar and pointer sizes/alignments agree with it before
+lowering; the two must not silently diverge. Executable output validates
+runtime/link availability for the target before code generation.
+
+Normalization interns derived product records instead of rewriting shared
+nominal definitions under a caller's substitutions or interface assumptions.
+Erasing regions preserves those normalized field identities. Pipeline admission
+also preflights the compiler-owned cleanup plan, so its resource limits are
+source diagnostics during both checking and building, not backend failures.
 
 Keep LLVM headers/libraries in the LLVM backend and its driver integration.
 The current adapter implements the specified scalar arithmetic profiles;
@@ -551,7 +613,8 @@ Do not implement speculative plugin loading or a second backend now.
 
 ## 8. Runtime, libraries and tools
 
-`library/core` will require no allocator, OS or executor. `library/alloc` depends
+`library/core` requires no allocator, OS or executor (`library/alloc` and
+`library/std` are currently root stubs without implementations). `library/alloc` depends
 on core and an explicit allocator. `library/std` adds hosted services. Create
 these source trees with their implementations, not empty architecture markers.
 Library contracts include access/regions, allocation, failure, invalidation and

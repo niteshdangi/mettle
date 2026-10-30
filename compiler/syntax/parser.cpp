@@ -22,7 +22,10 @@ void Parser::run(Module &module, std::vector<std::string> scope, bool nested) {
         module.globalAssembly.push_back(primary());
       } else if (is("extern") || (is("unsafe") && peek(1).text == "extern")) {
         foreignDeclaration(module, std::move(item));
-      } else if (is("static")) {
+      } else if (is("static") ||
+                 (is("const") && peek(1).kind == TokenKind::Word &&
+                  peek(1).text != "fn" && peek(1).text != "unsafe" &&
+                  peek(1).text != "async")) {
         staticDeclaration(module, std::move(item), false);
       } else if (is("module")) {
         moduleDeclaration(module, std::move(item));
@@ -96,8 +99,11 @@ Module parse(const Source &source, Diagnostics &diagnostics) {
   Diagnostics::SourceContext context(diagnostics, source);
   Module module;
   module.tokens = tokenize(source, diagnostics);
-  if (diagnostics.empty())
-    parsing::Parser(module.tokens, diagnostics).run(module);
+  if (diagnostics.empty()) {
+    parsing::Parser parser(module.tokens, diagnostics);
+    parser.run(module);
+    module.textLiterals = parser.textLiterals();
+  }
   for (auto &product : module.products) {
     std::vector<std::size_t> methods;
     for (auto &method : product.methods) {

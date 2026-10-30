@@ -15,6 +15,17 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     self = checked.types->view(self).payload;
     ++dereferences;
   }
+  if (receiver >= 0 && checked.types->isSlice(self) && callee.text == "len" &&
+      !callee.flag) {
+    if (call.children.size() != 1 || !callee.genericArguments.empty() ||
+        !callee.ownerGenericArguments.empty()) {
+      error("type", call.span, "slice len requires no arguments");
+      return inference.fresh(Type::Usize);
+    }
+    facts(call).machineOperation = "slice.len";
+    facts(call).dereferences = dereferences;
+    return inference.fresh(Type::Usize);
+  }
   if (receiver >= 0) {
     if (isNumeric(self))
       operation = "numeric." + callee.text;
@@ -42,6 +53,13 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
           checked.types->view(checked.types->product(self).components[0])
               .payload;
       if (checked.types->isProduct(payload)) {
+        if (checked.types->isSum(payload) &&
+            callee.text.starts_with("project_")) {
+          error("feature", call.span,
+                "pin projection of sum variants requires active-variant "
+                "support");
+          return inference.fresh();
+        }
         const auto &record = checked.types->product(payload);
         for (std::size_t field = 0; field < record.fields.size(); ++field)
           if ("project_" + record.fields[field].name == callee.text) {
@@ -116,9 +134,17 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
                (name == "size_of" || name == "align_of" ||
                 name == "needs_drop"))
       operation = name;
+    else if (owner == "core::intrinsics" && name == "type_id")
+      operation = "type_id";
     else if (owner == "core::mem" &&
-             (name == "transmute" || name == "zeroed" || name == "forget"))
+             (name == "transmute" || name == "zeroed" || name == "forget" ||
+              name == "replace" || name == "swap" || name == "size_of_val" ||
+              name == "align_of_val"))
       operation = "mem." + name;
+    else if (owner == "core::intrinsics" && name == "abort")
+      operation = "intrinsics.abort";
+    else if (owner == "core::intrinsics" && name == "panic_message")
+      operation = "intrinsics.panic_message";
     else if (owner == "core::ptr")
       operation = "ptr." + name;
     else if (isNumeric(builtinType(owner))) {
@@ -216,6 +242,7 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
                            : self);
     borrowed.push_back(mode);
   }
+  auto operandErrors = diagnostics.count();
   for (std::size_t i = 1; i < call.children.size(); ++i) {
     auto &value = *call.children[i];
     if (!value.name.empty())
@@ -292,6 +319,9 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     if (operation == "ptr.replace" && !operands.empty() &&
         checked.types->isPointer(operands[0]))
       expected = checked.types->pointer(operands[0]).payload;
+    if (operation == "mem.replace" && !operands.empty() &&
+        checked.types->isView(operands[0]))
+      expected = checked.types->view(operands[0]).payload;
     if (operation == "storage.new" && argument != Type::Unknown)
       expected = checked.types->product(argument).components[0];
     if (operation == "cell.new" && argument != Type::Unknown)
@@ -318,7 +348,8 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     if (operation.starts_with("ptr.write") && operands.size() == 1)
       mode = ParameterMode::Take;
     if (operation == "mem.transmute" || operation == "mem.forget" ||
-        (operation == "ptr.replace" && operands.size() == 1))
+        (operation == "ptr.replace" && operands.size() == 1) ||
+        (operation == "mem.replace" && operands.size() == 1))
       mode = ParameterMode::Take;
     if (mode == ParameterMode::Take && checked.types->isCopy(type))
       mode = ParameterMode::Value;
@@ -326,6 +357,18 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
         (operation == "ptr.from_ref" || operation == "ptr.from_mut")) {
       mode = operation == "ptr.from_mut" ? ParameterMode::Mut
                                          : ParameterMode::Read;
+      if (checked.types->isView(type))
+        type = checked.types->view(type).payload;
+      if (mode == ParameterMode::Mut)
+        requireMutablePlace(value);
+      type = checked.types->viewType(type, mode);
+    }
+    if ((operation == "mem.replace" && i == 1) ||
+        (operation == "mem.swap" && i <= 2) ||
+        (operation == "mem.size_of_val" && i == 1) ||
+        (operation == "mem.align_of_val" && i == 1)) {
+      mode = operation.ends_with("_of_val") ? ParameterMode::Read
+                                            : ParameterMode::Mut;
       if (checked.types->isView(type))
         type = checked.types->view(type).payload;
       if (mode == ParameterMode::Mut)
@@ -341,6 +384,10 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     operands.push_back(type);
     borrowed.push_back(mode);
   }
+  if (operation.starts_with("mem.") && operation != "mem.transmute" &&
+      operation != "mem.zeroed" && operation != "mem.forget" &&
+      !operands.empty() && checked.types->isView(operands[0]))
+    argument = checked.types->view(operands[0]).payload;
   if (operation == "storage.new" && argument == Type::Unknown &&
       operands.size() == 1)
     argument = checked.types->structural(storageKind, {operands[0]});
@@ -381,7 +428,8 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
   auto signature = machineSignature(*checked.types, operation, operands,
                                     argument, unpinProofs);
   if (!signature) {
-    error("type", call.span, "invalid primitive operation or operand types");
+    if (diagnostics.count() == operandErrors)
+      error("type", call.span, "invalid primitive operation or operand types");
     return inference.fresh();
   }
   if (signature->unsafeCall)

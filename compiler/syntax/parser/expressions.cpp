@@ -3,9 +3,28 @@
 
 namespace mettle::parsing {
 std::unique_ptr<Node> Parser::expr(int minimum) {
+  StateGuard guard(*this);
   if (++nesting > limits::parserNesting)
     fail("expression nesting limit exceeded", "limit");
-  auto left = primary();
+  std::unique_ptr<Node> left;
+  if (minimum <= 1 && (is("..") || is("..="))) {
+    auto operation = tokens[position++];
+    left = node(Kind::Range, operation.span, operation.text);
+    if (rangeEnds()) {
+      if (operation.text == "..=")
+        fail("an inclusive range requires an upper bound");
+      left->name = "full";
+    } else {
+      left->name = "to";
+      left->children.push_back(expr(2));
+    }
+    finish(*left);
+    if (is("..") || is("..="))
+      fail("ranges do not chain");
+    --nesting;
+    return left;
+  }
+  left = primary();
   bool compared = false;
   while (int level = is("as") ? 12 : binaryPrecedence(peek().text)) {
     if (is("as")) {
@@ -28,6 +47,19 @@ std::unique_ptr<Node> Parser::expr(int minimum) {
       fail("comparisons do not chain");
     compared |= level == 5;
     auto operation = tokens[position++];
+    const bool range = operation.text == ".." || operation.text == "..=";
+    if (range && rangeEnds()) {
+      if (operation.text == "..=")
+        fail("an inclusive range requires an upper bound");
+      auto result = node(Kind::Range, left->span, operation.text);
+      result->name = "from";
+      result->children.push_back(std::move(left));
+      finish(*result);
+      if (is("..") || is("..="))
+        fail("ranges do not chain");
+      left = std::move(result);
+      continue;
+    }
     newlines();
     auto kind = operation.text == "??" ? Kind::Coalesce
                 : (operation.text == ".." || operation.text == "..=")
@@ -45,6 +77,7 @@ std::unique_ptr<Node> Parser::expr(int minimum) {
   return left;
 }
 std::unique_ptr<Node> Parser::primary() {
+  StateGuard guard(*this);
   if (++nesting > limits::parserNesting)
     fail("expression nesting limit exceeded", "limit");
   auto token = peek();
@@ -95,7 +128,7 @@ std::unique_ptr<Node> Parser::primary() {
                 : operation.text == "capture" ? Kind::Capture
                                               : Kind::Throw;
     result = node(kind, operation.span);
-    result->children.push_back(expr(1));
+    result->children.push_back(kind == Kind::Throw ? expr(1) : primary());
   } else if (take("-") || take("!") || take("take") || take("read") ||
              take("mut") || take("*")) {
     result = node(Kind::Unary, token.span, token.text);
@@ -164,15 +197,24 @@ std::unique_ptr<Node> Parser::primary() {
     result =
         node(token.kind == TokenKind::Integer ? Kind::Integer : Kind::Floating,
              token.span, token.text);
+  } else if (token.kind == TokenKind::Text ||
+             token.kind == TokenKind::PrefixedText) {
+    ++position;
+    result = node(Kind::Text, token.span, token.text);
+    result->flag = token.text.front() == 'b';
+    textSpans.push_back(token.span);
   } else if (take("true") || take("false")) {
     result = node(Kind::Boolean, token.span, token.text);
   } else {
-    if (token.kind == TokenKind::Text)
-      feature("runtime text values require the native text library");
     if (token.kind == TokenKind::Word) {
-      if (isUnsupportedExpressionWord(token.text))
+      if (isUnsupportedExpressionWord(token.text)) {
+        if (rejectedNames.contains(token.text))
+          throw ParseFailure{};
         feature("this language feature is not implemented yet");
+      }
     }
+    if (token.kind != TokenKind::Word && token.kind != TokenKind::QuotedWord)
+      fail("expected an expression");
     auto identifier = name();
     result = node(Kind::Name, identifier.span, identifier.text);
     while (take("::")) {

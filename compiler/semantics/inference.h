@@ -3,6 +3,7 @@
 #include "diagnostics/diagnostics.h"
 #include "types/type.h"
 #include <optional>
+#include <set>
 
 namespace mettle {
 class TypeInference {
@@ -18,6 +19,9 @@ public:
   int composite(AggregateKind kind, std::vector<int> components,
                 std::uint32_t count = 0, Type symbolicCount = Type::Unknown);
   std::vector<int> components(int variable, AggregateKind kind, Span span);
+  int representative(int variable) { return root(variable); }
+  // Whether the variable is, or structurally contains, a listed representative.
+  bool depends(int variable, const std::set<int> &representatives);
 
 private:
   struct Variable {

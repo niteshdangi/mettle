@@ -4,6 +4,16 @@
 namespace mettle::lowering {
 Builder::Value Builder::machineExpression(const Node &node) {
   const auto &facts = module.facts(node);
+  if (facts.machineOperation == "slice.len") {
+    auto location = place(*node.children[0]->children[0]);
+    if (!live())
+      return {};
+    for (unsigned i = 0; i < facts.dereferences; ++i)
+      location.fields.push_back(Projection::dereference());
+    return emit(
+        {ir::Op::SliceLength, {}, {}, {}, "", location, -1, 0, node.span},
+        Type::Usize);
+  }
   if (facts.machineOperation == "pin.inline") {
     auto value = use(expression(*node.children[1], true));
     if (!live())
@@ -31,6 +41,8 @@ Builder::Value Builder::machineExpression(const Node &node) {
       facts.machineOperation == "pin.get_unchecked_mut" ||
       facts.machineOperation.starts_with("pin.project.")) {
     auto location = place(*node.children[0]->children[0]);
+    if (!live())
+      return {};
     for (unsigned i = 0; i < facts.dereferences; ++i)
       location.fields.push_back(Projection::dereference());
     location.fields.push_back(Projection::field(0));
@@ -73,6 +85,8 @@ Builder::Value Builder::machineExpression(const Node &node) {
     Place location;
     if (facts.machineOperation != "ptr.drop_in_place") {
       location = place(*node.children[0]->children[0]);
+      if (!live())
+        return {};
       for (unsigned i = 0; i < facts.dereferences; ++i)
         location.fields.push_back(Projection::dereference());
       location.fields.push_back(Projection::field(0));
@@ -90,6 +104,8 @@ Builder::Value Builder::machineExpression(const Node &node) {
   }
   if (facts.machineOperation == "storage.write") {
     auto location = place(*node.children[0]->children[0]);
+    if (!live())
+      return {};
     for (unsigned i = 0; i < facts.dereferences; ++i)
       location.fields.push_back(Projection::dereference());
     location.fields.push_back(Projection::field(0));
@@ -113,6 +129,8 @@ Builder::Value Builder::machineExpression(const Node &node) {
       facts.machineOperation == "storage.assume_init_ref" ||
       facts.machineOperation == "storage.assume_init_mut") {
     auto location = place(*node.children[0]->children[0]);
+    if (!live())
+      return {};
     for (unsigned i = 0; i < facts.dereferences; ++i)
       location.fields.push_back(Projection::dereference());
     location.fields.push_back(Projection::field(
@@ -152,6 +170,8 @@ Builder::Value Builder::machineExpression(const Node &node) {
     if ((facts.method && i == 0 && facts.dereferences) ||
         mode == ParameterMode::Read || mode == ParameterMode::Mut) {
       auto location = place(argument, false, mode == ParameterMode::Mut);
+      if (!live())
+        return {};
       auto type = sourceType(argument);
       auto depth = facts.method && i == 0 ? facts.dereferences : 0u;
       if (mode != ParameterMode::Value && module.typeStore()->isView(type))
@@ -231,6 +251,9 @@ Builder::Value Builder::machineExpression(const Node &node) {
     instruction.typeArguments.push_back(facts.machineType);
   for (auto requirement : facts.unpinRequirements)
     instruction.unpinProofs.emplace_back(requirement, requirement);
-  return track(emit(std::move(instruction), sourceType(node)), node.span);
+  auto result = emit(std::move(instruction), sourceType(node));
+  if (result.type == Type::Never)
+    terminate({ir::Exit::Unreachable});
+  return track(result, node.span);
 }
 } // namespace mettle::lowering

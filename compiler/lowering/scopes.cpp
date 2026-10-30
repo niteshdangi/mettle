@@ -9,15 +9,22 @@ int Builder::scope() {
   scopes.push_back(id);
   return id;
 }
-void Builder::endScope() {
+void Builder::endScope(Span span) {
+  if (!span.begin && !span.end)
+    for (auto local = function.locals.rbegin(); local != function.locals.rend();
+         ++local)
+      if (local->scope == scopes.back()) {
+        span = local->span;
+        break;
+      }
   if (live())
-    emit({Op::ScopeExit, {}, {}, {}, "", {-1, {}}, -1, scopes.back(), {}},
+    emit({Op::ScopeExit, {}, {}, {}, "", {-1, {}}, -1, scopes.back(), span},
          Type::Unit);
   scopes.pop_back();
 }
-void Builder::exitTo(std::size_t depth) {
+void Builder::exitTo(std::size_t depth, Span span) {
   for (std::size_t i = scopes.size(); i-- > depth;)
-    emit({Op::ScopeExit, {}, {}, {}, "", {-1, {}}, -1, scopes[i], {}},
+    emit({Op::ScopeExit, {}, {}, {}, "", {-1, {}}, -1, scopes[i], span},
          Type::Unit);
 }
 Place Builder::materialize(Value value, Span span, int targetScope) {
@@ -44,7 +51,16 @@ Builder::Value Builder::use(Value value) {
     return value;
   auto place = found->second;
   owners.erase(found);
-  return emit({Op::Move, {}, {}, {}, "", place, -1, 0, {}}, value.type);
+  return emit({Op::Move,
+               {},
+               {},
+               {},
+               "",
+               place,
+               -1,
+               0,
+               function.locals[place.root].span},
+              value.type);
 }
 void Builder::returnValue(Value value, Span span, bool failure) {
   if (constructorSelfSlot >= 0 && !failure)
@@ -56,12 +72,12 @@ void Builder::returnValue(Value value, Span span, bool failure) {
   std::optional<Place> pending;
   if (module.typeStore()->needsDrop(value.type))
     pending = materialize(value, span, -2);
-  exitTo(0);
+  exitTo(0, span);
   if (pending)
     value = emit({Op::Move, {}, {}, {}, "", *pending, -1, 0, span}, value.type);
   else
     value = use(value);
-  terminate({Exit::Return, value});
+  terminate({Exit::Return, value, -1, -1, span});
 }
 Builder::Value Builder::blockExpression(const Node &node, bool valueUsed) {
   int previousBlock = blockScope, previousTemporary = temporaryScope;
@@ -83,11 +99,14 @@ Builder::Value Builder::blockExpression(const Node &node, bool valueUsed) {
     }
     if (live() && (!tail || !valueUsed))
       result = unit();
-    endScope();
+    endScope(child.span);
     if (!live())
       break;
   }
-  endScope();
+  auto ending = node.span;
+  if (ending.end > ending.begin)
+    ending.begin = ending.end - 1;
+  endScope(ending);
   blockScope = previousBlock;
   temporaryScope = previousTemporary;
   return result;

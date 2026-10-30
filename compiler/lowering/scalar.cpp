@@ -29,6 +29,7 @@ ir::Function Builder::run(const mettle::Function &source, std::size_t index) {
   function.regionSignature = module.function(index).regionSignature;
   function.genericEqualities = module.function(index).genericEqualities;
   function.resultSources = module.function(index).resultSources;
+  function.resultContents = module.function(index).resultContents;
   function.twoPhaseReceiver = source.receiver == "mut";
 
   for (const auto &local : module.function(index).locals)
@@ -130,15 +131,35 @@ ir::Function Builder::run(const mettle::Function &source, std::size_t index) {
   }
   auto result = expression(*source.body);
   if (live()) {
-    if (module.facts(*source.body).flow.normal)
-      returnValue(result, source.span);
-    else
-      terminate({Exit::Unreachable});
+    if (module.facts(*source.body).flow.normal) {
+      auto span = source.body->span;
+      if (source.body->kind == Kind::Block && !source.body->children.empty())
+        span = source.body->children.back()->span;
+      returnValue(result, span);
+    }
   }
-  for (auto &b : function.blocks)
-    if (b.exit.kind == Exit::None)
-      b.exit.kind = Exit::Unreachable;
+  finishControlFlow();
   return std::move(function);
+}
+void Builder::finishControlFlow() {
+  std::vector<bool> reachable(function.blocks.size());
+  std::vector<int> work{0};
+  while (!work.empty()) {
+    auto block = work.back();
+    work.pop_back();
+    if (block < 0 || static_cast<std::size_t>(block) >= reachable.size() ||
+        reachable[block])
+      continue;
+    reachable[block] = true;
+    const auto &exit = function.blocks[block].exit;
+    if (exit.kind == Exit::Jump || exit.kind == Exit::Branch)
+      work.push_back(exit.first);
+    if (exit.kind == Exit::Branch)
+      work.push_back(exit.second);
+  }
+  for (std::size_t i = 0; i < function.blocks.size(); ++i)
+    if (function.blocks[i].exit.kind == Exit::None && !reachable[i])
+      function.blocks[i].exit.kind = Exit::Unreachable;
 }
 int Builder::block() {
   if (function.blocks.size() >= limits::cfgBlocks)

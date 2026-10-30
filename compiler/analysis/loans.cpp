@@ -4,15 +4,17 @@
 #include <algorithm>
 #include <iterator>
 #include <stdexcept>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 namespace mettle::analysis {
 namespace {
 void join(Origins &a, const Origins &b) { a.insert(b.begin(), b.end()); }
 void check(const ir::Function &function, const ir::Program &program,
-           const EffectSummaries &summaries, Diagnostics &diagnostics) {
+           const OriginInfo &info, Diagnostics &diagnostics) {
   if (function.blocks.empty())
     return;
-  auto info = origins(function, program, summaries);
   auto overlapping = [&](const Place &first, const Place &second) {
     auto root = first.root >= 0 ? std::int64_t{first.root}
                                 : -std::int64_t{first.root} - 1;
@@ -20,15 +22,23 @@ void check(const ir::Function &function, const ir::Program &program,
       return overlaps(first, second);
     return overlaps(*program.types, function.locals[root].type, first, second);
   };
-  for (const auto &[sources, span] : info.escapes)
-    for (auto id : ancestors(sources, info.loans))
-      for (const auto &target : info.loans.at(id).targets)
-        if (target.place.root >= 0 &&
-            function.locals[target.place.root].storage !=
-                StorageDuration::Static)
-          diagnostics.error(
-              "ownership", span,
-              "cannot store a view of local storage into caller-owned storage");
+  std::set<std::tuple<std::size_t, std::size_t, SourceId>> reported;
+  for (const auto &[sources, span] : info.escapes) {
+    // One report per escaping store, however many local loans back it.
+    const auto escapes = [&] {
+      for (auto id : ancestors(sources, info.loans))
+        for (const auto &target : info.loans.at(id).targets)
+          if (target.place.root >= 0 &&
+              function.locals[target.place.root].storage !=
+                  StorageDuration::Static)
+            return true;
+      return false;
+    }();
+    if (escapes && reported.emplace(span.begin, span.end, span.source).second)
+      diagnostics.error(
+          "ownership", span,
+          "cannot store a view of local storage into caller-owned storage");
+  }
   const auto count = function.blocks.size();
   std::vector<std::vector<int>> successors(count), predecessors(count);
   std::vector<bool> reachable(count);
@@ -164,7 +174,7 @@ void check(const ir::Function &function, const ir::Program &program,
   for (std::size_t b = 0; b < count; ++b) {
     if (!reachable[b])
       continue;
-    for (auto id : ancestors(info.returns[b], info.loans))
+    for (auto id : strongAncestors(info.returns[b], info.loans))
       for (const auto &target : info.loans.at(id).targets) {
         if (target.place.root >= 0 &&
             function.locals[target.place.root].storage ==
@@ -176,7 +186,7 @@ void check(const ir::Function &function, const ir::Program &program,
                       function.resultSources.end(),
                       static_cast<std::size_t>(source->second)) ==
                 function.resultSources.end())
-          diagnostics.error("ownership", {},
+          diagnostics.error("ownership", function.blocks[b].exit.span,
                             "returned view escapes local storage or its "
                             "declared input sources");
       }
@@ -275,6 +285,24 @@ void check(const ir::Function &function, const ir::Program &program,
             return true;
         return false;
       };
+      // A loan that only keeps its container borrow unavailable does not
+      // borrow the container's storage, so ending that storage is harmless
+      // unless some other live loan depends on the borrow itself.
+      auto shadowed = [&](int id) {
+        for (auto other : current)
+          if (other != id) {
+            Origins start;
+            for (auto parent : info.loans.at(other).parents)
+              if (!info.loans.at(other).borrowed.contains(parent))
+                start.insert(parent);
+            if (strongAncestors(start, info.loans).contains(id))
+              return false;
+          }
+        for (auto other : current)
+          if (info.loans.at(other).borrowed.contains(id))
+            return true;
+        return false;
+      };
       bool interiorRead = false;
       if (read && !write && instruction.place.root >= 0) {
         auto type = projectedType(*program.types,
@@ -296,7 +324,9 @@ void check(const ir::Function &function, const ir::Program &program,
             auto authority = ancestors(access.authority, info.loans);
             if (authority.contains(id) || disjoint(authority, id))
               continue;
-            for (const auto &referent : loan.targets)
+            auto referents = loan.targets;
+            referents.insert(loan.frozen.begin(), loan.frozen.end());
+            for (const auto &referent : referents)
               if (overlapping(access.place, referent.place) &&
                   (write || exclusive ||
                    (reservation && loan.mode == ParameterMode::Mut))) {
@@ -313,7 +343,7 @@ void check(const ir::Function &function, const ir::Program &program,
           }
         for (const auto &dead : point.dead)
           for (const auto &referent : loan.targets)
-            if (overlapping(dead, referent.place))
+            if (overlapping(dead, referent.place) && !shadowed(id))
               conflict = true;
         for (auto dropped : point.drops) {
           auto authority = ancestors({dropped}, info.loans);
@@ -343,27 +373,84 @@ void check(const ir::Function &function, const ir::Program &program,
     }
   }
 }
+// Post-order position of every function in the call graph, callees first.
+std::vector<std::size_t> calleeFirstRank(const ir::Program &program) {
+  const auto count = program.functions.size();
+  std::vector<std::size_t> rank(count, 0);
+  std::vector<bool> seen(count, false);
+  std::size_t next = 0;
+  for (std::size_t root = 0; root < count; ++root) {
+    if (seen[root])
+      continue;
+    // Each frame is a function and the position of its next instruction.
+    std::vector<std::tuple<std::size_t, std::size_t, std::size_t>> stack;
+    seen[root] = true;
+    stack.emplace_back(root, 0, 0);
+    while (!stack.empty()) {
+      auto &[f, block, instruction] = stack.back();
+      const auto &blocks = program.functions[f].blocks;
+      std::size_t callee = count;
+      while (block < blocks.size() && callee == count) {
+        if (instruction >= blocks[block].instructions.size()) {
+          ++block;
+          instruction = 0;
+          continue;
+        }
+        const auto &current = blocks[block].instructions[instruction++];
+        if ((current.op == ir::Op::Call || current.op == ir::Op::IndirectCall ||
+             current.op == ir::Op::CatchCall) &&
+            current.callee >= 0 &&
+            static_cast<std::size_t>(current.callee) < count &&
+            !seen[static_cast<std::size_t>(current.callee)])
+          callee = static_cast<std::size_t>(current.callee);
+      }
+      if (callee != count) {
+        seen[callee] = true;
+        stack.emplace_back(callee, 0, 0);
+      } else {
+        rank[f] = next++;
+        stack.pop_back();
+      }
+    }
+  }
+  return rank;
+}
 } // namespace
 void loans(const ir::Program &program, Diagnostics &diagnostics) {
   try {
     EffectSummaries summaries(program.functions.size());
-    bool changed;
+    std::vector<std::set<std::size_t>> dependents(program.functions.size());
+    // Analyzing callees before callers lets most summaries settle on the first
+    // visit instead of re-running every caller after each callee changes.
+    const auto rank = calleeFirstRank(program);
+    std::set<std::pair<std::size_t, std::size_t>> pending;
+    for (std::size_t f = 0; f < program.functions.size(); ++f)
+      pending.emplace(rank[f], f);
+    std::vector<OriginInfo> final(program.functions.size());
     std::size_t steps = 0;
-    do {
-      changed = false;
-      for (std::size_t f = 0; f < program.functions.size(); ++f) {
-        auto effects =
-            origins(program.functions[f], program, summaries).effects;
-        if (effects != summaries[f]) {
-          if (++steps > limits::activeLoans)
-            throw std::length_error("view effect analysis limit exceeded");
-          summaries[f] = std::move(effects);
-          changed = true;
-        }
+    while (!pending.empty()) {
+      auto f = pending.begin()->second;
+      pending.erase(pending.begin());
+      std::set<std::size_t> reads;
+      summaries.record(&reads);
+      auto info = origins(program.functions[f], program, summaries);
+      summaries.record(nullptr);
+      for (auto callee : reads)
+        dependents[callee].insert(f);
+      const bool stable = info.effects == summaries.slot(f);
+      // The last run of a function saw its final callee summaries, so it is
+      // the analysis the ownership check needs.
+      final[f] = std::move(info);
+      if (!stable) {
+        if (++steps > limits::activeLoans)
+          throw std::length_error("view effect analysis limit exceeded");
+        summaries.slot(f) = final[f].effects;
+        for (auto dependent : dependents[f])
+          pending.emplace(rank[dependent], dependent);
       }
-    } while (changed);
-    for (const auto &function : program.functions)
-      check(function, program, summaries, diagnostics);
+    }
+    for (std::size_t f = 0; f < program.functions.size(); ++f)
+      check(program.functions[f], program, final[f], diagnostics);
   } catch (const std::length_error &error) {
     diagnostics.error("limit", {}, error.what());
   }

@@ -43,7 +43,21 @@ files fail the build/quality checks.
 - Keep language behavior independent of host integer width, host SDK behavior
   and later generic specialization.
 - Recovered/incomplete trees are inspectable data, not runnable programs.
-  Compiler resource limits are explicit diagnostics, not silent truncation.
+  Compiler resource limits are explicit diagnostics, not silent truncation, and
+  follow one policy (`compiler/support/limits.h`): depth limits (parser,
+  syntax, type nesting) protect the native stack and stay small and fixed;
+  count limits (functions, products, locals, CFG blocks, witness slots, source
+  and token bytes) are set at 2^22..2^30 so only pathological input reaches
+  them and every algorithm behind them must stay near-linear; object sizes are
+  bounded by the signed pointer range. Arrays of more than 64 elements (1024
+  expanded elements when nested) of non-droppable elements are compact: one
+  place with an element type and a length, so only the target address-space
+  check (`error[limit]`, "array size exceeds target address space") bounds
+  them. Arrays of droppable elements keep one cleanup place per element and
+  are capped at 2^16 total elements (`TypeStore::droppableArrayElements`,
+  `error[limit]`); this is an implementation limit, not a language rule.
+  At most 100 diagnostics are printed, followed by an
+  "N additional diagnostics suppressed" summary.
 - Parsed AST nodes carry syntax, not inference variables or resolved slots.
   Checking owns separate read-only facts; CFG owns no syntax pointers.
 - Backend emission accepts only the pipeline's verified program. Structural
@@ -145,6 +159,29 @@ memory-model proof or blanket TSan coverage of the compiler, libraries or
 uninstrumented emitted programs. Native thread implementation still requires
 its own race/failure validation when it lands.
 
+I06 requalification (ASan/UBSan, `build/macos-arm64/Asan`, all 26 CTest suites):
+the instrumented compiler found one real heap-use-after-free, in
+`checkInterfaceContracts`, which held a reference into the erased-type store
+across `substituteRegions` calls that intern new erased types; it now works on a
+copy. The existing scalar positive case
+`generic-iteration-through-family-bounded-protocols` is its regression under
+ASan. Library programs (`library.core/alloc/std`) link the instrumented runtime
+and passed. A throwaway token-mutation fuzzer over every scalar POSITIVE/NEGATIVE
+source (15,000 `mettle check` runs under ASan/UBSan: deletion, duplication,
+swap, cross-source insertion) found no crash, internal error or sanitizer
+report; the only slow inputs were the documented specialization-nesting limit
+diagnostic and a 430 KB valid program. Under heavy host load the fixed CTest
+timeouts of the sanitized scalar and machine suites can expire; those suites
+were rerun unmodified without the timeout and passed.
+
+Threaded Mettle programs: the driver does not offer a TSan link mode and emitted
+code is not TSan-instrumented, so there is no gating TSan CTest. Evidence
+outside the repository: for `tests/std/{threads_basic,thread_scope,
+sync_primitives,mutex_poison,arc_races}.mt`, `mettle build --emit llvm`, the
+`sanitize_thread` attribute rewrite used by `tests/backend/memory.py`, and a
+TSan-compiled `runtime/*.cpp` produced executables that ran clean (no report,
+exit 0). This is not a repository gate or a race-freedom proof.
+
 On the current macOS 27.0.1 host, the previous LLVM 21.1.8 ASan runtime stalled before
 `main`. A local startup sample shows reentrant initialization via dyld cache
 enumeration and malloc. The matching
@@ -208,6 +245,11 @@ Use existing CTest/Python fixture infrastructure. Keep pure checks deterministic
 control seeds and record inputs for randomized/model tests. Do not add a test
 framework to avoid a simple fixture. Tests must not require installed Rust for
 ordinary Mettle development; Rust remains an optional comparator/interop tool.
+Positive source cases are partitioned deterministically across six CTest shards, each case/profile run once, so a shard stays well
+under its unchanged timeout in Debug and sanitized builds, including parallel CTest.
+Negative cases (scalar and multi-file module) require the intended message, phase and
+exact line and column on one diagnostic, not merely somewhere in the output. Hosted panic expectations
+require SIGABRT, not an arbitrary fatal signal.
 Do not weaken assertions, timeouts, overflow, cleanup or ownership rules to
 manufacture passing results.
 

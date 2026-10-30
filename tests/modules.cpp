@@ -159,6 +159,20 @@ void associatedImports() {
                             mettle::resolution::Namespace::Value, {}),
           "destructor was exposed as an associated callable binding");
 }
+void catalogLibrary() {
+  std::vector<mettle::Source> sources{
+      {"memory/root.mt", "fn main() { core::answer() - 42 }\n"},
+      {"memory/lib/core/module.mt", "pub fn answer() { 42 }\n"},
+      {"memory/lib/std/module.mt", "pub fn broken() { missing() }\n"}};
+  mettle::resolution::Library library{"memory/lib", false};
+  mettle::Diagnostics diagnostics;
+  require(mettle::pipeline::compile(sources, diagnostics, library).has_value(),
+          "catalog-supplied library failed or loaded an unreferenced root");
+  sources.front().text = "fn main() { std::broken() }\n";
+  mettle::Diagnostics failing;
+  require(!mettle::pipeline::compile(sources, failing, library).has_value(),
+          "referenced library error was not reported");
+}
 } // namespace
 
 int main() {
@@ -171,6 +185,7 @@ int main() {
     duplicateFileIdentity();
     privateRootReexport();
     associatedImports();
+    catalogLibrary();
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return 1;

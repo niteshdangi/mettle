@@ -20,8 +20,12 @@ bool requiresRegionProof(Type type, const TypeStore &types) {
                   parameter.mode == ParameterMode::Mut ||
                   self(self, parameter.type);
     } else if (types.isProduct(nested)) {
-      for (const auto &field : types.product(nested).fields)
-        result |= self(self, field.type);
+      const auto &record = types.product(nested);
+      if (record.kind == AggregateKind::Array && !record.components.empty())
+        result |= self(self, record.components[0]);
+      else
+        for (const auto &field : record.fields)
+          result |= self(self, field.type);
     } else if (types.isErased(nested)) {
       const auto &descriptor = types.erased(nested);
       result |= !descriptor.regionArguments.empty() ||
@@ -235,7 +239,12 @@ RegionAnswer RegionTypeSolver::compare(
     return RegionAnswer::Inconclusive;
   auto goal = std::pair{source, target};
   if (std::find(active.begin(), active.end(), goal) != active.end())
-    return RegionAnswer::Inconclusive;
+    // A cycle through a recursive nominal type or raw pointer holds
+    // coinductively; every other obligation is checked by the outer frames.
+    return (types.isPointer(source) && types.isPointer(target)) ||
+                   (types.isProduct(source) && types.isProduct(target))
+               ? RegionAnswer::Proven
+               : RegionAnswer::Inconclusive;
   active.push_back(goal);
   RegionAnswer answer = RegionAnswer::Rejected;
   if (types.isView(source) && types.isView(target)) {
@@ -244,6 +253,17 @@ RegionAnswer RegionTypeSolver::compare(
       answer = regions.outlives(from.region, to.region, environment);
       answer = together(answer, compare(from.payload, to.payload, environment,
                                         active, remaining));
+      if (to.mode == ParameterMode::Mut)
+        answer = together(answer, compare(to.payload, from.payload, environment,
+                                          active, remaining));
+    }
+  } else if (types.isPointer(source) && types.isPointer(target)) {
+    // Raw pointers carry no region; their pointee is checked like a view
+    // payload, so equal pointees reached through distinct type ids match.
+    const auto &from = types.pointer(source), &to = types.pointer(target);
+    if (from.mode == to.mode) {
+      answer =
+          compare(from.payload, to.payload, environment, active, remaining);
       if (to.mode == ParameterMode::Mut)
         answer = together(answer, compare(to.payload, from.payload, environment,
                                           active, remaining));
@@ -321,6 +341,16 @@ RegionAnswer RegionTypeSolver::compare(
         (structural ||
          nominalOrigin(types, source) == nominalOrigin(types, target))) {
       answer = RegionAnswer::Proven;
+      if (from.kind == AggregateKind::Array) {
+        answer = from.arrayCount == to.arrayCount &&
+                         from.components.size() == 1 &&
+                         to.components.size() == 1
+                     ? compare(from.components[0], to.components[0],
+                               environment, active, remaining)
+                     : RegionAnswer::Rejected;
+        active.pop_back();
+        return answer;
+      }
       for (std::size_t i = 0; i < from.fields.size(); ++i) {
         answer =
             together(answer, compare(from.fields[i].type, to.fields[i].type,
@@ -410,6 +440,15 @@ Type RegionTypeSolver::substitute(
                               region(region, view.region));
     } else if (types.isProduct(nested)) {
       auto product = types.product(nested);
+      if (product.kind == AggregateKind::Array && !product.components.empty()) {
+        auto element = self(self, product.components[0]);
+        result = product.arrayCount == Type::Unknown
+                     ? types.structural(AggregateKind::Array, {element},
+                                        product.fields.size())
+                     : types.arrayType(element, product.arrayCount);
+        active.pop_back();
+        return result;
+      }
       for (auto &field : product.fields)
         field.type = self(self, field.type);
       for (auto &argument : product.regionArguments)
@@ -470,9 +509,14 @@ RegionAnswer RegionTypeSolver::callable(
     if (types.isView(type)) {
       inner.assumptions.push_back({types.view(type).region, borrow});
       self(self, types.view(type).payload, borrow);
-    } else if (types.isProduct(type))
-      for (const auto &field : types.product(type).fields)
-        self(self, field.type, borrow);
+    } else if (types.isProduct(type)) {
+      const auto &record = types.product(type);
+      if (record.kind == AggregateKind::Array && !record.components.empty())
+        self(self, record.components[0], borrow);
+      else
+        for (const auto &field : record.fields)
+          self(self, field.type, borrow);
+    }
     wellformed.pop_back();
   };
   for (std::size_t i = 0;
@@ -504,7 +548,10 @@ RegionAnswer RegionTypeSolver::callable(
       self(self, types.view(pattern).payload, types.view(actual).payload);
     } else if (types.isProduct(pattern) && types.isProduct(actual)) {
       auto p = types.product(pattern), a = types.product(actual);
-      if (p.fields.size() == a.fields.size())
+      if (p.kind == AggregateKind::Array && a.kind == AggregateKind::Array &&
+          p.components.size() == 1 && a.components.size() == 1)
+        self(self, p.components[0], a.components[0]);
+      else if (p.fields.size() == a.fields.size())
         for (std::size_t i = 0; i < p.fields.size(); ++i)
           self(self, p.fields[i].type, a.fields[i].type);
     }

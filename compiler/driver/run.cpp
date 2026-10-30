@@ -33,6 +33,13 @@ int run(const Options &options) {
     diagnostics.print(source, std::cerr);
     return diagnostics.empty() ? 0 : 1;
   }
+  if (!targetFacts(options.target).initialProfile()) {
+    diagnostics.error(
+        "feature", {},
+        "source compilation supports Darwin ARM64 and Linux x86-64 targets");
+    diagnostics.print(source, std::cerr);
+    return 1;
+  }
   resolution::SourceProvider provider =
       [&](const std::string &path) -> std::optional<Source> {
     std::error_code error;
@@ -53,7 +60,9 @@ int run(const Options &options) {
     }
     return Source{canonical.generic_string(), (*child)->getBuffer().str()};
   };
-  auto tree = resolution::load(source, provider, diagnostics);
+  auto tree =
+      resolution::load(source, provider, diagnostics,
+                       {options.libraryDirectory, options.freestanding});
   auto program = tree ? pipeline::compile(std::move(*tree), diagnostics,
                                           !options.freestanding,
                                           targetFacts(options.target))

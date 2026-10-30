@@ -24,6 +24,20 @@ type Builder {
     }
     drop {}
 }
+module core { pub module iter { pub interface Iterator { type Item; mut fn next(): Self::Item?; } } }
+type Walker {
+    held: Guard
+    n: i32
+    max: i32
+    drop {}
+}
+impl Walker implements core::iter::Iterator {
+    type Item = Guard
+    mut fn next(): Guard? {
+        if self.n < self.max { self.n += 1; present(Guard(self.held.tag + self.n)) } else { none }
+    }
+}
+fn walk(tag: i32, count: i32): Walker { Walker(Guard(tag), 0, count) }
 fn test(value: read Guard, answer: bool): bool { answer }
 fn statements(): Unit {
     let held = Guard(101)
@@ -125,6 +139,15 @@ fn array_rest(): Unit {
     let values = [Guard(1131), Guard(1132), Guard(1133)]
     match take values { [first, rest @ ..] => {} }
 }
+fn iterations(): Unit {
+    for item in walk(1210, 2) { Guard(1201); }
+    for item in walk(1220, 3) { break }
+    var skipped = 0
+    for item in walk(1230, 2) { skipped += 1; continue }
+}
+fn iterated_return(): Unit {
+    for item in walk(1240, 2) { return }
+}
 fn main() {
     statements()
     conditional()
@@ -140,12 +163,26 @@ fn main() {
     variants()
     constructors()
     array_rest()
+    iterations()
+    iterated_return()
     0
 }
 )";
 
 constexpr auto arguments = R"(
+module core { pub module iter { pub interface Iterator { type Item; mut fn next(): Self::Item?; } } }
 type Guard { tag: i32; drop {} }
+type Walker {
+    held: Guard
+    n: i32
+    drop {}
+}
+impl Walker implements core::iter::Iterator {
+    type Item = Guard
+    mut fn next(): Guard? {
+        if self.n < 2 { self.n += 1; present(Guard(907)) } else { none }
+    }
+}
 type Panicker {
     tag: i32
     drop { let zero = 0; let trapped = 1 / zero }
@@ -161,7 +198,9 @@ fn consume(first: take Guard, second: take Guard): Unit {
 }
 fn arguments(): Unit {
     let held = Guard(901)
-    consume(Guard(905), explode())
+    for item in Walker(Guard(906), 0) {
+        consume(Guard(905), explode())
+    }
 }
 fn main() { arguments(); 0 }
 )";

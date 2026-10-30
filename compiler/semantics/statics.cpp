@@ -39,6 +39,21 @@ std::optional<std::size_t> Checker::staticName(std::string_view name,
                                     : std::optional(found->second);
 }
 
+// Raw pointers and a bare UnsafeCell are reachable only through unsafe code,
+// which takes over the synchronization; every safe interior-mutable wrapper
+// (Cell, RefCell, ...) still has to be Shareable.
+bool Checker::shareable(Type type, Span span) {
+  if (checked.types->isPointer(type))
+    return true;
+  if (checked.types->isProduct(type) &&
+      checked.types->product(type).kind == AggregateKind::UnsafeCell)
+    return true;
+  interfaces::Solver solver(*checked.types, *checked.interfaceData, diagnostics,
+                            interfaceAssumptions(), regionEnvironment());
+  return solver.prove({type, Type::Unknown, interfaces::Property::Shareable},
+                      span, false);
+}
+
 void Checker::staticDeclarations() {
   genericEnvironment = nullptr;
   checked.staticStorage.resize(module.statics.size());
@@ -55,6 +70,11 @@ void Checker::staticDeclarations() {
         checked.types->uninhabited(storage.type))
       error("type", source.span,
             "static storage requires a concrete sized type");
+    // Immutable statics are readable from every thread; mutable ones are only
+    // reachable through unsafe code, which owns the synchronization.
+    else if (!source.mutableBinding && !shareable(storage.type, source.span))
+      error("type", source.span,
+            "immutable static storage requires a Shareable type");
     storage.externalName = source.foreignDeclaration ? source.name : "";
     std::set<std::string> attributes;
     for (const auto &attribute : source.item.attributes) {
@@ -203,6 +223,26 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
   }
   if (node.kind == Kind::Unit && type == Type::Unit)
     return result;
+  if (node.kind == Kind::Text) {
+    auto literal = textLiteralType(node);
+    if (literal == Type::Unknown)
+      return std::nullopt;
+    // The literal's region is `static`; a static's annotation either names it
+    // or leaves it unspecified.
+    const bool staticView =
+        checked.types->isView(type) &&
+        checked.types->view(type).payload ==
+            checked.types->view(literal).payload &&
+        checked.types->view(type).mode == ParameterMode::Read &&
+        (checked.types->view(type).region == RegionId::Static ||
+         checked.types->view(type).region == RegionId::Unspecified);
+    if (!staticView)
+      if (!staticView)
+        return fail("static initializer text literal has an incompatible type");
+    result.kind = StaticConstant::Kind::Text;
+    result.text = facts(node).text;
+    return result;
+  }
   if (checked.types->isSum(type) &&
       !(node.kind == Kind::Name && staticName(node.text, node.span))) {
     auto record = checked.types->product(type);
@@ -316,6 +356,11 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
           checked.types->isSum(value->type))
         return fail("constant field projection requires a product");
       auto record = checked.types->product(value->type);
+      if (checked.types->compactArray(value->type)) {
+        error("feature", node.span,
+              "constant projection of a large array is not implemented");
+        return std::nullopt;
+      }
       auto field = record.fields.size();
       if ((*projection)->kind == Kind::Index) {
         if (record.kind != AggregateKind::Array)
@@ -433,8 +478,7 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
         mutableAddress != (reference.mode == ParameterMode::Mut))
       return fail("constant address type does not match its storage");
     if (slice)
-      result.scalar.magnitude[0] =
-          checked.types->product(payload).fields.size();
+      result.scalar.magnitude[0] = *checked.types->arrayLength(payload);
     if (mutableAddress && (!checked.types->isPointer(type) ||
                            !module.statics[*index].mutableBinding))
       return fail("mutable constant addresses require mutable raw storage");
@@ -567,7 +611,8 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
     if (node.flag && node.kind == Kind::Array && node.children.size() == 2) {
       auto count = constantInteger(*node.children[1]);
       if (!count || *count < 0 ||
-          static_cast<std::size_t>(*count) != record.fields.size())
+          static_cast<std::uint64_t>(*count) !=
+              checked.types->arrayLength(type))
         return fail("constant aggregate length does not match");
       auto element = staticInitializer(*node.children[0], record.components[0]);
       if (!element)
@@ -576,22 +621,32 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
         return fail("constant repetition cannot execute an element destructor");
       if (*count > 1 && !checked.types->isCopy(element->type))
         return fail("constant array repetition requires Copy elements");
+      if (checked.types->compactArray(type)) {
+        result.kind = StaticConstant::Kind::Repeat;
+        result.fields.push_back(std::move(*element));
+        return result;
+      }
       result.kind = StaticConstant::Kind::Aggregate;
       result.fields.assign(*count, *element);
       return result;
     }
-    if (node.children.size() != record.fields.size())
+    if (checked.types->compactArray(type)
+            ? node.children.size() != checked.types->arrayLength(type)
+            : node.children.size() != record.fields.size())
       return fail("constant aggregate length does not match");
     result.kind = StaticConstant::Kind::Aggregate;
     for (std::size_t i = 0; i < node.children.size(); ++i) {
-      auto value = staticInitializer(*node.children[i], record.fields[i].type);
+      auto value = staticInitializer(*node.children[i],
+                                     record.kind == AggregateKind::Array
+                                         ? record.components[0]
+                                         : record.fields[i].type);
       if (!value)
         return std::nullopt;
       result.fields.push_back(std::move(*value));
     }
     return result;
   }
-  if ((node.kind == Kind::Binary ||
+  if ((node.kind == Kind::Binary || node.kind == Kind::Name ||
        (node.kind == Kind::Unary && (node.text == "-" || node.text == "!"))) &&
       isInteger(type)) {
     // The required-integer evaluator owns composition; scalar leaves retain

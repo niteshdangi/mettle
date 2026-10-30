@@ -2,6 +2,7 @@
 #include "instances/arrays.h"
 #include "instances/callables.h"
 #include "support/limits.h"
+#include "types/layout.h"
 #include <algorithm>
 #include <functional>
 #include <map>
@@ -10,6 +11,11 @@
 
 namespace mettle::instances {
 namespace {
+struct LocatedLimit : std::length_error {
+  LocatedLimit(const std::string &message, Span span)
+      : std::length_error(message), span(span) {}
+  Span span;
+};
 class Planner {
 public:
   Planner(const ir::Program &source, Diagnostics &diagnostics,
@@ -45,6 +51,8 @@ public:
         specializeAssembly(assembly, {});
     } catch (const std::invalid_argument &failure) {
       diagnostics.error("type", {}, failure.what());
+    } catch (const LocatedLimit &failure) {
+      diagnostics.error("limit", failure.span, failure.what());
     } catch (const std::length_error &failure) {
       diagnostics.error("limit", {}, failure.what());
     }
@@ -64,6 +72,7 @@ private:
   std::map<std::pair<Type, Type>, int> callableAdapters;
   std::map<Type, int> callableContracts;
   std::set<Type> visitedTypes;
+  unsigned instanceDepth = 0;
   void specializeAssembly(Assembly &assembly,
                           std::span<const TypeBinding> bindings) {
     for (auto &operand : assembly.operands) {
@@ -133,6 +142,16 @@ private:
     if (type == Type::Unknown || types->isSymbolic(type))
       diagnostics.error("type", span,
                         "generic instance contains an unresolved parameter");
+    else if (types->isProduct(type) && types->isSized(type)) {
+      auto layout = objectLayout(*types, type);
+      if (!layout)
+        diagnostics.error(
+            "attribute", span,
+            "object layout cannot be established for this representation");
+      else if (layout->size > limits::objectBytes)
+        diagnostics.error("limit", span,
+                          "array size exceeds target address space");
+    }
   }
   void destructor(Type type, Span span) {
     if (!visitedTypes.insert(type).second)
@@ -172,6 +191,16 @@ private:
     Key key{index, arguments};
     if (auto found = instances.find(key); found != instances.end())
       return found->second;
+    if (instanceDepth >= limits::typeDepth)
+      throw LocatedLimit("generic specialization nesting limit exceeded "
+                         "while instantiating '" +
+                             declaration.name + "'",
+                         span);
+    struct Scope {
+      unsigned &depth;
+      explicit Scope(unsigned &depth) : depth(depth) { ++depth; }
+      ~Scope() { --depth; }
+    } scope(instanceDepth);
     if (instances.size() >= limits::functions)
       throw std::length_error("generic specialization limit exceeded");
     std::vector<TypeBinding> bindings;
@@ -193,7 +222,16 @@ private:
       }
       function.name += ">";
     }
+    // Instructions repeat a handful of types; a result is cached only after
+    // it was fully validated without diagnostics.
+    std::map<std::pair<Type, bool>, Type> resolved;
     auto substitute = [&](Type &type, bool runtime = true) {
+      if (auto known = resolved.find({type, runtime});
+          known != resolved.end()) {
+        type = known->second;
+        return;
+      }
+      const auto original = type;
       type = types->substitute(type, bindings);
       if (hooks.normalizeType)
         type = hooks.normalizeType(type, bindings, *types, diagnostics);
@@ -203,6 +241,8 @@ private:
         concrete(type, span);
         destructor(type, span);
       }
+      if (diagnostics.empty())
+        resolved.emplace(std::pair{original, runtime}, type);
     };
     substitute(function.result);
     for (auto &local : function.locals)

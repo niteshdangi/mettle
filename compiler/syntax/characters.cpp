@@ -1,4 +1,5 @@
 #include "syntax/lexer.h"
+#include <algorithm>
 #include <charconv>
 
 namespace mettle {
@@ -72,5 +73,123 @@ std::optional<std::uint32_t> characterLiteral(std::string_view text, bool byte,
       (!byte && value >= 0xd800 && value <= 0xdfff))
     return fail("literal is not a valid Unicode scalar");
   return value;
+}
+} // namespace mettle
+
+namespace mettle {
+namespace {
+void appendScalar(std::string &out, std::uint32_t value) {
+  if (value < 0x80) {
+    out.push_back(static_cast<char>(value));
+  } else if (value < 0x800) {
+    out.push_back(static_cast<char>(0xc0 | (value >> 6)));
+    out.push_back(static_cast<char>(0x80 | (value & 0x3f)));
+  } else if (value < 0x10000) {
+    out.push_back(static_cast<char>(0xe0 | (value >> 12)));
+    out.push_back(static_cast<char>(0x80 | ((value >> 6) & 0x3f)));
+    out.push_back(static_cast<char>(0x80 | (value & 0x3f)));
+  } else {
+    out.push_back(static_cast<char>(0xf0 | (value >> 18)));
+    out.push_back(static_cast<char>(0x80 | ((value >> 12) & 0x3f)));
+    out.push_back(static_cast<char>(0x80 | ((value >> 6) & 0x3f)));
+    out.push_back(static_cast<char>(0x80 | (value & 0x3f)));
+  }
+}
+} // namespace
+
+std::optional<std::string> textLiteral(std::string_view text,
+                                       Diagnostics &diagnostics, Span span) {
+  auto fail = [&](std::string message) -> std::optional<std::string> {
+    diagnostics.error("lex", span, std::move(message));
+    return std::nullopt;
+  };
+  const bool bytes = !text.empty() && text.front() == 'b';
+  if (bytes)
+    text.remove_prefix(1);
+  if (!text.empty() && text.front() == 'r') {
+    text.remove_prefix(1);
+    auto fence = text.find_first_not_of('#');
+    if (fence == std::string_view::npos || text.size() < 2 * fence + 2 ||
+        text[fence] != '"' || text[text.size() - fence - 1] != '"' ||
+        text.substr(text.size() - fence).find_first_not_of('#') !=
+            std::string_view::npos)
+      return fail("unterminated raw text literal");
+    auto body =
+        std::string(text.substr(fence + 1, text.size() - 2 * fence - 2));
+    if (bytes && std::any_of(body.begin(), body.end(), [](char c) {
+          return static_cast<unsigned char>(c) >= 0x80;
+        }))
+      return fail("byte text must contain only ASCII characters");
+    return body;
+  }
+  if (text.size() < 2 || text.front() != '"' || text.back() != '"')
+    return fail("unterminated text literal");
+  text = text.substr(1, text.size() - 2);
+  std::string result;
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    if (text[i] != '\\') {
+      if (bytes && static_cast<unsigned char>(text[i]) >= 0x80)
+        return fail("byte text must contain only ASCII characters");
+      result.push_back(text[i]);
+      continue;
+    }
+    if (++i == text.size())
+      return fail("incomplete text escape");
+    switch (text[i]) {
+    case 'n':
+      result.push_back('\n');
+      break;
+    case 'r':
+      result.push_back('\r');
+      break;
+    case 't':
+      result.push_back('\t');
+      break;
+    case '0':
+      result.push_back('\0');
+      break;
+    case '\\':
+    case '"':
+    case '\'':
+      result.push_back(text[i]);
+      break;
+    case 'x': {
+      std::uint32_t value = 0;
+      auto digits = text.substr(i + 1, 2);
+      auto parsed = std::from_chars(digits.data(),
+                                    digits.data() + digits.size(), value, 16);
+      if (digits.size() != 2 || parsed.ec != std::errc{} ||
+          parsed.ptr != digits.data() + 2 || (!bytes && value > 0x7f))
+        return fail(bytes ? "byte escape requires two hexadecimal digits"
+                          : "text byte escape requires two hexadecimal digits "
+                            "no greater than 7f");
+      result.push_back(static_cast<char>(value));
+      i += 2;
+      break;
+    }
+    case 'u': {
+      if (bytes)
+        return fail("invalid text escape");
+      auto close = text.find('}', i);
+      if (i + 1 >= text.size() || text[i + 1] != '{' ||
+          close == std::string_view::npos)
+        return fail("Unicode escape requires '\\u{hex}'");
+      std::uint32_t value = 0;
+      auto digits = text.substr(i + 2, close - i - 2);
+      auto parsed = std::from_chars(digits.data(),
+                                    digits.data() + digits.size(), value, 16);
+      if (digits.empty() || digits.size() > 6 || parsed.ec != std::errc{} ||
+          parsed.ptr != digits.data() + digits.size() || value > 0x10ffff ||
+          (value >= 0xd800 && value <= 0xdfff))
+        return fail("invalid Unicode scalar escape");
+      appendScalar(result, value);
+      i = close;
+      break;
+    }
+    default:
+      return fail("invalid text escape");
+    }
+  }
+  return result;
 }
 } // namespace mettle

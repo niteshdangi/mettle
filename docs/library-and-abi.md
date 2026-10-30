@@ -22,7 +22,9 @@ not linked merely because a program imports core.
 
 Working prelude: scalar names, Copy, Sized, iterator/call capabilities, Text,
 String when allocation is enabled, and native optional/outcome constructors.
-Do not silently reexport every platform API or choose a runtime from the prelude.
+The loader implements the core subset (`Text`, iterator interfaces, comparison
+interfaces, `panic`, `assert`, `String`); it has lowest name priority and no
+opt-out. Do not silently reexport every platform API or choose a runtime from the prelude.
 
 Package/module paths use one `::` resolution system. Names in this document are
 selected API directions, not a promise of source compatibility with Rust.
@@ -67,8 +69,12 @@ Byte containers are not automatically text. Conversion from arbitrary bytes is
 fallible unless an unsafe caller establishes validity.
 
 Text exposes byte length and byte/scalar iteration. Arbitrary integer character
-indexing is not defined. Checked slicing validates range and UTF-8 boundaries;
-an existing view prevents operations that can invalidate its backing storage.
+indexing is not defined. Checked slicing validates range and UTF-8 boundaries
+(`read text[i..j]` panics on an out-of-range or non-char-boundary range, through
+`core::ops::IndexRange`); an existing view prevents operations that can
+invalidate its backing storage. Byte literals `b"..."` are static `[u8; N]`
+views; `core::slice::from_raw_parts[_mut]` and `core::text::from_utf8_unchecked`
+build views from raw parts in unsafe code, the caller asserting the region.
 Normalization is not automatic. Grapheme operations use a versioned Unicode
 library and are not confused with constant-time byte access.
 
@@ -88,6 +94,13 @@ Initial collection API obligations:
 | clear | Destroy initialized elements exactly once |
 | consuming iteration | Own collection state and yield owned elements |
 | borrowed iteration | Hold receiver region; yield views without cloning |
+
+`Vec` implements consuming (`IntoIterator`), borrowed (`Iterable`) and mutable
+(`IterableMut`) iteration through the core interfaces, so `for x in take v`,
+`for x in read v` and `for x in mut v` work; `VecDeque`, `LinkedList` and (values only) the maps add `IterableMut`; every collection
+provides borrowed iteration and `FromIterator`/`Extend` (over any `IntoIterator` with a matching `Item`; `Iterator::collect` builds any `FromIterator`), borrowed `keys()`/`values()` on maps. Alloc types implement the matching `core::cmp`, `core::hash`,
+`core::ops` (`Deref`, `IndexRange`) and `core::fmt` interfaces; `String` is a
+`core::fmt::Write` sink.
 
 Because take consumes Copy values too, callers that need another independent
 copy must produce it explicitly before a consuming collection call. Do not
@@ -140,6 +153,14 @@ Files and sockets expose partial reads/writes. A successful write is not a
 durability guarantee. OS path strings preserve non-Unicode data when the platform
 permits it. Process exit status, environment encoding, handle inheritance and
 thread-local destructors are profile-specific obligations.
+
+The native `std` modules are `io`, `ffi`, `path`, `fs`, `process`, `env`,
+`time`, `net` and `panic`. Raw OS errors are kept in `io::Error` unchanged next
+to a portable kind; operations that time out report kind `TimedOut` and keep the
+OS number. `OsStr`/`Path` are byte sequences without a Unicode requirement, and a
+byte string containing NUL is rejected with `InvalidInput` before reaching the OS.
+The hosted panic hook (`std::panic::set_hook`) receives the message; the process
+still exits with status 101.
 
 Wall time and monotonic elapsed time are distinct types. No monotonicity promise
 is made for wall time. Timeouts distinguish expiration from completed cleanup.

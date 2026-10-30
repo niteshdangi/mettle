@@ -27,7 +27,8 @@ CONFIG = {"CMakeLists.txt", ".clang-format", ".clang-tidy", ".editorconfig", ".g
 def owned_files(root):
     root = Path(root)
     for directory, children, files in os.walk(root):
-        children[:] = sorted(name for name in children if name not in EXCLUDED and
+        children[:] = sorted(name for name in children if name != "__pycache__" and
+                             (Path(directory) != root or name not in EXCLUDED) and
                              not (Path(directory) / name).is_symlink())
         for name in sorted(files):
             path = Path(directory) / name
@@ -194,7 +195,9 @@ def main():
                 run("Static analysis: " + str(path.relative_to(ROOT)),
                     [tidy, path, "-p", build, "--config-file=" + str(ROOT / ".clang-tidy"),
                      "--quiet"])
-            run("CTest", [ctest, "--test-dir", build, "--output-on-failure"])
+            run("CTest", [ctest, "--test-dir", build, "--output-on-failure",
+                           "--parallel", str(max(1, (os.cpu_count() or 1) // 2))],
+                timeout=None)
             evidence["compilation_database_sha256"] = sha256(build / "compile_commands.json")
             evidence["compiler_sha256"] = sha256(build / "mettle")
         after = snapshot(ROOT)

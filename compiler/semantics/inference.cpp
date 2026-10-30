@@ -1,4 +1,5 @@
 #include "semantics/inference.h"
+#include <algorithm>
 
 namespace mettle {
 int TypeInference::fresh(Type type) {
@@ -16,6 +17,16 @@ int TypeInference::root(int v) {
   if (variables[v].parent != v)
     variables[v].parent = root(variables[v].parent);
   return variables[v].parent;
+}
+bool TypeInference::depends(int variable,
+                            const std::set<int> &representatives) {
+  variable = root(variable);
+  if (representatives.contains(variable))
+    return true;
+  auto children = variables[variable].components;
+  return std::any_of(children.begin(), children.end(), [&](int child) {
+    return depends(child, representatives);
+  });
 }
 Type TypeInference::value(int v) {
   v = root(v);
@@ -147,9 +158,10 @@ void TypeInference::equal(int a, int b, Span span, bool coercion) {
     }
     auto ac = components(a, kind, span), bc = components(b, kind, span);
     auto count = [&](int variable) {
-      return variables[variable].symbolicCount != Type::Unknown
-                 ? variables[variable].symbolicCount
-                 : types.constant(Type::I32, variables[variable].count);
+      return types.canonicalCount(
+          variables[variable].symbolicCount != Type::Unknown
+              ? variables[variable].symbolicCount
+              : types.constant(Type::I32, variables[variable].count));
     };
     if (ac.size() != bc.size() ||
         (kind == AggregateKind::Array && count(a) != count(b))) {

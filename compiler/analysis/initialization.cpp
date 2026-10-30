@@ -247,13 +247,22 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
             StorageDuration::Static)
           diagnostics.error("ownership", instruction.span,
                             "cannot move out of static storage");
-        if (reference)
-          diagnostics.error("ownership", instruction.span,
-                            "cannot move out of a borrowed place");
+        if (reference) {
+          auto moved =
+              projectedType(types, function.locals[instruction.place.root].type,
+                            instruction.place.fields);
+          // `take` consumes a Copy value too; an explicit copy is the fix.
+          diagnostics.error(
+              "ownership", instruction.span,
+              moved && types.isCopy(*moved)
+                  ? "cannot move out of a borrowed place; a `take` argument "
+                    "consumes its value, so copy it into a binding first"
+                  : "cannot move out of a borrowed place");
+        }
         Place prefix{instruction.place.root, {}};
         auto type = function.locals[prefix.root].type;
         for (auto projection : instruction.place.fields) {
-          if (types.isProduct(type) &&
+          if (!reference && types.isProduct(type) &&
               (types.product(type).hasDestructor ||
                types.product(type).nativeCleanup != NativeCleanup::None) &&
               tree.all(state.possible, tree.index(prefix)))
@@ -307,7 +316,8 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
       }
       if ((instruction.op == ir::Op::Store ||
            instruction.op == ir::Op::StorageWrite) &&
-          !writable && tree.any(state.ever, tree.index(instruction.place)))
+          !readOnly && !writable &&
+          tree.any(state.ever, tree.index(instruction.place)))
         diagnostics.error("type", instruction.span,
                           "cannot assign immutable binding '" +
                               tree.name(tree.index(instruction.place)) +

@@ -6,7 +6,6 @@ std::string Parser::textLiteral() {
   auto token = peek();
   if (token.kind != TokenKind::Text)
     fail("expected a constant text literal");
-  ++position;
   std::string result;
   for (std::size_t i = 1; i + 1 < token.text.size(); ++i) {
     auto character = token.text[i];
@@ -41,6 +40,7 @@ std::string Parser::textLiteral() {
     } else
       fail("unsupported constant text escape", "lex");
   }
+  ++position;
   return result;
 }
 std::vector<Attribute> Parser::attributes() {
@@ -116,8 +116,10 @@ void Parser::foreignDeclaration(Module &module, ItemSyntax item) {
 }
 void Parser::staticDeclaration(Module &module, ItemSyntax item, bool foreign) {
   Module::Static declaration;
-  declaration.span = expect("static").span;
-  declaration.mutableBinding = take("mut");
+  const bool constant = is("const");
+  declaration.span = expect(constant ? "const" : "static").span;
+  declaration.constant = constant;
+  declaration.mutableBinding = !constant && take("mut");
   declaration.name = name().text;
   expect(":");
   declaration.annotation = type();

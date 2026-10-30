@@ -14,6 +14,9 @@ public:
   NodeOwner(NodeOwner &&) noexcept;
   NodeOwner &operator=(NodeOwner &&) noexcept;
   ~NodeOwner();
+  // A non-owning reference, so semantic elaborations can share syntax nodes
+  // that remain owned by the parsed tree.
+  static NodeOwner borrow(Node &node);
   Node *get() { return value.get(); }
   const Node *get() const { return value.get(); }
   Node &operator*() { return *value; }
@@ -23,6 +26,7 @@ public:
 
 private:
   std::unique_ptr<Node> value;
+  bool owning = true;
 };
 enum class Kind {
   Integer,
@@ -57,6 +61,7 @@ enum class Kind {
   For,
   Coalesce,
   Character,
+  Text,
   Closure,
   Floating,
   Cast,
@@ -193,9 +198,27 @@ struct Node {
 inline NodeOwner::NodeOwner() = default;
 inline NodeOwner::NodeOwner(std::unique_ptr<Node> node)
     : value(std::move(node)) {}
-inline NodeOwner::NodeOwner(NodeOwner &&) noexcept = default;
-inline NodeOwner &NodeOwner::operator=(NodeOwner &&) noexcept = default;
-inline NodeOwner::~NodeOwner() = default;
+inline NodeOwner::NodeOwner(NodeOwner &&other) noexcept
+    : value(std::move(other.value)), owning(other.owning) {}
+inline NodeOwner &NodeOwner::operator=(NodeOwner &&other) noexcept {
+  if (this != &other) {
+    if (!owning)
+      value.release();
+    value = std::move(other.value);
+    owning = other.owning;
+  }
+  return *this;
+}
+inline NodeOwner::~NodeOwner() {
+  if (!owning)
+    value.release();
+}
+inline NodeOwner NodeOwner::borrow(Node &node) {
+  NodeOwner result;
+  result.value.reset(&node);
+  result.owning = false;
+  return result;
+}
 struct VisibilitySyntax {
   bool publicItem = false;
   std::vector<std::string> restriction;
@@ -249,6 +272,9 @@ struct Function {
 };
 struct Module {
   std::vector<Token> tokens;
+  // Spans of text-literal expressions; the loader uses them to mount the
+  // library that defines Text.
+  std::vector<Span> textLiterals;
   std::vector<Function> functions;
   struct Static {
     std::string name;
@@ -258,6 +284,8 @@ struct Module {
     ItemSyntax item{};
     bool mutableBinding = false;
     bool foreignDeclaration = false;
+    // `const` items share static storage; the flag selects value semantics.
+    bool constant = false;
   };
   std::vector<Static> statics;
   std::vector<NodeOwner> globalAssembly{};
@@ -349,6 +377,12 @@ struct Module {
   };
   std::vector<ModuleDeclaration> modules;
   std::vector<Import> imports;
+  // Names the loader makes visible, below every explicit and glob binding, in
+  // each module outside `libraryRoots`. Empty when no library supplies them.
+  struct Prelude {
+    std::vector<std::vector<std::string>> names;
+    std::vector<std::string> libraryRoots;
+  } prelude;
 };
 std::optional<bool> booleanLiteral(const Node &node);
 bool isStatement(Kind kind);

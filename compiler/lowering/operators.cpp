@@ -1,4 +1,5 @@
 #include "lowering/builder.h"
+#include <limits>
 
 namespace mettle::lowering {
 Builder::Value Builder::operatorExpression(const Node &node) {
@@ -16,9 +17,39 @@ Builder::Value Builder::operatorExpression(const Node &node) {
     }
     return expression(source, mode == ParameterMode::Take);
   };
-  std::vector<Value> arguments(node.children.size());
-  for (std::size_t i = 0; i < arguments.size() && live(); ++i)
-    arguments[i] = argument(i);
+  const bool ranged =
+      node.kind == Kind::Index && node.children[1]->kind == Kind::Range;
+  std::vector<Value> arguments(ranged ? 3 : node.children.size());
+  if (ranged && live()) {
+    // start, then the exclusive end; an absent end is usize::MAX.
+    const auto &range = *node.children[1];
+    const bool hasStart = range.name.empty() || range.name == "from";
+    const bool hasEnd = range.name.empty() || range.name == "to";
+    arguments[0] = argument(0);
+    arguments[1] = hasStart && live() ? use(expression(*range.children.front()))
+                                      : constant(Type::Usize, 0);
+    if (live() && hasEnd) {
+      arguments[2] = use(expression(*range.children.back()));
+      if (live() && range.text == "..=")
+        arguments[2] = emit({ir::Op::Binary,
+                             {},
+                             {arguments[2], constant(Type::Usize, 1)},
+                             {},
+                             "+",
+                             {-1, {}},
+                             -1,
+                             0,
+                             node.span},
+                            Type::Usize);
+    } else if (live()) {
+      NumericLiteral maximum;
+      maximum.magnitude[0] = std::numeric_limits<std::uint64_t>::max();
+      arguments[2] = constant(Type::Usize, maximum);
+    }
+  } else {
+    for (std::size_t i = 0; i < arguments.size() && live(); ++i)
+      arguments[i] = argument(i);
+  }
   if (!live())
     return {};
   for (auto &value : arguments)

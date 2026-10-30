@@ -25,6 +25,12 @@ staticConstantFields(const TypeStore &types, const StaticConstant &constant) {
       result.emplace_back(0, record.layout.tag);
     for (auto field : record.variants[constant.selection].fields)
       result.emplace_back(field, record.fields[field].type);
+  } else if (types.compactArray(constant.type)) {
+    if (constant.selection != -1 ||
+        constant.kind == StaticConstant::Kind::Repeat)
+      return std::nullopt;
+    for (std::size_t i = 0; i < constant.fields.size(); ++i)
+      result.emplace_back(i, record.components[0]);
   } else {
     if (constant.selection != -1)
       return std::nullopt;
@@ -89,6 +95,55 @@ Type TypeStore::declareProduct(std::string name, bool copyRequested) {
   products.push_back({std::move(name), {}, copyRequested});
   return id;
 }
+void TypeStore::syncLookup() {
+  for (; lookup.synced < entries.size(); ++lookup.synced) {
+    auto i = static_cast<std::uint32_t>(lookup.synced);
+    const auto &entry = entries[lookup.synced];
+    switch (entry.kind) {
+    case EntryKind::Product: {
+      const auto &record = products[entry.index];
+      if (record.genericOrigin != Type::Unknown)
+        lookup.genericInstances[record.genericOrigin].push_back(i);
+      if (record.regionOrigin != Type::Unknown)
+        lookup.regionInstances[record.regionOrigin].push_back(i);
+      lookup.aggregates[record.components].push_back(i);
+      break;
+    }
+    case EntryKind::View: {
+      const auto &record = views[entry.index];
+      lookup.views.try_emplace(
+          {record.payload, static_cast<int>(record.mode), record.region}, i);
+      break;
+    }
+    case EntryKind::Pointer: {
+      const auto &record = views[entry.index];
+      lookup.pointers.try_emplace(
+          {record.payload, static_cast<int>(record.mode)}, i);
+      break;
+    }
+    case EntryKind::Slice:
+      lookup.slices.try_emplace(slices[entry.index].element, i);
+      break;
+    case EntryKind::Erased:
+      lookup.erased[erasedTypes[entry.index].declaration].push_back(i);
+      break;
+    case EntryKind::Parameter: {
+      const auto &record = parameters[entry.index];
+      if (record.kind == TypeParameterKind::Value)
+        lookup.constants[{record.valueType, record.numeric.magnitude}]
+            .push_back(i);
+      else
+        lookup.operands[record.operands].push_back(i);
+      break;
+    }
+    case EntryKind::Callable:
+      lookup.callables[callableKey(callables[entry.index])].push_back(i);
+      break;
+    default:
+      break;
+    }
+  }
+}
 void TypeStore::defineProduct(Type type, std::vector<TypeField> fields) {
   products.at(entries.at(type.index() - builtins).index).fields =
       std::move(fields);
@@ -133,16 +188,22 @@ bool TypeStore::uninhabited(Type type) const {
 }
 Type TypeStore::structural(AggregateKind kind, std::vector<Type> components,
                            std::uint32_t count) {
-  for (std::size_t i = 0; i < entries.size(); ++i)
-    if (entries[i].kind == EntryKind::Product) {
-      const auto &record = products[entries[i].index];
-      if (record.kind == kind && record.components == components &&
-          record.regionOrigin == Type::Unknown &&
-          (kind != AggregateKind::Array ||
-           (record.arrayCount == Type::Unknown &&
-            record.fields.size() == count)))
-        return Type(builtins + static_cast<std::uint32_t>(i));
-    }
+  if (kind == AggregateKind::Array && !components.empty() &&
+      compactArrayShape(components[0], count))
+    return arrayType(components[0], constant(Type::I32, count));
+  syncLookup();
+  if (auto existing =
+          findIndexed(found(lookup.aggregates, components), [&](std::size_t i) {
+            if (entries[i].kind != EntryKind::Product)
+              return false;
+            const auto &record = products[entries[i].index];
+            return record.kind == kind && record.components == components &&
+                   record.regionOrigin == Type::Unknown &&
+                   (kind != AggregateKind::Array ||
+                    (record.arrayCount == Type::Unknown &&
+                     record.fields.size() == count));
+          }))
+    return *existing;
   std::vector<TypeField> fields;
   std::vector<VariantType> variants;
   std::string display;
@@ -253,11 +314,10 @@ bool TypeStore::isPointer(Type type) const {
          entries[type.index() - builtins].kind == EntryKind::Pointer;
 }
 Type TypeStore::pointerType(Type payload, ParameterMode mode) {
-  for (std::size_t i = 0; i < entries.size(); ++i)
-    if (entries[i].kind == EntryKind::Pointer &&
-        views[entries[i].index].payload == payload &&
-        views[entries[i].index].mode == mode)
-      return Type(builtins + static_cast<std::uint32_t>(i));
+  syncLookup();
+  if (auto existing = lookup.pointers.find({payload, static_cast<int>(mode)});
+      existing != lookup.pointers.end())
+    return Type(builtins + existing->second);
   Type result(builtins + static_cast<std::uint32_t>(entries.size()));
   entries.push_back({EntryKind::Pointer, views.size()});
   views.push_back(
@@ -268,12 +328,11 @@ Type TypeStore::pointerType(Type payload, ParameterMode mode) {
 }
 const ViewType &TypeStore::pointer(Type type) const { return view(type); }
 Type TypeStore::viewType(Type payload, ParameterMode mode, RegionId region) {
-  for (std::size_t i = 0; i < entries.size(); ++i)
-    if (entries[i].kind == EntryKind::View &&
-        views[entries[i].index].payload == payload &&
-        views[entries[i].index].mode == mode &&
-        views[entries[i].index].region == region)
-      return Type(builtins + static_cast<std::uint32_t>(i));
+  syncLookup();
+  if (auto existing =
+          lookup.views.find({payload, static_cast<int>(mode), region});
+      existing != lookup.views.end())
+    return Type(builtins + existing->second);
   Type result(builtins + static_cast<std::uint32_t>(entries.size()));
   entries.push_back({EntryKind::View, views.size()});
   views.push_back({payload, mode,
@@ -290,10 +349,10 @@ bool TypeStore::isSlice(Type type) const {
          entries[type.index() - builtins].kind == EntryKind::Slice;
 }
 Type TypeStore::sliceType(Type element) {
-  for (std::size_t i = 0; i < entries.size(); ++i)
-    if (entries[i].kind == EntryKind::Slice &&
-        slices[entries[i].index].element == element)
-      return Type(builtins + static_cast<std::uint32_t>(i));
+  syncLookup();
+  if (auto existing = lookup.slices.find(element);
+      existing != lookup.slices.end())
+    return Type(builtins + existing->second);
   Type result(builtins + static_cast<std::uint32_t>(entries.size()));
   entries.push_back({EntryKind::Slice, slices.size()});
   slices.push_back({element, "[" + std::string(name(element)) + "]"});
@@ -303,8 +362,10 @@ const SliceType &TypeStore::slice(Type type) const {
   return slices.at(entries.at(type.index() - builtins).index);
 }
 Type TypeStore::regionalProduct(Type origin, std::vector<TypeField> fields,
-                                std::vector<RegionId> arguments) {
+                                std::vector<RegionId> arguments,
+                                bool normalizedFields) {
   auto record = product(origin);
+  normalizedFields |= record.normalizedFields;
   if (record.kind == AggregateKind::Cell ||
       record.kind == AggregateKind::RefCell ||
       record.kind == AggregateKind::Ref || record.kind == AggregateKind::RefMut)
@@ -312,22 +373,28 @@ Type TypeStore::regionalProduct(Type origin, std::vector<TypeField> fields,
                       {fields.at(cellPayloadField(record.kind)).type});
   while (product(origin).regionOrigin != Type::Unknown)
     origin = product(origin).regionOrigin;
-  for (std::size_t i = 0; i < entries.size(); ++i)
-    if (entries[i].kind == EntryKind::Product) {
-      const auto &record = products[entries[i].index];
-      if (record.regionOrigin == origin &&
-          record.regionArguments == arguments &&
-          record.fields.size() == fields.size() &&
-          std::equal(record.fields.begin(), record.fields.end(), fields.begin(),
-                     [](const auto &left, const auto &right) {
-                       return left.name == right.name &&
-                              left.type == right.type;
-                     }))
-        return Type(builtins + static_cast<std::uint32_t>(i));
-    }
+  syncLookup();
+  if (auto existing = findIndexed(
+          found(lookup.regionInstances, origin), [&](std::size_t i) {
+            if (entries[i].kind != EntryKind::Product)
+              return false;
+            const auto &record = products[entries[i].index];
+            return record.regionOrigin == origin &&
+                   record.normalizedFields == normalizedFields &&
+                   record.regionArguments == arguments &&
+                   record.fields.size() == fields.size() &&
+                   std::equal(record.fields.begin(), record.fields.end(),
+                              fields.begin(),
+                              [](const auto &left, const auto &right) {
+                                return left.name == right.name &&
+                                       left.type == right.type;
+                              });
+          }))
+    return *existing;
   record.fields = std::move(fields);
   record.regionOrigin = origin;
   record.regionArguments = std::move(arguments);
+  record.normalizedFields = normalizedFields;
   auto result = declareProduct(record.name, record.copyRequested);
   products.at(entries.at(result.index() - builtins).index) = std::move(record);
   return result;

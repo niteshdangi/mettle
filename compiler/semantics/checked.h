@@ -43,6 +43,8 @@ struct NodeFacts {
   int variant = -1;
   Type effect = Type::Unknown;
   Type readView = Type::Unknown, mutView = Type::Unknown;
+  // Element count of the array a range index borrows a subslice of.
+  Type rangeArrayCount = Type::Unknown;
   ParameterMode iterationMode = ParameterMode::Read;
   std::vector<Type> injections{};
   Type rebuiltType = Type::Unknown;
@@ -57,6 +59,7 @@ struct NodeFacts {
   int witness = -1;
   Type erasedSource = Type::Unknown;
   Type opaqueSource = Type::Unknown;
+  std::string text;
   Type unsizedSource = Type::Unknown;
   Type unsizedCount = Type::Unknown;
   Type reborrowSource = Type::Unknown;
@@ -72,6 +75,7 @@ struct NodeFacts {
   std::vector<std::size_t> argumentOrder;
   std::vector<std::size_t> defaultArguments;
   bool indirect = false;
+  bool lexicallyBound = false;
   bool operatorCall = false;
   bool exclusivePlace = false;
   bool unsafeContext = false, writeOnly = false;
@@ -109,6 +113,9 @@ struct FunctionFacts {
   bool diverges = false;
   std::vector<Local> locals;
   std::vector<std::size_t> resultSources;
+  // Result sources that name only regions carried inside a borrowed parameter
+  // value, never the parameter's own borrow.
+  std::vector<std::size_t> resultContents;
   Type error = Type::Unknown;
   Type abiResult = Type::Unknown;
   std::vector<Type> defaultAbiResults;
@@ -172,6 +179,15 @@ struct ClosureFacts {
   bool deferred = false;
 };
 
+// How a `for` over a user iterator executes: the protocol-selected iterator
+// initializer, the iterator local and the elaborated loop. The elaboration
+// shares the original source, pattern and body; the parsed `for` is unchanged.
+struct IterationPlan {
+  ParameterMode mode = ParameterMode::Read;
+  std::string protocol, method;
+  NodeOwner elaboration;
+};
+
 class Checker;
 class CheckedModule {
 public:
@@ -186,6 +202,10 @@ public:
   }
   const FunctionFacts &function(std::size_t index) const {
     return functions.at(index);
+  }
+  const IterationPlan *iteration(const Node &node) const {
+    auto found = iterations.find(&node);
+    return found == iterations.end() ? nullptr : &found->second;
   }
   const std::vector<StaticFacts> &statics() const { return staticStorage; }
   std::shared_ptr<const TypeStore> typeStore() const { return types; }
@@ -207,6 +227,7 @@ private:
   std::vector<Assembly> assemblyItems{};
   std::unordered_map<const Node *, NodeFacts> nodes;
   std::unordered_map<const Pattern *, PatternFacts> patterns;
+  std::unordered_map<const Node *, IterationPlan> iterations;
   std::vector<FunctionFacts> functions;
   std::vector<StaticFacts> staticStorage;
   std::vector<std::unique_ptr<ClosureFacts>> closureBodies;

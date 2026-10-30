@@ -297,9 +297,13 @@ void Checker::resolveClosure(ClosureFacts &closure, bool final) {
     }
   }
   std::function<void(const Node &)> resolve = [&](const Node &node) {
-    if (node.kind != Kind::Closure)
+    if (node.kind != Kind::Closure) {
+      if (auto plan = checked.iterations.find(&node);
+          plan != checked.iterations.end())
+        resolve(*plan->second.elaboration);
       for (auto &child : node.children)
         resolve(*child);
+    }
     auto &checkedNode = facts(node);
     if (nodeVariables.contains(&node))
       checkedNode.type = inference.value(nodeVariables.at(&node));
@@ -503,6 +507,11 @@ void Checker::inferCaptures(ClosureFacts &closure) {
           record(*facts(node).place, mode, node.span);
           if (node.kind == Kind::Index)
             visit(*node.children[1], ParameterMode::Read);
+          return;
+        }
+        if (auto plan = checked.iterations.find(&node);
+            plan != checked.iterations.end()) {
+          visit(*plan->second.elaboration, ParameterMode::Value);
           return;
         }
         for (const auto &child : node.children)

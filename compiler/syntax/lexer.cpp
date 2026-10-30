@@ -7,11 +7,16 @@ bool wordStart(unsigned char c) {
   return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
 }
 bool digit(unsigned char c) { return c >= '0' && c <= '9'; }
+bool rawTextStart(const std::string &s, std::size_t i) {
+  while (i < s.size() && s[i] == '#')
+    ++i;
+  return i < s.size() && s[i] == '"';
+}
 } // namespace
 std::vector<Token> tokenize(const Source &source, Diagnostics &diagnostics) {
   Diagnostics::SourceContext context(diagnostics, source);
   if (source.text.size() > limits::sourceBytes) {
-    diagnostics.error("limit", {}, "source file exceeds 8 MiB");
+    diagnostics.error("limit", {}, "source file exceeds 1 GiB");
     return {{TokenKind::End, {0, 0, source.id}, ""}};
   }
   if (auto invalid = invalidUtf8(source.text)) {
@@ -22,8 +27,12 @@ std::vector<Token> tokenize(const Source &source, Diagnostics &diagnostics) {
   const auto &s = source.text;
   std::vector<Token> tokens;
   std::size_t i = 0;
+  bool afterDot = false;
   auto add = [&](TokenKind kind, std::size_t start) {
     tokens.push_back({kind, {start, i, source.id}, s.substr(start, i - start)});
+    if (kind != TokenKind::Space && kind != TokenKind::Newline &&
+        kind != TokenKind::Comment)
+      afterDot = kind == TokenKind::Symbol && tokens.back().text == ".";
   };
   while (i < s.size() && tokens.size() < limits::tokens) {
     auto start = i;
@@ -76,8 +85,35 @@ std::vector<Token> tokenize(const Source &source, Diagnostics &diagnostics) {
         diagnostics.error("lex", {start, i},
                           "backtick contents must be an identifier");
       add(TokenKind::QuotedWord, start);
-    } else if (c == '"') {
+    } else if ((c == 'r' ||
+                (c == 'b' && i + 1 < s.size() && s[i + 1] == 'r')) &&
+               rawTextStart(s, i + (c == 'b' ? 2 : 1))) {
+      // r"..." / r#"..."# with matched fences; br for raw byte text.
+      i += c == 'b' ? 2 : 1;
+      std::size_t fence = 0;
+      while (s[i] == '#') {
+        ++fence;
+        ++i;
+      }
       ++i;
+      bool closed = false;
+      while (i < s.size() && !closed) {
+        if (s[i++] != '"')
+          continue;
+        std::size_t seen = 0;
+        while (seen < fence && i + seen < s.size() && s[i + seen] == '#')
+          ++seen;
+        if (seen == fence) {
+          i += fence;
+          closed = true;
+        }
+      }
+      if (!closed)
+        diagnostics.error("lex", {start, i}, "unterminated raw text literal");
+      add(TokenKind::PrefixedText, start);
+    } else if (c == '"' || (c == 'b' && i + 1 < s.size() && s[i + 1] == '"')) {
+      const bool bytes = c == 'b';
+      i += bytes ? 2 : 1;
       bool escaped = false, closed = false;
       while (i < s.size() && s[i] != '\n' && s[i] != '\r') {
         auto value = s[i++];
@@ -89,7 +125,7 @@ std::vector<Token> tokenize(const Source &source, Diagnostics &diagnostics) {
       }
       if (!closed)
         diagnostics.error("lex", {start, i}, "unterminated text literal");
-      add(TokenKind::Text, start);
+      add(bytes ? TokenKind::PrefixedText : TokenKind::Text, start);
     } else if (c == '\'' ||
                (c == 'b' && i + 1 < s.size() && s[i + 1] == '\'')) {
       bool byte = c == 'b';
@@ -117,7 +153,8 @@ std::vector<Token> tokenize(const Source &source, Diagnostics &diagnostics) {
       while (i < s.size() && (wordStart(s[i]) || digit(s[i])))
         ++i;
       bool floating = false;
-      if (!based && i + 1 < s.size() && s[i] == '.' && digit(s[i + 1])) {
+      if (!afterDot && !based && i + 1 < s.size() && s[i] == '.' &&
+          digit(s[i + 1])) {
         floating = true;
         ++i;
         while (i < s.size() && (wordStart(s[i]) || digit(s[i])))

@@ -68,6 +68,31 @@ class QualityRulesTests(unittest.TestCase):
         path.write_text('#include "syntax/ast.h"\n')
         self.assertEqual(include_failures(path, self.root, modules), [])
 
+    def test_include_boundaries_handle_comments_splicing_and_macros(self):
+        modules = [{"name": "source", "files": ["source/a.cpp"],
+                    "dependencies": [], "public_headers": []}]
+        for text in ('#/**/include "llvm/IR/Module.h"\n',
+                     '#inc\\\nlude "llvm/IR/Module.h"\n',
+                     '#include HEADER\n',
+                     '#include "../backend/llvm/private.h"\n'):
+            with self.subTest(text=text):
+                path = self.write("compiler/source/a.cpp", text.encode())
+                self.assertTrue(include_failures(path, self.root, modules))
+        path = self.write("compiler/source/a.cpp",
+                          b'const char *text = R"note(\n#include "llvm/Fake.h"\n)note";\n'
+                          b'/*\n#include "llvm/AlsoFake.h"\n*/\n')
+        self.assertEqual(include_failures(path, self.root, modules), [])
+
+    def test_quoted_local_headers_resolve_before_include_roots(self):
+        modules = [{"name": "source", "files": ["source/a.cpp"],
+                    "dependencies": [], "public_headers": []},
+                   {"name": "other", "files": ["source/private.h"],
+                    "dependencies": [], "public_headers": []}]
+        self.write("compiler/source/private.h", b"// private\n")
+        path = self.write("compiler/source/a.cpp", b'#include "private.h"\n')
+        self.assertTrue(any("private header" in message
+                            for message in include_failures(path, self.root, modules)))
+
     def test_graph_rejects_cycles_unknown_edges_and_unowned_sources(self):
         modules = [
             {"name": "source", "directory": "source", "kind": "STATIC",
@@ -100,6 +125,11 @@ class QualityRulesTests(unittest.TestCase):
             self.write(directory + "/ignored.cpp", b"invalid \r\n")
         self.write("docs/baseline/generated.csv", b"generated\r\n")
         self.assertEqual(list(owned_files(self.root)), [expected])
+
+    def test_nested_excluded_names_are_still_authored_inputs(self):
+        paths = {self.write("compiler/" + name + "/source.cpp", b"owned\n")
+                 for name in ("build", ".tools", "vendor", "third_party")}
+        self.assertEqual(set(owned_files(self.root)), paths)
 
     def test_rejects_source_symlink_outside_project(self):
         with tempfile.TemporaryDirectory(prefix="mettle-quality-external-") as directory:

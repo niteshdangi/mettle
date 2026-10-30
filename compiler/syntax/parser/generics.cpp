@@ -27,6 +27,29 @@ bool Parser::genericClose() {
   }
   return false;
 }
+// A `<<` directly before a projection (`Vec<<T implements I>::Item>`) is two
+// opening brackets in a type-argument context; split it in place.
+bool Parser::genericOpen() {
+  if (is("<"))
+    return true;
+  if (!is("<<"))
+    return false;
+  for (std::size_t look = 1; look < 64; ++look) {
+    const auto &token = peek(look);
+    if (token.text == "implements")
+      break;
+    if (token.kind == TokenKind::End || token.kind == TokenKind::Newline ||
+        token.text == ";" || token.text == "{" || token.text == "}")
+      return false;
+  }
+  auto first = tokens[position];
+  first.text = "<";
+  first.span.end = first.span.begin + 1;
+  tokens[position].text = "<";
+  ++tokens[position].span.begin;
+  tokens.insert(tokens.begin() + static_cast<std::ptrdiff_t>(position), first);
+  return true;
+}
 std::vector<GenericParameter>
 Parser::genericParameters(std::vector<std::string> *regions) {
   std::vector<GenericParameter> result;
@@ -81,7 +104,9 @@ Parser::genericParameters(std::vector<std::string> *regions) {
   return result;
 }
 std::vector<GenericArgument> Parser::genericArguments() {
-  expect("<");
+  if (!genericOpen())
+    fail("expected '<'");
+  ++position;
   ++parens;
   std::vector<GenericArgument> result;
   do {

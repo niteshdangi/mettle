@@ -6,27 +6,30 @@ Type TypeStore::erasedType(ErasedType descriptor) {
   std::sort(
       descriptor.associated.begin(), descriptor.associated.end(),
       [](const auto &a, const auto &b) { return a.parameter < b.parameter; });
-  for (std::size_t i = 0; i < entries.size(); ++i)
-    if (entries[i].kind == EntryKind::Erased) {
-      const auto &prior = erasedTypes[entries[i].index];
-      if (prior.declaration != descriptor.declaration ||
-          prior.arguments != descriptor.arguments ||
-          prior.regionArguments != descriptor.regionArguments ||
-          prior.regionParameters != descriptor.regionParameters ||
-          prior.regionUniverse != descriptor.regionUniverse ||
-          prior.regionRequirements != descriptor.regionRequirements ||
-          prior.associated.size() != descriptor.associated.size())
-        continue;
-      bool same = true;
-      for (std::size_t binding = 0; binding < prior.associated.size();
-           ++binding)
-        same &= prior.associated[binding].parameter ==
-                    descriptor.associated[binding].parameter &&
-                prior.associated[binding].argument ==
-                    descriptor.associated[binding].argument;
-      if (same)
-        return Type(builtinTypeCount + static_cast<std::uint32_t>(i));
-    }
+  syncLookup();
+  if (auto existing = findIndexed(
+          found(lookup.erased, descriptor.declaration), [&](std::size_t i) {
+            if (entries[i].kind != EntryKind::Erased)
+              return false;
+            const auto &prior = erasedTypes[entries[i].index];
+            if (prior.declaration != descriptor.declaration ||
+                prior.arguments != descriptor.arguments ||
+                prior.regionArguments != descriptor.regionArguments ||
+                prior.regionParameters != descriptor.regionParameters ||
+                prior.regionUniverse != descriptor.regionUniverse ||
+                prior.regionRequirements != descriptor.regionRequirements ||
+                prior.associated.size() != descriptor.associated.size())
+              return false;
+            for (std::size_t binding = 0; binding < prior.associated.size();
+                 ++binding)
+              if (prior.associated[binding].parameter !=
+                      descriptor.associated[binding].parameter ||
+                  prior.associated[binding].argument !=
+                      descriptor.associated[binding].argument)
+                return false;
+            return true;
+          }))
+    return *existing;
   Type result(builtinTypeCount + static_cast<std::uint32_t>(entries.size()));
   entries.push_back({EntryKind::Erased, erasedTypes.size()});
   erasedTypes.push_back(std::move(descriptor));

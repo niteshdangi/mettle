@@ -3,6 +3,7 @@
 namespace mettle::parsing {
 std::unique_ptr<Node> Parser::assemblyExpression(std::string variant,
                                                  Span span) {
+  StateGuard guard(*this);
   auto result = node(Kind::Assembly, span);
   result->assembly.emplace();
   auto &assembly = *result->assembly;
@@ -37,9 +38,11 @@ std::unique_ptr<Node> Parser::assemblyExpression(std::string variant,
       AssemblySyntax::Operand operand;
       operand.span = peek().span;
       if (peek(1).text == "=") {
-        operand.name = tokens[position++].text;
+        operand.name = name().text;
         expect("=");
       }
+      if (peek().kind != TokenKind::Word)
+        fail("expected an assembly operand mode");
       operand.mode = tokens[position++].text;
       if (operand.mode == "const" || operand.mode == "sym") {
         operand.input = static_cast<int>(result->children.size());

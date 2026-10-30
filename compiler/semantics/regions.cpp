@@ -76,8 +76,7 @@ Type Checker::annotation(const TypeSyntax &syntax, Span span,
         }
         auto value = checked.types->constantValue(count);
         if ((checked.types->scalarConstantValue(count) && !value) ||
-            (value && (*value < 0 || static_cast<std::uint64_t>(*value) >
-                                         limits::cleanupPlaces))) {
+            (value && *value < 0)) {
           error("limit", span, "array length limit exceeded");
           return Type::Unknown;
         }
@@ -105,8 +104,13 @@ Type Checker::annotation(const TypeSyntax &syntax, Span span,
     return *generic;
   auto resolved = typeName(syntax.name, span, owner);
   if (!typeNames.contains(resolved))
-    if (auto alias = aliases.find(resolved); alias != aliases.end())
+    if (auto alias = aliases.find(resolved); alias != aliases.end()) {
+      auto errorsBefore = reportedErrors;
       resolveAlias(alias->second, aliasDepth);
+      // The alias already reported why it has no target.
+      if (reportedErrors != errorsBefore && !typeNames.contains(resolved))
+        return Type::Unknown;
+    }
   if (auto type = typeNames.find(resolved); type != typeNames.end()) {
     if (!syntax.view.empty())
       return checked.types->viewType(type->second,
@@ -360,6 +364,7 @@ public:
       const Module &module, std::vector<FunctionFacts> &functions,
       std::unordered_map<const Node *, NodeFacts> &nodes,
       const std::unordered_map<const Pattern *, PatternFacts> &patterns,
+      const std::unordered_map<const Node *, IterationPlan> &iterations,
       const std::vector<std::unique_ptr<ClosureFacts>> &closures,
       TypeStore &types, Diagnostics &diagnostics,
       interfaces::Database &interfaceData,
@@ -375,10 +380,11 @@ public:
       std::function<bool(Type, std::size_t, Span, const RegionEnvironment &)>
           unpinContract)
       : module(module), functions(functions), nodes(nodes), patterns(patterns),
-        closures(closures), types(types), store(types.regions()), solver(store),
-        relations(types, solver), diagnostics(diagnostics),
-        interfaceData(interfaceData), products(std::move(products)),
-        contracts(contracts), annotations(annotations), seeds(std::move(seeds)),
+        iterations(iterations), closures(closures), types(types),
+        store(types.regions()), solver(store), relations(types, solver),
+        diagnostics(diagnostics), interfaceData(interfaceData),
+        products(std::move(products)), contracts(contracts),
+        annotations(annotations), seeds(std::move(seeds)),
         normalizeContract(std::move(normalizeContract)),
         eraseContract(std::move(eraseContract)),
         unpinContract(std::move(unpinContract)) {}
@@ -389,6 +395,7 @@ private:
   std::vector<FunctionFacts> &functions;
   std::unordered_map<const Node *, NodeFacts> &nodes;
   const std::unordered_map<const Pattern *, PatternFacts> &patterns;
+  const std::unordered_map<const Node *, IterationPlan> &iterations;
   const std::vector<std::unique_ptr<ClosureFacts>> &closures;
   TypeStore &types;
   RegionStore &store;
@@ -470,7 +477,10 @@ private:
              std::vector<std::pair<RegionId, RegionId>> &bindings);
   void infer(RegionId actual, RegionId formal,
              std::vector<std::pair<RegionId, RegionId>> &bindings);
-  bool require(Type actual, Type expected, Span span, bool enforce = false);
+  bool require(Type actual, Type expected, Span span, bool enforce = false,
+               Type contract = Type::Unknown);
+  void requireArgument(Type actual, Type expected, bool exclusive, Span span,
+                       bool enforce, Type contract = Type::Unknown);
   void require(RegionId longer, RegionId shorter, Span span);
   Type merge(Type left, Type right, Span span);
   RegionId backing(const Node &node);
@@ -485,6 +495,12 @@ private:
   std::vector<RegionId> contained(Type type) const;
   Type signatureType(std::size_t index);
   Type callableBound(Type type, RegionContext &context, Span span);
+  void withinBounds(const std::vector<GenericParameter> &parameters,
+                    const std::vector<GenericConstraint> &constraints,
+                    const std::vector<TypeBinding> &arguments,
+                    const RegionContext &declaration,
+                    const std::vector<std::pair<RegionId, RegionId>> &bindings,
+                    Span span);
   void callableArguments(const std::vector<GenericParameter> &parameters,
                          const std::vector<GenericConstraint> &constraints,
                          const std::vector<TypeBinding> &arguments,
@@ -845,6 +861,8 @@ Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
              : result;
 }
 Type RegionPass::inferred(Type type, RegionId region) {
+  if (!requiresRegionProof(type, types))
+    return type;
   if (std::find(decorating.begin(), decorating.end(), type) != decorating.end())
     return type;
   decorating.push_back(type);
@@ -853,10 +871,19 @@ Type RegionPass::inferred(Type type, RegionId region) {
     auto view = types.view(type);
     result = types.viewType(inferred(view.payload, region), view.mode, region);
   } else if (types.isProduct(type)) {
-    auto fields = types.product(type).fields;
-    for (auto &field : fields)
-      field.type = inferred(field.type, region);
-    result = types.regionalProduct(type, std::move(fields), {});
+    const auto record = types.product(type);
+    if (record.kind == AggregateKind::Array && !record.components.empty()) {
+      auto element = inferred(record.components[0], region);
+      result = record.arrayCount == Type::Unknown
+                   ? types.structural(AggregateKind::Array, {element},
+                                      record.fields.size())
+                   : types.arrayType(element, record.arrayCount);
+    } else {
+      auto fields = record.fields;
+      for (auto &field : fields)
+        field.type = inferred(field.type, region);
+      result = types.regionalProduct(type, std::move(fields), {});
+    }
   }
   decorating.pop_back();
   return result;
@@ -974,6 +1001,11 @@ void RegionPass::infer(Type actual, Type formal,
     }
   } else if (types.isProduct(actual) && types.isProduct(formal)) {
     auto from = types.product(actual), to = types.product(formal);
+    if (from.kind == AggregateKind::Array && to.kind == AggregateKind::Array &&
+        from.components.size() == 1 && to.components.size() == 1) {
+      infer(from.components[0], to.components[0], bindings);
+      return;
+    }
     if (from.regionPattern != Type::Unknown &&
         from.regionPattern == to.regionPattern &&
         from.regionArguments.size() == to.regionArguments.size() &&
@@ -1005,9 +1037,13 @@ void RegionPass::infer(Type actual, Type formal,
     protectedInference.resize(protectedCount);
   }
 }
-bool RegionPass::require(Type actual, Type expected, Span span, bool enforce) {
+// `contract` is the declared type before call-site region bindings: a region
+// inferred as `static` from an argument is not a declared `static` contract.
+bool RegionPass::require(Type actual, Type expected, Span span, bool enforce,
+                         Type contract) {
   bool callable = types.isFunctionPointer(expected);
-  auto dependencies = contained(expected);
+  auto dependencies =
+      contained(contract == Type::Unknown ? expected : contract);
   bool staticContract = std::find(dependencies.begin(), dependencies.end(),
                                   RegionId::Static) != dependencies.end();
   if (!current->strict && !enforce && !callable && !staticContract)
@@ -1022,6 +1058,13 @@ bool RegionPass::require(Type actual, Type expected, Span span, bool enforce) {
                 "declared relationship",
           result == RegionAnswer::Inconclusive);
   return result == RegionAnswer::Proven;
+}
+// An exclusive argument is invariant: the reverse relation is checked only
+// once the forward one holds, so a violation is reported a single time.
+void RegionPass::requireArgument(Type actual, Type expected, bool exclusive,
+                                 Span span, bool enforce, Type contract) {
+  if (require(actual, expected, span, enforce, contract) && exclusive)
+    require(expected, actual, span, enforce, contract);
 }
 void RegionPass::require(RegionId longer, RegionId shorter, Span span) {
   auto result = solver.outlives(longer, shorter, current->context.environment);
@@ -1050,6 +1093,14 @@ Type RegionPass::merge(Type left, Type right, Span span) {
   }
   if (types.isProduct(left) && types.isProduct(right)) {
     auto a = types.product(left), b = types.product(right);
+    if (a.kind == AggregateKind::Array && b.kind == AggregateKind::Array &&
+        a.arrayCount == b.arrayCount && a.fields.size() == b.fields.size()) {
+      auto element = merge(a.components[0], b.components[0], span);
+      return a.arrayCount == Type::Unknown
+                 ? types.structural(AggregateKind::Array, {element},
+                                    a.fields.size())
+                 : types.arrayType(element, a.arrayCount);
+    }
     if (a.fields.size() == b.fields.size()) {
       for (std::size_t i = 0; i < a.fields.size(); ++i)
         a.fields[i].type = merge(a.fields[i].type, b.fields[i].type, span);
@@ -1071,6 +1122,10 @@ RegionId RegionPass::backing(const Node &node) {
     auto type = expression(*node.children[0]);
     if (types.isView(type))
       return types.view(type).region;
+    // A dereferenced raw pointer is unbounded: the unsafe code asserts that
+    // the referent lives as long as the borrow it creates.
+    if (types.isPointer(type))
+      return RegionId::Static;
   }
   if (facts(node).slot >= 0 &&
       static_cast<std::size_t>(facts(node).slot) < storage.size())
@@ -1245,12 +1300,46 @@ Type RegionPass::call(const Node &node) {
   if (facts(node).callee >= 0 &&
       static_cast<std::size_t>(facts(node).callee) < signatures.size()) {
     const auto &signature = signatures[facts(node).callee];
+    std::vector<TypeBinding> checkedArguments;
+    const auto &generics =
+        functions[static_cast<std::size_t>(facts(node).callee)]
+            .genericParameters;
+    for (std::size_t i = 0;
+         i < generics.size() && i < facts(node).typeArguments.size(); ++i)
+      checkedArguments.push_back({generics[i], facts(node).typeArguments[i]});
     for (std::size_t i = 1; i < node.children.size(); ++i) {
       auto parameter = i - 1 < facts(node).argumentOrder.size()
                            ? facts(node).argumentOrder[i - 1]
                            : i - 1;
-      if (parameter < signature.parameters.size())
-        expectClosure(*node.children[i], signature.parameters[parameter]);
+      if (parameter >= signature.parameters.size())
+        continue;
+      auto formal = signature.parameters[parameter];
+      // A higher-ranked callable bound gives the closure its binder.
+      if (types.isParameter(formal) &&
+          types.parameter(formal).callableConstraint != Type::Unknown) {
+        const auto &callee = module.functions[facts(node).callee];
+        const auto &name = types.parameter(formal).name;
+        const TypeSyntax *found = nullptr;
+        auto scan = [&](const std::vector<TypeSyntax> &bounds) {
+          for (const auto &bound : bounds)
+            if (bound.form == TypeForm::Callable && bound.callable &&
+                !bound.callable->regions.empty())
+              found = &bound;
+        };
+        for (const auto &generic : callee.genericParameters)
+          if (generic.name == name)
+            scan(generic.bounds);
+        for (const auto &constraint : callee.constraints)
+          if (constraint.subject.name == name)
+            scan(constraint.bounds);
+        if (found) {
+          auto context = signature.context;
+          formal = decorate(types.parameter(formal).callableConstraint, *found,
+                            context, node.span);
+        }
+      }
+      expectClosure(*node.children[i],
+                    types.substitute(formal, checkedArguments));
     }
   } else if (facts(node).indirect) {
     auto callable = expression(*node.children[0]);
@@ -1437,12 +1526,10 @@ Type RegionPass::call(const Node &node) {
            descriptor.parameters[i].mode == ParameterMode::Mut) &&
           types.isView(actual) && !types.isView(descriptor.parameters[i].type))
         actual = types.view(actual).payload;
-      require(actual, replace(descriptor.parameters[i].type, bindings),
-              node.children[i + 1]->span, !descriptor.regionParameters.empty());
-      if (descriptor.parameters[i].mode == ParameterMode::Mut)
-        require(replace(descriptor.parameters[i].type, bindings), actual,
-                node.children[i + 1]->span,
-                !descriptor.regionParameters.empty());
+      requireArgument(actual, replace(descriptor.parameters[i].type, bindings),
+                      descriptor.parameters[i].mode == ParameterMode::Mut,
+                      node.children[i + 1]->span,
+                      !descriptor.regionParameters.empty());
     }
     if (descriptor.parameterRegions.empty() && !semanticClosure) {
       std::vector<RegionId> sources;
@@ -1624,12 +1711,34 @@ Type RegionPass::call(const Node &node) {
         fixedParameters.insert(binding.parameter);
       }
     }
+  // The receiver binds the callee's type parameters like any other argument,
+  // so a view inside `T?` keeps its region in `take fn unwrap(): T`.
+  if (facts(node).method && methodReceiver && !formals.empty()) {
+    auto actual = *methodReceiver;
+    const auto mode = functions[callee].locals[0].mode;
+    if (!facts(node).receiverPlan &&
+        (mode == ParameterMode::Read || mode == ParameterMode::Mut) &&
+        !types.isView(formals[0]))
+      while (types.isView(actual))
+        actual = types.view(actual).payload;
+    inferArguments(formals[0], actual, typeBindings, inferredParameters,
+                   fixedParameters, node.span);
+  }
   for (std::size_t i = 0; i < arguments.size(); ++i) {
     auto parameter =
         i < facts(node).argumentOrder.size() ? facts(node).argumentOrder[i] : i;
-    if (parameter < formals.size())
-      inferArguments(formals[parameter], arguments[i], typeBindings,
-                     inferredParameters, fixedParameters, node.span);
+    if (parameter >= formals.size())
+      continue;
+    // A borrowed parameter receives the referent of an explicit view, so a
+    // generic parameter binds to the payload rather than the view itself.
+    auto actual = arguments[i];
+    auto mode = functions[callee].locals[parameter].mode;
+    if (!facts(*node.children[i + 1]).borrowConversion &&
+        (mode == ParameterMode::Read || mode == ParameterMode::Mut) &&
+        types.isView(actual) && !types.isView(formals[parameter]))
+      actual = types.view(actual).payload;
+    inferArguments(formals[parameter], actual, typeBindings, inferredParameters,
+                   fixedParameters, node.span);
   }
   for (auto &formal : formals)
     formal = types.substitute(formal, typeBindings);
@@ -1723,6 +1832,8 @@ Type RegionPass::call(const Node &node) {
             replace(replace(edge.shorter, substitution), bindings), node.span);
   for (const auto &edge : argumentLifetimes)
     require(edge.longer, replace(edge.shorter, bindings), node.span);
+  withinBounds(declaration.genericParameters, declaration.constraints,
+               typeBindings, declarationContext, bindings, node.span);
   if (facts(node).method && !formals.empty()) {
     auto actual = *methodReceiver;
     while (!facts(node).receiverPlan && types.isView(actual) &&
@@ -1732,9 +1843,9 @@ Type RegionPass::call(const Node &node) {
       if (types.isOpaque(actual) && !types.product(actual).fields.empty())
         actual = types.product(actual).fields[0].type;
     auto expected = replace(formals[0], bindings);
-    require(actual, expected, node.span, signature.strict);
-    if (functions[callee].locals[0].mode == ParameterMode::Mut)
-      require(expected, actual, node.span, signature.strict);
+    requireArgument(actual, expected,
+                    functions[callee].locals[0].mode == ParameterMode::Mut,
+                    node.span, signature.strict, formals[0]);
   }
   for (std::size_t i = 0; i < arguments.size(); ++i) {
     auto target =
@@ -1748,14 +1859,22 @@ Type RegionPass::call(const Node &node) {
     if (!facts(*node.children[i + 1]).borrowConversion && borrowed &&
         types.isView(actual) && !types.isView(formals[target]))
       actual = types.view(actual).payload;
-    require(actual, replace(formals[target], bindings),
-            node.children[i + 1]->span,
-            signature.strict || !fixedParameters.empty());
-    if (functions[callee].locals[target].mode == ParameterMode::Mut)
-      require(replace(formals[target], bindings), actual,
-              node.children[i + 1]->span,
-              signature.strict || !fixedParameters.empty());
+    requireArgument(actual, replace(formals[target], bindings),
+                    functions[callee].locals[target].mode == ParameterMode::Mut,
+                    node.children[i + 1]->span,
+                    signature.strict || !fixedParameters.empty(),
+                    formals[target]);
   }
+  // A result region that no argument constrains can only denote storage that
+  // outlives the call (or, for an unsafe callee, a lifetime its caller
+  // asserts), so the caller may pick any region: `static` coerces to all.
+  for (auto region : contained(result))
+    if (std::any_of(
+            substitution.begin(), substitution.end(),
+            [&](const auto &entry) { return entry.second == region; }) &&
+        std::none_of(bindings.begin(), bindings.end(),
+                     [&](const auto &entry) { return entry.first == region; }))
+      bindings.emplace_back(region, RegionId::Static);
   expressionErrors[&node] = replace(
       types.substitute(replace(signature.error, substitution), typeBindings),
       bindings);
@@ -1953,6 +2072,14 @@ Type RegionPass::expression(const Node &node) {
     return found->second;
   auto type = originalType(node);
   switch (node.kind) {
+  case Kind::For:
+    if (auto plan = iterations.find(&node); plan != iterations.end()) {
+      type = expression(*plan->second.elaboration);
+      break;
+    }
+    for (const auto &child : node.children)
+      expression(*child);
+    break;
   case Kind::Name:
     if (facts(node).slot >= 0 &&
         static_cast<std::size_t>(facts(node).slot) < locals.size())
@@ -2003,15 +2130,26 @@ Type RegionPass::expression(const Node &node) {
     }
     break;
   case Kind::Group:
+  case Kind::Unsafe:
     type = expression(*node.children[0]);
     break;
+  case Kind::Text:
+    type = inferred(type, RegionId::Static);
+    break;
   case Kind::Unary:
-    if (node.text == "read" || node.text == "mut")
-      type = types.viewType(expression(*node.children[0]),
-                            node.text == "read" ? ParameterMode::Read
-                                                : ParameterMode::Mut,
-                            backing(*node.children[0]));
-    else if (node.text == "*" && types.isView(expression(*node.children[0])))
+    if (node.text == "read" || node.text == "mut") {
+      auto operand = expression(*node.children[0]);
+      auto mode =
+          node.text == "read" ? ParameterMode::Read : ParameterMode::Mut;
+      // Borrowing a view the checker already resolved to a single view is a
+      // reborrow of its referent, not a view of the view.
+      if (types.isView(operand) && types.isView(facts(node).type) &&
+          !types.isView(types.view(facts(node).type).payload))
+        type = types.viewType(types.view(operand).payload, mode,
+                              types.view(operand).region);
+      else
+        type = types.viewType(operand, mode, backing(*node.children[0]));
+    } else if (node.text == "*" && types.isView(expression(*node.children[0])))
       type = types.view(expression(*node.children[0])).payload;
     else if (node.text == "take")
       type = expression(*node.children[0]);
@@ -2028,10 +2166,14 @@ Type RegionPass::expression(const Node &node) {
         static_cast<std::size_t>(facts(node).field) <
             types.product(base).fields.size())
       type = types.product(base).fields[facts(node).field].type;
-    else if (types.isSlice(base))
+    else if (types.isSlice(base) && node.children[1]->kind != Kind::Range)
       type = types.slice(base).element;
     for (std::size_t i = 1; i < node.children.size(); ++i)
-      expression(*node.children[i]);
+      if (node.children[i]->kind == Kind::Range)
+        for (const auto &bound : node.children[i]->children)
+          expression(*bound);
+      else
+        expression(*node.children[i]);
     break;
   }
   case Kind::Call:
@@ -2282,9 +2424,22 @@ void RegionPass::resultSources(std::size_t index) {
     facts.resultSources = eligible;
     return;
   }
-  auto declaredSources = syntax.annotation.sources;
-  declaredSources.insert(declaredSources.end(), syntax.error.sources.begin(),
-                         syntax.error.sources.end());
+  // Sources written on views nested in optional, tuple and outcome results
+  // declare the same relationship as a top-level `from` clause.
+  std::vector<std::string> declaredSources;
+  std::set<std::size_t> carried, borrowed, named;
+  auto collect = [&](auto &&self, const TypeSyntax &annotation) -> void {
+    for (const auto &name : annotation.sources)
+      if (std::find(declaredSources.begin(), declaredSources.end(), name) ==
+          declaredSources.end())
+        declaredSources.push_back(name);
+    if (annotation.nested)
+      self(self, *annotation.nested);
+    for (const auto &element : annotation.elements)
+      self(self, element);
+  };
+  collect(collect, syntax.annotation);
+  collect(collect, syntax.error);
   if (!declaredSources.empty()) {
     for (const auto &name : declaredSources) {
       if (name == "static") {
@@ -2292,8 +2447,10 @@ void RegionPass::resultSources(std::size_t index) {
           auto candidates = contained(signatures[index].parameters[p]);
           candidates.push_back(signatures[index].backing[p]);
           if (std::find(candidates.begin(), candidates.end(),
-                        RegionId::Static) != candidates.end())
+                        RegionId::Static) != candidates.end()) {
             add(p);
+            named.insert(p);
+          }
         }
         continue;
       }
@@ -2302,9 +2459,10 @@ void RegionPass::resultSources(std::size_t index) {
           [&](const auto &parameter) { return parameter.name == name; });
       if (found != syntax.parameters.end()) {
         auto p = static_cast<std::size_t>(found - syntax.parameters.begin());
-        if (std::find(eligible.begin(), eligible.end(), p) != eligible.end())
+        if (std::find(eligible.begin(), eligible.end(), p) != eligible.end()) {
           add(p);
-        else
+          named.insert(p);
+        } else
           error(syntax.span,
                 "borrowed result source is not borrowed input storage");
         continue;
@@ -2313,6 +2471,7 @@ void RegionPass::resultSources(std::size_t index) {
       for (const auto &[slot, parameter] : facts.parameterBindings)
         if (facts.locals[slot].name == name) {
           add(parameter);
+          named.insert(parameter);
           patternBinding = true;
         }
       if (patternBinding)
@@ -2323,17 +2482,26 @@ void RegionPass::resultSources(std::size_t index) {
         continue;
       }
       for (auto p : eligible) {
-        auto candidates = contained(signatures[index].parameters[p]);
-        candidates.push_back(signatures[index].backing[p]);
-        bool supports = false;
-        for (auto candidate : candidates)
-          supports |= solver.outlives(candidate, region->second,
-                                      signatures[index].context.environment) ==
-                      RegionAnswer::Proven;
-        if (supports)
+        auto proves = [&](RegionId candidate) {
+          return solver.outlives(candidate, region->second,
+                                 signatures[index].context.environment) ==
+                 RegionAnswer::Proven;
+        };
+        bool inside = false;
+        for (auto candidate : contained(signatures[index].parameters[p]))
+          inside |= proves(candidate);
+        if (proves(signatures[index].backing[p]))
+          borrowed.insert(p);
+        if (inside || borrowed.contains(p)) {
           add(p);
+          if (inside)
+            carried.insert(p);
+        }
       }
     }
+    for (auto p : carried)
+      if (!borrowed.contains(p) && !named.contains(p))
+        facts.resultContents.push_back(p);
   } else if (signatures[index].strict || !syntax.annotation.regions.empty()) {
     auto required = contained(signatures[index].result);
     auto errorRegions = contained(signatures[index].error);
@@ -2375,9 +2543,14 @@ std::vector<RegionId> RegionPass::contained(Type type) const {
       self(self, types.view(nested).payload);
     } else if (types.isSlice(nested))
       self(self, types.slice(nested).element);
-    else if (types.isProduct(nested))
-      for (const auto &field : types.product(nested).fields)
-        self(self, field.type);
+    else if (types.isProduct(nested)) {
+      const auto &record = types.product(nested);
+      if (record.kind == AggregateKind::Array && !record.components.empty())
+        self(self, record.components[0]);
+      else
+        for (const auto &field : record.fields)
+          self(self, field.type);
+    }
     active.pop_back();
   };
   visit(visit, type);
@@ -2402,7 +2575,11 @@ void RegionPass::wellformed(Type type, Span span, bool indirect, bool tail,
   if (!types.isSized(type) && !indirect && !tail)
     diagnostics.error(
         "type", span,
-        "unsized value requires a view or a metadata-supporting owner");
+        types.isParameter(type)
+            ? "by-value use of a possibly unsized type parameter requires a "
+              "Sized bound; an interface's 'Self' is unsized unless declared "
+              "'interface Name: Sized'"
+            : "unsized value requires a view or a metadata-supporting owner");
   if (types.isView(type)) {
     wellformed(types.view(type).payload, span, true, false, depth + 1);
     return;
@@ -2415,6 +2592,10 @@ void RegionPass::wellformed(Type type, Span span, bool indirect, bool tail,
   if (!types.isProduct(type))
     return;
   auto record = types.product(type);
+  if (record.kind == AggregateKind::Array && !record.components.empty()) {
+    wellformed(record.components[0], span, false, false, depth + 1);
+    return;
+  }
   if (!types.isSized(type) && !types.isSymbolic(type) &&
       types.pointerMetadata(type) != PointerMetadata::ElementCount &&
       types.pointerMetadata(type) != PointerMetadata::Witness)
@@ -2550,7 +2731,7 @@ void RegionPass::inferArguments(Type pattern, Type actual,
         arguments.size() == right.genericArguments.size()) {
       for (std::size_t i = 0; i < arguments.size(); ++i)
         infer(arguments[i], right.genericArguments[i]);
-    } else if (!left.components.empty() &&
+    } else if (left.kind == AggregateKind::Array && !left.components.empty() &&
                left.components.size() == right.components.size()) {
       for (std::size_t i = 0; i < left.components.size(); ++i)
         infer(left.components[i], right.components[i]);
@@ -2565,6 +2746,60 @@ void RegionPass::inferArguments(Type pattern, Type actual,
       infer(left.parameters[i].type, right.parameters[i].type);
     infer(left.result, right.result);
     infer(left.error, right.error);
+  }
+}
+// A `Within<region r>` bound states that everything the generic argument
+// borrows outlives `r`. The library interface has a blanket implementation, so
+// this is the only place the obligation is enforced.
+void RegionPass::withinBounds(
+    const std::vector<GenericParameter> &parameters,
+    const std::vector<GenericConstraint> &constraints,
+    const std::vector<TypeBinding> &arguments, const RegionContext &declaration,
+    const std::vector<std::pair<RegionId, RegionId>> &bindings, Span span) {
+  auto enforce = [&](Type argument, const TypeSyntax &bound) {
+    const auto separator = bound.name.rfind("::");
+    const auto name = separator == std::string::npos
+                          ? bound.name
+                          : bound.name.substr(separator + 2);
+    if (name != "Within" || bound.arguments.size() != 1 ||
+        bound.arguments[0].region.empty())
+      return;
+    auto found = declaration.names.find(bound.arguments[0].region);
+    if (found == declaration.names.end())
+      return;
+    auto limit = replace(found->second, bindings);
+    // A higher-ranked `r` lives only for one call of the callee, so a region
+    // from an enclosing universe already outlives it.
+    auto enclosing = [&](auto &&self, RegionId region) -> bool {
+      const auto &source = store.get(region);
+      if (source.kind == RegionKind::Intersection)
+        return std::all_of(source.sources.begin(), source.sources.end(),
+                           [&](auto nested) { return self(self, nested); });
+      const auto &target = store.get(limit);
+      return target.kind == RegionKind::Rigid &&
+             source.universe != target.universe &&
+             store.ancestor(source.universe, target.universe);
+    };
+    for (auto region : contained(argument))
+      if (!enclosing(enclosing, region))
+        require(region, limit, span);
+  };
+  for (const auto &parameter : parameters) {
+    if (parameter.kind != GenericParameterKind::Type)
+      continue;
+    auto binding = std::find_if(
+        arguments.begin(), arguments.end(), [&](const auto &entry) {
+          return types.isParameter(entry.parameter) &&
+                 types.parameter(entry.parameter).name == parameter.name;
+        });
+    if (binding == arguments.end() || binding->argument == binding->parameter)
+      continue;
+    for (const auto &bound : parameter.bounds)
+      enforce(binding->argument, bound);
+    for (const auto &constraint : constraints)
+      if (constraint.subject.name == parameter.name)
+        for (const auto &bound : constraint.bounds)
+          enforce(binding->argument, bound);
   }
 }
 void RegionPass::callableArguments(
@@ -2726,6 +2961,48 @@ void RegionPass::run() {
         context.arguments[identity] = identity;
       }
     rule.target = decorate(rule.target, syntax.target, context, syntax.span);
+    // Associated values naming a region-parameterized type carry their region
+    // arguments, so projections substitute family regions into them.
+    if (!types.isErased(rule.interfaceType))
+      return;
+    const auto &definition =
+        interfaceData.definitions[types.erased(rule.interfaceType).declaration];
+    for (auto &[ordinal, value] : rule.associated) {
+      if (ordinal >= definition.associated.size() ||
+          !types.isProduct(value.value))
+        continue;
+      const auto *provided = [&]() -> const Module::Associated * {
+        for (const auto &candidate : syntax.associated)
+          if (candidate.name == definition.associated[ordinal].name &&
+              !candidate.constant && !candidate.value.empty())
+            return &candidate;
+        return nullptr;
+      }();
+      const auto *owner = declaration(value.value);
+      if (!provided || !owner || owner->regions.empty())
+        continue;
+      auto family = context;
+      std::size_t familyRegion = 0, familyType = 0;
+      for (const auto &parameter : provided->genericParameters)
+        if (parameter.kind == GenericParameterKind::Region) {
+          if (familyRegion < value.regions.size())
+            family.names[parameter.name] = value.regions[familyRegion++];
+        } else if (familyType < value.parameters.size()) {
+          auto identity = value.parameters[familyType++];
+          family.types[parameter.name] = identity;
+          family.arguments[identity] = identity;
+        }
+      family.environment.assumptions.insert(
+          family.environment.assumptions.end(),
+          value.regionRequirements.begin(), value.regionRequirements.end());
+      if (familyRegion != 0) {
+        const auto &region = store.get(value.regions[0]);
+        family.scope = {region.binder, region.universe};
+        family.environment.universe = region.universe;
+      }
+      value.value =
+          decorate(value.value, provided->value, family, provided->span);
+    }
   };
   for (auto &rule : interfaceData.implementations)
     decorateRule(rule);
@@ -2967,7 +3244,7 @@ void Checker::checkRegions() {
         typeNames.at(definitionName(product.span, product.name)), &product);
   RegionPass(
       module, checked.functions, checked.nodes, checked.patterns,
-      checked.closureBodies, *checked.types, diagnostics,
+      checked.iterations, checked.closureBodies, *checked.types, diagnostics,
       *checked.interfaceData, std::move(products), regionContracts,
       semanticRegionAnnotations, std::move(seeds),
       [&](Type signature, std::span<const TypeBinding> bindings,

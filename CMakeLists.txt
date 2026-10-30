@@ -52,7 +52,18 @@ elseif(APPLE)
   set(METTLE_LINKER_FLAGS "--sysroot=${CMAKE_OSX_SYSROOT}")
 endif()
 
-add_library(mettle_runtime STATIC runtime/panic.cpp runtime/panic.h)
+# Documented macOS baseline (docs/reference-profiles.md) for the runtime and
+# for the objects the compiler emits, so linking never sees the host kernel
+# version. The compiler itself is built for the host and is not affected.
+set(METTLE_MACOS_DEPLOYMENT_TARGET "15.0" CACHE STRING
+    "Minimum macOS version of the Darwin ARM64 runtime and emitted objects")
+add_library(mettle_runtime STATIC runtime/panic.cpp runtime/panic.h
+  runtime/alloc.cpp runtime/alloc.h runtime/sys.cpp runtime/sys.h
+  runtime/thread.cpp runtime/thread.h)
+if(APPLE)
+  target_compile_options(mettle_runtime PRIVATE
+    "-mmacosx-version-min=${METTLE_MACOS_DEPLOYMENT_TARGET}")
+endif()
 target_compile_options(mettle_runtime PRIVATE -Wall -Wextra -Wpedantic -Werror)
 set(METTLE_RUNTIME_TARGET_FLAGS "")
 if(CMAKE_CXX_COMPILER_TARGET)
@@ -61,6 +72,11 @@ endif()
 execute_process(COMMAND "${CMAKE_CXX_COMPILER}" ${METTLE_RUNTIME_TARGET_FLAGS} -dumpmachine
                 OUTPUT_VARIABLE METTLE_RUNTIME_TARGET OUTPUT_STRIP_TRAILING_WHITESPACE
                 COMMAND_ERROR_IS_FATAL ANY)
+if(APPLE)
+  # -dumpmachine reports the host kernel version, not the deployment target.
+  string(REGEX REPLACE "-apple-.*$" "-apple-macosx${METTLE_MACOS_DEPLOYMENT_TARGET}"
+         METTLE_RUNTIME_TARGET "${METTLE_RUNTIME_TARGET}")
+endif()
 
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
              "${PROJECT_SOURCE_DIR}/compiler/modules.json")
@@ -123,8 +139,13 @@ foreach(index RANGE ${METTLE_MODULE_LAST})
 endforeach()
 target_include_directories(mettle_backend_llvm SYSTEM PUBLIC ${LLVM_INCLUDE_DIRS})
 target_link_libraries(mettle_backend_llvm PUBLIC ${METTLE_LLVM_LIBRARIES})
+if(APPLE)
+  target_compile_definitions(mettle_backend_llvm PRIVATE
+    METTLE_DARWIN_DEPLOYMENT_TARGET="${METTLE_MACOS_DEPLOYMENT_TARGET}")
+endif()
 target_compile_definitions(mettle PRIVATE METTLE_VERSION="${PROJECT_VERSION}"
   METTLE_CXX_PATH="${CMAKE_CXX_COMPILER}" METTLE_SYSROOT_PATH="${CMAKE_OSX_SYSROOT}"
+  METTLE_LIBRARY_PATH="${PROJECT_SOURCE_DIR}/library"
   METTLE_RUNTIME_PATH="$<TARGET_FILE:mettle_runtime>"
   METTLE_RUNTIME_TARGET="${METTLE_RUNTIME_TARGET}"
   METTLE_RUNTIME_SANITIZED=$<BOOL:${METTLE_ENABLE_SANITIZERS}>)
@@ -139,6 +160,12 @@ if(BUILD_TESTING)
     target_compile_options(mettle-runtime-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
     add_test(NAME runtime.panic COMMAND mettle-runtime-tests)
     set_tests_properties(runtime.panic PROPERTIES TIMEOUT 120)
+    add_executable(mettle-thread-tests tests/runtime/thread.cpp)
+    find_package(Threads REQUIRED)
+    target_link_libraries(mettle-thread-tests PRIVATE mettle_runtime Threads::Threads)
+    target_compile_options(mettle-thread-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME runtime.thread COMMAND mettle-thread-tests)
+    set_tests_properties(runtime.thread PROPERTIES TIMEOUT 120)
     add_executable(mettle-cleanup-frame-tests tests/backend/cleanup_frame.cpp)
     target_link_libraries(mettle-cleanup-frame-tests PRIVATE mettle_backend_llvm)
     target_compile_options(mettle-cleanup-frame-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -241,16 +268,42 @@ if(BUILD_TESTING)
   add_test(NAME compiler.modules-source
            COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/modules.py"
                    "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/module-evidence")
-  set_tests_properties(compiler.modules-memory compiler.modules-source
-                       PROPERTIES TIMEOUT 120)
+  add_test(NAME library.alloc
+           COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/alloc.py"
+                   "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/alloc-evidence"
+                   "${PROJECT_SOURCE_DIR}/tests/alloc")
+  set_tests_properties(library.alloc PROPERTIES TIMEOUT 900)
+  add_test(NAME library.std
+           COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/std.py"
+                   "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/std-evidence"
+                   "${PROJECT_SOURCE_DIR}/tests/std")
+  set_tests_properties(library.std PROPERTIES TIMEOUT 1800)
+  add_test(NAME library.core
+           COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/modules.py"
+                   "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/library-evidence" library)
+  set_tests_properties(compiler.modules-memory PROPERTIES TIMEOUT 120)
+  set_tests_properties(compiler.modules-source PROPERTIES TIMEOUT 600)
+  set_tests_properties(library.core PROPERTIES TIMEOUT 3600)
   set_tests_properties(compiler.boundaries PROPERTIES TIMEOUT 120)
   set_tests_properties(foundation.cli foundation.object-link-run foundation.backend-errors
                        PROPERTIES TIMEOUT 120)
   foreach(mode positive negative arithmetic syntax)
-    add_test(NAME scalar.${mode}
-             COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/scalars.py"
-                     "${mode}" "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/scalar-evidence")
-    set_tests_properties(scalar.${mode} PROPERTIES TIMEOUT 180)
+    if(mode STREQUAL "positive")
+      set(METTLE_POSITIVE_SHARDS 6)
+      math(EXPR last_shard "${METTLE_POSITIVE_SHARDS} - 1")
+      foreach(shard RANGE 0 ${last_shard})
+        add_test(NAME scalar.positive.${shard}
+                 COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/scalars.py"
+                         positive "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/scalar-evidence"
+                         --shard "${shard}/${METTLE_POSITIVE_SHARDS}")
+        set_tests_properties(scalar.positive.${shard} PROPERTIES TIMEOUT 180)
+      endforeach()
+    else()
+      add_test(NAME scalar.${mode}
+               COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/scalars.py"
+                       "${mode}" "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/scalar-evidence")
+      set_tests_properties(scalar.${mode} PROPERTIES TIMEOUT 180)
+    endif()
   endforeach()
   if(METTLE_ENABLE_SANITIZERS)
     add_test(NAME foundation.sanitizers

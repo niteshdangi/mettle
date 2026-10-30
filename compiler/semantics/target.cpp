@@ -104,12 +104,14 @@ std::optional<int> Checker::targetCall(Node &call, bool reachable) {
     return inference.fresh();
   }
   auto descriptor = *targetVector(operation->vector);
-  if (descriptor.arch != checked.targetDescription.arch ||
-      !checked.targetDescription.initialProfile())
+  bool unavailable = descriptor.arch != checked.targetDescription.arch ||
+                     !checked.targetDescription.initialProfile();
+  if (unavailable)
     error("feature", call.span,
           "architecture operation is unavailable on this target");
   requireUnsafe(call.span);
-  requireFeatures({operation->feature}, call.span);
+  if (!unavailable)
+    requireFeatures({operation->feature}, call.span);
   auto vector =
       checked.types->vectorType(descriptor.name, descriptor.element,
                                 descriptor.lanes, descriptor.alignment);

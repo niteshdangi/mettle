@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Execute scalar, product and ownership cases with the existing runner."""
 
+import argparse
 import hashlib
 import concurrent.futures
 import json
 import platform
 import re
 import resource
+import signal
 import subprocess
 import sys
 import time
@@ -17,6 +19,392 @@ ARM64 = globals().get("TARGET_ARCH", platform.machine()).lower() in ("arm64", "a
 ASM_ADD = "add {out:w}, {left:w}, {right:w}" if ARM64 else "mov {out:e}, {left:e}; add {out:e}, {right:e}"
 ASM_MOVE = "mov {out:w}, {input:w}" if ARM64 else "mov {out:e}, {input:e}"
 MACHINE_POSITIVE = {
+    "concurrency-properties-are-structural-with-unsafe-opt-in": r"""
+type Plain { a: i32; b: bool }
+type Raw { p: ptr<mut u8> }
+type Handle<T> { p: ptr<mut T> }
+unsafe impl Raw implements Transferable {}
+unsafe impl<T: Transferable> Handle<T> implements Transferable {}
+unsafe impl<T: Shareable> Handle<T> implements Shareable {}
+type Holder<T> { value: T }
+type Cellular { c: core::cell::Cell<i32> }
+fn send<T: Transferable>(value: take T): Unit {}
+fn share<T: Shareable>(value: read T): Unit {}
+fn owned<T: Transferable + Static>(value: take T): Unit {}
+fn forward<T: Transferable>(value: take T): Unit { send(value) }
+fn main(): i32 {
+    send(Plain(1, true))
+    send(Holder(Plain(1, true)))
+    send(Raw(core::ptr::null_mut::<u8>()))
+    send(Holder(Handle(core::ptr::null_mut::<i32>())))
+    share(Plain(1, true))
+    send(Cellular(core::cell::Cell::new(1)))
+    forward(Holder(4))
+    let k = 4
+    owned(take fn(): i32 { k })
+    0
+}
+""",
+    "optional-view-unwrap-keeps-its-region": r"""
+import core::text::Text;
+fn word_free(w: read Text): Unit {}
+fn first(t: read Text): (read Text from t)? { present(read t) }
+fn b(text: read Text): Unit { let x = first(text).unwrap(); word_free(x) }
+fn main(): i32 { b("x"); 0 }
+""",
+    "take-argument-from-copied-indexed-element": r"""
+fn sink(value: take u8): u8 { value }
+fn pick(digits: read [u8], i: usize): u8 { let d = digits[i]; sink(d) }
+fn main(): i32 { let a = [7u8, 8u8]; if pick(a, 1usize) != 8u8 { return 1 }; 0 }
+""",
+    "const-items-in-expressions-lengths-and-patterns": r"""
+const BASE: i32 = 5;
+const LIMIT: i32 = BASE * 2 + 1;
+const ALIAS: i32 = LIMIT;
+const ENABLED: bool = true;
+interface Width { const BITS: i32 = 8; }
+type Narrow {}
+impl Narrow implements Width { const BITS: i32 = 4; }
+const NARROW_BITS: i32 = <Narrow implements Width>::BITS + 1;
+pub module limits { pub const TOP: u8 = 200; }
+fn classify(value: i32): i32 {
+    match value { BASE => 1, ALIAS => 2, 0..=3 => 3, _ => 4 }
+}
+fn main(): i32 {
+    let cells: [i32; 11] = [BASE; LIMIT]
+    if classify(5) == 1 && classify(11) == 2 && classify(2) == 3 && classify(7) == 4 &&
+       cells[10] == BASE && limits::TOP == 200 && NARROW_BITS == 5 && ENABLED { 0 } else { 1 }
+}
+""",
+    "blanket-iterator-into-iterator-coexists-with-concrete-impl": r"""
+module core {
+    pub module iter {
+        pub interface Iterator { type Item; mut fn next(): Self::Item?; }
+        pub interface IntoIterator: Sized { type Item; type IntoIter: Iterator; fn into_iter(receiver self: take Self): Self::IntoIter; }
+        impl<I: Iterator> I implements IntoIterator {
+            type Item = I::Item
+            type IntoIter = I
+            fn into_iter(receiver self: take Self): I { self }
+        }
+    }
+}
+type Counter { n: i32; max: i32 }
+impl Counter implements core::iter::Iterator {
+    type Item = i32
+    mut fn next(): i32? {
+        if self.n < self.max { let v = self.n; self.n += 1; present(v) } else { none }
+    }
+}
+type Bag { max: i32 }
+impl Bag implements core::iter::IntoIterator {
+    type Item = i32
+    type IntoIter = Counter
+    fn into_iter(receiver self: take Self): Counter { Counter(0, self.max) }
+}
+fn main(): i32 { 0 }""",
+    "generic-interface-impl-on-pointer-to-generic-type": r"""
+import core::cmp::PartialEq;
+type Cell2<T> { v: T }
+type R<T> { p: ptr<mut Cell2<T>> }
+impl<T> R<T> { fn get(): read T from self { unsafe { read (*self.p).v } } }
+impl<T: PartialEq> R<T> implements PartialEq { fn eq(other: read R<T>): bool { self.get().eq(other.get()) } }
+type Node<T> { v: T; next: ptr<mut Node<T>> }
+type L<T> { head: ptr<mut Node<T>> }
+impl<T> L<T> { fn first(): (read T from self)? { if self.head == core::ptr::null_mut::<Node<T>>() { none } else { present(unsafe { read (*self.head).v }) } } }
+fn main(): i32 { 0 }
+""",
+    "range-indexing-user-protocol-read-and-mut": r"""
+module core { pub module ops {
+    pub interface IndexRange { type Output: unsized; fn index_range(start: usize, end: usize): read Self::Output from self; }
+    pub interface IndexRangeMut { type Output: unsized; mut fn index_range_mut(start: usize, end: usize): mut Self::Output from self; }
+} }
+type Buf { cells: [i32; 4] }
+impl Buf implements core::ops::IndexRange {
+    type Output = [i32]
+    fn index_range(start: usize, end: usize): read [i32] from self {
+        let stop = if end > 4usize { 4usize } else { end }
+        read self.cells[start..stop]
+    }
+}
+impl Buf implements core::ops::IndexRangeMut {
+    type Output = [i32]
+    mut fn index_range_mut(start: usize, end: usize): mut [i32] from self {
+        let stop = if end > 4usize { 4usize } else { end }
+        mut self.cells[start..stop]
+    }
+}
+fn main(): i32 {
+    var b = Buf([1, 2, 3, 4])
+    let mid: read [i32] = read b[1..3]
+    let tail: read [i32] = read b[2..]
+    let head: read [i32] = read b[..=0]
+    if mid.len() != 2 || tail.len() != 2 || head.len() != 1 { return 1 }
+    let w: mut [i32] = mut b[1..]
+    w[0] = 20
+    if b.cells[1] != 20 { return 2 }
+    0
+}
+""",
+    "closure-argument-takes-generic-result-from-explicit-type-argument": r"""
+fn apply<B>(f: take fn(i32): B): B { f(1) }
+type Holder<P> { p: P }
+fn main(): i32 {
+    let a = apply::<i32>(fn(x: i32): i32 { x + 41 })
+    let h = Holder::<fn(i32): bool>(fn(x: i32): bool { x % 2 == 0 })
+    if a != 42 || !h.p(4) || h.p(3) { return 1 }
+    0
+}
+""",
+    "generic-parameter-inferred-from-associated-binding-bound": """
+module core { pub module iter { pub interface Iterator { type Item; mut fn next(): Self::Item?; } } }
+import core::iter::Iterator;
+type Counter { n: i32; max: i32 }
+impl Counter implements Iterator {
+    type Item = i32
+    mut fn next(): i32? {
+        if self.n < self.max { let v = self.n; self.n += 1; present(v) } else { none }
+    }
+}
+fn sum<T, I: Iterator<Item = T>>(it: take I, first: take T): T {
+    var iter = it
+    var acc = first
+    while true { match take iter.next() { present(x) => { acc = x }, none => { break } } }
+    acc
+}
+fn main(): i32 {
+    let last = sum(Counter(0, 4), 0)
+    if last != 3 { return 1 }
+    0
+}
+""",
+    "byte-text-literals-are-static-byte-arrays": r"""
+fn sum(v: read [u8]): i32 { var t = 0; for x in v { t += x as i32 }; t }
+fn main(): i32 {
+    let a: read [u8; 3] from static = b"abc"
+    let r: read [u8] = br"x\y"
+    let e = b"\x00\xff\n"
+    let s: read [u8] = a
+    if sum(s) != 97 + 98 + 99 || r.len() != 3usize || e[1] != 255u8 { return 1 }
+    0
+}
+""",
+    "range-slicing-arrays-slices-and-mut-views": """
+fn total(v: read [i32]): i32 { var t = 0; for x in v { t += x }; t }
+fn main(): i32 {
+    var a: [i32; 5] = [1, 2, 3, 4, 5]
+    let s: read [i32] = read a[1..4]
+    let whole: read [i32] = read a[..]
+    let head: read [i32] = read a[..=1]
+    let tail: read [i32] = read a[3..]
+    if total(s) != 9 || whole.len() != 5 || head.len() != 2 || tail.len() != 2 { return 1 }
+    let m: mut [i32] = mut a[1..3]
+    m[0] = 20
+    let inner: read [i32] = read m[1..]
+    if inner.len() != 1 || a[1] != 20 { return 2 }
+    0
+}
+""",
+    "owners-generic-holder-of-view-infers-shared-region-for-exclusive-call": """
+type Holder<T> { item: T? }
+impl<T> Holder<T> {
+    mut fn put(value: take T) { self.item = present(value) }
+}
+fn fill<region a>(h: mut Holder<read i32 from a>, v: read i32 from a) {
+    h.put(read v)
+}
+fn main() {
+    var x = 1
+    let y = 2
+    var h = Holder(item: present(read x))
+    fill(mut h, read y)
+    match h.item { present(v) => *v - 2, none => 1 }
+}
+""",
+    "owners-external-mut-receiver-accepts-local-index-argument": """
+module core { pub module ops {
+    pub interface Index<I> { type Output; fn index(i: read I): read Self::Output from self; }
+    pub interface IndexMut<I> { type Output; mut fn index_mut(i: read I): mut Self::Output from self; }
+} }
+type Cells { p: ptr<mut i32> }
+impl Cells implements core::ops::Index<usize> {
+    type Output = i32
+    fn index(i: read usize): read i32 from self { unsafe { read *self.p.add(i) } }
+}
+impl Cells implements core::ops::IndexMut<usize> {
+    type Output = i32
+    mut fn index_mut(i: read usize): mut i32 from self { unsafe { mut *self.p.add(i) } }
+}
+type Holder<K, V> { cells: Cells; k: K; v: V }
+impl<K, V> Holder<K, V> {
+    mut fn store(i: usize, k: take K, v: take V, x: i32): Unit {
+        self.cells[i] = x
+        self.k = k
+        self.v = v
+    }
+}
+fn set(c: mut Cells, i: usize, x: i32): Unit { c[i] = x }
+fn main() {
+    var a = [0, 0, 0]
+    var c = Cells(core::ptr::from_mut(a).cast::<i32>())
+    set(c, 1usize, 5)
+    var h = Holder(c, 1, 2)
+    h.store(2usize, 3, 4, 9)
+    if a[1] != 5 || a[2] != 9 || h.k != 3 || h.v != 4 { return 1 }
+    0
+}
+""",
+    "owners-optional-view-results-name-their-source": """
+type Table<K, V> { vs: ptr<mut V>; n: usize; k: Option2<K> }
+type Option2<K> { k: K }
+impl<K, V> Table<K, V> {
+    fn get(k: read K, i: usize): (read V from self)? {
+        if i < self.n { present(unsafe { read *self.vs.add(i) }) } else { none }
+    }
+    mut fn get_mut(k: read K, i: usize): (mut V from self)? {
+        if i < self.n { present(unsafe { mut *self.vs.add(i) }) } else { none }
+    }
+    fn pair(k: read K): ((read V from self), usize) { (unsafe { read *self.vs }, 1usize) }
+}
+fn main() {
+    var a = [10, 20]
+    var t = Table(core::ptr::from_mut(a).cast::<i32>(), 2usize, Option2(1u8))
+    match t.get(1u8, 1usize) { present(v) => { if *v != 20 { return 1 } }, none => { return 2 } }
+    match t.get(1u8, 2usize) { present(v) => { return 3 }, none => {} }
+    match t.get_mut(1u8, 0usize) { present(v) => { if *v != 10 { return 4 } }, none => { return 5 } }
+    match t.pair(1u8) { (v, n) => { if *v != 10 || n != 1usize { return 6 } } }
+    0
+}
+""",
+    "owners-mem-replace-swap-size-of-val-and-abort": """
+type P { a: i32; b: i64 }
+type H<T> { v: T }
+fn exchange(dest: mut i32, v: i32): i32 { core::mem::replace(dest, v) }
+fn keep(slot: mut H<read i32>, v: take H<read i32>): H<read i32> from (slot, v) {
+    core::mem::replace(slot, v)
+}
+fn die(): Never { core::intrinsics::abort() }
+fn main() {
+    var x = 5
+    var y = 7
+    let old = core::mem::replace(x, 9)
+    core::mem::swap(x, y)
+    var p = P(1, 2)
+    var q = P(3, 4)
+    core::mem::swap(p, q)
+    let old2 = core::mem::replace(p, P(10, 20))
+    var z = 1
+    let r = exchange(z, 2)
+    let words = [1u32, 2u32, 3u32]
+    let a = 1
+    let b = 2
+    var first = H(read a)
+    let second = H(read b)
+    let previous = keep(first, second)
+    if old != 5 { return 1 }
+    if x != 7 || y != 9 { return 2 }
+    if p.a != 10 || q.a != 1 || old2.a != 3 { return 3 }
+    if z != 2 || r != 1 { return 4 }
+    if core::mem::size_of_val(words) != 12usize { return 5 }
+    if core::mem::align_of_val(p) != 8usize { return 6 }
+    if *previous.v != 1 || *first.v != 2 { return 7 }
+    if x == 0 { die() }
+    0
+}
+""",
+    "copy-through-view-copies": r"""
+type Bag { n: i32 }
+impl Bag {
+    mut fn add(item: take i32) { self.n += item }
+}
+fn gen<T>(x: take T): T { x }
+fn first(v: read [i32; 3]): read i32 from v { read v[0] }
+fn main(): i32 {
+    let arr = [1, 2, 3]
+    let r = first(read arr)
+    var b = Bag(0)
+    b.add(*r)
+    let g = gen(*r)
+    b.n + g - 2
+}
+""",
+    "generic-statics-and-inferred-turbofish": r"""
+type Vec<T> { len: usize
+  static fn empty(): Vec<T> { Self(0usize) }
+  fn n(): usize { self.len } }
+impl<T> Vec<T> {
+    static fn new(): Vec<T> { Vec(0usize) }
+    static fn two(): Vec<T> { Self(2usize) }
+    static fn viaself(): Vec<T> { Self::new() }
+    fn bump(): usize { self.n() + 1usize }
+}
+fn main(): i32 {
+    let a: Vec<i32> = Vec::new()
+    let b = Vec::<i32>::new()
+    let c: Vec<i32> = Vec::two()
+    let e: Vec<u8> = Vec::viaself()
+    let f = Vec::<i32>::two()
+    if a.n() == 0usize && b.n() == 0usize && c.n() == 2usize && f.bump() == 3usize && e.n() == 0usize { 0 } else { 1 }
+}
+""",
+    "generic-inference-from-expected-type": r"""
+type Vec<T> { a: T; n: usize }
+enum Opt<T> { Some(T), Nothing }
+fn nothing<T>(): Opt<T> { Opt::Nothing }
+type Slot<K> { v: K? }
+impl<K> Slot<K> {
+    static fn empty(): Slot<K> { Slot(none) }
+}
+fn main(): i32 {
+    let s: Opt<i32> = nothing()
+    let t: Opt<i32> = Opt::<i32>::Nothing
+    let e: Slot<i32> = Slot::empty()
+    match s { Opt::Nothing => 0, Opt::Some(_) => 1 }
+}
+""",
+    "projection-callable-and-closure-inference": r"""
+module core { pub module iter {
+  pub interface Iterator { type Item; mut fn next(): Self::Item?; } } }
+import core::iter::Iterator;
+type Counter { n: i32; max: i32 }
+impl Counter implements Iterator {
+    type Item = i32
+    mut fn next(): i32? {
+        if self.n < self.max { let v = self.n; self.n += 1; present(v) } else { none }
+    }
+}
+type Box<T> { v: T }
+type Map<I, F> { iter: I; f: F }
+impl<B, I: Iterator, F: fn(<I implements Iterator>::Item): B> Map<I, F> implements Iterator {
+    type Item = B
+    mut fn next(): B? {
+        match self.iter.next() { present(x) => present(self.f(x)), none => none }
+    }
+}
+fn map<B, I: Iterator, F: fn(<I implements Iterator>::Item): B>(it: take I, f: take F): Map<I, F> { Map(it, f) }
+type Take<I> { iter: I; n: usize }
+impl<T, I: Iterator<Item = T>> Take<I> implements Iterator {
+    type Item = T
+    mut fn next(): T? {
+        if self.n == 0usize { return none }
+        self.n -= 1usize
+        self.iter.next()
+    }
+}
+fn wrap<I: Iterator>(it: take I, w: take Box<<I implements Iterator>::Item>): Box<<I implements Iterator>::Item> { w }
+fn apply<B, F: fn(i32): B>(f: take F): B { f(1) }
+fn apply_ptr<B>(f: fn(i32): B, x: i32): B { f(x) }
+fn plus(x: i32): i32 { x + 1 }
+fn main(): i32 {
+    let w = wrap(Counter(0, 1), Box(5))
+    var m = map(Take(Counter(0, 10), 4usize), fn(x: i32): i32 { x * 10 })
+    var total = 0
+    for x in mut m { total += x }
+    let a = apply(fn(x: i32): i32 { x + 1 })
+    let b = apply_ptr(plus, 1)
+    let c = apply(fn(x: i32) { x * 3 })
+    if w.v == 5 && total == 60 && a == 2 && b == 2 && c == 3 { 0 } else { 1 }
+}
+""",
     "machine-asm-required-full-width-and-generic-constants": """
 static OFFSET: i128 = (1i128 << 80) + 42;
 unsafe fn answer<const N:i64>(value:i32):i32 {
@@ -407,41 +795,835 @@ fn main() {
 }
 """),
 }
+VEC_ITER_PREFIX = """
+module core { pub module iter {
+  pub interface Iterator { type Item; mut fn next(): Self::Item?; }
+  pub interface Iterable { type Item; type Iter<region r>; fn iter<region r>(receiver self: read Self from r): Self::Iter<region r>; }
+  pub interface IterableMut { type Item; type IterMut<region r>; fn iter_mut<region r>(receiver self: mut Self from r): Self::IterMut<region r>; }
+} }
+extern "C" {
+    unsafe fn realloc(p: ptr<mut u8>, n: usize): ptr<mut u8>;
+    unsafe fn free(p: ptr<mut u8>): Unit;
+}
+import core::iter::{Iterator, Iterable, IterableMut};
+type Vec<T> { ptr: ptr<mut T>; len: usize; cap: usize
+    drop { unsafe {
+        var i = 0usize
+        while i < self.len { core::ptr::drop_in_place(self.ptr.add(i)); i += 1usize }
+        if self.cap != 0usize { free(self.ptr.cast::<u8>()) }
+    } }
+}
+impl<T> Vec<T> {
+    mut fn push(v: take T): Unit {
+        if self.len == self.cap {
+            let nc = if self.cap == 0usize { 4usize } else { self.cap * 2usize }
+            let np = unsafe { realloc(self.ptr.cast::<u8>(), nc * core::mem::size_of::<T>()) }
+            self.ptr = np.cast::<T>()
+            self.cap = nc
+        }
+        unsafe { core::ptr::write(self.ptr.add(self.len), v) }
+        self.len += 1usize
+    }
+}
+fn new_vec<T>(): Vec<T> { Vec(core::ptr::null_mut::<T>(), 0usize, 0usize) }
+type VecIter<T, region r> { v: read Vec<T> from r; i: usize }
+impl<T, region r> VecIter<T, region r> implements Iterator {
+    type Item = read T from r
+    mut fn next(): (read T from r)? {
+        if self.i < self.v.len {
+            let x = unsafe { read *self.v.ptr.add(self.i) }
+            self.i += 1usize
+            present(x)
+        } else { none }
+    }
+}
+impl<T> Vec<T> implements Iterable {
+    type Item = T
+    type Iter<region r> = VecIter<T, region r>
+    fn iter<region r>(receiver self: read Self from r): VecIter<T, region r> { VecIter(read self, 0usize) }
+}
+
+type VecIterMut<T, region r> { v: mut Vec<T> from r; i: usize }
+impl<T, region r> VecIterMut<T, region r> implements Iterator {
+    type Item = mut T from r
+    mut fn next(): (mut T from r)? {
+        if self.i < self.v.len {
+            let x = unsafe { mut *self.v.ptr.add(self.i) }
+            self.i += 1usize
+            present(x)
+        } else { none }
+    }
+}
+impl<T> Vec<T> implements IterableMut {
+    type Item = T
+    type IterMut<region r> = VecIterMut<T, region r>
+    fn iter_mut<region r>(receiver self: mut Self from r): VecIterMut<T, region r> { VecIterMut(mut self, 0usize) }
+}
+"""
+VEC_ITER_LINES = 65
+VEC_ITER_BOUNDED_PREFIX = VEC_ITER_PREFIX.replace(
+    "type Iter<region r>;", "type Iter<region r>: Iterator<Item = read Self::Item from r>;"
+).replace(
+    "type IterMut<region r>;", "type IterMut<region r>: Iterator<Item = mut Self::Item from r>;")
+MACHINE_POSITIVE.update({
+    "local-iterator-result-returned-from-collection": VEC_ITER_PREFIX + """
+fn first<T>(c: read Vec<T>): (read T from c)? {
+    var it = c.iter()
+    it.next()
+}
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(4)
+    match first(read v) { present(x) => *x - 4, none => 1 }
+}
+""",
+    "stored-exclusive-view-read-result-used-before-mutation": VEC_ITER_PREFIX + """type Cursor<region r> { v: mut Vec<i32> from r }
+impl<region r> Cursor<region r> {
+    fn peek(): read i32 from r { unsafe { read *self.v.ptr } }
+    mut fn grow(x: i32): Unit { self.v.push(x) }
+}
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    var cur = Cursor(mut v)
+    let a = cur.peek()
+    let b = cur.peek()
+    let sum = *a + *b
+    cur.v.push(2)
+    cur.grow(3)
+    sum - 2
+}
+""",
+    "stored-exclusive-view-read-result-per-loop-iteration": VEC_ITER_PREFIX + """type Cursor<region r> { v: mut Vec<i32> from r }
+impl<region r> Cursor<region r> {
+    fn peek(): read i32 from r { unsafe { read *self.v.ptr } }
+    mut fn grow(x: i32): Unit { self.v.push(x) }
+}
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    var cur = Cursor(mut v)
+    var sum = 0
+    var i = 0
+    while i < 3 { let a = cur.peek(); sum += *a; cur.grow(i + 0); i += 1 }
+    sum - 3
+}
+""",
+    "stored-shared-view-read-results-coexist-with-reads": VEC_ITER_PREFIX + """type Cursor<region r> { v: read Vec<i32> from r }
+impl<region r> Cursor<region r> {
+    fn peek(): read i32 from r { unsafe { read *self.v.ptr } }
+}
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    let cur = Cursor(read v)
+    let a = cur.peek()
+    let b = cur.peek()
+    *a + *b - 2 + (cur.v.len as i32) - 1
+}
+""",
+    "shared-reborrows-of-stored-exclusive-view-coexist": VEC_ITER_PREFIX + """type Cursor<region r> { v: mut Vec<i32> from r }
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    var cur = Cursor(mut v)
+    let x = read cur.v
+    let y = read cur.v
+    (x.len + y.len) as i32
+}
+""",
+    "nested-cursor-read-result-used-before-mutation": VEC_ITER_PREFIX + """type Cursor<region r> { v: mut Vec<i32> from r }
+type Wrap<region q, region r> { c: mut Cursor<region r> from q }
+impl<region r> Cursor<region r> {
+    fn peek(): read i32 from r { unsafe { read *self.v.ptr } }
+}
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    var c = Cursor(mut v)
+    var w = Wrap(mut c)
+    let a = w.c.peek()
+    let x = *a
+    w.c.v.push(2)
+    x - 1
+}
+""",
+    "generic-iteration-through-family-bounded-protocols": VEC_ITER_BOUNDED_PREFIX + """
+fn sum<C: Iterable<Item = i32>>(c: read C): i32 { var s = 0; for x in c { s += *x }; s }
+fn bump<C: IterableMut<Item = i32>>(c: mut C): Unit { for x in mut c { *x += 1 } }
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    v.push(2)
+    bump(mut v)
+    sum(v) - 5
+}
+""",
+    "index-implementation-with-explicit-regions": """
+module core { pub module ops {
+ pub interface Index<I> { type Output; fn index(i: read I): read Self::Output from self; }
+} }
+type Arr { a: i32; b: i32 }
+impl Arr implements core::ops::Index<usize> {
+    type Output = i32
+    fn index<region r>(receiver self: read Self from r, i: read usize): read i32 from r {
+        if i == 0usize { read self.a } else { read self.b }
+    }
+}
+fn main(): i32 { let x = Arr(1, 2); if x[1usize] == 2 { 0 } else { 1 } }
+""",
+    "generic-impl-matches-generic-enum-field": """
+enum Slot<K, V> { Empty, Full(K, V) }
+type M<K, V> { slots: Slot<K, V> }
+impl<K, V> M<K, V> {
+    fn full(): i32 { match self.slots { Slot::Full(_, v) => 1, _ => 0 } }
+}
+fn main(): i32 { 0 }
+""",
+})
+
+
+BAG_ITER_MUT = """
+type Bag { a: i32; b: i32 }
+type Cursor<region r> { bag: mut Bag from r; at: i32 }
+impl<region r> Cursor<region r> {
+    mut fn next(): (mut i32 from r)? {
+        let i = self.at
+        self.at += 1
+        if i == 0 { present(mut self.bag.a) } else if i == 1 { present(mut self.bag.b) } else { none }
+    }
+}
+"""
+BAG_ITER_MUT_LINES = BAG_ITER_MUT.count("\n")
+
 MACHINE_NEGATIVE = {
+    "transferable-rejects-raw-pointer-structures": (
+        'type Plain { a: i32; b: bool }\ntype Raw { p: ptr<mut u8> }\ntype Cellular { c: core::cell::Cell<i32> }\ntype Blocked { a: i32 }\nimpl Blocked not Transferable;\nfn send<T: Transferable>(value: take T): Unit {}\nfn share<T: Shareable>(value: read T): Unit {}\nfn owned<T: Transferable + Static>(value: take T): Unit {}\nfn main(): i32 {\n  send(Raw(core::ptr::null_mut::<u8>()))\n  0\n}\n',
+        "type", "unsatisfied interface bound 'Transferable'", (10, 3)),
+    "shareable-rejects-cells": (
+        'type Plain { a: i32; b: bool }\ntype Raw { p: ptr<mut u8> }\ntype Cellular { c: core::cell::Cell<i32> }\ntype Blocked { a: i32 }\nimpl Blocked not Transferable;\nfn send<T: Transferable>(value: take T): Unit {}\nfn share<T: Shareable>(value: read T): Unit {}\nfn owned<T: Transferable + Static>(value: take T): Unit {}\nfn main(): i32 {\n  share(Cellular(core::cell::Cell::new(1)))\n  0\n}\n',
+        "type", "unsatisfied interface bound 'Shareable'", (10, 3)),
+    "transferable-honours-negative-implementations": (
+        'type Plain { a: i32; b: bool }\ntype Raw { p: ptr<mut u8> }\ntype Cellular { c: core::cell::Cell<i32> }\ntype Blocked { a: i32 }\nimpl Blocked not Transferable;\nfn send<T: Transferable>(value: take T): Unit {}\nfn share<T: Shareable>(value: read T): Unit {}\nfn owned<T: Transferable + Static>(value: take T): Unit {}\nfn main(): i32 {\n  send(Blocked(1))\n  0\n}\n',
+        "type", "unsatisfied interface bound 'Transferable'", (10, 3)),
+    "static-rejects-closures-borrowing-locals": (
+        'type Plain { a: i32; b: bool }\ntype Raw { p: ptr<mut u8> }\ntype Cellular { c: core::cell::Cell<i32> }\ntype Blocked { a: i32 }\nimpl Blocked not Transferable;\nfn send<T: Transferable>(value: take T): Unit {}\nfn share<T: Shareable>(value: read T): Unit {}\nfn owned<T: Transferable + Static>(value: take T): Unit {}\nfn main(): i32 {\n  let k = 4; let f = fn(): i32 { k }; owned(f)\n  0\n}\n',
+        "type", "unsatisfied interface bound 'Static'", (10, 39)),
+    "static-rejects-views-of-locals": (
+        'type Plain { a: i32; b: bool }\ntype Raw { p: ptr<mut u8> }\ntype Cellular { c: core::cell::Cell<i32> }\ntype Blocked { a: i32 }\nimpl Blocked not Transferable;\nfn send<T: Transferable>(value: take T): Unit {}\nfn share<T: Shareable>(value: read T): Unit {}\nfn owned<T: Transferable + Static>(value: take T): Unit {}\nfn main(): i32 {\n  let k = 4; owned(read k)\n  0\n}\n',
+        "type", "unsatisfied interface bound 'Static'", (10, 14)),
+    "transferable-generic-without-bound-is-rejected": (
+        "fn send<T: Transferable>(value: take T): Unit {}\nfn forward<T>(value: take T): Unit { send(value) }\nfn main(): i32 { 0 }\n",
+        "type", "unsatisfied interface bound 'Transferable'", (2, 38)),
+    "manual-transferable-requires-unsafe": (
+        "type Raw { p: ptr<mut u8> }\nimpl Raw implements Transferable {}\nfn main(): i32 { 0 }\n",
+        "unsafe", "manual Transferable implementation requires unsafe impl", (2, 1)),
+    "exclusive-iterator-items-cannot-both-be-live": (
+        BAG_ITER_MUT + """
+fn bad(c: mut Bag): Unit {
+    var it = Cursor(mut c, 0)
+    let x = it.next()
+    let y = it.next()
+    match take x { present(p) => { *p += 1 }, none => {} }
+}
+fn main(): i32 { 0 }
+""",
+        "ownership", "live exclusive loan", (BAG_ITER_MUT_LINES + 5, 13)),
+    "exclusive-iterator-item-blocks-source-write": (
+        BAG_ITER_MUT + """
+fn bad(c: mut Bag): Unit {
+    var it = Cursor(mut c, 0)
+    let x = it.next()
+    c.a = 5
+    match take x { present(p) => { *p += 1 }, none => {} }
+}
+fn main(): i32 { 0 }
+""",
+        "ownership", "live exclusive loan", (BAG_ITER_MUT_LINES + 5, 5)),
+    "exclusive-iterator-item-cannot-borrow-local-source": (
+        BAG_ITER_MUT + """
+fn bad(c: mut Bag): (mut i32 from c)? {
+    var own = Bag(1, 2)
+    var it = Cursor(mut own, 0)
+    it.next()
+}
+fn main(): i32 { 0 }
+""",
+        "ownership", "returned view escapes local storage", (BAG_ITER_MUT_LINES + 5, 5)),
+    "exclusive-iterator-held-item-blocks-next": (
+        BAG_ITER_MUT + """
+fn bad(c: mut Bag): Unit {
+    var it = Cursor(mut c, 0)
+    var held: (mut i32 from c)? = it.next()
+    let y = it.next()
+    match take held { present(p) => { *p += 1 }, none => {} }
+}
+fn main(): i32 { 0 }
+""",
+        "ownership", "live exclusive loan", (BAG_ITER_MUT_LINES + 5, 13)),
+    "take-argument-indexed-from-borrowed-copy-element-suggests-copy": (
+        "fn sink(value: take u8): u8 { value }\nfn pick(digits: read [u8], i: usize): u8 { sink(digits[i]) }\nfn main(): i32 { 0 }\n",
+        "ownership", "consumes its value, so copy it into a binding first", (2, 49)),
+    "local-iterator-result-keeps-collection-borrowed": (
+        VEC_ITER_PREFIX + """
+fn first<T>(c: read Vec<T>): (read T from c)? {
+    var it = c.iter()
+    it.next()
+}
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    let f = first(read v)
+    v.push(2)
+    match f { present(x) => *x, none => 0 }
+}
+""",
+        "ownership", "live read loan", (VEC_ITER_LINES + 9, 5)),
+    "local-iterator-result-cannot-borrow-local-collection": (
+        VEC_ITER_PREFIX + """
+fn bad(c: read Vec<i32>): (read i32 from c)? {
+    var own = new_vec::<i32>()
+    own.push(1)
+    var it = own.iter()
+    it.next()
+}
+fn main(): i32 { 0 }
+""",
+        "ownership", "returned view escapes local storage", (VEC_ITER_LINES + 5, 5)),
+    "exclusive-view-result-keeps-its-cursor-borrowed": (
+        VEC_ITER_PREFIX + """
+type Cursor<region r> { v: mut Vec<i32> from r }
+impl<region r> Cursor<region r> {
+    mut fn pick(): mut i32 from r { unsafe { mut *self.v.ptr } }
+}
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    var cur = Cursor(mut v)
+    let a = cur.pick()
+    let b = cur.pick()
+    *a = 1
+    *b = 2
+    0
+}
+""",
+        "ownership", "live exclusive loan", (VEC_ITER_LINES + 10, 13)),
+    "stored-exclusive-view-read-result-blocks-push-through-cursor": (
+        VEC_ITER_PREFIX + """type Cursor<region r> { v: mut Vec<i32> from r }
+impl<region r> Cursor<region r> {
+    fn peek(): read i32 from r { unsafe { read *self.v.ptr } }
+    mut fn grow(x: i32): Unit { self.v.push(x) }
+}
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    var cur = Cursor(mut v)
+    let a = cur.peek()
+    cur.v.push(2)
+    *a
+}
+""",
+        "ownership", "live read loan", (VEC_ITER_LINES + 10, 5)),
+    "stored-exclusive-view-read-result-blocks-field-write-through-cursor": (
+        VEC_ITER_PREFIX + """type Cursor<region r> { v: mut Vec<i32> from r }
+impl<region r> Cursor<region r> {
+    fn peek(): read i32 from r { unsafe { read *self.v.ptr } }
+    mut fn grow(x: i32): Unit { self.v.push(x) }
+}
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    var cur = Cursor(mut v)
+    let a = cur.peek()
+    cur.v.len = 0usize
+    *a
+}
+""",
+        "ownership", "live read loan", (VEC_ITER_LINES + 10, 5)),
+    "stored-exclusive-view-read-result-blocks-mutating-method": (
+        VEC_ITER_PREFIX + """type Cursor<region r> { v: mut Vec<i32> from r }
+impl<region r> Cursor<region r> {
+    fn peek(): read i32 from r { unsafe { read *self.v.ptr } }
+    mut fn grow(x: i32): Unit { self.v.push(x) }
+}
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    var cur = Cursor(mut v)
+    let a = cur.peek()
+    cur.grow(2)
+    *a
+}
+""",
+        "ownership", "live read loan", (VEC_ITER_LINES + 10, 5)),
+    "stored-exclusive-view-read-result-blocks-reborrow-of-stored-view": (
+        VEC_ITER_PREFIX + """type Cursor<region r> { v: mut Vec<i32> from r }
+impl<region r> Cursor<region r> {
+    fn peek(): read i32 from r { unsafe { read *self.v.ptr } }
+    mut fn grow(x: i32): Unit { self.v.push(x) }
+}
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    var cur = Cursor(mut v)
+    let a = cur.peek()
+    let w = mut cur.v
+    w.push(2)
+    *a
+}
+""",
+        "ownership", "live read loan", (VEC_ITER_LINES + 11, 5)),
+    "stored-exclusive-view-read-result-blocks-owner-mutation": (
+        VEC_ITER_PREFIX + """type Cursor<region r> { v: mut Vec<i32> from r }
+impl<region r> Cursor<region r> {
+    fn peek(): read i32 from r { unsafe { read *self.v.ptr } }
+    mut fn grow(x: i32): Unit { self.v.push(x) }
+}
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    var cur = Cursor(mut v)
+    let a = cur.peek()
+    v.push(2)
+    *a
+}
+""",
+        "ownership", "live exclusive loan", (VEC_ITER_LINES + 10, 5)),
+    "stored-exclusive-view-read-result-survives-moving-the-cursor": (
+        VEC_ITER_PREFIX + """type Cursor<region r> { v: mut Vec<i32> from r }
+impl<region r> Cursor<region r> {
+    fn peek(): read i32 from r { unsafe { read *self.v.ptr } }
+    mut fn grow(x: i32): Unit { self.v.push(x) }
+}
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    var cur = Cursor(mut v)
+    let a = cur.peek()
+    var moved = take cur
+    moved.v.push(2)
+    *a
+}
+""",
+        "ownership", "live read loan", (VEC_ITER_LINES + 11, 5)),
+    "stored-exclusive-view-read-result-through-optional-wrapper": (
+        VEC_ITER_PREFIX + """type Cursor<region r> { v: mut Vec<i32> from r }
+impl<region r> Cursor<region r> {
+    fn maybe(): (read i32 from r)? { unsafe { present(read *self.v.ptr) } }
+}
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    var cur = Cursor(mut v)
+    let a = cur.maybe()
+    cur.v.push(2)
+    match a { present(x) => *x, none => 0 }
+}
+""",
+        "ownership", "live read loan", (VEC_ITER_LINES + 9, 5)),
+    "stored-exclusive-view-read-result-through-raw-pointer-local": (
+        VEC_ITER_PREFIX + """type Cursor<region r> { v: mut Vec<i32> from r }
+impl<region r> Cursor<region r> {
+    fn peek(): read i32 from r { let p = self.v.ptr
+        unsafe { read *p } }
+}
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    var cur = Cursor(mut v)
+    let a = cur.peek()
+    cur.v.push(2)
+    *a
+}
+""",
+        "ownership", "live read loan", (VEC_ITER_LINES + 10, 5)),
+    "stored-exclusive-view-read-result-generic-payload": (
+        VEC_ITER_PREFIX + """type Cursor<T, region r> { v: mut T from r }
+impl<T, region r> Cursor<T, region r> {
+    fn peek(): read T from r { let p = core::ptr::from_ref(read *self.v)
+        unsafe { read *p } }
+}
+fn main(): i32 {
+    var n = 1
+    var cur = Cursor(mut n)
+    let a = cur.peek()
+    *cur.v = 7
+    *a
+}
+""",
+        "ownership", "live read loan", (VEC_ITER_LINES + 9, 5)),
+    "stored-exclusive-view-read-result-through-callee-with-cursor-parameter": (
+        VEC_ITER_PREFIX + """type Cursor<region r> { v: mut Vec<i32> from r }
+impl<region r> Cursor<region r> {
+    fn peek(): read i32 from r { unsafe { read *self.v.ptr } }
+    mut fn grow(x: i32): Unit { self.v.push(x) }
+}
+fn grab<region r>(c: mut Cursor<region r>): read i32 from r { c.peek() }
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    var cur = Cursor(mut v)
+    let a = grab(mut cur)
+    cur.v.push(2)
+    *a
+}
+""",
+        "ownership", "live exclusive loan", (VEC_ITER_LINES + 11, 5)),
+    "stored-exclusive-view-exclusive-result-blocks-push-through-cursor": (
+        VEC_ITER_PREFIX + """type Cursor<region r> { v: mut Vec<i32> from r }
+impl<region r> Cursor<region r> {
+    mut fn pick(): mut i32 from r { unsafe { mut *self.v.ptr } }
+}
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    var cur = Cursor(mut v)
+    let a = cur.pick()
+    cur.v.push(2)
+    *a = 1
+    0
+}
+""",
+        "ownership", "live exclusive loan", (VEC_ITER_LINES + 9, 5)),
+    "reborrowed-stored-exclusive-view-blocks-use-of-the-stored-view": (
+        VEC_ITER_PREFIX + """type Cursor<region r> { v: mut Vec<i32> from r }
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    var cur = Cursor(mut v)
+    let w = mut cur.v
+    cur.v.push(1)
+    w.push(2)
+    0
+}
+""",
+        "ownership", "live exclusive loan", (VEC_ITER_LINES + 5, 5)),
+    "shared-reborrow-of-stored-exclusive-view-blocks-writes-through-the-stored-view": (
+        VEC_ITER_PREFIX + """type Cursor<region r> { v: mut Vec<i32> from r }
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    var cur = Cursor(mut v)
+    let r = read cur.v
+    cur.v.push(1)
+    r.len as i32
+}
+""",
+        "ownership", "live read loan", (VEC_ITER_LINES + 5, 5)),
+    "erased-call-still-retains-views-stored-from-other-arguments": (
+        """
+type Hold<region r> { x: read i32 from r }
+interface Put { fn put<region r>(h: mut Hold<region r>, v: read i32 from r): Unit; }
+type A {}
+impl A implements Put { fn put<region r>(h: mut Hold<region r>, v: read i32 from r): Unit { h.x = read v } }
+fn run<P: Put>(p: read P): i32 {
+    var a = 1
+    var h = Hold(read a)
+    var b = 2
+    p.put(mut h, read b)
+    b = 3
+    *h.x
+}
+fn main(): i32 { run(read A()) }
+""",
+        "ownership", "live read loan", (11, 5)),
+    "const-initializer-must-be-constant": (
+        "fn f(): i32 { 3 }\nconst X: i32 = f();\nfn main(): i32 { X }",
+        "constant", "validated constant expression", (2, 16)),
+    "const-initializer-cycle": (
+        "const A: i32 = B;\nconst B: i32 = A;\nfn main(): i32 { A }",
+        "constant", "cycle in required static initialization", (1, 1)),
+    "const-initializer-type-mismatch": (
+        "const A: i32 = true;\nfn main(): i32 { A }",
+        "constant", "validated constant expression", (1, 16)),
+    "const-initializer-overflow": (
+        "const A: i8 = 100 + 100;\nfn main(): i32 { 0 }",
+        "constant", "overflows", (1, 15)),
+    "const-cannot-be-assigned": (
+        "const A: i32 = 1;\nfn main(): i32 { A = 2; 0 }",
+        "type", "cannot assign immutable binding", (2, 18)),
+    "const-requires-initializer": (
+        "const A: i32;\nfn main(): i32 { 0 }",
+        "parse", "expected '='", (1, 13)),
+    "const-pattern-requires-scalar": (
+        "const A: (i32, i32) = (1, 2);\nfn main(): i32 { match (1, 2) { A => 0 } }",
+        "type", "only integer and bool constants", (2, 33)),
+    "overlapping-blanket-and-concrete-implementation-is-rejected": (
+        'module core {\n    pub module iter {\n        pub interface Iterator { type Item; mut fn next(): Self::Item?; }\n        pub interface IntoIterator: Sized { type Item; type IntoIter: Iterator; fn into_iter(receiver self: take Self): Self::IntoIter; }\n        impl<I: Iterator> I implements IntoIterator {\n            type Item = I::Item\n            type IntoIter = I\n            fn into_iter(receiver self: take Self): I { self }\n        }\n    }\n}\ntype Counter { n: i32; max: i32 }\nimpl Counter implements core::iter::Iterator {\n    type Item = i32\n    mut fn next(): i32? {\n        if self.n < self.max { let v = self.n; self.n += 1; present(v) } else { none }\n    }\n}\ntype Bag { max: i32 }\nimpl Bag implements core::iter::IntoIterator {\n    type Item = i32\n    type IntoIter = Counter\n    fn into_iter(receiver self: take Self): Counter { Counter(0, self.max) }\n}\nimpl Counter implements core::iter::IntoIterator {\n    type Item = i32\n    type IntoIter = Counter\n    fn into_iter(receiver self: take Self): Counter { self }\n}\nfn main(): i32 { 0 }\n',
+        "type", "overlapping implementations cannot be selected by order", (25, 1)),
+    "interface-method-without-body-called-through-interface-name": (
+        "interface Plain { fn plain(): i32; }\nimpl i32 implements Plain { fn plain(): i32 { self } }\nfn main(): i32 {\n    let x: i32 = 5\n    Plain::plain(x) - 5\n}\n",
+        "type", "cannot be called through the interface name", (5, 5)),
+    "iteration-body-cannot-grow-the-iterated-collection": (
+        VEC_ITER_PREFIX + """
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    for x in v { v.push(*x) }
+    0
+}
+""",
+        "ownership", "live read loan", (VEC_ITER_LINES + 4, 18)),
+    "iterator-item-cannot-outlive-collection-mutation": (
+        VEC_ITER_PREFIX + """
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    var it = v.iter()
+    let first = it.next()
+    v.push(2)
+    match first { present(x) => *x, none => 0 }
+}
+""",
+        "ownership", "live read loan", (VEC_ITER_LINES + 6, 5)),
+    "mutable-iteration-cannot-nest-inside-read-iteration": (
+        VEC_ITER_PREFIX + """
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    for x in v { for y in mut v { *y += *x } }
+    0
+}
+""",
+        "ownership", "live read loan", (VEC_ITER_LINES + 4, 18)),
+    "read-iteration-item-is-not-writable": (
+        VEC_ITER_PREFIX + """
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1)
+    for x in v { *x = 5 }
+    0
+}
+""",
+        "ownership", "cannot write through a read parameter", (VEC_ITER_LINES + 4, 18)),
+    "iterator-item-of-local-collection-cannot-escape": (
+        VEC_ITER_PREFIX + """
+fn leak(): (read i32 from static)? {
+    var v = new_vec::<i32>()
+    v.push(1)
+    var it = v.iter()
+    it.next()
+}
+fn main(): i32 { 0 }
+""",
+        "region", "view region or invariant payload", (VEC_ITER_LINES + 1, 36)),
+    "matched-view-of-local-collection-cannot-escape": (
+        VEC_ITER_PREFIX + """
+fn bad(): (read i32 from static)? {
+    let v = new_vec::<i32>()
+    match v.iter().next() { present(x) => present(x), none => none }
+}
+fn main(): i32 { 0 }
+""",
+        "region", "view region or invariant payload", (VEC_ITER_LINES + 1, 35)),
+    "generic-iteration-body-cannot-nest-mutable-iteration": (
+        VEC_ITER_BOUNDED_PREFIX + """
+fn nest<C: IterableMut<Item = i32>>(c: mut C): Unit { for x in mut c { for y in mut c { *y += *x } } }
+fn main(): i32 { var v = new_vec::<i32>(); nest(mut v); 0 }
+""",
+        "ownership", "live exclusive loan", (VEC_ITER_LINES + 1, 72)),
+    "generic-iterator-item-cannot-outlive-collection-mutation": (
+        VEC_ITER_BOUNDED_PREFIX + """
+fn stale<C: IterableMut<Item = i32>>(c: mut C): i32 {
+    var it = c.iter_mut()
+    let a = it.next()
+    let b = c.iter_mut()
+    match a { present(x) => *x, none => 0 }
+}
+fn main(): i32 { var v = new_vec::<i32>(); stale(mut v) }
+""",
+        "ownership", "live exclusive loan", (VEC_ITER_LINES + 4, 13)),
+    "generic-read-iteration-item-is-not-writable": (
+        VEC_ITER_BOUNDED_PREFIX + """
+fn poke<C: Iterable<Item = i32>>(c: read C): Unit { for x in c { *x = 5 } }
+fn main(): i32 { 0 }
+""",
+        "ownership", "cannot write through a read parameter", (VEC_ITER_LINES + 1, 66)),
+    "generic-iterator-item-cannot-escape-the-collection": (
+        VEC_ITER_BOUNDED_PREFIX + """
+fn leak<C: Iterable<Item = i32>>(c: read C): (read i32 from static)? { var it = c.iter(); it.next() }
+fn main(): i32 { 0 }
+""",
+        "region", "view region or invariant payload", (VEC_ITER_LINES + 1, 70)),
+    "family-bound-rejects-implementation-with-wrong-item": (
+        VEC_ITER_BOUNDED_PREFIX + """
+type Bad { n: i32 }
+impl Bad implements core::iter::Iterator { type Item = i32; mut fn next(): i32? { none } }
+type Box { n: i32 }
+impl Box implements core::iter::Iterable {
+    type Item = i32
+    type Iter<region r> = Bad
+    fn iter<region r>(receiver self: read Self from r): Bad { Bad(0) }
+}
+fn main(): i32 { 0 }
+""",
+        "type", "associated item does not satisfy its interface bounds", (VEC_ITER_LINES + 4, 1)),
+    "generic-impl-field-match-checks-substituted-payload": (
+        """
+enum Slot<K, V> { Empty, Full(K, V) }
+type M<K, V> { slots: Slot<K, V> }
+impl<K, V> M<K, V> {
+    fn bad(): i32 { match self.slots { Slot::Full(_, v) => v, _ => 0 } }
+}
+fn main(): i32 { 0 }
+""",
+        "type", "expected i32, found V", (5, 40)),
+    "index-implementation-region-must-derive-from-self": (
+        """
+module core { pub module ops {
+ pub interface Index<I> { type Output; fn index(i: read I): read Self::Output from self; }
+} }
+type Arr { a: i32; b: i32 }
+impl Arr implements core::ops::Index<usize> {
+    type Output = i32
+    fn index<region r>(i: read usize): read i32 from r { read self.a }
+}
+fn main(): i32 { 0 }
+""",
+        "region", "view region or invariant payload does not satisfy", (8, 56)),
+    "byte-text-rejects-unicode-escape": (
+        'fn main(): i32 { let a = b"\\u{41}"; 0 }',
+        "lex", "invalid text escape", (1, 26), 1),
+    "byte-text-rejects-non-ascii": (
+        'fn main(): i32 { let a = b"\u00e9"; 0 }',
+        "lex", "byte text must contain only ASCII characters", (1, 26), 1),
+    "byte-text-bad-hex-escape": (
+        'fn main(): i32 { let a = b"\\xzz"; 0 }',
+        "lex", "byte escape requires two hexadecimal digits", (1, 26), 1),
+    "raw-byte-text-unterminated-fence": (
+        'fn main(): i32 { let a = br#"abc"; 0 }',
+        "lex", "unterminated raw text literal", (1, 26), 1),
+    "range-index-on-scalar": (
+        "fn main(): i32 { let x = 5; let y = read x[1..2]; 0 }",
+        "type", "range indexing requires an array, slice or a type", (1, 42), 1),
+    "range-index-on-product-without-protocol": (
+        "type T { x: i32 }\nfn main(): i32 { let a = T(1); let y = read a[1..2]; 0 }",
+        "type", "range indexing requires an array, slice or a type", (2, 45), 1),
+    "range-index-bound-must-be-usize": (
+        "fn main(): i32 { let a = [1, 2, 3]; let y = read a[1i32..2]; 0 }",
+        "type", "expected usize, found i32", (1, 52), 1),
+    "range-index-mut-requires-mutable-place": (
+        "fn main(): i32 { let a = [1, 2, 3]; let y = mut a[1..2]; 0 }",
+        "ownership", "exclusive borrow requires a mutable place", (1, 49)),
+    "range-index-unsized-subslice-needs-borrow": (
+        "fn main(): i32 { let a = [1, 2, 3]; let y = a[1..2]; 0 }",
+        "type", "unsized value requires a view", (1, 37)),
+    "range-index-inclusive-needs-upper-bound": (
+        "fn main(): i32 { let a = [1, 2, 3]; let y = read a[1..=]; 0 }",
+        "parse", "an inclusive range requires an upper bound", (1, 56)),
+    "range-index-ranges-do-not-chain": (
+        "fn main(): i32 { let a = [1, 2, 3]; let y = read a[3..1..2]; 0 }",
+        "parse", "ranges do not chain", (1, 56)),
+    "open-ended-range-value-is-not-implemented": (
+        "fn main(): i32 { let r = 1..; 0 }",
+        "feature", "open-ended range values are not implemented yet", (1, 26)),
+    "owners-exclusive-region-mismatch-reported-at-the-violation-only": ("""
+type Holder<T> { item: T? }
+impl<T> Holder<T> {
+    mut fn put(value: take T) { self.item = present(value) }
+}
+fn fill<region a>(h: mut Holder<read i32 from a>) {
+    let loc = 5
+    h.put(read loc)
+}
+fn main() { var x = 1; var h = Holder(item: present(read x)); fill(mut h); 0 }
+""", "region", 'invariant payload does not satisfy', (8, 5)),
+    "owners-generic-holder-view-cannot-outlive-inner-scope": ("""
+type Holder<T> { item: T? }
+impl<T> Holder<T> {
+    mut fn put(value: take T) { self.item = present(value) }
+}
+fn fill<region a>(h: mut Holder<read i32 from a>, v: read i32 from a) { h.put(read v) }
+fn main(): i32 {
+    var x = 1
+    var h = Holder(item: present(read x))
+    {
+        let y = 2
+        fill(mut h, read y)
+    }
+    match h.item { present(v) => *v, none => 0 }
+}
+""", "ownership", 'live read loan', (13, 5)),
+    "owners-raw-pointer-store-of-view-cannot-escape-into-receiver": ("""
+type V<T> { p: ptr<mut T>; n: usize }
+impl<T> V<T> {
+    mut fn push(value: take T) { unsafe { core::ptr::write(self.p.add(self.n), value) }; self.n = self.n + 1usize }
+}
+fn leak(v: mut V<read i32>) {
+    let y = 2
+    v.push(read y)
+}
+fn main() { 0 }
+""", "ownership", 'cannot store a view of local storage into caller-owned storage', (8, 5)),
+    "owners-mem-replace-cannot-store-local-view-into-caller-storage": ("""
+type H<T> { v: T }
+fn bad(slot: mut H<read i32>): Unit {
+    let x = 5
+    let old = core::mem::replace(slot, H(read x))
+}
+fn main() { 0 }
+""", "ownership", 'cannot store a view of local storage into caller-owned storage', (5, 15)),
+    "owners-generic-take-view-instantiation-cannot-escape-into-caller-storage": ("""
+type H<T> { v: T }
+fn put<T>(h: mut H<T>, x: take T): Unit { h.v = x }
+fn bad(h: mut H<read i32>): Unit {
+    let x = 5
+    put(h, read x)
+}
+fn main() { 0 }
+""", "ownership", 'cannot store a view of local storage into caller-owned storage', (6, 5)),
+    "owners-interface-by-value-self-requires-sized": ("""
+interface Consume { take fn consume(): i32; }
+fn main() { 0 }
+""", "type", "interface's 'Self' is unsized unless declared 'interface Name: Sized'", (2, 26)),
+    "turbofish-excess-generic-arguments": (
+        "fn id<T>(x: take T): T { x }\nfn main(): i32 { id::<i32, i32>(1) }",
+        "type", "excess explicit generic arguments", (2, 18)),
+    "generic-static-inferred-argument-mismatch": (
+        "type Vec<T> { len: usize\n  static fn empty(): Vec<T> { Self(0usize) } }\n"
+        "fn main(): i32 { let a: Vec<i32> = Vec::empty(); let b: Vec<u8> = a; 0 }",
+        "type", "expected Vec<u8>, found Vec<i32>", (3, 50)),
+    "generic-unit-variant-context-mismatch": (
+        "enum Opt<T> { Some(T), Nothing }\n"
+        "fn main(): i32 { let s: Opt<i32> = Opt::Nothing; let t: Opt<u8> = s; 0 }",
+        "type", "expected Opt<u8>, found Opt<i32>", (2, 50)),
+    "for-exclusive-iterator-loan-conflict": (
+        "module core { pub module iter { pub interface Iterator { type Item; mut fn next(): Self::Item?; } } }\n"
+        "type C { n: i32 }\nimpl C implements core::iter::Iterator { type Item = i32\n"
+        " mut fn next(): i32? { none } }\n"
+        "fn main(): i32 { var c = C(0); for x in mut c { c.n = 1 }; 0 }",
+        "ownership", "live exclusive loan", (5, 49)),
     "machine-target-rejects-strengthened-interface-feature-contract": (
         'interface Ready { fn answer():i32; }\n'
         'copy type Value implements Ready { @target_feature("' +
         ("aes" if ARM64 else "avx2") +
         '") fn answer():i32 { 42 } }\nfn main() { 0 }',
-        "type", "contract does not match interface"),
+        "type", "contract does not match interface", (2, 59)),
     "machine-target-rejects-implicit-nonbaseline-destructor": (
         'type Value { @target_feature("' + ("aes" if ARM64 else "avx2") +
         '") drop {} }\nfn main() { let value=Value(); 0 }',
-        "feature", "implicit destructor dispatch"),
+        "feature", "implicit destructor dispatch", (1, 37)),
     "machine-asm-naked-rejects-owned-cleanup-root": (
         '@layout(C) type Owned { value:i32; drop {} }\n'
         '@naked unsafe extern "C" fn invalid(value: take Owned) { naked_asm!("ret") }\n'
-        'fn main() { 0 }', "attribute", "requiring cleanup"),
+        'fn main() { 0 }', "attribute", "requiring cleanup", (2, 37)),
     **({
         "machine-target-rejects-out-of-bounds-native-lane": (
             'fn main() { unsafe { let vector=core::arch::aarch64::vdupq_n_s32(42);'
             'core::arch::aarch64::vgetq_lane_s32(vector,4) }; 0 }',
-            "type", "lane is outside"),
+            "type", "lane is outside", (1, 113)),
         "machine-target-rejects-dynamic-native-lane": (
             'fn main() { let lane=1; unsafe { '
             'let vector=core::arch::aarch64::vdupq_n_s32(42);'
             'core::arch::aarch64::vgetq_lane_s32(vector,lane) }; 0 }',
-            "type", "constant integer"),
+            "type", "constant integer", (1, 125)),
     } if ARM64 else {}),
     **({
         "machine-asm-rejects-unavailable-register-feature": (
             'fn main() { unsafe { asm!("/* {value} */",'
             'value = out(ymm_reg) _,options(nomem)) }; 0 }',
-            "assembly", "required feature"),
+            "assembly", "required feature", (1, 22)),
     } if not ARM64 else {
         "machine-target-core-rejects-hosted-optional-detector": (
             'fn main() { if is_aarch64_feature_detected!("aes") { 0 } else { 1 } }',
-            "feature", "unsupported core feature detection"),
+            "feature", "unsupported core feature detection", (1, 16)),
     }),
     "machine-asm-rejects-impossible-register-pressure": (
         'fn main() { unsafe { asm!("/* ' +
@@ -449,98 +1631,415 @@ MACHINE_NEGATIVE = {
         ' */",' + ','.join('v' + str(i) + '= in(' +
             ('vreg_low16' if ARM64 else 'reg_abcd') + ') ' + str(i + 1) + 'i64'
             for i in range(17 if ARM64 else 5)) +
-        ') }; 0 }', "assembly", "available register inventory"),
+        ') }; 0 }', "assembly", "available register inventory", (1, 22)),
     "machine-target-rejects-vector-element-shape-mismatch": (
         'fn main() { unsafe { ' + (
             'let value=core::arch::aarch64::vdupq_n_f32(1.0f32);'
             'core::arch::aarch64::vaddq_s32(value,value)' if ARM64 else
             'let value=core::arch::x86_64::_mm_set1_ps(1.0f32);'
             'core::arch::x86_64::_mm_add_epi32(value,value)') +
-        ' }; 0 }', "type"),
+        ' }; 0 }', "type", 'expected core::arch::', (1, 104)),
     "machine-asm-rejects-register-class-used-as-clobber-only": (
         'fn main() { unsafe { asm!("nop",out(' + ("preg" if ARM64 else "x87_reg") +
-        ') _) }; 0 }', "assembly", "explicit register"),
+        ') _) }; 0 }', "assembly", "explicit register", (1, 22)),
     "machine-asm-global-rejects-runtime-constant": (
         'global_asm!("/* {value} */",value = const unknown)\nfn main() { 0 }',
-        "type", "integer constant"),
+        "type", "unsupported operation in required constant", (1, 43), 1),
     "machine-asm-rejects-raw-nul-template": (
         'fn main() { unsafe { asm!("nop\\0",options(raw)) }; 0 }',
-        "assembly", "NUL"),
+        "assembly", "NUL", (1, 22)),
     "machine-asm-naked-rejects-unwind-without-metadata": (
         '@naked unsafe extern "C-unwind" fn invalid() { naked_asm!("ret") }\n'
-        'fn main() { 0 }', "feature", "unwind metadata"),
+        'fn main() { 0 }', "feature", "unwind metadata", (1, 1)),
     "machine-asm-naked-rejects-hidden-defaults": (
         '@naked unsafe extern "C" fn invalid(value:i32=42):i32 { naked_asm!("ret") }\n'
-        'fn main() { 0 }', "attribute", "defaults"),
+        'fn main() { 0 }', "attribute", "defaults", (1, 37)),
     "machine-asm-rejects-uninitialized-input": (
         'fn main() { var value:i32; unsafe { asm!("/* {input} */",'
-        'input = in(reg) value) }; 0 }', "type", "uninitialized"),
+        'input = in(reg) value) }; 0 }', "type", "uninitialized", (1, 74)),
     "machine-asm-rejects-noreturn-output": (
         'fn main() { var value=0; unsafe { asm!("/* {out} */",'
         'out = out(reg) value, options(noreturn)) } }',
-        "assembly", "noreturn"),
+        "assembly", "noreturn", (1, 35)),
     "machine-target-rejects-dispatch-proof-after-join": (
         '@target_feature("' + ("aes" if ARM64 else "avx2") +
         '") unsafe fn accelerated(): i32 { 42 }\n'
         'fn main() { if ' + ('is_aarch64_feature_detected!("neon")' if ARM64 else
                              'is_x86_feature_detected!("avx2")') +
-        ' { }; unsafe { accelerated() }; 0 }', "feature"),
+        ' { }; unsafe { accelerated() }; 0 }', "feature", 'target operation/call requires established target feature availability', (2, 67)),
     "machine-target-rejects-nonbaseline-hosted-entry": (
         '@target_feature("' + ("aes" if ARM64 else "avx2") +
-        '") fn main() { 0 }', "feature", "hosted entry"),
+        '") fn main() { 0 }', "feature", "hosted entry", (1, 24)),
     "machine-asm-rejects-conflicting-options": (
         'fn main() { unsafe { asm!("nop",options(nomem,readonly)) }; 0 }',
-        "assembly", "nomem and readonly"),
+        "assembly", "nomem and readonly", (1, 22)),
     "machine-asm-rejects-pure-without-output": (
         'fn main() { unsafe { asm!("nop",options(pure,nomem)) }; 0 }',
-        "assembly", "observable output"),
+        "assembly", "observable output", (1, 22)),
     "machine-asm-requires-unsafe": (
-        'fn main() { asm!("nop"); 0 }', "unsafe"),
+        'fn main() { asm!("nop"); 0 }', "unsafe", 'operation requires an unsafe block or unsafe function', (1, 13)),
     "machine-asm-rejects-reserved-register": (
         'fn main() { unsafe { asm!("nop",out("' + ("x18" if ARM64 else "rsp") +
-        '") _) }; 0 }', "assembly", "reserved"),
+        '") _) }; 0 }', "assembly", "reserved", (1, 22)),
     "machine-asm-rejects-register-alias-conflict": (
         'fn main() { unsafe { asm!("nop",in("' + ("x0" if ARM64 else "rax") +
         '") 1i64,out("' + ("w0" if ARM64 else "eax") +
-        '") _) }; 0 }', "assembly", "conflicting"),
+        '") _) }; 0 }', "assembly", "conflicting", (1, 22)),
     "machine-asm-rejects-managed-type": (
         'copy type Pair { first: i32; second: i32 }\n'
         'fn main() { let pair = Pair(1,2); unsafe { asm!("/* {value} */",'
-        'value = in(reg) pair) }; 0 }', "assembly", "operand type"),
+        'value = in(reg) pair) }; 0 }', "assembly", "operand type", (2, 44)),
     "machine-asm-rejects-invalid-modifier": (
         'fn main() { unsafe { asm!("/* {value:z} */",value = in(reg) 1) }; 0 }',
-        "assembly", "modifier"),
+        "assembly", "modifier", (1, 22)),
     "machine-asm-rejects-unwind-option": (
         'fn main() { unsafe { asm!("nop",options(may_unwind)) }; 0 }',
-        "assembly", "unsupported assembly option"),
+        "assembly", "unsupported assembly option", (1, 22)),
     "machine-asm-naked-rejects-ordinary-body": (
         '@naked unsafe extern "C" fn invalid(value: i32): i32 { value }\n'
-        'fn main() { 0 }', "attribute", "exactly naked_asm"),
+        'fn main() { 0 }', "attribute", "exactly naked_asm", (1, 26)),
     "machine-target-rejects-unknown-feature": (
         '@target_feature("imaginary") fn invalid() {}\nfn main() { 0 }',
-        "feature", "unknown target feature"),
+        "feature", "unknown target feature", (1, 17)),
     "machine-target-rejects-unguarded-feature-call": (
         '@target_feature("' + ("aes" if ARM64 else "avx2") +
         '") unsafe fn accelerated(): i32 { 42 }\n'
         'fn main() { unsafe { accelerated() }; 0 }',
-        "feature", "established target feature"),
+        "feature", "established target feature", (2, 22)),
     "machine-target-rejects-feature-erasure": (
         '@target_feature("' + ("aes" if ARM64 else "avx2") +
         '") unsafe fn accelerated(): i32 { 42 }\n'
         'fn main() { let callback: unsafe fn(): i32 = accelerated; 0 }',
-        "type"),
+        "type", 'found unsafe fn', (2, 13)),
     "machine-target-rejects-wrong-architecture-operation": (
         'fn main() { unsafe { ' + (
             'core::arch::x86_64::_mm_set1_epi32(42)' if ARM64 else
-            'core::arch::aarch64::vdupq_n_s32(42)') + ' }; 0 }', "feature"),
+            'core::arch::aarch64::vdupq_n_s32(42)') + ' }; 0 }', "feature", 'architecture operation is unavailable on this target', (1, 22), 1),
     "machine-target-rejects-known-unimplemented-operation": (
         'fn main() { unsafe { core::arch::' +
         ('aarch64::vaeseq_u8' if ARM64 else 'x86_64::_mm_aesenc_si128') +
-        '() }; 0 }', "feature", "unsupported architecture operation"),
+        '() }; 0 }', "feature", "unsupported architecture operation", (1, 22)),
 }
 
 
+def stress_program(functions, products, instances, locals_):
+    lines = [f"copy type P{i} {{ a: i32; b: i64 }}" for i in range(products)]
+    lines.append("copy type Box<T: Copy> { value: T }")
+    lines += [f"fn g{i}(x: i32): Box<P{i % products}> {{ return Box(P{i % products}(x, 1)) }}"
+              for i in range(instances)]
+    lines += [f"fn f{i}(x: i32): i32 {{ return x + {i % 7} }}" for i in range(functions)]
+    lines += ["fn many(): i32 {", "    var s = 0"]
+    for i in range(locals_):
+        lines += [f"    let v{i} = {i}", f"    s = s + v{i} % 3"]
+    lines += ["    return s", "}", "fn main(): i32 {", "    var t = many()"]
+    lines += [f"    t = t + f{i}(1)" for i in range(0, functions, 50)]
+    lines += [f"    t = t + g{i}(1).value.a" for i in range(instances)]
+    lines += ["    if t < 0 { return 1 }", "    return 0", "}"]
+    return "\n".join(lines) + "\n"
+
+
 POSITIVE = {
+    "closure-over-exclusive-views-releases-after-last-call": """
+type Cur<region r> { p: mut i32 from r }
+fn main(): i32 {
+    var v = 1
+    var cur = Cur(mut v)
+    var slot = fn(): mut i32 { mut *cur.p }
+    let a = slot()
+    *a = 5
+    let b = slot()
+    *b += 1
+    v += 1
+    if v == 7 { 0 } else { 1 }
+}
+""",
+    "local-iterator-of-exclusive-view-item-returns-as-input-view": BAG_ITER_MUT + """
+fn first_mut(c: mut Bag): (mut i32 from c)? {
+    var it = Cursor(mut c, 0)
+    it.next()
+}
+fn main(): i32 {
+    var bag = Bag(1, 2)
+    match take first_mut(mut bag) { present(x) => { *x += 5 }, none => { return 1 } }
+    if bag.a == 6 && bag.b == 2 { 0 } else { 2 }
+}
+""",
+    "raw-dereference-view-binds-generic-self-to-payload": r"""
+interface Less { fn less(other: read Self): bool; }
+impl i32 implements Less { fn less(other: read i32): bool { self < other } }
+unsafe fn ordered<T: Less>(p: ptr<mut T>, q: ptr<mut T>): bool {
+    unsafe { read *p }.less(unsafe { read *q })
+}
+fn main(): i32 {
+    var a = 1
+    var b = 2
+    let p = mut a as ptr<mut i32>
+    let q = mut b as ptr<mut i32>
+    if unsafe { ordered(p, q) } && !unsafe { ordered(q, p) } { 0 } else { 1 }
+}
+""",
+    "integer-and-char-range-matches-are-exhaustive": r"""
+fn bucket(x: u8): i32 { match x { 0..=100 => 1, 101..200 => 2, 200..=255 => 3 } }
+fn sign(x: i8): i32 { match x { -128..0 => -1, 0 => 0, 1..=127 => 1 } }
+fn plane(c: char): i32 { match c { '\u{0}'..='\u{d7ff}' => 1, '\u{e000}'..='\u{10ffff}' => 2 } }
+fn main(): i32 {
+    if bucket(0u8) != 1 || bucket(150u8) != 2 || bucket(255u8) != 3 { return 1 }
+    if sign(-128i8) != -1 || sign(0i8) != 0 || sign(127i8) != 1 { return 2 }
+    if plane('a') != 1 || plane('\u{10ffff}') != 2 { return 3 }
+    0
+}
+""",
+    "for-user-iterators-by-mode": r"""
+module core {
+    pub module iter {
+        pub interface Iterator { type Item; mut fn next(): Self::Item?; }
+        pub interface IntoIterator: Sized { type Item; type IntoIter: Iterator; fn into_iter(receiver self: take Self): Self::IntoIter; }
+    }
+}
+type Counter { n: i32; max: i32 }
+impl Counter implements core::iter::Iterator {
+    type Item = i32
+    mut fn next(): i32? {
+        if self.n < self.max { let v = self.n; self.n += 1; present(v) } else { none }
+    }
+}
+type Bag { max: i32 }
+impl Bag implements core::iter::IntoIterator {
+    type Item = i32
+    type IntoIter = Counter
+    fn into_iter(receiver self: take Self): Counter { Counter(0, self.max) }
+}
+fn main(): i32 {
+    var total = 0
+    for x in Counter(0, 5) { total += x }
+    for x in take Bag(4) { total += x }
+    var c = Counter(0, 3)
+    for x in mut c { total += x * 100 }
+    total - 316
+}
+""",
+    "generic-enum-unit-variant-from-context": """
+enum Opt<T> { Nothing, Just(T) }
+fn nothing<T>(): Opt<T> { Opt::Nothing }
+fn main(): i32 {
+    let a: Opt<i32> = Opt::Nothing
+    let b = Opt::<i32>::Nothing
+    let c: Opt<i32> = nothing::<i32>()
+    match a { Opt::Nothing => 0, Opt::Just(x) => x }
+}
+""",
+    "limits-stress-thousands-of-declarations-and-locals":
+        stress_program(5000, 2000, 500, 3000),
+    "limits-more-than-1024-locals-and-parameters": (
+        "type Owned { value:i32 }\n"
+        "fn many(" + ",".join(f"a{i}:i32" for i in range(1500)) + "): i32 { a1499 }\n"
+        "fn main(): i32 {\n" + "".join(f"let a{i}={i};" for i in range(1500)) +
+        "\n let items=[Owned(1)]; match take items { [rest @ ..] => 0 } }\n"),
+    "array-million-elements-copy-pass-return-loop": """
+static TABLE: [u8; 1_000_000] = [5; 1_000_000];
+static ZEROS: [i32; 300_000] = [0; 300_000];
+fn sum(v: read [u8; 1_000_000]): i32 {
+    var total = 0
+    for x in read v { total += x as i32 }
+    total
+}
+fn byvalue(v: take [u8; 1_000_000]): i32 {
+    var total = 0
+    for x in take v { total += x as i32 }
+    total
+}
+fn make(): [u8; 1_000_000] { [3; 1_000_000] }
+fn bump(v: mut [u8; 1_000_000]) { for x in mut v { x += 1 } }
+fn main(): i32 {
+    var a = make()
+    var b = a
+    b[10] = 9
+    if a[10] != 3 { return 1 }
+    if b[10] != 9 { return 2 }
+    bump(mut a)
+    if a[999_999] != 4 { return 3 }
+    if sum(a) != 4_000_000 { return 4 }
+    var c = b
+    if byvalue(c) != 3_000_000 + 6 { return 5 }
+    if TABLE[999_999] != 5 || ZEROS[299_999] != 0 { return 6 }
+    var i = 0
+    while i < 1_000_000 { b[i] = (i % 251) as u8; i += 1 }
+    if b[250] != 250 || b[251] != 0 { return 7 }
+    var same = true
+    i = 0
+    while i < 1_000_000 { if a[i] != 4 { same = false }; i += 1 }
+    if !same { return 8 }
+    0
+}
+""",
+    "array-large-struct-repeat-and-nested": """
+copy type Pt { x: i32; y: u8 }
+fn main(): i32 {
+    var pts = [Pt(7, 8); 100_000]
+    pts[99_999].x = 1
+    if pts[5].x != 7 || pts[99_999].x != 1 || pts[99_999].y != 8 { return 1 }
+    var grid = [[1i32; 1000]; 500]
+    grid[499][999] = 5
+    var s = 0
+    for row in read grid { for v in read row { s += v } }
+    if s != 500 * 1000 + 4 { return 2 }
+    var k = 0
+    var pattern = [0x5Au8; 500_000]
+    pattern[1] = 1
+    if pattern[0] != 0x5A || pattern[499_999] != 0x5A || pattern[1] != 1 { return 3 }
+    0
+}
+""",
+    "array-large-droppable-literal-drops-each-element": """
+type G { counter: ptr<mut i32>; drop { unsafe { *self.counter += 1 } } }
+fn main(): i32 {
+    var count = 0
+    let c = core::ptr::from_mut(count)
+    {
+        let a = [G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c), G(c)]
+    }
+    if count == 100 { 0 } else { 1 }
+}
+""",
+    "limits-array-beyond-65536-elements": """
+static TABLE: [u8;70000] = [3;70000];
+fn main(): i32 {
+    var big = [1u8; 100000]
+    big[99999] = 7
+    if big[99999] != 7 { return 1 }
+    if big[0] != 1 { return 2 }
+    if TABLE[69999] != 3 { return 3 }
+    0
+}
+""",
+    "review-independent-implementation-budget": (
+        "interface Code { fn code():i32; }\n" +
+        "".join(f"type T{i} {{}}\nimpl T{i} implements Code {{ fn code():i32 {{ {i} }} }}\n"
+                for i in range(92)) +
+        "fn main() { T91().code() - 91 }\n"),
+    "array-dynamic-index-large-bounded-cfg": """
+fn get(v: read [i32;3000], i: i32): i32 { v[i] }
+fn put(v: mut [i32;3000], i: i32, x: i32) { v[i] = x }
+fn main(): i32 {
+    var values = [0; 3000]
+    var i = 0
+    while i < 3000 { put(mut values, i, i * 2); i = i + 1 }
+    var sum = 0
+    i = 0
+    while i < 3000 { sum = sum + get(values, i) - i; i = i + 1 }
+    if sum == 4498500 && get(values, 2999) == 5998 { 0 } else { 1 }
+}
+""",
+    "array-dynamic-index-nested-and-products": """
+copy type Cell { left: i32; right: u8 }
+fn main(): i32 {
+    var grid = [[0u8; 300]; 300]
+    var r = 0
+    while r < 300 {
+        var c = 0
+        while c < 300 { grid[r][c] = (r + c) as u8; c = c + 1 }
+        r = r + 1
+    }
+    var cells = [Cell(1, 2u8); 4]
+    var k = 3
+    cells[k].left = 40
+    cells[k - 3].right = 7u8
+    if grid[299][299] == 86u8 && grid[10][20] == 30u8 && cells[3].left + cells[0].left == 41 &&
+       cells[0].right == 7u8 && cells[3].right == 2u8 { 0 } else { 1 }
+}
+""",
+    "array-dynamic-index-mut-borrow-and-usize": """
+fn bump(value: mut i32) { value = value + 1 }
+fn main(): i32 {
+    var values = [10, 20, 30]
+    var index = 2usize
+    bump(mut values[index])
+    let offset = 1
+    bump(mut values[offset])
+    if values[2usize] == 31 && values[1] == 21 && values[0] == 10 { 0 } else { 1 }
+}
+""",
+    "review-destructuring-shadows-after-initializer": """
+fn main() { let a = 1; let (a,b) = (a - 1,2); a }
+""",
+    "review-recursive-generic-permutation": """
+copy type Pair<A:Copy,B:Copy> { first:A; second:B }
+fn recurse<T:Copy,U:Copy>(p:Pair<T,U>,q:Pair<U,T>,n:i32):T {
+    if n == 0 { p.first } else {
+        let other = recurse::<U,T>(q,p,n-1)
+        p.first
+    }
+}
+fn main() { recurse(Pair(0,2u8),Pair(3u8,4),1) }
+""",
+    "review-symbolic-array-region-outlives": """
+fn put<region a,region b,const N:i32>(
+    dst:mut [read i32 from b;N],src:take [read i32 from a;N]):Unit where region a:b {
+    dst = src
+}
+fn main() { 0 }
+""",
+    "review-always-returning-machine-argument": """
+fn early():i32 {
+    let pointer = core::ptr::from_ref({ return 7; 5i64 })
+    0
+}
+fn main() { early() - 7 }
+""",
+    "review-generic-array-capture-try-edges": """
+fn checked(value:i32):i32 throws i32 {
+    if value > 5 { throw value }
+    value
+}
+fn scan<const N:i32>(values:read [i32;N]):i32 {
+    let outcome = capture {
+        var total = 0
+        for value in values { total += try checked(value) }
+        total
+    }
+    match outcome { success(total) => total, failure(value) => value }
+}
+fn main() {
+    let first = [1,2,3]
+    let second = [1,7,3]
+    if scan(first) == 6 && scan(second) == 7 { 0 } else { 1 }
+}
+""",
+    "review-associated-where-selects-after-self-match": """
+interface Bound { type Output; }
+interface Code { fn code():i32; }
+type Value {}
+impl Value implements Bound { type Output = i32; }
+type Box<T> { value:T }
+impl<T:Bound> Box<T> implements Code where <T implements Bound>::Output = i32 {
+    fn code():i32 { 7 }
+}
+fn main() { Box(Value()).code() - 7 }
+""",
+    "review-generic-transparent-zero-sized-field": """
+@layout(transparent)
+copy type Wrapper<T:Copy> { value:T; other:u32 }
+fn main() {
+    let value = Wrapper((),42u32)
+    if value.other == 42u32 && core::mem::size_of::<Wrapper<Unit>>() == 4usize { 0 } else { 1 }
+}
+""",
+    "review-tuple-member-chain": """
+fn main():i32 { let value = (1,(2,3)); value.1.0 - 2 }
+""",
+    "review-match-newlines-inside-call": """
+fn identity(value:i32):i32 { value }
+fn main():i32 {
+    identity(match 1 {
+        1 => 0
+        _ => 3
+    })
+}
+""",
+    "review-quoted-identifiers": """
+fn `match`(`type`:i32):i32 { `type` }
+fn main():i32 { `match`(0) }
+""",
     "machine-static-native-cell-constructors-and-guard-cleanup": """
 static mut CELL: core::cell::Cell<i32> = core::cell::Cell::new(0);
 static mut STATE: core::cell::RefCell<i32> = core::cell::RefCell::new(41);
@@ -590,6 +2089,26 @@ fn main() {
     if sum(values) == 42 && at(values,index) == 21 &&
        from_slice(slice,index) == 21 && slice[1usize] == 21 &&
        values[0usize] == 21 { 0 } else { 1 }
+}
+""",
+    "slice-length-uses-view-metadata": """
+fn length<T>(values: read [T]): usize { values.len() }
+fn identity(values: read [i32]): read [i32] from values { read values }
+fn counted(values: read [i32], count: mut i32): read [i32] from values {
+    count += 1
+    read values
+}
+fn main() {
+    var values = [20, 22]
+    var count = 0
+    let empty: [i32; 0] = []
+    let zero: read [i32] = read empty
+    let slice: mut [i32] = mut values
+    let n = counted(slice, count).len()
+    slice[0] += 1
+    if length::<i32>(slice) == 2usize && identity(slice).len() == 2usize &&
+       zero.len() == 0usize && n == 2usize && count == 1 &&
+       slice[0] == 21 { 0 } else { 1 }
 }
 """,
     "machine-numeric-wide-bounded-array-count-and-zero-array-alignment": """
@@ -1942,6 +3461,132 @@ fn main() {
     if *preserve::<Owner>(read value) == 42 { 0 } else { 1 }
 }
 """,
+    "borrowing-iteration-over-user-collection": """
+module core { pub module iter {
+  pub interface Iterator { type Item; mut fn next(): Self::Item?; }
+  pub interface Iterable { type Item; type Iter<region r>; fn iter<region r>(receiver self: read Self from r): Self::Iter<region r>; }
+  pub interface IterableMut { type Item; type IterMut<region r>; fn iter_mut<region r>(receiver self: mut Self from r): Self::IterMut<region r>; }
+} }
+extern "C" {
+    unsafe fn realloc(p: ptr<mut u8>, n: usize): ptr<mut u8>;
+    unsafe fn free(p: ptr<mut u8>): Unit;
+}
+import core::iter::{Iterator, Iterable, IterableMut};
+type Vec<T> { ptr: ptr<mut T>; len: usize; cap: usize
+    drop { unsafe {
+        var i = 0usize
+        while i < self.len { core::ptr::drop_in_place(self.ptr.add(i)); i += 1usize }
+        if self.cap != 0usize { free(self.ptr.cast::<u8>()) }
+    } }
+}
+impl<T> Vec<T> {
+    mut fn push(v: take T): Unit {
+        if self.len == self.cap {
+            let nc = if self.cap == 0usize { 4usize } else { self.cap * 2usize }
+            let np = unsafe { realloc(self.ptr.cast::<u8>(), nc * core::mem::size_of::<T>()) }
+            self.ptr = np.cast::<T>()
+            self.cap = nc
+        }
+        unsafe { core::ptr::write(self.ptr.add(self.len), v) }
+        self.len += 1usize
+    }
+}
+fn new_vec<T>(): Vec<T> { Vec(core::ptr::null_mut::<T>(), 0usize, 0usize) }
+type VecIter<T, region r> { v: read Vec<T> from r; i: usize }
+impl<T, region r> VecIter<T, region r> implements Iterator {
+    type Item = read T from r
+    mut fn next(): (read T from r)? {
+        if self.i < self.v.len {
+            let x = unsafe { read *self.v.ptr.add(self.i) }
+            self.i += 1usize
+            present(x)
+        } else { none }
+    }
+}
+impl<T> Vec<T> implements Iterable {
+    type Item = T
+    type Iter<region r> = VecIter<T, region r>
+    fn iter<region r>(receiver self: read Self from r): VecIter<T, region r> { VecIter(read self, 0usize) }
+}
+
+type VecIterMut<T, region r> { v: mut Vec<T> from r; i: usize }
+impl<T, region r> VecIterMut<T, region r> implements Iterator {
+    type Item = mut T from r
+    mut fn next(): (mut T from r)? {
+        if self.i < self.v.len {
+            let x = unsafe { mut *self.v.ptr.add(self.i) }
+            self.i += 1usize
+            present(x)
+        } else { none }
+    }
+}
+impl<T> Vec<T> implements IterableMut {
+    type Item = T
+    type IterMut<region r> = VecIterMut<T, region r>
+    fn iter_mut<region r>(receiver self: mut Self from r): VecIterMut<T, region r> { VecIterMut(mut self, 0usize) }
+}
+fn main(): i32 {
+    var v = new_vec::<i32>()
+    v.push(1); v.push(2); v.push(3)
+    var t = 0
+    for x in v { t += *x }
+    for x in mut v { *x += 10 }
+    for x in v { t += *x }
+    t - 6 - 36
+}
+""",
+    "region-family-associated-product-iteration": """
+module core { pub module iter {
+  pub interface Iterator { type Item; mut fn next(): Self::Item?; }
+  pub interface Iterable { type Iter<region r>; fn iter<region r>(receiver self: read Self from r): Self::Iter<region r>; }
+} }
+import core::iter::Iterator;
+import core::iter::Iterable;
+type Bag { a: i32; b: i32 }
+type BagIter<region r> { bag: read Bag from r; i: i32 }
+impl<region r> BagIter<region r> implements Iterator {
+    type Item = i32
+    mut fn next(): i32? {
+        let i = self.i
+        self.i += 1
+        if i == 0 { present(self.bag.a) } else if i == 1 { present(self.bag.b) } else { none }
+    }
+}
+impl Bag implements Iterable {
+    type Iter<region r> = BagIter<region r>
+    fn iter<region r>(receiver self: read Self from r): BagIter<region r> { BagIter(read self, 0) }
+}
+fn main(): i32 {
+    let bag = Bag(3, 4)
+    var t = 0
+    for x in bag { t += x }
+    t - 7
+}
+""",
+    "optional-and-mutable-view-results-reborrow-matched-views": """
+enum Slot<K, V> { Empty, Full(K, V) }
+fn value_of<K, V>(s: read Slot<K, V>): (read V from s)? {
+    match s { Slot::Full(_, v) => present(read v), _ => none }
+}
+fn value_mut<K, V>(s: mut Slot<K, V>): (mut V from s)? {
+    match mut s { Slot::Full(_, v) => present(mut v), _ => none }
+}
+type Cell { slot: Slot<i32, i32> }
+impl Cell {
+    fn get<region q>(k: read i32 from q): (read i32 from self)? { value_of(read self.slot) }
+}
+fn main(): i32 {
+    var s = Slot::Full(1, 10)
+    match take value_mut(mut s) { present(v) => { *v += 5 }, none => {} }
+    let c = Cell(s)
+    let k = 1
+    match c.get(read k) { present(v) => *v - 15, none => 1 }
+}
+""",
+    "closure-passed-to-generic-function-pointer-parameter": """
+fn apply<B>(f: take fn(i32): B): B { f(1) }
+fn main(): i32 { apply::<i32>(fn(x: i32): i32 { x + 1 }) - 2 }
+""",
     "opaque-associated-result-keeps-declared-interface": """
 interface Readable { fn value(): i32; }
 interface Factory { type Item: Readable; fn create(): Self::Item; }
@@ -2418,6 +4063,17 @@ fn main() {
     var sum = 0
     for (first, second) in [(10, 11), (10, 11)] { sum += first + second }
     if sum == 42 { 0 } else { 1 }
+}
+""",
+    "defaulted-bounded-generic-in-signature": """
+interface Tag { fn tag(): i32; }
+copy type Plain {}
+impl Plain implements Tag { fn tag(): i32 { 7 } }
+type Holder<A: Tag = Plain> { a: A }
+fn peek(h: read Holder): i32 { h.a.tag() }
+fn main(): i32 {
+    let h = Holder(Plain())
+    peek(h) - 7
 }
 """,
     "nested-optionals-spec": (Path(__file__).resolve().parents[1] / "examples/spec/nested-optionals.mt").read_text(),
@@ -3738,6 +5394,195 @@ fn main() {{
 
 
 NEGATIVE = {
+    "closure-result-views-of-captured-exclusive-view-cannot-coexist": ("""
+type Cur<region r> { p: mut i32 from r }
+fn main(): i32 {
+    var v = 1
+    var cur = Cur(mut v)
+    var f = fn(): mut i32 { mut *cur.p }
+    let a = f()
+    let b = f()
+    *a = 1
+    *b = 2
+    0
+}
+""", "ownership", "live exclusive loan", (9, 5)),
+    "closure-capturing-exclusive-view-blocks-source-write": ("""
+fn main(): i32 {
+    var v = 1
+    let m = mut v
+    var f = fn(): Unit { *m += 1 }
+    f()
+    v = 3
+    f()
+    0
+}
+""", "ownership", "live exclusive loan", (7, 5)),
+    "stored-closure-blocks-captured-source-use": ("""
+type Holder<F: mut fn(): Unit> { f: F }
+fn main(): i32 {
+    var v = 1
+    var h = Holder(fn(): Unit { v += 1 })
+    v = 5
+    h.f()
+    v
+}
+""", "ownership", "live exclusive loan", (6, 5)),
+    "closure-view-result-cannot-escape-captured-local": ("""
+fn main(): i32 {
+    var f = {
+        var l = 1
+        fn(): mut i32 { mut l }
+    }
+    let a = f()
+    *a = 1
+    0
+}
+""", "ownership", "live exclusive loan", (6, 5)),
+    "result-mixing-safe-and-raw-views-stays-backed-by-every-source": ("""
+fn pick(c: mut i32, d: mut i32, p: ptr<mut i32>, flag: bool): mut i32 from (c, d) {
+    let r = if flag { mut c } else { unsafe { mut *p } }
+    r
+}
+fn main(): i32 {
+    var a = 1
+    var b = 2
+    let p = mut b as ptr<mut i32>
+    let x = pick(mut a, mut b, p, false)
+    b = 5
+    *x = 3
+    0
+}
+""", "ownership", "live exclusive loan", (11, 5)),
+    "for-over-non-iterator": (
+        "fn main(): i32 { var t = 0; for x in 5 { t += 1 }; t }",
+        "type", "for requires", (1, 29)),
+    "review-reserved-where-is-not-an-identifier": (
+        "fn where() { 0 }\nfn main(){0}",
+        "parse", "expected an identifier", (1, 4)),
+    "review-reserved-macro-is-not-an-identifier": (
+        "fn main() { let macro=1; macro }",
+        "parse", "expected an identifier", (1, 17)),
+    "review-text-literal-must-close": (
+        'fn main() { unsafe { asm!("unterminated)\n} }',
+        "lex", "unterminated text literal", (1, 27)),
+    "review-backtick-must-contain-an-identifier": (
+        "fn `bad-name`() { 0 }\nfn main(){0}",
+        "lex", "backtick contents must be an identifier", (1, 4)),
+    "text-escape-rejects-unknown-escape": (
+        'fn main() { unsafe { asm!("a\\q") }; 0 }',
+        "lex", "unsupported constant text escape", (1, 27)),
+    "text-escape-rejects-non-ascii-byte": (
+        'fn main() { unsafe { asm!("a\\x80b") }; 0 }',
+        "lex", "text byte escape requires an ASCII value", (1, 27)),
+    "text-escape-rejects-non-hexadecimal-byte": (
+        'fn main() { unsafe { asm!("a\\xZZb") }; 0 }',
+        "lex", "text byte escape requires an ASCII value", (1, 27)),
+    "text-escape-rejects-truncated-byte": (
+        'fn main() { unsafe { asm!("a\\x4") }; 0 }',
+        "lex", "incomplete byte escape", (1, 27)),
+    "text-escaped-closing-quote-is-unterminated": (
+        'fn main() { unsafe { asm!("a\\") }; 0 }',
+        "lex", "unterminated text literal", (1, 27)),
+    "backtick-rejects-empty-identifier": (
+        "fn ``() { 0 }\nfn main() { 0 }",
+        "lex", "backtick contents must be an identifier", (1, 4)),
+    "backtick-rejects-leading-digit": (
+        "fn `9x`() { 0 }\nfn main() { 0 }",
+        "lex", "backtick contents must be an identifier", (1, 4)),
+    "backtick-must-close-on-its-line": (
+        "fn `unterminated\nfn main() { 0 }",
+        "lex", "unterminated backtick identifier", (1, 4)),
+    "review-growing-copy-specialization-is-bounded": ("""
+copy type Wrapper<T:Copy> { value:T }
+fn expand<T:Copy>(value:T,n:i32):i32 {
+    if n == 0 { 0 } else { expand(Wrapper(value),n-1) }
+}
+fn main() { expand(1,2) }
+""", "limit", "specialization nesting limit", (4, 28)),
+    "review-recursive-generic-permutation-preserves-type": ("""
+copy type Pair<A:Copy,B:Copy> { first:A; second:B }
+fn swap<T:Copy,U:Copy>(p:Pair<T,U>,q:Pair<U,T>,n:i32):T {
+    if n == 0 { p.first } else {
+        let other = swap::<U,T>(q,p,n-1)
+        q.first
+    }
+}
+fn main() { 0 }
+""", "type", "expected U, found T", (6, 9)),
+    "review-local-never-name-does-not-inherit-divergence": (
+        "fn stop():Never { loop {} }\nfn done():Unit {}\n"
+        "fn invoke(stop:fn():Unit):i32 { stop() }\nfn main(){ invoke(done) }",
+        "type", "expected i32", (3, 31)),
+    "review-views-require-explicit-comparison": (
+        "fn main() { let a=1; let b=2; if read a == read b {1} else {0} }",
+        "type", "view comparisons require explicitly comparing", (1, 34)),
+    "review-unreachable-or-alternative": (
+        "fn main() { match 1 { 1 | 1 => 0, _ => 1 } }",
+        "type", "unreachable or-pattern alternative", (1, 27)),
+    "review-symbolic-array-region-escape": ("""
+fn put<region a,region b,const N:i32>(
+    dst:mut [read i32 from b;N],src:take [read i32 from a;N]):Unit {
+    dst = src
+}
+fn main() { 0 }
+""", "region", "declared relationship", (4,5)),
+    "review-concrete-generic-transparent-layout": ("""
+@layout(transparent)
+copy type Wrapper<T:Copy> { value:T; other:u32 }
+fn main() { let value = Wrapper(1u8,2u32); 0 }
+""", "attribute", "object layout cannot be established", (4, 25)),
+    "array-size-exceeds-address-space": (
+        "fn f(a:[[u64;2_000_000_000];2_000_000_000]) {}\nfn main() { 0 }",
+        "limit", "array size exceeds target address space", (1, 6)),
+    "review-cleanup-array-expansion-limit-owned-by-checker": (
+        "type Owner { drop {} }\nfn main() { let value:[[Owner;3000];3000]; 0 }",
+        "limit", "array length exceeds compiler resource limit", (1, 1)),
+    "review-truncated-negative-pattern": (
+        "fn f(x:i32):i32 {\n    match x {\n        -",
+        "parse", "expected an integer literal after '-'", (3,10), 1),
+    "review-negative-identifier-pattern": (
+        "fn f(x:i32):i32 { match x { -x => 1, _ => 0 } }\nfn main(){0}",
+        "parse", "expected an integer literal after '-'", (1, 30)),
+    "review-truncated-assembly-operand": (
+        'fn main() { unsafe { asm!("nop", value =',
+        "parse", "expected an assembly operand mode", (1, 41), 1),
+    "review-recursive-optional-layout": (
+        "type A { value: A? }\nfn main(){0}",
+        "type", "recursive by-value product has no finite layout", (1, 10), 1),
+    "review-recursive-tuple-layout": (
+        "type A { value: (i32,A) }\nfn main(){0}",
+        "type", "recursive by-value product has no finite layout", (1, 10), 1),
+    "review-recursive-array-layout": (
+        "type A { value: [A;2] }\nfn main(){0}",
+        "type", "recursive by-value product has no finite layout", (1, 10), 1),
+    "recursive-enum-payload-layout": (
+        "enum E { X(E), Y }\nfn main(){0}",
+        "type", "recursive by-value product has no finite layout", (1, 10), 1),
+    "recursive-field-reports-the-field": (
+        "fn main(){0}\ntype A {\n  x: i32\n  b: [A; 2]\n}\n",
+        "type", "recursive by-value product has no finite layout", (4, 3), 1),
+    "mutual-recursion-reports-the-closing-field": (
+        "enum E { X(i32), Y(A) }\ntype A { e: E }\nfn main(){0}",
+        "type", "recursive by-value product has no finite layout", (2, 10), 1),
+    "review-packed-indirect-borrow": ("""
+@packed(1)
+copy type Packed { tag:u8; value:i32 }
+fn inspect(value:read i32):i32 { value }
+fn main() {
+    let value = Packed(0u8,42)
+    let pointer:fn(read i32):i32 = inspect
+    pointer(value.value) - 42
+}
+""", "alignment", "unaligned storage cannot form an ordinary view", (8,13)),
+    "review-pin-optional-projection": ("""
+fn main() {
+    var value:i32? = none
+    var handle = core::pin::Pin::new(mut value)
+    let inner = handle.project_value()
+    0
+}
+""", "feature", "pin projection of sum variants", (5, 17)),
     "machine-asm-const-rejects-runtime-local": ("""
 fn main() {
     let amount = 42
@@ -3749,188 +5594,188 @@ fn main() {
     }
     0
 }
-""", "type", "required constant"),
+""", "type", "required constant", (7, 56)),
     "machine-numeric-required-u128-overflow": ("""
 fn value<const N:u128=340282366920938463463374607431768211455u128+1>():u128{N}
 fn main(){0}
-""", "type", "required integer constant overflows"),
+""", "type", "required integer constant overflows", (2, 23)),
     "machine-numeric-required-i128-division-overflow": ("""
 fn value<const N:i128=-170141183460469231731687303715884105728i128 / -1>():i128{N}
 fn main(){0}
-""", "type", "required integer constant overflows"),
+""", "type", "required integer constant overflows", (2, 23)),
     "machine-numeric-required-u8-width-overflow": ("""
 fn value<const N:u8=255u8+1>():u8{N}
 fn main(){0}
-""", "type", "required integer constant overflows"),
+""", "type", "required integer constant overflows", (2, 21)),
     "machine-numeric-required-u128-multiply-overflow": ("""
 fn value<const N:u128=(1u128<<64)*(1u128<<64)>():u128{N}
 fn main(){0}
-""", "type", "required integer constant overflows"),
+""", "type", "required integer constant overflows", (2, 23)),
     "machine-numeric-required-u128-subtract-underflow": ("""
 fn value<const N:u128=0u128-1>():u128{N}
 fn main(){0}
-""", "type", "required integer constant overflows"),
+""", "type", "required integer constant overflows", (2, 23)),
     "machine-numeric-required-i128-negate-overflow": ("""
 fn value<const N:i128=-(-170141183460469231731687303715884105728i128)>():i128{N}
 fn main(){0}
-""", "type", "required integer constant overflows"),
+""", "type", "required integer constant overflows", (2, 23)),
     "machine-numeric-required-wide-invalid-shift": ("""
 fn value<const N:u128=1u128<<128>():u128{N}
 fn main(){0}
-""", "type", "invalid shift"),
+""", "type", "invalid shift", (2, 23)),
     "machine-numeric-required-wide-zero-divisor": ("""
 fn value<const N:u128=1u128/0>():u128{N}
 fn main(){0}
-""", "type", "division by zero"),
+""", "type", "division by zero", (2, 23)),
     "machine-numeric-pattern-rejects-truncation": ("""
 fn main(){match 1u64 { 18446744073709551616 => 0, _ => 1 }}
-""", "type", "pattern literal is outside the u64 range"),
+""", "type", "pattern literal is outside the u64 range", (2, 24)),
     "machine-numeric-wide-match-rejects-missing-maximum": ("""
 fn main(){match 0u128 { 0..340282366920938463463374607431768211455 => 0 }}
-""", "type", "non-exhaustive match"),
+""", "type", "non-exhaustive match", (2, 11)),
     "machine-numeric-wide-match-rejects-unreachable-maximum": ("""
 fn main(){match 0u128 {
     0..=340282366920938463463374607431768211455 => 0,
     340282366920938463463374607431768211455 => 1
 }}
-""", "type", "unreachable match arm"),
+""", "type", "unreachable match arm", (4, 5)),
     "machine-numeric-range-rejects-conflicting-widths": ("""
 fn main(){for value in 1u64..2u128 {}
 0}
-""", "type", "expected u128, found u64"),
+""", "type", "expected u128, found u64", (2, 24)),
     "machine-numeric-index-retains-explicit-i32-contract": ("""
 fn main(){let value=[0,1];value[1u64]}
-""", "type", "expected i32, found u64"),
-    "machine-numeric-large-length-retains-resource-limit": ("""
-fn main(){let value:[u8;65537]=[0;65537];0}
-""", "limit", "array length limit exceeded"),
+""", "type", "expected i32, found u64", (2, 33)),
     "machine-numeric-wide-count-cannot-truncate-into-a-small-array": (
         "fn main() { let values = [0;340282366920938463463374607431768211455u128]; 0 }",
-        "limit","array length limit exceeded"),
+        "limit","array length limit exceeded", (1, 26)),
     "machine-numeric-usize-constant-index-cannot-truncate": (
         "fn main() { let values = [42]; values[4294967296usize] }",
-        "type","array index is out of bounds"),
+        "type","array index is out of bounds", (1, 39)),
     "machine-numeric-required-rejects-conflicting-suffix": ("""
 fn value<const N:u64>():u64{N}
 fn main(){let result=value::<42u128>();0}
-""", "type", "const argument does not match its declared type"),
+""", "type", "const argument does not match its declared type", (3, 22)),
     "machine-numeric-rejects-unknown-floating-relaxation": ("""
 @fast_math(fast)
 fn main(){0}
-""", "attribute", "unknown floating relaxation"),
+""", "attribute", "unknown floating relaxation", (2, 12)),
     "machine-numeric-rejects-duplicate-floating-relaxation": ("""
 @fast_math(contract,contract)
 module numeric { pub fn value():i32{42} }
 fn main(){0}
-""", "attribute", "duplicate floating relaxation"),
+""", "attribute", "duplicate floating relaxation", (2, 21)),
     "machine-numeric-rejects-unlisted-floating-relaxation": ("""
 @fast_math
 fn main(){0}
-""", "attribute", "requires a comma-separated list"),
+""", "attribute", "requires a comma-separated list", (2, 1)),
     "machine-numeric-checked-conversion-rejects-nonnumeric-target": ("""
 fn main(){let result=42i64.checked_cast::<bool>();0}
-""", "type", "invalid primitive operation"),
+""", "type", "invalid primitive operation", (2, 22)),
     "machine-static-zero-count-repetition-cannot-execute-drop": (
         'type Owner { value: i32; drop {} }; '
         'static EMPTY: [Owner;0] = [Owner(42);0]; fn main() { 0 }',
-        "constant", "element destructor"),
+        "constant", "element destructor", (1, 63)),
     "c-variadic-definition-rejects-native-fat-pointer": (
         'unsafe extern "C" fn callback(count: i32,args: ...): i32 { '
         'args.arg::<ptr<read [i32]>>(); 0 }; fn main() { 0 }',
-        "type", "invalid primitive"),
+        "type", "invalid primitive", (1, 60)),
     "c-variadic-definition-rejects-native-function-pointer": (
         'unsafe extern "C" fn callback(count: i32,args: ...): i32 { '
         'args.arg::<fn(): i32>(); 0 }; fn main() { 0 }',
-        "type", "invalid primitive"),
+        "type", "invalid primitive", (1, 60)),
     "machine-static-function-pointer-storage-is-not-a-function-symbol": (
         'extern "C" { @link_name("same") static ADDRESS: unsafe extern "C" fn(): i32; '
         '@link_name("same") unsafe fn imported(): i32; } fn main() { 0 }',
-        "signature", "conflicting external"),
+        "signature", "conflicting external", (1, 33)),
     "machine-static-unsafe-initializer-does-not-authorize-other-declarations": (
         'static mut VALUE: i32 = 1; static FIRST: ptr<mut i32> = unsafe { SECOND }; '
         'static SECOND: ptr<mut i32> = core::ptr::from_mut(VALUE); fn main() { 0 }',
-        "unsafe", "requires an unsafe"),
+        "unsafe", "requires an unsafe", (1, 106)),
     "machine-static-import-and-definition-share-one-loan-root": (
         '@export_name("counter") static mut COUNT: i32 = 1; '
         'extern "C" { @link_name("counter") static mut ALIAS: i32; } '
         'fn main() { let writer = unsafe { mut COUNT }; '
         'let reader = unsafe { read ALIAS }; *writer = 42; *reader }',
-        "ownership"),
+        "ownership", 'access or storage lifetime conflicts with a live read loan', (1, 195)),
     "machine-static-unaligned-address-cannot-form-safe-view": (
         '@packed(1) copy type Packed { tag: u8; value: i32 }; '
         'static VALUE: Packed = Packed(0u8,42); '
         'static VIEW: read i32 from static = read VALUE.value; fn main() { 0 }',
-        "constant", "unaligned"),
+        "constant", "unaligned", (1, 129)),
     "c-variadic-definition-native-cursor-storage-is-opaque": (
         'unsafe extern "C" fn callback(count: i32,args: ...): i32 { '
         'args.0; 0 }; fn main() { 0 }',
-        "name", "unknown field"),
+        "name", "unknown field", (1, 60)),
     "machine-static-symbol-conflict-with-function": (
         '@export_name("same") static VALUE: i32 = 42; '
         '@export_name("same") fn answer(): i32 { 42 }; fn main() { 0 }',
-        "signature", "conflicting external"),
+        "signature", "conflicting external", (1, 22), 1),
     "machine-static-duplicate-symbol-definition": (
         '@export_name("same") static FIRST: i32 = 42; '
         '@export_name("same") static SECOND: i32 = 42; fn main() { 0 }',
-        "signature", "conflicting external"),
+        "signature", "conflicting external", (1, 67)),
     "machine-static-required-initializer-overflow": (
         "static VALUE: i8 = 127 + 1; fn main() { 0 }",
-        "constant", "overflows"),
+        "constant", "overflows", (1, 20)),
     "c-variadic-definition-conditional-end-is-not-live": (
         'unsafe extern "C" fn callback(count: i32,args: ...): i32 { '
         'if count == 0 { args.end() }; args.arg::<i32>() }; fn main() { 0 }',
-        "ownership", "may have been moved"),
+        "ownership", "may have been moved", (1, 90)),
     "c-variadic-definition-copy-after-end": (
         'unsafe extern "C" fn callback(count: i32,args: ...): i32 { '
         'args.end(); let copied = args.copy(); 0 }; fn main() { 0 }',
-        "ownership", "may have been moved"),
+        "ownership", "may have been moved", (1, 85)),
     "c-variadic-definition-float-default-promotion-required": (
         'unsafe extern "C" fn callback(count: i32,args: ...): i32 { '
         'args.arg::<f32>(); 0 }; fn main() { 0 }',
-        "type", "invalid primitive"),
+        "type", "invalid primitive", (1, 60)),
     "c-variadic-definition-cursor-cannot-enter-generic-helper": (
         'fn forget<T>(value: take T) { core::mem::forget(take value) }; '
         'unsafe extern "C" fn callback(count: i32,args: ...): i32 { '
         'forget(take args); 0 }; fn main() { 0 }',
-        "ownership", "cannot be passed"),
+        "ownership", "cannot be passed", (1, 130)),
     "machine-static-mutable-access-requires-unsafe": (
         "static mut VALUE: i32 = 42; fn main() { VALUE; 0 }",
-        "unsafe", "requires an unsafe"),
+        "unsafe", "requires an unsafe", (1, 41)),
+    "machine-static-immutable-requires-shareable": (
+        "static CELL: core::cell::Cell<i32> = core::cell::Cell::new(0); fn main() { 0 }",
+        "type", "requires a Shareable type", (1, 1)),
     "machine-static-no-owned-move": (
         "type Owner { value: i32 }; static VALUE: Owner = Owner(42); "
         "fn main() { let moved = take VALUE; 0 }",
-        "ownership", "cannot move out of static"),
+        "ownership", "cannot move out of static", (1, 90)),
     "machine-static-required-initializer-no-host-execution": (
         "fn compute(): i32 { 42 }; static VALUE: i32 = compute(); fn main() { 0 }",
-        "constant", "validated constant"),
+        "constant", "validated constant", (1, 47)),
     "machine-static-required-initializer-cycle": (
         "static FIRST: i32 = SECOND; static SECOND: i32 = FIRST; fn main() { 0 }",
-        "constant", "cycle"),
+        "constant", "cycle", (1, 1)),
     "machine-static-private-module-access": (
         "module storage { static VALUE: i32 = 42; } "
-        "fn main() { storage::VALUE; 0 }", "name"),
+        "fn main() { storage::VALUE; 0 }", "name", "unresolved value 'storage::VALUE'", (1, 56)),
     "machine-static-local-view-cannot-be-stored": (
         "static VALUE: i32 = 1; static mut VIEW: read i32 from static = read VALUE;"
         "fn main() { let value = 42; unsafe { VIEW = read value }; 0 }",
-        "region"),
+        "region", 'view region or invariant payload does not satisfy its declared relationship', (1, 112)),
     "c-variadic-definition-use-after-end": (
         'unsafe extern "C" fn callback(count: i32,args: ...): i32 { '
         'args.end(); args.arg::<i32>() }; fn main() { 0 }',
-        "ownership", "may have been moved"),
+        "ownership", "may have been moved", (1, 72)),
     "c-variadic-definition-requires-promoted-type": (
         'unsafe extern "C" fn callback(count: i32,args: ...): i32 { '
         'args.arg::<i8>() as i32 }; fn main() { 0 }',
-        "type", "invalid primitive"),
+        "type", "invalid primitive", (1, 60), 1),
     "c-variadic-definition-read-requires-unsafe": (
         'extern "C" fn callback(count: i32,args: ...): i32 { '
         'args.arg::<i32>() }; fn main() { 0 }',
-        "unsafe"),
+        "unsafe", 'operation requires an unsafe block or unsafe function', (1, 53)),
     "c-variadic-definition-cursor-cannot-escape": (
         'unsafe extern "C" fn callback(count: i32,args: ...) { args }; fn main() { 0 }',
-        "ownership", "cannot escape"),
+        "ownership", "cannot escape", (1, 19), 1),
     "machine-numeric-character-constants-cannot-use-integer-arithmetic": (
         "fn value<const C: char = 'a' + 'b'>(): char { C }\nfn main() { 0 }",
-        "type","requires integer operands"),
+        "type","requires integer operands", (1, 26)),
     "machine-unpin-method-where-bound-is-required-even-with-empty-body": ("""
 type Blocked { value: i32 }
 impl Blocked not Unpin;
@@ -3943,7 +5788,7 @@ fn main() {
     parent.demand()
     0
 }
-""", "type", "Unpin"),
+""", "type", "Unpin", (10, 5)),
     "machine-unpin-method-equality-cannot-mark-shared-parent-parameter": ("""
 type Parent<T> {
     fn bounded<U: Unpin>(value: mut T): Unit where T = U {
@@ -3955,13 +5800,13 @@ type Parent<T> {
     }
 }
 fn main() { 0 }
-""", "type"),
+""", "type", 'invalid primitive operation or operand types', (8, 22)),
     "machine-cell-shared-cell-handle-cannot-grant-ordinary-mutable-view": ("""
 fn wrong(cell: read core::cell::RefCell<i32>): Unit {
     let value = cell.get_mut()
 }
 fn main() { 0 }
-""", "ownership"),
+""", "ownership", 'exclusive borrow requires a mutable place', (3, 17)),
     "machine-unpin-contextual-bound-does-not-quantify-another-type": ("""
 type Owned { marker: core::marker::PhantomPinned }
 type Wrapper<T> { value: T; marker: core::marker::PhantomPinned }
@@ -3971,7 +5816,7 @@ fn wrong<T>(value: read Wrapper<T>): Unit where Wrapper<T>: Unpin {
     let wrong = handle.get_mut()
 }
 fn main() { 0 }
-""", "type"),
+""", "type", 'unsatisfied Unpin condition', (7, 17)),
     "machine-unpin-unresolved-region-condition-is-not-unconditional": ("""
 interface Ready<region r> {}
 type Wrapper<T> { value: T; marker: core::marker::PhantomPinned }
@@ -3980,7 +5825,7 @@ fn wrong<region r, T: Ready<region r>>(value: mut Wrapper<T>) {
     let handle = core::pin::Pin::new(mut value)
 }
 fn main() { 0 }
-""", "type"),
+""", "type", 'unsatisfied Unpin condition', (6, 18)),
     "machine-unpin-associated-equation-must-be-proven": ("""
 interface Family { type Item; }
 type Source {}
@@ -3992,14 +5837,14 @@ fn main() {
     let wrong = handle.get_mut()
     0
 }
-""", "type"),
+""", "type", 'unsatisfied Unpin condition', (9, 17)),
     "machine-cell-payload-view-cannot-outlive-local-guard": ("""
 fn wrong(cell: read core::cell::RefCell<i32>): read i32 from cell {
     let guard = cell.borrow()
     guard.get_ref()
 }
 fn main() { 0 }
-""", "ownership"),
+""", "ownership", 'returned view escapes local storage', (4,5)),
     "machine-cell-returned-guard-prevents-cell-move": ("""
 fn borrow<T>(cell: read core::cell::RefCell<T>): core::cell::Ref<T> from cell {
     cell.borrow()
@@ -4010,7 +5855,7 @@ fn main() {
     let moved = cell
     0
 }
-""", "ownership"),
+""", "ownership", 'access or storage lifetime conflicts with a live read loan', (8, 17)),
     "machine-unpin-false-contextual-bound-rejected-at-call": ("""
 type Owned { marker: core::marker::PhantomPinned }
 type Wrapper<T> { value: T; marker: core::marker::PhantomPinned }
@@ -4024,7 +5869,7 @@ fn main() {
     let wrong = access(value)
     0
 }
-""", "type", "Unpin"),
+""", "type", "Unpin", (11, 17)),
     "machine-unpin-recursive-condition-is-not-a-proof": ("""
 type Wrapper<T> { value: T; marker: core::marker::PhantomPinned }
 unsafe impl<T> Wrapper<T> implements Unpin where Wrapper<T>: Unpin {}
@@ -4033,7 +5878,7 @@ fn main() {
     let wrong = handle.get_mut()
     0
 }
-""", "type"),
+""", "type", 'unsatisfied Unpin condition', (6, 17)),
     "machine-cell-owner-cannot-move-before-later-guard-cleanup": ("""
 fn main() {
     let cell = core::cell::RefCell::new(42)
@@ -4041,7 +5886,7 @@ fn main() {
     let moved = cell
     0
 }
-""", "ownership"),
+""", "ownership", 'access or storage lifetime conflicts with a live read loan', (5, 17)),
     "machine-cell-owner-cannot-mutate-after-guard-last-use": ("""
 fn main() {
     var cell = core::cell::RefCell::new(42)
@@ -4050,13 +5895,13 @@ fn main() {
     *cell.get_mut() = 0
     value
 }
-""", "ownership"),
+""", "ownership", 'access or storage lifetime conflicts with a live read loan', (6, 5)),
     "machine-cell-guard-cannot-escape-cell": ("""
 fn main() {
     let guard = { let cell = core::cell::RefCell::new(42); cell.borrow() }
     *guard.get_ref()
 }
-""", "ownership"),
+""", "ownership", 'access or storage lifetime conflicts with a live read loan', (3,74)),
     "machine-cell-forget-cannot-invalidate-a-live-payload-reference": ("""
 fn main() {
     let cell = core::cell::RefCell::new(42)
@@ -4065,7 +5910,7 @@ fn main() {
     core::mem::forget(guard)
     *value
 }
-""", "ownership"),
+""", "ownership", 'access or storage lifetime conflicts with a live read loan', (6, 23)),
     "machine-cell-refmut-reborrows-are-not-independent-aliases": ("""
 fn main() {
     let cell = core::cell::RefCell::new(42)
@@ -4075,7 +5920,7 @@ fn main() {
     *first += *second
     0
 }
-""", "ownership"),
+""", "ownership", 'access or storage lifetime conflicts with a live exclusive loan', (7, 15)),
     "machine-cell-shared-ref-does-not-grant-mutable-payload": ("""
 fn main() {
     let cell = core::cell::RefCell::new(42)
@@ -4083,11 +5928,11 @@ fn main() {
     let wrong = guard.get_mut()
     0
 }
-""", "type"),
+""", "type", 'invalid primitive operation or operand types', (5, 17)),
     "machine-cell-copy-get-rejects-owned-payload": ("""
 type Owned { value: i32 }
 fn main() { let cell = core::cell::Cell::new(Owned(42)); let value = cell.get(); 0 }
-""", "type"),
+""", "type", 'invalid primitive operation or operand types', (3, 70)),
     "machine-cell-exchange-writeback-retains-new-view-source": ("""
 fn set<region a>(cell: read core::cell::Cell<read i32 from a>,
                  value: read i32 from a) { cell.set(read value) }
@@ -4097,7 +5942,7 @@ fn main() {
     { let short = 42; set(cell,read short) }
     *cell.get()
 }
-""", "ownership"),
+""", "ownership", 'access or storage lifetime conflicts with a live read loan', (7, 44)),
     "machine-cell-refmut-writeback-cannot-store-a-short-view": ("""
 type Slot<region r> { value: read i32 from r }
 fn set<region r>(cell: read core::cell::RefCell<Slot<region r>>,
@@ -4112,7 +5957,7 @@ fn main() {
     let guard = cell.borrow()
     *guard.get_ref().value
 }
-""", "ownership"),
+""", "ownership", 'access or storage lifetime conflicts with a live read loan', (11, 44)),
     "machine-unpin-condition-is-not-unconditional": ("""
 interface Ready {}
 impl i32 implements Ready {}
@@ -4123,7 +5968,7 @@ fn main() {
     let wrong = handle.get_mut()
     0
 }
-""", "type"),
+""", "type", 'unsatisfied Unpin condition', (8, 17)),
     "machine-unpin-where-assumption-does-not-leak-to-other-functions": ("""
 type Wrapper<T> { value: T; marker: core::marker::PhantomPinned }
 unsafe impl<T: Copy> Wrapper<T> implements Unpin {}
@@ -4135,7 +5980,7 @@ fn wrong<T>(value: mut Wrapper<T>) {
     let handle = core::pin::Pin::new(mut value)
 }
 fn main() { 0 }
-""", "type"),
+""", "type", 'unsatisfied Unpin condition', (9, 18)),
     "machine-unpin-associated-equality-must-be-proven": ("""
 interface Family { type Item; }
 type Source {}
@@ -4147,7 +5992,7 @@ fn main() {
     let wrong = handle.get_mut()
     0
 }
-""", "type"),
+""", "type", 'unsatisfied Unpin condition', (9, 17)),
     "machine-unpin-negative-declaration-remains-negative": ("""
 type Blocked { value: i32 }
 impl Blocked not Unpin;
@@ -4157,22 +6002,22 @@ fn main() {
     let wrong = handle.get_mut()
     0
 }
-""", "type"),
+""", "type", 'invalid primitive operation or operand types', (7, 17)),
     "machine-unpin-negative-declaration-cannot-have-bounds": ("""
 type Wrapper<T> { value: T }
 impl<T: Copy> Wrapper<T> not Unpin;
 fn main() { 0 }
-""", "type"),
+""", "type", 'negative Unpin declarations cannot specialize bounds', (3, 1)),
     **MACHINE_NEGATIVE,
     "machine-transparent-enum-requires-one-variant": (
         "@layout(transparent) enum Invalid { First(i32); Second(i32) }\nfn main() { 0 }",
-        "attribute"),
+        "attribute", 'transparent enum representation requires exactly one variant', (1, 22)),
     "machine-combined-enum-layout-rejects-conflicting-tags": (
         "@layout(C,u8,i8) enum Invalid { First }\nfn main() { 0 }",
-        "attribute"),
+        "attribute", 'an enum cannot have multiple integer representations', (1, 14)),
     "machine-transparent-enum-requires-one-storage-payload": (
         "@layout(transparent) enum Invalid { Only(i32,i32) }\nfn main() { 0 }",
-        "attribute"),
+        "attribute", 'object layout cannot be established for this representation', (1, 22)),
     "machine-pinned-destructor-retains-written-view-origin": ("""
 type Slot<region r> { value: read i32 from r }
 type Writer<region a,region b> {
@@ -4188,10 +6033,10 @@ fn main() {
     second = 0
     *slot.value
 }
-""","ownership"),
+""","ownership", 'access or storage lifetime conflicts with a live read loan', (13, 5)),
     "machine-borrowed-pin-cannot-be-consumed-through-a-view": (
         "fn wrong(value: read pinned mut i32) { let result = unsafe { value.into_inner_unchecked() } }\nfn main() { 0 }",
-        "ownership"),
+        "ownership", 'cannot move out of a borrowed place', (1, 62)),
     "machine-manual-unpin-condition-rejects-address-sensitive-argument": ("""
 type Wrapper<T> { value: T; marker: core::marker::PhantomPinned }
 unsafe impl<T: Unpin> Wrapper<T> implements Unpin {}
@@ -4200,10 +6045,10 @@ fn main() {
     let value = handle.get_mut()
     0
 }
-""","type"),
+""","type", 'unsatisfied Unpin condition', (6, 17)),
     "machine-union-read-requires-unsafe": (
         "union Bits { integer: u32; real: f32 }\nfn main() { let value = Bits(integer: 42u32); let result = value.real; 0 }",
-        "unsafe"),
+        "unsafe", 'reading a union field requires unsafe', (2, 60)),
     "machine-union-overlapping-field-loans-conflict": ("""
 union Bits { integer: u32; real: f32 }
 fn main() {
@@ -4212,31 +6057,31 @@ fn main() {
     value.real = 0.0f32
     if *borrowed == 42u32 { 0 } else { 1 }
 }
-""","ownership"),
+""","ownership", 'access or storage lifetime conflicts with a live read loan', (6, 5)),
     "machine-union-owned-field-requires-manual-drop": (
         "type Owned { drop {} }\nunion Wrong { value: Owned; bits: usize }\nfn main() { 0 }",
-        "type"),
+        "type", 'union fields requiring destruction must use ManuallyDrop storage', (2, 1)),
     "machine-explicit-receiver-must-wrap-self": (
         "type Payload { value: i32; fn wrong(receiver self: i32): i32 { self } }\nfn main() { 0 }",
-        "signature"),
+        "signature", 'explicit receiver must wrap Self', (1, 28)),
     "machine-explicit-receiver-must-be-first": (
         "type Payload { fn wrong(value: i32, receiver self: read Self): i32 { value } }\nfn main() { 0 }",
-        "signature"),
+        "signature", 'explicit receiver must be first and bind self', (1, 50)),
     "machine-enum-discriminants-check-their-width": (
         "@layout(u8) copy enum Byte { First = 255; Overflow }\nfn main() { 0 }",
-        "type"),
+        "type", 'enum discriminant is outside its representation', (1, 43)),
     "machine-enum-discriminants-must-be-distinct": (
         "@layout(i16) copy enum Number { First = -1; Second = -1 }\nfn main() { 0 }",
-        "type"),
+        "type", 'duplicate enum discriminant', (1, 45)),
     "machine-negative-unpin-declaration-prevents-extraction": (
         "type Stable { value: i32 }\nimpl Stable not Unpin;\nfn main() { var handle = core::pin::pin(Stable(42)); let value = handle.get_mut(); 0 }",
-        "type"),
+        "type", 'invalid primitive operation or operand types', (3, 66)),
     "machine-generic-pin-extraction-needs-unpin-bound": (
         "fn access<T>(value: mut pinned mut T): mut T from value { value.get_mut() }\nfn main() { 0 }",
-        "type"),
+        "type", 'invalid primitive operation or operand types', (1, 59)),
     "machine-manual-unpin-requires-unsafe-implementation": (
         "type Stable { value: i32 }\nimpl Stable implements Unpin {}\nfn main() { 0 }",
-        "unsafe"),
+        "unsafe", 'manual Unpin implementation requires unsafe impl', (2, 1)),
     "machine-pin-projection-retains-exclusive-parent-loan": ("""
 type Child { value: i32; marker: core::marker::PhantomPinned }
 type Parent { @pinned child: Child; other: i32 }
@@ -4246,7 +6091,7 @@ fn main() {
     let parent = unsafe { handle.get_unchecked_mut() }
     child.get_ref().value + parent.other
 }
-""","ownership"),
+""","ownership", 'access or storage lifetime conflicts with a live exclusive loan', (8, 5)),
     "machine-structurally-pinned-destructor-cannot-move-field": ("""
 type Child { value: i32; marker: core::marker::PhantomPinned }
 type Parent {
@@ -4254,25 +6099,25 @@ type Parent {
     drop { let moved = self.get_ref().child }
 }
 fn main() { 0 }
-""","ownership"),
+""","ownership", 'cannot move out of a borrowed place', (5, 24), 1),
     "machine-transmute-rejects-different-sizes": (
         "fn main() { let value = unsafe { core::mem::transmute::<u64>(1u32) }; 0 }",
-        "type"),
+        "type", 'invalid primitive operation or operand types', (1, 34)),
     "machine-memory-copy-requires-unsafe": (
         "fn main() { var value = 0; let p = core::ptr::from_mut(value); core::ptr::`copy`(p,p,1); 0 }",
-        "unsafe"),
+        "unsafe", 'operation requires an unsafe block or unsafe function', (1, 64)),
     "machine-memory-copy-requires-mutable-destination": (
         "fn main() { let value = 0; let p = core::ptr::from_ref(value); unsafe { core::ptr::`copy`(p,p,1) }; 0 }",
-        "type"),
+        "type", 'invalid primitive operation or operand types', (1, 73)),
     "machine-unaligned-packed-fields-cannot-be-pinned": (
         "@packed(1) type Packed { @pinned value: i64 }\nfn main() { 0 }",
-        "attribute"),
+        "attribute", 'an unaligned packed field cannot be structurally pinned', (1, 12)),
     "machine-atomic-handles-are-not-implicitly-copy": (
         "fn main() { let first=core::sync::atomic::AtomicU32::new(42); let second=first; first.load(core::sync::atomic::Ordering::Relaxed) as i32 }",
-        "ownership","moved"),
+        "ownership","moved", (1, 81)),
     "machine-atomic-unsupported-width-is-not-blocking-emulation": (
         "fn main() { let value=core::sync::atomic::AtomicU128::new(0); 0 }",
-        "feature","lock-free alias"),
+        "feature","lock-free alias", (1, 23)),
     "machine-address-sensitive-payload-requires-pinned-access": ("""
 type Stable { marker: core::marker::PhantomPinned; value: i32 }
 fn main() {
@@ -4280,26 +6125,26 @@ fn main() {
     let reference = handle.get_mut()
     0
 }
-""","type","invalid primitive operation"),
+""","type","invalid primitive operation", (5, 21)),
     "machine-packed-fields-cannot-form-aligned-views": ("""
 @layout(C)
 @packed(1)
 copy type Packed { tag: u8; value: i32 }
 fn inspect(value: read i32): i32 { value }
 fn main() { let value=Packed(0u8,42); inspect(value.value) }
-""","alignment","unaligned storage"),
+""","alignment","unaligned storage", (6, 47)),
     "machine-unsafe-does-not-permit-unaligned-reference-construction": ("""
 @layout(C)
 @packed(1)
 copy type Packed { tag: u8; value: i32 }
 fn main() { let value=Packed(0u8,42); let reference=unsafe { read value.value }; *reference }
-""","alignment","unaligned storage"),
+""","alignment","unaligned storage", (5, 67)),
     "machine-storage-write-needs-initialized-storage-handle": (
         "fn main() { var value: core::mem::MaybeUninit<i32>; let reference=value.write(42); *reference }",
-        "type","storage handle may be uninitialized"),
+        "type","storage handle may be uninitialized", (1, 67)),
     "machine-unsafe-cell-shared-reference-requires-unsafe": (
         "fn main() { let cell=core::cell::UnsafeCell::new(42); let value=cell.get_ref(); *value }",
-        "unsafe", "requires an unsafe block"),
+        "unsafe", "requires an unsafe block", (1, 65)),
     "machine-uninitialized-owned-reference-preserves-original-loan": ("""
 copy type Pair { first: i32; second: i32 }
 fn main() {
@@ -4309,7 +6154,7 @@ fn main() {
     value.first = 40
     reference.first + reference.second
 }
-""","ownership","live read loan"),
+""","ownership","live read loan", (7, 5)),
     "machine-foreign-reference-results-retain-source-loans": ("""
 copy type Pair { first: i32; second: i32 }
 extern "C" {
@@ -4321,55 +6166,64 @@ fn main() {
     value.first = 40
     result.first + result.second
 }
-""","ownership","live read loan"),
+""","ownership","live read loan", (9, 5)),
     "machine-c-callable-cannot-become-native-abi": (
         'extern "C" fn callback(value: i32): i32 { value }\nfn main() { let p: fn(i32): i32 = callback; p(0) }',
-        "type"),
+        "type", 'found extern "C" fn', (2, 13)),
     "machine-foreign-typed-failure-needs-explicit-c-representation": (
         'extern "C" { unsafe fn operation(): i32 throws i32; }\nfn main() { 0 }',
-        "signature", "native typed failure"),
+        "signature", "native typed failure", (1, 21)),
     "machine-duplicate-symbol-attribute-is-rejected": (
         '@export_name("first") @export_name("second")\nextern "C" fn operation(): i32 { 42 }\nfn main() { 0 }',
-        "attribute", "duplicate singleton"),
+        "attribute", "duplicate singleton", (1, 23)),
     "machine-raw-method-requires-unsafe": (
         "fn main() { let value = 42; let p = core::ptr::from_ref(value); p.`read`() }",
-        "unsafe", "requires an unsafe block"),
+        "unsafe", "requires an unsafe block", (1, 65)),
     "machine-raw-write-requires-mutable-pointer": (
         "fn main() { let value = 42; let p = core::ptr::from_ref(value); unsafe { p.write(1) }; 0 }",
-        "type", "invalid primitive operation"),
+        "type", "invalid primitive operation", (1, 74)),
     "machine-explicit-overflow-operations-preserve-width": (
         "fn main() { let value = 1u8.wrapping_add(2u16); 0 }",
-        "type", "expected"),
+        "type", "expected", (1, 42), 1),
     "machine-raw-dereference-requires-unsafe": (
         "fn main() { let value = 42; let p = read value as ptr<read i32>; *p }",
-        "unsafe", "requires an unsafe block"),
+        "unsafe", "requires an unsafe block", (1, 66)),
     "machine-unsafe-function-cannot-be-called-safely": (
         "unsafe fn operation(): i32 { 42 }\nfn main() { operation() }",
-        "unsafe", "requires an unsafe block"),
+        "unsafe", "requires an unsafe block", (2, 13)),
     "machine-unsafe-function-pointer-cannot-become-safe": (
         "unsafe fn operation(): i32 { 42 }\nfn main() { let p: fn(): i32 = operation; p() }",
-        "type"),
+        "type", 'found unsafe fn', (2, 13)),
     "machine-unsafe-does-not-disable-initialization-checks": (
         "fn main() { let value: i32; unsafe { value } }",
-        "type", "uninitialized"),
+        "type", "uninitialized", (1, 38)),
     "machine-unsafe-does-not-grant-mutable-pointer-access": (
         "fn main() { let value = 42; let p = read value as ptr<read i32>; unsafe { *p = 1 }; 0 }",
-        "ownership"),
+        "ownership", 'cannot write through a read parameter', (1, 75), 1),
     "machine-integers-do-not-implicitly-widen": (
         "fn main() { let a = 1u8; let b = 2u16; let sum = a + b; 0 }",
-        "type", "expected"),
+        "type", "expected", (1, 50)),
     "machine-negative-unsigned-literal": (
         "fn main() { let value: u64 = -1; 0 }",
-        "type", "outside the u64 range"),
+        "type", "outside the u64 range", (1, 31)),
     "machine-integer-literal-checks-contextual-width": (
         "fn main() { let value: i8 = 128; 0 }",
-        "type", "outside the i8 range"),
+        "type", "outside the i8 range", (1, 29)),
     "machine-floats-have-no-bitwise-operators": (
         "fn main() { let value = 1.0f32 & 2.0f32; 0 }",
-        "type", "integer"),
+        "type", "integer", (1, 25)),
+    "self-path-outside-type-or-impl": (
+        "type V { n: usize\n  static fn make(): V { V(0usize) } }\nfn main(): i32 { let v: V = Self::make(); 0 }",
+        "name", "'Self' is only available inside a type or impl body", (3, 29), 1),
+    "u32-cannot-cast-to-char": (
+        "fn main(): i32 { let c = 233u32 as char; let d = c; 0 }",
+        "type", "invalid scalar conversion", (1, 26), 1),
+    "static-method-without-generics-rejects-turbofish": (
+        "type V<T> { n: usize\n  static fn make(): V<T> { V(0usize) } }\nfn main(): i32 { let v: V<i32> = V::make::<i32>(); 0 }",
+        "type", "excess explicit generic arguments", (3, 34), 1),
     "machine-integers-cannot-cast-to-bool": (
         "fn main() { let flag = 1 as bool; 0 }",
-        "type", "invalid scalar conversion"),
+        "type", "invalid scalar conversion", (1, 24)),
     "receiver-move-failure-cannot-fall-back-to-read-interface": ("""
 interface Choose { fn choose(): i32; }
 type Value { take fn choose(): i32 { 1 } }
@@ -4379,7 +6233,7 @@ fn main() {
     let borrowed = read value
     borrowed.choose()
 }
-""", "ownership", "cannot move out of a borrowed place"),
+""", "ownership", "cannot move out of a borrowed place", (8, 5)),
     "mutable-projection-requires-deref-mut": ("""
 module core {
     pub module ops {
@@ -4398,26 +6252,26 @@ fn main() {
     wrapper.increment()
     0
 }
-""", "ownership", "requires matching DerefMut"),
+""", "ownership", "requires matching DerefMut", (16, 5)),
     "higher-ranked-interface-rejects-static-only-implementation": ("""
 interface Lifetime<region r> {}
 type StaticOnly {}
 impl StaticOnly implements Lifetime<region static> {}
 fn accept<T: for<region r> Lifetime<region r>>(value: read T): i32 { 42 }
 fn main() { let value = StaticOnly(); accept(value) }
-""", "type", "interface obligation"),
+""", "type", "interface obligation", (6, 39)),
     "mutable-stored-region-remains-invariant": ("""
 type Ref<region r> { value: mut (read i32 from r) from r }
 fn bad<region a, region b>(
     value: take Ref<region a>
 ): Ref<region b> where region a: b { take value }
 fn main() { 0 }
-""", "region", "invariant payload"),
+""", "region", "invariant payload", (5, 36)),
     "named-region-binder-does-not-leak-between-declarations": ("""
 fn first<region r>(value: read i32 from r): i32 { 0 }
 fn second(value: read i32 from r): i32 { 0 }
 fn main() { 0 }
-""", "region", "unknown region"),
+""", "region", "unknown region", (3, 11), 1),
     "erased-generic-result-retains-borrowed-captures": ("""
 copy type Pair { first: i32; second: i32 }
 interface Readable<T: Copy> { fn value(): T; }
@@ -4433,7 +6287,7 @@ fn main() {
     original.first += 1
     result.first + result.second
 }
-""", "ownership", "live read loan"),
+""", "ownership", "live read loan", (13, 5)),
     "erased-mutable-writeback-keeps-short-source-live": ("""
 copy type Pair { first: i32; second: i32 }
 interface Setter<region r> { mut fn set(value: read Pair from r): Unit; }
@@ -4453,9 +6307,9 @@ fn main() {
     }
     cell.value.first + cell.value.second
 }
-""", "ownership", "live read loan"),
+""", "ownership", "live read loan", (17, 5)),
     "generic-owned-return-spec": ((Path(__file__).resolve().parents[1] / "examples/core/reject-generic-owned-return.mt").read_text(),
-                                 "ownership", "borrowed"),
+                                 "ownership", "borrowed", (2, 5)),
     "implementation-cannot-strengthen-generic-bounds": ("""
 interface Accept { fn accept<T>(value: T): Unit; }
 type Number {}
@@ -4463,14 +6317,14 @@ impl Number implements Accept {
     fn accept<T: Copy>(value: T): Unit { let first = value; let second = value }
 }
 fn main() { 0 }
-""", "type", "strengthens"),
+""", "type", "strengthens", (5, 5), 1),
     "associated-output-must-satisfy-copy-bound": ("""
 interface Family { type Item: Copy; }
 type Owned { value: i32 }
 type Number {}
 impl Number implements Family { type Item = Owned }
 fn main() { 0 }
-""", "type", "Copy"),
+""", "type", "Copy", (5, 33)),
     "erasure-cannot-expose-unbound-self-inputs": ("""
 interface Equal { fn equal(other: Self): bool; }
 type Number {}
@@ -4480,7 +6334,7 @@ fn main() {
     let erased: read any Equal = read value
     0
 }
-""", "type", "not dispatchable"),
+""", "type", "not dispatchable", (7, 5)),
     "erasure-rejects-caller-selected-method-types": ("""
 interface Generic { fn accept<T>(value: T): Unit; }
 type Number {}
@@ -4490,7 +6344,7 @@ fn main() {
     let erased: read any Generic = read value
     0
 }
-""", "type", "not dispatchable"),
+""", "type", "not dispatchable", (7, 5)),
     "opaque-return-paths-share-one-hidden-type": ("""
 interface Readable { fn value(): i32; }
 type Number {}
@@ -4502,14 +6356,17 @@ fn make(flag: bool): some Readable {
     return Other()
 }
 fn main() { 0 }
-""", "type", "different hidden types"),
+""", "type", "different hidden types", (9, 5)),
     "opaque-return-does-not-expose-hidden-fields": ("""
 interface Readable { fn value(): i32; }
 copy type Number { value: i32 }
 impl Number implements Readable { fn value(): i32 { self.value } }
 fn make(): some Readable { Number(42) }
 fn main() { make().value }
-""", "name", "field"),
+""", "name", "field", (6, 13)),
+    "slice-length-rejects-arguments": (
+        "fn f(s: read [i32]): usize { s.len(1) }\nfn main() { 0 }\n",
+        "type", "slice len requires no arguments", (1, 30)),
     "slice-read-view-cannot-be-upgraded": ("""
 fn increment(values: mut [i32]) { values[0] += 1 }
 fn main() {
@@ -4518,138 +6375,135 @@ fn main() {
     increment(borrowed)
     0
 }
-""", "ownership", "mutable"),
+""", "ownership", "mutable", (6, 15)),
     "projection-requires-an-implementation": ("""
 interface Family { type Item; }
 type Unrelated {}
 fn invalid(value: <Unrelated implements Family>::Item): Unit {}
 fn main() { 0 }
-""", "type", "interface bound"),
-    "pattern-local-limit-is-a-diagnostic": ("type Owned { value:i32 }\nfn main() {" +
-        "".join(f"let a{i}=0;" for i in range(1023)) +
-        "let items=[Owned(1)]; match items { [rest @ ..] => 0 } }\n",
-        "limit", "local binding limit"),
-    "guard-local-limit-is-a-diagnostic": ("type Owned { value:i32 }\nfn main() {" +
-        "".join(f"let a{i}=0;" for i in range(1022)) +
-        "let items=[Owned(1)]; match take items { [rest @ ..] if true => 0, _ => 0 } }\n",
-        "limit", "local binding limit"),
-    "parameter-local-limit-is-a-diagnostic": ("fn many("+
-        ",".join(f"a{i}:i32" for i in range(1025))+
-        "): Unit {}\nfn main() { 0 }\n", "limit", "local binding limit"),
-    "mismatched-pattern-shape-is-a-source-error": ("fn main() { match true { present(value) => 0, _ => 1 } }\n", "type", "incompatible aggregate shape"),
+""", "type", "interface bound", (4, 12), 1),
+    "mismatched-pattern-shape-is-a-source-error": ("fn main() { match true { present(value) => 0, _ => 1 } }\n", "type", "incompatible aggregate shape", (1, 26), 1),
     "mismatched-variant-payload-count-is-a-source-error": ("copy enum Value { Held(i32) }\nfn main() { match Value::Held(42) { Value::Held(first,second) => first } }\n",
-                                                         "type", "pattern payload count"),
-    "unicode-surrogate-is-not-scalar": (r"fn main() { let value = '\u{d800}'; 0 }"+"\n", "lex", "valid Unicode scalar"),
-    "unicode-scalar-overflow": (r"fn main() { let value = '\u{110000}'; 0 }"+"\n", "lex", "valid Unicode scalar"),
-    "character-needs-exactly-one-scalar": ("fn main() { let value = 'ab'; 0 }\n", "lex", "exactly one scalar"),
-    "byte-literal-rejects-nonascii": ("fn main() { let value = b'é'; 0 }\n", "lex", "ASCII byte"),
-    "byte-escape-requires-two-digits": (r"fn main() { let value = b'\x1'; 0 }"+"\n", "lex", "two hexadecimal digits"),
-    "character-and-byte-remain-distinct": ("fn main() { let value: char = b'a'; 0 }\n", "type", "expected char, found u8"),
-    "constant-array-length-overflow": ("fn main() { let values: [i32; 2147483647+1] = []; 0 }\n", "type", "constant overflows"),
-    "array-length-cannot-use-runtime-binding": ("fn main() { let count=3; let values: [i32; count] = [1,2,3]; 0 }\n", "type", "constant integer"),
-    "required-parameter-cannot-follow-default": ("fn bad(a:i32=0,b:i32) { a+b }\nfn main() { bad(0,0) }\n", "type", "required parameter"),
+                                                         "type", "pattern payload count", (2, 37), 1),
+    "unicode-surrogate-is-not-scalar": (r"fn main() { let value = '\u{d800}'; 0 }"+"\n", "lex", "valid Unicode scalar", (1, 25)),
+    "unicode-scalar-overflow": (r"fn main() { let value = '\u{110000}'; 0 }"+"\n", "lex", "valid Unicode scalar", (1, 25)),
+    "character-needs-exactly-one-scalar": ("fn main() { let value = 'ab'; 0 }\n", "lex", "exactly one scalar", (1, 25)),
+    "byte-literal-rejects-nonascii": ("fn main() { let value = b'é'; 0 }\n", "lex", "ASCII byte", (1, 25)),
+    "byte-escape-requires-two-digits": (r"fn main() { let value = b'\x1'; 0 }"+"\n", "lex", "two hexadecimal digits", (1, 25)),
+    "character-and-byte-remain-distinct": ("fn main() { let value: char = b'a'; 0 }\n", "type", "expected char, found u8", (1, 13)),
+    "constant-array-length-overflow": ("fn main() { let values: [i32; 2147483647+1] = []; 0 }\n", "type", "constant overflows", (1, 31), 1),
+    "array-length-cannot-use-runtime-binding": ("fn main() { let count=3; let values: [i32; count] = [1,2,3]; 0 }\n", "type", "constant integer", (1, 44), 1),
+    "required-parameter-cannot-follow-default": ("fn bad(a:i32=0,b:i32) { a+b }\nfn main() { bad(0,0) }\n", "type", "required parameter", (1, 16)),
     "array-rest-borrow-cannot-escape-owner": ("type Owned { value:i32 }\nfn main() { let view: read [Owned;2]; { let values = [Owned(20),Owned(22),Owned(0)]; view = match values { [rest @ ..,_] => read rest } }; view[0].value }\n",
-                                           "ownership", "live read loan"),
+                                           "ownership", "live read loan", (2, 137)),
     "array-rest-does-not-permit-overlapping-mutation": ("fn main() { var values = [1,2,3]; match mut values { [first,rest @ ..] => { values[1] = 4; rest[0] += first } }; 0 }\n",
-                                                      "ownership", "live exclusive loan"),
-    "invalid-default-checked-when-supplied": ("fn bad(value: i32 = true) { value }\nfn main() { bad(42) }\n", "type", "expected i32, found bool"),
-    "defaults-cannot-reference-later-parameters": ("fn bad(a: i32 = b, b: i32 = 42) { a + b }\nfn main() { bad(0,0) }\n", "name", "unresolved value 'b'"),
+                                                      "ownership", "live exclusive loan", (1, 77)),
+    "invalid-default-checked-when-supplied": ("fn bad(value: i32 = true) { value }\nfn main() { bad(42) }\n", "type", "expected i32, found bool", (1, 8)),
+    "defaults-cannot-reference-later-parameters": ("fn bad(a: i32 = b, b: i32 = 42) { a + b }\nfn main() { bad(0,0) }\n", "name", "unresolved value 'b'", (1, 17)),
     "default-cannot-consume-earlier-owner": ("type Value { value: i32 }\nfn bad(a: take Value, b: take Value = a) { a.value + b.value }\nfn main() { bad(Value(20),Value(22)) }\n",
-                                           "ownership"),
+                                           "ownership", 'cannot move out of a borrowed place', (2, 39)),
     "default-view-does-not-extend-argument": ("fn view(a: i32, b: (read i32) = read a): read i32 from b { b }\nfn main() { let result = view(42); *result }\n",
-                                            "ownership", "live read loan"),
+                                            "ownership", "live read loan", (2, 13)),
     "custom-init-must-establish-every-field": ("type Pair { first: i32; second: i32; init(value: i32) { self.first = value } }\nfn main() { let pair = Pair(42); 0 }\n",
-                                             "type", "may be uninitialized"),
+                                             "type", "may be uninitialized", (1, 57)),
     "custom-init-method-needs-whole-self": ("type Pair { first: i32; second: i32; init() { self.first = 20; self.second = self.sum() }; fn sum() { self.first + self.second } }\nfn main() { let pair = Pair(); 0 }\n",
-                                           "type", "may be uninitialized"),
+                                           "type", "may be uninitialized", (1, 78)),
     "custom-init-replaces-generated-construction": ("type Pair { first: i32; second: i32; init() { self.first = 20; self.second = 22 } }\nfn main() { let pair = Pair(first:20,second:22); 0 }\n",
-                                                    "type", "argument"),
+                                                    "type", "argument", (2, 35)),
     "empty-range-pattern": ("fn main() { match 1 { 2..2 => 0, _ => 1 } }\n",
-                            "type", "empty or reversed"),
+                            "type", "empty or reversed", (1, 23)),
     "range-pattern-overlap-is-unreachable": ("fn main() { match 1 { 0..=42 => 0, 1..=4 => 1, _ => 2 } }\n",
-                                            "type", "unreachable match arm"),
+                                            "type", "unreachable match arm", (1, 36)),
     "or-patterns-bind-same-names": ("copy enum Value { First(i32); Second(i32) }\nfn main() { match Value::First(42) { Value::First(a) | Value::Second(b) => a } }\n",
-                                   "type", "identical names"),
+                                   "type", "identical names", (2, 38)),
     "sum-match-must-be-exhaustive": ("copy enum Value { First; Second }\nfn main() { match Value::First { Value::First => 0 } }\n",
-                                    "type", "non-exhaustive match"),
+                                    "type", "non-exhaustive match", (2, 13)),
     "nested-optional-coverage": ("fn main() { let value: i32?? = present(none); match value { none => 0, present(present(_)) => 1 } }\n",
-                                "type", "non-exhaustive match"),
+                                "type", "non-exhaustive match", (1, 47)),
     "guards-do-not-prove-coverage": ("fn main() { match true { true if true => 0, false => 1 } }\n",
-                                     "type", "non-exhaustive match"),
+                                     "type", "non-exhaustive match", (1, 13)),
     "duplicate-match-arm": ("fn main() { match true { true => 0, true => 1, false => 2 } }\n",
-                            "type", "unreachable match arm"),
+                            "type", "unreachable match arm", (1, 37)),
+    "integer-match-gap-between-ranges": ("fn f(x: u8): i32 { match x { 0..=100 => 1, 102..=255 => 2 } }\nfn main() { 0 }\n",
+                                         "type", "non-exhaustive match", (1, 20), 1),
+    "adjacent-ranges-cover-later-literal": ("fn f(x: i8): i32 { match x { -128..0 => 1, 0 => 2, 1..=127 => 3, -7 => 4 } }\nfn main() { 0 }\n",
+                                            "type", "unreachable match arm", (1, 66), 1),
+    "guarded-integer-arm-does-not-cover": ("fn f(x: u8): i32 { match x { 0..=255 if x > 3 => 1, 7 => 2 } }\nfn main() { 0 }\n",
+                                           "type", "non-exhaustive match", (1, 20), 1),
+    "char-match-must-cover-both-sides-of-surrogates": ("fn f(x: char): i32 { match x { '\\u{0}'..='\\u{d7ff}' => 1, '\\u{e000}'..'\\u{10ffff}' => 2 } }\nfn main() { 0 }\n",
+                                                       "type", "non-exhaustive match", (1, 22), 1),
     "outcome-keeps-error-identity": ("copy enum First { Bad }\ncopy enum Second { Bad }\nfn fail(): i32 throws First { throw First::Bad }\nfn wrong(): i32 throws Second { try fail() }\nfn main() { 0 }\n",
-                                    "effects", "propagated error"),
+                                    "effects", "propagated error", (4, 33)),
     "typed-call-needs-explicit-handling": ("copy enum Error { Bad }\nfn fail(): i32 throws Error { throw Error::Bad }\nfn main() { fail() }\n",
-                                          "effects", "requires try or capture"),
+                                          "effects", "requires try or capture", (3, 13)),
     "capture-is-not-panic-catch": ("fn main() { let value = capture (1 / 0); 0 }\n",
-                                  "effects", "requires a typed throwing"),
+                                  "effects", "requires a typed throwing", (1, 25)),
     "throw-needs-declared-effect": ("copy enum Error { Bad }\nfn bad() { throw Error::Bad }\nfn main() { 0 }\n",
-                                    "effects", "explicit throws"),
+                                    "effects", "explicit throws", (2, 12)),
     "read-match-cannot-move-owner": ("type Owned { value: i32 }\nenum Value { Held(Owned) }\nfn consume(value: take Owned) {}\nfn main() { let value = Value::Held(Owned(42)); match value { Value::Held(item) => consume(item) }; 0 }\n",
-                                    "ownership", "cannot move out of a borrowed place"),
+                                    "ownership", "cannot move out of a borrowed place", (4, 92)),
     "array-repetition-must-be-copy": ("type Owned { value: i32 }\nfn main() { let values = [Owned(42); 2]; 0 }\n",
-                                      "ownership", "requires Copy"),
+                                      "ownership", "requires Copy", (2, 26)),
     "array-constant-index-bounds": ("fn main() { let values = [42]; values[1] }\n",
-                                    "type", "out of bounds"),
+                                    "type", "out of bounds", (1, 39)),
     "refutable-binding-needs-else": ("fn main() { let value: i32? = none; let present(answer) = value; answer }\n",
-                                     "type", "refutable pattern"),
+                                     "type", "refutable pattern", (1, 41)),
     "let-else-must-diverge": ("fn main() { let value: i32? = none; let present(answer) = value else { 0 }; answer }\n",
-                             "type", "must diverge"),
+                             "type", "must diverge", (1, 70)),
     "nonlocal-break-must-initialize-on-every-path": ("fn choose(flag: bool) { let answer: i32; label outer: loop { loop { if flag { break label outer }; answer = 42; break label outer } }; answer }\nfn main() { choose(false) }\n",
-                                                    "type", "may be uninitialized"),
+                                                    "type", "may be uninitialized", (1, 136)),
     "loop-break-values-must-agree": ("fn choose(flag: bool) { loop { if flag { break true }; break 42 } }\nfn main() { 0 }\n",
-                                    "type", "expected bool, found i32"),
+                                    "type", "expected bool, found i32", (1, 56)),
     "bare-break-is-unit": ("fn choose(flag: bool) { loop { if flag { break }; break 42 } }\nfn main() { 0 }\n",
-                           "type", "expected Unit, found i32"),
+                           "type", "expected Unit, found i32", (1, 51)),
     "while-loop-remains-unit": ("fn main() { while true { break 42 }; 0 }\n",
-                                "type", "expected Unit, found i32"),
+                                "type", "expected Unit, found i32", (1, 26)),
     "unknown-break-label": ("fn main() { loop { break label missing 42 } }\n",
-                            "name", "unknown loop label 'missing'"),
+                            "name", "unknown loop label 'missing'", (1, 20)),
     "unknown-continue-label": ("fn main() { loop { continue label missing } }\n",
-                               "name", "unknown loop label 'missing'"),
+                               "name", "unknown loop label 'missing'", (1, 20)),
     "label-does-not-escape-loop": ("fn main() { label done: loop { break }; break label done; 0 }\n",
-                                  "name", "unknown loop label 'done'"),
+                                  "name", "unknown loop label 'done'", (1, 41)),
     "continue-cannot-carry-value": ("fn main() { loop { continue 42 } }\n",
-                                   "parse", "continue cannot carry a value"),
+                                   "parse", "continue cannot carry a value", (1, 29)),
     "loop-result-does-not-inherit-callers-type": ("fn answer() { loop { break true } }\nfn main() { let answer: i32 = answer(); 0 }\n",
-                                                 "type", "expected i32, found bool"),
+                                                 "type", "expected i32, found bool", (2, 13)),
     "break-view-cannot-escape-local": ("fn main() { let view = loop { let owned = 42; break read owned }; *view }\n",
-                                      "ownership", "live read loan"),
+                                      "ownership", "live read loan", (1, 47)),
     "owned-break-result-cannot-borrow-loop-local": ("type Guard<region r> { value: read i32 from r; drop { let observed = *self.value } }\nfn main() { let guard = loop { let owned = 42; break Guard(read owned) }; 0 }\n",
-                                                   "ownership", "live read loan"),
+                                                   "ownership", "live read loan", (2, 48)),
     "break-still-moves-owned-value": ("type Value { value: i32 }\nfn main() { let first = Value(42); let second = loop { break first }; first.value }\n",
-                                      "ownership", "moved"),
+                                      "ownership", "moved", (2, 71)),
     "alias-cycle": ("alias First = Second\nalias Second = First\nfn main() { 0 }\n",
-                    "type", "cyclic type alias"),
+                    "type", "cyclic type alias", (1, 1), 1),
     "alias-view-cycle": ("alias First = read Second\nalias Second = First\nfn main() { 0 }\n",
-                         "type", "cyclic type alias"),
+                         "type", "cyclic type alias", (1, 1), 1),
     "alias-recursive-product-layout": ("alias Link = Node\ntype Node { next: Link }\nfn main() { 0 }\n",
-                                       "type", "recursive by-value"),
+                                       "type", "recursive by-value", (2, 13), 1),
     "alias-nested-unbound-region": ("alias View = (read i32 from missing)\nfn main() { 0 }\n",
-                                    "name", "unknown region"),
+                                    "name", "unknown region", (1, 1)),
     "alias-unknown-target": ("alias Missing = Unknown\nfn main() { 0 }\n",
-                             "name", "type 'Unknown'"),
+                             "name", "type 'Unknown'", (1, 1)),
     "alias-duplicate-name": ("type Point {}\nalias Point = i32\nfn main() { 0 }\n",
-                             "name", "duplicate type"),
+                             "name", "duplicate type", (2, 1)),
     "alias-does-not-change-nominal-identity": ("copy type First { value: i32 }\ncopy type Second { value: i32 }\nalias Same = First\nfn consume(value: Same) {}\nfn main() { consume(Second(42)); 0 }\n",
-                                             "type", "expected First, found Second"),
+                                             "type", "expected First, found Second", (5, 21)),
     "alias-does-not-grant-copy": ("type Owned { value: i32 }\nalias Same = Owned\ncopy type Wrapper { value: Same }\nfn main() { 0 }\n",
-                                 "type", "not Copy"),
+                                 "type", "not Copy", (3, 1)),
     "alias-view-field-needs-region": ("alias View = read i32\ntype Reader { value: View }\nfn main() { 0 }\n",
-                                      "type", "declared region source"),
+                                      "type", "declared region source", (2, 15)),
     "alias-preserves-read-permission": ("alias View = read i32\nfn main() { var x = 1; let view: View = read x; *view = 2; 0 }\n",
-                                        "ownership", "cannot write through a read"),
+                                        "ownership", "cannot write through a read", (2, 49), 1),
     "static-function-has-no-self": ("type Point { static fn bad() { self.value } }\nfn main() { 0 }\n",
-                                    "name", "unresolved value 'self'"),
+                                    "name", "unresolved value 'self'", (1, 32), 1),
     "static-function-not-object-method": ("copy type Point { static fn make() { 42 } }\nfn main() { let point = Point(); point.make() }\n",
-                                          "type", "type-qualified call"),
+                                          "type", "type-qualified call", (2, 34)),
     "qualified-consuming-method-still-moves": ("type Point { value: i32; take fn consume() {} }\nalias Same = Point\nfn main() { let p = Point(42); Same::consume(p); p.value }\n",
-                                              "ownership", "moved"),
+                                              "ownership", "moved", (3, 50)),
     "qualified-mut-method-not-two-phase": ("type Counter { value: i32; fn get() { self.value }; mut fn add(value: i32) { self.value += value } }\nfn main() { var counter = Counter(1); Counter::add(counter, counter.get()); 0 }\n",
-                                           "ownership", "live exclusive loan"),
+                                           "ownership", "live exclusive loan", (2, 61)),
     "qualified-drop-not-directly-callable": ("type Guard { drop {} }\nfn main() { var guard = Guard(); Guard::drop(guard); 0 }\n",
-                                            "ownership", "destructor directly"),
+                                            "ownership", "destructor directly", (2, 34)),
     "nested-view-take-receiver": ("""
 type Counter { value: i32; take fn consume() {} }
 fn main() {
@@ -4659,7 +6513,7 @@ fn main() {
     second.consume()
     0
 }
-""", "ownership", "cannot move out of a borrowed place"),
+""", "ownership", "cannot move out of a borrowed place", (7, 5)),
     "conditional-writeback-retains-old-source": ("""
 copy type Reader<region r> { value: read i32 from r }
 fn set(reader: mut Reader, source: read i32, flag: bool) {
@@ -4673,7 +6527,7 @@ fn main() {
     first = 0
     *reader.value
 }
-""", "ownership", "live read loan"),
+""", "ownership", "live read loan", (11, 5)),
     "self-writeback-preserves-source": ("""
 copy type Reader<region r> { value: read i32 from r }
 fn echo(reader: mut Reader) { reader.value = reader.value }
@@ -4682,7 +6536,7 @@ fn main() {
     { let short = 42; reader = Reader(read short); echo(reader) }
     *reader.value
 }
-""", "ownership", "live read loan"),
+""", "ownership", "live read loan", (6, 65)),
     "nested-returned-view-cannot-escape": ("""
 copy type Payload<region r> { value: read i32 from r }
 copy type Reader<region r> { inner: read Payload from r }
@@ -4697,7 +6551,7 @@ fn main() {
     }
     *child
 }
-""", "ownership", "live read loan"),
+""", "ownership", "live read loan", (12, 5)),
     "owned-call-destructor-writeback-cannot-escape-source": ("""
 copy type Reader<region r> { value: read i32 from r }
 type Writer<region a, region b> {
@@ -4712,7 +6566,7 @@ fn main() {
     { let short = 0; release(Writer(mut reader, read short)) }
     *reader.value
 }
-""", "ownership", "live read loan"),
+""", "ownership", "live read loan", (12, 62)),
     "destructor-writeback-cannot-escape-source": ("""
 copy type Reader<region r> { value: read i32 from r }
 type Writer<region a, region b> {
@@ -4726,7 +6580,7 @@ fn main() {
     { let short = 0; let writer = Writer(mut reader, read short) }
     *reader.value
 }
-""", "ownership", "live read loan"),
+""", "ownership", "live read loan", (11, 66)),
     "writeback-preserves-return-dependencies": ("""
 copy type Reader<region r> { value: read i32 from r }
 fn first(a: read i32, b: read i32): read i32 from (a, b) { read a }
@@ -4739,12 +6593,12 @@ fn main() {
     { let short = 0; set(reader, value, short) }
     *reader.value
 }
-""", "ownership", "live read loan"),
+""", "ownership", "live read loan", (10, 48)),
     "wrapper-preserves-return-sources": ("""
 fn first(a: read i32, b: read i32): read i32 from (a, b) { read a }
 fn wrapper(a: read i32, b: read i32): read i32 from a { first(a, b) }
 fn main() { 0 }
-""", "ownership", "declared input sources"),
+""", "ownership", "declared input sources", (3, 57)),
     "destructor-conflicts-with-derived-view": ("""
 type Guard<region r> { value: mut i32 from r; drop { *self.value = 0 } }
 fn main() {
@@ -4753,7 +6607,7 @@ fn main() {
     { let guard = Guard(mut value); child = read *guard.value }
     *child
 }
-""", "ownership", "live read loan"),
+""", "ownership", "live read loan", (6, 63)),
     "replacement-destructor-conflicts-with-derived-view": ("""
 type Guard<region r> { value: mut i32 from r; drop { *self.value = 0 } }
 fn main() {
@@ -4764,148 +6618,148 @@ fn main() {
     guard = Guard(mut second)
     *child
 }
-""", "ownership", "live read loan"),
+""", "ownership", "live read loan", (8, 5)),
     "view-store-cannot-escape-local": ("copy type R<region r> { value: read i32 from r }\nfn bad(target: mut R) { let owned = 42; target.value = read owned }\nfn main() { 0 }\n",
-                                      "ownership", "caller-owned storage"),
+                                      "ownership", "caller-owned storage", (2, 41), 1),
     "view-writeback-short-source": ("copy type R<region r> { value: read i32 from r }\nfn set(target: mut R, value: read i32) { target.value = read value }\nfn forward(target: mut R, value: read i32) { set(target,value) }\nfn main() { let first = 1; var target = R(read first); { let short = 2; forward(target,short) }; *target.value }\n",
-                                    "ownership", "live read loan"),
+                                    "ownership", "live read loan", (4, 95)),
     "call-view-content-alias": ("copy type R<region r> { value: read i32 from r }\nfn both(reader: read R, writer: mut i32) { writer = *reader.value }\nfn main() { var x = 1; let reader = R(read x); both(reader,x); 0 }\n",
-                                "ownership", "live read loan"),
+                                "ownership", "live read loan", (3, 60)),
     "stored-read-mutation": ("fn main() { var x = 1; let v = read x; x = 2; *v }\n",
-                             "ownership", "live read loan"),
+                             "ownership", "live read loan", (1, 40)),
     "copied-read-still-live": ("fn main() { var x = 1; let v = read x; let copied = v; x = 2; *copied }\n",
-                              "ownership", "live read loan"),
+                              "ownership", "live read loan", (1, 56)),
     "exclusive-parent-suspended": ("fn main() { var x = 1; let p = mut x; let child = mut *p; *p = 2; *child }\n",
-                                   "ownership", "live exclusive loan"),
+                                   "ownership", "live exclusive loan", (1, 59)),
     "exclusive-parent-moved": ("fn main() { var x = 1; let p = mut x; let child = read *p; let moved = p; *child }\n",
-                               "ownership", "live read loan"),
+                               "ownership", "live read loan", (1, 72)),
     "read-view-not-writable": ("fn main() { var x = 1; let p = read x; *p = 2; 0 }\n",
-                               "ownership", "write through a read"),
+                               "ownership", "write through a read", (1, 40), 1),
     "read-view-no-exclusive-upgrade": ("fn main() { var x = 1; let p = read x; let child = mut *p; 0 }\n",
-                                      "ownership", "mutable place"),
+                                      "ownership", "mutable place", (1, 56)),
     "view-pointee-cannot-be-moved": ("type C { value: i32 }\nfn main() { var c = C(1); let p = mut c; let moved = *p; 0 }\n",
-                                    "ownership", "cannot move out of a borrowed place"),
+                                    "ownership", "cannot move out of a borrowed place", (2, 54)),
     "returned-local-view": ("fn bad(source: read i32): read i32 from source { let owned = 1; read owned }\nfn main() { 0 }\n",
-                            "ownership", "returned view escapes"),
+                            "ownership", "returned view escapes", (1, 65)),
     "returned-source-mismatch": ("fn bad(first: read i32, second: read i32): read i32 from first { read second }\nfn main() { 0 }\n",
-                                 "ownership", "declared input sources"),
+                                 "ownership", "declared input sources", (1, 66)),
     "ambiguous-returned-view": ("fn bad(first: read i32, second: read i32): read i32 { read first }\nfn main() { 0 }\n",
-                                "type", "ambiguous borrowed result"),
+                                "type", "ambiguous borrowed result", (1, 1)),
     "call-does-not-extend-temporary": ("type C { value: i32 }\nfn identity(c: C): read C from c { read c }\nfn main() { let v = identity(C(42)); v.value }\n",
-                                      "ownership", "live read loan"),
+                                      "ownership", "live read loan", (3, 13)),
     "returned-sources-both-live": ("fn first(a: read i32, b: read i32): read i32 from (a,b) { read a }\nfn main() { var a = 1; var b = 2; let v = first(a,b); b = 3; *v }\n",
-                                   "ownership", "live read loan"),
+                                   "ownership", "live read loan", (2, 55)),
     "reservation-forbids-mutation": ("type C { value: i32; mut fn add(n: i32) { self.value += n } }\nfn main() { var c = C(1); c.add({ c.value = 2; 1 }); 0 }\n",
-                                     "ownership", "live exclusive loan"),
+                                     "ownership", "live exclusive loan", (2, 35)),
     "ordinary-mut-call-not-two-phase": ("type C { value: i32; fn get() { self.value } }\nfn add(c: mut C,n: i32) { c.value += n }\nfn main() { var c = C(1); add(c,c.get()); 0 }\n",
-                                        "ownership", "live exclusive loan"),
+                                        "ownership", "live exclusive loan", (3, 33)),
     "activation-conflicts-with-read": ("type C { value: i32; fn view(): read i32 from self { read self.value }; mut fn add(n: read i32) { self.value += n } }\nfn main() { var c = C(1); c.add(c.view()); 0 }\n",
-                                       "ownership", "live read loan"),
+                                       "ownership", "live read loan", (2, 27)),
     "destructor-cannot-be-copy": ("copy type C { value: i32; drop {} }\nfn main() { 0 }\n",
-                                  "type", "destructor"),
+                                  "type", "destructor", (1, 1)),
     "destructor-forbids-partial-move": ("type Leaf { value: i32 }\ntype C { leaf: Leaf; drop {} }\nfn main() { let c = C(Leaf(1)); let leaf = c.leaf; 0 }\n",
-                                       "ownership", "partially move"),
+                                       "ownership", "partially move", (3, 44)),
     "destructor-retains-view": ("type Guard<region r> { view: read i32 from r; drop { let observed = *self.view } }\nfn main() { var x = 1; let guard = Guard(read x); x = 2; 0 }\n",
-                                "ownership", "live read loan"),
+                                "ownership", "live read loan", (2, 51)),
     "destructor-not-directly-callable": ("type C { drop {} }\nfn main() { var c = C(); c.drop(); 0 }\n",
-                                         "ownership", "destructor directly"),
+                                         "ownership", "destructor directly", (2, 26)),
     "exclusive-argument-alias": ("type C { value: i32 }\nfn both(a: mut C,b: mut C) {}\nfn main() { var c = C(1); both(c,c); 0 }\n",
-                                "ownership", "live exclusive loan"),
+                                "ownership", "live exclusive loan", (3, 34)),
     "read-exclusive-argument-alias": ("type C { value: i32 }\nfn both(a: C,b: mut C) {}\nfn main() { var c = C(1); both(c,c); 0 }\n",
-                                     "ownership", "live read loan"),
+                                     "ownership", "live read loan", (3, 34)),
     "mutation-during-read-argument": ("type C { value: i32 }\nfn outer(a: C,b: i32) {}\nfn change(c: mut C) { c.value += 1; 0 }\nfn main() { var c = C(1); outer(c,change(c)); 0 }\n",
-                                     "ownership", "live read loan"),
+                                     "ownership", "live read loan", (4, 42)),
     "parent-read-during-mut-argument": ("type C { value: i32 }\nfn outer(a: mut C,b: i32) {}\nfn main() { var c = C(1); outer(c,c.value); 0 }\n",
-                                       "ownership", "live exclusive loan"),
+                                       "ownership", "live exclusive loan", (3, 35)),
     "immutable-exclusive-borrow": ("type C { value: i32 }\nfn change(c: mut C) { c.value += 1 }\nfn main() { let c = C(1); change(c); 0 }\n",
-                                   "ownership", "mutable place"),
+                                   "ownership", "mutable place", (3, 34)),
     "write-through-read-parameter": ("type C { value: i32 }\nfn bad(c: C) { c.value = 2 }\nfn main() { 0 }\n",
-                                     "ownership", "write through a read parameter"),
+                                     "ownership", "write through a read parameter", (2, 16), 1),
     "borrowed-owned-return": ("type C { value: i32 }\nfn bad(c: C): C { c }\nfn main() { 0 }\n",
-                              "ownership", "cannot move out of a borrowed place"),
+                              "ownership", "cannot move out of a borrowed place", (2, 19)),
     "take-borrowed-copy": ("fn bad(value: read i32) { let x = take value }\nfn main() { 0 }\n",
-                           "ownership", "cannot move out of a borrowed place"),
+                           "ownership", "cannot move out of a borrowed place", (1, 40)),
     "read-to-mut-reborrow": ("type C { value: i32 }\nfn change(c: mut C) {}\nfn bad(c: C) { change(c) }\nfn main() { 0 }\n",
-                             "ownership", "mutable place"),
+                             "ownership", "mutable place", (3, 23)),
     "use-after-move": ((Path(__file__).resolve().parents[1] / "examples/core/reject-use-after-move.mt").read_text(),
-                       "ownership", "moved"),
+                       "ownership", "moved", (8, 5)),
     "take-copy-contract": ((Path(__file__).resolve().parents[1] / "examples/core/reject-take-copy.mt").read_text(),
-                           "ownership", "moved"),
+                           "ownership", "moved", (7, 5)),
     "whole-partial-initialization": ("copy type P { x: i32; y: i32 }\nfn main() { let p: P; p.x = 1; let copied = p; 0 }\n",
-                                      "type", "binding 'p' may be uninitialized"),
+                                      "type", "binding 'p' may be uninitialized", (2, 45)),
     "field-read-before-init": ("copy type P { x: i32 }\nfn main() { let p: P; p.x }\n",
-                               "type", "binding 'p.x' may be uninitialized"),
+                               "type", "binding 'p.x' may be uninitialized", (2, 23)),
     "field-double-initialization": ("copy type P { x: i32 }\nfn main() { let p: P; p.x = 1; p.x = 2; 0 }\n",
-                                    "type", "immutable binding 'p.x'"),
+                                    "type", "immutable binding 'p.x'", (2, 32)),
     "zero-size-field-initialization": ("copy type E {}\ncopy type P { x: i32; tag: E }\nfn main() { let p: P; p.x = 0; let copied = p; 0 }\n",
-                                       "type", "binding 'p' may be uninitialized"),
+                                       "type", "binding 'p' may be uninitialized", (3, 45)),
     "field-one-path-initialized": ("copy type P { x: i32 }\nfn choose(b: bool) { let p: P; if b { p.x = 42 }; p.x }\nfn main() { choose(true) }\n",
-                                   "type", "binding 'p.x' may be uninitialized"),
+                                   "type", "binding 'p.x' may be uninitialized", (2, 51)),
     "field-loop-reassignment": ("copy type P { x: i32 }\nfn main() { let p: P; var n = 0; while n < 2 { p.x = n; n += 1 }; 0 }\n",
-                                "type", "immutable binding 'p.x'"),
+                                "type", "immutable binding 'p.x'", (2, 48)),
     "field-assignment-type": ("copy type P { x: i32 }\nfn main() { var p = P(0); p.x = true; 0 }\n",
-                              "type", "expected i32, found bool"),
+                              "type", "expected i32, found bool", (2, 27)),
     "immutable-reinit-after-move": ("type P { x: i32 }\nfn main() { let p = P(1); let q = p; p = P(2); 0 }\n",
-                                    "type", "immutable binding 'p'"),
+                                    "type", "immutable binding 'p'", (2, 38)),
     "loop-use-after-move": ("type P { x: i32 }\nfn main() { var p = P(1); var n = 0; while n < 2 { let q = p; n += 1 }; 0 }\n",
-                            "ownership", "moved"),
+                            "ownership", "moved", (2, 60)),
     "conditional-use-after-move": ("type P { x: i32 }\nfn choose(flag: bool) { let p = P(42); if flag { let q = p }; p.x }\nfn main() { choose(false) }\n",
-                                   "ownership", "moved"),
+                                   "ownership", "moved", (2, 63)),
     "whole-use-after-field-take": ("copy type P { x: i32; y: i32 }\nfn main() { let p = P(20,22); let x = take p.x; let q = p; 0 }\n",
-                                   "ownership", "moved"),
-    "product-unknown-field": ("copy type P { x: i32 }\nfn main() { P(1).missing }\n", "name", "unknown field 'missing'"),
-    "product-field-type": ("copy type P { x: i32 }\nfn main() { let p = P(true); 0 }\n", "type", "expected i32, found bool"),
-    "product-missing-field": ("copy type P { x: i32 }\nfn main() { let p = P(); 0 }\n", "type", "argument count"),
-    "product-duplicate-field": ("copy type P { x: i32; x: i32 }\nfn main() { 0 }\n", "name", "duplicate field"),
-    "product-nominal-types": ("copy type A { x: i32 }\ncopy type B { x: i32 }\nfn main() { let x: A = B(1); 0 }\n", "type", "expected A, found B"),
-    "product-recursive-layout": ("copy type A { b: B }\ncopy type B { a: A }\nfn main() { 0 }\n", "type", "no finite layout"),
-    "product-noncopy-field": ("type Owner { x: i32 }\ncopy type Bad { owner: Owner }\nfn main() { 0 }\n", "type", "not Copy"),
-    "product-implicit-comparison": ("copy type P { x: i32 }\nfn main() { if P(1) == P(1) { 0 } else { 1 } }\n", "type", "comparison interface"),
-    "unknown-name": ("fn main(): i32 { missing }\n", "name"),
-    "unknown-function": ("fn main(): i32 { missing() }\n", "name"),
-    "unknown-type": ("fn main(): Missing { 0 }\n", "name"),
-    "wrong-return": ("fn main(): i32 { true }\n", "type"),
-    "conflicting-return": ("fn f(b: bool) { if b { return 1 }; false }\nfn main() { 0 }\n", "type"),
-    "unanchored-cycle": ("fn f() { g() }\nfn g() { f() }\nfn main(): i32 { f() }\n", "type"),
-    "wrong-call-type": ("fn f(x: i32) { x }\nfn main() { f(true) }\n", "type"),
-    "wrong-arity": ("fn f(x: i32) { x }\nfn main() { f() }\n", "type"),
-    "duplicate-label": ("fn f(x: i32, y: i32) { x }\nfn main() { f(x: 1, x: 2) }\n", "type"),
-    "unknown-label": ("fn f(x: i32) { x }\nfn main() { f(y: 1) }\n", "type"),
-    "positional-after-label": ("fn f(x: i32, y: i32) { x }\nfn main() { f(y: 1, 2) }\n", "type"),
-    "uninitialized": ("fn main(): i32 { let x: i32; x }\n", "type"),
-    "partial-initialization": ("fn f(b: bool) { let x: i32; if b { x = 1 }; x }\nfn main() { 0 }\n", "type"),
-    "double-initialization": ("fn main() { let x = 1; x = 2; x }\n", "type"),
-    "loop-double-initialization": ("fn main() { let x: i32; var n = 0; while n < 2 { x = n; n += 1 }; 0 }\n", "type"),
-    "compound-uninitialized": ("fn main() { var x: i32; x += 1; x }\n", "type"),
-    "loop-control": ("fn main() { break; 0 }\n", "type"),
-    "duplicate-function": ("fn main() { 0 }\nfn main() { 0 }\n", "name"),
-    "duplicate-parameter": ("fn f(x: i32, x: i32) { x }\nfn main() { 0 }\n", "name"),
-    "wrong-entry": ("fn main(x: i32) { x }\n", "type"),
-    "missing-entry": ("fn f() { 0 }\n", "name"),
-    "literal-range": ("fn main() { 2147483648 }\n", "type"),
-    "literal-separator": ("fn main() { 1__2 }\n", "lex"),
-    "literal-suffix": ("fn main() { 42unknown }\n", "lex"),
-    "negative-range": ("fn main() { -2147483649 }\n", "type"),
-    "old-arrow": ("fn main() -> i32 { 0 }\n", "parse"),
-    "old-unit-type": ("fn ignored(): () {}\nfn main() { 0 }\n", "parse"),
-    "old-never-type": ("fn ignored(): never { loop {} }\nfn main() { 0 }\n", "name"),
-    "missing-operand": ("fn main() { 1 + }\n", "parse"),
-    "missing-brace": ("fn main() { 0\n", "parse"),
-    "no-separator": ("fn main() { let x = 1 let y = 2; 0 }\n", "parse"),
-    "comparison-chain": ("fn main() { if 1 < 2 < 3 { 0 } else { 1 } }\n", "parse"),
-    "newline-before-call": ("fn f() { 1 }\nfn main() { f\n() }\n", "type", "entry function"),
-    "unterminated-comment": ("fn main() { 0 } /* missing", "lex"),
-    "invalid-character": ("fn main() { $ }\n", "lex"),
+                                   "ownership", "moved", (2, 57)),
+    "product-unknown-field": ("copy type P { x: i32 }\nfn main() { P(1).missing }\n", "name", "unknown field 'missing'", (2, 13)),
+    "product-field-type": ("copy type P { x: i32 }\nfn main() { let p = P(true); 0 }\n", "type", "expected i32, found bool", (2, 23)),
+    "product-missing-field": ("copy type P { x: i32 }\nfn main() { let p = P(); 0 }\n", "type", "argument count", (2, 21)),
+    "product-duplicate-field": ("copy type P { x: i32; x: i32 }\nfn main() { 0 }\n", "name", "duplicate field", (1, 23)),
+    "product-nominal-types": ("copy type A { x: i32 }\ncopy type B { x: i32 }\nfn main() { let x: A = B(1); 0 }\n", "type", "expected A, found B", (3, 13)),
+    "product-recursive-layout": ("copy type A { b: B }\ncopy type B { a: A }\nfn main() { 0 }\n", "type", "no finite layout", (2, 15), 1),
+    "product-noncopy-field": ("type Owner { x: i32 }\ncopy type Bad { owner: Owner }\nfn main() { 0 }\n", "type", "not Copy", (2, 1)),
+    "product-implicit-comparison": ("copy type P { x: i32 }\nfn main() { if P(1) == P(1) { 0 } else { 1 } }\n", "type", "comparison interface", (2, 16)),
+    "unknown-name": ("fn main(): i32 { missing }\n", "name", "unresolved value 'missing'", (1, 18)),
+    "unknown-function": ("fn main(): i32 { missing() }\n", "name", "unresolved or inaccessible function 'missing'", (1, 18)),
+    "unknown-type": ("fn main(): Missing { 0 }\n", "name", "unresolved or inaccessible type 'Missing'", (1, 1)),
+    "wrong-return": ("fn main(): i32 { true }\n", "type", 'expected i32, found bool', (1, 16)),
+    "conflicting-return": ("fn f(b: bool) { if b { return 1 }; false }\nfn main() { 0 }\n", "type", 'expected i32, found bool', (1, 15)),
+    "unanchored-cycle": ("fn f() { g() }\nfn g() { f() }\nfn main(): i32 { f() }\n", "type", 'cannot infer recursive result', (2, 1)),
+    "wrong-call-type": ("fn f(x: i32) { x }\nfn main() { f(true) }\n", "type", 'expected i32, found bool', (2, 15)),
+    "wrong-arity": ("fn f(x: i32) { x }\nfn main() { f() }\n", "type", "missing required argument 'x'", (2, 13)),
+    "duplicate-label": ("fn f(x: i32, y: i32) { x }\nfn main() { f(x: 1, x: 2) }\n", "type", 'duplicate argument', (2, 24), 1),
+    "unknown-label": ("fn f(x: i32) { x }\nfn main() { f(y: 1) }\n", "type", 'unknown or excess argument', (2, 18), 1),
+    "positional-after-label": ("fn f(x: i32, y: i32) { x }\nfn main() { f(y: 1, 2) }\n", "type", 'positional arguments must precede named arguments', (2, 21), 1),
+    "uninitialized": ("fn main(): i32 { let x: i32; x }\n", "type", "binding 'x' may be uninitialized", (1, 30)),
+    "partial-initialization": ("fn f(b: bool) { let x: i32; if b { x = 1 }; x }\nfn main() { 0 }\n", "type", "binding 'x' may be uninitialized", (1, 45)),
+    "double-initialization": ("fn main() { let x = 1; x = 2; x }\n", "type", "cannot assign immutable binding 'x' more than once", (1, 24)),
+    "loop-double-initialization": ("fn main() { let x: i32; var n = 0; while n < 2 { x = n; n += 1 }; 0 }\n", "type", "cannot assign immutable binding 'x' more than once", (1, 50)),
+    "compound-uninitialized": ("fn main() { var x: i32; x += 1; x }\n", "type", "binding 'x' may be uninitialized", (1, 25)),
+    "loop-control": ("fn main() { break; 0 }\n", "type", 'loop control outside a loop', (1, 13)),
+    "duplicate-function": ("fn main() { 0 }\nfn main() { 0 }\n", "name", "duplicate function or value binding 'main'", (2, 1)),
+    "duplicate-parameter": ("fn f(x: i32, x: i32) { x }\nfn main() { 0 }\n", "name", "duplicate parameter 'x'", (1, 14)),
+    "wrong-entry": ("fn main(x: i32) { x }\n", "type", 'entry function must have no parameters and return i32', (1, 1)),
+    "missing-entry": ("fn f() { 0 }\n", "name", "missing entry function 'main'", (1, 1)),
+    "literal-range": ("fn main() { 2147483648 }\n", "type", 'integer literal is outside the i32 range', (1, 13)),
+    "literal-separator": ("fn main() { 1__2 }\n", "lex", 'numeric separators must occur between digits', (1, 13)),
+    "literal-suffix": ("fn main() { 42unknown }\n", "lex", 'malformed integer literal', (1, 13)),
+    "negative-range": ("fn main() { -2147483649 }\n", "type", 'integer literal is outside the i32 range', (1, 14)),
+    "old-arrow": ("fn main() -> i32 { 0 }\n", "parse", "function results use ': Type', not '->'", (1, 14)),
+    "old-unit-type": ("fn ignored(): () {}\nfn main() { 0 }\n", "parse", 'use Unit in type positions', (1, 15)),
+    "old-never-type": ("fn ignored(): never { loop {} }\nfn main() { 0 }\n", "name", "unresolved or inaccessible type 'never'", (1, 1)),
+    "missing-operand": ("fn main() { 1 + }\n", "parse", 'expected an expression', (1, 17), 1),
+    "missing-brace": ("fn main() { 0\n", "parse", "expected '}'", (2, 1)),
+    "no-separator": ("fn main() { let x = 1 let y = 2; 0 }\n", "parse", "expected a newline or ';' between statements", (1, 23)),
+    "comparison-chain": ("fn main() { if 1 < 2 < 3 { 0 } else { 1 } }\n", "parse", 'comparisons do not chain', (1, 22)),
+    "newline-before-call": ("fn f() { 1 }\nfn main() { f\n() }\n", "type", "entry function", (2, 1)),
+    "unterminated-comment": ("fn main() { 0 } /* missing", "lex", 'unterminated block comment', (1, 17)),
+    "invalid-character": ("fn main() { $ }\n", "lex", 'unsupported character or literal', (1, 13)),
     "unused-generic-does-not-gain-copy": (
-        "fn f<T>(x: T): T { x }\nfn main() { 0 }\n", "ownership"),
-    "unknown-effect-type": ("fn f() throws Error { 0 }\nfn main() { 0 }\n", "name", "type 'Error'"),
+        "fn f<T>(x: T): T { x }\nfn main() { 0 }\n", "ownership", 'cannot move out of a borrowed place', (1, 20)),
+    "unknown-effect-type": ("fn f() throws Error { 0 }\nfn main() { 0 }\n", "name", "type 'Error'", (1, 1)),
     "capturing-closure-cannot-coerce-to-thin-pointer": ("""
 fn main(): i32 {
     let value = 42
     let pointer: fn(): i32 = fn() { value }
     pointer()
 }
-""", "type", "expected fn()"),
+""", "type", "expected fn()", (4, 5)),
     "borrowed-closure-cannot-move-captured-place": ("""
 type Item { value: i32 }
 fn consume(item: take Item): i32 { item.value }
@@ -4914,7 +6768,7 @@ fn main(): i32 {
     let closure = fn(): i32 { consume(item) }
     closure()
 }
-""", "ownership", "requires a take closure"),
+""", "ownership", "requires a take closure", (6, 39)),
     "copied-borrowed-closure-cannot-escape": ("""
 fn main(): i32 {
     let escaped = {
@@ -4925,14 +6779,14 @@ fn main(): i32 {
     }
     escaped()
 }
-""", "ownership", "live read loan"),
+""", "ownership", "live read loan", (8, 5)),
     "consume-callable-bound-is-not-repeatedly-callable": ("""
 fn twice<F: take fn(): i32>(operation: take F): i32 {
     operation() + operation()
 }
 fn answer(): i32 { 42 }
 fn main(): i32 { twice(answer) }
-""", "ownership", "may have been moved"),
+""", "ownership", "may have been moved", (3, 19)),
     "mutating-closure-requires-exclusive-binding": ("""
 fn main(): i32 {
     var value = 0
@@ -4940,14 +6794,14 @@ fn main(): i32 {
     closure()
     value
 }
-""", "ownership", "mutable place"),
+""", "ownership", "mutable place", (5, 5)),
     "function-pointer-access-contract-is-not-erased": ("""
 fn value(input: i32): i32 { input }
 fn main(): i32 {
     let pointer: fn(read i32): i32 = value
     pointer(42)
 }
-""", "type", "expected fn(read i32)"),
+""", "type", "expected fn(read i32)", (4, 5)),
     "indirect-returned-product-view-keeps-input-loans": ("""
 copy type Pair { first: i32; second: i32 }
 copy type Reader<region r> { value: read Pair from r }
@@ -4960,7 +6814,7 @@ fn main(): i32 {
     pair.first += 1
     result.first + result.second
 }
-""", "ownership", "live read loan"),
+""", "ownership", "live read loan", (10, 5)),
     "higher-ranked-callable-bound-rejects-monomorphic-pointer": ("""
 fn apply<F: for<region r> fn(read i32 from r): read i32 from r>(
     operation: read F, value: read i32): read i32 from value {
@@ -4972,50 +6826,50 @@ fn invalid<region outer>(
     apply(operation,value)
 }
 fn main(): i32 { 0 }
-""", "region", "declared relationship"),
+""", "region", "declared relationship", (9, 5)),
     "callable-type-requires-result-annotation": ("""
 fn main(): i32 {
     let closure: fn() = fn() { 42 }
     closure()
 }
-""", "parse", "expected ':'"),
+""", "parse", "expected ':'", (3, 23)),
     "unused-generic-body-is-checked": (
-        "fn wrong<T>(value: T): i32 { value }\nfn main(): i32 { 0 }\n", "type"),
+        "fn wrong<T>(value: T): i32 { value }\nfn main(): i32 { 0 }\n", "type", 'expected i32, found T', (1, 28)),
     "ordinary-copy-interface-grants-no-copy-rights": ("""
 module fake { pub interface Copy {} }
 fn wrong<T: fake::Copy>(value: T): T { value }
 fn main(): i32 { 0 }
-""", "ownership"),
+""", "ownership", 'cannot move out of a borrowed place', (3, 40)),
     "unused-generic-const-default-overflow": (
         "fn answer<const N:i32=2147483647+1>():i32{N}\n"
-        "fn main():i32{0}\n", "type", "overflows"),
+        "fn main():i32{0}\n", "type", "overflows", (1, 23)),
     "generic-array-repeat-needs-declared-copy": (
         "fn wrong<T,const N:i32>(value:take T):[T;N]{[value;N]}\n"
-        "fn main():i32{0}\n", "ownership", "requires Copy"),
+        "fn main():i32{0}\n", "ownership", "requires Copy", (1, 45)),
     "generic-array-loop-cannot-reuse-moved-outer-value": ("""
 type Owned { value: i32 }
 fn wrong<const N:i32>(values:read [i32;N], owner:take Owned):Unit {
     for value in values { let moved = take owner }
 }
 fn main():i32{0}
-""", "ownership"),
+""", "ownership", "binding 'owner' may have been moved", (4, 44)),
     "unused-generic-bound-must-resolve": (
         "fn wrong<T:Missing>(value:T):Unit{()}\nfn main():i32{0}\n",
-        "type", "unknown interface bound"),
+        "type", "unknown interface bound", (1, 1)),
     "interface-default-self-does-not-grant-sized": ("""
 fn require_sized<T>(value: read T): Unit { () }
 interface Bound<Rhs = Self> {
     fn invalid(): Unit { require_sized(self) }
 }
 fn main(): i32 { 0 }
-""", "type", "does not satisfy Sized"),
+""", "type", "does not satisfy Sized", (4, 26)),
     "equal-implementation-constraints-still-overlap": ("""
 interface Code { fn code(): i32; }
 type Box<T> { value:T }
 impl<T> Box<T> implements Code where T=i32 { fn code():i32{1} }
 impl<U> Box<U> implements Code where U=i32 { fn code():i32{2} }
 fn main():i32{0}
-""", "type", "overlapping implementations"),
+""", "type", "overlapping implementations", (5, 1)),
     "missing-current-implementations-do-not-prove-disjointness": ("""
 interface A {}
 interface B {}
@@ -5024,19 +6878,40 @@ type Box<T> { value:T }
 impl<T:A> Box<T> implements Code { fn code():i32{1} }
 impl<T:B> Box<T> implements Code { fn code():i32{2} }
 fn main():i32{0}
-""", "type", "overlapping implementations"),
+""", "type", "overlapping implementations", (7, 1)),
     "inherent-implementation-requirements-are-not-assumed": ("""
 type Box<T> { value:T }
 type Owned { value:i32 }
 impl<T:Copy> Box<T> { fn answer():i32{42} }
 fn main():i32{let value=Box(Owned(0));value.answer()}
-""", "name", "unresolved"),
+""", "name", "unresolved", (5, 39)),
     "unconstrained-implementation-type-parameter": (
         "type Plain{}\nimpl<T> Plain{fn answer():i32{42}}\nfn main():i32{0}\n",
-        "type", "unconstrained implementation parameter"),
+        "type", "unconstrained implementation parameter", (2, 1)),
     "unconstrained-implementation-const-parameter": (
         "type Plain{}\nimpl<const N:i32> Plain{fn answer():i32{N}}\n"
-        "fn main():i32{0}\n", "type", "unconstrained implementation parameter"),
+        "fn main():i32{0}\n", "type", "unconstrained implementation parameter", (2, 1)),
+    "generic-specialization-nesting-reports-call-site": (
+        "type Wrap<T>{value:T}\n"
+        "fn deep<T>(value: take T, n: i32): i32 { if n == 0 {0} else { deep(Wrap(value), n - 1) } }\n"
+        "fn main(): i32 { deep(1, 2) }\n",
+        "limit", "generic specialization nesting limit exceeded while instantiating 'deep'", (2, 63), 1),
+    "recovery-bad-pattern-leaves-no-stray-declaration": (
+        "fn f(x: i32): i32 { let y = 1; match x { -y => 1, _ => 0 } }\n"
+        "fn main(): i32 { f(1) }\n",
+        "parse", "expected an integer literal after '-' in a pattern", (1, 43), 1),
+    "recovery-reserved-binding-does-not-report-feature-use": (
+        "fn main(): i32 { let macro = 1; return macro }\n",
+        "parse", "expected an identifier", (1, 22), 1),
+    "unsupported-pin-projection-does-not-cascade-inference": (
+        "fn main(): i32 { var value: (u64)? = none; var handle = core::pin::Pin::new(mut value); "
+        "let inner = handle.project_value(); 0 }\n",
+        "feature", "pin projection of sum variants requires active-variant support", (1, 101), 1),
+    "unrelated-inference-error-in-other-function-still-reported": (
+        "fn a(): i32 { let x = nosuch(); 0 }\n"
+        "fn b(): i32 { let y = none; 0 }\n"
+        "fn main(): i32 { 0 }\n",
+        "type", "cannot infer local type; add ': Type'", (2, 15), 2),
 }
 
 ARITHMETIC = {
@@ -5067,6 +6942,14 @@ ARITHMETIC = {
     "machine-i128-division-overflow": (
         "let value=i128::MIN; let divisor=-1i128; let result=value/divisor; 0", "trap", "trap"),
     "array-dynamic-upper-bound": ("let values=[42]; let index=1; values[index]", "trap", "trap"),
+    "array-dynamic-upper-bound-large": (
+        "var values=[0; 3000]; let index=3000; values[index]", "trap", "trap"),
+    "array-dynamic-zero-length-bound": (
+        "let values:[i32;0]=[]; let index=0; values[index]", "trap", "trap"),
+    "array-dynamic-nested-inner-bound": (
+        "var grid=[[0u8;300];300]; let row=299; let column=300; grid[row][column]=1u8; 0", "trap", "trap"),
+    "array-dynamic-usize-negative-wrap": (
+        "let values=[42]; let index=0usize-1usize; values[index]", "trap", "trap"),
     "array-dynamic-negative-bound": ("let values=[42]; let index=-1; values[index]", "trap", "trap"),
     "overflow-add": ("let x = 2147483647; if x + 1 == -2147483648 { 0 } else { 1 }", "trap", 0),
     "overflow-sub": ("let x = -2147483648; if x - 1 == 2147483647 { 0 } else { 1 }", "trap", 0),
@@ -5088,22 +6971,26 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def run_suite(mode, executable, directory):
+def run_suite(mode, executable, directory, shard_index=0, shard_count=1):
     executable = str(Path(executable).resolve())
     directory = Path(directory) / mode
+    if shard_count > 1:
+        directory /= f"shard-{shard_index}"
     directory.mkdir(parents=True, exist_ok=True)
     evidence = {"scope": "Source regressions through the initial I06 machine boundary; not full language or release qualification",
                 "status": "in_progress", "mode": mode, "compiler_sha256": digest(executable),
                 "host": platform.platform(), "commands": [], "cases": []}
+    if shard_count > 1:
+        evidence["shard"] = {"index": shard_index, "count": shard_count}
 
-    def run(arguments, expected=0):
+    def run(arguments, expected=0, timeout=30):
         begin = time.perf_counter()
-        result = subprocess.run(arguments, text=True, capture_output=True, timeout=30)
+        result = subprocess.run(arguments, text=True, capture_output=True, timeout=timeout)
         evidence["commands"].append({"command": list(map(str, arguments)),
                                     "exit_status": result.returncode,
                                     "elapsed_seconds": time.perf_counter() - begin,
                                     "stdout": result.stdout, "stderr": result.stderr})
-        if (expected == "trap" and result.returncode >= 0) or (
+        if (expected == "trap" and result.returncode != -signal.SIGABRT) or (
                 expected != "trap" and result.returncode != expected):
             raise AssertionError(f"{arguments!r}: expected {expected}, got {result.returncode}\n"
                                  f"{result.stdout}{result.stderr}")
@@ -5118,7 +7005,8 @@ def run_suite(mode, executable, directory):
         path = source(name, text)
         program = directory / (name + "-" + profile)
         run([executable, "build", str(path), "-o", str(program),
-             "--profile", profile, *extra])
+             "--profile", profile, *extra],
+            timeout=180 if name.startswith("limits-stress") else 30)
         run([str(program)], expected)
         evidence["cases"].append({"file": str(path), "source_sha256": digest(path),
                                   "profile": profile, "expected": expected,
@@ -5174,11 +7062,20 @@ def run_suite(mode, executable, directory):
                 name, text = case
                 for profile in ("debug", "release"):
                     compile_run(name, text, profile, 0)
-            batch(POSITIVE.items(), execute_positive)
+            cases = sorted(POSITIVE.items())
+            batch((case for i, case in enumerate(cases)
+                   if i % shard_count == shard_index), execute_positive)
         elif mode == "negative":
             def execute_negative(item):
                 name, case = item
-                text, phase, *messages = case
+                try:
+                    text, phase, message, (line, column), *rest = case
+                    count, = rest or (None,)
+                except ValueError:
+                    raise AssertionError(f"{name}: negative case requires (source, phase, message, "
+                                         "(line, column)[, exact diagnostic count])")
+                if not message:
+                    raise AssertionError(f"{name}: negative case requires an intended diagnostic message")
                 path = source(name, text)
                 program = directory / (name + ".out")
                 program.write_bytes(b"preserve existing artifact")
@@ -5186,13 +7083,18 @@ def run_suite(mode, executable, directory):
                 for profile in profiles:
                     result = run([executable, "build", str(path), "-o", str(program),
                                   "--profile", profile], 1)
-                    if f"error[{phase}]" not in result.stderr or not re.search(
-                            re.escape(str(path)) + r":\d+:\d+: error", result.stderr):
-                        raise AssertionError(f"{name}: wrong/missing phase or span:\n{result.stderr}")
                     if program.read_bytes() != b"preserve existing artifact":
                         raise AssertionError(f"{name}: failed compilation damaged existing output")
-                    if messages and messages[0] not in result.stderr:
-                        raise AssertionError(f"{name}: missing intended diagnostic {messages[0]!r}\n{result.stderr}")
+                    # The phase, message and location must belong to one diagnostic.
+                    intended = (re.escape(str(path)) + f":{line}:{column}: error\\[" +
+                                re.escape(phase) + r"\]:[^\n]*" + re.escape(message))
+                    if not re.search(intended, result.stderr):
+                        raise AssertionError(
+                            f"{name}: expected error[{phase}] containing {message!r} at "
+                            f"{line}:{column}:\n{result.stderr}")
+                    if count is not None and len(re.findall(r": error\[", result.stderr)) != count:
+                        raise AssertionError(
+                            f"{name}: expected exactly {count} diagnostic(s):\n{result.stderr}")
                     evidence["cases"].append({"file": str(path), "phase": phase,
                                              "profile": profile,
                                              "source_sha256": digest(path)})
@@ -5205,7 +7107,110 @@ def run_suite(mode, executable, directory):
                         "release", "trap", ("--overflow-checks", "on"))
             compile_run("explicit-off", "fn main() { let x = 2147483647; if x + 1 < 0 { 0 } else { 1 } }\n",
                         "debug", 0, ("--overflow-checks", "off"))
+            for profile in ("debug", "release"):
+                compile_run("generic-array-literal-index-out-of-instantiated-bound",
+                            "fn pick<const N: i32>(v: read [i32;N]): i32 { v[5] }\n"
+                            "fn main(): i32 { let values = [1, 2, 3]; pick(values) }\n",
+                            profile, "trap")
         elif mode == "syntax":
+            pure = source("no-cleanup-trampoline",
+                          "fn add(a:i32,b:i32):i32 {a+b}\nfn main(){add(20,22)-42}\n")
+            pure_ir = directory / "no-cleanup-trampoline.ll"
+            run([executable, "build", str(pure), "--emit", "llvm", "-o", str(pure_ir)])
+            if "@mettle_rt_run(" in pure_ir.read_text():
+                raise AssertionError("A function without cleanup still uses the unwind trampoline")
+            prefix_path = source("try-prefix-precedence",
+                                 "fn f():i32 throws i32 {1}\n"
+                                 "fn g():i32 throws i32 { try f() + 1 }\nfn main(){0}\n")
+            prefix = json.loads(run([executable, "syntax", str(prefix_path)]).stdout)
+            body = next(item for item in prefix["functions"] if item["name"] == "g")["body"]
+            if body["children"][0]["text"] != "+":
+                raise AssertionError("try consumed a lower-precedence binary expression")
+            recovery = source("recovery-state",
+                              "fn f():i32 {\n" + "let x = -------------------;\n" * 14 +
+                              "let valid=1\nreturn valid\n}\nfn main(){0}\n")
+            recovered = run([executable, "syntax", str(recovery)], 1)
+            if "nesting limit" in recovered.stderr or recovered.stderr.count("error[") != 14:
+                raise AssertionError("Parser recovery leaked nesting state")
+            cascade = source("no-inference-cascade", "fn f(){1+true}\nfn main(){0}\n")
+            result = run([executable, "check", str(cascade)], 1)
+            if result.stderr.count("error[") != 1 or "cannot infer recursive" in result.stderr:
+                raise AssertionError("An independent type error poisoned later result inference")
+            pattern_cascade = source(
+                "no-generic-pattern-cascade",
+                "enum Slot<K, V> { Empty, Full(K, V) }\n"
+                "type M<K, V> { s: Slot<K, V> }\n"
+                "impl<K, V> M<K, V> {\n"
+                "    fn a(): (read V from self)? {\n"
+                "        let s = self.s.missing(1)\n"
+                "        match s { Slot::Full(_, v) => present(read v), _ => none }\n"
+                "    }\n"
+                "}\nfn main(){0}\n")
+            result = run([executable, "check", str(pattern_cascade)], 1)
+            if result.stderr.count("error[") != 1:
+                raise AssertionError("A failed scrutinee cascaded into its generic pattern")
+            capped = source("reported-diagnostic-cap",
+                            "".join(f"fn f{i}() {{ 1+true }}\n" for i in range(140)) +
+                            "fn main(){0}\n")
+            result = run([executable, "check", str(capped)], 1)
+            if result.stderr.count("error[") != 100 or "40 additional diagnostics suppressed (limit 100)" not in result.stderr:
+                raise AssertionError("Diagnostic cap silently discarded failures")
+            visibility = source("one-visibility-diagnostic",
+                                "pub(nowhere) fn f(){}\nfn main(){0}\n")
+            result = run([executable, "check", str(visibility)], 1)
+            if result.stderr.count("restricted visibility must name an enclosing module") != 1:
+                raise AssertionError("One visibility restriction was diagnosed repeatedly")
+            independent = source(
+                "independent-exhaustiveness-budgets",
+                "".join(f"fn f{i}(x:i32):i32 {{ match x {{\n" +
+                        "".join(f"{j} => {j},\n" for j in range(128)) +
+                        "_ => 0\n} }\n" for i in range(200)) + "fn main(){0}\n")
+            run([executable, "check", str(independent)])
+            unsupported = source("unsupported-target", "fn main(){0}\n")
+            for target in ("wasm32-unknown-unknown", "armv7-unknown-linux-gnueabihf"):
+                for emission in ("ir", "llvm"):
+                    destination = directory / "unsupported.out"
+                    destination.write_bytes(b"preserve unsupported output")
+                    result = run([executable, "build", str(unsupported), "--target",
+                                  target, "--emit", emission, "-o", str(destination)], 1)
+                    if "error[feature]" not in result.stderr or destination.read_bytes() != b"preserve unsupported output":
+                        raise AssertionError("Unsupported target escaped source admission")
+            lexical = ('extern "C" { unsafe fn `type`():Unit; }\n'
+                       'fn main() { unsafe { asm!("/* quoted \\"text\\" */") }; 0 }\n')
+            lexical_path = source("text-and-quoted-identifiers", lexical)
+            for command in ("tokens", "syntax"):
+                result = run([executable, command, str(lexical_path)])
+                tokens = json.loads(result.stdout)["tokens"]
+                if "".join(token["text"] for token in tokens) != lexical:
+                    raise AssertionError("Text/backtick tokens lost source bytes")
+                for token in tokens:
+                    if lexical.encode()[token["begin"]:token["end"]].decode() != token["text"]:
+                        raise AssertionError("Text/backtick token has wrong byte span")
+                quoted = next(token for token in tokens if token["text"] == "`type`")
+                word = next(token for token in tokens if token["text"] == "extern")
+                literal = next(token for token in tokens if token["text"] == '"C"')
+                if len({quoted["kind"], word["kind"], literal["kind"]}) != 3:
+                    raise AssertionError("Quoted identifiers/text were classified as ordinary words")
+            literals = ('fn main() { let a = \'x\'; let b = \'\\u{41}\'; let c = b\'a\'; let d = b\'\\x41\';\n'
+                        'let e = 1.5e+3; let f = 2f32; let g = 3.25; let h = 42; let i = 0x2a; let `type` = 1;\n'
+                        'unsafe { asm!("a\\"b\\\\n\\x41", "") }; 0 }\n')
+            literal_path = source("literal-token-kinds", literals)
+            for command in ("tokens", "syntax"):
+                tokens = json.loads(run([executable, command, str(literal_path)]).stdout)["tokens"]
+                if "".join(token["text"] for token in tokens) != literals:
+                    raise AssertionError("Literal tokens lost source bytes")
+                kinds = {}
+                for category, spellings in (
+                        ("word", ("fn", "main", "let")), ("symbol", ("{", "=", ";")),
+                        ("character", ("'x'", "'\\u{41}'")), ("byte", ("b'a'", "b'\\x41'")),
+                        ("floating", ("1.5e+3", "2f32", "3.25")), ("integer", ("42", "0x2a")),
+                        ("quoted", ("`type`",)), ("text", ('"a\\"b\\\\n\\x41"', '""'))):
+                    found = {token["kind"] for token in tokens if token["text"] in spellings}
+                    if len(found) != 1:
+                        raise AssertionError(f"{category} tokens have inconsistent kinds {found}")
+                    kinds[category] = found.pop()
+                if len(set(kinds.values())) != len(kinds):
+                    raise AssertionError(f"Distinct literal categories share a token kind: {kinds}")
             text = "// UTF-8 comment: café\r\nfn main()\r\n{\r\n /* a\r\n /* b */ c */\r\n(0)\r\n}\r\n"
             path = source("lossless", text)
             for command in ("tokens", "syntax"):
@@ -5257,4 +7262,16 @@ def run_suite(mode, executable, directory):
 
 
 if __name__ == "__main__":
-    run_suite(*sys.argv[1:])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("mode", choices=("positive", "negative", "arithmetic", "syntax"))
+    parser.add_argument("executable")
+    parser.add_argument("directory")
+    parser.add_argument("--shard", default="0/1")
+    args = parser.parse_args()
+    try:
+        index, count = map(int, args.shard.split("/"))
+        if count < 1 or not 0 <= index < count or (count > 1 and args.mode != "positive"):
+            raise ValueError()
+    except ValueError:
+        parser.error("--shard requires index/count with 0 <= index < count, for positive cases")
+    run_suite(args.mode, args.executable, args.directory, index, count)

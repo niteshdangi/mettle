@@ -121,9 +121,7 @@ ir::Function Builder::runDefault(const mettle::Function &source,
           : expression(*value);
   if (live())
     returnValue(result, body.span);
-  for (auto &block : function.blocks)
-    if (block.exit.kind == Exit::None)
-      block.exit.kind = Exit::Unreachable;
+  finishControlFlow();
   return std::move(function);
 }
 

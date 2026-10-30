@@ -17,13 +17,54 @@ const ObjectLayout &LoweringContext::layout(Type type) {
 std::uint64_t LoweringContext::alignment(Type type) {
   return layout(type).alignment;
 }
+bool LoweringContext::indirect(Type valueType) {
+  if (!program.types->isProduct(valueType))
+    return false;
+  if (program.types->isOpaque(valueType))
+    return indirect(program.types->product(valueType).fields[0].type);
+  if (program.types->product(valueType).vector ||
+      !program.types->isSized(valueType) ||
+      program.types->pointerMetadata(valueType) != PointerMetadata::None)
+    return false;
+  if (auto found = indirects.find(valueType.index()); found != indirects.end())
+    return found->second;
+  return indirects
+      .emplace(valueType.index(), layout(valueType).size > indirectThreshold)
+      .first->second;
+}
+Type LoweringContext::fieldType(Type owner, unsigned field) {
+  const auto &record = program.types->product(owner);
+  return record.kind == AggregateKind::Array ? record.components[0]
+                                             : record.fields.at(field).type;
+}
+std::uint64_t LoweringContext::fieldOffset(Type owner, unsigned field) {
+  return program.types->compactArray(owner)
+             ? field * layout(program.types->product(owner).components[0]).size
+             : layout(owner).fields.at(field);
+}
+llvm::Value *LoweringContext::zero(Type valueType) {
+  if (!indirect(valueType))
+    return llvm::Constant::getNullValue(type(valueType));
+  auto *storage = temporary(valueType);
+  builder.CreateMemSet(storage, builder.getInt8(0), layout(valueType).size,
+                       llvm::Align(alignment(valueType)));
+  return storage;
+}
 llvm::Type *LoweringContext::storageType(Type valueType) {
   if (program.types->isOpaque(valueType))
     return storageType(program.types->product(valueType).fields[0].type);
+  if (indirect(valueType))
+    return layoutType(valueType);
   return valueType == Type::Bool ? builder.getInt8Ty() : type(valueType);
 }
 llvm::Value *LoweringContext::load(Type valueType, llvm::Value *address,
                                    llvm::Align alignment) {
+  if (indirect(valueType)) {
+    auto *copy = temporary(valueType);
+    builder.CreateMemCpy(copy, copy->getAlign(), address, alignment,
+                         layout(valueType).size);
+    return copy;
+  }
   auto *loaded =
       builder.CreateAlignedLoad(storageType(valueType), address, alignment);
   return loaded->getType() == type(valueType)
@@ -32,6 +73,14 @@ llvm::Value *LoweringContext::load(Type valueType, llvm::Value *address,
 }
 void LoweringContext::store(Type valueType, llvm::Value *value,
                             llvm::Value *address, llvm::Align alignment) {
+  if (indirect(valueType)) {
+    if (value == address)
+      return;
+    builder.CreateMemMove(address, alignment, value,
+                          llvm::Align(this->alignment(valueType)),
+                          layout(valueType).size);
+    return;
+  }
   if (value->getType() != storageType(valueType))
     value = builder.CreateZExt(value, storageType(valueType));
   builder.CreateAlignedStore(value, address, alignment);
@@ -55,7 +104,7 @@ llvm::AllocaInst *LoweringContext::temporary(llvm::Type *type) {
   return allocation.CreateAlloca(type);
 }
 llvm::AllocaInst *LoweringContext::temporary(Type valueType) {
-  auto *result = temporary(type(valueType));
+  auto *result = temporary(layoutType(valueType));
   result->setAlignment(llvm::Align(alignment(valueType)));
   return result;
 }
@@ -65,38 +114,67 @@ llvm::Value *LoweringContext::fieldPointer(llvm::Value *address, Type owner,
     return address;
   if (customRepresentation(*program.types, owner))
     return builder.CreateGEP(builder.getInt8Ty(), address,
-                             builder.getInt64(layout(owner).fields.at(index)));
-  return builder.CreateStructGEP(type(owner), address, index);
+                             builder.getInt64(fieldOffset(owner, index)));
+  return builder.CreateStructGEP(layoutType(owner), address, index);
 }
 llvm::Value *LoweringContext::construct(Type valueType,
                                         llvm::ArrayRef<llvm::Value *> values,
                                         unsigned selected) {
-  if (!customRepresentation(*program.types, valueType)) {
-    llvm::Value *result = llvm::Constant::getNullValue(type(valueType));
+  if (!customRepresentation(*program.types, valueType) &&
+      !indirect(valueType)) {
+    auto *aggregate = type(valueType);
+    std::vector<llvm::Value *> physicalValues;
+    bool constant = true;
     for (unsigned i = 0; i < values.size(); ++i) {
       auto *physical =
           storageType(program.types->product(valueType).fields[i].type);
       auto *value = values[i]->getType() == physical
                         ? values[i]
                         : builder.CreateZExt(values[i], physical);
-      result = builder.CreateInsertValue(result, value, i);
+      constant &= llvm::isa<llvm::Constant>(value);
+      physicalValues.push_back(value);
     }
+    auto *record = llvm::dyn_cast<llvm::StructType>(aggregate);
+    // Folding one insertvalue at a time rebuilds the constant per element.
+    if (constant && record && record->getNumElements() == values.size()) {
+      std::vector<llvm::Constant *> elements;
+      for (auto *value : physicalValues)
+        elements.push_back(llvm::cast<llvm::Constant>(value));
+      return llvm::ConstantStruct::get(record, elements);
+    }
+    llvm::Value *result = llvm::Constant::getNullValue(aggregate);
+    for (unsigned i = 0; i < physicalValues.size(); ++i)
+      result = builder.CreateInsertValue(result, physicalValues[i], i);
     return result;
   }
   auto *storage = temporary(valueType);
-  builder.CreateStore(llvm::Constant::getNullValue(type(valueType)), storage);
+  if (indirect(valueType))
+    builder.CreateMemSet(storage, builder.getInt8(0), layout(valueType).size,
+                         storage->getAlign());
+  else
+    builder.CreateStore(llvm::Constant::getNullValue(layoutType(valueType)),
+                        storage);
   for (unsigned i = 0; i < values.size(); ++i) {
     auto field =
         program.types->product(valueType).layout.unionType ? selected : i;
-    store(program.types->product(valueType).fields[field].type, values[i],
+    store(fieldType(valueType, field), values[i],
           fieldPointer(storage, valueType, field), llvm::Align(1));
   }
-  return builder.CreateLoad(type(valueType), storage);
+  return indirect(valueType)
+             ? static_cast<llvm::Value *>(storage)
+             : builder.CreateLoad(layoutType(valueType), storage);
 }
 llvm::Value *LoweringContext::extract(llvm::Value *value, Type owner,
                                       unsigned field) {
   if (program.types->isOpaque(owner))
     return value;
+  if (indirect(owner)) {
+    if (program.types->isSum(owner) && field == 0 &&
+        !program.types->product(owner).layout.discriminants.empty())
+      return enumTag(owner, value);
+    return load(fieldType(owner, field), fieldPointer(value, owner, field),
+                llvm::Align(1));
+  }
   if (program.types->isSum(owner) && field == 0 &&
       !program.types->product(owner).layout.discriminants.empty()) {
     auto *storage = temporary(owner);
@@ -111,8 +189,8 @@ llvm::Value *LoweringContext::extract(llvm::Value *value, Type owner,
   }
   auto *storage = temporary(owner);
   builder.CreateStore(value, storage);
-  auto fieldType = program.types->product(owner).fields.at(field).type;
-  return load(fieldType, fieldPointer(storage, owner, field), llvm::Align(1));
+  return load(fieldType(owner, field), fieldPointer(storage, owner, field),
+              llvm::Align(1));
 }
 llvm::Value *LoweringContext::enumTag(Type owner, llvm::Value *address,
                                       bool ordinal) {
@@ -145,14 +223,19 @@ llvm::Value *LoweringContext::variant(Type owner, unsigned ordinal,
   if (record.layout.discriminants.empty()) {
     std::vector<llvm::Value *> fields;
     for (const auto &field : record.fields)
-      fields.push_back(llvm::Constant::getNullValue(type(field.type)));
+      fields.push_back(zero(field.type));
     fields[0] = builder.getInt32(ordinal);
     for (std::size_t i = 0; i < values.size(); ++i)
       fields[record.variants[ordinal].fields[i]] = values[i];
     return construct(owner, fields);
   }
   auto *storage = temporary(owner);
-  builder.CreateStore(llvm::Constant::getNullValue(type(owner)), storage);
+  if (indirect(owner))
+    builder.CreateMemSet(storage, builder.getInt8(0), layout(owner).size,
+                         storage->getAlign());
+  else
+    builder.CreateStore(llvm::Constant::getNullValue(layoutType(owner)),
+                        storage);
   if (record.layout.kind != LayoutKind::Transparent) {
     const auto &discriminant = record.layout.discriminants[ordinal];
     llvm::APInt bits(
@@ -169,9 +252,14 @@ llvm::Value *LoweringContext::variant(Type owner, unsigned ordinal,
     store(record.fields[field].type, values[i],
           fieldPointer(storage, owner, field), llvm::Align(1));
   }
-  return builder.CreateLoad(type(owner), storage);
+  return indirect(owner) ? static_cast<llvm::Value *>(storage)
+                         : builder.CreateLoad(layoutType(owner), storage);
 }
 llvm::Type *LoweringContext::type(Type typeId) {
+  return indirect(typeId) ? static_cast<llvm::Type *>(builder.getPtrTy())
+                          : layoutType(typeId);
+}
+llvm::Type *LoweringContext::layoutType(Type typeId) {
   if (isInteger(typeId) || typeId == Type::Char)
     return builder.getIntNTy(integerWidth(typeId));
   if (isFloating(typeId))
@@ -181,7 +269,7 @@ llvm::Type *LoweringContext::type(Type typeId) {
   if (typeId == Type::Unit || typeId == Type::Never)
     return llvm::StructType::get(context);
   if (program.types->isOpaque(typeId))
-    return type(program.types->product(typeId).fields[0].type);
+    return layoutType(program.types->product(typeId).fields[0].type);
   if (program.types->isErased(typeId))
     return viewType(typeId);
   if (program.types->isView(typeId))
@@ -189,7 +277,8 @@ llvm::Type *LoweringContext::type(Type typeId) {
   if (program.types->isPointer(typeId))
     return viewType(program.types->pointer(typeId).payload);
   if (program.types->isSlice(typeId))
-    return llvm::ArrayType::get(type(program.types->slice(typeId).element), 0);
+    return llvm::ArrayType::get(
+        layoutType(program.types->slice(typeId).element), 0);
   if (program.types->isFunctionPointer(typeId))
     return builder.getPtrTy();
   if (program.types->isProduct(typeId) &&
@@ -219,8 +308,9 @@ llvm::Type *LoweringContext::type(Type typeId) {
 }
 
 llvm::Type *LoweringContext::resultType(Type typeId) {
-  return typeId == Type::Unit || typeId == Type::Never ? builder.getVoidTy()
-                                                       : type(typeId);
+  return typeId == Type::Unit || typeId == Type::Never || indirect(typeId)
+             ? builder.getVoidTy()
+             : type(typeId);
 }
 
 llvm::FunctionCallee
@@ -283,7 +373,7 @@ unsigned CleanupFrame::addNode(const cleanup::Plan &sourcePlan, int place,
       type = lowering.program.types->product(type).fields[field].type;
     }
     if (alignment < lowering.alignment(planned.type)) {
-      nodes[index].relocation = addField(lowering.type(planned.type),
+      nodes[index].relocation = addField(lowering.layoutType(planned.type),
                                          lowering.alignment(planned.type));
       nodes[index].relocatedFlag = addField(lowering.builder.getInt1Ty());
     }
@@ -308,7 +398,7 @@ unsigned CleanupFrame::addRoot(const cleanup::Plan &sourcePlan, int place,
   unsigned root = roots.size();
   auto field = local >= 0 ? localFields[local]
                           : addField(indirect ? lowering.builder.getPtrTy()
-                                              : lowering.type(type),
+                                              : lowering.layoutType(type),
                                      indirect ? 8 : lowering.alignment(type));
   roots.push_back({type, field, 0, local, indirect, planned.place});
   auto node = addNode(sourcePlan, place, root, -1, {});
@@ -444,7 +534,7 @@ llvm::Value *LoweringContext::fieldAddress(llvm::Value *address, Type &type,
             ? builder.getInt64(lowering.layout(type).fields.at(index))
             : builder.CreatePtrToInt(
                   builder.CreateGEP(
-                      lowering.type(type), zero,
+                      lowering.layoutType(type), zero,
                       {builder.getInt32(0), builder.getInt32(index)}),
                   builder.getInt64Ty());
     auto *alignmentSlot =
@@ -521,8 +611,9 @@ llvm::Value *CleanupFrame::address(const Place &place) {
   for (auto projection : place.fields) {
     if (projection.kind == Projection::Kind::Slice) {
       const auto &array = lowering.program.types->product(type);
-      auto *elements = llvm::ArrayType::get(lowering.type(array.components[0]),
-                                            array.fields.size());
+      auto *elements =
+          llvm::ArrayType::get(lowering.storageType(array.components[0]),
+                               *lowering.program.types->arrayLength(type));
       address = lowering.builder.CreateGEP(
           elements, address,
           {lowering.builder.getInt32(0),
@@ -760,9 +851,9 @@ void CleanupFrame::emitReplacement(Replacement &replacement) {
   const auto &pending = roots[replacement.pending];
   auto *destination =
       builder.CreateLoad(builder.getPtrTy(), field(replacement.pointer));
-  auto *value =
-      builder.CreateLoad(lowering.type(pending.type), field(pending.field));
-  builder.CreateStore(value, destination);
+  auto *value = lowering.load(pending.type, field(pending.field),
+                              llvm::Align(lowering.alignment(pending.type)));
+  lowering.store(pending.type, value, destination, llvm::Align(1));
   set(pending.node, false);
   set(replacement.destination, true);
   updateParents(replacement.destination);
@@ -798,17 +889,15 @@ llvm::Value *CleanupFrame::createWrapper() {
   }
   if (source.variadicCursor >= 0) {
     auto *cursor = field(localFields[source.variadicCursor]);
-    builder.CreateStore(llvm::Constant::getNullValue(lowering.type(
+    builder.CreateStore(llvm::Constant::getNullValue(lowering.layoutType(
                             source.locals[source.variadicCursor].type)),
                         cursor);
     builder.CreateCall(
         llvm::Intrinsic::getOrInsertDeclaration(
             &lowering.module, llvm::Intrinsic::vacopy, {builder.getPtrTy()}),
         {cursor, wrapper->getArg(source.parameters)});
-    builder.CreateCall(
-        llvm::Intrinsic::getOrInsertDeclaration(
-            &lowering.module, llvm::Intrinsic::vaend, {builder.getPtrTy()}),
-        {wrapper->getArg(source.parameters)});
+    // The incoming cursor belongs to the physical entry that va_start it, which
+    // also ends it once this call returns; the frame owns only the copy.
     if (locals[source.variadicCursor] != std::numeric_limits<unsigned>::max())
       set(roots[locals[source.variadicCursor]].node, true);
   }
@@ -831,7 +920,8 @@ llvm::Value *CleanupFrame::createWrapper() {
         set(roots[locals[i]].node, true);
     }
   auto *outerFrame = frame;
-  if (lowering.freestanding)
+  if (lowering.freestanding ||
+      (nodes.empty() && source.abi != "C" && source.abi != "system"))
     builder.CreateCall(bodyFunction, {frame});
   else
     builder.CreateCall(
@@ -855,7 +945,14 @@ void CleanupFrame::finishWrapper(llvm::Value *outerFrame) {
     lowering.builder.CreateUnreachable();
   else if (source.result == Type::Unit)
     lowering.builder.CreateRetVoid();
-  else
+  else if (lowering.indirect(source.result)) {
+    lowering.builder.CreateMemCpy(
+        wrapper->getArg(wrapper->arg_size() - 1),
+        llvm::Align(lowering.alignment(source.result)), field(resultField),
+        llvm::Align(lowering.alignment(source.result)),
+        lowering.layout(source.result).size);
+    lowering.builder.CreateRetVoid();
+  } else
     lowering.builder.CreateRet(
         lowering.load(source.result, field(resultField),
                       llvm::Align(lowering.alignment(source.result))));

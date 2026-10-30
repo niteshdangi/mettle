@@ -2,17 +2,28 @@
 #include <algorithm>
 #include <functional>
 #include <limits>
+#include <map>
 #include <set>
 
 namespace mettle {
 std::optional<ObjectLayout> objectLayout(const TypeStore &types, Type type) {
   std::set<Type> active;
+  std::map<Type, ObjectLayout> summaries;
   auto align = [](std::uint64_t value, std::uint64_t alignment) {
     return (value + alignment - 1) & ~(alignment - 1);
   };
   std::function<std::optional<ObjectLayout>(Type)> visit =
       [&](Type current) -> std::optional<ObjectLayout> {
+    if (auto found = summaries.find(current); found != summaries.end())
+      return found->second;
     ObjectLayout result;
+    auto complete = [&]() {
+      auto summary = result;
+      summary.fields.clear();
+      summaries[current] = std::move(summary);
+      active.erase(current);
+      return result;
+    };
     if (isInteger(current) || current == Type::Char || current == Type::Bool) {
       result.size = std::max(1u, integerWidth(current) / 8);
       result.alignment = result.size;
@@ -57,8 +68,7 @@ std::optional<ObjectLayout> objectLayout(const TypeStore &types, Type type) {
         return std::nullopt;
       result.size = element->size * record.vector->lanes;
       result.alignment = record.vector->alignment;
-      active.erase(current);
-      return result;
+      return complete();
     }
     if (record.kind == AggregateKind::Enumeration && record.variants.empty()) {
       active.erase(current);
@@ -71,6 +81,29 @@ std::optional<ObjectLayout> objectLayout(const TypeStore &types, Type type) {
       if (hidden)
         hidden->fields = {0};
       return hidden;
+    }
+    if (record.kind == AggregateKind::Array) {
+      if (record.components.empty() ||
+          (record.arrayCount != Type::Unknown &&
+           !types.constantValue(record.arrayCount)))
+        return std::nullopt;
+      auto element = visit(record.components[0]);
+      if (!element)
+        return std::nullopt;
+      auto count = *types.arrayLength(current);
+      auto stride = align(element->size, element->alignment);
+      if (count && stride > std::numeric_limits<std::uint64_t>::max() / count)
+        return std::nullopt;
+      result.size = stride * count;
+      result.alignment = element->alignment;
+      result.unaligned = count && element->unaligned;
+      // Compact arrays have no per-element field offsets.
+      if (!types.compactArray(current)) {
+        result.fields.resize(count);
+        for (std::size_t i = 0; i < count; ++i)
+          result.fields[i] = stride * i;
+      }
+      return complete();
     }
     std::vector<ObjectLayout> members;
     for (const auto &field : record.fields) {
@@ -124,8 +157,7 @@ std::optional<ObjectLayout> objectLayout(const TypeStore &types, Type type) {
       }
       result.alignment = std::max(result.alignment, record.layout.alignment);
       result.size = align(result.size, result.alignment);
-      active.erase(current);
-      return result;
+      return complete();
     }
     if (record.layout.kind == LayoutKind::Transparent) {
       std::size_t nonzero = 0;
@@ -168,8 +200,7 @@ std::optional<ObjectLayout> objectLayout(const TypeStore &types, Type type) {
         result.alignment = std::max(result.alignment, record.layout.alignment);
       result.size = align(result.size, result.alignment);
     }
-    active.erase(current);
-    return result;
+    return complete();
   };
   return visit(type);
 }

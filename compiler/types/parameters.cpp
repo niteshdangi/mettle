@@ -2,9 +2,11 @@
 #include <algorithm>
 #include <functional>
 #include <limits>
+#include <map>
 #include <set>
 #include <stdexcept>
 #include <tuple>
+#include <unordered_set>
 
 namespace mettle {
 namespace {
@@ -42,13 +44,17 @@ Type TypeStore::constant(Type valueType, NumericLiteral value) {
   if (!integerLiteralFits(value, valueType))
     throw std::invalid_argument(
         "required scalar constant is outside its type range");
-  for (std::size_t i = 0; i < entries.size(); ++i)
-    if (entries[i].kind == EntryKind::Parameter) {
-      const auto &record = parameters[entries[i].index];
-      if (record.kind == TypeParameterKind::Value &&
-          record.valueType == valueType && record.numeric == value)
-        return Type(builtins + static_cast<std::uint32_t>(i));
-    }
+  syncLookup();
+  if (auto existing = findIndexed(
+          found(lookup.constants, std::pair{valueType, value.magnitude}),
+          [&](std::size_t i) {
+            if (entries[i].kind != EntryKind::Parameter)
+              return false;
+            const auto &record = parameters[entries[i].index];
+            return record.kind == TypeParameterKind::Value &&
+                   record.valueType == valueType && record.numeric == value;
+          }))
+    return *existing;
   auto result = declareParameter(integerLiteralName(value), false);
   auto &record = parameters.back();
   record.kind = TypeParameterKind::Value;
@@ -92,13 +98,16 @@ Type TypeStore::constantExpression(std::string operation,
     return constant(comparison || logical ? Type::Bool : operandType,
                     std::move(value));
   }
-  for (std::size_t i = 0; i < entries.size(); ++i)
-    if (entries[i].kind == EntryKind::Parameter) {
-      const auto &record = parameters[entries[i].index];
-      if (record.kind == TypeParameterKind::Expression &&
-          record.operation == operation && record.operands == operands)
-        return Type(builtins + static_cast<std::uint32_t>(i));
-    }
+  syncLookup();
+  if (auto existing =
+          findIndexed(found(lookup.operands, operands), [&](std::size_t i) {
+            if (entries[i].kind != EntryKind::Parameter)
+              return false;
+            const auto &record = parameters[entries[i].index];
+            return record.kind == TypeParameterKind::Expression &&
+                   record.operation == operation && record.operands == operands;
+          }))
+    return *existing;
   auto display = "(" + std::string(name(operands[0])) + operation +
                  std::string(name(operands[1])) + ")";
   auto result = declareParameter(std::move(display), false);
@@ -134,17 +143,20 @@ Type TypeStore::projection(Type subject, Type interfaceType,
                            std::vector<RegionId> regions) {
   arguments.insert(arguments.begin(), interfaceType);
   arguments.insert(arguments.begin(), subject);
-  for (std::size_t i = 0; i < entries.size(); ++i)
-    if (entries[i].kind == EntryKind::Parameter) {
-      const auto &record = parameters[entries[i].index];
-      if (record.kind == TypeParameterKind::Projection &&
-          record.operands == arguments &&
-          record.value == static_cast<std::int64_t>(associated) &&
-          record.valueType == valueType &&
-          record.copyRequested == copyRequested && record.sized == sized &&
-          record.regionArguments == regions)
-        return Type(builtins + static_cast<std::uint32_t>(i));
-    }
+  syncLookup();
+  if (auto existing =
+          findIndexed(found(lookup.operands, arguments), [&](std::size_t i) {
+            if (entries[i].kind != EntryKind::Parameter)
+              return false;
+            const auto &record = parameters[entries[i].index];
+            return record.kind == TypeParameterKind::Projection &&
+                   record.operands == arguments &&
+                   record.value == static_cast<std::int64_t>(associated) &&
+                   record.valueType == valueType &&
+                   record.copyRequested == copyRequested &&
+                   record.sized == sized && record.regionArguments == regions;
+          }))
+    return *existing;
   auto display = std::string(name(subject)) + "::<associated." +
                  std::to_string(associated) + ">";
   auto result = declareParameter(std::move(display), copyRequested, sized);
@@ -189,15 +201,31 @@ std::optional<NumericLiteral> TypeStore::scalarConstantValue(Type type) const {
   return std::nullopt;
 }
 bool TypeStore::isSized(Type type) const {
-  if (isSlice(type) || isErased(type))
-    return false;
-  if (isParameter(type))
-    return parameter(type).sized;
-  if (isProduct(type))
-    for (const auto &field : product(type).fields)
-      if (!isSized(field.type))
-        return false;
-  return contains(type);
+  std::set<Type> active;
+  std::map<Type, bool> known;
+  std::function<bool(Type)> visit = [&](Type current) {
+    if (isSlice(current) || isErased(current))
+      return false;
+    if (isParameter(current))
+      return parameter(current).sized;
+    if (!isProduct(current))
+      return contains(current);
+    if (auto found = known.find(current); found != known.end())
+      return found->second;
+    if (active.size() >= 128 || !active.insert(current).second)
+      return false;
+    bool sized = true;
+    const auto &record = product(current);
+    if (record.kind == AggregateKind::Array && !record.components.empty())
+      sized = visit(record.components[0]);
+    else
+      for (const auto &field : record.fields)
+        sized &= visit(field.type);
+    active.erase(current);
+    known[current] = sized;
+    return sized;
+  };
+  return visit(type);
 }
 bool TypeStore::isSymbolic(Type type) const {
   std::set<Type> visited;
@@ -248,9 +276,9 @@ bool TypeStore::isSymbolic(Type type) const {
 }
 std::vector<Type> TypeStore::typeParameters(Type type) const {
   std::vector<Type> result;
-  std::set<Type> visited;
+  std::unordered_set<std::uint32_t> visited;
   std::function<void(Type)> visit = [&](Type current) {
-    if (!visited.insert(current).second)
+    if (!visited.insert(current.index()).second)
       return;
     if (isProjection(current)) {
       for (auto operand : parameter(current).operands)
@@ -281,6 +309,10 @@ std::vector<Type> TypeStore::typeParameters(Type type) const {
         visit(argument);
       for (const auto &field : record.fields)
         visit(field.type);
+      // A symbolically sized array has no fields; its element is a component.
+      if (record.kind == AggregateKind::Array)
+        for (auto component : record.components)
+          visit(component);
       if (record.arrayCount != Type::Unknown)
         visit(record.arrayCount);
     }
@@ -307,17 +339,21 @@ Type TypeStore::instantiateProduct(Type origin, std::vector<Type> arguments) {
     explicit Depth(unsigned &value) : value(value) { ++value; }
     ~Depth() { --value; }
   } depth(instanceDepth);
-  auto source = product(origin);
-  if (source.genericParameters.size() != arguments.size())
+  if (product(origin).genericParameters.size() != arguments.size())
     throw std::invalid_argument("generic type argument count does not match");
-  for (std::size_t i = 0; i < entries.size(); ++i)
-    if (entries[i].kind == EntryKind::Product) {
-      const auto &record = products[entries[i].index];
-      if (record.regionOrigin == Type::Unknown &&
-          record.genericOrigin == origin &&
-          record.genericArguments == arguments)
-        return Type(builtins + static_cast<std::uint32_t>(i));
-    }
+  syncLookup();
+  if (auto existing = findIndexed(
+          found(lookup.genericInstances, origin), [&](std::size_t i) {
+            if (entries[i].kind != EntryKind::Product)
+              return false;
+            const auto &record = products[entries[i].index];
+            return record.regionOrigin == Type::Unknown &&
+                   record.genericOrigin == origin &&
+                   record.genericArguments == arguments;
+          }))
+    return *existing;
+  // Interning below can reallocate the product table, so keep a copy.
+  const auto source = product(origin);
   std::string display = source.name + "<";
   std::vector<TypeBinding> bindings;
   for (std::size_t i = 0; i < arguments.size(); ++i) {
@@ -357,8 +393,6 @@ Type TypeStore::instantiateProduct(Type origin, std::vector<Type> arguments) {
 }
 void TypeStore::refreshProductInstances() {
   for (std::size_t i = 0; i < entries.size(); ++i) {
-    if (i >= 65536)
-      throw std::length_error("generic type instance limit exceeded");
     if (entries[i].kind != EntryKind::Product)
       continue;
     auto index = entries[i].index;
@@ -398,23 +432,80 @@ void TypeStore::refreshProductInstances() {
     }
   }
 }
+Type TypeStore::canonicalCount(Type count) {
+  if (auto value = constantValue(count))
+    return constant(*value <= std::numeric_limits<std::int32_t>::max()
+                        ? Type::I32
+                        : Type::I64,
+                    *value);
+  return count;
+}
+std::optional<std::uint64_t> TypeStore::arrayLength(Type array) const {
+  const auto &record = product(array);
+  if (record.arrayCount == Type::Unknown)
+    return record.fields.size();
+  if (auto value = constantValue(record.arrayCount))
+    return static_cast<std::uint64_t>(*value);
+  return std::nullopt;
+}
+bool TypeStore::compactArray(Type array) const {
+  return isProduct(array) && product(array).kind == AggregateKind::Array &&
+         product(array).arrayCount != Type::Unknown &&
+         constantValue(product(array).arrayCount).has_value();
+}
+bool TypeStore::compactArrayShape(Type payload, std::uint64_t count) const {
+  // Compact arrays have no per-element drop state, so droppable elements keep
+  // one place per element.
+  if (needsDrop(payload))
+    return false;
+  // Nested arrays multiply the expanded place count.
+  std::uint64_t total = count;
+  for (auto walk = payload;
+       isProduct(walk) && product(walk).kind == AggregateKind::Array &&
+       !product(walk).components.empty();
+       walk = product(walk).components[0]) {
+    auto inner = std::max<std::uint64_t>(1, arrayLength(walk).value_or(1));
+    if (total > expandedArrayTotal / inner)
+      return true;
+    total *= inner;
+  }
+  return count > expandedArrayLimit || total > expandedArrayTotal;
+}
 Type TypeStore::arrayType(Type payload, Type count) {
   if (scalarConstantValue(count) && !constantValue(count))
     throw std::length_error("array length exceeds compiler resource limit");
   if (auto value = constantValue(count)) {
-    if (*value < 0 || *value > 65536)
+    if (*value < 0)
       throw std::length_error("array length exceeds compiler resource limit");
-    return structural(AggregateKind::Array, {payload},
-                      static_cast<std::uint32_t>(*value));
-  }
-  for (std::size_t i = 0; i < entries.size(); ++i)
-    if (entries[i].kind == EntryKind::Product) {
-      const auto &record = products[entries[i].index];
-      if (record.kind == AggregateKind::Array &&
-          record.components == std::vector<Type>{payload} &&
-          record.arrayCount == count)
-        return Type(builtins + static_cast<std::uint32_t>(i));
+    auto length = static_cast<std::uint64_t>(*value);
+    if (needsDrop(payload)) {
+      // Droppable elements keep a cleanup place each, so their total is
+      // bounded.
+      std::uint64_t total = length;
+      for (auto walk = payload;
+           isProduct(walk) && product(walk).kind == AggregateKind::Array &&
+           !product(walk).components.empty();
+           walk = product(walk).components[0])
+        total *= std::max<std::uint64_t>(1, arrayLength(walk).value_or(1));
+      if (length > droppableArrayElements || total > droppableArrayElements)
+        throw std::length_error("array length exceeds compiler resource limit");
     }
+    if (!compactArrayShape(payload, length))
+      return structural(AggregateKind::Array, {payload},
+                        static_cast<std::uint32_t>(length));
+    count = canonicalCount(count);
+  }
+  syncLookup();
+  const std::vector<Type> component{payload};
+  if (auto existing =
+          findIndexed(found(lookup.aggregates, component), [&](std::size_t i) {
+            if (entries[i].kind != EntryKind::Product)
+              return false;
+            const auto &record = products[entries[i].index];
+            return record.kind == AggregateKind::Array &&
+                   record.components == component && record.arrayCount == count;
+          }))
+    return *existing;
   auto result = declareProduct("[" + std::string(name(payload)) + "; " +
                                    std::string(name(count)) + "]",
                                isCopy(payload));
@@ -463,11 +554,26 @@ Type TypeStore::substitute(Type type, std::span<const TypeBinding> bindings) {
   if (isSlice(type))
     return sliceType(substitute(slice(type).element, bindings));
   if (isErased(type)) {
+    // Substitution can add types, so snapshot the small parts and avoid
+    // copying the method tables when no argument changes.
+    auto arguments = erased(type).arguments;
+    auto bound = erased(type).associated;
+    bool changed = false;
+    for (auto &argument : arguments) {
+      auto next = substitute(argument, bindings);
+      changed |= next != argument;
+      argument = next;
+    }
+    for (auto &associated : bound) {
+      auto next = substitute(associated.argument, bindings);
+      changed |= next != associated.argument;
+      associated.argument = next;
+    }
+    if (!changed)
+      return type;
     auto descriptor = erased(type);
-    for (auto &argument : descriptor.arguments)
-      argument = substitute(argument, bindings);
-    for (auto &associated : descriptor.associated)
-      associated.argument = substitute(associated.argument, bindings);
+    descriptor.arguments = std::move(arguments);
+    descriptor.associated = std::move(bound);
     auto methods = std::move(descriptor.methods);
     auto owners = std::move(descriptor.methodOwners);
     auto slots = std::move(descriptor.methodSlots);
@@ -540,6 +646,17 @@ Type TypeStore::substitute(Type type, std::span<const TypeBinding> bindings) {
   }
   if (!isProduct(type))
     return type;
+  {
+    // Plain nominal products have nothing to substitute; skip the layout copy.
+    const auto &plain = product(type);
+    if ((plain.kind == AggregateKind::Product ||
+         plain.kind == AggregateKind::Enumeration ||
+         plain.kind == AggregateKind::NativeVector) &&
+        plain.genericOrigin == Type::Unknown &&
+        plain.regionOrigin == Type::Unknown &&
+        !(plain.callable >= 0 && !plain.genericParameters.empty()))
+      return type;
+  }
   auto record = product(type);
   if (isOpaque(type)) {
     auto origin =
@@ -562,21 +679,24 @@ Type TypeStore::substitute(Type type, std::span<const TypeBinding> bindings) {
     }
     if (!changed)
       return type;
-    for (std::size_t i = 0; i < entries.size(); ++i)
-      if (entries[i].kind == EntryKind::Product) {
-        const auto &prior = products[entries[i].index];
-        if (prior.kind != AggregateKind::Opaque ||
-            prior.genericOrigin != origin ||
-            prior.genericArguments != record.genericArguments ||
-            prior.opaqueBounds != record.opaqueBounds ||
-            prior.fields.size() != record.fields.size())
-          continue;
-        bool same = true;
-        for (std::size_t field = 0; field < prior.fields.size(); ++field)
-          same &= prior.fields[field].type == record.fields[field].type;
-        if (same)
-          return Type(builtins + static_cast<std::uint32_t>(i));
-      }
+    syncLookup();
+    if (auto existing = findIndexed(
+            found(lookup.genericInstances, origin), [&](std::size_t i) {
+              if (entries[i].kind != EntryKind::Product)
+                return false;
+              const auto &prior = products[entries[i].index];
+              if (prior.kind != AggregateKind::Opaque ||
+                  prior.genericOrigin != origin ||
+                  prior.genericArguments != record.genericArguments ||
+                  prior.opaqueBounds != record.opaqueBounds ||
+                  prior.fields.size() != record.fields.size())
+                return false;
+              for (std::size_t field = 0; field < prior.fields.size(); ++field)
+                if (prior.fields[field].type != record.fields[field].type)
+                  return false;
+              return true;
+            }))
+      return *existing;
     auto result = declareProduct(record.name, record.copyRequested);
     record.genericOrigin = origin;
     products.at(entries.at(result.index() - builtins).index) =
@@ -622,6 +742,9 @@ Type TypeStore::substitute(Type type, std::span<const TypeBinding> bindings) {
         argument = substitute(argument, bindings);
       auto index = entries.at(result.index() - builtins).index;
       products[index].regionOrigin = origin;
+      syncLookup();
+      lookup.regionInstances[origin].push_back(
+          static_cast<std::uint32_t>(result.index() - builtins));
       products[index].genericArguments = std::move(record.genericArguments);
       for (auto &field : record.fields)
         field.type = substitute(field.type, bindings);
@@ -632,7 +755,8 @@ Type TypeStore::substitute(Type type, std::span<const TypeBinding> bindings) {
     for (auto &field : record.fields)
       field.type = substitute(field.type, bindings);
     return regionalProduct(origin, std::move(record.fields),
-                           std::move(record.regionArguments));
+                           std::move(record.regionArguments),
+                           record.normalizedFields);
   }
   if (record.callable >= 0 && record.genericOrigin == Type::Unknown &&
       !record.genericParameters.empty()) {

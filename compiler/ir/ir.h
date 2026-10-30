@@ -70,7 +70,8 @@ enum class Op {
   StorageWrite,
   DropPlace,
   Assembly,
-  FeatureTest
+  FeatureTest,
+  TextLiteral
 };
 struct Instruction {
   Op op;
@@ -108,6 +109,7 @@ struct Terminator {
   Value value{};
   int first = -1;
   int second = -1;
+  Span span{};
 };
 struct Block {
   std::vector<Instruction> instructions;
@@ -125,6 +127,7 @@ struct Function {
   };
   std::vector<Scope> scopes{{-1}};
   std::vector<std::size_t> resultSources{};
+  std::vector<std::size_t> resultContents{};
   std::string externalName{};
   bool twoPhaseReceiver = false;
   int constructorSelfSlot = -1;

@@ -10,6 +10,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -63,7 +64,8 @@ struct NumericLiteral {
   bool operator==(const NumericLiteral &) const = default;
 };
 struct StaticConstant {
-  enum class Kind { Scalar, Aggregate, Address, Function };
+  // Repeat is one element constant repeated over a compact array.
+  enum class Kind { Scalar, Aggregate, Address, Function, Text, Repeat };
   Kind kind = Kind::Scalar;
   Type type = Type::Unknown;
   NumericLiteral scalar{};
@@ -71,6 +73,8 @@ struct StaticConstant {
   int symbol = -1;
   std::vector<std::uint32_t> projections{};
   int selection = -1;
+  // Bytes of a Text or byte-text literal; `type` is its static read view.
+  std::string text{};
 };
 enum class StorageDuration { Automatic, Static };
 bool integerLiteralFits(const NumericLiteral &literal, Type type);
@@ -195,6 +199,7 @@ struct ProductType {
     unsigned lanes, alignment;
   };
   std::optional<VectorShape> vector{};
+  bool normalizedFields = false;
 };
 enum class TypeParameterKind { Type, Constant, Value, Expression, Projection };
 struct TypeParameter {
@@ -251,6 +256,17 @@ public:
   void setProductLayout(Type type, ProductLayout layout);
   void defineEnumeration(Type type, std::vector<VariantType> variants,
                          std::vector<TypeField> fields);
+  // Arrays within these bounds are expanded into one field per element so
+  // constant-index places stay precise; larger arrays are compact: one leaf
+  // place with an element type and a constant length, like a generic array.
+  static constexpr std::uint64_t expandedArrayLimit = 64;
+  static constexpr std::uint64_t expandedArrayTotal = 1024;
+  static constexpr std::uint64_t droppableArrayElements = 1u << 16;
+  Type canonicalCount(Type count);
+  // The constant length of a concrete array; empty for a symbolic length.
+  std::optional<std::uint64_t> arrayLength(Type array) const;
+  bool compactArray(Type array) const;
+  bool compactArrayShape(Type payload, std::uint64_t count) const;
   Type structural(AggregateKind kind, std::vector<Type> components,
                   std::uint32_t count = 0);
   bool isSum(Type type) const;
@@ -270,7 +286,8 @@ public:
   bool isSlice(Type type) const;
   const SliceType &slice(Type type) const;
   Type regionalProduct(Type origin, std::vector<TypeField> fields,
-                       std::vector<RegionId> arguments);
+                       std::vector<RegionId> arguments,
+                       bool normalizedFields = false);
   Type regionalShell(Type origin, std::vector<RegionId> regions,
                      std::vector<Type> arguments, Type pattern = Type::Unknown);
   void setRegionPattern(Type type, Type pattern);
@@ -367,6 +384,43 @@ private:
   std::vector<TypeParameter> parameters;
   std::vector<ErasedType> erasedTypes;
   unsigned instanceDepth = 0;
+  // Interning indices. Entries are indexed lazily by fields that are fixed
+  // when an entry is created; every candidate is still checked against the
+  // full identity predicate, so an index only narrows the search.
+  struct Lookup {
+    std::size_t synced = 0;
+    std::map<Type, std::vector<std::uint32_t>> genericInstances;
+    std::map<Type, std::vector<std::uint32_t>> regionInstances;
+    std::map<std::vector<Type>, std::vector<std::uint32_t>> aggregates;
+    std::map<std::tuple<Type, int, RegionId>, std::uint32_t> views;
+    std::map<std::pair<Type, int>, std::uint32_t> pointers;
+    std::map<Type, std::uint32_t> slices;
+    std::map<std::uint32_t, std::vector<std::uint32_t>> erased;
+    std::map<std::vector<Type>, std::vector<std::uint32_t>> operands;
+    std::map<std::vector<Type>, std::vector<std::uint32_t>> callables;
+    std::map<std::pair<Type, std::array<std::uint64_t, 2>>,
+             std::vector<std::uint32_t>>
+        constants;
+  } lookup;
+  void syncLookup();
+  static std::vector<Type> callableKey(const CallableType &descriptor);
+  template <class Match>
+  std::optional<Type> findIndexed(const std::vector<std::uint32_t> *candidates,
+                                  Match &&match) const {
+    std::optional<std::uint32_t> best;
+    if (candidates)
+      for (auto i : *candidates)
+        if ((!best || i < *best) && match(static_cast<std::size_t>(i)))
+          best = i;
+    if (!best)
+      return std::nullopt;
+    return Type(builtinTypeCount + *best);
+  }
+  template <class Key, class Value>
+  static const Value *found(const std::map<Key, Value> &map, const Key &key) {
+    auto entry = map.find(key);
+    return entry == map.end() ? nullptr : &entry->second;
+  }
 };
 std::string_view typeName(Type type);
 std::optional<std::vector<std::pair<std::uint32_t, Type>>>

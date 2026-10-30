@@ -1,6 +1,7 @@
 #include "pipeline/compile.h"
 #include "analysis/initialization.h"
 #include "analysis/loans.h"
+#include "cleanup/plan.h"
 #include "instances/specialize.h"
 #include "ir/verify.h"
 #include "lowering/scalar.h"
@@ -9,6 +10,7 @@
 #include "semantics/check.h"
 #include "semantics/interfaces.h"
 #include "syntax/parser.h"
+#include <map>
 
 namespace mettle::pipeline {
 class Compiler {
@@ -30,11 +32,14 @@ public:
         concrete &= !program.types->isSymbolic(local.type);
       for (const auto &block : function.blocks)
         for (const auto &instruction : block.instructions) {
-          concrete &= !program.types->isSymbolic(instruction.result.type) &&
-                      instruction.op != ir::Op::ArrayBorrowRead &&
-                      instruction.op != ir::Op::ArrayBorrowMut &&
-                      instruction.op != ir::Op::ArrayRepeat &&
-                      instruction.op != ir::Op::ArrayTake;
+          concrete &= !program.types->isSymbolic(instruction.result.type);
+          if (instruction.op == ir::Op::ArrayRepeat)
+            concrete &= program.types->compactArray(instruction.result.type);
+          if (instruction.op == ir::Op::ArrayTake &&
+              program.types->needsDrop(instruction.result.type))
+            diagnostics.error("feature", instruction.span,
+                              "by-value iteration over a large array of "
+                              "droppable elements is not implemented");
         }
       if (!concrete)
         diagnostics.error(
@@ -42,6 +47,23 @@ public:
             "uninstantiated declaration reached executable admission");
     }
     if (!diagnostics.empty() || !ir::verify(program, diagnostics, {}, proof))
+      return std::nullopt;
+    for (const auto &function : program.functions) {
+      if (function.blocks.empty())
+        continue;
+      try {
+        cleanup::plan(function, *program.types);
+      } catch (const std::length_error &error) {
+        auto local = function.parameters < function.locals.size()
+                         ? function.parameters
+                         : std::size_t{0};
+        diagnostics.error("limit",
+                          function.locals.empty() ? Span{}
+                                                  : function.locals[local].span,
+                          error.what());
+      }
+    }
+    if (!diagnostics.empty())
       return std::nullopt;
     analysis::initialization(program, diagnostics);
     if (!diagnostics.empty())
@@ -101,8 +123,14 @@ public:
     };
     lowering::opaqueAdapters(program, *types, checked->interfaceDatabase(),
                              diagnostics);
+    // Declaration-only normalization of a type is fixed per function.
+    std::map<std::pair<const ir::Function *, Type>, Type> declared;
     auto normalize = [&](Type type, std::span<const TypeBinding> bindings,
                          const ir::Function &function) {
+      if (bindings.empty())
+        if (auto known = declared.find({&function, type});
+            known != declared.end())
+          return known->second;
       std::vector<interfaces::Obligation> assumptions;
       for (auto [subject, interface] : function.interfaceBounds)
         assumptions.push_back({subject, interface});
@@ -113,8 +141,11 @@ public:
       substitutions.insert(substitutions.end(),
                            function.genericEqualities.begin(),
                            function.genericEqualities.end());
-      return types->eraseRegions(
-          declarations.normalize(type, substitutions, {}));
+      auto normalized =
+          types->eraseRegions(declarations.normalize(type, substitutions, {}));
+      if (bindings.empty())
+        declared.emplace(std::pair{&function, type}, normalized);
+      return normalized;
     };
     for (auto &function : program.functions) {
       auto valueType = [&](ir::Value &value) {
@@ -205,7 +236,10 @@ public:
         return true;
       interfaces::Solver solver(store, checked->interfaceDatabase(), errors, {},
                                 {}, true);
-      auto self = solver.normalize(call.interfaceSelf, bindings, call.span);
+      // Selection is by type identity; a family projection resolves to an
+      // iterator type that still names the caller's regions.
+      auto self = store.eraseRegions(
+          solver.normalize(call.interfaceSelf, bindings, call.span));
       auto interface =
           solver.normalize(call.interfaceType, bindings, call.span);
       const auto &definition =
@@ -283,8 +317,9 @@ std::optional<ir::VerifiedProgram> compile(const Source &source,
   return compile(std::vector<Source>{source}, diagnostics);
 }
 std::optional<ir::VerifiedProgram> compile(const std::vector<Source> &sources,
-                                           Diagnostics &diagnostics) {
-  auto tree = resolution::load(sources, diagnostics);
+                                           Diagnostics &diagnostics,
+                                           const resolution::Library &library) {
+  auto tree = resolution::load(sources, diagnostics, library);
   if (!tree)
     return std::nullopt;
   return Compiler::run(std::move(*tree), diagnostics);

@@ -3,6 +3,7 @@
 
 namespace mettle::parsing {
 TypeSyntax Parser::type(bool effect) {
+  StateGuard guard(*this);
   if (++nesting > limits::parserNesting)
     fail("type nesting limit exceeded", "limit");
   TypeSyntax result;
@@ -51,6 +52,8 @@ TypeSyntax Parser::type(bool effect) {
     do {
       result.elements.push_back(boundType());
     } while (take("+"));
+  } else if (take("_")) {
+    result.name = "_";
   } else if (take("<")) {
     result.form = TypeForm::Projection;
     result.elements.push_back(type(false));
@@ -60,7 +63,7 @@ TypeSyntax Parser::type(bool effect) {
       fail("expected '>' after an associated projection");
     expect("::");
     result.name = name().text;
-    if (is("<"))
+    if (genericOpen())
       result.arguments = genericArguments();
   } else if (take("(")) {
     ++parens;
@@ -96,7 +99,7 @@ TypeSyntax Parser::type(bool effect) {
         result.name += "::";
       result.name += component;
     }
-    if (is("<")) {
+    if (genericOpen()) {
       result.arguments = genericArguments();
       for (const auto &argument : result.arguments)
         if (!argument.region.empty())

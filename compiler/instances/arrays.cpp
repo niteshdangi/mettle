@@ -8,10 +8,16 @@
 namespace mettle::instances {
 namespace {
 void unrollLoops(ir::Function &function, const TypeStore &types) {
+  std::vector<ir::Function::ArrayLoop> retained;
   for (std::size_t l = 0; l < function.arrayLoops.size(); ++l) {
     auto loop = function.arrayLoops[l];
     auto type = *projectedType(types, function.locals[loop.source.root].type,
                                loop.source.fields);
+    // Compact arrays keep their dynamic-index loop.
+    if (types.compactArray(type)) {
+      retained.push_back(loop);
+      continue;
+    }
     auto count = types.product(type).fields.size();
     if (count && loop.blocks.size() >
                      (limits::cfgBlocks - function.blocks.size()) / count)
@@ -25,6 +31,7 @@ void unrollLoops(ir::Function &function, const TypeStore &types) {
         declared.size() > (limits::locals - function.locals.size()) / count)
       throw std::length_error("generic array iteration local limit exceeded");
     std::vector<std::map<int, int>> blocks(count);
+    std::vector<std::map<int, int>> iterationValues(count);
     std::vector<int> created;
     for (std::size_t iteration = 0; iteration < count; ++iteration)
       for (auto source : loop.blocks) {
@@ -34,7 +41,8 @@ void unrollLoops(ir::Function &function, const TypeStore &types) {
         created.push_back(id);
       }
     for (std::size_t iteration = 0; iteration < count; ++iteration) {
-      std::map<int, int> locals, values;
+      std::map<int, int> locals;
+      auto &values = iterationValues[iteration];
       for (auto source : declared) {
         locals.emplace(source, static_cast<int>(function.locals.size()));
         auto local = function.locals[source];
@@ -103,6 +111,38 @@ void unrollLoops(ir::Function &function, const TypeStore &types) {
         function.blocks[blocks[iteration].at(source)] = std::move(copy);
       }
     }
+    for (std::size_t target = 0; target < function.blocks.size(); ++target) {
+      if (std::find(loop.blocks.begin(), loop.blocks.end(), target) !=
+              loop.blocks.end() ||
+          std::find(created.begin(), created.end(), target) != created.end())
+        continue;
+      for (auto &instruction : function.blocks[target].instructions) {
+        if (instruction.op != ir::Op::Phi)
+          continue;
+        std::vector<int> predecessors;
+        std::vector<ir::Value> operands;
+        for (std::size_t p = 0; p < instruction.predecessors.size(); ++p) {
+          auto predecessor = instruction.predecessors[p];
+          auto value = instruction.operands[p];
+          if (std::find(loop.blocks.begin(), loop.blocks.end(), predecessor) ==
+              loop.blocks.end()) {
+            predecessors.push_back(predecessor);
+            operands.push_back(value);
+            continue;
+          }
+          for (std::size_t iteration = 0; iteration < count; ++iteration) {
+            auto remapped = value;
+            if (auto found = iterationValues[iteration].find(value.id);
+                found != iterationValues[iteration].end())
+              remapped.id = found->second;
+            predecessors.push_back(blocks[iteration].at(predecessor));
+            operands.push_back(remapped);
+          }
+        }
+        instruction.predecessors = std::move(predecessors);
+        instruction.operands = std::move(operands);
+      }
+    }
     function.blocks[loop.header].exit = {
         ir::Exit::Jump, {}, count ? blocks[0].at(loop.body) : loop.done};
     function.blocks[loop.step].instructions.clear();
@@ -118,7 +158,7 @@ void unrollLoops(ir::Function &function, const TypeStore &types) {
         region.insert(region.end(), created.begin(), created.end());
     }
   }
-  function.arrayLoops.clear();
+  function.arrayLoops = std::move(retained);
 }
 void reachableBlocks(ir::Function &function) {
   if (function.blocks.empty())
@@ -197,128 +237,32 @@ void reachableBlocks(ir::Function &function) {
 }
 } // namespace
 void expandArrays(ir::Function &function, const TypeStore &types) {
-  bool expanded = !function.arrayLoops.empty();
+  auto before = function.arrayLoops.size();
   unrollLoops(function, types);
+  bool expanded = function.arrayLoops.size() != before;
   if (expanded)
     reachableBlocks(function);
-  auto block = [&] {
-    if (function.blocks.size() >= limits::cfgBlocks)
-      throw std::length_error("generic array CFG expansion limit exceeded");
-    auto result = static_cast<int>(function.blocks.size());
-    function.blocks.emplace_back();
-    return result;
-  };
-  auto append = [&](int target, ir::Instruction instruction, Type type) {
-    instruction.result = {function.values++, type};
-    auto result = instruction.result;
-    function.blocks[target].instructions.push_back(std::move(instruction));
-    return result;
-  };
-  for (std::size_t b = 0; b < function.blocks.size(); ++b)
-    for (std::size_t i = 0; i < function.blocks[b].instructions.size(); ++i) {
-      auto instruction = function.blocks[b].instructions[i];
-      if (instruction.op == ir::Op::ArrayRepeat) {
+  for (auto &block : function.blocks)
+    for (auto &instruction : block.instructions) {
+      if (instruction.op == ir::Op::ArrayRepeat &&
+          !types.compactArray(instruction.result.type)) {
         auto count = types.product(instruction.result.type).fields.size();
         instruction.op = ir::Op::Construct;
         auto element = instruction.operands.at(0);
         instruction.operands.assign(count, element);
-        function.blocks[b].instructions[i] = std::move(instruction);
-        continue;
+      } else if ((instruction.op == ir::Op::ArrayBorrowRead ||
+                  instruction.op == ir::Op::ArrayBorrowMut) &&
+                 instruction.number >= 0) {
+        // A literal index outside the instantiated length stays a runtime
+        // bounds failure with no precise element identity.
+        auto array =
+            *projectedType(types, function.locals[instruction.place.root].type,
+                           instruction.place.fields);
+        if (types.compactArray(array) ||
+            static_cast<std::size_t>(instruction.number) >=
+                types.product(array).fields.size())
+          instruction.number = -1;
       }
-      if (instruction.op != ir::Op::ArrayBorrowRead &&
-          instruction.op != ir::Op::ArrayBorrowMut)
-        continue;
-      expanded = true;
-      auto source =
-          *projectedType(types, function.locals[instruction.place.root].type,
-                         instruction.place.fields);
-      auto count = types.product(source).fields.size();
-      auto originalExit = function.blocks[b].exit;
-      std::vector<ir::Instruction> remaining(
-          function.blocks[b].instructions.begin() +
-              static_cast<std::ptrdiff_t>(i + 1),
-          function.blocks[b].instructions.end());
-      function.blocks[b].instructions.resize(i);
-      int done = -1;
-      if (count) {
-        done = block();
-        function.blocks[done].instructions = std::move(remaining);
-        function.blocks[done].exit = originalExit;
-        for (auto &candidate : function.blocks)
-          for (auto &operation : candidate.instructions)
-            if (operation.op == ir::Op::Phi)
-              for (auto &predecessor : operation.predecessors)
-                if (predecessor == static_cast<int>(b))
-                  predecessor = done;
-      }
-      int current = static_cast<int>(b);
-      std::vector<ir::Value> values;
-      std::vector<int> predecessors;
-      for (std::size_t field = 0; field < count; ++field) {
-        ir::Instruction expected{ir::Op::Constant,
-                                 {},
-                                 {},
-                                 {},
-                                 "",
-                                 {-1, {}},
-                                 -1,
-                                 static_cast<std::int32_t>(field),
-                                 instruction.span};
-        auto number = append(current, std::move(expected),
-                             instruction.operands.at(0).type);
-        auto test = append(current,
-                           {ir::Op::Binary,
-                            {},
-                            {instruction.operands.at(0), number},
-                            {},
-                            "==",
-                            {-1, {}},
-                            -1,
-                            0,
-                            instruction.span},
-                           Type::Bool);
-        auto yes = block(), no = block();
-        function.blocks[current].exit = {ir::Exit::Branch, test, yes, no};
-        auto place = instruction.place;
-        place.fields.push_back(
-            Projection::field(static_cast<std::uint32_t>(field)));
-        values.push_back(
-            append(yes,
-                   {instruction.op == ir::Op::ArrayBorrowRead ? ir::Op::ViewRead
-                                                              : ir::Op::ViewMut,
-                    {},
-                    {},
-                    {},
-                    "",
-                    place,
-                    -1,
-                    0,
-                    instruction.span},
-                   instruction.result.type));
-        predecessors.push_back(yes);
-        function.blocks[yes].exit = {ir::Exit::Jump, {}, done};
-        current = no;
-      }
-      append(current,
-             {ir::Op::Panic, {}, {}, {}, "", {-1, {}}, -1, 2, instruction.span},
-             Type::Never);
-      function.blocks[current].exit = {ir::Exit::Unreachable};
-      if (done >= 0) {
-        ir::Instruction phi{ir::Op::Phi,
-                            instruction.result,
-                            std::move(values),
-                            std::move(predecessors),
-                            "",
-                            {-1, {}},
-                            -1,
-                            0,
-                            instruction.span};
-        function.blocks[done].instructions.insert(
-            function.blocks[done].instructions.begin(), std::move(phi));
-      }
-      break;
     }
-  if (expanded)
-    reachableBlocks(function);
 }
 } // namespace mettle::instances

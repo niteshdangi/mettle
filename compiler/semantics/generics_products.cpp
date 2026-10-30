@@ -2,6 +2,63 @@
 #include <algorithm>
 
 namespace mettle {
+std::optional<int> Checker::genericUnitVariant(Node &n) {
+  auto spelling = n.text;
+  auto delimiter = spelling.rfind("::");
+  if (delimiter == std::string::npos)
+    return std::nullopt;
+  auto owner = typeName(spelling.substr(0, delimiter), n.span, current->owner);
+  auto found = typeNames.find(owner);
+  if (found == typeNames.end() || !checked.types->isSum(found->second))
+    return std::nullopt;
+  const Module::Product *declaration = nullptr;
+  for (const auto &product : module.products)
+    if (definitionName(product.span, product.name) == owner &&
+        !productGenerics.at(&product).parameters.empty())
+      declaration = &product;
+  if (!declaration)
+    return std::nullopt;
+  auto variantName = spelling.substr(delimiter + 2);
+  const auto &pattern = checked.types->product(found->second);
+  int variant = -1;
+  for (std::size_t i = 0; i < pattern.variants.size(); ++i)
+    if (pattern.variants[i].name == variantName)
+      variant = static_cast<int>(i);
+  if (variant < 0 || !pattern.variants[variant].fields.empty())
+    return std::nullopt;
+  facts(n).variant = variant;
+  auto origin = found->second;
+  if (checked.types->product(origin).genericOrigin != Type::Unknown)
+    origin = checked.types->product(origin).genericOrigin;
+  const auto &environment = productGenerics.at(declaration);
+  const auto &explicitArguments = n.ownerGenericArguments.empty()
+                                      ? n.genericArguments
+                                      : n.ownerGenericArguments;
+  std::vector<Type> arguments(environment.parameters.size(), Type::Unknown);
+  std::size_t index = 0;
+  for (const auto &argument : explicitArguments) {
+    if (!argument.region.empty())
+      continue;
+    if (index >= arguments.size()) {
+      error("type", n.span, "excess generic constructor arguments");
+      break;
+    }
+    if (inferredArgument(argument)) {
+      ++index;
+      continue;
+    }
+    arguments[index] = genericArgument(argument, environment.parameters[index]);
+    ++index;
+  }
+  if (std::find(arguments.begin(), arguments.end(), Type::Unknown) ==
+      arguments.end())
+    return inference.fresh(
+        checked.types->instantiateProduct(origin, std::move(arguments)));
+  // Remaining arguments come from the expected type once it is known.
+  auto result = inference.fresh();
+  fieldRequests.push_back({&n, result, result, false, origin});
+  return result;
+}
 std::optional<int> Checker::genericConstruction(Node &n, bool reachable,
                                                 std::string_view name) {
   if (n.children.empty() || n.children[0]->kind != Kind::Name)
@@ -21,10 +78,9 @@ std::optional<int> Checker::genericConstruction(Node &n, bool reachable,
     }
   }
   const Module::Product *declaration = nullptr;
-  for (const auto &product : module.products)
-    if (definitionName(product.span, product.name) == owner &&
-        !productGenerics.at(&product).parameters.empty())
-      declaration = &product;
+  for (const auto *product : productsNamed(owner))
+    if (!productGenerics.at(product).parameters.empty())
+      declaration = product;
   GenericEnvironment *selected = nullptr;
   const std::vector<GenericParameter> *parameterSyntax = nullptr;
   Type patternType = Type::Unknown;
@@ -111,8 +167,9 @@ std::optional<int> Checker::genericConstruction(Node &n, bool reachable,
       error("type", n.span, "excess generic constructor arguments");
       break;
     }
-    bindings[genericIndex].argument =
-        genericArgument(argument, bindings[genericIndex].parameter);
+    if (!inferredArgument(argument))
+      bindings[genericIndex].argument =
+          genericArgument(argument, bindings[genericIndex].parameter);
     ++genericIndex;
   }
   if (!declaration && !enumeration && names.contains(constructorName)) {
@@ -174,6 +231,18 @@ std::optional<int> Checker::genericConstruction(Node &n, bool reachable,
   bool named = false;
   for (std::size_t i = 1; i < n.children.size(); ++i) {
     auto &argument = *n.children[i];
+    if (argument.kind == Kind::Closure && argument.name.empty() &&
+        i - 1 < fields.size()) {
+      // Explicit or already inferred arguments give a closure its signature.
+      std::vector<TypeBinding> solved;
+      for (const auto &binding : bindings)
+        if (binding.argument != Type::Unknown)
+          solved.push_back(binding);
+      auto expected =
+          checked.types->substitute(pattern.fields[fields[i - 1]].type, solved);
+      if (checked.types->isFunctionPointer(expected))
+        contextualize(argument, expected);
+    }
     auto variable = node(argument, reachable);
     this->fields(false);
     reachable &= facts(argument).flow.normal;
@@ -203,6 +272,21 @@ std::optional<int> Checker::genericConstruction(Node &n, bool reachable,
   }
   if (std::find(used.begin(), used.end(), false) != used.end())
     error("type", n.span, "missing constructor argument");
+  if (auto hint = expectedTypes.find(&n);
+      hint != expectedTypes.end() &&
+      std::any_of(bindings.begin(), bindings.end(), [](const auto &binding) {
+        return binding.argument == Type::Unknown;
+      })) {
+    auto expected = hint->second;
+    if (checked.types->isProduct(expected)) {
+      const auto &actual = checked.types->product(expected);
+      if (actual.genericOrigin == origin &&
+          actual.genericArguments.size() == bindings.size())
+        for (std::size_t i = 0; i < bindings.size(); ++i)
+          if (bindings[i].argument == Type::Unknown)
+            bindings[i].argument = actual.genericArguments[i];
+    }
+  }
   auto caller = genericEnvironment;
   genericEnvironment = &environment;
   completeGenericBindings(environment, bindings, n.span);

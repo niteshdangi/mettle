@@ -11,15 +11,16 @@ bool contains(std::initializer_list<std::string_view> values,
 } // namespace
 bool isReservedWord(std::string_view word) {
   return contains(
-      {"fn",      "type",      "copy",   "let",     "var",     "read",
-       "mut",     "take",      "if",     "else",    "while",   "loop",
-       "break",   "continue",  "return", "true",    "false",   "pub",
-       "enum",    "interface", "impl",   "throws",  "throw",   "try",
-       "capture", "match",     "none",   "present", "success", "failure",
-       "async",   "await",     "for",    "in",      "module",  "import",
-       "unsafe",  "extern",    "static", "const",   "init",    "drop",
-       "heap",    "shared",    "weak",   "local",   "pinned",  "as",
-       "alias",   "label",     "union",  "_"},
+      {"fn",       "type",      "copy",   "let",     "var",     "read",
+       "mut",      "take",      "if",     "else",    "while",   "loop",
+       "break",    "continue",  "return", "true",    "false",   "pub",
+       "enum",     "interface", "impl",   "throws",  "throw",   "try",
+       "capture",  "match",     "none",   "present", "success", "failure",
+       "async",    "await",     "for",    "in",      "module",  "import",
+       "unsafe",   "extern",    "static", "const",   "init",    "drop",
+       "heap",     "shared",    "weak",   "local",   "pinned",  "as",
+       "alias",    "label",     "union",  "where",   "region",  "implements",
+       "receiver", "macro",     "_"},
       word);
 }
 bool isUnsupportedExpressionWord(std::string_view word) {

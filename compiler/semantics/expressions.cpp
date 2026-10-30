@@ -10,6 +10,7 @@ void Checker::requireUnsafe(Span span) {
           "operation requires an unsafe block or unsafe function");
 }
 void Checker::function(Function &f) {
+  auto priorErrors = diagnostics.count();
   current = &f;
   guardedFeatures.clear();
   unsafeDepth = f.unsafeFunction ? 1 : 0;
@@ -41,7 +42,7 @@ void Checker::function(Function &f) {
     if (slot >= 0)
       facts(f).locals[slot].mode = mode;
   }
-  if (!diagnostics.empty())
+  if (diagnostics.count() != priorErrors)
     return;
   if (f.body.get())
     staticLocals();
@@ -71,7 +72,46 @@ void Checker::function(Function &f) {
     inference.equal(functionVariables[&f], inference.fresh(Type::Never),
                     f.span);
 }
+Type Checker::textLiteralType(const Node &n) {
+  auto bytes = textLiteral(n.text, diagnostics, n.span);
+  if (n.flag) {
+    // Byte text is a static array of exactly its bytes.
+    Type payload = checked.types->sliceType(Type::U8);
+    if (bytes) {
+      try {
+        payload = checked.types->structural(
+            AggregateKind::Array, {Type::U8},
+            static_cast<std::uint32_t>(bytes->size()));
+      } catch (const std::length_error &) {
+        error("limit", n.span, "byte text exceeds the array length limit");
+      }
+      facts(n).text = std::move(*bytes);
+    }
+    return checked.types->viewType(payload, ParameterMode::Read,
+                                   RegionId::Static);
+  }
+  auto text = typeNames.find("core::text::Text");
+  if (text == typeNames.end()) {
+    if (bytes)
+      error("feature", n.span,
+            "text literals require the library type core::text::Text");
+    return Type::Unknown;
+  }
+  if (bytes)
+    facts(n).text = std::move(*bytes);
+  return checked.types->viewType(text->second, ParameterMode::Read,
+                                 RegionId::Static);
+}
 int Checker::node(Node &n, bool reachable) {
+  if (reusedNodes.erase(&n))
+    return nodeVariables.at(&n);
+  auto errorsBefore = diagnostics.count();
+  auto result = checkNode(n, reachable);
+  if (diagnostics.count() != errorsBefore)
+    poisonedVariables.push_back(result);
+  return result;
+}
+int Checker::checkNode(Node &n, bool reachable) {
   auto unit = [&] { return inference.fresh(Type::Unit); };
   int result = inference.fresh();
   switch (n.kind) {
@@ -105,6 +145,10 @@ int Checker::node(Node &n, bool reachable) {
       facts(n).number = static_cast<std::int32_t>(*value);
     break;
   }
+  case Kind::Text:
+    if (auto type = textLiteralType(n); type != Type::Unknown)
+      result = inference.fresh(type);
+    break;
   case Kind::Boolean:
     result = inference.fresh(Type::Bool);
     facts(n).number = n.text == "true";
@@ -139,6 +183,11 @@ int Checker::node(Node &n, bool reachable) {
           constant && checked.types->isConstant(*constant)) {
         facts(n).constantParameter = *constant;
         result = inference.fresh(checked.types->parameter(*constant).valueType);
+        break;
+      }
+    if (!localName)
+      if (auto generic = genericUnitVariant(n)) {
+        result = *generic;
         break;
       }
     if (!localName)
@@ -349,14 +398,19 @@ int Checker::node(Node &n, bool reachable) {
       result = bindingPattern(n, reachable);
       break;
     }
+    auto annotationErrors = reportedErrors;
+    auto declaredType = n.annotation.empty()
+                            ? Type::Unknown
+                            : annotation(n.annotation, n.span, current->owner);
+    bool annotationFailed = reportedErrors != annotationErrors;
     if (!n.children.empty() && !n.annotation.empty())
-      contextualize(*n.children[0],
-                    annotation(n.annotation, n.span, current->owner));
+      contextualize(*n.children[0], declaredType);
     auto t = n.children.empty() ? inference.fresh()
                                 : node(*n.children[0], reachable);
     if (!n.annotation.empty()) {
-      auto declared =
-          inference.fresh(annotation(n.annotation, n.span, current->owner));
+      auto declared = inference.fresh(declaredType);
+      if (annotationFailed)
+        poisonedVariables.push_back(declared);
       if (!n.children.empty())
         coerce(*n.children[0], t, declared, n.span);
       else

@@ -12,6 +12,7 @@ void Checker::products() {
         typeNames.at(definitionName(product.span, product.name)));
     checked.types->setProductLayout(identities.back(), productLayout(product));
   }
+  std::vector<std::vector<Span>> fieldSpans(module.products.size());
   for (std::size_t i = 0; i < module.products.size(); ++i) {
     const auto &product = module.products[i];
     auto savedEnvironment = genericEnvironment;
@@ -20,6 +21,7 @@ void Checker::products() {
     std::vector<TypeField> fields;
     if (product.enumeration) {
       fields.push_back({"<tag>", Type::I32});
+      fieldSpans[i].push_back(product.span);
       std::vector<VariantType> variants;
       for (const auto &variant : product.variants) {
         if (!names.insert(variant.name).second)
@@ -35,6 +37,7 @@ void Checker::products() {
               static_cast<std::uint32_t>(fields.size()));
           fields.push_back({field.name, annotation(field.annotation, field.span,
                                                    product.name)});
+          fieldSpans[i].push_back(field.span);
         }
         variants.push_back(std::move(checkedVariant));
       }
@@ -48,6 +51,7 @@ void Checker::products() {
         error("name", field.span, "duplicate field '" + field.name + "'");
       fields.push_back(
           {field.name, annotation(field.annotation, field.span, product.name)});
+      fieldSpans[i].push_back(field.span);
     }
     checked.types->defineProduct(identities[i], std::move(fields));
     if (product.hasDestructor) {
@@ -61,8 +65,37 @@ void Checker::products() {
     return;
   checked.types->refreshProductInstances();
   std::vector<int> state(module.products.size());
-  std::function<void(std::size_t, unsigned)> visit = [&](std::size_t index,
-                                                         unsigned depth) {
+  std::function<void(std::size_t, unsigned, Span)> visit;
+  std::set<Type> structural;
+  std::function<void(Type, unsigned, Span)> member = [&](Type type,
+                                                         unsigned depth,
+                                                         Span span) {
+    if (!checked.types->isProduct(type))
+      return;
+    if (depth > limits::typeDepth) {
+      error("limit", span, "product nesting limit exceeded");
+      return;
+    }
+    const auto &record = checked.types->product(type);
+    auto origin =
+        record.genericOrigin == Type::Unknown ? type : record.genericOrigin;
+    auto found = std::find(identities.begin(), identities.end(), origin);
+    if (found != identities.end()) {
+      visit(static_cast<std::size_t>(found - identities.begin()), depth, span);
+      return;
+    }
+    if (!structural.insert(type).second) {
+      error("type", span, "recursive by-value product has no finite layout");
+      return;
+    }
+    if (record.kind == AggregateKind::Array && !record.components.empty())
+      member(record.components[0], depth + 1, span);
+    else
+      for (const auto &field : record.fields)
+        member(field.type, depth + 1, span);
+    structural.erase(type);
+  };
+  visit = [&](std::size_t index, unsigned depth, Span use) {
     if (depth > limits::typeDepth) {
       error("limit", module.products[index].span,
             "product nesting limit exceeded");
@@ -71,21 +104,14 @@ void Checker::products() {
     if (state[index] == 2)
       return;
     if (state[index] == 1) {
-      error("type", module.products[index].span,
-            "recursive by-value product has no finite layout");
+      error("type", use, "recursive by-value product has no finite layout");
       return;
     }
     state[index] = 1;
     const auto &type = checked.types->product(identities[index]);
-    for (const auto &field : type.fields) {
-      auto origin = checked.types->isProduct(field.type) &&
-                            checked.types->product(field.type).genericOrigin !=
-                                Type::Unknown
-                        ? checked.types->product(field.type).genericOrigin
-                        : field.type;
-      auto found = std::find(identities.begin(), identities.end(), origin);
-      if (found != identities.end())
-        visit(static_cast<std::size_t>(found - identities.begin()), depth + 1);
+    for (std::size_t f = 0; f < type.fields.size(); ++f) {
+      const auto &field = type.fields[f];
+      member(field.type, depth + 1, fieldSpans[index][f]);
       if (type.copyRequested && !checked.types->isCopy(field.type))
         error("type", module.products[index].span,
               "Copy product field '" + field.name + "' is not Copy");
@@ -93,7 +119,7 @@ void Checker::products() {
     state[index] = 2;
   };
   for (std::size_t i = 0; i < identities.size(); ++i)
-    visit(i, 0);
+    visit(i, 0, module.products[i].span);
   if (!diagnostics.empty())
     return;
 }

@@ -104,7 +104,9 @@ CAbiValue CAbi::classify(Type type, bool result) {
     }
     if (layout.size <= 16) {
       value.pieces.push_back(
-          layout.size <= 8
+          layout.alignment >= 16
+              ? static_cast<llvm::Type *>(context.builder.getInt128Ty())
+          : layout.size <= 8
               ? static_cast<llvm::Type *>(
                     context.builder.getIntNTy(result ? layout.size * 8 : 64))
               : llvm::ArrayType::get(context.builder.getInt64Ty(), 2));
@@ -438,7 +440,8 @@ void CAbi::exportBody(llvm::Function &external, llvm::Function &body,
       pieces.push_back(external.getArg(index++));
     arguments.push_back(decode(parameter, pieces));
   }
-  if (signature.variadic && body.arg_size() > arguments.size()) {
+  const bool cursor = signature.variadic && body.arg_size() > arguments.size();
+  if (cursor) {
     // This must remain in the physical variadic entry: the logical cleanup
     // wrapper has no access to the caller's incoming argument registers.
     auto *cursor = context.temporary(
@@ -451,6 +454,14 @@ void CAbi::exportBody(llvm::Function &external, llvm::Function &body,
     arguments.push_back(cursor);
   }
   auto *result = context.builder.CreateCall(&body, arguments);
+  if (cursor)
+    // va_start and va_end stay in this physical entry. An unwinding callee
+    // skips this, which is harmless where va_end is a no-op (the supported
+    // Darwin ARM64 and Linux x86-64 ABIs); the frame's copy has its own end.
+    context.builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
+                                   &context.module, llvm::Intrinsic::vaend,
+                                   {context.builder.getPtrTy()}),
+                               {arguments.back()});
   if (signature.result.indirect) {
     context.builder.CreateStore(result, external.getArg(0));
     context.builder.CreateRetVoid();

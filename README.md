@@ -3,13 +3,17 @@
 An independent systems language targeting Rust-level capabilities with simpler
 source structure and measured runtime parity.
 
-Status: I01-I06 are complete and qualified within the recorded macOS ARM64
-compiler-host / Linux x86-64 target-execution scope. The compiler checks and builds
+Status: correctness repairs are in progress after the `c485aa1` re-review.
+Historical green gates missed confirmed crashes, soundness/ABI defects and
+validation gaps; they are not current completion approval. The recorded scope is
+macOS ARM64 compiler-host / Linux x86-64 target execution. The compiler checks and builds
 Mettle programs with functions, result inference and control
 flow. I03 includes concrete products, projected initialization and
 moves, stored/returned views, receiver borrowing and native destructor/unwind
-cleanup. Libraries, a package manager and release-qualified targets remain later
-work. No Rust-runtime parity
+cleanup. Native `core`, `alloc` and hosted `std` libraries (I/O, files, paths,
+processes, networking, threads and synchronization) exist in initial form; a
+package manager, macros/derives, async and release-qualified targets remain
+later work. No Rust-runtime parity
 is claimed.
 I04 adds multi-file modules/imports/reexports/visibility,
 transparent aliases, concrete enums and ownership-sensitive patterns, nested
@@ -26,7 +30,7 @@ cleanup cases. The aggregate receipt is `build/i05-qualification.json`; the
 [implementation plan](docs/implementation-plan.md) records its scope and limits.
 This is not release-platform qualification or a Rust-runtime parity claim.
 
-I06's qualified initial machine boundary includes
+I06's implemented initial machine boundary includes
 wide integers/floats, raw pointers and memory operations, manual/uninitialized
 storage, interior mutability, inline pinning, atomics, C layout/calls and
 freestanding object emission. Combined C/integer enum representations,
@@ -35,8 +39,9 @@ Packed-field destruction relocates to aligned unwind-frame storage. Full-width
 constant composition, checked conversions, explicit floating policies, safe
 Cell/RefCell guards, conditional Unpin, statics/linkage and physical-entry
 variadic definitions are integrated. Inline/global/naked assembly and initial
-architecture-specific SIMD/feature dispatch are also integrated. I06 qualification
-passed on 2026-10-29: complete Debug coverage through a documented focused
+architecture-specific SIMD/feature dispatch are also integrated. Historical I06 gates
+passed on 2026-10-29 but the completion claim is reopened. Those receipts record
+Debug coverage through a documented focused
 continuation, Release 16/16 CTest suites, ASan/UBSan 17/17, selected static analysis
 and byte-identical clean rebuilds, plus 1,240 Linux source/profile cases and twelve
 cleanup cases. The aggregate receipt is `build/i06-qualification.json`.
@@ -81,8 +86,8 @@ python3 tools/build.py --configuration Release
 ```
 
 The bootstrap installs checksum-pinned tools into ignored `.tools/`, without
-replacing system compilers. The build script configures CMake/Ninja, reuses valid build inputs, runs CTest,
-then requires a full clean rebuild to have byte-identical compiler artifacts in the same
+replacing system compilers. The build script configures CMake/Ninja, performs a clean build, runs CTest,
+then requires a second clean build to have byte-identical compiler artifacts in the same
 environment. Logs, source/tool/sysroot hashes, commands and results remain under
 `build/<platform>/<configuration>/foundation-evidence.json`. This is not a
 cross-machine hermetic-build or release reproducibility claim.
@@ -112,7 +117,8 @@ build/macos-arm64/Debug/mettle build examples/core/control-flow.mt -o build/coun
 ./build/count
 ```
 
-The example returns process status 0 on success; printing is not implemented.
+The example returns process status 0 on success. Hosted programs can print
+through `std::io` (see `tests/std/`).
 `--profile debug` checks integer overflow; `--profile release` wraps ordinary
 overflow and optimizes object/executable output. Division/remainder failure
 checks remain enabled in both. `--overflow-checks on|off` overrides that policy.
@@ -121,11 +127,23 @@ CFG instead of an executable. `tokens` and `syntax` expose lossless token text
 and span-bearing syntax as prototype JSON. These inspection formats are not
 stable tooling APIs.
 
+The default target is the host architecture; on macOS ARM64 it is
+`arm64-apple-macosx15.0` (CMake `METTLE_MACOS_DEPLOYMENT_TARGET`, the macOS 15
+baseline shared by emitted objects, the runtime and the link), not the host
+kernel version. `--emit executable` requires that runtime target and is
+rejected before code generation otherwise; use `--emit object` for another
+supported target. The module data layout comes from the LLVM target machine,
+and the compiler checks that its own scalar/pointer layout agrees with it.
+Output is written to a temporary file beside `-o` and renamed only on success,
+so an unwritable or missing output location reports `error[io]` and leaves no
+partial file.
+
 The compiler supports concrete methods with read/mut/take receivers, eligible
 two-phase mutable receivers, `drop { ... }`, first-class read/mut views and basic
 region declarations/result-source contracts. Generic bodies are checked before
 specialization; a Copy instantiation cannot grant undeclared ownership rights.
-Erased slice receivers retain count metadata, and opaque values expose only
+Slice views expose `len()` using element-count metadata; erased slice receivers
+retain that metadata, and opaque values expose only
 declared bounds. Erasing a witness-metadata implementor itself still needs an
 explicit sized adapter; structural tail unsizing and interface upcasts are
 supported. Owning library handles and the remaining numeric/foreign-machine
@@ -212,7 +230,7 @@ host home directory:
 python3 tools/bootstrap.py --platform linux-x86_64
 export LIMA_HOME="$PWD/.tools/lima"
 limactl --tty=false start --name=mettle-linux-x64 --mount-only="$PWD:w" --timeout=10m tools/linux-vm.yaml
-python3 tools/test_linux_target.py --source
+python3 tools/test_linux_target.py --source --libraries
 limactl --tty=false stop mettle-linux-x64
 ```
 
@@ -313,6 +331,12 @@ Rust 1.99.1; its actual version and that mismatch are recorded.
   and [tracking matrix](docs/capabilities.csv).
 - [Native baseline mapping](docs/baseline-mapping.md): contract-preserving
   translation rules and explicit native replacements.
+- Native libraries live in [library/](library/) (`core`, `alloc`, `std`); the
+  compiler mounts a root on demand when a program names it, `--library-dir`
+  selects another tree, and text literals use `core::text::Text`. Core names (`Text`, `Iterator`,
+  `panic`, ...) and `String` come from an implicit lowest-priority prelude.
+  `alloc` provides collections, `String`, `Box`/`Rc`/`Arc`; `std` provides
+  hosted I/O, filesystem, process, environment, time, networking and threads.
 - [Native library surface](docs/library-surface.md): per-signature translation
   rules, derives/compiler facilities, unsized types and foreign completion.
 - [Reproducible baseline audit](docs/baseline/README.md): verified source/docs

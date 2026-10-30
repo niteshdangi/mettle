@@ -44,6 +44,19 @@ void Checker::checkBorrowAlignment() {
           if (resolved.machineBorrowModes[i] == ParameterMode::Read ||
               resolved.machineBorrowModes[i] == ParameterMode::Mut)
             require(*operands[i], true);
+      } else if (resolved.indirect) {
+        auto type = checked.nodes.at(node.children[0].get()).type;
+        while (checked.types->isView(type))
+          type = checked.types->view(type).payload;
+        if (checked.types->isCallable(type)) {
+          const auto &signature = checked.types->callable(type);
+          for (std::size_t i = 1;
+               i < node.children.size() && i <= signature.parameters.size();
+               ++i)
+            if (signature.parameters[i - 1].mode == ParameterMode::Read ||
+                signature.parameters[i - 1].mode == ParameterMode::Mut)
+              require(*node.children[i], true);
+        }
       } else if (resolved.callee >= 0 && !resolved.constructor) {
         const auto &callee = checked.functions[resolved.callee];
         if (resolved.method && !callee.locals.empty() &&

@@ -17,7 +17,7 @@ Builder::Value Builder::loopExpression(const Node &node) {
     int savedTemporary = temporaryScope;
     temporaryScope = scope();
     auto condition = use(expression(*node.children[0]));
-    endScope();
+    endScope(node.children[0]->span);
     temporaryScope = savedTemporary;
     branch(*node.children[0], condition, body, done);
   } else
@@ -53,7 +53,7 @@ Builder::Value Builder::transferExpression(const Node &node) {
       static_cast<std::size_t>(std::distance(loops.begin(), found.base()) - 1);
   auto depth = loops[index].depth;
   if (node.kind == Kind::Continue) {
-    exitTo(depth);
+    exitTo(depth, node.span);
     jump(loops[index].header);
     return {};
   }
@@ -63,7 +63,7 @@ Builder::Value Builder::transferExpression(const Node &node) {
   std::optional<Place> pending;
   if (module.typeStore()->needsDrop(value.type))
     pending = materialize(value, node.span, -2);
-  exitTo(depth);
+  exitTo(depth, node.span);
   value = pending ? emit({Op::Move, {}, {}, {}, "", *pending, -1, 0, node.span},
                          value.type)
                   : use(value);

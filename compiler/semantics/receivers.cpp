@@ -13,12 +13,42 @@ ParameterMode receiverMode(const Function &function) {
                                        : ParameterMode::Read;
 }
 } // namespace
+const std::vector<bool> &Checker::interfacesDeclaring(const std::string &name) {
+  auto &definitions = checked.interfaceData->definitions;
+  auto &declaring = methodInterfaces[name];
+  if (declaring.size() == definitions.size())
+    return declaring;
+  declaring.assign(definitions.size(), false);
+  for (std::size_t root = 0; root < definitions.size(); ++root) {
+    std::vector<std::size_t> pending{root};
+    std::set<std::size_t> visited{root};
+    while (!pending.empty() && !declaring[root]) {
+      auto next = pending.back();
+      pending.pop_back();
+      for (const auto &method : definitions[next].methods)
+        if (method.name == name)
+          declaring[root] = true;
+      for (const auto &parent : definitions[next].superinterfaces)
+        if (parent.property == interfaces::Property::Interface &&
+            checked.types->isErased(parent.interfaceType)) {
+          auto declaration =
+              checked.types->erased(parent.interfaceType).declaration;
+          if (visited.insert(declaration).second)
+            pending.push_back(declaration);
+        }
+    }
+  }
+  return declaring;
+}
 std::optional<std::size_t> Checker::receiverCandidate(Type receiver,
                                                       ParameterMode mode,
                                                       std::string_view name,
                                                       Node &call) {
   std::vector<std::size_t> inherent;
   std::map<std::size_t, std::vector<Type>> inherentArguments;
+  // Compiler-generated iteration calls name their protocol interface in
+  // call.text and bypass inherent methods and import visibility.
+  const bool protocol = call.kind == Kind::Call && !call.text.empty();
   auto self = receiver;
   bool pinned = checked.types->isProduct(receiver) &&
                 checked.types->product(receiver).kind == AggregateKind::Pin;
@@ -33,7 +63,7 @@ std::optional<std::size_t> Checker::receiverCandidate(Type receiver,
     return function.receiver != "static" && receiverMode(function) == mode &&
            pinned == expectsPinned;
   };
-  if (checked.types->isProduct(self)) {
+  if (!protocol && checked.types->isProduct(self)) {
     const auto &record = checked.types->product(self);
     auto owner = record.genericOrigin == Type::Unknown
                      ? record.name
@@ -45,7 +75,7 @@ std::optional<std::size_t> Checker::receiverCandidate(Type receiver,
   interfaces::Solver solver(*checked.types, *checked.interfaceData, diagnostics,
                             interfaceAssumptions(), regionEnvironment());
   for (const auto &implementation : checked.interfaceData->implementations) {
-    if (implementation.interfaceType != Type::Unknown)
+    if (protocol || implementation.interfaceType != Type::Unknown)
       continue;
     auto selected = implementation.inherent.find(std::string(name));
     if (selected == implementation.inherent.end() ||
@@ -83,6 +113,8 @@ std::optional<std::size_t> Checker::receiverCandidate(Type receiver,
       const auto &descriptor = checked.types->erased(inherited);
       const auto &definition =
           checked.interfaceData->definitions[descriptor.declaration];
+      if (protocol && definition.name != call.text)
+        continue;
       for (std::size_t method = 0; method < definition.methods.size();
            ++method) {
         const auto &entry = definition.methods[method];
@@ -109,13 +141,13 @@ std::optional<std::size_t> Checker::receiverCandidate(Type receiver,
   else if (genericEnvironment && genericEnvironment->bounds.contains(self)) {
     for (const auto &bound : genericEnvironment->bounds.at(self))
       if (bound.form != TypeForm::Callable && bound.name != "unsized" &&
-          !intrinsicProperty(bound, "Copy", call.span) &&
-          !intrinsicProperty(bound, "Sized", call.span) &&
-          !intrinsicProperty(bound, "Unpin", call.span))
+          !propertyBound(bound, call.span))
         consider(interfaceBound(bound, call.span, {}, self));
   } else {
     auto caller = checked.symbols->moduleOf(call.span);
     auto visible = [&](const interfaces::Definition &definition) {
+      if (protocol)
+        return true;
       if (!checked.symbols->accessible(definition.span, caller))
         return false;
       if (checked.symbols->moduleOf(definition.span) == caller)
@@ -141,8 +173,11 @@ std::optional<std::size_t> Checker::receiverCandidate(Type receiver,
       }
       return false;
     };
+    const auto &declaring = interfacesDeclaring(std::string(name));
     for (const auto &implementation : checked.interfaceData->implementations) {
-      if (!checked.types->isErased(implementation.interfaceType))
+      if (!checked.types->isErased(implementation.interfaceType) ||
+          !declaring[checked.types->erased(implementation.interfaceType)
+                         .declaration])
         continue;
       auto bindings = solver.applicable(implementation, self, call.span);
       if (!bindings)

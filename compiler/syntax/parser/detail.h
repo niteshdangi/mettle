@@ -1,6 +1,8 @@
 #pragma once
 #include "support/limits.h"
 #include "syntax/parser.h"
+#include <optional>
+#include <set>
 
 namespace mettle::parsing {
 struct ParseFailure {};
@@ -33,13 +35,30 @@ public:
 
   void run(Module &module, std::vector<std::string> scope = {},
            bool nested = false);
+  const std::vector<Span> &textLiterals() const { return textSpans; }
 
 private:
   std::vector<Token> tokens;
   Diagnostics &diagnostics;
   std::size_t position = 0;
   unsigned parens = 0, nesting = 0;
+  // Reserved words already rejected as names, so later uses stay silent.
+  std::set<std::string> rejectedNames;
+  std::optional<std::size_t> failedAt;
+  std::vector<Span> textSpans;
   unsigned genericExpressionLevel = 0;
+  struct StateGuard {
+    Parser &parser;
+    unsigned parens, nesting, genericExpressionLevel;
+    explicit StateGuard(Parser &parser)
+        : parser(parser), parens(parser.parens), nesting(parser.nesting),
+          genericExpressionLevel(parser.genericExpressionLevel) {}
+    ~StateGuard() {
+      parser.parens = parens;
+      parser.nesting = nesting;
+      parser.genericExpressionLevel = genericExpressionLevel;
+    }
+  };
   VisibilitySyntax visibility();
   std::vector<Attribute> attributes();
   std::string textLiteral();
@@ -50,8 +69,10 @@ private:
   void importDeclaration(Module &module, ItemSyntax item);
 
   const Token &peek(std::size_t look = 0) {
+    position = std::min(position, tokens.size() - 1);
     if (parens)
-      while (tokens[position].kind == TokenKind::Newline)
+      while (position + 1 < tokens.size() &&
+             tokens[position].kind == TokenKind::Newline)
         ++position;
     auto index = position;
     while (look && index + 1 < tokens.size()) {
@@ -74,11 +95,22 @@ private:
     return tokens[position++];
   }
   [[noreturn]] void fail(std::string message, std::string phase = "parse") {
-    diagnostics.error(std::move(phase), peek().span, std::move(message));
+    // Recovery that fails again at the same token is a cascade, not news.
+    auto span = peek().span;
+    if (!failedAt || *failedAt != span.begin)
+      diagnostics.error(std::move(phase), span, std::move(message));
+    failedAt = span.begin;
     throw ParseFailure{};
   }
   [[noreturn]] void feature(std::string message) {
     fail(std::move(message), "feature");
+  }
+  // A range operator with no operand after it ends the expression.
+  bool rangeEnds() {
+    auto &next = peek();
+    return next.kind == TokenKind::Newline || next.kind == TokenKind::End ||
+           next.text == "]" || next.text == ")" || next.text == "," ||
+           next.text == "}" || next.text == ";" || next.text == "=>";
   }
   void newlines() {
     while (peek().kind == TokenKind::Newline)
@@ -92,8 +124,11 @@ private:
     auto result = peek();
     if ((result.kind != TokenKind::Word &&
          result.kind != TokenKind::QuotedWord) ||
-        (result.kind != TokenKind::QuotedWord && isReservedWord(result.text)))
+        (result.kind != TokenKind::QuotedWord && isReservedWord(result.text))) {
+      if (result.kind == TokenKind::Word)
+        rejectedNames.insert(result.text);
       fail("expected an identifier");
+    }
     ++position;
     if (result.kind == TokenKind::QuotedWord)
       result.text = result.text.substr(1, result.text.size() - 2);
@@ -108,6 +143,7 @@ private:
   std::vector<GenericArgument> genericArguments();
   std::vector<GenericConstraint> genericConstraints();
   bool genericClose();
+  bool genericOpen();
   std::shared_ptr<const Node> genericValue();
   std::unique_ptr<Node> node(Kind kind, Span span, std::string text = "") {
     auto result = std::make_unique<Node>();

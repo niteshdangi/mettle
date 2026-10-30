@@ -120,6 +120,7 @@ void Checker::finishAssembly() {
     auto &assembly = *facts(n).assembly;
     const auto &syntax = *n.assembly;
     std::vector<Type> outputs;
+    bool constantFailed = false;
     for (std::size_t i = 0; i < assembly.operands.size(); ++i) {
       auto &operand = assembly.operands[i];
       const auto &source = syntax.operands[i];
@@ -160,13 +161,17 @@ void Checker::finishAssembly() {
         if (auto value =
                 checked.types->scalarConstantValue(operand.constantIdentity))
           operand.constant = *value;
+        else
+          constantFailed = true;
       }
       if (assemblyOutput(operand.mode) && !operand.discard)
         outputs.push_back(operand.type);
     }
     if (auto failure =
-            validateAssembly(*checked.types, checked.targetDescription,
-                             facts(n).targetFeatures, assembly))
+            constantFailed
+                ? std::nullopt
+                : validateAssembly(*checked.types, checked.targetDescription,
+                                   facts(n).targetFeatures, assembly))
       error("assembly", n.span, *failure);
     facts(n).machineType =
         checked.types->structural(AggregateKind::Tuple, std::move(outputs));

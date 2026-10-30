@@ -34,17 +34,39 @@ void Checker::explicitGenericBindings(const Function &function,
                                       std::vector<TypeBinding> &bindings,
                                       Span span) {
   std::vector<const GenericParameter *> owner, selected;
-  for (const auto &product : module.products)
-    if (function.implementation < 0 && !function.owner.empty() &&
-        definitionName(product.span, product.name) ==
-            typeName(function.owner, function.span))
-      for (const auto &parameter : product.genericParameters)
+  if (function.implementation < 0 && !function.owner.empty())
+    for (const auto *product :
+         productsNamed(typeName(function.owner, function.span)))
+      for (const auto &parameter : product->genericParameters)
         if (parameter.kind != GenericParameterKind::Region)
           owner.push_back(&parameter);
   for (std::size_t i = function.implicitGenericParameters;
        i < function.genericParameters.size(); ++i)
     if (function.genericParameters[i].kind != GenericParameterKind::Region)
       selected.push_back(&function.genericParameters[i]);
+  if (function.implementation >= 0 && !function.owner.empty()) {
+    // Owner arguments of an inherent impl bind the impl parameters that the
+    // target type names, in order.
+    const auto &target =
+        module
+            .implementations[static_cast<std::size_t>(function.implementation)]
+            .target;
+    for (const auto &argument : target.arguments) {
+      if (!argument.region.empty())
+        continue;
+      const GenericParameter *bound = nullptr;
+      if (argument.type && argument.type->form == TypeForm::Named &&
+          argument.type->arguments.empty())
+        for (std::size_t i = 0; i < function.implicitGenericParameters &&
+                                i < function.genericParameters.size();
+             ++i)
+          if (function.genericParameters[i].name == argument.type->name &&
+              function.genericParameters[i].kind !=
+                  GenericParameterKind::Region)
+            bound = &function.genericParameters[i];
+      owner.push_back(bound);
+    }
+  }
   if (function.constructor)
     selected.insert(selected.begin(), owner.begin(), owner.end());
   auto bind = [&](const std::vector<GenericArgument> &arguments,
@@ -57,7 +79,10 @@ void Checker::explicitGenericBindings(const Function &function,
         error("type", span, "excess explicit generic arguments");
         break;
       }
-      const auto &parameter = *parameters[index++];
+      const auto *declared = parameters[index++];
+      if (!declared)
+        continue;
+      const auto &parameter = *declared;
       auto identity = environment.names.at(parameter.name);
       auto binding = std::find_if(bindings.begin(), bindings.end(),
                                   [&](const TypeBinding &candidate) {
@@ -73,11 +98,16 @@ void Checker::explicitGenericBindings(const Function &function,
         error("type", span, "generic argument has no declaration binding");
         continue;
       }
-      binding->argument = genericArgument(argument, binding->parameter);
+      if (!inferredArgument(argument))
+        binding->argument = genericArgument(argument, binding->parameter);
     }
   };
   bind(callee.ownerGenericArguments, owner);
   bind(callee.genericArguments, selected);
+}
+bool Checker::inferredArgument(const GenericArgument &argument) {
+  return argument.type && argument.type->form == TypeForm::Named &&
+         argument.type->name == "_" && argument.type->arguments.empty();
 }
 Type Checker::genericArgument(const GenericArgument &argument, Type parameter) {
   if (checked.types->isParameter(parameter)) {

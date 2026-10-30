@@ -48,9 +48,13 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
       Protocol{">=", "core::cmp::PartialOrd", "ge"},
       Protocol{"[]", "core::ops::Index", "index"},
       Protocol{"[]mut", "core::ops::IndexMut", "index_mut"},
+      Protocol{"[..]", "core::ops::IndexRange", "index_range"},
+      Protocol{"[..]mut", "core::ops::IndexRangeMut", "index_range_mut"},
       Protocol{"negate", "core::ops::Neg", "neg"},
       Protocol{"!", "core::ops::Not", "not"}};
-  auto token = node.kind == Kind::Index
+  const bool ranged = node.kind == Kind::Index && right < 0;
+  auto token = ranged ? std::string_view(mutableIndex ? "[..]mut" : "[..]")
+               : node.kind == Kind::Index
                    ? std::string_view(mutableIndex ? "[]mut" : "[]")
                : right < 0 && node.text == "-" ? std::string_view("negate")
                                                : std::string_view(node.text);
@@ -67,7 +71,9 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
     error("type", node.span,
           comparison
               ? "product comparisons require a declared comparison interface"
-              : "operator requires its native interface protocol");
+          : ranged ? "range indexing requires an array, slice or a type "
+                     "implementing core::ops::IndexRange"
+                   : "operator requires its native interface protocol");
     return inference.fresh();
   }
   const auto &definition =
@@ -82,8 +88,13 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
   }
   ErasedType descriptor{definition.name,
                         static_cast<std::uint32_t>(interface->second)};
-  if (!definition.parameters.empty() && right >= 0)
-    descriptor.arguments.push_back(inference.value(right));
+  if (!definition.parameters.empty() && right >= 0) {
+    auto argument = inference.value(right);
+    // A view operand compares through its payload like the receiver does.
+    while (dereferences != 0 && checked.types->isView(argument))
+      argument = checked.types->view(argument).payload;
+    descriptor.arguments.push_back(argument);
+  }
   if (definition.parameters.size() != descriptor.arguments.size()) {
     error("type", node.span,
           "native operator interface has incompatible parameters");
@@ -94,7 +105,7 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
     return inference.fresh();
   auto &callee = module.functions[method->function];
   auto &environment = functionGenerics.at(&callee);
-  const auto count = right < 0 ? 1u : 2u;
+  const auto count = ranged ? 3u : right < 0 ? 1u : 2u;
   if (callee.parameters.size() != count) {
     error("type", node.span, "native operator method has incompatible arity");
     return inference.fresh();
@@ -174,8 +185,11 @@ void Checker::requireMutablePlace(Node &node) {
   if (node.kind == Kind::Index && checkedNode.indexView != Type::Unknown &&
       checked.types->view(checkedNode.indexView).mode != ParameterMode::Mut) {
     auto prior = checked.types->view(checkedNode.indexView).payload;
-    auto result = operatorCall(node, nodeVariables.at(node.children[0].get()),
-                               nodeVariables.at(node.children[1].get()), true);
+    auto key = node.children[1]->kind == Kind::Range
+                   ? -1
+                   : nodeVariables.at(node.children[1].get());
+    auto result =
+        operatorCall(node, nodeVariables.at(node.children[0].get()), key, true);
     auto view = result ? inference.value(*result) : Type::Unknown;
     if (!checked.types->isView(view) ||
         checked.types->view(view).mode != ParameterMode::Mut) {

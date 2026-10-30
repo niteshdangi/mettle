@@ -79,6 +79,9 @@ profile-independent contracts. Constant evaluation reports invalid required
 constant computations at compile time; it does not execute a runtime panic.
 Required constants use checked evaluation in every profile, as specified by
 the numeric annex; folding runtime expressions preserves their runtime policy.
+`const` items are immutable statics with checked constant initializers; cycles
+and non-constant initializers are errors, and integer/bool consts may be used
+as patterns.
 
 Integer casts truncate when narrowing and sign/zero-extend when widening as
 determined by the source signedness. The signed interpretation of destination
@@ -328,6 +331,45 @@ next until absence. It does not clone the collection or yielded elements.
 Break, typed failure and unwind clean up remaining initialized iteration state
 at the appropriate scope. Iterator-associated regions constrain the loop body
 and any yielded views.
+
+Range indexing `read base[a..b]` (also `a..`, `..b`, `..`, `a..=b`; bounds are
+`usize`) borrows a subslice of an array or slice, panicking when out of range or
+`a > b`; `mut base[..]` needs a mutable place. Other bases use
+`core::ops::IndexRange` (`fn index_range(start: usize, end: usize): read
+Self::Output from self`) or `IndexRangeMut`; an absent upper bound is passed as
+`usize::MAX` and `..=b` as `b + 1`. Open-ended ranges are not yet first-class
+values.
+
+The compiler recognizes the interfaces by canonical path, like `core::ops::*`:
+`core::iter::Iterator` (`type Item; mut fn next(): Self::Item?`),
+`core::iter::IntoIterator` (`fn into_iter(receiver self: take Self)`),
+`core::iter::Iterable` (`fn iter()`) and `core::iter::IterableMut`
+(`mut fn iter_mut()`), none with parameters. `for x in take v` or an rvalue uses
+Iterator directly, else IntoIterator; `for x in v` uses Iterable; `for x in mut v`
+uses IterableMut, else a mutable view that is itself an Iterator. Ranges and
+arrays keep their direct lowering. For other loops the checker records an
+iteration plan (mode, protocol, selected method) in a side table and builds a
+synthetic elaboration, an iterator binding plus
+`loop { match next() { present(x) => body, none => break } }`, that shares the
+original body. Ownership, region, capture and lowering passes consume the
+elaboration, so cleanup and loans follow ordinary scope rules.
+The iterator type of `Iterable`/`IterableMut` is a region family, for example
+`type Iter<region r> = VecIter<T, region r>` with
+`fn iter<region r>(receiver self: read Self from r): Self::Iter<region r>`; the loop
+borrows the collection for the iterator's region, so mutating it inside the loop
+or holding an item past a mutation is rejected. A family may bound itself with its
+own region, `type Iter<region r>: Iterator<Item = read Self::Item from r>`; each
+implementation's family type must satisfy the bound at the implementation's
+region, and generic code over `C: Iterable<Item = i32>` sees the bounded items as
+`read i32 from c`. Ownership checks of generic loops run per instantiation.
+
+Generic inference additionally uses the expected type: `let x: Opt<i32> = nothing()`,
+`Opt::Nothing` and `Self(..)` in generic statics take their arguments from context.
+`_` in a turbofish list is inferred, and inherent-impl statics are callable as
+`X::f()` and `X::<i32>::f()`. Projections such as `Vec<<I implements Iterator>::Item>`
+normalize once `I` is known; `I: Iterator<Item = T>` determines `T`, and a
+callable bound `F: fn(I::Item): B` determines `B` from the closure body, with
+unannotated closure parameters taking their modes from the bound.
 
 Exhaustiveness treats guarded arms as non-covering, unions or-pattern coverage,
 and handles finite alternatives/ranges/slices under their actual type. External

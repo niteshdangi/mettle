@@ -99,7 +99,7 @@
     },
     {
       "name": "pipeline", "directory": "pipeline", "kind": "STATIC",
-      "dependencies": ["syntax", "resolution", "semantics", "ir", "types", "lowering", "analysis", "instances", "diagnostics"],
+      "dependencies": ["syntax", "resolution", "semantics", "ir", "types", "lowering", "analysis", "instances", "cleanup", "diagnostics"],
       "public_headers": ["pipeline/compile.h"],
       "files": ["pipeline/compile.h", "pipeline/compile.cpp"]
     },

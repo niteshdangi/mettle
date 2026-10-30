@@ -4,13 +4,46 @@
 namespace mettle {
 void Checker::controlFlow(Function &function) {
   std::vector<Node *> targets;
+  std::set<std::string> lexical;
+  std::function<void(const Pattern &)> bind = [&](const Pattern &pattern) {
+    if (pattern.kind == PatternKind::Binding ||
+        pattern.kind == PatternKind::At || pattern.kind == PatternKind::Rest)
+      lexical.insert(pattern.text);
+    for (const auto &child : pattern.children)
+      bind(child);
+  };
   int next = 0;
   std::function<void(Node &)> visit = [&](Node &node) {
+    if (node.kind == Kind::Name)
+      facts(node).lexicallyBound = lexical.contains(node.text);
+    if (node.kind == Kind::Block) {
+      auto saved = lexical;
+      for (auto &child : node.children)
+        visit(*child);
+      lexical = std::move(saved);
+      return;
+    }
+    if (node.kind == Kind::Binding) {
+      for (auto &child : node.children)
+        visit(*child);
+      if (node.patterns.empty())
+        lexical.insert(node.text);
+      else
+        bind(node.patterns[0]);
+      return;
+    }
     if (node.kind == Kind::Closure) {
       auto saved = std::move(targets);
+      auto savedLexical = lexical;
+      for (const auto &parameter : node.parameters) {
+        lexical.insert(parameter.name);
+        if (parameter.pattern)
+          bind(*parameter.pattern);
+      }
       targets.clear();
       visit(*node.children[0]);
       targets = std::move(saved);
+      lexical = std::move(savedLexical);
       return;
     }
     bool loop = node.kind == Kind::Loop || node.kind == Kind::While ||
@@ -30,14 +63,37 @@ void Checker::controlFlow(Function &function) {
       else
         facts(node).control = facts(**target).control;
     }
-    for (auto &child : node.children)
-      visit(*child);
+    if (!node.patterns.empty() &&
+        (node.kind == Kind::For || node.kind == Kind::If ||
+         node.kind == Kind::While || node.kind == Kind::Arm)) {
+      auto saved = lexical;
+      std::size_t first = 0;
+      if (node.kind != Kind::Arm) {
+        visit(*node.children[0]);
+        first = 1;
+      }
+      bind(node.patterns[0]);
+      visit(*node.children[first]);
+      if (node.kind == Kind::Arm && node.children.size() > 1)
+        visit(*node.children[1]);
+      lexical = std::move(saved);
+      if (node.kind == Kind::If && node.children.size() > 2)
+        visit(*node.children[2]);
+    } else
+      for (auto &child : node.children)
+        visit(*child);
     if (loop)
       targets.pop_back();
   };
-  for (auto &parameter : function.parameters)
+  for (auto &parameter : function.parameters) {
     if (parameter.defaultValue.get())
       visit(*parameter.defaultValue);
+    lexical.insert(parameter.name);
+    if (parameter.pattern)
+      bind(*parameter.pattern);
+  }
+  if (!function.variadicCursor.empty())
+    lexical.insert(function.variadicCursor);
   visit(*function.body);
 }
 
@@ -68,5 +124,129 @@ int Checker::transfer(Node &n, bool reachable) {
     inference.equal(value, loopResults.at(facts(n).control), n.span, true);
   }
   return inference.fresh(Type::Never);
+}
+bool Checker::implementsProtocol(Type type, std::string_view interface,
+                                 Span span) {
+  auto found = interfaceNames.find(std::string(interface));
+  if (found == interfaceNames.end())
+    return false;
+  const auto &definition = checked.interfaceData->definitions[found->second];
+  if (!definition.parameters.empty())
+    return false;
+  auto bound = checked.types->erasedType(
+      ErasedType{definition.name, static_cast<std::uint32_t>(found->second)});
+  auto assumptions = interfaceAssumptions();
+  if (checked.types->isErased(type))
+    assumptions.push_back({type, type});
+  interfaces::Solver solver(*checked.types, *checked.interfaceData, diagnostics,
+                            std::move(assumptions), regionEnvironment());
+  return solver.prove({type, bound}, span, false);
+}
+// Elaborates a `for` over a user iterator into the recorded plan
+//   { var it = <iterator>; loop { match take it.next() {
+//       present(pattern) => { body }; none => break } } }
+// so that checking, regions, ownership and cleanup reuse the ordinary
+// machinery. The parsed `for` is unchanged: the elaboration lives in the
+// checked module's iteration table and shares the already-checked source and
+// the body.
+bool Checker::desugarIteration(Node &n, Type original) {
+  static constexpr std::string_view iterator = "core::iter::Iterator",
+                                    into = "core::iter::IntoIterator",
+                                    shared = "core::iter::Iterable",
+                                    exclusive = "core::iter::IterableMut";
+  auto &source = *n.children[0];
+  auto place = [](const Node &node) {
+    auto *current = &node;
+    while (current->kind == Kind::Group)
+      current = current->children[0].get();
+    return current->kind == Kind::Name || current->kind == Kind::Field ||
+           current->kind == Kind::Index ||
+           (current->kind == Kind::Unary &&
+            (current->text == "*" || current->text == "mut" ||
+             current->text == "read"));
+  };
+  auto self = original;
+  while (checked.types->isView(self))
+    self = checked.types->view(self).payload;
+  auto mode = facts(n).iterationMode;
+  if (mode == ParameterMode::Read && !place(source) &&
+      !checked.types->isView(original))
+    mode = ParameterMode::Take;
+  std::string_view method, owner;
+  if (mode == ParameterMode::Take) {
+    if (!implementsProtocol(self, iterator, source.span)) {
+      if (!implementsProtocol(self, into, source.span))
+        return false;
+      method = "into_iter";
+      owner = into;
+    }
+  } else if (mode == ParameterMode::Mut) {
+    if (implementsProtocol(self, exclusive, source.span)) {
+      method = "iter_mut";
+      owner = exclusive;
+    } else if (!implementsProtocol(self, iterator, source.span))
+      return false;
+  } else if (implementsProtocol(self, shared, source.span)) {
+    method = "iter";
+    owner = shared;
+  } else
+    return false;
+  auto make = [&](Kind kind, std::string text = {}) {
+    auto result = std::make_unique<Node>();
+    result->kind = kind;
+    result->span = n.span;
+    result->text = std::move(text);
+    return result;
+  };
+  auto reference = [&] {
+    auto result = make(Kind::Name, "<for iterator>");
+    facts(*result).lexicallyBound = true;
+    return result;
+  };
+  auto protocolCall = [&](NodeOwner receiver, std::string_view name,
+                          std::string_view interface) {
+    auto field = make(Kind::Field, std::string(name));
+    field->children.push_back(std::move(receiver));
+    auto call = make(Kind::Call, std::string(interface));
+    call->children.push_back(std::move(field));
+    return call;
+  };
+  reusedNodes.insert(&source);
+  NodeOwner initializer = NodeOwner::borrow(source);
+  if (!method.empty())
+    initializer = protocolCall(std::move(initializer), method, owner);
+  auto binding = make(Kind::Binding, "<for iterator>");
+  binding->flag = true;
+  binding->children.push_back(std::move(initializer));
+  auto present = make(Kind::Arm);
+  present->patterns.push_back(
+      Pattern{PatternKind::Variant, n.patterns[0].span, "present"});
+  present->patterns[0].children.push_back(n.patterns[0]);
+  auto body = make(Kind::Block);
+  body->children.push_back(NodeOwner::borrow(*n.children[1]));
+  body->children.push_back(make(Kind::Unit));
+  present->children.push_back(std::move(body));
+  auto done = make(Kind::Arm);
+  done->patterns.push_back(Pattern{PatternKind::Variant, n.span, "none"});
+  auto exit = make(Kind::Break);
+  facts(*exit).control = facts(n).control;
+  done->children.push_back(std::move(exit));
+  auto next = make(Kind::Match, "take");
+  next->children.push_back(protocolCall(reference(), "next", iterator));
+  next->children.push_back(std::move(present));
+  next->children.push_back(std::move(done));
+  auto loopBody = make(Kind::Block);
+  loopBody->children.push_back(std::move(next));
+  auto iteration = make(Kind::Loop);
+  iteration->label = n.label;
+  iteration->children.push_back(std::move(loopBody));
+  facts(*iteration).control = facts(n).control;
+  auto block = make(Kind::Block);
+  block->children.push_back(std::move(binding));
+  block->children.push_back(std::move(iteration));
+  flow(*block);
+  checked.iterations[&n] = IterationPlan{mode, std::string(owner),
+                                         std::string(method), std::move(block)};
+  return true;
 }
 } // namespace mettle

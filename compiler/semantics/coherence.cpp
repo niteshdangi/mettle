@@ -108,11 +108,19 @@ bool Solver::equalities(std::span<const TypeBinding> equations,
         return false;
       continue;
     }
-    for (const auto &binding : *unified) {
+    for (auto binding : *unified) {
       if (binding.parameter == binding.argument)
         continue;
-      if (std::find(parameters.begin(), parameters.end(), binding.parameter) ==
-          parameters.end())
+      auto owned = [&](Type parameter) {
+        return std::find(parameters.begin(), parameters.end(), parameter) !=
+               parameters.end();
+      };
+      // A bare parameter on the other side may stand for an implementation
+      // parameter, so orient the binding towards the one being solved.
+      if (!owned(binding.parameter) && owned(binding.argument) &&
+          types.isParameter(binding.argument))
+        std::swap(binding.parameter, binding.argument);
+      if (!owned(binding.parameter))
         return false;
       solved.push_back(binding);
     }
@@ -143,6 +151,44 @@ bool Solver::constraints(const Implementation &implementation,
     equation.parameter = types.substituteRegions(equation.parameter, regions);
     equation.argument = types.substituteRegions(equation.argument, regions);
   }
+  // Parameters that appear only in an associated-type binding or a callable
+  // result are determined by the arguments they constrain.
+  for (const auto &requirement : implementation.requirements) {
+    if (requirement.property != Property::Interface ||
+        !types.isErased(requirement.interfaceType) ||
+        types.erased(requirement.interfaceType).associated.empty())
+      continue;
+    auto bare = types.erased(requirement.interfaceType);
+    auto bound = std::move(bare.associated);
+    bare.associated.clear();
+    const auto &definition = database.definitions[bare.declaration];
+    auto interfaceType = types.erasedType(std::move(bare));
+    for (const auto &binding : bound) {
+      auto item = std::find_if(
+          definition.associated.begin(), definition.associated.end(),
+          [&](const auto &associated) {
+            return associated.parameter == binding.parameter;
+          });
+      if (item == definition.associated.end() || !item->parameters.empty())
+        continue;
+      equations.push_back(
+          {types.projection(
+               requirement.subject, interfaceType,
+               static_cast<std::size_t>(item - definition.associated.begin())),
+           types.substituteRegions(binding.argument, regions)});
+    }
+  }
+  for (auto parameter : implementation.parameters) {
+    if (!types.isParameter(parameter))
+      continue;
+    auto contract = types.parameter(parameter).callableConstraint;
+    auto actual = resolve(parameter, bindings, types);
+    if (contract == Type::Unknown || actual == parameter ||
+        !types.isCallable(actual))
+      continue;
+    equations.push_back(
+        {types.callable(contract).result, types.callable(actual).result});
+  }
   if (!equalities(equations, implementation.parameters, bindings, span,
                   potential))
     return false;
@@ -172,7 +218,9 @@ bool Solver::constraints(const Implementation &implementation,
             callableProof
                 ? callableProof(parameter, actual, bindings, regions, span)
                 : types.satisfiesCallable(
-                      actual, substituted(declaration.callableConstraint));
+                      actual,
+                      normalize(substituted(declaration.callableConstraint), {},
+                                span));
         if (!valid)
           return false;
       }
@@ -191,6 +239,17 @@ bool Solver::constraints(const Implementation &implementation,
             !types.isSized(requirement.subject)) ||
            (requirement.property == Property::Unpin &&
             !types.isUnpin(requirement.subject))))
+        return false;
+      // A concrete nominal subject only satisfies an interface requirement
+      // when some implementation could apply to it.
+      if (requirement.property == Property::Interface &&
+          types.isErased(requirement.interfaceType) &&
+          !types.isParameter(requirement.subject) &&
+          !types.isProjection(requirement.subject) &&
+          !types.isOpaque(requirement.subject) &&
+          !types.isErased(requirement.subject) &&
+          !someImplementationCouldApply(requirement.subject,
+                                        requirement.interfaceType))
         return false;
     } else if (!prove(requirement, span, false))
       return false;
@@ -223,13 +282,8 @@ bool Solver::constraints(const Implementation &implementation,
 
 std::optional<std::vector<TypeBinding>>
 Solver::applicable(const Implementation &implementation, Type self, Span span,
-                   std::vector<RegionBinding> *selectedRegions,
-                   bool deferEqualities) {
+                   std::vector<RegionBinding> *selectedRegions, bool) {
   std::vector<TypeBinding> bindings;
-  if (!deferEqualities &&
-      !equalities(implementation.equalities, implementation.parameters,
-                  bindings, span))
-    return std::nullopt;
   auto environment = regionEnvironment;
   auto scope = types.regions().binder(environment.universe);
   std::vector<RegionBinding> regions;
@@ -295,6 +349,14 @@ Solver::applicable(const Implementation &implementation, Type self, Span span,
   return valid ? std::optional(std::move(bindings)) : std::nullopt;
 }
 
+bool Solver::someImplementationCouldApply(Type subject, Type interfaceType) {
+  auto declaration = types.erased(interfaceType).declaration;
+  for (auto position : candidatesFor(declaration))
+    if (match(database.implementations[position].target, subject, true))
+      return true;
+  return false;
+}
+
 bool Solver::coherent() {
   bool valid = true;
   for (std::size_t i = 0; i < database.implementations.size(); ++i) {
@@ -316,6 +378,27 @@ bool Solver::coherent() {
         if (determined(equation.argument, left, known, types))
           for (auto parameter : identityParameters(equation.parameter, types))
             known.insert(parameter);
+      }
+      for (const auto &requirement : left.requirements) {
+        if (requirement.property != Property::Interface ||
+            !types.isErased(requirement.interfaceType) ||
+            !determined(requirement.subject, left, known, types))
+          continue;
+        for (const auto &binding :
+             types.erased(requirement.interfaceType).associated)
+          for (auto parameter : identityParameters(binding.argument, types))
+            known.insert(parameter);
+      }
+      for (auto parameter : left.parameters) {
+        if (!known.contains(parameter) || !types.isParameter(parameter))
+          continue;
+        auto contract = types.parameter(parameter).callableConstraint;
+        if (contract == Type::Unknown || !types.isFunctionPointer(contract))
+          continue;
+        for (auto result :
+             {types.callable(contract).result, types.callable(contract).error})
+          for (auto output : identityParameters(result, types))
+            known.insert(output);
       }
       changed = count != known.size();
     } while (changed);
@@ -346,11 +429,7 @@ bool Solver::coherent() {
       }
     }
     for (std::size_t j = 0; j < i; ++j) {
-      if (++steps > limits::activeLoans) {
-        diagnostics.error("limit", left.span,
-                          "coherence resource limit exceeded");
-        return false;
-      }
+      steps = 0;
       const auto &right = database.implementations[j];
       bool same = types.isErased(left.interfaceType) &&
                   types.isErased(right.interfaceType) &&

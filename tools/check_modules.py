@@ -9,6 +9,40 @@ from pathlib import Path, PurePosixPath
 CPP = {".cpp", ".h", ".hpp", ".cc", ".cxx", ".c"}
 
 
+def include_directives(text):
+    logical, numbers, pending = [], [], ""
+    for number, line in enumerate(text.splitlines(), 1):
+        if not pending:
+            first = number
+        if line.endswith("\\"):
+            pending += line[:-1]
+            continue
+        logical.append(pending + line)
+        numbers.append(first)
+        pending = ""
+    if pending:
+        logical.append(pending)
+        numbers.append(first)
+    text = "\n".join(logical)
+    tokens = re.compile(
+        r'(?:u8|u|U|L)?R"(?P<delimiter>[^ ()\\\t\r\n]{0,16})\(.*?\)(?P=delimiter)"'
+        r'|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\''
+        r'|/\*.*?\*/|//[^\n]*', re.S)
+
+    def mask(match):
+        value = match[0]
+        if value.startswith(("/*", "//")) or match["delimiter"] is not None:
+            return "".join("\n" if c == "\n" else " " for c in value)
+        return value
+
+    for number, line in zip(numbers, tokens.sub(mask, text).splitlines()):
+        directive = re.match(r'\s*#\s*(include|include_next|import)\b(.*)', line)
+        if not directive:
+            continue
+        header = re.fullmatch(r'\s*[<"]([^>"]+)[>"]\s*', directive[2])
+        yield number, header[1] if header else None
+
+
 def manifest(root):
     data = json.loads((Path(root) / "compiler/modules.json").read_text())
     if data.get("schema") != 1 or not isinstance(data.get("modules"), list):
@@ -97,21 +131,22 @@ def include_failures(path, root, modules=None):
     member = str(path.relative_to(root / "compiler")) if relative.parts[0] == "compiler" else ""
     owner = owners.get(member)
     failures = []
-    for number, line in enumerate(path.read_text().splitlines(), 1):
-        include = re.match(r'\s*#\s*include\s*[<"]([^>"]+)[>"]', line)
-        if not include:
+    for number, header in include_directives(path.read_text()):
+        if header is None:
+            failures.append(f"{relative}:{number}: nonliteral include cannot be checked")
             continue
-        name = include[1].replace("\\", "/")
+        name = header.replace("\\", "/")
         if PurePosixPath(name).is_absolute():
             failures.append(f"{relative}:{number}: nonportable absolute include '{name}'")
             continue
-        if name.startswith("."):
-            target = (path.parent / name).resolve()
+        local = (path.parent / name).resolve()
+        if name.startswith(".") or local.is_file():
+            target = local
         else:
             target = (root / "compiler" / name.removeprefix("compiler/")).resolve()
         target_member = str(target.relative_to(root / "compiler")) if target.is_relative_to(root / "compiler") else ""
         dependency = owners.get(target_member)
-        llvm = name.startswith("llvm/")
+        llvm = "llvm" in PurePosixPath(name).parts
         if owner is None:
             if dependency or llvm:
                 failures.append(f"{relative}:{number}: runtime/library cannot include compiler/LLVM headers")

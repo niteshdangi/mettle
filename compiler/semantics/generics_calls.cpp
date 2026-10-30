@@ -72,15 +72,38 @@ std::optional<int> Checker::genericCall(
     used[0] = true;
   }
   std::vector<std::pair<Node *, int>> actuals;
-  bool named = false;
+  bool named = false, misbound = false;
   for (std::size_t i = 1; i < n.children.size(); ++i) {
     auto &argument = *n.children[i];
     auto known = nodeVariables.find(&argument);
+    if (known == nodeVariables.end() && argument.name.empty() &&
+        i - 1 + receiverOffset < signature.size()) {
+      std::vector<TypeBinding> solved, open;
+      for (const auto &binding : bindings)
+        (binding.argument == Type::Unknown ? open : solved).push_back(binding);
+      auto expected =
+          checked.types->substitute(signature[i - 1 + receiverOffset], solved);
+      if (checked.types->isParameter(expected) &&
+          checked.types->parameter(expected).callableConstraint !=
+              Type::Unknown) {
+        // Parameters still being inferred stay open in the closure's context.
+        auto contract = checked.types->substitute(
+            checked.types->parameter(expected).callableConstraint, solved);
+        if (argument.kind == Kind::Closure)
+          contextualize(argument, checked.types->substitute(contract, open));
+      } else if (argument.kind == Kind::Closure &&
+                 checked.types->isFunctionPointer(expected))
+        contextualize(argument, checked.types->substitute(expected, open));
+      else if (expected != Type::Unknown &&
+               !checked.types->isSymbolic(expected))
+        contextualize(argument, expected);
+    }
     auto variable = known == nodeVariables.end() ? node(argument, reachable)
                                                  : known->second;
     fields(false);
     reachable &= facts(argument).flow.normal;
     std::size_t target = i - 1 + receiverOffset;
+    bool misordered = false;
     if (!argument.name.empty()) {
       named = true;
       auto found =
@@ -89,17 +112,22 @@ std::optional<int> Checker::genericCall(
                          return parameter.name == argument.name;
                        });
       target = static_cast<std::size_t>(found - function.parameters.begin());
-    } else if (named)
+    } else if (named) {
+      misbound = misordered = true;
       error("type", argument.span,
             "positional arguments must precede named arguments");
+    }
     if (target >= signature.size()) {
+      misbound = true;
       error("type", argument.span, "unknown or excess generic-call argument");
       facts(n).argumentOrder.push_back(0);
       actuals.push_back({&argument, variable});
       continue;
     }
-    if (used[target])
+    if (used[target] && !misordered) {
+      misbound = true;
       error("type", argument.span, "duplicate argument");
+    }
     used[target] = true;
     facts(n).argumentOrder.push_back(target);
     if (modes[target] == ParameterMode::Mut)
@@ -119,6 +147,50 @@ std::optional<int> Checker::genericCall(
       actual = checked.types->view(actual).payload;
     inferGeneric(signature[target], actual, bindings, argument.span);
     actuals.push_back({&argument, variable});
+  }
+  for (std::size_t round = 0; round < bindings.size(); ++round) {
+    bool progress = false;
+    for (const auto &binding : std::vector<TypeBinding>(bindings)) {
+      if (binding.argument == Type::Unknown ||
+          !checked.types->isParameter(binding.parameter))
+        continue;
+      auto contract =
+          checked.types->parameter(binding.parameter).callableConstraint;
+      if (contract == Type::Unknown ||
+          !checked.types->isCallable(binding.argument))
+        continue;
+      const auto expected = checked.types->callable(contract);
+      const auto actual = checked.types->callable(binding.argument);
+      if (expected.parameters.size() != actual.parameters.size())
+        continue;
+      auto before = bindings;
+      for (std::size_t i = 0; i < actual.parameters.size(); ++i)
+        inferGeneric(expected.parameters[i].type, actual.parameters[i].type,
+                     bindings, n.span);
+      inferGeneric(expected.result, actual.result, bindings, n.span);
+      if (expected.error != Type::Unknown && actual.error != Type::Unknown)
+        inferGeneric(expected.error, actual.error, bindings, n.span);
+      for (std::size_t i = 0; i < bindings.size(); ++i)
+        progress |= before[i].argument != bindings[i].argument;
+    }
+    if (!progress)
+      break;
+  }
+  if (auto hint = expectedTypes.find(&n);
+      hint != expectedTypes.end() &&
+      std::any_of(bindings.begin(), bindings.end(), [](const auto &binding) {
+        return binding.argument == Type::Unknown;
+      })) {
+    // The expected type only completes what the arguments left open.
+    auto trial = bindings;
+    auto expected = hint->second;
+    if (facts(n).optional && checked.types->isProduct(expected) &&
+        checked.types->product(expected).kind == AggregateKind::Optional)
+      expected = checked.types->product(expected).components[0];
+    inferFromExpected(resultPattern, expected, trial);
+    for (std::size_t i = 0; i < bindings.size(); ++i)
+      if (bindings[i].argument == Type::Unknown)
+        bindings[i].argument = trial[i].argument;
   }
   genericEnvironment = &environment;
   completeGenericBindings(environment, bindings, n.span);
@@ -162,7 +234,7 @@ std::optional<int> Checker::genericCall(
       variable = inference.fresh(expected);
     coerce(*argument, variable, inference.fresh(expected), argument->span);
   }
-  completeArguments(n, function, used);
+  completeArguments(n, function, used, !misbound);
   facts(n).receiverReservation = receiverOffset && function.receiver == "mut";
   auto result = normalizeCallType(resultPattern, bindings, function, n.span);
   facts(n).effect = normalizeCallType(errorPattern, bindings, function, n.span);
@@ -186,12 +258,45 @@ std::optional<int> Checker::genericCall(
     return inference.composite(AggregateKind::Optional, {variable});
   return variable;
 }
+void Checker::inferFromExpected(Type pattern, Type expected,
+                                std::vector<TypeBinding> &bindings) {
+  if (expected == Type::Unknown)
+    return;
+  for (auto &binding : bindings)
+    if (binding.parameter == pattern) {
+      if (binding.argument == Type::Unknown)
+        binding.argument = expected;
+      return;
+    }
+  if ((checked.types->isView(pattern) && checked.types->isView(expected)) ||
+      (checked.types->isPointer(pattern) &&
+       checked.types->isPointer(expected))) {
+    inferFromExpected(checked.types->view(pattern).payload,
+                      checked.types->view(expected).payload, bindings);
+    return;
+  }
+  if (!checked.types->isProduct(pattern) || !checked.types->isProduct(expected))
+    return;
+  const auto &left = checked.types->product(pattern);
+  const auto &right = checked.types->product(expected);
+  if (left.kind != right.kind || left.genericOrigin != right.genericOrigin)
+    return;
+  const auto &a = left.genericOrigin != Type::Unknown ? left.genericArguments
+                                                      : left.components;
+  const auto &b = right.genericOrigin != Type::Unknown ? right.genericArguments
+                                                       : right.components;
+  if (a.size() == b.size())
+    for (std::size_t i = 0; i < a.size(); ++i)
+      inferFromExpected(a[i], b[i], bindings);
+}
 void Checker::resolveGenericCalls() {
-  for (const auto &request : genericCallRequests) {
+  for (auto &request : genericCallRequests) {
     auto declarationResult =
         inference.value(functionVariables.at(request.function));
-    if (declarationResult == Type::Unknown)
+    if (declarationResult == Type::Unknown ||
+        declarationResult == request.resolvedDeclaration)
       continue;
+    request.resolvedDeclaration = declarationResult;
     auto saved = genericEnvironment;
     auto *savedCaller = current;
     current = request.caller;

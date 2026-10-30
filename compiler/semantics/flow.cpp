@@ -114,7 +114,8 @@ Flow Checker::flow(Node &n, std::string_view owner) {
       }
       result = combine(result, child);
     }
-    if (n.kind == Kind::Call && n.children[0]->kind == Kind::Name) {
+    if (n.kind == Kind::Call && n.children[0]->kind == Kind::Name &&
+        !facts(*n.children[0]).lexicallyBound) {
       auto found = names.find(callableName(n.children[0]->text, owner, n.span));
       if (found != names.end() &&
           facts(module.functions[found->second]).diverges)

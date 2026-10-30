@@ -32,6 +32,12 @@ Type TypeStore::eraseRegions(Type type) {
   if (!isProduct(type))
     return type;
   auto descriptor = product(type);
+  if (descriptor.normalizedFields) {
+    for (auto &field : descriptor.fields)
+      field.type = eraseRegions(field.type);
+    auto origin = eraseRegions(descriptor.regionOrigin);
+    return regionalProduct(origin, std::move(descriptor.fields), {}, true);
+  }
   if (descriptor.regionOrigin != Type::Unknown)
     return eraseRegions(descriptor.regionOrigin);
   if (descriptor.kind == AggregateKind::Opaque)
@@ -195,6 +201,23 @@ Type TypeStore::substituteRegions(Type type,
           else if (!regionStore.ancestor(nestedUniverse, universe))
             compatible = false;
         }
+        // Views in arguments and associated bindings also name regions.
+        std::function<void(Type)> widen = [&](Type value) {
+          if (isView(value)) {
+            auto nestedUniverse = regionStore.get(view(value).region).universe;
+            if (regionStore.ancestor(universe, nestedUniverse))
+              universe = nestedUniverse;
+            else if (!regionStore.ancestor(nestedUniverse, universe))
+              compatible = false;
+            widen(view(value).payload);
+          } else if (isProduct(value))
+            for (auto component : product(value).components)
+              widen(component);
+        };
+        for (auto argument : descriptor.arguments)
+          widen(argument);
+        for (const auto &binding : descriptor.associated)
+          widen(binding.argument);
         if (compatible)
           descriptor.regionUniverse = universe;
       }

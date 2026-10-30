@@ -37,10 +37,21 @@ public:
   void error(std::string phase, Span span, std::string message) {
     if (span.source == 0)
       span.source = currentSource;
+    // A repeated report of the same fault at the same place adds no
+    // information.
+    if (std::any_of(items.begin(), items.end(), [&](const Diagnostic &item) {
+          return item.span.begin == span.begin && item.span.end == span.end &&
+                 item.span.source == span.source && item.phase == phase &&
+                 item.message == message;
+        }))
+      return;
     if (items.size() < limits::diagnostics)
       items.push_back({std::move(phase), span, std::move(message)});
+    else
+      ++suppressed;
   }
   bool empty() const { return items.empty(); }
+  std::size_t count() const { return items.size() + suppressed; }
   void print(const Source &source, std::ostream &out) const {
     for (const auto &item : items) {
       auto found = std::find_if(
@@ -49,11 +60,16 @@ public:
       const auto &selected = found == sources.end() ? source : *found;
       printItem(selected, item, out);
     }
+    if (suppressed)
+      out << "mettle: " << suppressed
+          << " additional diagnostics suppressed (limit " << limits::diagnostics
+          << ")\n";
   }
   std::vector<Diagnostic> items;
 
 private:
   SourceId currentSource = 0;
+  std::size_t suppressed = 0;
   std::vector<Source> sources;
   static void printItem(const Source &source, const Diagnostic &item,
                         std::ostream &out) {

@@ -9,7 +9,7 @@ void Builder::fail(Value error, Span span) {
   }
   auto pending = materialize(error, span, -2);
   auto depth = effectHandlers.back().depth;
-  exitTo(depth);
+  exitTo(depth, span);
   auto value =
       emit({Op::Move, {}, {}, {}, "", pending, -1, 0, span}, error.type);
   effectHandlers.back().errors.push_back(value);
@@ -206,7 +206,7 @@ Builder::Value Builder::sumExpression(const Node &node) {
   std::vector<int> predecessors;
   if (live()) {
     auto pending = materialize(result, node.span, -2);
-    endScope();
+    endScope(node.span);
     temporaryScope = savedTemporary;
     result = emit({Op::Move, {}, {}, {}, "", pending, -1, 0, node.span},
                   result.type);
@@ -215,7 +215,7 @@ Builder::Value Builder::sumExpression(const Node &node) {
     predecessors.push_back(current);
     jump(done);
   } else
-    endScope();
+    endScope(node.span);
   auto handler = std::move(effectHandlers.back());
   effectHandlers.pop_back();
   temporaryScope = savedTemporary;

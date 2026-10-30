@@ -12,7 +12,17 @@
 #include <utility>
 
 namespace mettle::interfaces {
-enum class Property { Interface, Copy, Sized, Unpin };
+// Transferable/Shareable are structural cross-thread properties; Static marks
+// a type holding no view with a non-static region.
+enum class Property {
+  Interface,
+  Copy,
+  Sized,
+  Unpin,
+  Transferable,
+  Shareable,
+  Static
+};
 struct Obligation {
   Type subject, interfaceType;
   Property property = Property::Interface;
@@ -79,11 +89,23 @@ struct Projection {
   std::vector<Type> arguments{};
   std::vector<RegionId> regionArguments{};
 };
+struct ConcurrencyDeclaration {
+  bool negative = false;
+  Implementation implementation{};
+};
 struct Database {
   std::vector<Definition> definitions;
   std::vector<Implementation> implementations;
+  // Lazily maintained index of `implementations` by interface declaration;
+  // implementations are append-only, so only the new tail is indexed.
+  mutable std::vector<std::vector<std::size_t>> implementationsByDeclaration;
+  mutable std::size_t indexedImplementations = 0;
   std::vector<Projection> projections;
   std::map<Type, Implementation> unpinImplementations;
+  // Manual (unsafe) positive and negative Transferable/Shareable declarations
+  // keyed by property and nominal origin.
+  std::map<std::pair<Property, Type>, ConcurrencyDeclaration>
+      concurrencyDeclarations;
 };
 std::vector<Type> hierarchy(TypeStore &types, const Database &database,
                             Type subject, Type interfaceType, Span span,
@@ -119,6 +141,8 @@ public:
   std::vector<Obligation> projectionBounds(Type projection, Span span);
   std::optional<Type> implementedInterface(Type subject, Type interfaceType,
                                            Span span);
+  bool projectedBinding(Type subject, const ErasedType &wanted,
+                        const TypeBinding &required, Span span);
   bool equalities(std::span<const TypeBinding> equations,
                   std::span<const Type> parameters,
                   std::vector<TypeBinding> &bindings, Span span,
@@ -146,13 +170,19 @@ private:
   std::map<std::pair<Type, Type>, std::vector<RegionBinding>> regionSelections;
   std::set<std::pair<Type, Type>> active;
   std::set<Type> normalizing;
+  unsigned normalizationDepth = 0;
+  std::size_t normalizationSteps = 0;
   std::set<Type> provingUnpin;
+  std::set<std::pair<Property, Type>> provingConcurrency;
+  bool proveConcurrency(Property property, Type subject, Span span);
   std::vector<TypeBinding> contextualEqualities;
   std::size_t steps = 0;
   bool regionInconclusive = false;
   bool limitReported = false;
   std::optional<std::pair<const Implementation *, std::vector<TypeBinding>>>
   implementation(Type self, Type interfaceType, Span span, bool report);
+  bool someImplementationCouldApply(Type subject, Type interfaceType);
+  const std::vector<std::size_t> &candidatesFor(std::uint32_t declaration);
   bool matchRegions(const ErasedType &provided, const ErasedType &wanted,
                     std::span<const RegionId> quantified,
                     std::span<const RegionRequirement> requirements,

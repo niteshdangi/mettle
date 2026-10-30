@@ -30,10 +30,6 @@ std::string join(const std::vector<std::string> &path) {
   }
   return result;
 }
-bool sameSpan(Span left, Span right) {
-  return left.source == right.source && left.begin == right.begin &&
-         left.end == right.end;
-}
 } // namespace
 
 bool Resolution::inside(ModuleId module, ModuleId boundary) const {
@@ -50,28 +46,76 @@ bool Resolution::inside(ModuleId module, ModuleId boundary) const {
   }
 }
 
-ModuleId Resolution::moduleOf(Span span) const {
-  ModuleId result = 0;
-  auto length = std::numeric_limits<std::size_t>::max();
-  for (const auto &item : items)
-    if (item.span.source == span.source && item.span.begin <= span.begin &&
-        item.span.end >= span.end && item.span.end - item.span.begin < length) {
-      result = item.module;
-      length = item.span.end - item.span.begin;
+void Resolution::index() {
+  intervals.clear();
+  for (std::size_t i = 0; i < items.size(); ++i)
+    intervals[items[i].span.source].push_back(
+        {items[i].span.begin, items[i].span.end, i, -1});
+  for (auto &[source, list] : intervals) {
+    std::stable_sort(
+        list.begin(), list.end(), [](const Interval &a, const Interval &b) {
+          return a.begin != b.begin ? a.begin < b.begin : a.end > b.end;
+        });
+    std::vector<int> open;
+    for (std::size_t i = 0; i < list.size(); ++i) {
+      while (!open.empty() && list[open.back()].end < list[i].end &&
+             list[open.back()].end <= list[i].begin)
+        open.pop_back();
+      while (!open.empty() && list[open.back()].end < list[i].end)
+        open.pop_back();
+      list[i].parent = open.empty() ? -1 : open.back();
+      open.push_back(static_cast<int>(i));
     }
-  return result;
+  }
+}
+
+const Resolution::Item *Resolution::exact(Span span) const {
+  auto found = intervals.find(span.source);
+  if (found == intervals.end())
+    return nullptr;
+  const auto &list = found->second;
+  auto first = std::lower_bound(list.begin(), list.end(), span.begin,
+                                [](const Interval &entry, std::size_t begin) {
+                                  return entry.begin < begin;
+                                });
+  for (; first != list.end() && first->begin == span.begin; ++first)
+    if (first->end == span.end)
+      return &items[first->item];
+  return nullptr;
+}
+
+ModuleId Resolution::moduleOf(Span span) const {
+  auto found = intervals.find(span.source);
+  if (found == intervals.end())
+    return 0;
+  const auto &list = found->second;
+  auto after = std::upper_bound(list.begin(), list.end(), span.begin,
+                                [](std::size_t begin, const Interval &entry) {
+                                  return begin < entry.begin;
+                                });
+  // Items nest or are disjoint, so the innermost enclosing item is the nearest
+  // ancestor, starting at the last item that begins at or before the span.
+  for (int i = static_cast<int>(after - list.begin()) - 1; i >= 0;
+       i = list[i].parent)
+    if (list[i].end >= span.end) {
+      // Equal-length duplicates resolve to the earliest declared item.
+      auto best = i;
+      while (best > 0 && list[best - 1].begin == list[i].begin &&
+             list[best - 1].end == list[i].end)
+        --best;
+      return items[list[best].item].module;
+    }
+  return 0;
 }
 
 std::string Resolution::canonical(Span span) const {
-  for (const auto &item : items)
-    if (sameSpan(item.span, span))
-      return item.canonical;
+  if (const auto *item = exact(span))
+    return item->canonical;
   return {};
 }
 bool Resolution::accessible(Span declaration, ModuleId from) const {
-  for (const auto &item : items)
-    if (sameSpan(item.span, declaration))
-      return inside(from, item.boundary);
+  if (const auto *item = exact(declaration))
+    return inside(from, item->boundary);
   return false;
 }
 
@@ -215,6 +259,8 @@ public:
     imports();
     if (!diagnostics.empty())
       return {};
+    prelude();
+    result.index();
     return std::make_shared<const Resolution>(std::move(result));
   }
 
@@ -320,13 +366,11 @@ private:
       auto path = declaration.item.scope;
       path.push_back(declaration.name);
       auto child = scope(path);
-      define(Namespace::Module, parent,
-             boundary(declaration.item, parent, declaration.span),
-             declaration.name, result.moduleInfos[child].canonical,
-             declaration.span, child);
-      result.items.push_back(
-          {declaration.span, parent, result.moduleInfos[child].canonical,
-           boundary(declaration.item, parent, declaration.span)});
+      auto visible = boundary(declaration.item, parent, declaration.span);
+      define(Namespace::Module, parent, visible, declaration.name,
+             result.moduleInfos[child].canonical, declaration.span, child);
+      result.items.push_back({declaration.span, parent,
+                              result.moduleInfos[child].canonical, visible});
     }
   }
 
@@ -397,10 +441,9 @@ private:
     for (const auto &alias : tree.aliases) {
       auto module = scope(alias.item.scope);
       auto name = itemName(module, alias.name);
-      result.items.push_back(
-          {alias.span, module, name, boundary(alias.item, module, alias.span)});
-      define(Namespace::Type, module, boundary(alias.item, module, alias.span),
-             alias.name, name, alias.span);
+      auto visible = boundary(alias.item, module, alias.span);
+      result.items.push_back({alias.span, module, name, visible});
+      define(Namespace::Type, module, visible, alias.name, name, alias.span);
       if (!alias.target.name.empty() && !alias.target.nested &&
           alias.target.view.empty() && alias.target.form == TypeForm::Named)
         result.aliasTargets.emplace(name, std::pair{module, alias.target.name});
@@ -408,24 +451,27 @@ private:
     for (const auto &function : tree.functions) {
       auto module = scope(function.item.scope);
       auto name = itemName(module, function.name);
-      result.items.push_back({function.span, module, name,
-                              boundary(function.item, module, function.span)});
+      auto visible = boundary(function.item, module, function.span);
+      result.items.push_back({function.span, module, name, visible});
       if (function.owner.empty())
-        define(Namespace::Value, module,
-               boundary(function.item, module, function.span), function.name,
-               name, function.span);
-      else if (!function.destructor && function.implementation < 0) {
+        define(Namespace::Value, module, visible, function.name, name,
+               function.span);
+      else if (!function.destructor &&
+               (function.implementation < 0 ||
+                (function.receiver == "static" &&
+                 tree.implementations[static_cast<std::size_t>(
+                                          function.implementation)]
+                     .interface.name.empty()))) {
         auto delimiter = function.name.rfind('.');
         auto member = function.name.substr(delimiter + 1);
         auto index = result.definitions.size();
-        result.definitions.push_back(
-            {Namespace::Value,
-             module,
-             boundary(function.item, module, function.span),
-             member,
-             name,
-             function.span,
-             {}});
+        result.definitions.push_back({Namespace::Value,
+                                      module,
+                                      visible,
+                                      member,
+                                      name,
+                                      function.span,
+                                      {}});
         result.associatedItems[itemName(module, function.owner)].push_back(
             index);
       }
@@ -558,6 +604,27 @@ private:
             bind(module, name, target, visible, true, declaration.span, index);
     }
     return changed;
+  }
+
+  // Bind the prelude last, only where a module declares or imports nothing of
+  // that name, so every explicit and glob binding shadows it.
+  void prelude() {
+    const auto &roots = tree.prelude.libraryRoots;
+    for (const auto &path : tree.prelude.names) {
+      auto found = targets(0, path);
+      for (ModuleId module = 0; module < result.scopes.size(); ++module) {
+        const auto &canonical = result.moduleInfos[module].canonical;
+        auto root = canonical.substr(0, canonical.find("::"));
+        if (std::find(roots.begin(), roots.end(), root) != roots.end())
+          continue;
+        for (auto target : found) {
+          const auto &definition = result.definitions[target.definition];
+          if (!result.scopes[module].bindings.contains(
+                  key(definition.space, path.back())))
+            bind(module, path.back(), target, module, false, {}, 0);
+        }
+      }
+    }
   }
 
   void imports() {

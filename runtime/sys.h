@@ -1,0 +1,79 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+
+// Thin POSIX shims for the hosted `std` library. Mettle calls libc directly
+// wherever the C signature is portable; these cover only what it cannot
+// express: `errno`, variadic `open`, platform-specific constants and struct
+// layouts, process creation and the process arguments. Each function reports
+// failure like the libc call it wraps (negative result, `errno` set) unless
+// stated otherwise, and is identical on macOS and Linux.
+extern "C" {
+std::int32_t mettle_rt_errno();
+// Portable error class of an `errno` value, numbered like `std::io::ErrorKind`
+// (18 is the catch-all `Other`); platform errno numbers never leak into Mettle.
+std::int32_t mettle_rt_errno_kind(std::int32_t code);
+void mettle_rt_set_errno(std::int32_t value);
+
+// Portable open flags: 1 read, 2 write, 4 append, 8 truncate, 16 create,
+// 32 create-new. The descriptor is close-on-exec.
+std::int32_t mettle_rt_open(const char *path, std::int32_t flags,
+                            std::uint32_t mode);
+// Fills `out` with size, kind (0 file, 1 directory, 2 symlink, 3 other),
+// permission bits, modification seconds and nanoseconds. A
+// non-negative `fd` selects fstat; otherwise `follow` selects stat or lstat.
+std::int32_t mettle_rt_stat(const char *path, std::int32_t fd,
+                            std::int32_t follow, std::int64_t *out);
+// Next entry name of an open directory, skipping `.` and `..`; null at the end
+// (with `errno` zero) or on failure.
+const char *mettle_rt_readdir(void *directory);
+
+std::int32_t mettle_rt_argc();
+const char *mettle_rt_argv(std::int32_t index);
+const char *mettle_rt_environ_at(std::int32_t index);
+
+// Stdio modes: 0 inherit, 1 pipe, 2 null device. `envp` null inherits the
+// environment; `cwd` null inherits the directory. Piped parent ends are
+// returned in `fds` (-1 otherwise). Returns the child id, or -1 with the
+// `errno` that made the child fail before running the program.
+std::int32_t mettle_rt_spawn(const char *program, const char *const *argv,
+                             const char *const *envp, const char *cwd,
+                             const std::int32_t *modes, std::int32_t *fds);
+// Waits until `fd` is readable (or writable when `write` is nonzero) or the
+// timeout in milliseconds (negative: none) expires. 1 ready, 0 timeout.
+std::int32_t mettle_rt_poll(std::int32_t fd, std::int32_t write,
+                            std::int32_t timeoutMillis);
+// Blocks until either descriptor (negative ones are ignored) is readable or
+// hung up; bit 0 and bit 1 of the result name the ready descriptors.
+std::int32_t mettle_rt_poll_pair(std::int32_t first, std::int32_t second);
+
+// IPv4 sockets: kind 0 stream, 1 datagram. Addresses are host-order words.
+std::int32_t mettle_rt_sock_new(std::int32_t kind);
+std::int32_t mettle_rt_sock_bind(std::int32_t fd, std::uint32_t address,
+                                 std::uint16_t port);
+std::int32_t mettle_rt_sock_connect(std::int32_t fd, std::uint32_t address,
+                                    std::uint16_t port);
+// Waits at most `timeoutMillis` (negative: forever) for a connection; a
+// timeout fails with EAGAIN because SO_RCVTIMEO does not cover accept.
+std::int32_t mettle_rt_sock_accept(std::int32_t fd, std::int32_t timeoutMillis,
+                                   std::uint32_t *address, std::uint16_t *port);
+std::int32_t mettle_rt_sock_name(std::int32_t fd, std::int32_t peer,
+                                 std::uint32_t *address, std::uint16_t *port);
+std::int64_t mettle_rt_sock_send(std::int32_t fd, const std::uint8_t *data,
+                                 std::size_t size);
+std::int64_t mettle_rt_sock_sendto(std::int32_t fd, const std::uint8_t *data,
+                                   std::size_t size, std::uint32_t address,
+                                   std::uint16_t port);
+std::int64_t mettle_rt_sock_recvfrom(std::int32_t fd, std::uint8_t *data,
+                                     std::size_t size, std::uint32_t *address,
+                                     std::uint16_t *port);
+// Receive (send == 0) or send timeout in microseconds; zero disables it.
+std::int32_t mettle_rt_sock_timeout(std::int32_t fd, std::int32_t send,
+                                    std::uint64_t micros);
+
+// Clock 0 monotonic, 1 wall; fills seconds and nanoseconds.
+std::int32_t mettle_rt_clock(std::int32_t clock, std::int64_t *out);
+// Sleeps the whole duration, resuming after signal interruptions.
+void mettle_rt_sleep(std::uint64_t seconds, std::uint32_t nanos);
+}

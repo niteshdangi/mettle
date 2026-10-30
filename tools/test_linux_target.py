@@ -8,6 +8,8 @@ import os
 import platform
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from bootstrap import ROOT, artifacts, host_platform, sha256
 
@@ -33,7 +35,7 @@ print(json.dumps({
 """
 
 SOURCE_EXECUTION = """
-import concurrent.futures, hashlib, json, os, resource, subprocess, sys
+import concurrent.futures, hashlib, json, os, resource, signal, subprocess, sys
 from pathlib import Path
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 cxx, runtime, cases = sys.argv[1], sys.argv[2], json.loads(Path(sys.argv[3]).read_text())
@@ -55,7 +57,7 @@ def execute(case):
         raise RuntimeError(str(command) + "\\n" + link.stdout + link.stderr)
     result = subprocess.run([case["program"]], capture_output=True, timeout=15)
     expected = case["expected"]
-    if (expected == "trap" and result.returncode >= 0) or (
+    if (expected == "trap" and result.returncode != -signal.SIGABRT) or (
             expected != "trap" and result.returncode != expected):
         raise RuntimeError(str(case) + ": got " + str(result.returncode))
     output = dict(case, exit_status=result.returncode, link_command=command,
@@ -68,12 +70,114 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
 print(json.dumps(results))
 """
 
+LIBRARY_EXECUTION = """
+import concurrent.futures, hashlib, json, os, resource, shutil, signal, subprocess, sys
+from pathlib import Path
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+cxx, runtime, cases = sys.argv[1], sys.argv[2], json.loads(Path(sys.argv[3]).read_text())
+def execute(case):
+    command = [cxx, "--target=x86_64-unknown-linux-gnu", "-fuse-ld=lld",
+               case["object"], runtime, "-o", case["program"]]
+    environment = dict(os.environ, TMPDIR=str(Path(case["program"]).parent))
+    link = subprocess.run(command, text=True, capture_output=True, timeout=180, env=environment)
+    if link.returncode:
+        raise RuntimeError(case["name"] + ": " + link.stdout + link.stderr)
+    work = Path(case["program"] + ".dir")
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir()
+    for name, content in case.get("files", []):
+        (work / name).write_bytes(content.encode())
+    result = subprocess.run([case["program"], *case.get("args", [])], cwd=work,
+                            input=case.get("stdin", "").encode(), capture_output=True, timeout=120)
+    stdout, stderr = result.stdout.decode(errors="replace"), result.stderr.decode(errors="replace")
+    expected = case["expected"]
+    problems = []
+    if expected == "nonzero":
+        if result.returncode == 0:
+            problems.append("expected a runtime panic")
+    elif result.returncode != expected:
+        problems.append("exit " + str(result.returncode) + " != " + str(expected))
+    if "stdout" in case and stdout != case["stdout"]:
+        problems.append("stdout " + repr(stdout))
+    for needle in case.get("stdout_contains", []):
+        if needle not in stdout:
+            problems.append("stdout lacks " + repr(needle) + ": " + repr(stdout))
+    for needle in case.get("stderr_contains", []):
+        if needle not in stderr:
+            problems.append("stderr lacks " + repr(needle) + ": " + repr(stderr))
+    for name, content in case.get("expect_files", []):
+        path = work / name
+        if not path.exists() or path.read_bytes() != content.encode():
+            problems.append("file " + name + " differs")
+    if problems:
+        raise RuntimeError(case["name"] + ": " + "; ".join(problems) + "\\n" + stdout + stderr)
+    return {"name": case["name"], "exit_status": result.returncode,
+            "program_sha256": hashlib.sha256(Path(case["program"]).read_bytes()).hexdigest()}
+def attempt(case):
+    try:
+        return execute(case)
+    except Exception as error:
+        return {"name": case["name"], "failure": str(error)}
+with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+    results = list(pool.map(attempt, cases))
+failures = [result["failure"] for result in results if "failure" in result]
+if failures:
+    sys.exit("\\n".join(failures))
+print(json.dumps(results))
+"""
+
+
+def library_cases(output):
+    """(group, name, source text, expectations) for the core, alloc and std programs."""
+    sys.path.insert(0, str(ROOT / "tests"))
+    from std import directives, split_file
+    cases = []
+    for program in sorted((ROOT / "tests/library").glob("*.mt")):
+        cases.append(("core", program.stem, program.read_text(), {"expected": 0}))
+    cases.append(("core", "unwrap-none-aborts",
+                  "import core::option;\nfn nothing(): i32? { none }\n"
+                  "fn main(): i32 { nothing().unwrap() }\n", {"expected": "nonzero"}))
+    cases.append(("core", "panic-reports-message",
+                  "fn nothing(): i32? { none }\n"
+                  "fn main(): i32 { let guard = nothing()\n guard.expect(\"value was required\") }\n",
+                  {"expected": 101, "stderr_contains": ["panicked: value was required"]}))
+    cases.append(("core", "panic-function-unwinds",
+                  "fn check(ok: bool) { if !ok { panic(\"check failed\") } }\n"
+                  "fn main(): i32 { check(false)\n 0 }\n",
+                  {"expected": 101, "stderr_contains": ["panicked: check failed"]}))
+    for program in sorted((ROOT / "tests/alloc").glob("*.mt")):
+        text = program.read_text()
+        header = text.splitlines()[0] if text else ""
+        if header.startswith("// expect-error:"):
+            continue
+        cases.append(("alloc", program.stem, text, {
+            "expected": "nonzero" if header.startswith("// expect-exit: trap") else 0}))
+    for program in sorted((ROOT / "tests/std").glob("*.mt")):
+        text = program.read_text()
+        options = directives(text)
+        if "expect-error" in options:
+            continue
+        expectations = {
+            "expected": int(options.get("expect-exit", ["0"])[0]),
+            "args": options.get("args", [""])[0].split(),
+            "stdin": options.get("stdin", [""])[0],
+            "files": [split_file(entry) for entry in options.get("file", [])],
+            "expect_files": [split_file(entry) for entry in options.get("expect-file", [])],
+            "stderr_contains": options.get("expect-stderr", []),
+            "stdout_contains": options.get("linux-expect-stdout", [])}
+        if "expect-stdout" in options:
+            expectations["stdout"] = options["expect-stdout"][0]
+        cases.append(("std", program.stem, text, expectations))
+    return cases
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--instance", default="mettle-linux-x64")
     parser.add_argument("--source", action="store_true",
                         help="also execute current source run-pass/arithmetic and I03 cleanup cases")
+    parser.add_argument("--libraries", action="store_true",
+                        help="also execute the core, alloc and std library programs")
     arguments = parser.parse_args()
     if host_platform() != "macos-arm64":
         raise RuntimeError("This runner uses the native macOS ARM64 foundation builds")
@@ -85,8 +189,9 @@ def main():
     environment["TMPDIR"] = str(directory)
     evidence = {
         "scope": "Native macOS compiler host; Linux x86-64 target execution" +
-                 (" including source and I03 native cleanup" if arguments.source
-                  else "; constructed LLVM only"),
+                 (" including source and I03 native cleanup" if arguments.source else "") +
+                 (" and core/alloc/std library programs" if arguments.libraries else "") +
+                 ("" if arguments.source or arguments.libraries else "; constructed LLVM only"),
         "host": platform.platform(), "status": "in_progress", "commands": [], "cases": {},
         "limits": "Emulated target, not native x86 hardware/performance or Linux compiler-host qualification",
     }
@@ -131,24 +236,36 @@ def main():
         runtime_archive = directory / "runtime/libmettle_runtime.a"
         host_llvm = ROOT / ".tools/macos-arm64/llvm/bin"
         host_cxx, readobj = host_llvm / "clang++", host_llvm / "llvm-readobj"
-        if arguments.source:
+        if arguments.source or arguments.libraries:
             runtime_archive.parent.mkdir(exist_ok=True)
-            runtime_object = runtime_archive.parent / "panic.o"
-            compile_runtime = [
+            runtime_sources = ("runtime/panic.cpp", "runtime/alloc.cpp", "runtime/sys.cpp", "runtime/thread.cpp")
+            runtime_objects = [runtime_archive.parent / Path(name).with_suffix(".o").name
+                               for name in runtime_sources]
+            compile_commands = [[
                 cxx, "--target=x86_64-unknown-linux-gnu", "-std=c++20",
                 "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-O2", "-g",
-                "-c", str(ROOT / "runtime/panic.cpp"), "-o", str(runtime_object)]
-            archive_runtime = [archiver, "rcsD", str(runtime_archive), str(runtime_object)]
-            run([*remote, "env", f"TMPDIR={runtime_archive.parent}", *compile_runtime])
+                "-c", str(ROOT / name), "-o", str(obj)]
+                for name, obj in zip(runtime_sources, runtime_objects)]
+            archive_runtime = [archiver, "rcsD", str(runtime_archive),
+                               *map(str, runtime_objects)]
+            for compile_runtime in compile_commands:
+                run([*remote, "env", f"TMPDIR={runtime_archive.parent}", *compile_runtime])
             run([*remote, *archive_runtime])
             evidence["runtime"] = {
                 "target": "x86_64-unknown-linux-gnu",
                 "source_inputs": {name: sha256(ROOT / name)
-                                  for name in ("runtime/panic.cpp", "runtime/panic.h")},
-                "compile_command": compile_runtime, "archive_command": archive_runtime,
-                "object_sha256": sha256(runtime_object),
+                                  for name in ("runtime/panic.cpp", "runtime/panic.h",
+                                             "runtime/alloc.cpp", "runtime/alloc.h",
+                                             "runtime/sys.cpp", "runtime/sys.h",
+                                             "runtime/thread.cpp", "runtime/thread.h")},
+                "compile_commands": compile_commands, "archive_command": archive_runtime,
+                "object_sha256": {obj.name: sha256(obj) for obj in runtime_objects},
                 "archive_sha256": sha256(runtime_archive),
             }
+            evidence["host_tools"] = {
+                str(path): {"sha256": sha256(path), "version": run([str(path), "--version"])}
+                for path in (host_cxx, readobj)}
+        if arguments.source:
             callbacks_archive = runtime_archive.parent / "libmettle_machine_callbacks.a"
             callbacks_sources = ("tests/backend/machine_callbacks.c",
                                  "tests/backend/machine_unwind.cpp",
@@ -168,9 +285,6 @@ def main():
             evidence["machine_callbacks"] = {
                 "source_inputs": {name: sha256(ROOT / name) for name in callbacks_sources},
                 "archive_sha256": sha256(callbacks_archive)}
-            evidence["host_tools"] = {
-                str(path): {"sha256": sha256(path), "version": run([str(path), "--version"])}
-                for path in (host_cxx, readobj)}
         for configuration in ("Debug", "Release"):
             host = ROOT / "build/macos-arm64" / configuration
             manifest = host / "foundation-evidence.json"
@@ -287,7 +401,7 @@ def main():
                 evidence["cases"][configuration]["source_cases"] = json.loads(run(
                     [*remote, "python3", "-c", SOURCE_EXECUTION,
                      cxx, str(runtime_archive), str(cases_file)],
-                    timeout=600))
+                    timeout=7200))
                 print(f"{configuration}: {len(cases)} source cases linked/executed on Linux",
                       flush=True)
                 cleanup_runner = ROOT / "tests/backend/cleanup_frame.py"
@@ -316,6 +430,40 @@ def main():
                          str(suite_directory), "--target=x86_64-unknown-linux-gnu", "-fuse-ld=lld"],
                         timeout=300))
                 print(f"{configuration}: six backend cleanup cases linked/executed on Linux",
+                      flush=True)
+            if arguments.libraries:
+                compiler = host / "mettle"
+                if sha256(compiler) != previous["rebuilt_artifacts"]["mettle"]:
+                    raise RuntimeError("Source compiler differs from passing build evidence")
+                library_directory = output / "libraries"
+                cases = []
+                for group, name, text, expectations in library_cases(output):
+                    case_directory = library_directory / group / name
+                    case_directory.mkdir(parents=True, exist_ok=True)
+                    source = case_directory / "main.mt"
+                    source.write_text(text)
+                    obj = case_directory / "source.o"
+                    cases.append({"name": f"{group}-{name}", "object": str(obj),
+                                  "program": str(case_directory / "program"),
+                                  "source": str(source), **expectations})
+                def emit(case):
+                    run([str(compiler), "build", case["source"], "-o", case["object"],
+                         "--emit", "object", "--target", "x86_64-unknown-linux-gnu"],
+                        timeout=1800)
+                    case["source_sha256"] = sha256(Path(case["source"]))
+                    case["object_sha256"] = sha256(Path(case["object"]))
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    list(pool.map(emit, cases))
+                cases_file = output / "library-cases.json"
+                cases_file.write_text(json.dumps(cases, indent=2) + "\n")
+                evidence["cases"][configuration]["library_cases_input_sha256"] = sha256(cases_file)
+                evidence["cases"][configuration]["library_cases"] = json.loads(run(
+                    [*remote, "python3", "-c", LIBRARY_EXECUTION,
+                     cxx, str(runtime_archive), str(cases_file)], timeout=3600))
+                counts = {group: sum(case["name"].startswith(group + "-") for case in cases)
+                          for group in ("core", "alloc", "std")}
+                evidence["cases"][configuration]["library_counts"] = counts
+                print(f"{configuration}: library programs linked/executed on Linux: {counts}",
                       flush=True)
         for manifest, digest, source_inputs in native_manifests:
             if sha256(manifest) != digest:

@@ -2,6 +2,7 @@
 
 namespace mettle::parsing {
 Pattern Parser::pattern(int minimum) {
+  StateGuard guard(*this);
   if (++nesting > limits::parserNesting)
     fail("pattern nesting limit exceeded", "limit");
   Pattern result;
@@ -28,9 +29,12 @@ Pattern Parser::pattern(int minimum) {
            peek().kind == TokenKind::Character ||
            peek().kind == TokenKind::Byte || is("-")) {
     result.kind = PatternKind::Literal;
-    result.literalKind = peek().kind;
-    if (take("-"))
+    if (take("-")) {
       result.text = "-";
+      if (peek().kind != TokenKind::Integer)
+        fail("expected an integer literal after '-' in a pattern");
+    }
+    result.literalKind = peek().kind;
     result.text += tokens[position++].text;
   } else {
     bool builtin =
@@ -117,6 +121,7 @@ Pattern Parser::pattern(int minimum) {
 }
 
 std::unique_ptr<Node> Parser::matchExpression() {
+  StateGuard guard(*this);
   auto start = expect("match").span;
   auto result = node(Kind::Match, start, "read");
   if (is("mut") || is("take"))
@@ -124,6 +129,7 @@ std::unique_ptr<Node> Parser::matchExpression() {
   result->children.push_back(expr());
   newlines();
   expect("{");
+  parens = 0;
   separators();
   while (!is("}") && peek().kind != TokenKind::End) {
     auto arm = node(Kind::Arm, peek().span);

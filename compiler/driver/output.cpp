@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <sstream>
 
 namespace mettle::driver {
@@ -21,11 +22,40 @@ struct Temporary {
     if (!path.empty())
       llvm::sys::fs::remove(path);
   }
-  bool create(const std::string &model) {
-    return !llvm::sys::fs::createUniqueFile(model, path);
+  std::error_code create(const std::string &model) {
+    return llvm::sys::fs::createUniqueFile(model, path);
   }
 };
 
+bool sameRuntimeTarget(llvm::StringRef requested, llvm::StringRef runtime) {
+  const llvm::Triple a(llvm::Triple::normalize(requested)),
+      b(llvm::Triple::normalize(runtime));
+  return a.getArch() == b.getArch() && a.getVendor() == b.getVendor() &&
+         a.getOS() == b.getOS() && a.getEnvironment() == b.getEnvironment() &&
+         a.getOSVersion() == b.getOSVersion();
+}
+
+// Reports why the runtime library and native link are unavailable, if so.
+std::optional<std::string> linkUnavailable(const Options &options,
+                                           std::string &compiler) {
+  if (!sameRuntimeTarget(options.target, METTLE_RUNTIME_TARGET))
+    return std::string("runtime is built for ") + METTLE_RUNTIME_TARGET +
+           "; use --emit object and link with a target runtime";
+  if (!llvm::sys::fs::exists(METTLE_RUNTIME_PATH))
+    return std::string("runtime library ") + METTLE_RUNTIME_PATH +
+           " is missing";
+  auto found = llvm::sys::findProgramByName(options.cc);
+  if (!found)
+    return "cannot find selected C++ linker";
+  compiler = *found;
+  return std::nullopt;
+}
+
+int ioFailure(const std::string &action, const std::error_code &error) {
+  std::cerr << "mettle: error[io]: " << action << ": " << error.message()
+            << '\n';
+  return 1;
+}
 } // namespace
 int emit(const Options &options, const Source &source,
          const ir::VerifiedProgram &program) {
@@ -36,10 +66,16 @@ int emit(const Options &options, const Source &source,
     std::cerr << "mettle: error[io]: output would overwrite the source\n";
     return 1;
   }
+  std::string linker;
+  if (options.emit == "executable")
+    if (auto reason = linkUnavailable(options, linker)) {
+      std::cerr << "mettle: error[link]: " << *reason << '\n';
+      return 1;
+    }
   Temporary output;
-  if (!output.create(options.output + ".mettle-%%%%%%")) {
+  if (auto error = output.create(options.output + ".mettle-%%%%%%")) {
     std::cerr << "mettle: error[io]: cannot create output beside "
-              << options.output << '\n';
+              << options.output << ": " << error.message() << '\n';
     return 1;
   }
   bool release = options.profile == "release";
@@ -49,12 +85,13 @@ int emit(const Options &options, const Source &source,
     mettle::ir::print(program.program(), stream);
     llvm::raw_fd_ostream out(output.path, fileError);
     if (fileError)
-      return 1;
+      return ioFailure("cannot open " + options.output, fileError);
     out << stream.str();
     out.close();
     if (out.has_error()) {
+      auto writeError = out.error();
       out.clear_error();
-      return 1;
+      return ioFailure("cannot write " + options.output, writeError);
     }
   } else {
     struct BackendDiagnostics {
@@ -109,6 +146,12 @@ int emit(const Options &options, const Source &source,
                    "require a foreign unwind runtime\n";
       return 1;
     }
+    if (auto error = mettle::backend::checkTargetLayout(
+            *program.program().types, options.target)) {
+      std::cerr << "mettle: error[internal]: "
+                << llvm::toString(std::move(error)) << '\n';
+      return 1;
+    }
     auto module = mettle::backend::lower(program, context, checked,
                                          options.target, options.freestanding);
     module->setSourceFileName(source.path);
@@ -121,19 +164,21 @@ int emit(const Options &options, const Source &source,
     if (options.emit == "llvm") {
       llvm::raw_fd_ostream out(output.path, fileError);
       if (fileError)
-        return 1;
+        return ioFailure("cannot open " + options.output, fileError);
       module->print(out, nullptr);
       out.close();
       if (out.has_error()) {
+        auto writeError = out.error();
         out.clear_error();
-        return 1;
+        return ioFailure("cannot write " + options.output, writeError);
       }
     } else {
       Temporary object;
       std::string objectPath = output.path.str().str();
       if (options.emit == "executable") {
-        if (!object.create(options.output + ".object-%%%%%%"))
-          return 1;
+        if (auto error = object.create(options.output + ".object-%%%%%%"))
+          return ioFailure("cannot create object beside " + options.output,
+                           error);
         objectPath = object.path.str().str();
       }
       if (auto error = mettle::backend::emitObject(*module, options.target,
@@ -149,34 +194,24 @@ int emit(const Options &options, const Source &source,
         return 1;
       }
       if (options.emit == "executable") {
-        if (llvm::Triple::normalize(options.target) !=
-            llvm::Triple::normalize(METTLE_RUNTIME_TARGET)) {
-          std::cerr << "mettle: error[link]: runtime is built for "
-                    << METTLE_RUNTIME_TARGET
-                    << "; use --emit object and link with a target runtime\n";
-          return 1;
-        }
-        auto compiler = llvm::sys::findProgramByName(options.cc);
-        if (!compiler) {
-          std::cerr << "mettle: error[link]: cannot find selected C++ linker\n";
-          return 1;
-        }
         std::vector<std::string> arguments{
-            *compiler,  "--target=" + options.target,
+            linker,     "--target=" + options.target,
             objectPath, METTLE_RUNTIME_PATH,
             "-o",       output.path.str().str()};
         if (!options.sysroot.empty())
           arguments.push_back("--sysroot=" + options.sysroot);
         for (const auto &library : program.program().libraries)
           arguments.push_back("-l" + library);
-        if (llvm::Triple(options.target).isOSLinux())
+        if (llvm::Triple(options.target).isOSLinux()) {
           arguments.push_back("-fuse-ld=lld");
+          arguments.push_back("-pthread");
+        }
 #if METTLE_RUNTIME_SANITIZED
         arguments.push_back("-fsanitize=address,undefined");
         arguments.push_back("-fno-sanitize-recover=all");
 #endif
         std::vector<llvm::StringRef> refs(arguments.begin(), arguments.end());
-        if (llvm::sys::ExecuteAndWait(*compiler, refs) != 0) {
+        if (llvm::sys::ExecuteAndWait(linker, refs) != 0) {
           std::cerr << "mettle: error[link]: native link failed\n";
           return 1;
         }

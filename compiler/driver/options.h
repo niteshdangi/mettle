@@ -7,7 +7,7 @@ namespace mettle::driver {
 struct Options {
   Options();
   std::string command, input, output, emit = "executable", profile = "debug";
-  std::string target, cc, sysroot;
+  std::string target, cc, sysroot, libraryDirectory;
   std::optional<bool> checks;
   bool freestanding = false;
 };

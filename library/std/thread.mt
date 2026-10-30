@@ -1,0 +1,269 @@
+// Owned and scoped threads over the hosted runtime's pthread shims.
+//
+// A spawned thread runs a closure inside `mettle_rt_catch`, so a panic ends
+// only that thread: it unwinds with cleanup and `join` reports it as
+// `Panicked`. Owned threads need a Transferable, Static closure and result;
+// scoped threads may borrow from the enclosing frame and are always joined
+// before `scope` returns, also when the scope body panics.
+import package::core::panic::panic;
+
+extern "C" {
+    unsafe fn mettle_rt_panicking(): i32;
+    unsafe fn mettle_rt_catch(context: ptr<mut u8>, body: extern "C" fn(ptr<mut u8>): Unit): i32;
+    unsafe fn mettle_rt_thread_spawn(entry: extern "C" fn(ptr<mut u8>): Unit, argument: ptr<mut u8>, handle: ptr<mut usize>): i32;
+    unsafe fn mettle_rt_thread_join(handle: usize): i32;
+    unsafe fn mettle_rt_thread_detach(handle: usize): i32;
+    unsafe fn mettle_rt_thread_current(): usize;
+    unsafe fn mettle_rt_thread_yield(): Unit;
+    unsafe fn mettle_rt_thread_sleep(nanoseconds: u64): Unit;
+    unsafe fn mettle_rt_thread_parallelism(): u64;
+}
+
+// The thread ended by panicking; `code` is the runtime's panic code.
+pub copy type Panicked { pub code: i32 }
+// The operating system refused to start a thread.
+pub copy type SpawnError { pub code: i32 }
+
+// Identity of a running thread.
+pub copy type ThreadId { pub raw: usize }
+
+pub fn current(): ThreadId { ThreadId(unsafe { mettle_rt_thread_current() }) }
+pub fn yield_now(): Unit { unsafe { mettle_rt_thread_yield() } }
+pub fn sleep_nanos(nanoseconds: u64): Unit { unsafe { mettle_rt_thread_sleep(nanoseconds) } }
+pub fn available_parallelism(): usize { unsafe { mettle_rt_thread_parallelism() as usize } }
+
+// Non-generic part shared by the spawner and the thread. Two owners (the
+// thread and its handle or scope) release it; the last one frees the generic
+// state through `release`.
+type Header {
+    run: fn(ptr<mut u8>): Unit
+    release: fn(ptr<mut u8>): Unit
+    data: ptr<mut u8>
+    refs: core::sync::atomic::AtomicU32
+    code: i32
+    thread: usize
+    joined: core::sync::atomic::AtomicBool
+}
+
+// The closure waiting to run; dropped by `release` if it never started.
+type Packet<F, T> {
+    f: core::mem::MaybeUninit<F>
+    started: bool
+    slot: ptr<mut Slot<T>>
+}
+
+// Where the thread leaves its result.
+type Slot<T> {
+    filled: bool
+    value: core::mem::MaybeUninit<T>
+}
+
+fn run_packet<T, F: fn(): T>(data: ptr<mut u8>): Unit {
+    unsafe {
+        let packet = data.cast::<Packet<F, T>>()
+        let f = core::ptr::`read`((*packet).f.as_ptr())
+        (*packet).started = true
+        let result = f()
+        let slot = (*packet).slot
+        core::ptr::write((*slot).value.as_mut_ptr(), result)
+        (*slot).filled = true
+    }
+}
+
+fn release_packet<T, F: fn(): T>(data: ptr<mut u8>): Unit {
+    unsafe {
+        let packet = data.cast::<Packet<F, T>>()
+        if !(*packet).started { core::ptr::drop_in_place((*packet).f.as_mut_ptr()) }
+        let slot = (*packet).slot
+        if (*slot).filled { core::ptr::drop_in_place((*slot).value.as_mut_ptr()) }
+        let _slot = package::alloc::boxed::from_raw_in(slot, package::alloc::alloc::Global())
+        let _packet = package::alloc::boxed::from_raw_in(packet, package::alloc::alloc::Global())
+    }
+}
+
+// Drops one reference; the last one frees the shared state.
+unsafe fn release(header: ptr<mut Header>): Unit {
+    if (*header).refs.fetch_sub(1u32, core::sync::atomic::Ordering::AcqRel) == 1u32 {
+        let release_data = (*header).release
+        release_data((*header).data)
+        let _header = package::alloc::boxed::from_raw_in(header, package::alloc::alloc::Global())
+    }
+}
+
+// The thread body: runs the generic closure under the runtime's catch so a
+// panic stays on this thread, records its code and drops its reference.
+extern "C" fn thread_entry(raw: ptr<mut u8>): Unit {
+    unsafe {
+        let header = raw.cast::<Header>()
+        let run = (*header).run
+        let body = core::mem::transmute::<extern "C" fn(ptr<mut u8>): Unit>(run)
+        (*header).code = mettle_rt_catch((*header).data, body)
+        release(header)
+    }
+}
+
+// Allocates the shared state and starts the thread; on failure everything is
+// released again and the closure is dropped.
+unsafe fn start<T, F: fn(): T>(f: take F): (ptr<mut Header>, ptr<mut Slot<T>>) throws SpawnError {
+    let slot = package::alloc::boxed::new(Slot::<T>(false, core::mem::MaybeUninit::<T>::uninit())).into_raw().0
+    let packet = package::alloc::boxed::new(Packet::<F, T>(core::mem::MaybeUninit::new(f), false, slot)).into_raw().0
+    let header = package::alloc::boxed::new(Header(run_packet::<T, F>, release_packet::<T, F>, packet.cast::<u8>(),
+                                          core::sync::atomic::AtomicU32::new(2u32), 0,
+                                          0usize, core::sync::atomic::AtomicBool::new(false))).into_raw().0
+    var thread = 0usize
+    let status = mettle_rt_thread_spawn(thread_entry, header.cast::<u8>(), core::ptr::from_mut(thread))
+    if status != 0 {
+        release(header)
+        release(header)
+        throw SpawnError(status)
+    }
+    (*header).thread = thread
+    (header, slot)
+}
+
+// Owner of a running thread; dropping it detaches the thread.
+pub type JoinHandle<T> {
+    header: ptr<mut Header>
+    slot: ptr<mut Slot<T>>
+    drop {
+        unsafe {
+            let _detached = mettle_rt_thread_detach((*self.header).thread)
+            release(self.header)
+        }
+    }
+}
+unsafe impl<T: Transferable> JoinHandle<T> implements Transferable {}
+unsafe impl<T: Transferable> JoinHandle<T> implements Shareable {}
+
+pub fn try_spawn<T: Transferable + Static, F: fn(): T + Transferable + Static>(f: take F): JoinHandle<T> throws SpawnError {
+    let started = unsafe { try start::<T, F>(f) }
+    JoinHandle(started.0, started.1)
+}
+
+pub fn spawn<T: Transferable + Static, F: fn(): T + Transferable + Static>(f: take F): JoinHandle<T> {
+    let outcome = capture try_spawn::<T, F>(f)
+    match take outcome {
+        success(handle) => handle,
+        failure(error) => panic("failed to spawn a thread")
+    }
+}
+
+unsafe fn finish<T>(header: ptr<mut Header>, slot: ptr<mut Slot<T>>): T throws Panicked {
+    let _joined = mettle_rt_thread_join((*header).thread)
+    (*header).joined.store(true, core::sync::atomic::Ordering::Release)
+    if (*header).code != 0 || !(*slot).filled { throw Panicked((*header).code) }
+    (*slot).filled = false
+    core::ptr::`read`((*slot).value.as_ptr())
+}
+
+impl<T> JoinHandle<T> {
+    // Waits for the thread; a panic on it is reported, not propagated.
+    pub take fn join(): T throws Panicked {
+        let header = self.header
+        let slot = self.slot
+        core::mem::forget(take self)
+        unsafe {
+            let outcome = capture finish(header, slot)
+            release(header)
+            match take outcome { success(value) => value, failure(error) => throw error }
+        }
+    }
+    pub fn id(): ThreadId { ThreadId(unsafe { (*self.header).thread }) }
+}
+
+// Everything a type borrows outlives the region `r`. The compiler enforces it
+// where the bound is declared; any type satisfies the interface itself.
+pub interface Within<region r> {}
+impl<region r, F> F implements Within<region r> {}
+
+// Names the scope's region; the cell around it makes that region invariant.
+pub copy type Brand<region s> { pub unused: u8 }
+
+// Threads started inside `scope`. It is neither Transferable nor Shareable
+// (its cell opts out), so every spawn and join happens on the scoping thread.
+// `s` ends when the scope closure returns, so a spawned closure may borrow
+// only what outlives it, never a local of the scope body.
+pub type Scope<region s> {
+    threads: core::cell::UnsafeCell<package::alloc::vec::Vec<ptr<mut Header>>>
+    brand: core::cell::Cell<Brand<region s>>
+}
+
+// Joins every thread of the scope when dropped, so the borrows they hold end
+// before `scope` returns even if the scope body panics.
+type ScopeGuard<region r, region s> {
+    scope: read Scope<region s> from r
+    panicked: bool
+    drop {
+        unsafe {
+            var failed = false
+            let list = self.scope.threads.get()
+            var more = true
+            while more {
+                let next = (*list).pop()
+                match take next {
+                    present(header) => {
+                        if !(*header).joined.load(core::sync::atomic::Ordering::Acquire) {
+                            let _joined = mettle_rt_thread_join((*header).thread)
+                            (*header).joined.store(true, core::sync::atomic::Ordering::Release)
+                            if (*header).code != 0 { failed = true }
+                        }
+                        release(header)
+                    },
+                    none => { more = false }
+                }
+            }
+            if failed && mettle_rt_panicking() == 0 { panic("a scoped thread panicked") }
+        }
+    }
+}
+
+// Owner of a scoped thread's result; confined to the scoping thread.
+pub type ScopedJoinHandle<T> {
+    header: ptr<mut Header>
+    slot: ptr<mut Slot<T>>
+    drop { unsafe { release(self.header) } }
+}
+impl<T> ScopedJoinHandle<T> not Transferable;
+impl<T> ScopedJoinHandle<T> not Shareable;
+
+impl<T> ScopedJoinHandle<T> {
+    pub take fn join(): T throws Panicked {
+        let header = self.header
+        let slot = self.slot
+        core::mem::forget(take self)
+        unsafe {
+            let outcome = capture finish(header, slot)
+            release(header)
+            match take outcome { success(value) => value, failure(error) => throw error }
+        }
+    }
+}
+
+impl<region s> Scope<region s> {
+    unsafe fn register(receiver self: read Scope<region s> from s, header: ptr<mut Header>): Unit {
+        (*self.threads.get()).push(header.cast::<Header>())
+    }
+    // Starts a thread that may borrow from the enclosing frame.
+    pub fn spawn<T: Transferable, F: fn(): T + Transferable + Within<region s>>(receiver self: read Scope<region s> from s, f: take F): ScopedJoinHandle<T> {
+        let outcome = capture unsafe { try start::<T, F>(f) }
+        match take outcome {
+            success(started) => {
+                let header = started.0
+                let slot = started.1
+                unsafe {
+                    // refs: thread, handle and scope list
+                    (*header).refs.fetch_add(1u32, core::sync::atomic::Ordering::Relaxed)
+                    self.register(header)
+                }
+                ScopedJoinHandle(header, slot)
+            },
+            failure(error) => panic("failed to spawn a thread")
+        }
+    }
+}
+
+pub fn scope<R, F: for<region s> fn(read Scope<region s>): R>(f: take F): R {
+    let state = Scope(core::cell::UnsafeCell::new(package::alloc::vec::new::<ptr<mut Header>>()), core::cell::Cell::new(Brand(0u8)))
+    let guard = ScopeGuard(read state, false)
+    f(read state)
+}

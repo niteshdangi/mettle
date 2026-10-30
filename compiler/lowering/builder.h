@@ -118,6 +118,7 @@ private:
   Value viewCoercion(const Node &node);
   void dynamicDispatch(Instruction &call, const NodeFacts &facts, Span span);
   Value operatorExpression(const Node &node);
+  Place rangePlace(const Node &node, Place source, bool exclusive);
   Value callableExpression(const Node &node);
   Value indirectCallExpression(const Node &node);
   int closureIndex(std::size_t index) const;
@@ -139,8 +140,9 @@ private:
   Value variant(Type type, int tag, std::vector<Value> operands, Span span);
   Value blockExpression(const Node &node, bool valueUsed = true);
   int scope();
-  void endScope();
-  void exitTo(std::size_t depth);
+  void endScope(Span span = {});
+  void exitTo(std::size_t depth, Span span = {});
+  void finishControlFlow();
   Value track(Value value, Span span, int targetScope = -1);
   Value use(Value value);
   Place materialize(Value value, Span span, int targetScope);

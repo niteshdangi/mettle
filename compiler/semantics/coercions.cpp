@@ -166,7 +166,10 @@ void Checker::coerce(Node &expression, int actual, int expected, Span span) {
           checked.types->product(target).kind &&
       (expression.kind == Kind::Tuple || expression.kind == Kind::Array)) {
     const auto &wanted = checked.types->product(target);
-    if (checked.types->product(source).fields.size() == wanted.fields.size()) {
+    if (checked.types->product(source).fields.size() == wanted.fields.size() &&
+        (wanted.kind != AggregateKind::Array ||
+         checked.types->arrayLength(source) ==
+             checked.types->arrayLength(target))) {
       for (std::size_t i = 0; i < expression.children.size(); ++i) {
         if (expression.kind == Kind::Array && expression.flag && i == 1)
           break;

@@ -7,6 +7,17 @@ std::string Checker::definitionName(Span span,
   return canonical.empty() ? std::string(spelling) : canonical;
 }
 
+const std::vector<const Module::Product *> &
+Checker::productsNamed(const std::string &name) const {
+  if (productIndex.empty())
+    for (const auto &product : module.products)
+      productIndex[definitionName(product.span, product.name)].push_back(
+          &product);
+  static const std::vector<const Module::Product *> none;
+  auto found = productIndex.find(name);
+  return found == productIndex.end() ? none : found->second;
+}
+
 std::string Checker::typeName(std::string_view spelling, Span span,
                               std::string_view owner) const {
   if (spelling == "Self" && !owner.empty())
@@ -57,9 +68,8 @@ bool Checker::visibleField(Type type, std::size_t field, Span use) {
   if (checked.types->product(type).genericOrigin != Type::Unknown)
     type = checked.types->product(type).genericOrigin;
   const auto &name = checked.types->product(type).name;
-  for (const auto &product : module.products) {
-    if (definitionName(product.span, product.name) != name)
-      continue;
+  for (const auto *declared : productsNamed(name)) {
+    const auto &product = *declared;
     if (product.enumeration || field >= product.fields.size())
       return true;
     if (checked.symbols->accessible(product.fields[field].span,
