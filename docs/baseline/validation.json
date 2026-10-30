@@ -17,7 +17,7 @@
   },
   "known_edge_cases_checked": 13,
   "documentation_checks": {
-    "markdown_files_checked": 26,
+    "markdown_files_checked": 27,
     "capabilities_checked": 107,
     "implementation_milestones_planned": 16,
     "milestone_capabilities_checked": 107,
@@ -30,11 +30,11 @@
     "fixture_expectations_checked": 23,
     "fixtures_executed": false
   },
-  "documentation_sha256": "b503fe25e0bc719093977f5e09864859967226a7d33ee15e3514501029de008a",
+  "documentation_sha256": "5bdf60963fe99f21fe8b7c173f02d4c137e6f88b331ef94cfa6243a1d21a0d8a",
   "documentation_inputs": {
     "AGENTS.md": "33d2c795b34b8f4328f1df6e463cfdb2ec9e5c7ea4a14bad07e7cd5fd4b02c66",
     "CONTRIBUTING.md": "48e922caaaf6b55ebe4dcd05f79cba26ad3cfc9f7b9c69cb6e3d010309cb68f2",
-    "README.md": "2a020ab65a698d97be963eb03c9deed9b95afef972552af0dcc3c72a77dcae72",
+    "README.md": "b8e2f269a0276261515bb8af1284054af931a71c302cb8dcc1dc10c02f908dd4",
     "docs/adoption-rationale.md": "b58c31d57fb97046fcf2b95af318ee29a0b392f525e21b909d1d2145e50e8587",
     "docs/advanced-contracts.md": "d6112723263122dca5b1bd361af8f4ce30bb5541358e36ed82b67576dd5bfcb7",
     "docs/baseline/README.md": "616c5034fa3ed140f02ee534374f24337ff8eb4e2f3f1b2841190607aa459189",
@@ -89,7 +89,8 @@
     "examples/spec/reject-bodyless-result.mt": "f27662e527eb6cd87eb4919e16f22d58e8a5a4ef4445f93dc4e0c0cdadd1b19c",
     "examples/spec/reject-inferred-borrow-origin.mt": "419093cd80175873e1c81e267190f34a8d2b97b489192faecb3edc6142feb3d1",
     "examples/spec/reject-inferred-error.mt": "625779f3c3b77b0b6ca63899d12c5cab305810da2bdbe63b05e23a93c749be11",
-    "examples/spec/typed-outcome.mt": "4463442c009e99cd0c4ffaa087b5c198e7b2532d48cd2047b98532b911bb3636"
+    "examples/spec/typed-outcome.mt": "4463442c009e99cd0c4ffaa087b5c198e7b2532d48cd2047b98532b911bb3636",
+    "tools/vscode/README.md": "b7763c777868f57509ffaa9f4f94b2789d490ec23b0d6db1a45b57f9c21b46b0"
   },
   "source_constraints_checked": 107873,
   "conditional_unstable_declaration_references": {
