@@ -1,5 +1,7 @@
 import alloc.alloc.{Allocator, Layout, AllocError, Global}
 import alloc.vec.List
+import alloc.hash_map.{Map, Set}
+import alloc.string.String
 
 type Arena {
     allocations: ptr<mut i32>
@@ -31,6 +33,15 @@ extend Arena implements Allocator {
 }
 
 fn main(): i32 {
+    let empty = List<i32>()
+    let map = Map<i32, i32>()
+    let map_in = Map<i32, i32, Global>(allocator: Global())
+    let set = Set<i32>()
+    let set_in = Set<i32, Global>(allocator: Global())
+    let text = String("ok")
+    let other = String("ok", allocator: Global())
+    if empty.len() + map.len() + map_in.len() + set.len() + set_in.len() != 0usize { return 4 }
+    if text.as_text() != "ok" || other.as_text() != "ok" { return 5 }
     var allocations = 0
     var frees = 0
     var drops = 0

@@ -8,10 +8,11 @@ extend Arena implements Allocator {
     mut fn grow(p: ptr<mut u8>, old: Layout, size: usize): ptr<mut u8> throws AllocError { throw AllocError(0usize, 1usize) }
     mut fn shrink(p: ptr<mut u8>, old: Layout, size: usize): ptr<mut u8> throws AllocError { throw AllocError(0usize, 1usize) }
 }
-fn main() {
+fn main(): i32 {
     let arena = Arena()
     let _first = List<i32, Arena>(allocator: take arena)
     let _second = List<i32, Arena>(
         take arena
     )
+    0
 }
