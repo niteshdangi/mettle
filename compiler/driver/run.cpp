@@ -4,6 +4,7 @@
 #include "driver/inspect.h"
 #include "driver/options.h"
 #include "driver/output.h"
+#include "driver/procedural.h"
 #include "expansion/macros.h"
 #include "packages/plan.h"
 #include "pipeline/compile.h"
@@ -178,6 +179,7 @@ int build(const Options &requested,
   std::optional<packages::Store> store;
   std::string input = options.input;
   std::vector<resolution::Library::Package> dependencies;
+  std::vector<packages::Macro> macros;
   std::set<std::string> rootFeatures(options.features.begin(),
                                      options.features.end());
   if (packageInput(options)) {
@@ -196,6 +198,7 @@ int build(const Options &requested,
       return 1;
     }
     input = outcome.plan->root;
+    macros = outcome.plan->macros;
     ScriptResults generated;
     if (!outcome.plan->scripts.empty()) {
       store = openStore(options);
@@ -282,6 +285,15 @@ int build(const Options &requested,
   }
   BuildInputs inputs(options.libraryDirectory);
   inputs.record(source);
+  std::optional<ProcedureHost> procedural;
+  if (!macros.empty()) {
+    if (!store)
+      store = openStore(options);
+    procedural.emplace(options, std::move(macros), store ? &*store : nullptr,
+                       inputs);
+    if (!procedural->prepare())
+      return 1;
+  }
   resolution::SourceProvider provider =
       [&](const std::string &path) -> std::optional<Source> {
     std::error_code error;
@@ -326,6 +338,8 @@ int build(const Options &requested,
     library.harness = resolution::Library::Harness::Test;
   else if (options.harness == "bench")
     library.harness = resolution::Library::Harness::Bench;
+  if (procedural)
+    library.procedures = &procedural->procedures();
   auto tree = resolution::load(source, provider, diagnostics, library);
   if (tree && discovered) {
     for (const auto &entry : tree->tests)

@@ -36,6 +36,14 @@ struct BuildScript {
   bool root = false;
 };
 
+// A procedural macro declared by a package of the graph; its program runs on
+// the host while sources expand.
+struct Macro {
+  std::string name, package, version;
+  // Absolute package directory and canonical program source.
+  std::string directory, source;
+};
+
 struct Plan {
   std::string package, version;
   // Source file of the selected executable target.
@@ -43,6 +51,8 @@ struct Plan {
   std::vector<Mount> mounts;
   // Build scripts of the root and its dependencies, in resolution order.
   std::vector<BuildScript> scripts;
+  // Procedural macros of the root and its dependencies, in resolution order.
+  std::vector<Macro> macros;
   // Features the resolution enabled for the root package, sorted.
   std::vector<std::string> features;
   // Content identity of everything that selects this build's inputs: the

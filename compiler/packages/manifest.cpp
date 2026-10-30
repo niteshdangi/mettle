@@ -7,6 +7,14 @@ namespace mettle::packages {
 namespace {
 using Kind = toml::Value::Kind;
 
+bool validMacroName(const std::string &name) {
+  return !name.empty() && name[0] >= 'a' && name[0] <= 'z' &&
+         std::all_of(name.begin(), name.end(), [](char c) {
+           return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                  c == '_';
+         });
+}
+
 class Reader {
 public:
   Reader(Diagnostics &diagnostics, const Source &source)
@@ -201,7 +209,7 @@ std::optional<Manifest> parseManifest(const toml::Value &root,
   manifest.source = source.id;
   reader.known(root, "Mettle.toml",
                {"package", "targets", "dependencies", "dev-dependencies",
-                "features", "registry", "build"});
+                "features", "registry", "build", "macros"});
   if (const auto *bad = root.find("build-dependencies"))
     reader.error(bad->key,
                  "build-dependencies need build programs, which are not "
@@ -321,6 +329,45 @@ std::optional<Manifest> parseManifest(const toml::Value &root,
         manifest.buildScriptSpan = script->span;
       }
     }
+  }
+  if (const auto *macros = root.find("macros")) {
+    if (macros->kind != Kind::Table)
+      reader.error(macros->span, "[macros] must be a table of macros");
+    else
+      for (const auto &[name, value] : macros->table) {
+        if (value.kind != Kind::Table) {
+          reader.error(value.span,
+                       "a macro must be a table with 'source' and 'api'");
+          continue;
+        }
+        reader.known(value, "a macro", {"source", "api"});
+        MacroDecl macro;
+        macro.name = name;
+        macro.span = value.key;
+        if (!validMacroName(name))
+          reader.error(value.key, "invalid macro name '" + name +
+                                      "' (expected [a-z][a-z0-9_]*)");
+        const auto *file = value.find("source");
+        const auto *api = value.find("api");
+        if (!file || !api) {
+          reader.error(value.key,
+                       "macro '" + name + "' needs 'source' and 'api'");
+          continue;
+        }
+        if (const auto *text = reader.string(*file, "'source'"))
+          macro.source = *text;
+        if (api->kind != Kind::Integer)
+          reader.error(api->span, "'api' must be an integer major version");
+        else if (api->integer != 1)
+          reader.error(api->span,
+                       "unsupported macro API major version " +
+                           std::to_string(api->integer) + " (supported: 1)",
+                       "feature");
+        else
+          macro.api = api->integer;
+        if (!macro.source.empty() && macro.api == 1)
+          manifest.macros.push_back(std::move(macro));
+      }
   }
   if (const auto *features = root.find("features")) {
     if (features->kind != Kind::Table)

@@ -2,6 +2,7 @@
 
 #include "diagnostics/diagnostics.h"
 #include "expansion/expand.h"
+#include "expansion/procedural.h"
 #include "syntax/ast.h"
 #include <functional>
 #include <optional>
@@ -40,6 +41,9 @@ struct Library {
   // are collected into `Module::tests`, its own `main` is dropped and a
   // synthesized harness entry is loaded beside it (see expansion/harness.h).
   enum class Harness { None, Test, Bench } harness = Harness::None;
+  // Host-program macros that every loaded source may invoke; null for none.
+  // The host must outlive the load.
+  const expansion::Procedures *procedures = nullptr;
 };
 std::optional<Module> load(Source root, const SourceProvider &provider,
                            Diagnostics &diagnostics,

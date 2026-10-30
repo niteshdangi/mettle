@@ -31,6 +31,9 @@ public:
   explicit BuildInputs(const std::string &libraryDirectory);
   void record(const Source &source);
   void absent(const std::string &path);
+  // Generated text that is not a source file (a procedural macro's output)
+  // counts by content under `name`.
+  void generated(const std::string &name, const std::string &text);
   // The build key: lowercase SHA-256 over the inputs, the root source path
   // (embedded in the object), the output-affecting options including the
   // output's file name (embedded by the linker) and the mounts.
