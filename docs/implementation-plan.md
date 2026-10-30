@@ -798,9 +798,11 @@ result; only views carried by the instantiated argument flow
 (`generic-read-argument-*` source fixtures). Iteration is in key order (borrowing, values-only
 mutable, consuming and half-open `range`); the old contiguous `as_entries()`
 and the position-based `range` result are replaced by ordered iterators.
-Known gaps: no `SortedMap` entry API, no BTree-specific `try_` allocation
-tests, and a panicking key/value destructor leaks the remaining nodes. Borrowed
-iteration is implemented through the core interfaces: see the integration
+Known gaps: the `SortedMap` entry API and BTree-specific `try_` allocation
+tests are implemented, unverified (not yet built). Panics are runtime traps
+without unwinding or catch, so cleanup cannot continue after a key/value
+destructor traps; recoverable post-trap cleanup is not a supported contract.
+Borrowed iteration is implemented through the core interfaces: see the integration
 note below; `Box<[T]>`/unsized owners, `Arc`, `Pin` and
 the native `heap T`/`local shared T`/`weak` syntax (still a feature error) are
 not mapped; a `take` argument always
