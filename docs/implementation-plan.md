@@ -973,6 +973,12 @@ Build minimal formatting/editor/debug support as the relevant syntax and IR land
 do not wait until I12 to preserve spans or discover uninspectable values.
 I12 is the completion gate, not the first tooling work.
 
+I12 status: `mettle fmt FILE... [--check]` implemented, unverified (not yet built;
+see `docs/tooling-and-packages.md` section 3): whitespace-only, token-based
+layout checked by token sequence, syntax-tree fingerprint and idempotence.
+Line breaking and wrapping of long lines, `mettle lint/doc/test/bench`, LSP and
+debug workflows remain.
+
 I13 closes remaining operation mappings with compiled native declarations and
 per-operation semantic evidence, including supporting protocols, reexports,
 deprecated stable APIs and target cfg branches missing from rendered docs.

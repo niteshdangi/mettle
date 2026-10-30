@@ -9,6 +9,9 @@
 namespace mettle::driver {
 struct Options {
   Options();
+  // `mettle fmt FILE...`: `input` is the first file, `moreInputs` the rest.
+  std::vector<std::string> moreInputs;
+  bool check = false;
   std::string command, input, output, emit = "executable", profile = "debug";
   std::string target, cc, sysroot, libraryDirectory;
   std::optional<bool> checks;

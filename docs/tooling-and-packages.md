@@ -193,6 +193,22 @@ generic bounds, macro results or ABI layout.
 | mettle test | Build and run selected tests/doctests with filtering and machine-readable results |
 | mettle bench | Run explicitly selected benchmark workloads; preserve raw measurements and configuration |
 | mettle fmt | Syntax-preserving formatting; `--check` reports drift without rewriting |
+
+`mettle fmt FILE... [--check]` is implemented, unverified (not yet built): it
+works on the token stream (`syntax/format.{h,cpp}`) and changes only whitespace.
+Indentation is 4 spaces per bracket level (a line continued inside brackets, after
+a trailing operator or starting with `.` gets one more level); spacing is
+normalized after `,` `;` `:`, around `=`, comparison/compound-assignment/`=>`/`->`/`??`,
+inside one-line `{ }` and removed around `::`, `.` and inside `()`/`[]`; other
+gaps (`<`, `-`, `&`, ...) keep one space or none as written. Trailing whitespace
+goes, blank-line runs collapse to one (none after `{` or before `}`), the file
+ends in one newline. Line breaks are never added or removed; comments, text
+literals, multi-line raw text and f-strings keep their bytes, and declarative
+macro bodies keep their gaps. Each result is re-lexed and re-parsed and must have
+the same token sequence, the same syntax-tree fingerprint and be a fixed point;
+otherwise the file is reported and left untouched. `--check` prints each file
+that would change with its first differing line and exits 1 without writing;
+otherwise changed files are replaced atomically (temporary file and rename).
 | mettle lint | Native diagnostic rules; structured findings and source/expansion provenance |
 | mettle doc | Public/API documentation, source links and cross-package references |
 

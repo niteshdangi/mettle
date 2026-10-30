@@ -19,10 +19,11 @@
     {
       "name": "syntax", "directory": "syntax", "kind": "STATIC",
       "dependencies": ["source", "diagnostics", "support"],
-      "public_headers": ["syntax/token.h", "syntax/ast.h", "syntax/lexer.h", "syntax/parser.h", "syntax/migrate.h"],
+      "public_headers": ["syntax/token.h", "syntax/ast.h", "syntax/lexer.h", "syntax/parser.h", "syntax/migrate.h", "syntax/fingerprint.h", "syntax/format.h"],
       "files": ["syntax/token.h", "syntax/token.cpp", "syntax/ast.h", "syntax/ast.cpp",
         "syntax/lexer.h", "syntax/lexer.cpp", "syntax/characters.cpp", "syntax/parser.h", "syntax/parser.cpp",
-        "syntax/migrate.h", "syntax/migrate.cpp",
+        "syntax/migrate.h", "syntax/migrate.cpp", "syntax/fingerprint.h", "syntax/fingerprint.cpp",
+        "syntax/format.h", "syntax/format.cpp",
         "syntax/parser/detail.h", "syntax/parser/declarations.cpp", "syntax/parser/modules.cpp",
         "syntax/parser/statements.cpp", "syntax/parser/expressions.cpp",
         "syntax/parser/types.cpp", "syntax/parser/enumerations.cpp", "syntax/parser/machine.cpp", "syntax/parser/assembly.cpp",
