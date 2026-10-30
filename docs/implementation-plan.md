@@ -1031,8 +1031,10 @@ over checked facts, `--allow/--warn/--deny` and function-level
 `@allow/@warn/@deny` (tooling-and-packages section 3). Remaining I12 work:
 further lint rules and machine-readable findings, line breaking/wrapping in `fmt`, doc cross-references and search,
 doctests outside the root source, machine-readable test results, test timeouts, tests and benchmarks
-outside the root module, benchmark handles, LSP and debugger
-workflows. The milestone is not complete.
+outside the root module, benchmark handles and debugger
+workflows. The language server (`mettle lsp`, T005) is implemented, unverified
+(not yet built); see `docs/tooling-and-packages.md` section 5. The milestone is
+not complete.
 
 I12 status, source-level debug info: `-g` DWARF (compile unit, subprograms,
 line table, locals/parameters with basic/pointer/array/product types) is

@@ -134,6 +134,14 @@
       "files": ["lint/lint.h", "lint/lint.cpp"]
     },
     {
+      "name": "lsp", "directory": "lsp", "kind": "STATIC",
+      "dependencies": ["syntax", "expansion", "resolution", "pipeline", "types", "source", "diagnostics", "support"],
+      "public_headers": ["lsp/server.h"],
+      "files": ["lsp/json.h", "lsp/json.cpp", "lsp/text.h", "lsp/text.cpp",
+        "lsp/symbols.h", "lsp/symbols.cpp", "lsp/navigation.h", "lsp/navigation.cpp",
+        "lsp/server.h", "lsp/server.cpp"]
+    },
+    {
       "name": "cleanup", "directory": "cleanup", "kind": "STATIC",
       "dependencies": ["ir", "types", "places", "support"], "public_headers": ["cleanup/plan.h"],
       "files": ["cleanup/plan.h", "cleanup/plan.cpp"]
@@ -158,12 +166,13 @@
     },
     {
       "name": "driver", "directory": "driver", "kind": "EXECUTABLE",
-      "dependencies": ["source", "diagnostics", "syntax", "expansion", "documentation", "resolution", "packages", "ir", "types", "semantics", "lint", "pipeline", "backend_llvm"],
+      "dependencies": ["source", "diagnostics", "syntax", "expansion", "documentation", "resolution", "packages", "ir", "types", "semantics", "lint", "pipeline", "lsp", "backend_llvm"],
       "llvm": true, "public_headers": [],
       "files": ["driver/main.cpp", "driver/options.h", "driver/options.cpp", "driver/run.cpp",
         "driver/inspect.h", "driver/inspect.cpp", "driver/output.h", "driver/output.cpp",
         "driver/cache.h", "driver/cache.cpp", "driver/build_script.h", "driver/build_script.cpp",
-        "driver/execute.h", "driver/execute.cpp", "driver/document.h", "driver/document.cpp"]
+        "driver/execute.h", "driver/execute.cpp", "driver/document.h", "driver/document.cpp",
+        "driver/language_server.h", "driver/language_server.cpp"]
     }
   ]
 }
