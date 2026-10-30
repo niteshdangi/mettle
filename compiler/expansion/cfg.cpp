@@ -57,7 +57,10 @@ private:
     auto token = peek(look);
     return token && token->kind == TokenKind::Symbol && token->text == text;
   }
-  Span here() const { return peek() ? peek()->span : attribute.span; }
+  Span here() const {
+    const auto *token = peek();
+    return token != nullptr ? token->span : attribute.span;
+  }
 
   // `all`, `any` and `not` evaluate every operand, so an unknown predicate is
   // diagnosed even where the combinator's result is already decided.
