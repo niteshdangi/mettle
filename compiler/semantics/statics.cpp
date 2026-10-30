@@ -57,6 +57,9 @@ bool Checker::shareable(Type type, Span span) {
 void Checker::staticDeclarations() {
   genericEnvironment = nullptr;
   checked.staticStorage.resize(module.statics.size());
+  for (auto &source : module.statics)
+    if (source.initializer.get())
+      qualifyDottedPaths(*source.initializer);
   staticStates.resize(module.statics.size());
   for (std::size_t i = 0; i < module.statics.size(); ++i) {
     const auto &source = module.statics[i];
