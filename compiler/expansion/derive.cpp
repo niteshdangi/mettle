@@ -13,10 +13,14 @@ struct DeriveInfo {
 };
 const std::map<std::string, DeriveInfo> &catalog() {
   static const std::map<std::string, DeriveInfo> entries{
-      {"Clone", {"clone", "Clone"}}, {"Copy", {"marker", "Copy"}},
-      {"Debug", {"fmt", "Debug"}},   {"PartialEq", {"cmp", "PartialEq"}},
-      {"Eq", {"cmp", "Eq"}},         {"PartialOrd", {"cmp", "PartialOrd"}},
-      {"Ord", {"cmp", "Ord"}},       {"Hash", {"hash", "Hash"}},
+      {"Clone", {"clone", "Clone"}},
+      {"Copy", {"marker", "Copy"}},
+      {"Debug", {"fmt", "Debug"}},
+      {"PartialEq", {"cmp", "PartialEq"}},
+      {"Eq", {"cmp", "Eq"}},
+      {"PartialOrd", {"cmp", "PartialOrd"}},
+      {"Ord", {"cmp", "Ord"}},
+      {"Hash", {"hash", "Hash"}},
       {"Default", {"default", "Default"}}};
   return entries;
 }
@@ -230,7 +234,8 @@ private:
 
   void defaultValue() {
     put("static fn default(): " + target + " {\n");
-    const auto &shape = shapes().front();
+    const auto all = shapes();
+    const auto &shape = all.front();
     put(shape.constructor + "(");
     for (std::size_t i = 0; i < shape.fields->size(); ++i) {
       const auto &field = (*shape.fields)[i];

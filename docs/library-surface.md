@@ -533,9 +533,7 @@ pre-cutover `f"..{expr}.."` holes for integers, `bool`, `char`, `Text` and
 `String`; a non-f-string argument lifted to a one-hole message; two-level
 forwarding; the no-escape rules (no binding, return, capture, ordinary-parameter
 use, or function value); `Write.write`/`write_line` and `print`/`eprint`,
-including both broken-pipe dispositions (`probe.broken-pipe`).
-
-Implemented, unverified (not yet built or run): float holes (`f32`/`f64`
+including both broken-pipe dispositions (`probe.broken-pipe`); float holes (`f32`/`f64`
 `Display`/`Debug` in `library/core/float.mt`: shortest round-trip digits by
 exact big-integer arithmetic, no libc, plain positional notation, `NaN`/`inf`,
 `-0`; `Spec::precision` is not applied to floats); holes for any sized type
