@@ -247,7 +247,7 @@ std::vector<Token> tokenize(const Source &source, Diagnostics &diagnostics) {
         i += symbol.size();
       if (!found) {
         ++i;
-        if (std::string_view("(){}[],;:+-*/%!=<>&|^.?@").find(c) ==
+        if (std::string_view("(){}[],;:+-*/%!=<>&|^.?@$").find(c) ==
             std::string_view::npos)
           diagnostics.error(
               c >= 128 || c == '"' || c == '\'' || c == '`' ? "feature" : "lex",

@@ -31,8 +31,8 @@
     {
       "name": "expansion", "directory": "expansion", "kind": "STATIC",
       "dependencies": ["syntax", "source", "diagnostics", "support"],
-      "public_headers": ["expansion/expand.h"],
-      "files": ["expansion/expand.h", "expansion/detail.h", "expansion/expand.cpp", "expansion/cfg.cpp", "expansion/derive.cpp"]
+      "public_headers": ["expansion/expand.h", "expansion/macros.h"],
+      "files": ["expansion/expand.h", "expansion/macros.h", "expansion/detail.h", "expansion/expand.cpp", "expansion/cfg.cpp", "expansion/derive.cpp", "expansion/macros.cpp"]
     },
     {
       "name": "resolution", "directory": "resolution", "kind": "STATIC",
