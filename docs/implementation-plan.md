@@ -223,7 +223,7 @@ for those repairs; I07-I16 are not started.
 | I11 | Async and scoped tasks | Optional executor drives async I/O; owned/direct-borrowed/scoped tasks pass wake, cancellation, panic and forgetting cases | I08, I10 |
 | I12 | Complete developer workflow | Native build/run/test/bench/doc/fmt/lint commands, LSP and debugger workflows pass end to end | I09, I11 |
 | I13 | Platform and capability closure | All 107 capability requirements and applicable stable operation contracts have checked declarations and evidence across selected profiles | I12 |
-| I14 | V1 release qualification | Reproducible installable C++/LLVM toolchain passes safety, capability, target and Rust-runtime gates | I13 |
+| I14 | V1 release qualification | Reproducible installable C++/LLVM toolchain passes safety, capability, target and Rust runtime, compile-time and build-storage gates | I13 |
 | I15 | V1.1 substantive self-hosting | Mettle compiler builds itself through repeatable bootstrap stages and preserves V1 capability/performance gates | I14 |
 | I16 | V1.2 independent production backend | LLVM-free code generation covers every accepted profile/capability and passes Rust/LLVM-path comparisons | I15 |
 
@@ -231,6 +231,8 @@ This is fourteen delivery milestones to V1, followed by two architectural
 evolution milestones. I02 is the first useful native compiler, not a reduced V1.
 Dependencies are completion gates; a component's preparatory work may start once
 its own contracts/inputs exist, without marking the enclosing milestone complete.
+The experience track of section 8.7 runs alongside these milestones and is
+delivered by its own gates.
 
 ### 8.1. Foundation and first executable: I01-I02
 
@@ -908,7 +910,8 @@ inapplicable service is not a pass. Evidence must retain exact target applicabil
 
 I14 freezes a release candidate and checks the whole accepted scope, rather than
 removing difficult capabilities to produce a smaller V1. Run the predeclared
-pilot/fixed-sample runtime protocol and all supported-profile acceptance suites;
+pilot/fixed-sample runtime protocol, the compile-time and build-storage gates
+(performance.md section 5.1) and all supported-profile acceptance suites;
 preserve raw failures/inconclusive results. A faster workload cannot offset a
 credible regression elsewhere. Verify clean installation and native compilation
 without Rust. Resolve the owner's license/distribution decisions before public
@@ -928,6 +931,263 @@ object/debug/unwind emission and each accepted target's ABI integration.
 System linkers/SDKs remain explicit profile dependencies; LLVM code generation
 cannot remain a hidden fallback. Compare both backend paths and Rust under
 equivalent semantics and requalify every accepted profile.
+
+### 8.7. Experience track: readability, compile cost and storage
+
+Decisions D16-D29 (decisions.md) fix Mettle's identity: it must not read like a
+Rust copy, with better source readability, Rust-level or better runtime, faster
+compilation and smaller build-cache storage than Rust/Cargo. This track delivers
+the source/API half of that identity and its evidence. It retains the V1
+capability, ownership, failure and runtime contracts, and it does not mark any
+I06-I08 repair or milestone complete. It is judged on the two exhibit programs
+below and on measured gates, not on punctuation counts or resemblance to any
+other language. A shorter listing is an exhibit, not a productivity or runtime
+claim.
+
+**Existing facilities (not missing work).** The track builds on landed code:
+iterator interfaces, adapters and `collect` in `library/core/iter.mt`; the
+lowest-priority library prelude in `compiler/resolution/load.cpp`
+(`preludeNames()`); panic/assert and the runtime hook in `library/core/panic.mt`;
+text splitting, lines and byte/scalar iteration in `library/core/text.mt`; sink
+formatting in `library/core/fmt.mt`; allocator-aware collections and owned text
+in `library/alloc/{vec,hash_map,string}.mt`; hosted I/O and threads in
+`library/std/{io,module,thread}.mt` with synchronization in `library/std/sync/`;
+named call arguments in `compiler/syntax/parser/expressions.cpp` and
+`compiler/semantics/calls.cpp`, with their rejection fixtures (`duplicate-label`,
+`unknown-label`, `positional-after-label`); and the workloads
+`tests/std/cli_wordcount.mt` and `tests/alloc/ini_parser.mt`. The gaps are source
+ergonomics, API composition, precise new contracts and their verification.
+
+| Order | Deliverable and gate | May start |
+| --- | --- | --- |
+| R0a | Owner-approved review freeze: reconcile lane changes, review the exhibits, then pin the identity of every input: a git commit (work so far is commit `b622aef`) plus the pinned toolchain, SDK and dataset identities. No working-tree fingerprint | After active lanes integrate or pause |
+| R0b | Generic-discriminator prototype and compiler-boundary design before R1: calls, function values, projections, const arguments, nested closers, malformed arguments and newline cases, with shared generic-argument parsing and memoized lookahead. A reference discriminator is not proof the full parser is conflict-free | Now |
+| F1 | Fixed borrowed `Message`, `format` parameters, two-level forwarding and the std Writer adapter (library-surface section 10); lifetime, error and code-size tests; measure indirect-call cost, renderer/code size and check cost | Now (needs only D23-D24's minimal contract and the existing correctness prerequisites) |
+| R1 | Dotted qualification, bounded method lookup, associated namespace, equality-constrained constructor selection (`A = Global`), local builder inference as demonstrated necessary, vocabulary and the `experience-1` prelude | After active lanes integrate |
+| R2 | Lending lines, Copy-valued `[u8].bytes()`, KeyView, PathInput/`write_path` and equivalent workloads within qualified profiles; reconcile `library-and-abi.md` POSIX path statements with the native Windows path contract before delivering that profile | Now (independent of the new spellings; migrates at cutover) |
+| Cutover | Lane-owner freeze, parser-backed migration, focused checks, then resume writers | After R1 and active lanes integrate |
+| R3 | Expression-bodied `fn`, diagnostics, formatter/editor completion | After cutover |
+| Qualification | Frozen-input quality, target, safety and performance checks, including performance.md sections 5.1-5.2 | After R3 |
+| WP-S | Storage audit work package of tooling-and-packages.md section 7.1; operational, no dependency on an artifact store | Now |
+
+Reconcile this work with the I06 repair and I07-I08 obligations; a design
+document cannot mark them complete.
+
+**Cutover.** Schedule it as a short owner-approved window after all active lanes
+have integrated or paused; no freeze is in effect until then. Capture source
+identities at entry, use one writer, and migrate paths, projections, variants,
+API names, prelude and closure forms together. The codemod operates on parsed
+and resolved source spans, including provenance for `.mt` fixtures embedded in
+host test files, and leaves string contents, comments and historical evidence
+untouched. Require dry-run review, collision diagnostics and a clean source gate
+before releasing the freeze; regex replacement is not the migration mechanism.
+Before cutover: audit existing associated-namespace collisions (semantic-rules
+section 13.3); classify actual ambiguous `Item`/`IntoIter`/`Iter`/`IterMut`
+projection candidates in `library/core/iter.mt` (a comment-excluding syntactic
+census counted 68 short and 8 explicit occurrences, which counts occurrences,
+not ambiguity); and record package ownership in the native-library catalog.
+
+**Acceptance.** Use the existing source, module and library runners; no new
+framework. Compare exact successful outputs and exit codes, error identity,
+ownership/cleanup, allocation and peak memory, with blank/unterminated lines,
+invalid UTF-8 bytes, CRLF, non-Unicode paths, overflow profiles, partial output,
+and conflicts between a live line view and a refill. Compile-time and
+build-storage evidence follows performance.md section 5. Reader exercises ask
+unfamiliar developers to explain, modify and debug the exhibits, including the
+four Text/String ownership cases of library-surface section 9. Test fixtures:
+
+- *Named arguments with a default.* `scaled(value: 3) == 6` and
+  `scaled(factor: 4, value: 3) == 12` for `fn scaled(value: i32, factor: i32 = 2): i32`,
+  retaining the existing default-evaluation-order regressions (named expressions
+  in written order, omitted defaults in declaration order).
+- *Allocator construction.* With an instrumented `Arena: Allocator`, accept
+  `List<i32, Arena>(allocator: take arena)` with exactly one allocator transfer
+  and matching deallocation, and accept `List<i32>()`. Reject
+  `List<i32, Arena>()` for the applicability reason, a double consumption of
+  `arena`, a generic zero-argument call without an `A = Global` proof (even if
+  later instantiated with Global), and overlapping constructor conditions;
+  check defaults applied after argument constraints and no fallback to Global.
+  Diagnostics must be the intended applicability/ownership ones, not an unknown
+  Arena or unsupported-parser error.
+- *Message forwarding.* Three `format` functions `emit` (writes to stdout with
+  `write_line`), `log` and `relay`, each forwarding its parameter, are called
+  with `f"{a < b}"` (also by name `message:`), `f"value={42}"` and `"plain"`;
+  expected stdout `true\nvalue=42\nplain\n`. Checked instantiation records show no
+  message-shape specialization of the three functions (renderer thunks may differ
+  and normal inlining is separate). A destructible hole temporary with a sink
+  failure survives both forwarding levels, drops exactly once on success and on
+  failure, and no Message escapes.
+- *Format-hole boundaries.* The table in language-grammar section 13.5, with valid
+  declarations for the called functions, hole spans, escape rejection and single
+  evaluation; plus nested const braces, calls, comparisons and forwarded Messages.
+  An unknown callee or an unrelated syntax error does not exercise the contract.
+- *Broken pipe.* Subprocess tests for closed stdout (child SIGPIPE disposition set
+  explicitly to default and to ignore, so both the signal and the EPIPE-to-141
+  paths run), stderr failure, other errors, status/no-diagnostic behavior and
+  unchanged low-level error identity.
+- *Borrowed keys, lending lines, paths.* KeyView hash/equality coherence,
+  collisions, query-temporary expiry and map invalidation; line-view/refill
+  conflicts; non-Unicode POSIX names and Windows console/redirected output
+  including unpaired code units before claiming portable execution.
+- *Contextual `extend`.* Declaration, member declaration, member call and
+  local-name positions.
+- *Closures.* `p => fn(x) => x + 1, q => ...`, `apply(fn(x) => x + 1, other)`,
+  `apply(fn(x) => pair(x, 1), other)` and tuple-valued bodies.
+- *Generic application.* The categories of R0b, including the accepted
+  `assert(a < b, c > (d))` parse and its diagnostic.
+
+Passing the listings' documentation check does not establish semantic
+equivalence; the after programs must compile and execute once their features
+land, with the matched edge, error and ownership cases above.
+
+**Exhibit 1: byte-streaming word count.** The before program is the fixture
+`tests/std/cli_wordcount.mt`. The after program is the acceptance target
+(not accepted by the current compiler). It keeps the input/report arguments,
+raw path support, byte count, space/LF/tab separators, final unterminated line,
+report/stdout bytes and exit codes; error-message output still deliberately
+ignores its own failure, now visibly. Streaming formatting changes write
+granularity, not an atomic-write contract, so injected-failure tests check error
+identity and allowed partial output. Memory stays proportional to the longest line.
+
+```text
+import std.env
+import std.fs
+import std.io
+import std.path
+
+fn words_in(line: read [u8]): usize {
+    var words: usize = 0
+    var inside = false
+    for byte in line.bytes() {
+        let space = byte == b' ' || byte == b'\n' || byte == b'\t'
+        if !space && !inside { words += 1 }
+        inside = !space
+    }
+    words
+}
+
+fn count(input: read path.PathInput, report: read path.PathInput): Unit throws io.Error {
+    var reader = io.BufferedReader(try fs.open(input))
+    var buffer = List<u8>()
+    var lines: usize = 0
+    var words: usize = 0
+    var bytes: usize = 0
+    while let present(line) = try reader.read_bytes_line_into(buffer) {
+        lines += 1
+        bytes += line.len()
+        words += words_in(line)
+    }
+    {
+        var out = io.BufferedWriter(try fs.create(report))
+        try out.write_line(f"lines={lines}")
+        try out.write_line(f"words={words}")
+        try out.write_line(f"bytes={bytes}")
+        try out.flush()
+    }
+    var out = io.stdout()
+    try out.write_path(input)
+    try out.write_line(f": {lines} lines, {words} words, {bytes} bytes")
+}
+
+fn main(): i32 {
+    let args = env.args()
+    if args.len() != 3 {
+        var err = io.stderr()
+        let _ = capture err.write_line(f"usage: wordcount INPUT REPORT")
+        return 2
+    }
+    let result = capture count(args[1], args[2])
+    match take result {
+        success(_) => 0,
+        failure(error) => {
+            var err = io.stderr()
+            let message = error.message()
+            let _ = capture err.write_line(f"wordcount: {message}")
+            1
+        }
+    }
+}
+```
+
+The `PathInput` parameters are independently generic and borrowed, not erased
+interface objects. The std-owned writer types find std's Writer methods under
+the owning-package rule (semantic-rules section 13.2), with no Writer import.
+The byte-oriented input is intentional: a UTF-8 reader would reject previously
+valid inputs, and keeping line terminators leaves the byte count unchanged. The
+before fixture and byte-for-byte output comparison are POSIX-profile evidence;
+Windows output needs its own PathInput tests.
+
+**Exhibit 2: digit-list configuration parser.** The before program is the
+fixture `tests/alloc/ini_parser.mt`. The after program, still without std, keeps
+empty-line and empty-comma-field skipping, first-`=` splitting, digit-only
+nonnegative input, repeated-key accumulation, empty lists, partial updates before
+failure and all return codes. CR is not trimmed (use `split("\n")`, not a line
+helper that strips CRLF), and the original debug-overflow/release-wrapping
+arithmetic is retained rather than substituting the existing signed, checked
+numeric parser, which would change accepted inputs.
+
+```text
+fn parse_number(text: read Text): i64? {
+    if text.is_empty() { return none }
+    var value = 0i64
+    for byte in text.bytes() {
+        if byte < b'0' || byte > b'9' { return none }
+        value = value * 10 + ((byte - b'0') as i64)
+    }
+    present(value)
+}
+
+fn parse_list(text: read Text, out: mut List<i64>): bool {
+    for part in text.split(",") {
+        if part.is_empty() { continue }
+        let present(value) = parse_number(part) else { return false }
+        out.push(value)
+    }
+    true
+}
+
+fn parse(input: read Text, map: mut Map<String, List<i64>>): bool {
+    for line in input.split("\n") {
+        if line.is_empty() { continue }
+        let present((key, rest)) = line.split_once("=") else { return false }
+        let values = map.or_insert(String(key), List<i64>())
+        if !parse_list(rest, values) { return false }
+    }
+    true
+}
+
+fn sum(values: read List<i64>): i64 {
+    var total = 0i64
+    for value in values { total += *value }
+    total
+}
+
+fn main(): i32 {
+    var map = Map<String, List<i64>>()
+    if !parse("a=1,2,3\nb=40,50\na=4\nc=\n", map) { return 1 }
+    if map.len() != 3 { return 2 }
+    match map.get("a") {
+        present(values) => { if values.len() != 4 || sum(values) != 10 { return 3 } },
+        none => { return 4 }
+    }
+    match map.get("b") {
+        present(values) => { if sum(values) != 90 { return 5 } },
+        none => { return 6 }
+    }
+    match map.get("c") {
+        present(values) => { if !values.is_empty() { return 7 } },
+        none => { return 8 }
+    }
+    var bad = Map<String, List<i64>>()
+    if parse("x=1,zz\n", bad) { return 9 }
+    0
+}
+```
+
+Existing splitting, iteration and conditional bindings, not the new spellings,
+remove the scanning loops; the digit parser is kept because a different numeric
+grammar would be a behavior change. Insertion still builds owned String keys
+explicitly, while lookups borrow Text through KeyView and allocate no key.
 
 ## 9. Capability ownership and completion evidence
 

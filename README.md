@@ -1,7 +1,9 @@
 # Mettle
 
 An independent systems language targeting Rust-level capabilities with simpler
-source structure and measured runtime parity.
+source structure and measured runtime parity. Mettle must not read like a Rust
+copy: it aims for better readability, runtime at least equal to Rust, faster
+compilation and less build-cache storage (decisions D16-D17).
 
 Status: correctness repairs are in progress after the `c485aa1` re-review.
 Historical green gates missed confirmed crashes, soundness/ABI defects and

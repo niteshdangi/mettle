@@ -2,14 +2,26 @@
 
 ## 1. Accepted requirement
 
-Runtime must match or beat the frozen Rust baseline on each agreed representative
-workload. Compilation time, peak compiler/program memory, allocation counts, and
-binary size are measured separately; they do not have an accepted equality gate.
-Do not hide unacceptable resource growth simply because runtime passes.
+Mettle must not read like a Rust copy; its accepted main points are better source
+readability, runtime at least as fast, faster compilation and smaller build-cache
+storage than Rust (decisions D16-D17). The last three are measured gates:
+
+- **Runtime** must match or beat the frozen Rust baseline on each agreed
+  representative workload.
+- **Compile time** (clean builds, incremental builds after fixed edits, and
+  check-only) must beat the frozen Rust/Cargo baseline on each agreed
+  representative workload.
+- **Retained build-cache bytes** must beat the frozen Rust/Cargo baseline for the
+  same workloads and build states (section 5.1).
+
+Each gate is corpus-based and uses the decision rule of section 4 on a qualified
+runner. Peak compiler/program memory (RSS), allocation counts and binary size are
+reported with every result but have no equality gate of their own; do not hide
+unacceptable resource growth simply because a gated metric passes.
 
 The former 10-percent slowdown investigation threshold is superseded. A win on
 one workload does not compensate for a credible slowdown on another.
-This is a corpus-based release requirement, not a theorem about all programs.
+These are corpus-based release requirements, not theorems about all programs.
 
 ## 2. Benchmark definitions
 
@@ -106,17 +118,56 @@ silently to improve the score.
 
 Measure clean builds from defined empty build state, incremental builds after
 fixed edits, semantic check latency, LSP edit response, peak compiler memory,
-binary/debug-info size, and bootstrap stages.
+binary/debug-info size, retained build-cache bytes and bootstrap stages.
 
 Do not conflate compiler execution speed with the speed of code it produces.
 Additional optimization may improve application runtime while increasing build
 time. Self-hosting and backend ownership are architectural goals, not expected
 automatic speedups.
 
+### 5.1. Compile-time and build-storage gate
+
+Version each build workload like section 2: Mettle and Rust/Cargo sources with
+equivalent algorithms and dependencies, the frozen Rust 1.99.1 toolchain and its
+Cargo, profiles, optimization/LTO/codegen/debug-information settings, target
+and host identities, and an explicit cold/warm cache policy for both sides. The
+same corpus as the runtime workloads is used where a workload is buildable by
+both, plus multi-module and generic-heavy build corpora.
+
+Per workload, compare Mettle with Rust/Cargo on: wall time of a clean build,
+wall time of an incremental build after each fixed edit, wall time of
+check-only, and **retained build-cache bytes** (allocated bytes of the build
+directory and caches after the clean build and after the edit sequence, all
+debug and incremental data included; moving data elsewhere is not a saving).
+Also record peak RSS of the compiler, peak scratch bytes and binary size.
+Apply the section 4 ratio normalization (ratio above one means Mettle is
+worse), paired/interleaved runs and confidence procedure to the time metrics; the
+byte metrics are deterministic per build state and are compared directly with
+repeat runs confirming stability. An unqualified runner, missing counter or
+inconclusive result does not count as a pass.
+
+### 5.2. Compiler-work regression guard
+
+In addition, guard the compiler's own work with retired user instructions on a
+qualified, fixed runner, recording event, tool, process/child scope and
+multiplexing policy. Require a revised/baseline median instruction ratio of at
+most **1.05** per representative workload, cold and warm separately, with
+repeatability established first. An unavailable or unreliable counter leaves this
+guard incomplete; no unqualified substitute is allowed.
+
+For generated suffix, projection and builder families at N, 2N, 4N and 8N, require
+successive instruction growth of at most **2.2x** after fixed setup is amortized,
+and record parser visits and solver constraint steps to locate repeated work.
+Include the two exhibit programs of implementation-plan section 8.7 and
+generic-heavy code. These budgets are regression guards on top of, not
+substitutes for, the section 5.1 gate. Wall time, RSS, code size and
+allocations remain reported; no hard 5% elapsed-time gate applies on a loaded
+development machine.
+
 ## 6. V1 / V1.1 / V1.2 evidence
 
 V1 requires the audited capability denominator, supported-profile probes, semantic
-corpus, tooling workflows, and runtime gate. Publish known limitations without
+corpus, tooling workflows, and the runtime, compile-time and build-storage gates. Publish known limitations without
 reclassifying missing promised capabilities as completed.
 
 V1.1 additionally requires a substantive self-hosted compiler, repeatable staged

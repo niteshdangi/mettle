@@ -228,8 +228,8 @@ product_expr  = unary, { ( "*" | "/" | "%" ), unary } ;
 unary         = ( "-" | "!" | "take" ), unary | postfix ;
 postfix       = primary, { call_suffix | field_suffix } ;
 call_suffix   = "(", [ arguments ], ")" ;
-arguments     = argument, { ",", argument }, [ "," ] ;
-argument      = [ IDENT, ":" ], expression ;
+arguments     = call_argument, { ",", call_argument }, [ "," ] ;
+call_argument = [ IDENT, ":" ], expression ;
 field_suffix  = ".", IDENT ;
 primary       = IDENT | INTEGER | "true" | "false" | unit_value
               | "(", expression, ")" | tuple_expr | if_expr | block ;
@@ -246,9 +246,10 @@ The grammar above shares prefixes intentionally; a parser must use delimiter
 lookahead instead of treating the EBNF alternatives as ordered PEG choices.
 
 Core generic calls infer type arguments from arguments and expected result types.
-The extended grammar selects `function::<Types>(arguments)` for explicit call
-arguments, outside the initial subset. Do not silently parse `a < b > (c)` as a
-generic call.
+The extended grammar's pre-cutover spelling `function::<Types>(arguments)` gives
+explicit call arguments, outside the initial subset; the accepted target
+generic-application rule replaces it (language-grammar section 13.3). Do not
+silently parse `a < b > (c)` as a generic call under the pre-cutover grammar.
 
 Generated construction uses `Type(...)` in field declaration order, with optional
 field labels. Positional arguments precede named arguments; reject duplicates,
@@ -287,7 +288,8 @@ No inherent runtime winner follows from choosing these spellings. Labels resolve
 statically; generated constructors lower to field initialization; generic modes
 resolve from declarations. None requires a runtime name dictionary, type test,
 clone, or retain. Parser simplicity can influence tooling/compilation cost, but
-no compile-time speed result is claimed before implementation.
+no compile-time speed result is claimed before implementation; the accepted
+compile-time requirement is in performance.md section 1.
 
 Changing a delimiter is not a performance optimization. Preserve equivalent
 ownership operations and evaluate the runtime gate on generated programs.

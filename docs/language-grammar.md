@@ -3,6 +3,10 @@
 Status: documentation draft selected under routine delegation. This extends
 `core-grammar.md`; it does not claim an implemented or conflict-free parser.
 Explicitly unapproved identity proposals are not part of this grammar.
+Sections 1-12 describe the spelling the compiler accepts today; section 13
+specifies the accepted target spelling that replaces it at the cutover
+(implementation-plan section 8.7). Items marked "pre-cutover spelling" are
+removed at that cutover, not kept as alternatives.
 
 The core grammar is a subset, not a second dialect. Where this document extends
 a rule, its additional alternatives apply to the same syntax. A statement that
@@ -98,10 +102,11 @@ imports that never resolve to a declaration diagnose; compilation dependency
 cycles remain package-resolver errors. Static initialization remains constant,
 not import-order execution.
 
-Explicit generic call arguments use `function::<Types>(arguments)` as a working
-native disambiguator. This is a selected spelling, not a Rust compatibility
-fallback or requirement to expose Rust APIs. Ordinary calls infer arguments.
-`a < b > (c)` remains comparisons and is rejected as a comparison chain.
+Pre-cutover spelling, removed at cutover: paths use `::`, imports use
+`::{...}`/`::*`, and explicit generic call arguments use
+`function::<Types>(arguments)` as a working native disambiguator. Ordinary calls
+infer arguments. `a < b > (c)` is comparisons and is rejected as a comparison
+chain. Section 13 gives the target dotted paths and generic-application rule.
 
 ## 3. Type expressions
 
@@ -141,6 +146,10 @@ Named sources in function results may name parameters/receiver; stored-field
 sources name declared regions, not out-of-scope variable names.
 
 Bare interface parameter types denote independently generic concrete inputs.
+Behind a `read` or `mut` view no size is needed, so a bare-interface parameter
+accessed through either mode permits unsized implementors (for example Text or
+Path); a `take` or by-value bare-interface parameter still requires a sized
+implementor.
 `any Interface` is erased dispatch; `some Interface` is an opaque concrete return.
 Associated bindings, including types and constants, use where constraints.
 `Self` is the enclosing type/implementation. The predeclared `Never` has no values;
@@ -163,6 +172,9 @@ does not omit or infer an error effect: `fn load() throws Error { ... }` infers
 only the success type. `throws` remains an explicit contract.
 
 ## 4. Types, methods and implementations
+
+Pre-cutover spelling, removed at cutover: `impl` introduces implementations and
+`<T implements Interface>::Item` selects an interface projection (section 13).
 
 ```ebnf
 type_item     = attributes, [ visibility ], [ "copy" ], "type", IDENT,
@@ -285,7 +297,9 @@ loop. Value-producing `loop` joins its break value types; while/for remain unit.
 `if let pattern = expression { ... }` and its while equivalent use conditional
 bindings with explicit branch lifetimes.
 
-Closure syntax is `[async] [take] fn(parameters) [: Result] [throws Error] block`.
+Pre-cutover spelling: closure syntax is
+`[async] [take] fn(parameters) [: Result] [throws Error] block`; section 13.4 adds
+the expression body.
 Omitting a name distinguishes it from a function declaration. Types and result
 may be contextually inferred for closures. `take` selects owned captures;
 otherwise captures infer minimal read/exclusive use with an escaping-region
@@ -322,7 +336,8 @@ spelling alone does not determine metaprogramming semantics.
 - Function result effect versus stored outcome: parentheses distinguish them.
 - Parameter mode versus a stored reference value: parentheses isolate the
   reference payload, e.g. `x: take (read T from r)`.
-- Generic call versus comparison: only `::<...>` explicitly specializes calls.
+- Generic call versus comparison: pre-cutover, only `::<...>` specializes calls;
+  at cutover the syntax-only follower rule of section 13.3 decides.
 - Type construction versus condition block: construction uses parentheses.
 - Identifier versus unit variant pattern: variants use qualified paths.
 - `?` is a type suffix only; `?.`/`??` are expression tokens; error propagation
@@ -534,3 +549,122 @@ Required ambiguity fixtures include nested `>>`, ranges versus float literals,
 named functions versus closures, result effects versus stored outcomes, modes
 versus parenthesized borrowed payloads, if/else newlines, macro separators,
 optional chaining on nested optionals and specialization versus comparison.
+
+## 13. Target syntax: dotted paths, generic application, closures and formatting
+
+Status: accepted target (decisions D18-D29). **Migration status:** the compiler
+accepts the pre-cutover spellings in sections 1-12 (`::` paths, turbofish,
+`impl`, `<T implements I>::Item`, block-only `fn` closures, current library
+names) until the cutover milestone. One parser-backed migration then replaces
+them together; the old spellings are rejected afterwards, never kept as
+alternates. Fixtures that use the old spelling migrate with it.
+
+Semantic meaning is in semantic-rules section 13; library vocabulary is in
+library-surface section 9.
+
+### 13.1. Dotted paths and imports
+
+```ebnf
+dotted_path   = path_head, { ".", IDENT } ;
+dotted_import = [ visibility ], "import", dotted_path, [ import_tail ], ";" ;
+import_tail   = "as", IDENT
+              | ".", "{", import_item, { ",", import_item }, [ "," ], "}"
+              | ".", "*" ;
+import_item   = IDENT, { ".", IDENT }, [ "as", IDENT ] ;
+interface_member = type_atom, ".", "(", bound, ")", ".", IDENT, [ generic_args ] ;
+```
+
+Dots qualify modules, types and values: `import std.io` binds `io`,
+`import std.io.Writer` binds `Writer`, and `as` supplies an alias. `T.(Interface).Item`,
+`T.(Interface).CONSTANT` and `T.(Interface).function(arguments)` select an
+interface item explicitly; nested generic interface arguments stay inside the
+parentheses. `T.Item` is the short form only where semantic-rules section 13.1
+allows it. Enum variants are lower-snake-case qualified paths (`Ordering.less`),
+also in patterns; there is no contextual `.less` shorthand. A brace list binds
+several items of one module (`import std.io.{Reader, Writer as Sink}`); a glob
+(`import std.io.*`) binds every exported item at glob priority, below explicit
+imports and above the prelude, and an ambiguous glob name is diagnosed at use.
+
+### 13.2. Contextual `extend` declarations
+
+```ebnf
+extension     = [ "unsafe" ], "extend", [ generics ], type,
+                [ "implements", bound ], [ where_clause ],
+                "{", associated_items, "}" ;
+```
+
+`extension` replaces `implementation`, and a negative-property declaration uses
+`extend` in place of `impl`. `extend` is contextual: it is recognized only at the
+start of an item declaration, after attributes and visibility. It remains an
+identifier after `fn` and after `.`, so `mut fn extend(...)` and
+`out.extend(items)` parse unchanged.
+
+### 13.3. Generic application
+
+```ebnf
+generic_follower = "(" | "." | ")" | "]" | "}" | "," | ";" | NEWLINE | EOF ;
+```
+
+Types and generic declarations keep `<...>`; expressions write `make<T>(x)`,
+`List<T>()` and `let convert = parse<i32>`. Immediately after a name, member or
+projection, `<...>` is generic application exactly when it parses as a nonempty
+generic argument list and the next token is a `generic_follower` (an
+unsuppressed newline; other whitespace has no effect). Otherwise `<` is a
+comparison. The decision is syntax-only and never consults symbols: `a < b > (c)`
+is a generic call, and a non-type `b` is a semantic error rather than a retried
+comparison; `a < b > c` stays an invalid comparison chain. `x.count < limit` is a
+comparison even if `count` is a field.
+
+Known quirk, accepted: `assert(a < b, c > (d))` parses as one generic
+application `a<b, c>(d)` inside the outer call. The diagnostic at `<` explains
+the selected parse and suggests `assert((a < b), c > (d))`; there is no semantic
+backtracking. A specialized function value before a non-follower is
+parenthesized: `(f<T>)`. Const-expression braces protect internal comparisons,
+and nested `>>` splits as in type arguments. Turbofish and `::` are not
+alternates. The parser shares one generic-argument parser and memoizes
+lookahead so nested suffixes are not rescanned.
+
+### 13.4. Closures and call arguments
+
+```ebnf
+target_closure = [ "async" ], [ "take" ], "fn", "(", [ closure_parameters ], ")",
+                 [ result_annotation ], [ "throws", type ],
+                 ( block | "=>", expression ) ;
+```
+
+`fn(x) => x * 2` and `fn(x) { ... }` share parameter/result inference, effects
+and capture rules; `take fn` keeps its owned-capture meaning, and there is no
+separate `(x) => ...` form. An expression body uses ordinary expression
+precedence and ends at its enclosing delimiter or separator. A comma at the
+body's own delimiter depth ends it without being consumed; commas nested in
+calls, tuples or match blocks do not. So `apply(fn(x) => x + 1, other)` passes
+two arguments, `apply(fn(x) => pair(x, 1), other)` keeps `pair`'s comma inside
+the call, and `p => fn(x) => x + 1, q => ...` ends the first arm at its comma.
+
+Call arguments are core-grammar's `call_argument`: positional arguments precede
+named ones, and a label names the declared parameter without adding a namespace
+or a payload-type overload. Semantics are in core-semantics section 9.
+
+### 13.5. `format` parameters and interpolated text
+
+```ebnf
+format_parameter = pattern, ":", "format", type ;
+```
+
+`format` is contextual in parameter-modifier position and its type must resolve
+to the canonical `core.fmt.Message`, aliases included. Such a parameter accepts
+a direct `f"..."`, a direct Text/String expression lifted to a single-text
+recipe, or forwarding of an enclosing `format` parameter; rules and ABI are in
+library-surface section 10.
+
+Each `{ expression }` hole is an ordinary expression parsed within its own
+source-span boundary. The generic-application scan of section 13.3 cannot cross
+`}` into another hole or literal piece, and `{{`/`}}` are literal braces.
+
+| Input | Required interpretation |
+| --- | --- |
+| `f"{a < b}"` | Comparison inside one hole |
+| `f"{select<i32>(value)}"` | Generic call within that hole |
+| `f"{a < b} {c > (d)}"` | Two holes; the second `>` cannot close the first `<` |
+| `f"{{{a < b}}}"` | Literal braces around a comparison hole |
+| `f"{select<const {N < 2}>()}"` | Inner const braces stay within one hole |
