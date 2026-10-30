@@ -56,8 +56,7 @@ pub type List<T, A: Allocator = Global> {
 }
 
 pub fn new_in<T, A: Allocator>(a: take A): List<T, A> {
-    let cap = if core.mem.size_of<T>() == 0usize { 0xffffffffffffffffusize } else { 0usize }
-    List(dangling_for<T>(), 0usize, cap, a)
+    List<T, A>(allocator: take a)
 }
 pub fn new<T>(): List<T> { new_in(Global()) }
 
@@ -73,7 +72,23 @@ pub fn with_capacity_in<T, A: Allocator>(n: usize, a: take A): List<T, A> {
 }
 pub fn with_capacity<T>(n: usize): List<T> { with_capacity_in(n, Global()) }
 
+extend<T> List<T> {
+    pub init() {
+        self.ptr = dangling_for<T>()
+        self.len = 0usize
+        self.cap = if core.mem.size_of<T>() == 0usize { 0xffffffffffffffffusize } else { 0usize }
+        self.a = Global()
+    }
+}
+
 extend<T, A: Allocator> List<T, A> {
+    pub init(allocator: take A) {
+        self.ptr = dangling_for<T>()
+        self.len = 0usize
+        self.cap = if core.mem.size_of<T>() == 0usize { 0xffffffffffffffffusize } else { 0usize }
+        self.a = take allocator
+    }
+
     pub fn len(): usize { self.len }
     pub fn capacity(): usize { self.cap }
     pub fn is_empty(): bool { self.len == 0usize }

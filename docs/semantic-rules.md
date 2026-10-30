@@ -471,8 +471,7 @@ failure drops initialized fields under the existing rules.
 
 Declaration-checked conditional applicability under type equality, including
 proof of `A = Global`, is a required constructor-checker capability, not a
-`Global()` default placed in an arbitrary `A`. It is not yet implemented, so
-the zero-argument shape is unusable until it lands.
+`Global()` default placed in an arbitrary `A`.
 
 ### 13.5. Local builder inference
 

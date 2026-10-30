@@ -238,6 +238,8 @@ private:
       }
     std::erase_if(item.item.attributes,
                   [](const Attribute &a) { return a.name == "derive"; });
+    for (const auto &request : requests)
+      item.deriveRequests.emplace_back(request.name, request.span);
     if (!requests.empty())
       generateDerives(module, index, requests, diagnostics, allocate);
   }

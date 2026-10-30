@@ -76,9 +76,6 @@ Module::Product Parser::product() {
         method.annotation.name = result.name;
         method.annotation.regions = result.regions;
         method.receiver = "static";
-        for (const auto &existing : result.methods)
-          if (existing.constructor)
-            fail("a type may declare only one custom constructor");
       } else if (mode != "static" && !method.explicitReceiver)
         method.parameters.insert(
             method.parameters.begin(),

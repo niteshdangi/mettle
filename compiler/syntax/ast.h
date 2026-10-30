@@ -329,6 +329,7 @@ struct Module {
     std::vector<GenericConstraint> constraints{};
     std::vector<TypeSyntax> interfaces{};
     std::vector<Associated> associated{};
+    std::vector<std::pair<std::string, Span>> deriveRequests{};
   };
   std::vector<Product> products;
   struct Alias {

@@ -470,7 +470,7 @@ private:
       if (function.owner.empty())
         define(Namespace::Value, module, visible, function.name, name,
                function.span);
-      else if (!function.destructor &&
+      else if (!function.destructor && !function.constructor &&
                (function.implementation < 0 ||
                 (function.receiver == "static" &&
                  tree.implementations[static_cast<std::size_t>(

@@ -107,11 +107,9 @@ std::optional<int> Checker::genericConstruction(Node &n, bool reachable,
   auto origin = patternType;
   if (checked.types->product(origin).genericOrigin != Type::Unknown)
     origin = checked.types->product(origin).genericOrigin;
-  auto constructorName = checked.types->product(origin).name + ".init";
-  if (declaration && variantName.empty() && names.contains(constructorName)) {
-    auto index = names.at(constructorName);
-    return genericCall(n, reachable, index, 0);
-  }
+  if (variantName.empty() && constructors.contains(origin))
+    return genericCustomConstruction(n, reachable, origin, patternType,
+                                     *selected, !declaration);
   auto &environment = *selected;
   const auto pattern = checked.types->product(patternType);
   auto enumeration = checked.types->isSum(patternType);
@@ -172,60 +170,6 @@ std::optional<int> Checker::genericConstruction(Node &n, bool reachable,
       bindings[genericIndex].argument =
           genericArgument(argument, bindings[genericIndex].parameter);
     ++genericIndex;
-  }
-  if (!declaration && !enumeration && names.contains(constructorName)) {
-    auto constructor = names.at(constructorName);
-    auto &function = module.functions[constructor];
-    auto caller = genericEnvironment;
-    std::vector<TypeBinding> ownerPattern;
-    const auto &source = checked.types->product(origin);
-    for (std::size_t i = 0; i < source.genericParameters.size(); ++i)
-      ownerPattern.push_back(
-          {source.genericParameters[i], pattern.genericArguments[i]});
-    genericEnvironment = &functionGenerics.at(&function);
-    std::vector<Type> signature;
-    for (const auto &parameter : function.parameters)
-      signature.push_back(checked.types->substitute(
-          annotation(parameter.annotation, parameter.span, function.owner),
-          ownerPattern));
-    genericEnvironment = caller;
-    auto originalReachable = reachable;
-    for (std::size_t i = 1; i < n.children.size(); ++i) {
-      auto &argument = *n.children[i];
-      auto variable = node(argument, reachable);
-      this->fields(false);
-      reachable &= facts(argument).flow.normal;
-      auto target = i - 1;
-      if (!argument.name.empty()) {
-        target = signature.size();
-        for (std::size_t p = 0; p < function.parameters.size(); ++p)
-          if (function.parameters[p].name == argument.name)
-            target = p;
-      }
-      if (target >= signature.size())
-        continue;
-      auto actual = inference.value(variable);
-      const auto &parameter = function.parameters[target];
-      auto borrowed =
-          parameter.mode == "read" || parameter.mode == "mut" ||
-          (parameter.mode.empty() && !checked.types->isCopy(signature[target]));
-      if (borrowed && checked.types->isView(actual) &&
-          !checked.types->isView(signature[target]))
-        actual = checked.types->view(actual).payload;
-      inferGeneric(signature[target], actual, bindings, argument.span);
-    }
-    completeGenericBindings(environment, bindings, n.span);
-    genericObligations(environment, bindings, n.span);
-    for (auto &binding : ownerPattern)
-      binding.argument =
-          normalizeGenericType(binding.argument, bindings, n.span);
-    for (const auto &binding : bindings)
-      if (binding.argument == Type::Unknown)
-        error("type", n.span,
-              "cannot infer generic alias constructor arguments");
-    facts(n).constructor = false;
-    return genericCall(n, originalReachable, constructor, 0, ownerPattern,
-                       true);
   }
   std::vector<std::pair<Node *, int>> actuals;
   std::vector<bool> used(fields.size());

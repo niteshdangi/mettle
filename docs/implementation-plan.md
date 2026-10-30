@@ -1189,12 +1189,26 @@ ergonomics, API composition, precise new contracts and their verification.
 | Order | Deliverable and gate | Status |
 | --- | --- | --- |
 | Cutover | Dotted paths, `extend` implementation blocks, D21 vocabulary, and optional item-level semicolons | Implemented and verified |
-| R1 | Bounded lookup, associated namespace, constructor selection, inference, vocabulary and the `experience-1` prelude | Associated-namespace resolution, dotted-path resolution, and the syntax/vocabulary cutover are implemented and verified. This lane adds generic inference from slice elements and fixed-array arguments to slice parameters, and removes explicit type arguments from `debug_slice` callers; implemented, unverified here. The existing parser and annotation paths appear to support slice, array, tuple and parenthesized-view projection subjects; the grammar now records fixed-array subjects, but behavior remains unverified. Remaining: bounded method lookup through interfaces on slice views; constructor selection such as `List<i32>()` (semantic-rules section 13.4); focused R1 run/fail fixtures and verification |
+| R1 | Bounded lookup, associated namespace, constructor selection, inference, vocabulary and the `experience-1` prelude | Associated-namespace resolution, dotted-path resolution, and the syntax/vocabulary cutover are implemented and verified. Generic inference from slice elements and fixed-array arguments to slice parameters is implemented, unverified here. Constructor shape selection, extension applicability, overlap checks and the collection and String inits in semantic-rules section 13.4 are implemented, unverified (not yet built). The existing parser and annotation paths appear to support slice, array, tuple and parenthesized-view projection subjects; the grammar now records fixed-array subjects, but behavior remains unverified. Remaining: bounded method lookup through interfaces on slice views; focused R1 verification |
 | F1 | Fixed borrowed `Message`, `format` parameters, two-level forwarding and the std Writer adapter (library-surface section 10); lifetime, error and code-size tests; measure indirect-call cost, renderer/code size and check cost | In progress |
 | R2 | Lending lines, Copy-valued `[u8].bytes()`, KeyView, PathInput/`write_path` and equivalent workloads within qualified profiles; reconcile `library-and-abi.md` POSIX path statements with the native Windows path contract before delivering that profile | Implemented for POSIX in current spelling, focused fixtures pass; Windows paths and collision stress pending |
 | R3 | Expression-bodied `fn`, diagnostics, formatter/editor completion | Expression-bodied named functions (`=> expression`, the closure body form) are implemented, including methods and interface default methods; source and formatter regressions added, but unverified (not yet built). R3 does not select specific diagnostic improvements or completion behaviors: readable type display/notes/help and LSP completion remain gaps pending a more specific selection. |
 | Qualification | Frozen-input quality, target, safety and performance checks, including performance.md sections 5.1-5.2. D17 comparison harness (`tools/bench_compare.py`, `benchmarks/`, performance.md section 5.3): implemented; its `.mt` workloads type-check, but the harness has not been run and no result is claimed | After R1-R3 |
 | WP-S | Storage audit work package of tooling-and-packages.md section 7.1; operational, no dependency on an artifact store | Open |
+
+**R1 constructor inventory (unverified working-tree changes).** Type-body and
+inherent-extension inits, argument-shape selection and overlap rejection,
+target/bound applicability and default-after-argument inference are
+implemented in syntax, resolution and semantics. Distinct checked function
+identities feed the existing constructor call, hidden-self and cleanup paths.
+The `List`, `Map`, `Set` and `String` constructors and their existing factories
+are updated. Source fixtures cover ordinary and conditional overloads,
+allocator transfer, defaults, mismatch and overlap; none has been built or
+executed. The allocator and symbolic-applicability acceptance below still
+requires the applicable source, library, ownership, target and quality gates.
+Argument contextualization while resolving multiple same-shape candidates
+with unresolved applicability also needs review: a trial may check an argument
+before its candidate is selected. No qualification evidence is claimed.
 
 Reconcile this work with the I06 repair and I07-I08 obligations; a design
 document cannot mark them complete.

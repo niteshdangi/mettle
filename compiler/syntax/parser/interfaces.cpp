@@ -77,6 +77,8 @@ Module::Interface Parser::interfaceDeclaration() {
       if (is("mut") || is("take") || is("static"))
         mode = tokens[position++].text;
       auto method = function(true);
+      if (method.constructor)
+        fail("constructors cannot be declared in an interface", "signature");
       method.item.attributes = std::move(metadata);
       method.owner = result.name;
       method.interfaceOwner = result.name;
@@ -141,8 +143,15 @@ Module::Implementation Parser::implementationDeclaration() {
       method.item.attributes = std::move(metadata);
       method.owner = result.target.name;
       method.receiver = mode;
+      if (method.constructor) {
+        if (!result.interface.empty() || mode != "read")
+          fail("constructors require an inherent extension without a receiver",
+               "signature");
+        method.annotation = result.target;
+        method.receiver = "static";
+      }
       if (method.explicitReceiver) {
-        if (mode != "read")
+        if (mode != "read" || method.constructor)
           fail("explicit receiver cannot combine with a receiver modifier",
                "signature");
         method.receiver = method.parameters.front().mode.empty()
@@ -150,7 +159,7 @@ Module::Implementation Parser::implementationDeclaration() {
                               : method.parameters.front().mode;
       }
       method.item.visibility = std::move(visible);
-      if (mode != "static" && !method.explicitReceiver)
+      if (!method.constructor && mode != "static" && !method.explicitReceiver)
         method.parameters.insert(method.parameters.begin(),
                                  {"self", result.target, method.span, mode});
       result.methods.push_back(std::move(method));
