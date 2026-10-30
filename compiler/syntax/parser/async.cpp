@@ -945,6 +945,14 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
     }
     if (step == Step::Rest) {
       std::vector<NodeOwner> rest;
+      // Inside a loop iteration the leading rebindings (`var x = ..`) move
+      // into the closure, so carried locals it assigns are its own and not
+      // by-move captures.
+      if (tailExit)
+        for (auto &statement : block)
+          rest.push_back(std::move(statement));
+      if (tailExit)
+        block.clear();
       for (auto i = from; i < stmts.size(); ++i)
         rest.push_back(std::move(stmts[i]));
       if (tailExit && !endsWithReturn(rest))

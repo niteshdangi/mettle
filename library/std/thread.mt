@@ -240,9 +240,6 @@ impl<T> ScopedJoinHandle<T> {
 }
 
 impl<region s> Scope<region s> {
-    unsafe fn register(receiver self: read Scope<region s> from s, header: ptr<mut Header>): Unit {
-        (*self.threads.get()).push(header.cast::<Header>())
-    }
     // Starts a thread that may borrow from the enclosing frame.
     pub fn spawn<T: Transferable, F: fn(): T + Transferable + Within<region s>>(receiver self: read Scope<region s> from s, f: take F): ScopedJoinHandle<T> {
         let outcome = capture unsafe { try start::<T, F>(f) }
@@ -253,7 +250,7 @@ impl<region s> Scope<region s> {
                 unsafe {
                     // refs: thread, handle and scope list
                     (*header).refs.fetch_add(1u32, core::sync::atomic::Ordering::Relaxed)
-                    self.register(header)
+                    (*self.threads.get()).push(header.cast::<Header>())
                 }
                 ScopedJoinHandle(header, slot)
             },

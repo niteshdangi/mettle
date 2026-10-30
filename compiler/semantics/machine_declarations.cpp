@@ -9,6 +9,15 @@
 #include <tuple>
 
 namespace mettle {
+static bool literalDiscriminant(const Node &node) {
+  const Node *value = &node;
+  while (value->kind == Kind::Group)
+    value = value->children[0].get();
+  if (value->kind == Kind::Unary && value->text == "-")
+    value = value->children[0].get();
+  return value->kind == Kind::Integer;
+}
+
 ProductLayout Checker::productLayout(const Module::Product &product) {
   ProductLayout layout;
   layout.unionType = product.unionType;
@@ -125,6 +134,17 @@ ProductLayout Checker::productLayout(const Module::Product &product) {
                    [](const auto &variant) {
                      return variant.discriminant != nullptr;
                    }))) {
+    // A named discriminant reads constant storage, which is declared after
+    // product layouts; its layout is recomputed once statics exist.
+    if (!staticsDeclared &&
+        std::any_of(product.variants.begin(), product.variants.end(),
+                    [](const auto &variant) {
+                      return variant.discriminant &&
+                             !literalDiscriminant(*variant.discriminant);
+                    })) {
+      deferredLayouts.push_back(&product);
+      return layout;
+    }
     NumericLiteral next;
     bool overflow = false;
     std::set<std::tuple<bool, std::uint64_t, std::uint64_t>> used;

@@ -56,6 +56,7 @@ private:
   unsigned unsafeDepth = 0;
   void requireUnsafe(Span span);
   void machineDeclarations();
+  void staticNamesAndTypes();
   void staticDeclarations();
   void staticLocals();
   void staticInitializers();
@@ -66,6 +67,8 @@ private:
   std::optional<StaticConstant> staticValue(std::size_t index);
   std::optional<std::size_t> staticName(std::string_view name, Span span);
   std::unordered_map<std::string, std::size_t> staticNames;
+  bool staticsDeclared = false;
+  std::vector<const Module::Product *> deferredLayouts;
   std::vector<unsigned char> staticStates;
   void targetDeclarations();
   std::set<std::string> guardedFeatures{};

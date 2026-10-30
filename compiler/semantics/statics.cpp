@@ -54,7 +54,9 @@ bool Checker::shareable(Type type, Span span) {
                       span, false);
 }
 
-void Checker::staticDeclarations() {
+// Names and types first: associated-constant values and named enum
+// discriminants read constant storage before the remaining static checks run.
+void Checker::staticNamesAndTypes() {
   genericEnvironment = nullptr;
   checked.staticStorage.resize(module.statics.size());
   for (auto &source : module.statics)
@@ -68,6 +70,15 @@ void Checker::staticDeclarations() {
     storage.name = definitionName(source.span, source.name);
     staticNames.emplace(storage.name, i);
     storage.type = annotation(source.annotation, source.span);
+  }
+  staticsDeclared = true;
+}
+
+void Checker::staticDeclarations() {
+  genericEnvironment = nullptr;
+  for (std::size_t i = 0; i < module.statics.size(); ++i) {
+    const auto &source = module.statics[i];
+    auto &storage = checked.staticStorage[i];
     if (!checked.types->isSized(storage.type) ||
         checked.types->isSymbolic(storage.type) ||
         checked.types->uninhabited(storage.type))

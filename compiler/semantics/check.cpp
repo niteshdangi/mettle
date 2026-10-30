@@ -73,6 +73,11 @@ std::optional<CheckedModule> Checker::run() {
         controlFlow(f);
   }
   targetDeclarations();
+  staticNamesAndTypes();
+  for (const auto *product : deferredLayouts)
+    checked.types->setProductLayout(
+        typeNames.at(definitionName(product->span, product->name)),
+        productLayout(*product));
   interfaceImplementations();
   proveDeferredObligations();
   staticDeclarations();
