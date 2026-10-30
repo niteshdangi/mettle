@@ -1,15 +1,14 @@
 // Owned and scoped threads over the hosted runtime's pthread shims.
 //
-// A spawned thread runs a closure inside `mettle_rt_catch`, so a panic ends
-// only that thread: it unwinds with cleanup and `join` reports it as
-// `Panicked`. Owned threads need a Transferable, Static closure and result;
+// A spawned thread runs its closure and TLS cleanup under the runtime catch,
+// so a panic ends only that thread and `join` reports it as `Panicked`. Owned
+// threads need a Transferable, Static closure and result;
 // scoped threads may borrow from the enclosing frame and are always joined
 // before `scope` returns, also when the scope body panics.
 import package::core::panic::panic;
 
 extern "C" {
     unsafe fn mettle_rt_panicking(): i32;
-    unsafe fn mettle_rt_catch(context: ptr<mut u8>, body: extern "C" fn(ptr<mut u8>): Unit): i32;
     unsafe fn mettle_rt_thread_spawn(entry: extern "C" fn(ptr<mut u8>): Unit, argument: ptr<mut u8>, handle: ptr<mut usize>): i32;
     unsafe fn mettle_rt_thread_join(handle: usize): i32;
     unsafe fn mettle_rt_thread_detach(handle: usize): i32;
@@ -17,6 +16,7 @@ extern "C" {
     unsafe fn mettle_rt_thread_yield(): Unit;
     unsafe fn mettle_rt_thread_sleep(nanoseconds: u64): Unit;
     unsafe fn mettle_rt_thread_parallelism(): u64;
+    unsafe fn mettle_rt_thread_catch(context: ptr<mut u8>, body: extern "C" fn(ptr<mut u8>): Unit): i32;
 }
 
 // The thread ended by panicking; `code` is the runtime's panic code.
@@ -90,14 +90,20 @@ unsafe fn release(header: ptr<mut Header>): Unit {
     }
 }
 
-// The thread body: runs the generic closure under the runtime's catch so a
-// panic stays on this thread, records its code and drops its reference.
-extern "C" fn thread_entry(raw: ptr<mut u8>): Unit {
+extern "C" fn caught_thread_body(raw: ptr<mut u8>): Unit {
     unsafe {
         let header = raw.cast::<Header>()
         let run = (*header).run
         let body = core::mem::transmute::<extern "C" fn(ptr<mut u8>): Unit>(run)
-        (*header).code = mettle_rt_catch((*header).data, body)
+        body((*header).data)
+    }
+}
+
+// Runs the closure and then its TLS destructors under runtime catch boundaries.
+extern "C" fn thread_entry(raw: ptr<mut u8>): Unit {
+    unsafe {
+        let header = raw.cast::<Header>()
+        (*header).code = mettle_rt_thread_catch(header.cast::<u8>(), caught_thread_body)
         release(header)
     }
 }

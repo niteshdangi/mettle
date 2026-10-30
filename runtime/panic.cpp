@@ -1,4 +1,5 @@
 #include "panic.h"
+#include "thread.h"
 
 #include <atomic>
 #include <cstdio>
@@ -135,14 +136,24 @@ extern "C" void mettle_rt_clear_panic_hook() { panicHook.store(nullptr); }
 extern "C" std::int32_t mettle_rt_panicking() { return panicking() ? 1 : 0; }
 
 extern "C" std::int32_t mettle_rt_main(void *context, MettleAction body) {
+  std::int32_t status = 0;
   try {
     body(context);
   } catch (const Panic &panic) {
     if (panic.code != messagePanicCode)
       std::abort();
-    return messagePanicCode;
+    status = messagePanicCode;
   } catch (...) {
     std::abort();
   }
-  return 0;
+  try {
+    mettle_rt_tls_thread_exit();
+  } catch (const Panic &panic) {
+    if (panic.code != messagePanicCode || status != 0)
+      std::abort();
+    status = messagePanicCode;
+  } catch (...) {
+    std::abort();
+  }
+  return status;
 }
