@@ -62,13 +62,11 @@ public:
       result.function = &checker.module.functions[function->second];
       return result;
     }
-    if (name.text.find("::") != std::string::npos) {
-      auto reported = checker.reportedErrors;
-      if (auto associated = checker.associatedConstant(name))
-        return carrier(*associated);
-      if (checker.reportedErrors != reported)
-        result.kind = Lookup::Kind::Failed;
-    }
+    auto reported = checker.reportedErrors;
+    if (auto associated = checker.associatedConstant(name))
+      return carrier(*associated);
+    if (checker.reportedErrors != reported)
+      result.kind = Lookup::Kind::Failed;
     return result;
   }
 
@@ -313,5 +311,61 @@ std::optional<StaticConstant> Checker::evaluatedStatic(const Node &node,
   if (!result.value)
     return std::nullopt;
   return staticFromValue(*result.value, type, node.span);
+}
+
+std::optional<Type> Checker::inherentConstantValue(std::size_t index,
+                                                   Type subject) {
+  auto &constant = inherentConstants.at(index);
+  if (constant.state == 1) {
+    error("constant", constant.declaration->span,
+          "cycle in associated constant definition");
+    return std::nullopt;
+  }
+  if (constant.state == 0) {
+    constant.state = 1;
+    auto *savedEnvironment = genericEnvironment;
+    auto *savedFunction = current;
+    auto savedUnsafeDepth = unsafeDepth;
+    genericEnvironment =
+        &implementationGenerics.at(constant.implementation);
+    current = nullptr;
+    unsafeDepth = 0;
+    auto value = constant.declaration->constantValue
+                     ? constantType(*constant.declaration->constantValue,
+                                    constant.declaredType)
+                     : Type::Unknown;
+    if (value != Type::Unknown &&
+        (!checked.types->isConstant(value) ||
+         checked.types->parameter(value).valueType != constant.declaredType)) {
+      error("type", constant.declaration->span,
+            "associated constant value does not match its declared type");
+      value = Type::Unknown;
+    }
+    constant.value = value;
+    constant.state = 2;
+    genericEnvironment = savedEnvironment;
+    current = savedFunction;
+    unsafeDepth = savedUnsafeDepth;
+  }
+  if (constant.value == Type::Unknown)
+    return std::nullopt;
+
+  std::vector<TypeBinding> bindings;
+  if (checked.types->isProduct(constant.target) &&
+      checked.types->isProduct(subject)) {
+    const auto &pattern = checked.types->product(constant.target);
+    const auto &actual = checked.types->product(subject);
+    const auto &parameters =
+        implementationGenerics.at(constant.implementation).parameters;
+    for (std::size_t i = 0;
+         i < pattern.genericArguments.size() &&
+         i < actual.genericArguments.size();
+         ++i)
+      if (std::find(parameters.begin(), parameters.end(),
+                    pattern.genericArguments[i]) != parameters.end())
+        bindings.push_back(
+            {pattern.genericArguments[i], actual.genericArguments[i]});
+  }
+  return checked.types->substitute(constant.value, bindings);
 }
 } // namespace mettle

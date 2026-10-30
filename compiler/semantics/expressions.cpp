@@ -185,13 +185,19 @@ int Checker::checkNode(Node &n, bool reachable) {
         result = *primitive;
         break;
       }
-    if (!localName)
+    if (!localName) {
+      auto errorsBefore = reportedErrors;
       if (auto constant = associatedConstant(n);
           constant && checked.types->isConstant(*constant)) {
         facts(n).constantParameter = *constant;
         result = inference.fresh(checked.types->parameter(*constant).valueType);
         break;
       }
+      if (reportedErrors != errorsBefore) {
+        result = inference.fresh();
+        break;
+      }
+    }
     if (!localName)
       if (auto generic = genericUnitVariant(n)) {
         result = *generic;

@@ -24,7 +24,9 @@ Module::Product Parser::product() {
     auto metadata = attributes();
     auto memberVisibility = visibility();
     if (!result.interfaces.empty() && (is("type") || is("const"))) {
-      result.associated.push_back(associatedDeclaration());
+      auto associated = associatedDeclaration();
+      associated.visibility = std::move(memberVisibility);
+      result.associated.push_back(std::move(associated));
       separators();
       continue;
     }

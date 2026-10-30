@@ -426,14 +426,25 @@ Type Checker::constantType(const Node &node, Type expected) {
     }
   if (node.kind == Kind::Name &&
       (node.annotation.form == TypeForm::Projection ||
-       node.text.find("::") != std::string::npos))
+       node.text.find("::") != std::string::npos)) {
+    auto errorsBefore = reportedErrors;
     if (auto associated = associatedConstant(node))
       return *associated;
+    if (reportedErrors != errorsBefore)
+      return Type::Unknown;
+  }
   if (node.kind == Kind::Name && genericEnvironment) {
     auto found = genericEnvironment->names.find(node.text);
     if (found != genericEnvironment->names.end() &&
         checked.types->isConstant(found->second))
       return found->second;
+  }
+  if (node.kind == Kind::Name && node.text.find("::") == std::string::npos) {
+    auto errorsBefore = reportedErrors;
+    if (auto associated = associatedConstant(node))
+      return *associated;
+    if (reportedErrors != errorsBefore)
+      return Type::Unknown;
   }
   if (node.kind == Kind::Group)
     return constantType(*node.children[0], expected);

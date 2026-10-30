@@ -68,7 +68,9 @@ Module::Interface Parser::interfaceDeclaration() {
     if (is("type") || is("const")) {
       if (!metadata.empty())
         feature("attributes on associated items are not implemented");
-      result.associated.push_back(associatedDeclaration());
+      auto associated = associatedDeclaration();
+      associated.visibility = std::move(visible);
+      result.associated.push_back(std::move(associated));
     } else {
       std::string mode = "read";
       pendingAsync = take("async");
@@ -127,7 +129,9 @@ Module::Implementation Parser::implementationDeclaration() {
     if (is("type") || is("const")) {
       if (!metadata.empty())
         feature("attributes on associated items are not implemented");
-      result.associated.push_back(associatedDeclaration());
+      auto associated = associatedDeclaration();
+      associated.visibility = std::move(visible);
+      result.associated.push_back(std::move(associated));
     } else {
       std::string mode = "read";
       pendingAsync = take("async");
