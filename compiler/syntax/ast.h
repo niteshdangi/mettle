@@ -312,6 +312,7 @@ struct Module {
       std::vector<Parameter> fields;
       Span span;
       std::shared_ptr<const Node> discriminant{};
+      std::vector<Attribute> attributes{};
     };
     bool enumeration = false;
     bool unionType = false;

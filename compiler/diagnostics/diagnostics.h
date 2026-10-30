@@ -13,6 +13,21 @@ struct Diagnostic {
   std::string message;
 };
 
+// Provenance of a compiler-generated source (an attribute expansion). Spans
+// inside it map back to the user syntax that requested or shaped the code, so
+// a diagnostic in generated code reports the offending user declaration and
+// the attribute that generated it.
+struct Generation {
+  struct Mapping {
+    std::size_t begin = 0, end = 0;
+    Span target;
+  };
+  SourceId source = 0;
+  Span origin;
+  std::string description;
+  std::vector<Mapping> mappings;
+};
+
 class Diagnostics {
 public:
   class SourceContext {
@@ -50,15 +65,35 @@ public:
     else
       ++suppressed;
   }
+  void generated(Generation generation) {
+    generations.push_back(std::move(generation));
+  }
   bool empty() const { return items.empty(); }
   std::size_t count() const { return items.size() + suppressed; }
   void print(const Source &source, std::ostream &out) const {
     for (const auto &item : items) {
-      auto found = std::find_if(
-          sources.begin(), sources.end(),
-          [&](const Source &entry) { return entry.id == item.span.source; });
-      const auto &selected = found == sources.end() ? source : *found;
-      printItem(selected, item, out);
+      auto generation = std::find_if(generations.begin(), generations.end(),
+                                     [&](const Generation &entry) {
+                                       return entry.source == item.span.source;
+                                     });
+      if (generation == generations.end()) {
+        printItem(sourceOf(source, item.span), item.span.begin,
+                  "error[" + item.phase + "]", item.message, out);
+        continue;
+      }
+      auto target = generation->origin;
+      for (const auto &mapping : generation->mappings)
+        if (mapping.begin <= item.span.begin && item.span.begin < mapping.end) {
+          target = mapping.target;
+          break;
+        }
+      printItem(sourceOf(source, target), target.begin,
+                "error[" + item.phase + "]", item.message, out);
+      if (target.begin != generation->origin.begin ||
+          target.source != generation->origin.source)
+        printItem(sourceOf(source, generation->origin),
+                  generation->origin.begin, "note",
+                  "in generated code for " + generation->description, out);
     }
     if (suppressed)
       out << "mettle: " << suppressed
@@ -71,9 +106,17 @@ private:
   SourceId currentSource = 0;
   std::size_t suppressed = 0;
   std::vector<Source> sources;
-  static void printItem(const Source &source, const Diagnostic &item,
+  std::vector<Generation> generations;
+  const Source &sourceOf(const Source &fallback, Span span) const {
+    auto found = std::find_if(
+        sources.begin(), sources.end(),
+        [&](const Source &entry) { return entry.id == span.source; });
+    return found == sources.end() ? fallback : *found;
+  }
+  static void printItem(const Source &source, std::size_t position,
+                        const std::string &label, const std::string &message,
                         std::ostream &out) {
-    const auto offset = std::min(item.span.begin, source.text.size());
+    const auto offset = std::min(position, source.text.size());
     std::size_t line = 1, start = 0, column = 1;
     for (std::size_t i = 0; i < offset; ++i) {
       if (source.text[i] == '\n') {
@@ -87,8 +130,8 @@ private:
     auto end = source.text.find('\n', start);
     if (end == std::string::npos)
       end = source.text.size();
-    out << source.path << ':' << line << ':' << column << ": error["
-        << item.phase << "]: " << item.message << '\n'
+    out << source.path << ':' << line << ':' << column << ": " << label << ": "
+        << message << '\n'
         << printableUtf8(
                std::string_view(source.text).substr(start, end - start))
         << '\n';

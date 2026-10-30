@@ -1,6 +1,7 @@
 #pragma once
 
 #include "diagnostics/diagnostics.h"
+#include "expansion/expand.h"
 #include "syntax/ast.h"
 #include <functional>
 #include <optional>
@@ -22,6 +23,8 @@ struct Library {
   // `alloc` stays available (it only needs a provided allocator); `std` does
   // not.
   bool freestanding = false;
+  // Target and feature facts that `@cfg` predicates test.
+  expansion::Configuration configuration{};
 };
 std::optional<Module> load(Source root, const SourceProvider &provider,
                            Diagnostics &diagnostics,

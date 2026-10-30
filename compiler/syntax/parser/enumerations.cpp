@@ -14,8 +14,10 @@ Module::Product Parser::enumeration() {
   expect("{");
   separators();
   while (!is("}") && peek().kind != TokenKind::End) {
+    auto metadata = attributes();
     auto token = name();
     Module::Product::Variant variant{token.text, {}, token.span};
+    variant.attributes = std::move(metadata);
     if (take("(")) {
       ++parens;
       while (!is(")")) {
@@ -30,9 +32,11 @@ Module::Product Parser::enumeration() {
     } else if (take("{")) {
       separators();
       while (!is("}")) {
+        auto fieldAttributes = attributes();
         auto field = name();
         expect(":");
         variant.fields.push_back({field.text, type(), field.span});
+        variant.fields.back().attributes = std::move(fieldAttributes);
         if (!take(",") && !is("}") && peek().kind != TokenKind::Newline &&
             !is(";"))
           fail("expected a variant field separator");

@@ -13,7 +13,7 @@ void usage() {
          "executable|object|llvm|ir]\n"
          "         [--profile debug|release] [--overflow-checks on|off]\n"
          "         [--target TRIPLE] [--cc CXX] [--sysroot PATH]\n"
-         "         [--library-dir PATH]\n"
+         "         [--library-dir PATH] [--feature NAME]...\n"
          "         [--freestanding] (object/LLVM/IR output, aborting panics, "
          "no implicit hosted entry)\n"
          "Executable output requires the runtime target (the default); use "
@@ -54,6 +54,8 @@ std::optional<Options> options(int argc, char **argv) {
         result.libraryDirectory = value;
       else if (arg == "--sysroot")
         result.sysroot = value;
+      else if (arg == "--feature")
+        result.features.insert(value);
       else if (arg == "--overflow-checks" && (value == "on" || value == "off"))
         result.checks = value == "on";
       else

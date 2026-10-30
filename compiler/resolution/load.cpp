@@ -316,9 +316,20 @@ private:
     source.id = nextSource++;
     if (!currentRoot.empty())
       owner[source.id] = currentRoot;
-    auto tree = parse(source, diagnostics);
+    auto tree = parseDeclarations(source, diagnostics);
     if (!diagnostics.empty())
       return;
+    // Expansion precedes member flattening and the external-module scan, so
+    // inactive modules are never read and generated impls are flattened too.
+    expansion::expand(tree, diagnostics, library.configuration, [&] {
+      auto id = nextSource++;
+      if (!currentRoot.empty())
+        owner[id] = currentRoot;
+      return id;
+    });
+    if (!diagnostics.empty())
+      return;
+    completeDeclarations(tree);
     for (const auto &declaration : tree.modules) {
       if (!declaration.external)
         continue;

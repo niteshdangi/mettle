@@ -25,6 +25,7 @@ for them.
 | `source` | Original source bytes, spans and encoding validation | Diagnostics policy, AST or filesystem command orchestration |
 | `diagnostics` | Structured failures and source rendering | Parsing/recovery decisions or process exit |
 | `syntax` | Tokens, keyword/operator metadata, lexer, parsed AST and parser/recovery | Resolved bindings, inferred types, CFG slots, LLVM |
+| `expansion` | Attribute validation, `@cfg` target/feature predicate evaluation (inactive items are parsed but dropped before resolution), `@derive` generation of ordinary impls as separately registered generated sources with span provenance back to the attribute and offending field/variant | Name resolution, type checking, LLVM |
 | `resolution` | Compilation-local module identities, item/import scopes, visibility and canonical declaration names; source-provider-driven module assembly | Inference, backend types or filesystem I/O |
 | `types` | Compiler-owned language type identities/operations, target facts and target-layout results | Parsed AST, LLVM types/target machines, toolchain state |
 | `places` | Function-local storage roots, typed field paths and structural overlap | AST traversal, CFG control flow, mutability/loan policy |

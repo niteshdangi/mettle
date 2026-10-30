@@ -60,12 +60,24 @@ int run(const Options &options) {
     }
     return Source{canonical.generic_string(), (*child)->getBuffer().str()};
   };
-  auto tree =
-      resolution::load(source, provider, diagnostics,
-                       {options.libraryDirectory, options.freestanding});
+  auto facts = targetFacts(options.target);
+  expansion::Configuration configuration;
+  configuration.os = facts.system == TargetSystem::Linux    ? "linux"
+                     : facts.system == TargetSystem::Darwin ? "macos"
+                                                            : "";
+  configuration.arch = facts.arch == TargetArch::X86_64    ? "x86_64"
+                       : facts.arch == TargetArch::Aarch64 ? "aarch64"
+                                                           : "";
+  configuration.family = configuration.os.empty() ? "" : "unix";
+  configuration.endian = facts.littleEndian ? "little" : "big";
+  configuration.pointerWidth = facts.pointerBits;
+  configuration.targetFeatures = facts.baseline;
+  configuration.features = options.features;
+  auto tree = resolution::load(
+      source, provider, diagnostics,
+      {options.libraryDirectory, options.freestanding, configuration});
   auto program = tree ? pipeline::compile(std::move(*tree), diagnostics,
-                                          !options.freestanding,
-                                          targetFacts(options.target))
+                                          !options.freestanding, facts)
                       : std::nullopt;
   if (!program) {
     diagnostics.print(source, std::cerr);
