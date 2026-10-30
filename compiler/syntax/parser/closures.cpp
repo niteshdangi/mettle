@@ -105,10 +105,11 @@ std::unique_ptr<Node> Parser::closure() {
   newlines();
   result->children.push_back(block());
   if (asynchronous) {
+    auto error = result->error;
     auto output = asyncResult(std::move(result->annotation),
                               std::move(result->error), false);
-    auto future =
-        asyncBody(*result->children[0], std::move(output), start.span);
+    auto future = asyncBody(*result->children[0], std::move(output), start.span,
+                            std::move(error));
     auto body = node(Kind::Block, result->children[0]->span);
     body->children.push_back(std::move(future));
     finish(*body);

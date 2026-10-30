@@ -1006,6 +1006,37 @@ closures capture a raw pointer rather than its target, and a take closure owns
 a whole value with a destructor rather than a copied field; a sum whose variant
 changed through a `mut` borrow drops by its current variant.
 
+#### I11 coroutine replacement inventory
+
+The state-machine replacement is **not implemented**. Initial code changes are
+implemented, unverified (not yet built): `analysis/liveness` adds SSA
+block-boundary liveness with edge-specific phi uses; the parser's existing
+combinator path wraps a non-awaiting throwing body in a throwing closure
+captured as an outcome; and a live, immutable local is moved through the state
+of an awaiting loop instead of being recaptured by every step. These do not
+support throwing across an await or borrowed locals across suspension. Focused
+cases are `tests/ir/verify.cpp`,
+`tests/source/run/async-throwing-without-await.mt` and
+`tests/source/run/async-await-loop-retains-local.mt`, with
+`tests/source/fail/await-borrow-in-loop.mt` preserving the unsupported
+self-borrow diagnostic. The inventory was prepared against worktree base
+`b7670a5c9ef4c22a42a0f4f1c341f057a50edf79`; no build, test, formatter,
+quality gate or sanitizer was run for it. Earlier receipts above apply only to
+their documented revisions and scopes. The interface plan is in
+`compiler-architecture.md` under “I11 async state-machine interface plan”.
+
+| Requirement | State and owning files | Remaining work and required fixtures |
+| --- | --- | --- |
+| Preserve async source; type future and await | Partial: `syntax/parser/async.cpp` rewrites bodies; `semantics/checked.h` has no await facts. | Preserve source in `syntax`, resolve captures, regions, output, hidden future identity and poll witness in `semantics`/`types`; cover functions, methods, blocks, closures, generics and borrowed inputs. |
+| Ownership-checked suspension CFG | Partial, unverified: `analysis/liveness` computes SSA block-boundary facts including phi edges; `ir/ir.h` has no suspension edge and initialization/loans do not publish suspension facts. | Add checked suspension, structural validation, initialization, loan/origin liveness including loops, retained destructors and partially moved fields; cover read/mut loans, non-Copy locals and moving a borrowed local. |
+| Inline pinned state and poll | Missing: `lowering` has ordinary closure environments but no coroutine transform. | Generate constructor/poll, stable child slots, self-loans, correct `Unpin` and Transferable properties, and verified CFG in `lowering`/`types`/`instances`/`pipeline`; cover repeated pending, nested awaits and move-before-pin. |
+| Control flow | Partial: parser `Repeat`/`Either` handles selected loops and branches; live immutable locals are now moved through awaiting-loop state (implemented, unverified (not yet built)). | Replace parser lowering; preserve CFG back-edges and exits; cover nested return, throw, `?`, labeled break/continue, lazy operands and `for` over borrowed Vec/slice; migrate obsolete `await-*` feature-fail cases. |
+| Cleanup and cancellation | Partial: combinator fields drop, but segment-local drop order deviates. `cleanup/plan.cpp` and `backend/llvm/cleanup.cpp` use per-frame plans/flags. | Make initialized-place flags persistent across polls; preserve lexical order and pinned addresses on success, typed failure, cancellation and unwind. Cover never-polled and suspended cancellation, partial moves and exactly-once drops. |
+| Integration and qualification | Missing for the new path; existing `core::future`/`std::task` exercise the parser path. | Reuse existing executors and protocol; complete focused run/fail, generic, cleanup and backend tests, update both architecture and this inventory, then freeze sources. The owner must run applicable quality, Debug/Release, ASan/UBSan, reproducibility and Linux-target gates after integration. |
+
+The source-freeze gate depends on all rows, fixtures and documentation; a
+design or a partially implemented row is not a verified milestone.
+
 ### 8.5. Workflow, profiles and V1: I12-I14
 
 I12 closes the complete native developer workflow: command selection, diagnostic

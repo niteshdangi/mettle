@@ -98,8 +98,9 @@
     {
       "name": "analysis", "directory": "analysis", "kind": "STATIC",
       "dependencies": ["ir", "places", "support", "diagnostics"],
-      "public_headers": ["analysis/initialization.h", "analysis/loans.h"],
+      "public_headers": ["analysis/initialization.h", "analysis/loans.h", "analysis/liveness.h"],
       "files": ["analysis/initialization.h", "analysis/initialization.cpp",
+        "analysis/liveness.h", "analysis/liveness.cpp",
         "analysis/place_tree.h", "analysis/place_tree.cpp", "analysis/loans.h", "analysis/loans.cpp",
         "analysis/origins.h", "analysis/origins.cpp",
         "analysis/value_ownership.h", "analysis/value_ownership.cpp"]
