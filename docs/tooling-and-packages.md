@@ -219,18 +219,20 @@ Target, profile, feature, package/workspace and lock/offline selections are
 shared options. Unknown or unavailable requested capabilities fail explicitly;
 partial compiler milestones cannot count unsupported programs as passed tests.
 
-Implemented and verified: `check`, `build`, `run`, `test`, `bench` and `fmt`
-(plus `clean`, `migrate` and the inspection commands). `lint` does not exist
-yet. `doc` and doctests are implemented, unverified (not yet built; see
-section 4).
+`check`, `build`, `run`, `test`, `bench` and `fmt` have an earlier verified
+implementation (plus `clean`, `migrate` and the inspection commands). The T007
+runner extensions in section 4 are implemented, unverified (not yet built).
+`lint` does not exist yet. `doc` and doctests are implemented, unverified (not
+yet built; see section 4.1).
 
 ```
 mettle run   FILE|PACKAGE [build options] [-- ARGS...]
 mettle test  FILE|PACKAGE [FILTER...] [--exact] [--include-ignored | --ignored]
-             [--jobs N] [build options]
-mettle bench FILE|PACKAGE [FILTER...] [--exact] [--include-ignored] [build options]
+             [--jobs N] [--timeout SECONDS] [--format human|json] [build options]
+mettle bench FILE|PACKAGE [FILTER...] [--exact] [--include-ignored]
+             [--format human|json] [build options]
 mettle doc   [PATH...] [-o DIR] [--private]
-mettle test  FILE --doc [FILTER...]
+mettle test  FILE|PACKAGE --doc [FILTER...]
 ```
 
 `run` builds through the ordinary build path and cache into a private temporary
@@ -244,46 +246,65 @@ respectively unless `--profile` is given; the other build options apply.
 
 Test functions use @test; filtering selects fully qualified names. The runner
 reports pass/fail/ignored, process termination and infrastructure failure
-separately. Test ordering is not a language guarantee. A deterministic seed and
-concurrency selection are recorded when requested.
+separately. Test ordering is not a language guarantee. `--jobs` selects test
+concurrency; a deterministic seed option is not yet provided.
 
-Implemented behavior (verified): `@test` marks a function in the root module
-of the selected source with no parameters and result `Unit`, or `Unit throws E`
-(returning the failure fails the test). `@ignore` / `@ignore("reason")` skips it
-unless `--include-ignored` (run everything) or `--ignored` (run only ignored
-tests) is given; `@should_panic` / `@should_panic("text")` passes only when the
-test panics (exit status 101) or is ended by a signal, and the text, when given,
-must occur in its output. The user's `main` is not the entry of a test build and
-need not exist; the compiler generates the entry. Each test runs in its own
-process of the same executable (a hidden selector argument), `--jobs N` of them
-at a time (default: hardware concurrency), with standard input empty and both
-output streams captured and shown for non-passing tests. Output is in
-declaration order, `test NAME ... ok|FAILED|TERMINATED|ERROR|ignored`, then
-`test result: ok|FAILED. N passed; M failed; K ignored; T terminated; I
-infrastructure failures; F filtered out`. `failed` is a returned failure, a
-panic or a missing expected panic; `terminated` is an end by signal (an
-aborting profile's panic) or an unexpected exit status; infrastructure failures
-are processes that could not start or a harness mismatch. The exit status is 1
-unless all selected tests pass. Positional filters select by substring of the
-name (`--exact`: equality); names are the function names of the root module.
-No timeout bounds a hung test.
+Runner extensions in this T007 work are implemented, unverified (not yet
+built). `@test` marks a function in any module of the selected package with no
+parameters and result `Unit`, or `Unit throws E` (returning the failure fails
+the test). Inline and file modules (`module name;`) are included; displayed
+names are fully qualified, such as `network::connect`. `@ignore` /
+`@ignore("reason")` skips a test unless `--include-ignored` (run everything) or
+`--ignored` (run only ignored tests) is given; `@should_panic` /
+`@should_panic("text")` passes only when the test panics (exit status 101) or is
+ended by a signal, and the text, when given, must occur in its captured output.
+The user's root `main` is not the entry of a test build and need not exist; the
+compiler generates the entry. Each test runs in its own process of the same
+executable (a hidden selector argument), `--jobs N` of them at a time
+(default: hardware concurrency), with standard input empty and both output
+streams captured. Output follows stable collection order, which is not a
+language guarantee. The human format remains the default and reports
+pass/fail/ignored, termination, timeout and infrastructure
+failure separately: `failed` is a returned failure, panic or missing expected
+panic; `terminated` is a signal or unexpected exit status; infrastructure
+failure means a process could not start or the harness selector did not match.
+Human test lines are `test NAME ... ok|FAILED|TERMINATED|TIMED OUT|ERROR|ignored`;
+the final `test result:` line reports passed, failed, ignored, terminated,
+infrastructure failures, timed out and filtered counts. `--timeout SECONDS`
+bounds each test and doctest process;
+there is no default timeout. On expiry the runner kills the process group and
+reports `timed out`. The exit status is 1 unless all selected tests pass.
+Positional filters select by substring of the fully qualified name (`--exact`:
+equality).
 
-`@bench fn name()` (no parameters; any result, or a fallible result) in the
-root module is run by
-`bench` in one process at a time. The harness doubles the iteration count until
-one sample takes at least 10 ms, then measures 11 samples of that many calls
-with the monotonic `std::time` clock inside the process, and the command
-prints the median, minimum and maximum nanoseconds per iteration with the
-iteration count. The raw samples are not yet stored. Each call's result passes
-through `core::hint::black_box(value)`, an identity the optimizer cannot see
-through, so a benchmark keeps its work by returning it; inputs that must not be
+`--format json` writes newline-delimited JSON events instead of human output.
+Each suite has a `suite` event (`event`, `name`, `total`, `filtered`), one `test`
+event per selected or ignored entry (`event`, `name`, `outcome`, `duration_ns`,
+`output`, `message`), then a `summary` event. Field order is fixed as listed.
+Test outcomes are `passed`, `failed`, `ignored`, `terminated`,
+`infrastructure_failure` and `timed_out`; captured stdout/stderr, including
+panic text, is in `output`, while `message` carries the runner's explanation or
+ignore reason. Test summary fields, in order, are `event`, `passed`, `failed`,
+`ignored`, `terminated`, `infrastructure_failures`, `timed_out` and `filtered`;
+benchmark summary fields are `event`, `measured`, `failed`, `ignored` and
+`filtered`. Benchmark entries use the `measured` outcome. Build/CLI diagnostics
+remain on stderr. A normal `test` command reports its unit-test and doctest
+suites separately when both contain examples.
+
+`@bench fn name()` (no parameters; any result, or a fallible result) in any
+package module is run by `bench` one process at a time. Names are fully
+qualified. The harness doubles the iteration count until one sample takes at
+least 10 ms, then measures 11 samples of that many calls with the monotonic
+`std::time` clock inside the process. Human output prints the median, minimum
+and maximum nanoseconds per iteration with the iteration count. JSON reports a
+`measured` outcome, wall-clock `duration_ns` and the captured raw iteration and
+sample-nanosecond line in `output`. Each call's result passes through
+`core::hint::black_box(value)`, an identity the optimizer cannot see through,
+so a benchmark keeps its work by returning it; inputs that must not be
 constant-folded go through `black_box` too. There is no benchmark handle or
-per-iteration setup. Results from `bench` do not replace the performance protocol's
-registered metrics. A returned failure from a fallible benchmark is ignored.
-
-Limits of the current implementation: tests and benchmarks inside inline or
-file modules are rejected (`error[feature]`), machine-readable output does not
-exist, and the deterministic seed option is not provided.
+per-iteration setup. Results from `bench` do not replace the performance
+protocol's registered metrics. A returned failure from a fallible benchmark is
+ignored. A deterministic seed option and benchmark handles are not provided.
 
 Panic expectations match the declared contract. Aborting profiles need subprocess
 isolation to observe an expected panic; abort is not an unwind caught in-process.
@@ -320,24 +341,25 @@ are not removed). Not yet provided: cross-module links, package cross
 references, source hyperlinks (the page shows `file:line`), inferred result
 types and search.
 
-`mettle test FILE` also runs the fenced examples of the root source's
-documentation (all items, `pub` or not) after its `@test` functions;
-`--doc` runs only them. Each example is a function appended to the source
-(a block with its own `fn main()` becomes that function), so it sees the
-file's items, and runs in its own process through the test harness; if the
-combined build fails, examples are built one by one so only the broken ones
-fail. A code line written `~ code` (or `~`) is compiled but not rendered. The
-fence info is a comma/space list: none or `mettle` (run), `no_run` (compiled
-only), `ignore` (listed as ignored, not compiled), `should_panic`,
-`compile_fail` / `compile_fail(PHASE)` and any other word (`text`, `sh`) for a
-block that is not Mettle. A `compile_fail` block passes only when checking
-rejects it with the named phase; without a phase, `lex`, `parse` and `feature`
-(unsupported) diagnostics do not count, so a malformed or unsupported example
-cannot pass. Results use the unit-test format: `Doc-tests FILE`, then
+`mettle test FILE|PACKAGE` also runs fenced examples from every source file in
+the selected package (all items, `pub` or not) after its `@test` functions;
+`--doc` runs only the examples. Each generated test is overlaid on its original
+file while the complete package/module graph is built, so file-module examples
+retain their imports and module context without modifying package files. Each
+example runs in its own process through the test harness; if the combined build
+fails, examples are built one by one so only the broken ones fail. A code line
+written `~ code` (or `~`) is compiled but not rendered. The fence info is a
+comma/space list: none or `mettle` (run), `no_run` (compiled only), `ignore`
+(listed as ignored, not compiled), `should_panic`, `compile_fail` /
+`compile_fail(PHASE)` and any other word (`text`, `sh`) for a block that is not
+Mettle. A `compile_fail` block passes only when checking rejects it with the
+named phase; without a phase, `lex`, `parse` and `feature` (unsupported)
+diagnostics do not count, so a malformed or unsupported example cannot pass.
+Human results use `Doc-tests FILE`, then
 `test PAGE - ITEM (line N) ... ok|FAILED|ignored`, a `, no_run`-style note for
-compiled-only and compile_fail passes, and a `test result:` line. Limits: only
-the root source is scanned, file modules (`module name;`) cannot be built from
-the generated copy, and examples declaring `fn main()` must return `Unit`.
+compiled-only and compile_fail passes, and a `test result:` line. JSON results
+use the same newline-delimited event format as unit tests. Examples declaring
+`fn main()` must return `Unit`.
 
 Documentation fences distinguish ordinary examples, runnable native examples,
 no_run examples, ignored platform examples and compile_fail cases with the

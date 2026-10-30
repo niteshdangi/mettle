@@ -30,14 +30,15 @@ void merge(std::vector<Item> &destination, std::vector<Item> source,
 class Loader {
 public:
   Loader(const SourceProvider &provider, Diagnostics &diagnostics,
-         const Library &library)
-      : provider(provider), diagnostics(diagnostics), library(library) {}
+         const Library &library, std::vector<SourceModule> *sourceModules)
+      : provider(provider), diagnostics(diagnostics), library(library),
+        sourceModules(sourceModules) {}
 
   std::optional<Module> run(Source root) {
     auto directory = fs::path(root.path).parent_path();
     auto harnessPath =
         (directory / "mettle-test-harness.mt").lexically_normal();
-    read(std::move(root), {}, directory, 0);
+    read(std::move(root), {}, directory, 0, true);
     if (library.harness != Library::Harness::None && diagnostics.empty()) {
       bool bench = library.harness == Library::Harness::Bench;
       read({harnessPath.generic_string(),
@@ -60,6 +61,7 @@ private:
   const SourceProvider &provider;
   Diagnostics &diagnostics;
   const Library &library;
+  std::vector<SourceModule> *sourceModules;
   Module result;
   std::unordered_set<std::string> loaded;
   SourceId nextSource = 0;
@@ -365,7 +367,7 @@ private:
   }
 
   void read(Source source, std::vector<std::string> prefix, fs::path directory,
-            unsigned depth) {
+            unsigned depth, bool rootPackageSource = false) {
     auto identity = fs::path(source.path).lexically_normal().generic_string();
     if (!loaded.insert(identity).second) {
       diagnostics.error("name", {},
@@ -378,6 +380,8 @@ private:
       return;
     }
     source.id = nextSource++;
+    if (rootPackageSource && sourceModules)
+      sourceModules->push_back({source, prefix});
     if (!currentRoot.empty())
       owner[source.id] = currentRoot;
     // Declarative macros expand on the token level, before parsing.
@@ -397,9 +401,10 @@ private:
     // inactive modules are never read and generated impls are flattened too.
     const expansion::Configuration *facts = &configuration();
     std::optional<expansion::Configuration> harnessFacts;
-    if (depth == 0 && library.harness != Library::Harness::None) {
+    if (rootPackageSource && library.harness != Library::Harness::None) {
       harnessFacts = *facts;
-      harnessFacts->collectTests = harnessFacts->dropEntry = true;
+      harnessFacts->collectTests = true;
+      harnessFacts->dropEntry = depth == 0;
       facts = &*harnessFacts;
     }
     expansion::expand(tree, diagnostics, *facts, [&] {
@@ -410,8 +415,10 @@ private:
     });
     if (!diagnostics.empty())
       return;
-    if (depth == 0)
-      result.tests = std::move(tree.tests);
+    for (auto &test : tree.tests) {
+      test.path.insert(test.path.begin(), prefix.begin(), prefix.end());
+      result.tests.push_back(std::move(test));
+    }
     completeDeclarations(tree);
     for (const auto &declaration : tree.modules) {
       if (!declaration.external)
@@ -450,7 +457,7 @@ private:
         continue;
       }
       read(std::move(child), std::move(childPrefix),
-           childDirectory / declaration.name, depth + 1);
+           childDirectory / declaration.name, depth + 1, rootPackageSource);
     }
     auto implementationOffset = static_cast<int>(result.implementations.size());
     for (auto &implementation : tree.implementations)
@@ -480,10 +487,12 @@ private:
 } // namespace
 
 std::optional<Module> load(Source root, const SourceProvider &provider,
-                           Diagnostics &diagnostics, const Library &library) {
+                           Diagnostics &diagnostics, const Library &library,
+                           std::vector<SourceModule> *sourceModules) {
   if (!diagnostics.empty())
     return std::nullopt;
-  return Loader(provider, diagnostics, library).run(std::move(root));
+  return Loader(provider, diagnostics, library, sourceModules)
+      .run(std::move(root));
 }
 
 std::optional<Module> load(const std::vector<Source> &sources,

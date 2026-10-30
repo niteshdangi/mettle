@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
@@ -13,8 +15,10 @@
 #include <iomanip>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <optional>
 #include <set>
+#include <signal.h>
 #include <spawn.h>
 #include <sstream>
 #include <sys/wait.h>
@@ -51,7 +55,7 @@ struct WorkDirectory {
 };
 
 struct Termination {
-  bool started = false, signaled = false;
+  bool started = false, signaled = false, timedOut = false;
   int code = 0, signal = 0;
   std::string problem;
 };
@@ -61,7 +65,8 @@ struct Termination {
 // the child shares this process's standard streams.
 Termination spawn(const std::string &program,
                   const std::vector<std::string> &arguments,
-                  const std::string &capture) {
+                  const std::string &capture,
+                  std::optional<unsigned> timeoutSeconds = std::nullopt) {
   Termination result;
   std::vector<std::string> storage{program};
   storage.insert(storage.end(), arguments.begin(), arguments.end());
@@ -77,20 +82,71 @@ Termination spawn(const std::string &program,
                                      O_WRONLY | O_CREAT | O_TRUNC, 0600);
     posix_spawn_file_actions_adddup2(&actions, 1, 2);
   }
+  posix_spawnattr_t attributes;
+  posix_spawnattr_t *attributePointer = nullptr;
+  if (timeoutSeconds) {
+    int error = posix_spawnattr_init(&attributes);
+    if (error != 0) {
+      posix_spawn_file_actions_destroy(&actions);
+      result.problem = std::strerror(error);
+      return result;
+    }
+    short flags = POSIX_SPAWN_SETPGROUP;
+    error = posix_spawnattr_setpgroup(&attributes, 0);
+    if (error == 0)
+      error = posix_spawnattr_setflags(&attributes, flags);
+    if (error != 0) {
+      posix_spawnattr_destroy(&attributes);
+      posix_spawn_file_actions_destroy(&actions);
+      result.problem = std::strerror(error);
+      return result;
+    }
+    attributePointer = &attributes;
+  }
   pid_t child = 0;
-  int error = posix_spawn(&child, program.c_str(), &actions, nullptr,
+  int error = posix_spawn(&child, program.c_str(), &actions, attributePointer,
                           argv.data(), environ);
+  if (attributePointer)
+    posix_spawnattr_destroy(&attributes);
   posix_spawn_file_actions_destroy(&actions);
   if (error != 0) {
     result.problem = std::strerror(error);
     return result;
   }
   int status = 0;
-  while (waitpid(child, &status, 0) < 0)
-    if (errno != EINTR) {
-      result.problem = std::strerror(errno);
-      return result;
+  if (timeoutSeconds) {
+    const auto startedAt = std::chrono::steady_clock::now();
+    for (;;) {
+      auto waited = waitpid(child, &status, WNOHANG);
+      if (waited == child)
+        break;
+      if (waited < 0) {
+        if (errno == EINTR)
+          continue;
+        result.problem = std::strerror(errno);
+        return result;
+      }
+      if (std::chrono::steady_clock::now() - startedAt >=
+          std::chrono::seconds(*timeoutSeconds)) {
+        result.timedOut = true;
+        if (kill(-child, SIGKILL) < 0 && errno != ESRCH)
+          result.problem = std::strerror(errno);
+        do {
+          waited = waitpid(child, &status, 0);
+        } while (waited < 0 && errno == EINTR);
+        if (waited < 0 && result.problem.empty())
+          result.problem = std::strerror(errno);
+        result.started = true;
+        return result;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+  } else
+    while (waitpid(child, &status, 0) < 0)
+      if (errno != EINTR) {
+        result.problem = std::strerror(errno);
+        return result;
+      }
   result.started = true;
   if (WIFSIGNALED(status)) {
     result.signaled = true;
@@ -122,12 +178,13 @@ std::string name(const Module::TestFunction &entry) {
 
 // Builds the input into the work directory. Returns 0 or the build status.
 int buildInto(const Options &options, const WorkDirectory &work,
-              std::vector<Module::TestFunction> *tests, std::string &program) {
+              std::vector<Module::TestFunction> *tests, std::string &program,
+              std::vector<resolution::SourceModule> *sourceModules = nullptr) {
   Options selected = options;
   selected.command = "build";
   program = work.file("mettle-program").string();
   selected.output = program;
-  return build(selected, tests);
+  return build(selected, tests, sourceModules);
 }
 
 int runProgram(const Options &options) {
@@ -184,11 +241,12 @@ Selection select(const Options &options,
   return selection;
 }
 
-enum class Verdict { Passed, Failed, Terminated, Infrastructure };
+enum class Verdict { Passed, Failed, Terminated, Infrastructure, TimedOut };
 
 struct Result {
   Verdict verdict = Verdict::Infrastructure;
   std::string reason, output, note;
+  std::uint64_t durationNs = 0;
   // Decided without running a process (a compile-only or compile_fail
   // example, or one that did not compile).
   bool done = false;
@@ -200,6 +258,11 @@ Result classify(const Module::TestFunction &entry, const Termination &outcome,
                 std::string output) {
   Result result;
   result.output = std::move(output);
+  if (outcome.timedOut) {
+    result.verdict = Verdict::TimedOut;
+    result.reason = "timed out";
+    return result;
+  }
   if (!outcome.started) {
     result.reason = "cannot start the test process: " + outcome.problem;
     return result;
@@ -271,11 +334,16 @@ void runSelected(const Options &options, const WorkDirectory &work,
         continue;
       auto captured = work.file("output-" + std::to_string(index) + ".txt");
       const auto &target = targets[index];
+      auto startedAt = std::chrono::steady_clock::now();
       auto outcome = spawn(
           target.program,
           {expansion::harnessTestSelector, std::to_string(target.index)},
-          captured.string());
+          captured.string(), options.timeoutSeconds);
       results[index] = classify(tests[index], outcome, contents(captured));
+      results[index].durationNs = static_cast<std::uint64_t>(
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              std::chrono::steady_clock::now() - startedAt)
+              .count());
     }
   };
   std::vector<std::thread> pool;
@@ -286,26 +354,105 @@ void runSelected(const Options &options, const WorkDirectory &work,
     thread.join();
 }
 
+std::string jsonString(const std::string &value) {
+  static constexpr char hex[] = "0123456789abcdef";
+  std::string result = "\"";
+  for (unsigned char character : value) {
+    switch (character) {
+    case '"':
+      result += "\\\"";
+      break;
+    case '\\':
+      result += "\\\\";
+      break;
+    case '\b':
+      result += "\\b";
+      break;
+    case '\f':
+      result += "\\f";
+      break;
+    case '\n':
+      result += "\\n";
+      break;
+    case '\r':
+      result += "\\r";
+      break;
+    case '\t':
+      result += "\\t";
+      break;
+    default:
+      if (character < 0x20) {
+        result += "\\u00";
+        result += hex[character >> 4];
+        result += hex[character & 0x0f];
+      } else
+        result += static_cast<char>(character);
+    }
+  }
+  result += '"';
+  return result;
+}
+
+void jsonSuiteStart(const std::string &suite, std::size_t total,
+                    std::size_t filtered) {
+  std::cout << "{\"event\":\"suite\",\"name\":" << jsonString(suite)
+            << ",\"total\":" << total << ",\"filtered\":" << filtered
+            << "}\n";
+}
+
+void jsonTest(const std::string &test, const std::string &outcome,
+              std::uint64_t durationNs, const std::string &output,
+              const std::string &message) {
+  std::cout << "{\"event\":\"test\",\"name\":" << jsonString(test)
+            << ",\"outcome\":" << jsonString(outcome)
+            << ",\"duration_ns\":" << durationNs
+            << ",\"output\":" << jsonString(output)
+            << ",\"message\":" << jsonString(message) << "}\n";
+}
+
+std::string jsonOutcome(Verdict verdict) {
+  switch (verdict) {
+  case Verdict::Passed:
+    return "passed";
+  case Verdict::Failed:
+    return "failed";
+  case Verdict::Terminated:
+    return "terminated";
+  case Verdict::Infrastructure:
+    return "infrastructure_failure";
+  case Verdict::TimedOut:
+    return "timed_out";
+  }
+  return "infrastructure_failure";
+}
+
 // Prints the report of a test run in declaration order; true when every
 // selected test passed.
 bool report(const std::vector<Module::TestFunction> &tests,
-            const Selection &selection, const std::vector<Result> &results) {
-  std::size_t counts[4] = {0, 0, 0, 0};
-  std::cout << "running " << selection.run.size() + selection.ignored.size()
-            << (selection.run.size() + selection.ignored.size() == 1
-                    ? " test\n"
-                    : " tests\n");
+            const Selection &selection, const std::vector<Result> &results,
+            const Options &options, const std::string &suite = "test") {
+  std::size_t counts[5] = {0, 0, 0, 0, 0};
+  bool machineReadable = options.format == "json";
+  auto total = selection.run.size() + selection.ignored.size();
+  if (machineReadable)
+    jsonSuiteStart(suite, total, selection.filtered);
+  else
+    std::cout << "running " << total
+              << (total == 1 ? " test\n" : " tests\n");
   for (std::size_t i = 0; i < tests.size(); ++i) {
     if (tests[i].bench)
       continue;
     auto ignored = std::find(selection.ignored.begin(), selection.ignored.end(),
                              i) != selection.ignored.end();
     if (ignored) {
-      std::cout << "test " << name(tests[i]) << " ... ignored"
-                << (tests[i].ignoreReason.empty()
-                        ? ""
-                        : ", " + tests[i].ignoreReason)
-                << '\n';
+      if (machineReadable)
+        jsonTest(name(tests[i]), "ignored", 0, "", tests[i].ignoreReason);
+      else
+        std::cout << "test " << name(tests[i]) << " ... ignored"
+                  << (tests[i].ignoreReason.empty()
+                          ? ""
+                          : ", " + tests[i].ignoreReason)
+                  << '\n';
       continue;
     }
     if (std::find(selection.run.begin(), selection.run.end(), i) ==
@@ -313,12 +460,30 @@ bool report(const std::vector<Module::TestFunction> &tests,
       continue;
     const auto &result = results[i];
     ++counts[static_cast<int>(result.verdict)];
-    std::cout << "test " << name(tests[i]) << " ... "
-              << (result.verdict == Verdict::Passed       ? "ok"
-                  : result.verdict == Verdict::Failed     ? "FAILED"
-                  : result.verdict == Verdict::Terminated ? "TERMINATED"
-                                                          : "ERROR")
-              << (result.note.empty() ? "" : ", " + result.note) << '\n';
+    if (machineReadable) {
+      const auto &message =
+          result.reason.empty() ? result.note : result.reason;
+      jsonTest(name(tests[i]), jsonOutcome(result.verdict), result.durationNs,
+               result.output, message);
+    } else
+      std::cout << "test " << name(tests[i]) << " ... "
+                << (result.verdict == Verdict::Passed       ? "ok"
+                    : result.verdict == Verdict::Failed     ? "FAILED"
+                    : result.verdict == Verdict::Terminated ? "TERMINATED"
+                    : result.verdict == Verdict::TimedOut   ? "TIMED OUT"
+                                                            : "ERROR")
+                << (result.note.empty() ? "" : ", " + result.note) << '\n';
+  }
+  bool good = counts[1] + counts[2] + counts[3] + counts[4] == 0;
+  if (machineReadable) {
+    std::cout << "{\"event\":\"summary\",\"passed\":" << counts[0]
+              << ",\"failed\":" << counts[1]
+              << ",\"ignored\":" << selection.ignored.size()
+              << ",\"terminated\":" << counts[2]
+              << ",\"infrastructure_failures\":" << counts[3]
+              << ",\"timed_out\":" << counts[4]
+              << ",\"filtered\":" << selection.filtered << "}\n";
+    return good;
   }
   bool header = false;
   for (auto index : selection.run) {
@@ -335,17 +500,18 @@ bool report(const std::vector<Module::TestFunction> &tests,
                       ? ""
                       : "\n");
   }
-  bool good = counts[1] + counts[2] + counts[3] == 0;
   std::cout << "\ntest result: " << (good ? "ok" : "FAILED") << ". "
             << counts[0] << " passed; " << counts[1] << " failed; "
             << selection.ignored.size() << " ignored; " << counts[2]
             << " terminated; " << counts[3] << " infrastructure failures; "
-            << selection.filtered << " filtered out\n";
+            << counts[4] << " timed out; " << selection.filtered
+            << " filtered out\n";
   return good;
 }
 
 // Builds the unit tests and runs them. `built` is false when the build failed.
-int runUnitTests(const Options &options, bool &built) {
+int runUnitTests(const Options &options, bool &built,
+                 std::vector<resolution::SourceModule> &sourceModules) {
   WorkDirectory work;
   if (auto error = work.create()) {
     std::cerr << "mettle: error[io]: cannot create a temporary directory: "
@@ -354,7 +520,7 @@ int runUnitTests(const Options &options, bool &built) {
   }
   std::string program;
   std::vector<Module::TestFunction> tests;
-  if (int status = buildInto(options, work, &tests, program)) {
+  if (int status = buildInto(options, work, &tests, program, &sourceModules)) {
     built = false;
     return status;
   }
@@ -364,7 +530,7 @@ int runUnitTests(const Options &options, bool &built) {
   for (std::size_t i = 0; i < tests.size(); ++i)
     targets.push_back({program, i});
   runSelected(options, work, tests, targets, selection, results);
-  return report(tests, selection, results) ? 0 : 1;
+  return report(tests, selection, results, options) ? 0 : 1;
 }
 
 struct Compiled {
@@ -372,27 +538,21 @@ struct Compiled {
   std::string diagnostics;
 };
 
-// Builds `text` as the root source of a test executable at `program`,
-// capturing the diagnostics instead of printing them.
+// Builds a test executable with generated source overlays, capturing
+// diagnostics instead of printing them.
 Compiled compile(const Options &options, const WorkDirectory &work,
-                 const std::string &stem, const std::string &text,
-                 const std::string &program,
+                 const std::string &stem,
+                 const std::map<std::string, std::string> &sourceOverrides,
                  std::vector<Module::TestFunction> &tests) {
-  auto file = work.file(stem + ".mt");
-  {
-    std::ofstream out(file, std::ios::binary | std::ios::trunc);
-    out << text;
-  }
   Options selected = options;
   selected.command = "build";
-  selected.input = file.string();
-  selected.output = program;
+  selected.output = work.file(stem).string();
   selected.harness = "test";
   selected.filters.clear();
   std::ostringstream captured;
   auto *previous = std::cerr.rdbuf(captured.rdbuf());
   Compiled result;
-  result.status = build(selected, &tests);
+  result.status = build(selected, &tests, nullptr, &sourceOverrides);
   std::cerr.rdbuf(previous);
   result.diagnostics = captured.str();
   return result;
@@ -404,8 +564,8 @@ harnessIndex(const std::vector<Module::TestFunction> &tests,
              std::size_t index) {
   auto wanted = documentation::testName(index);
   for (std::size_t i = 0; i < tests.size(); ++i)
-    if (!tests[i].bench && tests[i].path.size() == 1 &&
-        tests[i].path.front() == wanted)
+    if (!tests[i].bench && !tests[i].path.empty() &&
+        tests[i].path.back() == wanted)
       return i;
   return std::nullopt;
 }
@@ -451,24 +611,41 @@ Result judgeCompileFail(const documentation::Example &example,
   return result;
 }
 
-// Runs the fenced examples of the documentation comments of the root source.
-// Every example is its own function appended to the source and runs in its own
-// process; examples that do not compile are told apart by building them one by
-// one. Returns 0, or 1 when an example fails.
-int runDoctests(const Options &requested) {
-  std::ifstream in(requested.input, std::ios::binary);
-  std::string text((std::istreambuf_iterator<char>(in)),
-                   std::istreambuf_iterator<char>());
-  if (!in && !in.eof()) {
-    std::cerr << "mettle: error[io]: cannot read " << requested.input << '\n';
+// Runs the fenced examples from every source file in the selected package.
+// Generated tests are overlaid on their original source paths, preserving the
+// package's module graph and avoiding writes beside user files.
+int runDoctests(const Options &requested,
+                std::vector<resolution::SourceModule> sourceModules) {
+  WorkDirectory work;
+  if (auto error = work.create()) {
+    std::cerr << "mettle: error[io]: cannot create a temporary directory: "
+              << error.message() << '\n';
     return 1;
   }
-  auto page = documentation::extract(
-      Source{requested.input, text},
-      fs::path(requested.input).stem().string(), true);
-  auto examples = documentation::examples(page);
-  if (examples.empty())
-    return 0;
+  if (sourceModules.empty()) {
+    std::string program;
+    std::vector<Module::TestFunction> discovered;
+    if (int status =
+            buildInto(requested, work, &discovered, program, &sourceModules))
+      return status;
+  }
+  std::vector<documentation::Example> examples;
+  std::vector<std::size_t> sourceForExample;
+  for (std::size_t sourceIndex = 0; sourceIndex < sourceModules.size();
+       ++sourceIndex) {
+    const auto &source = sourceModules[sourceIndex];
+    std::string pageName;
+    for (const auto &part : source.path)
+      pageName += (pageName.empty() ? "" : "::") + part;
+    if (pageName.empty())
+      pageName = fs::path(source.source.path).stem().string();
+    auto page =
+        documentation::extract(source.source, pageName, true);
+    for (auto &example : documentation::examples(page)) {
+      examples.push_back(std::move(example));
+      sourceForExample.push_back(sourceIndex);
+    }
+  }
   // Ignored-ness is a property of the example, not of a test attribute.
   Options options = requested;
   options.includeIgnored = options.onlyIgnored = false;
@@ -481,25 +658,41 @@ int runDoctests(const Options &requested) {
     tests.push_back(std::move(entry));
   }
   auto selection = select(options, tests, false);
-  std::cout << "\nDoc-tests " << requested.input << '\n';
-  WorkDirectory work;
-  if (auto error = work.create()) {
-    std::cerr << "mettle: error[io]: cannot create a temporary directory: "
-              << error.message() << '\n';
-    return 1;
+  if (examples.empty()) {
+    if (requested.format != "json" || !requested.docOnly)
+      return 0;
+    std::vector<Result> results;
+    return report(tests, selection, results, options, "doctest") ? 0 : 1;
   }
+  if (requested.format != "json")
+    std::cout << "\nDoc-tests " << requested.input << '\n';
   std::vector<Result> results(tests.size());
   std::vector<Target> targets(tests.size());
   std::vector<std::size_t> built;
+  auto overlays = [&](const std::vector<std::size_t> &picks) {
+    std::map<std::size_t, std::vector<std::size_t>> grouped;
+    for (auto index : picks)
+      grouped[sourceForExample[index]].push_back(index);
+    std::map<std::string, std::string> overrides;
+    for (const auto &[sourceIndex, sourcePicks] : grouped) {
+      const auto &source = sourceModules[sourceIndex].source;
+      overrides.emplace(
+          source.path,
+          documentation::withTests(source.text, examples, sourcePicks));
+    }
+    return overrides;
+  };
   for (auto index : selection.run)
     if (examples[index].mode == documentation::Mode::CompileFail) {
       std::vector<Module::TestFunction> ignored;
       auto stem = "doctest-" + std::to_string(index);
-      auto compiled = compile(
-          options, work, stem,
-          documentation::withTests(text, examples, {index}),
-          work.file(stem).string(), ignored);
+      auto startedAt = std::chrono::steady_clock::now();
+      auto compiled = compile(options, work, stem, overlays({index}), ignored);
       results[index] = judgeCompileFail(examples[index], compiled);
+      results[index].durationNs = static_cast<std::uint64_t>(
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              std::chrono::steady_clock::now() - startedAt)
+              .count());
     } else
       built.push_back(index);
   auto place = [&](std::size_t index, const std::string &program,
@@ -517,9 +710,7 @@ int runDoctests(const Options &requested) {
   if (!built.empty()) {
     std::vector<Module::TestFunction> found;
     auto program = work.file("doctests").string();
-    auto combined = documentation::withTests(text, examples, built);
-    auto compiled =
-        compile(options, work, "doctests", combined, program, found);
+    auto compiled = compile(options, work, "doctests", overlays(built), found);
     if (compiled.status == 0)
       for (auto index : built)
         place(index, program, found);
@@ -528,9 +719,8 @@ int runDoctests(const Options &requested) {
         auto stem = "doctest-" + std::to_string(index);
         auto single = work.file(stem).string();
         std::vector<Module::TestFunction> own;
-        auto one = compile(options, work, stem,
-                           documentation::withTests(text, examples, {index}),
-                           single, own);
+        auto startedAt = std::chrono::steady_clock::now();
+        auto one = compile(options, work, stem, overlays({index}), own);
         if (one.status == 0) {
           place(index, single, own);
           continue;
@@ -538,6 +728,10 @@ int runDoctests(const Options &requested) {
         results[index].verdict = Verdict::Failed;
         results[index].reason = "the example does not compile";
         results[index].output = one.diagnostics;
+        results[index].durationNs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - startedAt)
+                .count());
         results[index].done = true;
       }
   }
@@ -548,19 +742,20 @@ int runDoctests(const Options &requested) {
       results[index].done = true;
     }
   runSelected(options, work, tests, targets, selection, results);
-  return report(tests, selection, results) ? 0 : 1;
+  return report(tests, selection, results, options, "doctest") ? 0 : 1;
 }
 
 int runTests(const Options &options) {
   int status = 0;
   bool built = true;
+  std::vector<resolution::SourceModule> sourceModules;
   if (!options.docOnly) {
-    status = runUnitTests(options, built);
+    status = runUnitTests(options, built, sourceModules);
     if (!built)
       return status;
   }
   if (!options.onlyIgnored)
-    status |= runDoctests(options);
+    status |= runDoctests(options, std::move(sourceModules));
   return status;
 }
 
@@ -582,54 +777,97 @@ int runBenchmarks(const Options &options) {
   if (int status = buildInto(options, work, &benches, program))
     return status;
   auto selection = select(options, benches, true);
-  std::cout << "running " << selection.run.size() + selection.ignored.size()
-            << (selection.run.size() + selection.ignored.size() == 1
-                    ? " benchmark\n"
-                    : " benchmarks\n");
-  for (auto index : selection.ignored)
-    std::cout << "bench " << name(benches[index]) << " ... ignored"
-              << (benches[index].ignoreReason.empty()
-                      ? ""
-                      : ", " + benches[index].ignoreReason)
-              << '\n';
-  std::size_t failed = 0;
+  std::vector<Result> results(benches.size());
+  std::vector<unsigned long long> iterations(benches.size());
+  std::vector<std::vector<double>> samples(benches.size());
+  bool machineReadable = options.format == "json";
+  auto selectedCount = selection.run.size() + selection.ignored.size();
+  if (machineReadable)
+    jsonSuiteStart("bench", selectedCount, selection.filtered);
+  else {
+    std::cout << "running " << selectedCount
+              << (selectedCount == 1 ? " benchmark\n" : " benchmarks\n");
+    for (auto index : selection.ignored)
+      std::cout << "bench " << name(benches[index]) << " ... ignored"
+                << (benches[index].ignoreReason.empty()
+                        ? ""
+                        : ", " + benches[index].ignoreReason)
+                << '\n';
+  }
   // Benchmarks run one at a time so they do not compete for the machine.
   for (auto index : selection.run) {
     auto captured = work.file("bench-" + std::to_string(index) + ".txt");
+    auto startedAt = std::chrono::steady_clock::now();
     auto outcome =
         spawn(program, {expansion::harnessBenchSelector, std::to_string(index)},
               captured.string());
-    auto output = contents(captured);
-    std::istringstream words(output);
-    unsigned long long iterations = 0;
-    std::vector<double> samples;
-    words >> iterations;
+    auto &result = results[index];
+    result.output = contents(captured);
+    result.durationNs = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - startedAt)
+            .count());
+    std::istringstream words(result.output);
+    words >> iterations[index];
     for (unsigned long long total; words >> total;)
-      samples.push_back(static_cast<double>(total));
+      samples[index].push_back(static_cast<double>(total));
     if (!outcome.started || outcome.signaled || outcome.code != 0 ||
-        iterations == 0 ||
-        samples.size() !=
+        iterations[index] == 0 ||
+        samples[index].size() !=
             static_cast<std::size_t>(expansion::harnessBenchSamples)) {
-      ++failed;
-      std::cout << "bench " << name(benches[index]) << " ... FAILED ("
-                << (!outcome.started ? "cannot start: " + outcome.problem
-                    : outcome.signaled
-                        ? "terminated by " + signalName(outcome.signal)
-                        : "exit status " + std::to_string(outcome.code))
-                << ")\n"
-                << output;
+      result.verdict = Verdict::Failed;
+      result.reason =
+          !outcome.started ? "cannot start: " + outcome.problem
+          : outcome.signaled ? "terminated by " + signalName(outcome.signal)
+          : outcome.code != 0
+              ? "exit status " + std::to_string(outcome.code)
+              : "invalid benchmark output";
+      if (!machineReadable)
+        std::cout << "bench " << name(benches[index]) << " ... FAILED ("
+                  << result.reason << ")\n"
+                  << result.output;
       continue;
     }
-    std::sort(samples.begin(), samples.end());
-    auto per = [&](double total) {
-      return total / static_cast<double>(iterations);
-    };
-    std::cout << "bench " << name(benches[index]) << " ... "
-              << number(per(samples[samples.size() / 2]))
-              << " ns/iter (median of " << samples.size() << " samples; min "
-              << number(per(samples.front())) << ", max "
-              << number(per(samples.back())) << "; " << iterations
-              << " iterations per sample)\n";
+    result.verdict = Verdict::Passed;
+    std::sort(samples[index].begin(), samples[index].end());
+    if (!machineReadable) {
+      const auto &sample = samples[index];
+      auto per = [&](double total) {
+        return total / static_cast<double>(iterations[index]);
+      };
+      std::cout << "bench " << name(benches[index]) << " ... "
+                << number(per(sample[sample.size() / 2]))
+                << " ns/iter (median of " << sample.size() << " samples; min "
+                << number(per(sample.front())) << ", max "
+                << number(per(sample.back())) << "; " << iterations[index]
+                << " iterations per sample)\n";
+    }
+  }
+  auto failed = static_cast<std::size_t>(std::count_if(
+      selection.run.begin(), selection.run.end(), [&](std::size_t index) {
+        return results[index].verdict != Verdict::Passed;
+      }));
+  if (machineReadable) {
+    for (std::size_t index = 0; index < benches.size(); ++index) {
+      if (std::find(selection.ignored.begin(), selection.ignored.end(),
+                    index) != selection.ignored.end()) {
+        jsonTest(name(benches[index]), "ignored", 0, "",
+                 benches[index].ignoreReason);
+        continue;
+      }
+      if (std::find(selection.run.begin(), selection.run.end(), index) ==
+          selection.run.end())
+        continue;
+      const auto &result = results[index];
+      jsonTest(name(benches[index]),
+               result.verdict == Verdict::Passed ? "measured" : "failed",
+               result.durationNs, result.output, result.reason);
+    }
+    std::cout << "{\"event\":\"summary\",\"measured\":"
+              << selection.run.size() - failed << ",\"failed\":" << failed
+              << ",\"ignored\":" << selection.ignored.size()
+              << ",\"filtered\":" << selection.filtered << "}\n";
+    return failed ? 1 : 0;
   }
   std::cout << "\nbench result: " << (failed ? "FAILED" : "ok") << ". "
             << selection.run.size() - failed << " measured; " << failed

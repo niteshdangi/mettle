@@ -129,7 +129,7 @@ private:
 
   // Records a function annotated for the harness (the attributes as written,
   // before `@cfg` consumption).
-  void collect(const Function &function,
+  void collect(Function &function,
                const std::vector<Attribute> &attributes) {
     Module::TestFunction found;
     bool marked = false, modifiers = false;
@@ -174,6 +174,10 @@ private:
     found.path.push_back(function.name);
     found.span = function.span;
     found.fallible = !function.error.empty();
+    // The generated harness is in the package root, so collected entries in
+    // descendant modules must be package-visible to that caller.
+    function.item.visibility.publicItem = true;
+    function.item.visibility.restriction = {"package"};
     module.tests.push_back(std::move(found));
   }
 

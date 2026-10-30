@@ -20,6 +20,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <set>
 #include <vector>
 
@@ -176,7 +177,9 @@ int run(const Options &requested) {
 }
 
 int build(const Options &requested,
-          std::vector<Module::TestFunction> *discovered) {
+          std::vector<Module::TestFunction> *discovered,
+          std::vector<resolution::SourceModule> *sourceModules,
+          const std::map<std::string, std::string> *sourceOverrides) {
   Options options = requested;
   std::optional<packages::Store> store;
   std::string input = options.input;
@@ -234,8 +237,13 @@ int build(const Options &requested,
   }
   std::error_code pathError;
   auto rootPath = std::filesystem::canonical(input, pathError);
+  auto sourceText = (*buffer)->getBuffer().str();
+  if (!pathError && sourceOverrides)
+    if (auto replacement = sourceOverrides->find(rootPath.generic_string());
+        replacement != sourceOverrides->end())
+      sourceText = replacement->second;
   Source source{pathError ? input : rootPath.generic_string(),
-                (*buffer)->getBuffer().str()};
+                std::move(sourceText)};
   Diagnostics diagnostics;
   if (options.command == "migrate") {
     auto migration = migrate(source, diagnostics);
@@ -305,7 +313,13 @@ int build(const Options &requested,
                         "cannot identify " + path + ": " + error.message());
       return std::nullopt;
     }
-    Source loaded{canonical.generic_string(), (*child)->getBuffer().str()};
+    auto text = (*child)->getBuffer().str();
+    if (sourceOverrides)
+      if (auto replacement =
+              sourceOverrides->find(canonical.generic_string());
+          replacement != sourceOverrides->end())
+        text = replacement->second;
+    Source loaded{canonical.generic_string(), std::move(text)};
     inputs.record(loaded);
     return loaded;
   };
@@ -329,17 +343,10 @@ int build(const Options &requested,
     library.harness = resolution::Library::Harness::Test;
   else if (options.harness == "bench")
     library.harness = resolution::Library::Harness::Bench;
-  auto tree = resolution::load(source, provider, diagnostics, library);
+  auto tree =
+      resolution::load(source, provider, diagnostics, library, sourceModules);
   if (tree && discovered) {
-    for (const auto &entry : tree->tests)
-      if (entry.path.size() > 1)
-        diagnostics.error(
-            "feature", entry.span,
-            "tests and benchmarks inside modules are not supported yet; "
-            "declare them in the root module of the source");
     *discovered = tree->tests;
-    if (!diagnostics.empty())
-      tree.reset();
   }
   // Executables and objects are reused when every input of the build,
   // as gathered while loading, matches a stored result.
