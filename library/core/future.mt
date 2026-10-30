@@ -186,6 +186,11 @@ pub enum Flow<S, R> { Next(S); Done((S, R)) }
 // of the loop agrees on `R` (`Unit` for a loop used as a statement).
 pub copy type LoopKind<R> {}
 pub fn next_iteration<S, R>(state: take S, kind: LoopKind<R>): Flow<S, R> { Flow::Next(state) }
+// The result of a loop that contains a `return`: it either leaves normally
+// with its `break` value or leaves the whole function with `F`.
+pub enum Exit<R, F> { Leave(R); Return(F) }
+pub fn leave<R, F>(value: take R, kind: LoopKind<Exit<R, F>>): Exit<R, F> { Exit::Leave(value) }
+pub fn give_up<R, F>(value: take F, kind: LoopKind<Exit<R, F>>): Exit<R, F> { Exit::Return(value) }
 pub fn finish_loop<S, R>(state: take S, value: take R): Flow<S, R> { Flow::Done((state, value)) }
 
 // Runs `step` over the state until it reports `Done`. The state or the future

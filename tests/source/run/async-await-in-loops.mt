@@ -117,6 +117,35 @@ async fn guarded(p: ptr<mut i32>): i32 {
     i
 }
 
+async fn early_return(limit: i32): i32 {
+    var total = 0
+    while total < 100 {
+        let v = await Count(1)
+        total = total + v
+        if total >= limit { return total + 1000 }
+    }
+    total + await Count(0)
+}
+
+async fn early_return_value_loop(limit: i32): i32 {
+    var k = 0
+    loop {
+        k = k + await Count(1)
+        if k == 84 { return 7 }
+        if k >= limit { break k }
+    }
+}
+
+async fn while_let(n: i32): i32 {
+    var pending: i32? = present(n)
+    var total = 0
+    while let present(left) = pending {
+        total = total + await Count(1)
+        pending = if left > 1 { present(left - 1) } else { none }
+    }
+    total
+}
+
 // Returns the output and the number of Pending polls.
 fn drive<F: Future<Output = i32>>(future: take F): (i32, i32) {
     let waker = noop_waker()
@@ -175,5 +204,15 @@ fn main(): i32 {
     var cancelled = 0
     abandon(guarded(core::ptr::from_mut(cancelled)))
     if cancelled != 2 + 100 { return 10 }
+    let k = drive(early_return(50))
+    if k.0 != 1084 || k.1 != 2 { return 13 }
+    let l = drive(early_return(1000))
+    if l.0 != 168 || l.1 != 3 { return 14 }
+    let m = drive(early_return_value_loop(100))
+    if m.0 != 7 { return 15 }
+    let n = drive(early_return_value_loop(10))
+    if n.0 != 42 { return 16 }
+    let o = drive(while_let(3))
+    if o.0 != 126 || o.1 != 3 { return 17 }
     0
 }
