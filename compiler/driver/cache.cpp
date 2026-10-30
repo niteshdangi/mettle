@@ -119,6 +119,10 @@ void BuildInputs::absent(const std::string &path) {
   inputs.emplace(path, "absent");
 }
 
+void BuildInputs::generated(const std::string &name, const std::string &text) {
+  inputs["generated:" + name] = "text:" + digest(text);
+}
+
 std::string
 BuildInputs::key(const Options &options,
                  const std::vector<resolution::Library::Package> &mounts,

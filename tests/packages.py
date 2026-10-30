@@ -347,6 +347,39 @@ def build_script_untracked_inputs():
     explained(app, expected=1, contains="unknown or malformed declaration")
 
 
+def procedural_macro():
+    app = packages("proc-macro/app")
+    macro = packages("proc-macro/genfn")
+    # The macro program generates `answer`; main returns answer() - 41.
+    text, built = explained(app)
+    assert "procedural macro 'make_fn!': rerun (no reproducible record)" in text, text
+    assert exit_code(built) == 0
+    text, built = explained(app)
+    assert "procedural macro 'make_fn!': reused (declared reproducible" in text, text
+    assert "cache hit" in last_cache_event(text), text
+    assert exit_code(built) == 0
+    # Changing a declared external input reruns the program and changes the
+    # expansion, so the compiled output must not be reused.
+    edit(macro / "spec.txt", "41", "42")
+    text, built = explained(app)
+    assert "procedural macro 'make_fn!': rerun (input 'spec.txt' changed)" in text, text
+    assert "cache miss" in last_cache_event(text), text
+    assert exit_code(built) == 1
+
+
+def procedural_macro_failure():
+    app = packages("proc-macro/app")
+    # A failure the program reports is a diagnostic at the invocation.
+    (app / "src/main.mt").write_text("make_fn!()\n\nfn main(): i32 { 0 }\n")
+    explained(app, expected=1,
+              contains=["error[macro]", "procedural macro 'make_fn!': make_fn! "
+                        "expects the name of the function"])
+    # An unsupported API major version is rejected before any program runs.
+    edit(packages("proc-macro/genfn/Mettle.toml"), "api = 1", "api = 2")
+    explained(app, expected=1,
+              contains="unsupported macro API major version 2")
+
+
 def package_options_need_package():
     source = evidence / "plain.mt"
     source.write_text("fn main(): i32 { 0 }\n")
@@ -891,6 +924,7 @@ CASES = [path_dependency, missing_lock_locked, lock_corruption,
          manifest_diagnostics, package_options_need_package, incremental_reuse,
          edit_invalidation, cache_dedup_and_bound, cache_corruption_and_clean,
          build_script, build_script_untracked_inputs,
+         procedural_macro, procedural_macro_failure,
          migrate_preserves_syntax_tree, run_forwards_args_and_exit_status,
          test_reports_pass_fail_ignored_and_isolates_panics,
          test_filter_exact, bench_reports_timing, fmt_normalizes_layout_only,

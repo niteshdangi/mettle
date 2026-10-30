@@ -2,6 +2,7 @@
 
 #include "diagnostics/diagnostics.h"
 #include "expansion/expand.h"
+#include "expansion/procedural.h"
 #include <optional>
 
 namespace mettle::expansion {
@@ -21,6 +22,14 @@ namespace mettle::expansion {
 // every matching, definition or repetition fault is a structured `macro`
 // diagnostic at the use site.
 //
+// `procedural` (may be null) names host-program macros that are invoked the
+// same way (`name!(...)`): the argument tokens go to the program (see
+// expansion/procedural.h), its text output is re-lexed and spliced in with
+// every token attributed to the invocation, and the result is expanded again.
+// A program failure, a protocol fault or output that does not lex is a
+// `macro` diagnostic at the invocation. A file-local `macro` of the same name
+// takes precedence.
+//
 // Returns nullopt when the source defines no macro or does not lex (the
 // parser then reports it); otherwise the generated source, which keeps the
 // original path. Its registered provenance maps every generated token back to
@@ -28,5 +37,6 @@ namespace mettle::expansion {
 // origin, and unchanged text exactly, so diagnostics keep their positions.
 std::optional<Source> expandMacros(const Source &source,
                                    Diagnostics &diagnostics,
-                                   const SourceAllocator &allocate);
+                                   const SourceAllocator &allocate,
+                                   const Procedures *procedural = nullptr);
 } // namespace mettle::expansion

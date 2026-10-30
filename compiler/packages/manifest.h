@@ -3,6 +3,7 @@
 #include "diagnostics/diagnostics.h"
 #include "packages/semver.h"
 #include "packages/toml.h"
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -23,6 +24,15 @@ struct DependencySpec {
 
 struct Target {
   std::string name, kind, source;
+  Span span;
+};
+
+// A procedural macro: a Mettle host program, relative to the package
+// directory, that `name!(...)` invocations run. `api` is the extension API
+// major version it requires.
+struct MacroDecl {
+  std::string name, source;
+  std::int64_t api = 0;
   Span span;
 };
 
@@ -47,6 +57,8 @@ struct Manifest {
   // that runs on the host before this package's consumers compile.
   std::optional<std::string> buildScript;
   Span buildScriptSpan;
+  // `[macros.NAME]` tables, in declaration order.
+  std::vector<MacroDecl> macros;
   // Absolute, normalized package directory.
   std::string directory;
   SourceId source = 0;

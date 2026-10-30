@@ -71,6 +71,56 @@ a rerun that regenerates unchanged tokens still reuses the compiled program.
 The contract is recorded in the build cache and rechecked (input hashes,
 variable values, hashes of every generated file) before reuse.
 
+### Procedural macros (L056)
+
+Status: implemented and verified on macOS arm64 (tests `procedural_macro` and
+`procedural_macro_failure` in `tests/packages.py`).
+
+A package declares host-program macros in `Mettle.toml`:
+
+```toml
+[macros.make_fn]
+source = "macros/make_fn.mt"   # a Mettle program, relative to the package
+api = 1                        # required extension API major version
+```
+
+`api` is required; a major version the compiler does not support is a
+`feature` diagnostic before any program is built or run. A package may declare
+macros and no library target. Macro names are global to the package graph (a
+duplicate is a `package` error); a file-local declarative `macro` of the same
+name shadows it. An invocation `make_fn!(...)` (any delimiter) is recognized in
+every source of the build, before parsing, like a declarative one.
+
+Each program is compiled for the host (cached like any program) and run once
+per distinct invocation in its package directory. The compiler writes a
+versioned, line-based request (`mettle-macro 1.0`, the macro name and one
+`tok KIND SPACED TEXT` line per argument token; the index is the token's
+identity) to its standard input and reads `mettle:` lines from its standard
+output: `text=` appends generated source, `error=` fails the invocation,
+`rerun-if-changed=`, `rerun-if-env-changed=` and `reproducible` declare the
+input contract. Escaping and the full format are in
+`compiler/expansion/procedural.h`; the library side is `std::macros`
+(`read_invocation`, `emit`, `fail`, `depends_on_file`, `depends_on_env`,
+`reproducible`). The generated text is re-lexed and re-parsed, nested macros in
+it are expanded, and every generated token is attributed to the invocation, so
+diagnostics in generated code point at the `name!(...)` use. A program
+failure, a protocol violation, a reported error or text that does not lex is a
+`macro` diagnostic at the invocation.
+
+Caching follows the build-script rule: a macro reruns on every build unless it
+declared `reproducible`; it is then reused only while its binary, request,
+declared files/directories and environment variables are unchanged
+(`--explain` shows `rerun (...)` or `reused`). Undeclared inputs therefore
+always force a rerun. Each response text is part of the consumer's build key,
+so a changed external input changes the output while an unchanged expansion
+reuses the cached compile. Tests: `tests/packages.py` (`procedural_macro`,
+`procedural_macro_failure`), fixtures in `tests/packages/proc-macro`.
+Known gaps: macros are not namespaced per package; no definition-site,
+fresh-identity or span-carrying token constructors or per-token diagnostics
+(an error points at the whole invocation); the program-side token API exposes
+tokens as text, not a structured tree; attribute and derive macros are not
+supported; only `name!(...)` invocations; no project isolation policy.
+
 ### Incremental builds and the build cache (T003)
 
 `mettle build` (executables and objects) keys its output by a SHA-256 over: the
@@ -216,7 +266,7 @@ that would change with its first differing line and exits 1 without writing;
 otherwise changed files are replaced atomically (temporary file and rename).
 
 `mettle lint FILE|PACKAGE [--allow|--warn|--deny RULE]... [build options]` is
-implemented, unverified (not yet built). It runs the same front end as `check`
+implemented and verified. It runs the same front end as `check`
 (parse, expansion, resolution, typing, ownership; any error is reported as usual
 and no lint runs) and then semantic lints over the checked program, never over
 raw text. Findings are structured diagnostics with spans and expansion
@@ -386,8 +436,8 @@ analysis reports that state rather than guessing a result from callers.
 
 `mettle lsp [--library-dir DIR] [--target TRIPLE] [--freestanding]` runs the
 language server (LSP 3.17, JSON-RPC with `Content-Length` framing on standard
-input/output; UTF-16 positions). T005 status: implemented, unverified (not yet
-built). It supports full and ranged text synchronization with
+input/output; UTF-16 positions). T005 status: implemented and verified on macOS
+arm64 (test `language_server`). It supports full and ranged text synchronization with
 `publishDiagnostics` (each open document is analyzed by the compiler front end
 on its in-memory text; editing a document re-analyzes the open documents that
 read it; parse errors still produce diagnostics), `hover`, `definition`,

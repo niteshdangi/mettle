@@ -27,6 +27,8 @@ struct Piece {
   // Written in a template of the expansion being built; only these may be
   // renamed for hygiene.
   bool authored = false;
+  // Written directly after the previous token of a procedural macro's output.
+  bool glued = false;
 };
 using Pieces = std::vector<Piece>;
 
@@ -92,7 +94,7 @@ Pieces lower(const Source &source, const std::vector<Token> &tokens) {
 // that were adjacent in the source stay adjacent; tokens pasted together from
 // different places never fuse.
 bool separated(const Piece *previous, const Piece &piece) {
-  if (!previous || newline(*previous) || newline(piece))
+  if (!previous || newline(*previous) || newline(piece) || piece.glued)
     return false;
   if (!piece.space) {
     static const std::set<std::string_view> tight{"(", "[", ".", ",", ")",
@@ -649,8 +651,9 @@ private:
 class Expander {
 public:
   Expander(const Source &source, Diagnostics &diagnostics,
-           const SourceAllocator &allocate)
-      : source(source), diagnostics(diagnostics), allocate(allocate) {}
+           const SourceAllocator &allocate, const Procedures *procedures)
+      : source(source), diagnostics(diagnostics), allocate(allocate),
+        procedures(procedures) {}
 
   std::optional<Source> run() {
     Diagnostics scratch;
@@ -666,7 +669,10 @@ public:
         definitions.push_back({i, close[i + 2]});
         i = close[i + 2];
       }
-    if (definitions.empty())
+    bool procedural = false;
+    for (std::size_t i = 0; i < pieces.size() && !procedural; ++i)
+      procedural = procedure(pieces, i);
+    if (definitions.empty() && !procedural)
       return std::nullopt;
     Diagnostics::SourceContext context(diagnostics, source);
     for (const auto &definition : definitions)
@@ -678,6 +684,7 @@ private:
   const Source &source;
   Diagnostics &diagnostics;
   const SourceAllocator &allocate;
+  const Procedures *procedures;
   Pieces pieces;
   std::vector<std::size_t> close;
   std::vector<std::pair<std::size_t, std::size_t>> definitions;
@@ -770,6 +777,18 @@ private:
     return found == macros.end() ? nullptr : &found->second;
   }
 
+  // Whether `in[i]` starts an invocation of a procedural macro that no
+  // file-local macro shadows.
+  bool procedure(const Pieces &in, std::size_t i) const {
+    if (!procedures || in[i].kind != TokenKind::Word || i + 2 >= in.size() ||
+        !symbol(in[i + 1], "!") || in[i + 1].space || !opener(in[i + 2]))
+      return false;
+    if (i > 0 && (symbol(in[i - 1], ".") || symbol(in[i - 1], "::")))
+      return false;
+    return procedures->names.contains(in[i].text) &&
+           !macros.contains(in[i].text);
+  }
+
   std::string path() const {
     std::string result;
     for (const auto &name : chain)
@@ -786,12 +805,15 @@ private:
     bool ok = true;
     for (std::size_t i = 0; i < in.size();) {
       const auto *macro = invoked(in, i);
-      if (!macro) {
+      auto host = !macro && procedure(in, i);
+      if (!macro && !host) {
         out.push_back(in[i++]);
         continue;
       }
       auto last = inner[i + 2];
-      if (!broken.contains(macro->name))
+      if (host)
+        ok &= invokeProcedure(in, i, last, out, depth, use);
+      else if (!broken.contains(macro->name))
         ok &= invoke(*macro, in, i, last, out, depth, use);
       i = last + 1;
       if (out.size() > limits::tokens) {
@@ -846,6 +868,96 @@ private:
                    "' matches this invocation (" +
                    std::to_string(macro.rules.size()) + " rule(s) tried)");
     return false;
+  }
+
+  static const char *kindName(TokenKind kind) {
+    switch (kind) {
+    case TokenKind::Word:
+      return "word";
+    case TokenKind::Integer:
+      return "integer";
+    case TokenKind::Symbol:
+      return "symbol";
+    case TokenKind::Newline:
+      return "newline";
+    case TokenKind::Character:
+      return "character";
+    case TokenKind::Byte:
+      return "byte";
+    case TokenKind::Floating:
+      return "floating";
+    case TokenKind::QuotedWord:
+      return "quoted-word";
+    case TokenKind::Text:
+      return "text";
+    case TokenKind::PrefixedText:
+      return "prefixed-text";
+    case TokenKind::FormatOpen:
+      return "format-open";
+    case TokenKind::FormatPiece:
+      return "format-piece";
+    case TokenKind::FormatHoleOpen:
+      return "format-hole-open";
+    case TokenKind::FormatHoleClose:
+      return "format-hole-close";
+    case TokenKind::FormatClose:
+      return "format-close";
+    default:
+      return "other";
+    }
+  }
+
+  // Runs a host-program macro on the invocation `in[at..last]` and expands the
+  // tokens it produced. Every produced token is attributed to the invocation.
+  bool invokeProcedure(const Pieces &in, std::size_t at, std::size_t last,
+                       Pieces &out, unsigned depth, Span use) {
+    const auto &name = in[at].text;
+    if (depth >= recursionLimit) {
+      error(use, "macro recursion limit of " + std::to_string(recursionLimit) +
+                     " exceeded while expanding '" + name +
+                     "!'; expansion path: " + path());
+      return false;
+    }
+    chain.push_back(name);
+    struct Pop {
+      std::vector<std::string> &chain;
+      ~Pop() { chain.pop_back(); }
+    } pop{chain};
+    Pieces arguments(in.begin() + at + 3, in.begin() + last);
+    for (auto &piece : arguments)
+      piece.authored = false;
+    Pieces expanded;
+    if (!expandPieces(arguments, expanded, depth + 1, use))
+      return false;
+    std::vector<ProcedureToken> tokens;
+    for (const auto &piece : expanded)
+      tokens.push_back({kindName(piece.kind), piece.text, piece.space});
+    auto response = procedures->run(name, encodeRequest(name, tokens));
+    auto prefix = "procedural macro '" + name + "!'";
+    if (!response.fault.empty()) {
+      error(use, prefix + " failed: " + response.fault);
+      return false;
+    }
+    if (!response.errors.empty()) {
+      for (const auto &message : response.errors)
+        error(use, prefix + ": " + message);
+      return false;
+    }
+    Source produced{source.path, response.text, source.id};
+    Diagnostics scratch;
+    auto lexed = tokenize(produced, scratch);
+    if (!scratch.empty()) {
+      error(use, prefix + " produced text that does not lex");
+      return false;
+    }
+    Pieces generated = lower(produced, lexed);
+    for (auto &piece : generated) {
+      piece.glued = !piece.space;
+      piece.origin = use;
+    }
+    if (!generated.empty())
+      generated.front().glued = false;
+    return expandPieces(generated, out, depth + 1, use);
   }
 
   bool instantiate(const Macro &macro, const std::vector<Node> &nodes,
@@ -1047,21 +1159,23 @@ private:
         continue;
       }
       const auto *macro = invoked(pieces, i);
-      if (!macro) {
+      auto host = !macro && procedure(pieces, i);
+      if (!macro && !host) {
         ++i;
         continue;
       }
+      auto name = host ? pieces[i].text : macro->name;
       auto first = i, last = close[i + 2];
       Span use{pieces[first].origin.begin, pieces[last].origin.end, source.id};
       copy(use.begin);
       cursor = use.end;
       i = last + 1;
-      if (broken.contains(macro->name))
+      if (macro && broken.contains(name))
         continue;
       chain.clear();
       Pieces call(pieces.begin() + first, pieces.begin() + last + 1), result;
       if (expandPieces(call, result, 0, use))
-        emit(result, use, macro->name);
+        emit(result, use, name);
     }
     copy(source.text.size());
     if (failed)
@@ -1078,7 +1192,8 @@ private:
 
 std::optional<Source> expandMacros(const Source &source,
                                    Diagnostics &diagnostics,
-                                   const SourceAllocator &allocate) {
-  return Expander(source, diagnostics, allocate).run();
+                                   const SourceAllocator &allocate,
+                                   const Procedures *procedural) {
+  return Expander(source, diagnostics, allocate, procedural).run();
 }
 } // namespace mettle::expansion

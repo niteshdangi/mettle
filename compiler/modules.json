@@ -33,9 +33,9 @@
     {
       "name": "expansion", "directory": "expansion", "kind": "STATIC",
       "dependencies": ["syntax", "source", "diagnostics", "support"],
-      "public_headers": ["expansion/expand.h", "expansion/macros.h", "expansion/harness.h"],
+      "public_headers": ["expansion/expand.h", "expansion/macros.h", "expansion/procedural.h", "expansion/harness.h"],
       "files": ["expansion/expand.h", "expansion/macros.h", "expansion/detail.h", "expansion/expand.cpp", "expansion/cfg.cpp", "expansion/derive.cpp", "expansion/macros.cpp",
-        "expansion/harness.h", "expansion/harness.cpp"]
+        "expansion/procedural.h", "expansion/procedural.cpp", "expansion/harness.h", "expansion/harness.cpp"]
     },
     {
       "name": "documentation", "directory": "documentation", "kind": "STATIC",
@@ -171,6 +171,7 @@
       "files": ["driver/main.cpp", "driver/options.h", "driver/options.cpp", "driver/run.cpp",
         "driver/inspect.h", "driver/inspect.cpp", "driver/output.h", "driver/output.cpp",
         "driver/cache.h", "driver/cache.cpp", "driver/build_script.h", "driver/build_script.cpp",
+        "driver/observe.h", "driver/observe.cpp", "driver/procedural.h", "driver/procedural.cpp",
         "driver/execute.h", "driver/execute.cpp", "driver/document.h", "driver/document.cpp",
         "driver/language_server.h", "driver/language_server.cpp"]
     }

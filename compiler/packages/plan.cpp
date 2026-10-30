@@ -256,6 +256,8 @@ private:
                               manifest.name + "' would both mount as module '" +
                               entry->first + "'");
       const auto *library = manifest.library();
+      if (!library && !manifest.macros.empty())
+        continue;
       if (!library) {
         diagnostics.error("package", manifest.nameSpan,
                           "package '" + manifest.name +
@@ -417,10 +419,32 @@ private:
                                 fs::canonical(script, error).generic_string(),
                                 package.candidate.kind == SourceKind::Root});
       }
+      for (const auto &macro : manifest.macros) {
+        auto program = fs::path(manifest.directory) / macro.source;
+        if (!fs::is_regular_file(program)) {
+          diagnostics.error("package", macro.span,
+                            "macro source '" + macro.source +
+                                "' does not exist");
+          return std::nullopt;
+        }
+        for (const auto &known : plan.macros)
+          if (known.name == macro.name) {
+            diagnostics.error("package", macro.span,
+                              "macro '" + macro.name +
+                                  "' is declared by both '" + known.package +
+                                  "' and '" + manifest.name + "'");
+            return std::nullopt;
+          }
+        plan.macros.push_back({macro.name, manifest.name,
+                               toString(manifest.version), manifest.directory,
+                               fs::canonical(program, error).generic_string()});
+      }
       if (package.candidate.kind == SourceKind::Root) {
         plan.features = package.features;
         continue;
       }
+      if (!manifest.library())
+        continue;
       plan.mounts.push_back(
           {moduleName(manifest.name),
            fs::canonical(
