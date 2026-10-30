@@ -2,6 +2,7 @@
 // allocator hook (see `alloc::alloc`), never on an operating system.
 pub module alloc;
 pub module boxed;
+pub module future;
 pub module rc;
 pub module arc;
 pub module binary_heap;

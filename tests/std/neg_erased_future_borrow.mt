@@ -1,0 +1,18 @@
+// expect-error: type
+import alloc::future;
+import core::future::{Context, Future, Poll};
+
+type Borrowed<region r> { value: read i32 from r }
+impl<region r> Borrowed<region r> implements Future {
+    type Output = i32
+    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> {
+        let me = unsafe { self.get_unchecked_mut() }
+        Poll::Ready(*me.value)
+    }
+}
+
+fn main(): i32 {
+    let value = 5
+    let erased = future::erase(Borrowed(read value))
+    0
+}

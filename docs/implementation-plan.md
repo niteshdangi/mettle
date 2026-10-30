@@ -918,6 +918,40 @@ parent destruction and an uncooperative child poll. Check actual cleanup versus
 cancellation requests; no hidden mandatory boxing or default executor in core.
 Exercise an async network service and P10 without weaker lifetime guarantees.
 
+I11 library sub-batch, implemented, unverified (not yet built): `alloc::future`
+adds explicitly heap-erased `Static` futures with a fixed-address payload and
+typed poll/drop dispatch. The local `std::task::Executor` retains task
+registrations independently of handles and wakes; owned `spawn` requires
+`Transferable + Static`, returns a result-bearing `JoinHandle`, and drop/abort
+cancels. Poll and destruction panic codes are reported through the handle.
+Close and completion serialize with queue insertion; foreign wakers own only
+task metadata. Reentrant cancellation defers destruction until poll returns;
+reentrant joins on an active executor are rejected. The synchronous local
+`task::scope` drives ready children and cancels suspended children before exit,
+including on parent unwind; its private executor retains children even when
+their handles are forgotten. It does not provide an asynchronous scope whose
+children remain suspended across parent polls. Completed task metadata stays
+registered until executor destruction. Tests added or updated:
+`tests/std/{erased_future,direct_borrowed_future,neg_erased_future_borrow,
+neg_spawn_borrowed_future,neg_task_scope_body_local,task_owned,
+task_panic_isolation,task_scope,task_scope_async,async_executor}.mt`. Raw-waker
+construction now requires thread-safe callbacks and `Waker` is Transferable
+and Shareable. None has been built or run at this revision; this is not I11
+completion or sanitizer evidence.
+
+Remaining I11 work includes async I/O and a full asynchronous borrowed-scope
+interface using the poll epochs in memory-and-concurrency section 6, including
+its independent soundness/race review and sanitizer qualification. Borrowed
+heap-erased futures require region-carrying erasure. Async interface
+declarations currently hit the bodyless-async feature diagnostic in
+`syntax/parser/declarations.cpp::function`. The checker/IR async implementation
+must preserve the async modifier on interface declarations, publish per-method
+associated future families carrying the declared receiver/argument regions and
+error outcome, and bind each implementation's concrete state to its witness;
+erased dispatch must explicitly declare its future erasure contract.
+P10 has only a backlog entry, not a specified benchmark source; an async
+network service, measurement protocol and equivalent comparator remain open.
+
 I11 status (partial; built and run on macOS arm64 Release and Debug): `core::future`
 has `Future`/`Poll`/`Context`/`Waker` (vtable protocol, no allocation) and the
 inline state types `Lazy`, `Then`, `Defer`; `std::task` is the optional executor
@@ -989,8 +1023,8 @@ typed liveness with locals as fields of one state, loops as back-edges and
 borrows across an await as pinned self-references) remains open. Also not
 done: borrows of locals across an await beyond the explicit-binding diagnostic
 (the continuation captures by move, so the checker rejects the rest), async
-interface methods and explicit erased futures, scoped/borrowed tasks,
-cancellation, panic isolation in workers, P10. Drop order deviation, accepted
+interface methods, region-carrying erased futures, asynchronous borrowed-task
+scopes, async I/O and P10. Drop order deviation, accepted
 and documented: a local that no continuation uses is dropped when its segment
 ends at the await, not at function exit, because keeping it alive needs a move
 analysis of which locals are still initialized (a rebinding of an already

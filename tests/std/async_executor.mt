@@ -1,6 +1,9 @@
 // expect-exit: 101
 // expect-stderr: async future polled after completion
 import std::task;
+import std::sync::mutex;
+import alloc::arc;
+import alloc::arc::Arc;
 import core::future::{Future, Poll, Context};
 
 type Count { left: i32 }
@@ -29,22 +32,30 @@ async fn sum(a: i32): i32 {
     let y = await task::yield_now()
     a + x
 }
-async fn record(p: ptr<mut i32>, v: i32) {
+async fn record(log: take Arc<mutex::Mutex<i32>>, v: i32) {
     await task::yield_now();
-    unsafe { *p = *p * 10 + v }
+    let locked = capture log.get().lock()
+    var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
+    *guard.get_mut() = *guard.get() * 10 + v
 }
 
 fn main(): i32 {
     if task::block_on(sum(3)) != 8 { return 1 }
 
     // Executor: two tasks interleave through yield_now.
-    var log = 0
+    let log = arc::new(mutex::new(0))
     let ex = task::executor()
-    ex.spawn(record(core::ptr::from_mut(log), 1))
-    ex.spawn(record(core::ptr::from_mut(log), 2))
+    let first = ex.spawn(record(log.retain(), 1))
+    let second = ex.spawn(record(log.retain(), 2))
     if ex.pending() != 2usize { return 2 }
     ex.run()
-    if ex.pending() != 0usize || log != 12 { return 3 }
+    let first_result = capture first.join()
+    let second_result = capture second.join()
+    match take first_result { success(v) => {}, failure(e) => { return 3 } }
+    match take second_result { success(v) => {}, failure(e) => { return 3 } }
+    let locked = capture log.get().lock()
+    let value = match take locked { success(g) => *g.get(), failure(e) => -1 }
+    if ex.pending() != 0usize || value != 12 { return 3 }
 
     // Dropping an unfinished future drops live state exactly once.
     var dropped = 0
