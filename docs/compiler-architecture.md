@@ -548,8 +548,13 @@ lowering from the declaration, closure or default body) carries one source
 Only the LLVM adapter (`backend/llvm/debug.*`, active under the driver's `-g`)
 turns spans into `DILocation`s with line tables built from the loaded sources,
 and builds `DISubprogram`, `DILocalVariable` and type metadata (layout offsets
-come from `types/layout.h`). A final pass drops locations that would not
-verify. Without `-g` the adapter emits no metadata.
+come from `types/layout.h`). The driver supplies the diagnostics provenance
+mapping: copied text retains its source offset and macro-produced tokens use
+the invocation span. Closure environment fields use captured place names.
+Sums use a discriminator and per-variant payload structures in a DWARF variant
+part; offsets come from the compiler layout, including overlapping payloads.
+A final pass drops locations that would not verify. Without `-g` the adapter
+emits no metadata. These changes are implemented but not yet built or verified.
 
 ## 6. Compilation state, errors and side effects
 

@@ -376,7 +376,7 @@ int build(const Options &requested,
   }
   if (options.command == "check")
     return 0;
-  int status = emit(options, source, *program, diagnostics.registeredSources());
+  int status = emit(options, source, *program, diagnostics);
   if (status == 0 && cacheKey && store) {
     bool stored =
         store->put(*cacheKey, options.output, options.emit == "executable");

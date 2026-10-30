@@ -1025,10 +1025,14 @@ doctests, machine-readable test results, test timeouts, tests and benchmarks
 outside the root module, benchmark handles, LSP and debugger
 workflows. The milestone is not complete.
 
-I12 status, source-level debug info: `-g` DWARF (compile unit, subprograms,
-line table, locals/parameters with basic/pointer/array/product types) is
-implemented and verified; sums, owners, erased values and
-async states are opaque, and scopes/inlining/CodeView remain open.
+I12/T006 status, source-level debug info: the earlier basic `-g` DWARF
+implementation was verified. Product/generic/closure capture, sum variant and
+length-bearing pointer metadata, macro invocation locations and LLDB summaries
+are implemented, unverified (not yet built). The new package DWARF regression
+has not run. Async combinator fields and optional tags describe nested state,
+but a source await-point discriminator/display is not yet established;
+erasure, moved-value liveness, scopes, inlining and CodeView remain open.
+T006 and I12 are not complete.
 
 I13 closes remaining operation mappings with compiled native declarations and
 per-operation semantic evidence, including supporting protocols, reexports,

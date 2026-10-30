@@ -1,6 +1,8 @@
 #include "backend/llvm/debug.h"
 #include "types/layout.h"
+#include "llvm/ADT/APInt.h"
 #include "llvm/BinaryFormat/Dwarf.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/Metadata.h"
 #include <algorithm>
 
@@ -55,10 +57,11 @@ llvm::DISubprogram *DebugInfo::attach(llvm::Function &function,
                                       bool artificial) {
   auto *file = rootFile;
   unsigned line = 0;
-  if (auto *found = known(source.span) ? info(source.span.source) : nullptr) {
+  auto span = request.sourceSpan ? request.sourceSpan(source.span) : source.span;
+  if (auto *found = known(span) ? info(span.source) : nullptr) {
     file = found->file;
     line = position(found->lines,
-                    std::min(source.span.begin, found->source->text.size()))
+                    std::min(span.begin, found->source->text.size()))
                .first;
   }
   auto local = function.hasLocalLinkage();
@@ -88,6 +91,8 @@ void DebugInfo::begin(llvm::IRBuilder<> &builder,
 llvm::DILocation *DebugInfo::location(Span span) {
   if (!current)
     return nullptr;
+  if (request.sourceSpan)
+    span = request.sourceSpan(span);
   auto *found = known(span) ? info(span.source) : nullptr;
   if (!found)
     return last;
@@ -126,7 +131,8 @@ void DebugInfo::declare(llvm::IRBuilder<> &builder, const ir::Local &local,
     return;
   if (borrowed)
     valueType = dib.createPointerType(valueType, 64);
-  auto *found = known(local.span) ? info(local.span.source) : nullptr;
+  auto span = request.sourceSpan ? request.sourceSpan(local.span) : local.span;
+  auto *found = known(span) ? info(span.source) : nullptr;
   auto *file = found ? found->file : current->getFile();
   auto *place = location(local.span);
   auto *variable =
@@ -159,7 +165,7 @@ llvm::DIType *DebugInfo::describe(Type type) {
 
 llvm::DIType *DebugInfo::build(Type type) {
   const auto &store = *program.types;
-  if (type == Type::Unit || type == Type::Never || type == Type::Unknown)
+  if (type == Type::Unknown)
     return nullptr;
   const auto layout = objectLayout(store, type);
   if (!layout)
@@ -178,8 +184,7 @@ llvm::DIType *DebugInfo::build(Type type) {
                                    : llvm::dwarf::DW_ATE_unsigned);
   if (store.isOpaque(type))
     return describe(store.product(type).fields[0].type);
-  // Sums, erased values, slices and fat pointers appear as sized structures
-  // without members.
+  // Erased values and unsupported representations retain their exact size.
   auto opaque = [&] {
     return dib.createStructType(unit, name, rootFile, 0, bits, alignment,
                                 llvm::DINode::FlagZero, nullptr,
@@ -190,11 +195,27 @@ llvm::DIType *DebugInfo::build(Type type) {
   if (store.isView(type) || store.isPointer(type)) {
     auto payload = store.isView(type) ? store.view(type).payload
                                       : store.pointer(type).payload;
-    if (store.pointerMetadata(payload) != PointerMetadata::None)
+    auto metadata = store.pointerMetadata(payload);
+    auto pointerBits = store.targetPointerBits();
+    if (metadata == PointerMetadata::None)
+      return dib.createPointerType(describe(payload), pointerBits, 0,
+                                   std::nullopt, name);
+    if (metadata != PointerMetadata::ElementCount)
       return opaque();
-    return dib.createPointerType(describe(payload), 64, 0, std::nullopt, name);
+    auto element = store.isSlice(payload) ? store.slice(payload).element
+                                          : payload;
+    auto *pointer = dib.createPointerType(describe(element), pointerBits);
+    auto *length = describe(Type::Usize);
+    std::vector<llvm::Metadata *> members{
+        dib.createMemberType(unit, "ptr", rootFile, 0, pointerBits, pointerBits,
+                             0, llvm::DINode::FlagZero, pointer),
+        dib.createMemberType(unit, "len", rootFile, 0, pointerBits, pointerBits,
+                             pointerBits, llvm::DINode::FlagZero, length)};
+    return dib.createStructType(unit, name, rootFile, 0, bits, alignment,
+                                llvm::DINode::FlagZero, nullptr,
+                                dib.getOrCreateArray(members));
   }
-  if (!store.isProduct(type) || store.isSum(type))
+  if (!store.isProduct(type))
     return opaque();
   const auto &record = store.product(type);
   if (record.vector || record.layout.unionType)
@@ -214,8 +235,63 @@ llvm::DIType *DebugInfo::build(Type type) {
   auto *temporary = dib.createReplaceableCompositeType(
       llvm::dwarf::DW_TAG_structure_type, name, unit, rootFile, 0, 0, bits,
       alignment);
+  types[type.index()] = temporary;
   std::vector<llvm::Metadata *> members;
-  for (std::size_t i = 0; i < record.fields.size(); ++i)
+  if (store.isSum(type) && !record.fields.empty() &&
+      record.layout.kind != LayoutKind::Transparent) {
+    auto tagIdentity = record.layout.discriminants.empty()
+                           ? record.fields[0].type
+                           : record.layout.tag;
+    auto *tagType = describe(tagIdentity);
+    auto tagLayout = objectLayout(store, tagIdentity);
+    if (tagType && tagLayout) {
+      auto *tag = dib.createMemberType(
+          temporary, "discriminant", rootFile, 0, tagLayout->size * 8,
+          static_cast<std::uint32_t>(tagLayout->alignment * 8),
+          layout->fields[0] * 8, llvm::DINode::FlagZero, tagType);
+      std::vector<llvm::Metadata *> variants;
+      for (std::size_t index = 0; index < record.variants.size(); ++index) {
+        const auto &variant = record.variants[index];
+        std::vector<llvm::Metadata *> fields;
+        for (auto fieldIndex : variant.fields) {
+          const auto &field = record.fields[fieldIndex];
+          auto fieldLayout = objectLayout(store, field.type);
+          if (auto *member = describe(field.type); member && fieldLayout)
+            fields.push_back(dib.createMemberType(
+                temporary, field.name, rootFile, 0, fieldLayout->size * 8,
+                static_cast<std::uint32_t>(fieldLayout->alignment * 8),
+                layout->fields[fieldIndex] * 8, llvm::DINode::FlagZero,
+                member));
+        }
+        auto *payload = dib.createStructType(
+            unit, variant.name, rootFile, 0, bits, alignment,
+            llvm::DINode::FlagZero, nullptr, dib.getOrCreateArray(fields));
+        auto width = static_cast<unsigned>(tagLayout->size * 8);
+        llvm::APInt value(width, index);
+        if (!record.layout.discriminants.empty()) {
+          const auto &literal = record.layout.discriminants[index];
+          value = llvm::APInt(128, literal.magnitude).zextOrTrunc(width);
+          if (literal.negative)
+            value = -value;
+        }
+        auto *constant = llvm::ConstantInt::get(module.getContext(), value);
+        variants.push_back(dib.createVariantMemberType(
+            temporary, variant.name, rootFile, 0, bits, alignment, 0, constant,
+            llvm::DINode::FlagZero, payload));
+      }
+      members.push_back(dib.createVariantPart(
+          temporary, "", rootFile, 0, bits, alignment, llvm::DINode::FlagZero,
+          tag, dib.getOrCreateArray(variants)));
+    }
+    auto *composite = dib.createStructType(
+        unit, name, rootFile, 0, bits, alignment, llvm::DINode::FlagZero,
+        nullptr, dib.getOrCreateArray(members));
+    return dib.replaceTemporary(llvm::TempMDNode(temporary), composite);
+  }
+  auto first = store.isSum(type) && record.layout.kind == LayoutKind::Transparent
+                   ? 1u
+                   : 0u;
+  for (std::size_t i = first; i < record.fields.size(); ++i)
     if (auto *member = describe(record.fields[i].type)) {
       const auto &field = record.fields[i];
       auto fieldLayout = objectLayout(store, field.type);

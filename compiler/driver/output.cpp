@@ -74,7 +74,7 @@ int ioFailure(const std::string &action, const std::error_code &error) {
 } // namespace
 int emit(const Options &options, const Source &source,
          const ir::VerifiedProgram &program,
-         const std::vector<Source> &sources) {
+         const Diagnostics &diagnostics) {
   std::error_code fileError;
   auto inputPath = std::filesystem::weakly_canonical(source.path, fileError);
   if (!fileError && inputPath == std::filesystem::weakly_canonical(
@@ -170,7 +170,9 @@ int emit(const Options &options, const Source &source,
     }
     // The comp_dir is the root source's directory, never a temporary path.
     mettle::backend::DebugInfoRequest debugRequest{
-        sources, std::filesystem::path(source.path).parent_path().string()};
+        diagnostics.registeredSources(),
+        std::filesystem::path(source.path).parent_path().string(),
+        [&diagnostics](Span span) { return diagnostics.debugSpan(span); }};
     auto module = mettle::backend::lower(
         program, context, checked, options.target, options.freestanding,
         options.debugInfo && options.emit != "ir" ? &debugRequest : nullptr);

@@ -318,25 +318,44 @@ Moved/uninitialized values must not be presented as live valid values.
 Optimization may eliminate values; report optimized-out rather than inventing
 their contents. Static region analysis does not require runtime region objects.
 
-Status (I12, implemented and verified): `mettle build -g`
+Status (I12/T006, partial; changes implemented, unverified and not yet built):
+`mettle build -g`
 emits DWARF 4 through `llvm::DIBuilder` in the LLVM adapter
 (`backend/llvm/debug.*`): a compile unit and file per source, a subprogram per
 source function (source name; linkage name is the symbol), a line-table
 location on every instruction from the IR instruction spans, and a
 `DW_TAG_variable`/`DW_TAG_formal_parameter` per named local with basic,
-pointer, array and product (members at the compiler layout offsets) types. The
-comp dir is the root source's directory, so output is deterministic; without
-`-g` output is byte-identical. `-g` is explicit (the `debug` profile does not
+pointer, array and product (members at the compiler layout offsets) types.
+The new metadata describes captured places by name, generic products with
+their instantiated Mettle spelling, length-bearing pointers as `{ptr, len}`,
+and tagged sums using a DWARF variant part with the physical discriminator and
+per-variant fields. Explicit integer enum representations use their actual
+discriminants; transparent enums retain a product-like description. Macro
+tokens use the invocation location in line tables. The current async lowering
+uses library combinators such as `Then` and `Defer`, whose named members and
+optional tags expose their nested state; it does not provide a single
+source-await-point discriminator. Another lowering implementation must retain
+readable field names and expose its actual state/discriminant in its type.
+
+For LLDB, import `tools/debug/mettle_lldb.py` with
+`command script import /path/to/mettle/tools/debug/mettle_lldb.py`. It registers
+best-effort summaries for native `Vec`, `String`, text views, optionals and
+outcomes; text reads are capped at 256 bytes. Summaries do not execute program
+code and report unavailable data rather than guessing. LLDB support and the
+updated DWARF regression have not yet been built or run.
+
+The comp dir is the root source's directory; without `-g` the adapter emits no
+debug metadata. `-g` is explicit (the `debug` profile does not
 imply it), and `-g` builds bypass the build cache. On Darwin an executable's
 DWARF stays in the temporary object, so the link step runs `dsymutil` to write
 `OUTPUT.dSYM` (warning if it is missing); `--emit object` keeps DWARF in the
 object. Gaps: subprogram types lack parameter/return types; locals are
 visible from function entry (no lexical scopes, so values before
-initialization are garbage); sums, optionals, owners, erased values, fat
-pointers and async states are opaque sized structs; no inlining/monomorphization
-records, no CodeView/PDB, no moved-value liveness. Evidence: the packages
-`debug_info` case, and every host run case built with `-g` runs unchanged and
-passes `llvm-dwarfdump --verify`.
+initialization are garbage); erased/witness pointers, some unsupported layouts
+and async await-point identity remain incomplete; no inlining/monomorphization
+records, no CodeView/PDB, no moved-value liveness. Prior baseline evidence
+covered the original packages `debug_info` case and host run cases under `-g`;
+it does not verify the new metadata or formatter.
 
 Optional Rust bridges build as separate interoperability packages with explicit
 Rust toolchain/ABI adapters. They do not introduce a mandatory rustc dependency

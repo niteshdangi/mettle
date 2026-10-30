@@ -119,6 +119,38 @@ public:
   std::vector<Diagnostic> items;
   // Every source whose text was read, for consumers mapping spans to lines.
   const std::vector<Source> &registeredSources() const { return sources; }
+  // Debug locations use the invocation for macro-produced tokens, while
+  // unchanged copied text keeps its original offset.
+  Span debugSpan(Span span) const {
+    for (std::size_t depth = 0; depth < generations.size(); ++depth) {
+      auto generation = std::find_if(
+          generations.begin(), generations.end(),
+          [&](const Generation &entry) { return entry.source == span.source; });
+      if (generation == generations.end())
+        break;
+      auto next = generation->origin;
+      auto mapping = std::upper_bound(
+          generation->mappings.begin(), generation->mappings.end(), span.begin,
+          [](std::size_t offset, const Generation::Mapping &entry) {
+            return offset < entry.begin;
+          });
+      if (mapping != generation->mappings.begin()) {
+        --mapping;
+        if (span.begin < mapping->end) {
+          if (mapping->exact) {
+            next = mapping->target;
+            next.begin += span.begin - mapping->begin;
+          } else if (!mapping->description.empty()) {
+            next = mapping->origin;
+          } else {
+            next = mapping->target;
+          }
+        }
+      }
+      span = next;
+    }
+    return span;
+  }
 
 private:
   SourceId currentSource = 0;

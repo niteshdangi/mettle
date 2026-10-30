@@ -588,12 +588,23 @@ def debug_info():
         return
     source = evidence / "debuggee.mt"
     source.write_text(
+        "macro twice { ($x:expr) => { $x * 2 }; }\n"
+        "type Pair<T> { first: T; second: T }\n"
+        "@layout(C,u8)\n"
+        "copy enum Choice { Empty = 7; Value(i64) = 9 }\n"
         "fn add_up(base: i32): i32 {\n"
-        "    let doubled: i32 = base * 2\n"
+        "    let doubled: i32 = twice!(base)\n"
         "    doubled + 1\n"
         "}\n"
         "fn main(): i32 {\n"
-        "    add_up(20) - 41\n"
+        "    let pair: Pair<i64> = Pair::<i64>(20i64, 22i64)\n"
+        "    let seed: i32 = 7\n"
+        "    let closure = fn(): i32 { seed }\n"
+        "    let choice = Choice::Value(42i64)\n"
+        "    match choice {\n"
+        "        Choice::Empty => 1,\n"
+        "        Choice::Value(_) => add_up(20) - 41 + closure() - 7\n"
+        "    }\n"
         "}\n")
     plain = [evidence / "plain1.o", evidence / "plain2.o"]
     debug = [evidence / "debug1.o", evidence / "debug2.o"]
@@ -605,16 +616,33 @@ def debug_info():
     assert debug[0].read_bytes() == debug[1].read_bytes()
     assert plain[0].read_bytes() != debug[0].read_bytes()
     assert b"debuggee.mt" not in plain[0].read_bytes()
+    subprocess.run([str(dwarfdump), "--verify", str(debug[0])],
+                   text=True, capture_output=True, check=True)
     info = subprocess.run([str(dwarfdump), "--debug-info", str(debug[0])],
                           text=True, capture_output=True, check=True).stdout
     assert "DW_TAG_compile_unit" in info, info
     assert "DW_TAG_subprogram" in info and '"add_up"' in info, info
     assert "DW_TAG_variable" in info and '"doubled"' in info, info
     assert "DW_TAG_formal_parameter" in info and '"base"' in info, info
+    assert '"Pair<i64>"' in info, info
+    assert re.search(r'DW_TAG_member(?:(?!DW_TAG_).)*"seed"',
+                     info, re.DOTALL), info
+    assert "DW_TAG_variant_part" in info and '"Value"' in info, info
+    for discriminant in ("7", "9"):
+        assert re.search(r"DW_AT_discr_value\s*\(\s*(?:0x0*)?" +
+                         discriminant + r"\b", info), info
     assert "debuggee.mt" in info, info
     lines = subprocess.run([str(dwarfdump), "--debug-line", str(debug[0])],
                            text=True, capture_output=True, check=True).stdout
-    assert any(row.split()[1:2] == ["3"] for row in lines.splitlines()
+    invocation_line = next(i for i, line in enumerate(
+        source.read_text().splitlines(), 1) if "twice!(base)" in line)
+    assert any(row.split()[1:2] == [str(invocation_line)]
+               for row in lines.splitlines()
+               if row.startswith("0x")), lines
+    return_line = next(i for i, line in enumerate(
+        source.read_text().splitlines(), 1) if "doubled + 1" in line)
+    assert any(row.split()[1:2] == [str(return_line)]
+               for row in lines.splitlines()
                if row.startswith("0x")), lines
 
 

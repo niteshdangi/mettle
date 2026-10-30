@@ -4,6 +4,7 @@
 #include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -16,6 +17,7 @@ namespace mettle::backend {
 struct DebugInfoRequest {
   const std::vector<Source> &sources;
   std::string directory;
+  std::function<Span(Span)> sourceSpan;
 };
 
 // Source-level DWARF for one module. It owns the DIBuilder, maps spans to
