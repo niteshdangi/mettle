@@ -28,11 +28,21 @@ struct Mount {
   std::vector<std::string> features;
 };
 
+// A package's `[build] script`, run on the host before consumers compile.
+struct BuildScript {
+  std::string package, version;
+  // Absolute package directory and canonical script source.
+  std::string directory, source;
+  bool root = false;
+};
+
 struct Plan {
   std::string package, version;
   // Source file of the selected executable target.
   std::string root;
   std::vector<Mount> mounts;
+  // Build scripts of the root and its dependencies, in resolution order.
+  std::vector<BuildScript> scripts;
   // Features the resolution enabled for the root package, sorted.
   std::vector<std::string> features;
   // Content identity of everything that selects this build's inputs: the

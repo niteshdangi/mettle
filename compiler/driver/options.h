@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <set>
 #include <string>
@@ -19,6 +20,13 @@ struct Options {
   std::vector<std::string> features, registries;
   bool defaultFeatures = true, locked = false, offline = false;
   bool packageOptions = false;
+  // Build cache (see docs/performance.md section 5.1.1). An empty directory
+  // selects METTLE_CACHE_DIR, then the user cache directory.
+  std::string cacheDir;
+  std::uint64_t cacheLimitKib = 512 * 1024, cacheMaxAgeDays = 30;
+  bool noCache = false, explain = false, dryRun = false;
+  // Link libraries requested by build scripts.
+  std::vector<std::string> extraLibraries;
 };
 std::optional<Options> options(int argc, char **argv);
 void usage();

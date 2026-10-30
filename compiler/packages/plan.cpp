@@ -403,11 +403,24 @@ private:
     std::error_code error;
     plan.root = fs::canonical(rootSource, error).generic_string();
     for (const auto &package : resolution->packages) {
+      const auto &manifest = *package.candidate.manifest;
+      if (manifest.buildScript) {
+        auto script = fs::path(manifest.directory) / *manifest.buildScript;
+        if (!fs::is_regular_file(script)) {
+          diagnostics.error("package", manifest.buildScriptSpan,
+                            "build script '" + *manifest.buildScript +
+                                "' does not exist");
+          return std::nullopt;
+        }
+        plan.scripts.push_back(
+            {manifest.name, toString(manifest.version), manifest.directory,
+             fs::canonical(script, error).generic_string(),
+             package.candidate.kind == SourceKind::Root});
+      }
       if (package.candidate.kind == SourceKind::Root) {
         plan.features = package.features;
         continue;
       }
-      const auto &manifest = *package.candidate.manifest;
       plan.mounts.push_back(
           {moduleName(manifest.name),
            fs::canonical(

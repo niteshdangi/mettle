@@ -22,6 +22,12 @@ void usage() {
          "         [--registry DIR]... [--locked] [--offline] [--frozen]\n"
          "         (resolves Mettle.toml, verifies or writes Mettle.lock and "
          "mounts dependencies)\n"
+         "       mettle clean [PACKAGE_DIR] [--cache-dir DIR] [--dry-run]\n"
+         "         (empties the build cache; with a package also removes its "
+         "target/mettle outputs)\n"
+         "Build cache (builds of executables/objects): [--cache-dir DIR] "
+         "[--no-cache] [--cache-limit-kib N] [--cache-max-age-days N] "
+         "[--explain]\n"
          "Executable output requires the runtime target (the default); use "
          "--emit object for other targets.\n"
          "Scalar/product compiler with field initialization, owned moves, "
@@ -29,17 +35,24 @@ void usage() {
          "Stored views, destructors and unwind cleanup remain incomplete.\n";
 }
 std::optional<Options> options(int argc, char **argv) {
-  if (argc < 3)
+  if (argc < 2)
     return std::nullopt;
   Options result;
   result.command = argv[1];
   if (result.command != "build" && result.command != "check" &&
-      result.command != "tokens" && result.command != "syntax")
+      result.command != "tokens" && result.command != "syntax" &&
+      result.command != "clean")
     return std::nullopt;
   for (int i = 2; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--freestanding") {
       result.freestanding = true;
+      continue;
+    }
+    if (arg == "--no-cache" || arg == "--explain" || arg == "--dry-run") {
+      result.noCache |= arg == "--no-cache";
+      result.explain |= arg == "--explain";
+      result.dryRun |= arg == "--dry-run";
       continue;
     }
     if (arg == "--no-default-features" || arg == "--locked" ||
@@ -68,6 +81,14 @@ std::optional<Options> options(int argc, char **argv) {
         result.libraryDirectory = value;
       else if (arg == "--sysroot")
         result.sysroot = value;
+      else if (arg == "--cache-dir")
+        result.cacheDir = value;
+      else if ((arg == "--cache-limit-kib" || arg == "--cache-max-age-days") &&
+               !value.empty() && value.size() < 10 &&
+               value.find_first_not_of("0123456789") == std::string::npos)
+        (arg == "--cache-limit-kib" ? result.cacheLimitKib
+                                    : result.cacheMaxAgeDays) =
+            std::stoull(value);
       else if (arg == "--bin" || arg == "--registry") {
         result.packageOptions = true;
         if (arg == "--bin")
@@ -90,7 +111,7 @@ std::optional<Options> options(int argc, char **argv) {
     else
       return std::nullopt;
   }
-  if (result.input.empty() ||
+  if ((result.input.empty() && result.command != "clean") ||
       (result.freestanding && result.command == "build" &&
        result.emit == "executable") ||
       (result.command == "build" && result.output.empty()) ||

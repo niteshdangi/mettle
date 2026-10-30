@@ -4,6 +4,7 @@
 Usage: packages.py MettleExecutable EvidenceDir FixturesDir
 """
 
+import os
 import shutil
 import subprocess
 import sys
@@ -18,8 +19,10 @@ def reset():
 
 
 def invoke(arguments, expected=0, contains=()):
+    # Every case owns its build cache so runs never touch the user's.
+    environment = {**os.environ, "METTLE_CACHE_DIR": str(evidence / "cache")}
     result = subprocess.run([str(mettle), *map(str, arguments)], text=True,
-                            capture_output=True, timeout=600)
+                            capture_output=True, timeout=600, env=environment)
     text = result.stdout + result.stderr
     if result.returncode != expected:
         raise AssertionError(f"{arguments}: expected {expected}, got "
@@ -36,6 +39,36 @@ def build_and_run(directory, *extra):
     invoke(["build", directory, "-o", output, *extra])
     result = subprocess.run([str(output)], timeout=60)
     assert result.returncode == 0, f"{directory}: program exited {result.returncode}"
+
+
+def explained(directory, *extra, expected=0, contains=()):
+    """Builds with the cache log; returns (log, output path)."""
+    output = evidence / "out.bin"
+    output.unlink(missing_ok=True)
+    text = invoke(["build", directory, "-o", output, "--explain", *extra],
+                  expected, contains)
+    return text, output
+
+
+def last_cache_event(text):
+    """The cache line of the program itself (scripts compile before it)."""
+    lookups = ("mettle: cache hit", "mettle: cache miss", "mettle: cache entry")
+    events = [line for line in text.splitlines() if line.startswith(lookups)]
+    return events[-1] if events else ""
+
+
+def exit_code(program):
+    return subprocess.run([str(program)], timeout=60).returncode
+
+
+def cache_files(kind):
+    return [path for path in (evidence / "cache" / kind).rglob("*")
+            if path.is_file()]
+
+
+def cache_bytes():
+    return sum(path.stat().st_size
+               for kind in ("entries", "blobs") for path in cache_files(kind))
 
 
 def edit(path, old, new):
@@ -175,6 +208,141 @@ def manifest_diagnostics():
     invoke(["check", app], 1, "mathlib -> units -> mathlib")
 
 
+def incremental_reuse():
+    app = packages("incremental/app")
+    first, built = explained(app)
+    assert "cache miss" in first and "cache stored" in first, first
+    assert exit_code(built) == 0
+    bytes_built = built.read_bytes()
+    second, reused = explained(app)
+    assert "cache hit" in second, second
+    assert reused.read_bytes() == bytes_built
+    assert os.access(reused, os.X_OK) and exit_code(reused) == 0
+    assert not os.access(cache_files("blobs")[0], os.W_OK), "shared blob is writable"
+    # An incremental result equals a clean build without any cache.
+    clean = evidence / "clean.bin"
+    invoke(["build", app, "-o", clean, "--no-cache"])
+    assert clean.read_bytes() == bytes_built
+
+
+def edit_invalidation():
+    app = packages("incremental/app")
+    math = app / "src/math.mt"
+    explained(app)
+    # Comments, layout and files the program never loads are not inputs.
+    edit(math, "pub fn answer", "// the answer\n\n\npub fn answer")
+    text, _ = explained(app)
+    assert "cache hit" in text, text
+    edit(app / "src/unused.mt", "0", "1")
+    text, _ = explained(app)
+    assert "cache hit" in text, text
+    # A token change recompiles, then reuses again.
+    edit(math, "{ 42 }", "{ 40 + 2 }")
+    text, built = explained(app)
+    assert "cache miss" in text, text
+    assert exit_code(built) == 0
+    text, _ = explained(app)
+    assert "cache hit" in text, text
+    # A change in a dependency package invalidates the dependent build.
+    path_app = packages("path-dependency/app")
+    text, _ = explained(path_app)
+    assert "cache miss" in text, text
+    text, _ = explained(path_app, "--locked")
+    assert "cache hit" in text, text
+    edit(packages("path-dependency/units/src/lib.mt"), "21", "20 + 1")
+    text, built = explained(path_app)
+    assert "cache miss" in text, text
+    assert exit_code(built) == 0
+
+
+def cache_dedup_and_bound():
+    app = packages("incremental/app")
+    explained(app)
+    explained(app, "--features", "extra")
+    # Different keys that produce the same bytes share one stored blob.
+    assert len(cache_files("entries")) == 2, cache_files("entries")
+    assert len(cache_files("blobs")) == 1, cache_files("blobs")
+    blob = cache_files("blobs")[0].stat().st_size
+    # With a budget that holds one artifact, the least recently used goes.
+    edit(app / "src/math.mt", "pub fn answer(): i32 { 42 }",
+         "pub fn answer(): i32 { 42 }\npub fn zero(): i32 { 0 }")
+    edit(app / "src/main.mt", "- 42 }", "- 42 + math::zero() }")
+    limit = (blob * 3 // 2) // 1024 + 1
+    text, built = explained(app, "--cache-limit-kib", limit)
+    assert "evicted" in text and "least recently used" in text, text
+    assert cache_bytes() <= limit * 1024, (cache_bytes(), limit)
+    assert exit_code(built) == 0
+    assert len(cache_files("blobs")) == 1, cache_files("blobs")
+    # A budget below a single artifact keeps nothing, yet builds still work.
+    edit(app / "src/main.mt", "math::zero() }", "math::zero() + 0 }")
+    text, built = explained(app, "--cache-limit-kib", 1)
+    assert cache_bytes() <= 1024, cache_bytes()
+    assert exit_code(built) == 0
+
+
+def cache_corruption_and_clean():
+    app = packages("incremental/app")
+    explained(app)
+    blob = cache_files("blobs")[0]
+    blob.chmod(0o644)
+    blob.write_bytes(b"corrupted")
+    text, built = explained(app)
+    assert "entry corrupt" in text, text
+    assert exit_code(built) == 0
+    text, _ = explained(app)
+    assert "cache hit" in text, text
+    # `clean` reports, then empties, only a directory that is a store.
+    cache = evidence / "cache"
+    text = invoke(["clean", "--dry-run"], contains="would remove 1 entries")
+    assert cache.exists()
+    invoke(["clean"], contains="removed 1 entries")
+    assert not cache.exists()
+    text, _ = explained(app)
+    assert "cache miss" in text, text
+    foreign = evidence / "foreign"
+    foreign.mkdir()
+    (foreign / "keep.txt").write_text("x")
+    invoke(["clean", "--cache-dir", foreign], 1, "not a mettle store")
+    assert (foreign / "keep.txt").exists()
+
+
+def build_script():
+    app = packages("build-script/app")
+    text, built = explained(app)
+    assert "rerun (no reproducible record)" in text, text
+    assert exit_code(built) == 0, "generated module, feature or script output"
+    text, built = explained(app)
+    assert "reused (declared reproducible" in text, text
+    assert "cache hit" in last_cache_event(text), text
+    assert exit_code(built) == 0
+    # A changed declared input reruns the script; unchanged generated tokens
+    # still reuse the compiled program.
+    edit(app / "spec.txt", "}\n", "} // annotated\n")
+    text, built = explained(app)
+    assert "rerun (input 'spec.txt' changed)" in text, text
+    assert "cache hit" in last_cache_event(text), text
+    edit(app / "spec.txt", "{ 7 }", "{ 3 + 4 }")
+    text, built = explained(app)
+    assert "cache miss" in last_cache_event(text), text
+    assert exit_code(built) == 0
+    # `clean PACKAGE` removes the generated outputs too.
+    assert (app / "target/mettle/out/generated.mt").exists()
+    invoke(["clean", app])
+    assert not (app / "target/mettle").exists()
+
+
+def build_script_untracked_inputs():
+    app = packages("build-script/app")
+    script = app / "build.mt"
+    edit(script, '    std::io::print("mettle:reproducible\\n")\n', "")
+    for _ in range(2):
+        text, built = explained(app)
+        assert "rerun (no reproducible record)" in text, text
+        assert exit_code(built) == 0
+    edit(script, '    0\n}', '    std::io::print("mettle:bogus=1\\n")\n    0\n}')
+    explained(app, expected=1, contains="unknown or malformed declaration")
+
+
 def package_options_need_package():
     source = evidence / "plain.mt"
     source.write_text("fn main(): i32 { 0 }\n")
@@ -183,7 +351,9 @@ def package_options_need_package():
 
 CASES = [path_dependency, missing_lock_locked, lock_corruption,
          registry_resolution, version_conflict, backtracking, offline, features,
-         manifest_diagnostics, package_options_need_package]
+         manifest_diagnostics, package_options_need_package, incremental_reuse,
+         edit_invalidation, cache_dedup_and_bound, cache_corruption_and_clean,
+         build_script, build_script_untracked_inputs]
 
 failures = []
 for case in CASES:

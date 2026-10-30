@@ -1,3 +1,5 @@
+#include "driver/build_script.h"
+#include "driver/cache.h"
 #include "driver/inspect.h"
 #include "driver/options.h"
 #include "driver/output.h"
@@ -20,9 +22,51 @@ bool packageInput(const Options &options) {
   return std::filesystem::is_directory(options.input, error) ||
          std::filesystem::path(options.input).filename() == "Mettle.toml";
 }
+
+// `mettle clean`: empties the build cache and, given a package, that
+// package's generated build-script outputs.
+int clean(const Options &options) {
+  namespace fs = std::filesystem;
+  Options selected = options;
+  selected.noCache = false;
+  auto store = openStore(selected);
+  if (!store) {
+    std::cerr << "mettle: error[io]: no cache directory (use --cache-dir or "
+                 "METTLE_CACHE_DIR)\n";
+    return 1;
+  }
+  std::string problem;
+  auto removed = store->clear(options.dryRun, problem);
+  if (!removed) {
+    std::cerr << "mettle: error[io]: " << problem << '\n';
+    return 1;
+  }
+  std::cout << "mettle: cache " << store->root().generic_string() << ": "
+            << (options.dryRun ? "would remove " : "removed ")
+            << removed->entries << " entries, " << removed->blobs
+            << " blobs, " << removed->bytes << " bytes\n";
+  if (!options.input.empty()) {
+    fs::path input(options.input);
+    std::error_code error;
+    auto directory = fs::is_directory(input, error) ? input
+                                                    : input.parent_path();
+    auto generated = directory / "target" / "mettle";
+    if (fs::exists(generated, error)) {
+      std::cout << "mettle: " << (options.dryRun ? "would remove " : "removed ")
+                << generated.generic_string() << '\n';
+      if (!options.dryRun)
+        fs::remove_all(generated, error);
+    }
+  }
+  return 0;
+}
 } // namespace
 
-int run(const Options &options) {
+int run(const Options &requested) {
+  if (requested.command == "clean")
+    return clean(requested);
+  Options options = requested;
+  std::optional<packages::Store> store;
   std::string input = options.input;
   std::vector<resolution::Library::Package> dependencies;
   std::set<std::string> rootFeatures(options.features.begin(),
@@ -43,12 +87,27 @@ int run(const Options &options) {
       return 1;
     }
     input = outcome.plan->root;
-    for (const auto &mount : outcome.plan->mounts)
-      dependencies.push_back({mount.name,
-                              mount.source,
-                              {mount.features.begin(), mount.features.end()}});
+    ScriptResults generated;
+    if (!outcome.plan->scripts.empty()) {
+      store = openStore(options);
+      if (!runBuildScripts(options, *outcome.plan, store ? &*store : nullptr,
+                           generated))
+        return 1;
+    }
+    for (const auto &mount : outcome.plan->mounts) {
+      std::set<std::string> features(mount.features.begin(),
+                                     mount.features.end());
+      for (const auto &extra : generated.features[mount.package])
+        features.insert(extra);
+      dependencies.push_back({mount.name, mount.source, std::move(features)});
+    }
+    for (auto &module : generated.modules)
+      dependencies.push_back(std::move(module));
     rootFeatures = {outcome.plan->features.begin(),
                     outcome.plan->features.end()};
+    for (const auto &extra : generated.features[outcome.plan->package])
+      rootFeatures.insert(extra);
+    options.extraLibraries = std::move(generated.libraries);
   } else if (options.packageOptions) {
     std::cerr << "mettle: error[package]: --bin, --no-default-features, "
                  "--registry, --locked, --offline and --frozen need a package "
@@ -83,12 +142,16 @@ int run(const Options &options) {
     diagnostics.print(source, std::cerr);
     return 1;
   }
+  BuildInputs inputs(options.libraryDirectory);
+  inputs.record(source);
   resolution::SourceProvider provider =
       [&](const std::string &path) -> std::optional<Source> {
     std::error_code error;
     bool exists = std::filesystem::exists(path, error);
-    if (!exists && !error)
+    if (!exists && !error) {
+      inputs.absent(path);
       return std::nullopt;
+    }
     auto child = llvm::MemoryBuffer::getFile(path);
     if (!child) {
       diagnostics.error(
@@ -101,7 +164,9 @@ int run(const Options &options) {
                         "cannot identify " + path + ": " + error.message());
       return std::nullopt;
     }
-    return Source{canonical.generic_string(), (*child)->getBuffer().str()};
+    Source loaded{canonical.generic_string(), (*child)->getBuffer().str()};
+    inputs.record(loaded);
+    return loaded;
   };
   auto facts = targetFacts(options.target);
   expansion::Configuration configuration;
@@ -116,9 +181,37 @@ int run(const Options &options) {
   configuration.pointerWidth = facts.pointerBits;
   configuration.targetFeatures = facts.baseline;
   configuration.features = std::move(rootFeatures);
+  auto mounts = dependencies;
   auto tree = resolution::load(source, provider, diagnostics,
                                {options.libraryDirectory, options.freestanding,
                                 std::move(dependencies), configuration});
+  // Executables and objects are reused when every input of the build,
+  // as gathered while loading, matches a stored result.
+  std::optional<std::string> cacheKey;
+  if (tree && options.command == "build" &&
+      (options.emit == "executable" || options.emit == "object")) {
+    if (!store)
+      store = openStore(options);
+    std::error_code error;
+    auto sourcePath = std::filesystem::weakly_canonical(source.path, error);
+    if (store && (error || sourcePath != std::filesystem::weakly_canonical(
+                                             options.output, error))) {
+      cacheKey = inputs.key(options, mounts, configuration.features);
+      auto found = store->materialize(*cacheKey, options.output);
+      if (found == packages::Store::Lookup::Hit) {
+        if (options.explain)
+          std::cerr << "mettle: cache hit " << cacheKey->substr(0, 12)
+                    << ": compile and link skipped\n";
+        return 0;
+      }
+      if (options.explain)
+        std::cerr << "mettle: cache "
+                  << (found == packages::Store::Lookup::Corrupt
+                          ? "entry corrupt, rebuilding "
+                          : "miss ")
+                  << cacheKey->substr(0, 12) << '\n';
+    }
+  }
   auto program = tree ? pipeline::compile(std::move(*tree), diagnostics,
                                           !options.freestanding, facts)
                       : std::nullopt;
@@ -126,6 +219,19 @@ int run(const Options &options) {
     diagnostics.print(source, std::cerr);
     return 1;
   }
-  return options.command == "check" ? 0 : emit(options, source, *program);
+  if (options.command == "check")
+    return 0;
+  int status = emit(options, source, *program);
+  if (status == 0 && cacheKey && store) {
+    bool stored = store->put(*cacheKey, options.output,
+                             options.emit == "executable");
+    if (options.explain)
+      std::cerr << "mettle: cache " << (stored ? "stored " : "could not store ")
+                << cacheKey->substr(0, 12) << '\n';
+    for (const auto &note : store->prune(*cacheKey))
+      if (options.explain)
+        std::cerr << "mettle: cache " << note << '\n';
+  }
+  return status;
 }
 } // namespace mettle::driver
