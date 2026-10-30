@@ -1330,11 +1330,10 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
          i < generics.size() && i < facts(node).typeArguments.size(); ++i)
       checkedArguments.push_back({generics[i], facts(node).typeArguments[i]});
     for (std::size_t i = 1; i < node.children.size(); ++i) {
-      auto parameter = operatorIndex
-                           ? i
-                           : i - 1 < facts(node).argumentOrder.size()
-                                 ? facts(node).argumentOrder[i - 1]
-                                 : i - 1;
+      auto parameter = operatorIndex ? i
+                       : i - 1 < facts(node).argumentOrder.size()
+                           ? facts(node).argumentOrder[i - 1]
+                           : i - 1;
       if (parameter >= signature.parameters.size())
         continue;
       auto formal = signature.parameters[parameter];
@@ -1681,19 +1680,19 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
   std::size_t regionIndex = 0;
   if (!operatorIndex) {
     for (const auto &argument : node.children[0]->genericArguments) {
-    if (argument.region.empty())
-      continue;
-    if (regionIndex >= declaration.regions.size()) {
-      error(argument.span, "excess explicit region arguments");
-      break;
+      if (argument.region.empty())
+        continue;
+      if (regionIndex >= declaration.regions.size()) {
+        error(argument.span, "excess explicit region arguments");
+        break;
+      }
+      const auto &name = declaration.regions[regionIndex++];
+      if (auto found = signature.context.names.find(name);
+          found != signature.context.names.end())
+        explicitRegions.emplace_back(
+            found->second,
+            source(argument.region, current->context, argument.span));
     }
-    const auto &name = declaration.regions[regionIndex++];
-    if (auto found = signature.context.names.find(name);
-        found != signature.context.names.end())
-      explicitRegions.emplace_back(
-          found->second,
-          source(argument.region, current->context, argument.span));
-  }
   }
   for (auto region : signature.quantified) {
     auto explicitArgument =
@@ -2186,8 +2185,7 @@ Type RegionPass::expression(const Node &node) {
     auto base = expression(*node.children[0]);
     while (types.isView(base))
       base = types.view(base).payload;
-    if (node.kind == Kind::Index &&
-        facts(node).indexView != Type::Unknown) {
+    if (node.kind == Kind::Index && facts(node).indexView != Type::Unknown) {
       if (facts(node).callee >= 0) {
         auto indexed = call(node, true);
         if (types.isView(indexed))
@@ -2198,8 +2196,8 @@ Type RegionPass::expression(const Node &node) {
         type = types.view(facts(node).indexView).payload;
       }
     } else if (types.isProduct(base) && facts(node).field >= 0 &&
-        static_cast<std::size_t>(facts(node).field) <
-            types.product(base).fields.size())
+               static_cast<std::size_t>(facts(node).field) <
+                   types.product(base).fields.size())
       type = types.product(base).fields[facts(node).field].type;
     else if (types.isSlice(base) && node.children[1]->kind != Kind::Range)
       type = types.slice(base).element;

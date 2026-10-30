@@ -20,6 +20,9 @@ inline constexpr std::size_t diagnostics = 100;
 inline constexpr unsigned parserNesting = 128;
 inline constexpr unsigned syntaxDepth = 256;
 inline constexpr unsigned typeDepth = 128;
+// Spelled size of one specialization argument: polymorphic recursion that
+// doubles a type each level is reported long before it exhausts memory.
+inline constexpr std::size_t typeNameBytes = std::size_t{1} << 20;
 // Step budgets of fixpoint solvers and projection walks.
 inline constexpr std::size_t activeLoans = std::size_t{1} << 22;
 // Elements of expanded aggregate cleanup/initialization hierarchies.

@@ -404,13 +404,13 @@ def fmt_normalizes_layout_only():
     # comments, the multi-line raw text and the line structure do not.
     messy = (
         "// header comment   \n"
-        "fn   double(value:i32):i32=>value*2\n"
+        "fn   double(value:i32):i32=>value  *  2\n"
         "interface   Twice {\n"
         "fn value():i32;\n"
-        "fn twice():i32=>self.value()*2\n"
+        "fn twice():i32=>self.value()  *  2\n"
         "}\n"
         "type Number {\n"
-        "fn twice():i32=>self.value*2\n"
+        "fn twice():i32=>self.value  *  2\n"
         "}\n"
         "fn   add(a:i32,b: i32) : i32 {\n"
         "        a   +   b\n"

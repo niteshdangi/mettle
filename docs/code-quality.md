@@ -56,6 +56,10 @@ files fail the build/quality checks.
   them. Arrays of droppable elements keep one cleanup place per element and
   are capped at 2^16 total elements (`TypeStore::droppableArrayElements`,
   `error[limit]`); this is an implementation limit, not a language rule.
+  A specialization type argument longer than 1 MiB when spelled
+  (`limits::typeNameBytes`) is reported as `error[limit]`, so polymorphic
+  recursion that doubles a type each level stops before the nesting limit's
+  exponential cost; this is also an implementation limit.
   At most 100 diagnostics are printed, followed by an
   "N additional diagnostics suppressed" summary.
 - Parsed AST nodes carry syntax, not inference variables or resolved slots.

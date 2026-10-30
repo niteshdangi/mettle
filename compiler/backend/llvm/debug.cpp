@@ -208,9 +208,8 @@ llvm::DIType *DebugInfo::build(Type type) {
       return opaque();
     auto element =
         store.isSlice(payload) ? store.slice(payload).element : payload;
-    auto *pointee = metadata == PointerMetadata::ElementCount
-                        ? describe(element)
-                        : nullptr;
+    auto *pointee =
+        metadata == PointerMetadata::ElementCount ? describe(element) : nullptr;
     if (metadata == PointerMetadata::ElementCount && !pointee)
       return opaque();
     auto *pointer = dib.createPointerType(pointee, pointerBits);
@@ -273,21 +272,19 @@ llvm::DIType *DebugInfo::build(Type type) {
       auto payloadOffset = layout->size;
       for (const auto &variant : record.variants)
         for (auto fieldIndex : variant.fields)
-          payloadOffset =
-              std::min(payloadOffset, layout->fields[fieldIndex]);
+          payloadOffset = std::min(payloadOffset, layout->fields[fieldIndex]);
       for (std::size_t index = 0; index < record.variants.size(); ++index) {
         const auto &variant = record.variants[index];
         std::vector<llvm::Metadata *> fields;
         auto variantOffset = layout->size;
         for (auto fieldIndex : variant.fields)
-          variantOffset =
-              std::min(variantOffset, layout->fields[fieldIndex]);
+          variantOffset = std::min(variantOffset, layout->fields[fieldIndex]);
         if (variant.fields.empty())
           variantOffset = payloadOffset;
         const auto variantBits = (layout->size - variantOffset) * 8;
         auto *payloadTemporary = dib.createReplaceableCompositeType(
-            llvm::dwarf::DW_TAG_structure_type, variant.name, unit, rootFile,
-            0, 0, variantBits, alignment);
+            llvm::dwarf::DW_TAG_structure_type, variant.name, unit, rootFile, 0,
+            0, variantBits, alignment);
         for (auto fieldIndex : variant.fields) {
           const auto &field = record.fields[fieldIndex];
           auto fieldLayout = objectLayout(store, field.type);
@@ -302,8 +299,8 @@ llvm::DIType *DebugInfo::build(Type type) {
         auto *payloadComposite = dib.createStructType(
             unit, variant.name, rootFile, 0, variantBits, alignment,
             llvm::DINode::FlagZero, nullptr, dib.getOrCreateArray(fields));
-        auto *payload = dib.replaceTemporary(
-            llvm::TempMDNode(payloadTemporary), payloadComposite);
+        auto *payload = dib.replaceTemporary(llvm::TempMDNode(payloadTemporary),
+                                             payloadComposite);
         auto width = static_cast<unsigned>(tagLayout->size * 8);
         llvm::APInt value(width, index);
         if (!record.layout.discriminants.empty()) {
@@ -315,8 +312,7 @@ llvm::DIType *DebugInfo::build(Type type) {
         auto *constant = llvm::ConstantInt::get(module.getContext(), value);
         variants.push_back(dib.createVariantMemberType(
             temporary, variant.name, rootFile, 0, variantBits, alignment,
-            variantOffset * 8, constant, llvm::DINode::FlagZero,
-            payload));
+            variantOffset * 8, constant, llvm::DINode::FlagZero, payload));
       }
       members.push_back(dib.createVariantPart(
           temporary, "", rootFile, 0, bits, alignment, llvm::DINode::FlagZero,

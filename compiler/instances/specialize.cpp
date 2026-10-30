@@ -197,6 +197,12 @@ private:
                          "while instantiating '" +
                              displayPath(declaration.name) + "'",
                          span);
+    for (auto argument : arguments)
+      if (types->name(argument).size() > limits::typeNameBytes)
+        throw LocatedLimit("generic specialization type grows beyond the "
+                           "compiler size limit while instantiating '" +
+                               displayPath(declaration.name) + "'",
+                           span);
     struct Scope {
       unsigned &depth;
       explicit Scope(unsigned &depth) : depth(depth) { ++depth; }
