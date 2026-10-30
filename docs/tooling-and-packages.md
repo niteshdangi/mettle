@@ -306,6 +306,29 @@ Hover, signature help and generated API documentation expose the resolved
 signature, including an inferred result when source omits `: Type`. Unresolved
 analysis reports that state rather than guessing a result from callers.
 
+`mettle lsp [--library-dir DIR] [--target TRIPLE] [--freestanding]` runs the
+language server (LSP 3.17, JSON-RPC with `Content-Length` framing on standard
+input/output; UTF-16 positions). T005 status: implemented, unverified (not yet
+built). It supports full and ranged text synchronization with
+`publishDiagnostics` (each open document is analyzed by the compiler front end
+on its in-memory text; editing a document re-analyzes the open documents that
+read it; parse errors still produce diagnostics), `hover`, `definition`,
+hierarchical `documentSymbol`, `formatting` (the `mettle fmt` layout) and
+`prepareRename`/`rename`. Navigation and rename use a token-based index of the
+open documents, so they work on incomplete source. Rename refuses ambiguous
+or unsafe cases (fields, variants, modules, `main`, items declared more than
+once, reserved words as new names); local and parameter renames stay within
+their scope and update `name:` argument labels.
+
+Known gaps: completion, signature help and find-references are not implemented;
+hover shows the declared signature rather than an inferred type (the pipeline
+exposes no checked side tables); match-arm and closure pattern bindings are not
+tracked; member rename and definition match by name, not receiver type; only
+open documents take part in navigation; single-file analysis only (no package
+mounts); ranges inside macro- or derive-generated sources are reported at the
+start of the document with a `path:line:column:` prefix instead of the
+expansion chain.
+
 Rename observes namespaces, public paths and hygienic expansion identity.
 Generated identifiers are edited at their source/generator only when the mapping
 is unambiguous. Diagnostics include primary/related spans and the expansion

@@ -1,3 +1,4 @@
+#include "driver/language_server.h"
 #include "driver/options.h"
 #include <exception>
 #include <iostream>
@@ -13,6 +14,12 @@ int main(int argc, char **argv) {
                     std::string_view(argv[1]) == "-h")) {
     mettle::driver::usage();
     return 0;
+  }
+  if (argc >= 2 && std::string_view(argv[1]) == "lsp") {
+    int status = mettle::driver::languageServer(argc, argv);
+    if (status == 2)
+      std::cerr << "mettle: invalid arguments; use --help\n";
+    return status;
   }
   auto options = mettle::driver::options(argc, argv);
   if (!options) {

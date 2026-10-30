@@ -1012,8 +1012,10 @@ checked by token sequence, syntax-tree fingerprint and idempotence. `mettle run`
 `execute.cpp`, expansion `harness.cpp`; contract in tooling-and-packages sections
 3 and 4). Remaining I12 work: `doc`, `lint`, line breaking/wrapping in `fmt`,
 doctests, machine-readable test results, test timeouts, tests and benchmarks
-outside the root module, benchmark handles, LSP and debugger
-workflows. The milestone is not complete.
+outside the root module, benchmark handles and debugger
+workflows. The language server (`mettle lsp`, T005) is implemented, unverified
+(not yet built); see `docs/tooling-and-packages.md` section 5. The milestone is
+not complete.
 
 I12 status, source-level debug info: `-g` DWARF (compile unit, subprograms,
 line table, locals/parameters with basic/pointer/array/product types) is

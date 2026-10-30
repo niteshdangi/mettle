@@ -4,6 +4,7 @@
 Usage: packages.py MettleExecutable EvidenceDir FixturesDir
 """
 
+import json
 import os
 import shutil
 import re
@@ -618,6 +619,136 @@ def debug_info():
                if row.startswith("0x")), lines
 
 
+class LanguageClient:
+    """Drives `mettle lsp` with Content-Length framed JSON-RPC."""
+
+    def __init__(self):
+        self.process = subprocess.Popen(
+            [str(mettle), "lsp"], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.next_id = 0
+
+    def send(self, message):
+        body = json.dumps({"jsonrpc": "2.0", **message}).encode()
+        self.process.stdin.write(
+            b"Content-Length: %d\r\n\r\n" % len(body) + body)
+        self.process.stdin.flush()
+
+    def receive(self):
+        length = None
+        while True:
+            line = self.process.stdout.readline()
+            if not line:
+                raise AssertionError("language server closed its output")
+            line = line.strip()
+            if not line:
+                break
+            name, _, value = line.decode().partition(":")
+            if name.lower() == "content-length":
+                length = int(value)
+        return json.loads(self.process.stdout.read(length))
+
+    def notify(self, method, params):
+        self.send({"method": method, "params": params})
+
+    def request(self, method, params):
+        self.next_id += 1
+        self.send({"id": self.next_id, "method": method, "params": params})
+        return self.wait(lambda m: m.get("id") == self.next_id)
+
+    def wait(self, accept):
+        for _ in range(100):
+            message = self.receive()
+            if accept(message):
+                return message
+        raise AssertionError("expected message never arrived")
+
+    def open(self, uri, text):
+        self.notify("textDocument/didOpen", {"textDocument": {
+            "uri": uri, "languageId": "mettle", "version": 1, "text": text}})
+
+
+def language_server():
+    broken = "file:///workspace/broken.mt"
+    clean = "file:///workspace/clean.mt"
+    client = LanguageClient()
+    try:
+        reply = client.request("initialize", {"processId": None,
+                                              "rootUri": None,
+                                              "capabilities": {}})
+        capabilities = reply["result"]["capabilities"]
+        assert capabilities["definitionProvider"], capabilities
+        assert capabilities["renameProvider"], capabilities
+        client.notify("initialized", {})
+
+        # An unknown name on the second line is reported at that identifier.
+        client.open(broken, "fn main(): i32 {\n    missing_name\n}\n")
+        published = client.wait(
+            lambda m: m.get("method") == "textDocument/publishDiagnostics"
+            and m["params"]["uri"] == broken)["params"]["diagnostics"]
+        assert published, "expected a diagnostic"
+        diagnostic = published[0]
+        assert diagnostic["severity"] == 1, diagnostic
+        assert diagnostic["range"]["start"] == {"line": 1, "character": 4}, \
+            diagnostic
+        assert diagnostic["range"]["end"] == {"line": 1, "character": 16}, \
+            diagnostic
+
+        # Incomplete source still produces diagnostics and keeps serving.
+        client.notify("textDocument/didChange", {
+            "textDocument": {"uri": broken, "version": 2},
+            "contentChanges": [{"text": "fn main(): i32 {\n    let x =\n"}]})
+        client.wait(
+            lambda m: m.get("method") == "textDocument/publishDiagnostics"
+            and m["params"]["uri"] == broken and m["params"]["diagnostics"])
+
+        client.open(clean, "fn double(x: i32): i32 { x + x }\n"
+                           "fn main(): i32 {\n"
+                           "    let total = double(21)\n"
+                           "    total - 42\n"
+                           "}\n")
+        published = client.wait(
+            lambda m: m.get("method") == "textDocument/publishDiagnostics"
+            and m["params"]["uri"] == clean)["params"]["diagnostics"]
+        assert published == [], published
+
+        document = {"uri": clean}
+        found = client.request("textDocument/definition", {
+            "textDocument": document,
+            "position": {"line": 2, "character": 17}})["result"]
+        assert found == [{"uri": clean, "range": {
+            "start": {"line": 0, "character": 3},
+            "end": {"line": 0, "character": 9}}}], found
+
+        changes = client.request("textDocument/rename", {
+            "textDocument": document,
+            "position": {"line": 3, "character": 5},
+            "newName": "sum"})["result"]["changes"]
+        assert [(e["range"]["start"], e["range"]["end"], e["newText"])
+                for e in changes[clean]] == [
+            ({"line": 2, "character": 8}, {"line": 2, "character": 13}, "sum"),
+            ({"line": 3, "character": 4}, {"line": 3, "character": 9}, "sum"),
+        ], changes
+
+        refused = client.request("textDocument/rename", {
+            "textDocument": document,
+            "position": {"line": 3, "character": 5},
+            "newName": "fn"})
+        assert "error" in refused, refused
+
+        symbols = client.request("textDocument/documentSymbol",
+                                 {"textDocument": document})["result"]
+        assert [s["name"] for s in symbols] == ["double", "main"], symbols
+
+        assert "result" in client.request("shutdown", None)
+        client.notify("exit", None)
+        assert client.process.wait(timeout=30) == 0
+    finally:
+        if client.process.poll() is None:
+            client.process.kill()
+        client.process.communicate()
+
+
 CASES = [path_dependency, missing_lock_locked, lock_corruption,
          registry_resolution, version_conflict, backtracking, offline, features,
          manifest_diagnostics, package_options_need_package, incremental_reuse,
@@ -626,7 +757,7 @@ CASES = [path_dependency, missing_lock_locked, lock_corruption,
          migrate_preserves_syntax_tree, run_forwards_args_and_exit_status,
          test_reports_pass_fail_ignored_and_isolates_panics,
          test_filter_exact, bench_reports_timing, fmt_normalizes_layout_only,
-         debug_info]
+         debug_info, language_server]
 
 failures = []
 for case in CASES:
