@@ -325,8 +325,10 @@ def main():
                     module.TARGET_ARCH = "x86_64"
                     spec.loader.exec_module(module)
                     return module
-                scalar = target_cases("scalar_cases", ROOT / "tests/scalars.py")
-                POSITIVE, ARITHMETIC = scalar.POSITIVE, scalar.ARITHMETIC
+                import source as source_cases
+                # Programs run under both profiles with no extra build flags.
+                run_cases = [case for case in source_cases.load_cases("run", arch="x86_64")
+                             if not case.flags and case.profiles == source_cases.PROFILES]
                 machine = target_cases("machine_cases", ROOT / "tests/backend/machine.py")
                 machine_sources = {"machine-" + name: text
                                    for name, text in machine.SOURCES.items()}
@@ -334,17 +336,15 @@ def main():
                 if sha256(compiler) != previous["rebuilt_artifacts"]["mettle"]:
                     raise RuntimeError("Source compiler differs from passing build evidence")
                 cases = []
-                selected_sources = {name: (text, 0, 0) for name, text in POSITIVE.items()}
-                selected_sources.update({
-                    name: ("fn main(): i32 { " + body + " }\n", debug, release)
-                    for name, (body, debug, release) in ARITHMETIC.items()})
+                selected_sources = {case.name: (case.path.read_text(), case.exits["debug"],
+                                                case.exits["release"]) for case in run_cases}
                 selected_sources.update({
                     "modules-" + name: (files["main.mt"], 0, 0)
                     for name, files in TARGET_FILES.items()})
                 selected_sources.update({name: (text, 0, 0)
                                          for name, text in machine_sources.items()})
                 evidence["cases"][configuration]["source_selection"] = {
-                    "positive": sorted(POSITIVE), "arithmetic": sorted(ARITHMETIC),
+                    "run": sorted(case.name for case in run_cases),
                     "modules": sorted(TARGET_FILES), "machine": sorted(machine_sources),
                     "freestanding": ["no-hosted-runtime", "assembly-simd-no-services"]}
                 for profile in ("debug", "release"):

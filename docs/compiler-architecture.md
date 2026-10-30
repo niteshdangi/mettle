@@ -502,7 +502,7 @@ zero-size C probes; static symbols, initialization, visibility and freestanding
 objects; C-to-Mettle variadic definitions with cursor copies and aggregates;
 assembly operand order, early/late clobbers, options, symbols and naked entries;
 and SIMD/feature acceptance, guarded execution and rejection. Reuse
-`tests/scalars.py`, `tests/backend/machine.py` and its C/C++ callbacks, plus
+`tests/source`, `tests/backend/machine.py` and its C/C++ callbacks, plus
 `tools/test_linux_target.py`. Prepare the Linux freestanding and independent
 atomic memory-model/race cases before the source-freeze gate.
 
