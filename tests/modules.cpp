@@ -164,7 +164,7 @@ void catalogLibrary() {
       {"memory/root.mt", "fn main() { core::answer() - 42 }\n"},
       {"memory/lib/core/module.mt", "pub fn answer() { 42 }\n"},
       {"memory/lib/std/module.mt", "pub fn broken() { missing() }\n"}};
-  mettle::resolution::Library library{"memory/lib", false};
+  mettle::resolution::Library library{"memory/lib", false, {}};
   mettle::Diagnostics diagnostics;
   require(mettle::pipeline::compile(sources, diagnostics, library).has_value(),
           "catalog-supplied library failed or loaded an unreferenced root");
