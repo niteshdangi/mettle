@@ -70,7 +70,8 @@ void Parser::run(Module &module, std::vector<std::string> scope, bool nested) {
         if (module.aliases.size() > limits::products)
           fail("alias declaration limit exceeded", "limit");
       } else {
-        if (!is("fn") && !(is("unsafe") && peek(1).text == "fn"))
+        if (!is("fn") && !is("async") &&
+            !(is("unsafe") && (peek(1).text == "fn" || peek(1).text == "async")))
           feature("this declaration is not implemented");
         auto value = function();
         value.item = std::move(item);

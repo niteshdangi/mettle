@@ -53,6 +53,12 @@ std::unique_ptr<Node> Parser::closure() {
   if (take("async"))
     feature("async closures require I06");
   auto result = node(Kind::Closure, start.span);
+  struct Restore {
+    bool &flag;
+    bool saved;
+    ~Restore() { flag = saved; }
+  } restore{inAsyncBody, inAsyncBody};
+  inAsyncBody = false;
   result->flag = take("take");
   expect("fn");
   expect("(");

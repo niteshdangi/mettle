@@ -5,6 +5,7 @@ pub module any;
 pub module clone;
 pub module cmp;
 pub module fmt;
+pub module future;
 pub module hash;
 pub module iter;
 pub module num;

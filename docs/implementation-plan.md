@@ -888,6 +888,22 @@ parent destruction and an uncooperative child poll. Check actual cleanup versus
 cancellation requests; no hidden mandatory boxing or default executor in core.
 Exercise an async network service and P10 without weaker lifetime guarantees.
 
+I11 status (unverified until the orchestrator builds and runs it): `core::future`
+has `Future`/`Poll`/`Context`/`Waker` (vtable protocol, no allocation) and the
+inline state types `Lazy`, `Then`, `Defer`; `std::task` is the optional executor
+(`block_on`, `Executor` with spawn/run, `yield_now`). The parser lowers
+`async fn` (free functions and methods) to `some Future<Output = T>` built from
+those states (`compiler/syntax/parser/async.cpp`), so there is no separate
+state-machine IR pass. Not done: `await` outside whole-statement position
+(`await e`, `let x = await e`, `var x = await e`, `x = await e`), `await`
+inside branches/loops, `return` before the last await, pattern bindings from
+await, async closures/blocks, async interface methods and explicit erased
+futures, borrowing a local across an await (the continuation captures by move),
+locals not used after an await are dropped at the await instead of at function
+exit, scoped/borrowed tasks, cancellation, panic isolation in workers, P10.
+`recursive region inference` now accepts a revisited type pair (function-pointer
+cycle) instead of reporting a limit error.
+
 ### 8.5. Workflow, profiles and V1: I12-I14
 
 I12 closes the complete native developer workflow: command selection, diagnostic
