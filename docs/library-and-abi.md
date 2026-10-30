@@ -25,9 +25,14 @@ String when allocation is enabled, and native optional/outcome constructors.
 The loader implements the core subset (`Text`, iterator interfaces, comparison
 interfaces, `panic`, `assert`, `String`); it has lowest name priority and no
 opt-out. Do not silently reexport every platform API or choose a runtime from the prelude.
+At the cutover the versioned `experience-1` prelude of library-surface.md
+section 9 replaces this subset, adding `List`, `Map` and `Set` with allocation.
 
-Package/module paths use one `::` resolution system. Names in this document are
-selected API directions, not a promise of source compatibility with Rust.
+Package/module paths use one `::` resolution system before the cutover and one
+dotted system after it (language-grammar.md section 13). Names in this document
+are selected API directions, not a promise of source compatibility with Rust;
+collection, interface and I/O names are those of the pre-cutover libraries
+unless library-surface.md section 9 gives the target name.
 
 ## 2. Ownership and allocation operations
 
@@ -138,7 +143,8 @@ ownership is deliberately reconstructed. Callback allocation and erasure remain
 separate from its invocation mode.
 
 Formatting writes into a caller-selected sink. Streaming formatting must be
-available without building an intermediate String. Parsing distinguishes
+available without building an intermediate String; the `format` parameter kind
+and borrowed `Message` of library-surface.md section 10 are its target contract. Parsing distinguishes
 invalid input, incomplete input, overflow and target-specific I/O failures where
 the operation supports them.
 
@@ -157,7 +163,10 @@ thread-local destructors are profile-specific obligations.
 The native `std` modules are `io`, `ffi`, `path`, `fs`, `process`, `env`,
 `time`, `net` and `panic`. Raw OS errors are kept in `io::Error` unchanged next
 to a portable kind; operations that time out report kind `TimedOut` and keep the
-OS number. `OsStr`/`Path` are byte sequences without a Unicode requirement, and a
+OS number. `OsStr`/`Path` are byte sequences without a Unicode requirement on the POSIX profiles; the
+native Windows path encoding and its display (`write_path`) are specified in
+library-surface.md section 12 and reconciled with this statement before the
+Windows profile is delivered. A
 byte string containing NUL is rejected with `InvalidInput` before reaching the OS.
 The hosted panic hook (`std::panic::set_hook`) receives the message; the process
 still exits with status 101.

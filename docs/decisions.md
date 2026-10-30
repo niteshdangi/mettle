@@ -13,17 +13,42 @@
 | D07 | Known copyable ordinary parameters receive values; non-copy resources borrow |
 | D08 | Generic defaults use declaration-known constraints; unconstrained T borrows |
 | D09 | Named structs/enums explicitly opt into Copy; built-in aggregates are structural |
-| D10 | Runtime must match or beat Rust per agreed workload; measure builds/memory separately |
+| D10 | Runtime must match or beat Rust per agreed workload; builds and memory are measured per D17 |
 | D11 | Routine decisions are delegated; do not stop for approval after every item |
 | D12 | Every material comparison explains Rust behavior, likely faster option and uncertainty |
 | D13 | Function results use optional `: Type`, not `->`; omission infers from body returns/tails, not callers. Explicit annotations remain checked contracts, including for public definitions. |
 | D14 | `Unit` is a predeclared type name, not a keyword; `()` is its sole value, not a second type spelling. Omitted results may infer Unit but do not default to it. |
 | D15 | `Never` is the predeclared uninhabited type, replacing the lowercase built-in spelling; it remains distinct from Unit. Prefer `let _ = expression` for intentional non-Unit discard; semicolon semantics remain unchanged. |
+| D16 | Identity: Mettle must not read like a Rust copy. Its main points are (1) better source readability than Rust, (2) runtime speed matching or beating Rust (D10), (3) faster compilation than Rust, (4) less build-cache storage than Rust/Cargo. Accepted 2026-10-30. Judge the language on the exhibit programs of [implementation-plan.md §8.7](implementation-plan.md#87-experience-track-readability-compile-cost-and-storage), not on punctuation counts or resemblance to another language |
+| D17 | Compile time (clean, incremental, check-only) and retained build-cache bytes must beat the frozen Rust/Cargo baseline on the agreed representative workloads: corpus-based like the runtime gate, measured on a qualified runner, with RSS and binary size reported. The compiler-work budget (median retired-instruction ratio at most 1.05, successive growth at most 2.2x) is an additional regression guard. See [performance.md §5.1](performance.md#51-compile-time-and-build-storage-gate) and [§5.2](performance.md#52-compiler-work-regression-guard). Replaces the earlier "no accepted equality gate" for compile time |
 
 The shared-assignment rule supersedes the original v0.21 implicit-retain rule.
 The runtime gate supersedes its greater-than-10-percent investigation trigger.
 The finalized Word blueprint predates the detailed parameter and copyability
 decisions; these source documents carry those subsequent refinements.
+
+## Experience revision (accepted 2026-10-30)
+
+These target decisions carry the D16 identity into the source language and
+library. They are accepted design, not implemented syntax: the compiler keeps
+the pre-cutover spellings until the cutover milestone, which is scheduled by the
+lane owner ([implementation-plan.md §8.7](implementation-plan.md#87-experience-track-readability-compile-cost-and-storage)).
+They retain the V1 capability, ownership, failure and runtime contracts.
+
+| ID | Decision | Normative section |
+| --- | --- | --- |
+| D18 | Dots qualify modules, types and values (`import std.io`, `as`); `T.(Interface).Item` selects interface items; lexical shadowing with diagnostics; bounded method lookup (inherent, bounds, prelude, owning package, explicit imports); lowercase variants share one associated namespace with associated functions and constants, and a collision is a declaration error; brace-list imports `import std.io.{Reader, Writer}` and glob imports `import std.io.*` | [semantic-rules.md §13.1-13.3](semantic-rules.md#131-qualified-resolution-shadowing-and-interface-selection), [language-grammar.md §13.1](language-grammar.md#131-dotted-paths-and-imports) |
+| D19 | Generic application in expressions is `name<...>` decided by a syntax-only rule: a nonempty generic list followed by one of `( . ) ] } , ;`, an unsuppressed newline or end of file. Turbofish and `::` are removed; the `assert(a < b, c > (d))` parse is an accepted, diagnosed quirk | [language-grammar.md §13.3](language-grammar.md#133-generic-application) |
+| D20 | `List`, `Map` and `Set` default `A = Global`; constructors are selected by explicit label/arity shape with declaration-checked applicability (`A = Global`), no hidden allocator fallback and no return-type overloading | [semantic-rules.md §13.4](semantic-rules.md#134-constructor-selection) |
+| D21 | Native vocabulary (`List`, `Map`, `Set`, `SortedMap`, `SortedSet`, `OwnedIterable`, `MutableIterable`, `BidirectionalIterator`, `FromItems`, `ExtendItems`, `Reader`/`Writer`, `BufferedReader`/`BufferedWriter`, past-participle iterator adapter types, contextual `extend`) with the versioned `experience-1` prelude. Accurate standard words (Iterator, Copy, Clone, Eq, Ord, Hash, Text, String) are kept | [library-surface.md §9](library-surface.md#9-vocabulary-and-the-experience-1-prelude), [language-grammar.md §13.2](language-grammar.md#132-contextual-extend-declarations), [baseline-mapping.md §4](baseline-mapping.md) |
+| D22 | Builder inference is local to one named function, solved before capture or escape, with source-span provenance and earliest-conflict diagnostics | [semantic-rules.md §13.5](semantic-rules.md#135-local-builder-inference) |
+| D23 | `format` is a parameter kind whose type is the opaque borrowed `core.fmt.Message`; recipes never escape; std owns Writer `write`/`write_line` | [library-surface.md §10.1](library-surface.md#101-format-parameters-and-corefmtmessage), [language-grammar.md §13.5](language-grammar.md#135-format-parameters-and-interpolated-text) |
+| D24 | `print`/`eprint` take `format` parameters and panic on ordinary failure; a stdout broken pipe terminates quietly (SIGPIPE by default, status 141 when EPIPE is observed) | [library-surface.md §10.2](library-surface.md#102-convenience-output-and-broken-pipes) |
+| D25 | Reusable lending lines (`read_line_into`, `read_bytes_line_into`) and Copy-valued `[u8].bytes()` | [library-surface.md §11](library-surface.md#11-lending-lines-and-byte-iteration) |
+| D26 | One closure introducer: `fn(x) => expr` and `fn(x) { ... }`; no `(x) =>` form | [language-grammar.md §13.4](language-grammar.md#134-closures-and-call-arguments) |
+| D27 | Named arguments follow positional ones, labels change neither access nor evaluation order, and call sites omit `mut` for declaration-known mutable parameters (style, not a mode change) | [core-semantics.md §9](core-semantics.md#9-evaluation-order), [language-grammar.md §13.4](language-grammar.md#134-closures-and-call-arguments) |
+| D28 | `KeyView<Q>` lets `Map.get` take borrowed keys such as Text without allocation | [library-surface.md §12](library-surface.md#12-borrowed-keys-and-path-input) |
+| D29 | `path.PathInput` and std `write_path` accept and display native paths without lossy conversion; a bare-interface `read`/`mut` parameter permits unsized implementors | [library-surface.md §12](library-surface.md#12-borrowed-keys-and-path-input), [language-grammar.md §3](language-grammar.md#3-type-expressions) |
 
 ## Routine selections made under delegation
 
@@ -75,6 +100,8 @@ decisions; these source documents carry those subsequent refinements.
 | Memory/provenance and async containment | Unsafe/async safety claim | Model/review and execute the selected mechanisms |
 | OS/SDK/WASI/board execution | Supported-target claims | Probe selected reference profiles and publish release evidence |
 | Benchmark pilot and fixed release experiment | Runtime release verdict | Apply the specified plan with actual controlled measurements |
+| Compile-time and build-storage measurement | Compile-time and build-cache claims (D17) | Qualified-runner corpus measurement per [performance.md §5.1](performance.md#51-compile-time-and-build-storage-gate) |
+| Experience cutover (D18-D29) | Claim that target syntax or vocabulary is implemented | Milestones R0a-Qualification of [implementation-plan.md §8.7](implementation-plan.md#87-experience-track-readability-compile-cost-and-storage); pre-cutover spellings stay valid until then |
 | Project license | Public open-source licensing/distribution | Separate owner decision; no invented approval |
 | Registry governance and public stabilization | Public service/compatibility promises | Owner decisions before launch; selected pre-implementation syntax is not a public stability guarantee |
 

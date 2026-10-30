@@ -379,6 +379,22 @@ Default expressions use declaration-site resolution, not arbitrary caller locals
 Their permitted dependencies and ownership accesses need the signature/default
 typing rules; no default implicitly clones or retains another argument.
 
+Call arguments are positional-then-named (`call_argument`, core-grammar section
+6). Named arguments may reorder the remaining parameters; duplicate labels,
+unknown labels and a positional argument after a named one are errors. A label
+names the declared parameter; it adds no second namespace and no overload by
+payload type, and it does not change access: `allocator: take arena` still
+contains a consuming expression, and a `mut` parameter still requires a mutable
+place. The resolved parameter mapping is stored separately from evaluation order.
+
+Preferred call style omits `mut` for declaration-known mutable parameters:
+`parse(input, map)`. An explicit `mut place` stays legal, useful when forming or
+storing a view or requesting a particular reborrow, and lint does not require
+it; a redundancy hint may remove it only where checked access, loans and
+evaluation order are equivalent. Keep `take` where intentional consumption
+should be visible. This is style guidance, not a change to parameter modes or
+borrow checking.
+
 For ordinary assignment, evaluate the replacement value first, then the
 destination place once, then replace its old value. This preserves the
 Rust-compatible RHS-before-destination rule. Destructuring assignment first

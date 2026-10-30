@@ -1,6 +1,9 @@
 # Adoption rationale: start with a blocked task
 
-Status: evidence-backed problem analysis, not an accepted language identity.
+Status: evidence-backed problem analysis. This document does not select the
+language identity; the owner-accepted identity (readability, runtime parity,
+faster compilation, smaller build storage) is decision D16-D17 in
+[decisions.md](decisions.md), and a problem-led adoption case remains separate.
 This replaces feature-first positioning as the discovery method. No additional
 language capability or release commitment is approved by this document.
 
@@ -75,7 +78,7 @@ Sources:
 
 | Problem | Existing route | New-language justification |
 | --- | --- | --- |
-| Rust build/debug friction | Compiler and tooling improvements | Weak by itself; a new compiler is not necessarily a new language |
+| Rust build/debug friction | Compiler and tooling improvements | Weak by itself as an adoption case; compile time and build storage are nevertheless accepted gates (D17) |
 | Difficult ownership/macros/async | Rust evolution and alternative semantics | Requires substantial semantic benefit, not punctuation changes |
 | Surviving backend failures | Durable execution frameworks | Does not alone require a language |
 | CPU/GPU application boundary | Existing accelerator languages and bindings | Needs concrete unsupported workloads and evidence, not generic portability claims |
@@ -95,7 +98,7 @@ The task is not "make C++ fast" or "make Rust syntax nicer." It is:
 > product working and preserving performance and integration contracts.
 
 This is the strongest problem-led candidate from this pass because its adoption
-boundary is observable. It is not yet the selected Mettle identity, nor a claim
+boundary is observable. It is not the identity selected in D16, nor a claim
 that existing solutions fail it.
 
 Happy Rust users need not be the first audience. Teams blocked from using safer

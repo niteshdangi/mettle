@@ -380,3 +380,213 @@ reference to name one of these families. It separately rejects a stable
 implementation member whose interface member is experimental. Thus Error
 provider/Request, experimental buffered-reader cursors and experimental Windows
 process-attribute methods are not smuggled in as supporting-protocol exceptions.
+
+## 9. Vocabulary and the `experience-1` prelude
+
+Status: accepted target (decision D21), effective at the cutover. The native
+vocabulary is chosen in the same migration as the dotted paths of
+language-grammar section 13. Canonical reexports or aliases preserve the
+baseline identities that baseline-mapping.md requires; there is one collection
+implementation, not a branded and a compatibility copy. Compiler-recognized
+protocols follow resolved declaration identities, not a second set of
+spelling-based special cases.
+
+| Pre-cutover name or form | Target name or form |
+| --- | --- |
+| `Vec`, `HashMap`, `HashSet` | `List`, `Map`, `Set` from `alloc.collections` |
+| `BTreeMap`, `BTreeSet` | `SortedMap`, `SortedSet` |
+| `IntoIterator`, `IterableMut` | `OwnedIterable`, `MutableIterable` |
+| `DoubleEndedIterator`, `FromIterator`, `Extend` | `BidirectionalIterator`, `FromItems`, `ExtendItems` |
+| `impl<T> X implements I` | `extend<T> X implements I` |
+| Out-of-line inherent `impl<T> X` | `extend<T> X`; ordinary methods prefer the type body |
+| Hosted `Read`, `Write`, `BufReader`, `BufWriter` | `Reader`, `Writer`, `BufferedReader`, `BufferedWriter` |
+| Named optional/result wrappers | None introduced: use `T?` and `(T throws E)` |
+
+All iterator adapter types use one past-participle scheme, because
+`core.iter.Map<B,I,F>` would otherwise shadow the prelude collection `Map` and
+a partial rename would leave an inconsistent family:
+
+| Adapter | Type | Adapter | Type |
+| --- | --- | --- | --- |
+| `Map` | `Mapped` | `TakeWhile` | `TakenWhile` |
+| `Filter` | `Filtered` | `SkipWhile` | `SkippedWhile` |
+| `FilterMap` | `FilterMapped` | `StepBy` | `Stepped` |
+| `Enumerate` | `Enumerated` | `Inspect` | `Inspected` |
+| `Zip` | `Zipped` | `Fuse` | `Fused` |
+| `Chain` | `Chained` | `Rev` | `Reversed` |
+| `TakeN` | `Limited` | `Skip` | `Skipped` |
+
+`Peekable` is unchanged, and the adapter *method* names (`map`, `filter`, ...)
+are unchanged. Signatures, implementations and the baseline mapping change in
+the same resolved-identity migration. No legacy adapter `Map` alias is injected
+into the native iterator module; a requirement for that exact old exposure needs
+an explicit mapping-policy decision at the freeze.
+
+The accurate standard names `Iterator`, `Iterable`, `Copy`, `Clone`, `Eq`, `Ord`,
+`Hash`, `Text` and `String` are retained: their presence alone is not evidence
+of a copied design, and renaming them would only reduce accuracy.
+
+**Library prelude `experience-1`, exact contents:**
+
+- Core: `Text`, `Iterator`, `BidirectionalIterator`, `OwnedIterable`, `Iterable`,
+  `MutableIterable`, `PartialEq`, `Eq`, `PartialOrd`, `Ord`, `Ordering`, `panic`,
+  `assert`.
+- With allocation enabled: `String`, `List`, `Map`, `Set`.
+- Hosted additions: none; import I/O, threads, networking and executors.
+
+The list excludes compiler-predeclared scalar/capability names, which keep their
+existing specifications. Prelude entries have the lowest lookup priority. The
+package language revision selects the prelude version; changing this set needs a
+new version and collision tests.
+
+`Text` is UTF-8 content viewed through `read Text`; `String` owns growable UTF-8
+storage and its allocator. Literals have type `read Text from static` and
+allocate nothing. `String(text)` visibly requests ownership and copying;
+`string.as_text()` borrows without copying. Existing checked read coercions may
+avoid redundant adapters but never manufacture an owned String.
+
+## 10. Formatting and output
+
+Status: accepted target (decisions D23-D24). Core owns sink formatting; **std
+owns Writer's `write`/`write_line` methods and the byte-I/O adapter**;
+`write_all(bytes)` and `flush()` stay methods too.
+
+### 10.1. `format` parameters and `core.fmt.Message`
+
+```text
+fn log(message: format core.fmt.Message): Unit throws io.Error {
+    var out = io.stderr()
+    try out.write_line(message)
+}
+```
+
+The parameter kind is part of the checked callable contract; any function or
+method may declare one and no function name is compiler-special. A recipe may be
+a direct `f"..."`, a direct Text/String lifted to a single-text recipe, or the
+forwarded enclosing `format` parameter at such an argument. It cannot otherwise
+be bound, returned, stored, put in an aggregate or passed to an ordinary generic
+parameter. Forwarding keeps the outer call's lifetime bound, so user loggers
+work without first-class recipes; the no-escape contract survives forwarding and
+callable conversion, and asynchronous retention needs an explicit owned String.
+
+`Message` is an opaque fixed-size borrowed descriptor, not generic over the
+interpolation's shape. Conceptually it views literal pieces and a caller-stack
+array of fields, each carrying a value-context pointer, a checked renderer
+function pointer and formatting options; unsized values use a stack-resident
+view descriptor with their metadata, never a truncated fat pointer. The layout
+is compiler-owned, not a public ABI promise, and not a dependency on any Rust
+layout (Rust documents `fmt::Arguments` only as an opaque precompiled
+abstraction). This is explicit borrowed erasure at the format boundary: indirect
+renderer calls, no heap allocation, no Box, and no implicit retention or copy of
+payloads. A fixed borrowed sink adapter keeps the renderer ABI independent of
+the concrete writer. Logger and relay functions therefore have one body across
+message shapes; renderer thunks may be shared per value-type/format operation;
+ordinary unrelated generics may still specialize. Normal backend inlining stays
+possible: the guarantee is no recipe-shape instantiation of the logger, not
+identical machine code. Measure indirect-call cost, renderer/code-size growth
+and check cost in the F1 deliverable.
+
+Receiver, ordinary arguments and holes evaluate once in source order. Owned hole
+temporaries survive through the enclosing call; borrowed holes are loans only
+through that call and its cleanup; on failure each established temporary is
+destroyed exactly once. The description itself allocates nothing, while
+`alloc.fmt.string` explicitly allocates an owned String and user formatters keep
+their own documented costs. The first slice supports primitive/Text/String
+holes, brace escaping and source-span errors, and needs no first-class format
+lifetimes, new paths, constructors or concise closures.
+
+Each formatted Writer method retains the first full `io.Error` from the sink and
+returns it unchanged, including raw OS information. A formatter failure with no
+sink error maps explicitly to `io.ErrorKind.invalid_data`. Partial output is
+allowed; output is not transactional.
+
+### 10.2. Convenience output and broken pipes
+
+`io.print("hello\n")` and `io.eprint(f"count={count}\n")` declare `format`
+parameters, add no implicit newline, and panic on ordinary failure instead of
+ignoring it. **Stdout broken pipe is the exception** (`broken_pipe`, EPIPE on
+POSIX): the runtime does not ignore SIGPIPE (only sockets use `SO_NOSIGPIPE`/
+`MSG_NOSIGNAL`), so by default a write to a closed stdout pipe terminates the
+process by SIGPIPE. Where the inherited disposition is *ignore*, `print` observes
+EPIPE and terminates quietly with exit status 141, without a panic message or
+hook. The shell-visible status is equivalent, but the raw child status still
+distinguishes signal termination from `exit(141)`. No application-wide signal
+disposition is installed for this convenience policy.
+
+The EPIPE path uses `std.process.exit` immediate-termination cleanup: live
+Mettle destructors do not run, other writers are not flushed, and it is not
+graceful unwinding. It applies only to stdout convenience output; `eprint` and
+non-pipe errors still panic, while fallible Writer methods never request this
+termination and preserve returned error identity. Programs needing controlled
+cleanup use `try out.write_line(...)` and handle broken pipe themselves.
+
+Migration records the change from silently ignored failure to
+panic-on-ordinary-failure with a quiet broken pipe; the names are not
+deprecated, and the actual cutover date is recorded after lane-owner approval.
+Each old call migrates by intent: the CLI's error-reporting branches keep an
+explicit `let _ = capture ...` so their exit-status policy does not become 101.
+
+## 11. Lending lines and byte iteration
+
+Status: accepted target (decision D25). Std buffered readers provide:
+
+```text
+mut fn read_line_into(buf: mut String): (read Text from buf)? throws io.Error
+mut fn read_bytes_line_into(buf: mut List<u8>): (read [u8] from buf)? throws io.Error
+```
+
+Both clear `buf` before reading, retain LF/CRLF bytes, return `none` only when no
+bytes remain, and return a final unterminated line. The returned view depends on
+`buf`, not on the reader; retaining it prevents the next mutation or refill of
+`buf`. Memory is proportional to the longest line plus the reader's buffer.
+These are lending operations, not `Iterator` implementations.
+
+The text form validates UTF-8 and reports `invalid_data`, leaving the String
+empty and valid on validation failure. The byte form accepts arbitrary bytes. An
+I/O failure may consume input and returns no view; any partial buffer contents
+are documented and never presented as an invalid String.
+
+`[u8].bytes()` is a Copy-valued iterator like `Text.bytes()`: it yields `u8`,
+holds a read loan on the slice and allocates nothing. It removes repeated
+dereferences without changing the `Iterable` item contract or choosing
+generic-loop ownership from a later Copy instantiation.
+
+## 12. Borrowed keys and path input
+
+Status: accepted target (decisions D28-D29).
+
+**KeyView.** `KeyView<Q>` exposes `read Q from self` without allocation or
+retention. `Map<K,V>.get<Q>(key: read Q)` requires `K: KeyView<Q>` and
+`Q: Hash + Eq`, so an unsized query such as Text is allowed, and returns a view
+of the map's value, not of the query. Equal stored and query keys must hash
+identically under the selected hasher with equality consistent across both
+representations. Identity views and `String -> Text` are provided (String's hash
+already delegates to Text). Ambiguous view relations are rejected. Insertion
+still acquires an owned key explicitly, so `map.get("a")` allocates no temporary
+String.
+
+**PathInput.** `Path` remains an unsized borrowed OS-path view. `path.PathInput`
+has `fn as_path(): read Path from self` and is implemented for Path/PathBuf and
+OsStr/OsString, preserving the platform-native representation (bytes on POSIX,
+the selected native Windows encoding on Windows) without allocation or lossy
+conversion. The borrow never outlives its source, and NUL validation stays in
+the OS operations. Hosted path-taking convenience APIs accept independently
+generic `PathInput` read parameters whose desugared bounds permit unsized
+implementors as well as owned OS strings (language-grammar section 3); the
+underlying read-Path entry points remain. `env.args()` keeps returning owned OS
+strings, so `count(args[1], args[2])` needs no adapter. This is a library
+protocol, not implicit allocation, interface erasure or a new constructor rule.
+
+`out.write_path(input)` is the fallible std Writer operation for path display.
+POSIX output preserves native path bytes. On Windows, redirected byte output uses
+UTF-8 for valid Unicode and visible `\u{XXXX}` escapes for unpaired UTF-16 code
+units; console output uses the wide-character console API with the same escapes
+where required. This is display, not reversible serialization; native paths
+remain available separately, and no invalid Text or lossy String conversion is
+constructed.
+
+The current path/OS-string implementation is POSIX-profile code. The call site
+is platform-neutral, but Windows storage, sink dispatch and output expectations
+are target prerequisites, not established support. The POSIX byte-view statements
+in library-and-abi.md section 6 are reconciled with the native Windows path
+contract before that profile is delivered (implementation-plan section 8.7, R2).

@@ -160,8 +160,78 @@ into native Mettle builds.
 ## 6. Comparison and evidence
 
 Rust already provides mature package/build/test/editor/debugger workflows.
-These are parity requirements, not Mettle's claimed unique language identity.
+These are parity requirements, not Mettle's claimed unique language identity;
+build speed and build-cache size are the exception, being accepted gates
+(performance.md section 5.1).
 Feature resolution, caching and richer debug output affect build cost/artifact
 size; no inherent application-speed improvement follows from their spelling.
 Implementation acceptance needs resolver fixtures, invalidation tests, compiler/
 editor agreement, debugger probes and executable documentation on real targets.
+
+## 7. Storage: two separate products
+
+Build-cache size is an accepted gate (performance.md section 5.1), so storage is
+specified for both products, which have different owners and must not be mixed.
+
+### 7.1. Compiler-development storage
+
+Address measured candidates first. A prior broad sample was 45.2 GiB in `.tools`
+and 3.8 GiB in `build`. The table lists allocated blocks (`du -sk`) observed on
+2026-10-30: a point-in-time observation, not an atomic or current inventory.
+
+| Candidate | GiB | Disposition |
+| --- | ---: | --- |
+| `.tools/linux-x86_64/llvm` | 11.3 | Active pinned LLVM 22.1.3: retain |
+| `.tools/linux-x86_64/llvm-21.1.8` | 10.5 | Historical version, not a byte duplicate; audit consumers before retirement |
+| `.tools/macos-arm64/llvm` | 7.3 | Active host toolchain: retain |
+| `.tools/macos-arm64/llvm-21.1.8` | 7.8 | Historical host version: same retirement audit |
+| `.tools/downloads` | 6.6 | Verified archives kept after extraction; choose offline retention before pruning |
+
+The two historical versions and the downloads are about 24.8 GiB of
+**candidate**, not guaranteed reclaimable, space; allocated-block reports can
+double-count shared or cloned storage and do not prove physical savings. README
+records the deliberate preservation of historical toolchains, and inspected
+CMake caches use the mutable `llvm` path even for historical `*-llvm21` build
+directories, so a directory name alone cannot prove which compiler produced an
+artifact.
+
+Lane worktrees are transient source/build storage outside the checkout, not a
+fixed table entry or an automatic-pruning candidate: report their size only in an
+operational snapshot, and aim for zero lane-owned data once all lanes are merged
+and retired. Shared Git metadata is accounted separately, unmerged source and
+active builds are protected, and retirement uses the owner-approved Git worktree
+operation, never recursive cache deletion.
+
+**Storage audit work package** (operational; it does not wait for an application
+artifact store): inventory exact archive/version hashes, active worktree and VM
+consumers, historical evidence obligations and offline pins; agree a retirement
+list; remove only approved resolved paths; then verify bootstrap, build selection
+and evidence access. Sibling-worktree and VM consumers are not yet cleared and no
+deletion has been performed.
+
+**Retention policy.** Keep explicitly pinned offline archives; otherwise permit
+removal of a downloaded archive only after checksum verification and successful
+extraction. Keep the refusal to overwrite unknown installations. Share pinned
+tool installations across worktrees when identities match instead of
+replicating full LLVM distributions. None of this changes the language or weakens
+reproducibility checks.
+
+### 7.2. End-user cache store
+
+I09 owns complete cache identities and immutable local sharing; I12 owns the
+user-facing workflow. Distinguish tool installation, dependency sources,
+compiled/intermediate/query caches, debug data, scratch and final outputs.
+Identities include all semantic, compiler, host/target, SDK, policy,
+environment and path-sensitive inputs, and editor and CLI reuse only compatible
+checked facts. The store requires byte and age budgets, live-build leases,
+atomic publication, corruption recovery, offline pins and explainable eviction.
+Shared blobs are never writable through materialized outputs. Debug profiles
+account for all symbol files, since moving debug data alone does not reduce
+total size. Budget changes must not silently change overflow, panic,
+specialization or ABI.
+
+The `mettle storage` and cache-pruning commands are deferred until a managed
+store exists whose ownership, accounting and deletion they can implement; until
+then use filesystem reports and explicit maintenance scripts. Measure
+cold/warm retained bytes, peak scratch, rebuild cost and matched runtime behavior
+before selecting default budgets or claiming savings.

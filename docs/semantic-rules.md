@@ -299,19 +299,20 @@ sound native/user-declared dereference targets, and permitted final unsizing.
 For each candidate T, consider T, read T, then mut T. Do not dereference a raw
 pointer implicitly or invent exclusive access through an ordinary shared owner.
 
-At each candidate, consider inherent methods, then visible applicable interface
-methods. Multiple applicable interface methods at the same priority are
+At each candidate, consider inherent methods, then applicable interface methods
+visible under the bounded lookup of section 13.2. Multiple applicable interface methods at the same priority are
 ambiguous; import order cannot decide. Select a method, then enforce its
 ownership, mutability, visibility and unsafe-call obligations. An unavailable
 move or mutable loan is an error, not permission to fall back to another method.
 
 Use `<T implements Interface>::method(receiver, arguments)` for explicit
-disambiguation. Static associated functions do not acquire a receiver by being
+disambiguation (pre-cutover spelling; target `T.(Interface).method(...)`, section 13.1). Static associated functions do not acquire a receiver by being
 spelled after an object. Dereference coercion can execute the declared user's
 projection method, whose behavior is not a compiler-inserted clone/retain.
 Cycles/resource exhaustion diagnose rather than changing search precedence.
 
-There is no general overload selection by argument count/default availability.
+There is no general overload selection by argument count/default availability;
+constructor shape selection (section 13.4) is the only exception.
 Same-named inherent methods require provably disjoint receiver instantiations;
 overlapping declarations cannot win by where-clause specificity.
 Operator interfaces use their declared receiver/operand modes and the same
@@ -366,7 +367,7 @@ region, and generic code over `C: Iterable<Item = i32>` sees the bounded items a
 Generic inference additionally uses the expected type: `let x: Opt<i32> = nothing()`,
 `Opt::Nothing` and `Self(..)` in generic statics take their arguments from context.
 `_` in a turbofish list is inferred, and inherent-impl statics are callable as
-`X::f()` and `X::<i32>::f()`. Projections such as `Vec<<I implements Iterator>::Item>`
+`X::f()` and `X::<i32>::f()` (pre-cutover spellings; section 13.1). Projections such as `Vec<<I implements Iterator>::Item>`
 normalize once `I` is known; `I: Iterator<Item = T>` determines `T`, and a
 callable bound `F: fn(I::Item): B` determines `B` from the closure body, with
 unannotated closure parameters taking their modes from the bound.
@@ -376,6 +377,117 @@ and handles finite alternatives/ranges/slices under their actual type. External
 nonexhaustive types require a fallback. Reject unreachable duplicate alternatives
 according to native diagnostics; no missing case may silently become unsafe
 unreachable code.
+
+## 13. Target resolution, lookup, construction and inference
+
+Status: accepted target (decisions D18-D22), effective at the cutover; the
+compiler implements the pre-cutover `::` resolution until then. Spelling is in
+language-grammar section 13.
+
+### 13.1. Qualified resolution, shadowing and interface selection
+
+Resolve a qualified head once, lexically, nearest scope first. Locals and
+parameters may shadow imports and prelude entries. A parameter's own type
+annotation is checked before the parameter enters scope, so
+`fn open(path: read path.Path)` is legal; afterwards the nearest binding wins and
+`path.name` in the body is value access. Namespace or type access through the
+hidden import is diagnosed at that use, naming the shadowing declaration and
+suggesting an alias such as `import std.path as p`. Never retry another
+namespace after member typing fails. Conflicting explicit bindings in one scope
+remain declaration errors. Declared modules and package-root bindings are
+namespace heads too.
+
+| Resolved head | Meaning of `head.name` |
+| --- | --- |
+| Module, package or imported namespace | Exported namespace item |
+| Type or type parameter | Associated function, constant or enum variant (section 13.3) |
+| Value | Field or receiver method |
+
+If `List` resolves to a type, `List.new` is associated access; a permitted local
+shadow of the prelude's `List` yields value-member access instead.
+`T.(Interface).Item`, `.CONSTANT` and `.function(...)` select an interface item
+explicitly. For a type parameter, including interface `Self`, `T.Item` is allowed
+when its declared or elaborated bounds identify exactly one associated
+declaration named `Item`; aliases and inherited exposures of one projection,
+including its type/const/region substitutions, are deduplicated. Two distinct
+candidates require explicit selection even if their types happen to be equal,
+and concrete-type projections always use the explicit form. Adding a bound that
+introduces a second candidate is an intentional source-breaking change: diagnose
+both candidates and suggest, for example, `T.(Iterator).Item`; do not preserve
+an earlier choice.
+
+### 13.2. Bounded method lookup
+
+Inherent methods have priority. Interface candidates come only from:
+declared or elaborated generic bounds; the selected versioned prelude;
+interfaces declared in the receiver type's owning package; and explicit
+interface imports in the lexical scope. An interface found elsewhere in the
+dependency graph is not a candidate, even if currently unique. Package
+ownership is the resolved package identity, never a module-name heuristic, and
+the native-library catalog records it before cutover.
+
+Lookup uses indexed declaration metadata and the existing coherence and
+visibility checks; several applicable candidates diagnose and require explicit
+selection. Adding an unrelated external interface and implementation therefore
+adds no candidate. Changes to the owner's interfaces, selected prelude,
+explicit imports or declared bounds remain compatibility events and invalidate
+the corresponding resolution queries. Std-owned writers see std's Writer
+methods without an import; a custom type implementing an external Writer needs
+the import, an explicit Writer bound or explicit selection.
+
+### 13.3. Associated namespace and variants
+
+A type has one associated namespace shared by associated functions, associated
+constants and lowercase enum variants. A collision among them is a declaration
+error. The migration audit enumerates existing collisions before cutover and
+resolves each explicitly. `none`, `present`, `success` and `failure` are
+grammar-owned constructors for native optionals/outcomes, not unqualified
+library-enum variants; user and library enums require qualification.
+
+### 13.4. Constructor selection
+
+`List<T, A = Global>` is contiguous and growable; `Map<K,V,A = Global>` and
+`Set<T,A = Global>` are hash-based with unspecified iteration order;
+`SortedMap`, `SortedSet`, `LinkedList` and `Deque` remain explicit
+alternatives. Empty ordinary construction allocates no storage.
+
+| Call | Contract |
+| --- | --- |
+| `List<i32>()` | Zero-argument init, applicable only when `A = Global` |
+| `List<i32, Arena>(allocator: take arena)` | Named-allocator init consumes the supplied allocator |
+| `List<i32, Arena>()` | Error: there is no implicit Arena value |
+| `String(text)` | Explicit UTF-8 copy into globally allocated owned storage |
+| `String(text, allocator: take arena)` | Same copy using the supplied allocator |
+
+Constructors are selected by explicit argument-label/arity shape with
+declaration-checked applicability constraints; defaults cannot create
+overlapping shapes. Never select by inferred return type, implicit conversion
+or failure effect. Capacity and fallible factories stay separate operations;
+general function overloading remains unsupported. Type arguments are inferred
+from supplied arguments before defaults apply, and an explicitly selected
+allocator type cannot fall back to Global. Generated field construction applies
+only when no custom init exists; a custom init hides storage fields, and partial
+failure drops initialized fields under the existing rules.
+
+Declaration-checked conditional applicability under type equality, including
+proof of `A = Global`, is a required constructor-checker capability, not a
+`Global()` default placed in an arbitrary `A`. It is not yet implemented, so
+the zero-argument shape is unusable until it lands.
+
+### 13.5. Local builder inference
+
+Gather constraints within one named function; nested function or closure bodies
+do not infer the types of captured builders. Typed call parameters and local
+uses may constrain a builder, which is solved before capture, return or escape;
+call sites in other functions never determine a declaration's inferred result.
+Process provenance by source span, applying hard type constraints before
+literal fallback. Unsuffixed integers default to `i32` only after contextual
+constraints are exhausted; unresolved generic parameters get no default. Branch
+constraints participate regardless of traversal order. On conflict report the
+earliest incompatible use in that order and the earlier constraint that fixed
+the type. Matching numeric types, explicit narrowing/signedness conversions and
+declaration-known ownership and error contracts are unchanged. Probe existing
+support first; add solver work only for a demonstrated unresolved case.
 
 ## Primary comparison sources
 
