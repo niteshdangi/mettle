@@ -175,10 +175,37 @@ blocking/async behavior are per-type contracts. Atomic orderings must have a
 specified memory model. A channel owns queued messages and defines disconnection,
 bounded capacity, cancellation, and destruction behavior.
 
+`std::sync::mpsc::channel` is an unbounded FIFO. `sync_channel(n)` has capacity
+`n`; capacity zero is a rendezvous, so a blocking send completes only after a
+receiver takes its message. `try_send` returns the unaccepted value when full or
+disconnected. `try_recv` distinguishes an empty connected channel from a drained
+disconnected one. `recv_timeout` distinguishes timeout from disconnection, and
+`SyncSender::send_timeout` returns its value on either failure. Receiver
+iteration blocks until a message arrives and ends only after all senders are
+gone and queued messages are drained. `Select` borrows receivers carrying the
+same item type, blocks without polling, and returns a ready receiver index
+without consuming its message; a disconnected receiver is ready. Ready indices
+are considered in rotating order.
+
+Declare a static `std::sync::tls::LocalKey<T>` with its initializer function as
+the field value, for example `static KEY: LocalKey<T> = LocalKey(make_value);`.
+This aggregate initializer avoids a generic const-function call; methods on a
+`LocalKey` require a static-storage receiver. The runtime creates its native
+key on first use, and the initializer runs independently on each thread's first
+`with` access. `set` installs a value directly. `std::sync::tls::new<T>()`
+instead returns an owned, dynamically created key. Each thread destroys live
+values in reverse order of first installation. Values reinstalled by a
+destructor are considered in a later destructor pass, up to the host pthread
+destructor-iteration limit. The hosted Mettle entry point runs the main
+thread's remaining TLS destructors after `main` returns or panics and before it
+returns the process status. Other process-termination paths do not promise this
+cleanup.
+
 Files and sockets expose partial reads/writes. A successful write is not a
 durability guarantee. OS path strings preserve non-Unicode data when the platform
 permits it. Process exit status, environment encoding, handle inheritance and
-thread-local destructors are profile-specific obligations.
+thread-local destructors remain profile-specific obligations outside the hosted
+pthread profiles.
 
 The native `std` modules are `io`, `ffi`, `path`, `fs`, `process`, `env`,
 `time`, `net` and `panic`. Raw OS errors are kept in `io::Error` unchanged next
