@@ -34,6 +34,11 @@ public:
   std::optional<Module> run(Source root) {
     auto directory = fs::path(root.path).parent_path();
     read(std::move(root), {}, std::move(directory), 0);
+    for (const auto &package : library.packages) {
+      if (!diagnostics.empty())
+        break;
+      mountPackage(package);
+    }
     if (diagnostics.empty() && !library.directory.empty())
       mountLibraries();
     if (!diagnostics.empty())
@@ -232,6 +237,31 @@ private:
       found.push_back({token.text, member, from(token), token.span, false});
     }
     return found;
+  }
+
+  void mountPackage(const Library::Package &package) {
+    auto source = provider(package.source);
+    if (!source) {
+      if (diagnostics.empty())
+        diagnostics.error("io", {},
+                          "package '" + package.name + "' requires '" +
+                              package.source + "'");
+      return;
+    }
+    for (const auto &declaration : result.modules)
+      if (declaration.item.scope.empty() && declaration.name == package.name) {
+        diagnostics.error("name", declaration.span,
+                          "module '" + package.name +
+                              "' collides with the dependency package of the "
+                              "same name");
+        return;
+      }
+    Module::ModuleDeclaration declaration;
+    declaration.name = package.name;
+    declaration.item.visibility.publicItem = true;
+    result.modules.push_back(std::move(declaration));
+    auto directory = fs::path(source->path).parent_path();
+    read(std::move(*source), {package.name}, std::move(directory), 1);
   }
 
   void mountLibraries() {

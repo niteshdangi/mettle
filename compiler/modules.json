@@ -117,8 +117,17 @@
         "backend/llvm/cleanup.h", "backend/llvm/cleanup.cpp", "backend/llvm/target.h", "backend/llvm/target.cpp"]
     },
     {
+      "name": "packages", "directory": "packages", "kind": "STATIC",
+      "dependencies": ["source", "diagnostics", "support"],
+      "public_headers": ["packages/plan.h"],
+      "files": ["packages/plan.h", "packages/plan.cpp", "packages/toml.h", "packages/toml.cpp",
+        "packages/semver.h", "packages/semver.cpp", "packages/sha256.h", "packages/sha256.cpp",
+        "packages/manifest.h", "packages/manifest.cpp", "packages/solver.h", "packages/solver.cpp",
+        "packages/lock.h", "packages/lock.cpp"]
+    },
+    {
       "name": "driver", "directory": "driver", "kind": "EXECUTABLE",
-      "dependencies": ["source", "diagnostics", "syntax", "resolution", "ir", "types", "pipeline", "backend_llvm"],
+      "dependencies": ["source", "diagnostics", "syntax", "resolution", "packages", "ir", "types", "pipeline", "backend_llvm"],
       "llvm": true, "public_headers": [],
       "files": ["driver/main.cpp", "driver/options.h", "driver/options.cpp", "driver/run.cpp",
         "driver/inspect.h", "driver/inspect.cpp", "driver/output.h", "driver/output.cpp"]

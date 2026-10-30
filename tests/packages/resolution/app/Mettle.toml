@@ -1,0 +1,11 @@
+[package]
+name = "resolution-app"
+version = "0.1.0"
+language = "mettle-1"
+
+[registry]
+path = "../../registry"
+
+[dependencies]
+left = { path = "../left" }
+right = { path = "../right" }
