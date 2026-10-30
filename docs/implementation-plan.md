@@ -973,6 +973,13 @@ Build minimal formatting/editor/debug support as the relevant syntax and IR land
 do not wait until I12 to preserve spans or discover uninspectable values.
 I12 is the completion gate, not the first tooling work.
 
+Status of I12 (implemented, unverified (not yet built)): `mettle run`, `mettle
+test` and `mettle bench` (driver `execute.cpp`, expansion `harness.cpp`; contract
+in tooling-and-packages sections 3 and 4). Remaining I12 work: `doc`, `fmt`,
+`lint`, doctests, machine-readable test results, test timeouts, tests and
+benchmarks outside the root module, benchmark handles with an opaque sink, LSP
+and debugger workflows. The milestone is not complete.
+
 I13 closes remaining operation mappings with compiled native declarations and
 per-operation semantic evidence, including supporting protocols, reexports,
 deprecated stable APIs and target cfg branches missing from rendered docs.

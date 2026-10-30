@@ -36,6 +36,10 @@ struct Library {
   // Target facts and the root source's features that `@cfg` predicates test;
   // a dependency package tests its own features, the standard libraries none.
   expansion::Configuration configuration{};
+  // Test/benchmark builds: the root source's `@test` (or `@bench`) functions
+  // are collected into `Module::tests`, its own `main` is dropped and a
+  // synthesized harness entry is loaded beside it (see expansion/harness.h).
+  enum class Harness { None, Test, Bench } harness = Harness::None;
 };
 std::optional<Module> load(Source root, const SourceProvider &provider,
                            Diagnostics &diagnostics,

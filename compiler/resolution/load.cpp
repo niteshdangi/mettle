@@ -1,4 +1,5 @@
 #include "resolution/load.h"
+#include "expansion/harness.h"
 #include "expansion/macros.h"
 #include "support/limits.h"
 #include "syntax/parser.h"
@@ -34,7 +35,15 @@ public:
 
   std::optional<Module> run(Source root) {
     auto directory = fs::path(root.path).parent_path();
-    read(std::move(root), {}, std::move(directory), 0);
+    auto harnessPath =
+        (directory / "mettle-test-harness.mt").lexically_normal();
+    read(std::move(root), {}, directory, 0);
+    if (library.harness != Library::Harness::None && diagnostics.empty()) {
+      bool bench = library.harness == Library::Harness::Bench;
+      read({harnessPath.generic_string(),
+            expansion::harnessSource(result.tests, bench)},
+           {}, std::move(directory), 1);
+    }
     for (const auto &package : library.packages) {
       if (!diagnostics.empty())
         break;
@@ -383,7 +392,14 @@ private:
       return;
     // Expansion precedes member flattening and the external-module scan, so
     // inactive modules are never read and generated impls are flattened too.
-    expansion::expand(tree, diagnostics, configuration(), [&] {
+    const expansion::Configuration *facts = &configuration();
+    std::optional<expansion::Configuration> harnessFacts;
+    if (depth == 0 && library.harness != Library::Harness::None) {
+      harnessFacts = *facts;
+      harnessFacts->collectTests = harnessFacts->dropEntry = true;
+      facts = &*harnessFacts;
+    }
+    expansion::expand(tree, diagnostics, *facts, [&] {
       auto id = nextSource++;
       if (!currentRoot.empty())
         owner[id] = currentRoot;
@@ -391,6 +407,8 @@ private:
     });
     if (!diagnostics.empty())
       return;
+    if (depth == 0)
+      result.tests = std::move(tree.tests);
     completeDeclarations(tree);
     for (const auto &declaration : tree.modules) {
       if (!declaration.external)

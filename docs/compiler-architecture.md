@@ -25,7 +25,7 @@ for them.
 | `source` | Original source bytes, spans and encoding validation | Diagnostics policy, AST or filesystem command orchestration |
 | `diagnostics` | Structured failures and source rendering | Parsing/recovery decisions or process exit |
 | `syntax` | Tokens, keyword/operator metadata, lexer, parsed AST and parser/recovery | Resolved bindings, inferred types, CFG slots, LLVM |
-| `expansion` | Attribute validation, `@cfg` target/feature predicate evaluation (inactive items are parsed but dropped before resolution), `@derive` generation of ordinary impls as separately registered generated sources with span provenance back to the attribute and offending field/variant; declarative macro expansion (`macros.cpp`, token-level, before parsing; the generated source maps every token to its template/argument origin and the invocation) | Name resolution, type checking, LLVM |
+| `expansion` | Attribute validation, `@cfg` target/feature predicate evaluation (inactive items are parsed but dropped before resolution), `@derive` generation of ordinary impls as separately registered generated sources with span provenance back to the attribute and offending field/variant; test/benchmark collection and harness synthesis (`harness.cpp`: in a test build the root source's `@test`/`@bench` functions are recorded in `Module::tests`, its own `main` is dropped and Mettle source for a selector-dispatching `main` is generated and loaded beside the root; each test then runs in its own process); declarative macro expansion (`macros.cpp`, token-level, before parsing; the generated source maps every token to its template/argument origin and the invocation) | Name resolution, type checking, LLVM |
 | `resolution` | Compilation-local module identities, item/import scopes, visibility and canonical declaration names; source-provider-driven module assembly | Inference, backend types or filesystem I/O |
 | `packages` | Manifest/lock TOML, SemVer requirements, dependency solving with features, checksums, the package build plan (mounts and build scripts handed to the driver) and the content-addressed build store (`store`) | Source parsing, semantics, network access or artifact publication |
 | `types` | Compiler-owned language type identities/operations, target facts and target-layout results | Parsed AST, LLVM types/target machines, toolchain state |
@@ -39,7 +39,7 @@ for them.
 | `cleanup` | Static owned-place flag hierarchy, lexical/unwind cleanup plans and ordering | LLVM types, per-object runtime registration, region inference |
 | `pipeline` | Backend-independent compilation entry points and stage ordering | CLI parsing, output publication, package downloads |
 | `backend` | LLVM adapter, target-machine setup, optimization and object emission | Discovering unresolved names/types or deciding ownership |
-| `driver` | CLI, inspection serialization, source loading, build-script execution, cache-key assembly and lookup, artifact publication and native link invocation | Typing, inference, borrow rules or dataflow algorithms |
+| `driver` | CLI, inspection serialization, source loading, build-script execution, cache-key assembly and lookup, artifact publication and native link invocation, and `mettle run`/`test`/`bench` execution (`execute.cpp`: temporary build, per-test process spawning, result classification and reporting) | Typing, inference, borrow rules or dataflow algorithms |
 
 Components are build/link units, not processes or public plugin APIs. Public
 headers expose the minimum boundary; algorithm context and mutable working state

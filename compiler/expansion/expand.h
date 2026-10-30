@@ -14,6 +14,10 @@ struct Configuration {
   std::string os, arch, family, endian;
   unsigned pointerWidth = 0;
   std::set<std::string> targetFeatures, features;
+  // Test builds: collect `@test`/`@bench` functions of the root source into
+  // `Module::tests` and drop that source's own entry function (the harness
+  // supplies the entry).
+  bool collectTests = false, dropEntry = false;
 };
 // Allocates the identity of a generated source (the text of a derive).
 using SourceAllocator = std::function<SourceId()>;

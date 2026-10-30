@@ -199,7 +199,24 @@ generic bounds, macro results or ABI layout.
 Target, profile, feature, package/workspace and lock/offline selections are
 shared options. Unknown or unavailable requested capabilities fail explicitly;
 partial compiler milestones cannot count unsupported programs as passed tests.
-No actual command above exists yet.
+
+Implemented, unverified (not yet built): `check`, `build`, `run`, `test` and
+`bench` (plus `clean`, `migrate` and the inspection commands). `fmt`, `lint` and
+`doc` do not exist yet.
+
+```
+mettle run   FILE|PACKAGE [build options] [-- ARGS...]
+mettle test  FILE|PACKAGE [FILTER...] [--exact] [--include-ignored | --ignored]
+             [--jobs N] [build options]
+mettle bench FILE|PACKAGE [FILTER...] [--exact] [--include-ignored] [build options]
+```
+
+`run` builds through the ordinary build path and cache into a private temporary
+directory (nothing is written beside the sources), starts the program with the
+arguments after `--` and the caller's standard streams, and exits with its
+status; a program ended by a signal produces a message and status 128 plus the
+signal number. `test` and `bench` use the debug and release profile
+respectively unless `--profile` is given; the other build options apply.
 
 ## 4. Tests and executable documentation
 
@@ -207,6 +224,42 @@ Test functions use @test; filtering selects fully qualified names. The runner
 reports pass/fail/ignored, process termination and infrastructure failure
 separately. Test ordering is not a language guarantee. A deterministic seed and
 concurrency selection are recorded when requested.
+
+Implemented behavior (unverified): `@test` marks a function in the root module
+of the selected source with no parameters and result `Unit`, or `Unit throws E`
+(returning the failure fails the test). `@ignore` / `@ignore("reason")` skips it
+unless `--include-ignored` (run everything) or `--ignored` (run only ignored
+tests) is given; `@should_panic` / `@should_panic("text")` passes only when the
+test panics (exit status 101) or is ended by a signal, and the text, when given,
+must occur in its output. The user's `main` is not the entry of a test build and
+need not exist; the compiler generates the entry. Each test runs in its own
+process of the same executable (a hidden selector argument), `--jobs N` of them
+at a time (default: hardware concurrency), with standard input empty and both
+output streams captured and shown for non-passing tests. Output is in
+declaration order, `test NAME ... ok|FAILED|TERMINATED|ERROR|ignored`, then
+`test result: ok|FAILED. N passed; M failed; K ignored; T terminated; I
+infrastructure failures; F filtered out`. `failed` is a returned failure, a
+panic or a missing expected panic; `terminated` is an end by signal (an
+aborting profile's panic) or an unexpected exit status; infrastructure failures
+are processes that could not start or a harness mismatch. The exit status is 1
+unless all selected tests pass. Positional filters select by substring of the
+name (`--exact`: equality); names are the function names of the root module.
+No timeout bounds a hung test.
+
+`@bench fn name()` (no parameters, `Unit` result) in the root module is run by
+`bench` in one process at a time. The harness doubles the iteration count until
+one sample takes at least 10 ms, then measures 11 samples of that many calls
+with the monotonic `std::time` clock inside the process, and the command
+prints the median, minimum and maximum nanoseconds per iteration with the
+iteration count. The raw samples are not yet stored. There is no benchmark
+handle, per-iteration setup or opaque sink: an optimizer may delete a body
+without observable effects, so a benchmark must produce effects the compiler
+cannot remove. Results from `bench` do not replace the performance protocol's
+registered metrics. A returned failure from a fallible benchmark is ignored.
+
+Limits of the current implementation: tests and benchmarks inside inline or
+file modules are rejected (`error[feature]`), doctests and machine-readable
+output do not exist, and the deterministic seed option is not provided.
 
 Panic expectations match the declared contract. Aborting profiles need subprocess
 isolation to observe an expected panic; abort is not an unwind caught in-process.

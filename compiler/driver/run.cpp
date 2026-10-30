@@ -1,5 +1,6 @@
 #include "driver/build_script.h"
 #include "driver/cache.h"
+#include "driver/execute.h"
 #include "driver/inspect.h"
 #include "driver/options.h"
 #include "driver/output.h"
@@ -68,6 +69,14 @@ int clean(const Options &options) {
 int run(const Options &requested) {
   if (requested.command == "clean")
     return clean(requested);
+  if (requested.command == "run" || requested.command == "test" ||
+      requested.command == "bench")
+    return execute(requested);
+  return build(requested, nullptr);
+}
+
+int build(const Options &requested,
+          std::vector<Module::TestFunction> *discovered) {
   Options options = requested;
   std::optional<packages::Store> store;
   std::string input = options.input;
@@ -214,9 +223,24 @@ int run(const Options &requested) {
   configuration.targetFeatures = facts.baseline;
   configuration.features = std::move(rootFeatures);
   auto mounts = dependencies;
-  auto tree = resolution::load(source, provider, diagnostics,
-                               {options.libraryDirectory, options.freestanding,
-                                std::move(dependencies), configuration});
+  resolution::Library library{options.libraryDirectory, options.freestanding,
+                              std::move(dependencies), configuration};
+  if (options.harness == "test")
+    library.harness = resolution::Library::Harness::Test;
+  else if (options.harness == "bench")
+    library.harness = resolution::Library::Harness::Bench;
+  auto tree = resolution::load(source, provider, diagnostics, library);
+  if (tree && discovered) {
+    for (const auto &entry : tree->tests)
+      if (entry.path.size() > 1)
+        diagnostics.error(
+            "feature", entry.span,
+            "tests and benchmarks inside modules are not supported yet; "
+            "declare them in the root module of the source");
+    *discovered = tree->tests;
+    if (!diagnostics.empty())
+      tree.reset();
+  }
   // Executables and objects are reused when every input of the build,
   // as gathered while loading, matches a stored result.
   std::optional<std::string> cacheKey;
