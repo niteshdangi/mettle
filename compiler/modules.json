@@ -38,6 +38,15 @@
         "expansion/harness.h", "expansion/harness.cpp"]
     },
     {
+      "name": "documentation", "directory": "documentation", "kind": "STATIC",
+      "dependencies": ["syntax", "source", "diagnostics", "support"],
+      "public_headers": ["documentation/document.h", "documentation/markdown.h", "documentation/doctest.h", "documentation/html.h"],
+      "files": ["documentation/document.h", "documentation/document.cpp",
+        "documentation/markdown.h", "documentation/markdown.cpp",
+        "documentation/doctest.h", "documentation/doctest.cpp",
+        "documentation/html.h", "documentation/html.cpp"]
+    },
+    {
       "name": "resolution", "directory": "resolution", "kind": "STATIC",
       "dependencies": ["syntax", "expansion", "source", "diagnostics", "support"],
       "public_headers": ["resolution/resolve.h", "resolution/load.h"],
@@ -143,12 +152,12 @@
     },
     {
       "name": "driver", "directory": "driver", "kind": "EXECUTABLE",
-      "dependencies": ["source", "diagnostics", "syntax", "expansion", "resolution", "packages", "ir", "types", "pipeline", "backend_llvm"],
+      "dependencies": ["source", "diagnostics", "syntax", "expansion", "documentation", "resolution", "packages", "ir", "types", "pipeline", "backend_llvm"],
       "llvm": true, "public_headers": [],
       "files": ["driver/main.cpp", "driver/options.h", "driver/options.cpp", "driver/run.cpp",
         "driver/inspect.h", "driver/inspect.cpp", "driver/output.h", "driver/output.cpp",
         "driver/cache.h", "driver/cache.cpp", "driver/build_script.h", "driver/build_script.cpp",
-        "driver/execute.h", "driver/execute.cpp"]
+        "driver/execute.h", "driver/execute.cpp", "driver/document.h", "driver/document.cpp"]
     }
   ]
 }

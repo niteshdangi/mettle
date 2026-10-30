@@ -1,5 +1,6 @@
 #include "driver/build_script.h"
 #include "driver/cache.h"
+#include "driver/document.h"
 #include "driver/execute.h"
 #include "driver/inspect.h"
 #include "driver/options.h"
@@ -166,6 +167,8 @@ int run(const Options &requested) {
     return clean(requested);
   if (requested.command == "fmt")
     return formatFiles(requested);
+  if (requested.command == "doc")
+    return document(requested);
   if (requested.command == "run" || requested.command == "test" ||
       requested.command == "bench")
     return execute(requested);

@@ -618,6 +618,95 @@ def debug_info():
                if row.startswith("0x")), lines
 
 
+DOC_SOURCE = (
+    "//! Arithmetic helpers.\n"
+    "//!\n"
+    "//! Use `add` to sum.\n"
+    "\n"
+    "/// Adds two numbers.\n"
+    "///\n"
+    "/// ```\n"
+    "/// ~ let unused = 0\n"
+    "/// if add(1, 2) != 3 { panic(\"bad add\") }\n"
+    "/// ```\n"
+    "pub fn add(a: i32, b: i32): i32 { a + b }\n"
+    "\n"
+    "/// Doubles a number.\n"
+    "///\n"
+    "/// ```\n"
+    "/// if twice(2) != 5 { panic(\"doc boom\") }\n"
+    "/// ```\n"
+    "///\n"
+    "/// ```compile_fail(type)\n"
+    "/// let x: i32 = true\n"
+    "/// ```\n"
+    "///\n"
+    "/// ```should_panic\n"
+    "/// panic(\"expected\")\n"
+    "/// ```\n"
+    "///\n"
+    "/// ```no_run\n"
+    "/// loop {}\n"
+    "/// ```\n"
+    "///\n"
+    "/// ```text\n"
+    "/// not code\n"
+    "/// ```\n"
+    "pub fn twice(a: i32): i32 { add(a, a) }\n"
+    "fn private_helper(): i32 { 1 }\n")
+
+
+def doc_writes_deterministic_html():
+    source = evidence / "maths.mt"
+    source.write_text(DOC_SOURCE)
+    first, second = evidence / "doc-a", evidence / "doc-b"
+    invoke(["doc", source, "-o", first], 0, "documented 1 module")
+    invoke(["doc", source, "-o", second], 0, "documented 1 module")
+    names = sorted(path.name for path in first.iterdir())
+    assert names == ["index.html", "maths.html", "style.css"], names
+    for name in names:
+        assert (first / name).read_bytes() == (second / name).read_bytes(), name
+    page = (first / "maths.html").read_text()
+    for needle in ["<h1>maths</h1>", "Use <code>add</code> to sum.",
+                   "Adds two numbers.",
+                   '<pre class="sig"><code>pub fn add(a: i32, b: i32): i32'
+                   "</code></pre>", "<figcaption>compile_fail(type)"]:
+        assert needle in page, needle
+    # Hidden lines, bodies and private items stay out of the page.
+    for needle in ["unused", "a + b", "private_helper", "not code"]:
+        assert needle not in page, needle
+    assert "maths" in (first / "index.html").read_text()
+    invoke(["doc", source, "-o", first, "--private"], 0)
+    assert "private_helper" in (first / "maths.html").read_text()
+    # A source that does not parse is reported, not documented.
+    broken = evidence / "broken.mt"
+    broken.write_text("pub fn (\n")
+    invoke(["doc", broken, "-o", evidence / "doc-c"], 1, "error[parse]")
+
+
+def doctests_run_isolated_examples():
+    source = evidence / "maths.mt"
+    source.write_text(DOC_SOURCE)
+    text = invoke(["test", source], 1, [
+        "Doc-tests", "test maths - add (line 8) ... ok",
+        "test maths - twice (line 16) ... FAILED", "doc boom",
+        "test maths - twice (line 20) ... ok, failed to compile as declared",
+        "test maths - twice (line 24) ... ok",
+        "test maths - twice (line 28) ... ok, compiled, not run",
+        "4 passed; 1 failed; 0 ignored"])
+    assert "not code" not in text, text
+    invoke(["test", source, "--doc", "add"], 0,
+           ["test maths - add (line 8) ... ok", "1 passed; 0 failed",
+            "4 filtered out"])
+    # An example that is not valid Mettle fails alone; the others still run.
+    source.write_text(DOC_SOURCE.replace("panic(\"expected\")",
+                                         "let = ;"))
+    invoke(["test", source, "--doc"], 1,
+           ["test maths - add (line 8) ... ok",
+            "test maths - twice (line 24) ... FAILED",
+            "the example does not compile"])
+
+
 CASES = [path_dependency, missing_lock_locked, lock_corruption,
          registry_resolution, version_conflict, backtracking, offline, features,
          manifest_diagnostics, package_options_need_package, incremental_reuse,
@@ -626,6 +715,7 @@ CASES = [path_dependency, missing_lock_locked, lock_corruption,
          migrate_preserves_syntax_tree, run_forwards_args_and_exit_status,
          test_reports_pass_fail_ignored_and_isolates_panics,
          test_filter_exact, bench_reports_timing, fmt_normalizes_layout_only,
+         doc_writes_deterministic_html, doctests_run_isolated_examples,
          debug_info]
 
 failures = []

@@ -9,7 +9,8 @@
 namespace mettle::driver {
 struct Options {
   Options();
-  // `mettle fmt FILE...`: `input` is the first file, `moreInputs` the rest.
+  // `mettle fmt FILE...` and `mettle doc PATH...`: `input` is the first path,
+  // `moreInputs` the rest.
   std::vector<std::string> moreInputs;
   bool check = false;
   std::string command, input, output, emit = "executable", profile = "debug";
@@ -39,6 +40,9 @@ struct Options {
   std::vector<std::string> programArguments, filters;
   bool exact = false, includeIgnored = false, onlyIgnored = false;
   unsigned jobs = 0;
+  // `mettle test --doc` runs only the doctests; `mettle doc --private` also
+  // documents items that are not `pub`.
+  bool docOnly = false, documentPrivate = false;
   std::string harness;
 };
 std::optional<Options> options(int argc, char **argv);
