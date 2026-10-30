@@ -114,6 +114,19 @@ NumericLiteral integerMaximum(Type type) {
   result.magnitude = mask(integerWidth(type) - isSignedInteger(type));
   return result;
 }
+NumericLiteral integerMinimum(Type type, unsigned pointerBits) {
+  return integerMinimum(integerEquivalent(type, pointerBits));
+}
+NumericLiteral integerMaximum(Type type, unsigned pointerBits) {
+  return integerMaximum(integerEquivalent(type, pointerBits));
+}
+NumericLiteral evaluateIntegerConstant(std::string_view op, Type type,
+                                       const NumericLiteral &a,
+                                       const NumericLiteral &b,
+                                       unsigned pointerBits) {
+  return evaluateIntegerConstant(op, integerEquivalent(type, pointerBits), a,
+                                 b);
+}
 NumericLiteral evaluateIntegerConstant(std::string_view op, Type type,
                                        const NumericLiteral &a,
                                        const NumericLiteral &b) {

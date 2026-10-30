@@ -133,6 +133,7 @@ Module::Product Parser::product() {
 Function Parser::function(bool allowDeclaration) {
   Function result;
   result.unsafeFunction = take("unsafe");
+  result.constFunction = take("const");
   result.constructor = is("init");
   if (result.constructor) {
     result.span = expect("init").span;

@@ -141,7 +141,7 @@ std::optional<int> Checker::machineValue(const Node &node) {
   if (!isInteger(type) || (member != "MIN" && member != "MAX"))
     return std::nullopt;
   NumericLiteral literal;
-  auto width = integerWidth(type);
+  auto width = integerWidth(type, pointerBits());
   auto bits =
       member == "MAX" ? width - (isSignedInteger(type) ? 1 : 0) : width - 1;
   if (member == "MIN") {

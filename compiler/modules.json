@@ -51,8 +51,14 @@
       "files": ["places/place.h", "places/place.cpp"]
     },
     {
+      "name": "consteval", "directory": "consteval", "kind": "STATIC",
+      "dependencies": ["syntax", "types", "diagnostics", "source", "support"],
+      "public_headers": ["consteval/evaluate.h"],
+      "files": ["consteval/evaluate.h", "consteval/evaluate.cpp"]
+    },
+    {
       "name": "semantics", "directory": "semantics", "kind": "STATIC",
-      "dependencies": ["syntax", "resolution", "types", "places", "diagnostics", "support"],
+      "dependencies": ["syntax", "resolution", "types", "places", "consteval", "diagnostics", "support"],
       "public_headers": ["semantics/check.h", "semantics/checked.h", "semantics/interfaces.h"],
       "files": ["semantics/check.h", "semantics/checked.h", "semantics/checker.h",
         "semantics/check.cpp", "semantics/inference.h", "semantics/inference.cpp",

@@ -390,7 +390,7 @@ void Checker::resolvePatterns() {
     facts(*pattern).type = inference.value(variable);
     const auto &resolved = facts(*pattern);
     if (resolved.numeric &&
-        !integerLiteralFits(*resolved.numeric, resolved.type))
+        !integerLiteralFits(*resolved.numeric, resolved.type, pointerBits()))
       error("type", pattern->span,
             "pattern literal is outside the " +
                 std::string(checked.types->name(resolved.type)) + " range");

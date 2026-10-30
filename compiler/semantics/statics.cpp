@@ -205,7 +205,8 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
       return std::nullopt;
     result.scalar = *facts(*literalNode).numeric;
     facts(*literalNode).type = type;
-    if (isInteger(type) && !integerLiteralFits(result.scalar, type))
+    if (isInteger(type) &&
+        !integerLiteralFits(result.scalar, type, pointerBits()))
       return fail("static initializer integer is outside its type range");
     return result;
   }
@@ -213,6 +214,8 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
     result.scalar.magnitude[0] = node.text == "true";
     return result;
   }
+  if (constFunctionCall(node))
+    return evaluatedStatic(node, type);
   if (node.kind == Kind::Character &&
       type == (node.flag ? Type::U8 : Type::Char)) {
     auto value = characterLiteral(node.text, node.flag, diagnostics, node.span);
@@ -659,9 +662,31 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
       return fail(
           "required static expression has an incompatible integer type");
     result.scalar = *value;
-    if (!integerLiteralFits(result.scalar, type))
+    if (!integerLiteralFits(result.scalar, type, pointerBits()))
       return fail("required static initializer overflows its type");
     return result;
+  }
+  bool scalar = isInteger(type) || type == Type::Bool || type == Type::Char;
+  bool aggregate = checked.types->isProduct(type) &&
+                   !checked.types->isSum(type) && !scalar;
+  switch (node.kind) {
+  case Kind::Cast:
+  case Kind::If:
+  case Kind::Match:
+  case Kind::Block:
+  case Kind::Index:
+  case Kind::Field:
+    if (scalar || aggregate)
+      return evaluatedStatic(node, type);
+    break;
+  case Kind::Binary:
+  case Kind::Name:
+  case Kind::Unary:
+    if ((scalar && !isInteger(type)) || aggregate)
+      return evaluatedStatic(node, type);
+    break;
+  default:
+    break;
   }
   return fail("static initializer requires a validated constant expression");
 }

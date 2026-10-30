@@ -518,6 +518,15 @@ type tests. Array repetition evaluates its element expression once and requires
 Copy for duplication; a generator API provides repeated construction of non-Copy
 elements. Const evaluation validates required array lengths after parsing.
 
+`const fn` (grammar `function` with `"const"`) is a function the compiler's
+constant evaluator may call from required constants, array lengths and static
+initializers. Its body is interpreted over the target's integer widths:
+literals, arithmetic, casts, comparisons, `if`/`match`/blocks/`let`/`var`,
+loops, tuples, arrays and calls to other `const fn`. Overflow, division by
+zero, out-of-bounds indexing and exhausting the evaluation step budget or call
+depth are compile-time errors (`error[constant]` / `error[limit]`).
+Generic, method, variadic and fallible `const fn` are not yet evaluated.
+
 ## 11. Receiver and pin projection rules
 
 An explicit receiver must be first and unique. Its type is Self or a finite

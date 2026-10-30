@@ -380,6 +380,8 @@ Type Checker::constantContext(const Node &node) {
   return Type::Unknown;
 }
 Type Checker::constantType(const Node &node, Type expected) {
+  if (needsEvaluator(node))
+    return evaluatedConstant(node, expected);
   if (node.kind == Kind::Name)
     if (auto primitive = machineValue(node))
       if (facts(node).numeric && isInteger(inference.value(*primitive))) {
@@ -436,7 +438,7 @@ Type Checker::constantType(const Node &node, Type expected) {
                 : isInteger(expected)   ? expected
                                         : Type::I32;
     if (!facts(syntax).numeric ||
-        !integerLiteralFits(*facts(syntax).numeric, type)) {
+        !integerLiteralFits(*facts(syntax).numeric, type, pointerBits())) {
       error("type", node.span,
             "required integer constant is outside the " +
                 std::string(checked.types->name(type)) + " range");
@@ -488,7 +490,8 @@ Type Checker::constantType(const Node &node, Type expected) {
                         valueType, valueType == Type::Bool ? integerLiteral(0)
                                    : isSignedInteger(valueType)
                                        ? integerLiteral(-1)
-                                       : integerMaximum(valueType))});
+                                       : integerMaximum(valueType,
+                                                        pointerBits()))});
     } catch (const std::invalid_argument &failure) {
       error("type", node.span, failure.what());
       return Type::Unknown;

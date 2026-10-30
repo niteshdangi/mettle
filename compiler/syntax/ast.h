@@ -263,6 +263,7 @@ struct Function {
   std::string interfaceOwner{};
   int implementation = -1;
   bool unsafeFunction = false;
+  bool constFunction = false;
   std::string abi{};
   bool foreignDeclaration = false;
   bool variadic = false;

@@ -24,6 +24,10 @@ inline constexpr unsigned typeDepth = 128;
 inline constexpr std::size_t activeLoans = std::size_t{1} << 22;
 // Elements of expanded aggregate cleanup/initialization hierarchies.
 inline constexpr std::size_t cleanupPlaces = std::size_t{1} << 24;
+// Compile-time evaluation: evaluation steps per required constant and the
+// nesting of const function calls. Exhaustion is a diagnostic, never a cap.
+inline constexpr std::size_t constEvalSteps = std::size_t{1} << 24;
+inline constexpr unsigned constEvalDepth = 256;
 // Objects must stay addressable: sizes are bounded by the signed pointer range.
 inline constexpr std::uint64_t objectBytes = std::uint64_t{1} << 62;
 } // namespace mettle::limits

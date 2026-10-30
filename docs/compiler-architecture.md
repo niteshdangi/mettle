@@ -29,6 +29,7 @@ for them.
 | `resolution` | Compilation-local module identities, item/import scopes, visibility and canonical declaration names; source-provider-driven module assembly | Inference, backend types or filesystem I/O |
 | `packages` | Manifest/lock TOML, SemVer requirements, dependency solving with features, checksums and the package build plan (mounts handed to the driver) | Source parsing, semantics, network access or artifact publication |
 | `types` | Compiler-owned language type identities/operations, target facts and target-layout results | Parsed AST, LLVM types/target machines, toolchain state |
+| `consteval` | Pure target-aware compile-time interpreter over syntax: scalar/aggregate values at the selected target's integer widths, `const fn` calls, control flow, step/depth budgets (`error[limit]`); names and diagnostics come from a host interface | Name resolution, checker state, LLVM, host-width arithmetic |
 | `places` | Function-local storage roots, typed field paths and structural overlap | AST traversal, CFG control flow, mutability/loan policy |
 | `semantics` | Lexical resolution, module-resolution consumption, inference, flow facts and checked syntax | LLVM, code emission, filesystem/linker side effects |
 | `ir` | Typed CFG model, structural/type/SSA verification and inspection | AST traversal, ownership policy implemented in a printer, LLVM |
