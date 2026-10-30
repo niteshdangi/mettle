@@ -80,6 +80,9 @@ private:
   std::unordered_map<std::string, Names> declared;
   std::unordered_map<std::string, bool> availability;
   std::unordered_map<std::string, std::string> methods;
+  // Iterator methods; a call chained on `)` (as in `(0..n).fold(...)`) needs
+  // `core` because the built-in range value is then a library range.
+  std::unordered_set<std::string> iteratorMethods;
   bool builtinMethodsLoaded = false;
   std::size_t scanned = 0, scannedLiterals = 0;
 
@@ -186,6 +189,18 @@ private:
           methods.emplace(function.name.substr(function.name.rfind('.') + 1),
                           module);
     }
+    if (auto source = provider((fs::path(library.directory) / "core" / "iter.mt")
+                                   .lexically_normal()
+                                   .generic_string())) {
+      Diagnostics scratch;
+      auto tree = parse(*source, scratch);
+      if (scratch.empty())
+        for (const auto &function : tree.functions)
+          if (function.implementation < 0 &&
+              function.interfaceOwner == "Iterator")
+            iteratorMethods.insert(
+                function.name.substr(function.name.rfind('.') + 1));
+    }
     return methods;
   }
 
@@ -238,6 +253,9 @@ private:
         const auto &known = builtinMethods();
         if (auto method = known.find(token.text); method != known.end())
           found.push_back({"core", method->second, "", token.span, false});
+        else if (i > 1 && significant[i - 2]->text == ")" &&
+                 iteratorMethods.contains(token.text))
+          found.push_back({"core", "iter", "", token.span, false});
       }
       if (token.kind == TokenKind::Word && from(token).empty() &&
           (i == 0 || (significant[i - 1]->text != "::" &&

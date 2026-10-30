@@ -68,6 +68,27 @@ int Checker::aggregate(Node &n, bool reachable) {
             "missing bound is only valid as an index");
       return inference.fresh();
     }
+    if (!loopRanges.contains(&n)) {
+      // Outside a `for` source the range is the library `core.iter` value so
+      // that it is an Iterator; without `core` it stays structural.
+      std::string target =
+          n.text == "..=" ? "core::iter::range_inclusive" : "core::iter::range";
+      if (auto found = names.find(callableName(target, current->owner, n.span));
+          found != names.end()) {
+        auto callee = std::make_unique<Node>();
+        callee->kind = Kind::Name;
+        callee->span = n.span;
+        callee->text = std::move(target);
+        std::vector<NodeOwner> children;
+        children.push_back(std::move(callee));
+        for (auto &child : n.children)
+          children.push_back(std::move(child));
+        n.children = std::move(children);
+        n.kind = Kind::Call;
+        n.text.clear();
+        return call(n, reachable);
+      }
+    }
     auto lower = node(*n.children[0], reachable);
     auto upper = node(*n.children[1], reachable);
     inference.equal(lower, upper, n.span);
@@ -126,6 +147,12 @@ int Checker::aggregate(Node &n, bool reachable) {
     if (children.empty())
       return fallback;
     return inference.joined(children[0], fallback, n.span);
+  }
+  if (auto *iterable = n.children[0].get(); iterable) {
+    while (iterable->kind == Kind::Group)
+      iterable = iterable->children[0].get();
+    if (iterable->kind == Kind::Range && iterable->name.empty())
+      loopRanges.insert(iterable);
   }
   int source = node(*n.children[0], reachable);
   auto type = inference.value(source);

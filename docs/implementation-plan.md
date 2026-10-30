@@ -736,15 +736,29 @@ arithmetic/index traps still abort; there is no `core.process.exit` (core has
 no OS; std is a stub). `core.hint.black_box(value)` is a compiler intrinsic
 identity: the value round-trips through memory an empty `asm sideeffect` with a
 memory clobber may touch, so optimization cannot fold or delete it.
-Known core gaps: the built-in `a..b` range is not an `Iterator` (library
-`iter.range` is used instead); heapsort is not stable and there
-is no allocation-backed stable sort; slice `Iterable`/`MutableIterable` cannot be
-implemented because associated types cannot name the `self` region, so `iter()`
-is inherent; Debug for composites and generic nested `fmt` calls are blocked by
-exclusive-loan retention after a generic `mut Formatter` call (`fmt.write_i64`
-helpers are provided); sort stability and Unicode
-whitespace/case are not implemented; mounting compiles the whole of `core`, which
-costs seconds in Debug builds.
+Built-in ranges: `a..b`/`a..=b` map to the library `core.iter.range` /
+`range_inclusive` values (`Range<T>`/`RangeInclusive<T>`, Iterators and
+bidirectional) wherever the range is not the direct source of a `for`, when
+`core` is mounted; the checker rewrites the node to that call (calls chained on
+`)` with an Iterator method name mount `core`). A range that is the source of a
+`for` keeps the structural counted-loop form, and without `core` a range stays
+structural. An iterator held in a local is consumed by `for x in it`. Implemented,
+unverified (not yet built); open-ended range values and non-integer bounds are
+unchanged (not implemented).
+Core slice `sort_unstable`, `sort_unstable_by` and `sort_unstable_by_key` are an
+allocation-free introsort (median-of-three quicksort, insertion sort for short
+ranges, heapsort fallback; fixed pending-range stack). Allocation-backed
+slice and `List` `sort`/`sort_by`/`sort_by_key` use a stable index merge sort,
+two index buffers from the global allocator and only swap initialized elements after all
+comparisons; these APIs are implemented, unverified (not yet built). Slice
+stable methods are provided by `alloc.vec`, which must be mounted. Slice
+`Iterable`/`MutableIterable` implementations now use the associated iterator
+region families; they are implemented, unverified (not yet built), including
+generic use with an unsized slice. Composite Debug implementations and the
+generic mutable-formatter loan correction are already present, with nested
+collection coverage described below; they have not been reverified by this
+lane. Unicode whitespace/case remain unimplemented; mounting compiles the
+whole of `core`, which costs seconds in Debug builds.
 Also: text literals are usable as `static` initializers and
 byte/raw literals (`b"..."` is `read [u8; N] from static`; `r"..."`, `r#"..."#`,
 `br"..."`); range slicing `read a[i..j]`, `a[i..]`, `a[..j]`, `a[..]`, `a[i..=j]`

@@ -136,7 +136,7 @@ module identities. Generic aliases expand under their declaration environment an
 source/module identities; evaluated const arguments participate in identity.
 
 Concrete enum, optional and outcome descriptors own their alternatives and active
-payload field maps. Tuples, fixed arrays and ranges are structural identities;
+payload field maps. Tuples, fixed arrays and ranges are structural identities (a range outside a `for` source is checked as a call of `core.iter.range`/`range_inclusive` when `core` is mounted);
 named products/enums remain nominal. Recursive structural constraints are solved
 inside inference, not by inserting unresolved types into published CFGs. Optional
 injections are checked expected-type adaptations, never flattening of nested

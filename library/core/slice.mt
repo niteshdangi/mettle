@@ -1,5 +1,5 @@
-import super.cmp.{PartialEq, PartialOrd}
-import super.iter.Iterator
+import super.cmp.{PartialEq, PartialOrd, Ord, Ordering}
+import super.iter.{Iterator, Iterable, MutableIterable}
 
 copy type Raw { data: ptr<read u8>; len: usize }
 
@@ -131,35 +131,134 @@ extend<T: PartialOrd> [T] {
         }
         true
     }
-    // In-place heapsort: O(n log n) worst case, no allocation, NOT stable.
-    pub mut fn sort() {
-        let n = self.len()
-        if n < 2usize { return }
-        var start = n / 2usize
-        while start > 0usize {
-            start -= 1usize
-            sift_down<T>(mut self, start, n)
-        }
-        var end = n
-        while end > 1usize {
-            end -= 1usize
-            self.swap(0usize, end)
-            sift_down<T>(mut self, 0usize, end)
-        }
+    // In-place introsort: O(n log n) worst case, no allocation, NOT stable.
+    pub mut fn sort_unstable() {
+        introsort(mut self, fn(a: read T, b: read T): bool { a.lt(b) })
     }
 }
 
-fn sift_down<T: PartialOrd>(xs: mut [T], start: usize, end: usize) {
-    var root = start
-    while true {
-        var child = root * 2usize + 1usize
-        if child >= end { return }
-        if child + 1usize < end && xs[child] < xs[child + 1usize] { child += 1usize }
-        if xs[root] < xs[child] {
-            xs.swap(root, child)
-            root = child
-        } else {
-            return
+extend<T> [T] {
+    pub mut fn sort_unstable_by<F: fn(read T, read T): Ordering>(compare: take F) {
+        introsort(mut self, fn(a: read T, b: read T): bool { compare(a, b).is_lt() })
+    }
+    pub mut fn sort_unstable_by_key<K: Ord, F: fn(read T): K>(key: take F) {
+        introsort(mut self, fn(a: read T, b: read T): bool {
+            let left = key(a)
+            let right = key(b)
+            left.cmp(read right).is_lt()
+        })
+    }
+}
+
+// Introsort over `less`: median-of-three quicksort, insertion sort for short
+// ranges and an in-place heapsort once the depth budget (2 * log2 n) is spent.
+// Pending ranges live in a fixed stack; the smaller partition is pushed and the
+// larger is processed next, so at most log2 n + 1 ranges are pending.
+fn introsort<T, F: fn(read T, read T): bool>(xs: mut [T], less: take F) {
+    let n = xs.len()
+    if n < 2usize { return }
+    var budget = 0usize
+    var shrinking = n
+    while shrinking > 1usize { shrinking /= 2usize; budget += 2usize }
+    var lows = [0usize; 80]
+    var highs = [0usize; 80]
+    var budgets = [0usize; 80]
+    var top = 1usize
+    lows[0usize] = 0usize
+    highs[0usize] = n
+    budgets[0usize] = budget
+    while top > 0usize {
+        top -= 1usize
+        var lo = lows[top]
+        var hi = highs[top]
+        var left_budget = budgets[top]
+        while hi - lo > 1usize {
+            if hi - lo <= 16usize {
+                var i = lo + 1usize
+                while i < hi {
+                    var j = i
+                    while j > lo && less(read xs[j], read xs[j - 1usize]) {
+                        xs.swap(j, j - 1usize)
+                        j -= 1usize
+                    }
+                    i += 1usize
+                }
+                break
+            }
+            if left_budget == 0usize {
+                let size = hi - lo
+                var start = size / 2usize
+                while start > 0usize {
+                    start -= 1usize
+                    var root = start
+                    while true {
+                        var child = root * 2usize + 1usize
+                        if child >= size { break }
+                        if child + 1usize < size && less(read xs[lo + child], read xs[lo + child + 1usize]) {
+                            child += 1usize
+                        }
+                        if less(read xs[lo + root], read xs[lo + child]) {
+                            xs.swap(lo + root, lo + child)
+                            root = child
+                        } else {
+                            break
+                        }
+                    }
+                }
+                var end = size
+                while end > 1usize {
+                    end -= 1usize
+                    xs.swap(lo, lo + end)
+                    var root = 0usize
+                    while true {
+                        var child = root * 2usize + 1usize
+                        if child >= end { break }
+                        if child + 1usize < end && less(read xs[lo + child], read xs[lo + child + 1usize]) {
+                            child += 1usize
+                        }
+                        if less(read xs[lo + root], read xs[lo + child]) {
+                            xs.swap(lo + root, lo + child)
+                            root = child
+                        } else {
+                            break
+                        }
+                    }
+                }
+                break
+            }
+            left_budget -= 1usize
+            let mid = lo + (hi - lo) / 2usize
+            let last = hi - 1usize
+            if less(read xs[mid], read xs[lo]) { xs.swap(mid, lo) }
+            if less(read xs[last], read xs[mid]) {
+                xs.swap(last, mid)
+                if less(read xs[mid], read xs[lo]) { xs.swap(mid, lo) }
+            }
+            xs.swap(lo, mid)
+            var i = lo + 1usize
+            var j = last
+            while true {
+                while i <= j && less(read xs[i], read xs[lo]) { i += 1usize }
+                while i <= j && less(read xs[lo], read xs[j]) { j -= 1usize }
+                if i >= j { break }
+                xs.swap(i, j)
+                i += 1usize
+                j -= 1usize
+            }
+            xs.swap(lo, j)
+            if j - lo < hi - (j + 1usize) {
+                lows[top] = lo
+                highs[top] = j
+                budgets[top] = left_budget
+                top += 1usize
+                lo = j + 1usize
+            } else {
+                lows[top] = j + 1usize
+                highs[top] = hi
+                budgets[top] = left_budget
+                top += 1usize
+                hi = j
+            }
         }
     }
 }
@@ -196,6 +295,22 @@ extend<region r, T> SliceIterMut<region r, T> implements Iterator {
 extend<T> [T] {
     pub fn iter(): SliceIter<region self, T> { SliceIter(read self, 0usize) }
     pub mut fn iter_mut(): SliceIterMut<region self, T> { SliceIterMut(mut self, 0usize) }
+}
+
+extend<T> [T] implements Iterable {
+    type Item = T
+    type Iter<region r> = SliceIter<region r, T>
+    fn iter<region r>(receiver self: read Self from r): SliceIter<region r, T> {
+        SliceIter(read self, 0usize)
+    }
+}
+
+extend<T> [T] implements MutableIterable {
+    type Item = T
+    type IterMut<region r> = SliceIterMut<region r, T>
+    fn iter_mut<region r>(receiver self: mut Self from r): SliceIterMut<region r, T> {
+        SliceIterMut(mut self, 0usize)
+    }
 }
 
 // Copy-valued iteration over the bytes of a slice: yields `u8` while holding a
