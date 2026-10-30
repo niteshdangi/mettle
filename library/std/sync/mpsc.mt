@@ -377,7 +377,7 @@ extend<region r, T> Select<region r, T> {
             var checked = 0usize
             var index = self.cursor
             while checked < self.receivers.len() {
-                if channel_ready(self.receivers.as_slice()[index].chan.get()) {
+                if channel_ready(self.receivers[index].chan.get()) {
                     self.cursor = if index + 1usize == self.receivers.len() { 0usize } else { index + 1usize }
                     return index
                 }
@@ -386,14 +386,14 @@ extend<region r, T> Select<region r, T> {
             }
             var registered = 0usize
             while registered < self.receivers.len() {
-                register_select_waiter(self.receivers.as_slice()[registered].chan.get())
+                register_select_waiter(self.receivers[registered].chan.get())
                 registered += 1usize
             }
             checked = 0usize
             index = self.cursor
             var chosen: usize? = none
             while checked < self.receivers.len() {
-                if channel_ready(self.receivers.as_slice()[index].chan.get()) {
+                if channel_ready(self.receivers[index].chan.get()) {
                     chosen = present(index)
                     checked = self.receivers.len()
                 } else {
@@ -405,7 +405,7 @@ extend<region r, T> Select<region r, T> {
                 present(found) => {
                     registered = 0usize
                     while registered < self.receivers.len() {
-                        unregister_select_waiter(self.receivers.as_slice()[registered].chan.get())
+                        unregister_select_waiter(self.receivers[registered].chan.get())
                         registered += 1usize
                     }
                     self.cursor = if found + 1usize == self.receivers.len() { 0usize } else { found + 1usize }
@@ -416,7 +416,7 @@ extend<region r, T> Select<region r, T> {
             unsafe { mettle_rt_select_wait(epoch) }
             registered = 0usize
             while registered < self.receivers.len() {
-                unregister_select_waiter(self.receivers.as_slice()[registered].chan.get())
+                unregister_select_waiter(self.receivers[registered].chan.get())
                 registered += 1usize
             }
         }

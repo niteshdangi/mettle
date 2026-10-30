@@ -497,7 +497,7 @@ private:
   Type merge(Type left, Type right, Span span);
   RegionId backing(const Node &node);
   Type expression(const Node &node);
-  Type call(const Node &node);
+  Type call(const Node &node, bool operatorIndex = false);
   Type receiver(Type actual, RegionId &location, const ReceiverPlan &plan,
                 Span span, bool bounded = false);
   Type closure(const Node &node);
@@ -1285,12 +1285,21 @@ Type RegionPass::receiver(Type actual, RegionId &location,
   }
   return actual;
 }
-Type RegionPass::call(const Node &node) {
+Type RegionPass::call(const Node &node, bool operatorIndex) {
+  const bool receiverCall = facts(node).method || operatorIndex;
+  const auto parameterForArgument = [&](std::size_t argument) {
+    if (operatorIndex)
+      return argument + 1;
+    return argument < facts(node).argumentOrder.size()
+               ? facts(node).argumentOrder[argument]
+               : argument;
+  };
   std::optional<Type> methodReceiver;
   RegionId methodLocation = RegionId::Unspecified;
-  if (facts(node).method && !node.children.empty() &&
-      !node.children[0]->children.empty()) {
-    const auto &syntax = *node.children[0]->children[0];
+  if (receiverCall && !node.children.empty() &&
+      (operatorIndex || !node.children[0]->children.empty())) {
+    const auto &syntax =
+        operatorIndex ? *node.children[0] : *node.children[0]->children[0];
     auto actual = expression(syntax);
     methodLocation = backing(syntax);
     if (facts(node).optional) {
@@ -1321,9 +1330,11 @@ Type RegionPass::call(const Node &node) {
          i < generics.size() && i < facts(node).typeArguments.size(); ++i)
       checkedArguments.push_back({generics[i], facts(node).typeArguments[i]});
     for (std::size_t i = 1; i < node.children.size(); ++i) {
-      auto parameter = i - 1 < facts(node).argumentOrder.size()
-                           ? facts(node).argumentOrder[i - 1]
-                           : i - 1;
+      auto parameter = operatorIndex
+                           ? i
+                           : i - 1 < facts(node).argumentOrder.size()
+                                 ? facts(node).argumentOrder[i - 1]
+                                 : i - 1;
       if (parameter >= signature.parameters.size())
         continue;
       auto formal = signature.parameters[parameter];
@@ -1668,7 +1679,8 @@ Type RegionPass::call(const Node &node) {
   std::vector<std::pair<RegionId, RegionId>> substitution, bindings;
   std::vector<std::pair<RegionId, RegionId>> explicitRegions;
   std::size_t regionIndex = 0;
-  for (const auto &argument : node.children[0]->genericArguments) {
+  if (!operatorIndex) {
+    for (const auto &argument : node.children[0]->genericArguments) {
     if (argument.region.empty())
       continue;
     if (regionIndex >= declaration.regions.size()) {
@@ -1681,6 +1693,7 @@ Type RegionPass::call(const Node &node) {
       explicitRegions.emplace_back(
           found->second,
           source(argument.region, current->context, argument.span));
+  }
   }
   for (auto region : signature.quantified) {
     auto explicitArgument =
@@ -1710,7 +1723,7 @@ Type RegionPass::call(const Node &node) {
   std::set<Type> inferredParameters;
   std::set<Type> fixedParameters;
   std::size_t explicitIndex = 0;
-  if (!node.children.empty())
+  if (!operatorIndex && !node.children.empty())
     for (const auto &argument : node.children[0]->genericArguments) {
       if (!argument.region.empty())
         continue;
@@ -1726,7 +1739,7 @@ Type RegionPass::call(const Node &node) {
     }
   // The receiver binds the callee's type parameters like any other argument,
   // so a view inside `T?` keeps its region in `take fn unwrap(): T`.
-  if (facts(node).method && methodReceiver && !formals.empty()) {
+  if (receiverCall && methodReceiver && !formals.empty()) {
     auto actual = *methodReceiver;
     const auto mode = functions[callee].locals[0].mode;
     if (!facts(node).receiverPlan &&
@@ -1738,8 +1751,7 @@ Type RegionPass::call(const Node &node) {
                    fixedParameters, node.span);
   }
   for (std::size_t i = 0; i < arguments.size(); ++i) {
-    auto parameter =
-        i < facts(node).argumentOrder.size() ? facts(node).argumentOrder[i] : i;
+    auto parameter = parameterForArgument(i);
     if (parameter >= formals.size())
       continue;
     // A borrowed parameter receives the referent of an explicit view, so a
@@ -1785,13 +1797,13 @@ Type RegionPass::call(const Node &node) {
         !types.isView(formals[parameter])) {
       lifetime = types.view(actual).region;
       actual = types.view(actual).payload;
-      if (facts(node).method && parameter == 0)
+      if (receiverCall && parameter == 0)
         while (types.isView(actual)) {
           lifetime = store.intersection({lifetime, types.view(actual).region});
           actual = types.view(actual).payload;
         }
     }
-    if (facts(node).method && parameter == 0)
+    if (receiverCall && parameter == 0)
       for (unsigned hidden = 0; hidden < facts(node).hiddenReceiver; ++hidden)
         if (types.isOpaque(actual) && !types.product(actual).fields.empty())
           actual = types.product(actual).fields[0].type;
@@ -1802,12 +1814,12 @@ Type RegionPass::call(const Node &node) {
       argumentLifetimes.push_back(
           {lifetime, replace(signature.backing[parameter], substitution)});
   };
-  if (facts(node).method && !formals.empty())
-    argument(0, *methodReceiver, *node.children[0]->children[0], methodLocation,
-             facts(node).receiverPlan.has_value());
+  if (receiverCall && !formals.empty())
+    argument(0, *methodReceiver,
+             operatorIndex ? *node.children[0] : *node.children[0]->children[0],
+             methodLocation, facts(node).receiverPlan.has_value());
   for (std::size_t i = 0; i < arguments.size(); ++i) {
-    auto target =
-        i < facts(node).argumentOrder.size() ? facts(node).argumentOrder[i] : i;
+    auto target = parameterForArgument(i);
     argument(target, arguments[i], *node.children[i + 1], argumentLocations[i],
              facts(*node.children[i + 1]).borrowConversion.has_value());
   }
@@ -1847,7 +1859,7 @@ Type RegionPass::call(const Node &node) {
     require(edge.longer, replace(edge.shorter, bindings), node.span);
   withinBounds(declaration.genericParameters, declaration.constraints,
                typeBindings, declarationContext, bindings, node.span);
-  if (facts(node).method && !formals.empty()) {
+  if (receiverCall && !formals.empty()) {
     auto actual = *methodReceiver;
     while (!facts(node).receiverPlan && types.isView(actual) &&
            !types.isView(formals[0]))
@@ -1861,8 +1873,7 @@ Type RegionPass::call(const Node &node) {
                     node.span, signature.strict, formals[0]);
   }
   for (std::size_t i = 0; i < arguments.size(); ++i) {
-    auto target =
-        i < facts(node).argumentOrder.size() ? facts(node).argumentOrder[i] : i;
+    auto target = parameterForArgument(i);
     if (target >= formals.size())
       continue;
     auto actual = arguments[i];
@@ -2175,7 +2186,18 @@ Type RegionPass::expression(const Node &node) {
     auto base = expression(*node.children[0]);
     while (types.isView(base))
       base = types.view(base).payload;
-    if (types.isProduct(base) && facts(node).field >= 0 &&
+    if (node.kind == Kind::Index &&
+        facts(node).indexView != Type::Unknown) {
+      if (facts(node).callee >= 0) {
+        auto indexed = call(node, true);
+        if (types.isView(indexed))
+          type = types.view(indexed).payload;
+        else if (types.isView(facts(node).indexView))
+          type = types.view(facts(node).indexView).payload;
+      } else if (types.isView(facts(node).indexView)) {
+        type = types.view(facts(node).indexView).payload;
+      }
+    } else if (types.isProduct(base) && facts(node).field >= 0 &&
         static_cast<std::size_t>(facts(node).field) <
             types.product(base).fields.size())
       type = types.product(base).fields[facts(node).field].type;
