@@ -178,3 +178,20 @@ impl<B: Future, F: take fn(): B> Defer<B, F> implements Future {
         }
     }
 }
+
+// The two sides of a lowered `if`/`match` whose branches await: each branch is
+// its own future and exactly one of them is ever built, so the join costs one
+// discriminant and no allocation. `match` nests the pair to the right.
+pub enum Either<A, B> { Left(A); Right(B) }
+pub fn left<A, B>(value: take A): Either<A, B> { Either::Left(value) }
+pub fn right<A, B>(value: take B): Either<A, B> { Either::Right(value) }
+impl<A: Future, B: Future<Output = A::Output>> Either<A, B> implements Future {
+    type Output = A::Output
+    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<A::Output> {
+        let me = unsafe { self.get_unchecked_mut() }
+        match mut me {
+            Either::Left(inner) => unsafe { core::pin::Pin::new_unchecked(mut inner).poll(mut cx) },
+            Either::Right(inner) => unsafe { core::pin::Pin::new_unchecked(mut inner).poll(mut cx) }
+        }
+    }
+}

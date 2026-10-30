@@ -50,15 +50,18 @@ TypeSyntax Parser::callableType() {
 }
 std::unique_ptr<Node> Parser::closure() {
   auto start = peek();
-  if (take("async"))
-    feature("async closures require I06");
-  auto result = node(Kind::Closure, start.span);
+  bool asynchronous = take("async");
   struct Restore {
     bool &flag;
     bool saved;
     ~Restore() { flag = saved; }
   } restore{inAsyncBody, inAsyncBody};
-  inAsyncBody = false;
+  inAsyncBody = asynchronous;
+  if (asynchronous && is("{")) {
+    auto body = block();
+    return asyncBody(*body, TypeSyntax{}, start.span);
+  }
+  auto result = node(Kind::Closure, start.span);
   result->flag = take("take");
   expect("fn");
   expect("(");
@@ -92,6 +95,18 @@ std::unique_ptr<Node> Parser::closure() {
     result->error = type();
   newlines();
   result->children.push_back(block());
+  if (asynchronous) {
+    auto output = asyncResult(std::move(result->annotation),
+                              std::move(result->error), false);
+    auto future =
+        asyncBody(*result->children[0], std::move(output), start.span);
+    auto body = node(Kind::Block, result->children[0]->span);
+    body->children.push_back(std::move(future));
+    finish(*body);
+    result->children[0] = std::move(body);
+    result->annotation = {};
+    result->error = {};
+  }
   finish(*result);
   return result;
 }
