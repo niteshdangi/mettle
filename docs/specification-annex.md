@@ -56,7 +56,7 @@ past its final endpoint. Required array counts retain their declared integer
 type and are checked against compiler resource limits before internal narrowing.
 Implementation restrictions do not establish new language-level index contracts.
 
-`value.checked_cast::<Integer>()` returns `present(converted)` or `none`.
+`value.checked_cast<Integer>()` returns `present(converted)` or `none`.
 Integer sources must be in the destination range. Floating sources are truncated
 toward zero first; NaN, infinity and a truncated result outside the integer range
 return `none`. Ordinary `as` casts retain the clamping policy above.

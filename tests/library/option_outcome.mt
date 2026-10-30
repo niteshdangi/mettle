@@ -1,5 +1,5 @@
-import core.option;
-import core.outcome;
+import core.option
+import core.outcome
 fn dbl(x: take i32): i32 { x * 2 }
 fn bigger(x: read i32): bool { x > 5 }
 fn half(x: take i32): (i32 throws i32) { if x % 2 == 0 { success(x / 2) } else { failure(x) } }

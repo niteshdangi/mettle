@@ -53,50 +53,7 @@ void typeFingerprint(const TypeSyntax &type, std::string &out) {
   }
   out += ')';
 }
-// A Name or Field chain is fingerprinted as one dotted-neutral path so that
-// `a::b` and `a.b` compare equal; generic argument lists keep source order.
 void nodeFingerprint(const Node &node, std::string &out) {
-  const Node *root = &node;
-  std::vector<const Node *> links;
-  while (root->kind == Kind::Field && !root->flag &&
-         root->children.size() == 1) {
-    links.push_back(root);
-    root = root->children[0].get();
-  }
-  if (root->kind == Kind::Name) {
-    // Generic arguments are attached to the path segment they apply to:
-    // a `::` Name carries owner arguments for its second-to-last segment
-    // and its own arguments for the last, while a dotted chain carries them
-    // per link. Empty lists are omitted so both spellings agree.
-    std::vector<std::string> segments;
-    for (std::size_t begin = 0;;) {
-      auto end = root->text.find("::", begin);
-      segments.push_back(root->text.substr(begin, end - begin));
-      if (end == std::string::npos)
-        break;
-      begin = end + 2;
-    }
-    auto attach = [&](std::size_t index,
-                      const std::vector<GenericArgument> &arguments) {
-      if (!arguments.empty())
-        argumentsFingerprint(arguments, segments[index]);
-    };
-    if (segments.size() >= 2)
-      attach(segments.size() - 2, root->ownerGenericArguments);
-    else if (!root->ownerGenericArguments.empty())
-      argumentsFingerprint(root->ownerGenericArguments, segments.front());
-    attach(segments.size() - 1, root->genericArguments);
-    for (auto link = links.rbegin(); link != links.rend(); ++link) {
-      segments.push_back((*link)->text);
-      attach(segments.size() - 1, (*link)->genericArguments);
-    }
-    out += "N(";
-    for (std::size_t index = 0; index < segments.size(); ++index)
-      out += (index ? "::" : "") + segments[index];
-    typeFingerprint(root->annotation, out);
-    out += ' ' + node.name + (node.semicolon ? ";)" : ")");
-    return;
-  }
   out += "K(" + std::to_string(static_cast<int>(node.kind)) + ' ' + node.text +
          ' ' + node.name + ' ' + node.label + (node.flag ? " 1" : " 0") +
          (node.semicolon ? ";" : "");

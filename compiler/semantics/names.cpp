@@ -1,5 +1,6 @@
 #include "semantics/checker.h"
 #include "support/limits.h"
+#include "support/path.h"
 #include <algorithm>
 
 namespace mettle {
@@ -52,7 +53,7 @@ Checker::Binding Checker::lookup(const std::string &name, Span span) {
       return {localVariables[current][i], static_cast<int>(i), current};
     }
   }
-  error("name", span, "unresolved value '" + name + "'");
+  error("name", span, "unresolved value '" + displayPath(name) + "'");
   return {inference.fresh(), -1};
 }
 // A path container qualifies a following segment: a module, a type (including

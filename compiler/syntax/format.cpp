@@ -72,6 +72,41 @@ bool spacedOperator(const Piece &piece) {
                        "%=", "&=", "|=", "^=", "<<=", ">>=", "=>", "->", "??"});
 }
 
+// The leading keyword of a line after any visibility and `unsafe` prefix.
+std::string_view leadingKeyword(const Line &line) {
+  std::size_t k = 0;
+  if (k < line.size() && line[k].text == "pub") {
+    ++k;
+    if (k < line.size() && symbol(line[k], "(")) {
+      while (k < line.size() && !symbol(line[k], ")"))
+        ++k;
+      ++k;
+    }
+  }
+  if (k < line.size() && line[k].text == "unsafe")
+    ++k;
+  return k < line.size() && line[k].kind == TokenKind::Word
+             ? std::string_view(line[k].text)
+             : std::string_view();
+}
+
+// The index of a line-ending `;` after a one-line item, which a newline
+// already terminates; `line.size()` when there is none. Statement `;`s are
+// kept: they decide whether a block's last expression is its value.
+std::size_t redundantSemicolon(const Line &line, bool itemScope) {
+  auto end = line.size();
+  while (end && line[end - 1].kind == TokenKind::Comment)
+    --end;
+  if (!end || !symbol(line[end - 1], ";"))
+    return line.size();
+  auto keyword = leadingKeyword(line);
+  bool item = keyword == "import" || keyword == "module" ||
+              keyword == "alias" || keyword == "extend";
+  if (itemScope && (keyword == "const" || keyword == "static"))
+    item = true;
+  return item ? end - 1 : line.size();
+}
+
 // The whitespace between two neighbours on one line. Where the rules do not
 // decide (`<`, `-`, `&`, ...: operator or prefix, comparison or generic
 // bracket) the written choice is kept, collapsed to one space.
@@ -86,8 +121,7 @@ std::string gapBefore(const Piece &previous, const Piece &current,
     return current.text.starts_with("//") ? " " : written;
   if (previous.kind == TokenKind::Comment)
     return written;
-  if (oneOf(previous, {"(", "[", "::"}) ||
-      oneOf(current, {")", "]", ",", ";", "::", ":"}))
+  if (oneOf(previous, {"(", "["}) || oneOf(current, {")", "]", ",", ";", ":"}))
     return "";
   if (oneOf(previous, {",", ";", ":"}))
     return " ";
@@ -127,7 +161,7 @@ bool continued(const Line &previous, const Piece &first) {
 std::string layout(const Source &source, const std::vector<Token> &tokens) {
   struct Open {
     std::size_t indent, line;
-    bool brace, macro;
+    bool brace, macro, items;
   };
   auto lines = split(source, tokens);
   std::vector<Open> stack;
@@ -160,7 +194,12 @@ std::string layout(const Source &source, const std::vector<Token> &tokens) {
     }
     out.append(indent * indentWidth, ' ');
     unsigned inFormat = 0;
+    auto drop =
+        macros ? line.size()
+               : redundantSemicolon(line, stack.empty() || stack.back().items);
     for (std::size_t k = 0; k < line.size(); ++k) {
+      if (k == drop)
+        continue;
       const auto &piece = line[k];
       if (k)
         out += gapBefore(line[k - 1], piece, inFormat, macros != 0);
@@ -184,7 +223,8 @@ std::string layout(const Source &source, const std::vector<Token> &tokens) {
                      line[k - 2].text == "macro" &&
                      line[k - 1].kind == TokenKind::Word;
         macros += macro;
-        stack.push_back({entry, n, piece.text == "{", macro});
+        bool items = piece.text == "{" && leadingKeyword(line) == "module";
+        stack.push_back({entry, n, piece.text == "{", macro, items});
       } else if (oneOf(piece, {")", "]", "}"}) && !stack.empty()) {
         macros -= stack.back().macro;
         stack.pop_back();
@@ -203,14 +243,25 @@ struct Signature {
   bool operator==(const Signature &) const = default;
 };
 // Tokens with their texts and whether a line break separates them from the
-// previous one: everything the formatter must leave alone.
+// previous one: everything the formatter must leave alone. A line-ending `;`
+// is left out; the syntax fingerprint keeps the ones that matter.
 std::vector<Signature> signature(const Source &source,
                                  const std::vector<Token> &tokens) {
   std::vector<Signature> result;
   bool breaks = false;
-  for (const auto &token : tokens) {
+  for (std::size_t n = 0; n < tokens.size(); ++n) {
+    const auto &token = tokens[n];
     if (token.kind == TokenKind::Space || token.kind == TokenKind::End)
       continue;
+    if (token.kind == TokenKind::Symbol && tokenText(source, token) == ";") {
+      auto next = n + 1;
+      while (next < tokens.size() && (tokens[next].kind == TokenKind::Space ||
+                                      tokens[next].kind == TokenKind::Comment))
+        ++next;
+      if (next == tokens.size() || tokens[next].kind == TokenKind::Newline ||
+          tokens[next].kind == TokenKind::End)
+        continue;
+    }
     if (token.kind == TokenKind::Newline) {
       breaks = !result.empty();
       continue;

@@ -1,5 +1,5 @@
-import std.io.Error;
-import std.path.path_from_text;
+import std.io.Error
+import std.path.path_from_text
 
 fn run(): i32 throws Error {
     let call = try std.macros.read_invocation()

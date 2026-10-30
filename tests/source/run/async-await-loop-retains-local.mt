@@ -1,4 +1,4 @@
-import core.future.{Future, Poll, Context, noop_waker};
+import core.future.{Future, Poll, Context, noop_waker}
 
 type YieldOnce { yielded: bool }
 extend YieldOnce implements Future {

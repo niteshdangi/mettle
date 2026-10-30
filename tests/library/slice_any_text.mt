@@ -1,9 +1,9 @@
-import core.slice;
-import core.iter;
-import core.iter.Iterator;
-import core.option;
-import core.any;
-import core.text;
+import core.slice
+import core.iter
+import core.iter.Iterator
+import core.option
+import core.any
+import core.text
 
 type P { x: i32 }
 

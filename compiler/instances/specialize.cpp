@@ -2,6 +2,7 @@
 #include "instances/arrays.h"
 #include "instances/callables.h"
 #include "support/limits.h"
+#include "support/path.h"
 #include "types/layout.h"
 #include <algorithm>
 #include <functional>
@@ -194,7 +195,7 @@ private:
     if (instanceDepth >= limits::typeDepth)
       throw LocatedLimit("generic specialization nesting limit exceeded "
                          "while instantiating '" +
-                             declaration.name + "'",
+                             displayPath(declaration.name) + "'",
                          span);
     struct Scope {
       unsigned &depth;

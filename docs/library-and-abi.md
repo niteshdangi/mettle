@@ -16,7 +16,7 @@ low-level memory facilities. It requires neither allocator nor OS.
 allocation-backed formatting and explicitly erased values. It depends on a
 provided allocator but does not require processes, files or an executor.
 
-`alloc::future::erase` (implemented, verified on macOS arm64) consumes a `Static` future
+`alloc.future.erase` (implemented, verified on macOS arm64) consumes a `Static` future
 and allocates a fixed-address payload using the global allocator. Its
 `Erased<T>` handle can move without moving the payload; polling dispatches
 through pinned exclusive access and dropping the handle destroys and frees the
@@ -29,11 +29,11 @@ underlying contracts.
 networking and processes. The official async runtime is separately selectable,
 not linked merely because a program imports core.
 
-The local `std::task` executor and its synchronous `scope` are implemented,
+The local `std.task` executor and its synchronous `scope` are implemented,
 verified on macOS arm64. `spawn` allocates a task, requires `Transferable + Static` future
 and output, and returns a non-transferable handle. Joining drives the executor;
 dropping or aborting the handle cancels, and poll/destructor panics become
-`JoinError::Panicked`. The executor retains registrations even if handles are
+`JoinError.Panicked`. The executor retains registrations even if handles are
 forgotten and closes them on drop. A local scope permits `Within` borrows,
 drives ready children and cancels suspended ones before returning; it does not
 keep children running across an enclosing async future's polls. No fairness or
@@ -45,14 +45,13 @@ String when allocation is enabled, and native optional/outcome constructors.
 The loader implements the core subset (`Text`, iterator interfaces, comparison
 interfaces, `panic`, `assert`, `String`); it has lowest name priority and no
 opt-out. Do not silently reexport every platform API or choose a runtime from the prelude.
-At the cutover the versioned `experience-1` prelude of library-surface.md
-section 9 replaces this subset, adding `List`, `Map` and `Set` with allocation.
+The versioned `experience-1` prelude of library-surface.md section 9 specifies
+the current prelude, including `List`, `Map` and `Set` when allocation is enabled.
 
-Package/module paths use one `::` resolution system before the cutover and one
-dotted system after it (language-grammar.md section 13). Names in this document
-are selected API directions, not a promise of source compatibility with Rust;
-collection, interface and I/O names are those of the pre-cutover libraries
-unless library-surface.md section 9 gives the target name.
+Package and module paths use dotted qualification
+(language-grammar.md section 13). Names in this document are selected API
+contracts, not a promise of source compatibility with Rust; collection,
+interface and I/O names follow library-surface.md section 9.
 
 ## 2. Ownership and allocation operations
 
@@ -96,9 +95,9 @@ fallible unless an unsafe caller establishes validity.
 Text exposes byte length and byte/scalar iteration. Arbitrary integer character
 indexing is not defined. Checked slicing validates range and UTF-8 boundaries
 (`read text[i..j]` panics on an out-of-range or non-char-boundary range, through
-`core::ops::IndexRange`); an existing view prevents operations that can
+`core.ops.IndexRange`); an existing view prevents operations that can
 invalidate its backing storage. Byte literals `b"..."` are static `[u8; N]`
-views; `core::slice::from_raw_parts[_mut]` and `core::text::from_utf8_unchecked`
+views; `core.slice.from_raw_parts[_mut]` and `core.text.from_utf8_unchecked`
 build views from raw parts in unsafe code, the caller asserting the region.
 Normalization is not automatic. Grapheme operations use a versioned Unicode
 library and are not confused with constant-time byte access.
@@ -120,12 +119,15 @@ Initial collection API obligations:
 | consuming iteration | Own collection state and yield owned elements |
 | borrowed iteration | Hold receiver region; yield views without cloning |
 
-`Vec` implements consuming (`IntoIterator`), borrowed (`Iterable`) and mutable
-(`IterableMut`) iteration through the core interfaces, so `for x in take v`,
-`for x in read v` and `for x in mut v` work; `VecDeque`, `LinkedList` and (values only) the maps add `IterableMut`; every collection
-provides borrowed iteration and `FromIterator`/`Extend` (over any `IntoIterator` with a matching `Item`; `Iterator::collect` builds any `FromIterator`), borrowed `keys()`/`values()` on maps. Alloc types implement the matching `core::cmp`, `core::hash`,
-`core::ops` (`Deref`, `IndexRange`) and `core::fmt` interfaces; `String` is a
-`core::fmt::Write` sink.
+`List` implements consuming (`OwnedIterable`), borrowed (`Iterable`) and
+mutable (`MutableIterable`) iteration through the core interfaces, so
+`for x in take v`, `for x in read v` and `for x in mut v` work; `VecDeque`,
+`LinkedList` and (values only) the maps add `MutableIterable`; every collection
+provides borrowed iteration and `FromItems`/`ExtendItems` (over any
+`OwnedIterable` with a matching `Item`; `Iterator.collect` builds any
+`FromItems`), and borrowed `keys()`/`values()` on maps. Alloc types implement
+the matching `core.cmp`, `core.hash`, `core.ops` (`Deref`, `IndexRange`) and
+`core.fmt` interfaces; `String` is a `core.fmt.Write` sink.
 
 Because take consumes Copy values too, callers that need another independent
 copy must produce it explicitly before a consuming collection call. Do not
@@ -175,24 +177,24 @@ blocking/async behavior are per-type contracts. Atomic orderings must have a
 specified memory model. A channel owns queued messages and defines disconnection,
 bounded capacity, cancellation, and destruction behavior.
 
-`std::sync::mpsc::channel` is an unbounded FIFO. `sync_channel(n)` has capacity
+`std.sync.mpsc.channel` is an unbounded FIFO. `sync_channel(n)` has capacity
 `n`; capacity zero is a rendezvous, so a blocking send completes only after a
 receiver takes its message. `try_send` returns the unaccepted value when full or
 disconnected. `try_recv` distinguishes an empty connected channel from a drained
 disconnected one. `recv_timeout` distinguishes timeout from disconnection, and
-`SyncSender::send_timeout` returns its value on either failure. Receiver
+`SyncSender.send_timeout` returns its value on either failure. Receiver
 iteration blocks until a message arrives and ends only after all senders are
 gone and queued messages are drained. `Select` borrows receivers carrying the
 same item type, blocks without polling, and returns a ready receiver index
 without consuming its message; a disconnected receiver is ready. Ready indices
 are considered in rotating order.
 
-Declare a static `std::sync::tls::LocalKey<T>` with its initializer function as
-the field value, for example `static KEY: LocalKey<T> = LocalKey(make_value);`.
+Declare a static `std.sync.tls.LocalKey<T>` with its initializer function as
+the field value, for example `static KEY: LocalKey<T> = LocalKey(make_value)`.
 This aggregate initializer avoids a generic const-function call; methods on a
 `LocalKey` require a static-storage receiver. The runtime creates its native
 key on first use, and the initializer runs independently on each thread's first
-`with` access. `set` installs a value directly. `std::sync::tls::new<T>()`
+`with` access. `set` installs a value directly. `std.sync.tls.new<T>()`
 instead returns an owned, dynamically created key. Each thread destroys live
 values in reverse order of first installation. Values reinstalled by a
 destructor are considered in a later destructor pass, up to the host pthread
@@ -208,14 +210,14 @@ thread-local destructors remain profile-specific obligations outside the hosted
 pthread profiles.
 
 The native `std` modules are `io`, `ffi`, `path`, `fs`, `process`, `env`,
-`time`, `net` and `panic`. Raw OS errors are kept in `io::Error` unchanged next
+`time`, `net` and `panic`. Raw OS errors are kept in `io.Error` unchanged next
 to a portable kind; operations that time out report kind `TimedOut` and keep the
 OS number. `OsStr`/`Path` are byte sequences without a Unicode requirement on the POSIX profiles; the
 native Windows path encoding and its display (`write_path`) are specified in
 library-surface.md section 12 and reconciled with this statement before the
 Windows profile is delivered. A
 byte string containing NUL is rejected with `InvalidInput` before reaching the OS.
-The hosted panic hook (`std::panic::set_hook`) receives the message; the process
+The hosted panic hook (`std.panic.set_hook`) receives the message; the process
 still exits with status 101.
 
 Wall time and monotonic elapsed time are distinct types. No monotonicity promise

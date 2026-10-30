@@ -1,15 +1,15 @@
 // Synchronous byte I/O: `Reader`/`Writer` expose partial transfers (the count a
 // single call moved), the `*_all`/`read_exact`/`read_to_end` helpers loop over
 // them, and `Error` keeps the raw OS error number so it round-trips unchanged.
-import package.alloc.vec;
-import package.alloc.vec.List;
-import package.core.text.Text;
-import package.core.cmp.PartialEq;
-import package.core.slice;
-import package.core.fmt;
-import package.alloc.string.String;
-import super.sys;
-import super.path.PathInput;
+import package.alloc.vec
+import package.alloc.vec.List
+import package.core.text.Text
+import package.core.cmp.PartialEq
+import package.core.slice
+import package.core.fmt
+import package.alloc.string.String
+import super.sys
+import super.path.PathInput
 
 pub copy enum ErrorKind {
     NotFound, PermissionDenied, ConnectionRefused, ConnectionReset, ConnectionAborted,
@@ -244,7 +244,7 @@ extend Stderr implements Writer {
 
 // Writes the formatted message to standard output without a newline. An
 // ordinary failure panics. A closed pipe (EPIPE) ends the process quietly with
-// status 141 and runs no destructors, like `process::exit`; callers needing
+// status 141 and runs no destructors, like `process.exit`; callers needing
 // cleanup use `stdout().write(...)` and handle the error.
 pub fn print(message: format fmt.Message): Unit {
     var out = stdout()

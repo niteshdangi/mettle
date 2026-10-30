@@ -1,5 +1,5 @@
 // expect-error: region
-import std.thread;
+import std.thread
 
 // A `take` scope closure owns `data`; its environment dies when it returns.
 fn main(): i32 {

@@ -1,11 +1,11 @@
-import alloc.string.String;
-import core.clone.Clone;
-import core.cmp.{Ordering, Ord};
-import core.hash;
-import core.hash.{Hash, Hasher};
-import core.fmt;
-import core.fmt.{Write, Display, Debug};
-import core.text.Text;
+import alloc.string.String
+import core.clone.Clone
+import core.cmp.{Ordering, Ord}
+import core.hash
+import core.hash.{Hash, Hasher}
+import core.fmt
+import core.fmt.{Write, Display, Debug}
+import core.text.Text
 
 fn main(): i32 {
     var s = alloc.string.from_text("héllo")

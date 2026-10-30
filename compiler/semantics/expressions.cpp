@@ -38,7 +38,7 @@ void Checker::function(Function &f) {
                                            : ParameterMode::Read;
     if (p.format && !formatMessage(t))
       error("signature", p.span,
-            "a 'format' parameter must have type core::fmt::Message");
+            "a 'format' parameter must have type core.fmt.Message");
     auto variable = inference.fresh(t);
     if (p.format)
       formatVariables.insert(variable);
@@ -101,7 +101,7 @@ Type Checker::textLiteralType(const Node &n) {
   if (text == typeNames.end()) {
     if (bytes)
       error("feature", n.span,
-            "text literals require the library type core::text::Text");
+            "text literals require the library type core.text.Text");
     return Type::Unknown;
   }
   if (bytes)

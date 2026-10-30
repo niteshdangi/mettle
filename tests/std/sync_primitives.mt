@@ -1,6 +1,6 @@
-import std.thread;
-import std.sync.{mutex, condvar, rwlock, once, barrier, mpsc, tls};
-import alloc.arc;
+import std.thread
+import std.sync.{mutex, condvar, rwlock, once, barrier, mpsc, tls}
+import alloc.arc
 
 type Flag {
   ready: core.sync.atomic.AtomicBool

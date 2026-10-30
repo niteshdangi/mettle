@@ -1,9 +1,9 @@
-import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd};
-import package.core.fmt;
-import package.core.hash.{Hash, Hasher};
-import package.core.ops.{Deref, DerefMut};
-import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, free_block, handle_alloc_error};
-import package.core.clone.Clone;
+import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import package.core.fmt
+import package.core.hash.{Hash, Hasher}
+import package.core.ops.{Deref, DerefMut}
+import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, free_block, handle_alloc_error}
+import package.core.clone.Clone
 
 // Unique owner of one heap value, tied to the allocator that produced it.
 pub type Box<T, A: Allocator = super.alloc.Global> {
@@ -62,7 +62,7 @@ extend<T, A: Allocator> Box<T, A> {
 }
 
 // Safety: `p` came from `into_raw` (or an equivalent allocation of
-// `layout_of::<T>()` by `a`) and holds an initialized `T`.
+// `layout_of<T>()` by `a`) and holds an initialized `T`.
 pub unsafe fn from_raw_in<T, A: Allocator>(p: ptr<mut T>, a: take A): Box<T, A> { Box(p, a) }
 
 

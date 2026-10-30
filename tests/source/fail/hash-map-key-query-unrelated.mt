@@ -1,5 +1,5 @@
 // expect-error: type 6:8 unsatisfied interface obligation
-import alloc.hash_map;
+import alloc.hash_map
 fn main(): i32 {
     var m = hash_map.new<i32, i32>()
     let old = m.insert(1, 1)

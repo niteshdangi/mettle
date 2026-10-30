@@ -130,7 +130,8 @@ void Parser::staticDeclaration(Module &module, ItemSyntax item, bool foreign) {
     newlines();
     declaration.initializer = expr();
   }
-  declaration.span.end = expect(";").span.end;
+  declaration.span.end = tokens[position - 1].span.end;
+  endItem(constant ? "a constant" : "a static");
   module.statics.push_back(std::move(declaration));
   if (module.statics.size() > limits::products)
     fail("static declaration limit exceeded", "limit");

@@ -1,19 +1,19 @@
-import alloc.binary_heap;
-import alloc.binary_heap.BinaryHeap;
-import alloc.btree;
-import alloc.btree.{SortedMap, SortedSet};
-import alloc.hash_map;
-import alloc.hash_map.{Map, Set};
-import alloc.linked_list;
-import alloc.linked_list.LinkedList;
-import alloc.vec_deque;
-import alloc.vec_deque.Deque;
-import alloc.vec;
-import alloc.vec.List;
-import core.clone.Clone;
-import core.cmp.{Ordering, Ord, PartialOrd};
-import core.hash.hash_one;
-import core.iter.{collect, range, Iterator, MutableIterable, ExtendItems};
+import alloc.binary_heap
+import alloc.binary_heap.BinaryHeap
+import alloc.btree
+import alloc.btree.{SortedMap, SortedSet}
+import alloc.hash_map
+import alloc.hash_map.{Map, Set}
+import alloc.linked_list
+import alloc.linked_list.LinkedList
+import alloc.vec_deque
+import alloc.vec_deque.Deque
+import alloc.vec
+import alloc.vec.List
+import core.clone.Clone
+import core.cmp.{Ordering, Ord, PartialOrd}
+import core.hash.hash_one
+import core.iter.{collect, range, Iterator, MutableIterable, ExtendItems}
 
 fn pairs(from: i32, to: i32): alloc.vec.IntoIter<(i32, i32)> {
     var out = alloc.vec.new<(i32, i32)>()
@@ -95,7 +95,7 @@ fn main(): i32 {
     var v: List<i32> = collect(range(0, 3))
     v.extend(range(3, 5))
     if v.len() != 5usize { return 26 }
-    // collect/extend take any IntoIterator, including collections directly
+    // collect/extend take any OwnedIterable, including collections directly
     let dup: List<i32> = collect(v)
     var more = vec.new<i32>()
     more.extend(dup)

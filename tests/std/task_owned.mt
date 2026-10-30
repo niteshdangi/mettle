@@ -1,6 +1,6 @@
-import core.future.{Context, Future, Poll, Waker};
-import std.task;
-import std.thread;
+import core.future.{Context, Future, Poll, Waker}
+import std.task
+import std.thread
 
 // These raw pointers remain valid on the executor thread until all tasks and
 // saved wakers have been dropped. The test never transfers the task itself.

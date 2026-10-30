@@ -3,8 +3,9 @@
   "modules": [
     {
       "name": "support", "directory": "support", "kind": "INTERFACE",
-      "dependencies": [], "public_headers": ["support/limits.h"],
-      "files": ["support/limits.h"]
+      "dependencies": [],
+      "public_headers": ["support/limits.h", "support/path.h"],
+      "files": ["support/limits.h", "support/path.h"]
     },
     {
       "name": "source", "directory": "source", "kind": "STATIC",
@@ -19,10 +20,10 @@
     {
       "name": "syntax", "directory": "syntax", "kind": "STATIC",
       "dependencies": ["source", "diagnostics", "support"],
-      "public_headers": ["syntax/token.h", "syntax/ast.h", "syntax/lexer.h", "syntax/parser.h", "syntax/migrate.h", "syntax/fingerprint.h", "syntax/format.h"],
+      "public_headers": ["syntax/token.h", "syntax/ast.h", "syntax/lexer.h", "syntax/parser.h", "syntax/fingerprint.h", "syntax/format.h"],
       "files": ["syntax/token.h", "syntax/token.cpp", "syntax/ast.h", "syntax/ast.cpp",
         "syntax/lexer.h", "syntax/lexer.cpp", "syntax/characters.cpp", "syntax/parser.h", "syntax/parser.cpp",
-        "syntax/migrate.h", "syntax/migrate.cpp", "syntax/fingerprint.h", "syntax/fingerprint.cpp",
+        "syntax/fingerprint.h", "syntax/fingerprint.cpp",
         "syntax/format.h", "syntax/format.cpp",
         "syntax/parser/detail.h", "syntax/parser/declarations.cpp", "syntax/parser/modules.cpp",
         "syntax/parser/statements.cpp", "syntax/parser/expressions.cpp",
@@ -90,7 +91,7 @@
     },
     {
       "name": "ir", "directory": "ir", "kind": "STATIC",
-      "dependencies": ["source", "types", "places", "diagnostics"],
+      "dependencies": ["source", "types", "places", "diagnostics", "support"],
       "public_headers": ["ir/ir.h", "ir/verify.h", "ir/verified.h"],
       "files": ["ir/ir.h", "ir/print.cpp", "ir/verify.h", "ir/verify.cpp",
         "ir/verified.h", "ir/dominance.h", "ir/dominance.cpp", "ir/target.h", "ir/target.cpp"]
@@ -130,7 +131,7 @@
     },
     {
       "name": "lint", "directory": "lint", "kind": "STATIC",
-      "dependencies": ["semantics", "syntax", "types", "source"],
+      "dependencies": ["semantics", "syntax", "types", "source", "support"],
       "public_headers": ["lint/lint.h"],
       "files": ["lint/lint.h", "lint/lint.cpp"]
     },
@@ -149,7 +150,8 @@
     },
     {
       "name": "backend_llvm", "directory": "backend/llvm", "kind": "STATIC",
-      "dependencies": ["ir", "cleanup", "types", "source"], "llvm": true,
+      "dependencies": ["ir", "cleanup", "types", "source", "support"],
+      "llvm": true,
       "public_headers": ["backend/llvm/lower.h", "backend/llvm/object.h"],
       "files": ["backend/llvm/lower.h", "backend/llvm/lower.cpp", "backend/llvm/abi.h", "backend/llvm/abi.cpp",
         "backend/llvm/object.h", "backend/llvm/object.cpp",
@@ -167,7 +169,9 @@
     },
     {
       "name": "driver", "directory": "driver", "kind": "EXECUTABLE",
-      "dependencies": ["source", "diagnostics", "syntax", "expansion", "documentation", "resolution", "packages", "ir", "types", "semantics", "lint", "pipeline", "lsp", "backend_llvm"],
+      "dependencies": ["source", "diagnostics", "syntax", "expansion",
+        "documentation", "resolution", "packages", "ir", "types", "semantics",
+        "lint", "pipeline", "lsp", "backend_llvm", "support"],
       "llvm": true, "public_headers": [],
       "files": ["driver/main.cpp", "driver/options.h", "driver/options.cpp", "driver/run.cpp",
         "driver/inspect.h", "driver/inspect.cpp", "driver/output.h", "driver/output.cpp",

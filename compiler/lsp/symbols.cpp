@@ -24,7 +24,7 @@ bool nameable(const Token &token) {
   return word(token) && !isReservedWord(token.text);
 }
 bool memberAccess(const Token &token) {
-  return symbol(token, ".") || symbol(token, "?.") || symbol(token, "::");
+  return symbol(token, ".") || symbol(token, "?.");
 }
 bool modifier(std::string_view text) {
   return text == "pub" || text == "copy" || text == "unsafe" ||
@@ -56,11 +56,16 @@ std::string squeeze(std::string_view raw, std::size_t limit = 240) {
 }
 bool itemKind(std::string_view spelling, SymbolKind &kind) {
   static const std::pair<std::string_view, SymbolKind> kinds[] = {
-      {"fn", SymbolKind::Function},      {"type", SymbolKind::Type},
-      {"enum", SymbolKind::Enumeration}, {"interface", SymbolKind::Interface},
-      {"union", SymbolKind::Union},      {"alias", SymbolKind::Alias},
-      {"static", SymbolKind::Static},    {"const", SymbolKind::Constant},
-      {"module", SymbolKind::Module},    {"impl", SymbolKind::Implementation}};
+      {"fn", SymbolKind::Function},
+      {"type", SymbolKind::Type},
+      {"enum", SymbolKind::Enumeration},
+      {"interface", SymbolKind::Interface},
+      {"union", SymbolKind::Union},
+      {"alias", SymbolKind::Alias},
+      {"static", SymbolKind::Static},
+      {"const", SymbolKind::Constant},
+      {"module", SymbolKind::Module},
+      {"extend", SymbolKind::Implementation}};
   for (const auto &entry : kinds)
     if (entry.first == spelling) {
       kind = entry.second;

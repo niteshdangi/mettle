@@ -1,6 +1,7 @@
 #include "ir/verify.h"
 #include "ir/dominance.h"
 #include "ir/target.h"
+#include "support/path.h"
 #include "types/layout.h"
 #include "types/machine.h"
 #include <algorithm>
@@ -26,7 +27,8 @@ bool function(const Function &f, const Program &program,
   bool valid = true;
   auto fail = [&](Span span, std::string message) {
     diagnostics.error("internal", span,
-                      "invalid CFG in '" + f.name + "': " + message);
+                      "invalid CFG in '" + displayPath(f.name) +
+                          "': " + message);
     valid = false;
   };
   if ((f.blocks.empty() && f.externalName.empty()) || !known(f.result) ||

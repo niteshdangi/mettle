@@ -1,7 +1,7 @@
-import std.thread;
-import std.sync.mpsc;
-import alloc.arc;
-import core.iter.Iterator;
+import std.thread
+import std.sync.mpsc
+import alloc.arc
+import core.iter.Iterator
 
 fn main(): i32 {
     let unbounded = mpsc.channel<i32>()

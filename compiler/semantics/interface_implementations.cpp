@@ -1,11 +1,13 @@
 #include "semantics/checker.h"
+#include "support/path.h"
 #include <algorithm>
 #include <utility>
 
 namespace mettle {
 // Manual declarations of the structural cross-thread properties: a negative
-// `impl T not Transferable;` or an `unsafe impl ... implements Transferable {}`
-// whose bounds state the conditions the implementer has verified.
+// `extend T not Transferable;` or an `unsafe extend ... implements
+// Transferable {}` whose bounds state the conditions the implementer has
+// verified.
 void Checker::concurrencyDeclaration(
     const Module::Implementation &syntax, interfaces::Property property,
     interfaces::Implementation &implementation) {
@@ -35,7 +37,7 @@ void Checker::concurrencyDeclaration(
           name + " declaration must belong to the type's package");
   if (!syntax.negative && !syntax.unsafeImplementation)
     error("unsafe", syntax.span,
-          "manual " + name + " implementation requires unsafe impl");
+          "manual " + name + " implementation requires an unsafe extend");
   if (syntax.negative && syntax.unsafeImplementation)
     error("type", syntax.span, "negative " + name + " declarations are safe");
   if (!syntax.associated.empty() || !syntax.methodFunctions.empty())
@@ -141,7 +143,7 @@ void Checker::interfaceImplementations() {
           error("type", syntax.span, "overlapping Unpin declarations");
         if (!syntax.negative && !syntax.unsafeImplementation)
           error("unsafe", syntax.span,
-                "manual Unpin implementation requires unsafe impl");
+                "manual Unpin implementation requires an unsafe extend");
         if (checked.types->product(origin).package != 0)
           error("type", syntax.span,
                 "Unpin implementation must belong to the type's package");
@@ -207,7 +209,7 @@ void Checker::interfaceImplementations() {
             "this negative property is not implemented");
     if (syntax.unsafeImplementation)
       error("type", syntax.span,
-            "unsafe impl requires an unsafe native property");
+            "unsafe extend requires an unsafe native property");
     if (!syntax.interface.empty())
       implementation.interfaceType = interfaceBound(
           syntax.interface, syntax.span, {}, implementation.target);
@@ -765,7 +767,7 @@ std::optional<Type> Checker::associatedConstant(const Node &node) {
       subject = parameter->second;
   }
   // Only annotate the prefix when some inherent constant has this member;
-  // otherwise `Generic::Variant` would report missing generic arguments.
+  // otherwise a qualified variant would report missing generic arguments.
   bool memberDeclared = false;
   for (const auto &[name, index] : inherentConstantNames)
     if (name.size() > member.size() + 2 && name.ends_with(member) &&
@@ -798,7 +800,8 @@ std::optional<Type> Checker::associatedConstant(const Node &node) {
       return inherentConstantValue(resolved->second, subject);
     if (candidate != inherentConstantNames.end()) {
       error("name", node.span,
-            "unresolved or inaccessible name '" + lookupName + "'");
+            "unresolved or inaccessible name '" + displayPath(lookupName) +
+                "'");
       return std::nullopt;
     }
   }

@@ -1,5 +1,5 @@
 
-import core.cmp.PartialEq;
+import core.cmp.PartialEq
 type Cell2<T> { v: T }
 type R<T> { p: ptr<mut Cell2<T>> }
 extend<T> R<T> { fn get(): read T from self { unsafe { read (*self.p).v } } }

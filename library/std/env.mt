@@ -1,12 +1,12 @@
 // Process arguments, environment variables and the working directory. Names
 // and values are OS strings (arbitrary bytes), not text.
-import package.alloc.vec;
-import package.alloc.vec.List;
-import super.ffi;
-import super.ffi.{OsStr, OsString};
-import super.io;
-import super.path.{PathBuf, PathInput};
-import super.sys;
+import package.alloc.vec
+import package.alloc.vec.List
+import super.ffi
+import super.ffi.{OsStr, OsString}
+import super.io
+import super.path.{PathBuf, PathInput}
+import super.sys
 
 // The command line, program name first.
 pub fn args(): List<OsString> {

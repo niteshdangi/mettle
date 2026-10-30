@@ -5,14 +5,14 @@
 // on. The compiler re-lexes and re-parses the text; every generated token is
 // attributed to the invocation. The wire format is documented in
 // compiler/expansion/procedural.h; a different major version is rejected.
-import package.alloc.vec;
-import package.alloc.vec.List;
-import package.alloc.string;
-import package.alloc.string.String;
-import package.core.iter.Iterator;
-import package.core.text.Text;
-import super.io;
-import super.io.{Error, ErrorKind, Reader, Writer};
+import package.alloc.vec
+import package.alloc.vec.List
+import package.alloc.string
+import package.alloc.string.String
+import package.core.iter.Iterator
+import package.core.text.Text
+import super.io
+import super.io.{Error, ErrorKind, Reader, Writer}
 
 // One argument token. `kind` is the compiler's token kind (`word`, `integer`,
 // `symbol`, `newline`, `text`, ...); `spaced` tells whether whitespace preceded

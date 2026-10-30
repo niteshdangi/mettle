@@ -20,11 +20,11 @@ const fn classify(n: i32): u8 {
 }
 
 static SQUARES: [i32; 4] = [square(1), square(2), square(3), square(4)];
-static FACT: u32 = factorial(10);
-static GCD: u64 = gcd(1071, 462);
-static KINDS: (u8, u8, u8) = (classify(0), classify(2), classify(9));
-static WRAPPED: u8 = (300i32 as u8);
-static SHIFT: usize = 1usize << 20;
+static FACT: u32 = factorial(10)
+static GCD: u64 = gcd(1071, 462)
+static KINDS: (u8, u8, u8) = (classify(0), classify(2), classify(9))
+static WRAPPED: u8 = (300i32 as u8)
+static SHIFT: usize = 1usize << 20
 
 fn main(): i32 {
     if SQUARES[3] != 16 { return 1; }

@@ -1,4 +1,5 @@
 #include "semantics/checker.h"
+#include "support/path.h"
 #include <algorithm>
 
 namespace mettle {
@@ -306,7 +307,7 @@ std::optional<int> Checker::genericConstruction(Node &n, bool reachable,
     if (bindings[i].argument == Type::Unknown)
       error("type", n.span,
             "cannot infer generic constructor argument '" +
-                std::string(checked.types->name(bindings[i].parameter)) + "'");
+                displayPath(checked.types->name(bindings[i].parameter)) + "'");
   }
   genericEnvironment = caller;
   genericObligations(environment, bindings, n.span);

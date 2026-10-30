@@ -1,14 +1,14 @@
-import package.core.iter.Iterator;
-import super.alloc.{Allocator, Global, AllocError, panic_precondition};
-import package.core.clone.Clone;
-import package.core.default.Default;
-import package.core.fmt;
-import package.core.ops.{Deref, IndexRange};
-import package.core.hash.{Hash, Hasher};
-import package.core.borrow.KeyView;
-import super.vec.{List, slice_ptr};
-import package.core.cmp.{Ordering, PartialEq, Eq, PartialOrd, Ord};
-import package.core.text.{Text, from_utf8_unchecked};
+import package.core.iter.Iterator
+import super.alloc.{Allocator, Global, AllocError, panic_precondition}
+import package.core.clone.Clone
+import package.core.default.Default
+import package.core.fmt
+import package.core.ops.{Deref, IndexRange}
+import package.core.hash.{Hash, Hasher}
+import package.core.borrow.KeyView
+import super.vec.{List, slice_ptr}
+import package.core.cmp.{Ordering, PartialEq, Eq, PartialOrd, Ord}
+import package.core.text.{Text, from_utf8_unchecked}
 
 // Owned, growable UTF-8 text: a `List<u8>` whose bytes are always well formed.
 pub type String<A: Allocator = Global> {

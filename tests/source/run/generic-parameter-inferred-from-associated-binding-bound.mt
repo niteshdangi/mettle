@@ -1,6 +1,6 @@
 
 module core { pub module iter { pub interface Iterator { type Item; mut fn next(): Self.Item?; } } }
-import core.iter.Iterator;
+import core.iter.Iterator
 type Counter { n: i32; max: i32 }
 extend Counter implements Iterator {
     type Item = i32

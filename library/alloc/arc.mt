@@ -1,8 +1,8 @@
 // Atomically reference-counted shared owner. Counting is atomic; that makes
 // the handles themselves thread-safe, not the payload: an `Arc<T>` crosses or
 // is shared between threads only when `T` is both Transferable and Shareable.
-import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, handle_alloc_error};
-import package.core.clone.Clone;
+import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, handle_alloc_error}
+import package.core.clone.Clone
 
 // Shared header and payload. `wk` counts every Weak plus one implicit
 // reference held collectively by all strong owners, so the block is released

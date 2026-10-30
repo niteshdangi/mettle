@@ -246,7 +246,7 @@ void phaseOwnership() {
       {"alias.mt", "alias Coordinate = Point\n"
                    "copy type Point { value: i32; "
                    "static fn make(value: i32): Self { Self(value) } }\n"
-                   "fn main() { Coordinate::make(42).value }\n"},
+                   "fn main() { Coordinate.make(42).value }\n"},
       aliases);
   auto aliasChecked = mettle::check(std::move(aliasSyntax), aliases);
   require(aliasChecked.has_value(), "declaration aliases failed checking");
@@ -385,9 +385,9 @@ void variantRefinementCases() {
   auto compiled = mettle::pipeline::compile(
       {"variants.mt",
        "copy enum Value { Empty; Held(i32) }\n"
-       "fn unpack(value: Value) { match value { Value::Empty => 0, "
-       "Value::Held(payload) => payload } }\n"
-       "fn main() { unpack(Value::Held(42)) }\n"},
+       "fn unpack(value: Value) { match value { Value.Empty => 0, "
+       "Value.Held(payload) => payload } }\n"
+       "fn main() { unpack(Value.Held(42)) }\n"},
       diagnostics);
   require(compiled.has_value(), "valid tagged pattern CFG rejected");
   auto malformed = compiled->program();
@@ -428,11 +428,11 @@ void conditionalUnpinProofCases() {
   auto compiled = mettle::pipeline::compile(
       {"unpin.mt",
        "interface Ready {}\n"
-       "impl i32 implements Ready {}\n"
-       "type Wrapper<T> { value: T; marker: core::marker::PhantomPinned }\n"
-       "unsafe impl<T: Ready> Wrapper<T> implements Unpin {}\n"
-       "fn main() { var handle = core::pin::pin("
-       "Wrapper(42,core::marker::PhantomPinned)); "
+       "extend i32 implements Ready {}\n"
+       "type Wrapper<T> { value: T; marker: core.marker.PhantomPinned }\n"
+       "unsafe extend<T: Ready> Wrapper<T> implements Unpin {}\n"
+       "fn main() { var handle = core.pin.pin("
+       "Wrapper(42,core.marker.PhantomPinned)); "
        "let value = handle.get_mut(); 0 }\n"},
       diagnostics);
   require(compiled.has_value(), "validated conditional Unpin rejected");

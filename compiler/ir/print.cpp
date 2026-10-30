@@ -1,4 +1,5 @@
 #include "ir/ir.h"
+#include "support/path.h"
 #include <ostream>
 
 namespace mettle::ir {
@@ -6,7 +7,7 @@ void print(const Program &program, std::ostream &out) {
   for (std::size_t index = 0; index < program.statics.size(); ++index) {
     const auto &storage = program.statics[index];
     out << "static @" << index << ' ' << storage.name << ": "
-        << program.types->name(storage.type);
+        << displayPath(program.types->name(storage.type));
     if (storage.mutableBinding)
       out << " mut";
     if (!storage.externalName.empty())
@@ -15,7 +16,8 @@ void print(const Program &program, std::ostream &out) {
     out << '\n';
   }
   for (const auto &f : program.functions) {
-    out << "fn " << f.name << ": " << program.types->name(f.result);
+    out << "fn " << displayPath(f.name) << ": "
+        << displayPath(program.types->name(f.result));
     if (f.variadicCursor >= 0)
       out << " variadic-context @" << f.variadicCursor;
     out << '\n';
@@ -25,7 +27,7 @@ void print(const Program &program, std::ostream &out) {
         out << "    %" << i.result.id << ": ";
         if (i.result.access != Access::Owned)
           out << (i.result.access == Access::Read ? "read " : "mut ");
-        out << program.types->name(i.result.type) << " op"
+        out << displayPath(program.types->name(i.result.type)) << " op"
             << static_cast<int>(i.op) << ' ' << i.text;
         for (auto v : i.operands)
           out << " %" << v.id;

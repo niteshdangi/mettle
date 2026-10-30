@@ -1,17 +1,17 @@
 // Files and directories on the POSIX layer shared by macOS and Linux. A
-// successful write is not a durability guarantee (`File::sync_all` is).
-import package.alloc.vec;
-import package.alloc.vec.List;
-import package.alloc.string.String;
-import package.core.text.Text;
-import package.core.outcome;
-import super.ffi;
-import super.ffi.{OsStr, OsString};
-import super.io;
-import super.io.{Error, ErrorKind, Reader, Writer};
-import super.path.{Path, PathBuf, PathInput};
-import super.sys;
-import super.time.SystemTime;
+// successful write is not a durability guarantee (`File.sync_all` is).
+import package.alloc.vec
+import package.alloc.vec.List
+import package.alloc.string.String
+import package.core.text.Text
+import package.core.outcome
+import super.ffi
+import super.ffi.{OsStr, OsString}
+import super.io
+import super.io.{Error, ErrorKind, Reader, Writer}
+import super.path.{Path, PathBuf, PathInput}
+import super.sys
+import super.time.SystemTime
 
 extern "C" {
     unsafe fn fsync(fd: i32): i32;

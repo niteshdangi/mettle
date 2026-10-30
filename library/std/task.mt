@@ -1,4 +1,4 @@
-// Optional hosted executor for the `core::future` protocol: `block_on` and a
+// Optional hosted executor for the `core.future` protocol: `block_on` and a
 // single-threaded `Executor`. Nothing in `core` or `alloc` depends on it; a
 // program may use any other executor that supplies a `Waker`.
 //
@@ -8,17 +8,17 @@
 // task's `queued` flag is cleared before the poll and set by the first wake.
 // A task whose future returned `Ready` is removed from its slot, so a later
 // wake finds nothing to poll: the executor never polls a completed future.
-import super.sync.mutex;
-import super.sync.condvar;
-import super.thread.{Brand, Within};
-import package.alloc.arc;
-import package.alloc.arc.Arc;
-import package.alloc.boxed;
-import package.alloc.alloc.Global;
-import package.alloc.vec.List;
-import package.alloc.vec_deque.Deque;
-import package.core.future.{Future, Poll, Context, Waker, RawWaker, RawWakerVTable};
-import package.core.panic.panic;
+import super.sync.mutex
+import super.sync.condvar
+import super.thread.{Brand, Within}
+import package.alloc.arc
+import package.alloc.arc.Arc
+import package.alloc.boxed
+import package.alloc.alloc.Global
+import package.alloc.vec.List
+import package.alloc.vec_deque.Deque
+import package.core.future.{Future, Poll, Context, Waker, RawWaker, RawWakerVTable}
+import package.core.panic.panic
 
 extern "C" {
     unsafe fn mettle_rt_catch(context: ptr<mut u8>, body: extern "C" fn(ptr<mut u8>): Unit): i32;
@@ -290,8 +290,8 @@ pub type Executor {
         }
     }
 }
-extend Executor not Transferable;
-extend Executor not Shareable;
+extend Executor not Transferable
+extend Executor not Shareable
 
 // The nested guard continues cancelling the remaining registrations if a
 // future destructor unwinds. A second panic during unwinding aborts.
@@ -500,8 +500,8 @@ pub type JoinHandle<T> {
     result: Arc<ResultSlot<T>>
     drop { cancel(read self.task) }
 }
-extend<T> JoinHandle<T> not Transferable;
-extend<T> JoinHandle<T> not Shareable;
+extend<T> JoinHandle<T> not Transferable
+extend<T> JoinHandle<T> not Shareable
 
 extend<T> JoinHandle<T> {
     pub fn abort(): Unit { cancel(read self.task) }
@@ -535,8 +535,8 @@ pub type Scope<region s> {
     executor: Executor
     brand: core.cell.Cell<Brand<region s>>
 }
-extend<region s> Scope<region s> not Transferable;
-extend<region s> Scope<region s> not Shareable;
+extend<region s> Scope<region s> not Transferable
+extend<region s> Scope<region s> not Shareable
 
 extend<region s> Scope<region s> {
     pub fn spawn<T: Within<region s>, F: Future<Output = T> + Within<region s>>(receiver self: read Scope<region s> from s, future: take F): JoinHandle<T> {

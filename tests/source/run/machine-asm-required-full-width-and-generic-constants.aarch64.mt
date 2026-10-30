@@ -1,6 +1,6 @@
 // arch: aarch64
 
-static OFFSET: i128 = (1i128 << 80) + 42;
+static OFFSET: i128 = (1i128 << 80) + 42
 unsafe fn answer<const N:i64>(value:i32):i32 {
     var result = value
     asm!("add {value:w}, {value:w}, #{amount}",

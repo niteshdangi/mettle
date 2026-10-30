@@ -135,7 +135,7 @@ def library_cases(output):
     for program in sorted((ROOT / "tests/library").glob("*.mt")):
         cases.append(("core", program.stem, program.read_text(), {"expected": 0}))
     cases.append(("core", "unwrap-none-aborts",
-                  "import core::option;\nfn nothing(): i32? { none }\n"
+                  "import core.option;\nfn nothing(): i32? { none }\n"
                   "fn main(): i32 { nothing().unwrap() }\n", {"expected": "nonzero"}))
     cases.append(("core", "panic-reports-message",
                   "fn nothing(): i32? { none }\n"

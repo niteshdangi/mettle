@@ -1,12 +1,9 @@
 # Mettle language grammar: extended specification
 
-Status: documentation draft selected under routine delegation. This extends
-`core-grammar.md`; it does not claim an implemented or conflict-free parser.
-Explicitly unapproved identity proposals are not part of this grammar.
-Sections 1-12 describe the spelling the compiler accepts today; section 13
-specifies the accepted target spelling that replaces it at the cutover
-(implementation-plan section 8.7). Items marked "pre-cutover spelling" are
-removed at that cutover, not kept as alternatives.
+Status: selected full-language grammar. This extends `core-grammar.md`;
+implementation status and remaining work are recorded in
+`implementation-plan.md` section 8.7. Explicitly unapproved identity proposals
+are not part of this grammar.
 
 The core grammar is a subset, not a second dialect. Where this document extends
 a rule, its additional alternatives apply to the same syntax. A statement that
@@ -50,13 +47,14 @@ enclosing module respectively.
 ## 2. Paths, imports and generics
 
 ```ebnf
-path          = path_head, { "::", IDENT } ;
+path          = path_head, { ".", IDENT } ;
 path_head     = IDENT | "self" | "super" | "package" ;
 visibility    = "pub", [ "(", path, ")" ] ;
-module        = [ visibility ], "module", IDENT, ( ";" | "{", items, "}" ) ;
+module        = [ visibility ], "module", IDENT, [ ";" ]
+              | [ visibility ], "module", IDENT, "{", items, "}" ;
 import        = [ visibility ], "import", path,
-                [ ( "as", IDENT ) | ( "::", "{", import_names, "}" )
-                  | ( "::", "*" ) ], ";" ;
+                [ ( "as", IDENT ) | ( ".", "{", import_names, "}" )
+                  | ( ".", "*" ) ], [ ";" ] ;
 import_names  = IDENT, [ "as", IDENT ],
                 { ",", IDENT, [ "as", IDENT ] }, [ "," ] ;
 generic       = IDENT, [ ":", bounds ], [ "=", type ]
@@ -78,15 +76,15 @@ constraint    = type, ":", bounds
               | "region", IDENT, ":", region_reference ;
 ```
 
-In item-level declarations, newline separation may replace the terminating
-semicolon under the core separator rule. `pub import` reexports rather than
-creating a second module identity. Visibility is module-private by default;
+Item-level `import`, `module`, `const`, `static`, `alias`, and negative
+`extend` declarations may end at an unsuppressed newline without a semicolon.
+`pub import` reexports rather than creating a second module identity. Visibility is module-private by default;
 restricted `pub(path)` names an enclosing module boundary.
 
 Name resolution uses distinct type, value and macro namespaces. Reject ambiguous
 imports; import order cannot change implementation selection. Dependency package
 identity is provided by the resolver, not merely a source spelling.
-An external `module name;` loads exactly one of `name.mt` or `name/module.mt`
+An external `module name` loads exactly one of `name.mt` or `name/module.mt`
 relative to its containing module's directory; two matches or no match diagnose.
 An inline module uses a same-named child directory for its external children.
 The package target's source is its root module. A source file cannot acquire
@@ -102,11 +100,9 @@ imports that never resolve to a declaration diagnose; compilation dependency
 cycles remain package-resolver errors. Static initialization remains constant,
 not import-order execution.
 
-Pre-cutover spelling, removed at cutover: paths use `::`, imports use
-`::{...}`/`::*`, and explicit generic call arguments use
-`function::<Types>(arguments)` as a working native disambiguator. Ordinary calls
-infer arguments. `a < b > (c)` is comparisons and is rejected as a comparison
-chain. Section 13 gives the target dotted paths and generic-application rule.
+Generic call arguments use `function<T>(arguments)` when the syntax-only
+generic-follower rule in section 13.3 selects application. Ordinary calls infer
+arguments.
 
 ## 3. Type expressions
 
@@ -125,8 +121,11 @@ type_atom     = path, [ generic_args ]
               | "some", bounds, [ "from", sources ]
               | "ptr", "<", ( "read" | "mut" ), type, ">"
               | projection_type | callable_type | "_" ;
-projection_type = "<", type, "implements", bound, ">", "::", IDENT,
+projection_type = projection_subject, ".", "(", bound, ")", ".", IDENT,
                   [ generic_args ] ;
+projection_subject = path, [ generic_args ]
+                   | "[", type, "]"
+                   | "(", type, ")" ;
 sources       = region_source | "(", region_source, { ",", region_source }, ")" ;
 region_source = path | "static" ;
 callable_type = [ "for", "<", region_list, ">" ],
@@ -173,9 +172,6 @@ only the success type. `throws` remains an explicit contract.
 
 ## 4. Types, methods and implementations
 
-Pre-cutover spelling, removed at cutover: `impl` introduces implementations and
-`<T implements Interface>::Item` selects an interface projection (section 13).
-
 ```ebnf
 type_item     = attributes, [ visibility ], [ "copy" ], "type", IDENT,
                 [ generics ], [ "implements", bounds ], [ where_clause ],
@@ -187,7 +183,7 @@ variant       = attributes, IDENT, [ "(", type_list, ")" | "{", fields, "}" ],
 interface     = attributes, [ visibility ], [ "unsafe" ], "interface", IDENT,
                 [ generics ], [ ":", bounds ], [ where_clause ],
                 "{", associated_items, "}" ;
-implementation = [ "unsafe" ], "impl", [ generics ], type,
+implementation = [ "unsafe" ], "extend", [ generics ], type,
                  [ "implements", bound ], [ where_clause ],
                  "{", associated_items, "}" ;
 function      = attributes, [ visibility ], [ "unsafe" ], [ "const" ],
@@ -196,9 +192,9 @@ function      = attributes, [ visibility ], [ "unsafe" ], [ "const" ],
                 [ result_annotation ], [ "throws", type ],
                 [ where_clause ], ( block | ";" ) ;
 associated_type = attributes, [ visibility ], "type", IDENT, [ generics ],
-                  [ ":", bounds ], [ where_clause ], [ "=", type ], ";" ;
+                  [ ":", bounds ], [ where_clause ], [ "=", type ], [ ";" ] ;
 constant      = [ visibility ], "const", IDENT, ":", type,
-                "=", const_expression, ";" ;
+                "=", const_expression, [ ";" ] ;
 destructor    = "drop", block ;
 ```
 
@@ -297,9 +293,8 @@ loop. Value-producing `loop` joins its break value types; while/for remain unit.
 `if let pattern = expression { ... }` and its while equivalent use conditional
 bindings with explicit branch lifetimes.
 
-Pre-cutover spelling: closure syntax is
-`[async] [take] fn(parameters) [: Result] [throws Error] block`; section 13.4 adds
-the expression body.
+Closure syntax is
+`[async] [take] fn(parameters) [: Result] [throws Error] (block | => expression)`.
 Omitting a name distinguishes it from a function declaration. Types and result
 may be contextually inferred for closures. `take` selects owned captures;
 otherwise captures infer minimal read/exclusive use with an escaping-region
@@ -336,8 +331,8 @@ spelling alone does not determine metaprogramming semantics.
 - Function result effect versus stored outcome: parentheses distinguish them.
 - Parameter mode versus a stored reference value: parentheses isolate the
   reference payload, e.g. `x: take (read T from r)`.
-- Generic call versus comparison: pre-cutover, only `::<...>` specializes calls;
-  at cutover the syntax-only follower rule of section 13.3 decides.
+- Generic call versus comparison: the syntax-only follower rule of section
+  13.3 decides.
 - Type construction versus condition block: construction uses parentheses.
 - Identifier versus unit variant pattern: variants use qualified paths.
 - `?` is a type suffix only; `?.`/`??` are expression tokens; error propagation
@@ -364,9 +359,9 @@ item          = type_item | enum_item | interface | implementation | function
               | foreign_block | foreign_function | macro_definition
               | negative_property | alias_item ;
 alias_item    = attributes, [ visibility ], "alias", IDENT, [ generics ],
-                [ where_clause ], "=", type, ";" ;
-negative_property = "impl", [ generics ], type, "not", path,
-                    [ where_clause ], ";" ;
+                [ where_clause ], "=", type, [ ";" ] ;
+negative_property = "extend", [ generics ], type, "not", path,
+                    [ where_clause ], [ ";" ] ;
 generics      = "<", generic, { ",", generic }, [ "," ], ">" ;
 parameters    = parameter, { ",", parameter }, [ "," ] ;
 parameter     = pattern, ":", [ mode ], type, [ "=", expression ]
@@ -395,14 +390,14 @@ literal       = INTEGER | FLOAT | CHARACTER | BYTE | TEXT | BYTE_TEXT
               | RAW_TEXT | RAW_BYTE_TEXT | "true" | "false" ;
 const_expression = expression ;
 static_item   = attributes, [ visibility ], "static", [ "mut" ],
-                IDENT, ":", type, "=", expression, ";" ;
+                IDENT, ":", type, "=", expression, [ ";" ] ;
 union_item    = attributes, [ visibility ], "union", IDENT, [ generics ],
                 [ where_clause ], "{", fields, "}" ;
 foreign_block = "extern", TEXT, "{", { foreign_declaration }, "}" ;
 foreign_declaration = [ "unsafe" ], [ visibility ], "fn", IDENT,
                 "(", [ parameters ], [ ",", "..." ], ")",
                 result_annotation, ";"
-              | [ visibility ], "static", [ "mut" ], IDENT, ":", type, ";" ;
+              | [ visibility ], "static", [ "mut" ], IDENT, ":", type, [ ";" ] ;
 foreign_function = "extern", TEXT, function ;
 macro_definition = "macro", IDENT, "{", TOKEN_TREE_CONTENTS, "}" ;
 ```
@@ -478,11 +473,11 @@ unary         = ( "-" | "!" | "*" | "take" | "read" | "mut" | "weak"
                 | "heap" | "shared" | "await" | "try" | "capture" ), unary
               | "local", "shared", unary | postfix ;
 postfix       = primary, { call_suffix | field_suffix | index_suffix
-                         | optional_suffix | specialize_suffix } ;
+                         | optional_suffix | generic_suffix } ;
 field_suffix  = ".", ( IDENT | INTEGER ) ;
 index_suffix  = "[", expression, "]" ;
 optional_suffix = "?.", IDENT ;
-specialize_suffix = "::", generic_args ;
+generic_suffix = generic_args ;
 primary       = path | projection_type | literal | "none" | unit_value
               | "present", "(", expression, ")"
               | "success", "(", expression, ")"
@@ -493,14 +488,15 @@ primary       = path | projection_type | literal | "none" | unit_value
 array_expr    = "[", [ expression, { ",", expression }, [ "," ] ], "]"
               | "[", expression, ";", const_expression, "]" ;
 closure       = [ "async" ], [ "take" ], "fn", "(", [ closure_parameters ], ")",
-                [ result_annotation ], [ "throws", type ], block ;
+                [ result_annotation ], [ "throws", type ],
+                ( block | "=>", expression ) ;
 closure_parameters = closure_parameter, { ",", closure_parameter }, [ "," ] ;
 closure_parameter = pattern, [ ":", [ mode ], type ] ;
 macro_invocation = path, "!", DELIMITED_TOKEN_TREE ;
 ```
 
 The range operator cannot chain; an inclusive range requires an upper bound.
-Paths stop before `::<`, which starts explicit specialization.
+Generic application follows a name or dotted member chain.
 Integer field selectors are unsuffixed decimal tuple positions, not arbitrary
 integer expressions; ordinary named members still require identifiers.
 `take fn(...)` and `async take fn(...)` use closure parsing, not ordinary unary
@@ -557,16 +553,13 @@ fixtures remains a later implementation task, not a result of writing EBNF.
 Required ambiguity fixtures include nested `>>`, ranges versus float literals,
 named functions versus closures, result effects versus stored outcomes, modes
 versus parenthesized borrowed payloads, if/else newlines, macro separators,
-optional chaining on nested optionals and specialization versus comparison.
+optional chaining on nested optionals and generic application versus
+comparison.
 
-## 13. Target syntax: dotted paths, generic application, closures and formatting
+## 13. Dotted paths, generic application, closures and formatting
 
-Status: accepted target (decisions D18-D29). **Migration status:** the compiler
-accepts the pre-cutover spellings in sections 1-12 (`::` paths, turbofish,
-`impl`, `<T implements I>::Item`, block-only `fn` closures, current library
-names) until the cutover milestone. One parser-backed migration then replaces
-them together; the old spellings are rejected afterwards, never kept as
-alternates. Fixtures that use the old spelling migrate with it.
+Status: current syntax (decisions D18-D29). Implementation status and remaining
+work are recorded in implementation-plan section 8.7.
 
 Semantic meaning is in semantic-rules section 13; library vocabulary is in
 library-surface section 9.
@@ -575,7 +568,7 @@ library-surface section 9.
 
 ```ebnf
 dotted_path   = path_head, { ".", IDENT } ;
-dotted_import = [ visibility ], "import", dotted_path, [ import_tail ], ";" ;
+dotted_import = [ visibility ], "import", dotted_path, [ import_tail ], [ ";" ] ;
 import_tail   = "as", IDENT
               | ".", "{", import_item, { ",", import_item }, [ "," ], "}"
               | ".", "*" ;
@@ -594,19 +587,16 @@ several items of one module (`import std.io.{Reader, Writer as Sink}`); a glob
 (`import std.io.*`) binds every exported item at glob priority, below explicit
 imports and above the prelude, and an ambiguous glob name is diagnosed at use.
 
-Implementation rule (checker, verified): a dotted
-expression chain is a field or method access when its root is a local value or
-parameter in scope, so a value shadows a type or module of the same name.
-Otherwise the longest prefix whose leading segments are modules, types,
-interfaces, `Self` or generic parameters is the qualified path of the old `::`
-spelling (`Slot.empty()` is `Slot::empty()`, `core.pin.Pin.new(x)` is
-`core::pin::Pin::new(x)`); remaining links are ordinary accesses. An
-unshadowed `core`, `alloc` or `std` chain is a path through its last link, since
-those roots also name compiler intrinsics, and `self` is the receiver inside a
-type or extension and the current module elsewhere. Generic
-arguments on a segment map to the owner or function arguments of that path
-(`Opt<i32>.Nothing` is `Opt::<i32>::Nothing`). Patterns and types qualify with
-dots in the parser.
+Implementation rule (checker, verified): a dotted expression chain is a field
+or method access when its root is a local value or parameter in scope, so a
+value shadows a type or module of the same name. Otherwise, resolve the longest
+prefix whose leading segments are modules, types, interfaces, `Self` or generic
+parameters; remaining links are ordinary accesses. An unshadowed `core`,
+`alloc` or `std` chain is a path through its last link, since those roots also
+name compiler intrinsics, and `self` is the receiver inside a type or extension
+and the current module elsewhere. Generic arguments on a segment map to the
+owner or function arguments of that path (`Opt<i32>.Nothing`). Patterns and
+types qualify with dots in the parser.
 
 ### 13.2. Contextual `extend` declarations
 
@@ -616,10 +606,10 @@ extension     = [ "unsafe" ], "extend", [ generics ], type,
                 "{", associated_items, "}" ;
 ```
 
-`extension` replaces `implementation`, and a negative-property declaration uses
-`extend` in place of `impl`. `extend` is contextual: it is recognized only at the
-start of an item declaration, after attributes and visibility. It remains an
-identifier after `fn` and after `.`, so `mut fn extend(...)` and
+An implementation declaration uses `extend`; a negative-property declaration
+uses `extend Type not Interface`. `extend` is contextual: it is recognized only
+at the start of an item declaration, after attributes and visibility. It remains
+an identifier after `fn` and after `.`, so `mut fn extend(...)` and
 `out.extend(items)` parse unchanged.
 
 ### 13.3. Generic application
@@ -643,8 +633,8 @@ application `a<b, c>(d)` inside the outer call. The diagnostic at `<` explains
 the selected parse and suggests `assert((a < b), c > (d))`; there is no semantic
 backtracking. A specialized function value before a non-follower is
 parenthesized: `(f<T>)`. Const-expression braces protect internal comparisons,
-and nested `>>` splits as in type arguments. Turbofish and `::` are not
-alternates. The parser shares one generic-argument parser and memoizes
+and nested `>>` splits as in type arguments. The parser shares one
+generic-argument parser and memoizes
 lookahead so nested suffixes are not rescanned.
 
 Implementation rule (parser, verified): application is attempted only after a
@@ -652,8 +642,6 @@ name or dotted member chain (not after a literal, call or `<<`); the generic
 argument list is parsed speculatively, and a rejected attempt rolls back
 position, `>>` splits, `<<` insertions and diagnostics state before the `<` is
 read as a comparison. `FormatHoleClose` also counts as a follower. The
-pre-cutover spellings (`::<`, `::`, `impl`, `<T implements I>::M`) remain
-accepted and produce the same AST; `mettle migrate FILE` rewrites them. The
 quirk diagnostic above, dotted names inside import groups, and dotted machine
 macro paths are not yet implemented.
 

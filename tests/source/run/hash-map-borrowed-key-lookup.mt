@@ -1,7 +1,7 @@
 // A String-keyed map is searched with Text and owned keys without allocating;
 // equal keys hash alike so growth, collisions and removals still find entries.
-import alloc.hash_map;
-import alloc.string;
+import alloc.hash_map
+import alloc.string
 
 fn key(i: u32): string.String {
     var s = string.from_text("k")

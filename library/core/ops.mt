@@ -30,6 +30,6 @@ pub interface Index<I> { type Output: unsized; fn index(index: read I): read Sel
 pub interface IndexMut<I> { type Output: unsized; mut fn index_mut(index: read I): mut Self.Output from self; }
 // Range indexing `value[a..b]`, `value[a..]`, `value[..b]`, `value[..=b]`,
 // `value[..]` on a non-array, non-slice type: `end` is the exclusive upper
-// bound, or usize::MAX when the range has no upper bound.
+// bound, or usize.MAX when the range has no upper bound.
 pub interface IndexRange { type Output: unsized; fn index_range(start: usize, end: usize): read Self.Output from self; }
 pub interface IndexRangeMut { type Output: unsized; mut fn index_range_mut(start: usize, end: usize): mut Self.Output from self; }

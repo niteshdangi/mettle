@@ -2,8 +2,8 @@
 // equal under `Eq` must feed identical bytes, so every implementation below
 // hashes exactly what its `PartialEq` compares. Integers are written as
 // little-endian bytes, so results do not depend on the host byte order.
-import super.cmp.Ordering;
-import super.text.Text;
+import super.cmp.Ordering
+import super.text.Text
 
 pub interface Hasher {
     mut fn write(bytes: read [u8]): Unit;

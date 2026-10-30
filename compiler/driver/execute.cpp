@@ -1,6 +1,7 @@
 #include "driver/execute.h"
 #include "documentation/doctest.h"
 #include "expansion/harness.h"
+#include "support/path.h"
 #include "llvm/Support/FileSystem.h"
 #include <algorithm>
 #include <atomic>
@@ -173,7 +174,7 @@ std::string name(const Module::TestFunction &entry) {
   std::string joined;
   for (const auto &part : entry.path)
     joined += (joined.empty() ? "" : "::") + part;
-  return joined;
+  return displayPath(joined);
 }
 
 // Builds the input into the work directory. Returns 0 or the build status.
@@ -636,6 +637,8 @@ int runDoctests(const Options &requested,
       pageName += (pageName.empty() ? "" : "::") + part;
     if (pageName.empty())
       pageName = fs::path(source.source.path).stem().string();
+    else
+      pageName = displayPath(pageName);
     auto page = documentation::extract(source.source, pageName, true);
     for (auto &example : documentation::examples(page)) {
       examples.push_back(std::move(example));

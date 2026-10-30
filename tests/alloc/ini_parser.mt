@@ -1,9 +1,9 @@
 // Structured parser plus collection workload, built without std:
 // `name=1,2,3` lines accumulate into a Map<String, List<i64>>.
-import alloc.hash_map.Map;
-import alloc.string.String;
-import alloc.vec.List;
-import package.core.text.Text;
+import alloc.hash_map.Map
+import alloc.string.String
+import alloc.vec.List
+import package.core.text.Text
 
 fn parse_number(t: read Text): i64? {
     let bytes = t.as_bytes()

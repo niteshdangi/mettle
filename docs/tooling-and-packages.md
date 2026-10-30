@@ -11,7 +11,7 @@ These operations are native equivalents, not Cargo-manifest compatibility.
 component, then compiles the selected executable target with each resolved
 dependency library mounted as a public root module named after the package
 (`-` becomes `_`). Inside a dependency's own submodules, reach other packages
-with `import package::name`.
+with `import package.name`.
 
 - Manifest: `[package] name/version/language="mettle-1"`, `[targets.NAME]`
   (`kind`, `source`; defaults `src/main.mt` executable, `src/lib.mt` library),
@@ -99,7 +99,7 @@ identity) to its standard input and reads `mettle:` lines from its standard
 output: `text=` appends generated source, `error=` fails the invocation,
 `rerun-if-changed=`, `rerun-if-env-changed=` and `reproducible` declare the
 input contract. Escaping and the full format are in
-`compiler/expansion/procedural.h`; the library side is `std::macros`
+`compiler/expansion/procedural.h`; the library side is `std.macros`
 (`read_invocation`, `emit`, `fail`, `depends_on_file`, `depends_on_env`,
 `reproducible`). The generated text is re-lexed and re-parsed, nested macros in
 it are expanded, and every generated token is attributed to the invocation, so
@@ -251,7 +251,7 @@ works on the token stream (`syntax/format.{h,cpp}`) and changes only whitespace.
 Indentation is 4 spaces per bracket level (a line continued inside brackets, after
 a trailing operator or starting with `.` gets one more level); spacing is
 normalized after `,` `;` `:`, around `=`, comparison/compound-assignment/`=>`/`->`/`??`,
-inside one-line `{ }` and removed around `::`, `.` and inside `()`/`[]`; other
+inside one-line `{ }` and removed around `.` and inside `()`/`[]`; other
 gaps (`<`, `-`, `&`, ...) keep one space or none as written. Trailing whitespace
 goes, blank-line runs collapse to one (none after `{` or before `}`), the file
 ends in one newline. Line breaks are never added or removed; comments, text
@@ -288,7 +288,7 @@ set a rule, the rule name `warnings` sets the default for every rule (`--deny
 warnings` makes all findings fail). The `@allow(RULE, ...)`, `@warn(...)`,
 `@deny(...)` and `@forbid(...)` attributes on a function override the flags inside
 that function; `RULE` may be spelled with `-` or `_`, and unknown names are
-ignored. Attributes on imports and on products/impls, line breaking of findings
+ignored. Attributes on imports and on products/extensions, line breaking of findings
 and machine-readable output are not implemented.
 
 Target, profile, feature, package/workspace and lock/offline selections are
@@ -296,7 +296,7 @@ shared options. Unknown or unavailable requested capabilities fail explicitly;
 partial compiler milestones cannot count unsupported programs as passed tests.
 
 Implemented and verified: `check`, `build`, `run`, `test`, `bench` and `fmt`
-(plus `clean`, `migrate` and the inspection commands). The T007 runner
+(plus `clean` and the inspection commands). The T007 runner
 extensions in section 4 are implemented and verified on macOS arm64. `lint` is implemented and
 verified (test `lint_reports_semantic_findings`). `doc` and doctests are
 implemented and verified (see section 4.1).
@@ -328,8 +328,8 @@ concurrency; a deterministic seed option is not yet provided.
 Runner extensions in this T007 work are implemented and verified on macOS
 arm64 (test `test_json_timeout_and_modules`). `@test` marks a function in any module of the selected package with no
 parameters and result `Unit`, or `Unit throws E` (returning the failure fails
-the test). Inline and file modules (`module name;`) are included; displayed
-names are fully qualified, such as `network::connect`. `@ignore` /
+the test). Inline and file modules (`module name`) are included; displayed
+names are fully qualified, such as `network.connect`. `@ignore` /
 `@ignore("reason")` skips a test unless `--include-ignored` (run everything) or
 `--ignored` (run only ignored tests) is given; `@should_panic` /
 `@should_panic("text")` passes only when the test panics (exit status 101) or is
@@ -371,11 +371,11 @@ suites separately when both contain examples.
 package module is run by `bench` one process at a time. Names are fully
 qualified. The harness doubles the iteration count until one sample takes at
 least 10 ms, then measures 11 samples of that many calls with the monotonic
-`std::time` clock inside the process. Human output prints the median, minimum
+`std.time` clock inside the process. Human output prints the median, minimum
 and maximum nanoseconds per iteration with the iteration count. JSON reports a
 `measured` outcome, wall-clock `duration_ns` and the captured raw iteration and
 sample-nanosecond line in `output`. Each call's result passes through
-`core::hint::black_box(value)`, an identity the optimizer cannot see through,
+`core.hint.black_box(value)`, an identity the optimizer cannot see through,
 so a benchmark keeps its work by returning it; inputs that must not be
 constant-folded go through `black_box` too. There is no benchmark handle or
 per-iteration setup. Results from `bench` do not replace the performance
@@ -404,12 +404,12 @@ file, default `.`. A file that does not lex, expand and parse is reported
 never produced from an invalid tree. The output (default
 `target/mettle/doc` below a single directory argument, else below the current
 directory) is plain HTML with no script, font or network use: `index.html`,
-one `<module>.html` per file (`net/http.mt` is `net::http`; a directory's
+one `<module>.html` per file (`net/http.mt` is `net.http`; a directory's
 `module.mt` names the directory) and one shared `style.css`. Items are the
 `pub` types, enums, unions, interfaces, functions, constants, aliases,
 macros, inline modules and implementations (`--private` adds the rest), grouped
 and sorted by name; fields, variants and the members of an interface or of an
-`impl ... implements ...` need no `pub`, and `@test`/`@bench` functions are
+`extend ... implements ...` need no `pub`, and `@test`/`@bench` functions are
 omitted. A signature is the declaration header exactly as written
 (whitespace collapsed, no body) with its attributes, so an omitted result is
 not guessed. Output is deterministic (no timestamps, stable order, stale files
@@ -512,10 +512,10 @@ readable field names and expose its actual state/discriminant in its type.
 
 For LLDB, import `tools/debug/mettle_lldb.py` with
 `command script import /path/to/mettle/tools/debug/mettle_lldb.py`. It registers
-best-effort summaries for native `Vec`, `String`, text views, optionals and
+best-effort summaries for native `List`, `String`, text views, optionals and
 outcomes; text reads are capped at 256 bytes. Summaries do not execute program
 code and report unavailable data rather than guessing. The updated `debug_info`
-regression passes on macOS arm64; LLDB summaries were checked manually (Vec
+regression passes on macOS arm64; LLDB summaries were checked manually (List
 length/capacity and String text display; an optional shows only its variant,
 not its payload). No automated LLDB test exists.
 

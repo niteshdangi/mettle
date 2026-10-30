@@ -13,8 +13,8 @@ const fn widen(): u64 {
     x += 1;
     x
 }
-static SUM: u64 = sum_to(100000);
-static WIDE: u64 = widen();
+static SUM: u64 = sum_to(100000)
+static WIDE: u64 = widen()
 
 fn main(): i32 {
     if SUM != 4999950000 { return 1; }

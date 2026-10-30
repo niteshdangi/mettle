@@ -1,7 +1,7 @@
 // Comparison capabilities. Operators dispatch to `PartialEq`/`PartialOrd` by
 // these canonical paths; the primitive implementations below delegate to the
 // compiler's built-in scalar comparisons.
-import super.text.Text;
+import super.text.Text
 
 pub copy enum Ordering { Less, Equal, Greater }
 

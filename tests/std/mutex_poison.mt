@@ -1,6 +1,6 @@
-import std.thread;
-import std.sync.mutex;
-import alloc.arc;
+import std.thread
+import std.sync.mutex
+import alloc.arc
 
 fn discard<T>(value: take T): Unit {}
 

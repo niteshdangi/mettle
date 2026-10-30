@@ -1,5 +1,5 @@
-import std.thread;
-import alloc.arc;
+import std.thread
+import alloc.arc
 
 type Tracker {
   drops: arc.Arc<core.sync.atomic.AtomicUsize>
@@ -8,7 +8,7 @@ type Tracker {
 
 fn discard<T>(value: take T): Unit {}
 
-// Weak::upgrade races the final strong drop: each round the value must be
+// Weak.upgrade races the final strong drop: each round the value must be
 // destroyed exactly once and upgrades must never observe a dead value.
 fn round(drops: read arc.Arc<core.sync.atomic.AtomicUsize>): i32 {
   let owner = arc.new(Tracker(drops.retain()))

@@ -2,12 +2,12 @@
 // file: input.txt=the quick brown fox\n\njumps over  the lazy dog\nlast line no newline
 // expect-stdout: input.txt: 4 lines, 13 words, 66 bytes\n
 // expect-file: report.txt=lines=4\nwords=13\nbytes=66\n
-// File-processing CLI: reads a file line by line through BufReader, counts,
-// then writes a report file through BufWriter and prints a summary.
-import std.io.{Error, Reader, Writer};
-import std.ffi;
-import std.path;
-import alloc.vec.List;
+// File-processing CLI: reads a file line by line through BufferedReader, counts,
+// then writes a report file through BufferedWriter and prints a summary.
+import std.io.{Error, Reader, Writer}
+import std.ffi
+import std.path
+import alloc.vec.List
 
 fn decimal(v: usize): List<u8> {
     var digits = alloc.vec.new<u8>()

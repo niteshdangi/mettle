@@ -256,19 +256,6 @@ std::unique_ptr<Node> Parser::primary() {
       result->span.end = expect(")").span.end;
     }
     --parens;
-  } else if (take("<")) {
-    auto subject = type();
-    expect("implements");
-    auto interface = boundType();
-    genericClose();
-    expect("::");
-    auto member = name();
-    result = node(Kind::Name, token.span, member.text);
-    result->annotation.form = TypeForm::Projection;
-    result->annotation.name = member.text;
-    result->annotation.elements.push_back(std::move(subject));
-    result->annotation.elements.push_back(std::move(interface));
-    result->span.end = member.span.end;
   } else if (token.kind == TokenKind::FormatOpen) {
     result = formatString();
   } else if (token.kind == TokenKind::Character ||
@@ -302,18 +289,17 @@ std::unique_ptr<Node> Parser::primary() {
       fail("expected an expression");
     auto identifier = name();
     result = node(Kind::Name, identifier.span, identifier.text);
-    while (take("::")) {
-      if (is("<")) {
-        result->genericArguments = genericArguments();
-        result->span.end = tokens[position - 1].span.end;
-        if (is("::") && peek(1).text != "<")
-          result->ownerGenericArguments = std::move(result->genericArguments);
-        continue;
+    // A dotted path ending in `!` names a macro (`core.arch.asm!`).
+    auto end = position;
+    while (tokens[end].text == "." && nameToken(tokens[end + 1]))
+      end += 2;
+    if (end != position && tokens[end].text == "!")
+      while (position != end) {
+        ++position;
+        auto segment = tokens[position++];
+        result->text += "::" + segment.text;
+        result->span.end = segment.span.end;
       }
-      auto member = is("drop") ? tokens[position++] : name();
-      result->text += "::" + member.text;
-      result->span.end = member.span.end;
-    }
   }
   if (result->kind == Kind::Name && is("!")) {
     auto separator = result->text.rfind("::");
@@ -332,17 +318,11 @@ std::unique_ptr<Node> Parser::primary() {
     } else
       feature("unsupported machine macro");
   }
-  // A name just specialized with `<...>`: a following `.member` or `::member`
-  // continues a type-qualified path (`List<T>.new` is `List::<T>::new`).
+  // A name just specialized with `<...>`: a following `.member` continues a
+  // type-qualified path (`List<T>.new`).
   bool specialized = false;
   for (;;) {
     const bool qualifies = std::exchange(specialized, false);
-    if (is("::") && peek(1).text == "<") {
-      ++position;
-      result->genericArguments = genericArguments();
-      result->span.end = tokens[position - 1].span.end;
-      continue;
-    }
     if (is("<") &&
         (result->kind == Kind::Name || result->kind == Kind::Field) &&
         result->genericArguments.empty()) {
@@ -355,7 +335,7 @@ std::unique_ptr<Node> Parser::primary() {
         continue;
       }
     }
-    if (qualifies && (is("::") || (is(".") && nameToken(peek(1))))) {
+    if (qualifies && is(".") && nameToken(peek(1))) {
       ++position;
       auto member = is("drop") ? tokens[position++] : name();
       result->text += "::" + member.text;
@@ -419,8 +399,6 @@ std::unique_ptr<Node> Parser::primary() {
     finish(*call);
     result = std::move(call);
   }
-  if (is("::"))
-    feature("extended postfix expressions are not implemented in I02");
   finish(*result);
   --nesting;
   return result;

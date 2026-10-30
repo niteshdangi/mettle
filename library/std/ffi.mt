@@ -2,13 +2,13 @@
 // that round-trip losslessly. `OsStr` is the unsized view, `OsString` the
 // owner. Interior NUL bytes are representable here and rejected only where a
 // C string is required (`cstring`).
-import package.alloc.vec;
-import package.alloc.vec.List;
-import package.alloc.string.String;
-import package.core.text.Text;
-import package.core.slice;
-import super.io;
-import super.io.ErrorKind;
+import package.alloc.vec
+import package.alloc.vec.List
+import package.alloc.string.String
+import package.core.text.Text
+import package.core.slice
+import super.io
+import super.io.ErrorKind
 
 pub type OsStr { bytes: [u8] }
 

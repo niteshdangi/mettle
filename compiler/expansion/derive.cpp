@@ -24,7 +24,7 @@ const std::map<std::string, DeriveInfo> &catalog() {
       {"Default", {"default", "Default"}}};
   return entries;
 }
-const std::string core = "package::core::";
+const std::string core = "core.";
 
 std::string identifier(const std::string &name) {
   auto plain =
@@ -74,7 +74,7 @@ public:
     else if (interface == "PartialEq")
       equality();
     else if (interface == "Eq") {
-      // Marker interface: the empty impl asserts the derived PartialEq.
+      // Marker interface: the empty extension asserts the derived PartialEq.
     } else if (interface == "Hash")
       hash();
     else
@@ -110,8 +110,7 @@ private:
   }
 
   void header() {
-    path =
-        core + std::string(catalog().at(interface).module) + "::" + interface;
+    path = core + std::string(catalog().at(interface).module) + "." + interface;
     target = identifier(product.name);
     std::string arguments;
     for (const auto &parameter : product.genericParameters) {
@@ -123,7 +122,7 @@ private:
       arguments += identifier(parameter.name);
     }
     target += arguments.empty() ? "" : arguments + ">";
-    put("impl " + target + " implements " + path + " {\n");
+    put("extend " + target + " implements " + path + " {\n");
   }
 
   std::string projection(const Parameter &field) {
@@ -139,8 +138,8 @@ private:
         interfaceName == "PartialEq" || interfaceName == "PartialOrd"
             ? "<" + placeholder + ">"
             : "";
-    return "<" + placeholder + " implements " + core + module +
-           "::" + interfaceName + argument + ">";
+    return placeholder + ".(" + core + module + "." + interfaceName + argument +
+           ")";
   }
 
   std::vector<Shape> shapes() const {
@@ -155,7 +154,7 @@ private:
           !variant.fields.empty() && std::isdigit(static_cast<unsigned char>(
                                          variant.fields.front().name[0]));
       result.push_back(
-          {identifier(product.name) + "::" + identifier(variant.name),
+          {identifier(product.name) + "." + identifier(variant.name),
            variant.name, &variant.fields, positional, false, result.size()});
     }
     return result;
@@ -214,7 +213,7 @@ private:
         if (!shape.positional)
           put(identifier(field.name) + ": ");
         mapped(field, [&] {
-          put(projection(field) + "::clone(" + access(shape, "self", "__l", i) +
+          put(projection(field) + ".clone(" + access(shape, "self", "__l", i) +
               ")");
         });
       }
@@ -243,14 +242,14 @@ private:
         put(", ");
       if (!shape.positional)
         put(identifier(field.name) + ": ");
-      mapped(field, [&] { put(projection(field) + "::default()"); });
+      mapped(field, [&] { put(projection(field) + ".default()"); });
     }
     put(")\n}\n");
   }
 
   void debug() {
-    put("fn fmt<__W: " + core + "fmt::Write>(f: mut " + core +
-        "fmt::Formatter<__W>): Unit throws " + core + "fmt::Error {\n");
+    put("fn fmt<__W: " + core + "fmt.Write>(f: mut " + core +
+        "fmt.Formatter<__W>): Unit throws " + core + "fmt.Error {\n");
     auto emit = [&](const Shape &shape) {
       auto &fields = *shape.fields;
       put("try f.write_str(\"" + shape.label + "\")\n");
@@ -265,7 +264,7 @@ private:
         if (!shape.positional)
           put("try f.write_str(\"" + fields[i].name + ": \")\n");
         mapped(fields[i], [&] {
-          put("try " + projection(fields[i]) + "::fmt(" +
+          put("try " + projection(fields[i]) + ".fmt(" +
               access(shape, "self", "__l", i) + ", mut f)");
         });
         put("\ntry f.debug_item_end()\n");
@@ -298,7 +297,7 @@ private:
       if (i)
         put(" && ");
       mapped(field, [&] {
-        put(projection(field) + "::eq(" + access(left, "self", "__l", i) +
+        put(projection(field) + ".eq(" + access(left, "self", "__l", i) +
             ", read " + access(left, "other", "__r", i) + ")");
       });
     }
@@ -327,12 +326,12 @@ private:
   }
 
   void orderingChain(const Shape &shape, bool partial) {
-    std::string equal = core + "cmp::Ordering::Equal";
+    std::string equal = core + "cmp.Ordering.Equal";
     auto wrapped = partial ? "present(" + equal + ")" : equal;
     auto call = [&](const Parameter &field, std::size_t i) {
       mapped(field, [&] {
-        put(projectionOf(field, partial ? "PartialOrd" : "Ord", "cmp") +
-            "::" + (partial ? "partial_cmp(" : "cmp(") +
+        put(projectionOf(field, partial ? "PartialOrd" : "Ord", "cmp") + "." +
+            (partial ? "partial_cmp(" : "cmp(") +
             access(shape, "self", "__l", i) + ", read " +
             access(shape, "other", "__r", i) + ")");
       });
@@ -353,9 +352,9 @@ private:
 
   void ordering(bool partial) {
     put(partial ? "fn partial_cmp(other: read " + target + "): " + core +
-                      "cmp::Ordering? {\n"
+                      "cmp.Ordering? {\n"
                 : "fn cmp(other: read " + target + "): " + core +
-                      "cmp::Ordering {\n");
+                      "cmp.Ordering {\n");
     if (!product.enumeration)
       orderingChain(shapes().front(), partial);
     else {
@@ -369,8 +368,8 @@ private:
                 "usize,\n");
           put("}\n");
         }
-        put("if __li != __ri { return <usize implements " + core + "cmp::" +
-            (partial ? "PartialOrd<usize>>::partial_cmp" : "Ord>::cmp") +
+        put("if __li != __ri { return usize.(" + core + "cmp." +
+            (partial ? "PartialOrd<usize>).partial_cmp" : "Ord).cmp") +
             "(__li, read __ri) }\n");
       }
       put("match self {\n");
@@ -381,8 +380,8 @@ private:
         put("},\n");
         if (all.size() > 1) {
           put("_ => { ");
-          put(partial ? "present(" + core + "cmp::Ordering::Equal)"
-                      : core + "cmp::Ordering::Equal");
+          put(partial ? "present(" + core + "cmp.Ordering.Equal)"
+                      : core + "cmp.Ordering.Equal");
           put(" },\n");
         }
         put("}\n},\n");
@@ -393,15 +392,15 @@ private:
   }
 
   void hash() {
-    put("fn hash<__H: " + core + "hash::Hasher>(state: mut __H): Unit {\n");
+    put("fn hash<__H: " + core + "hash.Hasher>(state: mut __H): Unit {\n");
     auto emit = [&](const Shape &shape) {
       if (product.enumeration)
-        put("<usize implements " + core + "hash::Hash>::hash(" +
+        put("usize.(" + core + "hash.Hash).hash(" +
             std::to_string(shape.index) + "usize, mut state)\n");
       for (std::size_t i = 0; i < shape.fields->size(); ++i) {
         const auto &field = (*shape.fields)[i];
         mapped(field, [&] {
-          put(projection(field) + "::hash(" + access(shape, "self", "__l", i) +
+          put(projection(field) + ".hash(" + access(shape, "self", "__l", i) +
               ", mut state)");
         });
         put("\n");
@@ -515,26 +514,25 @@ std::vector<DeriveRequest> deriveRequests(const Attribute &attribute,
       path += tokens[position].text;
       span.end = tokens[position].span.end;
       ++position;
-      if (position < tokens.size() && tokens[position].text == "::") {
-        path += "::";
+      if (position < tokens.size() && tokens[position].text == ".") {
+        path += ".";
         ++position;
       } else
         break;
     }
-    if (path.empty() || path.ends_with("::")) {
+    if (path.empty() || path.ends_with(".")) {
       diagnostics.error("attribute",
                         tokens[std::min(position, tokens.size() - 1)].span,
                         "expected an interface name in derive(...)");
       return result;
     }
     auto name = path.substr(
-        path.rfind(':') == std::string::npos ? 0 : path.rfind(':') + 1);
+        path.rfind('.') == std::string::npos ? 0 : path.rfind('.') + 1);
     auto found = catalog().find(name);
     auto qualified = name != path;
     if (found == catalog().end() ||
         (qualified &&
-         path != "core::" + std::string(found->second.module) + "::" + name &&
-         path != core + std::string(found->second.module) + "::" + name))
+         path != "core." + std::string(found->second.module) + "." + name))
       diagnostics.error(
           "attribute", span,
           "unknown derive '" + path +

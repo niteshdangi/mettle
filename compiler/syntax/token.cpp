@@ -11,27 +11,27 @@ bool contains(std::initializer_list<std::string_view> values,
 } // namespace
 bool isReservedWord(std::string_view word) {
   return contains(
-      {"fn",       "type",      "copy",   "let",     "var",     "read",
-       "mut",      "take",      "if",     "else",    "while",   "loop",
-       "break",    "continue",  "return", "true",    "false",   "pub",
-       "enum",     "interface", "impl",   "throws",  "throw",   "try",
-       "capture",  "match",     "none",   "present", "success", "failure",
-       "async",    "await",     "for",    "in",      "module",  "import",
-       "unsafe",   "extern",    "static", "const",   "init",    "drop",
-       "heap",     "shared",    "weak",   "local",   "pinned",  "as",
-       "alias",    "label",     "union",  "where",   "region",  "implements",
-       "receiver", "macro",     "_"},
+      {"fn",     "type",      "copy",    "let",     "var",        "read",
+       "mut",    "take",      "if",      "else",    "while",      "loop",
+       "break",  "continue",  "return",  "true",    "false",      "pub",
+       "enum",   "interface", "throws",  "throw",   "try",        "capture",
+       "match",  "none",      "present", "success", "failure",    "async",
+       "await",  "for",       "in",      "module",  "import",     "unsafe",
+       "extern", "static",    "const",   "init",    "drop",       "heap",
+       "shared", "weak",      "local",   "pinned",  "as",         "alias",
+       "label",  "union",     "where",   "region",  "implements", "receiver",
+       "macro",  "_"},
       word);
 }
 bool isUnsupportedExpressionWord(std::string_view word) {
-  return contains(
-      {"read",    "mut",       "take",    "heap",   "shared",  "local",
-       "weak",    "pinned",    "match",   "none",   "present", "success",
-       "failure", "try",       "capture", "throw",  "async",   "await",
-       "for",     "fn",        "unsafe",  "type",   "copy",    "pub",
-       "enum",    "interface", "impl",    "module", "import",  "extern",
-       "const",   "static",    "union",   "alias",  "macro",   "label"},
-      word);
+  return contains({"read",      "mut",     "take",    "heap",   "shared",
+                   "local",     "weak",    "pinned",  "match",  "none",
+                   "present",   "success", "failure", "try",    "capture",
+                   "throw",     "async",   "await",   "for",    "fn",
+                   "unsafe",    "type",    "copy",    "pub",    "enum",
+                   "interface", "module",  "import",  "extern", "const",
+                   "static",    "union",   "alias",   "macro",  "label"},
+                  word);
 }
 int binaryPrecedence(std::string_view op) {
   if (op == ".." || op == "..=")
@@ -67,7 +67,7 @@ std::string_view compoundSymbol(std::string_view input) {
   for (std::string_view symbol :
        {"...", "..=", "..", ">>=", "<<=", "==", "!=", "<=", ">=",
         "&&",  "||",  "+=", "-=",  "*=",  "/=", "%=", "&=", "|=",
-        "^=",  "<<",  ">>", "->",  "::",  "=>", "?.", "??"})
+        "^=",  "<<",  ">>", "->",  "=>",  "?.", "??"})
     if (input.starts_with(symbol))
       return symbol;
   return {};

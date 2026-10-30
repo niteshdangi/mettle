@@ -1,8 +1,8 @@
-import alloc.vec;
+import alloc.vec
 
 fn seed(): u64 { 12345u64 } // bench-edit-point
 
-fn generate(size: usize): vec.Vec<u8> {
+fn generate(size: usize): vec.List<u8> {
     var bytes = vec.with_capacity<u8>(size)
     var state = seed()
     var index = 0usize

@@ -2,13 +2,13 @@
 // `PathBuf` the owner. Bytes are never reinterpreted, so non-Unicode names
 // round-trip losslessly. Separator is `/`; repeated separators and `.`
 // components are ignored when splitting.
-import package.alloc.vec;
-import package.alloc.vec.List;
-import package.alloc.string.String;
-import package.core.text.Text;
-import package.core.slice;
-import super.ffi;
-import super.ffi.{OsStr, OsString};
+import package.alloc.vec
+import package.alloc.vec.List
+import package.alloc.string.String
+import package.core.text.Text
+import package.core.slice
+import super.ffi
+import super.ffi.{OsStr, OsString}
 
 pub type Path { bytes: [u8] }
 

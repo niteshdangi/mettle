@@ -399,48 +399,6 @@ def package_options_need_package():
     invoke(["check", source, "--locked"], 2)
 
 
-def migrate_preserves_syntax_tree():
-    # Generic arguments move between a `::` path and a dotted chain; the
-    # syntax-tree check must accept that and the result must be a fixed point.
-    source = evidence / "old.mt"
-    source.write_text(
-        "enum Opt<T> { Some(T), Nothing }\n"
-        "type Slot<K> { v: K? }\n"
-        "impl<K> Slot<K> {\n"
-        "    static fn empty(): Slot<K> { Slot(none) }\n"
-        "}\n"
-        "fn main(): i32 {\n"
-        "    let t: Opt<i32> = Opt::<i32>::Nothing\n"
-        "    let e: Slot<i32> = Slot::empty()\n"
-        "    match t { Opt::Nothing => 0, Opt::Some(_) => 1 }\n"
-        "}\n")
-    expected = (
-        "enum Opt<T> { Some(T), Nothing }\n"
-        "type Slot<K> { v: K? }\n"
-        "extend<K> Slot<K> {\n"
-        "    static fn empty(): Slot<K> { Slot(none) }\n"
-        "}\n"
-        "fn main(): i32 {\n"
-        "    let t: Opt<i32> = Opt<i32>.Nothing\n"
-        "    let e: Slot<i32> = Slot.empty()\n"
-        "    match t { Opt.Nothing => 0, Opt.Some(_) => 1 }\n"
-        "}\n")
-    migrated = evidence / "new.mt"
-    invoke(["migrate", source, "-o", migrated])
-    assert migrated.read_text() == expected, migrated.read_text()
-    again = evidence / "again.mt"
-    invoke(["migrate", migrated, "-o", again])
-    assert again.read_text() == expected, again.read_text()
-    shadow = evidence / "shadow.mt"
-    shadow.write_text("module m { pub fn f(): i32 { 1 } }\n"
-                      "fn main(): i32 { let m = 2; m::f() + m }\n")
-    kept = invoke(["migrate", shadow])
-    assert "m::f()" in kept and "local name" in kept, kept
-    broken = evidence / "broken.mt"
-    broken.write_text("fn main(): i32 { 0\n")
-    invoke(["migrate", broken], 1)
-
-
 def fmt_normalizes_layout_only():
     # Indentation, spacing, trailing whitespace and blank runs change; the
     # comments, the multi-line raw text and the line structure do not.
@@ -520,10 +478,10 @@ def fmt_normalizes_layout_only():
 def lint_reports_semantic_findings():
     source = evidence / "lint.mt"
     source.write_text(
-        "import core::iter::{Iterator, Iterable};\n"
+        "import core.iter.{Iterator, Iterable};\n"
         "copy enum Error { Bad }\n"
         "fn value(input: i32): i32 throws Error {\n"
-        "    if input < 0 { throw Error::Bad }\n"
+        "    if input < 0 { throw Error.Bad }\n"
         "    input\n"
         "}\n"
         "fn spare(): i32 {\n"
@@ -545,8 +503,8 @@ def lint_reports_semantic_findings():
     text = invoke(["lint", source], 0,
                   ["warning[unused-binding]", "binding 'unused'",
                    "warning[unused-mutability]", "'var counter'",
-                   "warning[unused-import]", "core::iter::Iterator",
-                   "core::iter::Iterable", "warning[unreachable-code]",
+                   "warning[unused-import]", "core.iter.Iterator",
+                   "core.iter.Iterable", "warning[unreachable-code]",
                    "warning[unused-outcome]"])
     # The function-level @allow wins; discarded results and `_` are fine.
     assert "'ignored'" not in text, text
@@ -569,11 +527,11 @@ def run_forwards_args_and_exit_status():
     program = directory / "echo.mt"
     program.write_text(
         "fn main(): i32 {\n"
-        "    let args = std::env::args()\n"
-        "    std::io::print(\"hello from run\\n\")\n"
+        "    let args = std.env.args()\n"
+        "    std.io.print(\"hello from run\\n\")\n"
         "    if args.len() != 3usize { return 1 }\n"
-        "    if !args[1usize].as_os_str().same(std::ffi::os_str_from_text(\"one\")) { return 2 }\n"
-        "    if !args[2usize].as_os_str().same(std::ffi::os_str_from_text(\"--two\")) { return 3 }\n"
+        "    if !args[1usize].as_os_str().same(std.ffi.os_str_from_text(\"one\")) { return 2 }\n"
+        "    if !args[2usize].as_os_str().same(std.ffi.os_str_from_text(\"--two\")) { return 3 }\n"
         "    42\n"
         "}\n")
     before = sorted(os.listdir(directory))
@@ -649,7 +607,7 @@ def bench_reports_timing():
         "@bench\n"
         "fn total(): u64 {\n"
         "    var sum = 0u64\n"
-        "    var i = core::hint::black_box(0u64)\n"
+        "    var i = core.hint.black_box(0u64)\n"
         "    while i < 1000u64 { sum = (sum ^ i) * 1099511628211u64; i += 1u64 }\n"
         "    sum\n"
         "}\n")
@@ -690,13 +648,13 @@ def debug_info():
         "    doubled + 1\n"
         "}\n"
         "fn main(): i32 {\n"
-        "    let pair: Pair<i64> = Pair::<i64>(20i64, 22i64)\n"
+        "    let pair: Pair<i64> = Pair<i64>(20i64, 22i64)\n"
         "    let seed: i32 = 7\n"
         "    let closure = fn(): i32 { seed }\n"
-        "    let choice = Choice::Value(42i64)\n"
+        "    let choice = Choice.Value(42i64)\n"
         "    match choice {\n"
-        "        Choice::Empty => 1,\n"
-        "        Choice::Value(_) => add_up(20) - 41 + closure() - 7\n"
+        "        Choice.Empty => 1,\n"
+        "        Choice.Value(_) => add_up(20) - 41 + closure() - 7\n"
         "    }\n"
         "}\n")
     plain = [evidence / "plain1.o", evidence / "plain2.o"]
@@ -1006,8 +964,8 @@ def test_json_timeout_and_modules():
         assert list(event) == expected_keys[event["event"]], event
     outcomes = {event["name"]: event for event in events
                  if event["event"] == "test"}
-    assert outcomes["inline_tests::inline_passes"]["outcome"] == "passed"
-    assert outcomes["extras::sub_passes"]["outcome"] == "passed"
+    assert outcomes["inline_tests.inline_passes"]["outcome"] == "passed"
+    assert outcomes["extras.sub_passes"]["outcome"] == "passed"
     assert outcomes["panic_report"]["output"].find("json panic") >= 0
     assert outcomes["hangs"]["outcome"] == "timed_out"
     assert any(event["event"] == "summary" and event["timed_out"] == 1
@@ -1015,13 +973,13 @@ def test_json_timeout_and_modules():
 
     benches = invoke_json([
         "bench", source, "--format", "json", "--exact",
-        "inline_tests::inline_bench", "extras::sub_bench"])
+        "inline_tests.inline_bench", "extras.sub_bench"])
     assert benches[0]["event"] == "suite"
     assert benches[-1]["event"] == "summary"
     measured = {event["name"] for event in benches
                 if event.get("outcome") == "measured"}
-    assert measured == {"inline_tests::inline_bench",
-                        "extras::sub_bench"}, benches
+    assert measured == {"inline_tests.inline_bench",
+                        "extras.sub_bench"}, benches
 
     doctests = invoke_json(["test", source, "--doc", "--format", "json"])
     assert doctests[0]["event"] == "suite"
@@ -1038,7 +996,7 @@ CASES = [path_dependency, missing_lock_locked, lock_corruption,
          edit_invalidation, cache_dedup_and_bound, cache_corruption_and_clean,
          build_script, build_script_untracked_inputs,
          procedural_macro, procedural_macro_failure,
-         migrate_preserves_syntax_tree, run_forwards_args_and_exit_status,
+         run_forwards_args_and_exit_status,
          test_reports_pass_fail_ignored_and_isolates_panics,
          test_filter_exact, bench_reports_timing, fmt_normalizes_layout_only,
          doc_writes_deterministic_html, doctests_run_isolated_examples,

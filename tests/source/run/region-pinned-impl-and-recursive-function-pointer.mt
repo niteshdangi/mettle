@@ -1,8 +1,8 @@
 // A pinned receiver implements an interface for a region-parameterized type,
-// and a closure in that impl inherits the impl region. A type recursing
+// and a closure in that extension inherits the extension region. A type recursing
 // through a function-pointer field compares equal to itself when viewed by a
 // generic callee.
-import core.future.Poll;
+import core.future.Poll
 interface G { type Output; fn poll(receiver self: take pinned mut Self, x: i32): Poll<Self.Output>; }
 type Borrowed<region r> { value: read i32 from r }
 fn apply<F: fn(i32): i32>(f: take F): i32 { f(1) }

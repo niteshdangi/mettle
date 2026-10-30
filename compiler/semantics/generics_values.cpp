@@ -163,7 +163,7 @@ std::optional<CallableType> Checker::genericFunctionValue(Node &node,
   for (const auto &binding : bindings) {
     if (binding.argument == Type::Unknown)
       error("type", node.span,
-            "cannot infer generic function-value arguments; use ::<...>");
+            "cannot infer generic function-value arguments; use <...>");
     facts(node).typeArguments.push_back(binding.argument);
   }
   genericObligations(environment, bindings, node.span);

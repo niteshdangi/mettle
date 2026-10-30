@@ -1,4 +1,5 @@
 #include "lint/lint.h"
+#include "support/path.h"
 #include "types/type.h"
 #include <algorithm>
 #include <cctype>
@@ -54,7 +55,7 @@ std::string join(const std::vector<std::string> &path) {
   std::string result;
   for (const auto &part : path)
     result += (result.empty() ? "" : "::") + part;
-  return result;
+  return displayPath(result);
 }
 
 class Linter {
@@ -132,13 +133,13 @@ private:
       if (declaration.glob) {
         if (!resolution.importUsed(i))
           report(unusedImport, declaration.span,
-                 "glob import of '" + path + "::*' is never used");
+                 "glob import of '" + path + ".*' is never used");
       } else if (!declaration.names.empty()) {
         for (const auto &entry : declaration.names)
           if (!resolution.importUsed(i, entry.alias.empty() ? entry.name
                                                             : entry.alias))
             report(unusedImport, entry.span,
-                   "import '" + path + "::" + entry.name + "' is never used");
+                   "import '" + path + "." + entry.name + "' is never used");
       } else if (!resolution.importUsed(i, declaration.alias.empty()
                                                ? declaration.path.back()
                                                : declaration.alias)) {

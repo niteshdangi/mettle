@@ -2,17 +2,17 @@
 // (missing program, bad directory) fails `spawn` with the OS error reported by
 // the child before it ran; a child that runs and fails is a nonzero
 // `ExitStatus`, or one ended by a signal, not an `Error`.
-import package.alloc.vec;
-import package.alloc.vec.List;
-import package.core.outcome;
-import super.env;
-import super.ffi;
-import super.ffi.{OsStr, OsString};
-import super.io;
-import super.io.{Error, ErrorKind, Reader, Writer};
-import super.path.{PathBuf, PathInput};
-import package.core.text.Text;
-import super.sys;
+import package.alloc.vec
+import package.alloc.vec.List
+import package.core.outcome
+import super.env
+import super.ffi
+import super.ffi.{OsStr, OsString}
+import super.io
+import super.io.{Error, ErrorKind, Reader, Writer}
+import super.path.{PathBuf, PathInput}
+import package.core.text.Text
+import super.sys
 
 extern "C" {
     unsafe fn getpid(): i32;
@@ -80,7 +80,7 @@ pub type Child {
     }
 }
 
-// Captured result of `Command::output`.
+// Captured result of `Command.output`.
 pub type Output { pub status: ExitStatus; pub stdout: List<u8>; pub stderr: List<u8> }
 
 fn wait_status(pid: i32, options: i32): ExitStatus? throws Error {

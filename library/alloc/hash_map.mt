@@ -1,13 +1,13 @@
-import package.core.iter.{Iterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems};
-import package.core.clone.Clone;
-import package.core.cmp.Eq;
-import package.core.fmt;
-import package.core.slice.SliceIter;
-import super.alloc.{Allocator, Global, AllocError, Layout, layout_unchecked, handle_alloc_error, layout_of};
-import package.core.hash.{Hash, hash_one};
-import super.vec.List;
-import package.core.cmp.PartialEq;
-import package.core.borrow.KeyView;
+import package.core.iter.{Iterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import package.core.clone.Clone
+import package.core.cmp.Eq
+import package.core.fmt
+import package.core.slice.SliceIter
+import super.alloc.{Allocator, Global, AllocError, Layout, layout_unchecked, handle_alloc_error, layout_of}
+import package.core.hash.{Hash, hash_one}
+import super.vec.List
+import package.core.cmp.PartialEq
+import package.core.borrow.KeyView
 
 fn empty(): usize { 0xffffffffffffffffusize }
 

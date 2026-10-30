@@ -24,14 +24,14 @@ type Builder {
     }
     drop {}
 }
-module core { pub module iter { pub interface Iterator { type Item; mut fn next(): Self::Item?; } } }
+module core { pub module iter { pub interface Iterator { type Item; mut fn next(): Self.Item?; } } }
 type Walker {
     held: Guard
     n: i32
     max: i32
     drop {}
 }
-impl Walker implements core::iter::Iterator {
+extend Walker implements core.iter.Iterator {
     type Item = Guard
     mut fn next(): Guard? {
         if self.n < self.max { self.n += 1; present(Guard(self.held.tag + self.n)) } else { none }
@@ -122,13 +122,13 @@ fn labeled_continues(): Unit {
     Guard(1030);
 }
 fn variants(): Unit {
-    let one = Owned::One(Guard(1101))
-    let two = Owned::Two(Guard(1102), Guard(1103))
-    let empty = Owned::Empty
+    let one = Owned.One(Guard(1101))
+    let two = Owned.Two(Guard(1102), Guard(1103))
+    let empty = Owned.Empty
     match take one {
-        Owned::Empty => {},
-        Owned::One(held) => {},
-        Owned::Two(_, _) => {}
+        Owned.Empty => {},
+        Owned.One(held) => {},
+        Owned.Two(_, _) => {}
     }
 }
 fn constructors(): Unit {
@@ -170,14 +170,14 @@ fn main() {
 )";
 
 constexpr auto arguments = R"(
-module core { pub module iter { pub interface Iterator { type Item; mut fn next(): Self::Item?; } } }
+module core { pub module iter { pub interface Iterator { type Item; mut fn next(): Self.Item?; } } }
 type Guard { tag: i32; drop {} }
 type Walker {
     held: Guard
     n: i32
     drop {}
 }
-impl Walker implements core::iter::Iterator {
+extend Walker implements core.iter.Iterator {
     type Item = Guard
     mut fn next(): Guard? {
         if self.n < 2 { self.n += 1; present(Guard(907)) } else { none }

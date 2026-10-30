@@ -49,7 +49,7 @@ for a correctly accounted additional owner. An aggregate does not acquire
 implicit retention simply because one of its fields is a shared handle.
 
 Rust precedent: `Copy` permits bitwise duplication and is not overloadable;
-non-`Copy` assignment moves. `Arc::clone` explicitly retains the same allocation.
+non-`Copy` assignment moves. `Arc.clone` explicitly retains the same allocation.
 Mettle preserves these cost distinctions, with native ownership syntax.
 
 ## 3. Initial semantic examples

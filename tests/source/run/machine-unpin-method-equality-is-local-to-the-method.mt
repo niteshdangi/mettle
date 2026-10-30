@@ -1,6 +1,6 @@
 
 type Blocked { value: i32 }
-extend Blocked not Unpin;
+extend Blocked not Unpin
 type Parent<T> {
     value: T
     fn access<U: Unpin>(value: mut T): mut T from value where T = U {

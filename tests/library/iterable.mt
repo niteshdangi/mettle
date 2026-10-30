@@ -1,6 +1,6 @@
-import core.iter.Iterator;
-import core.iter.Iterable;
-import core.iter.MutableIterable;
+import core.iter.Iterator
+import core.iter.Iterable
+import core.iter.MutableIterable
 
 type Bag { a: i32; b: i32 }
 type BagIterMut<region r> { bag: mut Bag from r; at: i32 }

@@ -6,9 +6,7 @@ namespace mettle::parsing {
 std::vector<std::string> Parser::path() {
   std::vector<std::string> result{name().text};
   for (;;) {
-    if (is("::") && peek(1).text != "{" && peek(1).text != "*")
-      ++position;
-    else if (is(".") && nameToken(peek(1)))
+    if (is(".") && nameToken(peek(1)))
       ++position;
     else
       break;
@@ -52,9 +50,8 @@ void Parser::moduleDeclaration(Module &module, ItemSyntax item) {
   } else {
     declaration.external = true;
     declaration.span.end = end;
-    if (!take(";") && !separated && peek().kind != TokenKind::Newline &&
-        peek().kind != TokenKind::End && !is("}"))
-      fail("expected ';' or a newline after an external module");
+    if (!separated)
+      endItem("an external module");
   }
   module.modules.push_back(std::move(declaration));
 }
@@ -66,7 +63,7 @@ void Parser::importDeclaration(Module &module, ItemSyntax item) {
   declaration.path = path();
   if (take("as")) {
     declaration.alias = name().text;
-  } else if (take("::") || take(".")) {
+  } else if (take(".")) {
     if (take("*")) {
       declaration.glob = true;
     } else {
@@ -91,9 +88,7 @@ void Parser::importDeclaration(Module &module, ItemSyntax item) {
     }
   }
   declaration.span.end = tokens[position - 1].span.end;
-  if (peek().kind != TokenKind::Newline && !is(";") && !is("}") &&
-      peek().kind != TokenKind::End)
-    fail("expected a newline or ';' after an import");
+  endItem("an import");
   module.imports.push_back(std::move(declaration));
 }
 } // namespace mettle::parsing

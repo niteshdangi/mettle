@@ -2,8 +2,8 @@
 // A message forwarded through two `format` levels renders unchanged: bool and
 // integer holes, a plain Text argument lifted to a single-text recipe and
 // literal text, including a named argument.
-import core.fmt.Message;
-import core.fmt.buffer_writer;
+import core.fmt.Message
+import core.fmt.buffer_writer
 
 fn emit(message: format Message, buffer: mut [u8]): usize {
     var out = buffer_writer(mut buffer)

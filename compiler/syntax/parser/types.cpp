@@ -54,17 +54,6 @@ TypeSyntax Parser::type(bool effect) {
     } while (take("+"));
   } else if (take("_")) {
     result.name = "_";
-  } else if (take("<")) {
-    result.form = TypeForm::Projection;
-    result.elements.push_back(type(false));
-    expect("implements");
-    result.elements.push_back(type(false));
-    if (!genericClose())
-      fail("expected '>' after an associated projection");
-    expect("::");
-    result.name = name().text;
-    if (genericOpen())
-      result.arguments = genericArguments();
   } else if (take("(")) {
     ++parens;
     auto first = type();

@@ -16,7 +16,7 @@ fn main() {
         let value = unsafe { core.arch.x86_64._mm256_set1_epi32(42) }
         let callback = identity
         let returned = unsafe { foreign(callback(value)) }
-        let lanes = unsafe { core.mem.transmute::<[i32;8]>(returned) }
+        let lanes = unsafe { core.mem.transmute<[i32;8]>(returned) }
         if lanes[0] == 42 && lanes[7] == 42 { 0 } else { 1 }
     } else { 0 }
 }

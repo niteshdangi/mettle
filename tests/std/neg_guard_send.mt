@@ -1,6 +1,6 @@
 // expect-error: type
-import std.thread;
-import std.sync.mutex;
+import std.thread
+import std.sync.mutex
 
 fn main(): i32 {
   let lock = mutex.new(1)

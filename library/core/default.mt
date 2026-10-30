@@ -1,5 +1,5 @@
 // The value a type starts from when nothing more specific is chosen.
-// `<T implements Default>::default()` is explicit and allocates only where the
+// `T.(Default).default()` is explicit and allocates only where the
 // implementing type's own constructor does. `@derive(Default)` builds a product
 // from the default of each field.
 

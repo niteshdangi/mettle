@@ -14,7 +14,6 @@
 #include "semantics/checked.h"
 #include "syntax/format.h"
 #include "syntax/lexer.h"
-#include "syntax/migrate.h"
 #include "syntax/parser.h"
 #include "types/target.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -323,35 +322,6 @@ int build(const Options &requested,
   Source source{pathError ? input : rootPath.generic_string(),
                 std::move(sourceText)};
   Diagnostics diagnostics;
-  if (options.command == "migrate") {
-    auto migration = migrate(source, diagnostics);
-    if (!migration) {
-      diagnostics.print(source, std::cerr);
-      return 1;
-    }
-    for (const auto &skipped : migration->skipped) {
-      auto line = 1 + std::count(source.text.begin(),
-                                 source.text.begin() +
-                                     static_cast<std::ptrdiff_t>(std::min(
-                                         skipped.offset, source.text.size())),
-                                 '\n');
-      std::cerr << source.path << ':' << line
-                << ": warning[migrate]: left unchanged: " << skipped.reason
-                << '\n';
-    }
-    if (options.output.empty())
-      std::cout << migration->text;
-    else {
-      std::ofstream out(options.output, std::ios::binary);
-      out << migration->text;
-      if (!out) {
-        std::cerr << "mettle: error[io]: cannot write " << options.output
-                  << '\n';
-        return 1;
-      }
-    }
-    return 0;
-  }
   if (options.command == "tokens" || options.command == "syntax") {
     Module tree;
     if (options.command == "tokens")

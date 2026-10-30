@@ -1,9 +1,9 @@
-import alloc.future;
-import alloc.arc;
-import alloc.arc.Arc;
-import core.future.{Context, Future, Poll};
-import std.task;
-import std.thread;
+import alloc.future
+import alloc.arc
+import alloc.arc.Arc
+import core.future.{Context, Future, Poll}
+import std.task
+import std.thread
 
 type Stable {
     address: ptr<mut u8>

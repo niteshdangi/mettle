@@ -1,5 +1,5 @@
-import super.mutex;
-import super.condvar;
+import super.mutex
+import super.condvar
 
 type State {
     count: usize

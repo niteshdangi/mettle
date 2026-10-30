@@ -1,6 +1,6 @@
-import std.thread;
-import std.sync.mutex;
-import alloc.arc;
+import std.thread
+import std.sync.mutex
+import alloc.arc
 
 fn main(): i32 {
   let h = thread.spawn(take fn(): i32 { 7 })

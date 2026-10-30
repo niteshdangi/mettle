@@ -1,5 +1,5 @@
-import super.cmp.{PartialEq, PartialOrd};
-import super.iter.Iterator;
+import super.cmp.{PartialEq, PartialOrd}
+import super.iter.Iterator
 
 copy type Raw { data: ptr<read u8>; len: usize }
 

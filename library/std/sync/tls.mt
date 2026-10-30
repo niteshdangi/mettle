@@ -1,4 +1,4 @@
-import package.core.panic.panic;
+import package.core.panic.panic
 
 extern "C" {
     unsafe fn mettle_rt_tls_key_new(destructor: extern "C" fn(ptr<mut u8>): Unit): usize;

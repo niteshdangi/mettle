@@ -2,7 +2,7 @@
 @layout(C,u8)
 copy enum Value { Empty = 7; Byte(u8) = 9; Wide(u64) = 42 }
 fn main() {
-    let bytes = unsafe { core.mem.transmute::<[u8;16]>(Value.Byte(42u8)) }
+    let bytes = unsafe { core.mem.transmute<[u8;16]>(Value.Byte(42u8)) }
     let answer = match Value.Byte(42u8) {
         Value.Byte(value) => value as i32,
         _ => 0

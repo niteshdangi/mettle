@@ -1,10 +1,10 @@
-import package.core.iter.{Iterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems};
-import package.core.clone.Clone;
-import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd};
-import package.core.hash.{Hash, Hasher};
-import package.core.fmt;
+import package.core.iter.{Iterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import package.core.clone.Clone
+import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import package.core.hash.{Hash, Hasher}
+import package.core.fmt
 
-import super.alloc.{Allocator, Global, AllocError, layout_unchecked, handle_alloc_error, layout_of, dangling_for};
+import super.alloc.{Allocator, Global, AllocError, layout_unchecked, handle_alloc_error, layout_of, dangling_for}
 
 // Growable ring buffer owning its block and allocator.
 pub type Deque<T, A: Allocator = Global> {

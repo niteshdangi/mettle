@@ -13,7 +13,7 @@ pub copy type AllocError { pub size: usize; pub align: usize }
 pub copy type LayoutError { pub size: usize; pub align: usize }
 
 // Size and alignment of a block. `align` is a power of two and `size`
-// rounded up to `align` does not exceed `isize::MAX`.
+// rounded up to `align` does not exceed `isize.MAX`.
 pub copy type Layout {
     size: usize
     align: usize

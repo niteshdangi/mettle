@@ -1,4 +1,5 @@
 #include "semantics/checker.h"
+#include "support/path.h"
 #include "types/layout.h"
 
 namespace mettle {
@@ -202,7 +203,8 @@ int Checker::call(Node &n, bool reachable) {
                 scope.contains(n.children[0]->text);
   if (shadowed) {
     error("type", n.span,
-          "unresolved or non-callable function '" + n.children[0]->text + "'");
+          "unresolved or non-callable function '" +
+              displayPath(n.children[0]->text) + "'");
     return result;
   }
   if (n.children[0]->kind == Kind::Name)
@@ -272,11 +274,11 @@ int Checker::call(Node &n, bool reachable) {
       if (auto primitive = machineCall(n, reachable))
         return *primitive;
       error("name", n.span,
-            "unresolved or inaccessible function '" + n.children[0]->text +
-                "'" +
+            "unresolved or inaccessible function '" +
+                displayPath(n.children[0]->text) + "'" +
                 (current->owner.empty() &&
                          n.children[0]->text.starts_with("Self::")
-                     ? "; 'Self' is only available inside a type or impl "
+                     ? "; 'Self' is only available inside a type or extend "
                        "body"
                      : ""));
       return result;
@@ -289,8 +291,8 @@ int Checker::call(Node &n, bool reachable) {
         facts(n).interfaceMethod < 0) {
       error("type", n.span,
             "an interface method without a body cannot be called through the "
-            "interface name; call it as a method or as "
-            "'<Type implements Interface>::" +
+            "interface name; call it as a method or as 'T.(" +
+                displayPath(declared.interfaceOwner) + ")." +
                 declared.name.substr(declared.name.rfind('.') + 1) + "'");
       return result;
     }
@@ -318,7 +320,7 @@ int Checker::call(Node &n, bool reachable) {
         !checked.symbols->accessible(function.span,
                                      checked.symbols->moduleOf(n.span)))
       error("name", n.span,
-            "private or restricted function '" + function.name +
+            "private or restricted function '" + displayPath(function.name) +
                 "' is inaccessible");
     if (!function.error.empty()) {
       facts(n).effect =
@@ -348,7 +350,8 @@ int Checker::call(Node &n, bool reachable) {
       signature.push_back({"", Type::Unknown});
   }
   if (facts(n).constructor && count + offset != signature.size())
-    error("type", n.span, "argument count does not match '" + name + "'");
+    error("type", n.span,
+          "argument count does not match '" + displayPath(name) + "'");
   std::vector<bool> used(signature.size());
   if (offset && !used.empty())
     used[0] = true;
@@ -499,7 +502,7 @@ void Checker::fields(bool final) {
           } else if (!checked.types->isSlice(base)) {
             error("type", request.node->span,
                   "range indexing requires an array, slice or a type "
-                  "implementing core::ops::IndexRange");
+                  "implementing core.ops.IndexRange");
             continue;
           }
           inference.equal(request.result, inference.fresh(slice),
@@ -589,7 +592,7 @@ void Checker::fields(bool final) {
       error("type", request.node->span,
             request.origin != Type::Unknown
                 ? "cannot infer generic arguments of variant '" +
-                      request.node->text + "'; add ': Type' or ::<...>"
+                      request.node->text + "'; add ': Type' or <...>"
                 : "cannot infer field source type; add ': Type'");
   fieldRequests.clear();
 }

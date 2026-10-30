@@ -1,5 +1,6 @@
 #include "semantics/checker.h"
 #include "support/limits.h"
+#include "support/path.h"
 #include <algorithm>
 #include <functional>
 
@@ -13,7 +14,8 @@ void Checker::interfaceHeaders() {
   for (const auto &syntax : module.interfaces) {
     auto name = definitionName(syntax.span, syntax.name);
     if (!interfaceNames.emplace(name, database.definitions.size()).second) {
-      error("name", syntax.span, "duplicate interface '" + syntax.name + "'");
+      error("name", syntax.span,
+            "duplicate interface '" + displayPath(syntax.name) + "'");
       continue;
     }
     interfaces::Definition definition;
@@ -133,7 +135,8 @@ Type Checker::interfaceBound(const TypeSyntax &bound, Span span,
   auto canonical = typeName(bound.name, span, owner);
   auto found = interfaceNames.find(canonical);
   if (found == interfaceNames.end()) {
-    error("type", span, "unknown interface bound '" + bound.name + "'");
+    error("type", span,
+          "unknown interface bound '" + displayPath(bound.name) + "'");
     return Type::Unknown;
   }
   const auto &syntax = module.interfaces[found->second];
@@ -367,7 +370,8 @@ bool Checker::interfaceObligation(Type actual, const TypeSyntax &bound,
                             interfaceAssumptions(), regionEnvironment());
   if (solver.prove(obligation, span, false))
     return true;
-  error("type", span, "unsatisfied interface bound '" + bound.name + "'");
+  error("type", span,
+        "unsatisfied interface bound '" + displayPath(bound.name) + "'");
   return false;
 }
 bool Checker::interfaceObligation(Type actual, Type interfaceType, Span span) {
@@ -386,7 +390,7 @@ bool Checker::interfaceObligation(Type actual, Type interfaceType, Span span) {
               .name == "core::fmt::Hole") {
     error("type", span,
           "a value of this type cannot fill an f-string hole; it must be "
-          "Text or implement core::fmt::Display");
+          "Text or implement core.fmt.Display");
     return false;
   }
   error("type", span, "unsatisfied interface obligation");

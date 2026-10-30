@@ -1,6 +1,7 @@
 #include "driver/document.h"
 #include "documentation/html.h"
 #include "expansion/macros.h"
+#include "support/path.h"
 #include "syntax/parser.h"
 #include <algorithm>
 #include <filesystem>
@@ -19,7 +20,7 @@ struct Input {
 };
 
 // A page is named by its path below the given directory: `net/http.mt` is
-// `net::http` and a directory's `module.mt` names the directory itself.
+// `net.http` and a directory's `module.mt` names the directory itself.
 std::string pageName(const fs::path &relative) {
   auto stem = relative;
   stem.replace_extension();
@@ -28,7 +29,7 @@ std::string pageName(const fs::path &relative) {
   std::string name;
   for (const auto &part : stem)
     name += (name.empty() ? "" : "::") + part.generic_string();
-  return name;
+  return displayPath(name);
 }
 
 bool gather(const std::string &argument, std::vector<Input> &inputs) {

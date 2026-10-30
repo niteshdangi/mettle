@@ -133,7 +133,7 @@ build/macos-arm64/Debug/mettle build tests/packages/path-dependency/app -o build
 ```
 
 The example returns process status 0 on success. Hosted programs can print
-through `std::io` (see `tests/std/`).
+through `std.io` (see `tests/std/`).
 `--profile debug` checks integer overflow; `--profile release` wraps ordinary
 overflow and optimizes object/executable output. Division/remainder failure
 checks remain enabled in both. `--overflow-checks on|off` overrides that policy.
@@ -206,10 +206,10 @@ copy type Point {
     x: i32
     static fn make(x: i32): Self { Self(x) }
 }
-fn main() { if Coordinate::make(42).x == 42 { 0 } else { 1 } }
+fn main() { if Coordinate.make(42).x == 42 { 0 } else { 1 } }
 ```
 
-`Type::method(receiver, arguments)` also supports an explicit receiver using its
+`Type.method(receiver, arguments)` also supports an explicit receiver using its
 declared access mode. Only object-style eligible mutable receivers receive the
 two-phase reservation behavior; qualifying an ordinary call does not weaken it.
 
@@ -348,7 +348,7 @@ Rust 1.99.1; its actual version and that mismatch are recorded.
   translation rules and explicit native replacements.
 - Native libraries live in [library/](library/) (`core`, `alloc`, `std`); the
   compiler mounts a root on demand when a program names it, `--library-dir`
-  selects another tree, and text literals use `core::text::Text`. Core names (`Text`, `Iterator`,
+  selects another tree, and text literals use `core.text.Text`. Core names (`Text`, `Iterator`,
   `panic`, ...) and `String` come from an implicit lowest-priority prelude.
   `alloc` provides collections, `String`, `Box`/`Rc`/`Arc`; `std` provides
   hosted I/O, filesystem, process, environment, time, networking and threads.

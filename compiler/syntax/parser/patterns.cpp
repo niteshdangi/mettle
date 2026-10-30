@@ -40,7 +40,7 @@ Pattern Parser::pattern(int minimum) {
     bool builtin =
         is("none") || is("present") || is("success") || is("failure");
     result.text = builtin ? tokens[position++].text : name().text;
-    while (take("::") || (is(".") && nameToken(peek(1)) && take(".")))
+    while (is(".") && nameToken(peek(1)) && take("."))
       result.text += "::" + name().text;
     result.kind = builtin || result.text.find("::") != std::string::npos
                       ? PatternKind::Variant

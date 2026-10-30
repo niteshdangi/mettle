@@ -4,7 +4,7 @@ enum ParseError {
 
 fn invalid(value: i32) {
     if value < 0 {
-        throw ParseError::Negative
+        throw ParseError.Negative
     }
     value
 }

@@ -1,5 +1,5 @@
 // expect-error: region
-import std.thread;
+import std.thread
 
 // The spawned thread may outlive the scope body's locals: the scope joins
 // only after its closure has returned.

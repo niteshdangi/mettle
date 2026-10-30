@@ -81,7 +81,10 @@ an explicit semicolon because it affects block values.
   that expression. Put the operator/dot on the preceding line, or parenthesize.
 - `return`, `break`, and `continue` end at an unsuppressed newline. Write a
   multiline returned expression inside parentheses.
-- Adjacent simple statements on the same line require a semicolon.
+- Item-level `import`, `module`, `const`, `static`, `alias`, and negative
+  `extend` declarations may end at an unsuppressed newline without a semicolon.
+- Adjacent simple statements or declarations on the same line require a
+  semicolon.
 
 A final expression in a block supplies its value unless followed by an explicit
 semicolon. Trailing newlines/comments before `}` do not discard its value.
@@ -246,10 +249,9 @@ The grammar above shares prefixes intentionally; a parser must use delimiter
 lookahead instead of treating the EBNF alternatives as ordered PEG choices.
 
 Core generic calls infer type arguments from arguments and expected result types.
-The extended grammar's pre-cutover spelling `function::<Types>(arguments)` gives
-explicit call arguments, outside the initial subset; the accepted target
-generic-application rule replaces it (language-grammar section 13.3). Do not
-silently parse `a < b > (c)` as a generic call under the pre-cutover grammar.
+The extended grammar's `function<T>(arguments)` gives explicit call arguments
+under the syntax-only generic-follower rule in language-grammar section 13.3;
+ambiguous expressions are not retried as a different parse.
 
 Generated construction uses `Type(...)` in field declaration order, with optional
 field labels. Positional arguments precede named arguments; reject duplicates,

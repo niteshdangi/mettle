@@ -2,8 +2,8 @@
 // Float holes print the shortest decimal that reads back as the same value, in
 // plain positional notation; user types with a Display implementation fill
 // holes through the same path as primitives.
-import core.fmt.{Message, Display, Debug, Formatter, Write, Error};
-import core.fmt.{buffer_writer, formatter, spec};
+import core.fmt.{Message, Display, Debug, Formatter, Write, Error}
+import core.fmt.{buffer_writer, formatter, spec}
 
 fn emit(message: format Message, buffer: mut [u8]): usize {
     var out = buffer_writer(mut buffer)

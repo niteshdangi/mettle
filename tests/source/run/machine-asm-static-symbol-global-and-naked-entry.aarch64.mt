@@ -1,6 +1,6 @@
 // arch: aarch64
 
-static VALUE: i32 = 42;
+static VALUE: i32 = 42
 extern "C" { static ADDRESS: ptr<read i32>; }
 global_asm!(".data\n.globl {address}\n.p2align 3\n{address}:\n.quad {value}\n.text",
             address = sym ADDRESS, value = sym VALUE)

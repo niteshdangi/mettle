@@ -106,15 +106,15 @@ Module::Implementation Parser::implementationDeclaration() {
   Module::Implementation result;
   result.unsafeImplementation = take("unsafe");
   result.span = peek().span;
-  if (!take("impl"))
-    expect("extend");
+  expect("extend");
   result.genericParameters = genericParameters();
   result.target = type(false);
   if (take("not")) {
     result.negative = true;
     result.interface = type(false);
     result.constraints = genericConstraints();
-    result.span.end = expect(";").span.end;
+    result.span.end = tokens[position - 1].span.end;
+    endItem("a negative extension");
     return result;
   }
   if (take("implements"))

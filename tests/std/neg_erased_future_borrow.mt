@@ -1,6 +1,6 @@
 // expect-error: type
-import alloc.future;
-import core.future.{Context, Future, Poll};
+import alloc.future
+import core.future.{Context, Future, Poll}
 
 type Borrowed<region r> { value: read i32 from r }
 extend<region r> Borrowed<region r> implements Future {

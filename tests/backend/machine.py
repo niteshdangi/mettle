@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 ARM64 = globals().get("TARGET_ARCH", platform.machine()).lower() in ("aarch64", "arm64")
-VECTOR = "core::arch::aarch64::int32x4_t" if ARM64 else "core::arch::x86_64::__m128i"
+VECTOR = "core.arch.aarch64.int32x4_t" if ARM64 else "core.arch.x86_64.__m128i"
 MACHINE_FREESTANDING_SOURCE = ("""
 @export_name("mettle_core_count")
 unsafe extern "C" fn core_count(input:i32):i32 {
@@ -21,18 +21,18 @@ unsafe extern "C" fn core_count(input:i32):i32 {
     """\", value = inout(reg) answer,options(nomem,nostack))
     """ + (
         """
-    let vector = core::arch::aarch64::vdupq_n_s32(answer)
+    let vector = core.arch.aarch64.vdupq_n_s32(answer)
     if is_aarch64_feature_detected!("neon") {
-        core::arch::aarch64::vgetq_lane_s32(vector,0)
+        core.arch.aarch64.vgetq_lane_s32(vector,0)
     } else { 0 }
 """ if ARM64 else """
     if is_x86_feature_detected!("avx2") {
-        let vector = core::arch::x86_64::_mm256_set1_epi32(answer)
-        let lanes = core::mem::transmute::<[i32;8]>(vector)
+        let vector = core.arch.x86_64._mm256_set1_epi32(answer)
+        let lanes = core.mem.transmute<[i32;8]>(vector)
         lanes[7]
     } else {
-        let vector = core::arch::x86_64::_mm_set1_epi32(answer)
-        let lanes = core::mem::transmute::<[i32;4]>(vector)
+        let vector = core.arch.x86_64._mm_set1_epi32(answer)
+        let lanes = core.mem.transmute<[i32;4]>(vector)
         lanes[3]
     }
 """) + """
@@ -45,10 +45,10 @@ MACHINE_REJECTIONS = {
 MACHINE_SOURCES = {
     "machine-target-variadic-vector-c-physical-entry": """
 unsafe extern "C" fn inspect(first:i32,args: ...):i32 {
-    let vector = args.arg::<""" + VECTOR + """>()
-    let integer = args.arg::<i32>()
-    let floating = args.arg::<f64>()
-    let lanes = core::mem::transmute::<[i32;4]>(vector)
+    let vector = args.arg<""" + VECTOR + """>()
+    let integer = args.arg<i32>()
+    let floating = args.arg<f64>()
+    let lanes = core.mem.transmute<[i32;4]>(vector)
     if first == 1 && lanes[0] == 42 && lanes[3] == 42 &&
        integer == 2 && floating == 40.0 { 42 } else { -1 }
 }
@@ -62,13 +62,13 @@ fn main() { if unsafe { mettle_c_machine_vector_definition(inspect) } == 42 { 0 
     "machine-target-guarded-wide-vector-c-physical-abi": """
 @target_feature("avx")
 unsafe extern "C" fn mettle_c_machine_vector256(
-    value:core::arch::x86_64::__m256i):core::arch::x86_64::__m256i;
+    value:core.arch.x86_64.__m256i):core.arch.x86_64.__m256i;
 fn main() {
     if is_x86_feature_detected!("avx") {
-        let value = unsafe { core::arch::x86_64::_mm256_set1_epi32(41) }
+        let value = unsafe { core.arch.x86_64._mm256_set1_epi32(41) }
         let callback = mettle_c_machine_vector256
         let returned = unsafe { callback(value) }
-        let lanes = unsafe { core::mem::transmute::<[i32;8]>(returned) }
+        let lanes = unsafe { core.mem.transmute<[i32;8]>(returned) }
         if lanes[0] == 42 && lanes[7] == 42 { 0 } else { 1 }
     } else { 0 }
 }
@@ -76,16 +76,16 @@ fn main() {
     "machine-target-variadic-wide-vector-overflow-area": """
 @target_feature("avx")
 unsafe extern "C" fn inspect(first:i32,args: ...):i32 {
-    let vector = args.arg::<core::arch::x86_64::__m256i>()
-    let integer = args.arg::<i32>()
-    let floating = args.arg::<f64>()
-    let lanes = core::mem::transmute::<[i32;8]>(vector)
+    let vector = args.arg<core.arch.x86_64.__m256i>()
+    let integer = args.arg<i32>()
+    let floating = args.arg<f64>()
+    let lanes = core.mem.transmute<[i32;8]>(vector)
     if first == 1 && lanes[0] == 42 && lanes[7] == 42 &&
        integer == 2 && floating == 40.0 { 42 } else { -1 }
 }
 fn main() {
     if is_x86_feature_detected!("avx") {
-        let vector = unsafe { core::arch::x86_64::_mm256_set1_epi32(42) }
+        let vector = unsafe { core.arch.x86_64._mm256_set1_epi32(42) }
         if unsafe { inspect(1,vector,2,40.0) } == 42 { 0 } else { 1 }
     } else { 0 }
 }
@@ -96,7 +96,7 @@ fn main() {
 unsafe extern "C" fn mettle_c_machine_vector_variadic(count:i32,...):f64;
 fn main() {
     if is_x86_feature_detected!("avx") {
-        let vector = unsafe { core::arch::x86_64::_mm256_set1_epi32(1) }
+        let vector = unsafe { core.arch.x86_64._mm256_set1_epi32(1) }
         let result = unsafe { mettle_c_machine_vector_variadic(
             7,vector,1.0,2.0,3.0,4.0,5.0,6.0,7.0,ScalarFloat(13.0)) }
         if result == 42.0 { 0 } else { 1 }
@@ -107,8 +107,8 @@ fn main() {
     "machine-target-vector-aggregate-and-mixed-union-abi": """
 @layout(C)
 copy type VectorPair { first: """ + VECTOR + """; second: """ + (
-    "core::arch::aarch64::int64x2_t" if ARM64 else
-    "core::arch::x86_64::__m128i") + """ }
+    "core.arch.aarch64.int64x2_t" if ARM64 else
+    "core.arch.x86_64.__m128i") + """ }
 @layout(C)
 copy union VectorUnion { vector: """ + VECTOR + """; floating:f64; integer:u64 }
 extern "C" {
@@ -118,16 +118,16 @@ extern "C" {
 fn main() {
     unsafe {
         let first = """ + (
-            "core::arch::aarch64::vdupq_n_s32(40)" if ARM64 else
-            "core::arch::x86_64::_mm_set1_epi32(40)") + """
+            "core.arch.aarch64.vdupq_n_s32(40)" if ARM64 else
+            "core.arch.x86_64._mm_set1_epi32(40)") + """
         let second = """ + (
-            "core::arch::aarch64::vdupq_n_s64(40i64)" if ARM64 else
-            "core::arch::x86_64::_mm_set1_epi64x(40i64)") + """
+            "core.arch.aarch64.vdupq_n_s64(40i64)" if ARM64 else
+            "core.arch.x86_64._mm_set1_epi64x(40i64)") + """
         let pair = mettle_c_machine_vector_pair(VectorPair(first,second))
         let result = mettle_c_machine_vector_union(VectorUnion(vector:pair.first))
-        let narrow = core::mem::transmute::<[i32;4]>(pair.first)
-        let wide = core::mem::transmute::<[i64;2]>(pair.second)
-        let union_lanes = core::mem::transmute::<[i32;4]>(result.vector)
+        let narrow = core.mem.transmute<[i32;4]>(pair.first)
+        let wide = core.mem.transmute<[i64;2]>(pair.second)
+        let union_lanes = core.mem.transmute<[i32;4]>(result.vector)
         if narrow[0] == 41 && wide[1] == 42i64 && union_lanes[3] == 42 { 0 } else { 1 }
     }
 }
@@ -145,8 +145,8 @@ fn main() { if unsafe { mettle_machine_jump() } == 42 { 0 } else { 1 } }
 """,
     "machine-asm-global-generic-symbol-retention": """
 fn identity<T:Copy>(value:T):T { value }
-core::arch::global_asm!(".data\\n.p2align 3\\n.quad {symbol}\\n.text",
-                       symbol = sym identity::<i64>)
+core.arch.global_asm!(".data\\n.p2align 3\\n.quad {symbol}\\n.text",
+                       symbol = sym identity<i64>)
 fn main() { 0 }
 """,
     "machine-asm-publishes-no-output-after-input-unwind": """
@@ -155,7 +155,7 @@ unsafe fn failing_input(): i32 {
     1 / zero
 }
 unsafe extern "C-unwind" fn failed_assembly(context: ptr<mut Unit>) {
-    let pointer = context.cast::<i32>()
+    let pointer = context.cast<i32>()
     asm!(\"""" + ('mov {out:w}, {input:w}' if ARM64 else
                    'mov {out:e}, {input:e}') + """\",
          out = out(reg) *pointer, input = in(reg) failing_input(),
@@ -168,7 +168,7 @@ extern "C" {
 }
 fn main() {
     var value = 42
-    let pointer = core::ptr::from_mut(value).cast::<Unit>()
+    let pointer = core.ptr.from_mut(value).cast<Unit>()
     let caught = unsafe { mettle_c_machine_catch(failed_assembly,pointer) }
     if caught == 1 && value == 42 { 0 } else { 1 }
 }
@@ -223,9 +223,9 @@ fn main() {
     "machine-target-native-vector-c-abi-and-callback": """
 unsafe extern "C" fn vector_callback(value: """ + VECTOR + """): """ + VECTOR + """ {
     """ + (
-        "core::arch::aarch64::vaddq_s32(value,core::arch::aarch64::vdupq_n_s32(1))"
+        "core.arch.aarch64.vaddq_s32(value,core.arch.aarch64.vdupq_n_s32(1))"
         if ARM64 else
-        "core::arch::x86_64::_mm_add_epi32(value,core::arch::x86_64::_mm_set1_epi32(1))"
+        "core.arch.x86_64._mm_add_epi32(value,core.arch.x86_64._mm_set1_epi32(1))"
     ) + """
 }
 extern "C" {
@@ -237,11 +237,11 @@ extern "C" {
 fn main() {
     unsafe {
         let value = """ + (
-            "core::arch::aarch64::vdupq_n_s32(40)" if ARM64 else
-            "core::arch::x86_64::_mm_set1_epi32(40)") + """
+            "core.arch.aarch64.vdupq_n_s32(40)" if ARM64 else
+            "core.arch.x86_64._mm_set1_epi32(40)") + """
         let incremented = mettle_c_machine_vector(value)
         let result = mettle_c_machine_vector_callback(vector_callback,incremented)
-        let lanes = core::mem::transmute::<[i32;4]>(result)
+        let lanes = core.mem.transmute<[i32;4]>(result)
         if lanes[0] == 42 && lanes[3] == 42 { 0 } else { 1 }
     }
 }
@@ -288,7 +288,7 @@ extern "C" {
         context: ptr<mut Unit>): i32;
 }
 unsafe extern "C" fn callback(context: ptr<mut Unit>, value: i32): i32 {
-    let counter = context.cast::<i32>()
+    let counter = context.cast<i32>()
     *counter += value
     *counter
 }
@@ -297,7 +297,7 @@ type Guard {
     drop { unsafe { *self.counter += 1 } }
 }
 unsafe extern "C-unwind" fn panic_callback(context: ptr<mut Unit>) {
-    let guard = Guard(context.cast::<i32>())
+    let guard = Guard(context.cast<i32>())
     let zero = 0
     let quotient = 1 / zero
 }
@@ -314,24 +314,24 @@ type PanicDrop {
     }
 }
 unsafe extern "C-unwind" fn drop_callback(context: ptr<mut Unit>) {
-    let counter = context.cast::<i32>()
-    var storage = core::mem::ManuallyDrop::new(
+    let counter = context.cast<i32>()
+    var storage = core.mem.ManuallyDrop.new(
         PanicDrop(Leaf(counter,1),Leaf(counter,10)))
     storage.drop()
 }
 @packed(1)
 type PackedDrop { tag: u8; payload: PanicDrop }
 unsafe extern "C-unwind" fn packed_drop_callback(context: ptr<mut Unit>) {
-    let counter = context.cast::<i32>()
+    let counter = context.cast<i32>()
     let value = PackedDrop(1u8,PanicDrop(Leaf(counter,1),Leaf(counter,10)))
 }
 unsafe extern "C" fn release_flag(context: ptr<mut Unit>, value: u32) {
-    core::intrinsics::atomic_store(context.cast::<u32>(),value,
-                                    core::sync::atomic::Ordering::Release)
+    core.intrinsics.atomic_store(context.cast<u32>(),value,
+                                    core.sync.atomic.Ordering.Release)
 }
 unsafe extern "C" fn acquire_flag(context: ptr<mut Unit>): u32 {
-    core::intrinsics::atomic_load(context.cast::<u32>(),
-                                  core::sync::atomic::Ordering::Acquire)
+    core.intrinsics.atomic_load(context.cast<u32>(),
+                                  core.sync.atomic.Ordering.Acquire)
 }
 """
 
@@ -344,9 +344,9 @@ unsafe extern "C" fn aligned_callback(a:i64,b:i64,c:i64,d:i64,e:i64,f:i64,g:i64,
     if a+b+c+d+e+f+g+h == 36i64 && marker == 9 && q.value == 77i128 { 1 } else { 0 }
 }
 unsafe extern "C" fn inspect(first:i32,args: ...):i32 {
-    let marker = args.arg::<i32>()
-    let q = args.arg::<AlignedWide>()
-    let tail = args.arg::<i32>()
+    let marker = args.arg<i32>()
+    let q = args.arg<AlignedWide>()
+    let tail = args.arg<i32>()
     if first == 1 && marker == 5 && q.value == 77i128 && tail == 6 { 1 } else { 0 }
 }
 extern "C" {
@@ -373,16 +373,16 @@ extern "C" {
         context: ptr<mut Unit>): i32;
 }
 unsafe extern "C" fn acquire_failure(context: ptr<mut Unit>): u32 {
-    let result = core::intrinsics::atomic_compare_exchange(
-        context.cast::<u32>(),0u32,0u32,
-        core::sync::atomic::Ordering::Relaxed,
-        core::sync::atomic::Ordering::Acquire)
+    let result = core.intrinsics.atomic_compare_exchange(
+        context.cast<u32>(),0u32,0u32,
+        core.sync.atomic.Ordering.Relaxed,
+        core.sync.atomic.Ordering.Acquire)
     match result { success(_) => 0u32, failure(value) => value }
 }
 fn main() {
-    let flag = core::sync::atomic::AtomicU32::new(0)
+    let flag = core.sync.atomic.AtomicU32.new(0)
     unsafe { mettle_atomic_failed_acquire(
-        release_flag,acquire_failure,flag.as_ptr().cast::<Unit>()) }
+        release_flag,acquire_failure,flag.as_ptr().cast<Unit>()) }
 }
 """,
     "c-thread-sequentially-consistent-store-buffering": PRELUDE + """
@@ -393,18 +393,18 @@ extern "C" {
         context: ptr<mut Unit>): i32;
 }
 unsafe extern "C" fn seq_store(context: ptr<mut Unit>,index: u32,value: u32) {
-    core::intrinsics::atomic_store(
-        context.cast::<u32>().add(index as usize),value,
-        core::sync::atomic::Ordering::SeqCst)
+    core.intrinsics.atomic_store(
+        context.cast<u32>().add(index as usize),value,
+        core.sync.atomic.Ordering.SeqCst)
 }
 unsafe extern "C" fn seq_load(context: ptr<mut Unit>,index: u32): u32 {
-    core::intrinsics::atomic_load(
-        context.cast::<u32>().add(index as usize),
-        core::sync::atomic::Ordering::SeqCst)
+    core.intrinsics.atomic_load(
+        context.cast<u32>().add(index as usize),
+        core.sync.atomic.Ordering.SeqCst)
 }
 fn main() {
     var flags = [0u32,0u32]
-    let context = core::ptr::from_mut(flags).cast::<Unit>()
+    let context = core.ptr.from_mut(flags).cast<Unit>()
     unsafe { mettle_atomic_sequential_consistency(seq_store,seq_load,context) }
 }
 """,
@@ -412,9 +412,9 @@ fn main() {
 @layout(C)
 copy type Triple { first: f64; second: f64; third: f64 }
 unsafe extern "C" fn inspect(count: i32,args: ...): i32 {
-    let triple = args.arg::<Triple>()
-    let wide = args.arg::<i128>()
-    let last = args.arg::<i32>()
+    let triple = args.arg<Triple>()
+    let wide = args.arg<i128>()
+    let last = args.arg<i32>()
     if triple.first + triple.second + triple.third == 42.0f64 &&
        wide == 1267650600228229401496703205418i128 && last == 42 { 42 } else { -1 }
 }
@@ -445,10 +445,10 @@ fn main() {
 """,
     "c-variadic-definition-compatible-unwind-and-native-cursor-cleanup": PRELUDE + """
 unsafe extern "C-unwind" fn fail(context: ptr<mut Unit>,args: ...): i32 {
-    let counter = context.cast::<i32>()
+    let counter = context.cast<i32>()
     let guard = Guard(counter)
     var copied = args.copy()
-    let number = copied.arg::<i32>()
+    let number = copied.arg<i32>()
     let zero = 0
     number / zero
 }
@@ -460,7 +460,7 @@ extern "C" {
 fn main() {
     var count = 40
     let caught = unsafe {
-        mettle_c_variadic_definition_catch(fail,core::ptr::from_mut(count).cast::<Unit>())
+        mettle_c_variadic_definition_catch(fail,core.ptr.from_mut(count).cast<Unit>())
     }
     if caught == 1 && count == 42 { 0 } else { 1 }
 }
@@ -486,10 +486,10 @@ fn main() {
 """,
     "c-variadic-definition-copy-and-independent-advancement": PRELUDE + """
 unsafe extern "C" fn sum(count: i32,args: ...): i32 {
-    let first = args.arg::<i32>()
+    let first = args.arg<i32>()
     var copied = args.copy()
-    let second = args.arg::<i32>()
-    let again = copied.arg::<i32>()
+    let second = args.arg<i32>()
+    let again = copied.arg<i32>()
     args.end()
     if count == 2 && second == again { first + second } else { -1 }
 }
@@ -503,15 +503,15 @@ fn main() {
 """,
     "c-variadic-definition-register-pressure-and-aggregates": PRELUDE + """
 unsafe extern "C" fn inspect(count: i32,args: ...): i32 {
-    let mixed = args.arg::<Mixed>()
+    let mixed = args.arg<Mixed>()
     var integers = 0i64
-    for index in 0..10 { integers += args.arg::<i64>() }
-    let pair = args.arg::<Pair>()
+    for index in 0..10 { integers += args.arg<i64>() }
+    let pair = args.arg<Pair>()
     var reals = 0.0f64
-    for index in 0..10 { reals += args.arg::<f64>() }
-    let floats = args.arg::<Floats>()
-    let large = args.arg::<Large>()
-    let packed = args.arg::<Packed>()
+    for index in 0..10 { reals += args.arg<f64>() }
+    let floats = args.arg<Floats>()
+    let large = args.arg<Large>()
+    let packed = args.arg<Packed>()
     if mixed.first == 20.0f64 && mixed.second == 22 &&
        integers == 55i64 && pair.first + pair.second == 42 &&
        reals == 55.0f64 && floats.first + floats.second == 42.0f32 &&
@@ -540,7 +540,7 @@ extern "C" {
 }
 fn main() {
     let result = unsafe {
-        mettle_c_static_storage(core::ptr::from_ref(ANSWER),core::ptr::from_mut(COUNT))
+        mettle_c_static_storage(core.ptr.from_ref(ANSWER),core.ptr.from_mut(COUNT))
     }
     if result == 42 && IMPORTED == 42 && unsafe { IMPORTED_COUNT == 42 } { 0 } else { 1 }
 }
@@ -553,18 +553,18 @@ extern "C" {
 }
 @packed(1)
 type PanicGuard<region r> {
-    byte: u8; guard: core::cell::RefMut<i32> from r
+    byte: u8; guard: core.cell.RefMut<i32> from r
     drop { let zero = 0; let quotient = 1 / zero }
 }
 unsafe extern "C-unwind" fn callback(context: ptr<read Unit>) {
-    let cell = read *context.cast::<core::cell::RefCell<i32>>()
+    let cell = read *context.cast<core.cell.RefCell<i32>>()
     var guard = cell.borrow_mut()
     *guard.get_mut() = 42
     let value = PanicGuard(1u8,guard)
 }
 fn main() {
-    let cell = core::cell::RefCell::new(0)
-    let context = core::ptr::from_ref(cell).cast::<Unit>()
+    let cell = core.cell.RefCell.new(0)
+    let context = core.ptr.from_ref(cell).cast<Unit>()
     let caught = unsafe { mettle_cell_catch(callback,context) }
     {
         var guard = cell.borrow_mut()
@@ -581,7 +581,7 @@ extern "C" {
         context: ptr<read Unit>): i32;
 }
 type Reenter {
-    cell: ptr<read core::cell::Cell<Reenter>>
+    cell: ptr<read core.cell.Cell<Reenter>>
     observed: ptr<mut i32>; amount: i32
     drop {
         if self.amount == 1 {
@@ -592,19 +592,19 @@ type Reenter {
     }
 }
 unsafe extern "C-unwind" fn callback(context: ptr<read Unit>) {
-    let pointer = context.cast::<core::cell::Cell<Reenter>>()
+    let pointer = context.cast<core.cell.Cell<Reenter>>()
     let cell = read *pointer
     let observed = (*cell.as_ptr()).observed
     cell.set(Reenter(pointer,observed,42))
 }
 fn main() {
     var observed = 0
-    let log = core::ptr::from_mut(observed)
-    let cell = core::cell::Cell::new(
-        Reenter(core::ptr::null::<core::cell::Cell<Reenter>>(),log,1))
-    let pointer = core::ptr::from_ref(cell)
+    let log = core.ptr.from_mut(observed)
+    let cell = core.cell.Cell.new(
+        Reenter(core.ptr.null<core.cell.Cell<Reenter>>(),log,1))
+    let pointer = core.ptr.from_ref(cell)
     unsafe { (*cell.as_ptr()).cell = pointer }
-    let caught = unsafe { mettle_cell_catch(callback,pointer.cast::<Unit>()) }
+    let caught = unsafe { mettle_cell_catch(callback,pointer.cast<Unit>()) }
     if caught != 1 || observed != 42 { return 1 }
     { let value = cell.into_inner() }
     if observed == 43 { 0 } else { 2 }
@@ -623,8 +623,8 @@ fn main() {
     let values = [Empty(),Empty(),Empty()]
     for value in take values {}
     let count = unsafe { mettle_c_zst_count() }
-    let pointer = core::ptr::null::<Empty>()
-    if count == 3 && core::mem::size_of::<Empty>() == 0usize &&
+    let pointer = core.ptr.null<Empty>()
+    if count == 3 && core.mem.size_of<Empty>() == 0usize &&
        pointer.wrapping_add(18446744073709551615usize) == pointer &&
        pointer.wrapping_offset(-9223372036854775808isize) == pointer { 0 } else { 1 }
 }
@@ -639,7 +639,7 @@ copy enum Wrapped { Value(Signed,Unit) }
 @layout(transparent)
 copy enum Real { Value(f64) }
 unsafe extern "C" fn transparent_callback(value: Wrapped): Wrapped {
-    match value { Wrapped::Value(number,_) => Wrapped::Value(Signed(number.value - 1),()) }
+    match value { Wrapped.Value(number,_) => Wrapped.Value(Signed(number.value - 1),()) }
 }
 extern "C" {
     unsafe fn mettle_c_tiny_tagged(value: Tiny): Tiny;
@@ -649,13 +649,13 @@ extern "C" {
     unsafe fn mettle_c_enum_variadic(count: i32,...): i32;
 }
 fn main() {
-    let tagged = unsafe { mettle_c_tiny_tagged(Tiny::Byte(41u8)) }
-    let number = unsafe { mettle_c_transparent_callback(transparent_callback,Wrapped::Value(Signed(-1i8),())) }
-    let real = unsafe { mettle_c_transparent_double(Real::Value(41.0f64)) }
-    let promoted = unsafe { mettle_c_enum_variadic(1,Wrapped::Value(Signed(42i8),())) }
-    let first = match tagged { Tiny::Byte(value) => value == 42u8, _ => false }
-    let second = match number { Wrapped::Value(value,_) => value.value == -2i8 }
-    let third = match real { Real::Value(value) => value == 42.0f64 }
+    let tagged = unsafe { mettle_c_tiny_tagged(Tiny.Byte(41u8)) }
+    let number = unsafe { mettle_c_transparent_callback(transparent_callback,Wrapped.Value(Signed(-1i8),())) }
+    let real = unsafe { mettle_c_transparent_double(Real.Value(41.0f64)) }
+    let promoted = unsafe { mettle_c_enum_variadic(1,Wrapped.Value(Signed(42i8),())) }
+    let first = match tagged { Tiny.Byte(value) => value == 42u8, _ => false }
+    let second = match number { Wrapped.Value(value,_) => value.value == -2i8 }
+    let third = match real { Real.Value(value) => value == 42.0f64 }
     if first && second && third && promoted == 42 { 0 } else { 1 }
 }
 """,
@@ -686,37 +686,37 @@ extern "C" {
     unsafe fn mettle_c_enum_variadic(count: i32, ...): i32;
 }
 fn main() {
-    let integer = unsafe { mettle_c_tagged(Tagged::Integer(41i64)) }
-    let real = unsafe { mettle_c_tagged(Tagged::Real(41.0f64)) }
-    let byte = unsafe { mettle_c_byte_enum(Byte::First) }
-    let promoted = unsafe { mettle_c_enum_variadic(1,Byte::Last) }
+    let integer = unsafe { mettle_c_tagged(Tagged.Integer(41i64)) }
+    let real = unsafe { mettle_c_tagged(Tagged.Real(41.0f64)) }
+    let byte = unsafe { mettle_c_byte_enum(Byte.First) }
+    let promoted = unsafe { mettle_c_enum_variadic(1,Byte.Last) }
     let size = unsafe { mettle_c_tagged_size() }
-    let first = match integer { Tagged::Integer(value) => value == 42i64, _ => false }
-    let second = match real { Tagged::Real(value) => value == 42.0f64, _ => false }
-    let last = match byte { Byte::Last => true, _ => false }
+    let first = match integer { Tagged.Integer(value) => value == 42i64, _ => false }
+    let second = match real { Tagged.Real(value) => value == 42.0f64, _ => false }
+    let last = match byte { Byte.Last => true, _ => false }
     if first && second && last && promoted == 42 &&
-       size == core::mem::size_of::<Tagged>() { 0 } else { 1 }
+       size == core.mem.size_of<Tagged>() { 0 } else { 1 }
 }
 """,
     "c-unwind-packed-drop-finishes-relocated-fields-once": PRELUDE + """
 fn main() {
     var counter = 0
-    let context = core::ptr::from_mut(counter).cast::<Unit>()
+    let context = core.ptr.from_mut(counter).cast<Unit>()
     let caught = unsafe { mettle_c_catch(packed_drop_callback,context) }
     if caught == 1 && counter == 112 { 0 } else { 1 }
 }
 """,
     "c-thread-release-acquire-publication": PRELUDE + """
 fn main() {
-    let flag = core::sync::atomic::AtomicU32::new(0)
-    let context = flag.as_ptr().cast::<Unit>()
+    let flag = core.sync.atomic.AtomicU32.new(0)
+    let context = flag.as_ptr().cast<Unit>()
     unsafe { mettle_atomic_publication(release_flag,acquire_flag,context) }
 }
 """,
     "c-unwind-explicit-in-place-cleanup": PRELUDE + """
 fn main() {
     var counter = 0
-    let context = core::ptr::from_mut(counter).cast::<Unit>()
+    let context = core.ptr.from_mut(counter).cast<Unit>()
     let caught = unsafe { mettle_c_catch(drop_callback,context) }
     if caught == 1 && counter == 112 { 0 } else { 1 }
 }
@@ -724,7 +724,7 @@ fn main() {
     "c-layout-calls-and-callbacks": PRELUDE + """
 fn main() {
     var counter = 40
-    let context = core::ptr::from_mut(counter).cast::<Unit>()
+    let context = core.ptr.from_mut(counter).cast<Unit>()
     let pair = unsafe { mettle_c_pair(Pair(20,20)) }
     let exported = unsafe { mettle_c_call_export(Pair(20,20)) }
     let floats = unsafe { mettle_c_floats(Floats(20.0f32,20.0f32)) }
@@ -742,8 +742,8 @@ fn main() {
        large.first + large.second + large.third == 42i64 &&
        packed.first as i32 + packed.second == 42 &&
        called == 42 && counter == 42 && integer == 42i64 &&
-       size == core::mem::size_of::<Pair>() &&
-       offset == 1usize && core::mem::size_of::<Packed>() == 5usize { 0 } else { 1 }
+       size == core.mem.size_of<Pair>() &&
+       offset == 1usize && core.mem.size_of<Packed>() == 5usize { 0 } else { 1 }
 }
 """,
     "c-variadic-promotions": PRELUDE + """
@@ -757,7 +757,7 @@ fn main() {
     "c-compatible-unwind-cleans-both-languages": PRELUDE + """
 fn main() {
     var counter = 40
-    let context = core::ptr::from_mut(counter).cast::<Unit>()
+    let context = core.ptr.from_mut(counter).cast<Unit>()
     let caught = unsafe { mettle_c_catch(panic_callback,context) }
     if caught == 1 && counter == 42 { 0 } else { 1 }
 }
@@ -766,8 +766,8 @@ fn main() {
 
 FREESTANDING_SOURCE = """
 static OFFSET: i32 = 1;
-static ATOMIC: core::sync::atomic::AtomicI32 =
-    core::sync::atomic::AtomicI32::new(0);
+static ATOMIC: core.sync.atomic.AtomicI32 =
+    core.sync.atomic.AtomicI32.new(0);
 type Guard {
     counter: ptr<mut i32>
     drop { unsafe { *self.counter += 1 } }
@@ -776,11 +776,11 @@ type Guard {
 extern "C" fn core_count(value: i32): i32 {
     var count = value
     {
-        let guard = Guard(core::ptr::from_mut(count))
+        let guard = Guard(core.ptr.from_mut(count))
     }
-    ATOMIC.store(count,core::sync::atomic::Ordering::Relaxed)
-    let previous = ATOMIC.fetch_add(OFFSET,core::sync::atomic::Ordering::SeqCst)
-    ATOMIC.load(core::sync::atomic::Ordering::Relaxed)
+    ATOMIC.store(count,core.sync.atomic.Ordering.Relaxed)
+    let previous = ATOMIC.fetch_add(OFFSET,core.sync.atomic.Ordering.SeqCst)
+    ATOMIC.load(core.sync.atomic.Ordering.Relaxed)
 }
 """
 
@@ -804,13 +804,13 @@ type Guard {
 }
 fn run(value: i32): i32 {
     var count = value
-    { let guard = Guard(core::ptr::from_mut(count)) }
+    { let guard = Guard(core.ptr.from_mut(count)) }
     count
 }
 fn main(): i32 { if run(1) == 2 { 0 } else { 1 } }
 """
 VARIADIC_SOURCE = """
-unsafe extern "C" fn sum(count: i32, args: ...): i32 { args.arg::<i32>() + count }
+unsafe extern "C" fn sum(count: i32, args: ...): i32 { args.arg<i32>() + count }
 fn main(): i32 { 0 }
 """
 INVALID_ASM_SOURCE = 'fn main() { unsafe { asm!("mettle_invalid_instruction",options(nostack)) }; 0 }\n'

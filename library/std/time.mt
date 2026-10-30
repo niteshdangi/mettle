@@ -1,6 +1,6 @@
 // Monotonic and wall-clock time. `Instant` never goes backwards; `SystemTime`
 // can (clock adjustments), so differences are fallible.
-import super.sys;
+import super.sys
 
 // A length of time: whole seconds plus nanoseconds below one second.
 pub copy type Duration { secs: u64; nanos: u32 }

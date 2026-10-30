@@ -1,12 +1,12 @@
-import core.cmp;
-import core.cmp.Ordering;
-import core.cmp.Ord;
-import core.cmp.PartialOrd;
-import core.hash;
-import core.hash.Hash;
-import core.hash.Hasher;
-import core.text.Text;
-import core.option;
+import core.cmp
+import core.cmp.Ordering
+import core.cmp.Ord
+import core.cmp.PartialOrd
+import core.hash
+import core.hash.Hash
+import core.hash.Hasher
+import core.text.Text
+import core.option
 
 fn slice_hash(items: read [i32]): u64 {
     var h = hash.fnv1a()

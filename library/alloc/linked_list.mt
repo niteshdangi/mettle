@@ -1,10 +1,10 @@
-import package.core.iter.{Iterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems};
-import package.core.clone.Clone;
-import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd};
-import package.core.hash.{Hash, Hasher};
-import package.core.fmt;
+import package.core.iter.{Iterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import package.core.clone.Clone
+import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import package.core.hash.{Hash, Hasher}
+import package.core.fmt
 
-import super.alloc.{Allocator, Global, AllocError, layout_of, handle_alloc_error};
+import super.alloc.{Allocator, Global, AllocError, layout_of, handle_alloc_error}
 
 type Node<T> {
     value: T

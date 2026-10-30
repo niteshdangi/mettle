@@ -1,7 +1,7 @@
-import alloc.arc;
-import alloc.arc.Arc;
-import core.future.{Context, Future, Poll};
-import std.task;
+import alloc.arc
+import alloc.arc.Arc
+import core.future.{Context, Future, Poll}
+import std.task
 
 type Panics {
     drops: Arc<core.sync.atomic.AtomicUsize>

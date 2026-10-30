@@ -14,7 +14,7 @@ void require(bool condition, const char *message) {
 
 void inMemorySources() {
   std::vector<mettle::Source> sources{
-      {"memory/root.mt", "module math;\nimport math::{answer as result};\n"
+      {"memory/root.mt", "module math;\nimport math.{answer as result};\n"
                          "fn main() { result() - 42 }\n"},
       {"memory/math.mt", "pub fn answer() { 42 }\n"}};
   mettle::Diagnostics diagnostics;
@@ -36,8 +36,8 @@ void syntaxAndIdentities() {
   mettle::Source source{"memory/root.mt",
                         "module left { pub fn value() { 20 } }\n"
                         "module right { pub fn value() { 22 } }\n"
-                        "import left::value as first;\n"
-                        "fn main() { first() + right::value() }\n"};
+                        "import left.value as first;\n"
+                        "fn main() { first() + right.value() }\n"};
   mettle::Diagnostics diagnostics;
   auto tree = mettle::parse(source, diagnostics);
   auto resolved = mettle::resolution::resolve(tree, diagnostics);
@@ -62,9 +62,9 @@ void syntaxAndIdentities() {
 void sameDeclarationGlobs() {
   mettle::Source source{"memory/root.mt",
                         "module base { pub fn answer() { 42 } }\n"
-                        "module a { pub import package::base::answer; }\n"
-                        "module b { pub import package::base::answer; }\n"
-                        "import a::*;\nimport b::*;\nfn main() { answer() }\n"};
+                        "module a { pub import package.base.answer; }\n"
+                        "module b { pub import package.base.answer; }\n"
+                        "import a.*;\nimport b.*;\nfn main() { answer() }\n"};
   mettle::Diagnostics diagnostics;
   auto tree = mettle::parse(source, diagnostics);
   auto resolved = mettle::resolution::resolve(tree, diagnostics);
@@ -77,10 +77,10 @@ void delayedExplicitImport() {
                         "module a { pub fn answer() { 1 } }\n"
                         "module b { pub fn answer() { 42 } }\n"
                         "module selected {\n"
-                        "pub import package::a::*;\n"
-                        "pub import package::relay::answer;\n}\n"
-                        "module relay { pub import package::b::answer; }\n"
-                        "import selected::*;\nfn main() { answer() }\n"};
+                        "pub import package.a.*;\n"
+                        "pub import package.relay.answer;\n}\n"
+                        "module relay { pub import package.b.answer; }\n"
+                        "import selected.*;\nfn main() { answer() }\n"};
   mettle::Diagnostics diagnostics;
   auto tree = mettle::parse(source, diagnostics);
   auto resolved = mettle::resolution::resolve(tree, diagnostics);
@@ -121,8 +121,7 @@ void duplicateFileIdentity() {
 void privateRootReexport() {
   mettle::Diagnostics diagnostics;
   auto tree = mettle::parse(
-      {"memory/root.mt",
-       "fn hidden() { 42 }\npub import self::hidden as exposed;\n"},
+      {"memory/root.mt", "fn hidden() { 42 }\npub import hidden as exposed;\n"},
       diagnostics);
   require(!mettle::resolution::resolve(tree, diagnostics),
           "package-private root declaration became globally public");
@@ -138,9 +137,9 @@ void associatedImports() {
                      "pub enum Choice { Answer(i32), Empty }\n"
                      "type Maker { pub static fn answer() { 42 }; drop {} }\n"
                      "alias Alias = Choice;\n"
-                     "import Alias::{Answer as result};\n"
-                     "import Choice::*;\n"
-                     "import Maker::answer as get;\n"},
+                     "import Alias.{Answer as result};\n"
+                     "import Choice.*;\n"
+                     "import Maker.answer as get;\n"},
                     diagnostics);
   auto resolved = mettle::resolution::resolve(tree, diagnostics);
   if (!resolved)
@@ -161,14 +160,14 @@ void associatedImports() {
 }
 void catalogLibrary() {
   std::vector<mettle::Source> sources{
-      {"memory/root.mt", "fn main() { core::answer() - 42 }\n"},
+      {"memory/root.mt", "fn main() { core.answer() - 42 }\n"},
       {"memory/lib/core/module.mt", "pub fn answer() { 42 }\n"},
       {"memory/lib/std/module.mt", "pub fn broken() { missing() }\n"}};
   mettle::resolution::Library library{"memory/lib", false, {}};
   mettle::Diagnostics diagnostics;
   require(mettle::pipeline::compile(sources, diagnostics, library).has_value(),
           "catalog-supplied library failed or loaded an unreferenced root");
-  sources.front().text = "fn main() { std::broken() }\n";
+  sources.front().text = "fn main() { std.broken() }\n";
   mettle::Diagnostics failing;
   require(!mettle::pipeline::compile(sources, failing, library).has_value(),
           "referenced library error was not reported");

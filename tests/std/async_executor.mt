@@ -1,10 +1,10 @@
 // expect-exit: 101
 // expect-stderr: async future polled after completion
-import std.task;
-import std.sync.mutex;
-import alloc.arc;
-import alloc.arc.Arc;
-import core.future.{Future, Poll, Context};
+import std.task
+import std.sync.mutex
+import alloc.arc
+import alloc.arc.Arc
+import core.future.{Future, Poll, Context}
 
 type Count { left: i32 }
 extend Count implements Future {

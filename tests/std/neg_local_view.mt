@@ -1,5 +1,5 @@
 // expect-error: type
-import std.thread;
+import std.thread
 
 fn main(): i32 {
   let stack_slot = 5

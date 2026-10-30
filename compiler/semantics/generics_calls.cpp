@@ -1,4 +1,5 @@
 #include "semantics/checker.h"
+#include "support/path.h"
 #include <algorithm>
 
 namespace mettle {
@@ -209,8 +210,8 @@ std::optional<int> Checker::genericCall(
     if (bindings[i].argument == Type::Unknown)
       error("type", n.span,
             "cannot infer generic argument '" +
-                std::string(checked.types->name(bindings[i].parameter)) +
-                "'; supply explicit ::<...> arguments");
+                displayPath(checked.types->name(bindings[i].parameter)) +
+                "'; supply explicit <...> arguments");
   }
   genericEnvironment = caller;
   std::vector<RegionBinding> explicitRegions;
@@ -443,8 +444,8 @@ void Checker::finishDeferred(Node &n, DeferredCall deferred, Type expected) {
     if (binding.argument == Type::Unknown)
       error("type", n.span,
             "cannot infer generic argument '" +
-                std::string(checked.types->name(binding.parameter)) +
-                "'; supply explicit ::<...> arguments");
+                displayPath(checked.types->name(binding.parameter)) +
+                "'; supply explicit <...> arguments");
   genericEnvironment = deferred.caller;
   genericObligations(*deferred.environment, bindings, n.span,
                      deferred.explicitRegions);

@@ -125,7 +125,7 @@ capability bounds and region obligations separately from code generation.
 Failure to terminate/resource exhaustion is distinct from an unsatisfied bound.
 Const parameters affect type identity; equal evaluated parameters unify.
 
-Interface implementation selection must be coherent. An impl cannot silently
+Interface implementation selection must be coherent. An implementation cannot silently
 weaken input guarantees or strengthen caller obligations relative to its
 interface. Method result/error/region contracts must match the declared contract
 or an explicitly specified compatible substitution.
@@ -305,9 +305,9 @@ ambiguous; import order cannot decide. Select a method, then enforce its
 ownership, mutability, visibility and unsafe-call obligations. An unavailable
 move or mutable loan is an error, not permission to fall back to another method.
 
-Use `<T implements Interface>::method(receiver, arguments)` for explicit
-disambiguation (pre-cutover spelling; target `T.(Interface).method(...)`, section 13.1). Static associated functions do not acquire a receiver by being
-spelled after an object. Dereference coercion can execute the declared user's
+Use `T.(Interface).method(receiver, arguments)` for explicit disambiguation.
+Static associated functions do not acquire a receiver by being spelled after
+an object. Dereference coercion can execute the declared user's
 projection method, whose behavior is not a compiler-inserted clone/retain.
 Cycles/resource exhaustion diagnose rather than changing search precedence.
 
@@ -336,40 +336,40 @@ and any yielded views.
 Range indexing `read base[a..b]` (also `a..`, `..b`, `..`, `a..=b`; bounds are
 `usize`) borrows a subslice of an array or slice, panicking when out of range or
 `a > b`; `mut base[..]` needs a mutable place. Other bases use
-`core::ops::IndexRange` (`fn index_range(start: usize, end: usize): read
-Self::Output from self`) or `IndexRangeMut`; an absent upper bound is passed as
-`usize::MAX` and `..=b` as `b + 1`. Open-ended ranges are not yet first-class
+`core.ops.IndexRange` (`fn index_range(start: usize, end: usize): read
+Self.Output from self`) or `IndexRangeMut`; an absent upper bound is passed as
+`usize.MAX` and `..=b` as `b + 1`. Open-ended ranges are not yet first-class
 values.
 
-The compiler recognizes the interfaces by canonical path, like `core::ops::*`:
-`core::iter::Iterator` (`type Item; mut fn next(): Self::Item?`),
-`core::iter::IntoIterator` (`fn into_iter(receiver self: take Self)`),
-`core::iter::Iterable` (`fn iter()`) and `core::iter::IterableMut`
+The compiler recognizes the interfaces by canonical path, like `core.ops.*`:
+`core.iter.Iterator` (`type Item; mut fn next(): Self.Item?`),
+`core.iter.OwnedIterable` (`fn into_iter(receiver self: take Self)`),
+`core.iter.Iterable` (`fn iter()`) and `core.iter.MutableIterable`
 (`mut fn iter_mut()`), none with parameters. `for x in take v` or an rvalue uses
-Iterator directly, else IntoIterator; `for x in v` uses Iterable; `for x in mut v`
-uses IterableMut, else a mutable view that is itself an Iterator. Ranges and
+Iterator directly, else OwnedIterable; `for x in v` uses Iterable; `for x in mut v`
+uses MutableIterable, else a mutable view that is itself an Iterator. Ranges and
 arrays keep their direct lowering. For other loops the checker records an
 iteration plan (mode, protocol, selected method) in a side table and builds a
 synthetic elaboration, an iterator binding plus
 `loop { match next() { present(x) => body, none => break } }`, that shares the
 original body. Ownership, region, capture and lowering passes consume the
 elaboration, so cleanup and loans follow ordinary scope rules.
-The iterator type of `Iterable`/`IterableMut` is a region family, for example
-`type Iter<region r> = VecIter<T, region r>` with
-`fn iter<region r>(receiver self: read Self from r): Self::Iter<region r>`; the loop
+The iterator type of `Iterable`/`MutableIterable` is a region family, for example
+`type Iter<region r> = ListIter<T, region r>` with
+`fn iter<region r>(receiver self: read Self from r): Self.Iter<region r>`; the loop
 borrows the collection for the iterator's region, so mutating it inside the loop
 or holding an item past a mutation is rejected. A family may bound itself with its
-own region, `type Iter<region r>: Iterator<Item = read Self::Item from r>`; each
+own region, `type Iter<region r>: Iterator<Item = read Self.Item from r>`; each
 implementation's family type must satisfy the bound at the implementation's
 region, and generic code over `C: Iterable<Item = i32>` sees the bounded items as
 `read i32 from c`. Ownership checks of generic loops run per instantiation.
 
 Generic inference additionally uses the expected type: `let x: Opt<i32> = nothing()`,
-`Opt::Nothing` and `Self(..)` in generic statics take their arguments from context.
-`_` in a turbofish list is inferred, and inherent-impl statics are callable as
-`X::f()` and `X::<i32>::f()` (pre-cutover spellings; section 13.1). Projections such as `Vec<<I implements Iterator>::Item>`
+`Opt.Nothing` and `Self(..)` in generic statics take their arguments from context.
+`_` in a generic argument list is inferred, and inherent statics are callable as
+`X.f()` and `X<i32>.f()`. Projections such as `I.(Iterator).Item`
 normalize once `I` is known; `I: Iterator<Item = T>` determines `T`, and a
-callable bound `F: fn(I::Item): B` determines `B` from the closure body, with
+callable bound `F: fn(I.Item): B` determines `B` from the closure body, with
 unannotated closure parameters taking their modes from the bound.
 
 Exhaustiveness treats guarded arms as non-covering, unions or-pattern coverage,
@@ -378,11 +378,11 @@ nonexhaustive types require a fallback. Reject unreachable duplicate alternative
 according to native diagnostics; no missing case may silently become unsafe
 unreachable code.
 
-## 13. Target resolution, lookup, construction and inference
+## 13. Resolution, lookup, construction and inference
 
-Status: accepted target (decisions D18-D22), effective at the cutover; the
-compiler implements the pre-cutover `::` resolution until then. Spelling is in
-language-grammar section 13.
+Status: current semantic design (decisions D18-D22). Spelling is in
+language-grammar section 13; implementation status and remaining R1 work are in
+implementation-plan section 8.7.
 
 ### 13.1. Qualified resolution, shadowing and interface selection
 
@@ -424,7 +424,7 @@ interfaces declared in the receiver type's owning package; and explicit
 interface imports in the lexical scope. An interface found elsewhere in the
 dependency graph is not a candidate, even if currently unique. Package
 ownership is the resolved package identity, never a module-name heuristic, and
-the native-library catalog records it before cutover.
+the native-library catalog records it for candidate selection.
 
 Lookup uses indexed declaration metadata and the existing coherence and
 visibility checks; several applicable candidates diagnose and require explicit
@@ -439,8 +439,8 @@ the import, an explicit Writer bound or explicit selection.
 
 A type has one associated namespace shared by associated functions, associated
 constants and lowercase enum variants. A collision among them is a declaration
-error. The migration audit enumerates existing collisions before cutover and
-resolves each explicitly. `none`, `present`, `success` and `failure` are
+error. A declaration audit resolves each collision explicitly. `none`, `present`,
+`success` and `failure` are
 grammar-owned constructors for native optionals/outcomes, not unqualified
 library-enum variants; user and library enums require qualification.
 

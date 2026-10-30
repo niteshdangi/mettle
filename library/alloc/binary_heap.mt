@@ -1,10 +1,10 @@
-import package.core.iter.{Iterator, OwnedIterable, Iterable, FromItems, ExtendItems};
-import package.core.clone.Clone;
-import package.core.fmt;
-import package.core.slice.SliceIter;
-import super.alloc.{Allocator, Global, AllocError};
-import super.vec.List;
-import package.core.cmp.Ord;
+import package.core.iter.{Iterator, OwnedIterable, Iterable, FromItems, ExtendItems}
+import package.core.clone.Clone
+import package.core.fmt
+import package.core.slice.SliceIter
+import super.alloc.{Allocator, Global, AllocError}
+import super.vec.List
+import package.core.cmp.Ord
 
 // Max-heap on a `List`.
 pub type BinaryHeap<T, A: Allocator = Global> { data: List<T, A> }
@@ -88,7 +88,7 @@ extend<T: Clone, A: Allocator + Clone> BinaryHeap<T, A> implements Clone {
 // Elements appear in heap (storage) order.
 extend<T: fmt.Debug, A: Allocator> BinaryHeap<T, A> implements fmt.Debug {
     fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
-        try <[T] implements fmt.Debug>::fmt(self.data.as_slice(), mut f)
+        try fmt.debug_slice<T, W>(self.data.as_slice(), mut f)
     }
 }
 extend<T: Ord, A: Allocator> BinaryHeap<T, A> implements ExtendItems<T> {

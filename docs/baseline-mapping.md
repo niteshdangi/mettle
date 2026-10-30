@@ -103,7 +103,7 @@ are not automatically public Mettle APIs. Their stable user-visible capability
 needs an equivalent native facility. Tooling maps to documented Mettle command
 operations, not to source compatibility with Cargo manifests.
 
-The native vocabulary of library-surface.md section 9 renames some baseline
+The native vocabulary of library-surface.md section 9 maps some Rust baseline
 items (`Vec` to `List`, `HashMap` to `Map`, `HashSet` to `Set`, `BTreeMap` and
 `BTreeSet` to `SortedMap` and `SortedSet`, `IntoIterator` to `OwnedIterable`,
 `DoubleEndedIterator` to `BidirectionalIterator`, `FromIterator` to
@@ -113,8 +113,8 @@ adapters to their past-participle names). The catalog keeps the baseline path
 as the identity and records the native name as its mapping; a rename never
 drops an operation, and a reexport still refers to one native declaration.
 The default rule's "same relative item name" applies to everything outside that
-vocabulary. Before cutover the native libraries keep the current names; the
-mapping changes in the same migration that renames them.
+vocabulary. These native names are the Mettle exposure for the corresponding
+Rust baseline identities.
 
 ## 5. Target conditions
 

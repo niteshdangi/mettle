@@ -20,7 +20,7 @@ bool isModifier(std::string_view word) {
 }
 
 bool isKeyword(std::string_view word) {
-  return oneOf(word, {"fn", "type", "enum", "interface", "impl", "alias",
+  return oneOf(word, {"fn", "type", "enum", "interface", "extend", "alias",
                       "const", "static", "module", "import", "union", "macro"});
 }
 
@@ -258,7 +258,7 @@ private:
       item.kind = Kind::Enum;
     else if (has("interface"))
       item.kind = Kind::Interface;
-    else if (has("impl"))
+    else if (has("extend"))
       item.kind = Kind::Implementation;
     else if (has("alias"))
       item.kind = Kind::Alias;

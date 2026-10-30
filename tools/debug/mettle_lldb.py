@@ -61,12 +61,12 @@ def sum_summary(value, _internal_dict):
 
 def __lldb_init_module(debugger, _internal_dict):
     commands = [
-        r"type summary add -w Mettle -x '(^|::)List<.*>$' "
+        r"type summary add -w Mettle -x '(^|\.)List<.*>$' "
         r"-F mettle_lldb.list_summary",
-        r"type summary add -w Mettle -x '(^|::)String<.*>$' "
+        r"type summary add -w Mettle -x '(^|\.)String<.*>$' "
         r"-F mettle_lldb.string_summary",
         r"type summary add -w Mettle -x '^(read |mut |ptr<read |ptr<mut )"
-        r"(.*::)?Text>?$' -F mettle_lldb.text_summary",
+        r"(.*\.)?Text>?$' -F mettle_lldb.text_summary",
         r"type summary add -w Mettle -x '^\(.*\)\?$' "
         r"-F mettle_lldb.sum_summary",
         r"type summary add -w Mettle -x '^\(.* throws .*\)$' "

@@ -1,4 +1,5 @@
 #include "backend/llvm/debug.h"
+#include "support/path.h"
 #include "types/layout.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/BinaryFormat/Dwarf.h"
@@ -69,7 +70,7 @@ llvm::DISubprogram *DebugInfo::attach(llvm::Function &function,
   auto flags = local ? (llvm::DISubprogram::SPFlagDefinition |
                         llvm::DISubprogram::SPFlagLocalToUnit)
                      : llvm::DISubprogram::SPFlagDefinition;
-  auto name = source.name + (artificial ? ".frame" : "");
+  auto name = displayPath(source.name) + (artificial ? ".frame" : "");
   auto *subprogram = dib.createFunction(
       file, name, function.getName(), file, line, subroutine, line,
       artificial || source.name.starts_with('<') ? llvm::DINode::FlagArtificial
@@ -171,7 +172,7 @@ llvm::DIType *DebugInfo::build(Type type) {
   const auto layout = objectLayout(store, type);
   if (!layout)
     return nullptr;
-  const std::string name(store.name(type));
+  const std::string name = displayPath(store.name(type));
   const std::uint64_t bits = layout->size * 8;
   const auto alignment = static_cast<std::uint32_t>(layout->alignment * 8);
   if (type == Type::Bool || type == Type::Char || isInteger(type) ||

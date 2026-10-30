@@ -1,5 +1,6 @@
 #include "documentation/doctest.h"
 #include "documentation/markdown.h"
+#include "support/path.h"
 #include <string_view>
 
 namespace mettle::documentation {
@@ -78,7 +79,8 @@ void fromDoc(const Doc &doc, const std::string &page, const std::string &owner,
 
 void fromItem(const Item &item, const std::string &page,
               const std::string &prefix, std::vector<Example> &out) {
-  auto owner = prefix.empty() ? item.name : prefix + "::" + item.name;
+  auto owner =
+      displayPath(prefix.empty() ? item.name : prefix + "::" + item.name);
   fromDoc(item.doc, page, owner, out);
   for (const auto &member : item.members)
     fromItem(member, page, owner, out);

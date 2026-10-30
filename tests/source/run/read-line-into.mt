@@ -1,6 +1,6 @@
 // Line reader contract: LF/CRLF kept, final unterminated line, none only at EOF,
 // invalid UTF-8 -> InvalidData leaving an empty valid String.
-import std.io.Reader;
+import std.io.Reader
 fn lines(data: read [u8]): i32 {
     var r = std.io.buf_reader(std.io.slice_reader(data))
     var buf = alloc.string.from_text("stale")

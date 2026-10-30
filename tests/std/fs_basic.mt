@@ -1,8 +1,8 @@
 // File create/write/seek/read, metadata, rename, remove and directory listing.
-import std.io.{Error, ErrorKind, Reader, Writer};
-import std.fs.SeekFrom;
-import core.iter.Iterator;
-import std.path.path_from_text;
+import std.io.{Error, ErrorKind, Reader, Writer}
+import std.fs.SeekFrom
+import core.iter.Iterator
+import std.path.path_from_text
 
 fn run(): i32 throws Error {
     try std.fs.create_dir_all(path_from_text("a/b/c"))

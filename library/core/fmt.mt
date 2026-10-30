@@ -2,11 +2,11 @@
 // the sink propagate as `Error` through `try`. `BufferWriter` formats into a
 // caller-provided byte buffer. Format specifications are built explicitly with
 // `Spec` since text-interpolation syntax is not part of `core`.
-import super.cmp.Ordering;
-import super.iter.Iterator;
-import super.slice;
-import super.text.Text;
-import super.text.from_utf8_unchecked;
+import super.cmp.Ordering
+import super.iter.Iterator
+import super.slice
+import super.text.Text
+import super.text.from_utf8_unchecked
 
 pub copy type Error {}
 
@@ -625,18 +625,20 @@ extend Error implements Debug {
 extend Error implements Display {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try f.write_str("an error occurred when formatting an argument") }
 }
-extend<T: Debug> [T] implements Debug {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
-        try f.debug_open("[")
-        var i = 0usize
-        while i < self.len() {
-            try f.debug_item_start(i == 0usize)
-            try T.(Debug).fmt(self[i], mut f)
-            try f.debug_item_end()
-            i += 1usize
-        }
-        try f.debug_close("]", self.len() == 0usize)
+// Debug output of a slice, shared by arrays and slice-backed collections.
+pub fn debug_slice<T: Debug, W: Write>(items: read [T], f: mut Formatter<W>): Unit throws Error {
+    try f.debug_open("[")
+    var i = 0usize
+    while i < items.len() {
+        try f.debug_item_start(i == 0usize)
+        try T.(Debug).fmt(items[i], mut f)
+        try f.debug_item_end()
+        i += 1usize
     }
+    try f.debug_close("]", items.len() == 0usize)
+}
+extend<T: Debug> [T] implements Debug {
+    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try debug_slice<T, W>(self, mut f) }
 }
 
 // Tuples print as `(a, b)`; a one-element tuple keeps its trailing comma.
@@ -984,6 +986,6 @@ extend<T: Debug, E: Debug> (T throws E) implements Debug {
 }
 extend<T: Debug, const N: usize> [T; N] implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
-        try <[T] implements Debug>::fmt(read self[..], mut f)
+        try debug_slice<T, W>(read self[..], mut f)
     }
 }

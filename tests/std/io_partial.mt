@@ -1,6 +1,6 @@
 // Partial reads and writes stay visible; the *_all helpers loop over them.
-import std.io.{Reader, Writer, Error, ErrorKind};
-import alloc.vec.List;
+import std.io.{Reader, Writer, Error, ErrorKind}
+import alloc.vec.List
 
 // Reads at most `step` bytes per call.
 type Dribble { data: List<u8>; pos: usize; step: usize; calls: usize }
@@ -85,7 +85,7 @@ fn run(): i32 throws Error {
         success(u) => { return 10 },
         failure(e) => { if !e.kind().is(ErrorKind.WriteZero) { return 11 } }
     }
-    // BufWriter coalesces small writes into one underlying write.
+    // BufferedWriter coalesces small writes into one underlying write.
     var sink = Trickle(alloc.vec.new<u8>(), 1000usize, 0usize)
     {
         var w = std.io.buf_writer_with_capacity(64usize, sink)
@@ -95,7 +95,7 @@ fn run(): i32 throws Error {
         try w.flush()
         if w.buffered() != 0usize { return 13 }
     }
-    // BufReader serves lines from large refills.
+    // BufferedReader serves lines from large refills.
     var src = Dribble(alloc.vec.new<u8>(), 0usize, 5usize, 0usize)
     src.data.extend_from_slice("one\ntwo\n\nlast".as_bytes())
     var r = std.io.buf_reader_with_capacity(4usize, src)

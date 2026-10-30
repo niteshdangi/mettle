@@ -13,7 +13,6 @@ Options::Options()
 void usage() {
   std::cout
       << "Usage: mettle check|tokens|syntax FILE\n"
-         "       mettle migrate FILE [-o OUTPUT]\n"
          "         (rewrites pre-cutover spellings to the target syntax of "
          "language-grammar section 13; prints to stdout, never edits FILE)\n"
          "       mettle fmt FILE... [--check]\n"
@@ -79,10 +78,10 @@ std::optional<Options> options(int argc, char **argv) {
   result.command = argv[1];
   if (result.command != "build" && result.command != "check" &&
       result.command != "tokens" && result.command != "syntax" &&
-      result.command != "clean" && result.command != "migrate" &&
-      result.command != "fmt" && result.command != "run" &&
-      result.command != "test" && result.command != "bench" &&
-      result.command != "doc" && result.command != "lint")
+      result.command != "clean" && result.command != "fmt" &&
+      result.command != "run" && result.command != "test" &&
+      result.command != "bench" && result.command != "doc" &&
+      result.command != "lint")
     return std::nullopt;
   bool selection = result.command == "test" || result.command == "bench";
   bool profileGiven = false;

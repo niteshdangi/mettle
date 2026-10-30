@@ -1,4 +1,4 @@
-import core.future.{Future, Poll, Context, noop_waker};
+import core.future.{Future, Poll, Context, noop_waker}
 
 type Count { left: i32 }
 extend Count implements Future {

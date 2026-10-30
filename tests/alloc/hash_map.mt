@@ -1,4 +1,4 @@
-import alloc.hash_map.Map;
+import alloc.hash_map.Map
 fn main(): i32 {
     var m = alloc.hash_map.new<i32, i64>()
     var i = 0

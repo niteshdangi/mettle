@@ -1,6 +1,6 @@
-import alloc.string.String;
-import package.core.cmp.Ord;
-import alloc.vec.List;
+import alloc.string.String
+import package.core.cmp.Ord
+import alloc.vec.List
 
 fn main(): i32 {
     var s = alloc.string.from_text("h\u{e9}llo")

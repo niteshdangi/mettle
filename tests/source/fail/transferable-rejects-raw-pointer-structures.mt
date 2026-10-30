@@ -3,7 +3,7 @@ type Plain { a: i32; b: bool }
 type Raw { p: ptr<mut u8> }
 type Cellular { c: core.cell.Cell<i32> }
 type Blocked { a: i32 }
-extend Blocked not Transferable;
+extend Blocked not Transferable
 fn send<T: Transferable>(value: take T): Unit {}
 fn share<T: Shareable>(value: read T): Unit {}
 fn owned<T: Transferable + Static>(value: take T): Unit {}

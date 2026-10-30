@@ -1,8 +1,8 @@
 // args: one two
 // Program arguments, environment variables and the working directory.
-import std.ffi;
-import std.io.Error;
-import std.path.path_from_text;
+import std.ffi
+import std.io.Error
+import std.path.path_from_text
 
 fn run(): i32 throws Error {
     let args = std.env.args()

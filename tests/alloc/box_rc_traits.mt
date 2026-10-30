@@ -1,12 +1,12 @@
-import alloc.boxed;
-import alloc.rc;
-import alloc.string.String;
-import core.clone.Clone;
-import core.cmp.Ord;
-import core.hash;
-import core.hash.{Hash, Hasher};
-import core.fmt;
-import core.fmt.Display;
+import alloc.boxed
+import alloc.rc
+import alloc.string.String
+import core.clone.Clone
+import core.cmp.Ord
+import core.hash
+import core.hash.{Hash, Hasher}
+import core.fmt
+import core.fmt.Display
 
 fn main(): i32 {
     let b0 = boxed.new(41)

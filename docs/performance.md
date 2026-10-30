@@ -223,7 +223,7 @@ and `results.md`.
 Workloads live in `benchmarks/<name>/main.mt` with `rust/{Cargo.toml,src/main.rs}`
 and cover P01-P06 subsets that the current compiler supports: integer loops
 (`p01_int_loops`), floating point (`p02_float_kernel`), byte scanning
-(`p03_text_scan`), struct-heavy `Vec` (`p04_struct_vec`), hash map
+(`p03_text_scan`), struct-heavy Rust `Vec` / Mettle `List` (`p04_struct_vec`), hash map
 (`p05_hash_map`) and generic monomorphization (`p06_generic_dispatch`). P07-P12
 need capabilities not yet comparable and are not included. Programs return a
 7-bit checksum as the exit status; the harness requires equal status and stdout

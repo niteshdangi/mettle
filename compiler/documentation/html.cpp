@@ -1,6 +1,7 @@
 #include "documentation/html.h"
 #include "documentation/doctest.h"
 #include "documentation/markdown.h"
+#include "support/path.h"
 #include <algorithm>
 #include <set>
 #include <string_view>
@@ -256,7 +257,7 @@ private:
   void entry(std::string &out, const Item &item, const std::string &prefix) {
     auto id = identifier(prefix, item.name);
     out += "<article id=\"" + id + "\">\n<h3><a href=\"#" + id + "\">" +
-           escape(item.kind == Kind::Implementation ? "impl" : item.name) +
+           escape(item.kind == Kind::Implementation ? "extend" : item.name) +
            "</a><span class=\"kind\">" + std::string(word(item.kind)) +
            "</span>" + location(item) + "</h3>\n" + declaration(item) +
            renderDoc(item.doc);
@@ -281,9 +282,8 @@ std::string fileName(const std::string &name, std::set<std::string> &taken) {
   std::string base;
   for (std::size_t i = 0; i < name.size(); ++i) {
     char c = name[i];
-    if (c == ':' && i + 1 < name.size() && name[i + 1] == ':') {
+    if (c == '.') {
       base += '.';
-      ++i;
     } else
       base += slug(std::string(1, c)) == "." ? '_' : c;
   }
@@ -295,6 +295,8 @@ std::string fileName(const std::string &name, std::set<std::string> &taken) {
 } // namespace
 
 std::vector<File> render(std::vector<Page> pages) {
+  for (auto &page : pages)
+    page.name = displayPath(page.name);
   std::stable_sort(pages.begin(), pages.end(),
                    [](const Page &left, const Page &right) {
                      return left.name < right.name;

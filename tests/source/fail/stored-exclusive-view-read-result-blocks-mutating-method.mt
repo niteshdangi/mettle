@@ -9,7 +9,7 @@ extern "C" {
     unsafe fn realloc(p: ptr<mut u8>, n: usize): ptr<mut u8>;
     unsafe fn free(p: ptr<mut u8>): Unit;
 }
-import core.iter.{Iterator, Iterable, MutableIterable};
+import core.iter.{Iterator, Iterable, MutableIterable}
 type List<T> { ptr: ptr<mut T>; len: usize; cap: usize
     drop { unsafe {
         var i = 0usize

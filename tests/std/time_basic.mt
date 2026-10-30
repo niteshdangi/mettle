@@ -1,5 +1,5 @@
 // Monotonic and wall clocks, durations and sleep.
-import std.time.{from_millis, from_secs, from_nanos, duration};
+import std.time.{from_millis, from_secs, from_nanos, duration}
 
 fn main(): i32 {
     let d = duration(1u64, 500000000u32)

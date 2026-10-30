@@ -106,7 +106,7 @@ int Checker::aggregate(Node &n, bool reachable) {
       if (sliced) {
         error("type", n.span,
               "range indexing requires an array, slice or a type "
-              "implementing core::ops::IndexRange");
+              "implementing core.ops.IndexRange");
         return inference.fresh();
       }
     }

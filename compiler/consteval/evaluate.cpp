@@ -1,5 +1,6 @@
 #include "consteval/evaluate.h"
 #include "diagnostics/diagnostics.h"
+#include "support/path.h"
 #include "syntax/lexer.h"
 #include <algorithm>
 #include <deque>
@@ -265,7 +266,7 @@ private:
       }
       if (builtin == Type::Unknown || builtin == Type::Never ||
           isFloating(builtin)) {
-        unsupported(span, "type '" + type.name + "'");
+        unsupported(span, "type '" + displayPath(type.name) + "'");
         return std::nullopt;
       }
       return scalarShape(builtin);
@@ -979,12 +980,12 @@ private:
     }
     if (found.kind != Lookup::Kind::Function || !found.function)
       return fail("name", callee.span,
-                  "unknown function '" + callee.text +
+                  "unknown function '" + displayPath(callee.text) +
                       "' in a constant expression");
     const Function &function = *found.function;
     if (!function.constFunction)
       return fail("constant", node.span,
-                  "call to non-const function '" + callee.text +
+                  "call to non-const function '" + displayPath(callee.text) +
                       "' in a constant expression");
     if (!function.genericParameters.empty() || function.constructor ||
         !function.owner.empty() || function.variadic ||
@@ -992,7 +993,7 @@ private:
         function.destructor || !function.error.empty() ||
         function.foreignDeclaration)
       return unsupported(callee.span,
-                         "calling '" + callee.text +
+                         "calling '" + displayPath(callee.text) +
                              "' (generic, method, variadic or fallible "
                              "const functions)");
     if (frames.size() > options.callDepth)
@@ -1005,8 +1006,8 @@ private:
       if (parameter.mode == "mut" ||
           (parameter.pattern.has_value() &&
            parameter.pattern->kind != PatternKind::Binding))
-        return unsupported(callee.span,
-                           "this parameter of '" + callee.text + "'");
+        return unsupported(callee.span, "this parameter of '" +
+                                            displayPath(callee.text) + "'");
       auto parameterShape = shape(parameter.annotation, parameter.span);
       if (!parameterShape)
         return std::nullopt;
@@ -1033,14 +1034,14 @@ private:
                          });
         if (named == function.parameters.end())
           return fail("type", argument.span,
-                      "'" + callee.text + "' has no parameter '" +
+                      "'" + displayPath(callee.text) + "' has no parameter '" +
                           argument.name + "'");
         slot = static_cast<std::size_t>(named - function.parameters.begin());
       } else
         ++position;
       if (slot >= arguments.size() || arguments[slot])
         return fail("type", argument.span,
-                    "wrong arguments for '" + callee.text + "'");
+                    "wrong arguments for '" + displayPath(callee.text) + "'");
       auto value = eval(argument, &*parameterShapes[slot]);
       if (!value || !coerce(*value, *parameterShapes[slot], argument.span))
         return std::nullopt;
@@ -1050,7 +1051,7 @@ private:
       if (!arguments[i])
         return fail("type", node.span,
                     "missing argument '" + function.parameters[i].name +
-                        "' in call to '" + callee.text + "'");
+                        "' in call to '" + displayPath(callee.text) + "'");
     frames.emplace_back();
     frame().inFunction = true;
     frame().result = result;
@@ -1126,7 +1127,7 @@ private:
         return unsupported(node.span, "a function used as a value");
       default:
         return fail("name", node.span,
-                    "unknown name '" + node.text +
+                    "unknown name '" + displayPath(node.text) +
                         "' in a constant expression");
       }
     }

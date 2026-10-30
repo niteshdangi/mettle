@@ -72,7 +72,7 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
           comparison
               ? "product comparisons require a declared comparison interface"
           : ranged ? "range indexing requires an array, slice or a type "
-                     "implementing core::ops::IndexRange"
+                     "implementing core.ops.IndexRange"
                    : "operator requires its native interface protocol");
     return inference.fresh();
   }

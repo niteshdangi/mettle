@@ -1,4 +1,4 @@
-import super.mutex.MutexGuard;
+import super.mutex.MutexGuard
 
 extern "C" {
     unsafe fn mettle_rt_cond_new(): ptr<mut u8>;

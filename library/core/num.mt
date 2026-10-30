@@ -2,8 +2,8 @@
 // an optional leading `+` (and `-` for signed types), then at least one digit;
 // no whitespace and no separators.
 
-import super.cmp.{Eq, PartialEq};
-import super.text.Text;
+import super.cmp.{Eq, PartialEq}
+import super.text.Text
 
 pub copy enum IntErrorKind { Empty, InvalidDigit, PosOverflow, NegOverflow, InvalidRadix }
 

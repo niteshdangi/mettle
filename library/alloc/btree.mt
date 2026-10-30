@@ -1,13 +1,13 @@
-import package.core.iter.{Iterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems};
-import package.core.clone.Clone;
-import package.core.cmp.{Eq, PartialEq, PartialOrd};
-import package.core.hash.{Hash, Hasher};
-import package.core.fmt;
-import package.core.slice.SliceIter;
-import super.alloc.{Allocator, Global, AllocError};
-import super.vec.List;
-import package.core.cmp.{Ord, Ordering};
-import package.core.borrow.KeyView;
+import package.core.iter.{Iterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import package.core.clone.Clone
+import package.core.cmp.{Eq, PartialEq, PartialOrd}
+import package.core.hash.{Hash, Hasher}
+import package.core.fmt
+import package.core.slice.SliceIter
+import super.alloc.{Allocator, Global, AllocError}
+import super.vec.List
+import package.core.cmp.{Ord, Ordering}
+import package.core.borrow.KeyView
 
 pub type Entry<K, V> {
     pub key: K

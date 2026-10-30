@@ -1,4 +1,5 @@
 #include "semantics/inference.h"
+#include "support/path.h"
 #include <algorithm>
 
 namespace mettle {
@@ -125,8 +126,8 @@ void TypeInference::equal(int a, int b, Span span, bool coercion) {
       (an != Variable::Numeric::None && bn != Variable::Numeric::None &&
        an != bn)) {
     diagnostics.error("type", span,
-                      "expected " + std::string(types.name(value(b))) +
-                          ", found " + std::string(types.name(value(a))));
+                      "expected " + displayPath(types.name(value(b))) +
+                          ", found " + displayPath(types.name(value(a))));
     return;
   }
   if (variables[a].kind || variables[b].kind) {
@@ -175,8 +176,8 @@ void TypeInference::equal(int a, int b, Span span, bool coercion) {
   }
   if (at != Type::Unknown && bt != Type::Unknown && at != bt) {
     diagnostics.error("type", span,
-                      "expected " + std::string(types.name(bt)) + ", found " +
-                          std::string(types.name(at)));
+                      "expected " + displayPath(types.name(bt)) + ", found " +
+                          displayPath(types.name(at)));
     return;
   }
   variables[a].parent = b;

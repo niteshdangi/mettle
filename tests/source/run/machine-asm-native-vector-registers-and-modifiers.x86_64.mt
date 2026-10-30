@@ -7,7 +7,7 @@ fn main() {
         asm!("paddd {left:x}, {right:x}",
              left = inlateout(xmm_reg) left, right = in(xmm_reg) right,
              options(pure,nomem,nostack,preserves_flags))
-        let lanes = core.mem.transmute::<[i32;4]>(left)
+        let lanes = core.mem.transmute<[i32;4]>(left)
         if lanes[3] == 42 { 0 } else { 1 }
     }
 }

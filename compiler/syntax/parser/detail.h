@@ -137,6 +137,13 @@ private:
     while (peek().kind == TokenKind::Newline)
       ++position;
   }
+  // An item ends at a newline, `}`, end of input or an optional `;`.
+  void endItem(const char *what) {
+    if (take(";") || peek().kind == TokenKind::Newline ||
+        peek().kind == TokenKind::End || is("}"))
+      return;
+    fail(std::string("expected a newline after ") + what);
+  }
   void separators() {
     while (peek().kind == TokenKind::Newline || is(";"))
       ++position;

@@ -1,4 +1,4 @@
-import package.core.panic.panic;
+import package.core.panic.panic
 extern "C" {
     unsafe fn mettle_rt_mutex_new(): ptr<mut u8>;
     unsafe fn mettle_rt_mutex_free(mutex: ptr<mut u8>): Unit;
@@ -41,7 +41,7 @@ pub type MutexGuard<T, region r> {
         }
     }
 }
-extend<T, region r> MutexGuard<T, region r> not Transferable;
+extend<T, region r> MutexGuard<T, region r> not Transferable
 unsafe extend<T: Shareable, region r> MutexGuard<T, region r> implements Shareable {}
 
 pub fn new<T>(value: take T): Mutex<T> {

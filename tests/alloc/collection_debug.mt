@@ -1,16 +1,16 @@
-import alloc.binary_heap;
-import alloc.btree;
-import alloc.hash_map;
-import alloc.linked_list;
-import alloc.string.String;
-import alloc.vec;
-import alloc.vec.List;
-import alloc.vec_deque;
-import alloc.boxed;
-import core.clone.Clone;
-import alloc.rc;
-import core.fmt;
-import core.fmt.Debug;
+import alloc.binary_heap
+import alloc.btree
+import alloc.hash_map
+import alloc.linked_list
+import alloc.string.String
+import alloc.vec
+import alloc.vec.List
+import alloc.vec_deque
+import alloc.boxed
+import core.clone.Clone
+import alloc.rc
+import core.fmt
+import core.fmt.Debug
 
 fn render<T: Debug>(value: read T, pretty: bool): String {
     var out = alloc.string.new()

@@ -1,4 +1,4 @@
-import core.ops;
+import core.ops
 type V { x: i32 }
 extend V implements core.ops.Add<V> {
     type Output = V

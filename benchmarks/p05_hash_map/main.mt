@@ -1,4 +1,4 @@
-import alloc.hash_map;
+import alloc.hash_map
 
 fn seed(): i64 { 12345i64 } // bench-edit-point
 

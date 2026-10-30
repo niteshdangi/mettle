@@ -2,7 +2,7 @@
 // equal identities in every package; distinct types differ (up to a 64-bit
 // hash collision of their canonical names).
 
-import super.cmp.{Eq, PartialEq};
+import super.cmp.{Eq, PartialEq}
 
 pub copy type TypeId { value: u64 }
 

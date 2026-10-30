@@ -1,5 +1,5 @@
 // expect-error: region
-import std.thread;
+import std.thread
 
 fn main(): i32 {
   thread.scope(fn(s: read thread.Scope): i32 {

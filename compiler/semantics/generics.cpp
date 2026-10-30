@@ -1,5 +1,6 @@
 #include "semantics/checker.h"
 #include "support/limits.h"
+#include "support/path.h"
 #include "syntax/lexer.h"
 #include <algorithm>
 #include <charconv>
@@ -393,8 +394,8 @@ static bool containsField(const Node &node) {
 }
 Type Checker::constantType(const Node &node, Type expected) {
   // Dotted paths (`Mod.N`, `Type.N`) in associated-constant values, array
-  // lengths, constant arguments and discriminants qualify like their `::`
-  // spelling. The nodes are parser-owned and qualification is idempotent.
+  // lengths, constant arguments and discriminants qualify like other paths.
+  // The nodes are parser-owned and qualification is idempotent.
   if (containsField(node))
     qualifyDottedPaths(const_cast<Node &>(node));
   if (needsEvaluator(node))
@@ -469,7 +470,7 @@ Type Checker::constantType(const Node &node, Type expected) {
         !integerLiteralFits(*facts(syntax).numeric, type, pointerBits())) {
       error("type", node.span,
             "required integer constant is outside the " +
-                std::string(checked.types->name(type)) + " range");
+                displayPath(checked.types->name(type)) + " range");
       return Type::Unknown;
     }
     facts(syntax).type = type;
@@ -556,7 +557,7 @@ Checker::genericArguments(const std::vector<GenericParameter> &parameters,
     if (binding.argument == Type::Unknown)
       error("type", span,
             "missing generic argument '" +
-                std::string(checked.types->name(binding.parameter)) + "'");
+                displayPath(checked.types->name(binding.parameter)) + "'");
     result.push_back(binding.argument);
   }
   std::vector<Type> concrete;

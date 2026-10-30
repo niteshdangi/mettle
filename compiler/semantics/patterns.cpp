@@ -1,4 +1,5 @@
 #include "semantics/checker.h"
+#include "support/path.h"
 #include "syntax/lexer.h"
 #include <charconv>
 #include <functional>
@@ -236,7 +237,8 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
             : typeName(spelling.substr(0, delimiter), p.span, current->owner);
     auto found = typeNames.find(owner);
     if (found == typeNames.end() || !checked.types->isProduct(found->second)) {
-      error("name", p.span, "unknown pattern constructor '" + p.text + "'");
+      error("name", p.span,
+            "unknown pattern constructor '" + displayPath(p.text) + "'");
       return;
     }
     if (type == Type::Unknown) {
@@ -267,7 +269,8 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
         if (product.variants[i].name == name)
           facts(p).variant = static_cast<int>(i);
       if (facts(p).variant < 0) {
-        error("name", p.span, "unknown variant pattern '" + p.text + "'");
+        error("name", p.span,
+              "unknown variant pattern '" + displayPath(p.text) + "'");
         return;
       }
       facts(p).fields = product.variants[facts(p).variant].fields;
@@ -408,7 +411,7 @@ void Checker::resolvePatterns() {
         !integerLiteralFits(*resolved.numeric, resolved.type, pointerBits()))
       error("type", pattern->span,
             "pattern literal is outside the " +
-                std::string(checked.types->name(resolved.type)) + " range");
+                displayPath(checked.types->name(resolved.type)) + " range");
   }
 }
 int Checker::bindingPattern(Node &n, bool reachable) {

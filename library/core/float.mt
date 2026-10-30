@@ -4,11 +4,11 @@
 // The output is plain positional notation, never an exponent: `0.1`, `1`,
 // `1500000`, `0.000001`. Display prints an integral value without a fractional
 // part (`1`); Debug keeps `1.0`. NaN prints `NaN`, infinities `inf`/`-inf`, and
-// negative zero `-0`. `Spec::precision` is not applied to floats yet. Width,
+// negative zero `-0`. `Spec.precision` is not applied to floats yet. Width,
 // fill, alignment, `plus` and `zero` follow the integer rules.
-import super.fmt.{Formatter, Write, Display, Debug, Error};
-import super.slice;
-import super.text.from_utf8_unchecked;
+import super.fmt.{Formatter, Write, Display, Debug, Error}
+import super.slice
+import super.text.from_utf8_unchecked
 
 // 40 little-endian 32-bit limbs hold every intermediate value for f64 (about
 // 1100 bits at most); `len` counts the significant limbs, so zero has none.

@@ -1,5 +1,6 @@
 #include "semantics/interfaces.h"
 #include "support/limits.h"
+#include "support/path.h"
 #include <algorithm>
 #include <functional>
 #include <stdexcept>
@@ -406,7 +407,7 @@ bool Solver::coherent() {
       if (!known.contains(parameter)) {
         diagnostics.error("type", left.span,
                           "unconstrained implementation parameter '" +
-                              std::string(types.name(parameter)) + "'");
+                              displayPath(types.name(parameter)) + "'");
         valid = false;
       }
     if (types.isErased(left.interfaceType)) {

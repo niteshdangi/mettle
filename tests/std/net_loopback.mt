@@ -1,7 +1,7 @@
 // Single-process loopback TCP and UDP with partial transfers and timeouts.
-import std.io.{Error, ErrorKind, Reader, Writer};
-import std.net.{SocketAddr, TcpStream, TcpListener};
-import std.time.from_millis;
+import std.io.{Error, ErrorKind, Reader, Writer}
+import std.net.{SocketAddr, TcpStream, TcpListener}
+import std.time.from_millis
 
 fn any_port(): SocketAddr { std.net.socket_addr(std.net.localhost(), 0u16) }
 

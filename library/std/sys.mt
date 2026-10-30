@@ -1,8 +1,8 @@
 // Raw operating-system boundary of `std`: the libc calls and the
 // `runtime/sys.cpp` shims (see `runtime/sys.h`), plus checked helpers shared by
 // the hosted modules. Nothing here is a stable public surface.
-import package.alloc.vec;
-import package.alloc.vec.List;
+import package.alloc.vec
+import package.alloc.vec.List
 
 extern "C" {
     pub unsafe fn mettle_rt_errno(): i32;

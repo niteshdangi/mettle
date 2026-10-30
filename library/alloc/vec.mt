@@ -1,12 +1,12 @@
-import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, layout_unchecked, free_block, handle_alloc_error, panic_precondition, dangling_for};
-import package.core.clone.Clone;
-import package.core.default.Default;
-import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd};
-import package.core.hash.{Hash, Hasher};
-import package.core.fmt;
-import package.core.ops.{Deref, DerefMut, IndexRange, IndexRangeMut};
-import package.core.iter.{Iterator, BidirectionalIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems};
-import package.core.slice.{SliceIter, SliceIterMut};
+import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, layout_unchecked, free_block, handle_alloc_error, panic_precondition, dangling_for}
+import package.core.clone.Clone
+import package.core.default.Default
+import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import package.core.hash.{Hash, Hasher}
+import package.core.fmt
+import package.core.ops.{Deref, DerefMut, IndexRange, IndexRangeMut}
+import package.core.iter.{Iterator, BidirectionalIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import package.core.slice.{SliceIter, SliceIterMut}
 
 copy type RawSlice<T> { data: ptr<read T>; len: usize }
 
@@ -508,7 +508,7 @@ extend<T> List<T> implements FromItems<T> {
 
 extend<T: fmt.Debug, A: Allocator> List<T, A> implements fmt.Debug {
     fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
-        try <[T] implements fmt.Debug>::fmt(self.as_slice(), mut f)
+        try fmt.debug_slice<T, W>(self.as_slice(), mut f)
     }
 }
 

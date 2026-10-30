@@ -2,12 +2,12 @@
 // set; an expired timeout fails with kind `TimedOut` while keeping the raw OS
 // number the system reported (usually "try again"). IPv6 and connect
 // timeouts are not provided yet.
-import package.core.outcome;
-import super.io;
-import super.io.{Error, ErrorKind, Reader, Writer};
-import package.core.slice;
-import super.sys;
-import super.time.Duration;
+import package.core.outcome
+import super.io
+import super.io.{Error, ErrorKind, Reader, Writer}
+import package.core.slice
+import super.sys
+import super.time.Duration
 
 pub copy type Ipv4Addr { bits: u32 }
 

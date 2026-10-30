@@ -1,5 +1,5 @@
-import core.future.{Context, Future, Poll};
-import std.task;
+import core.future.{Context, Future, Poll}
+import std.task
 
 type Borrowed<region r> { value: read i32 from r; polled: bool }
 extend<region r> Borrowed<region r> implements Future {

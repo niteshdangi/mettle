@@ -23,8 +23,10 @@ fn main(): i32 {
     let s: Slot<i32> = Slot.empty()
     let t = Slot<i32>.empty()
     let started = util.Counter.start(7)
+    let incremented = util.inc(1)
+    let doubled = util.deep.twice(3)
     let h = Holder(3)
     let util = h
     let shadowed = util.util
-    unwrap(a) + unwrap(b) + unwrap(c) + util::inc(1) + util::deep::twice(3) + started + shadowed
+    unwrap(a) + unwrap(b) + unwrap(c) + incremented + doubled + started + shadowed
 }

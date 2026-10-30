@@ -1,6 +1,6 @@
-import core.fmt;
-import core.fmt.Write;
-import core.fmt.Display;
+import core.fmt
+import core.fmt.Write
+import core.fmt.Display
 
 type Pt { x: i32; y: i32 }
 extend Pt implements Display {

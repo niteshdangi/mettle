@@ -1,6 +1,6 @@
 // expect-exit: 0
 const fn lanes(n: usize): usize { n * 2 + 1 }
-const LEN: usize = lanes(3);
+const LEN: usize = lanes(3)
 const AREA: usize = if LEN > 4 { LEN * LEN } else { 0 };
 
 fn main(): i32 {

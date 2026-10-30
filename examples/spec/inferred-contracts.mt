@@ -16,7 +16,7 @@ type Counter {
 
 pub fn accept_nonnegative(value: i32) throws ParseError {
     if value < 0 {
-        throw ParseError::Negative
+        throw ParseError.Negative
     }
     value
 }

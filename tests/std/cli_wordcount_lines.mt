@@ -5,10 +5,10 @@
 // As cli_wordcount, using the borrowed-line API: read_bytes_line_into reuses
 // one buffer, [u8].bytes() iterates Copy bytes, paths are passed as OsString
 // through PathInput, and write_path prints the input name.
-import std.io.{Error, Reader, Writer};
-import std.ffi;
-import std.path.PathInput;
-import alloc.vec.List;
+import std.io.{Error, Reader, Writer}
+import std.ffi
+import std.path.PathInput
+import alloc.vec.List
 
 fn decimal(v: usize): List<u8> {
     var digits = alloc.vec.new<u8>()

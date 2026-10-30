@@ -11,8 +11,8 @@ void Parser::run(Module &module, std::vector<std::string> scope, bool nested) {
       auto metadata = attributes();
       ItemSyntax item{scope, visibility(), std::move(metadata)};
       if ((is("global_asm") && peek(1).text == "!") ||
-          (is("core") && peek(1).text == "::" && peek(2).text == "arch" &&
-           peek(3).text == "::" && peek(4).text == "global_asm" &&
+          (is("core") && peek(1).text == "." && peek(2).text == "arch" &&
+           peek(3).text == "." && peek(4).text == "global_asm" &&
            peek(5).text == "!")) {
         if (!item.attributes.empty())
           feature("attributes on global assembly are not implemented");
@@ -34,8 +34,7 @@ void Parser::run(Module &module, std::vector<std::string> scope, bool nested) {
         for (auto &method : value.methods)
           method.item.scope = item.scope;
         module.interfaces.push_back(std::move(value));
-      } else if (is("impl") || (is("unsafe") && peek(1).text == "impl") ||
-                 isExtension()) {
+      } else if (isExtension()) {
         auto value = implementationDeclaration();
         value.item = item;
         for (auto &method : value.methods)
@@ -61,9 +60,7 @@ void Parser::run(Module &module, std::vector<std::string> scope, bool nested) {
         expect("=");
         alias.target = type();
         alias.span.end = tokens[position - 1].span.end;
-        if (peek().kind != TokenKind::Newline && !is(";") &&
-            peek().kind != TokenKind::End && !(nested && is("}")))
-          fail("expected a newline or ';' after an alias");
+        endItem("an alias");
         module.aliases.push_back(std::move(alias));
         if (module.aliases.size() > limits::products)
           fail("alias declaration limit exceeded", "limit");
@@ -89,7 +86,6 @@ void Parser::run(Module &module, std::vector<std::string> scope, bool nested) {
       while (peek().kind != TokenKind::End && !is("fn") && !is("type") &&
              !is("copy") && !is("alias") && !is("enum") && !is("union") &&
              !is("pub") && !is("module") && !is("import") && !is("interface") &&
-             !is("impl") &&
              !(is("extend") && position && tokens[position - 1].text != "." &&
                tokens[position - 1].text != "fn") &&
              !(nested && is("}")))

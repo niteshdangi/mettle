@@ -1,6 +1,6 @@
 // expect-error: region
-import core.future.{Context, Future, Poll};
-import std.task;
+import core.future.{Context, Future, Poll}
+import std.task
 
 type Child<region r> { value: read i32 from r }
 extend<region r> Child<region r> implements Future {

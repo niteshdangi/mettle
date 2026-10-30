@@ -1,10 +1,10 @@
-import super.mutex;
-import super.condvar;
-import super.super.time;
-import package.alloc.arc.Arc;
-import package.alloc.vec.List;
-import package.alloc.vec_deque.Deque;
-import package.core.iter.Iterator;
+import super.mutex
+import super.condvar
+import super.super.time
+import package.alloc.arc.Arc
+import package.alloc.vec.List
+import package.alloc.vec_deque.Deque
+import package.core.iter.Iterator
 
 extern "C" {
     unsafe fn mettle_rt_select_epoch(): u64;
@@ -60,7 +60,7 @@ pub type Receiver<T> {
         unsafe { mettle_rt_select_notify() }
     }
 }
-extend<T> Receiver<T> not Shareable;
+extend<T> Receiver<T> not Shareable
 
 // Sender for a bounded channel; capacity zero requires a waiting receiver.
 pub type SyncSender<T> {

@@ -1,6 +1,6 @@
 // Path decomposition edge cases.
-import std.path.path_from_text;
-import std.path.Path;
+import std.path.path_from_text
+import std.path.Path
 
 fn name_is(p: read Path, want: read Text): bool {
     match p.file_name() { present(n) => { match n.to_str() { present(t) => t == want, none => false } }, none => false }

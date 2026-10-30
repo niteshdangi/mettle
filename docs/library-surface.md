@@ -36,7 +36,7 @@ the other IDs identify additional shapes present, not exclusive alternatives.
 | T03 | Box/Arc/Rc/Weak/Pin map to heap/shared/local shared/weak/pinned owners or views. Preserve allocator identity, payload access, weak failure and pin projection rules. Explicit shared-owner Clone maps to retain; it never makes owner handles Copy. |
 | T04 | Option/Result map recursively to optional/stored outcome; source unit maps to native `Unit`, with `()` as its value, and source never maps to native `Never`. Unit/Never and nested alternatives remain distinct. Preserve mapping, transpose, extraction and iteration operations. A throwing convenience wrapper cannot replace the stored-outcome operation. |
 | T05 | Translate a callable's parameter access modes, output, failure and regions; native result annotations use `: Type`, including `: Unit`. Callable types/bodyless declarations keep explicit results; inferred definitions must resolve to the same contract. Fn/FnMut/FnOnce become read/mutate/consume-callable capabilities. By-value non-Copy parameters are explicitly consuming, not silently borrowed under the native default. |
-| T06 | Concrete impl-Trait parameters become independently inferred generics; opaque returns have declaration identity. Dyn values become explicitly erased interface values with the same associated bindings/regions; no implicit allocation is added. |
+| T06 | Concrete Rust `impl Trait` parameters become independently inferred generics; opaque returns have declaration identity. Dyn values become explicitly erased interface values with the same associated bindings/regions; no implicit allocation is added. |
 | T07 | Translate `for<'r>` to `for<region r>` with fresh rigid universes and leak checks. No monomorphization-time ownership privileges. |
 | T08 | Preserve const item/parameter identity and stable const-callability independently from runtime stability. Required evaluation uses target constants and checked arithmetic, not host execution or release wrapping. |
 | T09 | Preserve unsafe-call requirements, pointer mutability/provenance, initialized validity, unions and manual destruction. A safe reference API cannot become an unsafe raw-pointer workaround. |
@@ -84,7 +84,7 @@ unsafe unless the compiler can establish that exact initialized interpretation.
 
 ### Allocation-free cells and pin properties
 
-The compiler-owned `core::cell::Cell<T>` provides `new`, Copy-only `get`,
+The compiler-owned `core.cell.Cell<T>` provides `new`, Copy-only `get`,
 `set`, `replace`, `swap`, `get_mut`, `into_inner` and `as_ptr`.
 `RefCell<T>` provides `new`, `replace`, `swap`, `get_mut`, `into_inner`,
 `as_ptr`, `borrow`, `borrow_mut`, `try_borrow` and `try_borrow_mut`.
@@ -97,7 +97,7 @@ retains the ordinary unsafe raw-pointer obligations.
 Both provide `get_ref`; `RefMut` additionally provides `get_mut`, requiring
 exclusive access to the guard. `Ref.clone()` acquires another counted read
 guard, without cloning the payload. A guard stored in a nominal type declares
-its cell lifetime, for example `guard: core::cell::RefMut<T> from r`.
+its cell lifetime, for example `guard: core.cell.RefMut<T> from r`.
 Returned payload views borrow their guard, not merely its backing cell.
 The guards cannot be moved, forgotten or destroyed while such views remain
 live. A surviving guard keeps its cell immovable and alive until cleanup,
@@ -209,7 +209,7 @@ The target's actual register/save-area/stack classification is normative, not a
 generic sequence of native T objects.
 
 The initial source interface spells a definition's cursor `args: ...` after at
-least one fixed parameter. `args.arg::<T>()` is unsafe and requests the actual
+least one fixed parameter. `args.arg<T>()` is unsafe and requests the actual
 promoted C argument type: request `i32` rather than `i8`/`bool`, and `f64`
 rather than `f32`. C-compatible Copy aggregates retain their aggregate ABI;
 their fields do not undergo scalar default promotions individually.
@@ -225,8 +225,8 @@ The physical variadic entry captures its incoming ABI state before invoking
 any logical body or cleanup callback. A hidden context is not a named source
 parameter and does not change source argument counts or result-source contracts.
 
-Static declarations use `static NAME: Type = constant;` or
-`static mut NAME: Type = constant;`; foreign blocks admit the same declaration
+Static declarations use `static NAME: Type = constant` or
+`static mut NAME: Type = constant`; foreign blocks admit the same declaration
 without an initializer. Module visibility, imports and local shadowing apply
 normally. Static storage has program lifetime, cannot be moved out, and is not
 implicitly scope-dropped. Immutable storage containing native interior mutation
@@ -254,7 +254,7 @@ The I06 implementation uses compiler-owned target facts for Linux x86-64
 CPU tuning. This is an initial implementation inventory, not I13's complete
 per-operation/per-profile closure or a target-qualification receipt.
 
-`asm!` and `core::arch::asm!` implement the annex's ordered inputs, early/late
+`asm!` and `core.arch.asm!` implement the annex's ordered inputs, early/late
 outputs, split/same-place inouts, typed full-width/generic integer constants,
 resolved function/static symbols,
 register classes/aliases/modifiers, C/system clobbers and options. Linux also
@@ -383,30 +383,29 @@ process-attribute methods are not smuggled in as supporting-protocol exceptions.
 
 ## 9. Vocabulary and the `experience-1` prelude
 
-Status: accepted target (decision D21), effective at the cutover. The native
-vocabulary is chosen in the same migration as the dotted paths of
-language-grammar section 13. Canonical reexports or aliases preserve the
+Status: implemented (decision D21). Canonical reexports or aliases preserve the
 baseline identities that baseline-mapping.md requires; there is one collection
 implementation, not a branded and a compatibility copy. Compiler-recognized
 protocols follow resolved declaration identities, not a second set of
 spelling-based special cases.
 
-| Pre-cutover name or form | Target name or form |
+| Rust baseline name or form | Mettle name or form |
 | --- | --- |
 | `Vec`, `HashMap`, `HashSet` | `List`, `Map`, `Set` from `alloc.collections` |
 | `BTreeMap`, `BTreeSet` | `SortedMap`, `SortedSet` |
 | `IntoIterator`, `IterableMut` | `OwnedIterable`, `MutableIterable` |
 | `DoubleEndedIterator`, `FromIterator`, `Extend` | `BidirectionalIterator`, `FromItems`, `ExtendItems` |
-| `impl<T> X implements I` | `extend<T> X implements I` |
-| Out-of-line inherent `impl<T> X` | `extend<T> X`; ordinary methods prefer the type body |
+| Interface implementation blocks | `extend<T> X implements I` |
+| Out-of-line inherent implementation blocks | `extend<T> X`; ordinary methods prefer the type body |
 | Hosted `Read`, `Write`, `BufReader`, `BufWriter` | `Reader`, `Writer`, `BufferedReader`, `BufferedWriter` |
 | Named optional/result wrappers | None introduced: use `T?` and `(T throws E)` |
 
-All iterator adapter types use one past-participle scheme, because
-`core.iter.Map<B,I,F>` would otherwise shadow the prelude collection `Map` and
-a partial rename would leave an inconsistent family:
+The hosted I/O names refer to `std.io`; `core.fmt.Write` retains its name.
 
-| Adapter | Type | Adapter | Type |
+Iterator adapter types use one consistent past-participle scheme, distinct from
+the collection type `Map`:
+
+| Rust adapter | Mettle type | Rust adapter | Mettle type |
 | --- | --- | --- | --- |
 | `Map` | `Mapped` | `TakeWhile` | `TakenWhile` |
 | `Filter` | `Filtered` | `SkipWhile` | `SkippedWhile` |
@@ -416,11 +415,9 @@ a partial rename would leave an inconsistent family:
 | `Chain` | `Chained` | `Rev` | `Reversed` |
 | `TakeN` | `Limited` | `Skip` | `Skipped` |
 
-`Peekable` is unchanged, and the adapter *method* names (`map`, `filter`, ...)
-are unchanged. Signatures, implementations and the baseline mapping change in
-the same resolved-identity migration. No legacy adapter `Map` alias is injected
-into the native iterator module; a requirement for that exact old exposure needs
-an explicit mapping-policy decision at the freeze.
+`Peekable` and adapter *method* names (`map`, `filter`, ...) are unchanged.
+`Map` names the collection; iterator adapters use the names in the table. The
+iterator module does not export a `Map` alias for an adapter.
 
 The accurate standard names `Iterator`, `Iterable`, `Copy`, `Clone`, `Eq`, `Ord`,
 `Hash`, `Text` and `String` are retained: their presence alone is not evidence
@@ -447,7 +444,8 @@ avoid redundant adapters but never manufacture an owned String.
 
 ## 10. Formatting and output
 
-Status: accepted target (decisions D23-D24). Core owns sink formatting; **std
+Status: accepted design (decisions D23-D24); implementation partial (see
+section 10.3). Core owns sink formatting; **std
 owns Writer's `write`/`write_line` methods and the byte-I/O adapter**;
 `write_all(bytes)` and `flush()` stay methods too.
 
@@ -520,27 +518,25 @@ non-pipe errors still panic, while fallible Writer methods never request this
 termination and preserve returned error identity. Programs needing controlled
 cleanup use `try out.write_line(...)` and handle broken pipe themselves.
 
-Migration records the change from silently ignored failure to
-panic-on-ordinary-failure with a quiet broken pipe; the names are not
-deprecated, and the actual cutover date is recorded after lane-owner approval.
-Each old call migrates by intent: the CLI's error-reporting branches keep an
-explicit `let _ = capture ...` so their exit-status policy does not become 101.
+The behavior is panic-on-ordinary-failure with a quiet broken pipe. The CLI's
+error-reporting branches keep an explicit `let _ = capture ...` so their
+exit-status policy does not become 101.
 
 ### 10.3. Implementation status
 
 F1 is partially implemented and verified on macOS arm64 (Release and Debug):
-pre-cutover `f"..{expr}.."` holes for integers, `bool`, `char`, `Text` and
+`f"..{expr}.."` holes for integers, `bool`, `char`, `Text` and
 `String`; a non-f-string argument lifted to a one-hole message; two-level
 forwarding; the no-escape rules (no binding, return, capture, ordinary-parameter
-use, or function value); `Write.write`/`write_line` and `print`/`eprint`,
+use, or function value); `Writer.write`/`write_line` and `print`/`eprint`,
 including both broken-pipe dispositions (`probe.broken-pipe`); float holes (`f32`/`f64`
 `Display`/`Debug` in `library/core/float.mt`: shortest round-trip digits by
 exact big-integer arithmetic, no libc, plain positional notation, `NaN`/`inf`,
-`-0`; `Spec::precision` is not applied to floats); holes for any sized type
-implementing `core::fmt::Display` through one blanket `Hole` implementation
+`-0`; `Spec.precision` is not applied to floats); holes for any sized type
+implementing `core.fmt.Display` through one blanket `Hole` implementation
 (the per-primitive and `String` implementations were removed; `Text` keeps its
 own because it is unsized); and a dedicated type error ("a value of this type
-cannot fill an f-string hole; it must be Text or implement core::fmt::Display")
+cannot fill an f-string hole; it must be Text or implement core.fmt.Display")
 replacing "unsatisfied interface obligation" for a hole. Fixtures:
 `tests/source/run/fstring-float-and-display-holes.mt`,
 `tests/source/fail/fstring-hole-type-cannot-be-formatted.mt`.
@@ -551,10 +547,10 @@ indirect-call, code-size and check-cost measurements.
 
 ## 11. Lending lines and byte iteration
 
-Status: accepted target (decision D25); implemented in current spelling
-(`BufReader::read_line_into`/`read_bytes_line_into`, `[u8].bytes()`; fixtures
+Status: implemented (`BufferedReader.read_line_into`/`read_bytes_line_into`,
+`[u8].bytes()`; fixtures
 `tests/source/{run,fail}/read-line-into*`, `tests/std/cli_wordcount_lines.mt`).
-The unsafe `String::as_mut_vec` helper supports the line reader. Std buffered
+The unsafe `String.as_mut_vec` helper supports the line reader. Std buffered
 readers provide:
 
 ```text
@@ -580,11 +576,10 @@ generic-loop ownership from a later Copy instantiation.
 
 ## 12. Borrowed keys and path input
 
-Status: accepted target (decisions D28-D29); implemented in current spelling as
-`core::borrow::KeyView<Q: unsized>` (identity and `String` to `Text`) on the
-hash/B-tree maps and sets, and `std::path::PathInput` for Path/PathBuf/OsStr/
-OsString accepted by fs, env, process and `Write::write_path`. Windows path
-input is not delivered.
+Status: `core.borrow.KeyView<Q: unsized>` (identity and `String` to `Text`) is
+implemented on the hash/ordered maps and sets. `std.path.PathInput` for
+Path/PathBuf/OsStr/OsString is implemented for POSIX fs, env, process and
+`Writer.write_path`; Windows path input is not delivered.
 
 **KeyView.** `KeyView<Q>` exposes `read Q from self` without allocation or
 retention. `Map<K,V>.get<Q>(key: read Q)` requires `K: KeyView<Q>` and

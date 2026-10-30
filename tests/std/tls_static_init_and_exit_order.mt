@@ -1,11 +1,11 @@
 // expect-stdout: WB\nWA\nMB\nMA\n
-import std.thread;
-import std.sync.tls;
-import std.io;
+import std.thread
+import std.sync.tls
+import std.io
 
-static MAIN_THREAD: core.sync.atomic.AtomicUsize = core.sync.atomic.AtomicUsize.new(0usize);
-static FIRST: tls.LocalKey<Marker> = tls.LocalKey(make_first);
-static SECOND: tls.LocalKey<Marker> = tls.LocalKey(make_second);
+static MAIN_THREAD: core.sync.atomic.AtomicUsize = core.sync.atomic.AtomicUsize.new(0usize)
+static FIRST: tls.LocalKey<Marker> = tls.LocalKey(make_first)
+static SECOND: tls.LocalKey<Marker> = tls.LocalKey(make_second)
 
 type Marker {
     main: bool

@@ -1,5 +1,6 @@
 #include "semantics/checker.h"
 #include "support/limits.h"
+#include "support/path.h"
 #include "types/machine.h"
 #include <algorithm>
 #include <functional>
@@ -34,12 +35,13 @@ std::optional<CheckedModule> Checker::run() {
     auto name = definitionName(f.span, f.name);
     facts(f).canonicalName = name;
     if (!names.emplace(name, i).second)
-      error("name", f.span, "duplicate function '" + f.name + "'");
+      error("name", f.span, "duplicate function '" + displayPath(f.name) + "'");
     if (auto type = typeNames.find(name);
         type != typeNames.end() && checked.types->isProduct(type->second) &&
         !checked.types->isSum(type->second))
       error("name", f.span,
-            "function conflicts with type constructor '" + f.name + "'");
+            "function conflicts with type constructor '" + displayPath(f.name) +
+                "'");
     functionVariables[&f] =
         inference.fresh(annotation(f.annotation, f.span, f.owner));
     facts(f).diverges = inference.value(functionVariables[&f]) == Type::Never;
@@ -321,7 +323,7 @@ std::optional<CheckedModule> Checker::run() {
         !integerLiteralFits(*resolved.numeric, resolved.type, pointerBits()))
       error("type", syntax->span,
             "integer literal is outside the " +
-                std::string(checked.types->name(resolved.type)) + " range");
+                displayPath(checked.types->name(resolved.type)) + " range");
     if (syntax->kind == Kind::Cast) {
       auto source = checked.nodes.at(syntax->children[0].get()).type;
       if (source != Type::Never && source != Type::Unknown &&

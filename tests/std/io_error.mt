@@ -1,6 +1,6 @@
-// io::Error keeps the raw OS error number unchanged and derives a portable kind.
-import std.io.{Error, ErrorKind, Reader};
-import std.path.path_from_text;
+// io.Error keeps the raw OS error number unchanged and derives a portable kind.
+import std.io.{Error, ErrorKind, Reader}
+import std.path.path_from_text
 
 fn run(): i32 throws Error {
     // Any errno round-trips exactly, whether or not it maps to a kind.

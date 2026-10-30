@@ -1,7 +1,7 @@
 // Operations on the native stored outcome `(T throws E)`.
-// `import core::outcome;` makes the inherent methods below visible.
+// `import core.outcome;` makes the inherent methods below visible.
 
-import super.text.Text;
+import super.text.Text
 
 extend<T, E> (T throws E) {
     pub fn is_success(): bool { match self { success(value) => true, failure(error) => false } }

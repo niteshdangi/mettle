@@ -1,6 +1,7 @@
 #include "semantics/checker.h"
 #include "semantics/region_solver.h"
 #include "support/limits.h"
+#include "support/path.h"
 #include <algorithm>
 #include <functional>
 #include <regex>
@@ -121,7 +122,7 @@ Type Checker::annotation(const TypeSyntax &syntax, Span span,
   }
   static const std::regex unsupported("([iu](8|16|32|64|128|size)|f(32|64))");
   error(std::regex_match(syntax.name, unsupported) ? "feature" : "name", span,
-        "unresolved or inaccessible type '" + syntax.name + "'");
+        "unresolved or inaccessible type '" + displayPath(syntax.name) + "'");
   return Type::Unknown;
 }
 Type Checker::semanticAnnotation(const TypeSyntax &syntax, Span span,

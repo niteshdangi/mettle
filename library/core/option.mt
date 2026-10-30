@@ -1,8 +1,8 @@
-// Operations on the native optional `T?`. `import core::option;` makes the
+// Operations on the native optional `T?`. `import core.option;` makes the
 // inherent methods below visible. Absence-panicking operations call
-// `core::panic::panic`.
+// `core.panic.panic`.
 
-import super.text.Text;
+import super.text.Text
 
 extend<T> T? {
     pub fn is_present(): bool { match self { present(value) => true, none => false } }

@@ -29,16 +29,15 @@ decisions; these source documents carry those subsequent refinements.
 
 ## Experience revision (accepted 2026-10-30)
 
-These target decisions carry the D16 identity into the source language and
-library. They are accepted design, not implemented syntax: the compiler keeps
-the pre-cutover spellings until the cutover milestone, which is scheduled by the
-lane owner ([implementation-plan.md §8.7](implementation-plan.md#87-experience-track-readability-compile-cost-and-storage)).
-They retain the V1 capability, ownership, failure and runtime contracts.
+These decisions carry the D16 identity into the source language and library.
+They define the current syntax and vocabulary and retain the V1 capability,
+ownership, failure and runtime contracts. Implementation and verification
+status are tracked in [implementation-plan.md §8.7](implementation-plan.md#87-experience-track-readability-compile-cost-and-storage).
 
 | ID | Decision | Normative section |
 | --- | --- | --- |
 | D18 | Dots qualify modules, types and values (`import std.io`, `as`); `T.(Interface).Item` selects interface items; lexical shadowing with diagnostics; bounded method lookup (inherent, bounds, prelude, owning package, explicit imports); lowercase variants share one associated namespace with associated functions and constants, and a collision is a declaration error; brace-list imports `import std.io.{Reader, Writer}` and glob imports `import std.io.*` | [semantic-rules.md §13.1-13.3](semantic-rules.md#131-qualified-resolution-shadowing-and-interface-selection), [language-grammar.md §13.1](language-grammar.md#131-dotted-paths-and-imports) |
-| D19 | Generic application in expressions is `name<...>` decided by a syntax-only rule: a nonempty generic list followed by one of `( . ) ] } , ;`, an unsuppressed newline or end of file. Turbofish and `::` are removed; the `assert(a < b, c > (d))` parse is an accepted, diagnosed quirk | [language-grammar.md §13.3](language-grammar.md#133-generic-application) |
+| D19 | Generic application in expressions is `name<...>` decided by a syntax-only rule: a nonempty generic list followed by one of `( . ) ] } , ;`, an unsuppressed newline or end of file. The `assert(a < b, c > (d))` parse is an accepted, diagnosed quirk | [language-grammar.md §13.3](language-grammar.md#133-generic-application) |
 | D20 | `List`, `Map` and `Set` default `A = Global`; constructors are selected by explicit label/arity shape with declaration-checked applicability (`A = Global`), no hidden allocator fallback and no return-type overloading | [semantic-rules.md §13.4](semantic-rules.md#134-constructor-selection) |
 | D21 | Native vocabulary (`List`, `Map`, `Set`, `SortedMap`, `SortedSet`, `OwnedIterable`, `MutableIterable`, `BidirectionalIterator`, `FromItems`, `ExtendItems`, `Reader`/`Writer`, `BufferedReader`/`BufferedWriter`, past-participle iterator adapter types, contextual `extend`) with the versioned `experience-1` prelude. Accurate standard words (Iterator, Copy, Clone, Eq, Ord, Hash, Text, String) are kept | [library-surface.md §9](library-surface.md#9-vocabulary-and-the-experience-1-prelude), [language-grammar.md §13.2](language-grammar.md#132-contextual-extend-declarations), [baseline-mapping.md §4](baseline-mapping.md) |
 | D22 | Builder inference is local to one named function, solved before capture or escape, with source-span provenance and earliest-conflict diagnostics | [semantic-rules.md §13.5](semantic-rules.md#135-local-builder-inference) |
@@ -101,7 +100,7 @@ They retain the V1 capability, ownership, failure and runtime contracts.
 | OS/SDK/WASI/board execution | Supported-target claims | Probe selected reference profiles and publish release evidence |
 | Benchmark pilot and fixed release experiment | Runtime release verdict | Apply the specified plan with actual controlled measurements |
 | Compile-time and build-storage measurement | Compile-time and build-cache claims (D17) | Qualified-runner corpus measurement per [performance.md §5.1](performance.md#51-compile-time-and-build-storage-gate) |
-| Experience cutover (D18-D29) | Claim that target syntax or vocabulary is implemented | Milestones R0a-Qualification of [implementation-plan.md §8.7](implementation-plan.md#87-experience-track-readability-compile-cost-and-storage); pre-cutover spellings stay valid until then |
+| Experience track (D18-D29) | Claim that every syntax, lookup and inference obligation is complete | [Implementation-plan.md §8.7](implementation-plan.md#87-experience-track-readability-compile-cost-and-storage) records verified work and the remaining R1 blockers |
 | Project license | Public open-source licensing/distribution | Separate owner decision; no invented approval |
 | Registry governance and public stabilization | Public service/compatibility promises | Owner decisions before launch; selected pre-implementation syntax is not a public stability guarantee |
 

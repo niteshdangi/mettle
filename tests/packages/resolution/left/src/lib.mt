@@ -1,3 +1,3 @@
-import package.util;
+import package.util
 
 pub fn value(): i32 { util.value() }

@@ -3,6 +3,7 @@
 #include "backend/llvm/cleanup.h"
 #include "backend/llvm/object.h"
 #include "backend/llvm/target.h"
+#include "support/path.h"
 #include "llvm/IR/InlineAsm.h"
 
 #include "llvm/ADT/APFloat.h"
@@ -124,9 +125,9 @@ public:
       } else
         function =
             f.externalName.empty()
-                ? llvm::Function::Create(signature,
-                                         llvm::GlobalValue::InternalLinkage,
-                                         "mettle." + f.name, *module)
+                ? llvm::Function::Create(
+                      signature, llvm::GlobalValue::InternalLinkage,
+                      "mettle." + displayPath(f.name), *module)
                 : llvm::cast<llvm::Function>(
                       module->getOrInsertFunction(f.externalName, signature)
                           .getCallee());

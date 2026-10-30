@@ -2,9 +2,9 @@
 // and `MutableIterable` by canonical path for `for` loops. Adapters are lazy: they
 // pull from the wrapped iterator only when `next` is called, and consuming
 // methods stop at the first decisive item.
-import super.cmp.Ord;
-import super.option;
-import super.cmp.Ordering;
+import super.cmp.Ord
+import super.option
+import super.cmp.Ordering
 
 pub interface Iterator: Sized {
     type Item;
@@ -168,7 +168,7 @@ pub interface MutableIterable {
     fn iter_mut<region r>(receiver self: mut Self from r): Self.IterMut<region r>;
 }
 
-// Every iterator is trivially its own IntoIterator.
+// Every iterator is trivially its own OwnedIterable.
 extend<I: Iterator> I implements OwnedIterable {
     type Item = I.Item
     type IntoIter = I

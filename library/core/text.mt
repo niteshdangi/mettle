@@ -1,9 +1,9 @@
-import super.cmp.Eq;
-import super.cmp.Ord;
-import super.cmp.Ordering;
-import super.cmp.PartialEq;
-import super.cmp.PartialOrd;
-import super.iter.Iterator;
+import super.cmp.Eq
+import super.cmp.Ord
+import super.cmp.Ordering
+import super.cmp.PartialEq
+import super.cmp.PartialOrd
+import super.iter.Iterator
 
 // Unsized, validated UTF-8 view; the view metadata is the byte count. Only
 // the checked constructors below create views of Text, which keeps the

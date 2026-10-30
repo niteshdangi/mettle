@@ -5,7 +5,7 @@
 // threads need a Transferable, Static closure and result;
 // scoped threads may borrow from the enclosing frame and are always joined
 // before `scope` returns, also when the scope body panics.
-import package.core.panic.panic;
+import package.core.panic.panic
 
 extern "C" {
     unsafe fn mettle_rt_panicking(): i32;
@@ -224,8 +224,8 @@ pub type ScopedJoinHandle<T> {
     slot: ptr<mut Slot<T>>
     drop { unsafe { release(self.header) } }
 }
-extend<T> ScopedJoinHandle<T> not Transferable;
-extend<T> ScopedJoinHandle<T> not Shareable;
+extend<T> ScopedJoinHandle<T> not Transferable
+extend<T> ScopedJoinHandle<T> not Shareable
 
 extend<T> ScopedJoinHandle<T> {
     pub take fn join(): T throws Panicked {

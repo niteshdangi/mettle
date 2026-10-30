@@ -8,7 +8,7 @@ module values {
     pub static mut COUNT: i32 = 1;
 }
 import values.{ANSWER as NUMBER,CELL,FLAG}
-static VIEW: read i32 from static = read values.ANSWER;
+static VIEW: read i32 from static = read values.ANSWER
 fn answer(): read i32 from static { read NUMBER }
 fn forward(): read i32 from static { answer() }
 fn main() {

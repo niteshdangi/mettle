@@ -1,4 +1,5 @@
 #include "lsp/navigation.h"
+#include "support/path.h"
 #include "syntax/token.h"
 #include <algorithm>
 #include <set>
@@ -157,7 +158,7 @@ RenamePlan planRename(const Files &files, std::size_t file, std::size_t offset,
       // Callers name the parameter in `name: value` arguments.
       const auto &function = declaration(files, file, item.owner);
       if (itemCount(files, function.name) != 1) {
-        plan.error = "function '" + function.name +
+        plan.error = "function '" + displayPath(function.name) +
                      "' is declared more than once, so named arguments of "
                      "its parameter cannot be updated";
         return plan;

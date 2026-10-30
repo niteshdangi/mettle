@@ -388,7 +388,7 @@ The first I04 dependency implements non-generic transparent aliases and concrete
 static associated functions. Product identities are collected before forward
 alias expansion, and aliases preserve nominal/Copy/access/destruction behavior
 rather than defining wrapper types. Cycles, unknown targets and unbound
-region-specific aliases diagnose. `Type::function`, alias-qualified calls and
+region-specific aliases diagnose. `Type.function`, alias-qualified calls and
 `Self` construction/lookup resolve without changing source spelling; static
 functions have no implicit receiver. Explicit qualified read/mut/take method
 calls retain their access contracts and are not implicitly two-phase.
@@ -544,12 +544,12 @@ verdict. The last column names acceptance checks and explicit later limits.
 | S015 | Cell/RefCell/UnsafeCell: implemented initial facilities | Safe cell operations, dynamic borrow/try-borrow guards, native release and conflict/forget/unwind cases | Frozen-input sanitizer/target and applicable operation qualification; native thread libraries remain I10. |
 | S016 | Uninitialized/manual-drop storage: implemented | `MaybeUninit`/`ManuallyDrop` signatures and focused ownership cases | Current partial-initialization, validity, explicit-drop, alignment and unwind evidence. |
 | S017 | Atomics/fences: implemented initial scalar mechanisms | Ordering validation, RMW/CAS/fences; C++ thread publication case | Independent memory-model/race evidence and applicable target width/order cases. A publication example or ASan alone is insufficient; native thread libraries remain I10. |
-| S018 | Transferable/Shareable/Static: implemented initial contracts | Structural derivation in `interface_solver.cpp` (raw pointers, cells and `Ref`/`RefMut` opt out; atomics and plain data opt in), `unsafe impl`/`impl X not P` declarations, bounds enforced at call sites; Static additionally requires `static` regions | Frozen-input generic/region/projection qualification. Immutable statics must be Shareable (raw pointers and a bare `UnsafeCell` are exempt; `static mut` needs unsafe). Scoped spawns require `F: Within<region s>`, checked in `regions.cpp` (`withinBounds`), so closures cannot capture locals declared inside the scope body. `fs::ReadDir` is an `Iterator`; `mpsc::sync_channel(n)` has capacity `n`, including rendezvous at zero. A panic in a spawned thread is caught per thread and `join()` returns `Err(Panicked{code: 101})`. Impl-level region names are now resolved from the current function's region scope when a callee's annotation scope is active (`regionReference`); verified on macOS arm64 (`impl-region-method-call-on-other-type.mt`), and `Scope::spawn` no longer needs its private `register` workaround. |
-| S019 | Thread spawn and scope: implemented initial library | `std::thread` (`spawn`, `JoinHandle::join` reporting `Panicked`, `scope` joining on panic) over `runtime/thread.cpp`; owned threads require Transferable + Static, scoped ones Transferable | Linux target execution of `library.std`, sanitizer/TSan evidence of the shim, stress on the target. Race freedom is not a fairness or deadlock-freedom claim. |
-| S020 | Mutex and RwLock: implemented initial library | `std::sync::{mutex,rwlock}` with poisoning, thread-affine guards (`not Transferable`) and an error-checking mutex that reports relock | Target stress and applicable poison/failure-policy cases. |
-| S021 | Condition variables, barriers, once: implemented initial library | `std::sync::{condvar,barrier,once}`; a panicking initialiser re-arms `Once` | Target stress. |
-| S022 | Channels: implemented, verified on macOS arm64 (`tests/std/channel_rendezvous_select_timeouts_iterator.mt`) | `std::sync::mpsc` unbounded FIFO, bounded channels including zero-capacity rendezvous, nonblocking and timed operations, blocking receiver iteration, and a condvar-backed multi-receiver `Select` | Run focused hosted channel cases, then Linux-target and TSan qualification; no build or runtime evidence is claimed for this change. |
-| S023 | Thread-local storage: implemented, verified on macOS arm64 (`tests/std/tls_static_init_and_exit_order.mt`) | Static `std::sync::tls::LocalKey<T>` aggregate declarations with lazy native-key creation, plus owned dynamic keys, per-thread initialization and reverse first-installation destruction at thread exit and hosted main exit | Run static initializer and thread/main exit destructor cases, then qualify destructor iteration/order and target profiles; no build or runtime evidence is claimed for this change. |
+| S018 | Transferable/Shareable/Static: implemented initial contracts | Structural derivation in `interface_solver.cpp` (raw pointers, cells and `Ref`/`RefMut` opt out; atomics and plain data opt in), `unsafe extend`/negative `extend X not P` declarations, bounds enforced at call sites; Static additionally requires `static` regions | Frozen-input generic/region/projection qualification. Immutable statics must be Shareable (raw pointers and a bare `UnsafeCell` are exempt; `static mut` needs unsafe). Scoped spawns require `F: Within<region s>`, checked in `regions.cpp` (`withinBounds`), so closures cannot capture locals declared inside the scope body. `fs.ReadDir` is an `Iterator`; `mpsc.sync_channel(n)` has capacity `n`, including rendezvous at zero. A panic in a spawned thread is caught per thread and `join()` reports a Panicked result with code 101. Extension-level region names are now resolved from the current function's region scope when a callee's annotation scope is active (`regionReference`); verified on macOS arm64 (`impl-region-method-call-on-other-type.mt`), and `Scope.spawn` no longer needs its private `register` workaround. |
+| S019 | Thread spawn and scope: implemented initial library | `std.thread` (`spawn`, `JoinHandle.join` reporting `Panicked`, `scope` joining on panic) over `runtime/thread.cpp`; owned threads require Transferable + Static, scoped ones Transferable | Linux target execution of `library.std`, sanitizer/TSan evidence of the shim, stress on the target. Race freedom is not a fairness or deadlock-freedom claim. |
+| S020 | Mutex and RwLock: implemented initial library | `std.sync.{mutex,rwlock}` with poisoning, thread-affine guards (`not Transferable`) and an error-checking mutex that reports relock | Target stress and applicable poison/failure-policy cases. |
+| S021 | Condition variables, barriers, once: implemented initial library | `std.sync.{condvar,barrier,once}`; a panicking initialiser re-arms `Once` | Target stress. |
+| S022 | Channels: implemented, verified on macOS arm64 (`tests/std/channel_rendezvous_select_timeouts_iterator.mt`) | `std.sync.mpsc` unbounded FIFO, bounded channels including zero-capacity rendezvous, nonblocking and timed operations, blocking receiver iteration, and a condvar-backed multi-receiver `Select` | Run focused hosted channel cases, then Linux-target and TSan qualification; no build or runtime evidence is claimed for this change. |
+| S023 | Thread-local storage: implemented, verified on macOS arm64 (`tests/std/tls_static_init_and_exit_order.mt`) | Static `std.sync.tls.LocalKey<T>` aggregate declarations with lazy native-key creation, plus owned dynamic keys, per-thread initialization and reverse first-installation destruction at thread exit and hosted main exit | Run static initializer and thread/main exit destructor cases, then qualify destructor iteration/order and target profiles; no build or runtime evidence is claimed for this change. |
 | A001 | Initial C ABIs/callbacks/varargs: implemented mechanisms | Darwin ARM64/Linux x86-64 adapters, physical-entry cursor capture, independent copies, promoted/aggregate reads and cleanup | Frozen-input C round trips/cursor/cleanup qualification on Linux. Cursor transfers outside the represented initial contract are explicitly diagnosed; no new target ABI is implied. |
 | A002 | Layout/alignment: implemented initial combinations | Combined C/integer tags, transparent single-variant enums/products, unions and packed/aligned storage; exact transparent scalar ABI/callback/vararg forwarding has focused C evidence | Frozen-input sanitizer and Linux calling/layout/validity qualification; additional profile/operation closure remains I13. |
 | A003 | Symbols/linkage: implemented mechanisms | Function/static imports/exports/library selection, stable storage identities, full-width required initializers and relocations | Frozen-input symbol/link/lifetime/initialization and freestanding qualification. |
@@ -675,20 +675,20 @@ Partial I07 work adds `len()` on borrowed slices using existing element-count
 metadata; on-demand mounting of native `library/{core,alloc,std}` sources
 (`--library-dir`, catalog-supplied for in-memory builds, layering and
 freestanding rules, user-root shadowing); text literals typed
-`read core::text::Text from static` (static private constant plus length
+`read core.text.Text from static` (static private constant plus length
 metadata); and a first `library/core` (`text`: UTF-8 validation, checked
 slicing, chars/bytes iteration, equality, ordering, find/trim/split/lines/
-char_indices; `option`/`outcome` operations as inherent impls on `T?` and
+char_indices; `option`/`outcome` operations as inherent extensions on `T?` and
 `(T throws E)`; `cmp` (Ordering, PartialEq/Eq/PartialOrd/Ord, min/max/clamp,
 Reverse; ints, bool, char, Text, tuples, slices, options); `iter` (Iterator with
-lazy adapters, DoubleEndedIterator, IntoIterator, library ranges, sources, sum/
+lazy adapters, BidirectionalIterator, OwnedIterable, library ranges, sources, sum/
 product/min/max); `hash` (Hash/Hasher, FNV-1a, SipHash-1-3/2-4 verified against
 reference vectors); `fmt` (Write sink, Formatter with fill/align/width/precision/
 sign/alternate/zero, Display/Debug/radix traits for scalars and Text, fixed-buffer
 and counting sinks, writer-failure propagation); `num` (integer parsing with radix
 and distinct error kinds); `slice` (get/first/last/contains/swap/reverse/fill/
 copy_from_slice/split_at(_mut)/binary_search/heapsort/window/chunk/iter/iter_mut);
-`any` (TypeId from the `core::intrinsics::type_id` compiler intrinsic, is,
+`any` (TypeId from the `core.intrinsics.type_id` compiler intrinsic, is,
 downcast_ref/mut); `ops` operator interfaces. Tests: `tests/library/*.mt` through
 `library.core` (`tests/modules.py ... library`).
 Prelude: when core is mounted and not shadowed by a user `module core`, the
@@ -698,23 +698,23 @@ declarations, explicit imports and globs shadow them; libraries are mounted
 lazily when a prelude name or a core inherent method name appears. There is no
 opt-out attribute (unspecified). `const` items reuse the static evaluator
 (immutable statics; usable in expressions, array lengths, integer/bool
-patterns and associated `T::NAME` forms; inherent `impl S { const }` is
+patterns and associated `T.NAME` forms; inherent `extend S { const }` is
 implemented and verified on macOS arm64 by the inherent-associated-constant
 run and fail cases). Panic:
-`core::panic::{panic, assert, unreachable}` lower through
-`core::intrinsics::panic_message`, which is `llvm.trap` freestanding and the
+`core.panic.{panic, assert, unreachable}` lower through
+`core.intrinsics.panic_message`, which is `llvm.trap` freestanding and the
 runtime hook `mettle_rt_panic_message` when hosted (stderr `panicked: msg`,
 exit status 101); core `unwrap`/`expect`/slice-split failures use it. Builtin
-arithmetic/index traps still abort; there is no `core::process::exit` (core has
-no OS; std is a stub). `core::hint::black_box(value)` is a compiler intrinsic
+arithmetic/index traps still abort; there is no `core.process.exit` (core has
+no OS; std is a stub). `core.hint.black_box(value)` is a compiler intrinsic
 identity: the value round-trips through memory an empty `asm sideeffect` with a
 memory clobber may touch, so optimization cannot fold or delete it.
 Known core gaps: the built-in `a..b` range is not an `Iterator` (library
-`iter::range` is used instead); heapsort is not stable and there
-is no allocation-backed stable sort; slice `Iterable`/`IterableMut` cannot be
+`iter.range` is used instead); heapsort is not stable and there
+is no allocation-backed stable sort; slice `Iterable`/`MutableIterable` cannot be
 implemented because associated types cannot name the `self` region, so `iter()`
 is inherent; Debug for composites and generic nested `fmt` calls are blocked by
-exclusive-loan retention after a generic `mut Formatter` call (`fmt::write_i64`
+exclusive-loan retention after a generic `mut Formatter` call (`fmt.write_i64`
 helpers are provided); sort stability and Unicode
 whitespace/case are not implemented; mounting compiles the whole of `core`, which
 costs seconds in Debug builds.
@@ -722,27 +722,27 @@ Also: text literals are usable as `static` initializers and
 byte/raw literals (`b"..."` is `read [u8; N] from static`; `r"..."`, `r#"..."#`,
 `br"..."`); range slicing `read a[i..j]`, `a[i..]`, `a[..j]`, `a[..]`, `a[i..=j]`
 on arrays and slices (bounds-checked, `mut` for mutable subslices) and, through
-the `core::ops::IndexRange`/`IndexRangeMut` protocol, on Text (panics on
-out-of-range or non-char-boundary) and user types; `core::slice::from_raw_parts`
-and `from_raw_parts_mut`, `core::text::from_utf8_unchecked[_mut]` (unsafe; the
+the `core.ops.IndexRange`/`IndexRangeMut` protocol, on Text (panics on
+out-of-range or non-char-boundary) and user types; `core.slice.from_raw_parts`
+and `from_raw_parts_mut`, `core.text.from_utf8_unchecked[_mut]` (unsafe; the
 result region is the caller's choice); generic parameters determined by an
 `I: Iterator<Item = T>` bound; closures passed to generic callable parameters and
 explicit generic constructors. Open-ended
 range values (as opposed to range indexing), `f"..."` interpolation, `const`
-items, `u32 as char` (only `u8 as char` is defined), `core::process::exit`,
+items, `u32 as char` (only `u8 as char` is defined), `core.process.exit`,
 remain open; this is not I07 completion or qualification.
-The first native `library/alloc` now provides `alloc::alloc` (checked
+The first native `library/alloc` now provides `alloc.alloc` (checked
 `Layout`, `Allocator` contract with `allocate/deallocate/grow/shrink` returning
 `AllocError`, stateless `Global`, `handle_alloc_error` = abort policy), `Box`,
-`Rc`/`Weak`, `Vec`, `String`, `HashMap`/`HashSet`, `BTreeMap`/`BTreeSet`,
+`Rc`/`Weak`, `List`, `String`, `Map`/`Set`, `SortedMap`/`SortedSet`,
 `VecDeque`, `BinaryHeap` and `LinkedList`, each generic over an allocator
 (`A: Allocator = Global`) that is stored in the collection and used for every
 block it owns. Hosted builds link the `mettle_rt_alloc/dealloc/realloc` hooks in
 `runtime/alloc.cpp`; freestanding builds supply those symbols. Tests live in
 `tests/alloc/` (`library.alloc`): happy paths, large growth, hash collisions,
-a failing allocator, counted drops, a trap on a non-boundary `String::truncate`,
-a borrow-invalidation rejection and a structured parser + `HashMap<String,
-Vec<i64>>` workload built without std. Known gaps: `BTreeMap` is a sorted array
+a failing allocator, counted drops, a trap on a non-boundary `String.truncate`,
+a borrow-invalidation rejection and a structured parser + `Map<String,
+List<i64>>` workload built without std. Known gaps: `SortedMap` is a sorted array
 (O(n) updates), not a node B-tree; no entry API beyond `or_insert`; borrowed
 iteration is implemented through the core interfaces: see the integration
 note below; `Box<[T]>`/unsized owners, `Arc`, `Pin` and
@@ -751,56 +751,56 @@ not mapped; a `take` argument always
 moves even a `Copy` binding, so generic calls pass `i + 0` or a fresh `let`.
 Panics are runtime traps (no unwinding catch), so panic-safety is tested for
 drop order only. Alloc/core integration (lane allocint): `library/alloc/support.mt` is gone and
-`library/alloc` depends only on `core`. New `core::clone::Clone` (integers,
-`bool`, `char`, `Unit`, `Ordering`, pairs, `T?`); `core::iter::Iterable`/
-`IterableMut` are region-family interfaces (`type Iter<region r>`,
-`fn iter<region r>(receiver self: read Self from r)`). `Vec` implements
-`IntoIterator` (`IntoIter` is double-ended), `Iterable`/`IterableMut`
+`library/alloc` depends only on `core`. New `core.clone.Clone` (integers,
+`bool`, `char`, `Unit`, `Ordering`, pairs, `T?`); `core.iter.Iterable`/
+`MutableIterable` are region-family interfaces (`type Iter<region r>`,
+`fn iter<region r>(receiver self: read Self from r)`). `List` implements
+`OwnedIterable` (`IntoIter` is double-ended), `Iterable`/`MutableIterable`
 (`for x in read v`, `for x in mut v`, `for x in take v`), `Deref`/`DerefMut` to
 `[T]`, `IndexRange`/`IndexRangeMut`, `Clone`, `PartialEq/Eq/PartialOrd/Ord` and
-`Hash`. `String` implements `fmt::Write` (`fmt::Error`), `Deref` to `Text`,
+`Hash`. `String` implements `fmt.Write` (`fmt.Error`), `Deref` to `Text`,
 `IndexRange` (-> `Text`), `Display`, `Debug`, `Hash` (equal to `Text`'s hash),
 `Ord`. `Box` and `Rc` are transparent over `Deref`, comparison, `Hash`,
-`Display`/`Debug` (`Box` also `DerefMut`, `Clone`). `HashMap`/`HashSet`,
-`BTreeMap`/`BTreeSet`, `BinaryHeap`, `VecDeque` and `LinkedList` implement
-`Iterable` (maps yield stored buckets/entries; map `IterableMut` is withheld
-because it would expose keys). `HashMap` hashes with `core::hash` (SipHash-1-3).
-Compiler changes: blanket-impl coherence now rules out a concrete subject when
-no implementation of the required interface could apply (so
-`impl<I: Iterator> I implements IntoIterator` coexists with concrete
-impls); calling a body-less interface method through the interface name is a
-structured type error (use method syntax or `<T implements I>::m`); the region
+`Display`/`Debug` (`Box` also `DerefMut`, `Clone`). `Map`/`Set`,
+`SortedMap`/`SortedSet`, `BinaryHeap`, `VecDeque` and `LinkedList` implement
+`Iterable` (maps yield stored buckets/entries; map `MutableIterable` is withheld
+because it would expose keys). `Map` hashes with `core.hash` (SipHash-1-3).
+Compiler changes: blanket-extension coherence now rules out a concrete subject
+when no implementation of the required interface could apply (so
+`extend<I: Iterator> I implements OwnedIterable` coexists with concrete
+implementation declarations); calling a body-less interface method through the interface name is a
+structured type error (use method syntax or `T.(I).m`); the region
 solver compares raw pointers structurally and treats cycles through recursive
-nominal types/pointers coinductively. Standard-interface surface (lane allocfmt): `Vec`, `VecDeque`, `LinkedList`,
-`BinaryHeap`, `HashMap`/`HashSet` and `BTreeMap`/`BTreeSet` implement `Debug`
+nominal types/pointers coinductively. Standard-interface surface (lane allocfmt): `List`, `VecDeque`, `LinkedList`,
+`BinaryHeap`, `Map`/`Set` and `SortedMap`/`SortedSet` implement `Debug`
 with Rust-style output (`[1, 2]`, `{k: v}`, `{a, b}`) and the pretty
 `alternate` form (`Formatter` carries an indent level and indents lazily at line
 starts; helpers `debug_open/debug_item_start/debug_item_end/debug_close`; `[T]`
 has `Debug`). All but `BinaryHeap` implement `Clone` (needing `Clone` elements
 and allocator) and `PartialEq/Eq`; maps/sets compare order-independently,
-ordered ones (`VecDeque`, `LinkedList`, `BTreeMap`, `BTreeSet`) add
-`PartialOrd/Ord` (lexicographic) and `Hash` (length-prefixed); `HashMap`/
-`HashSet` deliberately have no `Hash`. `IterableMut` covers `VecDeque`,
-`LinkedList` and, over values only, `HashMap`/`BTreeMap` (`for v in mut m`,
-`values_mut()`); keys are never mutable. `core::iter` gains `FromIterator`,
-`Extend` and a free `collect` (`let v: Vec<i32> = collect(it)`), implemented for
-every collection (maps take `(K, V)` items); they take any `IntoIterator` (its
-`IntoIter` is declared `Iterator<Item = Self::Item>`), and `Iterator::collect` is a
+ordered ones (`VecDeque`, `LinkedList`, `SortedMap`, `SortedSet`) add
+`PartialOrd/Ord` (lexicographic) and `Hash` (length-prefixed); `Map`/`Set`
+deliberately have no `Hash`. `MutableIterable` covers `VecDeque`,
+`LinkedList` and, over values only, `Map`/`SortedMap` (`for v in mut m`,
+`values_mut()`); keys are never mutable. `core.iter` gains `FromItems`,
+`ExtendItems` and a free `collect` (`let v: List<i32> = collect(it)`), implemented for
+every collection (maps take `(K, V)` items); they take any `OwnedIterable` (its
+`IntoIter` is declared `Iterator<Item = Self.Item>`), and `Iterator.collect` is a
 provided method (bound elaboration is coinductive over bounds already in progress). `Unit` gained comparison
-impls. `Debug` now also covers `T?`, outcomes, tuples (arity 1-12) and `[T; N]`;
+implementations. `Debug` now also covers `T?`, outcomes, tuples (arity 1-12) and `[T; N]`;
 maps expose borrowed `keys()`/`values()`. Deliberate omissions: `Display` for
-collections and `BinaryHeap` `PartialEq`/`IterableMut` (Rust has none).
+collections and `BinaryHeap` `PartialEq`/`MutableIterable` (Rust has none).
 Region-lane I07 work: a user collection (`ptr`/`len`/`cap`) can implement
-`Iterable`/`IterableMut` with a region-family associated iterator
-(`type Iter<region r> = VecIter<T, region r>`), so `for x in v` and
+`Iterable`/`MutableIterable` with a region-family associated iterator
+(`type Iter<region r> = ListIter<T, region r>`), so `for x in v` and
 `for x in mut v` yield `read T from v`/`mut T from v` and reject mutation or
 escape while the loop or an item is live. Optional/mutable view results
 (`(read V from self)?`) re-borrow matched views, closures may be passed to generic
 function-pointer parameters, and raw-pointer dereference views are treated as
 `static`-backed. Family bounds may mention the family region
-(`type Iter<region r>: Iterator<Item = read Self::Item from r>`), so generic
+(`type Iter<region r>: Iterator<Item = read Self.Item from r>`), so generic
 `for x in c` over `C: Iterable<Item = i32>` and `for x in mut c` over
-`IterableMut` type-check and region-check; mutation during iteration and item
+`MutableIterable` type-check and region-check; mutation during iteration and item
 escape are rejected when the generic function is instantiated, like other
 ownership diagnostics. A result whose `from` region is carried inside a borrowed
 parameter (not the parameter's own borrow) depends only on the shared loans stored
@@ -823,13 +823,13 @@ build without these hosted services. Record the initial profile's actual
 behavior; other profile implementations close in I13.
 
 Stored exclusive views. A result borrowed through a `mut` view stored in a
-struct (`Cursor<region r>{ v: mut Vec<T> from r }`) now keeps a loan on the
+struct (`Cursor<region r>{ v: mut List<T> from r }`) now keeps a loan on the
 view's referent even when the callee derives it through a raw-pointer deref
 (summary places are truncated at the last view deref, and result paths with no
 tracked targets are backed by their `from` parameters). A borrow of a place
 that holds a stored `mut` view also freezes that view's referent (`Loan::frozen`),
 so reborrows such as `let b = mut a.v` block later use of `a.v`. The library
-`Iterable`/`IterableMut` interfaces declare bounded `Iter<region r>` families,
+`Iterable`/`MutableIterable` interfaces declare bounded `Iter<region r>` families,
 so generic code can call `.iter().next()`.
 A result path that mixes safe and raw-pointer-derived views keeps the safe
 targets and adds the `from`-parameter backing. Adversarial closure-capture probes
@@ -838,8 +838,8 @@ hole; generic `F: mut fn(): mut T` bounds still require an unambiguous `from`
 contract.
 
 I08 status (initial macOS ARM64 hosted profile): `library/std` provides `io`
-(Read/Write with visible partial transfers, `write_all`/`read_exact`/
-`read_to_end`, buffered reader/writer, an `io::Error` that round-trips the raw
+(Reader/Writer with visible partial transfers, `write_all`/`read_exact`/
+`read_to_end`, buffered reader/writer, an `io.Error` that round-trips the raw
 errno), `ffi` (`OsStr`/`OsString`), `path`, `fs`, `process`, `env`, `time`,
 `net` (synchronous IPv4 TCP and UDP with timeouts) and `panic` (hook around the
 runtime's exit-101 path). The POSIX layer is the libc calls declared in
@@ -908,7 +908,7 @@ verified on macOS arm64 (std programs). Channels provide an unbounded `channel`,
 `sync_channel` including zero-capacity rendezvous, timeout/try operations,
 receiver iteration and `Select`. TLS supports static lazy-initialized keys and
 documented thread/main-exit destruction ordering. Static keys use aggregate
-initializers rather than `LocalKey::new`, because generic const functions are
+initializers rather than `LocalKey.new`, because generic const functions are
 not evaluated in static initializers.
 Implement owned/scoped threads,
 Transferable/Shareable, Arc/weak races, mutex/RwLock guards, condition variables,
@@ -926,16 +926,16 @@ cancellation requests; no hidden mandatory boxing or default executor in core.
 Exercise an async network service and P10 without weaker lifetime guarantees.
 
 I11 library sub-batch, implemented and verified on macOS arm64 by the std
-programs (Release ctest 23/23): `alloc::future`
+programs (Release ctest 23/23): `alloc.future`
 adds explicitly heap-erased `Static` futures with a fixed-address payload and
-typed poll/drop dispatch. The local `std::task::Executor` retains task
+typed poll/drop dispatch. The local `std.task.Executor` retains task
 registrations independently of handles and wakes; owned `spawn` requires
 `Transferable + Static`, returns a result-bearing `JoinHandle`, and drop/abort
 cancels. Poll and destruction panic codes are reported through the handle.
 Close and completion serialize with queue insertion; foreign wakers own only
 task metadata. Reentrant cancellation defers destruction until poll returns;
 reentrant joins on an active executor are rejected. The synchronous local
-`task::scope` drives ready children and cancels suspended children before exit,
+`task.scope` drives ready children and cancels suspended children before exit,
 including on parent unwind; its private executor retains children even when
 their handles are forgotten. It does not provide an asynchronous scope whose
 children remain suspended across parent polls. Completed task metadata stays
@@ -960,9 +960,9 @@ erased dispatch must explicitly declare its future erasure contract.
 P10 has only a backlog entry, not a specified benchmark source; an async
 network service, measurement protocol and equivalent comparator remain open.
 
-I11 status (partial; built and run on macOS arm64 Release and Debug): `core::future`
+I11 status (partial; built and run on macOS arm64 Release and Debug): `core.future`
 has `Future`/`Poll`/`Context`/`Waker` (vtable protocol, no allocation) and the
-inline state types `Lazy`, `Then`, `Defer`; `std::task` is the optional executor
+inline state types `Lazy`, `Then`, `Defer`; `std.task` is the optional executor
 (`block_on`, `Executor` with spawn/run, `yield_now`). The parser lowers
 `async fn` (free functions and methods), `async { .. }` blocks and
 `async fn(..) { .. }` closures to `some Future<Output = T>` built from those
@@ -974,7 +974,7 @@ evaluated subexpression (`f(await a) + 1`, `let (p, q) = await e`,
 effectful operands evaluated before the await hoisted too; `await` inside the
 branches of an `if`/`else if`/`match` that is the last statement of its block
 (each branch is its own future, joined by the allocation-free
-`core::future::Either`; the checker completes each branch's `left`/`right`
+`core.future.Either`; the checker completes each branch's `left`/`right`
 generic arguments from the other branches, see compiler-architecture
 "Cross-branch inference"); `return` before the last await when it ends a branch
 of an `if`/`match` with exactly one continuing branch (the statements after it
@@ -988,18 +988,18 @@ Await in loops and nested blocks (implemented and verified): a
 `while`/`loop`/`for` statement that contains an `await`, a nested block, and an
 `if`/`match` that is not last in its block lower in the same parser pass. The
 carried state is the tuple of the `var` locals in scope. A loop body becomes a
-step closure over that state, driven by `core::future::Repeat`
+step closure over that state, driven by `core.future.Repeat`
 (`repeat`/`Flow`/`next_iteration`/`finish_loop`); `break`/`continue` (also
 labeled, targeting the loop itself) are rewritten to returns of
 `finish_loop`/`next_iteration` and placed by the existing early-return
 lowering; the loop's final state (and `break` value) feeds the continuation of
 the statements after it. Every loop binds a zero-size copyable witness
-`let <loop-kind>: core::future::LoopKind<R> = LoopKind()` (R is `Unit`, or the
+`let <loop-kind>: core.future.LoopKind<R> = LoopKind()` (R is `Unit`, or the
 async function's result for a tail loop used as its value) and passes it to
 `repeat` and `next_iteration`, so all steps agree on the result type. The step
 future is polled through a raw place, so the next state holds no loan of the
 `Repeat` across its back edge. `for` desugars to
-`var <iter> = core::iter::into_iterator(source)` plus a `loop`/`match` over
+`var <iter> = core.iter.into_iterator(source)` plus a `loop`/`match` over
 `next()`, so the iterator is one more carried `var`; over a built-in
 `lo..hi`/`lo..=hi` range (not an iterator) it counts a carried `var` instead,
 and `..=` ends with a flag rather than stepping past `hi`; a block or a joined branch
@@ -1010,9 +1010,9 @@ dropping it drops whichever is initialized. Tests:
 `tests/source/fail/await-in-{loop,loop-return,branch-not-last}.mt` cases.
 Implemented and verified on macOS arm64: `return value` directly inside an awaiting
 loop of a non-throwing async function (the loop result becomes
-`core::future::Exit<R, F>`; `rewriteExits` turns `return` into
+`core.future.Exit<R, F>`; `rewriteExits` turns `return` into
 `finish_loop(state, give_up(value, kind))` and the statements after the loop run
-only for `Exit::Leave`), and `while let p = e` with an await, lowered to
+only for `Exit.Leave`), and `while let p = e` with an await, lowered to
 `loop { match e { p => body, _ => break } }`. Tests: the `early_return*` and
 `while_let` cases of `async-await-in-loops.mt`; `await-in-loop-return.mt` now
 covers `throw`.
@@ -1072,9 +1072,9 @@ their documented revisions and scopes. The interface plan is in
 | Preserve async source; type future and await | Partial: `syntax/parser/async.cpp` rewrites bodies; `semantics/checked.h` has no await facts. | Preserve source in `syntax`, resolve captures, regions, output, hidden future identity and poll witness in `semantics`/`types`; cover functions, methods, blocks, closures, generics and borrowed inputs. |
 | Ownership-checked suspension CFG | Partial (liveness verified by `tests/ir/verify.cpp`): `analysis/liveness` computes SSA block-boundary facts including phi edges; `ir/ir.h` has no suspension edge and initialization/loans do not publish suspension facts. | Add checked suspension, structural validation, initialization, loan/origin liveness including loops, retained destructors and partially moved fields; cover read/mut loans, non-Copy locals and moving a borrowed local. |
 | Inline pinned state and poll | Missing: `lowering` has ordinary closure environments but no coroutine transform. | Generate constructor/poll, stable child slots, self-loans, correct `Unpin` and Transferable properties, and verified CFG in `lowering`/`types`/`instances`/`pipeline`; cover repeated pending, nested awaits and move-before-pin. |
-| Control flow | Partial: parser `Repeat`/`Either` handles selected loops and branches; live immutable locals are now moved through awaiting-loop state (verified on macOS arm64). | Replace parser lowering; preserve CFG back-edges and exits; cover nested return, throw, `?`, labeled break/continue, lazy operands and `for` over borrowed Vec/slice; migrate obsolete `await-*` feature-fail cases. |
+| Control flow | Partial: parser `Repeat`/`Either` handles selected loops and branches; live immutable locals are now moved through awaiting-loop state (verified on macOS arm64). | Replace parser lowering; preserve CFG back-edges and exits; cover nested return, throw, `?`, labeled break/continue, lazy operands and `for` over borrowed List/slice; update obsolete `await-*` feature-fail cases. |
 | Cleanup and cancellation | Partial: combinator fields drop, but segment-local drop order deviates. `cleanup/plan.cpp` and `backend/llvm/cleanup.cpp` use per-frame plans/flags. | Make initialized-place flags persistent across polls; preserve lexical order and pinned addresses on success, typed failure, cancellation and unwind. Cover never-polled and suspended cancellation, partial moves and exactly-once drops. |
-| Integration and qualification | Missing for the new path; existing `core::future`/`std::task` exercise the parser path. | Reuse existing executors and protocol; complete focused run/fail, generic, cleanup and backend tests, update both architecture and this inventory, then freeze sources. The owner must run applicable quality, Debug/Release, ASan/UBSan, reproducibility and Linux-target gates after integration. |
+| Integration and qualification | Missing for the new path; existing `core.future`/`std.task` exercise the parser path. | Reuse existing executors and protocol; complete focused run/fail, generic, cleanup and backend tests, update both architecture and this inventory, then freeze sources. The owner must run applicable quality, Debug/Release, ASan/UBSan, reproducibility and Linux-target gates after integration. |
 
 The source-freeze gate depends on all rows, fixtures and documentation; a
 design or a partially implemented row is not a verified milestone.
@@ -1115,7 +1115,7 @@ I12/T006 status, source-level debug info: the earlier basic `-g` DWARF
 implementation was verified. Product/generic/closure capture, sum variant and
 length-bearing pointer metadata, macro invocation locations and LLDB summaries
 are implemented and verified on macOS arm64 (packages test `debug_info`; LLDB
-summaries checked manually: `List len=2 cap=4` (then named `Vec`), `String` text; optionals show
+summaries checked manually: `List len=2 cap=4`, `String` text; optionals show
 only the variant name). Async combinator fields and optional tags describe nested state,
 but a source await-point discriminator/display is not yet established;
 erasure, moved-value liveness, scopes, inlining and CodeView remain open.
@@ -1180,34 +1180,23 @@ named call arguments in `compiler/syntax/parser/expressions.cpp` and
 `tests/std/cli_wordcount.mt` and `tests/alloc/ini_parser.mt`. The gaps are source
 ergonomics, API composition, precise new contracts and their verification.
 
-| Order | Deliverable and gate | May start |
+| Order | Deliverable and gate | Status |
 | --- | --- | --- |
-| R0a | Owner-approved review freeze: reconcile lane changes, review the exhibits, then pin the identity of every input: a git commit (work so far is commit `b622aef`) plus the pinned toolchain, SDK and dataset identities. No working-tree fingerprint | After active lanes integrate or pause |
-| R0b | Generic-discriminator prototype and compiler-boundary design before R1: calls, function values, projections, const arguments, nested closers, malformed arguments and newline cases, with shared generic-argument parsing and memoized lookahead. A reference discriminator is not proof the full parser is conflict-free. Status: parser discriminator implemented and verified (source suite, `new-syntax-*` cases) | Now |
-| F1 | Fixed borrowed `Message`, `format` parameters, two-level forwarding and the std Writer adapter (library-surface section 10); lifetime, error and code-size tests; measure indirect-call cost, renderer/code size and check cost | Now (needs only D23-D24's minimal contract and the existing correctness prerequisites) |
-| R1 | Dotted qualification, bounded method lookup, associated namespace, equality-constrained constructor selection (`A = Global`), local builder inference as demonstrated necessary, vocabulary and the `experience-1` prelude. Status: parser part (dual-accept dotted paths, `extend`, `T.(I).Item`, `fn(x) => e`, `mettle migrate`) implemented and verified (source suite, packages `migrate_preserves_syntax_tree`); checker resolution of dotted expression paths implemented and verified (`Checker::qualifyDottedPath` in the pre-check `controlFlow` walk and for static initializers; tests `dotted-paths-resolve-like-qualified-paths`, `dotted-path-unresolved-member-is-name-error`; the whole source corpus, migrated, passes: 363/363 run cases, fail cases same phase/line/message); dotted paths in associated-constant values, array-length constants, constant arguments and enum discriminants are now qualified in `Checker::constantType` (verified on macOS arm64; static names and types are registered before interface implementations and named-discriminant layouts, so both can read module constants; test `dotted-paths-in-constant-positions`; a generic-parameter root such as `T.N` is not covered there); migrate refuses declarative-macro files | After active lanes integrate |
-| R2 | Lending lines, Copy-valued `[u8].bytes()`, KeyView, PathInput/`write_path` and equivalent workloads within qualified profiles; reconcile `library-and-abi.md` POSIX path statements with the native Windows path contract before delivering that profile. Status: implemented for POSIX in current spelling, focused fixtures pass; Windows paths and collision stress pending | Now (independent of the new spellings; migrates at cutover) |
-| Cutover | Lane-owner freeze, parser-backed migration, focused checks, then resume writers | After R1 and active lanes integrate |
-| R3 | Expression-bodied `fn`, diagnostics, formatter/editor completion | After cutover |
-| Qualification | Frozen-input quality, target, safety and performance checks, including performance.md sections 5.1-5.2. D17 comparison harness (`tools/bench_compare.py`, `benchmarks/`, performance.md section 5.3): implemented; its `.mt` workloads type-check, but the harness has not been run and no result is claimed | After R3 |
-| WP-S | Storage audit work package of tooling-and-packages.md section 7.1; operational, no dependency on an artifact store | Now |
+| Cutover | Dotted paths, `extend` implementation blocks, D21 vocabulary, and optional item-level semicolons | Implemented and verified |
+| R1 | Bounded lookup, associated namespace, constructor selection, inference, vocabulary and the `experience-1` prelude | Associated-namespace resolution, dotted-path resolution, and the syntax/vocabulary cutover are implemented and verified. Remaining: bounded method lookup through interfaces on slice views; constructor selection such as `List<i32>()` (semantic-rules section 13.4); inference through `read [T]` parameters; and `[T].(I)` as a projection subject |
+| F1 | Fixed borrowed `Message`, `format` parameters, two-level forwarding and the std Writer adapter (library-surface section 10); lifetime, error and code-size tests; measure indirect-call cost, renderer/code size and check cost | In progress |
+| R2 | Lending lines, Copy-valued `[u8].bytes()`, KeyView, PathInput/`write_path` and equivalent workloads within qualified profiles; reconcile `library-and-abi.md` POSIX path statements with the native Windows path contract before delivering that profile | Implemented for POSIX in current spelling, focused fixtures pass; Windows paths and collision stress pending |
+| R3 | Expression-bodied `fn`, diagnostics, formatter/editor completion | Remaining work |
+| Qualification | Frozen-input quality, target, safety and performance checks, including performance.md sections 5.1-5.2. D17 comparison harness (`tools/bench_compare.py`, `benchmarks/`, performance.md section 5.3): implemented; its `.mt` workloads type-check, but the harness has not been run and no result is claimed | After R1-R3 |
+| WP-S | Storage audit work package of tooling-and-packages.md section 7.1; operational, no dependency on an artifact store | Open |
 
 Reconcile this work with the I06 repair and I07-I08 obligations; a design
 document cannot mark them complete.
 
-**Cutover.** Schedule it as a short owner-approved window after all active lanes
-have integrated or paused; no freeze is in effect until then. Capture source
-identities at entry, use one writer, and migrate paths, projections, variants,
-API names, prelude and closure forms together. The codemod operates on parsed
-and resolved source spans, including provenance for `.mt` fixtures embedded in
-host test files, and leaves string contents, comments and historical evidence
-untouched. Require dry-run review, collision diagnostics and a clean source gate
-before releasing the freeze; regex replacement is not the migration mechanism.
-Before cutover: audit existing associated-namespace collisions (semantic-rules
-section 13.3); classify actual ambiguous `Item`/`IntoIter`/`Iter`/`IterMut`
-projection candidates in `library/core/iter.mt` (a comment-excluding syntactic
-census counted 68 short and 8 explicit occurrences, which counts occurrences,
-not ambiguity); and record package ownership in the native-library catalog.
+**Implemented syntax cutover.** Dotted paths, `extend` implementation blocks,
+D21 collection/iterator/I/O names, and newline-terminated item declarations
+have been implemented and verified. The associated-namespace and dotted-path
+regressions are covered by the focused source cases and the source suite.
 
 **Acceptance.** Use the existing source, module and library runners; no new
 framework. Compare exact successful outputs and exit codes, error identity,
@@ -1255,16 +1244,17 @@ four Text/String ownership cases of library-surface section 9. Test fixtures:
   local-name positions.
 - *Closures.* `p => fn(x) => x + 1, q => ...`, `apply(fn(x) => x + 1, other)`,
   `apply(fn(x) => pair(x, 1), other)` and tuple-valued bodies.
-- *Generic application.* The categories of R0b, including the accepted
-  `assert(a < b, c > (d))` parse and its diagnostic.
+- *Generic application.* Calls, function values, projections, const arguments,
+  nested closers, malformed arguments and newline cases, including the
+  diagnosed `assert(a < b, c > (d))` parse.
 
 Passing the listings' documentation check does not establish semantic
 equivalence; the after programs must compile and execute once their features
 land, with the matched edge, error and ownership cases above.
 
 **Exhibit 1: byte-streaming word count.** The before program is the fixture
-`tests/std/cli_wordcount.mt`. The after program is the acceptance target
-(not accepted by the current compiler). It keeps the input/report arguments,
+`tests/std/cli_wordcount.mt`. The after program uses the current syntax and
+keeps the input/report arguments,
 raw path support, byte count, space/LF/tab separators, final unterminated line,
 report/stdout bytes and exit codes; error-message output still deliberately
 ignores its own failure, now visibly. Streaming formatting changes write
@@ -1429,8 +1419,8 @@ I14-I16 own qualification/evolution rather than additional baseline capability I
 | I08 | S024-S028 |
 | I09 | L054-L058, T001-T003 |
 
-I09 status: L057 implemented and verified by focused source cases (attribute parsing with spans, unknown-attribute diagnostics, `@derive` of Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash on products and enums including generic types, generated-code provenance diagnostics). `Default`: implemented and verified on macOS arm64 (Release and Debug) - `core::default::Default` (`static fn default(): Self`) with implementations for integers, floats, `bool`, `char`, `Unit`, `T?` (none), 2- and 3-tuples, `Global`, `Vec` and `String`, and `@derive(Default)` for products including generic types (field defaults, `Default` bound on used type parameters); enums (no default-variant syntax), unions and arrays are not covered, so `derive(Default)` on an enum is a `feature` diagnostic. Fixtures: `tests/source/run/derive-default-and-manual-default.mt`, `tests/source/fail/derive-default-field-without-default.mt`, `tests/source/fail/derive-default-on-enum-is-unsupported.mt`. L058 implemented and verified (`@cfg` with `all`/`any`/`not`, `target_os/arch/family/endian/pointer_width/feature`, `feature`). Single-file builds take `--features a,b`; in a package build the root source tests its resolved features and each dependency its own (tests/packages.py `features`), while the standard libraries see none. Unions, empty enums and types with `init` constructors cannot derive; L056 procedural macros are implemented, unverified (see below).
-L055 (declarative macros) implemented and verified on macOS arm64 (Release and Debug): `compiler/expansion/macros.{h,cpp}` expands file-local `macro name { (matcher) => { expansion }; }` definitions on the token level before parsing (`name!(...)`, `[...]`, `{...}`), with matcher fragments `expr stmt pat ty path ident literal tt block item`, `$(...) sep? * + ?` repetitions, follow-set and depth checks at definition, native-parser validation of structured fragments, parenthesized `expr` substitution, per-expansion renaming of template-bound identifiers (hygiene), `$capture(name)` deliberate capture, a 256-level recursion limit reported as a structured `macro` diagnostic with the expansion path, and generated-source provenance (template/argument token plus the invocation, via `Generation::Mapping`). Hooks: `resolution/load.cpp` calls `expandMacros` before `parseDeclarations`; the lexer accepts `$`. Evidence to produce: `tests/source/run/macro-*.mt` and `tests/source/fail/macro-*.mt`. Known gaps: macros are not exported across files or packages and have no macro namespace resolution; free names in a template resolve at the use site, not the definition site; only `let`/`var`/`for`/closure-parameter binders are renamed (match-arm and pattern binders are not); expansions in expression position are not parenthesized as a whole; arguments are expanded eagerly; fragment kind names are the short follow-set spellings. L056 (procedural macros): implemented and verified on macOS arm64 (tests `procedural_macro`, `procedural_macro_failure`). `[macros.NAME] source/api` in `Mettle.toml`, host-program build and run per invocation (`driver/procedural.cpp`), a versioned line-based token request/response (`expansion/procedural.{h,cpp}`, library side `std::macros`), output re-lexed and attributed to the invocation, failures as `macro` diagnostics, reuse only under a `reproducible` contract with declared files/environment (undeclared inputs rerun) and the response text part of the consumer's build key. Evidence to produce: `tests/packages.py` `procedural_macro` and `procedural_macro_failure`. Known gaps: macros are graph-global (no per-package namespace), no attribute/derive procedural macros, no definition-site/fresh identity constructors or per-token error spans, tokens are exposed as text (see tooling-and-packages, Procedural macros).
+I09 status: L057 implemented and verified by focused source cases (attribute parsing with spans, unknown-attribute diagnostics, `@derive` of Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash on products and enums including generic types, generated-code provenance diagnostics). `Default`: implemented and verified on macOS arm64 (Release and Debug) - `core.default.Default` (`static fn default(): Self`) with implementations for integers, floats, `bool`, `char`, `Unit`, `T?` (none), 2- and 3-tuples, `Global`, `List` and `String`, and `@derive(Default)` for products including generic types (field defaults, `Default` bound on used type parameters); enums (no default-variant syntax), unions and arrays are not covered, so `derive(Default)` on an enum is a `feature` diagnostic. Fixtures: `tests/source/run/derive-default-and-manual-default.mt`, `tests/source/fail/derive-default-field-without-default.mt`, `tests/source/fail/derive-default-on-enum-is-unsupported.mt`. L058 implemented and verified (`@cfg` with `all`/`any`/`not`, `target_os/arch/family/endian/pointer_width/feature`, `feature`). Single-file builds take `--features a,b`; in a package build the root source tests its resolved features and each dependency its own (tests/packages.py `features`), while the standard libraries see none. Unions, empty enums and types with `init` constructors cannot derive; L056 procedural macros are implemented, unverified (see below).
+L055 (declarative macros) implemented and verified on macOS arm64 (Release and Debug): `compiler/expansion/macros.{h,cpp}` expands file-local `macro name { (matcher) => { expansion }; }` definitions on the token level before parsing (`name!(...)`, `[...]`, `{...}`), with matcher fragments `expr stmt pat ty path ident literal tt block item`, `$(...) sep? * + ?` repetitions, follow-set and depth checks at definition, native-parser validation of structured fragments, parenthesized `expr` substitution, per-expansion renaming of template-bound identifiers (hygiene), `$capture(name)` deliberate capture, a 256-level recursion limit reported as a structured `macro` diagnostic with the expansion path, and generated-source provenance (template/argument token plus the invocation, via `Generation::Mapping`). Hooks: `resolution/load.cpp` calls `expandMacros` before `parseDeclarations`; the lexer accepts `$`. Evidence to produce: `tests/source/run/macro-*.mt` and `tests/source/fail/macro-*.mt`. Known gaps: macros are not exported across files or packages and have no macro namespace resolution; free names in a template resolve at the use site, not the definition site; only `let`/`var`/`for`/closure-parameter binders are renamed (match-arm and pattern binders are not); expansions in expression position are not parenthesized as a whole; arguments are expanded eagerly; fragment kind names are the short follow-set spellings. L056 (procedural macros): implemented and verified on macOS arm64 (tests `procedural_macro`, `procedural_macro_failure`). `[macros.NAME] source/api` in `Mettle.toml`, host-program build and run per invocation (`driver/procedural.cpp`), a versioned line-based token request/response (`expansion/procedural.{h,cpp}`, library side `std.macros`), output re-lexed and attributed to the invocation, failures as `macro` diagnostics, reuse only under a `reproducible` contract with declared files/environment (undeclared inputs rerun) and the response text part of the consumer's build key. Evidence to produce: `tests/packages.py` `procedural_macro` and `procedural_macro_failure`. Known gaps: macros are graph-global (no per-package namespace), no attribute/derive procedural macros, no definition-site/fresh identity constructors or per-token error spans, tokens are exposed as text (see tooling-and-packages, Procedural macros).
 | I10 | S005, S018-S023 |
 | I11 | L052-L053, S030 |
 | I12 | L060, T004-T007 |

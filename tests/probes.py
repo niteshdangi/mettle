@@ -68,7 +68,7 @@ def run_suite(mode, executable, directory):
                 ("multiply_add", {"fmul", "fadd"}, {"contract"}),
                 ("<closure-", {"fmul", "fadd"}, {"contract"}),
                 ("defaulted.<default.", {"fmul", "fadd"}, {"contract"}),
-                ("relaxed::calculate", {"fadd"}, {"reassoc", "arcp", "afn"}),
+                ("relaxed.calculate", {"fadd"}, {"reassoc", "arcp", "afn"}),
                 ("separate", {"fmul", "fadd"}, set()),
                 ("checked", {"fcmp"}, set())):
             matches = [body for symbol, body in bodies.items()
@@ -91,9 +91,9 @@ def run_suite(mode, executable, directory):
                                   "profile": profile, "llvm_sha256": digest(output)})
     def broken_pipe():
         program = source("print-to-closed-pipe",
-                         "import std::io;\nfn main(): i32 {\n"
+                         "import std.io;\nfn main(): i32 {\n"
                          "    var i = 0\n"
-                         "    while i < 1000000 { io::print(f\"line {i}\\n\"); i += 1 }\n"
+                         "    while i < 1000000 { io.print(f\"line {i}\\n\"); i += 1 }\n"
                          "    0\n}\n")
         binary = directory / "print-to-closed-pipe"
         run([executable, "build", str(program), "-o", str(binary)])
@@ -145,10 +145,10 @@ def run_suite(mode, executable, directory):
                 "no-generic-pattern-cascade",
                 "enum Slot<K, V> { Empty, Full(K, V) }\n"
                 "type M<K, V> { s: Slot<K, V> }\n"
-                "impl<K, V> M<K, V> {\n"
+                "extend<K, V> M<K, V> {\n"
                 "    fn a(): (read V from self)? {\n"
                 "        let s = self.s.missing(1)\n"
-                "        match s { Slot::Full(_, v) => present(read v), _ => none }\n"
+                "        match s { Slot.Full(_, v) => present(read v), _ => none }\n"
                 "    }\n"
                 "}\nfn main(){0}\n")
             result = run([executable, "check", str(pattern_cascade)], 1)

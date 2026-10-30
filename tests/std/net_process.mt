@@ -1,9 +1,9 @@
 // A parent serves on loopback while a child process (this program) connects.
-import std.io.{Error, Reader, Writer};
-import std.process.Stdio;
-import std.ffi;
-import alloc.vec.List;
-import std.time.from_millis;
+import std.io.{Error, Reader, Writer}
+import std.process.Stdio
+import std.ffi
+import alloc.vec.List
+import std.time.from_millis
 
 fn serve(): i32 throws Error {
     var listener = try std.net.tcp_listen(std.net.socket_addr(std.net.localhost(), 0u16))

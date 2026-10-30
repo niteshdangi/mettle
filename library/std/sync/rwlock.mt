@@ -1,4 +1,4 @@
-import package.core.panic.panic;
+import package.core.panic.panic
 
 extern "C" {
     unsafe fn mettle_rt_rwlock_new(): ptr<mut u8>;
@@ -30,8 +30,8 @@ pub type WriteGuard<T, region r> {
     lock: read RwLock<T> from r
     drop { let _status = unsafe { mettle_rt_rwlock_unlock(self.lock.raw) } }
 }
-extend<T, region r> ReadGuard<T, region r> not Transferable;
-extend<T, region r> WriteGuard<T, region r> not Transferable;
+extend<T, region r> ReadGuard<T, region r> not Transferable
+extend<T, region r> WriteGuard<T, region r> not Transferable
 
 pub fn new<T>(value: take T): RwLock<T> {
     let raw = unsafe { mettle_rt_rwlock_new() }

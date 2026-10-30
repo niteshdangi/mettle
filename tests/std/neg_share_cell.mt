@@ -1,6 +1,6 @@
 // expect-error: type
-import std.thread;
-import alloc.arc;
+import std.thread
+import alloc.arc
 
 fn main(): i32 {
   let cell = arc.new(core.cell.Cell.new(1))

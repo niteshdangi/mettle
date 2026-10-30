@@ -419,7 +419,7 @@ bool Solver::prove(const Obligation &obligation, Span span, bool report) {
 }
 
 // Structural derivation of Transferable/Shareable/Static. Raw pointers and
-// foreign-affine types opt out unless an `unsafe impl` opts them back in.
+// foreign-affine types opt out unless an `unsafe extend` opts them back in.
 bool Solver::proveConcurrency(Property property, Type subject, Span span) {
   const auto key = std::make_pair(property, subject);
   if (!provingConcurrency.insert(key).second)

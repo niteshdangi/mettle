@@ -1,9 +1,9 @@
-import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd};
-import package.core.fmt;
-import package.core.hash.{Hash, Hasher};
-import package.core.ops.Deref;
-import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, handle_alloc_error};
-import package.core.clone.Clone;
+import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import package.core.fmt
+import package.core.hash.{Hash, Hasher}
+import package.core.ops.Deref
+import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, handle_alloc_error}
+import package.core.clone.Clone
 
 // Shared header and payload. `wk` counts every Weak plus one implicit
 // reference held collectively by all strong owners, so the block is released

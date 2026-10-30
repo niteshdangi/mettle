@@ -1,4 +1,4 @@
-import core.clone.Clone;
+import core.clone.Clone
 
 fn main(): i32 {
     let a = (7, true)

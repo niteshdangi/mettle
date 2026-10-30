@@ -1,8 +1,8 @@
 // Source-level panic: a nonrecoverable failure with a message, routed through
-// the single compiler-owned hook `core::intrinsics::panic_message`. A hosted
+// the single compiler-owned hook `core.intrinsics.panic_message`. A hosted
 // runtime reports the message on stderr, unwinds with cleanup and exits with
 // status 101; a freestanding build has no sink and aborts (trap).
-import super.text.Text;
+import super.text.Text
 
 pub fn panic(message: read Text): Never {
     core.intrinsics.panic_message(message.as_bytes())

@@ -1,6 +1,6 @@
 // Explicit duplication. `clone` produces an independent value of the same
 // type; it never aliases the original's resources.
-import super.cmp.Ordering;
+import super.cmp.Ordering
 
 pub interface Clone: Sized { fn clone(): Self; }
 

@@ -1,5 +1,5 @@
-import std.thread;
-import alloc.arc;
+import std.thread
+import alloc.arc
 
 type Tracker {
   drops: arc.Arc<core.sync.atomic.AtomicUsize>

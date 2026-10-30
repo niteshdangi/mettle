@@ -14,8 +14,7 @@ std::unique_ptr<Node> Parser::stmt() {
         is("failure") ||
         ((peek().kind == TokenKind::Word ||
           peek().kind == TokenKind::QuotedWord) &&
-         (peek(1).text == "::" || peek(1).text == "." ||
-          peek(1).text == "{"))) {
+         (peek(1).text == "." || peek(1).text == "{"))) {
       result->patterns.push_back(pattern());
       result->text = "<pattern>";
     } else

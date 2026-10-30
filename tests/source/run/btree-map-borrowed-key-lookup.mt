@@ -1,5 +1,5 @@
-import alloc.btree;
-import alloc.string;
+import alloc.btree
+import alloc.string
 
 fn main(): i32 {
     var m = btree.new<string.String, i32>()

@@ -1,7 +1,7 @@
-import alloc.hash_map;
-import alloc.btree;
-import alloc.binary_heap;
-import alloc.vec_deque;
+import alloc.hash_map
+import alloc.btree
+import alloc.binary_heap
+import alloc.vec_deque
 
 fn main(): i32 {
     var d = vec_deque.new<i32>()

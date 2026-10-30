@@ -1,9 +1,9 @@
-import alloc.arc;
-import alloc.rc;
-import alloc.rc.Rc;
-import core.future.{Context, Future, Poll, Waker};
-import std.task;
-import std.thread;
+import alloc.arc
+import alloc.rc
+import alloc.rc.Rc
+import core.future.{Context, Future, Poll, Waker}
+import std.task
+import std.thread
 
 type Child<region r> {
     value: read i32 from r
