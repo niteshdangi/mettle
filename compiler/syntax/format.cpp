@@ -151,9 +151,9 @@ bool continued(const Line &previous, const Piece &first) {
   for (auto piece = previous.rbegin(); piece != previous.rend(); ++piece) {
     if (piece->kind == TokenKind::Comment)
       continue;
-    return oneOf(*piece, {"=",  "==", "!=", "<=", ">=", "+=", "-=",
-                          "*=", "/=", "%=", "&=", "|=", "^=", "&&",
-                          "||", "+",  "-",  "*",  "/",  "%", "=>", "??"});
+    return oneOf(*piece, {"=",  "==", "!=", "<=", ">=", "+=", "-=", "*=",
+                          "/=", "%=", "&=", "|=", "^=", "&&", "||", "+",
+                          "-",  "*",  "/",  "%",  "=>", "??"});
   }
   return false;
 }
@@ -306,9 +306,8 @@ std::string wrap(const Source &source, const std::vector<Token> &tokens) {
           break;
         breaks.push_back(position);
         segment = position;
-        target = position + (100 > indent + indentWidth
-                                 ? 100 - indent - indentWidth
-                                 : 1);
+        target = position +
+                 (100 > indent + indentWidth ? 100 - indent - indentWidth : 1);
         candidate = chosen + 1;
       }
     }
@@ -329,10 +328,9 @@ std::string wrap(const Source &source, const std::vector<Token> &tokens) {
       ++parens;
     else if (token.text == ")" && parens)
       --parens;
-    else if ((token.text == "," && parens) ||
-             token.text == "&&" || token.text == "||" ||
-             token.text == "+" || token.text == "-" || token.text == "*" ||
-             token.text == "/" || token.text == "??")
+    else if ((token.text == "," && parens) || token.text == "&&" ||
+             token.text == "||" || token.text == "+" || token.text == "-" ||
+             token.text == "*" || token.text == "/" || token.text == "??")
       candidates.push_back(token.span.end);
   }
   std::string result;

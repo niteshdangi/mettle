@@ -86,8 +86,8 @@ std::string linkedText(std::string_view text, const Links &links,
         target = links.find(std::string(page) + "." + name);
     }
     if (target != links.end() && !target->second.empty())
-      out += "<a href=\"" + escape(target->second) + "\">" + escape(name) +
-             "</a>";
+      out +=
+          "<a href=\"" + escape(target->second) + "\">" + escape(name) + "</a>";
     else
       out += escape(name);
     i = end;
@@ -136,14 +136,13 @@ std::string renderDoc(const Doc &doc, const Links &links,
   for (const auto &block : blocks(doc)) {
     switch (block.kind) {
     case Block::Kind::Paragraph:
-      out += "<p>" + inlineText(joined(block.lines, ' '), links, page) +
-             "</p>\n";
+      out +=
+          "<p>" + inlineText(joined(block.lines, ' '), links, page) + "</p>\n";
       break;
     case Block::Kind::Heading: {
       auto level = std::to_string(std::min(block.level + 3, 6u));
-      out += "<h" + level + ">" +
-             inlineText(block.lines.front(), links, page) + "</h" + level +
-             ">\n";
+      out += "<h" + level + ">" + inlineText(block.lines.front(), links, page) +
+             "</h" + level + ">\n";
       break;
     }
     case Block::Kind::List:
@@ -276,10 +275,10 @@ private:
     for (unsigned n = 2; !used.insert(id).second; ++n)
       id = base + "-" + std::to_string(n);
     if (collect) {
-      auto key = page.name + "." +
-                 (prefix.empty() ? std::string(name)
-                                 : std::string(prefix) + "." +
-                                       std::string(name));
+      auto key =
+          page.name + "." +
+          (prefix.empty() ? std::string(name)
+                          : std::string(prefix) + "." + std::string(name));
       auto [it, inserted] = links.emplace(key, file + "#" + id);
       if (!inserted)
         it->second.clear();
@@ -338,8 +337,8 @@ private:
         auto memberId = identifier(id, member.name);
         out += "<dt id=\"" + memberId + "\"><code>" +
                linkedText(member.signature, links, page.name) +
-               "</code></dt>\n<dd>" +
-               renderDoc(member.doc, links, page.name) + "</dd>\n";
+               "</code></dt>\n<dd>" + renderDoc(member.doc, links, page.name) +
+               "</dd>\n";
       }
       out += "</dl>\n";
     }
@@ -426,12 +425,13 @@ std::vector<File> render(std::vector<Page> pages) {
       continue;
     if (search.size() > 1)
       search += ',';
-    search += "{\"name\":" + jsonString(name) + ",\"href\":" +
-              jsonString(href) + "}";
+    search +=
+        "{\"name\":" + jsonString(name) + ",\"href\":" + jsonString(href) + "}";
   }
   search += "]\n";
   files.push_back({"search-index.json", search});
-  files.push_back({"search-index.js", "const mettleSearch = " + search + ";\n"});
+  files.push_back(
+      {"search-index.js", "const mettleSearch = " + search + ";\n"});
   files.push_back(
       {"search.js",
        "const input = document.getElementById('search');\n"

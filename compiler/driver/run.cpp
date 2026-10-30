@@ -237,8 +237,7 @@ std::string jsonString(std::string_view value) {
 }
 
 bool reportFindings(const std::vector<lint::Finding> &findings,
-                    Diagnostics &diagnostics, const Source &source,
-                    bool json) {
+                    Diagnostics &diagnostics, const Source &source, bool json) {
   std::size_t warnings = 0, denied = 0;
   for (const auto &finding : findings) {
     if (json) {
@@ -248,10 +247,9 @@ bool reportFindings(const std::vector<lint::Finding> &findings,
           owner = &candidate;
           break;
         }
-      std::cout << "{\"code\":" << jsonString(finding.rule)
-                << ",\"level\":"
+      std::cout << "{\"code\":" << jsonString(finding.rule) << ",\"level\":"
                 << jsonString(finding.level == lint::Level::Deny ? "deny"
-                                                                : "warn")
+                                                                 : "warn")
                 << ",\"span\":{\"file\":" << jsonString(owner->path)
                 << ",\"begin\":" << finding.span.begin
                 << ",\"end\":" << finding.span.end
