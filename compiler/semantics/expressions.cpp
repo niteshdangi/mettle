@@ -257,6 +257,7 @@ int Checker::checkNode(Node &n, bool reachable) {
     }
     if (n.text == "take") {
       result = node(*n.children[0], reachable);
+      diagnoseBorrowedMatchMove(*n.children[0], result);
       break;
     }
     auto *literalNode = n.children[0].get();

@@ -107,6 +107,7 @@ struct Local {
   bool patternView = false;
   StorageDuration storage = StorageDuration::Automatic;
   int staticIndex = -1;
+  bool readMatchPattern = false;
 };
 struct FunctionFacts {
   Type result = Type::Unknown;

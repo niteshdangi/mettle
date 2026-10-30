@@ -414,6 +414,16 @@ int Checker::call(Node &n, bool reachable) {
               "variadic non-Copy arguments require explicit take");
       continue;
     }
+    auto *argumentValue = &argument;
+    while (argumentValue->kind == Kind::Group)
+      argumentValue = argumentValue->children[0].get();
+    if (facts(n).callee >= 0 &&
+        static_cast<std::size_t>(facts(n).callee) < module.functions.size() &&
+        target < module.functions[facts(n).callee].parameters.size() &&
+        module.functions[facts(n).callee].parameters[target].mode == "take" &&
+        !(argumentValue->kind == Kind::Unary &&
+          argumentValue->text == "take"))
+      diagnoseBorrowedMatchMove(argument, type);
     if (!facts(n).constructor) {
       const auto &formal = module.functions[facts(n).callee].parameters[target];
       bool borrowed = formal.mode == "read" || formal.mode == "mut" ||
