@@ -397,6 +397,10 @@ void Checker::machineDeclarations() {
     std::set<std::string> attributes;
     auto symbol = function.abi.empty() ? std::string{} : function.name;
     for (const auto &attribute : function.item.attributes) {
+      // Lint levels are read by the lint pass and may repeat.
+      if (attribute.name == "allow" || attribute.name == "warn" ||
+          attribute.name == "deny" || attribute.name == "forbid")
+        continue;
       if (!attributes.insert(attribute.name).second)
         error("attribute", attribute.span,
               "duplicate singleton attribute '" + attribute.name + "'");

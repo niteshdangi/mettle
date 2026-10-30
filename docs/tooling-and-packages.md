@@ -215,14 +215,40 @@ report the same phase, line and message (columns may move). `--check` prints eac
 that would change with its first differing line and exits 1 without writing;
 otherwise changed files are replaced atomically (temporary file and rename).
 
+`mettle lint FILE|PACKAGE [--allow|--warn|--deny RULE]... [build options]` is
+implemented, unverified (not yet built). It runs the same front end as `check`
+(parse, expansion, resolution, typing, ownership; any error is reported as usual
+and no lint runs) and then semantic lints over the checked program, never over
+raw text. Findings are structured diagnostics with spans and expansion
+provenance, printed as `warning[RULE]` (or `error[RULE]` when denied) followed by
+a count; findings in the standard library, dependency packages and generated code
+are not reported. The exit status is 1 when a denied finding exists, otherwise 0.
+Rules (stable kebab-case names):
+
+| Rule | Reports |
+| --- | --- |
+| `unused-binding` | a `let`/`var`/pattern binding that is never read, assigned or captured (names starting with `_` and `let _ =` are exempt) |
+| `unused-mutability` | a `var` that is never reassigned, mutably borrowed or used as a `mut` receiver; use `let` |
+| `unused-import` | an `import` name (or glob) no lookup went through; `pub` imports are exempt |
+| `unreachable-code` | the first statement of a block after a statement that never completes |
+| `unused-outcome` | an expression statement whose value is an `Outcome` (for example a bare `capture f()`); handle it, `try` it or write `let _ =` |
+
+Levels are `allow`, `warn` (default) and `deny`. `--allow|--warn|--deny RULE`
+set a rule, the rule name `warnings` sets the default for every rule (`--deny
+warnings` makes all findings fail). The `@allow(RULE, ...)`, `@warn(...)`,
+`@deny(...)` and `@forbid(...)` attributes on a function override the flags inside
+that function; `RULE` may be spelled with `-` or `_`, and unknown names are
+ignored. Attributes on imports and on products/impls, line breaking of findings
+and machine-readable output are not implemented.
+
 Target, profile, feature, package/workspace and lock/offline selections are
 shared options. Unknown or unavailable requested capabilities fail explicitly;
 partial compiler milestones cannot count unsupported programs as passed tests.
 
 Implemented and verified: `check`, `build`, `run`, `test`, `bench` and `fmt`
-(plus `clean`, `migrate` and the inspection commands). `lint` does not exist
-yet. `doc` and doctests are implemented, unverified (not yet built; see
-section 4).
+(plus `clean`, `migrate` and the inspection commands). `lint` is implemented
+and verified (test `lint_reports_semantic_findings`). `doc` and doctests are implemented and verified
+(see section 4).
 
 ```
 mettle run   FILE|PACKAGE [build options] [-- ARGS...]

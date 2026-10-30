@@ -11,6 +11,8 @@ struct Diagnostic {
   std::string phase;
   Span span;
   std::string message;
+  // "error" or "warning"; only lint findings are warnings.
+  std::string severity = "error";
 };
 
 // Provenance of a compiler-generated source (an attribute expansion). Spans
@@ -57,6 +59,13 @@ public:
     SourceId previous;
   };
   void error(std::string phase, Span span, std::string message) {
+    add("error", std::move(phase), span, std::move(message));
+  }
+  void warning(std::string phase, Span span, std::string message) {
+    add("warning", std::move(phase), span, std::move(message));
+  }
+  void add(std::string severity, std::string phase, Span span,
+           std::string message) {
     if (span.source == 0)
       span.source = currentSource;
     // A repeated report of the same fault at the same place adds no
@@ -64,16 +73,23 @@ public:
     if (std::any_of(items.begin(), items.end(), [&](const Diagnostic &item) {
           return item.span.begin == span.begin && item.span.end == span.end &&
                  item.span.source == span.source && item.phase == phase &&
-                 item.message == message;
+                 item.severity == severity && item.message == message;
         }))
       return;
     if (items.size() < limits::diagnostics)
-      items.push_back({std::move(phase), span, std::move(message)});
+      items.push_back(
+          {std::move(phase), span, std::move(message), std::move(severity)});
     else
       ++suppressed;
   }
   void generated(Generation generation) {
     generations.push_back(std::move(generation));
+  }
+  // True for the generated source of an attribute or macro expansion.
+  bool isGenerated(SourceId id) const {
+    return std::any_of(
+        generations.begin(), generations.end(),
+        [&](const Generation &entry) { return entry.source == id; });
   }
   bool empty() const { return items.empty(); }
   std::size_t count() const { return items.size() + suppressed; }
@@ -85,7 +101,7 @@ public:
                                      });
       if (generation == generations.end()) {
         printItem(sourceOf(source, item.span), item.span.begin,
-                  "error[" + item.phase + "]", item.message, out);
+                  item.severity + "[" + item.phase + "]", item.message, out);
         continue;
       }
       auto target = generation->origin;
@@ -105,7 +121,7 @@ public:
           break;
         }
       printItem(sourceOf(source, target), target.begin,
-                "error[" + item.phase + "]", item.message, out);
+                item.severity + "[" + item.phase + "]", item.message, out);
       if (!exact &&
           (target.begin != origin.begin || target.source != origin.source))
         printItem(sourceOf(source, origin), origin.begin, "note",

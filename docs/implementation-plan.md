@@ -1025,8 +1025,11 @@ test [--doc]`, fence annotations `no_run`/`ignore`/`should_panic`/
 `compile_fail(PHASE)`) are implemented and verified on macOS arm64 (driver
 `document.cpp`/`execute.cpp`, component `compiler/documentation`; tooling-and-
 packages section 4.1; tests `doc_writes_deterministic_html` and
-`doctests_run_isolated_examples` in `tests/packages.py`). Remaining I12 work:
-`lint`, line breaking/wrapping in `fmt`, doc cross-references and search,
+`doctests_run_isolated_examples` in `tests/packages.py`). `mettle lint` is implemented and verified on macOS arm64 (test
+`lint_reports_semantic_findings`): five semantic rules
+over checked facts, `--allow/--warn/--deny` and function-level
+`@allow/@warn/@deny` (tooling-and-packages section 3). Remaining I12 work:
+further lint rules and machine-readable findings, line breaking/wrapping in `fmt`, doc cross-references and search,
 doctests outside the root source, machine-readable test results, test timeouts, tests and benchmarks
 outside the root module, benchmark handles, LSP and debugger
 workflows. The milestone is not complete.

@@ -4,6 +4,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace mettle::driver {
@@ -44,6 +45,9 @@ struct Options {
   // documents items that are not `pub`.
   bool docOnly = false, documentPrivate = false;
   std::string harness;
+  // `mettle lint`: (level, rule) from `--allow|--warn|--deny RULE`, in order;
+  // the rule `warnings` selects every rule not named otherwise.
+  std::vector<std::pair<std::string, std::string>> lintLevels;
 };
 std::optional<Options> options(int argc, char **argv);
 void usage();

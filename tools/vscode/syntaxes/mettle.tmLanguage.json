@@ -1,0 +1,193 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Mettle",
+  "scopeName": "source.mettle",
+  "patterns": [
+    {"include": "#comments"},
+    {"include": "#strings"},
+    {"include": "#quoted-identifiers"},
+    {"include": "#declarations"},
+    {"include": "#keywords"},
+    {"include": "#numbers"},
+    {"include": "#types"},
+    {"include": "#operators"}
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.documentation.mettle",
+          "match": "//[/!].*$"
+        },
+        {
+          "name": "comment.line.double-slash.mettle",
+          "match": "//.*$"
+        },
+        {"include": "#block-comment"}
+      ]
+    },
+    "block-comment": {
+      "name": "comment.block.mettle",
+      "begin": "/\\*",
+      "end": "\\*/",
+      "patterns": [{"include": "#block-comment"}]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.raw.mettle",
+          "begin": "\\b(?:br|r)(#*)\"",
+          "end": "\"\\1"
+        },
+        {
+          "name": "string.quoted.double.interpolated.mettle",
+          "begin": "\\bf\"",
+          "end": "\"|$",
+          "patterns": [
+            {"include": "#escapes"},
+            {
+              "name": "constant.character.escape.mettle",
+              "match": "\\{\\{|\\}\\}"
+            },
+            {"include": "#format-hole"}
+          ]
+        },
+        {
+          "name": "string.quoted.double.mettle",
+          "begin": "(?:\\bb)?\"",
+          "end": "\"|$",
+          "patterns": [{"include": "#escapes"}]
+        },
+        {
+          "name": "string.quoted.single.mettle",
+          "begin": "(?:\\bb)?'",
+          "end": "'|$",
+          "patterns": [{"include": "#escapes"}]
+        }
+      ]
+    },
+    "escapes": {
+      "patterns": [
+        {
+          "name": "constant.character.escape.mettle",
+          "match": "\\\\(?:[nrt0\\\\'\"]|x[0-9A-Fa-f]{2}|u\\{[0-9A-Fa-f]{1,6}\\})"
+        },
+        {
+          "name": "invalid.illegal.escape.mettle",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "format-hole": {
+      "name": "meta.interpolation.mettle",
+      "begin": "\\{",
+      "end": "\\}",
+      "patterns": [
+        {"include": "#expression-braces"},
+        {"include": "$self"}
+      ]
+    },
+    "expression-braces": {
+      "begin": "\\{",
+      "end": "\\}",
+      "patterns": [
+        {"include": "#expression-braces"},
+        {"include": "$self"}
+      ]
+    },
+    "quoted-identifiers": {
+      "name": "variable.other.mettle",
+      "match": "`[A-Za-z_][A-Za-z0-9_]*`"
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(fn)\\s+(`[A-Za-z_][A-Za-z0-9_]*`|[A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {"name": "storage.type.function.mettle"},
+            "2": {"name": "entity.name.function.mettle"}
+          }
+        },
+        {
+          "match": "\\b(type|enum|interface|union|alias)\\s+(`[A-Za-z_][A-Za-z0-9_]*`|[A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {"name": "storage.type.mettle"},
+            "2": {"name": "entity.name.type.mettle"}
+          }
+        },
+        {
+          "name": "entity.other.attribute-name.mettle",
+          "match": "@[A-Za-z_][A-Za-z0-9_:]*"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "constant.language.mettle",
+          "match": "\\b(?:true|false|none)\\b"
+        },
+        {
+          "name": "support.function.variant.mettle",
+          "match": "\\b(?:present|success|failure)\\b"
+        },
+        {
+          "name": "variable.language.mettle",
+          "match": "\\b(?:self|Self)\\b"
+        },
+        {
+          "name": "keyword.control.mettle",
+          "match": "\\b(?:if|else|while|loop|for|in|match|break|continue|return|throw|throws|try|capture|await|label)\\b"
+        },
+        {
+          "name": "storage.type.mettle",
+          "match": "\\b(?:fn|let|var|type|enum|interface|union|alias|macro)\\b"
+        },
+        {
+          "name": "storage.modifier.mettle",
+          "match": "\\b(?:pub|copy|read|mut|take|async|unsafe|extern|static|const|init|drop|heap|shared|weak|local|pinned|as|where|region|implements|receiver|impl|module|import)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.mettle",
+          "match": "\\b[0-9](?:_?[0-9])*(?:\\.[0-9](?:_?[0-9])*(?:[eE][+-]?[0-9](?:_?[0-9])*)?(?:f32|f64)?|[eE][+-]?[0-9](?:_?[0-9])*(?:f32|f64)?|f32|f64)\\b"
+        },
+        {
+          "name": "constant.numeric.integer.mettle",
+          "match": "\\b(?:0x[0-9a-fA-F](?:_?[0-9a-fA-F])*|0b[01](?:_?[01])*|0o[0-7](?:_?[0-7])*|[0-9](?:_?[0-9])*)(?:[iu](?:8|16|32|64|128|size))?\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.mettle",
+          "match": "\\b(?:bool|char|[iu](?:8|16|32|64|128|size)|f32|f64|Unit|Never|Text|String|Copy|Sized|Unpin|Transferable|Shareable|Static|ptr)\\b"
+        },
+        {
+          "name": "constant.other.mettle",
+          "match": "\\b[A-Z][A-Z0-9_]+\\b"
+        },
+        {
+          "name": "entity.name.type.mettle",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.mettle",
+          "match": "\\?\\?|\\?\\.|\\.\\.=|\\.\\.|=>|::|<<=?|>>=?|[+*/%&|^!=<>-]=?|\\?"
+        },
+        {
+          "name": "punctuation.separator.mettle",
+          "match": "[{}\\[\\](),;:.]"
+        }
+      ]
+    }
+  }
+}
