@@ -1,4 +1,4 @@
-// expect-error: feature 7:25 `await` inside a loop is not implemented
+// expect-error: feature 7:25 `await` inside a loop or nested block is not implemented
 async fn g(): i32 { 1 }
 
 async fn f(): i32 {

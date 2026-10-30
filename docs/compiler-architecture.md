@@ -698,4 +698,6 @@ host and Linux x86-64 target, not a Linux compiler host, public ABI or runtime p
 
 The lexer emits `FormatOpen/Piece/HoleOpen/HoleClose/Close` tokens; the parser desugars an f-string into a labelled call chain `core::fmt::message(read [field(hole, piece)...], tail)` (labels `f-string`, `f-string-internal`). The checker (`calls.cpp`, `expressions.cpp`) confines these nodes to `format` argument positions; no new AST kind, IR or backend work.
 
+Cross-branch inference: a generic call at the tail of an `if`/`else` or `match` arm without an expected type (or an argument of such a call) may leave generic arguments open (`if c { left(a) } else { right(b) }`). `Checker::genericCall` then defers its errors and obligations (`deferredCalls`); `joinDeferred` merges the arm types structurally (`mergePartial`) and `finishDeferred` completes the bindings from the merged type, recomputes the call facts and refines its arguments top-down before the ordinary join. Arguments still open are reported as before.
+
 A hole's type is checked through the `core::fmt::Hole` bound of `core::fmt::field`: one blanket library implementation covers every sized `Display` type and `Text` has its own; when the bound fails, `Checker::interfaceObligation` reports a dedicated "cannot fill an f-string hole" error instead of the generic obligation message.

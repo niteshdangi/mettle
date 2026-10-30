@@ -340,8 +340,7 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
     case Kind::Match: {
       bool direct = isAwait(*current.children[0]);
       hoistValue(current.children[0], out);
-      if (direct && current.text == "read" &&
-          !isAwait(*current.children[0]))
+      if (direct && current.text == "read" && !isAwait(*current.children[0]))
         current.text = "take";
       break;
     }
@@ -429,9 +428,9 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
 
   // `if c { A } else { B }` becomes `if c { left(A) } else { right(B) }` over
   // the futures of the branches; `match` nests the pair to the right.
-  branchFuture = [&](Node &statement, std::vector<NodeOwner> &rest,
-                     const std::vector<std::string> &variables)
-      -> std::unique_ptr<Node> {
+  branchFuture =
+      [&](Node &statement, std::vector<NodeOwner> &rest,
+          const std::vector<std::string> &variables) -> std::unique_ptr<Node> {
     auto at = statement.span;
     auto result = node(statement.kind, at, statement.text);
     result->patterns = std::move(statement.patterns);
@@ -458,8 +457,7 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
     for (std::size_t i = 0; i < arms; ++i) {
       auto &source = *statement.children[i + 1];
       if (source.flag && containsAwait(*source.children[0]))
-        reject(*source.children[0],
-               "`await` is not allowed in a match guard");
+        reject(*source.children[0], "`await` is not allowed in a match guard");
       auto future = futureOf(source.children.back(), rest, variables);
       if (i + 1 < arms)
         future = wrap("core::future::left", std::move(future));
@@ -616,10 +614,9 @@ std::unique_ptr<Node> Parser::asyncBody(Node &body, TypeSyntax result,
     return asBlock(span, std::move(block));
   };
 
-  bool awaits = std::any_of(statements.begin(), statements.end(),
-                            [](const NodeOwner &statement) {
-                              return containsAwait(*statement);
-                            });
+  bool awaits = std::any_of(
+      statements.begin(), statements.end(),
+      [](const NodeOwner &statement) { return containsAwait(*statement); });
   if (!awaits) {
     std::vector<NodeOwner> all;
     for (auto &statement : statements)

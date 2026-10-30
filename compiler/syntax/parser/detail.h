@@ -170,8 +170,7 @@ private:
   void lowerAsync(Function &function);
   // The future expression for an async body; `result` is empty when inferred.
   std::unique_ptr<Node> asyncBody(Node &body, TypeSyntax result, Span span);
-  TypeSyntax asyncResult(TypeSyntax result, TypeSyntax error,
-                         bool unitIfEmpty);
+  TypeSyntax asyncResult(TypeSyntax result, TypeSyntax error, bool unitIfEmpty);
   std::unique_ptr<Node> loopExpression();
   Module::Product product();
   Module::Product enumeration();

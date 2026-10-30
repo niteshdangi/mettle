@@ -1,6 +1,7 @@
 #include "semantics/checker.h"
 #include "support/limits.h"
 #include "syntax/lexer.h"
+#include <array>
 
 namespace mettle {
 
@@ -385,6 +386,12 @@ int Checker::checkNode(Node &n, bool reachable) {
     auto literal = booleanLiteral(condition);
     bool yes = literal != false;
     bool no = literal != true;
+    const bool deferJoin =
+        n.children.size() == 3 && !expectedTypes.contains(&n);
+    if (deferJoin) {
+      markDeferrable(*n.children[1]);
+      markDeferrable(*n.children[2]);
+    }
     auto savedFeatures = guardedFeatures;
     if (condition.kind == Kind::FeatureTest)
       guardedFeatures.insert(condition.text);
@@ -395,6 +402,12 @@ int Checker::checkNode(Node &n, bool reachable) {
                  ? node(*n.children[2],
                         reachable && facts(condition).flow.normal && no)
                  : unit();
+    if (deferJoin) {
+      const std::array<Node *, 2> tails{n.children[1].get(),
+                                        n.children[2].get()};
+      const std::array<int, 2> types{a, b};
+      joinDeferred(tails, types);
+    }
     if (n.children.size() == 3 && expectedTypes.contains(&n)) {
       result = inference.fresh(expectedTypes.at(&n));
       coerce(*n.children[1], a, result, n.children[1]->span);

@@ -340,6 +340,13 @@ int Checker::match(Node &n, bool reachable) {
                                 : ParameterMode::Read;
   int result = inference.fresh(expectedTypes.contains(&n) ? expectedTypes.at(&n)
                                                           : Type::Never);
+  const bool deferJoin = !expectedTypes.contains(&n);
+  std::vector<Node *> tails;
+  std::vector<int> bodies;
+  std::vector<Span> spans;
+  if (deferJoin)
+    for (std::size_t i = 1; i < n.children.size(); ++i)
+      markDeferrable(*n.children[i]->children.back());
   for (std::size_t i = 1; i < n.children.size(); ++i) {
     auto &arm = *n.children[i];
     scopes.emplace_back();
@@ -375,11 +382,19 @@ int Checker::match(Node &n, bool reachable) {
       }
     }
     auto body = node(*arm.children.back(), reachable);
-    if (expectedTypes.contains(&n))
+    if (!deferJoin)
       coerce(*arm.children.back(), body, result, arm.span);
-    else
-      result = inference.joined(result, body, arm.span);
+    else {
+      tails.push_back(arm.children.back().get());
+      bodies.push_back(body);
+      spans.push_back(arm.span);
+    }
     scopes.pop_back();
+  }
+  if (deferJoin) {
+    joinDeferred(tails, bodies);
+    for (std::size_t i = 0; i < bodies.size(); ++i)
+      result = inference.joined(result, bodies[i], spans[i]);
   }
   // Exhaustiveness is checked after type constraints have resolved.
   return result;

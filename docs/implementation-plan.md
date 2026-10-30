@@ -906,14 +906,16 @@ inline state types `Lazy`, `Then`, `Defer`; `std::task` is the optional executor
 `async fn` (free functions and methods), `async { .. }` blocks and
 `async fn(..) { .. }` closures to `some Future<Output = T>` built from those
 states (`compiler/syntax/parser/async.cpp`), so there is no separate
-state-machine IR pass. Implemented, unverified (not yet built or run; the
-earlier whole-statement forms above were verified): `await` in any eagerly
+state-machine IR pass. Verified on macOS arm64 (Release and Debug): `await`
+in any eagerly
 evaluated subexpression (`f(await a) + 1`, `let (p, q) = await e`,
 `if await c {..}`) by hoisting into temporaries in evaluation order, with
 effectful operands evaluated before the await hoisted too; `await` inside the
 branches of an `if`/`else if`/`match` that is the last statement of its block
 (each branch is its own future, joined by the allocation-free
-`core::future::Either`); `return` before the last await when it ends a branch
+`core::future::Either`; the checker completes each branch's `left`/`right`
+generic arguments from the other branches, see compiler-architecture
+"Cross-branch inference"); `return` before the last await when it ends a branch
 of an `if`/`match` with exactly one continuing branch (the statements after it
 move into that branch); async blocks and async closures (captured by move, the
 result type inferred); and a structured diagnostic for a `let r = read x` /

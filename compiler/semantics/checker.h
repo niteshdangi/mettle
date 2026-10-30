@@ -5,6 +5,8 @@
 #include "semantics/inference.h"
 #include "semantics/region_solver.h"
 #include <map>
+#include <span>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace mettle {
@@ -360,6 +362,29 @@ private:
   };
   std::vector<GenericCallRequest> genericCallRequests;
   void resolveGenericCalls();
+  // A generic call at the tail of an `if`/`match` branch (or an argument of
+  // such a call) may leave parameters that only the other branches fix, as in
+  // `if c { left(a) } else { right(b) }`; the join completes it.
+  struct DeferredCall {
+    Function *function;
+    std::vector<TypeBinding> bindings;
+    std::vector<Type> signature;
+    Type resultPattern, errorPattern;
+    int variable;
+    std::size_t request;
+    GenericEnvironment *environment, *caller;
+    Function *owner;
+    std::vector<RegionBinding> explicitRegions;
+  };
+  std::unordered_set<const Node *> deferrableCalls;
+  std::unordered_map<const Node *, DeferredCall> deferredCalls;
+  void markDeferrable(Node &tail);
+  bool partialType(Type type);
+  Type mergePartial(Type a, Type b);
+  void refineDeferred(Node &tail, Type expected);
+  void finishDeferred(Node &call, DeferredCall deferred, Type expected);
+  // Completes the deferred calls at the given branch tails from their join.
+  void joinDeferred(std::span<Node *const> tails, std::span<const int> types);
   void declarations();
   Type resolveAlias(std::size_t index, unsigned depth = 0);
   unsigned aliasDepth = 0;
