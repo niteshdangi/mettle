@@ -4,7 +4,7 @@
 // timeouts are not provided yet.
 import package.core.outcome;
 import super.io;
-import super.io.{Error, ErrorKind, Read, Write};
+import super.io.{Error, ErrorKind, Reader, Writer};
 import package.core.slice;
 import super.sys;
 import super.time.Duration;
@@ -155,11 +155,11 @@ extend TcpStream {
     }
 }
 
-extend TcpStream implements Read {
+extend TcpStream implements Reader {
     mut fn read_some(buf: mut [u8]): usize throws Error { try stream_read(self.fd, buf) }
 }
 
-extend TcpStream implements Write {
+extend TcpStream implements Writer {
     mut fn write_some(buf: read [u8]): usize throws Error { try stream_write(self.fd, buf) }
     mut fn flush(): Unit throws Error {}
 }

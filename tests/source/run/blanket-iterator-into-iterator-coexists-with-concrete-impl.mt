@@ -2,8 +2,8 @@
 module core {
     pub module iter {
         pub interface Iterator { type Item; mut fn next(): Self.Item?; }
-        pub interface IntoIterator: Sized { type Item; type IntoIter: Iterator; fn into_iter(receiver self: take Self): Self.IntoIter; }
-        extend<I: Iterator> I implements IntoIterator {
+        pub interface OwnedIterable: Sized { type Item; type IntoIter: Iterator; fn into_iter(receiver self: take Self): Self.IntoIter; }
+        extend<I: Iterator> I implements OwnedIterable {
             type Item = I.Item
             type IntoIter = I
             fn into_iter(receiver self: take Self): I { self }
@@ -18,7 +18,7 @@ extend Counter implements core.iter.Iterator {
     }
 }
 type Bag { max: i32 }
-extend Bag implements core.iter.IntoIterator {
+extend Bag implements core.iter.OwnedIterable {
     type Item = i32
     type IntoIter = Counter
     fn into_iter(receiver self: take Self): Counter { Counter(0, self.max) }

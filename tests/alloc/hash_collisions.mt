@@ -1,4 +1,4 @@
-import alloc.hash_map.HashMap;
+import alloc.hash_map.Map;
 import core.hash.{Hash, Hasher};
 import package.core.cmp.PartialEq;
 

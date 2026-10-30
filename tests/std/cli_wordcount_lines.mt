@@ -5,12 +5,12 @@
 // As cli_wordcount, using the borrowed-line API: read_bytes_line_into reuses
 // one buffer, [u8].bytes() iterates Copy bytes, paths are passed as OsString
 // through PathInput, and write_path prints the input name.
-import std.io.{Error, Read, Write};
+import std.io.{Error, Reader, Writer};
 import std.ffi;
 import std.path.PathInput;
-import alloc.vec.Vec;
+import alloc.vec.List;
 
-fn decimal(v: usize): Vec<u8> {
+fn decimal(v: usize): List<u8> {
     var digits = alloc.vec.new<u8>()
     var x = v
     if x == 0usize { digits.push(48u8) }
@@ -32,7 +32,7 @@ fn words_in(line: read [u8]): usize {
     words
 }
 
-fn field(out: mut Vec<u8>, name: read Text, value: usize): Unit {
+fn field(out: mut List<u8>, name: read Text, value: usize): Unit {
     out.extend_from_slice(name.as_bytes())
     out.extend_from_slice(decimal(value).as_slice())
     out.push(10u8)

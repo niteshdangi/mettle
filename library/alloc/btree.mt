@@ -1,11 +1,11 @@
-import package.core.iter.{Iterator, IntoIterator, Iterable, IterableMut, FromIterator, Extend};
+import package.core.iter.{Iterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems};
 import package.core.clone.Clone;
 import package.core.cmp.{Eq, PartialEq, PartialOrd};
 import package.core.hash.{Hash, Hasher};
 import package.core.fmt;
 import package.core.slice.SliceIter;
 import super.alloc.{Allocator, Global, AllocError};
-import super.vec.Vec;
+import super.vec.List;
 import package.core.cmp.{Ord, Ordering};
 import package.core.borrow.KeyView;
 
@@ -16,17 +16,17 @@ pub type Entry<K, V> {
 
 // Ordered map kept as a sorted array: lookups are O(log n) binary searches,
 // updates move O(n) entries. It provides the ordered-iteration and range
-// contract of `BTreeMap`; a node-based B-tree is future work.
-pub type BTreeMap<K, V, A: Allocator = Global> {
-    entries: Vec<Entry<K, V>, A>
+// contract of `SortedMap`; a node-based B-tree is future work.
+pub type SortedMap<K, V, A: Allocator = Global> {
+    entries: List<Entry<K, V>, A>
 }
 
-pub fn new_in<K, V, A: Allocator>(a: take A): BTreeMap<K, V, A> {
-    BTreeMap(super.vec.new_in<Entry<K, V>, A>(a))
+pub fn new_in<K, V, A: Allocator>(a: take A): SortedMap<K, V, A> {
+    SortedMap(super.vec.new_in<Entry<K, V>, A>(a))
 }
-pub fn new<K, V>(): BTreeMap<K, V> { new_in(Global()) }
+pub fn new<K, V>(): SortedMap<K, V> { new_in(Global()) }
 
-extend<K: Ord, V, A: Allocator> BTreeMap<K, V, A> {
+extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
     pub fn len(): usize { self.entries.len() }
     pub fn is_empty(): bool { self.entries.is_empty() }
     // Entries in ascending key order.
@@ -124,12 +124,12 @@ extend<K: Ord, V, A: Allocator> BTreeMap<K, V, A> {
     pub mut fn clear(): Unit { self.entries.clear() }
 }
 
-pub type BTreeSet<K, A: Allocator = Global> { map: BTreeMap<K, Unit, A> }
+pub type SortedSet<K, A: Allocator = Global> { map: SortedMap<K, Unit, A> }
 
-pub fn set_new_in<K, A: Allocator>(a: take A): BTreeSet<K, A> { BTreeSet(new_in<K, Unit, A>(a)) }
-pub fn set_new<K>(): BTreeSet<K> { BTreeSet(new<K, Unit>()) }
+pub fn set_new_in<K, A: Allocator>(a: take A): SortedSet<K, A> { SortedSet(new_in<K, Unit, A>(a)) }
+pub fn set_new<K>(): SortedSet<K> { SortedSet(new<K, Unit>()) }
 
-extend<K: Ord, A: Allocator> BTreeSet<K, A> {
+extend<K: Ord, A: Allocator> SortedSet<K, A> {
     pub fn len(): usize { self.map.len() }
     pub fn is_empty(): bool { self.map.is_empty() }
     pub fn contains<Q: Ord + unsized>(key: read Q): bool where K: KeyView<Q> { self.map.contains_key(key) }
@@ -147,19 +147,19 @@ extend<K: Ord, A: Allocator> BTreeSet<K, A> {
 
 
 // Iteration is in ascending key order.
-extend<K, V, A: Allocator> BTreeMap<K, V, A> implements Iterable {
+extend<K, V, A: Allocator> SortedMap<K, V, A> implements Iterable {
     type Item = Entry<K, V>
     type Iter<region r> = SliceIter<region r, Entry<K, V>>
     fn iter<region r>(receiver self: read Self from r): SliceIter<region r, Entry<K, V>> { self.entries.as_slice().iter() }
 }
-extend<K, A: Allocator> BTreeSet<K, A> implements Iterable {
+extend<K, A: Allocator> SortedSet<K, A> implements Iterable {
     type Item = Entry<K, Unit>
     type Iter<region r> = SliceIter<region r, Entry<K, Unit>>
     fn iter<region r>(receiver self: read Self from r): SliceIter<region r, Entry<K, Unit>> { self.map.entries.as_slice().iter() }
 }
 
 // Mutable iteration visits the values only, in key order: mutable keys could break the ordering.
-pub type ValuesMut<region r, K, V, A: Allocator> { map: mut BTreeMap<K, V, A> from r; index: usize }
+pub type ValuesMut<region r, K, V, A: Allocator> { map: mut SortedMap<K, V, A> from r; index: usize }
 extend<region r, K, V, A: Allocator> ValuesMut<region r, K, V, A> implements Iterator {
     type Item = mut V from r
     mut fn next(): (mut V from r)? {
@@ -187,22 +187,22 @@ extend<region r, K, V> Values<region r, K, V> implements Iterator {
         match self.inner.next() { present(e) => present(read e.value), none => none }
     }
 }
-extend<K, V, A: Allocator> BTreeMap<K, V, A> {
+extend<K, V, A: Allocator> SortedMap<K, V, A> {
     pub fn keys(): Keys<region self, K, V> { Keys(self.entries.as_slice().iter()) }
     pub fn values(): Values<region self, K, V> { Values(self.entries.as_slice().iter()) }
 }
-extend<K, V, A: Allocator> BTreeMap<K, V, A> implements IterableMut {
+extend<K, V, A: Allocator> SortedMap<K, V, A> implements MutableIterable {
     type Item = V
     type IterMut<region r> = ValuesMut<region r, K, V, A>
     fn iter_mut<region r>(receiver self: mut Self from r): ValuesMut<region r, K, V, A> { ValuesMut(mut self, 0usize) }
 }
-extend<K, V, A: Allocator> BTreeMap<K, V, A> {
+extend<K, V, A: Allocator> SortedMap<K, V, A> {
     pub mut fn values_mut(): ValuesMut<region self, K, V, A> { ValuesMut(mut self, 0usize) }
 }
 
-extend<K: Clone, V: Clone, A: Allocator + Clone> BTreeMap<K, V, A> implements Clone {
-    fn clone(): BTreeMap<K, V, A> {
-        var out = BTreeMap(super.vec.new_in<Entry<K, V>, A>(self.entries.allocator().clone()))
+extend<K: Clone, V: Clone, A: Allocator + Clone> SortedMap<K, V, A> implements Clone {
+    fn clone(): SortedMap<K, V, A> {
+        var out = SortedMap(super.vec.new_in<Entry<K, V>, A>(self.entries.allocator().clone()))
         var i = 0usize
         while i < self.entries.len() {
             let e = read self.entries[i]
@@ -212,8 +212,8 @@ extend<K: Clone, V: Clone, A: Allocator + Clone> BTreeMap<K, V, A> implements Cl
         out
     }
 }
-extend<K: PartialEq, V: PartialEq, A: Allocator> BTreeMap<K, V, A> implements PartialEq {
-    fn eq(other: read BTreeMap<K, V, A>): bool {
+extend<K: PartialEq, V: PartialEq, A: Allocator> SortedMap<K, V, A> implements PartialEq {
+    fn eq(other: read SortedMap<K, V, A>): bool {
         if self.entries.len() != other.entries.len() { return false }
         var i = 0usize
         while i < self.entries.len() {
@@ -225,10 +225,10 @@ extend<K: PartialEq, V: PartialEq, A: Allocator> BTreeMap<K, V, A> implements Pa
         true
     }
 }
-extend<K: Eq, V: Eq, A: Allocator> BTreeMap<K, V, A> implements Eq {}
+extend<K: Eq, V: Eq, A: Allocator> SortedMap<K, V, A> implements Eq {}
 // Lexicographic over `(key, value)` entries in key order.
-extend<K: PartialOrd, V: PartialOrd, A: Allocator> BTreeMap<K, V, A> implements PartialOrd {
-    fn partial_cmp(other: read BTreeMap<K, V, A>): Ordering? {
+extend<K: PartialOrd, V: PartialOrd, A: Allocator> SortedMap<K, V, A> implements PartialOrd {
+    fn partial_cmp(other: read SortedMap<K, V, A>): Ordering? {
         var i = 0usize
         while i < self.entries.len() && i < other.entries.len() {
             let a = read self.entries[i]
@@ -246,8 +246,8 @@ extend<K: PartialOrd, V: PartialOrd, A: Allocator> BTreeMap<K, V, A> implements 
         self.entries.len().partial_cmp(other.entries.len())
     }
 }
-extend<K: Ord, V: Ord, A: Allocator> BTreeMap<K, V, A> implements Ord {
-    fn cmp(other: read BTreeMap<K, V, A>): Ordering {
+extend<K: Ord, V: Ord, A: Allocator> SortedMap<K, V, A> implements Ord {
+    fn cmp(other: read SortedMap<K, V, A>): Ordering {
         var i = 0usize
         while i < self.entries.len() && i < other.entries.len() {
             let a = read self.entries[i]
@@ -261,7 +261,7 @@ extend<K: Ord, V: Ord, A: Allocator> BTreeMap<K, V, A> implements Ord {
         self.entries.len().cmp(other.entries.len())
     }
 }
-extend<K: Hash, V: Hash, A: Allocator> BTreeMap<K, V, A> implements Hash {
+extend<K: Hash, V: Hash, A: Allocator> SortedMap<K, V, A> implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit {
         state.write_usize(self.entries.len())
         var i = 0usize
@@ -273,7 +273,7 @@ extend<K: Hash, V: Hash, A: Allocator> BTreeMap<K, V, A> implements Hash {
         }
     }
 }
-extend<K: fmt.Debug, V: fmt.Debug, A: Allocator> BTreeMap<K, V, A> implements fmt.Debug {
+extend<K: fmt.Debug, V: fmt.Debug, A: Allocator> SortedMap<K, V, A> implements fmt.Debug {
     fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
         try f.debug_open("{")
         var i = 0usize
@@ -289,8 +289,8 @@ extend<K: fmt.Debug, V: fmt.Debug, A: Allocator> BTreeMap<K, V, A> implements fm
         try f.debug_close("}", self.entries.len() == 0usize)
     }
 }
-extend<K: Ord, V, A: Allocator> BTreeMap<K, V, A> implements Extend<(K, V)> {
-    mut fn extend<I: IntoIterator<Item = (K, V)>>(items: take I): Unit {
+extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> implements ExtendItems<(K, V)> {
+    mut fn extend<I: OwnedIterable<Item = (K, V)>>(items: take I): Unit {
         var source = items.into_iter()
         while true {
             match take source.next() {
@@ -300,31 +300,31 @@ extend<K: Ord, V, A: Allocator> BTreeMap<K, V, A> implements Extend<(K, V)> {
         }
     }
 }
-extend<K: Ord, V> BTreeMap<K, V> implements FromIterator<(K, V)> {
-    static fn from_iter<I: IntoIterator<Item = (K, V)>>(items: take I): BTreeMap<K, V> {
+extend<K: Ord, V> SortedMap<K, V> implements FromItems<(K, V)> {
+    static fn from_iter<I: OwnedIterable<Item = (K, V)>>(items: take I): SortedMap<K, V> {
         var out = new<K, V>()
         out.extend(items)
         out
     }
 }
 
-extend<K: Clone, A: Allocator + Clone> BTreeSet<K, A> implements Clone {
-    fn clone(): BTreeSet<K, A> { BTreeSet(self.map.clone()) }
+extend<K: Clone, A: Allocator + Clone> SortedSet<K, A> implements Clone {
+    fn clone(): SortedSet<K, A> { SortedSet(self.map.clone()) }
 }
-extend<K: PartialEq, A: Allocator> BTreeSet<K, A> implements PartialEq {
-    fn eq(other: read BTreeSet<K, A>): bool { self.map == other.map }
+extend<K: PartialEq, A: Allocator> SortedSet<K, A> implements PartialEq {
+    fn eq(other: read SortedSet<K, A>): bool { self.map == other.map }
 }
-extend<K: Eq, A: Allocator> BTreeSet<K, A> implements Eq {}
-extend<K: PartialOrd, A: Allocator> BTreeSet<K, A> implements PartialOrd {
-    fn partial_cmp(other: read BTreeSet<K, A>): Ordering? { self.map.partial_cmp(other.map) }
+extend<K: Eq, A: Allocator> SortedSet<K, A> implements Eq {}
+extend<K: PartialOrd, A: Allocator> SortedSet<K, A> implements PartialOrd {
+    fn partial_cmp(other: read SortedSet<K, A>): Ordering? { self.map.partial_cmp(other.map) }
 }
-extend<K: Ord, A: Allocator> BTreeSet<K, A> implements Ord {
-    fn cmp(other: read BTreeSet<K, A>): Ordering { self.map.cmp(other.map) }
+extend<K: Ord, A: Allocator> SortedSet<K, A> implements Ord {
+    fn cmp(other: read SortedSet<K, A>): Ordering { self.map.cmp(other.map) }
 }
-extend<K: Hash, A: Allocator> BTreeSet<K, A> implements Hash {
+extend<K: Hash, A: Allocator> SortedSet<K, A> implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { self.map.hash(mut state) }
 }
-extend<K: fmt.Debug, A: Allocator> BTreeSet<K, A> implements fmt.Debug {
+extend<K: fmt.Debug, A: Allocator> SortedSet<K, A> implements fmt.Debug {
     fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
         try f.debug_open("{")
         var i = 0usize
@@ -337,16 +337,16 @@ extend<K: fmt.Debug, A: Allocator> BTreeSet<K, A> implements fmt.Debug {
         try f.debug_close("}", self.map.entries.len() == 0usize)
     }
 }
-extend<K: Ord, A: Allocator> BTreeSet<K, A> implements Extend<K> {
-    mut fn extend<I: IntoIterator<Item = K>>(items: take I): Unit {
+extend<K: Ord, A: Allocator> SortedSet<K, A> implements ExtendItems<K> {
+    mut fn extend<I: OwnedIterable<Item = K>>(items: take I): Unit {
         var source = items.into_iter()
         while true {
             match take source.next() { present(item) => { let added = self.insert(item) }, none => { break } }
         }
     }
 }
-extend<K: Ord> BTreeSet<K> implements FromIterator<K> {
-    static fn from_iter<I: IntoIterator<Item = K>>(items: take I): BTreeSet<K> {
+extend<K: Ord> SortedSet<K> implements FromItems<K> {
+    static fn from_iter<I: OwnedIterable<Item = K>>(items: take I): SortedSet<K> {
         var out = set_new<K>()
         out.extend(items)
         out
@@ -354,5 +354,5 @@ extend<K: Ord> BTreeSet<K> implements FromIterator<K> {
 }
 
 // Owned storage moves or is shared exactly when its elements and allocator do.
-unsafe extend<K: Transferable, V: Transferable, A: Allocator + Transferable> BTreeMap<K, V, A> implements Transferable {}
-unsafe extend<K: Shareable, V: Shareable, A: Allocator + Shareable> BTreeMap<K, V, A> implements Shareable {}
+unsafe extend<K: Transferable, V: Transferable, A: Allocator + Transferable> SortedMap<K, V, A> implements Transferable {}
+unsafe extend<K: Shareable, V: Shareable, A: Allocator + Shareable> SortedMap<K, V, A> implements Shareable {}

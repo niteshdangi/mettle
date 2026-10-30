@@ -152,9 +152,9 @@ bool Checker::implementsProtocol(Type type, std::string_view interface,
 // the body.
 bool Checker::desugarIteration(Node &n, Type original) {
   static constexpr std::string_view iterator = "core::iter::Iterator",
-                                    into = "core::iter::IntoIterator",
+                                    into = "core::iter::OwnedIterable",
                                     shared = "core::iter::Iterable",
-                                    exclusive = "core::iter::IterableMut";
+                                    exclusive = "core::iter::MutableIterable";
   auto &source = *n.children[0];
   auto place = [](const Node &node) {
     auto *current = &node;

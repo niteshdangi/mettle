@@ -6,18 +6,18 @@ import package.core.fmt;
 import package.core.ops.{Deref, IndexRange};
 import package.core.hash.{Hash, Hasher};
 import package.core.borrow.KeyView;
-import super.vec.{Vec, slice_ptr};
+import super.vec.{List, slice_ptr};
 import package.core.cmp.{Ordering, PartialEq, Eq, PartialOrd, Ord};
 import package.core.text.{Text, from_utf8_unchecked};
 
-// Owned, growable UTF-8 text: a `Vec<u8>` whose bytes are always well formed.
+// Owned, growable UTF-8 text: a `List<u8>` whose bytes are always well formed.
 pub type String<A: Allocator = Global> {
-    v: Vec<u8, A>
+    v: List<u8, A>
 }
 
 // Invalid input handed back to the caller together with the failing offset.
 pub type FromUtf8Error<A: Allocator = Global> {
-    pub bytes: Vec<u8, A>
+    pub bytes: List<u8, A>
     pub valid_up_to: usize
 }
 
@@ -36,7 +36,7 @@ pub fn from_text_in<A: Allocator>(t: read Text, a: take A): String<A> {
 }
 
 // Validates `bytes`; on failure the buffer comes back in the error.
-pub fn from_utf8<A: Allocator>(bytes: take Vec<u8, A>): String<A> throws FromUtf8Error<A> {
+pub fn from_utf8<A: Allocator>(bytes: take List<u8, A>): String<A> throws FromUtf8Error<A> {
     let ok = match package.core.text.from_utf8(bytes.as_slice()) {
         present(_) => true,
         none => false
@@ -98,7 +98,7 @@ extend<A: Allocator> String<A> {
     pub fn as_bytes(): read [u8] from self { self.v.as_slice() }
     // Borrowed text view; while it lives the string cannot change.
     pub fn as_text(): read Text from self { unsafe { from_utf8_unchecked(self.v.as_slice()) } }
-    pub take fn into_bytes(): Vec<u8, A> {
+    pub take fn into_bytes(): List<u8, A> {
         unsafe {
             let v = core.ptr.`read`(core.ptr.from_ref(self.v))
             core.mem.forget(take self)
@@ -107,7 +107,7 @@ extend<A: Allocator> String<A> {
     }
     // Safety: the bytes must be well-formed UTF-8 again before the string is
     // next observed as text (including on drop-free early exits such as errors).
-    pub mut unsafe fn as_mut_vec(): mut Vec<u8, A> from self { mut self.v }
+    pub mut unsafe fn as_mut_vec(): mut List<u8, A> from self { mut self.v }
     pub mut fn try_reserve(extra: usize): Unit throws AllocError { try self.v.try_reserve(extra) }
     pub mut fn reserve(extra: usize): Unit { self.v.reserve(extra) }
 

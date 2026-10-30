@@ -1,5 +1,5 @@
 import alloc.alloc.{Allocator, Layout, AllocError, Global};
-import alloc.vec.Vec;
+import alloc.vec.List;
 
 // Allocator that fails once the shared budget of successful allocations runs out.
 copy type Limited { budget: ptr<mut i32>; live: ptr<mut i32> }

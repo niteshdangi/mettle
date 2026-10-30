@@ -1,6 +1,6 @@
 import core.iter;
 import core.iter.Iterator;
-import core.iter.DoubleEndedIterator;
+import core.iter.BidirectionalIterator;
 
 fn evens(x: read i32): bool { x % 2 == 0 }
 fn main(): i32 {

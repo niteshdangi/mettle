@@ -1,4 +1,4 @@
-import package.core.iter.{Iterator, IntoIterator, Iterable, IterableMut, FromIterator, Extend};
+import package.core.iter.{Iterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems};
 import package.core.clone.Clone;
 import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd};
 import package.core.hash.{Hash, Hasher};
@@ -7,7 +7,7 @@ import package.core.fmt;
 import super.alloc.{Allocator, Global, AllocError, layout_unchecked, handle_alloc_error, layout_of, dangling_for};
 
 // Growable ring buffer owning its block and allocator.
-pub type VecDeque<T, A: Allocator = Global> {
+pub type Deque<T, A: Allocator = Global> {
     buf: ptr<mut T>
     cap: usize
     head: usize
@@ -24,13 +24,13 @@ pub type VecDeque<T, A: Allocator = Global> {
     }
 }
 
-pub fn new_in<T, A: Allocator>(a: take A): VecDeque<T, A> {
+pub fn new_in<T, A: Allocator>(a: take A): Deque<T, A> {
     let cap = if core.mem.size_of<T>() == 0usize { 0x7fffffffffffffffusize } else { 0usize }
-    VecDeque(dangling_for<T>(), cap, 0usize, 0usize, a)
+    Deque(dangling_for<T>(), cap, 0usize, 0usize, a)
 }
-pub fn new<T>(): VecDeque<T> { new_in(Global()) }
+pub fn new<T>(): Deque<T> { new_in(Global()) }
 
-extend<T, A: Allocator> VecDeque<T, A> {
+extend<T, A: Allocator> Deque<T, A> {
     pub fn len(): usize { self.len }
     pub fn capacity(): usize { self.cap }
     pub fn is_empty(): bool { self.len == 0usize }
@@ -128,14 +128,14 @@ extend<T, A: Allocator> VecDeque<T, A> {
     }
 }
 
-extend<T, A: Allocator> VecDeque<T, A> implements package.core.ops.Index<usize> {
+extend<T, A: Allocator> Deque<T, A> implements package.core.ops.Index<usize> {
     type Output = T
     fn index(i: read usize): read T from self {
         if i >= self.len { super.alloc.panic_precondition() }
         unsafe { read *self.buf.add(self.physical(i)) }
     }
 }
-extend<T, A: Allocator> VecDeque<T, A> implements package.core.ops.IndexMut<usize> {
+extend<T, A: Allocator> Deque<T, A> implements package.core.ops.IndexMut<usize> {
     type Output = T
     mut fn index_mut(i: read usize): mut T from self {
         if i >= self.len { super.alloc.panic_precondition() }
@@ -145,7 +145,7 @@ extend<T, A: Allocator> VecDeque<T, A> implements package.core.ops.IndexMut<usiz
 
 
 // Borrowed front-to-back iterator over a ring buffer.
-pub type DequeIter<region r, T, A: Allocator> { deque: read VecDeque<T, A> from r; index: usize }
+pub type DequeIter<region r, T, A: Allocator> { deque: read Deque<T, A> from r; index: usize }
 extend<region r, T, A: Allocator> DequeIter<region r, T, A> implements Iterator {
     type Item = read T from r
     mut fn next(): (read T from r)? {
@@ -158,14 +158,14 @@ extend<region r, T, A: Allocator> DequeIter<region r, T, A> implements Iterator 
         }
     }
 }
-extend<T, A: Allocator> VecDeque<T, A> implements Iterable {
+extend<T, A: Allocator> Deque<T, A> implements Iterable {
     type Item = T
     type Iter<region r> = DequeIter<region r, T, A>
     fn iter<region r>(receiver self: read Self from r): DequeIter<region r, T, A> { DequeIter(read self, 0usize) }
 }
 
 // Mutable front-to-back iterator over a ring buffer.
-pub type DequeIterMut<region r, T, A: Allocator> { deque: mut VecDeque<T, A> from r; index: usize }
+pub type DequeIterMut<region r, T, A: Allocator> { deque: mut Deque<T, A> from r; index: usize }
 extend<region r, T, A: Allocator> DequeIterMut<region r, T, A> implements Iterator {
     type Item = mut T from r
     mut fn next(): (mut T from r)? {
@@ -178,14 +178,14 @@ extend<region r, T, A: Allocator> DequeIterMut<region r, T, A> implements Iterat
         }
     }
 }
-extend<T, A: Allocator> VecDeque<T, A> implements IterableMut {
+extend<T, A: Allocator> Deque<T, A> implements MutableIterable {
     type Item = T
     type IterMut<region r> = DequeIterMut<region r, T, A>
     fn iter_mut<region r>(receiver self: mut Self from r): DequeIterMut<region r, T, A> { DequeIterMut(mut self, 0usize) }
 }
 
-extend<T: Clone, A: Allocator + Clone> VecDeque<T, A> implements Clone {
-    fn clone(): VecDeque<T, A> {
+extend<T: Clone, A: Allocator + Clone> Deque<T, A> implements Clone {
+    fn clone(): Deque<T, A> {
         var out = new_in<T, A>(self.a.clone())
         var i = 0usize
         while i < self.len {
@@ -195,8 +195,8 @@ extend<T: Clone, A: Allocator + Clone> VecDeque<T, A> implements Clone {
         out
     }
 }
-extend<T: PartialEq, A: Allocator> VecDeque<T, A> implements PartialEq {
-    fn eq(other: read VecDeque<T, A>): bool {
+extend<T: PartialEq, A: Allocator> Deque<T, A> implements PartialEq {
+    fn eq(other: read Deque<T, A>): bool {
         if self.len != other.len { return false }
         var i = 0usize
         while i < self.len {
@@ -206,9 +206,9 @@ extend<T: PartialEq, A: Allocator> VecDeque<T, A> implements PartialEq {
         true
     }
 }
-extend<T: Eq, A: Allocator> VecDeque<T, A> implements Eq {}
-extend<T: PartialOrd, A: Allocator> VecDeque<T, A> implements PartialOrd {
-    fn partial_cmp(other: read VecDeque<T, A>): Ordering? {
+extend<T: Eq, A: Allocator> Deque<T, A> implements Eq {}
+extend<T: PartialOrd, A: Allocator> Deque<T, A> implements PartialOrd {
+    fn partial_cmp(other: read Deque<T, A>): Ordering? {
         var i = 0usize
         while i < self.len && i < other.len {
             match self[i].partial_cmp(other[i]) {
@@ -220,8 +220,8 @@ extend<T: PartialOrd, A: Allocator> VecDeque<T, A> implements PartialOrd {
         self.len.partial_cmp(other.len)
     }
 }
-extend<T: Ord, A: Allocator> VecDeque<T, A> implements Ord {
-    fn cmp(other: read VecDeque<T, A>): Ordering {
+extend<T: Ord, A: Allocator> Deque<T, A> implements Ord {
+    fn cmp(other: read Deque<T, A>): Ordering {
         var i = 0usize
         while i < self.len && i < other.len {
             let o = self[i].cmp(other[i])
@@ -232,7 +232,7 @@ extend<T: Ord, A: Allocator> VecDeque<T, A> implements Ord {
     }
 }
 // Hashes like the slice of the same elements, front to back.
-extend<T: Hash, A: Allocator> VecDeque<T, A> implements Hash {
+extend<T: Hash, A: Allocator> Deque<T, A> implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit {
         state.write_usize(self.len)
         var i = 0usize
@@ -242,7 +242,7 @@ extend<T: Hash, A: Allocator> VecDeque<T, A> implements Hash {
         }
     }
 }
-extend<T: fmt.Debug, A: Allocator> VecDeque<T, A> implements fmt.Debug {
+extend<T: fmt.Debug, A: Allocator> Deque<T, A> implements fmt.Debug {
     fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
         try f.debug_open("[")
         var i = 0usize
@@ -255,16 +255,16 @@ extend<T: fmt.Debug, A: Allocator> VecDeque<T, A> implements fmt.Debug {
         try f.debug_close("]", self.len == 0usize)
     }
 }
-extend<T, A: Allocator> VecDeque<T, A> implements Extend<T> {
-    mut fn extend<I: IntoIterator<Item = T>>(items: take I): Unit {
+extend<T, A: Allocator> Deque<T, A> implements ExtendItems<T> {
+    mut fn extend<I: OwnedIterable<Item = T>>(items: take I): Unit {
         var source = items.into_iter()
         while true {
             match take source.next() { present(item) => { self.push_back(item) }, none => { break } }
         }
     }
 }
-extend<T> VecDeque<T> implements FromIterator<T> {
-    static fn from_iter<I: IntoIterator<Item = T>>(items: take I): VecDeque<T> {
+extend<T> Deque<T> implements FromItems<T> {
+    static fn from_iter<I: OwnedIterable<Item = T>>(items: take I): Deque<T> {
         var out = new<T>()
         out.extend(items)
         out
@@ -272,5 +272,5 @@ extend<T> VecDeque<T> implements FromIterator<T> {
 }
 
 // Owned storage moves or is shared exactly when its elements and allocator do.
-unsafe extend<T: Transferable, A: Allocator + Transferable> VecDeque<T, A> implements Transferable {}
-unsafe extend<T: Shareable, A: Allocator + Shareable> VecDeque<T, A> implements Shareable {}
+unsafe extend<T: Transferable, A: Allocator + Transferable> Deque<T, A> implements Transferable {}
+unsafe extend<T: Shareable, A: Allocator + Shareable> Deque<T, A> implements Shareable {}

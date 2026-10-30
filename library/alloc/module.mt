@@ -7,6 +7,7 @@ pub module rc;
 pub module arc;
 pub module binary_heap;
 pub module btree;
+pub module collections;
 pub module hash_map;
 pub module string;
 pub module linked_list;

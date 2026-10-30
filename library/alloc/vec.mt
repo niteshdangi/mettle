@@ -5,7 +5,7 @@ import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd};
 import package.core.hash.{Hash, Hasher};
 import package.core.fmt;
 import package.core.ops.{Deref, DerefMut, IndexRange, IndexRangeMut};
-import package.core.iter.{Iterator, DoubleEndedIterator, IntoIterator, Iterable, IterableMut, FromIterator, Extend};
+import package.core.iter.{Iterator, BidirectionalIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems};
 import package.core.slice.{SliceIter, SliceIterMut};
 
 copy type RawSlice<T> { data: ptr<read T>; len: usize }
@@ -41,7 +41,7 @@ pub fn drop_run<T>(p: ptr<mut T>, n: usize): Unit {
 }
 
 // Contiguous growable array owning its buffer and the allocator that made it.
-pub type Vec<T, A: Allocator = Global> {
+pub type List<T, A: Allocator = Global> {
     ptr: ptr<mut T>
     len: usize
     cap: usize
@@ -55,25 +55,25 @@ pub type Vec<T, A: Allocator = Global> {
     }
 }
 
-pub fn new_in<T, A: Allocator>(a: take A): Vec<T, A> {
+pub fn new_in<T, A: Allocator>(a: take A): List<T, A> {
     let cap = if core.mem.size_of<T>() == 0usize { 0xffffffffffffffffusize } else { 0usize }
-    Vec(dangling_for<T>(), 0usize, cap, a)
+    List(dangling_for<T>(), 0usize, cap, a)
 }
-pub fn new<T>(): Vec<T> { new_in(Global()) }
+pub fn new<T>(): List<T> { new_in(Global()) }
 
-pub fn try_with_capacity_in<T, A: Allocator>(n: usize, a: take A): Vec<T, A> throws AllocError {
+pub fn try_with_capacity_in<T, A: Allocator>(n: usize, a: take A): List<T, A> throws AllocError {
     var v = new_in<T, A>(a)
     try v.try_reserve_exact(n)
     v
 }
-pub fn with_capacity_in<T, A: Allocator>(n: usize, a: take A): Vec<T, A> {
+pub fn with_capacity_in<T, A: Allocator>(n: usize, a: take A): List<T, A> {
     var v = new_in<T, A>(a)
     v.reserve_exact(n)
     v
 }
-pub fn with_capacity<T>(n: usize): Vec<T> { with_capacity_in(n, Global()) }
+pub fn with_capacity<T>(n: usize): List<T> { with_capacity_in(n, Global()) }
 
-extend<T, A: Allocator> Vec<T, A> {
+extend<T, A: Allocator> List<T, A> {
     pub fn len(): usize { self.len }
     pub fn capacity(): usize { self.cap }
     pub fn is_empty(): bool { self.len == 0usize }
@@ -228,7 +228,7 @@ extend<T, A: Allocator> Vec<T, A> {
     }
 
     // Moves all elements of `other` to the end; `other` is left empty.
-    pub mut fn append(other: mut Vec<T, A>): Unit {
+    pub mut fn append(other: mut List<T, A>): Unit {
         self.reserve(other.len)
         unsafe {
             core.ptr.`copy`(other.ptr.cast_const(), self.ptr.add(self.len), other.len)
@@ -260,7 +260,7 @@ extend<T, A: Allocator> Vec<T, A> {
     }
 }
 
-extend<T: Clone, A: Allocator> Vec<T, A> {
+extend<T: Clone, A: Allocator> List<T, A> {
     pub mut fn extend_from_slice(items: read [T]): Unit {
         self.reserve(items.len())
         var i = 0usize
@@ -276,7 +276,7 @@ extend<T: Clone, A: Allocator> Vec<T, A> {
     }
 }
 
-extend<T: PartialEq, A: Allocator> Vec<T, A> {
+extend<T: PartialEq, A: Allocator> List<T, A> {
     pub fn contains(x: read T): bool {
         var i = 0usize
         while i < self.len {
@@ -307,7 +307,7 @@ extend<T: PartialEq, A: Allocator> Vec<T, A> {
     }
 }
 
-extend<T: Ord, A: Allocator> Vec<T, A> {
+extend<T: Ord, A: Allocator> List<T, A> {
     // Stable merge sort using a scratch buffer from the vector's own element type.
     pub mut fn sort(): Unit {
         let n = self.len
@@ -355,12 +355,12 @@ unsafe fn sort_run<T: Ord>(p: ptr<mut T>, tmp: ptr<mut T>, n: usize): Unit {
     core.ptr.`copy`(tmp.cast_const(), p, n)
 }
 
-extend<T, A: Allocator + Default> Vec<T, A> implements Default {
-    static fn default(): Vec<T, A> { new_in<T, A>(A.(Default).default()) }
+extend<T, A: Allocator + Default> List<T, A> implements Default {
+    static fn default(): List<T, A> { new_in<T, A>(A.(Default).default()) }
 }
 
-extend<T: Clone, A: Allocator + Clone> Vec<T, A> implements Clone {
-    fn clone(): Vec<T, A> {
+extend<T: Clone, A: Allocator + Clone> List<T, A> implements Clone {
+    fn clone(): List<T, A> {
         var out = with_capacity_in<T, A>(self.len, self.a.clone())
         var i = 0usize
         while i < self.len {
@@ -371,14 +371,14 @@ extend<T: Clone, A: Allocator + Clone> Vec<T, A> implements Clone {
     }
 }
 
-extend<T, A: Allocator> Vec<T, A> implements package.core.ops.Index<usize> {
+extend<T, A: Allocator> List<T, A> implements package.core.ops.Index<usize> {
     type Output = T
     fn index(i: read usize): read T from self {
         if i >= self.len { panic_precondition() }
         unsafe { read *self.ptr.add(i) }
     }
 }
-extend<T, A: Allocator> Vec<T, A> implements package.core.ops.IndexMut<usize> {
+extend<T, A: Allocator> List<T, A> implements package.core.ops.IndexMut<usize> {
     type Output = T
     mut fn index_mut(i: read usize): mut T from self {
         if i >= self.len { panic_precondition() }
@@ -386,15 +386,15 @@ extend<T, A: Allocator> Vec<T, A> implements package.core.ops.IndexMut<usize> {
     }
 }
 
-extend<T, A: Allocator> Vec<T, A> implements Deref {
+extend<T, A: Allocator> List<T, A> implements Deref {
     type Target = [T]
     fn deref(): read [T] from self { self.as_slice() }
 }
-extend<T, A: Allocator> Vec<T, A> implements DerefMut {
+extend<T, A: Allocator> List<T, A> implements DerefMut {
     type Target = [T]
     mut fn deref_mut(): mut [T] from self { self.as_mut_slice() }
 }
-extend<T, A: Allocator> Vec<T, A> implements IndexRange {
+extend<T, A: Allocator> List<T, A> implements IndexRange {
     type Output = [T]
     fn index_range(start: usize, end: usize): read [T] from self {
         let stop = if end == 0xffffffffffffffffusize { self.len } else { end }
@@ -402,7 +402,7 @@ extend<T, A: Allocator> Vec<T, A> implements IndexRange {
         unsafe { read *slice_ptr(self.ptr.add(start), stop - start) }
     }
 }
-extend<T, A: Allocator> Vec<T, A> implements IndexRangeMut {
+extend<T, A: Allocator> List<T, A> implements IndexRangeMut {
     type Output = [T]
     mut fn index_range_mut(start: usize, end: usize): mut [T] from self {
         let stop = if end == 0xffffffffffffffffusize { self.len } else { end }
@@ -411,18 +411,18 @@ extend<T, A: Allocator> Vec<T, A> implements IndexRangeMut {
     }
 }
 
-extend<T: PartialEq, A: Allocator> Vec<T, A> implements PartialEq {
-    fn eq(other: read Vec<T, A>): bool { self.as_slice() == other.as_slice() }
+extend<T: PartialEq, A: Allocator> List<T, A> implements PartialEq {
+    fn eq(other: read List<T, A>): bool { self.as_slice() == other.as_slice() }
 }
-extend<T: Eq, A: Allocator> Vec<T, A> implements Eq {}
-extend<T: PartialOrd, A: Allocator> Vec<T, A> implements PartialOrd {
-    fn partial_cmp(other: read Vec<T, A>): Ordering? { self.as_slice().partial_cmp(other.as_slice()) }
+extend<T: Eq, A: Allocator> List<T, A> implements Eq {}
+extend<T: PartialOrd, A: Allocator> List<T, A> implements PartialOrd {
+    fn partial_cmp(other: read List<T, A>): Ordering? { self.as_slice().partial_cmp(other.as_slice()) }
 }
-extend<T: Ord, A: Allocator> Vec<T, A> implements Ord {
-    fn cmp(other: read Vec<T, A>): Ordering { self.as_slice().cmp(other.as_slice()) }
+extend<T: Ord, A: Allocator> List<T, A> implements Ord {
+    fn cmp(other: read List<T, A>): Ordering { self.as_slice().cmp(other.as_slice()) }
 }
-// Hashes exactly like the slice view, so `Vec<T>` and `[T]` agree.
-extend<T: Hash, A: Allocator> Vec<T, A> implements Hash {
+// Hashes exactly like the slice view, so `List<T>` and `[T]` agree.
+extend<T: Hash, A: Allocator> List<T, A> implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { self.as_slice().hash(mut state) }
 }
 // By-value iterator; remaining elements and the buffer are released on drop.
@@ -442,7 +442,7 @@ pub type IntoIter<T, A: Allocator = Global> {
     }
 }
 
-extend<T, A: Allocator> Vec<T, A> implements IntoIterator {
+extend<T, A: Allocator> List<T, A> implements OwnedIterable {
     type Item = T
     type IntoIter = IntoIter<T, A>
     fn into_iter(receiver self: take Self): IntoIter<T, A> {
@@ -466,7 +466,7 @@ extend<T, A: Allocator> IntoIter<T, A> implements Iterator {
         present(unsafe { core.ptr.`read`(self.buf.add(i)) })
     }
 }
-extend<T, A: Allocator> IntoIter<T, A> implements DoubleEndedIterator {
+extend<T, A: Allocator> IntoIter<T, A> implements BidirectionalIterator {
     mut fn next_back(): T? {
         if self.front == self.back { return none }
         self.back -= 1usize
@@ -479,39 +479,39 @@ extend<T, A: Allocator> IntoIter<T, A> {
 
 // Borrowed iteration: `for x in read v` yields `read T from v`, `for x in mut v`
 // yields `mut T from v`; the loop keeps the vector borrowed.
-extend<T, A: Allocator> Vec<T, A> implements Iterable {
+extend<T, A: Allocator> List<T, A> implements Iterable {
     type Item = T
     type Iter<region r> = SliceIter<region r, T>
     fn iter<region r>(receiver self: read Self from r): SliceIter<region r, T> { self.as_slice().iter() }
 }
-extend<T, A: Allocator> Vec<T, A> implements IterableMut {
+extend<T, A: Allocator> List<T, A> implements MutableIterable {
     type Item = T
     type IterMut<region r> = SliceIterMut<region r, T>
     fn iter_mut<region r>(receiver self: mut Self from r): SliceIterMut<region r, T> { self.as_mut_slice().iter_mut() }
 }
 
-extend<T, A: Allocator> Vec<T, A> implements Extend<T> {
-    mut fn extend<I: IntoIterator<Item = T>>(items: take I): Unit {
+extend<T, A: Allocator> List<T, A> implements ExtendItems<T> {
+    mut fn extend<I: OwnedIterable<Item = T>>(items: take I): Unit {
         var source = items.into_iter()
         while true {
             match take source.next() { present(item) => { self.push(item) }, none => { break } }
         }
     }
 }
-extend<T> Vec<T> implements FromIterator<T> {
-    static fn from_iter<I: IntoIterator<Item = T>>(items: take I): Vec<T> {
+extend<T> List<T> implements FromItems<T> {
+    static fn from_iter<I: OwnedIterable<Item = T>>(items: take I): List<T> {
         var out = new<T>()
         out.extend(items)
         out
     }
 }
 
-extend<T: fmt.Debug, A: Allocator> Vec<T, A> implements fmt.Debug {
+extend<T: fmt.Debug, A: Allocator> List<T, A> implements fmt.Debug {
     fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
         try <[T] implements fmt.Debug>::fmt(self.as_slice(), mut f)
     }
 }
 
 // Owned storage moves or is shared exactly when its elements and allocator do.
-unsafe extend<T: Transferable, A: Allocator + Transferable> Vec<T, A> implements Transferable {}
-unsafe extend<T: Shareable, A: Allocator + Shareable> Vec<T, A> implements Shareable {}
+unsafe extend<T: Transferable, A: Allocator + Transferable> List<T, A> implements Transferable {}
+unsafe extend<T: Shareable, A: Allocator + Shareable> List<T, A> implements Shareable {}

@@ -1,10 +1,10 @@
 // Partial reads and writes stay visible; the *_all helpers loop over them.
-import std.io.{Read, Write, Error, ErrorKind};
-import alloc.vec.Vec;
+import std.io.{Reader, Writer, Error, ErrorKind};
+import alloc.vec.List;
 
 // Reads at most `step` bytes per call.
-type Dribble { data: Vec<u8>; pos: usize; step: usize; calls: usize }
-extend Dribble implements Read {
+type Dribble { data: List<u8>; pos: usize; step: usize; calls: usize }
+extend Dribble implements Reader {
     mut fn read_some(buf: mut [u8]): usize throws Error {
         self.calls += 1usize
         var n = buf.len()
@@ -18,8 +18,8 @@ extend Dribble implements Read {
 }
 
 // Accepts at most `step` bytes per call.
-type Trickle { out: Vec<u8>; step: usize; calls: usize }
-extend Trickle implements Write {
+type Trickle { out: List<u8>; step: usize; calls: usize }
+extend Trickle implements Writer {
     mut fn write_some(buf: read [u8]): usize throws Error {
         self.calls += 1usize
         var n = buf.len()
@@ -32,7 +32,7 @@ extend Trickle implements Write {
 
 // A sink that stops accepting bytes.
 type Full {}
-extend Full implements Write {
+extend Full implements Writer {
     mut fn write_some(buf: read [u8]): usize throws Error { 0usize }
     mut fn flush(): Unit throws Error {}
 }

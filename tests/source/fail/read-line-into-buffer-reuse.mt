@@ -1,6 +1,6 @@
 // expect-error: ownership 11:54 live exclusive loan
 // The returned line is a view of the buffer, so the buffer cannot be refilled while it lives.
-import std.io.Read;
+import std.io.Reader;
 fn main(): i32 {
     let data = [97u8, 10u8, 98u8, 10u8]
     var r = std.io.buf_reader(std.io.slice_reader(data))

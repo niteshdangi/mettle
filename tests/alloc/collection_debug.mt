@@ -4,7 +4,7 @@ import alloc.hash_map;
 import alloc.linked_list;
 import alloc.string.String;
 import alloc.vec;
-import alloc.vec.Vec;
+import alloc.vec.List;
 import alloc.vec_deque;
 import alloc.boxed;
 import core.clone.Clone;
@@ -31,7 +31,7 @@ fn main(): i32 {
     if !is(render(v, false), "[1, 2]") { return 2 }
     if !is(render(v, true), "[\n    1,\n    2,\n]") { return 3 }
 
-    var nested = vec.new<Vec<i32>>()
+    var nested = vec.new<List<i32>>()
     nested.push(vec.new<i32>())
     nested.push(v.clone())
     if !is(render(nested, false), "[[], [1, 2]]") { return 4 }
@@ -64,7 +64,7 @@ fn main(): i32 {
     bs.insert(9); bs.insert(8)
     if !is(render(bs, false), "{8, 9}") { return 14 }
 
-    var inner = vec.new<btree.BTreeSet<i32>>()
+    var inner = vec.new<btree.SortedSet<i32>>()
     inner.push(bs)
     if !is(render(inner, true), "[\n    {\n        8,\n        9,\n    },\n]") { return 15 }
     if !is(render(boxed.new(v), false), "[1, 2]") { return 16 }

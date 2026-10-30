@@ -3,13 +3,13 @@
 // the child before it ran; a child that runs and fails is a nonzero
 // `ExitStatus`, or one ended by a signal, not an `Error`.
 import package.alloc.vec;
-import package.alloc.vec.Vec;
+import package.alloc.vec.List;
 import package.core.outcome;
 import super.env;
 import super.ffi;
 import super.ffi.{OsStr, OsString};
 import super.io;
-import super.io.{Error, ErrorKind, Read, Write};
+import super.io.{Error, ErrorKind, Reader, Writer};
 import super.path.{PathBuf, PathInput};
 import package.core.text.Text;
 import super.sys;
@@ -50,7 +50,7 @@ pub type ChildStdin {
     drop { if self.fd >= 0 { let closed = unsafe { sys.close(self.fd) } } }
 }
 
-extend ChildStdin implements Write {
+extend ChildStdin implements Writer {
     mut fn write_some(buf: read [u8]): usize throws Error { try io.write_fd(self.fd, buf) }
     mut fn flush(): Unit throws Error {}
 }
@@ -61,7 +61,7 @@ pub type ChildOutput {
     drop { if self.fd >= 0 { let closed = unsafe { sys.close(self.fd) } } }
 }
 
-extend ChildOutput implements Read {
+extend ChildOutput implements Reader {
     mut fn read_some(buf: mut [u8]): usize throws Error { try io.read_fd(self.fd, buf) }
 }
 
@@ -81,7 +81,7 @@ pub type Child {
 }
 
 // Captured result of `Command::output`.
-pub type Output { pub status: ExitStatus; pub stdout: Vec<u8>; pub stderr: Vec<u8> }
+pub type Output { pub status: ExitStatus; pub stdout: List<u8>; pub stderr: List<u8> }
 
 fn wait_status(pid: i32, options: i32): ExitStatus? throws Error {
     var status = 0
@@ -158,8 +158,8 @@ type EnvChange { name: OsString; value: OsString; remove: bool }
 // working directory and standard streams.
 pub type Command {
     program: OsString
-    args: Vec<OsString>
-    changes: Vec<EnvChange>
+    args: List<OsString>
+    changes: List<EnvChange>
     clear_env: bool
     cwd: PathBuf
     has_cwd: bool
@@ -197,7 +197,7 @@ extend Command {
     pub mut fn stderr(s: Stdio): Unit { self.stderr = s }
 
     // The child's environment as NUL-terminated `name=value` strings.
-    fn environment(): Vec<Vec<u8>> throws Error {
+    fn environment(): List<List<u8>> throws Error {
         var entries = vec.new<EnvChange>()
         if !self.clear_env {
             let current = env.vars()
@@ -218,7 +218,7 @@ extend Command {
             }
             k += 1usize
         }
-        var out = vec.new<Vec<u8>>()
+        var out = vec.new<List<u8>>()
         var n = 0usize
         while n < entries.len() {
             var line = vec.new<u8>()
@@ -233,7 +233,7 @@ extend Command {
 
     // Starts the child. Piped streams are reachable through the `Child`.
     pub fn spawn(): Child throws Error {
-        var strings = vec.new<Vec<u8>>()
+        var strings = vec.new<List<u8>>()
         strings.push(try ffi.cstring(self.program.as_bytes()))
         var i = 0usize
         while i < self.args.len() {

@@ -98,10 +98,10 @@ private:
     static const std::vector<std::vector<std::string>> names{
         {"core", "text", "Text"},
         {"core", "iter", "Iterator"},
-        {"core", "iter", "IntoIterator"},
-        {"core", "iter", "DoubleEndedIterator"},
+        {"core", "iter", "BidirectionalIterator"},
+        {"core", "iter", "OwnedIterable"},
         {"core", "iter", "Iterable"},
-        {"core", "iter", "IterableMut"},
+        {"core", "iter", "MutableIterable"},
         {"core", "cmp", "PartialEq"},
         {"core", "cmp", "Eq"},
         {"core", "cmp", "PartialOrd"},
@@ -109,7 +109,10 @@ private:
         {"core", "cmp", "Ordering"},
         {"core", "panic", "panic"},
         {"core", "panic", "assert"},
-        {"alloc", "string", "String"}};
+        {"alloc", "string", "String"},
+        {"alloc", "collections", "List"},
+        {"alloc", "collections", "Map"},
+        {"alloc", "collections", "Set"}};
     return names;
   }
   static int layer(const std::string &name) {
@@ -219,6 +222,14 @@ private:
                        span, true});
     }
     scannedLiterals = result.textLiterals.size();
+    // A program type named like a prelude entry shadows it, so the prelude's
+    // library is not mounted for that name.
+    std::set<std::string> declaredTypes;
+    for (std::size_t i = 0; i + 1 < significant.size(); ++i)
+      if (from(*significant[i]).empty() &&
+          (significant[i]->text == "type" || significant[i]->text == "enum" ||
+           significant[i]->text == "interface"))
+        declaredTypes.insert(significant[i + 1]->text);
     for (std::size_t i = 0; i < significant.size(); ++i) {
       const auto &token = *significant[i];
       if (token.kind == TokenKind::Word && from(token).empty() && i > 0 &&
@@ -233,7 +244,7 @@ private:
                       significant[i - 1]->text != ".")))
         for (const auto &name : preludeNames())
           if (name.back() == token.text) {
-            if (available(name[0]))
+            if (!declaredTypes.contains(token.text) && available(name[0]))
               found.push_back({name[0], name[1], "", token.span, false});
             break;
           }

@@ -2,7 +2,7 @@
 // `runtime/sys.cpp` shims (see `runtime/sys.h`), plus checked helpers shared by
 // the hosted modules. Nothing here is a stable public surface.
 import package.alloc.vec;
-import package.alloc.vec.Vec;
+import package.alloc.vec.List;
 
 extern "C" {
     pub unsafe fn mettle_rt_errno(): i32;
@@ -66,7 +66,7 @@ pub fn errno(): i32 { unsafe { mettle_rt_errno() } }
 
 // Bytes of the NUL-terminated string at `p`, without the terminator.
 // Safety: `p` points at a NUL-terminated string that outlives the copy.
-pub unsafe fn bytes_from_c(p: ptr<read u8>): Vec<u8> {
+pub unsafe fn bytes_from_c(p: ptr<read u8>): List<u8> {
     let n = unsafe { strlen(p) }
     var out = vec.with_capacity<u8>(n)
     var i = 0usize

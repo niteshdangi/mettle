@@ -1,6 +1,6 @@
 // Child-process round trip: the program re-runs itself and talks to `cat`
 // and `sh` over pipes; failures, signals, environment and cwd are observed.
-import std.io.{Error, ErrorKind, Read, Write};
+import std.io.{Error, ErrorKind, Reader, Writer};
 import std.process.{Stdio, Child, ChildStdin};
 import std.ffi;
 import std.path.path_from_text;

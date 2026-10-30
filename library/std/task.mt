@@ -15,8 +15,8 @@ import package.alloc.arc;
 import package.alloc.arc.Arc;
 import package.alloc.boxed;
 import package.alloc.alloc.Global;
-import package.alloc.vec.Vec;
-import package.alloc.vec_deque.VecDeque;
+import package.alloc.vec.List;
+import package.alloc.vec_deque.Deque;
 import package.core.future.{Future, Poll, Context, Waker, RawWaker, RawWakerVTable};
 import package.core.panic.panic;
 
@@ -230,7 +230,7 @@ type Shared {
     live: core.sync.atomic.AtomicUsize
     polling: core.sync.atomic.AtomicBool
 }
-type Queue { items: VecDeque<ptr<mut u8>>; closed: bool }
+type Queue { items: Deque<ptr<mut u8>>; closed: bool }
 type Task {
     future: mutex.Mutex<ErasedFuture?>
     queued: core.sync.atomic.AtomicBool
@@ -271,7 +271,7 @@ extend Task implements Wake {
 // Completed task metadata is retained until executor destruction.
 pub type Executor {
     hub: Arc<Shared>
-    tasks: core.cell.UnsafeCell<Vec<ptr<mut u8>>>
+    tasks: core.cell.UnsafeCell<List<ptr<mut u8>>>
     drop {
         let _cancel = CancelRest(self.tasks.get())
         let hub = self.hub.get()
@@ -296,7 +296,7 @@ extend Executor not Shareable;
 // The nested guard continues cancelling the remaining registrations if a
 // future destructor unwinds. A second panic during unwinding aborts.
 type CancelRest {
-    tasks: ptr<mut Vec<ptr<mut u8>>>
+    tasks: ptr<mut List<ptr<mut u8>>>
     drop {
         let remaining = CancelRest(self.tasks)
         var more = true

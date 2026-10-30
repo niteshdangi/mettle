@@ -1,8 +1,8 @@
-// Synchronous byte I/O: `Read`/`Write` expose partial transfers (the count a
+// Synchronous byte I/O: `Reader`/`Writer` expose partial transfers (the count a
 // single call moved), the `*_all`/`read_exact`/`read_to_end` helpers loop over
 // them, and `Error` keeps the raw OS error number so it round-trips unchanged.
 import package.alloc.vec;
-import package.alloc.vec.Vec;
+import package.alloc.vec.List;
 import package.core.text.Text;
 import package.core.cmp.PartialEq;
 import package.core.slice;
@@ -110,7 +110,7 @@ extend Error {
 // Reads bytes. `read_some` moves at most `buf.len()` bytes and returns how many it
 // moved; zero means end of input (or an empty buffer). It may move fewer bytes
 // than requested without being at the end.
-pub interface Read {
+pub interface Reader {
     mut fn read_some(buf: mut [u8]): usize throws Error;
 
     // Fills `buf` entirely or fails with `UnexpectedEof`.
@@ -126,7 +126,7 @@ pub interface Read {
     }
 
     // Appends everything up to the end of input to `out`; returns the count.
-    mut fn read_to_end(out: mut Vec<u8>): usize throws Error {
+    mut fn read_to_end(out: mut List<u8>): usize throws Error {
         var chunk = [0u8; 4096]
         var total = 0usize
         while true {
@@ -142,7 +142,7 @@ pub interface Read {
 // Writes bytes. `write_some` accepts a prefix of `buf` and returns its length,
 // which can be shorter than `buf`; `write_all` repeats until everything is
 // accepted and fails with `WriteZero` if the sink stops accepting bytes.
-pub interface Write {
+pub interface Writer {
     mut fn write_some(buf: read [u8]): usize throws Error;
     mut fn flush(): Unit throws Error;
 
@@ -172,8 +172,8 @@ pub interface Write {
 }
 
 // Adapts a byte writer to the formatting sink, keeping the first writer error.
-type FormatSink<region r, W: Write + unsized> { inner: mut W from r; first_error: Error? }
-extend<region r, W: Write + unsized> FormatSink<region r, W> implements fmt.Write {
+type FormatSink<region r, W: Writer + unsized> { inner: mut W from r; first_error: Error? }
+extend<region r, W: Writer + unsized> FormatSink<region r, W> implements fmt.Write {
     mut fn write_str(text: read Text): Unit throws fmt.Error {
         let done = capture self.inner.write_all(text.as_bytes())
         match take done {
@@ -183,7 +183,7 @@ extend<region r, W: Write + unsized> FormatSink<region r, W> implements fmt.Writ
     }
 }
 
-fn format_to<W: Write + unsized>(writer: mut W, message: format fmt.Message, newline: bool): Unit throws Error {
+fn format_to<W: Writer + unsized>(writer: mut W, message: format fmt.Message, newline: bool): Unit throws Error {
     var sink = FormatSink(mut writer, none)
     let outcome = capture message.write_to(mut sink)
     match take outcome {
@@ -230,14 +230,14 @@ pub fn stdin(): Stdin { Stdin() }
 pub fn stdout(): Stdout { Stdout() }
 pub fn stderr(): Stderr { Stderr() }
 
-extend Stdin implements Read {
+extend Stdin implements Reader {
     mut fn read_some(buf: mut [u8]): usize throws Error { try fd_read(0, buf) }
 }
-extend Stdout implements Write {
+extend Stdout implements Writer {
     mut fn write_some(buf: read [u8]): usize throws Error { try fd_write(1, buf) }
     mut fn flush(): Unit throws Error {}
 }
-extend Stderr implements Write {
+extend Stderr implements Writer {
     mut fn write_some(buf: read [u8]): usize throws Error { try fd_write(2, buf) }
     mut fn flush(): Unit throws Error {}
 }
@@ -267,8 +267,8 @@ pub fn eprint(message: format fmt.Message): Unit {
     }
 }
 
-// Appends the bytes of `src` to a growable buffer: `Vec<u8>` is a sink.
-extend Vec<u8> implements Write {
+// Appends the bytes of `src` to a growable buffer: `List<u8>` is a sink.
+extend List<u8> implements Writer {
     mut fn write_some(buf: read [u8]): usize throws Error {
         self.extend_from_slice(buf)
         buf.len()
@@ -279,7 +279,7 @@ extend Vec<u8> implements Write {
 // Reads from an in-memory slice, advancing past what was consumed.
 pub type SliceReader<region r> { data: read [u8] from r; pos: usize }
 pub fn slice_reader<region r>(data: read [u8] from r): SliceReader<region r> { SliceReader(read data, 0usize) }
-extend<region r> SliceReader<region r> implements Read {
+extend<region r> SliceReader<region r> implements Reader {
     mut fn read_some(buf: mut [u8]): usize throws Error {
         let left = self.data.len() - self.pos
         var n = buf.len()
@@ -296,22 +296,22 @@ extend<region r> SliceReader<region r> implements Read {
 
 // Buffered reader: serves small reads from an internal buffer and refills it
 // with one large read.
-pub type BufReader<R: Read> {
+pub type BufferedReader<R: Reader> {
     inner: R
-    buf: Vec<u8>
+    buf: List<u8>
     pos: usize
     filled: usize
 }
 
-pub fn buf_reader<R: Read>(inner: take R): BufReader<R> { buf_reader_with_capacity(8192usize, inner) }
+pub fn buf_reader<R: Reader>(inner: take R): BufferedReader<R> { buf_reader_with_capacity(8192usize, inner) }
 
-pub fn buf_reader_with_capacity<R: Read>(capacity: usize, inner: take R): BufReader<R> {
+pub fn buf_reader_with_capacity<R: Reader>(capacity: usize, inner: take R): BufferedReader<R> {
     var buf = vec.with_capacity<u8>(capacity)
     buf.resize(capacity, 0u8)
-    BufReader(inner, buf, 0usize, 0usize)
+    BufferedReader(inner, buf, 0usize, 0usize)
 }
 
-extend<R: Read> BufReader<R> {
+extend<R: Reader> BufferedReader<R> {
     // The unread bytes, refilling from the source when the buffer is drained.
     pub mut fn fill_buf(): read [u8] from self throws Error {
         if self.pos >= self.filled {
@@ -330,7 +330,7 @@ extend<R: Read> BufReader<R> {
 
     // Appends bytes up to and including `delimiter` (or the end of input) to
     // `out`; returns how many were appended.
-    pub mut fn read_until(delimiter: u8, out: mut Vec<u8>): usize throws Error {
+    pub mut fn read_until(delimiter: u8, out: mut List<u8>): usize throws Error {
         var total = 0usize
         while true {
             let avail = try self.fill_buf()
@@ -351,7 +351,7 @@ extend<R: Read> BufReader<R> {
     }
 
     // Appends one line, including its newline, to `out`; zero means end of input.
-    pub mut fn read_line(out: mut Vec<u8>): usize throws Error { try self.read_until(10u8, out) }
+    pub mut fn read_line(out: mut List<u8>): usize throws Error { try self.read_until(10u8, out) }
 
     // Replaces `buf` with the next line, LF or CRLF included, and views it;
     // none only at end of input with no bytes left. The last line may lack a
@@ -377,7 +377,7 @@ extend<R: Read> BufReader<R> {
 
     // As `read_line_into` for arbitrary bytes: no validation, so only an I/O
     // failure (which leaves the bytes read so far in `buf`) can fail.
-    pub mut fn read_bytes_line_into(buf: mut Vec<u8>): (read [u8] from buf)? throws Error {
+    pub mut fn read_bytes_line_into(buf: mut List<u8>): (read [u8] from buf)? throws Error {
         buf.clear()
         let n = try self.read_until(10u8, buf)
         if n == 0usize { return none }
@@ -385,7 +385,7 @@ extend<R: Read> BufReader<R> {
     }
 }
 
-extend<R: Read> BufReader<R> implements Read {
+extend<R: Reader> BufferedReader<R> implements Reader {
     mut fn read_some(buf: mut [u8]): usize throws Error {
         if buf.len() == 0usize { return 0usize }
         let avail = try self.fill_buf()
@@ -402,22 +402,22 @@ extend<R: Read> BufReader<R> implements Read {
 }
 
 // Buffered writer: coalesces small writes; `flush` (or drop) pushes them out.
-pub type BufWriter<W: Write> {
+pub type BufferedWriter<W: Writer> {
     inner: W
-    buf: Vec<u8>
+    buf: List<u8>
     capacity: usize
     drop {
         let ignored = capture self.flush_buf()
     }
 }
 
-pub fn buf_writer<W: Write>(inner: take W): BufWriter<W> { buf_writer_with_capacity(8192usize, inner) }
+pub fn buf_writer<W: Writer>(inner: take W): BufferedWriter<W> { buf_writer_with_capacity(8192usize, inner) }
 
-pub fn buf_writer_with_capacity<W: Write>(capacity: usize, inner: take W): BufWriter<W> {
-    BufWriter(inner, vec.with_capacity<u8>(capacity), capacity)
+pub fn buf_writer_with_capacity<W: Writer>(capacity: usize, inner: take W): BufferedWriter<W> {
+    BufferedWriter(inner, vec.with_capacity<u8>(capacity), capacity)
 }
 
-extend<W: Write> BufWriter<W> {
+extend<W: Writer> BufferedWriter<W> {
     mut fn flush_buf(): Unit throws Error {
         if self.buf.len() > 0usize {
             try self.inner.write_all(self.buf.as_slice())
@@ -428,7 +428,7 @@ extend<W: Write> BufWriter<W> {
     pub fn buffered(): usize { self.buf.len() }
 }
 
-extend<W: Write> BufWriter<W> implements Write {
+extend<W: Writer> BufferedWriter<W> implements Writer {
     mut fn write_some(buf: read [u8]): usize throws Error {
         if self.buf.len() + buf.len() > self.capacity { try self.flush_buf() }
         if buf.len() >= self.capacity {

@@ -3,7 +3,7 @@
 // owner. Interior NUL bytes are representable here and rejected only where a
 // C string is required (`cstring`).
 import package.alloc.vec;
-import package.alloc.vec.Vec;
+import package.alloc.vec.List;
 import package.alloc.string.String;
 import package.core.text.Text;
 import package.core.slice;
@@ -62,7 +62,7 @@ pub fn bytes_equal(a: read [u8], b: read [u8]): bool {
     true
 }
 
-pub type OsString { v: Vec<u8> }
+pub type OsString { v: List<u8> }
 
 pub fn new_os_string(): OsString { OsString(vec.new<u8>()) }
 
@@ -74,7 +74,7 @@ pub fn os_string_from_bytes(bytes: read [u8]): OsString {
 
 pub fn os_string_from_text(text: read Text): OsString { os_string_from_bytes(text.as_bytes()) }
 
-pub fn os_string_from_vec(bytes: take Vec<u8>): OsString { OsString(bytes) }
+pub fn os_string_from_vec(bytes: take List<u8>): OsString { OsString(bytes) }
 
 extend OsString {
     pub fn as_os_str(): read OsStr from self { os_str(self.v.as_slice()) }
@@ -83,12 +83,12 @@ extend OsString {
     pub fn is_empty(): bool { self.v.is_empty() }
     pub mut fn push_bytes(bytes: read [u8]): Unit { self.v.extend_from_slice(bytes) }
     pub mut fn push(s: read OsStr): Unit { self.v.extend_from_slice(s.as_bytes()) }
-    pub take fn into_bytes(): Vec<u8> { self.v }
+    pub take fn into_bytes(): List<u8> { self.v }
     pub fn same(other: read OsString): bool { bytes_equal(self.v.as_slice(), other.as_bytes()) }
 }
 
 // A NUL-terminated copy of `bytes` for passing to C.
-pub fn cstring(bytes: read [u8]): Vec<u8> throws io.Error {
+pub fn cstring(bytes: read [u8]): List<u8> throws io.Error {
     var out = vec.with_capacity<u8>(bytes.len() + 1usize)
     var i = 0usize
     while i < bytes.len() {

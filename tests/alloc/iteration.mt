@@ -1,5 +1,5 @@
-import alloc.vec.Vec;
-import core.iter.{Iterator, IntoIterator, DoubleEndedIterator};
+import alloc.vec.List;
+import core.iter.{Iterator, OwnedIterable, BidirectionalIterator};
 
 fn main(): i32 {
     var v = alloc.vec.new<i32>()

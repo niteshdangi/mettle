@@ -185,7 +185,7 @@ pub copy type Brand<region s> { pub unused: u8 }
 // `s` ends when the scope closure returns, so a spawned closure may borrow
 // only what outlives it, never a local of the scope body.
 pub type Scope<region s> {
-    threads: core.cell.UnsafeCell<package.alloc.vec.Vec<ptr<mut Header>>>
+    threads: core.cell.UnsafeCell<package.alloc.vec.List<ptr<mut Header>>>
     brand: core.cell.Cell<Brand<region s>>
 }
 

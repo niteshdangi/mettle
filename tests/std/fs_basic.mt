@@ -1,5 +1,5 @@
 // File create/write/seek/read, metadata, rename, remove and directory listing.
-import std.io.{Error, ErrorKind, Read, Write};
+import std.io.{Error, ErrorKind, Reader, Writer};
 import std.fs.SeekFrom;
 import core.iter.Iterator;
 import std.path.path_from_text;

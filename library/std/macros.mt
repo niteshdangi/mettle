@@ -6,13 +6,13 @@
 // attributed to the invocation. The wire format is documented in
 // compiler/expansion/procedural.h; a different major version is rejected.
 import package.alloc.vec;
-import package.alloc.vec.Vec;
+import package.alloc.vec.List;
 import package.alloc.string;
 import package.alloc.string.String;
 import package.core.iter.Iterator;
 import package.core.text.Text;
 import super.io;
-import super.io.{Error, ErrorKind, Read, Write};
+import super.io.{Error, ErrorKind, Reader, Writer};
 
 // One argument token. `kind` is the compiler's token kind (`word`, `integer`,
 // `symbol`, `newline`, `text`, ...); `spaced` tells whether whitespace preceded
@@ -20,7 +20,7 @@ import super.io.{Error, ErrorKind, Read, Write};
 pub type Token { pub kind: String; pub text: String; pub spaced: bool }
 
 // What the invocation passed: the macro's name and its argument tokens.
-pub type Invocation { pub name: String; pub tokens: Vec<Token> }
+pub type Invocation { pub name: String; pub tokens: List<Token> }
 
 extend Invocation {
     // The argument tokens as source text, spaced as written.
@@ -76,7 +76,7 @@ fn unescape(text: read Text): String throws Error {
     }
 }
 
-fn escape(text: read Text): Vec<u8> {
+fn escape(text: read Text): List<u8> {
     let bytes = text.as_bytes()
     var out = vec.with_capacity<u8>(bytes.len())
     var i = 0usize

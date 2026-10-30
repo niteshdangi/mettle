@@ -1,4 +1,4 @@
-import package.core.iter.{Iterator, IntoIterator, Iterable, IterableMut, FromIterator, Extend};
+import package.core.iter.{Iterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems};
 import package.core.clone.Clone;
 import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd};
 import package.core.hash.{Hash, Hasher};
@@ -148,7 +148,7 @@ extend<region r, T, A: Allocator> ListIterMut<region r, T, A> implements Iterato
         present(unsafe { mut (*n).value })
     }
 }
-extend<T, A: Allocator> LinkedList<T, A> implements IterableMut {
+extend<T, A: Allocator> LinkedList<T, A> implements MutableIterable {
     type Item = T
     type IterMut<region r> = ListIterMut<region r, T, A>
     fn iter_mut<region r>(receiver self: mut Self from r): ListIterMut<region r, T, A> {
@@ -235,16 +235,16 @@ extend<T: fmt.Debug, A: Allocator> LinkedList<T, A> implements fmt.Debug {
         try f.debug_close("]", self.len == 0usize)
     }
 }
-extend<T, A: Allocator> LinkedList<T, A> implements Extend<T> {
-    mut fn extend<I: IntoIterator<Item = T>>(items: take I): Unit {
+extend<T, A: Allocator> LinkedList<T, A> implements ExtendItems<T> {
+    mut fn extend<I: OwnedIterable<Item = T>>(items: take I): Unit {
         var source = items.into_iter()
         while true {
             match take source.next() { present(item) => { self.push_back(item) }, none => { break } }
         }
     }
 }
-extend<T> LinkedList<T> implements FromIterator<T> {
-    static fn from_iter<I: IntoIterator<Item = T>>(items: take I): LinkedList<T> {
+extend<T> LinkedList<T> implements FromItems<T> {
+    static fn from_iter<I: OwnedIterable<Item = T>>(items: take I): LinkedList<T> {
         var out = new<T>()
         out.extend(items)
         out

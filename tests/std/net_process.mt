@@ -1,8 +1,8 @@
 // A parent serves on loopback while a child process (this program) connects.
-import std.io.{Error, Read, Write};
+import std.io.{Error, Reader, Writer};
 import std.process.Stdio;
 import std.ffi;
-import alloc.vec.Vec;
+import alloc.vec.List;
 import std.time.from_millis;
 
 fn serve(): i32 throws Error {
@@ -31,7 +31,7 @@ fn serve(): i32 throws Error {
     0
 }
 
-fn decimal(v: u32): Vec<u8> {
+fn decimal(v: u32): List<u8> {
     var digits = alloc.vec.new<u8>()
     var x = v
     if x == 0u32 { digits.push(48u8) }

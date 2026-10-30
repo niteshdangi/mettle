@@ -151,8 +151,8 @@ int Checker::aggregate(Node &n, bool reachable) {
       return node(*checked.iterations.at(&n).elaboration, reachable);
     error("type", n.span,
           "for requires a concrete range or array, or an iterator, "
-          "collection or view implementing core::iter::Iterator, IntoIterator, "
-          "Iterable or IterableMut for its mode");
+          "collection or view implementing core.iter.Iterator, OwnedIterable, "
+          "Iterable or MutableIterable for its mode");
     return inference.fresh(Type::Unit);
   }
   loopResults[facts(n).control] = inference.fresh(Type::Unit);

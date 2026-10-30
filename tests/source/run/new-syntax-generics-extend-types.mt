@@ -1,5 +1,5 @@
 // expect-exit: 43
-type Vec<T> { a: T; n: usize }
+type List<T> { a: T; n: usize }
 enum Opt<T> { Some(T), Nothing }
 fn nothing<T>(): Opt<T> { Opt.Nothing }
 fn id<T>(x: take T): T { x }
@@ -10,7 +10,7 @@ extend<K> Slot<K> {
 fn main(): i32 {
     let s: Opt<i32> = nothing<i32>()
     let f = id<i32>
-    let wrapped: Vec<Vec<i32>> = Vec(Vec(f(40), 1), 1)
+    let wrapped: List<List<i32>> = List(List(f(40), 1), 1)
     let a = 3
     let b = 4
     let cmp = if a < b { 1 } else { 0 }

@@ -1,4 +1,4 @@
-import alloc.vec.Vec;
+import alloc.vec.List;
 import alloc.string.String;
 import core.clone.Clone;
 import core.cmp.{Ordering, Ord, PartialOrd};
@@ -6,7 +6,7 @@ import core.hash.{Hash, hash_one};
 import core.fmt;
 import core.fmt.Debug;
 
-fn mk(a: i32, b: i32, c: i32): Vec<i32> {
+fn mk(a: i32, b: i32, c: i32): List<i32> {
     var v = alloc.vec.new<i32>()
     v.push(a); v.push(b); v.push(c)
     v

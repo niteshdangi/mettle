@@ -1,13 +1,13 @@
-import package.core.iter.{Iterator, IntoIterator, Iterable, FromIterator, Extend};
+import package.core.iter.{Iterator, OwnedIterable, Iterable, FromItems, ExtendItems};
 import package.core.clone.Clone;
 import package.core.fmt;
 import package.core.slice.SliceIter;
 import super.alloc.{Allocator, Global, AllocError};
-import super.vec.Vec;
+import super.vec.List;
 import package.core.cmp.Ord;
 
-// Max-heap on a `Vec`.
-pub type BinaryHeap<T, A: Allocator = Global> { data: Vec<T, A> }
+// Max-heap on a `List`.
+pub type BinaryHeap<T, A: Allocator = Global> { data: List<T, A> }
 
 pub fn new_in<T, A: Allocator>(a: take A): BinaryHeap<T, A> { BinaryHeap(super.vec.new_in<T, A>(a)) }
 pub fn new<T>(): BinaryHeap<T> { new_in(Global()) }
@@ -17,7 +17,7 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
     pub fn is_empty(): bool { self.data.is_empty() }
     pub fn peek(): (read T from self)? { self.data.get(0usize) }
     pub fn as_slice(): read [T] from self { self.data.as_slice() }
-    pub take fn into_vec(): Vec<T, A> {
+    pub take fn into_vec(): List<T, A> {
         unsafe {
             let v = core.ptr.`read`(core.ptr.from_ref(self.data))
             core.mem.forget(take self)
@@ -91,16 +91,16 @@ extend<T: fmt.Debug, A: Allocator> BinaryHeap<T, A> implements fmt.Debug {
         try <[T] implements fmt.Debug>::fmt(self.data.as_slice(), mut f)
     }
 }
-extend<T: Ord, A: Allocator> BinaryHeap<T, A> implements Extend<T> {
-    mut fn extend<I: IntoIterator<Item = T>>(items: take I): Unit {
+extend<T: Ord, A: Allocator> BinaryHeap<T, A> implements ExtendItems<T> {
+    mut fn extend<I: OwnedIterable<Item = T>>(items: take I): Unit {
         var source = items.into_iter()
         while true {
             match take source.next() { present(item) => { self.push(item) }, none => { break } }
         }
     }
 }
-extend<T: Ord> BinaryHeap<T> implements FromIterator<T> {
-    static fn from_iter<I: IntoIterator<Item = T>>(items: take I): BinaryHeap<T> {
+extend<T: Ord> BinaryHeap<T> implements FromItems<T> {
+    static fn from_iter<I: OwnedIterable<Item = T>>(items: take I): BinaryHeap<T> {
         var out = new<T>()
         out.extend(items)
         out

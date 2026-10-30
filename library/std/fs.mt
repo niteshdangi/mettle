@@ -1,14 +1,14 @@
 // Files and directories on the POSIX layer shared by macOS and Linux. A
 // successful write is not a durability guarantee (`File::sync_all` is).
 import package.alloc.vec;
-import package.alloc.vec.Vec;
+import package.alloc.vec.List;
 import package.alloc.string.String;
 import package.core.text.Text;
 import package.core.outcome;
 import super.ffi;
 import super.ffi.{OsStr, OsString};
 import super.io;
-import super.io.{Error, ErrorKind, Read, Write};
+import super.io.{Error, ErrorKind, Reader, Writer};
 import super.path.{Path, PathBuf, PathInput};
 import super.sys;
 import super.time.SystemTime;
@@ -144,17 +144,17 @@ extend File {
     }
 }
 
-extend File implements Read {
+extend File implements Reader {
     mut fn read_some(buf: mut [u8]): usize throws Error { try io.read_fd(self.fd, buf) }
 }
 
-extend File implements Write {
+extend File implements Writer {
     mut fn write_some(buf: read [u8]): usize throws Error { try io.write_fd(self.fd, buf) }
     mut fn flush(): Unit throws Error {}
 }
 
 // The whole file.
-pub fn read_bytes(input: read PathInput): Vec<u8> throws Error {
+pub fn read_bytes(input: read PathInput): List<u8> throws Error {
     var f = try open(input)
     var out = vec.new<u8>()
     let n = try f.read_to_end(out)

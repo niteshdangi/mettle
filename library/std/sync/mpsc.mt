@@ -2,8 +2,8 @@ import super.mutex;
 import super.condvar;
 import super.super.time;
 import package.alloc.arc.Arc;
-import package.alloc.vec.Vec;
-import package.alloc.vec_deque.VecDeque;
+import package.alloc.vec.List;
+import package.alloc.vec_deque.Deque;
 import package.core.iter.Iterator;
 
 extern "C" {
@@ -13,7 +13,7 @@ extern "C" {
 }
 
 type Shared<T> {
-    queue: mutex.Mutex<VecDeque<T>>
+    queue: mutex.Mutex<Deque<T>>
     ready: condvar.Condvar
     space: condvar.Condvar
     bound: usize
@@ -353,7 +353,7 @@ extend<T> Receiver<T> implements Iterator {
 
 // Borrows a homogeneous receiver set; selecting does not consume its message.
 pub type Select<region r, T> {
-    receivers: Vec<read Receiver<T> from r>
+    receivers: List<read Receiver<T> from r>
     cursor: usize
 }
 

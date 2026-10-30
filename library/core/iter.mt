@@ -1,5 +1,5 @@
-// Iteration. The compiler recognizes `Iterator`, `IntoIterator`, `Iterable`
-// and `IterableMut` by canonical path for `for` loops. Adapters are lazy: they
+// Iteration. The compiler recognizes `Iterator`, `OwnedIterable`, `Iterable`
+// and `MutableIterable` by canonical path for `for` loops. Adapters are lazy: they
 // pull from the wrapped iterator only when `next` is called, and consuming
 // methods stop at the first decisive item.
 import super.cmp.Ord;
@@ -103,50 +103,50 @@ pub interface Iterator: Sized {
         none
     }
 
-    take fn map<B, F: fn(take Self.Item): B>(f: take F): Map<B, Self, F> { Map(self, f, Phantom<B>()) }
-    take fn filter<F: fn(read Self.Item): bool>(test: take F): Filter<Self, F> { Filter(self, test) }
-    take fn filter_map<B, F: fn(take Self.Item): B?>(f: take F): FilterMap<B, Self, F> {
-        FilterMap(self, f, Phantom<B>())
+    take fn map<B, F: fn(take Self.Item): B>(f: take F): Mapped<B, Self, F> { Mapped(self, f, Phantom<B>()) }
+    take fn filter<F: fn(read Self.Item): bool>(test: take F): Filtered<Self, F> { Filtered(self, test) }
+    take fn filter_map<B, F: fn(take Self.Item): B?>(f: take F): FilterMapped<B, Self, F> {
+        FilterMapped(self, f, Phantom<B>())
     }
-    take fn enumerate(): Enumerate<Self> { Enumerate(self, 0usize) }
-    take fn zip<U: Iterator>(other: take U): Zip<Self, U> { Zip(self, other) }
-    take fn chain<U: Iterator>(other: take U): Chain<Self, U> { Chain(self, present(other), true) }
-    take fn take_n(n: usize): TakeN<Self> { TakeN(self, n) }
-    take fn skip(n: usize): Skip<Self> { Skip(self, n) }
-    take fn take_while<F: fn(read Self.Item): bool>(test: take F): TakeWhile<Self, F> { TakeWhile(self, test, false) }
-    take fn skip_while<F: fn(read Self.Item): bool>(test: take F): SkipWhile<Self, F> { SkipWhile(self, test, false) }
+    take fn enumerate(): Enumerated<Self> { Enumerated(self, 0usize) }
+    take fn zip<U: Iterator>(other: take U): Zipped<Self, U> { Zipped(self, other) }
+    take fn chain<U: Iterator>(other: take U): Chained<Self, U> { Chained(self, present(other), true) }
+    take fn take_n(n: usize): Limited<Self> { Limited(self, n) }
+    take fn skip(n: usize): Skipped<Self> { Skipped(self, n) }
+    take fn take_while<F: fn(read Self.Item): bool>(test: take F): TakenWhile<Self, F> { TakenWhile(self, test, false) }
+    take fn skip_while<F: fn(read Self.Item): bool>(test: take F): SkippedWhile<Self, F> { SkippedWhile(self, test, false) }
     // `step` must be nonzero; the first item is always produced.
-    take fn step_by(step: usize): StepBy<Self> { StepBy(self, step, true) }
+    take fn step_by(step: usize): Stepped<Self> { Stepped(self, step, true) }
     take fn peekable(): Peekable<Self> { Peekable(self, none, false) }
-    take fn inspect<F: fn(read Self.Item): Unit>(f: take F): Inspect<Self, F> { Inspect(self, f) }
-    take fn fuse(): Fuse<Self> { Fuse(self, false) }
-    take fn collect<C: FromIterator<Self.Item>>(): C { C.(FromIterator<Self.Item>).from_iter(self) }
+    take fn inspect<F: fn(read Self.Item): Unit>(f: take F): Inspected<Self, F> { Inspected(self, f) }
+    take fn fuse(): Fused<Self> { Fused(self, false) }
+    take fn collect<C: FromItems<Self.Item>>(): C { C.(FromItems<Self.Item>).from_iter(self) }
 }
 
 // Collections that can be built from, or grown by, a sequence of owned items.
-pub interface FromIterator<T>: Sized {
-    static fn from_iter<I: IntoIterator<Item = T>>(items: take I): Self;
+pub interface FromItems<T>: Sized {
+    static fn from_iter<I: OwnedIterable<Item = T>>(items: take I): Self;
 }
-pub interface Extend<T> {
-    mut fn extend<I: IntoIterator<Item = T>>(items: take I): Unit;
+pub interface ExtendItems<T> {
+    mut fn extend<I: OwnedIterable<Item = T>>(items: take I): Unit;
 }
-// `let v: Vec<i32> = collect(items)`.
-pub fn collect<T, I: IntoIterator<Item = T>, C: FromIterator<T>>(items: take I): C {
-    C.(FromIterator<T>).from_iter(items)
+// `let v: List<i32> = collect(items)`.
+pub fn collect<T, I: OwnedIterable<Item = T>, C: FromItems<T>>(items: take I): C {
+    C.(FromItems<T>).from_iter(items)
 }
 
 // The iterator of an owned `for` source; async loops keep it in their state.
-pub fn into_iterator<T: IntoIterator>(items: take T): T.IntoIter {
-    T.(IntoIterator).into_iter(items)
+pub fn into_iterator<T: OwnedIterable>(items: take T): T.IntoIter {
+    T.(OwnedIterable).into_iter(items)
 }
 
 // Iterators that can also yield from the back.
-pub interface DoubleEndedIterator: Iterator {
+pub interface BidirectionalIterator: Iterator {
     mut fn next_back(): Self.(Iterator).Item?;
-    take fn rev(): Rev<Self> { Rev(self) }
+    take fn rev(): Reversed<Self> { Reversed(self) }
 }
 
-pub interface IntoIterator: Sized {
+pub interface OwnedIterable: Sized {
     type Item;
     type IntoIter: Iterator<Item = Self.Item>;
     fn into_iter(receiver self: take Self): Self.IntoIter;
@@ -162,14 +162,14 @@ pub interface Iterable {
     fn iter<region r>(receiver self: read Self from r): Self.Iter<region r>;
 }
 
-pub interface IterableMut {
+pub interface MutableIterable {
     type Item;
     type IterMut<region r>: Iterator<Item = mut Self.Item from r>;
     fn iter_mut<region r>(receiver self: mut Self from r): Self.IterMut<region r>;
 }
 
 // Every iterator is trivially its own IntoIterator.
-extend<I: Iterator> I implements IntoIterator {
+extend<I: Iterator> I implements OwnedIterable {
     type Item = I.Item
     type IntoIter = I
     fn into_iter(receiver self: take Self): I { self }
@@ -177,21 +177,21 @@ extend<I: Iterator> I implements IntoIterator {
 
 pub type Phantom<T> {}
 
-pub type Map<B, I, F> { iter: I; f: F; result: Phantom<B> }
-extend<B, I: Iterator, F: fn(take I.Item): B> Map<B, I, F> implements Iterator {
+pub type Mapped<B, I, F> { iter: I; f: F; result: Phantom<B> }
+extend<B, I: Iterator, F: fn(take I.Item): B> Mapped<B, I, F> implements Iterator {
     type Item = B
     mut fn next(): B? {
         match take self.iter.next() { present(item) => present(self.f(item)), none => none }
     }
 }
-extend<B, I: Iterator + DoubleEndedIterator, F: fn(take I.(Iterator).Item): B> Map<B, I, F> implements DoubleEndedIterator {
+extend<B, I: Iterator + BidirectionalIterator, F: fn(take I.(Iterator).Item): B> Mapped<B, I, F> implements BidirectionalIterator {
     mut fn next_back(): B? {
         match take self.iter.next_back() { present(item) => present(self.f(item)), none => none }
     }
 }
 
-pub type Filter<I, F> { iter: I; test: F }
-extend<I: Iterator, F: fn(read I.Item): bool> Filter<I, F> implements Iterator {
+pub type Filtered<I, F> { iter: I; test: F }
+extend<I: Iterator, F: fn(read I.Item): bool> Filtered<I, F> implements Iterator {
     type Item = I.Item
     mut fn next(): I.Item? {
         while true {
@@ -203,7 +203,7 @@ extend<I: Iterator, F: fn(read I.Item): bool> Filter<I, F> implements Iterator {
         none
     }
 }
-extend<I: Iterator + DoubleEndedIterator, F: fn(read I.(Iterator).Item): bool> Filter<I, F> implements DoubleEndedIterator {
+extend<I: Iterator + BidirectionalIterator, F: fn(read I.(Iterator).Item): bool> Filtered<I, F> implements BidirectionalIterator {
     mut fn next_back(): I.(Iterator).Item? {
         while true {
             match take self.iter.next_back() {
@@ -215,8 +215,8 @@ extend<I: Iterator + DoubleEndedIterator, F: fn(read I.(Iterator).Item): bool> F
     }
 }
 
-pub type FilterMap<B, I, F> { iter: I; f: F; result: Phantom<B> }
-extend<B, I: Iterator, F: fn(take I.Item): B?> FilterMap<B, I, F> implements Iterator {
+pub type FilterMapped<B, I, F> { iter: I; f: F; result: Phantom<B> }
+extend<B, I: Iterator, F: fn(take I.Item): B?> FilterMapped<B, I, F> implements Iterator {
     type Item = B
     mut fn next(): B? {
         while true {
@@ -229,8 +229,8 @@ extend<B, I: Iterator, F: fn(take I.Item): B?> FilterMap<B, I, F> implements Ite
     }
 }
 
-pub type Enumerate<I> { iter: I; index: usize }
-extend<I: Iterator> Enumerate<I> implements Iterator {
+pub type Enumerated<I> { iter: I; index: usize }
+extend<I: Iterator> Enumerated<I> implements Iterator {
     type Item = (usize, I.Item)
     mut fn next(): (usize, I.Item)? {
         match take self.iter.next() {
@@ -245,8 +245,8 @@ extend<I: Iterator> Enumerate<I> implements Iterator {
 }
 
 // Ends as soon as either side ends; the first side is polled first.
-pub type Zip<A, B> { first: A; second: B }
-extend<A: Iterator, B: Iterator> Zip<A, B> implements Iterator {
+pub type Zipped<A, B> { first: A; second: B }
+extend<A: Iterator, B: Iterator> Zipped<A, B> implements Iterator {
     type Item = (A.Item, B.Item)
     mut fn next(): (A.Item, B.Item)? {
         match take self.first.next() {
@@ -260,8 +260,8 @@ extend<A: Iterator, B: Iterator> Zip<A, B> implements Iterator {
 }
 
 // `second` is dropped (set to none) once exhausted; `first_live` marks the front half.
-pub type Chain<A, B> { first: A; second: B?; first_live: bool }
-extend<T, A: Iterator<Item = T>, B: Iterator<Item = T>> Chain<A, B> implements Iterator {
+pub type Chained<A, B> { first: A; second: B?; first_live: bool }
+extend<T, A: Iterator<Item = T>, B: Iterator<Item = T>> Chained<A, B> implements Iterator {
     type Item = T
     mut fn next(): T? {
         if self.first_live {
@@ -277,8 +277,8 @@ extend<T, A: Iterator<Item = T>, B: Iterator<Item = T>> Chain<A, B> implements I
     }
 }
 
-pub type TakeN<I> { iter: I; remaining: usize }
-extend<I: Iterator> TakeN<I> implements Iterator {
+pub type Limited<I> { iter: I; remaining: usize }
+extend<I: Iterator> Limited<I> implements Iterator {
     type Item = I.Item
     mut fn next(): I.Item? {
         if self.remaining == 0usize { return none }
@@ -287,8 +287,8 @@ extend<I: Iterator> TakeN<I> implements Iterator {
     }
 }
 
-pub type Skip<I> { iter: I; pending: usize }
-extend<I: Iterator> Skip<I> implements Iterator {
+pub type Skipped<I> { iter: I; pending: usize }
+extend<I: Iterator> Skipped<I> implements Iterator {
     type Item = I.Item
     mut fn next(): I.Item? {
         if self.pending > 0usize {
@@ -300,8 +300,8 @@ extend<I: Iterator> Skip<I> implements Iterator {
     }
 }
 
-pub type TakeWhile<I, F> { iter: I; test: F; done: bool }
-extend<I: Iterator, F: fn(read I.Item): bool> TakeWhile<I, F> implements Iterator {
+pub type TakenWhile<I, F> { iter: I; test: F; done: bool }
+extend<I: Iterator, F: fn(read I.Item): bool> TakenWhile<I, F> implements Iterator {
     type Item = I.Item
     mut fn next(): I.Item? {
         if self.done { return none }
@@ -316,8 +316,8 @@ extend<I: Iterator, F: fn(read I.Item): bool> TakeWhile<I, F> implements Iterato
     }
 }
 
-pub type SkipWhile<I, F> { iter: I; test: F; started: bool }
-extend<I: Iterator, F: fn(read I.Item): bool> SkipWhile<I, F> implements Iterator {
+pub type SkippedWhile<I, F> { iter: I; test: F; started: bool }
+extend<I: Iterator, F: fn(read I.Item): bool> SkippedWhile<I, F> implements Iterator {
     type Item = I.Item
     mut fn next(): I.Item? {
         if self.started { return self.iter.next() }
@@ -336,8 +336,8 @@ extend<I: Iterator, F: fn(read I.Item): bool> SkipWhile<I, F> implements Iterato
     }
 }
 
-pub type StepBy<I> { iter: I; step: usize; first: bool }
-extend<I: Iterator> StepBy<I> implements Iterator {
+pub type Stepped<I> { iter: I; step: usize; first: bool }
+extend<I: Iterator> Stepped<I> implements Iterator {
     type Item = I.Item
     mut fn next(): I.Item? {
         if self.first {
@@ -348,8 +348,8 @@ extend<I: Iterator> StepBy<I> implements Iterator {
     }
 }
 
-pub type Inspect<I, F> { iter: I; f: F }
-extend<I: Iterator, F: fn(read I.Item): Unit> Inspect<I, F> implements Iterator {
+pub type Inspected<I, F> { iter: I; f: F }
+extend<I: Iterator, F: fn(read I.Item): Unit> Inspected<I, F> implements Iterator {
     type Item = I.Item
     mut fn next(): I.Item? {
         match take self.iter.next() {
@@ -360,8 +360,8 @@ extend<I: Iterator, F: fn(read I.Item): Unit> Inspect<I, F> implements Iterator 
 }
 
 // Once `next` returned none it keeps returning none without polling again.
-pub type Fuse<I> { iter: I; done: bool }
-extend<I: Iterator> Fuse<I> implements Iterator {
+pub type Fused<I> { iter: I; done: bool }
+extend<I: Iterator> Fused<I> implements Iterator {
     type Item = I.Item
     mut fn next(): I.Item? {
         if self.done { return none }
@@ -372,12 +372,12 @@ extend<I: Iterator> Fuse<I> implements Iterator {
     }
 }
 
-pub type Rev<I> { iter: I }
-extend<I: Iterator + DoubleEndedIterator> Rev<I> implements Iterator {
+pub type Reversed<I> { iter: I }
+extend<I: Iterator + BidirectionalIterator> Reversed<I> implements Iterator {
     type Item = I.(Iterator).Item
     mut fn next(): I.(Iterator).Item? { self.iter.next_back() }
 }
-extend<I: Iterator + DoubleEndedIterator> Rev<I> implements DoubleEndedIterator {
+extend<I: Iterator + BidirectionalIterator> Reversed<I> implements BidirectionalIterator {
     mut fn next_back(): I.(Iterator).Item? { self.iter.next() }
 }
 
@@ -456,7 +456,7 @@ extend<T: Step> Range<T> implements Iterator {
         none
     }
 }
-extend<T: Step> Range<T> implements DoubleEndedIterator {
+extend<T: Step> Range<T> implements BidirectionalIterator {
     mut fn next_back(): T? {
         if self.start < self.end {
             self.end = self.end.predecessor()
@@ -478,7 +478,7 @@ extend<T: Step> RangeInclusive<T> implements Iterator {
         present(value)
     }
 }
-extend<T: Step> RangeInclusive<T> implements DoubleEndedIterator {
+extend<T: Step> RangeInclusive<T> implements BidirectionalIterator {
     mut fn next_back(): T? {
         if self.done || self.start > self.end { return none }
         let value = self.end

@@ -11,12 +11,12 @@ def _unsigned(value):
     return result if error.Success() else None
 
 
-def vec_summary(value, _internal_dict):
+def list_summary(value, _internal_dict):
     length = _unsigned(value.GetChildMemberWithName("len"))
     capacity = _unsigned(value.GetChildMemberWithName("cap"))
     if length is None or capacity is None:
-        return "Vec <unavailable>"
-    return f"Vec len={length} cap={capacity}"
+        return "List <unavailable>"
+    return f"List len={length} cap={capacity}"
 
 
 def _text(value):
@@ -61,8 +61,8 @@ def sum_summary(value, _internal_dict):
 
 def __lldb_init_module(debugger, _internal_dict):
     commands = [
-        r"type summary add -w Mettle -x '(^|::)Vec<.*>$' "
-        r"-F mettle_lldb.vec_summary",
+        r"type summary add -w Mettle -x '(^|::)List<.*>$' "
+        r"-F mettle_lldb.list_summary",
         r"type summary add -w Mettle -x '(^|::)String<.*>$' "
         r"-F mettle_lldb.string_summary",
         r"type summary add -w Mettle -x '^(read |mut |ptr<read |ptr<mut )"

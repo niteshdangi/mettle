@@ -3,7 +3,7 @@
 // round-trip losslessly. Separator is `/`; repeated separators and `.`
 // components are ignored when splitting.
 import package.alloc.vec;
-import package.alloc.vec.Vec;
+import package.alloc.vec.List;
 import package.alloc.string.String;
 import package.core.text.Text;
 import package.core.slice;
@@ -140,7 +140,7 @@ fn last_dot(name: read [u8]): usize? {
     none
 }
 
-pub type PathBuf { v: Vec<u8> }
+pub type PathBuf { v: List<u8> }
 
 pub fn new_path_buf(): PathBuf { PathBuf(vec.new<u8>()) }
 

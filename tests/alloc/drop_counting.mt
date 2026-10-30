@@ -1,9 +1,9 @@
-import alloc.vec.Vec;
+import alloc.vec.List;
 import alloc.rc.Rc;
-import alloc.hash_map.HashMap;
-import alloc.vec_deque.VecDeque;
+import alloc.hash_map.Map;
+import alloc.vec_deque.Deque;
 import alloc.linked_list.LinkedList;
-import alloc.btree.BTreeMap;
+import alloc.btree.SortedMap;
 import alloc.boxed.Box;
 
 // Adds its id to a shared counter when dropped; each drop must happen exactly once.

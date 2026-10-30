@@ -17,7 +17,7 @@ extend Manual implements Default {
 }
 
 @derive(Default)
-type Holder { manual: Manual; pair: (i32, bool); name: string.String; items: vec.Vec<i32> }
+type Holder { manual: Manual; pair: (i32, bool); name: string.String; items: vec.List<i32> }
 
 @derive(Default)
 type Marker {}

@@ -1,7 +1,7 @@
 // Process arguments, environment variables and the working directory. Names
 // and values are OS strings (arbitrary bytes), not text.
 import package.alloc.vec;
-import package.alloc.vec.Vec;
+import package.alloc.vec.List;
 import super.ffi;
 import super.ffi.{OsStr, OsString};
 import super.io;
@@ -9,7 +9,7 @@ import super.path.{PathBuf, PathInput};
 import super.sys;
 
 // The command line, program name first.
-pub fn args(): Vec<OsString> {
+pub fn args(): List<OsString> {
     var out = vec.new<OsString>()
     let n = unsafe { sys.mettle_rt_argc() }
     var i = 0
@@ -25,7 +25,7 @@ pub fn args(): Vec<OsString> {
 pub type EnvVar { pub name: OsString; pub value: OsString }
 
 // The environment at the time of the call, in the operating system's order.
-pub fn vars(): Vec<EnvVar> {
+pub fn vars(): List<EnvVar> {
     var out = vec.new<EnvVar>()
     var i = 0
     while true {

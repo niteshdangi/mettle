@@ -1,5 +1,5 @@
-import alloc.vec.Vec;
-import core.iter.{Iterator, IntoIterator};
+import alloc.vec.List;
+import core.iter.{Iterator, OwnedIterable};
 type D { c: ptr<mut i32>; id: i32
     drop { unsafe { *self.c += self.id } } }
 fn main(): i32 {

@@ -1,5 +1,5 @@
 // Single-process loopback TCP and UDP with partial transfers and timeouts.
-import std.io.{Error, ErrorKind, Read, Write};
+import std.io.{Error, ErrorKind, Reader, Writer};
 import std.net.{SocketAddr, TcpStream, TcpListener};
 import std.time.from_millis;
 

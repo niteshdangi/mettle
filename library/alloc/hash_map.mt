@@ -1,11 +1,11 @@
-import package.core.iter.{Iterator, IntoIterator, Iterable, IterableMut, FromIterator, Extend};
+import package.core.iter.{Iterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems};
 import package.core.clone.Clone;
 import package.core.cmp.Eq;
 import package.core.fmt;
 import package.core.slice.SliceIter;
 import super.alloc.{Allocator, Global, AllocError, Layout, layout_unchecked, handle_alloc_error, layout_of};
 import package.core.hash.{Hash, hash_one};
-import super.vec.Vec;
+import super.vec.List;
 import package.core.cmp.PartialEq;
 import package.core.borrow.KeyView;
 
@@ -17,11 +17,11 @@ pub type Bucket<K, V> {
     pub value: V
 }
 
-// Insertion-ordered open-addressing table: entries live densely in a `Vec`
+// Insertion-ordered open-addressing table: entries live densely in a `List`
 // and a power-of-two index table (linear probing, backward-shift deletion)
 // maps hashes to entry positions. Both blocks come from the same allocator.
-pub type HashMap<K, V, A: Allocator = Global> {
-    entries: Vec<Bucket<K, V>, A>
+pub type Map<K, V, A: Allocator = Global> {
+    entries: List<Bucket<K, V>, A>
     idx: ptr<mut usize>
     icap: usize
     drop {
@@ -32,14 +32,14 @@ pub type HashMap<K, V, A: Allocator = Global> {
     }
 }
 
-pub fn new_in<K, V, A: Allocator>(a: take A): HashMap<K, V, A> {
-    HashMap(super.vec.new_in<Bucket<K, V>, A>(a), core.ptr.null_mut<usize>(), 0usize)
+pub fn new_in<K, V, A: Allocator>(a: take A): Map<K, V, A> {
+    Map(super.vec.new_in<Bucket<K, V>, A>(a), core.ptr.null_mut<usize>(), 0usize)
 }
-pub fn new<K, V>(): HashMap<K, V> { new_in(Global()) }
+pub fn new<K, V>(): Map<K, V> { new_in(Global()) }
 
 fn hash_of<Q: Hash + unsized>(k: read Q): u64 { hash_one(k) }
 
-extend<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> {
+extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
     pub fn len(): usize { self.entries.len() }
     pub fn is_empty(): bool { self.entries.is_empty() }
     pub fn capacity(): usize { self.icap / 4usize * 3usize }
@@ -218,12 +218,12 @@ extend<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> {
 }
 
 // Set of keys backed by a map with unit values.
-pub type HashSet<K, A: Allocator = Global> { map: HashMap<K, Unit, A> }
+pub type Set<K, A: Allocator = Global> { map: Map<K, Unit, A> }
 
-pub fn set_new_in<K, A: Allocator>(a: take A): HashSet<K, A> { HashSet(new_in<K, Unit, A>(a)) }
-pub fn set_new<K>(): HashSet<K> { HashSet(new<K, Unit>()) }
+pub fn set_new_in<K, A: Allocator>(a: take A): Set<K, A> { Set(new_in<K, Unit, A>(a)) }
+pub fn set_new<K>(): Set<K> { Set(new<K, Unit>()) }
 
-extend<K: Hash + PartialEq, A: Allocator> HashSet<K, A> {
+extend<K: Hash + PartialEq, A: Allocator> Set<K, A> {
     pub fn len(): usize { self.map.len() }
     pub fn is_empty(): bool { self.map.is_empty() }
     pub fn contains<Q: Hash + PartialEq + unsized>(key: read Q): bool where K: KeyView<Q> { self.map.contains_key(key) }
@@ -244,19 +244,19 @@ extend<K: Hash + PartialEq, A: Allocator> HashSet<K, A> {
 
 // Iteration is in insertion order and yields the stored buckets; keys are not
 // mutably iterable because that could break the table's hash invariants.
-extend<K, V, A: Allocator> HashMap<K, V, A> implements Iterable {
+extend<K, V, A: Allocator> Map<K, V, A> implements Iterable {
     type Item = Bucket<K, V>
     type Iter<region r> = SliceIter<region r, Bucket<K, V>>
     fn iter<region r>(receiver self: read Self from r): SliceIter<region r, Bucket<K, V>> { self.entries.as_slice().iter() }
 }
-extend<K, A: Allocator> HashSet<K, A> implements Iterable {
+extend<K, A: Allocator> Set<K, A> implements Iterable {
     type Item = Bucket<K, Unit>
     type Iter<region r> = SliceIter<region r, Bucket<K, Unit>>
     fn iter<region r>(receiver self: read Self from r): SliceIter<region r, Bucket<K, Unit>> { self.map.entries.as_slice().iter() }
 }
 
 // Mutable iteration visits the values only: mutable keys could break the table's hash invariants.
-pub type ValuesMut<region r, K, V, A: Allocator> { map: mut HashMap<K, V, A> from r; index: usize }
+pub type ValuesMut<region r, K, V, A: Allocator> { map: mut Map<K, V, A> from r; index: usize }
 extend<region r, K, V, A: Allocator> ValuesMut<region r, K, V, A> implements Iterator {
     type Item = mut V from r
     mut fn next(): (mut V from r)? {
@@ -284,21 +284,21 @@ extend<region r, K, V> Values<region r, K, V> implements Iterator {
         match self.inner.next() { present(e) => present(read e.value), none => none }
     }
 }
-extend<K, V, A: Allocator> HashMap<K, V, A> {
+extend<K, V, A: Allocator> Map<K, V, A> {
     pub fn keys(): Keys<region self, K, V> { Keys(self.entries.as_slice().iter()) }
     pub fn values(): Values<region self, K, V> { Values(self.entries.as_slice().iter()) }
 }
-extend<K, V, A: Allocator> HashMap<K, V, A> implements IterableMut {
+extend<K, V, A: Allocator> Map<K, V, A> implements MutableIterable {
     type Item = V
     type IterMut<region r> = ValuesMut<region r, K, V, A>
     fn iter_mut<region r>(receiver self: mut Self from r): ValuesMut<region r, K, V, A> { ValuesMut(mut self, 0usize) }
 }
-extend<K, V, A: Allocator> HashMap<K, V, A> {
+extend<K, V, A: Allocator> Map<K, V, A> {
     pub mut fn values_mut(): ValuesMut<region self, K, V, A> { ValuesMut(mut self, 0usize) }
 }
 
-extend<K: Hash + PartialEq + Clone, V: Clone, A: Allocator + Clone> HashMap<K, V, A> implements Clone {
-    fn clone(): HashMap<K, V, A> {
+extend<K: Hash + PartialEq + Clone, V: Clone, A: Allocator + Clone> Map<K, V, A> implements Clone {
+    fn clone(): Map<K, V, A> {
         var out = new_in<K, V, A>(self.entries.allocator().clone())
         var i = 0usize
         while i < self.entries.len() {
@@ -310,8 +310,8 @@ extend<K: Hash + PartialEq + Clone, V: Clone, A: Allocator + Clone> HashMap<K, V
     }
 }
 // Equal when both hold the same keys with equal values, in any order.
-extend<K: Hash + PartialEq, V: PartialEq, A: Allocator> HashMap<K, V, A> implements PartialEq {
-    fn eq(other: read HashMap<K, V, A>): bool {
+extend<K: Hash + PartialEq, V: PartialEq, A: Allocator> Map<K, V, A> implements PartialEq {
+    fn eq(other: read Map<K, V, A>): bool {
         if self.len() != other.len() { return false }
         var i = 0usize
         while i < self.entries.len() {
@@ -325,8 +325,8 @@ extend<K: Hash + PartialEq, V: PartialEq, A: Allocator> HashMap<K, V, A> impleme
         true
     }
 }
-extend<K: Hash + PartialEq, V: Eq, A: Allocator> HashMap<K, V, A> implements Eq {}
-extend<K: fmt.Debug, V: fmt.Debug, A: Allocator> HashMap<K, V, A> implements fmt.Debug {
+extend<K: Hash + PartialEq, V: Eq, A: Allocator> Map<K, V, A> implements Eq {}
+extend<K: fmt.Debug, V: fmt.Debug, A: Allocator> Map<K, V, A> implements fmt.Debug {
     fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
         try f.debug_open("{")
         var i = 0usize
@@ -342,8 +342,8 @@ extend<K: fmt.Debug, V: fmt.Debug, A: Allocator> HashMap<K, V, A> implements fmt
         try f.debug_close("}", self.entries.len() == 0usize)
     }
 }
-extend<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> implements Extend<(K, V)> {
-    mut fn extend<I: IntoIterator<Item = (K, V)>>(items: take I): Unit {
+extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> implements ExtendItems<(K, V)> {
+    mut fn extend<I: OwnedIterable<Item = (K, V)>>(items: take I): Unit {
         var source = items.into_iter()
         while true {
             match take source.next() {
@@ -353,20 +353,20 @@ extend<K: Hash + PartialEq, V, A: Allocator> HashMap<K, V, A> implements Extend<
         }
     }
 }
-extend<K: Hash + PartialEq, V> HashMap<K, V> implements FromIterator<(K, V)> {
-    static fn from_iter<I: IntoIterator<Item = (K, V)>>(items: take I): HashMap<K, V> {
+extend<K: Hash + PartialEq, V> Map<K, V> implements FromItems<(K, V)> {
+    static fn from_iter<I: OwnedIterable<Item = (K, V)>>(items: take I): Map<K, V> {
         var out = new<K, V>()
         out.extend(items)
         out
     }
 }
 
-extend<K: Hash + PartialEq + Clone, A: Allocator + Clone> HashSet<K, A> implements Clone {
-    fn clone(): HashSet<K, A> { HashSet(self.map.clone()) }
+extend<K: Hash + PartialEq + Clone, A: Allocator + Clone> Set<K, A> implements Clone {
+    fn clone(): Set<K, A> { Set(self.map.clone()) }
 }
 // Equal when both hold the same elements, in any order.
-extend<K: Hash + PartialEq, A: Allocator> HashSet<K, A> implements PartialEq {
-    fn eq(other: read HashSet<K, A>): bool {
+extend<K: Hash + PartialEq, A: Allocator> Set<K, A> implements PartialEq {
+    fn eq(other: read Set<K, A>): bool {
         if self.len() != other.len() { return false }
         var i = 0usize
         while i < self.map.entries.len() {
@@ -379,8 +379,8 @@ extend<K: Hash + PartialEq, A: Allocator> HashSet<K, A> implements PartialEq {
         true
     }
 }
-extend<K: Hash + PartialEq, A: Allocator> HashSet<K, A> implements Eq {}
-extend<K: fmt.Debug, A: Allocator> HashSet<K, A> implements fmt.Debug {
+extend<K: Hash + PartialEq, A: Allocator> Set<K, A> implements Eq {}
+extend<K: fmt.Debug, A: Allocator> Set<K, A> implements fmt.Debug {
     fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
         try f.debug_open("{")
         var i = 0usize
@@ -393,16 +393,16 @@ extend<K: fmt.Debug, A: Allocator> HashSet<K, A> implements fmt.Debug {
         try f.debug_close("}", self.map.entries.len() == 0usize)
     }
 }
-extend<K: Hash + PartialEq, A: Allocator> HashSet<K, A> implements Extend<K> {
-    mut fn extend<I: IntoIterator<Item = K>>(items: take I): Unit {
+extend<K: Hash + PartialEq, A: Allocator> Set<K, A> implements ExtendItems<K> {
+    mut fn extend<I: OwnedIterable<Item = K>>(items: take I): Unit {
         var source = items.into_iter()
         while true {
             match take source.next() { present(item) => { let added = self.insert(item) }, none => { break } }
         }
     }
 }
-extend<K: Hash + PartialEq> HashSet<K> implements FromIterator<K> {
-    static fn from_iter<I: IntoIterator<Item = K>>(items: take I): HashSet<K> {
+extend<K: Hash + PartialEq> Set<K> implements FromItems<K> {
+    static fn from_iter<I: OwnedIterable<Item = K>>(items: take I): Set<K> {
         var out = set_new<K>()
         out.extend(items)
         out
@@ -410,5 +410,5 @@ extend<K: Hash + PartialEq> HashSet<K> implements FromIterator<K> {
 }
 
 // Owned storage moves or is shared exactly when its elements and allocator do.
-unsafe extend<K: Transferable, V: Transferable, A: Allocator + Transferable> HashMap<K, V, A> implements Transferable {}
-unsafe extend<K: Shareable, V: Shareable, A: Allocator + Shareable> HashMap<K, V, A> implements Shareable {}
+unsafe extend<K: Transferable, V: Transferable, A: Allocator + Transferable> Map<K, V, A> implements Transferable {}
+unsafe extend<K: Shareable, V: Shareable, A: Allocator + Shareable> Map<K, V, A> implements Shareable {}

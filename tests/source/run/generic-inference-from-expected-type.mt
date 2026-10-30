@@ -1,5 +1,5 @@
 
-type Vec<T> { a: T; n: usize }
+type List<T> { a: T; n: usize }
 enum Opt<T> { Some(T), Nothing }
 fn nothing<T>(): Opt<T> { Opt.Nothing }
 type Slot<K> { v: K? }

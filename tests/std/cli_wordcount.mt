@@ -4,12 +4,12 @@
 // expect-file: report.txt=lines=4\nwords=13\nbytes=66\n
 // File-processing CLI: reads a file line by line through BufReader, counts,
 // then writes a report file through BufWriter and prints a summary.
-import std.io.{Error, Read, Write};
+import std.io.{Error, Reader, Writer};
 import std.ffi;
 import std.path;
-import alloc.vec.Vec;
+import alloc.vec.List;
 
-fn decimal(v: usize): Vec<u8> {
+fn decimal(v: usize): List<u8> {
     var digits = alloc.vec.new<u8>()
     var x = v
     if x == 0usize { digits.push(48u8) }
@@ -34,7 +34,7 @@ fn words_in(line: read [u8]): usize {
     words
 }
 
-fn field(out: mut Vec<u8>, name: read Text, value: usize): Unit {
+fn field(out: mut List<u8>, name: read Text, value: usize): Unit {
     out.extend_from_slice(name.as_bytes())
     out.extend_from_slice(decimal(value).as_slice())
     out.push(10u8)

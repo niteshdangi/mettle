@@ -10,14 +10,14 @@ extend Counter implements Iterator {
     }
 }
 type Box<T> { v: T }
-type Map<I, F> { iter: I; f: F }
-extend<B, I: Iterator, F: fn(I.(Iterator).Item): B> Map<I, F> implements Iterator {
+type Mapped<I, F> { iter: I; f: F }
+extend<B, I: Iterator, F: fn(I.(Iterator).Item): B> Mapped<I, F> implements Iterator {
     type Item = B
     mut fn next(): B? {
         match self.iter.next() { present(x) => present(self.f(x)), none => none }
     }
 }
-fn map<B, I: Iterator, F: fn(I.(Iterator).Item): B>(it: take I, f: take F): Map<I, F> { Map(it, f) }
+fn map<B, I: Iterator, F: fn(I.(Iterator).Item): B>(it: take I, f: take F): Mapped<I, F> { Mapped(it, f) }
 type Take<I> { iter: I; n: usize }
 extend<T, I: Iterator<Item = T>> Take<I> implements Iterator {
     type Item = T

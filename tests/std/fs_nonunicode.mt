@@ -1,6 +1,6 @@
 // Paths and OS strings hold arbitrary bytes and round-trip them losslessly.
 // linux-expect-stdout: non-utf8 name on disk
-import std.io.{Error, ErrorKind, Write};
+import std.io.{Error, ErrorKind, Writer};
 import std.path.path;
 import std.path.path_from_text;
 import std.ffi;

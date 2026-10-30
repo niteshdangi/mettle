@@ -1,8 +1,8 @@
 // Structured parser plus collection workload, built without std:
-// `name=1,2,3` lines accumulate into a HashMap<String, Vec<i64>>.
-import alloc.hash_map.HashMap;
+// `name=1,2,3` lines accumulate into a Map<String, List<i64>>.
+import alloc.hash_map.Map;
 import alloc.string.String;
-import alloc.vec.Vec;
+import alloc.vec.List;
 import package.core.text.Text;
 
 fn parse_number(t: read Text): i64? {
@@ -20,7 +20,7 @@ fn parse_number(t: read Text): i64? {
 }
 
 // Adds every comma-separated number in `list` to `out`; false on malformed input.
-fn parse_list(list: read Text, out: mut Vec<i64>): bool {
+fn parse_list(list: read Text, out: mut List<i64>): bool {
     var start = 0usize
     var i = 0usize
     let bytes = list.as_bytes()
@@ -42,7 +42,7 @@ fn parse_list(list: read Text, out: mut Vec<i64>): bool {
     true
 }
 
-fn parse(input: read Text, map: mut HashMap<String, Vec<i64>>): bool {
+fn parse(input: read Text, map: mut Map<String, List<i64>>): bool {
     var line_start = 0usize
     var i = 0usize
     let bytes = input.as_bytes()
@@ -63,7 +63,7 @@ fn parse(input: read Text, map: mut HashMap<String, Vec<i64>>): bool {
     true
 }
 
-fn sum(v: read Vec<i64>): i64 {
+fn sum(v: read List<i64>): i64 {
     var total = 0i64
     var i = 0usize
     while i < v.len() {
@@ -74,7 +74,7 @@ fn sum(v: read Vec<i64>): i64 {
 }
 
 fn main(): i32 {
-    var map = alloc.hash_map.new<String, Vec<i64>>()
+    var map = alloc.hash_map.new<String, List<i64>>()
     if !parse("a=1,2,3\nb=40,50\na=4\nc=\n", mut map) { return 1 }
     if map.len() != 3usize { return 2 }
     match map.get(alloc.string.from_text("a")) {
@@ -89,7 +89,7 @@ fn main(): i32 {
         present(v) => { if !v.is_empty() { return 7 } },
         none => { return 8 }
     }
-    var bad = alloc.hash_map.new<String, Vec<i64>>()
+    var bad = alloc.hash_map.new<String, List<i64>>()
     if parse("x=1,zz\n", mut bad) { return 9 }
     0
 }
