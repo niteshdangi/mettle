@@ -50,6 +50,8 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
          (mode == ParameterMode::Read && !checked.types->isCopy(type)))) {
       facts(*current).locals[slot].patternView = true;
       facts(*current).locals[slot].mode = mode;
+      facts(*current).locals[slot].readMatchPattern =
+          inOrdinaryMatchPattern && mode == ParameterMode::Read;
     }
     if (p.kind == PatternKind::At) {
       if (mode == ParameterMode::Take && !checked.types->isCopy(type))
@@ -196,6 +198,8 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
                              !checked.types->isCopy(subarray)))) {
             facts(*current).locals[slot].patternView = true;
             facts(*current).locals[slot].mode = mode;
+            facts(*current).locals[slot].readMatchPattern =
+                inOrdinaryMatchPattern && mode == ParameterMode::Read;
           }
         }
       } else
@@ -344,6 +348,12 @@ int Checker::match(Node &n, bool reachable) {
   int result = inference.fresh(expectedTypes.contains(&n) ? expectedTypes.at(&n)
                                                           : Type::Never);
   const bool deferJoin = !expectedTypes.contains(&n);
+  const auto expected = expectedTypes.contains(&n)
+                            ? expectedTypes.at(&n)
+                            : Type::Unknown;
+  const bool ownedResult =
+      mode == ParameterMode::Read && expected != Type::Unknown &&
+      !checked.types->isView(expected) && !checked.types->isCopy(expected);
   std::vector<Node *> tails;
   std::vector<int> bodies;
   std::vector<Span> spans;
@@ -353,7 +363,10 @@ int Checker::match(Node &n, bool reachable) {
   for (std::size_t i = 1; i < n.children.size(); ++i) {
     auto &arm = *n.children[i];
     scopes.emplace_back();
+    const auto previousMatchPattern = inOrdinaryMatchPattern;
+    inOrdinaryMatchPattern = mode == ParameterMode::Read;
     pattern(arm.patterns[0], source, mode);
+    inOrdinaryMatchPattern = previousMatchPattern;
     if (arm.flag) {
       if (mode == ParameterMode::Take) {
         auto bodyBindings = scopes.back();
@@ -385,6 +398,14 @@ int Checker::match(Node &n, bool reachable) {
       }
     }
     auto body = node(*arm.children.back(), reachable);
+    auto *armValue = arm.children.back().get();
+    while (armValue->kind == Kind::Group)
+      armValue = armValue->children[0].get();
+    if (ownedResult &&
+        !(armValue->kind == Kind::Unary && armValue->text == "take") &&
+        checked.types->eraseRegions(inference.value(body)) ==
+            checked.types->eraseRegions(expected))
+      diagnoseBorrowedMatchMove(*arm.children.back(), body);
     if (!deferJoin)
       coerce(*arm.children.back(), body, result, arm.span);
     else {
@@ -401,6 +422,29 @@ int Checker::match(Node &n, bool reachable) {
   }
   // Exhaustiveness is checked after type constraints have resolved.
   return result;
+}
+
+void Checker::diagnoseBorrowedMatchMove(const Node &expression, int variable) {
+  const auto type = inference.value(variable);
+  if (type == Type::Unknown || checked.types->isCopy(type))
+    return;
+  const Node *source = &expression;
+  while (source->kind == Kind::Group ||
+         (source->kind == Kind::Unary &&
+          (source->text == "take" || source->text == "*")) ||
+         source->kind == Kind::Field || source->kind == Kind::Index)
+    source = source->children[0].get();
+  if (source->kind != Kind::Name || facts(*source).slot < 0)
+    return;
+  auto slot = static_cast<std::size_t>(facts(*source).slot);
+  if (slot >= facts(*current).locals.size() ||
+      !facts(*current).locals[slot].readMatchPattern)
+    return;
+  const auto &binding = facts(*current).locals[slot];
+  error("ownership", binding.span,
+        "pattern binding '" + binding.name +
+            "' moves a non-copyable payload out of a borrowed scrutinee; "
+            "write `match take <expr>` to consume it");
 }
 
 void Checker::resolvePatterns() {

@@ -168,6 +168,8 @@ private:
         static_cast<std::size_t>(&function - module.functions.data()));
   }
   void error(std::string phase, Span span, std::string message);
+  void diagnoseBorrowedMatchMove(const Node &expression, int variable);
+  bool inOrdinaryMatchPattern = false;
   void coerce(Node &expression, int actual, int expected, Span span);
   int join(Node &left, int a, Node &right, int b, Span span);
   Type annotation(const TypeSyntax &syntax, Span span,
