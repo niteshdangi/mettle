@@ -49,7 +49,7 @@ std::optional<CheckedModule> Checker::run() {
         inference.fresh(annotation(f.annotation, f.span, f.owner));
     facts(f).diverges = inference.value(functionVariables[&f]) == Type::Never;
     if (f.explicitReceiver) {
-      if (f.owner.empty())
+      if (f.owner.empty() && f.implementation < 0)
         error("signature", f.span,
               "explicit receiver requires an owning type or interface");
       else {
