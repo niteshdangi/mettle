@@ -219,12 +219,16 @@ Implicit receiver conventions remain: read `fn`, exclusive `mut fn`, consuming
 parameter `receiver self: <mode/type>` and cannot also select an implicit
 receiver modifier. This makes ownership of heap/pinned receivers explicit.
 
-Generated construction uses fields in declaration order. A custom constructor is
-`init(parameters) [throws Error] { ... }`. It initializes `self.field` places;
-all fields must be initialized on success. Before that point, `self` cannot
-escape or receive ordinary methods. On failure, destroy established fields only.
-A custom constructor replaces the corresponding generated call, not the
-capability to define other named factories.
+Generated construction uses fields in declaration order when the type has no
+custom constructors. A custom constructor is
+`init(parameters) [throws Error] { ... }`, declared in the type body or an
+inherent `extend` block. Several constructors are permitted when their
+argument shapes and applicability conditions do not overlap; selection is
+specified in semantic-rules section 13.4. Any custom constructor hides the
+generated field constructor. An init initializes `self.field` places; all
+fields must be initialized on success. Before that point, `self` cannot escape
+or receive ordinary methods. On failure, destroy established fields only.
+Named factories remain separate operations.
 
 Parameter defaults use `name: Type = expression`. In declaration scope they may
 read earlier parameters, subject to their access/region contracts, but may not

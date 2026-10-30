@@ -3,6 +3,7 @@
 #include "consteval/evaluate.h"
 #include "semantics/check.h"
 #include "semantics/inference.h"
+#include "semantics/interfaces.h"
 #include "semantics/region_solver.h"
 #include <map>
 #include <set>
@@ -96,6 +97,11 @@ private:
   std::optional<int> machineValue(const Node &node);
   void checkBorrowAlignment();
   std::unordered_map<std::string, std::size_t> names;
+  struct ConstructorCandidate {
+    std::size_t function;
+    interfaces::Implementation applicability;
+  };
+  std::map<Type, std::vector<ConstructorCandidate>> constructors;
   std::unordered_map<std::string, std::size_t> aliases;
   std::vector<unsigned char> aliasStates;
   mutable std::unordered_map<std::string, std::vector<const Module::Product *>>
@@ -235,6 +241,9 @@ private:
     Span declarationSpan{};
     std::set<const GenericConstraint *> boundConstraints;
   };
+  int genericCustomConstruction(Node &node, bool reachable, Type origin,
+                                Type pattern, GenericEnvironment &environment,
+                                bool alias);
   void seedInterfaceBindings(const Node &node,
                              const GenericEnvironment &environment,
                              std::vector<TypeBinding> &bindings);
@@ -438,6 +447,13 @@ private:
   void function(Function &function);
   void parameterDefaults(Function &function);
   void constructor(Function &function);
+  bool constructorShapeMatches(const Function &function, const Node &call);
+  bool constructorShapesOverlap(const Function &a, const Function &b);
+  void registerConstructors();
+  std::optional<std::vector<TypeBinding>>
+  constructorApplicability(const ConstructorCandidate &candidate, Type type,
+                           Span span, interfaces::Solver &solver,
+                           std::span<const TypeBinding> seed = {});
   void completeArguments(Node &node, Function &function,
                          const std::vector<bool> &used,
                          bool reportMissing = true);

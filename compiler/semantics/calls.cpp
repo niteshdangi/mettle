@@ -229,11 +229,14 @@ int Checker::call(Node &n, bool reachable) {
   }
   if (constructed != typeNames.end() &&
       checked.types->isProduct(constructed->second)) {
-    auto custom =
-        names.find(checked.types->product(constructed->second).name + ".init");
-    if (custom != names.end() && module.functions[custom->second].constructor) {
-      name = custom->first;
-      constructed = typeNames.end();
+    auto origin = checked.types->product(constructed->second).genericOrigin;
+    if (origin == Type::Unknown)
+      origin = constructed->second;
+    if (constructors.contains(origin)) {
+      GenericEnvironment environment;
+      return genericCustomConstruction(n, reachable, origin,
+                                       constructed->second, environment,
+                                       constructed->second != origin);
     }
   }
   if (constructed != typeNames.end() &&

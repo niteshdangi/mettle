@@ -33,8 +33,11 @@ std::optional<CheckedModule> Checker::run() {
     current = &f;
     facts(f).genericParameters = genericBindings(f);
     auto name = definitionName(f.span, f.name);
-    facts(f).canonicalName = name;
-    if (!names.emplace(name, i).second)
+    facts(f).canonicalName =
+        f.constructor ? name + "$init" + std::to_string(i) : name;
+    auto [existing, inserted] = names.emplace(name, i);
+    if (!inserted &&
+        !(f.constructor && module.functions[existing->second].constructor))
       error("name", f.span, "duplicate function '" + displayPath(f.name) + "'");
     if (auto type = typeNames.find(name);
         type != typeNames.end() && checked.types->isProduct(type->second) &&
@@ -81,6 +84,8 @@ std::optional<CheckedModule> Checker::run() {
         typeNames.at(definitionName(product->span, product->name)),
         productLayout(*product));
   interfaceImplementations();
+  if (diagnostics.empty())
+    registerConstructors();
   proveDeferredObligations();
   staticDeclarations();
   if (diagnostics.empty())
@@ -119,10 +124,29 @@ std::optional<CheckedModule> Checker::run() {
             out.push_back(found->second);
         } else if (n.kind == Kind::Call && n.children[0]->kind == Kind::Name &&
                    !facts(*n.children[0]).lexicallyBound) {
-          auto found =
-              names.find(callableName(n.children[0]->text, owner, n.span));
+          auto called = callableName(n.children[0]->text, owner, n.span);
+          auto found = names.find(called);
           if (found != names.end())
             out.push_back(found->second);
+          Type calledType = Type::Unknown;
+          if (auto type = typeNames.find(called); type != typeNames.end())
+            calledType = type->second;
+          else if (auto alias = aliases.find(called); alias != aliases.end()) {
+            const auto &syntax = module.aliases[alias->second];
+            auto *saved = genericEnvironment;
+            genericEnvironment = &aliasGenerics.at(&syntax);
+            calledType = annotation(syntax.target, syntax.span);
+            genericEnvironment = saved;
+          }
+          if (checked.types->isProduct(calledType)) {
+            auto origin = checked.types->product(calledType).genericOrigin;
+            if (origin == Type::Unknown)
+              origin = calledType;
+            if (auto candidates = constructors.find(origin);
+                candidates != constructors.end())
+              for (const auto &candidate : candidates->second)
+                out.push_back(candidate.function);
+          }
         } else if (n.kind == Kind::Call && n.children[0]->kind == Kind::Field) {
           for (std::size_t i = 0; i < module.functions.size(); ++i)
             if (module.functions[i].name.ends_with("." + n.children[0]->text))

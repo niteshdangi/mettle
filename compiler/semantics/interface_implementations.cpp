@@ -381,7 +381,7 @@ void Checker::interfaceImplementations() {
       for (std::size_t function = 0; function < module.functions.size();
            ++function) {
         const auto &method = module.functions[function];
-        if (method.implementation != static_cast<int>(i))
+        if (method.implementation != static_cast<int>(i) || method.constructor)
           continue;
         auto name = method.name.substr(method.name.rfind('.') + 1);
         if (!implementation.inherent

@@ -153,6 +153,17 @@ Private default thunks reborrow already-evaluated arguments; omitted arguments r
 in declaration order after explicit source-order evaluation. Constructor metadata
 identifies unestablished `self` storage: normal success moves it into a result,
 while failure cleanup runs initialized field destructors, not its user destructor.
+Constructor candidates are registered by nominal origin in semantics, with
+distinct internal function identities and target applicability constraints.
+Shape intersection is checked at declaration time, and calls select a checked
+candidate before ordinary call and generic substitution planning. Generated
+field construction is unavailable whenever a nominal type has custom inits.
+Inherent-extension inits use the same hidden-self lowering and cleanup as
+type-body inits; their target and bounds remain declaration-owned conditions.
+Expansion retains derive request names and spans so semantics can reject an
+unsupported derive after constructors from other extensions have been collected.
+This constructor-selection change is implemented but has not yet been built
+or verified.
 
 Callable descriptors retain parameter access, success/error types, result-source
 indices and read/mut/take capability independently of native function pointers.
