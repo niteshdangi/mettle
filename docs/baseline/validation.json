@@ -1,5 +1,5 @@
 {
-  "status": "failed",
+  "status": "passed",
   "operations_checked": 240733,
   "native_unit_mappings_checked": 118,
   "native_never_mappings_checked": 140,
@@ -23,14 +23,14 @@
     "milestone_capabilities_checked": 107,
     "grammar_productions": {
       "core-grammar.md": 49,
-      "language-grammar.md": 100
+      "language-grammar.md": 109
     },
-    "composed_grammar_productions": 129,
+    "composed_grammar_productions": 138,
     "function_result_and_unit_policies_checked": true,
     "fixture_expectations_checked": 23,
     "fixtures_executed": false
   },
-  "documentation_sha256": "f780fc01b9382790f1adb3ccd6a5cf70163b97699586809deeaa2c07192472b0",
+  "documentation_sha256": "5d69e77a8477511de8f42f70027684213401f5cacfbad042391a57709d86c5e7",
   "documentation_inputs": {
     "AGENTS.md": "33d2c795b34b8f4328f1df6e463cfdb2ec9e5c7ea4a14bad07e7cd5fd4b02c66",
     "CONTRIBUTING.md": "48e922caaaf6b55ebe4dcd05f79cba26ad3cfc9f7b9c69cb6e3d010309cb68f2",
@@ -52,7 +52,7 @@
     "docs/core-semantics.md": "a2998fdc3a7f118f35e4c0f82c8dda7633b0ca4b95882fab90138825c050f1ef",
     "docs/decisions.md": "143ca13f192a3642cf88a69d71a3ac50f8c90350c8d23a265781522401ac5340",
     "docs/implementation-plan.md": "a2b936236dc34e4732ed76a75101af579c6f68687a3a58ebe782ee9b282a068b",
-    "docs/language-grammar.md": "7452a2cfc0df0cf8810793e02072f6142bec124c0612ac0472b7a19413e8d0a2",
+    "docs/language-grammar.md": "112fa81fea80281f35d29acba536b35766ad7db35e1ad29f44469446822a9fb0",
     "docs/language-identity.md": "7febf4dec2af3cf08e0852a2eaea4a427a884ebdaf72dae993991625ded37ab3",
     "docs/library-and-abi.md": "5db1ef4bd00dab55b2d469c3fd5e3b25e1cb9cfd79b807f65cc9a5a7b632e91f",
     "docs/library-surface.md": "15a3e1b9a9648eb2a8fe944bd6f382bfc1bc811a42a236ded39879ff2d6ae3eb",
@@ -163,38 +163,7 @@
     "uninhabited": 9,
     "varargs": 2
   },
-  "failures": [
-    {
-      "file": "docs/decisions.md",
-      "problem": "Missing heading anchor",
-      "target": "language-grammar.md#131-dotted-paths-and-imports"
-    },
-    {
-      "file": "docs/decisions.md",
-      "problem": "Missing heading anchor",
-      "target": "language-grammar.md#133-generic-application"
-    },
-    {
-      "file": "docs/decisions.md",
-      "problem": "Missing heading anchor",
-      "target": "language-grammar.md#132-contextual-extend-declarations"
-    },
-    {
-      "file": "docs/decisions.md",
-      "problem": "Missing heading anchor",
-      "target": "language-grammar.md#135-format-parameters-and-interpolated-text"
-    },
-    {
-      "file": "docs/decisions.md",
-      "problem": "Missing heading anchor",
-      "target": "language-grammar.md#134-closures-and-call-arguments"
-    },
-    {
-      "file": "docs/decisions.md",
-      "problem": "Missing heading anchor",
-      "target": "language-grammar.md#134-closures-and-call-arguments"
-    }
-  ],
+  "failures": [],
   "scope": "Documentation data, source identities, stability contexts, declaration-link closure and rule assignment; not compiler/soundness/runtime validation",
   "manifest_sha256": "fb6bdf95c62f23b3bba8baee134c948e85df8fbccbe04766dfa9ab5bffec26eb"
 }
