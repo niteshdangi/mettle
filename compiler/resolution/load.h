@@ -3,6 +3,7 @@
 #include "diagnostics/diagnostics.h"
 #include "expansion/expand.h"
 #include "expansion/procedural.h"
+#include "source/source.h"
 #include "syntax/ast.h"
 #include <functional>
 #include <optional>
@@ -37,17 +38,25 @@ struct Library {
   // Target facts and the root source's features that `@cfg` predicates test;
   // a dependency package tests its own features, the standard libraries none.
   expansion::Configuration configuration{};
-  // Test/benchmark builds: the root source's `@test` (or `@bench`) functions
-  // are collected into `Module::tests`, its own `main` is dropped and a
-  // synthesized harness entry is loaded beside it (see expansion/harness.h).
+  // Test/benchmark builds: the selected package's `@test` (or `@bench`)
+  // functions are collected into `Module::tests`, the root `main` is dropped
+  // and a synthesized harness entry is loaded beside it.
   enum class Harness { None, Test, Bench } harness = Harness::None;
   // Host-program macros that every loaded source may invoke; null for none.
   // The host must outlive the load.
   const expansion::Procedures *procedures = nullptr;
 };
+// An original source file in the selected package and its external-module
+// path. The driver uses these inputs to discover and overlay doctests without
+// changing files in the package.
+struct SourceModule {
+  Source source;
+  std::vector<std::string> path;
+};
 std::optional<Module> load(Source root, const SourceProvider &provider,
                            Diagnostics &diagnostics,
-                           const Library &library = {});
+                           const Library &library = {},
+                           std::vector<SourceModule> *sourceModules = nullptr);
 std::optional<Module> load(const std::vector<Source> &sources,
                            Diagnostics &diagnostics,
                            const Library &library = {});

@@ -2,7 +2,9 @@
 #include "backend/llvm/object.h"
 #include "lint/lint.h"
 #include <algorithm>
+#include <charconv>
 #include <iostream>
+#include <system_error>
 
 namespace mettle::driver {
 Options::Options()
@@ -46,13 +48,14 @@ void usage() {
          "         (builds into a temporary directory, runs the program with "
          "ARGS and exits with its status; a signal exits 128+signal)\n"
          "       mettle test FILE|PACKAGE [FILTER...] [--exact] "
-         "[--include-ignored|--ignored] [--doc] [--jobs N] [build options]\n"
-         "         (runs the root module's @test functions and the fenced "
-         "examples of its documentation comments, each in its own process; "
+         "[--include-ignored|--ignored] [--doc] [--jobs N] "
+         "[--timeout SECONDS] [--format human|json] [build options]\n"
+         "         (runs package @test functions and its fenced examples, "
+         "each in its own process; "
          "--doc runs only the examples)\n"
-         "       mettle bench FILE|PACKAGE [FILTER...] [--exact] [build "
-         "options]\n"
-         "         (runs the root module's @bench functions; release profile "
+         "       mettle bench FILE|PACKAGE [FILTER...] [--exact] "
+         "[--format human|json] [build options]\n"
+         "         (runs the package's @bench functions; release profile "
          "unless --profile is given)\n"
          "       mettle lsp [--library-dir DIR] [--target TRIPLE] "
          "[--freestanding]\n"
@@ -94,6 +97,27 @@ std::optional<Options> options(int argc, char **argv) {
       result.exact |= arg == "--exact";
       result.includeIgnored |= arg == "--include-ignored";
       result.onlyIgnored |= arg == "--ignored";
+      continue;
+    }
+    if (selection && arg == "--format") {
+      if (++i == argc)
+        return std::nullopt;
+      result.format = argv[i];
+      if (result.format != "human" && result.format != "json")
+        return std::nullopt;
+      continue;
+    }
+    if (result.command == "test" && arg == "--timeout") {
+      if (++i == argc)
+        return std::nullopt;
+      std::string value = argv[i];
+      unsigned seconds = 0;
+      auto parsed =
+          std::from_chars(value.data(), value.data() + value.size(), seconds);
+      if (value.empty() || parsed.ec != std::errc{} ||
+          parsed.ptr != value.data() + value.size() || seconds == 0)
+        return std::nullopt;
+      result.timeoutSeconds = seconds;
       continue;
     }
     if (selection && arg == "--jobs") {

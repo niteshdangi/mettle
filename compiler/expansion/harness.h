@@ -23,8 +23,8 @@ inline constexpr int harnessBenchSamples = 11;
 // A test exits 0 on success and `harnessFailureStatus` when it returns its
 // failure (`harnessUsageStatus` for a selector it does not know); panics end
 // the process through the runtime. A benchmark prints `ITERATIONS SAMPLE...`
-// (calibrated so a sample takes at least 10 ms) and exits 0. Only the root
-// module's functions are addressable.
+// (calibrated so a sample takes at least 10 ms) and exits 0. Collected
+// functions use their qualified module paths.
 std::string harnessSource(const std::vector<Module::TestFunction> &tests,
                           bool bench);
 } // namespace mettle::expansion

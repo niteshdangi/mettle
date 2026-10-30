@@ -6,8 +6,8 @@ Usage: packages.py MettleExecutable EvidenceDir FixturesDir
 
 import json
 import os
-import shutil
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -33,6 +33,19 @@ def invoke(arguments, expected=0, contains=()):
         if needle not in text:
             raise AssertionError(f"{arguments}: missing {needle!r}\n{text}")
     return text
+
+
+def invoke_json(arguments, expected=0):
+    environment = {**os.environ, "METTLE_CACHE_DIR": str(evidence / "cache")}
+    result = subprocess.run([str(mettle), *map(str, arguments)], text=True,
+                            capture_output=True, timeout=600, env=environment)
+    if result.returncode != expected:
+        raise AssertionError(f"{arguments}: expected {expected}, got "
+                             f"{result.returncode}\n"
+                             f"{result.stdout}{result.stderr}")
+    if result.stderr:
+        raise AssertionError(f"{arguments}: unexpected stderr\n{result.stderr}")
+    return [json.loads(line) for line in result.stdout.splitlines()]
 
 
 def build_and_run(directory, *extra):
@@ -947,6 +960,78 @@ def language_server():
         client.process.communicate()
 
 
+def test_json_timeout_and_modules():
+    source = evidence / "module-tests.mt"
+    source.write_text(
+        "module extras;\n"
+        "module inline_tests {\n"
+        "    @test\n"
+        "    fn inline_passes() {}\n"
+        "    @bench\n"
+        "    fn inline_bench() {}\n"
+        "}\n"
+        "@test\n"
+        "fn top_level() {}\n"
+        "@test\n"
+        "fn panic_report() { panic(\"json panic\") }\n"
+        "@test\n"
+        "fn hangs() { loop {} }\n"
+        "@bench\n"
+        "fn root_bench() {}\n")
+    (evidence / "extras.mt").write_text(
+        "/// Module docs.\n"
+        "///\n"
+        "/// ```\n"
+        "/// if value() != 1 { panic(\"bad module doctest\") }\n"
+        "/// ```\n"
+        "fn value(): i32 { 1 }\n"
+        "@test\n"
+        "fn sub_passes() {}\n"
+        "@bench\n"
+        "fn sub_bench() {}\n")
+
+    events = invoke_json(
+        ["test", source, "--format", "json", "--timeout", "1", "--jobs", "2"],
+        1)
+    assert events[0]["event"] == "suite"
+    assert events[-1]["event"] == "summary"
+    expected_keys = {
+        "suite": ["event", "name", "total", "filtered"],
+        "test": ["event", "name", "outcome", "duration_ns", "output",
+                  "message"],
+        "summary": ["event", "passed", "failed", "ignored", "terminated",
+                     "infrastructure_failures", "timed_out", "filtered"],
+    }
+    for event in events:
+        assert list(event) == expected_keys[event["event"]], event
+    outcomes = {event["name"]: event for event in events
+                 if event["event"] == "test"}
+    assert outcomes["inline_tests::inline_passes"]["outcome"] == "passed"
+    assert outcomes["extras::sub_passes"]["outcome"] == "passed"
+    assert outcomes["panic_report"]["output"].find("json panic") >= 0
+    assert outcomes["hangs"]["outcome"] == "timed_out"
+    assert any(event["event"] == "summary" and event["timed_out"] == 1
+                for event in events), events
+
+    benches = invoke_json([
+        "bench", source, "--format", "json", "--exact",
+        "inline_tests::inline_bench", "extras::sub_bench"])
+    assert benches[0]["event"] == "suite"
+    assert benches[-1]["event"] == "summary"
+    measured = {event["name"] for event in benches
+                if event.get("outcome") == "measured"}
+    assert measured == {"inline_tests::inline_bench",
+                        "extras::sub_bench"}, benches
+
+    doctests = invoke_json(["test", source, "--doc", "--format", "json"])
+    assert doctests[0]["event"] == "suite"
+    assert doctests[-1]["event"] == "summary"
+    assert any(
+        event["event"] == "test" and event["name"].startswith("extras - ") and
+        event["outcome"] == "passed" for event in doctests
+    ), doctests
+
+
 CASES = [path_dependency, missing_lock_locked, lock_corruption,
          registry_resolution, version_conflict, backtracking, offline, features,
          manifest_diagnostics, package_options_need_package, incremental_reuse,
@@ -957,7 +1042,8 @@ CASES = [path_dependency, missing_lock_locked, lock_corruption,
          test_reports_pass_fail_ignored_and_isolates_panics,
          test_filter_exact, bench_reports_timing, fmt_normalizes_layout_only,
          doc_writes_deterministic_html, doctests_run_isolated_examples,
-         lint_reports_semantic_findings, debug_info, language_server]
+         lint_reports_semantic_findings, debug_info, language_server,
+         test_json_timeout_and_modules]
 
 # Optional fourth argument: a regular expression selecting cases by name.
 selected = re.compile(sys.argv[4]) if len(sys.argv) > 4 else None

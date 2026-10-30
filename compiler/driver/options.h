@@ -36,11 +36,14 @@ struct Options {
   // Link libraries requested by build scripts.
   std::vector<std::string> extraLibraries;
   // `mettle run`: arguments after `--`. `mettle test`/`bench`: name filters,
-  // selection and parallelism. Internally a test or benchmark build selects
-  // the harness entry (`test`, `bench`; empty for ordinary builds).
+  // selection, output format and test timeout. Internally a test or benchmark
+  // build selects the harness entry (`test`, `bench`; empty for ordinary
+  // builds).
   std::vector<std::string> programArguments, filters;
   bool exact = false, includeIgnored = false, onlyIgnored = false;
+  std::string format = "human";
   unsigned jobs = 0;
+  std::optional<unsigned> timeoutSeconds;
   // `mettle test --doc` runs only the doctests; `mettle doc --private` also
   // documents items that are not `pub`.
   bool docOnly = false, documentPrivate = false;

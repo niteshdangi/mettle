@@ -391,8 +391,8 @@ struct Module {
     std::vector<std::vector<std::string>> names;
     std::vector<std::string> libraryRoots;
   } prelude;
-  // Functions annotated `@test` or `@bench` in the root source, collected by
-  // attribute expansion for the test/benchmark harness. `path` is the
+  // Functions annotated `@test` or `@bench` in the selected package, collected
+  // by attribute expansion for the test/benchmark harness. `path` is the
   // enclosing modules followed by the function name.
   struct TestFunction {
     std::vector<std::string> path;

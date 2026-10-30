@@ -1056,21 +1056,23 @@ I12 status: `mettle fmt FILE... [--check]` implemented and verified (see
 checked by token sequence, syntax-tree fingerprint and idempotence. `mettle run`,
 `mettle test` and `mettle bench` are implemented and verified (driver
 `execute.cpp`, expansion `harness.cpp`; contract in tooling-and-packages sections
-3 and 4). `mettle doc` (static HTML from `///`/`//!`) and doctests (`mettle
-test [--doc]`, fence annotations `no_run`/`ignore`/`should_panic`/
-`compile_fail(PHASE)`) are implemented and verified on macOS arm64 (driver
-`document.cpp`/`execute.cpp`, component `compiler/documentation`; tooling-and-
-packages section 4.1; tests `doc_writes_deterministic_html` and
-`doctests_run_isolated_examples` in `tests/packages.py`). `mettle lint` is implemented and verified on macOS arm64 (test
-`lint_reports_semantic_findings`): five semantic rules
-over checked facts, `--allow/--warn/--deny` and function-level
-`@allow/@warn/@deny` (tooling-and-packages section 3). Remaining I12 work:
-further lint rules and machine-readable findings, line breaking/wrapping in `fmt`, doc cross-references and search,
-doctests outside the root source, machine-readable test results, test timeouts, tests and benchmarks
-outside the root module, benchmark handles and debugger
-workflows. The language server (`mettle lsp`, T005) is implemented and verified
-on macOS arm64 (test `language_server`); see `docs/tooling-and-packages.md` section 5. The milestone is
-not complete.
+3 and 4). T007's package-wide test/benchmark collection, qualified names,
+newline-delimited JSON results, optional per-test timeout and doctests from
+every package module file are implemented, unverified (regression
+`test_json_timeout_and_modules`). `mettle doc` (static HTML from `///`/`//!`)
+and doctests (`mettle test [--doc]`, fence annotations `no_run`/`ignore`/
+`should_panic`/`compile_fail(PHASE)`) are implemented and verified on macOS
+arm64 (driver `document.cpp`/`execute.cpp`, component `compiler/documentation`;
+tooling-and-packages section 4.1; tests `doc_writes_deterministic_html` and
+`doctests_run_isolated_examples` in `tests/packages.py`). `mettle lint` is
+implemented and verified on macOS arm64 (test `lint_reports_semantic_findings`):
+five semantic rules over checked facts, `--allow/--warn/--deny` and
+function-level `@allow/@warn/@deny` (tooling-and-packages section 3). Remaining
+I12 work: further lint rules and machine-readable findings, line
+breaking/wrapping in `fmt`, doc cross-references and search, benchmark handles
+and debugger workflows. The language server (`mettle lsp`, T005) is implemented
+and verified on macOS arm64 (test `language_server`); see
+`docs/tooling-and-packages.md` section 5. The milestone is not complete.
 
 I12/T006 status, source-level debug info: the earlier basic `-g` DWARF
 implementation was verified. Product/generic/closure capture, sum variant and
