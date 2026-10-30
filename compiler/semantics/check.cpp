@@ -313,7 +313,7 @@ std::optional<CheckedModule> Checker::run() {
           error("ownership", syntax->children[i]->span,
                 "a variadic cursor cannot be passed outside its invocation");
     if (syntax->kind == Kind::Integer && resolved.numeric &&
-        !integerLiteralFits(*resolved.numeric, resolved.type))
+        !integerLiteralFits(*resolved.numeric, resolved.type, pointerBits()))
       error("type", syntax->span,
             "integer literal is outside the " +
                 std::string(checked.types->name(resolved.type)) + " range");

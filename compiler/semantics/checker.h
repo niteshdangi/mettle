@@ -1,5 +1,6 @@
 #pragma once
 
+#include "consteval/evaluate.h"
 #include "semantics/check.h"
 #include "semantics/inference.h"
 #include "semantics/region_solver.h"
@@ -16,10 +17,29 @@ public:
         diagnostics(diagnostics), inference(diagnostics, *checked.types),
         requireEntry(requireEntry) {
     checked.targetDescription = std::move(target);
+    checked.types->setPointerBits(pointerBits());
   }
   std::optional<CheckedModule> run();
 
 private:
+  friend class ConstantHost;
+  TypeStore &typeStore() { return *checked.types; }
+  // usize/isize width of the selected target; an unspecified target is 64.
+  unsigned pointerBits() const {
+    return checked.targetDescription.pointerBits
+               ? checked.targetDescription.pointerBits
+               : 64;
+  }
+  // The compiler-owned evaluator for required constants that go beyond
+  // literal arithmetic: casts, control flow, const fn calls, aggregates.
+  Type evaluatedConstant(const Node &node, Type expected);
+  std::optional<StaticConstant> evaluatedStatic(const Node &node, Type type);
+  bool needsEvaluator(const Node &node) const;
+  bool constFunctionCall(const Node &node);
+  std::optional<evaluation::Shape> constantShape(Type type);
+  std::optional<evaluation::Value> constantValueOf(const StaticConstant &value);
+  std::optional<StaticConstant> staticFromValue(const evaluation::Value &value,
+                                                Type type, Span span);
   struct Binding {
     int variable;
     int slot;

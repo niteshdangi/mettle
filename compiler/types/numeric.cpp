@@ -28,6 +28,18 @@ unsigned integerWidth(Type type) {
     return 128;
   return type == Type::Bool ? 1 : 0;
 }
+unsigned integerWidth(Type type, unsigned pointerBits) {
+  return type == Type::Usize || type == Type::Isize ? pointerBits
+                                                    : integerWidth(type);
+}
+Type integerEquivalent(Type type, unsigned pointerBits) {
+  if (type != Type::Usize && type != Type::Isize)
+    return type;
+  const bool sign = type == Type::Isize;
+  return pointerBits == 16   ? (sign ? Type::I16 : Type::U16)
+         : pointerBits == 32 ? (sign ? Type::I32 : Type::U32)
+                             : (sign ? Type::I64 : Type::U64);
+}
 Type builtinType(std::string_view name) {
   for (auto type :
        {Type::I8, Type::I16, Type::I32, Type::I64, Type::I128, Type::Isize,
@@ -55,6 +67,10 @@ bool integerLiteralFits(const NumericLiteral &literal, Type type) {
     return false;
   return width > 64 ? low == 0 && high == (std::uint64_t{1} << (width - 65))
                     : high == 0 && low == (std::uint64_t{1} << (width - 1));
+}
+bool integerLiteralFits(const NumericLiteral &literal, Type type,
+                        unsigned pointerBits) {
+  return integerLiteralFits(literal, integerEquivalent(type, pointerBits));
 }
 bool validFloatingLiteral(std::string_view spelling) {
   std::size_t position = spelling.starts_with("-") ? 1 : 0;

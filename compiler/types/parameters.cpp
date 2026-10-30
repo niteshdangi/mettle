@@ -91,10 +91,11 @@ Type TypeStore::constantExpression(std::string operation,
     throw std::invalid_argument("division by zero in constant expression");
   if ((operation == "<<" || operation == ">>") && right &&
       (right->negative || right->magnitude[1] ||
-       right->magnitude[0] >= integerWidth(operandType)))
+       right->magnitude[0] >= integerWidth(operandType, pointerBits)))
     throw std::invalid_argument("invalid shift in constant expression");
   if (left && right) {
-    auto value = evaluateIntegerConstant(operation, operandType, *left, *right);
+    auto value = evaluateIntegerConstant(operation, operandType, *left, *right,
+                                        pointerBits);
     return constant(comparison || logical ? Type::Bool : operandType,
                     std::move(value));
   }

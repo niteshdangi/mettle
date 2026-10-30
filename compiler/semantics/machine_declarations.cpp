@@ -161,7 +161,7 @@ ProductLayout Checker::productLayout(const Module::Product &product) {
         }
         overflow = false;
       }
-      if (overflow || !integerLiteralFits(next, layout.tag))
+      if (overflow || !integerLiteralFits(next, layout.tag, pointerBits()))
         error("type", variant.span,
               "enum discriminant is outside its representation");
       if (!next.magnitude[0] && !next.magnitude[1])

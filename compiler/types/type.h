@@ -56,6 +56,11 @@ bool isSignedInteger(Type type);
 bool isFloating(Type type);
 bool isNumeric(Type type);
 unsigned integerWidth(Type type);
+// usize/isize take the selected target's pointer width (16, 32 or 64 bits);
+// the one-argument forms assume 64.
+unsigned integerWidth(Type type, unsigned pointerBits);
+// The fixed-width integer with the same width and signedness on that target.
+Type integerEquivalent(Type type, unsigned pointerBits);
 Type builtinType(std::string_view name);
 struct NumericLiteral {
   std::array<std::uint64_t, 2> magnitude{};
@@ -78,14 +83,22 @@ struct StaticConstant {
 };
 enum class StorageDuration { Automatic, Static };
 bool integerLiteralFits(const NumericLiteral &literal, Type type);
+bool integerLiteralFits(const NumericLiteral &literal, Type type,
+                        unsigned pointerBits);
 NumericLiteral integerLiteral(std::int64_t value);
 std::string integerLiteralName(const NumericLiteral &value);
 int compareIntegers(const NumericLiteral &left, const NumericLiteral &right);
 NumericLiteral integerMinimum(Type type);
 NumericLiteral integerMaximum(Type type);
+NumericLiteral integerMinimum(Type type, unsigned pointerBits);
+NumericLiteral integerMaximum(Type type, unsigned pointerBits);
 NumericLiteral evaluateIntegerConstant(std::string_view operation, Type type,
                                        const NumericLiteral &left,
                                        const NumericLiteral &right);
+NumericLiteral evaluateIntegerConstant(std::string_view operation, Type type,
+                                       const NumericLiteral &left,
+                                       const NumericLiteral &right,
+                                       unsigned pointerBits);
 bool validFloatingLiteral(std::string_view spelling);
 bool scalarCastAllowed(Type source, Type target);
 struct FloatingPolicy {
@@ -317,6 +330,10 @@ public:
   Type constant(Type valueType, std::int64_t value);
   Type constant(Type valueType, NumericLiteral value);
   Type constantExpression(std::string operation, std::vector<Type> operands);
+  // Pointer width of the compilation target; constant arithmetic on
+  // usize/isize wraps and overflows at this width, never the host's.
+  void setPointerBits(unsigned bits) { pointerBits = bits; }
+  unsigned targetPointerBits() const { return pointerBits; }
   Type projection(Type subject, Type interfaceType, std::size_t associated,
                   std::vector<Type> arguments = {},
                   Type valueType = Type::Unknown, bool copyRequested = false,
@@ -361,6 +378,7 @@ private:
       std::pair<Type, std::vector<std::pair<Type, Type>>>;
   std::map<RegionalSubstitution, Type> regionalSubstitutions;
   unsigned regionalSubstitutionDepth = 0;
+  unsigned pointerBits = 64;
   enum class EntryKind {
     Product,
     View,
