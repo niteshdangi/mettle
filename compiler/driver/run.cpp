@@ -43,13 +43,13 @@ int clean(const Options &options) {
   }
   std::cout << "mettle: cache " << store->root().generic_string() << ": "
             << (options.dryRun ? "would remove " : "removed ")
-            << removed->entries << " entries, " << removed->blobs
-            << " blobs, " << removed->bytes << " bytes\n";
+            << removed->entries << " entries, " << removed->blobs << " blobs, "
+            << removed->bytes << " bytes\n";
   if (!options.input.empty()) {
     fs::path input(options.input);
     std::error_code error;
-    auto directory = fs::is_directory(input, error) ? input
-                                                    : input.parent_path();
+    auto directory =
+        fs::is_directory(input, error) ? input : input.parent_path();
     auto generated = directory / "target" / "mettle";
     if (fs::exists(generated, error)) {
       std::cout << "mettle: " << (options.dryRun ? "would remove " : "removed ")
@@ -223,8 +223,8 @@ int run(const Options &requested) {
     return 0;
   int status = emit(options, source, *program);
   if (status == 0 && cacheKey && store) {
-    bool stored = store->put(*cacheKey, options.output,
-                             options.emit == "executable");
+    bool stored =
+        store->put(*cacheKey, options.output, options.emit == "executable");
     if (options.explain)
       std::cerr << "mettle: cache " << (stored ? "stored " : "could not store ")
                 << cacheKey->substr(0, 12) << '\n';

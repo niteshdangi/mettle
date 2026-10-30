@@ -412,10 +412,10 @@ private:
                                 "' does not exist");
           return std::nullopt;
         }
-        plan.scripts.push_back(
-            {manifest.name, toString(manifest.version), manifest.directory,
-             fs::canonical(script, error).generic_string(),
-             package.candidate.kind == SourceKind::Root});
+        plan.scripts.push_back({manifest.name, toString(manifest.version),
+                                manifest.directory,
+                                fs::canonical(script, error).generic_string(),
+                                package.candidate.kind == SourceKind::Root});
       }
       if (package.candidate.kind == SourceKind::Root) {
         plan.features = package.features;

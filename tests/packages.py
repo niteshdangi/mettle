@@ -220,7 +220,9 @@ def incremental_reuse():
     assert os.access(reused, os.X_OK) and exit_code(reused) == 0
     assert not os.access(cache_files("blobs")[0], os.W_OK), "shared blob is writable"
     # An incremental result equals a clean build without any cache.
-    clean = evidence / "clean.bin"
+    # The linker embeds the output's file name, so compare like names.
+    clean = evidence / "clean" / "out.bin"
+    clean.parent.mkdir(exist_ok=True)
     invoke(["build", app, "-o", clean, "--no-cache"])
     assert clean.read_bytes() == bytes_built
 

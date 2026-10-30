@@ -31,8 +31,7 @@ bool digit(char c) { return c >= '0' && c <= '9'; }
 bool upper(char c) { return c >= 'A' && c <= 'Z'; }
 
 bool identifier(const std::string &name) {
-  return allOf(name,
-               [](char c) { return lower(c) || digit(c) || c == '_'; }) &&
+  return allOf(name, [](char c) { return lower(c) || digit(c) || c == '_'; }) &&
          lower(name[0]);
 }
 
@@ -55,8 +54,9 @@ bool libraryName(const std::string &name) {
 
 bool variableName(const std::string &name) {
   return allOf(name,
-               [](char c) { return lower(c) || upper(c) || digit(c) ||
-                                   c == '_'; }) &&
+               [](char c) {
+                 return lower(c) || upper(c) || digit(c) || c == '_';
+               }) &&
          !digit(name[0]);
 }
 
@@ -276,11 +276,13 @@ private:
       std::error_code error;
       auto source = fs::canonical(outDirectory / file, error);
       if (error || !fs::is_regular_file(source))
-        return fail(script, "module '" + name + "' names a file the script "
-                                "did not generate: " + file);
-      if (!taken.insert(name).second)
         return fail(script, "module '" + name +
-                                "' collides with another root module");
+                                "' names a file the script "
+                                "did not generate: " +
+                                file);
+      if (!taken.insert(name).second)
+        return fail(script,
+                    "module '" + name + "' collides with another root module");
       results.modules.push_back({name, source.generic_string(), features});
     }
     results.features[script.package].insert(declared.features.begin(),
@@ -300,9 +302,8 @@ private:
     std::error_code error;
     fs::create_directories(work, error);
     if (error)
-      return fail(script,
-                  "cannot create " + work.generic_string() + ": " +
-                      error.message());
+      return fail(script, "cannot create " + work.generic_string() + ": " +
+                              error.message());
     // Scripts are compiled for the host whatever the build target is.
     Options host;
     host.command = "build";
@@ -356,7 +357,8 @@ private:
     if (error)
       return fail(script, "cannot create " + outDirectory.generic_string());
     auto log = (work / "build-script.stdout").generic_string();
-    for (const auto &[name, value] : std::vector<std::pair<const char *, std::string>>{
+    for (const auto &[name, value] :
+         std::vector<std::pair<const char *, std::string>>{
              {"METTLE_OUT_DIR", outDirectory.generic_string()},
              {"METTLE_PACKAGE_DIR", script.directory},
              {"METTLE_PACKAGE_NAME", script.package},
@@ -375,15 +377,15 @@ private:
         std::nullopt, llvm::StringRef(log), std::nullopt};
     std::string message;
     bool notLaunched = false;
-    int status = llvm::sys::ExecuteAndWait(program, arguments, std::nullopt,
-                                           redirects, 0, 0, &message,
-                                           &notLaunched);
+    int status =
+        llvm::sys::ExecuteAndWait(program, arguments, std::nullopt, redirects,
+                                  0, 0, &message, &notLaunched);
     std::error_code restored;
     fs::current_path(previous, restored);
     if (notLaunched || status != 0)
-      return fail(script, notLaunched ? "cannot run the script: " + message
-                                    : "exited with status " +
-                                          std::to_string(status));
+      return fail(script, notLaunched
+                              ? "cannot run the script: " + message
+                              : "exited with status " + std::to_string(status));
     std::ifstream stream(log, std::ios::binary);
     std::ostringstream output;
     output << stream.rdbuf();

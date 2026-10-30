@@ -877,7 +877,7 @@ and `mettle check|build` on a package directory are implemented and covered by
 `tests/packages.py`. Open: git/remote registries, coexisting versions (flat
 module namespace) and feature/host/target separation.
 
-I09 T002/T003 status: implemented, unverified (not yet built or run).
+I09 T002/T003 status: implemented and verified on macOS arm64 (Release and Debug).
 `[build] script` programs run on the host with declared `mettle:` outputs
 (generated modules, features, link libraries) and a `reproducible` input
 contract, otherwise rerun conservatively (`compiler/driver/build_script.cpp`);

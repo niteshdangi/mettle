@@ -139,8 +139,7 @@ bool Store::publish(const fs::path &path, const std::string &content) {
   return !error;
 }
 
-bool Store::put(const std::string &key, const fs::path &file,
-                bool executable) {
+bool Store::put(const std::string &key, const fs::path &file, bool executable) {
   if (key.size() < 2 || !prepare())
     return false;
   std::uint64_t size = 0;
@@ -152,8 +151,7 @@ bool Store::put(const std::string &key, const fs::path &file,
   if (!fs::exists(path, error)) {
     fs::create_directories(path.parent_path(), error);
     auto temporary = scratch();
-    fs::copy_file(file, temporary, fs::copy_options::overwrite_existing,
-                  error);
+    fs::copy_file(file, temporary, fs::copy_options::overwrite_existing, error);
     if (error)
       return false;
     fs::permissions(temporary,
@@ -309,9 +307,8 @@ std::vector<std::string> Store::prune(const std::string &keep) {
         std::chrono::duration_cast<std::chrono::hours>(now - record.used);
     if (bounds.maxAgeDays &&
         age > std::chrono::hours(24 * static_cast<long>(bounds.maxAgeDays)))
-      evict(record,
-            "unused for more than " + std::to_string(bounds.maxAgeDays) +
-                " days");
+      evict(record, "unused for more than " +
+                        std::to_string(bounds.maxAgeDays) + " days");
     else
       live.push_back(std::move(record));
   }

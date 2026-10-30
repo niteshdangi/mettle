@@ -321,4 +321,8 @@ if(BUILD_TESTING)
                      ${METTLE_LINKER_FLAGS})
     set_tests_properties(foundation.sanitizers PROPERTIES TIMEOUT 120)
   endif()
+  # Test builds never use the user's build cache.
+  get_property(METTLE_TESTS DIRECTORY PROPERTY TESTS)
+  set_property(TEST ${METTLE_TESTS} APPEND PROPERTY ENVIRONMENT
+               "METTLE_CACHE_DIR=${PROJECT_BINARY_DIR}/test-cache")
 endif()

@@ -26,6 +26,21 @@ struct Temporary {
     return llvm::sys::fs::createUniqueFile(model, path);
   }
 };
+// A private directory beside the output, so the object and the linked file
+// get fixed names: random names would reach the executable (the linker's
+// code-signature identifier and UUID) and break reproducible builds.
+struct TemporaryDirectory {
+  llvm::SmallString<256> path;
+  ~TemporaryDirectory() {
+    if (!path.empty()) {
+      std::error_code ignored;
+      std::filesystem::remove_all(path.str().str(), ignored);
+    }
+  }
+  std::error_code create(const std::string &prefix) {
+    return llvm::sys::fs::createUniqueDirectory(prefix, path);
+  }
+};
 
 bool sameRuntimeTarget(llvm::StringRef requested, llvm::StringRef runtime) {
   const llvm::Triple a(llvm::Triple::normalize(requested)),
@@ -173,13 +188,19 @@ int emit(const Options &options, const Source &source,
         return ioFailure("cannot write " + options.output, writeError);
       }
     } else {
-      Temporary object;
-      std::string objectPath = output.path.str().str();
+      TemporaryDirectory work;
+      std::string objectPath = output.path.str().str(), linked;
       if (options.emit == "executable") {
-        if (auto error = object.create(options.output + ".object-%%%%%%"))
-          return ioFailure("cannot create object beside " + options.output,
-                           error);
-        objectPath = object.path.str().str();
+        std::error_code absoluteError;
+        const auto beside =
+            std::filesystem::absolute(options.output, absoluteError).string();
+        if (auto error = work.create(beside + ".mettle-link"))
+          return ioFailure(
+              "cannot create link directory beside " + options.output, error);
+        const auto directory = std::filesystem::path(work.path.str().str());
+        objectPath = (directory / "main.o").string();
+        linked = (directory / std::filesystem::path(options.output).filename())
+                     .string();
       }
       if (auto error = mettle::backend::emitObject(*module, options.target,
                                                    objectPath, release)) {
@@ -197,7 +218,7 @@ int emit(const Options &options, const Source &source,
         std::vector<std::string> arguments{
             linker,     "--target=" + options.target,
             objectPath, METTLE_RUNTIME_PATH,
-            "-o",       output.path.str().str()};
+            "-o",       linked};
         if (!options.sysroot.empty())
           arguments.push_back("--sysroot=" + options.sysroot);
         for (const auto &library : program.program().libraries)
@@ -217,6 +238,8 @@ int emit(const Options &options, const Source &source,
           std::cerr << "mettle: error[link]: native link failed\n";
           return 1;
         }
+        if (auto error = llvm::sys::fs::rename(linked, output.path))
+          return ioFailure("cannot move linked output", error);
       }
     }
   }

@@ -41,7 +41,8 @@ with `import package::name`.
   package name and no coexisting majors; no git/remote registries,
   host/target feature separation or build-dependencies; library-only roots
   cannot be built. Build scripts (T002) and the content-addressed build cache
-  (T003) follow; both are implemented but unverified (not yet built).
+  (T003) follow; both are implemented and verified on macOS arm64 (Release
+  and Debug).
   Tests: `tests/packages.py`.
 
 ### Build scripts (T002)
@@ -74,13 +75,18 @@ variable values, hashes of every generated file) before reuse.
 
 `mettle build` (executables and objects) keys its output by a SHA-256 over: the
 compiler identity (version, runtime target, size and mtime of the compiler and
-runtime library), emit/profile/overflow policy/target/linker/sysroot, enabled
-features, mounts, link libraries, and every source the load step read. User
-sources count by token stream (comments, spacing and blank lines do not
-matter), library sources by content, and probed-but-absent paths as absent. A
+runtime library), emit/profile/overflow policy/target/linker/sysroot, the
+output's file name (the linker embeds it as the code-signature identifier),
+enabled features, mounts, link libraries, and every source the load step read.
+User sources count by token stream (comments, spacing and blank lines do not
+matter; sound while no source position reaches the output, so debug info or
+panic locations must add positions to the key), library sources by content, and probed-but-absent paths as absent. A
 hit copies the stored artifact and skips checking, lowering, code generation and
 linking; any miss does the full build, which is the same code path as a clean
-build, so incremental and clean results agree. Reuse is whole-program: an edit
+build, so incremental and clean results agree byte for byte (the driver links
+inside a private directory with fixed object and output names, so no
+temporary name reaches the executable). CTest builds use a cache in the build
+tree, never the user's. Reuse is whole-program: an edit
 to any loaded source (including a dependency package or generated file)
 recompiles; unloaded files, comments and layout do not. Finer
 parse/name/type/ownership/instantiation query reuse inside the compiler remains

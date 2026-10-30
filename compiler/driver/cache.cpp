@@ -3,6 +3,7 @@
 #include "packages/sha256.h"
 #include "syntax/lexer.h"
 #include "llvm/Support/FileSystem.h"
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -16,7 +17,12 @@ std::string fileStamp(const fs::path &path) {
   auto size = fs::file_size(path, error);
   auto time = fs::last_write_time(path, error);
   return path.generic_string() + ":" + (error ? "?" : std::to_string(size)) +
-         ":" + (error ? "?" : std::to_string(time.time_since_epoch().count()));
+         ":" +
+         (error ? "?"
+                : std::to_string(static_cast<long long>(
+                      std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          time.time_since_epoch())
+                          .count())));
 }
 
 std::string digest(const std::string &text) {
@@ -34,16 +40,20 @@ std::string tokenDigest(const Source &source) {
   if (!scratch.empty())
     return digest("text:" + source.text);
   packages::Sha256 hash;
-  bool newline = false;
+  // A run of line breaks counts once, and only between two tokens.
+  bool started = false, newline = false;
   for (const auto &token : tokens) {
     if (token.kind == TokenKind::Space || token.kind == TokenKind::Comment)
       continue;
     if (token.kind == TokenKind::Newline) {
-      if (!newline)
-        hash.update("\n");
-      newline = true;
+      newline = started;
       continue;
     }
+    if (token.kind == TokenKind::End)
+      break;
+    if (newline)
+      hash.update("\n");
+    started = true;
     newline = false;
     hash.update(std::to_string(static_cast<int>(token.kind)));
     hash.update(std::string_view(":", 1));
@@ -79,8 +89,8 @@ std::optional<packages::Store> openStore(const Options &options) {
 
 std::string compilerIdentity() {
   std::string text = std::string("mettle ") + METTLE_VERSION + " " +
-                     METTLE_RUNTIME_TARGET + " sanitized=" +
-                     std::to_string(METTLE_RUNTIME_SANITIZED);
+                     METTLE_RUNTIME_TARGET +
+                     " sanitized=" + std::to_string(METTLE_RUNTIME_SANITIZED);
   auto self = llvm::sys::fs::getMainExecutable(
       "mettle", reinterpret_cast<void *>(
                     reinterpret_cast<std::intptr_t>(&compilerIdentity)));
@@ -93,15 +103,14 @@ BuildInputs::BuildInputs(const std::string &libraryDirectory) {
     return;
   std::error_code error;
   auto canonical = fs::weakly_canonical(libraryDirectory, error);
-  libraryPrefix = (error ? fs::path(libraryDirectory) : canonical)
-                      .generic_string() +
-                  "/";
+  libraryPrefix =
+      (error ? fs::path(libraryDirectory) : canonical).generic_string() + "/";
 }
 
 void BuildInputs::record(const Source &source) {
-  bool library = !libraryPrefix.empty() &&
-                 source.path.compare(0, libraryPrefix.size(), libraryPrefix) ==
-                     0;
+  bool library =
+      !libraryPrefix.empty() &&
+      source.path.compare(0, libraryPrefix.size(), libraryPrefix) == 0;
   inputs[source.path] =
       library ? "text:" + digest(source.text) : tokenDigest(source);
 }
@@ -124,11 +133,13 @@ BuildInputs::key(const Options &options,
   add(options.emit);
   add(options.profile);
   add(options.checks.value_or(options.profile != "release") ? "checks"
-                                                              : "wrap");
+                                                            : "wrap");
   add(options.target);
   add(options.cc);
   add(options.sysroot);
   add(options.freestanding ? "freestanding" : "hosted");
+  // The linker embeds the output's file name (code-signature identifier).
+  add("name:" + fs::path(options.output).filename().string());
   for (const auto &library : options.extraLibraries)
     add("link:" + library);
   for (const auto &feature : rootFeatures)
