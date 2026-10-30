@@ -220,14 +220,17 @@ shared options. Unknown or unavailable requested capabilities fail explicitly;
 partial compiler milestones cannot count unsupported programs as passed tests.
 
 Implemented and verified: `check`, `build`, `run`, `test`, `bench` and `fmt`
-(plus `clean`, `migrate` and the inspection commands). `lint` and `doc` do not
-exist yet.
+(plus `clean`, `migrate` and the inspection commands). `lint` does not exist
+yet. `doc` and doctests are implemented, unverified (not yet built; see
+section 4).
 
 ```
 mettle run   FILE|PACKAGE [build options] [-- ARGS...]
 mettle test  FILE|PACKAGE [FILTER...] [--exact] [--include-ignored | --ignored]
              [--jobs N] [build options]
 mettle bench FILE|PACKAGE [FILTER...] [--exact] [--include-ignored] [build options]
+mettle doc   [PATH...] [-o DIR] [--private]
+mettle test  FILE --doc [FILTER...]
 ```
 
 `run` builds through the ordinary build path and cache into a private temporary
@@ -279,13 +282,62 @@ per-iteration setup. Results from `bench` do not replace the performance protoco
 registered metrics. A returned failure from a fallible benchmark is ignored.
 
 Limits of the current implementation: tests and benchmarks inside inline or
-file modules are rejected (`error[feature]`), doctests and machine-readable
-output do not exist, and the deterministic seed option is not provided.
+file modules are rejected (`error[feature]`), machine-readable output does not
+exist, and the deterministic seed option is not provided.
 
 Panic expectations match the declared contract. Aborting profiles need subprocess
 isolation to observe an expected panic; abort is not an unwind caught in-process.
 Cleanup/cancellation tests observe completed teardown, not merely a request.
 Benchmark runners do not weaken the performance protocol's registered metrics.
+
+### 4.1. Documentation comments, `mettle doc` and doctests
+
+Status: implemented, unverified (not yet built).
+
+`///` documents the item that follows it (before or between its attributes) and
+`//!` the enclosing file or inline module. The lexer already keeps comments as
+tokens, so no syntax change is needed; `compiler/documentation` reads them from
+the token stream. Text is markdown reduced to paragraphs, `#` headings,
+`-`/`*` lists, `` `inline code` `` and fenced blocks.
+
+`mettle doc [PATH...] [-o DIR] [--private]` documents every `.mt` file of each
+directory (recursively, skipping `target` and dot directories) or each named
+file, default `.`. A file that does not lex, expand and parse is reported
+(`error[parse]` ...), skipped and makes the exit status 1; documentation is
+never produced from an invalid tree. The output (default
+`target/mettle/doc` below a single directory argument, else below the current
+directory) is plain HTML with no script, font or network use: `index.html`,
+one `<module>.html` per file (`net/http.mt` is `net::http`; a directory's
+`module.mt` names the directory) and one shared `style.css`. Items are the
+`pub` types, enums, unions, interfaces, functions, constants, aliases,
+macros, inline modules and implementations (`--private` adds the rest), grouped
+and sorted by name; fields, variants and the members of an interface or of an
+`impl ... implements ...` need no `pub`, and `@test`/`@bench` functions are
+omitted. A signature is the declaration header exactly as written
+(whitespace collapsed, no body) with its attributes, so an omitted result is
+not guessed. Output is deterministic (no timestamps, stable order, stale files
+are not removed). Not yet provided: cross-module links, package cross
+references, source hyperlinks (the page shows `file:line`), inferred result
+types and search.
+
+`mettle test FILE` also runs the fenced examples of the root source's
+documentation (all items, `pub` or not) after its `@test` functions;
+`--doc` runs only them. Each example is a function appended to the source
+(a block with its own `fn main()` becomes that function), so it sees the
+file's items, and runs in its own process through the test harness; if the
+combined build fails, examples are built one by one so only the broken ones
+fail. A code line written `~ code` (or `~`) is compiled but not rendered. The
+fence info is a comma/space list: none or `mettle` (run), `no_run` (compiled
+only), `ignore` (listed as ignored, not compiled), `should_panic`,
+`compile_fail` / `compile_fail(PHASE)` and any other word (`text`, `sh`) for a
+block that is not Mettle. A `compile_fail` block passes only when checking
+rejects it with the named phase; without a phase, `lex`, `parse` and `feature`
+(unsupported) diagnostics do not count, so a malformed or unsupported example
+cannot pass. Results use the unit-test format: `Doc-tests FILE`, then
+`test PAGE - ITEM (line N) ... ok|FAILED|ignored`, a `, no_run`-style note for
+compiled-only and compile_fail passes, and a `test result:` line. Limits: only
+the root source is scanned, file modules (`module name;`) cannot be built from
+the generated copy, and examples declaring `fn main()` must return `Unit`.
 
 Documentation fences distinguish ordinary examples, runnable native examples,
 no_run examples, ignored platform examples and compile_fail cases with the

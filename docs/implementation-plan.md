@@ -1010,8 +1010,14 @@ I12 status: `mettle fmt FILE... [--check]` implemented and verified (see
 checked by token sequence, syntax-tree fingerprint and idempotence. `mettle run`,
 `mettle test` and `mettle bench` are implemented and verified (driver
 `execute.cpp`, expansion `harness.cpp`; contract in tooling-and-packages sections
-3 and 4). Remaining I12 work: `doc`, `lint`, line breaking/wrapping in `fmt`,
-doctests, machine-readable test results, test timeouts, tests and benchmarks
+3 and 4). `mettle doc` (static HTML from `///`/`//!`) and doctests (`mettle
+test [--doc]`, fence annotations `no_run`/`ignore`/`should_panic`/
+`compile_fail(PHASE)`) are implemented, unverified (not yet built; driver
+`document.cpp`/`execute.cpp`, component `compiler/documentation`; tooling-and-
+packages section 4.1; tests `doc_writes_deterministic_html` and
+`doctests_run_isolated_examples` in `tests/packages.py`). Remaining I12 work:
+`lint`, line breaking/wrapping in `fmt`, doc cross-references and search,
+doctests outside the root source, machine-readable test results, test timeouts, tests and benchmarks
 outside the root module, benchmark handles, LSP and debugger
 workflows. The milestone is not complete.
 

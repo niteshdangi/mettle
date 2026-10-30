@@ -1,4 +1,5 @@
 #include "driver/execute.h"
+#include "documentation/doctest.h"
 #include "expansion/harness.h"
 #include "llvm/Support/FileSystem.h"
 #include <algorithm>
@@ -11,6 +12,9 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
+#include <optional>
+#include <set>
 #include <spawn.h>
 #include <sstream>
 #include <sys/wait.h>
@@ -184,7 +188,10 @@ enum class Verdict { Passed, Failed, Terminated, Infrastructure };
 
 struct Result {
   Verdict verdict = Verdict::Infrastructure;
-  std::string reason, output;
+  std::string reason, output, note;
+  // Decided without running a process (a compile-only or compile_fail
+  // example, or one that did not compile).
+  bool done = false;
 };
 
 // Classifies one isolated test process. A panic ends the process with the
@@ -243,26 +250,30 @@ unsigned workers(const Options &options, std::size_t count) {
       std::min<std::size_t>(jobs, std::max<std::size_t>(count, 1)));
 }
 
-int runTests(const Options &options) {
-  WorkDirectory work;
-  if (auto error = work.create()) {
-    std::cerr << "mettle: error[io]: cannot create a temporary directory: "
-              << error.message() << '\n';
-    return 1;
-  }
+// What runs one entry: the executable and the harness index of the entry in
+// it.
+struct Target {
   std::string program;
-  std::vector<Module::TestFunction> tests;
-  if (int status = buildInto(options, work, &tests, program))
-    return status;
-  auto selection = select(options, tests, false);
-  std::vector<Result> results(tests.size());
+  std::size_t index = 0;
+};
+
+// Runs the selected entries, `jobs` processes at a time, into `results`;
+// entries whose result is already `done` are left alone.
+void runSelected(const Options &options, const WorkDirectory &work,
+                 const std::vector<Module::TestFunction> &tests,
+                 const std::vector<Target> &targets,
+                 const Selection &selection, std::vector<Result> &results) {
   std::atomic<std::size_t> next{0};
   auto worker = [&] {
     for (auto turn = next++; turn < selection.run.size(); turn = next++) {
       auto index = selection.run[turn];
+      if (results[index].done)
+        continue;
       auto captured = work.file("output-" + std::to_string(index) + ".txt");
+      const auto &target = targets[index];
       auto outcome = spawn(
-          program, {expansion::harnessTestSelector, std::to_string(index)},
+          target.program,
+          {expansion::harnessTestSelector, std::to_string(target.index)},
           captured.string());
       results[index] = classify(tests[index], outcome, contents(captured));
     }
@@ -273,7 +284,12 @@ int runTests(const Options &options) {
   worker();
   for (auto &thread : pool)
     thread.join();
+}
 
+// Prints the report of a test run in declaration order; true when every
+// selected test passed.
+bool report(const std::vector<Module::TestFunction> &tests,
+            const Selection &selection, const std::vector<Result> &results) {
   std::size_t counts[4] = {0, 0, 0, 0};
   std::cout << "running " << selection.run.size() + selection.ignored.size()
             << (selection.run.size() + selection.ignored.size() == 1
@@ -302,7 +318,7 @@ int runTests(const Options &options) {
                   : result.verdict == Verdict::Failed     ? "FAILED"
                   : result.verdict == Verdict::Terminated ? "TERMINATED"
                                                           : "ERROR")
-              << '\n';
+              << (result.note.empty() ? "" : ", " + result.note) << '\n';
   }
   bool header = false;
   for (auto index : selection.run) {
@@ -325,7 +341,227 @@ int runTests(const Options &options) {
             << selection.ignored.size() << " ignored; " << counts[2]
             << " terminated; " << counts[3] << " infrastructure failures; "
             << selection.filtered << " filtered out\n";
-  return good ? 0 : 1;
+  return good;
+}
+
+// Builds the unit tests and runs them. `built` is false when the build failed.
+int runUnitTests(const Options &options, bool &built) {
+  WorkDirectory work;
+  if (auto error = work.create()) {
+    std::cerr << "mettle: error[io]: cannot create a temporary directory: "
+              << error.message() << '\n';
+    return 1;
+  }
+  std::string program;
+  std::vector<Module::TestFunction> tests;
+  if (int status = buildInto(options, work, &tests, program)) {
+    built = false;
+    return status;
+  }
+  auto selection = select(options, tests, false);
+  std::vector<Result> results(tests.size());
+  std::vector<Target> targets;
+  for (std::size_t i = 0; i < tests.size(); ++i)
+    targets.push_back({program, i});
+  runSelected(options, work, tests, targets, selection, results);
+  return report(tests, selection, results) ? 0 : 1;
+}
+
+struct Compiled {
+  int status = 0;
+  std::string diagnostics;
+};
+
+// Builds `text` as the root source of a test executable at `program`,
+// capturing the diagnostics instead of printing them.
+Compiled compile(const Options &options, const WorkDirectory &work,
+                 const std::string &stem, const std::string &text,
+                 const std::string &program,
+                 std::vector<Module::TestFunction> &tests) {
+  auto file = work.file(stem + ".mt");
+  {
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out << text;
+  }
+  Options selected = options;
+  selected.command = "build";
+  selected.input = file.string();
+  selected.output = program;
+  selected.harness = "test";
+  selected.filters.clear();
+  std::ostringstream captured;
+  auto *previous = std::cerr.rdbuf(captured.rdbuf());
+  Compiled result;
+  result.status = build(selected, &tests);
+  std::cerr.rdbuf(previous);
+  result.diagnostics = captured.str();
+  return result;
+}
+
+// The harness index of the generated test of example `index`, if any.
+std::optional<std::size_t>
+harnessIndex(const std::vector<Module::TestFunction> &tests,
+             std::size_t index) {
+  auto wanted = documentation::testName(index);
+  for (std::size_t i = 0; i < tests.size(); ++i)
+    if (!tests[i].bench && tests[i].path.size() == 1 &&
+        tests[i].path.front() == wanted)
+      return i;
+  return std::nullopt;
+}
+
+// The checking phases of the `error[PHASE]` diagnostics in `text`.
+std::set<std::string> phases(const std::string &text) {
+  std::set<std::string> found;
+  for (std::size_t at = text.find("error["); at != std::string::npos;
+       at = text.find("error[", at + 1)) {
+    auto end = text.find(']', at);
+    if (end != std::string::npos)
+      found.insert(text.substr(at + 6, end - at - 6));
+  }
+  return found;
+}
+
+// A compile_fail example passes when its program is rejected in the expected
+// phase. Without a named phase a malformed (lex/parse) or unsupported
+// (feature) program does not count: the example must fail checking.
+Result judgeCompileFail(const documentation::Example &example,
+                        const Compiled &compiled) {
+  Result result;
+  auto found = phases(compiled.diagnostics);
+  bool expected = false;
+  for (const auto &phase : found)
+    expected |= example.phase.empty()
+                    ? phase != "lex" && phase != "parse" && phase != "feature"
+                    : phase == example.phase;
+  if (expected) {
+    result.verdict = Verdict::Passed;
+    result.note = "failed to compile as declared";
+  } else {
+    result.verdict = Verdict::Failed;
+    result.reason = compiled.status == 0
+                        ? "the example compiled but is marked compile_fail"
+                        : "the example does not fail in the expected phase" +
+                              (example.phase.empty()
+                                   ? std::string(" (not lex, parse or feature)")
+                                   : " (" + example.phase + ")");
+    result.output = compiled.diagnostics;
+  }
+  result.done = true;
+  return result;
+}
+
+// Runs the fenced examples of the documentation comments of the root source.
+// Every example is its own function appended to the source and runs in its own
+// process; examples that do not compile are told apart by building them one by
+// one. Returns 0, or 1 when an example fails.
+int runDoctests(const Options &requested) {
+  std::ifstream in(requested.input, std::ios::binary);
+  std::string text((std::istreambuf_iterator<char>(in)),
+                   std::istreambuf_iterator<char>());
+  if (!in && !in.eof()) {
+    std::cerr << "mettle: error[io]: cannot read " << requested.input << '\n';
+    return 1;
+  }
+  auto page = documentation::extract(
+      Source{requested.input, text},
+      fs::path(requested.input).stem().string(), true);
+  auto examples = documentation::examples(page);
+  if (examples.empty())
+    return 0;
+  // Ignored-ness is a property of the example, not of a test attribute.
+  Options options = requested;
+  options.includeIgnored = options.onlyIgnored = false;
+  std::vector<Module::TestFunction> tests;
+  for (const auto &example : examples) {
+    Module::TestFunction entry;
+    entry.path = {example.name};
+    entry.ignored = example.mode == documentation::Mode::Ignore;
+    entry.shouldPanic = example.mode == documentation::Mode::ShouldPanic;
+    tests.push_back(std::move(entry));
+  }
+  auto selection = select(options, tests, false);
+  std::cout << "\nDoc-tests " << requested.input << '\n';
+  WorkDirectory work;
+  if (auto error = work.create()) {
+    std::cerr << "mettle: error[io]: cannot create a temporary directory: "
+              << error.message() << '\n';
+    return 1;
+  }
+  std::vector<Result> results(tests.size());
+  std::vector<Target> targets(tests.size());
+  std::vector<std::size_t> built;
+  for (auto index : selection.run)
+    if (examples[index].mode == documentation::Mode::CompileFail) {
+      std::vector<Module::TestFunction> ignored;
+      auto stem = "doctest-" + std::to_string(index);
+      auto compiled = compile(
+          options, work, stem,
+          documentation::withTests(text, examples, {index}),
+          work.file(stem).string(), ignored);
+      results[index] = judgeCompileFail(examples[index], compiled);
+    } else
+      built.push_back(index);
+  auto place = [&](std::size_t index, const std::string &program,
+                   const std::vector<Module::TestFunction> &found) {
+    auto harness = harnessIndex(found, index);
+    if (!harness)
+      return;
+    targets[index] = {program, *harness};
+    if (examples[index].mode == documentation::Mode::NoRun) {
+      results[index].verdict = Verdict::Passed;
+      results[index].note = "compiled, not run";
+      results[index].done = true;
+    }
+  };
+  if (!built.empty()) {
+    std::vector<Module::TestFunction> found;
+    auto program = work.file("doctests").string();
+    auto combined = documentation::withTests(text, examples, built);
+    auto compiled =
+        compile(options, work, "doctests", combined, program, found);
+    if (compiled.status == 0)
+      for (auto index : built)
+        place(index, program, found);
+    else
+      for (auto index : built) {
+        auto stem = "doctest-" + std::to_string(index);
+        auto single = work.file(stem).string();
+        std::vector<Module::TestFunction> own;
+        auto one = compile(options, work, stem,
+                           documentation::withTests(text, examples, {index}),
+                           single, own);
+        if (one.status == 0) {
+          place(index, single, own);
+          continue;
+        }
+        results[index].verdict = Verdict::Failed;
+        results[index].reason = "the example does not compile";
+        results[index].output = one.diagnostics;
+        results[index].done = true;
+      }
+  }
+  for (auto index : built)
+    if (!results[index].done && targets[index].program.empty()) {
+      results[index].verdict = Verdict::Infrastructure;
+      results[index].reason = "the harness has no test for this example";
+      results[index].done = true;
+    }
+  runSelected(options, work, tests, targets, selection, results);
+  return report(tests, selection, results) ? 0 : 1;
+}
+
+int runTests(const Options &options) {
+  int status = 0;
+  bool built = true;
+  if (!options.docOnly) {
+    status = runUnitTests(options, built);
+    if (!built)
+      return status;
+  }
+  if (!options.onlyIgnored)
+    status |= runDoctests(options);
+  return status;
 }
 
 std::string number(double value) {

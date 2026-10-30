@@ -16,6 +16,10 @@ void usage() {
          "       mettle fmt FILE... [--check]\n"
          "         (canonical layout, rewriting files in place; --check lists "
          "files that would change and exits 1 without rewriting)\n"
+         "       mettle doc [PATH...] [-o DIR] [--private]\n"
+         "         (writes static HTML documentation of the `pub` items of "
+         "the .mt files under each PATH, default `.`, to DIR, default "
+         "target/mettle/doc; fenced examples are run by mettle test)\n"
          "       mettle build FILE -o OUTPUT [--emit "
          "executable|object|llvm|ir]\n"
          "         [--profile debug|release] [--overflow-checks on|off]\n"
@@ -34,9 +38,10 @@ void usage() {
          "         (builds into a temporary directory, runs the program with "
          "ARGS and exits with its status; a signal exits 128+signal)\n"
          "       mettle test FILE|PACKAGE [FILTER...] [--exact] "
-         "[--include-ignored|--ignored] [--jobs N] [build options]\n"
-         "         (runs the root module's @test functions, each in its own "
-         "process)\n"
+         "[--include-ignored|--ignored] [--doc] [--jobs N] [build options]\n"
+         "         (runs the root module's @test functions and the fenced "
+         "examples of its documentation comments, each in its own process; "
+         "--doc runs only the examples)\n"
          "       mettle bench FILE|PACKAGE [FILTER...] [--exact] [build "
          "options]\n"
          "         (runs the root module's @bench functions; release profile "
@@ -62,7 +67,8 @@ std::optional<Options> options(int argc, char **argv) {
       result.command != "tokens" && result.command != "syntax" &&
       result.command != "clean" && result.command != "migrate" &&
       result.command != "fmt" && result.command != "run" &&
-      result.command != "test" && result.command != "bench")
+      result.command != "test" && result.command != "bench" &&
+      result.command != "doc")
     return std::nullopt;
   bool selection = result.command == "test" || result.command == "bench";
   bool profileGiven = false;
@@ -88,6 +94,14 @@ std::optional<Options> options(int argc, char **argv) {
           std::stoul(value) == 0)
         return std::nullopt;
       result.jobs = static_cast<unsigned>(std::stoul(value));
+      continue;
+    }
+    if (result.command == "test" && arg == "--doc") {
+      result.docOnly = true;
+      continue;
+    }
+    if (result.command == "doc" && arg == "--private") {
+      result.documentPrivate = true;
       continue;
     }
     if (arg == "--freestanding") {
@@ -162,13 +176,15 @@ std::optional<Options> options(int argc, char **argv) {
         return std::nullopt;
     } else if (result.input.empty())
       result.input = arg;
-    else if (result.command == "fmt")
+    else if (result.command == "fmt" || result.command == "doc")
       result.moreInputs.push_back(arg);
     else if (selection)
       result.filters.push_back(arg);
     else
       return std::nullopt;
   }
+  if (result.command == "doc" && result.input.empty())
+    result.input = ".";
   if (result.command == "bench" && !profileGiven)
     result.profile = "release";
   if ((result.input.empty() && result.command != "clean") ||
