@@ -1,0 +1,15 @@
+[package]
+name = "p05_hash_map"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[profile.release]
+opt-level = 3
+debug = false
+lto = false
+codegen-units = 16
+panic = "abort"
+overflow-checks = false
+incremental = false
