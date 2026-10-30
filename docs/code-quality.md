@@ -245,9 +245,15 @@ Use existing CTest/Python fixture infrastructure. Keep pure checks deterministic
 control seeds and record inputs for randomized/model tests. Do not add a test
 framework to avoid a simple fixture. Tests must not require installed Rust for
 ordinary Mettle development; Rust remains an optional comparator/interop tool.
-Positive source cases are partitioned deterministically across six CTest shards, each case/profile run once, so a shard stays well
-under its unchanged timeout in Debug and sanitized builds, including parallel CTest.
-Negative cases (scalar and multi-file module) require the intended message, phase and
+Source cases are one file each in `tests/source/run` (accepted programs, executed per
+profile) and `tests/source/fail` (rejected programs); leading `// key: value` lines configure
+the expected exit status, profiles, flags, timeout and diagnostics (`tests/source.py` documents
+them). The runner executes cases in parallel (`-j`, default every core), so `source.run` and
+`source.fail` reserve that many CTest processors; a case timeout bounds each command, and
+`--timeout-scale` stretches it on slow or loaded hosts without editing cases. Case names are
+file names, hence unique. `tests/probes.py` keeps the checks that are not plain programs
+(token/syntax inspection, LLVM fast-math flags).
+Negative cases (source and multi-file module) require the intended message, phase and
 exact line and column on one diagnostic, not merely somewhere in the output. Hosted panic expectations
 require SIGABRT, not an arbitrary fatal signal.
 Do not weaken assertions, timeouts, overflow, cleanup or ownership rules to

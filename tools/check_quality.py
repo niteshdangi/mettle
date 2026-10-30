@@ -49,7 +49,10 @@ def text_failures(path, root):
     failures = []
     if "\r" in text:
         failures.append(f"{relative}: use LF line endings")
-    if text and not text.endswith("\n"):
+    # tests/source programs may end mid-construct on purpose, and must say so.
+    truncated = (relative.startswith("tests/source/") and
+                 re.match(r"(// [\w-]+: .*\n)*// truncated: ", text) is not None)
+    if text and not text.endswith("\n") and not truncated:
         failures.append(f"{relative}: missing final newline")
     for number, line in enumerate(text.splitlines(), 1):
         if line.rstrip(" \t") != line:

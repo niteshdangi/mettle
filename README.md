@@ -104,10 +104,15 @@ build directory when the compiler version changes. This checkout retains the
 old tools as `llvm-21.1.8` and old builds with `-llvm21` suffixes.
 See the [compatibility record](docs/code-quality.md#5-unsafe-memory-and-concurrency).
 
-The three foundation checks retain their constructed-LLVM smoke test. Four
+The three foundation checks retain their constructed-LLVM smoke test. The
 source suites additionally compile actual Mettle programs, execute native code,
-check arithmetic traps/wrapping, and reject invalid or unsupported source.
-Evidence and retained programs live under each build's `scalar-evidence/`.
+check arithmetic traps/wrapping, and reject invalid or unsupported source: one
+file per case in `tests/source/run` and `tests/source/fail` with inline
+`// expect-...` directives, run in parallel by `tests/source.py`
+(`python3 tests/source.py run|fail BUILD/mettle OUTDIR [-j N] [--filter REGEX]`);
+`tests/probes.py` holds the syntax and LLVM fast-math inspections.
+Evidence and retained programs live under each build's `source-evidence/` and
+`probe-evidence/`.
 Runtime and native cleanup integration suites additionally check exact drop
 traces, unwinding, replacement restoration and double-panic abort.
 
@@ -324,7 +329,7 @@ Rust 1.99.1; its actual version and that mismatch are recorded.
 - [Memory and concurrency](docs/memory-and-concurrency.md): validity, provenance,
   aliasing, atomics and poll-scoped borrowed-task execution.
 - [Examples](examples/core/expectations.json): full core expectations; the
-  I02 scalar corpus in `tests/scalars.py` is qualified separately.
+  I02 scalar corpus in `tests/source` is qualified separately.
 - [Extended examples](examples/spec/expectations.json): optional/outcome and
   method/default-argument composition.
 - [Capability coverage](docs/capability-coverage.md): baseline inventory method

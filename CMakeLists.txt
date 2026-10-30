@@ -287,23 +287,22 @@ if(BUILD_TESTING)
   set_tests_properties(compiler.boundaries PROPERTIES TIMEOUT 120)
   set_tests_properties(foundation.cli foundation.object-link-run foundation.backend-errors
                        PROPERTIES TIMEOUT 120)
-  foreach(mode positive negative arithmetic syntax)
-    if(mode STREQUAL "positive")
-      set(METTLE_POSITIVE_SHARDS 6)
-      math(EXPR last_shard "${METTLE_POSITIVE_SHARDS} - 1")
-      foreach(shard RANGE 0 ${last_shard})
-        add_test(NAME scalar.positive.${shard}
-                 COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/scalars.py"
-                         positive "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/scalar-evidence"
-                         --shard "${shard}/${METTLE_POSITIVE_SHARDS}")
-        set_tests_properties(scalar.positive.${shard} PROPERTIES TIMEOUT 180)
-      endforeach()
-    else()
-      add_test(NAME scalar.${mode}
-               COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/scalars.py"
-                       "${mode}" "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/scalar-evidence")
-      set_tests_properties(scalar.${mode} PROPERTIES TIMEOUT 180)
-    endif()
+  # One file per case under tests/source, run by a parallel runner. Each test
+  # reserves its worker count so `ctest -jN` does not oversubscribe the host.
+  cmake_host_system_information(RESULT METTLE_SOURCE_TEST_JOBS QUERY NUMBER_OF_LOGICAL_CORES)
+  foreach(kind run fail)
+    add_test(NAME source.${kind}
+             COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/source.py"
+                     ${kind} "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/source-evidence"
+                     -j ${METTLE_SOURCE_TEST_JOBS})
+    set_tests_properties(source.${kind} PROPERTIES TIMEOUT 1800
+                         PROCESSORS ${METTLE_SOURCE_TEST_JOBS})
+  endforeach()
+  foreach(mode syntax fast-math)
+    add_test(NAME probe.${mode}
+             COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/probes.py"
+                     "${mode}" "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/probe-evidence")
+    set_tests_properties(probe.${mode} PROPERTIES TIMEOUT 180)
   endforeach()
   if(METTLE_ENABLE_SANITIZERS)
     add_test(NAME foundation.sanitizers

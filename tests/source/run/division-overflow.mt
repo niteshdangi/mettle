@@ -1,0 +1,2 @@
+// expect-exit: trap
+fn main(): i32 { -2147483648 / -1 }

@@ -1,0 +1,3 @@
+// arch: aarch64
+// expect-error: assembly 3:22 available register inventory
+fn main() { unsafe { asm!("/* {v0} {v1} {v2} {v3} {v4} {v5} {v6} {v7} {v8} {v9} {v10} {v11} {v12} {v13} {v14} {v15} {v16} */",v0= in(vreg_low16) 1i64,v1= in(vreg_low16) 2i64,v2= in(vreg_low16) 3i64,v3= in(vreg_low16) 4i64,v4= in(vreg_low16) 5i64,v5= in(vreg_low16) 6i64,v6= in(vreg_low16) 7i64,v7= in(vreg_low16) 8i64,v8= in(vreg_low16) 9i64,v9= in(vreg_low16) 10i64,v10= in(vreg_low16) 11i64,v11= in(vreg_low16) 12i64,v12= in(vreg_low16) 13i64,v13= in(vreg_low16) 14i64,v14= in(vreg_low16) 15i64,v15= in(vreg_low16) 16i64,v16= in(vreg_low16) 17i64) }; 0 }

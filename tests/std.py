@@ -15,22 +15,19 @@ path as argv[0]; `\\n` in a value is a newline.
   expect-error   `phase`: the program must be rejected by the compiler there
 """
 
-import re
 import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import directives as shared
+
 
 def directives(text):
-    found = {}
-    for line in text.splitlines():
-        match = re.match(r"// ([\w-]+): ?(.*)$", line)
-        if not match:
-            break
-        found.setdefault(match.group(1), []).append(match.group(2).replace("\\n", "\n"))
-    return found
+    found, _ = shared.parse(text)
+    return {key: [value.replace("\\n", "\n") for value in values]
+            for key, values in found.items()}
 
 
 def split_file(entry):
