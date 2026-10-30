@@ -1223,6 +1223,20 @@ private:
     }
     if (operation == "mem.forget")
       return unit();
+    if (operation == "hint.black_box") {
+      // The value round-trips through memory that an empty assembly block may
+      // read and write, so the optimizer can neither fold nor drop it.
+      auto alignment = llvm::Align(lowering.alignment(argument));
+      auto *storage = lowering.temporary(argument);
+      lowering.store(argument, arguments[0], storage, alignment);
+      auto *barrier = llvm::InlineAsm::get(
+          llvm::FunctionType::get(builder.getVoidTy(), {builder.getPtrTy()},
+                                  false),
+          "", "r,~{memory}", true);
+      builder.CreateCall(barrier, {storage})
+          ->addFnAttr(llvm::Attribute::NoUnwind);
+      return lowering.load(argument, storage, alignment);
+    }
     if (operation == "intrinsics.abort") {
       builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
           module.get(), llvm::Intrinsic::trap));

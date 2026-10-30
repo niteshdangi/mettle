@@ -28,6 +28,17 @@ void usage() {
          "         [--registry DIR]... [--locked] [--offline] [--frozen]\n"
          "         (resolves Mettle.toml, verifies or writes Mettle.lock and "
          "mounts dependencies)\n"
+         "       mettle run FILE|PACKAGE [build options] [-- ARGS...]\n"
+         "         (builds into a temporary directory, runs the program with "
+         "ARGS and exits with its status; a signal exits 128+signal)\n"
+         "       mettle test FILE|PACKAGE [FILTER...] [--exact] "
+         "[--include-ignored|--ignored] [--jobs N] [build options]\n"
+         "         (runs the root module's @test functions, each in its own "
+         "process)\n"
+         "       mettle bench FILE|PACKAGE [FILTER...] [--exact] [build "
+         "options]\n"
+         "         (runs the root module's @bench functions; release profile "
+         "unless --profile is given)\n"
          "       mettle clean [PACKAGE_DIR] [--cache-dir DIR] [--dry-run]\n"
          "         (empties the build cache; with a package also removes its "
          "target/mettle outputs)\n"
@@ -48,10 +59,35 @@ std::optional<Options> options(int argc, char **argv) {
   if (result.command != "build" && result.command != "check" &&
       result.command != "tokens" && result.command != "syntax" &&
       result.command != "clean" && result.command != "migrate" &&
-      result.command != "fmt")
+      result.command != "fmt" && result.command != "run" &&
+      result.command != "test" && result.command != "bench")
     return std::nullopt;
+  bool selection = result.command == "test" || result.command == "bench";
+  bool profileGiven = false;
   for (int i = 2; i < argc; ++i) {
     std::string arg = argv[i];
+    if (arg == "--" && result.command == "run") {
+      result.programArguments.assign(argv + i + 1, argv + argc);
+      break;
+    }
+    if (selection && (arg == "--exact" || arg == "--include-ignored" ||
+                      arg == "--ignored")) {
+      result.exact |= arg == "--exact";
+      result.includeIgnored |= arg == "--include-ignored";
+      result.onlyIgnored |= arg == "--ignored";
+      continue;
+    }
+    if (selection && arg == "--jobs") {
+      if (++i == argc)
+        return std::nullopt;
+      std::string value = argv[i];
+      if (value.empty() || value.size() > 4 ||
+          value.find_first_not_of("0123456789") != std::string::npos ||
+          std::stoul(value) == 0)
+        return std::nullopt;
+      result.jobs = static_cast<unsigned>(std::stoul(value));
+      continue;
+    }
     if (arg == "--freestanding") {
       result.freestanding = true;
       continue;
@@ -82,9 +118,10 @@ std::optional<Options> options(int argc, char **argv) {
         result.output = value;
       else if (arg == "--emit")
         result.emit = value;
-      else if (arg == "--profile")
+      else if (arg == "--profile") {
         result.profile = value;
-      else if (arg == "--target")
+        profileGiven = true;
+      } else if (arg == "--target")
         result.target = value;
       else if (arg == "--cc")
         result.cc = value;
@@ -121,14 +158,22 @@ std::optional<Options> options(int argc, char **argv) {
       result.input = arg;
     else if (result.command == "fmt")
       result.moreInputs.push_back(arg);
+    else if (selection)
+      result.filters.push_back(arg);
     else
       return std::nullopt;
   }
+  if (result.command == "bench" && !profileGiven)
+    result.profile = "release";
   if ((result.input.empty() && result.command != "clean") ||
       (result.check && result.command != "fmt") ||
       (result.freestanding && result.command == "build" &&
        result.emit == "executable") ||
       (result.command == "build" && result.output.empty()) ||
+      ((result.command == "run" || selection) &&
+       (!result.output.empty() || result.emit != "executable" ||
+        result.freestanding)) ||
+      (result.includeIgnored && result.onlyIgnored) ||
       (result.profile != "debug" && result.profile != "release") ||
       (result.emit != "executable" && result.emit != "object" &&
        result.emit != "llvm" && result.emit != "ir"))

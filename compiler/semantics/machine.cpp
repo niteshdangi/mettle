@@ -141,6 +141,8 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
               name == "replace" || name == "swap" || name == "size_of_val" ||
               name == "align_of_val"))
       operation = "mem." + name;
+    else if (owner == "core::hint" && name == "black_box")
+      operation = "hint.black_box";
     else if (owner == "core::intrinsics" && name == "abort")
       operation = "intrinsics.abort";
     else if (owner == "core::intrinsics" && name == "panic_message")
@@ -348,6 +350,7 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     if (operation.starts_with("ptr.write") && operands.size() == 1)
       mode = ParameterMode::Take;
     if (operation == "mem.transmute" || operation == "mem.forget" ||
+        operation == "hint.black_box" ||
         (operation == "ptr.replace" && operands.size() == 1) ||
         (operation == "mem.replace" && operands.size() == 1))
       mode = ParameterMode::Take;
@@ -388,6 +391,9 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       operation != "mem.zeroed" && operation != "mem.forget" &&
       !operands.empty() && checked.types->isView(operands[0]))
     argument = checked.types->view(operands[0]).payload;
+  if (operation == "hint.black_box" && argument == Type::Unknown &&
+      operands.size() == 1)
+    argument = operands[0];
   if (operation == "storage.new" && argument == Type::Unknown &&
       operands.size() == 1)
     argument = checked.types->structural(storageKind, {operands[0]});

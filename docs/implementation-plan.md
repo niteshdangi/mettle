@@ -704,7 +704,9 @@ supported). Panic: `core::panic::{panic, assert, unreachable}` lower through
 runtime hook `mettle_rt_panic_message` when hosted (stderr `panicked: msg`,
 exit status 101); core `unwrap`/`expect`/slice-split failures use it. Builtin
 arithmetic/index traps still abort; there is no `core::process::exit` (core has
-no OS; std is a stub).
+no OS; std is a stub). `core::hint::black_box(value)` is a compiler intrinsic
+identity: the value round-trips through memory an empty `asm sideeffect` with a
+memory clobber may touch, so optimization cannot fold or delete it.
 Known core gaps: the built-in `a..b` range is not an `Iterator` (library
 `iter::range` is used instead); heapsort is not stable and there
 is no allocation-backed stable sort; slice `Iterable`/`IterableMut` cannot be
@@ -976,10 +978,15 @@ Build minimal formatting/editor/debug support as the relevant syntax and IR land
 do not wait until I12 to preserve spans or discover uninspectable values.
 I12 is the completion gate, not the first tooling work.
 
-I12 status: `mettle fmt FILE... [--check]` implemented and verified (see `docs/tooling-and-packages.md` section 3): whitespace-only, token-based
-layout checked by token sequence, syntax-tree fingerprint and idempotence.
-Line breaking and wrapping of long lines, `mettle lint/doc/test/bench`, LSP and
-debug workflows remain.
+I12 status: `mettle fmt FILE... [--check]` implemented and verified (see
+`docs/tooling-and-packages.md` section 3): whitespace-only, token-based layout
+checked by token sequence, syntax-tree fingerprint and idempotence. `mettle run`,
+`mettle test` and `mettle bench` are implemented and verified (driver
+`execute.cpp`, expansion `harness.cpp`; contract in tooling-and-packages sections
+3 and 4). Remaining I12 work: `doc`, `lint`, line breaking/wrapping in `fmt`,
+doctests, machine-readable test results, test timeouts, tests and benchmarks
+outside the root module, benchmark handles, LSP and debugger
+workflows. The milestone is not complete.
 
 I13 closes remaining operation mappings with compiled native declarations and
 per-operation semantic evidence, including supporting protocols, reexports,

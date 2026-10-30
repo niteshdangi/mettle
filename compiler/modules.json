@@ -33,8 +33,9 @@
     {
       "name": "expansion", "directory": "expansion", "kind": "STATIC",
       "dependencies": ["syntax", "source", "diagnostics", "support"],
-      "public_headers": ["expansion/expand.h", "expansion/macros.h"],
-      "files": ["expansion/expand.h", "expansion/macros.h", "expansion/detail.h", "expansion/expand.cpp", "expansion/cfg.cpp", "expansion/derive.cpp", "expansion/macros.cpp"]
+      "public_headers": ["expansion/expand.h", "expansion/macros.h", "expansion/harness.h"],
+      "files": ["expansion/expand.h", "expansion/macros.h", "expansion/detail.h", "expansion/expand.cpp", "expansion/cfg.cpp", "expansion/derive.cpp", "expansion/macros.cpp",
+        "expansion/harness.h", "expansion/harness.cpp"]
     },
     {
       "name": "resolution", "directory": "resolution", "kind": "STATIC",
@@ -145,7 +146,8 @@
       "llvm": true, "public_headers": [],
       "files": ["driver/main.cpp", "driver/options.h", "driver/options.cpp", "driver/run.cpp",
         "driver/inspect.h", "driver/inspect.cpp", "driver/output.h", "driver/output.cpp",
-        "driver/cache.h", "driver/cache.cpp", "driver/build_script.h", "driver/build_script.cpp"]
+        "driver/cache.h", "driver/cache.cpp", "driver/build_script.h", "driver/build_script.cpp",
+        "driver/execute.h", "driver/execute.cpp"]
     }
   ]
 }

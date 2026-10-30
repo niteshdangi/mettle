@@ -390,6 +390,18 @@ struct Module {
     std::vector<std::vector<std::string>> names;
     std::vector<std::string> libraryRoots;
   } prelude;
+  // Functions annotated `@test` or `@bench` in the root source, collected by
+  // attribute expansion for the test/benchmark harness. `path` is the
+  // enclosing modules followed by the function name.
+  struct TestFunction {
+    std::vector<std::string> path;
+    Span span;
+    bool bench = false, ignored = false, shouldPanic = false;
+    // The function declares a typed failure (`throws`); returning it fails.
+    bool fallible = false;
+    std::string ignoreReason, panicMessage;
+  };
+  std::vector<TestFunction> tests;
 };
 std::optional<bool> booleanLiteral(const Node &node);
 // The `::`-joined spelling of a plain Name or Field chain (`a.b.c`), or

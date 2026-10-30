@@ -22,8 +22,16 @@ public:
     retain(module.modules, [&](Module::ModuleDeclaration &item) {
       return !inside(item.item.scope);
     });
-    retain(module.functions,
-           [&](Function &item) { return keep(item.item, Site::Item); });
+    retain(module.functions, [&](Function &item) {
+      auto attributes = configuration.collectTests ? item.item.attributes
+                                                   : std::vector<Attribute>{};
+      if (!keep(item.item, Site::Item))
+        return false;
+      if (configuration.collectTests)
+        collect(item, attributes);
+      return !(configuration.dropEntry && item.item.scope.empty() &&
+               item.name == "main");
+    });
     retain(module.statics,
            [&](Module::Static &item) { return keep(item.item, Site::Item); });
     retain(module.aliases,
@@ -97,6 +105,78 @@ private:
     return own && !inside(item.item.scope);
   }
 
+  static bool harnessAttribute(const std::string &name) {
+    return name == "test" || name == "bench" || name == "ignore" ||
+           name == "should_panic";
+  }
+
+  // The optional constant text argument of `@ignore("...")` and
+  // `@should_panic("...")`.
+  std::string textArgument(const Attribute &attribute) {
+    if (!attribute.parenthesized || attribute.arguments.empty())
+      return {};
+    if (attribute.arguments.size() != 1 ||
+        attribute.arguments[0].kind != TokenKind::Text ||
+        attribute.arguments[0].text.size() < 2) {
+      diagnostics.error("attribute", attribute.span,
+                        "attribute '@" + attribute.name +
+                            "' takes at most one constant text argument");
+      return {};
+    }
+    const auto &text = attribute.arguments[0].text;
+    return text.substr(1, text.size() - 2);
+  }
+
+  // Records a function annotated for the harness (the attributes as written,
+  // before `@cfg` consumption).
+  void collect(const Function &function,
+               const std::vector<Attribute> &attributes) {
+    Module::TestFunction found;
+    bool marked = false, modifiers = false;
+    for (const auto &attribute : attributes) {
+      if (attribute.name == "test" || attribute.name == "bench") {
+        if (marked)
+          diagnostics.error("attribute", attribute.span,
+                            "a function is either '@test' or '@bench', once");
+        marked = true;
+        found.bench = attribute.name == "bench";
+      } else if (attribute.name == "ignore") {
+        modifiers = found.ignored = true;
+        found.ignoreReason = textArgument(attribute);
+      } else if (attribute.name == "should_panic") {
+        modifiers = found.shouldPanic = true;
+        found.panicMessage = textArgument(attribute);
+      }
+    }
+    if (!marked) {
+      if (modifiers)
+        diagnostics.error("attribute", function.span,
+                          "'@ignore' and '@should_panic' need '@test' or "
+                          "'@bench' on the same function");
+      return;
+    }
+    const auto &result = function.annotation;
+    bool unit = result.empty() ||
+                (result.form == TypeForm::Named && result.name == "Unit" &&
+                 result.arguments.empty()) ||
+                (result.form == TypeForm::Tuple && result.elements.empty());
+    if (!function.parameters.empty() || !function.genericParameters.empty() ||
+        !function.owner.empty() || (!unit && !found.bench) ||
+        function.foreignDeclaration)
+      diagnostics.error("attribute", function.span,
+                        "'@test' and '@bench' functions are plain functions "
+                        "without parameters or generics; a '@test' function "
+                        "has no result other than Unit");
+    if (found.bench && found.shouldPanic)
+      diagnostics.error("attribute", function.span,
+                        "'@should_panic' applies to '@test' functions");
+    found.path = function.item.scope;
+    found.path.push_back(function.name);
+    found.span = function.span;
+    found.fallible = !function.error.empty();
+    module.tests.push_back(std::move(found));
+  }
+
   // Returns false when a `@cfg` predicate excludes the attributed syntax.
   bool process(std::vector<Attribute> &attributes, Site site) {
     bool active = true, sawCfg = false;
@@ -113,6 +193,14 @@ private:
                             "with all(...)");
         sawCfg = true;
         active &= evaluateCfg(attribute, configuration, diagnostics);
+        return true;
+      }
+      if (harnessAttribute(attribute.name)) {
+        // Consumed: ordinary builds ignore test metadata.
+        if (site != Site::Item)
+          diagnostics.error("attribute", attribute.span,
+                            "attribute '@" + attribute.name +
+                                "' applies to functions");
         return true;
       }
       if (attribute.name == "derive") {

@@ -234,6 +234,9 @@ machineSignature(const TypeStore &types, std::string_view operation,
   }
   if (operation == "mem.forget")
     return operands.size() == 1 ? signature(Type::Unit) : std::nullopt;
+  if (operation == "hint.black_box")
+    return operands.size() == 1 && operands[0] == argument ? signature(argument)
+                                                           : std::nullopt;
   for (auto operand : operands)
     if (containsVarArgs(types, operand))
       return std::nullopt;

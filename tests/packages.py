@@ -6,6 +6,7 @@ Usage: packages.py MettleExecutable EvidenceDir FixturesDir
 
 import os
 import shutil
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -469,12 +470,110 @@ def fmt_normalizes_layout_only():
         macro.read_text()
 
 
+def run_forwards_args_and_exit_status():
+    directory = evidence / "run-case"
+    directory.mkdir()
+    program = directory / "echo.mt"
+    program.write_text(
+        "fn main(): i32 {\n"
+        "    let args = std::env::args()\n"
+        "    std::io::print(\"hello from run\\n\")\n"
+        "    if args.len() != 3usize { return 1 }\n"
+        "    if !args[1usize].as_os_str().same(std::ffi::os_str_from_text(\"one\")) { return 2 }\n"
+        "    if !args[2usize].as_os_str().same(std::ffi::os_str_from_text(\"--two\")) { return 3 }\n"
+        "    42\n"
+        "}\n")
+    before = sorted(os.listdir(directory))
+    invoke(["run", program, "--", "one", "--two"], 42, "hello from run")
+    invoke(["run", program], 1, "hello from run")
+    assert sorted(os.listdir(directory)) == before, "run left files behind"
+    program.write_text('fn main(): i32 { panic("run panic") }\n')
+    invoke(["run", program], 101, "run panic")
+
+
+TEST_SOURCE = (
+    "fn main(): i32 { 99 }\n"
+    "fn add(a: i32, b: i32): i32 { a + b }\n"
+    "@test\n"
+    "fn passes() { if add(1, 2) != 3 { panic(\"bad add\") } }\n"
+    "@test\n"
+    "fn panics() { panic(\"boom\") }\n"
+    "@test\n"
+    "@ignore(\"slow\")\n"
+    "fn skipped() { panic(\"must not run\") }\n"
+    "@test\n"
+    "@should_panic(\"expected boom\")\n"
+    "fn expects_panic() { panic(\"expected boom\") }\n"
+    "@test\n"
+    "fn returns_failure(): Unit throws i32 { throw 5 }\n")
+
+
+def test_reports_pass_fail_ignored_and_isolates_panics():
+    source = evidence / "tests.mt"
+    source.write_text(TEST_SOURCE)
+    text = invoke(["test", source], 1, [
+        "running 5 tests", "test passes ... ok", "test panics ... FAILED",
+        "test skipped ... ignored, slow", "test expects_panic ... ok",
+        "test returns_failure ... FAILED", "boom",
+        "2 passed; 2 failed; 1 ignored"])
+    assert "must not run" not in text, text
+    invoke(["test", source, "--include-ignored", "--jobs", "1"], 1,
+           ["test skipped ... FAILED", "2 passed; 3 failed; 0 ignored"])
+    invoke(["test", source, "--ignored"], 1,
+           ["test skipped ... FAILED", "0 passed; 1 failed; 0 ignored"])
+
+
+def test_filter_exact():
+    source = evidence / "tests.mt"
+    source.write_text(TEST_SOURCE)
+    invoke(["test", source, "pass"], 0,
+           ["test passes ... ok", "1 passed; 0 failed; 0 ignored",
+            "4 filtered out"])
+    invoke(["test", source, "--exact", "pass"], 0,
+           ["running 0 tests", "0 passed; 0 failed; 0 ignored"])
+    invoke(["test", source, "--exact", "passes", "expects_panic"], 0,
+           "2 passed; 0 failed; 0 ignored")
+
+
+def bench_reports_timing():
+    source = evidence / "bench.mt"
+    source.write_text(
+        "@bench\n"
+        "fn spin() {\n"
+        "    var i = 0u32\n"
+        "    while i < 100u32 { i += 1u32 }\n"
+        "}\n"
+        "@bench\n"
+        "@ignore\n"
+        "fn skipped() {}\n")
+    invoke(["bench", source], 0,
+           ["bench spin ... ", "ns/iter (median of 11 samples",
+            "bench skipped ... ignored", "1 measured; 0 failed; 1 ignored"])
+    invoke(["bench", source, "--exact", "other"], 0, "0 measured")
+    # A result passes through core::hint::black_box, so returned work is kept.
+    kept = evidence / "kept.mt"
+    kept.write_text(
+        "@bench\n"
+        "fn total(): u64 {\n"
+        "    var sum = 0u64\n"
+        "    var i = core::hint::black_box(0u64)\n"
+        "    while i < 1000u64 { sum = (sum ^ i) * 1099511628211u64; i += 1u64 }\n"
+        "    sum\n"
+        "}\n")
+    text = invoke(["bench", kept], 0, "bench total ... ")
+    median = float(re.search(r"total \.\.\. ([0-9.]+) ns/iter", text).group(1))
+    # 1000 dependent multiplies cannot fold or vanish (~1 ns each).
+    assert median > 100, text
+
+
 CASES = [path_dependency, missing_lock_locked, lock_corruption,
          registry_resolution, version_conflict, backtracking, offline, features,
          manifest_diagnostics, package_options_need_package, incremental_reuse,
          edit_invalidation, cache_dedup_and_bound, cache_corruption_and_clean,
          build_script, build_script_untracked_inputs,
-         migrate_preserves_syntax_tree, fmt_normalizes_layout_only]
+         migrate_preserves_syntax_tree, run_forwards_args_and_exit_status,
+         test_reports_pass_fail_ignored_and_isolates_panics,
+         test_filter_exact, bench_reports_timing, fmt_normalizes_layout_only]
 
 failures = []
 for case in CASES:
