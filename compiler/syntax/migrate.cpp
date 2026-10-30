@@ -67,13 +67,35 @@ void nodeFingerprint(const Node &node, std::string &out) {
     root = root->children[0].get();
   }
   if (root->kind == Kind::Name) {
-    out += "N(" + root->text;
-    for (auto link = links.rbegin(); link != links.rend(); ++link)
-      out += "::" + (*link)->text;
-    argumentsFingerprint(root->ownerGenericArguments, out);
-    argumentsFingerprint(root->genericArguments, out);
-    for (auto link = links.rbegin(); link != links.rend(); ++link)
-      argumentsFingerprint((*link)->genericArguments, out);
+    // Generic arguments are attached to the path segment they apply to:
+    // a `::` Name carries owner arguments for its second-to-last segment
+    // and its own arguments for the last, while a dotted chain carries them
+    // per link. Empty lists are omitted so both spellings agree.
+    std::vector<std::string> segments;
+    for (std::size_t begin = 0;;) {
+      auto end = root->text.find("::", begin);
+      segments.push_back(root->text.substr(begin, end - begin));
+      if (end == std::string::npos)
+        break;
+      begin = end + 2;
+    }
+    auto attach = [&](std::size_t index,
+                      const std::vector<GenericArgument> &arguments) {
+      if (!arguments.empty())
+        argumentsFingerprint(arguments, segments[index]);
+    };
+    if (segments.size() >= 2)
+      attach(segments.size() - 2, root->ownerGenericArguments);
+    else if (!root->ownerGenericArguments.empty())
+      argumentsFingerprint(root->ownerGenericArguments, segments.front());
+    attach(segments.size() - 1, root->genericArguments);
+    for (auto link = links.rbegin(); link != links.rend(); ++link) {
+      segments.push_back((*link)->text);
+      attach(segments.size() - 1, (*link)->genericArguments);
+    }
+    out += "N(";
+    for (std::size_t index = 0; index < segments.size(); ++index)
+      out += (index ? "::" : "") + segments[index];
     typeFingerprint(root->annotation, out);
     out += ' ' + node.name + (node.semicolon ? ";)" : ")");
     return;
@@ -351,9 +373,8 @@ std::optional<Migration> migrate(const Source &source,
     for (auto j = k + 1; j <= interfaceEnd; ++j)
       nested |= j != implementsAt && scan.text(j) == "implements";
     static const char *const atoms[] = {
-        "[",      "(",     "ptr",    "read", "mut",  "any",
-        "some",   "fn",    "for",    "_",    "take", "unsafe",
-        "extern", "async", "pinned", "<",    "<<"};
+        "[", "(",    "ptr",    "read",   "mut",   "any",    "some", "fn", "for",
+        "_", "take", "unsafe", "extern", "async", "pinned", "<",    "<<"};
     const auto &first = scan.text(k + 1);
     const bool atom =
         std::any_of(std::begin(atoms), std::end(atoms),
@@ -370,16 +391,14 @@ std::optional<Migration> migrate(const Source &source,
       skip(k, "comment inside an associated projection");
       continue;
     }
-    const auto open =
-        scan.at(k).span.begin + (scan.text(k) == "<<" ? 1u : 0u);
+    const auto open = scan.at(k).span.begin + (scan.text(k) == "<<" ? 1u : 0u);
     const auto &closing = scan.at(closer);
     edits.push_back({open, scan.at(k + 1).span.begin, ""});
+    edits.push_back({scan.at(subjectEnd).span.end,
+                     scan.at(interfaceBegin).span.begin, ".("});
     edits.push_back(
-        {scan.at(subjectEnd).span.end, scan.at(interfaceBegin).span.begin,
-         ".("});
-    edits.push_back({split ? closing.span.begin + 1
-                           : scan.at(interfaceEnd).span.end,
-                     scan.at(member).span.begin, ")."});
+        {split ? closing.span.begin + 1 : scan.at(interfaceEnd).span.end,
+         scan.at(member).span.begin, ")."});
   }
 
   // `::` becomes `.`; turbofish `::<` drops the separator.

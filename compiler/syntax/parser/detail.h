@@ -161,8 +161,7 @@ private:
   std::unique_ptr<Node> closure();
   std::unique_ptr<Node> interfaceMember(std::unique_ptr<Node> subject);
   bool nameToken(const Token &token) const {
-    return token.kind == TokenKind::Word ||
-           token.kind == TokenKind::QuotedWord;
+    return token.kind == TokenKind::Word || token.kind == TokenKind::QuotedWord;
   }
   bool isExtension() {
     return is("extend") || (is("unsafe") && peek(1).text == "extend");

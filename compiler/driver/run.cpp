@@ -157,6 +157,7 @@ int run(const Options &requested) {
     }
     return 0;
   }
+  if (options.command == "tokens" || options.command == "syntax") {
     Module tree;
     if (options.command == "tokens")
       tree.tokens = tokenize(source, diagnostics);

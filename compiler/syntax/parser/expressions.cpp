@@ -350,8 +350,8 @@ std::unique_ptr<Node> Parser::primary() {
       if (genericApplication(arguments)) {
         result->genericArguments = std::move(arguments);
         result->span.end = tokens[position - 1].span.end;
-        specialized = result->kind == Kind::Name &&
-                      result->ownerGenericArguments.empty();
+        specialized =
+            result->kind == Kind::Name && result->ownerGenericArguments.empty();
         continue;
       }
     }

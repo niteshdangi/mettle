@@ -79,8 +79,8 @@ bool Parser::followsGenericApplication() {
 // state, including split `>>` tokens, is restored and the `<` is a comparison.
 bool Parser::genericApplication(std::vector<GenericArgument> &arguments) {
   const auto start = position;
-  const auto key = std::make_tuple(start, tokens.size(), parens,
-                                   genericExpressionLevel);
+  const auto key =
+      std::make_tuple(start, tokens.size(), parens, genericExpressionLevel);
   if (rejectedApplications.contains(key))
     return false;
   const auto savedParens = parens, savedNesting = nesting,

@@ -633,7 +633,7 @@ and nested `>>` splits as in type arguments. Turbofish and `::` are not
 alternates. The parser shares one generic-argument parser and memoizes
 lookahead so nested suffixes are not rescanned.
 
-Implementation rule (parser, unverified): application is attempted only after a
+Implementation rule (parser, verified): application is attempted only after a
 name or dotted member chain (not after a literal, call or `<<`); the generic
 argument list is parsed speculatively, and a rejected attempt rolls back
 position, `>>` splits, `<<` insertions and diagnostics state before the `<` is
