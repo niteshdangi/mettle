@@ -29,6 +29,8 @@ Type TypeStore::eraseRegions(Type type) {
     descriptor.regionUniverse = 0;
     return callableType(std::move(descriptor));
   }
+  if (isErased(type))
+    return erasedBound(type, RegionId::Unspecified);
   if (!isProduct(type))
     return type;
   auto descriptor = product(type);
@@ -185,6 +187,8 @@ Type TypeStore::substituteRegions(Type type,
         binding.argument = visit(binding.argument, visible);
       for (auto &argument : descriptor.regionArguments)
         argument = regionStore.substitute(argument, visible);
+      if (descriptor.bound != RegionId::Unspecified)
+        descriptor.bound = regionStore.substitute(descriptor.bound, visible);
       for (auto &requirement : descriptor.regionRequirements) {
         requirement.longer =
             regionStore.substitute(requirement.longer, visible);

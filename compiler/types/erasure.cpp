@@ -18,6 +18,7 @@ Type TypeStore::erasedType(ErasedType descriptor) {
                 prior.regionParameters != descriptor.regionParameters ||
                 prior.regionUniverse != descriptor.regionUniverse ||
                 prior.regionRequirements != descriptor.regionRequirements ||
+                prior.bound != descriptor.bound ||
                 prior.associated.size() != descriptor.associated.size())
               return false;
             for (std::size_t binding = 0; binding < prior.associated.size();
@@ -34,6 +35,13 @@ Type TypeStore::erasedType(ErasedType descriptor) {
   entries.push_back({EntryKind::Erased, erasedTypes.size()});
   erasedTypes.push_back(std::move(descriptor));
   return result;
+}
+Type TypeStore::erasedBound(Type type, RegionId bound) {
+  auto descriptor = erased(type);
+  if (descriptor.bound == bound)
+    return type;
+  descriptor.bound = bound;
+  return erasedType(std::move(descriptor));
 }
 void TypeStore::setErasedMethods(Type type, std::vector<CallableType> methods) {
   std::vector<Type> pointers;

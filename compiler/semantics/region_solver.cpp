@@ -314,6 +314,12 @@ RegionAnswer RegionTypeSolver::compare(
           answer = together(answer, RegionAnswer::Inconclusive);
           break;
         }
+        // An owner holds its payload behind a raw pointer, yet owns it like
+        // a field: the payload is covariant, as for any owned value.
+        if (i == 0 && *variance == Variance::Bivariant &&
+            from.genericOrigin != Type::Unknown &&
+            !ownerSpelling(types.product(from.genericOrigin).name).empty())
+          variance = Variance::Covariant;
         if (*variance == Variance::Covariant ||
             *variance == Variance::Invariant)
           answer = together(answer, compare(from.genericArguments[i],
@@ -384,6 +390,10 @@ RegionAnswer RegionTypeSolver::compare(
         from.regionArguments.size() == to.regionArguments.size() &&
         from.associated.size() == to.associated.size()) {
       answer = RegionAnswer::Proven;
+      if (from.bound != RegionId::Unspecified &&
+          to.bound != RegionId::Unspecified)
+        answer = regions.outlives(from.bound, to.bound, environment);
+      boundRejected |= answer == RegionAnswer::Rejected;
       for (std::size_t p = 0; p < from.regionArguments.size(); ++p) {
         answer = together(answer,
                           regions.outlives(from.regionArguments[p],
@@ -614,6 +624,7 @@ RegionAnswer RegionTypeSolver::coerce(Type source, Type target,
                                       const RegionEnvironment &environment) {
   std::vector<std::pair<Type, Type>> active;
   std::size_t remaining = 4096;
+  boundRejected = false;
   return compare(source, target, environment, active, remaining);
 }
 Variance RegionTypeSolver::variance(Type type, RegionId parameter) const {
@@ -715,6 +726,10 @@ RegionTypeSolver::varianceFor(Type type, RegionId region, Type parameter,
            types.product(nested).kind == AggregateKind::RefCell ||
            types.product(nested).kind == AggregateKind::UnsafeCell))
         result = Variance::Invariant;
+      if (types.isErased(nested) &&
+          types.erased(nested).bound != RegionId::Unspecified &&
+          occurrence(types.erased(nested).bound))
+        result = combine(result, Variance::Covariant);
       if (types.isProjection(nested) || types.isErased(nested)) {
         const auto &arguments = types.isProjection(nested)
                                     ? types.parameter(nested).regionArguments

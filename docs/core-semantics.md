@@ -274,8 +274,10 @@ Read-view duplication copies the loan-bearing view, not its backing object.
 Nominal generic values carry loans in their type arguments even when a library
 owner stores the payload behind a raw pointer. A raw pointer field alone does
 not create a loan. Erasing a loan-carrying payload into an owning interface must
-preserve those loans; any non-static loan returned through the erased owner
-must be covered by an explicit `from` source that it outlives.
+preserve those loans. The erased payload of an owner type carries a lifetime
+bound: `heap any I from r` is bounded by `r`, and an owner without `from` holds
+no borrow. Each loan the hidden value carries must outlive the bound of the
+expected type at the conversion site (binding, argument, field or result).
 
 Allow independently accessible struct fields when disjointness is established.
 For slices and dynamic indices, use sound compile-time proofs or checked splitting

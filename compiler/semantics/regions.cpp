@@ -826,6 +826,14 @@ Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
       arguments.push_back(argument);
       nested.names[product->regions[i]] = argument;
     }
+    // `pinned heap T` keeps the owner syntax (and possibly its sources) one
+    // level down.
+    const TypeSyntax *owner =
+        syntax.form == TypeForm::Owner ? &syntax
+        : syntax.form == TypeForm::Pinned && !syntax.elements.empty() &&
+                syntax.elements[0].form == TypeForm::Owner
+            ? &syntax.elements[0]
+            : nullptr;
     std::size_t argumentIndex = 0, typeIndex = 0;
     std::vector<Type> typeArguments;
     auto parameters = types.product(origin).genericParameters;
@@ -846,10 +854,22 @@ Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
                  syntax.arguments[argumentIndex].type)
           argument = decorate(argument, *syntax.arguments[argumentIndex].type,
                               context, span, fallback, stored);
-        else if (syntax.form == TypeForm::Owner && typeIndex == 0 &&
-                 syntax.nested)
-          argument = decorate(argument, *syntax.nested, context, span, fallback,
-                              stored);
+        else if (owner && typeIndex == 0 && owner->nested) {
+          // An owned erased payload is bounded by the owner's `from`
+          // sources; without them it holds no borrow.
+          auto bound = fallback;
+          if (!owner->nested->sources.empty())
+            bound = sources(*owner->nested, context, span, fallback);
+          else if (owner != &syntax && !owner->sources.empty())
+            bound = sources(*owner, context, span, fallback);
+          else if (syntax.sources.empty())
+            bound = RegionId::Static;
+          bool erasedPayload = types.isErased(argument);
+          argument = decorate(argument, *owner->nested, context, span,
+                              erasedPayload ? bound : fallback, stored);
+          if (erasedPayload && types.isErased(argument))
+            argument = types.erasedBound(argument, bound);
+        }
         else
           argument = inferred(argument, store.inference(context.scope));
         nested.types[parameter.name] = argument;
@@ -1098,6 +1118,9 @@ void RegionPass::infer(Type actual, Type formal,
   } else if (types.isErased(actual) && types.isErased(formal)) {
     const auto from = types.erased(actual), to = types.erased(formal);
     if (from.declaration == to.declaration) {
+      if (from.bound != RegionId::Unspecified &&
+          to.bound != RegionId::Unspecified)
+        infer(from.bound, to.bound, bindings);
       for (std::size_t p = 0;
            p < from.regionArguments.size() && p < to.regionArguments.size();
            ++p)
@@ -1166,6 +1189,9 @@ bool RegionPass::require(Type actual, Type expected, Span span, bool enforce,
     error(span,
           result == RegionAnswer::Inconclusive
               ? "region constraint solving is inconclusive"
+          : relations.erasedBoundRejected()
+              ? "erased owner payload borrow does not outlive the expected "
+                "from sources"
               : "view region or invariant payload does not satisfy its "
                 "declared relationship",
           result == RegionAnswer::Inconclusive);
@@ -2703,68 +2729,41 @@ Type RegionPass::expression(const Node &node) {
   if (facts(node).erasedSource != Type::Unknown) {
     type = erased(type, facts(node).rebuiltType, node.span);
   }
-  if (facts(node).ownerUnsizeSource != Type::Unknown && types.isProduct(type) &&
-      types.isProduct(facts(node).rebuiltType)) {
-    const auto &sourceOwner = types.product(type);
-    const auto &targetOwner = types.product(facts(node).rebuiltType);
-    if (!sourceOwner.genericArguments.empty() &&
-        !targetOwner.genericArguments.empty() &&
-        types.isErased(targetOwner.genericArguments.front())) {
-      auto sourcePayload = sourceOwner.genericArguments.front();
-      auto targetPayload = targetOwner.genericArguments.front();
-      auto erased = types.erasedTail(sourcePayload, targetPayload);
-      if (erased && erased->first == sourcePayload &&
-          erased->second == targetPayload) {
-        std::vector<RegionId> allowed;
-        const auto &syntax = module.functions[currentFunction];
-        auto allow = [&](std::string_view name) {
-          if (name == "static") {
-            allowed.push_back(RegionId::Static);
-            return;
-          }
-          if (auto region = current->context.names.find(std::string(name));
-              region != current->context.names.end())
-            allowed.push_back(region->second);
-          for (std::size_t p = 0; p < syntax.parameters.size(); ++p)
-            if (syntax.parameters[p].name == name) {
-              auto regions =
-                  contained(signatures[currentFunction].parameters[p]);
-              regions.push_back(signatures[currentFunction].backing[p]);
-              allowed.insert(allowed.end(), regions.begin(), regions.end());
-            }
-        };
-        auto collectSources = [&](auto &&self,
-                                  const TypeSyntax &annotation) -> void {
-          for (const auto &name : annotation.sources)
-            allow(name);
-          if (annotation.nested)
-            self(self, *annotation.nested);
-          for (const auto &element : annotation.elements)
-            self(self, element);
-        };
-        collectSources(collectSources, syntax.annotation);
-        std::sort(allowed.begin(), allowed.end());
-        allowed.erase(std::unique(allowed.begin(), allowed.end()),
-                      allowed.end());
-        for (auto borrow : contained(sourcePayload)) {
-          if (borrow == RegionId::Static)
-            continue;
-          bool outlives = std::any_of(
-              allowed.begin(), allowed.end(), [&](auto resultSource) {
-                return solver.outlives(borrow, resultSource,
-                                       current->context.environment) ==
-                       RegionAnswer::Proven;
-              });
-          if (!outlives) {
-            error(node.span,
-                  "erased owner payload borrow is not covered by its from "
-                  "sources");
-            break;
-          }
+  if (facts(node).ownerUnsizeSource != Type::Unknown) {
+    auto target = facts(node).rebuiltType;
+    if (types.isProduct(type) && types.isProduct(target) &&
+        !types.product(type).genericArguments.empty() &&
+        !types.product(target).genericArguments.empty()) {
+      auto sourcePayload = types.product(type).genericArguments.front();
+      auto targetPayload = types.product(target).genericArguments.front();
+      auto tail = types.erasedTail(types.eraseRegions(sourcePayload),
+                                   targetPayload);
+      if (types.isErased(targetPayload) && tail &&
+          tail->second == targetPayload) {
+        // The erased payload is bounded by every borrow it hides; the
+        // expected type's `from` sources are checked against that bound.
+        std::vector<RegionId> borrows;
+        // A borrow whose region was not resolved here is at most local.
+        for (auto region : contained(sourcePayload))
+          if (region == RegionId::Unspecified)
+            borrows.push_back(store.local(current->context.scope));
+          else if (region != RegionId::Static)
+            borrows.push_back(region);
+        auto bound = borrows.empty()       ? RegionId::Static
+                     : borrows.size() == 1 ? borrows.front()
+                                           : store.intersection(borrows);
+        auto origin = types.product(target).genericOrigin;
+        if (origin != Type::Unknown &&
+            !types.product(origin).genericParameters.empty()) {
+          auto context = current->context;
+          context.arguments[types.product(origin).genericParameters.front()] =
+              types.erasedBound(targetPayload, bound);
+          target = decorate(target, TypeSyntax{}, context, node.span,
+                            RegionId::Unspecified, false);
         }
       }
     }
-    type = facts(node).rebuiltType;
+    type = target;
   }
   if (facts(node).callableCoercion != Type::Unknown) {
     auto expected = facts(node).callableCoercion;
@@ -2941,6 +2940,10 @@ std::vector<RegionId> RegionPass::contained(Type type) const {
       for (auto region : record.regionArguments)
         if (std::find(result.begin(), result.end(), region) == result.end())
           result.push_back(region);
+      if (record.bound != RegionId::Unspecified &&
+          std::find(result.begin(), result.end(), record.bound) ==
+              result.end())
+        result.push_back(record.bound);
       for (auto argument : record.arguments)
         self(self, argument);
       for (const auto &binding : record.associated)

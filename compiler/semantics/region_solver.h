@@ -49,6 +49,8 @@ public:
   RegionAnswer coerce(Type source, Type target,
                       const RegionEnvironment &environment);
   Variance variance(Type type, RegionId parameter) const;
+  // Whether the last coerce rejected an owned erased payload's bound.
+  bool erasedBoundRejected() const { return boundRejected; }
 
 private:
   RegionAnswer compare(Type source, Type target,
@@ -66,5 +68,6 @@ private:
                                       std::size_t &remaining) const;
   TypeStore &types;
   RegionSolver &regions;
+  bool boundRejected = false;
 };
 } // namespace mettle

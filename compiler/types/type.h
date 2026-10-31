@@ -253,6 +253,10 @@ struct ErasedType {
   std::vector<RegionId> regionParameters{};
   RegionUniverse regionUniverse = 0;
   std::vector<RegionRequirement> regionRequirements{};
+  // Lifetime bound of an owned erased payload (`heap any I from r`): every
+  // borrow held by the hidden value outlives it. Unspecified outside the
+  // region pass and for erased types reached through a view.
+  RegionId bound = RegionId::Unspecified;
 };
 struct ViewType {
   Type payload;
@@ -386,6 +390,7 @@ public:
   bool matchesSubstitution(Type pattern, Type actual,
                            std::span<const TypeBinding> bindings) const;
   Type erasedType(ErasedType descriptor);
+  Type erasedBound(Type type, RegionId bound);
   void setErasedMethods(Type type, std::vector<CallableType> methods);
   void setErasedDispatch(Type type, std::vector<Type> owners,
                          std::vector<std::size_t> slots);

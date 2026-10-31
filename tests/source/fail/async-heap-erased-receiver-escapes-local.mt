@@ -1,4 +1,4 @@
-// expect-error: ownership 13:5 returned view escapes local storage
+// expect-error: region 10:51 erased owner payload borrow
 import core.future.Future
 interface Source {
     async(heap) fn total(n: i32): i32
