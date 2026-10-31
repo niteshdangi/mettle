@@ -1389,6 +1389,7 @@ macOS profile (owner decision 2026-10-31).
 
 Moved into I13 by owner decision (2026-10-31): pinned owning handles (S003,
 safe `Pin` of heap/shared owners), previously an I07 item.
+The library half of I13 is defined in [i13-library.md](i13-library.md).
 
 I13 closes the V1 operation subset defined in `docs/library-surface.md`
 section 6.1 with compiled native declarations and per-operation semantic
