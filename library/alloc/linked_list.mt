@@ -157,6 +157,19 @@ extend<T, A: Allocator> LinkedList<T, A> implements MutableIterable {
     }
 }
 
+pub type LinkedListIntoIter<T, A: Allocator = Global> { list: LinkedList<T, A> }
+extend<T, A: Allocator> LinkedListIntoIter<T, A> implements Iterator {
+    type Item = T
+    mut fn next(): T? { self.list.pop_front() }
+}
+extend<T, A: Allocator> LinkedList<T, A> implements OwnedIterable {
+    type Item = T
+    type IntoIter = LinkedListIntoIter<T, A>
+    fn into_iter(receiver self: take Self): LinkedListIntoIter<T, A> {
+        LinkedListIntoIter(take self)
+    }
+}
+
 extend<T: Clone, A: Allocator + Clone> LinkedList<T, A> implements Clone {
     fn clone(): LinkedList<T, A> {
         var out = new_in<T, A>(self.a.clone())

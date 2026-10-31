@@ -184,6 +184,19 @@ extend<T, A: Allocator> Deque<T, A> implements MutableIterable {
     fn iter_mut<region r>(receiver self: mut Self from r): DequeIterMut<region r, T, A> { DequeIterMut(mut self, 0usize) }
 }
 
+pub type DequeIntoIter<T, A: Allocator = Global> { deque: Deque<T, A> }
+extend<T, A: Allocator> DequeIntoIter<T, A> implements Iterator {
+    type Item = T
+    mut fn next(): T? { self.deque.pop_front() }
+}
+extend<T, A: Allocator> Deque<T, A> implements OwnedIterable {
+    type Item = T
+    type IntoIter = DequeIntoIter<T, A>
+    fn into_iter(receiver self: take Self): DequeIntoIter<T, A> {
+        DequeIntoIter(take self)
+    }
+}
+
 extend<T: Clone, A: Allocator + Clone> Deque<T, A> implements Clone {
     fn clone(): Deque<T, A> {
         var out = new_in<T, A>(self.a.clone())
