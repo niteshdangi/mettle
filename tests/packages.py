@@ -597,6 +597,11 @@ def multi_package_extension():
     assert exit_code(built) == 1
 
 
+def type_id_survives_public_reexport():
+    app = packages("type-id-reexport/app")
+    build_and_run(app)
+
+
 def package_options_need_package():
     source = evidence / "plain.mt"
     source.write_text("fn main(): i32 { 0 }\n")
@@ -1596,6 +1601,7 @@ CASES = [path_dependency, restricted_dependency_visibility,
          procedural_macro, procedural_macro_failure,
          public_declarative_macro_dependency,
          multi_package_extension,
+         type_id_survives_public_reexport,
          run_forwards_args_and_exit_status,
          test_reports_pass_fail_ignored_and_isolates_panics,
          test_filter_exact, bench_reports_timing, fmt_normalizes_layout_only,

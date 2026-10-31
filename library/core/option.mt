@@ -65,3 +65,15 @@ extend<T> T? {
         unsafe { core.ptr.replace(core.ptr.from_mut(self), present(value)) }
     }
 }
+
+extend<T, E> (T throws E)? {
+    pub take fn transpose(): (T? throws E) {
+        match take self {
+            none => success(none),
+            present(result) => match take result {
+                success(value) => success(present(value)),
+                failure(error) => failure(error)
+            }
+        }
+    }
+}

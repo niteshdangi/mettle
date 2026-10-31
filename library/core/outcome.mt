@@ -43,3 +43,13 @@ extend<T, E> (T throws E) {
         match take self { success(value) => success(value), failure(error) => f(error) }
     }
 }
+
+extend<T, E> (T? throws E) {
+    pub take fn transpose(): (T throws E)? {
+        match take self {
+            success(none) => none,
+            success(present(value)) => present(success(value)),
+            failure(error) => present(failure(error))
+        }
+    }
+}
