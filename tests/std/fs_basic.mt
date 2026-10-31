@@ -42,6 +42,7 @@ fn run(): i32 throws Error {
         let e = try rd.next_entry()
         match e { present(entry) => { names += 1 }, none => { break } }
     }
+    match try rd.next_entry() { present(_) => { return 10 }, none => {} }
     if names != 2 { return 10 }
     // The listing is also a core Iterator over fallible entries.
     var listing = try std.fs.read_dir(path_from_text("a"))
