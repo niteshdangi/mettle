@@ -2,7 +2,10 @@
 // type; it never aliases the original's resources.
 import super.cmp.Ordering
 
-pub interface Clone: Sized { fn clone(): Self; }
+pub interface Clone: Sized {
+    fn clone(): Self;
+    mut fn clone_from(source: read Self): Unit { self = source.clone() }
+}
 
 extend i8 implements Clone { fn clone(): i8 { self } }
 extend i16 implements Clone { fn clone(): i16 { self } }

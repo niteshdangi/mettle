@@ -6,7 +6,9 @@ pub module borrow
 pub module char
 pub module clone
 pub module cmp
+pub module convert
 pub module default
+pub module error
 pub module float
 pub module fmt
 pub module future

@@ -15,6 +15,27 @@ extend<T> Poll<T> {
     pub fn is_pending(): bool { match self { Poll.Ready(value) => false, Poll.Pending => true } }
 }
 
+extend<T, E> Poll<(T throws E)> {
+    pub take fn map_ok<U>(f: fn(take T): U): Poll<(U throws E)> {
+        match take self {
+            Poll.Ready(result) => Poll.Ready(match take result {
+                success(value) => success(f(value)),
+                failure(error) => failure(error)
+            }),
+            Poll.Pending => Poll.Pending
+        }
+    }
+    pub take fn map_err<F>(f: fn(take E): F): Poll<(T throws F)> {
+        match take self {
+            Poll.Ready(result) => Poll.Ready(match take result {
+                success(value) => success(value),
+                failure(error) => failure(f(error))
+            }),
+            Poll.Pending => Poll.Pending
+        }
+    }
+}
+
 pub interface Future {
     type Output;
     fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Self.Output>;
