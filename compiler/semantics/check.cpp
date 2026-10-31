@@ -92,6 +92,148 @@ std::optional<CheckedModule> Checker::run() {
     resolveRegionProjections();
   if (!diagnostics.empty())
     return std::nullopt;
+  struct AsyncCall {
+    std::size_t target;
+    Span span;
+  };
+  std::vector<std::vector<AsyncCall>> asyncCalls(module.functions.size());
+  for (std::size_t caller = 0; caller < module.functions.size(); ++caller) {
+    const auto &function = module.functions[caller];
+    if (!function.asynchronous || !function.body.get())
+      continue;
+    std::function<void(const Node &, bool)>
+        collect = [&](const Node &node, bool awaited) {
+          if (node.kind == Kind::Closure)
+            return;
+          if (node.kind == Kind::Binding && node.text.starts_with("<await-")) {
+            for (const auto &child : node.children)
+              collect(*child, true);
+            return;
+          }
+          if (awaited && node.kind == Kind::Call && !node.children.empty()) {
+            const auto &callee = *node.children[0];
+            if (callee.kind == Kind::Name) {
+              auto name =
+                  callableName(callee.text, function.owner, callee.span);
+              if (auto found = names.find(name); found != names.end() &&
+                  module.functions[found->second].asynchronous)
+                asyncCalls[caller].push_back({found->second, node.span});
+            } else if (callee.kind == Kind::Field &&
+                       !callee.children.empty()) {
+              std::optional<std::size_t> selected;
+              if (!function.owner.empty()) {
+                auto name = callableName(function.owner + "::" + callee.text,
+                                         function.owner, callee.span);
+                if (auto found = names.find(name);
+                    found != names.end() &&
+                    module.functions[found->second].asynchronous)
+                  selected = found->second;
+              }
+              if (!selected) {
+                for (std::size_t candidate = 0;
+                     candidate < module.functions.size(); ++candidate) {
+                  const auto &method = module.functions[candidate];
+                  if (!method.asynchronous ||
+                      !method.name.ends_with("." + callee.text))
+                    continue;
+                  if (selected) {
+                    selected.reset();
+                    break;
+                  }
+                  selected = candidate;
+                }
+              }
+              if (selected)
+                asyncCalls[caller].push_back({*selected, node.span});
+            }
+          }
+          for (const auto &child : node.children)
+            collect(*child, awaited);
+        };
+    const Node *body = function.body.get();
+    if (body->kind == Kind::Block && body->children.size() == 1) {
+      const auto &future = *body->children[0];
+      if (future.kind == Kind::Call && future.children.size() > 1 &&
+          future.children[1]->kind == Kind::Closure)
+        body = future.children[1]->children[0].get();
+    }
+    collect(*body, false);
+  }
+  std::vector<int> asyncIndex(asyncCalls.size(), -1),
+      asyncLow(asyncCalls.size());
+  std::vector<std::size_t> asyncStack;
+  std::vector<bool> asyncActive(asyncCalls.size());
+  int nextAsyncIndex = 0;
+  std::function<void(std::size_t)> visitAsync = [&](std::size_t caller) {
+    asyncIndex[caller] = asyncLow[caller] = nextAsyncIndex++;
+    asyncStack.push_back(caller);
+    asyncActive[caller] = true;
+    for (const auto &call : asyncCalls[caller]) {
+      if (asyncIndex[call.target] == -1) {
+        visitAsync(call.target);
+        asyncLow[caller] = std::min(asyncLow[caller], asyncLow[call.target]);
+      } else if (asyncActive[call.target])
+        asyncLow[caller] =
+            std::min(asyncLow[caller], asyncIndex[call.target]);
+    }
+    if (asyncLow[caller] != asyncIndex[caller])
+      return;
+    std::vector<std::size_t> component;
+    while (true) {
+      auto member = asyncStack.back();
+      asyncStack.pop_back();
+      asyncActive[member] = false;
+      component.push_back(member);
+      if (member == caller)
+        break;
+    }
+    std::vector<bool> inComponent(asyncCalls.size());
+    for (auto member : component)
+      inComponent[member] = true;
+    std::optional<std::pair<std::size_t, AsyncCall>> recursive;
+    for (auto member : component)
+      for (const auto &call : asyncCalls[member])
+        if (inComponent[call.target] &&
+            (component.size() > 1 || call.target == member)) {
+          recursive = std::make_pair(member, call);
+          break;
+        }
+    if (!recursive)
+      return;
+    auto [start, firstCall] = *recursive;
+    std::vector<std::size_t> cycle{start, firstCall.target};
+    std::vector<bool> seen(asyncCalls.size());
+    std::function<bool(std::size_t)> findCycle = [&](std::size_t current) {
+      if (current == start)
+        return true;
+      seen[current] = true;
+      for (const auto &call : asyncCalls[current]) {
+        if (!inComponent[call.target] || seen[call.target])
+          continue;
+        cycle.push_back(call.target);
+        if (findCycle(call.target))
+          return true;
+        cycle.pop_back();
+      }
+      return false;
+    };
+    if (firstCall.target != start)
+      findCycle(firstCall.target);
+    std::string description;
+    for (auto member : cycle) {
+      if (!description.empty())
+        description += " -> ";
+      description += displayPath(module.functions[member].name);
+    }
+    error("type", firstCall.span,
+          "recursive async future cycle " + description +
+              " would make the future contain itself");
+  };
+  for (std::size_t function = 0; function < asyncCalls.size(); ++function)
+    if (asyncIndex[function] == -1)
+      visitAsync(function);
+  if (!diagnostics.empty())
+    return std::nullopt;
   bool changed;
   do {
     changed = false;
@@ -214,6 +356,94 @@ std::optional<CheckedModule> Checker::run() {
   resolveGenericCalls();
 
   finishClosures();
+  auto futureInterface = std::find_if(
+      checked.interfaceData->definitions.begin(),
+      checked.interfaceData->definitions.end(), [](const auto &definition) {
+        return definition.name == "core::future::Future";
+      });
+  if (futureInterface != checked.interfaceData->definitions.end()) {
+    const auto futureDeclaration = static_cast<std::uint32_t>(
+        futureInterface - checked.interfaceData->definitions.begin());
+    auto outputItem = std::find_if(
+        futureInterface->associated.begin(), futureInterface->associated.end(),
+        [](const auto &associated) { return associated.name == "Output"; });
+    if (outputItem != futureInterface->associated.end()) {
+      auto bindOutput = [&](Type interfaceType, Type output) {
+        if (!checked.types->isErased(interfaceType))
+          return interfaceType;
+        auto descriptor = checked.types->erased(interfaceType);
+        if (descriptor.declaration != futureDeclaration)
+          return interfaceType;
+        auto binding = std::find_if(
+            descriptor.associated.begin(), descriptor.associated.end(),
+            [&](const auto &associated) {
+              return associated.parameter == outputItem->parameter;
+            });
+        if (binding == descriptor.associated.end())
+          descriptor.associated.push_back({outputItem->parameter, output});
+        else
+          binding->argument = output;
+        return checked.types->erasedType(std::move(descriptor));
+      };
+      auto updateOpaqueOutput = [&](Type opaque, Type output) {
+        if (!checked.types->isOpaque(opaque))
+          return;
+        auto bounds = checked.types->product(opaque).opaqueBounds;
+        bool changed = false;
+        for (auto &bound : bounds) {
+          auto updated = bindOutput(bound, output);
+          changed |= updated != bound;
+          bound = updated;
+        }
+        if (changed)
+          checked.types->setOpaqueBounds(opaque, std::move(bounds));
+      };
+      for (std::size_t i = 0; i < module.functions.size(); ++i) {
+        const auto &function = module.functions[i];
+        if (!function.asynchronous || !function.asyncOutput.empty() ||
+            !function.body.get())
+          continue;
+        const Node *future = function.body.get();
+        if (future->kind == Kind::Block && future->children.size() == 1)
+          future = future->children[0].get();
+        if (future->kind != Kind::Call || future->children.size() < 2 ||
+            future->children[1]->kind != Kind::Closure)
+          continue;
+        const auto &closure = *future->children[1];
+        if (facts(closure).closure < 0 ||
+            static_cast<std::size_t>(facts(closure).closure) >=
+                checked.closureBodies.size())
+          continue;
+        auto output =
+            checked.closureBodies[facts(closure).closure]->function.abiResult;
+        if (output == Type::Unknown)
+          continue;
+        updateOpaqueOutput(facts(function).opaqueResult, output);
+        if (function.asyncFuture.empty())
+          continue;
+        auto interfaceName =
+            typeName(function.interfaceOwner, function.span, function.owner);
+        auto interface = interfaceNames.find(interfaceName);
+        if (interface == interfaceNames.end())
+          continue;
+        auto &definition =
+            checked.interfaceData->definitions[interface->second];
+        auto family = std::find_if(
+            definition.associated.begin(), definition.associated.end(),
+            [&](const auto &associated) {
+              return associated.name == function.asyncFuture;
+            });
+        if (family == definition.associated.end())
+          continue;
+        for (auto &bound : family->bounds)
+          if (bound.property == interfaces::Property::Interface) {
+            auto updated = bindOutput(bound.interfaceType, output);
+            bound.interfaceType = updated;
+          }
+        updateOpaqueOutput(family->defaultValue, output);
+      }
+    }
+  }
   for (auto [variable, span] : integerOrBoolean) {
     auto t = inference.value(variable);
     if (t != Type::Bool && !isInteger(t) && t != Type::Never)

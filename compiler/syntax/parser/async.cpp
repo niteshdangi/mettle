@@ -119,7 +119,7 @@ std::unique_ptr<Node> Parser::asyncBody(NodeOwner body, TypeSyntax result,
 
 void Parser::lowerAsync(Function &function) {
   auto bodySpan = function.body->span;
-  auto result = asyncResult(function.annotation, true);
+  auto result = asyncResult(function.annotation, false);
   TypeSyntax output = result;
   if (!function.error.empty()) {
     TypeSyntax outcome;
