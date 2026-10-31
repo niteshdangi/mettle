@@ -308,13 +308,9 @@ Closure syntax is
 Omitting a name distinguishes it from a function declaration. Types and result
 may be contextually inferred for closures. `take` selects owned captures;
 otherwise captures infer minimal read/exclusive use with an escaping-region
-contract. It does not force every escaping closure to allocate. Synchronous
-named function result inference is body-based. An async named function outside
-an interface default body has `Unit` output when its result annotation is
-omitted; a bodyful async interface method instead infers its output from the
-coroutine body, while a bodyless async interface declaration requires an
-explicit result. Closure contextual inference does not let a caller's expected
-type determine a named function's declaration.
+contract. It does not force every escaping closure to allocate. Named function
+result inference is body-based; closure contextual inference does not let a
+caller's expected type determine a named function's declaration.
 
 ## 7. Unsafe, foreign declarations and metadata
 

@@ -313,7 +313,6 @@ struct Module {
     VisibilitySyntax visibility{};
     bool constant = false;
     bool asyncFuture = false;
-    bool asyncFutureOutputInferred = false;
     TypeSyntax annotation{}, value{};
     std::shared_ptr<const Node> constantValue{};
     std::vector<GenericParameter> genericParameters{};
