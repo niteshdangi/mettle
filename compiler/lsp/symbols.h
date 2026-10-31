@@ -2,6 +2,7 @@
 
 #include "syntax/token.h"
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -59,6 +60,11 @@ struct Occurrence {
   int declaration = -1;
 };
 
+struct CallContext {
+  const Occurrence *callee = nullptr;
+  std::size_t activeParameter = 0;
+};
+
 // A lexical view of one document built from its token stream alone, so it
 // exists for incomplete or invalid source. It finds item, member, parameter and
 // local declarations (with their scopes) and every identifier occurrence. It
@@ -69,8 +75,14 @@ public:
   explicit SymbolIndex(const std::string &text);
   const std::vector<Declaration> &declarations() const { return items; }
   const std::vector<Occurrence> &occurrences() const { return uses; }
+  void setFunctionResult(Span functionSpan, const std::string &name,
+                         const std::string &result);
+  void addBinding(std::string name, Span span, std::size_t scopeBegin,
+                  std::size_t scopeEnd, int parent = -1);
+  void bindOccurrence(std::size_t offset, int declaration);
   // The occurrence whose identifier contains or ends at `offset`.
   const Occurrence *occurrenceAt(std::size_t offset) const;
+  std::optional<CallContext> callAt(std::size_t offset) const;
   // The `name:` labels in the argument list directly after `callee`.
   std::vector<const Occurrence *> argumentLabels(const Occurrence &callee,
                                                  const std::string &name) const;

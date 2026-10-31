@@ -560,26 +560,39 @@ analysis reports that state rather than guessing a result from callers.
 
 `mettle lsp [--library-dir DIR] [--target TRIPLE] [--freestanding]` runs the
 language server (LSP 3.17, JSON-RPC with `Content-Length` framing on standard
-input/output; UTF-16 positions). T005 status: implemented and verified on macOS
-arm64 (test `language_server`). It supports full and ranged text synchronization with
+input/output; UTF-16 positions). T005 status: implemented; the completion,
+signature-help, references and checked-facts changes below are unverified (not
+yet built). Earlier functionality was verified on macOS arm64 (test
+`language_server`). It supports full and ranged text synchronization with
 `publishDiagnostics` (each open document is analyzed by the compiler front end
 on its in-memory text; editing a document re-analyzes the open documents that
 read it; parse errors still produce diagnostics), `hover`, `definition`,
 hierarchical `documentSymbol`, `formatting` (the `mettle fmt` layout) and
-`prepareRename`/`rename`. Navigation and rename use a token-based index of the
-open documents, so they work on incomplete source. Rename refuses ambiguous
-or unsafe cases (fields, variants, modules, `main`, items declared more than
-once, reserved words as new names); local and parameter renames stay within
-their scope and update `name:` argument labels.
+`prepareRename`/`rename`. Navigation and rename use a token-based index so they
+work on incomplete source; source files read through the configured provider
+are indexed alongside open documents. Completion offers visible lexical
+declarations and keywords, and uses checked receiver types to narrow member
+suggestions when available. Signature help tracks the active argument and
+indexed declaration parameters. References include uniquely resolved local,
+parameter and member occurrences. Checked facts provide inferred expression
+hover and inferred named-function result signatures. Checked match-arm and
+closure pattern bindings participate in local navigation. Same-file member
+references and definitions use checked receiver/callee facts.
 
-Known gaps: completion, signature help and find-references are not implemented;
-hover shows the declared signature rather than an inferred type (the pipeline
-exposes no checked side tables); match-arm and closure pattern bindings are not
-tracked; member rename and definition match by name, not receiver type; only
-open documents take part in navigation; single-file analysis only (no package
-mounts); ranges inside macro- or derive-generated sources are reported at the
-start of the document with a `path:line:column:` prefix instead of the
-expansion chain.
+Rename refuses ambiguous or unsafe cases (fields, variants, modules, `main`,
+reserved words as new names); local and parameter renames stay within their
+scope and update `name:` argument labels.
+
+Known gaps: completion does not prove extension-method applicability or resolve
+all incomplete qualified paths; signature help does not substitute generic
+arguments or infer callable signatures; overloaded/ambiguous references are
+omitted. Member rename remains unavailable for fields, and same-file receiver
+facts do not yet disambiguate members across provider-loaded files. Provider
+sources are indexed only when encountered by an open document, not through
+workspace-wide package discovery. Generated diagnostics map to a user source
+span when possible but do not yet expose the full expansion chain as related
+information. Diagnostic type spelling, notes and help still need the readable,
+source-oriented display specified for R3.
 
 Rename observes namespaces, public paths and hygienic expansion identity.
 Generated identifiers are edited at their source/generator only when the mapping

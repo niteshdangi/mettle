@@ -60,6 +60,8 @@ std::vector<Target> targetsAt(const Files &files, std::size_t file,
   const Occurrence *use = files[file].index->occurrenceAt(offset);
   if (!use || use->role == Role::Label)
     return {};
+  if (use->role == Role::Member && use->declaration >= 0)
+    return {{file, use->declaration}};
   if (use->role == Role::Declaration ||
       (use->role == Role::Lexical && use->declaration >= 0))
     return {{file, use->declaration}};
@@ -89,6 +91,61 @@ std::vector<Site> definitionsAt(const Files &files, std::size_t file,
   for (auto target : targetsAt(files, file, offset)) {
     const auto &item = declarationOf(files, target);
     sites.push_back({target.file, item.nameBegin, item.nameEnd});
+  }
+  return sites;
+}
+
+std::vector<Site> referencesAt(const Files &files, std::size_t file,
+                              std::size_t offset, bool includeDeclaration) {
+  const auto *use = files[file].index->occurrenceAt(offset);
+  auto targets = targetsAt(files, file, offset);
+  if (!use || targets.size() != 1)
+    return {};
+  const auto target = targets.front();
+  const auto &item = declarationOf(files, target);
+  std::vector<Target> globalItems;
+  for (std::size_t g = 0; g < files.size(); ++g) {
+    const auto &items = files[g].index->declarations();
+    for (std::size_t d = 0; d < items.size(); ++d)
+      if (!items[d].scoped() &&
+          items[d].kind != SymbolKind::Implementation &&
+          items[d].name == item.name && topLevel(files, g, items[d]))
+        globalItems.push_back({g, static_cast<int>(d)});
+  }
+  std::vector<Site> sites;
+  for (std::size_t g = 0; g < files.size(); ++g) {
+    std::vector<Target> localItems;
+    const auto &items = files[g].index->declarations();
+    for (std::size_t d = 0; d < items.size(); ++d)
+      if (!items[d].scoped() &&
+          items[d].kind != SymbolKind::Implementation &&
+          items[d].name == item.name && topLevel(files, g, items[d]))
+        localItems.push_back({g, static_cast<int>(d)});
+    for (const auto &occurrence : files[g].index->occurrences()) {
+      if (!includeDeclaration && occurrence.role == Role::Declaration)
+        continue;
+      bool matches = false;
+      if (item.scoped()) {
+        matches = g == target.file &&
+                  occurrence.declaration == target.declaration &&
+                  (occurrence.role == Role::Declaration ||
+                   occurrence.role == Role::Lexical);
+      } else if (occurrence.role == Role::Declaration ||
+                 (occurrence.role == Role::Member &&
+                  occurrence.declaration >= 0)) {
+        matches = g == target.file &&
+                  occurrence.declaration == target.declaration;
+      } else if (occurrence.role == Role::Lexical &&
+                 occurrence.declaration < 0 && occurrence.name == item.name) {
+        const auto &candidates =
+            localItems.empty() ? globalItems : localItems;
+        matches = candidates.size() == 1 &&
+                  candidates.front().file == target.file &&
+                  candidates.front().declaration == target.declaration;
+      }
+      if (matches)
+        sites.push_back({g, occurrence.begin, occurrence.end});
+    }
   }
   return sites;
 }
@@ -135,7 +192,8 @@ RenamePlan planRename(const Files &files, std::size_t file, std::size_t offset,
     plan.error = "renaming a " + kindName(item.kind) + " is not supported";
     return plan;
   }
-  if (!item.scoped() && itemCount(files, item.name) != 1) {
+  if (!item.scoped() && topLevel(files, target.file, item) &&
+      itemCount(files, item.name) != 1) {
     plan.error = "'" + item.name +
                  "' is declared more than once, so its uses cannot be told "
                  "apart without type information";
@@ -148,6 +206,19 @@ RenamePlan planRename(const Files &files, std::size_t file, std::size_t offset,
     return plan;
   }
   std::set<Site> edits;
+  if (!item.scoped() && !topLevel(files, target.file, item) &&
+      item.kind == SymbolKind::Function) {
+    for (std::size_t g = 0; g < files.size(); ++g)
+      for (const auto &occurrence : files[g].index->occurrences()) {
+        if (occurrence.role != Role::Member || occurrence.name != item.name)
+          continue;
+        if (targetsAt(files, g, occurrence.begin).size() != 1) {
+          plan.error = "'" + item.name +
+                       "' has member uses without a unique receiver type";
+          return plan;
+        }
+      }
+  }
   if (item.scoped()) {
     for (const auto &occurrence : files[file].index->occurrences())
       if ((occurrence.role == Role::Declaration ||
@@ -177,18 +248,8 @@ RenamePlan planRename(const Files &files, std::size_t file, std::size_t offset,
         }
     }
   } else {
-    for (std::size_t g = 0; g < files.size(); ++g)
-      for (const auto &occurrence : files[g].index->occurrences()) {
-        if (occurrence.name != item.name)
-          continue;
-        bool declares = occurrence.role == Role::Declaration &&
-                        !declaration(files, g, occurrence.declaration).scoped();
-        bool uses =
-            occurrence.role == Role::Member ||
-            (occurrence.role == Role::Lexical && occurrence.declaration < 0);
-        if (declares || uses)
-          edits.insert(Site{g, occurrence.begin, occurrence.end});
-      }
+    for (const auto &site : referencesAt(files, file, offset, true))
+      edits.insert(site);
   }
   plan.edits.assign(edits.begin(), edits.end());
   return plan;

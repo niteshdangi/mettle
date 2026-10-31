@@ -465,6 +465,60 @@ SymbolIndex::SymbolIndex(const std::string &text) {
   Builder(text, *this).run();
 }
 
+void SymbolIndex::setFunctionResult(Span functionSpan, const std::string &name,
+                                    const std::string &result) {
+  for (auto &item : items)
+    if (item.kind == SymbolKind::Function && item.name == name &&
+        functionSpan.begin <= item.nameBegin &&
+        item.nameBegin < functionSpan.end) {
+      auto throws = item.signature.find(" throws ");
+      item.signature.insert(throws == std::string::npos ? item.signature.size()
+                                                        : throws,
+                            ": " + result);
+    }
+}
+
+void SymbolIndex::addBinding(std::string name, Span span,
+                             std::size_t scopeBegin, std::size_t scopeEnd,
+                             int parent) {
+  if (name.empty() || isReservedWord(name))
+    return;
+  Declaration binding;
+  binding.name = std::move(name);
+  binding.kind = SymbolKind::Local;
+  binding.nameBegin = span.begin;
+  binding.nameEnd = span.end;
+  binding.begin = span.begin;
+  binding.end = span.end;
+  binding.scopeBegin = scopeBegin;
+  binding.scopeEnd = scopeEnd;
+  binding.parent = parent;
+  items.push_back(std::move(binding));
+  auto declaration = static_cast<int>(items.size() - 1);
+  for (auto &use : uses) {
+    if (use.name != items.back().name || use.begin < scopeBegin ||
+        use.begin >= scopeEnd)
+      continue;
+    if (use.begin == span.begin && use.end == span.end) {
+      use.role = Role::Declaration;
+      use.declaration = declaration;
+    } else if (use.role == Role::Lexical &&
+               (use.declaration < 0 ||
+                items[static_cast<std::size_t>(use.declaration)].scopeBegin <=
+                    scopeBegin)) {
+      use.declaration = declaration;
+    }
+  }
+}
+
+void SymbolIndex::bindOccurrence(std::size_t offset, int declaration) {
+  for (auto &use : uses)
+    if (use.begin == offset && use.role == Role::Member) {
+      use.declaration = declaration;
+      return;
+    }
+}
+
 const Occurrence *SymbolIndex::occurrenceAt(std::size_t offset) const {
   auto after = std::upper_bound(uses.begin(), uses.end(), offset,
                                 [](std::size_t value, const Occurrence &use) {
@@ -474,6 +528,55 @@ const Occurrence *SymbolIndex::occurrenceAt(std::size_t offset) const {
     return nullptr;
   const auto &use = *(after - 1);
   return offset <= use.end ? &use : nullptr;
+}
+
+std::optional<CallContext> SymbolIndex::callAt(std::size_t offset) const {
+  for (std::size_t open = tokens.size(); open > 0; --open) {
+    auto candidate = open - 1;
+    if (!symbol(tokens[candidate], "(") ||
+        tokens[candidate].span.begin >= offset ||
+        (match[candidate] < tokens.size() &&
+         tokens[match[candidate]].span.begin < offset))
+      continue;
+    if (candidate == 0)
+      continue;
+    auto callee = candidate - 1;
+    if (symbol(tokens[callee], ">") || symbol(tokens[callee], ">>")) {
+      int depth = 0;
+      for (;;) {
+        depth += symbol(tokens[callee], ">")
+                     ? 1
+                     : symbol(tokens[callee], ">>") ? 2 : 0;
+        if (symbol(tokens[callee], "<"))
+          depth -= 1;
+        if (depth <= 0 || callee == 0)
+          break;
+        --callee;
+      }
+      if (symbol(tokens[callee], "<") && callee > 0)
+        --callee;
+    }
+    if (!word(tokens[callee]))
+      continue;
+    auto occurrence = byToken[callee];
+    if (occurrence < 0)
+      continue;
+    std::size_t active = 0;
+    for (auto i = candidate + 1;
+         i < tokens.size() && tokens[i].span.begin < offset; ++i) {
+      if (opener(tokens[i])) {
+        if (match[i] >= tokens.size())
+          break;
+        if (tokens[match[i]].span.begin < offset)
+          i = match[i];
+        continue;
+      }
+      if (symbol(tokens[i], ","))
+        ++active;
+    }
+    return CallContext{&uses[static_cast<std::size_t>(occurrence)], active};
+  }
+  return std::nullopt;
 }
 
 std::vector<const Occurrence *>

@@ -47,6 +47,8 @@ std::optional<Hover> hoverAt(const Files &files, std::size_t file,
                              std::size_t offset);
 std::vector<Site> definitionsAt(const Files &files, std::size_t file,
                                 std::size_t offset);
+std::vector<Site> referencesAt(const Files &files, std::size_t file,
+                               std::size_t offset, bool includeDeclaration);
 
 // Renaming the symbol at `offset`. `error` is set when it cannot be renamed
 // safely; otherwise `name` is the identifier and, when `replacement` is not
