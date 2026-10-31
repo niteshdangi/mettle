@@ -79,6 +79,10 @@ def coroutine_summary(value, _internal_dict):
         if not value.IsValid():
             return "state = <unavailable>"
     state = value.GetChildMemberWithName("state")
+    # A Coroutine wraps its CoroutineState, which holds the state enum.
+    nested = state.GetChildMemberWithName("state")
+    if nested.IsValid():
+        state = nested
     raw = _unsigned(state)
     if raw is None:
         return "state = <unavailable>"
@@ -108,7 +112,7 @@ def __lldb_init_module(debugger, _internal_dict):
         r"type summary add -w Mettle -x '^\(.* throws .*\)$' "
         r"-F mettle_lldb.sum_summary",
         r"type summary add -w Mettle -x "
-        r"'^((read|mut) )?(.*\.)?CoroutineState<.*>$' "
+        r"'^((read|mut) )?(.*\.)?Coroutine(State)?<.*>( \*)?$' "
         r"-F mettle_lldb.coroutine_summary",
         "type category enable Mettle",
     ]

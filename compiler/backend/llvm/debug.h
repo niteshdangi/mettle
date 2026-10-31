@@ -75,6 +75,8 @@ private:
       scopes;
   std::unordered_map<std::uint32_t, llvm::DIType *> types;
   std::unordered_map<std::size_t, llvm::DILocalVariable *> variables;
+  // Entry allocas holding each variable's current address, or null.
+  std::unordered_map<std::size_t, llvm::AllocaInst *> slots;
   std::vector<llvm::DILocalScope *> lexicalScopes;
   llvm::DIExpression *dereference = nullptr;
   std::set<std::uint32_t> building;

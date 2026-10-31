@@ -218,6 +218,7 @@ void DebugInfo::begin(llvm::IRBuilder<> &builder,
   current = subprogram;
   following = statements;
   variables.clear();
+  slots.clear();
   lexicalScopes.clear();
   lexicalScopes.push_back(subprogram);
   if (source && statements) {
@@ -328,47 +329,33 @@ void DebugInfo::declare(llvm::IRBuilder<> &builder, std::size_t index,
     const std::uint64_t operation[] = {llvm::dwarf::DW_OP_deref};
     dereference = dib.createExpression(operation);
   }
-  if (argument || local.storage == StorageDuration::Static) {
-    // The slot holds the variable's address: frame fields are not allocas,
-    // which a debug declaration needs to survive every code generator.
-    auto &entry = builder.GetInsertBlock()->getParent()->getEntryBlock();
-    llvm::IRBuilder<> allocation(&entry, entry.begin());
-    auto *slot = allocation.CreateAlloca(builder.getPtrTy());
+  // Every variable is declared once on an entry slot that holds its address;
+  // frame fields are not allocas, which a declaration needs to survive every
+  // code generator. Locals start absent (null) until initialized, and a move,
+  // drop or scope exit nulls the slot again.
+  auto &entry = builder.GetInsertBlock()->getParent()->getEntryBlock();
+  llvm::IRBuilder<> allocation(&entry, entry.begin());
+  auto *slot = allocation.CreateAlloca(builder.getPtrTy());
+  auto *absent = allocation.CreateStore(
+      llvm::ConstantPointerNull::get(builder.getPtrTy()), slot);
+  slots[index] = slot;
+  if (argument || local.storage == StorageDuration::Static)
     builder.CreateStore(storage, slot);
-    static_cast<void>(dib.insertDeclare(slot, variable, dereference, place,
-                                        builder.GetInsertBlock()));
-  } else
-    static_cast<void>(dib.insertDbgValueIntrinsic(
-        llvm::UndefValue::get(builder.getPtrTy()), variable, dereference, place,
-        builder.GetInsertBlock()));
+  static_cast<void>(dib.insertDeclare(slot, variable, dereference, place,
+                                      std::next(absent->getIterator())));
 }
 
-void DebugInfo::invalidate(llvm::IRBuilder<> &builder, std::size_t index,
-                           Span span, int scopeIndex) {
-  auto found = variables.find(index);
-  if (found == variables.end())
-    return;
-  if (!dereference) {
-    const std::uint64_t operation[] = {llvm::dwarf::DW_OP_deref};
-    dereference = dib.createExpression(operation);
-  }
-  static_cast<void>(dib.insertDbgValueIntrinsic(
-      llvm::UndefValue::get(builder.getPtrTy()), found->second, dereference,
-      location(span, scopeIndex), builder.GetInsertBlock()));
+void DebugInfo::invalidate(llvm::IRBuilder<> &builder, std::size_t index, Span,
+                           int) {
+  if (auto found = slots.find(index); found != slots.end())
+    builder.CreateStore(llvm::ConstantPointerNull::get(builder.getPtrTy()),
+                        found->second);
 }
 
-void DebugInfo::restore(llvm::IRBuilder<> &builder, std::size_t index,
-                        Span span, int scopeIndex, llvm::Value *storage) {
-  auto found = variables.find(index);
-  if (found == variables.end())
-    return;
-  if (!dereference) {
-    const std::uint64_t operation[] = {llvm::dwarf::DW_OP_deref};
-    dereference = dib.createExpression(operation);
-  }
-  static_cast<void>(dib.insertDbgValueIntrinsic(
-      storage, found->second, dereference, location(span, scopeIndex),
-      builder.GetInsertBlock()));
+void DebugInfo::restore(llvm::IRBuilder<> &builder, std::size_t index, Span,
+                        int, llvm::Value *storage) {
+  if (auto found = slots.find(index); found != slots.end())
+    builder.CreateStore(storage, found->second);
 }
 
 void DebugInfo::endScope(llvm::IRBuilder<> &builder, const ir::Function &source,

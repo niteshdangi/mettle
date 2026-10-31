@@ -1019,9 +1019,12 @@ def debug_info():
     ir_text = debug_ir.read_text()
     moved = re.search(r'(!\d+) = !DILocalVariable\(name: "original"', ir_text)
     assert moved, ir_text
-    assert re.search(r'(?:@llvm\.dbg\.value\(metadata |#dbg_value\()'
-                     r'ptr undef, (?:metadata )?' +
-                     re.escape(moved.group(1)) + r'\b', ir_text), ir_text
+    # A variable is declared on an address slot; moving it nulls the slot.
+    slot = re.search(r'#dbg_declare\(ptr (%\d+), ' +
+                     re.escape(moved.group(1)) + r',', ir_text)
+    assert slot, ir_text
+    assert re.search(r'store ptr null, ptr ' + re.escape(slot.group(1)) +
+                     r'\b', ir_text), ir_text
     release_info = subprocess.run(
         [str(dwarfdump), "--debug-info", str(release)],
         text=True, capture_output=True, check=True).stdout
