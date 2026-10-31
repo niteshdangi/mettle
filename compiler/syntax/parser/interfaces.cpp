@@ -210,6 +210,7 @@ Module::Interface Parser::interfaceDeclaration() {
       result.associated.push_back(std::move(associated));
     } else {
       std::string mode = "read";
+      pendingUnsafe = take("unsafe");
       pendingAsync = take("async");
       std::string futureStorage;
       Span storageSpan;
@@ -289,12 +290,10 @@ Module::Interface Parser::interfaceDeclaration() {
           fail("an `async(heap)` method needs a read or mut receiver",
                "signature");
         if (method.asyncOutput.empty())
-          fail("an `async(heap)` method declares its output type",
-               "signature");
+          fail("an `async(heap)` method declares its output type", "signature");
         for (const auto &parameter : method.parameters)
           if (parameter.pattern)
-            fail("`async(heap)` method parameters must be named",
-                 "signature");
+            fail("`async(heap)` method parameters must be named", "signature");
         method.futureStorage = futureStorage;
         auto shortName = method.name.substr(method.name.rfind('.') + 1);
         auto companion =
@@ -324,7 +323,7 @@ Module::Implementation Parser::implementationDeclaration() {
     endItem("a negative extension");
     return result;
   }
-  if (take("implements"))
+  if (takeContinuation("implements"))
     result.interface = type(false);
   result.constraints = genericConstraints();
   newlines();
@@ -341,6 +340,7 @@ Module::Implementation Parser::implementationDeclaration() {
       result.associated.push_back(std::move(associated));
     } else {
       std::string mode = "read";
+      pendingUnsafe = take("unsafe");
       pendingAsync = take("async");
       std::string futureStorage;
       Span storageSpan;

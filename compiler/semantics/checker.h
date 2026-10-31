@@ -343,6 +343,13 @@ private:
                                                     Span span) const;
   std::vector<interfaces::Obligation> interfaceAssumptions();
   void expandSuperinterfaces(std::vector<interfaces::Obligation> &result);
+  std::vector<interfaces::Obligation> resolveSuperinterfaces(std::size_t index);
+  const std::vector<interfaces::Obligation> &
+  superinterfacesOf(std::size_t index);
+  std::set<std::size_t> signedSuperinterfaces;
+  std::set<std::size_t> resolvingSuperinterfaces;
+  std::map<std::size_t, std::vector<interfaces::Obligation>>
+      earlySuperinterfaces;
   bool unpinObligation(Type type, Span span);
   bool shareable(Type type, Span span);
   std::optional<std::size_t> interfaceMethod(Type self, std::string_view method,

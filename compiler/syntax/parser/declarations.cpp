@@ -12,7 +12,7 @@ Module::Product Parser::product() {
     expect("type");
   result.name = name().text;
   result.genericParameters = genericParameters(&result.regions);
-  if (take("implements"))
+  if (takeContinuation("implements"))
     do {
       result.interfaces.push_back(boundType());
     } while (take("+"));
@@ -48,6 +48,7 @@ Module::Product Parser::product() {
         method.destructor = true;
         mode = "mut";
       } else {
+        pendingUnsafe = take("unsafe");
         pendingAsync = take("async");
         if (take("mut"))
           mode = "mut";
@@ -132,7 +133,8 @@ Module::Product Parser::product() {
 }
 Function Parser::function(bool allowDeclaration, bool inferAsyncResult) {
   Function result;
-  result.unsafeFunction = take("unsafe");
+  result.unsafeFunction = take("unsafe") || pendingUnsafe;
+  pendingUnsafe = false;
   result.constFunction = take("const");
   bool asyncFunction = take("async") || pendingAsync;
   pendingAsync = false;

@@ -68,6 +68,8 @@ private:
   unsigned awaitTemporaries = 0;
   // `async` consumed by a member dispatcher ahead of its receiver mode.
   bool pendingAsync = false;
+  // A member's `unsafe` precedes its receiver modifier (`unsafe static fn`).
+  bool pendingUnsafe = false;
   struct StateGuard {
     Parser &parser;
     unsigned parens, nesting, genericExpressionLevel;
@@ -149,6 +151,18 @@ private:
   void newlines() {
     while (peek().kind == TokenKind::Newline)
       ++position;
+  }
+  // A header that requires a block may continue on the next line with a
+  // clause keyword (`implements`, `where`) before its `{`.
+  bool takeContinuation(std::string_view text) {
+    auto index = position;
+    while (index + 1 < tokens.size() &&
+           tokens[index].kind == TokenKind::Newline)
+      ++index;
+    if (tokens[index].text != text)
+      return false;
+    position = index + 1;
+    return true;
   }
   // An item ends at a newline, `}`, end of input or an optional `;`.
   void endItem(const char *what) {

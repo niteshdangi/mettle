@@ -859,6 +859,12 @@ std::optional<Type> Checker::associatedConstant(const Node &node) {
       subject = annotation(syntax, node.span, owner);
     }
   }
+  if (auto builtin = builtinType(prefix);
+      builtin != Type::Unknown &&
+      (subject == Type::Unknown || subject == builtin))
+    if (auto found = inherentConstantNames.find(prefix + "::" + member);
+        found != inherentConstantNames.end())
+      return inherentConstantValue(found->second, builtin);
   if (checked.types->isProduct(subject)) {
     auto ownerType = subject;
     if (checked.types->product(ownerType).genericOrigin != Type::Unknown)

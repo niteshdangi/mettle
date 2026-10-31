@@ -105,9 +105,15 @@ void Checker::inherentConstantNamesAndTypes() {
     (void)inserted;
     genericEnvironment = &registered->second;
 
-    if (!checked.types->isProduct(target) ||
-        (checked.types->product(target).kind != AggregateKind::Product &&
-         checked.types->product(target).kind != AggregateKind::Enumeration)) {
+    // Scalar builtins own their constants by spelling, e.g. `char.MAX`.
+    const bool scalarBuiltin = target != Type::Unknown &&
+                               builtinType(syntax.target.name) == target &&
+                               (isInteger(target) || isFloating(target) ||
+                                target == Type::Char || target == Type::Bool);
+    if (!scalarBuiltin &&
+        (!checked.types->isProduct(target) ||
+         (checked.types->product(target).kind != AggregateKind::Product &&
+          checked.types->product(target).kind != AggregateKind::Enumeration))) {
       for (const auto &item : syntax.associated)
         if (item.constant)
           error("type", item.span,
@@ -118,9 +124,11 @@ void Checker::inherentConstantNamesAndTypes() {
     }
 
     auto ownerType = target;
-    if (checked.types->product(ownerType).genericOrigin != Type::Unknown)
+    if (!scalarBuiltin &&
+        checked.types->product(ownerType).genericOrigin != Type::Unknown)
       ownerType = checked.types->product(ownerType).genericOrigin;
-    const auto owner = checked.types->product(ownerType).name;
+    const auto owner = scalarBuiltin ? syntax.target.name
+                                     : checked.types->product(ownerType).name;
     for (const auto &item : syntax.associated) {
       if (!item.constant)
         continue;
@@ -140,7 +148,9 @@ void Checker::inherentConstantNamesAndTypes() {
       auto index = inherentConstants.size();
       inherentConstants.push_back(
           {&syntax, &item, target, declaredType, Type::Unknown, 0});
-      inherentConstantNames.emplace(owner + "::" + item.name, index);
+      if (!inherentConstantNames.emplace(owner + "::" + item.name, index)
+               .second)
+        error("name", item.span, "duplicate associated constant");
     }
     popRegionParameters();
     genericEnvironment = saved;

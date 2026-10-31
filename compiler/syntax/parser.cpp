@@ -100,6 +100,54 @@ void Parser::run(Module &module, std::vector<std::string> scope, bool nested) {
 } // namespace mettle::parsing
 
 namespace mettle {
+namespace {
+// Semantic facts are keyed by syntax identity, so each method needs its own
+// copy of the inherited generic syntax rather than shared callable/nested
+// nodes.
+TypeSyntax distinctType(const TypeSyntax &source);
+std::shared_ptr<const TypeSyntax>
+distinctType(const std::shared_ptr<const TypeSyntax> &source) {
+  return source ? std::make_shared<TypeSyntax>(distinctType(*source)) : source;
+}
+TypeSyntax distinctType(const TypeSyntax &source) {
+  auto copy = source;
+  copy.nested = distinctType(source.nested);
+  for (auto &element : copy.elements)
+    element = distinctType(element);
+  for (auto &argument : copy.arguments)
+    argument.type = distinctType(argument.type);
+  if (source.callable) {
+    auto callable = std::make_shared<CallableTypeSyntax>(*source.callable);
+    for (auto &parameter : callable->parameters)
+      parameter.annotation = distinctType(parameter.annotation);
+    callable->result = distinctType(callable->result);
+    callable->error = distinctType(callable->error);
+    copy.callable = std::move(callable);
+  }
+  return copy;
+}
+std::vector<GenericParameter>
+distinctParameters(std::vector<GenericParameter> parameters) {
+  for (auto &parameter : parameters) {
+    for (auto &bound : parameter.bounds)
+      bound = distinctType(bound);
+    parameter.annotation = distinctType(parameter.annotation);
+    parameter.defaultType = distinctType(parameter.defaultType);
+  }
+  return parameters;
+}
+std::vector<GenericConstraint>
+distinctConstraints(std::vector<GenericConstraint> constraints) {
+  for (auto &constraint : constraints) {
+    constraint.subject = distinctType(constraint.subject);
+    for (auto &bound : constraint.bounds)
+      bound = distinctType(bound);
+    if (constraint.equality)
+      constraint.equality = distinctType(*constraint.equality);
+  }
+  return constraints;
+}
+} // namespace
 Module parseDeclarations(const Source &source, Diagnostics &diagnostics) {
   Diagnostics::SourceContext context(diagnostics, source);
   Module module;
@@ -177,14 +225,14 @@ void completeDeclarations(Module &module) {
       TypeSyntax unsized;
       unsized.name = "unsized";
       self.bounds.push_back(std::move(unsized));
+      auto inherited = distinctParameters(interface.genericParameters);
       method.genericParameters.insert(method.genericParameters.begin(),
-                                      interface.genericParameters.begin(),
-                                      interface.genericParameters.end());
+                                      inherited.begin(), inherited.end());
       method.genericParameters.insert(method.genericParameters.begin(),
                                       std::move(self));
-      method.constraints.insert(method.constraints.begin(),
-                                interface.constraints.begin(),
-                                interface.constraints.end());
+      auto constraints = distinctConstraints(interface.constraints);
+      method.constraints.insert(method.constraints.begin(), constraints.begin(),
+                                constraints.end());
       method.implicitGenericParameters = interface.genericParameters.size() + 1;
       if (!method.item.visibility.publicItem)
         method.item.visibility = interface.item.visibility;
@@ -198,14 +246,14 @@ void completeDeclarations(Module &module) {
       method.implementation = static_cast<int>(i);
       method.interfaceOwner = implementation.interface.name;
       method.name = "<impl." + std::to_string(i) + ">." + method.name;
+      auto inherited = distinctParameters(implementation.genericParameters);
       method.genericParameters.insert(method.genericParameters.begin(),
-                                      implementation.genericParameters.begin(),
-                                      implementation.genericParameters.end());
+                                      inherited.begin(), inherited.end());
       method.implicitGenericParameters =
           implementation.genericParameters.size();
-      method.constraints.insert(method.constraints.begin(),
-                                implementation.constraints.begin(),
-                                implementation.constraints.end());
+      auto constraints = distinctConstraints(implementation.constraints);
+      method.constraints.insert(method.constraints.begin(), constraints.begin(),
+                                constraints.end());
       module.functions.push_back(std::move(method));
     }
     implementation.methods.clear();

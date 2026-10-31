@@ -324,6 +324,49 @@ std::vector<interfaces::Obligation> Checker::interfaceAssumptions() {
   return result;
 }
 
+std::vector<interfaces::Obligation>
+Checker::resolveSuperinterfaces(std::size_t index) {
+  const auto &syntax = module.interfaces[index];
+  const auto self = checked.interfaceData->definitions[index].self;
+  std::vector<interfaces::Obligation> result;
+  for (const auto &parentBound : syntax.superinterfaces) {
+    if (auto property = propertyBound(parentBound, syntax.span))
+      result.push_back({self, Type::Unknown, *property});
+    else
+      result.push_back(
+          {self, interfaceBound(parentBound, syntax.span, {}, self)});
+  }
+  return result;
+}
+
+// Extension bounds are resolved before interface signatures, so a projection
+// such as `I.Item` through `I: ExactSizeIterator` needs the parents early.
+// Region-parameterized interfaces bind their regions only during signatures.
+const std::vector<interfaces::Obligation> &
+Checker::superinterfacesOf(std::size_t index) {
+  const auto &definition = checked.interfaceData->definitions[index];
+  if (signedSuperinterfaces.contains(index))
+    return definition.superinterfaces;
+  if (auto early = earlySuperinterfaces.find(index);
+      early != earlySuperinterfaces.end())
+    return early->second;
+  static const std::vector<interfaces::Obligation> none;
+  const auto &syntax = module.interfaces[index];
+  if (std::any_of(syntax.genericParameters.begin(),
+                  syntax.genericParameters.end(), [](const auto &parameter) {
+                    return parameter.kind == GenericParameterKind::Region;
+                  }))
+    return none;
+  if (!resolvingSuperinterfaces.insert(index).second)
+    return none;
+  auto *saved = genericEnvironment;
+  genericEnvironment = &interfaceGenerics.at(&syntax);
+  auto parents = resolveSuperinterfaces(index);
+  genericEnvironment = saved;
+  resolvingSuperinterfaces.erase(index);
+  return earlySuperinterfaces.emplace(index, std::move(parents)).first->second;
+}
+
 void Checker::expandSuperinterfaces(
     std::vector<interfaces::Obligation> &result) {
   std::set<std::pair<Type, Type>> expanded;
@@ -343,7 +386,7 @@ void Checker::expandSuperinterfaces(
          ++i)
       substitutions.push_back(
           {definition.parameters[i], descriptor.arguments[i]});
-    for (auto parent : definition.superinterfaces) {
+    for (auto parent : superinterfacesOf(descriptor.declaration)) {
       parent.subject = checked.types->substitute(parent.subject, substitutions);
       parent.interfaceType =
           checked.types->substitute(parent.interfaceType, substitutions);
@@ -563,15 +606,12 @@ void Checker::interfaceSignatures() {
       popRegionParameters();
       genericEnvironment = outer;
     }
-    for (const auto &parentBound : syntax.superinterfaces) {
-      if (auto property = propertyBound(parentBound, syntax.span))
-        definition.superinterfaces.push_back(
-            {definition.self, Type::Unknown, *property});
-      else
-        definition.superinterfaces.push_back(
-            {definition.self,
-             interfaceBound(parentBound, syntax.span, {}, definition.self)});
-    }
+    if (auto early = earlySuperinterfaces.find(i);
+        early != earlySuperinterfaces.end())
+      definition.superinterfaces = std::move(early->second);
+    else
+      definition.superinterfaces = resolveSuperinterfaces(i);
+    signedSuperinterfaces.insert(i);
     popRegionParameters();
   }
   std::vector<unsigned char> states(module.interfaces.size());
@@ -772,31 +812,45 @@ std::optional<Type> Checker::interfaceAnnotation(const TypeSyntax &syntax,
       if (subject != genericEnvironment->names.end()) {
         auto bounds = genericEnvironment->bounds.find(subject->second);
         if (bounds != genericEnvironment->bounds.end()) {
-          Type projection = Type::Unknown;
+          // Associated names declared by superinterfaces are reachable
+          // through the elaborated bound set.
+          std::vector<interfaces::Obligation> elaborated;
           for (const auto &bound : bounds->second) {
             if (propertyBound(bound, span) || bound.name == "unsized")
               continue;
             auto interface =
                 interfaceBound(bound, span, owner, subject->second);
-            if (!checked.types->isErased(interface))
+            if (checked.types->isErased(interface))
+              elaborated.push_back({subject->second, interface});
+          }
+          expandSuperinterfaces(elaborated);
+          auto name = syntax.name.substr(delimiter + 2);
+          Type declaring = Type::Unknown;
+          for (const auto &obligation : elaborated) {
+            if (obligation.property != interfaces::Property::Interface ||
+                obligation.subject != subject->second ||
+                !checked.types->isErased(obligation.interfaceType) ||
+                obligation.interfaceType == declaring)
               continue;
             const auto &definition =
                 checked.interfaceData
-                    ->definitions[checked.types->erased(interface).declaration];
+                    ->definitions[checked.types
+                                      ->erased(obligation.interfaceType)
+                                      .declaration];
             if (std::none_of(
                     definition.associated.begin(), definition.associated.end(),
-                    [&](const auto &item) {
-                      return item.name == syntax.name.substr(delimiter + 2);
-                    }))
+                    [&](const auto &item) { return item.name == name; }))
               continue;
-            if (projection != Type::Unknown) {
+            if (declaring != Type::Unknown) {
               error("type", span, "ambiguous associated projection");
               return Type::Unknown;
             }
-            projection = interfaceProjection(subject->second, interface,
-                                             syntax.name.substr(delimiter + 2),
-                                             syntax.arguments, span);
+            declaring = obligation.interfaceType;
           }
+          Type projection = Type::Unknown;
+          if (declaring != Type::Unknown)
+            projection = interfaceProjection(subject->second, declaring, name,
+                                             syntax.arguments, span);
           if (projection != Type::Unknown)
             return projection;
         }

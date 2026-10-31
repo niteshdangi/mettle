@@ -224,7 +224,7 @@ std::vector<GenericArgument> Parser::genericArguments() {
 }
 std::vector<GenericConstraint> Parser::genericConstraints() {
   std::vector<GenericConstraint> result;
-  if (!take("where"))
+  if (!takeContinuation("where"))
     return result;
   do {
     GenericConstraint constraint;
