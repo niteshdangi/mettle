@@ -316,6 +316,66 @@ extend<T> Receiver<T> {
             none => core.intrinsics.abort()
         }
     }
+
+    pub fn iter<region r>(
+        receiver self: read Receiver<T> from r
+    ): Iter<region r, T> {
+        Iter(read self)
+    }
+
+    pub fn try_iter<region r>(
+        receiver self: read Receiver<T> from r
+    ): TryIter<region r, T> {
+        TryIter(read self, false)
+    }
+
+    pub take fn into_iter(): IntoIter<T> { IntoIter(self) }
+}
+
+// Blocks until the receiver disconnects, yielding each queued value.
+pub type Iter<region r, T> { receiver: read Receiver<T> from r }
+extend<region r, T> Iter<region r, T> implements Iterator {
+    type Item = T
+    mut fn next(): T? {
+        let value = capture self.receiver.recv()
+        match take value {
+            success(item) => present(item),
+            failure(error) => none
+        }
+    }
+}
+
+// Stops when no value is immediately available.
+pub type TryIter<region r, T> {
+    receiver: read Receiver<T> from r
+    finished: bool
+}
+extend<region r, T> TryIter<region r, T> implements Iterator {
+    type Item = T
+    mut fn next(): T? {
+        if self.finished { return none }
+        let value = capture self.receiver.try_recv()
+        match take value {
+            success(item) => present(item),
+            failure(error) => {
+                self.finished = true
+                none
+            }
+        }
+    }
+}
+
+// Owns the receiver and drains queued values before ending.
+pub type IntoIter<T> { receiver: Receiver<T> }
+extend<T> IntoIter<T> implements Iterator {
+    type Item = T
+    mut fn next(): T? {
+        let value = capture self.receiver.recv()
+        match take value {
+            success(item) => present(item),
+            failure(error) => none
+        }
+    }
 }
 
 fn channel_ready<T>(chan: read Shared<T>): bool {

@@ -1,4 +1,5 @@
 import package.core.panic.panic
+import package.core.default.Default
 import super.mutex.{PoisonError, TryLockError}
 
 extern "C" {
@@ -46,8 +47,27 @@ pub fn new<T>(value: take T): RwLock<T> {
     if raw == core.ptr.null_mut<u8>() { core.intrinsics.abort() }
     RwLock(raw, core.sync.atomic.AtomicBool.new(false), core.cell.UnsafeCell.new(value))
 }
+extend<T: Default> RwLock<T> implements Default {
+    static fn default(): RwLock<T> { new(T.(Default).default()) }
+}
 
 extend<T> RwLock<T> {
+    pub fn read(): ReadGuard<T, region self> throws PoisonError<ReadGuard<T, region self>> {
+        self.reader()
+    }
+
+    pub fn write(): WriteGuard<T, region self> throws PoisonError<WriteGuard<T, region self>> {
+        self.writer()
+    }
+
+    pub fn try_read(): ReadGuard<T, region self> throws TryLockError<ReadGuard<T, region self>> {
+        self.try_reader()
+    }
+
+    pub fn try_write(): WriteGuard<T, region self> throws TryLockError<WriteGuard<T, region self>> {
+        self.try_writer()
+    }
+
     pub fn reader(): ReadGuard<T, region self> throws PoisonError<ReadGuard<T, region self>> {
         if unsafe { mettle_rt_rwlock_read(self.raw) } != 0 { panic("rwlock read lock failed") }
         let guard = ReadGuard(read self)

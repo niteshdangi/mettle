@@ -93,6 +93,11 @@ mettle_rt_sock_recvfrom(std::int32_t fd, std::uint8_t *data, std::size_t size,
 // Receive (send == 0) or send timeout in microseconds; zero disables it.
 std::int32_t mettle_rt_sock_timeout(std::int32_t fd, std::int32_t send,
                                     std::uint64_t micros);
+std::int32_t mettle_rt_sock_set_nodelay(std::int32_t fd,
+                                        std::int32_t enabled);
+std::int32_t mettle_rt_sock_get_nodelay(std::int32_t fd,
+                                        std::int32_t *enabled);
+std::int32_t mettle_rt_sock_error(std::int32_t fd, std::int32_t *error);
 
 // Resolution handles own their getaddrinfo-derived address list. The caller
 // must release a non-null handle with `mettle_rt_resolve_free`.
@@ -130,8 +135,9 @@ void mettle_rt_reactor_wake(void *reactor);
 // an executor-control wake and -1 on failure.
 std::int32_t mettle_rt_reactor_wait(void *reactor);
 
-// Nonblocking socket operations used by `std.net`'s async wrappers.
+// Descriptor blocking-mode operations used by `std.net`.
 std::int32_t mettle_rt_set_nonblocking(std::int32_t fd);
+std::int32_t mettle_rt_set_blocking(std::int32_t fd);
 std::int32_t mettle_rt_sock_connect_start(std::int32_t fd, std::int32_t family,
                                           const std::uint8_t *address,
                                           std::size_t addressSize,

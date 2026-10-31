@@ -1,5 +1,6 @@
 import super.mutex.MutexGuard
 import package.core.panic.panic
+import package.core.default.Default
 import package.std.time
 
 extern "C" {
@@ -25,9 +26,15 @@ pub fn new(): Condvar {
     if raw == core.ptr.null_mut<u8>() { core.intrinsics.abort() }
     Condvar(raw)
 }
+extend Condvar implements Default {
+    static fn default(): Condvar { new() }
+}
 
 // Whether a timed wait ended by its deadline.
-pub copy type TimedOut { pub timed_out: bool }
+pub copy type TimedOut { expired: bool }
+extend TimedOut {
+    pub fn timed_out(): bool { self.expired }
+}
 
 extend Condvar {
     pub fn wait<T, region r>(guard: take MutexGuard<T, region r>): MutexGuard<T, region r> {
@@ -65,7 +72,7 @@ extend Condvar {
             let remaining = nanoseconds - elapsed as u64
             let waited = self.wait_timeout(current, remaining)
             current = waited.0
-            if waited.1.timed_out { return (current, waited.1) }
+            if waited.1.timed_out() { return (current, waited.1) }
         }
         (current, TimedOut(false))
     }

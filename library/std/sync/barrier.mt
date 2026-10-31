@@ -7,6 +7,11 @@ type State {
     generation: usize
 }
 
+pub copy type BarrierWaitResult { leader: bool }
+extend BarrierWaitResult {
+    pub fn is_leader(): bool { self.leader }
+}
+
 // Blocks `parties` threads until all have arrived; reusable across rounds.
 pub type Barrier {
     parties: usize
@@ -22,8 +27,8 @@ pub fn new(parties: usize): Barrier {
 }
 
 extend Barrier {
-    // Returns true for exactly one thread per round (the last to arrive).
-    pub fn wait(): bool {
+    // Marks exactly one thread per round (the last to arrive) as leader.
+    pub fn wait(): BarrierWaitResult {
         let locked = capture self.state.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
         let round = guard.get().generation
@@ -35,12 +40,12 @@ extend Barrier {
                 none => 0usize
             }
             self.arrived.notify_all()
-            return true
+            return BarrierWaitResult(true)
         }
         guard.get_mut().count = next
         while guard.get().generation == round {
             guard = self.arrived.wait(guard)
         }
-        false
+        BarrierWaitResult(false)
     }
 }

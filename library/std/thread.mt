@@ -8,7 +8,9 @@
 import package.core.panic.panic
 import package.alloc.string.String
 import package.core.text.Text
+import package.core.slice
 import package.core.option
+import package.std.time.Duration
 
 extern "C" {
     unsafe fn mettle_rt_panicking(): i32;
@@ -23,6 +25,10 @@ extern "C" {
     unsafe fn mettle_rt_thread_join(handle: usize): i32;
     unsafe fn mettle_rt_thread_detach(handle: usize): i32;
     unsafe fn mettle_rt_thread_current(): usize;
+    unsafe fn mettle_rt_thread_park(): Unit;
+    unsafe fn mettle_rt_thread_park_timeout(nanoseconds: u64): Unit;
+    unsafe fn mettle_rt_thread_unpark(handle: usize): Unit;
+    unsafe fn mettle_rt_thread_name(handle: usize, buffer: ptr<mut u8>, capacity: usize): isize;
     unsafe fn mettle_rt_thread_yield(): Unit;
     unsafe fn mettle_rt_thread_sleep(nanoseconds: u64): Unit;
     unsafe fn mettle_rt_thread_parallelism(): u64;
@@ -36,11 +42,53 @@ pub copy type SpawnError { pub code: i32 }
 
 // Identity of a running thread.
 pub copy type ThreadId { pub raw: usize }
+pub copy type Thread { raw: usize }
 
 pub fn current(): ThreadId { ThreadId(unsafe { mettle_rt_thread_current() }) }
+pub fn current_thread(): Thread { Thread(unsafe { mettle_rt_thread_current() }) }
+pub fn panicking(): bool { unsafe { mettle_rt_panicking() != 0 } }
 pub fn yield_now(): Unit { unsafe { mettle_rt_thread_yield() } }
 pub fn sleep_nanos(nanoseconds: u64): Unit { unsafe { mettle_rt_thread_sleep(nanoseconds) } }
+pub fn sleep(duration: Duration): Unit { package.std.time.sleep(duration) }
+pub fn sleep_ms(milliseconds: u64): Unit {
+    sleep(package.std.time.from_millis(milliseconds))
+}
+pub fn park(): Unit { unsafe { mettle_rt_thread_park() } }
+fn duration_nanos(duration: Duration): u64 {
+    let value = duration.as_nanos()
+    if value > 18446744073709551615u128 {
+        18446744073709551615u64
+    } else {
+        value as u64
+    }
+}
+pub fn park_timeout(duration: Duration): Unit {
+    unsafe { mettle_rt_thread_park_timeout(duration_nanos(duration)) }
+}
+pub fn park_timeout_ms(milliseconds: u64): Unit {
+    park_timeout(package.std.time.from_millis(milliseconds))
+}
 pub fn available_parallelism(): usize { unsafe { mettle_rt_thread_parallelism() as usize } }
+
+extend ThreadId {
+    pub fn same(other: ThreadId): bool { self.raw == other.raw }
+}
+
+extend Thread {
+    pub fn id(): ThreadId { ThreadId(self.raw) }
+    pub fn unpark(): Unit { unsafe { mettle_rt_thread_unpark(self.raw) } }
+    pub fn name(): Text? {
+        var buffer = [0u8; 64]
+        let length = unsafe {
+            mettle_rt_thread_name(self.raw, core.ptr.from_mut(buffer).cast<u8>(), 64usize)
+        }
+        if length < 0isize { return none }
+        let bytes = unsafe {
+            slice.subslice_unchecked(buffer, 0usize, length as usize)
+        }
+        package.core.text.from_utf8(bytes)
+    }
+}
 
 pub type Builder {
     name: String?
@@ -227,6 +275,11 @@ unsafe fn finish<T>(header: ptr<mut Header>, slot: ptr<mut Slot<T>>): T throws P
 }
 
 extend<T> JoinHandle<T> {
+    pub fn thread(): Thread { Thread(unsafe { (*self.header).thread }) }
+    pub fn is_finished(): bool {
+        unsafe { (*self.header).finished.load(core.sync.atomic.Ordering.Acquire) }
+    }
+
     // Waits for the thread; a panic on it is reported, not propagated.
     pub take fn join(): T throws Panicked {
         let header = self.header

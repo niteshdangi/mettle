@@ -11,12 +11,23 @@ import super.sys
 import super.task
 import super.time.Duration
 
+extern "C" {
+    unsafe fn dup(fd: i32): i32;
+}
+
 pub copy type Ipv4Addr { bits: u32 }
 pub copy type Ipv6Addr { bytes: [u8; 16] }
 pub copy enum IpAddr { V4(Ipv4Addr), V6(Ipv6Addr) }
 
 pub copy type SocketAddr {
     pub ip: IpAddr
+    pub port: u16
+    pub flowinfo: u32
+    pub scope_id: u32
+}
+pub copy type SocketAddrV4 { pub ip: Ipv4Addr; pub port: u16 }
+pub copy type SocketAddrV6 {
+    pub ip: Ipv6Addr
     pub port: u16
     pub flowinfo: u32
     pub scope_id: u32
@@ -53,19 +64,116 @@ pub fn socket_addr_ip(ip: IpAddr, port: u16): SocketAddr {
     SocketAddr(ip, port, 0u32, 0u32)
 }
 
+pub fn socket_addr_v4(ip: Ipv4Addr, port: u16): SocketAddrV4 {
+    SocketAddrV4(ip, port)
+}
+
 pub fn socket_addr_v6(ip: Ipv6Addr, port: u16, flowinfo: u32, scope_id: u32): SocketAddr {
     SocketAddr(IpAddr.V6(ip), port, flowinfo, scope_id)
 }
 
+pub fn socket_addr_v6_parts(ip: Ipv6Addr, port: u16, flowinfo: u32, scope_id: u32): SocketAddrV6 {
+    SocketAddrV6(ip, port, flowinfo, scope_id)
+}
+
+extend SocketAddrV4 {
+    pub static fn new(ip: Ipv4Addr, port: u16): SocketAddrV4 { SocketAddrV4(ip, port) }
+    pub fn ip(): Ipv4Addr { self.ip }
+    pub mut fn set_ip(ip: Ipv4Addr): Unit { self.ip = ip }
+    pub fn port(): u16 { self.port }
+    pub mut fn set_port(port: u16): Unit { self.port = port }
+    pub fn to_socket_addr(): SocketAddr { socket_addr(self.ip, self.port) }
+}
+
+extend SocketAddrV6 {
+    pub static fn new(ip: Ipv6Addr, port: u16, flowinfo: u32, scope_id: u32): SocketAddrV6 {
+        SocketAddrV6(ip, port, flowinfo, scope_id)
+    }
+    pub fn ip(): Ipv6Addr { self.ip }
+    pub mut fn set_ip(ip: Ipv6Addr): Unit { self.ip = ip }
+    pub fn port(): u16 { self.port }
+    pub mut fn set_port(port: u16): Unit { self.port = port }
+    pub fn flowinfo(): u32 { self.flowinfo }
+    pub mut fn set_flowinfo(flowinfo: u32): Unit { self.flowinfo = flowinfo }
+    pub fn scope_id(): u32 { self.scope_id }
+    pub mut fn set_scope_id(scope_id: u32): Unit { self.scope_id = scope_id }
+    pub fn to_socket_addr(): SocketAddr {
+        socket_addr_v6(self.ip, self.port, self.flowinfo, self.scope_id)
+    }
+}
+
 extend Ipv4Addr {
+    pub static fn new(a: u8, b: u8, c: u8, d: u8): Ipv4Addr { ipv4(a, b, c, d) }
+    pub static fn from_bits(bits: u32): Ipv4Addr { Ipv4Addr(bits) }
+    pub static fn from_octets(octets: [u8; 4]): Ipv4Addr {
+        ipv4(octets[0usize], octets[1usize], octets[2usize], octets[3usize])
+    }
+    pub fn to_bits(): u32 { self.bits }
     pub fn octets(): [u8; 4] {
         [(self.bits >> 24u32) as u8, (self.bits >> 16u32) as u8, (self.bits >> 8u32) as u8, self.bits as u8]
     }
     pub fn is_loopback(): bool { (self.bits >> 24u32) == 127u32 }
+    pub fn is_unspecified(): bool { self.bits == 0u32 }
+    pub fn is_broadcast(): bool { self.bits == 4294967295u32 }
+    pub fn is_multicast(): bool { (self.bits >> 28u32) == 14u32 }
+    pub fn is_link_local(): bool { (self.bits & 4294901760u32) == 2851995648u32 }
+    pub fn is_private(): bool {
+        let a = (self.bits >> 24u32) & 255u32
+        let b = (self.bits >> 16u32) & 255u32
+        (a == 10u32) || (a == 172u32 && b >= 16u32 && b <= 31u32) ||
+            (a == 192u32 && b == 168u32)
+    }
+    pub fn is_documentation(): bool {
+        let a = (self.bits >> 24u32) & 255u32
+        let b = (self.bits >> 16u32) & 255u32
+        (a == 192u32 && b == 0u32 && ((self.bits >> 8u32) & 255u32) == 2u32) ||
+            (a == 198u32 && b == 51u32 && ((self.bits >> 8u32) & 255u32) == 100u32) ||
+            (a == 203u32 && b == 0u32 && ((self.bits >> 8u32) & 255u32) == 113u32)
+    }
+    pub fn to_ipv6_compatible(): Ipv6Addr {
+        ipv6(0u16, 0u16, 0u16, 0u16, 0u16, 0u16,
+             (self.bits >> 16u32) as u16, self.bits as u16)
+    }
+    pub fn to_ipv6_mapped(): Ipv6Addr {
+        ipv6(0u16, 0u16, 0u16, 0u16, 0u16, 65535u16,
+             (self.bits >> 16u32) as u16, self.bits as u16)
+    }
     pub fn same(other: Ipv4Addr): bool { self.bits == other.bits }
 }
 
 extend Ipv6Addr {
+    pub static fn new(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u16, h: u16): Ipv6Addr {
+        ipv6(a, b, c, d, e, f, g, h)
+    }
+    pub static fn from_bits(bits: u128): Ipv6Addr {
+        Ipv6Addr([
+            (bits >> 120u32) as u8, (bits >> 112u32) as u8,
+            (bits >> 104u32) as u8, (bits >> 96u32) as u8,
+            (bits >> 88u32) as u8, (bits >> 80u32) as u8,
+            (bits >> 72u32) as u8, (bits >> 64u32) as u8,
+            (bits >> 56u32) as u8, (bits >> 48u32) as u8,
+            (bits >> 40u32) as u8, (bits >> 32u32) as u8,
+            (bits >> 24u32) as u8, (bits >> 16u32) as u8,
+            (bits >> 8u32) as u8, bits as u8
+        ])
+    }
+    pub static fn from_segments(segments: [u16; 8]): Ipv6Addr {
+        ipv6(
+            segments[0usize], segments[1usize], segments[2usize], segments[3usize],
+            segments[4usize], segments[5usize], segments[6usize], segments[7usize]
+        )
+    }
+    pub static fn from_octets(bytes: [u8; 16]): Ipv6Addr { Ipv6Addr(bytes) }
+    pub fn octets(): [u8; 16] { self.bytes }
+    pub fn to_bits(): u128 {
+        var bits = 0u128
+        var i = 0usize
+        while i < 16usize {
+            bits = bits | ((self.bytes[i] as u128) << ((15u32 - i as u32) * 8u32))
+            i += 1usize
+        }
+        bits
+    }
     pub fn segments(): [u16; 8] {
         [
             ((self.bytes[0usize] as u16) << 8u16) | self.bytes[1usize] as u16,
@@ -97,6 +205,59 @@ extend Ipv6Addr {
         true
     }
 
+    pub fn is_multicast(): bool { self.bytes[0usize] == 255u8 }
+    pub fn is_unicast_link_local(): bool {
+        self.bytes[0usize] == 254u8 && (self.bytes[1usize] & 192u8) == 128u8
+    }
+    pub fn is_unique_local(): bool { (self.bytes[0usize] & 254u8) == 252u8 }
+    pub fn to_ipv4(): Ipv4Addr? {
+        var compatible = true
+        var i = 0usize
+        while i < 12usize {
+            if self.bytes[i] != 0u8 { compatible = false }
+            i += 1usize
+        }
+        var mapped = self.bytes[10usize] == 255u8 && self.bytes[11usize] == 255u8
+        i = 0usize
+        while i < 10usize {
+            if self.bytes[i] != 0u8 { mapped = false }
+            i += 1usize
+        }
+        if !compatible && !mapped { return none }
+        if compatible && self.bytes[12usize] == 0u8 && self.bytes[13usize] == 0u8 &&
+           self.bytes[14usize] == 0u8 && self.bytes[15usize] <= 1u8 {
+            return none
+        }
+        present(ipv4(self.bytes[12usize], self.bytes[13usize], self.bytes[14usize], self.bytes[15usize]))
+    }
+    pub fn to_ipv4_compatible(): Ipv4Addr? {
+        var i = 0usize
+        while i < 12usize {
+            if self.bytes[i] != 0u8 { return none }
+            i += 1usize
+        }
+        if self.bytes[12usize] == 0u8 && self.bytes[13usize] == 0u8 &&
+           self.bytes[14usize] == 0u8 && self.bytes[15usize] <= 1u8 {
+            return none
+        }
+        present(ipv4(self.bytes[12usize], self.bytes[13usize], self.bytes[14usize], self.bytes[15usize]))
+    }
+    pub fn to_ipv4_mapped(): Ipv4Addr? {
+        var i = 0usize
+        while i < 10usize {
+            if self.bytes[i] != 0u8 { return none }
+            i += 1usize
+        }
+        if self.bytes[10usize] != 255u8 || self.bytes[11usize] != 255u8 { return none }
+        present(ipv4(self.bytes[12usize], self.bytes[13usize], self.bytes[14usize], self.bytes[15usize]))
+    }
+    pub fn to_canonical(): IpAddr {
+        match self.to_ipv4_mapped() {
+            present(address) => IpAddr.V4(address),
+            none => IpAddr.V6(self)
+        }
+    }
+
     pub fn same(other: Ipv6Addr): bool {
         var i = 0usize
         while i < 16usize {
@@ -108,10 +269,31 @@ extend Ipv6Addr {
 }
 
 extend IpAddr {
+    pub fn is_ipv4(): bool { match self { IpAddr.V4(_) => true, _ => false } }
+    pub fn is_ipv6(): bool { match self { IpAddr.V6(_) => true, _ => false } }
     pub fn is_loopback(): bool {
         match self {
             IpAddr.V4(ip) => ip.is_loopback(),
             IpAddr.V6(ip) => ip.is_loopback()
+        }
+    }
+
+    pub fn is_multicast(): bool {
+        match self {
+            IpAddr.V4(ip) => ip.is_multicast(),
+            IpAddr.V6(ip) => ip.is_multicast()
+        }
+    }
+    pub fn is_unspecified(): bool {
+        match self {
+            IpAddr.V4(ip) => ip.is_unspecified(),
+            IpAddr.V6(ip) => ip.is_unspecified()
+        }
+    }
+    pub fn to_canonical(): IpAddr {
+        match self {
+            IpAddr.V4(ip) => IpAddr.V4(ip),
+            IpAddr.V6(ip) => ip.to_canonical()
         }
     }
 
@@ -130,6 +312,13 @@ extend IpAddr {
 }
 
 extend SocketAddr {
+    pub static fn new(ip: IpAddr, port: u16): SocketAddr { socket_addr_ip(ip, port) }
+    pub fn ip(): IpAddr { self.ip }
+    pub mut fn set_ip(ip: IpAddr): Unit { self.ip = ip }
+    pub fn port(): u16 { self.port }
+    pub mut fn set_port(port: u16): Unit { self.port = port }
+    pub fn is_ipv4(): bool { self.ip.is_ipv4() }
+    pub fn is_ipv6(): bool { self.ip.is_ipv6() }
     pub fn same(other: SocketAddr): bool {
         self.ip.same(other.ip) && self.port == other.port &&
             self.flowinfo == other.flowinfo && self.scope_id == other.scope_id
@@ -536,6 +725,24 @@ fn set_timeout(fd: i32, send: i32, limit: Duration?): Unit throws Error {
     if unsafe { sys.mettle_rt_sock_timeout(fd, send, micros) } != 0 { throw io.last_os_error() }
 }
 
+fn set_nonblocking(fd: i32, on: bool): Unit throws Error {
+    var status = 0
+    if on {
+        status = unsafe { sys.mettle_rt_set_nonblocking(fd) }
+    } else {
+        status = unsafe { sys.mettle_rt_set_blocking(fd) }
+    }
+    if status != 0 { throw io.last_os_error() }
+}
+
+fn take_socket_error(fd: i32): Error? throws Error {
+    var code = 0i32
+    if unsafe { sys.mettle_rt_sock_error(fd, core.ptr.from_mut(code)) } != 0 {
+        throw io.last_os_error()
+    }
+    if code == 0 { none } else { present(io.from_raw_os_error(code)) }
+}
+
 fn new_socket(kind: i32, family: i32): i32 throws Error {
     let fd = unsafe { sys.mettle_rt_sock_new(kind, family) }
     if fd < 0 { throw io.last_os_error() }
@@ -727,6 +934,15 @@ pub fn async_tcp_listen(addr: SocketAddr): AsyncTcpListener throws Error {
 }
 
 extend TcpListener {
+    pub fn take_error(): Error? throws Error { try take_socket_error(self.fd) }
+    pub fn try_clone(): TcpListener throws Error {
+        let cloned = unsafe { dup(self.fd) }
+        if cloned < 0 { throw io.last_os_error() }
+        TcpListener(cloned, self.accept_millis)
+    }
+    pub fn set_nonblocking(on: bool): Unit throws Error {
+        try set_nonblocking(self.fd, on)
+    }
     pub fn local_addr(): SocketAddr throws Error { try local_of(self.fd, 0) }
     pub mut fn set_accept_timeout(limit: Duration?): Unit throws Error {
         self.accept_millis = -1
@@ -804,6 +1020,29 @@ extend TcpStream {
     }
     pub fn local_addr(): SocketAddr throws Error { try local_of(self.fd, 0) }
     pub fn peer_addr(): SocketAddr throws Error { try local_of(self.fd, 1) }
+    pub fn try_clone(): TcpStream throws Error {
+        let cloned = unsafe { dup(self.fd) }
+        if cloned < 0 { throw io.last_os_error() }
+        TcpStream(cloned)
+    }
+    pub fn set_nonblocking(on: bool): Unit throws Error {
+        try set_nonblocking(self.fd, on)
+    }
+    pub fn set_nodelay(on: bool): Unit throws Error {
+        var enabled = 0i32
+        if on { enabled = 1 }
+        if unsafe { sys.mettle_rt_sock_set_nodelay(self.fd, enabled) } != 0 {
+            throw io.last_os_error()
+        }
+    }
+    pub fn nodelay(): bool throws Error {
+        var enabled = 0i32
+        if unsafe { sys.mettle_rt_sock_get_nodelay(self.fd, core.ptr.from_mut(enabled)) } != 0 {
+            throw io.last_os_error()
+        }
+        enabled != 0
+    }
+    pub fn take_error(): Error? throws Error { try take_socket_error(self.fd) }
     pub fn set_read_timeout(limit: Duration?): Unit throws Error { try set_timeout(self.fd, 0, limit) }
     pub fn set_write_timeout(limit: Duration?): Unit throws Error { try set_timeout(self.fd, 1, limit) }
     pub fn wait_readable(limit: Duration): bool throws Error {
@@ -902,6 +1141,15 @@ extend AsyncTcpStream {
 
 extend UdpSocket {
     pub fn local_addr(): SocketAddr throws Error { try local_of(self.fd, 0) }
+    pub fn take_error(): Error? throws Error { try take_socket_error(self.fd) }
+    pub fn try_clone(): UdpSocket throws Error {
+        let cloned = unsafe { dup(self.fd) }
+        if cloned < 0 { throw io.last_os_error() }
+        UdpSocket(cloned)
+    }
+    pub fn set_nonblocking(on: bool): Unit throws Error {
+        try set_nonblocking(self.fd, on)
+    }
     pub fn set_read_timeout(limit: Duration?): Unit throws Error { try set_timeout(self.fd, 0, limit) }
     pub fn set_write_timeout(limit: Duration?): Unit throws Error { try set_timeout(self.fd, 1, limit) }
 

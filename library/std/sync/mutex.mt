@@ -1,4 +1,5 @@
 import package.core.panic.panic
+import package.core.default.Default
 extern "C" {
     unsafe fn mettle_rt_mutex_new(): ptr<mut u8>;
     unsafe fn mettle_rt_mutex_free(mutex: ptr<mut u8>): Unit;
@@ -11,6 +12,9 @@ extern "C" {
 // A lock released while its holder was unwinding; the guard is still usable.
 pub type PoisonError<G> { pub guard: G }
 extend<G> PoisonError<G> {
+    pub static fn new(guard: take G): PoisonError<G> { PoisonError(guard) }
+    pub fn get_ref(): read G from self { read self.guard }
+    pub mut fn get_mut(): mut G from self { mut self.guard }
     pub take fn into_inner(): G { self.guard }
 }
 
@@ -48,6 +52,9 @@ pub fn new<T>(value: take T): Mutex<T> {
     let raw = unsafe { mettle_rt_mutex_new() }
     if raw == core.ptr.null_mut<u8>() { core.intrinsics.abort() }
     Mutex(raw, core.sync.atomic.AtomicBool.new(false), core.cell.UnsafeCell.new(value))
+}
+extend<T: Default> Mutex<T> implements Default {
+    static fn default(): Mutex<T> { new(T.(Default).default()) }
 }
 
 extend<T> Mutex<T> {

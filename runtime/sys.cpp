@@ -20,6 +20,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -854,11 +855,48 @@ extern "C" std::int32_t mettle_rt_sock_timeout(std::int32_t fd,
     errno = EINVAL;
     return -1;
   }
+
   timeval value;
   value.tv_sec = static_cast<time_t>(seconds);
   value.tv_usec = static_cast<suseconds_t>(micros % 1000000);
   return setsockopt(fd, SOL_SOCKET, send ? SO_SNDTIMEO : SO_RCVTIMEO, &value,
                     sizeof value);
+}
+
+extern "C" std::int32_t mettle_rt_sock_set_nodelay(std::int32_t fd,
+                                                    std::int32_t enabled) {
+  const int value = enabled != 0;
+  return retry([&] {
+    return setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &value, sizeof(value));
+  });
+}
+
+extern "C" std::int32_t mettle_rt_sock_get_nodelay(std::int32_t fd,
+                                                    std::int32_t *enabled) {
+  if (!enabled) {
+    errno = EINVAL;
+    return -1;
+  }
+  int value = 0;
+  socklen_t size = sizeof(value);
+  if (retry([&] {
+        return getsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &value, &size);
+      }) != 0)
+    return -1;
+  *enabled = value != 0;
+  return 0;
+}
+
+extern "C" std::int32_t mettle_rt_sock_error(std::int32_t fd,
+                                              std::int32_t *error) {
+  if (!error) {
+    errno = EINVAL;
+    return -1;
+  }
+  socklen_t size = sizeof(*error);
+  return retry([&] {
+    return getsockopt(fd, SOL_SOCKET, SO_ERROR, error, &size);
+  });
 }
 
 extern "C" std::uint8_t *mettle_rt_resolve(const std::uint8_t *host,
@@ -1235,6 +1273,13 @@ extern "C" std::int32_t mettle_rt_set_nonblocking(std::int32_t fd) {
   if (flags < 0)
     return -1;
   return retry([&] { return fcntl(fd, F_SETFL, flags | O_NONBLOCK); });
+}
+
+extern "C" std::int32_t mettle_rt_set_blocking(std::int32_t fd) {
+  const int flags = retry([&] { return fcntl(fd, F_GETFL); });
+  if (flags < 0)
+    return -1;
+  return retry([&] { return fcntl(fd, F_SETFL, flags & ~O_NONBLOCK); });
 }
 
 extern "C" std::int32_t
