@@ -284,7 +284,62 @@ pub fn concat(a: read Text, b: read Text): String {
     s
 }
 
+fn replace_text(text: read Text, pattern: read Text, replacement: read Text, limit: usize): String {
+    var result = new()
+    var remaining = limit
+    if pattern.is_empty() {
+        if remaining > 0usize {
+            result.push_str(replacement)
+            remaining -= 1usize
+        }
+        var chars = text.chars()
+        while true {
+            match chars.next() {
+                present(c) => {
+                    result.push(c)
+                    if remaining > 0usize {
+                        result.push_str(replacement)
+                        remaining -= 1usize
+                    }
+                },
+                none => { break }
+            }
+        }
+        return result
+    }
+
+    var rest = read text
+    while remaining > 0usize {
+        match rest.find(pattern) {
+            present(at) => {
+                match rest.get(0usize, at) {
+                    present(prefix) => { result.push_str(prefix) },
+                    none => { panic_precondition() }
+                }
+                result.push_str(replacement)
+                let start = at + pattern.len()
+                rest = match rest.get(start, rest.len()) {
+                    present(suffix) => suffix,
+                    none => { panic_precondition() }
+                }
+                remaining -= 1usize
+            },
+            none => { break }
+        }
+    }
+    result.push_str(rest)
+    result
+}
+
 extend Text {
+    pub fn replace(pattern: read Text, replacement: read Text): String {
+        replace_text(read self, pattern, replacement, 0xffffffffffffffffusize)
+    }
+
+    pub fn replacen(pattern: read Text, replacement: read Text, count: usize): String {
+        replace_text(read self, pattern, replacement, count)
+    }
+
     pub fn to_lowercase(): String {
         var result = new()
         var chars = self.lowercase_chars()
