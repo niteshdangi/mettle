@@ -199,7 +199,9 @@ fixtures are explicitly named. Full operation closure is a separate, still
 open obligation: `docs/baseline/audit-summary.json` reports 106,125 canonical
 required contracts, and the baseline explicitly says native declarations are
 not typechecked and cfg branches are not compiled. No operation-wide macOS
-ARM64 declaration/evidence receipt exists in this worktree. See
+ARM64 declaration/evidence receipt exists in this worktree. V1 requires only
+the operation subset of `docs/library-surface.md` section 6.1 (about 2,900
+folded operation families and 1,760 trait/type pairs); the remainder is I17. See
 `docs/library-surface.md` sections 6–8 for applicability and required
 supporting-protocol review; do not infer per-operation closure from the
 capability-level fixtures above.

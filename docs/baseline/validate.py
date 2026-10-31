@@ -107,7 +107,7 @@ def documentation_checks(project):
         r"^\| (I\d\d) \| ([^|\n]+) \| ([^|\n]+) \| ([^|\n]+) \|$",
         milestone_text, re.M)
     milestone_ids = {row[0] for row in milestone_rows}
-    if len(milestone_rows) != 16 or milestone_ids != {f"I{i:02d}" for i in range(1, 17)}:
+    if len(milestone_rows) != 17 or milestone_ids != {f"I{i:02d}" for i in range(1, 18)}:
         failures.append({"problem": "Implementation milestone identity/count mismatch"})
     milestone_owners = {}
     for milestone, entries in re.findall(

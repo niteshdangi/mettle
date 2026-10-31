@@ -13,7 +13,7 @@ receipts; their re-review findings are covered by the I06 requalification.
 I06 is complete within the scope above. I07-I11 are partially implemented on macOS arm64 (per-item
 status in sections 8.3-8.4); none is qualified. I12 workflow commands are in
 progress. I13's macOS ARM64 capability inventory is implemented, unverified
-(not yet built); complete operation closure is not qualified. I14-I16 are not
+(not yet built); the V1 operation subset is not qualified. I14-I17 are not
 started.
 The selected design is in the linked specifications. Scalar execution does not
 establish full language, library or release correctness.
@@ -227,13 +227,14 @@ status below; no milestone after I06 is complete.
 | I10 | Threads and synchronization | Scoped/owned threads, shared ownership, locks, atomics and channels pass race/failure stress cases | I07 |
 | I11 | Async and scoped tasks | Optional executor drives async I/O; owned/direct-borrowed/scoped tasks pass wake, cancellation, panic and forgetting cases | I08, I10 |
 | I12 | Complete developer workflow | Native build/run/test/bench/doc/fmt/lint commands, LSP and debugger workflows pass end to end | I09, I11 |
-| I13 | Platform and capability closure | All 107 capability requirements and applicable stable operation contracts have checked declarations and evidence across selected profiles | I12 |
+| I13 | Platform and capability closure | All 107 capability requirements and the V1 operation subset (library-surface.md section 6.1) have checked declarations and evidence across selected profiles | I12 |
 | I14 | V1 release qualification | Reproducible installable C++/LLVM toolchain passes safety, capability, target and Rust runtime, compile-time and build-storage gates | I13 |
 | I15 | V1.1 substantive self-hosting | Mettle compiler builds itself through repeatable bootstrap stages and preserves V1 capability/performance gates | I14 |
 | I16 | V1.2 independent production backend | LLVM-free code generation covers every accepted profile/capability and passes Rust/LLVM-path comparisons | I15 |
+| I17 | Complete stable-operation closure | Every applicable stable inventory record outside the V1 subset, including deprecated contracts, architecture intrinsics and OS extensions, has checked declarations and evidence | I14 |
 
 This is fourteen delivery milestones to V1, followed by two architectural
-evolution milestones. I02 is the first useful native compiler, not a reduced V1.
+evolution milestones and I17's post-V1 completion of the operation inventory. I02 is the first useful native compiler, not a reduced V1.
 Dependencies are completion gates; a component's preparatory work may start once
 its own contracts/inputs exist, without marking the enclosing milestone complete.
 The experience track of section 8.7 runs alongside these milestones and is
@@ -1347,9 +1348,11 @@ it and the updated LLDB formatters are implemented, unverified (not run on this
 lane). Windows CodeView/PDB remains open and is out of scope for this lane.
 T006 and I12 are not complete.
 
-I13 closes remaining operation mappings with compiled native declarations and
-per-operation semantic evidence, including supporting protocols, reexports,
-deprecated stable APIs and target cfg branches missing from rendered docs.
+I13 closes the V1 operation subset defined in `docs/library-surface.md`
+section 6.1 with compiled native declarations and per-operation semantic
+evidence, including its supporting protocols, reexports and target cfg branches
+missing from rendered docs. By owner decision, every other stable inventory
+record, including deprecated stable APIs, moves to I17 and is not a V1 gate.
 For this lane, gate only the macOS ARM64 compiler-host/Darwin ARM64 target
 profile. Linux and Windows are excluded from gates by the owner and remain not
 qualified. Other target references (Android, WASI, non-hosted Wasm and
@@ -1364,10 +1367,11 @@ acceptance inventory is implemented, unverified (not yet built); it is a
 documentation-only source/fixture review at `0eea2fa`, with no new compiler or
 library implementation, test fixture, build, or test run. The inventory records
 61 evidenced, 1 implemented-without-evidence, 44 partial and 1 missing
-capability. It does not claim complete I13 operation closure: the pinned
-baseline has 106,125 canonical required contracts, and no receipt proves
+capability. It does not claim I13 operation closure: the pinned baseline has
+106,125 canonical contracts, of which the V1 subset is about 2,900 folded
+operation families and 1,760 trait/type pairs, and no receipt yet proves
 macOS ARM64 declaration typechecking and per-operation execution/probes for
-the applicable stable surface. Concrete open work includes the A009 optional
+that subset. Concrete open work includes the A009 optional
 Rust bridge decision/implementation, unsupported unsized heap owners and
 erased async-interface dispatch (S003/L053), the macOS per-item target/cfg
 audit (S031), and the remaining stable operation, supporting-protocol,
@@ -1378,7 +1382,9 @@ imports/reexports, dependency-object reuse, expanded debugger checks and async
 borrowed scopes, still require execution and applicable review.
 
 I14 freezes a release candidate and checks the whole accepted scope, rather than
-removing difficult capabilities to produce a smaller V1. Run the predeclared
+removing difficult capabilities to produce a smaller V1. The owner-selected V1
+operation subset (`docs/library-surface.md` section 6.1) is the only accepted
+operation-scope reduction; it does not drop any capability row. Run the predeclared
 pilot/fixed-sample runtime protocol, the compile-time and build-storage gates
 (performance.md section 5.1) and all supported-profile acceptance suites;
 preserve raw failures/inconclusive results. A faster workload cannot offset a
@@ -1386,7 +1392,7 @@ credible regression elsewhere. Verify clean installation and native compilation
 without Rust. Resolve the owner's license/distribution decisions before public
 publication; internal implementation does not require inventing those decisions.
 
-### 8.6. Architectural evolution: I15-I16
+### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher
 around the C++ implementation. Retain the C++ bootstrap/compiler reference,
@@ -1403,6 +1409,12 @@ equivalent semantics and requalify every accepted profile. The independent
 backend must provide address/undefined-behavior and thread checking equivalent
 to the current ASan/UBSan/TSan qualification, or run the full unsafe/runtime
 corpus under it; losing sanitizer coverage blocks I16.
+
+I17 closes the rest of the pinned stable inventory outside the V1 subset:
+deprecated stable APIs, remaining inherent operations and trait
+implementations, architecture intrinsics and OS extension modules, each with
+the same declaration, applicability and per-operation evidence rules as I13.
+It may proceed alongside I15-I16.
 
 ### 8.7. Experience track: readability, compile cost and storage
 

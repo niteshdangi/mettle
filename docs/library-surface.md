@@ -350,6 +350,104 @@ Experimental APIs are inventoried but not automatically committed. Explicitly
 accepted native allocator control, negative thread properties and borrowed
 scopes remain required independently of the reference's nightly register.
 
+### 6.1. V1 operation subset
+
+By owner decision, V1 (I13/I14) requires only the following subset of the
+stable inventory. Every other applicable stable record — including deprecated
+stable contracts, architecture intrinsics beyond the A006 initial tables, OS
+extension modules other than the selected Unix ones, and other rare types —
+remains required, but it moves to I17. The capability rows, the
+experience-track programs and the explicitly accepted items of section 6 remain
+V1 obligations regardless of this subset.
+
+A record from the pinned inventory is in the V1 subset when it is stable, not
+deprecated, applicable to the Darwin ARM64 target and not under `arch` or a
+non-Unix `os` module, and one of the following holds:
+
+- It is the declaration of a selected type or trait, or a selected free
+  function or macro.
+- It is an inherent method, associated constant, variant or public field of a
+  selected type.
+- It is a required or provided member of a selected trait.
+- It is an implementation of a selected trait for a selected type. Each
+  (type, trait) pair is one obligation, covering every member and associated
+  type of that implementation.
+
+Integer widths, float widths and same-shape atomics are folded into one family
+each, but the family must still be evidenced at every width. With this folding
+the subset is about 2,900 operation families plus 1,760 trait/type pairs, out
+of 106,125 canonical contracts.
+
+Selected types (by Rust name; native names follow section 9):
+
+- **Scalars and core values:** `Option`, `Result`, the integer and float
+  primitives, `bool`, `char`, `str`, slices, arrays, tuples, unit, `Range`,
+  `RangeInclusive`, `ManuallyDrop`, `NonNull`, `PhantomData`, `Reverse`,
+  `Wrapping`.
+- **Collections and text:** `String`, `Vec`, `VecDeque`, `HashMap`,
+  `HashSet`, `BTreeMap`, `BTreeSet`, `BinaryHeap`, and their `Entry`, `Iter`,
+  `IterMut`, `IntoIter`, `Drain`, `Keys` and `Values` types.
+- **Iterator adapters and text iterators:** `Map`, `Filter`, `Enumerate`, `Zip`,
+  `Chain`, `Rev`, `Take`, `Skip`, `Peekable`, `StepBy`, `TakeWhile`,
+  `SkipWhile`, `FlatMap`, `Flatten`, `Cloned`, `Copied`, `Windows`, `Chunks`,
+  `Chars`, `CharIndices`, `Bytes`, `Split` and `SplitWhitespace`.
+- **Owners and cells:** `Box`, `Rc`, `Arc`, `Weak`, `Cell`, `RefCell`, `Ref`,
+  `RefMut`, `OnceCell`, `Pin`.
+- **Synchronization:** `Mutex`, `RwLock` and their guards, `Condvar`, `Once`,
+  `OnceLock`, `Barrier`, the bool/pointer/32-bit/64-bit/size atomics,
+  `Ordering`, and the mpsc `Sender`, `SyncSender` and `Receiver`.
+- **Hosted services:**
+  - Time: `Duration`, `Instant`, `SystemTime`.
+  - Formatting and errors: `Formatter`, `Arguments`, the io `Error` and
+    `ErrorKind`.
+  - Files and paths: `File`, `OpenOptions`, `Metadata`, `ReadDir`, `DirEntry`,
+    `FileType`, `Permissions`, `Path`, `PathBuf`, `OsStr`, `OsString`, `CStr`,
+    `CString`.
+  - Standard streams and buffering: `Stdin`, `Stdout`, `Stderr`, `BufReader`,
+    `BufWriter`, `Lines`, `Cursor`.
+  - Processes: `Command`, `Child`, `Output`, `ExitStatus`, `Stdio`.
+  - Networking: `TcpListener`, `TcpStream`, `UdpSocket`, `SocketAddr`,
+    `IpAddr`, `Ipv4Addr`, `Ipv6Addr`.
+  - Threads: `JoinHandle`, `Thread`, `Scope`, `ScopedJoinHandle`.
+  - Async: `Poll`, `Context`, `Waker`.
+
+Selected traits:
+
+- **Iteration:** `Iterator`, `IntoIterator`, `DoubleEndedIterator`,
+  `ExactSizeIterator`, `FromIterator`, `Extend`.
+- **Value traits:** `Clone`, `Copy`, `Default`, `Debug`, `Display`, `Hash`,
+  `Hasher`, `BuildHasher`, `PartialEq`, `Eq`, `PartialOrd`, `Ord`.
+- **I/O:** the fmt and io `Write`, `Read`, `BufRead`, `Seek`.
+- **Conversion:** `From`, `Into`, `TryFrom`, `TryInto`, `AsRef`, `AsMut`,
+  `Borrow`, `ToOwned`, `ToString`, `FromStr`.
+- **Operators:** the arithmetic, bitwise, negation and compound-assignment
+  operators, `Index`, `IndexMut`, `Deref`, `DerefMut`.
+- **Language and runtime:** `Drop`, `Fn`, `FnMut`, `FnOnce`, `Future`, `Send`,
+  `Sync`, `Sized`, `Error`, `Any`.
+
+Selected free functions and macros:
+
+- **Threads:** the `thread` functions `spawn`, `scope`, `sleep`, `current`,
+  `yield_now`, `available_parallelism`.
+- **Files:** the `fs` functions `read`, `read_to_string`, `write`,
+  `create_dir`, `create_dir_all`, `remove_file`, `remove_dir`, `remove_dir_all`,
+  `rename`, `copy`, `metadata`, `read_dir`, `canonicalize`.
+- **Environment:** the `env` functions `args`, `var`, `vars`, `set_var`,
+  `remove_var`, `current_dir`, `set_current_dir`, `temp_dir`.
+- **Process and standard streams:** `process::exit`, `process::abort`,
+  `process::id`, `io::stdin`, `io::stdout`, `io::stderr`, `io::copy`.
+- **Memory and pointers:** the `mem` functions `swap`, `replace`, `take`,
+  `drop`, `forget`, `size_of`, `align_of`, `size_of_val`; the `ptr` functions
+  `null`, `null_mut`, `eq`, `read`, `write`, `copy`, `copy_nonoverlapping`,
+  `drop_in_place`.
+- **Comparison and iteration:** `cmp::min`, `cmp::max`, and the `iter`
+  functions `once`, `repeat`, `empty`, `from_fn`, `successors`, `zip`.
+- **Channels and construction:** `mpsc::channel`, `mpsc::sync_channel`,
+  `hint::black_box`, `char::from_u32`, `char::from_digit`, `str::from_utf8`,
+  `array::from_fn`.
+- **Macros:** the print/format/write macros, the assert macros, `panic`,
+  `vec`, `unreachable`, `todo`, `unimplemented`, `matches`, `dbg`.
+
 ## 7. What this does not certify
 
 The manifests and rules finish the design's operation inventory and translation
