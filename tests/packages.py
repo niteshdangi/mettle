@@ -1009,6 +1009,128 @@ def debug_info():
                if row.startswith("0x")), lines
 
 
+def find_lldb():
+    candidates = []
+    xcrun = shutil.which("xcrun")
+    if xcrun:
+        try:
+            result = subprocess.run([xcrun, "--find", "lldb"], text=True,
+                                    capture_output=True, timeout=30)
+            if result.returncode == 0 and result.stdout.strip():
+                candidates.append(result.stdout.strip())
+        except (OSError, subprocess.SubprocessError):
+            pass
+    for base in (mettle, Path(__file__).resolve()):
+        for parent in base.parents:
+            candidates.extend(sorted(
+                str(tool) for tool in
+                parent.glob(".tools/*/llvm/bin/lldb")))
+    if found := shutil.which("lldb"):
+        candidates.append(found)
+    for tool in dict.fromkeys(candidates):
+        try:
+            result = subprocess.run([tool, "--version"], capture_output=True,
+                                    timeout=30)
+            if result.returncode == 0:
+                return tool
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return None
+
+
+def debugger_workflow():
+    lldb = find_lldb()
+    if lldb is None:
+        print("SKIP debugger_workflow: LLDB not found (xcrun or PATH/toolchain)")
+        return
+
+    source = evidence / "debuggee.mt"
+    source.write_text(
+        "import alloc.collections.List\n"
+        "import core.future.{Context, Poll, noop_waker}\n"
+        "import std.task\n"
+        "interface DebugReadable { fn read_value(): i32; }\n"
+        "type DebugValue { value: i32 }\n"
+        "extend DebugValue implements DebugReadable {\n"
+        "    fn read_value(): i32 { self.value }\n"
+        "}\n"
+        "@layout(C,u8)\n"
+        "copy enum DebugChoice { Empty = 7; Value(i32) = 9 }\n"
+        "async fn debug_coroutine(): i32 {\n"
+        "    await task.yield_now();\n"
+        "    42\n"
+        "}\n"
+        "fn inspect(base: i32): i32 {\n"
+        "    let result = base + 1\n"
+        "    result\n"
+        "}\n"
+        "fn main(): i32 {\n"
+        "    var items = List<i32>.new()\n"
+        "    items.push(7)\n"
+        "    let backing: [i32; 2] = [3; 2]\n"
+        "    let slice: read [i32] = read backing\n"
+        "    let choice = DebugChoice.Value(42)\n"
+        "    let concrete = DebugValue(7)\n"
+        "    let erased: read any DebugReadable = read concrete\n"
+        "    var slot = core.pin.pin(debug_coroutine())\n"
+        "    let waker = noop_waker()\n"
+        "    var cx = Context.from_waker(read waker)\n"
+        "    match take slot.as_mut().poll(mut cx) {\n"
+        "        Poll.Pending => {},\n"
+        "        Poll.Ready(_) => { return 1 }\n"
+        "    }\n"
+        "    let coroutine = unsafe { slot.as_mut().get_unchecked_mut() }\n"
+        "    let result = inspect(41)\n"
+        "    if result != 42 || items.len() != 1usize || "
+        "slice.len() != 2usize { return 2 }\n"
+        "    if erased.read_value() != 7 { return 3 }\n"
+        "    match choice {\n"
+        "        DebugChoice.Empty => 4,\n"
+        "        DebugChoice.Value(value) => value - 42\n"
+        "    }\n"
+        "}\n")
+    output = evidence / "debugger-workflow"
+    invoke(["build", source, "-o", output, "-g"])
+
+    lines = source.read_text().splitlines()
+    main_line = next(i for i, line in enumerate(lines, 1)
+                     if "let result = inspect(41)" in line)
+    inspect_line = next(i for i, line in enumerate(lines, 1)
+                        if "let result = base + 1" in line)
+    await_line = next(i for i, line in enumerate(lines, 1)
+                      if "await task.yield_now()" in line)
+    script = Path(__file__).resolve().parents[1] / "tools/debug/mettle_lldb.py"
+    commands = [
+        lldb, "--batch",
+        "-o", f'command script import "{script}"',
+        "-o", f"breakpoint set --file debuggee.mt --line {main_line}",
+        "-o", f"breakpoint set --file debuggee.mt --line {inspect_line}",
+        "-o", "run",
+        "-o", "frame variable",
+        "-o", "frame variable coroutine",
+        "-o", "continue",
+        "-o", "frame variable",
+        "-o", "next",
+        "-o", "frame variable",
+        "-o", "continue",
+        "--", str(output),
+    ]
+    result = subprocess.run(commands, text=True, capture_output=True,
+                            timeout=180)
+    text = result.stdout + result.stderr
+    assert result.returncode == 0, f"{commands}: {text}"
+    assert "stop reason = breakpoint" in text, text
+    assert f"debuggee.mt:{main_line}" in text, text
+    assert f"debuggee.mt:{inspect_line}" in text, text
+    assert "base" in text and "i32" in text, text
+    assert "List len=1 cap=" in text, text
+    assert "slice len=2" in text, text
+    assert "DebugChoice" in text and "Value" in text, text
+    assert "read any DebugReadable" in text and "erased data=" in text, text
+    assert f"state = await #1 (line {await_line})" in text, text
+    assert "exited with status = 0" in text, text
+
+
 DOC_SOURCE = (
     "//! Arithmetic helpers.\n"
     "//!\n"
@@ -1347,7 +1469,8 @@ CASES = [path_dependency, missing_lock_locked, lock_corruption,
          doc_writes_deterministic_html,
          doc_resolves_dependency_links_and_warns,
          doctests_run_isolated_examples,
-         lint_reports_semantic_findings, debug_info, language_server,
+         lint_reports_semantic_findings, debug_info, debugger_workflow,
+         language_server,
          test_json_timeout_and_modules]
 
 # Optional fourth argument: a regular expression selecting cases by name.

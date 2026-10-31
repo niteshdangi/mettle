@@ -569,7 +569,7 @@ their contents. Static region analysis does not require runtime region objects.
 Status (I12/T006, partial; the current DWARF changes for lexical scopes,
 moved-value liveness, erased witness types and inlining are implemented,
 unverified (not yet built). Earlier `debug_info` assertions passed on macOS
-arm64; LLDB summaries have not been re-run interactively):
+arm64; the LLDB workflow and current summaries are implemented, unverified):
 `mettle build -g`
 emits DWARF 4 through `llvm::DIBuilder` in the LLVM adapter
 (`backend/llvm/debug.*`): a compile unit and file per source, a subprogram per
@@ -594,18 +594,22 @@ DWARF variant part (`start`, `await #N (line L)`, `running`, and `done`), with
 captured environment and output fields and per-suspension fields for
 scope-initialized locals. The LLDB summary renders `state = await #N (line L)`.
 These coroutine changes are implemented, unverified (not yet built); the
-focused `debug_info` assertions and interactive LLDB behavior remain unverified.
+existing `debug_info` assertions have prior macOS arm64 evidence, but the
+current changes and interactive LLDB behavior remain unverified.
 
 For LLDB, import `tools/debug/mettle_lldb.py` with
 `command script import /path/to/mettle/tools/debug/mettle_lldb.py`. It registers
-best-effort summaries for native `List`, `String`, text views, optionals and
-outcomes; text reads are capped at 256 bytes. Summaries do not execute program
-code and report unavailable data rather than guessing. The updated `debug_info`
-baseline regression passes on macOS arm64; the coroutine assertions added here
-are unverified. Existing LLDB summaries were checked manually (List
-length/capacity and String text display; an optional shows only its variant,
-not its payload); the coroutine summary has not been checked interactively. No
-automated LLDB test exists.
+best-effort summaries for native `List`, slices, erased views, `String`, text
+views, optionals, outcomes and coroutine states; text reads are capped at 256
+bytes. Summaries do not execute program code and report unavailable data rather
+than guessing. `tests/packages.py::debugger_workflow` builds a `-g` executable,
+imports these summaries into batch LLDB, and checks source breakpoints,
+parameters/locals, list and slice lengths, a tagged variant, an erased view and
+a suspended coroutine state. It prints a clear skip if LLDB is unavailable.
+This workflow and the current summary changes are implemented, unverified (not
+run on this lane); prior macOS arm64 checks covered List length/capacity and
+String text display, while the coroutine summary has not been checked
+interactively.
 
 The comp dir is the root source's directory; without `-g` the adapter emits no
 debug metadata. `-g` is explicit (the `debug` profile does not imply it), and

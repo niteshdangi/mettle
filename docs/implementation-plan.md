@@ -1259,11 +1259,14 @@ invocation locations have prior macOS arm64 verification. The updated LLDB
 summaries have not been re-run interactively. Coroutine resume-state variants,
 the discriminator, scope-initialized saved-local fields, captured environment
 and output fields, and the LLDB `state = await #N (line L)` summary are
-implemented; the focused `debug_info` assertions pass on macOS arm64. This
-lane adds DWARF lexical scopes, moved-value location ranges, erased witness
-table types, and release inlining metadata; these changes and assertions are
-implemented, unverified (not yet built). Windows CodeView/PDB remains open and
-is out of scope for this lane.
+implemented; the focused `debug_info` assertions have prior macOS arm64
+evidence. This lane adds DWARF lexical scopes, moved-value location ranges,
+erased witness table types, and release inlining metadata; these changes and
+assertions are implemented, unverified (not yet built). The new
+`debugger_workflow` package case automates LLDB breakpoint, local/parameter,
+slice/List, tagged-variant, erased-view and suspended-coroutine summary checks;
+it and the updated LLDB formatters are implemented, unverified (not run on this
+lane). Windows CodeView/PDB remains open and is out of scope for this lane.
 T006 and I12 are not complete.
 
 I13 closes remaining operation mappings with compiled native declarations and
