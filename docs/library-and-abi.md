@@ -38,7 +38,9 @@ forgotten and closes them on drop. A local scope permits `Within` borrows,
 drives ready children and cancels suspended ones before returning; it does not
 keep children running across an enclosing async future's polls. No fairness or
 bounded completion is promised. Completed task metadata is retained until the
-executor is destroyed.
+executor is destroyed. Calling `run` or `run_until_stalled` reentrantly from a
+task poll on that same executor panics rather than nesting a poll or blocking.
+This reentrancy guard is implemented but unverified.
 
 Working prelude: scalar names, Copy, Sized, iterator/call capabilities, Text,
 String when allocation is enabled, and native optional/outcome constructors.
