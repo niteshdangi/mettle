@@ -1019,8 +1019,13 @@ void RegionPass::infer(Type actual, Type formal,
       infer(from.components[0], to.components[0], bindings);
       return;
     }
-    if (from.regionPattern != Type::Unknown &&
-        from.regionPattern == to.regionPattern &&
+    // Same nominal origins keep their region arguments aligned even when a
+    // specialization has a different erased region pattern.
+    const bool sameOrigin = from.regionOrigin != Type::Unknown &&
+                            from.regionOrigin == to.regionOrigin;
+    const bool samePattern = from.regionPattern != Type::Unknown &&
+                             from.regionPattern == to.regionPattern;
+    if ((sameOrigin || samePattern) &&
         from.regionArguments.size() == to.regionArguments.size() &&
         from.genericArguments.size() == to.genericArguments.size()) {
       for (std::size_t i = 0; i < from.regionArguments.size(); ++i)
@@ -1711,6 +1716,41 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
                               explicitArgument == explicitRegions.end()
                                   ? store.inference(current->context.scope)
                                   : explicitArgument->second);
+  }
+  if (receiverCall) {
+    // Extension-owner regions are implicit method arguments, not call-site
+    // generic arguments.
+    auto instantiateOwnerRegions =
+        [&](const std::vector<GenericParameter> &parameters) {
+          for (const auto &parameter : parameters) {
+            if (parameter.kind != GenericParameterKind::Region)
+              continue;
+            auto found = signature.context.names.find(parameter.name);
+            if (found == signature.context.names.end() ||
+                std::any_of(substitution.begin(), substitution.end(),
+                            [&](const auto &entry) {
+                              return entry.first == found->second;
+                            }))
+              continue;
+            substitution.emplace_back(
+                found->second, store.inference(current->context.scope));
+          }
+        };
+    const auto &method = module.functions[callee];
+    if (method.implementation >= 0 &&
+        static_cast<std::size_t>(method.implementation) <
+            module.implementations.size()) {
+      instantiateOwnerRegions(
+          module.implementations[method.implementation].genericParameters);
+    } else if (!method.interfaceOwner.empty()) {
+      auto owner = std::find_if(
+          module.interfaces.begin(), module.interfaces.end(),
+          [&](const auto &candidate) {
+            return candidate.name == method.interfaceOwner;
+          });
+      if (owner != module.interfaces.end())
+        instantiateOwnerRegions(owner->genericParameters);
+    }
   }
   for (auto region : signature.backing)
     if (store.get(region).kind == RegionKind::Bound &&
