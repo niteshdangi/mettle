@@ -1,8 +1,8 @@
-# I13 library work package (handoff)
+# I13 library work package
 
 Repo: /Users/niteshkumar/Projects/mettle-lang, main at `940637d`. I01-I12 are
-closed for the macOS ARM64 host and Darwin ARM64 target only. You own the
-**library** half of I13. Another agent works on the compiler half at the same time.
+closed for the macOS ARM64 host and Darwin ARM64 target only. You own I13's
+library work and the compiler changes it needs.
 
 ## Read first
 - AGENTS.md, CONTRIBUTING.md, docs/code-quality.md
@@ -71,19 +71,25 @@ After these, work through the subset area by area, in this order:
 7. macros;
 8. mem and ptr functions.
 
-## Boundary with the compiler agent
-- You edit library/**, tests/** and the docs listed above. Do NOT edit
-  compiler/**, the runtime C++ or shared compiler headers.
-- If a library operation needs a compiler feature or fix:
-  - write a minimal repro `.mt` file and its exact compiler error into
-    `docs/i13-compiler-requests.md`;
-  - mark the row blocked and move on to other rows;
-  - do not weaken the API or the test to work around it.
-- The compiler agent already owns these; don't work around them:
-  - **Integer literals don't infer `usize` from a library Index impl**
-    (`list[0]`). Keep the `0usize` suffixes until the fix lands.
-  - **S003:** pinned owning handles.
-  - **Sanitized hosted-std compile time.**
+## Compiler changes
+You may change the compiler (compiler/**, runtime C++) when a V1 operation needs
+it. Follow the C++ compiler scope in docs/implementation-plan.md section 8:
+V1-required features and correctness/soundness fixes only, no C++-only tuning
+or refactors. Keep the module boundaries in compiler/modules.json, format with
+the pinned clang-format, and add a focused source run/fail regression for each
+compiler fix. Never weaken an API or a test to avoid a compiler fix.
+
+Compiler work also in your scope:
+- **Integer literals don't infer `usize` from a library Index impl:** `list[0]`
+  on List/VecDeque defaults to `i32` and finds no `Index<i32>`; built-in slices
+  already infer `usize`. The argument type comes from `inference.value(right)` in
+  `Checker::operatorCall` (compiler/semantics/operators.cpp); an unresolved
+  integer-literal variable should take the index type of the receiver's sole
+  integer Index implementation. Then drop the `0usize` suffixes in
+  tests/source/run/i13-text-whitespace-splits-boundaries.mt (~lines 352-415).
+- **S003:** pinned owning handles (safe `Pin` of heap/shared owners).
+- **Sanitized hosted-std compile time:** 37 s against a 30 s probe bound
+  (Release is 2.7 s). Diagnose before changing anything.
 
 ## Owner rules
 - **Mettle must not look like Rust.** Use Mettle names and syntax (section 9),
