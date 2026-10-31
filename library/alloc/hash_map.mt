@@ -518,7 +518,8 @@ extend<region r, K: Hash + PartialEq, V, A: Allocator> Entry<region r, K, V, A> 
     pub take fn and_modify<F: take fn(mut V): Unit>(modify: take F): Entry<region r, K, V, A> {
         match take self {
             Entry.Occupied(entry) => {
-                // The entry's exclusive map loan keeps this initialized slot valid.
+                // The exclusive map loan keeps this initialized slot and index
+                // stable; this pointer is used only for the synchronous callback.
                 let slot = unsafe { core.ptr.from_mut((*entry.map.entries.as_mut_ptr().add(entry.index)).value) }
                 unsafe { modify(mut *slot) }
                 Entry.Occupied(entry)

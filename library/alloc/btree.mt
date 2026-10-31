@@ -599,8 +599,8 @@ extend<region r, K: Ord, V, A: Allocator> Entry<region r, K, V, A> {
     pub take fn and_modify<F: take fn(mut V): Unit>(modify: take F): Entry<region r, K, V, A> {
         match take self {
             Entry.Occupied(entry) => {
-                // Use a raw slot pointer to avoid the get_mut() loan false
-                // positive; the exclusive entry loan keeps it live here.
+                // The exclusive map loan keeps this initialized value live and
+                // the node stable; use the pointer only for the callback.
                 let slot = unsafe {
                     core.ptr.from_mut((*node_entry(entry.node, entry.index)).value)
                 }

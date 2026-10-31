@@ -784,11 +784,21 @@ block it owns. Hosted builds link the `mettle_rt_alloc/dealloc/realloc` hooks in
 `tests/alloc/` (`library.alloc`): happy paths, large growth, hash collisions,
 a failing allocator, counted drops, a trap on a non-boundary `String.truncate`,
 a borrow-invalidation rejection and a structured parser + `Map<String,
-List<i64>>` workload built without std. Map `entry` operations are verified
-by `tests/alloc/map_entry.mt` on macOS; `Entry.and_modify` writes through a
-raw slot pointer because the `get_mut()` form is rejected with a likely false
-"view of local storage into caller-owned storage" diagnostic (open), and
-dedicated entry loan-rejection fixtures remain required.
+List<i64>>` workload built without std. Existing `tests/alloc/map_entry.mt`
+exercises the `Entry.and_modify` API and its run path. Both hash-map and sorted
+map implementations retain a raw slot pointer in `and_modify`: the entry's
+exclusive map loan keeps the initialized value and its location valid, and the
+pointer is used only during the synchronous callback. The reported rejection
+of a `get_mut()`-based implementation uses the "view of local storage into
+caller-owned storage" diagnostic; static inspection locates this diagnostic in
+origin/loan escape analysis, but the rejected form's exact escape path has not
+been reproduced, so whether it is a false positive remains unresolved. The
+`get_mut()` method returns `mut V from self`, unlike consuming `into_mut()`'s
+`mut V from r`; a local receiver reborrow is a possible source classification,
+but that hypothesis is unverified. A dedicated entry live-loan rejection
+fixture was added under `tests/alloc/`. These library, fixture, and
+documentation changes are implemented, unverified (not yet built); the
+compiler analysis was not changed.
 `SortedMap`/`SortedSet` are a node B-tree (minimum degree 6, nodes from the
 map's allocator, parent links, split on the way down and borrow/merge on
 removal), verified on macOS by `tests/alloc/btree_stress.mt` and
