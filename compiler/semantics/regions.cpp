@@ -512,7 +512,8 @@ private:
   const Module::Product *declaration(Type type) const;
   Type decorate(Type type, const TypeSyntax &syntax, RegionContext &context,
                 Span span, RegionId fallback = RegionId::Unspecified,
-                bool stored = false);
+                bool stored = false,
+                bool inferGenericArgumentsFromFallback = false);
   Type inferred(Type type, RegionId region);
   Type replace(Type type,
                const std::vector<std::pair<RegionId, RegionId>> &map);
@@ -627,7 +628,8 @@ const Module::Product *RegionPass::declaration(Type type) const {
 }
 Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
                           RegionContext &context, Span span, RegionId fallback,
-                          bool stored) {
+                          bool stored,
+                          bool inferGenericArgumentsFromFallback) {
   if (auto found = annotations.find(&syntax); found != annotations.end())
     type = found->second;
   if (type == Type::Unknown || type == Type::Never)
@@ -805,7 +807,12 @@ Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
           argument = decorate(argument, *syntax.nested, context, span, fallback,
                               stored);
         else
-          argument = inferred(argument, store.inference(context.scope));
+          argument = inferred(
+              argument,
+              inferGenericArgumentsFromFallback &&
+                      fallback != RegionId::Unspecified
+                  ? fallback
+                  : store.inference(context.scope));
         nested.types[parameter.name] = argument;
         typeArguments.push_back(argument);
       }
@@ -3350,7 +3357,7 @@ void RegionPass::run() {
   auto inferredAsyncBodyResult = [&](std::size_t index, RegionContext &context,
                                      RegionId fallback) {
     const auto &syntax = module.functions[index];
-    if (!syntax.asyncDefaultOutputInferred ||
+    if (!syntax.asyncDefaultFutureInferred ||
         syntax.asyncDefaultBodyResult.form != TypeForm::Opaque)
       return signatures[index].result;
     auto owner =
@@ -3425,7 +3432,8 @@ void RegionPass::run() {
         ++region;
       }
     future = types.substituteRegions(future, regionBindings);
-    return decorate(future, TypeSyntax{}, context, syntax.span, fallback);
+    return decorate(future, TypeSyntax{}, context, syntax.span, fallback,
+                    false, true);
   };
   for (std::size_t i = 0; i < module.functions.size(); ++i) {
     currentFunction = i;
@@ -3460,7 +3468,7 @@ void RegionPass::run() {
     if (!module.functions[i].body.get())
       continue;
     auto bodyResult = current->result;
-    if (module.functions[i].asyncDefaultOutputInferred) {
+    if (module.functions[i].asyncDefaultFutureInferred) {
       std::vector<RegionId> eligible;
       for (std::size_t p = 0; p < current->parameters.size(); ++p)
         if (functions[i].locals[p].mode == ParameterMode::Read ||

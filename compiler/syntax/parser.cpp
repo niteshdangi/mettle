@@ -203,6 +203,7 @@ void completeDeclarations(Module &module) {
       method.constraints.insert(method.constraints.begin(),
                                 implementation.constraints.begin(),
                                 implementation.constraints.end());
+      implementation.methodFunctions.push_back(module.functions.size());
       module.functions.push_back(std::move(method));
     }
     implementation.methods.clear();

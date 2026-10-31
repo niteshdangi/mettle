@@ -359,14 +359,11 @@ void Checker::interfaceImplementations() {
            ++method) {
         const auto &required = definition.methods[method];
         std::optional<int> provided;
-        for (std::size_t function = 0; function < module.functions.size();
-             ++function) {
+        for (auto function : syntax.methodFunctions) {
+          if (function >= module.functions.size())
+            continue;
           const auto &candidate = module.functions[function];
-          if ((candidate.implementation == static_cast<int>(i) ||
-               std::find(syntax.methodFunctions.begin(),
-                         syntax.methodFunctions.end(),
-                         function) != syntax.methodFunctions.end()) &&
-              candidate.name.ends_with("." + required.name)) {
+          if (candidate.name.ends_with("." + required.name)) {
             if (provided)
               error("name", candidate.span, "duplicate implementation method");
             provided = static_cast<int>(function);
