@@ -30,7 +30,7 @@ struct Piece {
   bool authored = false;
   // Written directly after the previous token of a procedural macro's output.
   bool glued = false;
-  std::vector<std::string> context;
+  std::vector<std::string> context{};
 };
 using Pieces = std::vector<Piece>;
 
@@ -931,6 +931,15 @@ private:
     return found == macros->end() ? nullptr : &found->second;
   }
 
+  // First token of the `a.b.` qualifier written before the macro name at `i`.
+  static std::size_t qualifierStart(const Pieces &in, std::size_t i) {
+    auto first = i;
+    while (first >= 2 && symbol(in[first - 1], ".") &&
+           in[first - 2].kind == TokenKind::Word)
+      first -= 2;
+    return first;
+  }
+
   const Macro *qualifiedMacro(const Pieces &in, std::size_t i,
                               std::vector<std::string> &path) {
     if (i < 2 || !symbol(in[i - 1], "."))
@@ -972,8 +981,8 @@ private:
       return {};
     if (i > 0 && symbol(in[i - 1], "::"))
       return {};
-    auto caller = in[i].context.empty() ? scopeAt(in[i].origin.begin)
-                                         : in[i].context;
+    auto caller =
+        in[i].context.empty() ? scopeAt(in[i].origin.begin) : in[i].context;
     std::vector<std::string> path;
     const Macro *macro = nullptr;
     if (i > 0 && symbol(in[i - 1], "."))
@@ -1010,8 +1019,7 @@ private:
       return false;
     if (i > 0 && (symbol(in[i - 1], ".") || symbol(in[i - 1], "::")))
       return false;
-    return procedures->names.contains(in[i].text) &&
-           !invoked(in, i).macro;
+    return procedures->names.contains(in[i].text) && !invoked(in, i).macro;
   }
 
   std::string path() const {
@@ -1037,18 +1045,23 @@ private:
         continue;
       }
       auto last = inner[i + 2];
+      if (macro) {
+        // The qualifier was already copied token by token; it names the
+        // macro, not a value the expansion is applied to.
+        auto prefix = i - qualifierStart(in, i);
+        out.resize(out.size() - std::min(prefix, out.size()));
+      }
       if (invocation.privateAccess) {
-        nameError({in[i].origin.begin, in[last].origin.end,
-                   in[i].origin.source},
-                  *macro);
+        nameError(
+            {in[i].origin.begin, in[last].origin.end, in[i].origin.source},
+            *macro);
         i = last + 1;
         ok = false;
         continue;
       }
       if (host)
         ok &= invokeProcedure(in, i, last, out, depth, use);
-      else if (!broken.contains(
-                   macroKey(macro->definitionScope, macro->name)))
+      else if (!broken.contains(macroKey(macro->definitionScope, macro->name)))
         ok &= invoke(*macro, in, i, last, out, depth, use);
       i = last + 1;
       if (out.size() > limits::tokens) {
@@ -1598,7 +1611,7 @@ private:
         continue;
       }
       auto name = host ? pieces[i].text : macro->name;
-      auto first = i, last = close[i + 2];
+      auto first = macro ? qualifierStart(pieces, i) : i, last = close[i + 2];
       Span use{pieces[first].origin.begin, pieces[last].origin.end, source.id};
       copy(use.begin);
       cursor = use.end;
@@ -1607,8 +1620,8 @@ private:
         nameError(use, *macro);
         continue;
       }
-      if (macro && broken.contains(
-                       macroKey(macro->definitionScope, macro->name)))
+      if (macro &&
+          broken.contains(macroKey(macro->definitionScope, macro->name)))
         continue;
       chain.clear();
       Pieces call(pieces.begin() + first, pieces.begin() + last + 1), result;

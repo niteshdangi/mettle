@@ -47,9 +47,8 @@ public:
         continue;
       auto name = package.module.empty() ? package.name : package.module;
       sourceId(*source);
-      macroModules[{name}] =
-          {fs::path(source->path).parent_path(), source->path, source->id,
-           std::nullopt};
+      macroModules[{name}] = {fs::path(source->path).parent_path(),
+                              source->path, source->id, std::nullopt};
     }
     read(std::move(root), {}, directory, 0, true);
     if (library.harness != Library::Harness::None && diagnostics.empty()) {
@@ -108,7 +107,7 @@ private:
   Module result;
   std::unordered_set<std::string> loaded;
   SourceId nextSource = 0;
-  std::map<std::vector<std::string>, SourceId> sourceIds;
+  std::map<std::string, SourceId> sourceIds;
   struct MacroModuleLocation {
     fs::path directory;
     std::string sourcePath;
@@ -153,9 +152,8 @@ private:
       auto alias = path[1];
       std::replace(alias.begin(), alias.end(), '-', '_');
       std::string module;
-      const auto &dependencies = currentPackage
-                                     ? currentPackage->dependencies
-                                     : library.packageDependencies;
+      const auto &dependencies = currentPackage ? currentPackage->dependencies
+                                                : library.packageDependencies;
       for (const auto &[name, target] : dependencies)
         if (name == alias || name == path[1]) {
           module = target;
@@ -168,8 +166,8 @@ private:
     }
 
     auto base = macroModules.end();
-    for (auto candidate = macroModules.begin();
-         candidate != macroModules.end(); ++candidate)
+    for (auto candidate = macroModules.begin(); candidate != macroModules.end();
+         ++candidate)
       if (candidate->first.size() <= path.size() &&
           std::equal(candidate->first.begin(), candidate->first.end(),
                      path.begin()) &&
@@ -179,9 +177,8 @@ private:
     if (base == macroModules.end())
       return std::nullopt;
     if (base->first.size() == path.size()) {
-      auto source = base->second.rootSource
-                        ? base->second.rootSource
-                        : provider(base->second.sourcePath);
+      auto source = base->second.rootSource ? base->second.rootSource
+                                            : provider(base->second.sourcePath);
       if (!source)
         return std::nullopt;
       source->id = base->second.sourceId;
@@ -194,9 +191,8 @@ private:
       for (auto i = base->first.size(); i + 1 < length; ++i)
         directory /= path[i];
       auto name = path[length - 1];
-      auto firstPath = (directory / (name + ".mt"))
-                           .lexically_normal()
-                           .generic_string();
+      auto firstPath =
+          (directory / (name + ".mt")).lexically_normal().generic_string();
       auto secondPath =
           (directory / name / "module.mt").lexically_normal().generic_string();
       auto first = provider(firstPath);
@@ -207,15 +203,13 @@ private:
         continue;
       auto source = first ? std::move(*first) : std::move(*second);
       sourceId(source);
-      std::vector<std::string> sourcePath(path.begin(),
-                                          path.begin() + length);
+      std::vector<std::string> sourcePath(path.begin(), path.begin() + length);
       return expansion::MacroModuleSource{std::move(source), std::move(path),
                                           std::move(sourcePath)};
     }
 
-    auto source = base->second.rootSource
-                      ? base->second.rootSource
-                      : provider(base->second.sourcePath);
+    auto source = base->second.rootSource ? base->second.rootSource
+                                          : provider(base->second.sourcePath);
     if (!source)
       return std::nullopt;
     source->id = base->second.sourceId;
@@ -500,11 +494,9 @@ private:
           return;
         }
         if (reference.ownerSyntax &&
-            (shadowed.contains(reference.root) ||
-             !available(reference.root))) {
-          diagnostics.error(
-              "feature", reference.span,
-              "native owner syntax requires the alloc library");
+            (shadowed.contains(reference.root) || !available(reference.root))) {
+          diagnostics.error("feature", reference.span,
+                            "native owner syntax requires the alloc library");
           return;
         }
         if (shadowed.contains(reference.root) ||
