@@ -3,7 +3,7 @@ module original {
 }
 
 module api {
-    pub import original.value
+    pub import super.original.value
 }
 
 import api.value
