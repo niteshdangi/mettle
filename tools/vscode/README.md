@@ -40,7 +40,6 @@ ELECTRON_RUN_AS_NODE=1 \
   "/Applications/Visual Studio Code.app/Contents/MacOS/Code" \
   tools/vscode/test/grammar.cjs \
   "/Applications/Visual Studio Code.app/Contents/Resources/app"
-python3 tools/check_quality.py
 ```
 
 For another desktop installation, pass its application resource directory and

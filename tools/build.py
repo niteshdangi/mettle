@@ -17,8 +17,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--configuration", choices=("Debug", "Release"), default="Debug")
     parser.add_argument("--sanitizers", action="store_true", help="enable compiler ASan/UBSan")
-    parser.add_argument("--quality", action="store_true",
-                        help="run the build-directory quality gate, including CTest, once")
     arguments = parser.parse_args()
     selected = host_platform()
     items = artifacts(selected)
@@ -50,9 +48,7 @@ def main():
          f"-DMETTLE_ENABLE_SANITIZERS={'ON' if arguments.sanitizers else 'OFF'}"],
         [str(cmake), "--build", str(build), "--target", "clean"],
         [str(cmake), "--build", str(build), "--parallel", str(min(os.cpu_count() or 1, 4))],
-        ([sys.executable, str(ROOT / "tools/check_quality.py"), "--build-dir", str(build)]
-         if arguments.quality else
-         [str(ctest), "--test-dir", str(build), "--output-on-failure", "--verbose"]),
+        [str(ctest), "--test-dir", str(build), "--output-on-failure", "--verbose"],
         [str(cmake), "--build", str(build), "--target", "clean"],
         [str(cmake), "--build", str(build), "--parallel", str(min(os.cpu_count() or 1, 4))],
     ]

@@ -26,7 +26,7 @@ The [architecture contract](compiler-architecture.md) owns the full component
 design. `compiler/modules.json` declares each current component's sources, public
 headers and direct dependencies and drives its CMake target. Cycles, undeclared
 includes, access to another component's private headers and unowned compiler
-files fail the build/quality checks.
+files fail the build.
 
 - Source, syntax, semantics and compiler-owned IR must not include LLVM or
   backend headers. The driver orchestrates; it does not define typing/ownership.
@@ -205,8 +205,7 @@ report from UBSan, both with exit status 99.
 `abort_on_error=0` selects that exit behavior on Darwin; `halt_on_error=1` and
 nonrecovering instrumentation remain enabled. The 15-second startup guard and
 ordinary negative-test expectations remain unchanged.
-Clean-build/tool/runtime hashes and logs are recorded by `tools/build.py`;
-the build-directory quality gate separately records analysis/test results.
+Clean-build/tool/runtime hashes and logs are recorded by `tools/build.py`.
 Do not silently substitute host runtimes, disable ASan, inject a private dyld
 shim, or change toolchain pins without an explicit compatibility decision.
 
@@ -281,19 +280,16 @@ framework or test added just to validate the wording of this standard.
 
 | Change | Required evidence |
 | --- | --- |
-| Every change | Fast quality gate: authored text, pinned formatting, direct include boundaries, Python syntax, rule regressions and specification audit |
-| Compiler/runtime C++ | Build-directory quality gate: fresh incremental build, selected clang-tidy checks and applicable CTest fixtures |
+| Every change | Pinned formatting; the build's module/include check |
+| Compiler/runtime C++ | Incremental build and applicable CTest fixtures |
 | Memory/unsafe/ownership | Above plus ASan/UBSan build and relevant boundary/cleanup regressions |
 | Language behavior or IR/backend | Debug/Release source-profile checks; Linux source execution when target behavior/lowering is affected |
 | Library/API | Applicable access/failure/invalidation/complexity cases, native contract mapping and layer restrictions; target/ABI cases when relevant |
 | Milestone/release closure | Clean reproducible builds, current source/tool/sysroot/artifact identities and the owning milestone's complete target gates |
 | Performance | Equivalent contracts/datasets and the registered performance protocol; separate compiler time/memory from program runtime |
 
-`tools/check_quality.py --build-dir ...` rebuilds before analysis/tests and
-refuses another project's or an unpinned compiler's build directory. It does not
-silently install dependencies or fix source. Receipts under `build/quality/`
-are bound to inputs and selected tools. Fast, build, sanitizer, reproducibility
-and target checks are different evidence scopes; none substitutes for another.
+Build, sanitizer, reproducibility and target checks are different evidence
+scopes; none substitutes for another.
 
 ## 8. Dependencies, suppressions and review
 

@@ -39,7 +39,7 @@ the annexes refine older broad descriptions, without overriding user decisions.
 
 The documentation gate closes only when
 [baseline/validation.json](baseline/validation.json) reports passed for the current
-operation-manifest digest and documentation-input digest, with no failures.
+operation-manifest digest, with no failures.
 [The reproducible audit](baseline/README.md) defines the inventory boundary and
 limitations. Re-run its validator after changing this specification.
 

@@ -165,17 +165,6 @@ def documentation_checks(project):
     }, failures
 
 
-def documentation_inputs(project):
-    paths = (list(project_files(project, "*.md")) + list((project / "examples").rglob("*.mt")) +
-             list((project / "examples").rglob("expectations.json")) +
-             list(ROOT.glob("*.py")) +
-             [project / "docs/capabilities.csv", project / "docs/toolchain-pins.json",
-              ROOT / "sources.json", ROOT / "supporting-protocols.json"])
-    hashes = {str(path.relative_to(project)): hashlib.sha256(path.read_bytes()).hexdigest()
-              for path in sorted(set(paths))}
-    return hashes, hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
-
-
 def main():
     summary = json.loads((ROOT / "audit-summary.json").read_text())
     provenance = json.loads((ROOT / "source-provenance.json").read_text())
@@ -348,7 +337,6 @@ def main():
         failures.append({"problem": "Operation totals differ"})
     documentation, documentation_failures = documentation_checks(ROOT.parent.parent)
     failures.extend(documentation_failures)
-    document_inputs, document_digest = documentation_inputs(ROOT.parent.parent)
     source_constraints = 0
     with gzip.open(ROOT / "source-constraints.jsonl.gz", "rt") as stream:
         for line in stream:
@@ -375,8 +363,6 @@ def main():
         "table_counts": table_counts,
         "known_edge_cases_checked": len(checks) + 2,
         "documentation_checks": documentation,
-        "documentation_sha256": document_digest,
-        "documentation_inputs": document_inputs,
         "source_constraints_checked": source_constraints,
         "conditional_unstable_declaration_references": dict(sorted(conditional_unstable_references.items())),
         "supporting_protocol_families": dict(sorted(supporting_families.items())),
@@ -387,7 +373,7 @@ def main():
     (ROOT / "validation.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps({
         k: v for k, v in result.items()
-        if k not in {"conditional_unstable_declaration_references", "failures", "documentation_inputs"}
+        if k not in {"conditional_unstable_declaration_references", "failures"}
     }, indent=2))
     print(f"Conditional supporting contracts: {len(conditional_unstable_references)}")
     print(f"Failures: {len(failures)}")

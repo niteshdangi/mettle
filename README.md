@@ -51,7 +51,7 @@ This is initial-profile qualification, not I13's complete per-operation/profile
 closure, Linux compiler-host qualification or a runtime-parity claim.
 I05 receipts remain unchanged historical evidence.
 
-## Contributor quality gate
+## Contributor checks
 
 The [compiler architecture](docs/compiler-architecture.md) defines component
 responsibilities, phase-owned representations and the full-language growth map.
@@ -63,12 +63,12 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [compiler/library standard](docs/code-quality.md) before changing the implementation.
 
 ```sh
-python3 tools/check_quality.py
-python3 tools/check_quality.py --build-dir build/macos-arm64/Debug
+cmake --build build/macos-arm64/Debug
+ctest --test-dir build/macos-arm64/Debug --output-on-failure
 ```
 
-Pinned formatting, safety-focused static analysis, warnings-as-errors and
-behavioral tests are required as applicable. A separate
+The build runs the module check; warnings are errors. Format C++ with the
+pinned `clang-format`. A separate
 `python3 tools/build.py --configuration Debug --sanitizers` build instruments
 project C++ with ASan/UBSan. These checks do not prove a safety model or replace
 target execution/reproducibility gates.

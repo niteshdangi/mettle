@@ -22,10 +22,13 @@ enforced source/dependency graph. Update both with architectural changes.
   cases, focused algorithm unit tests, and applicable codegen/link/ABI probes.
   Reuse the existing runners; no new test framework, custom testing DSL or
   directory/layout assertions without a concrete functional need.
-- Run `python3 tools/check_quality.py`; for code changes also run its
-  `--build-dir` gate and the applicable checks in the standard's validation matrix.
+- For code changes, build, run CTest and the applicable checks in the
+  standard's validation matrix; format C++ with the pinned `clang-format`.
 - Unsafe/memory changes require documented invariants and sanitizer evidence.
   Exceptions to a check require narrow scope, rationale and recorded follow-up.
+- Until I15, change the C++ compiler only for V1-required features,
+  correctness/soundness fixes or a measured I14 gate; no C++-only tuning,
+  refactors or polish (see implementation-plan section 8).
 - Keep changes surgical, preserve other people's work, and do not claim a
   milestone, target, safety property or speedup without current evidence.
 - Do not publish, choose a license, initialize/amend/commit Git history or

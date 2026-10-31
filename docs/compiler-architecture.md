@@ -13,7 +13,7 @@ compiled by Mettle are not C++ compiler components. A separate repository is
 justified by an independently owned/released product, not by folder size.
 
 The current compiler graph lives in `compiler/modules.json`. It owns source
-membership and direct dependencies and drives CMake targets. The quality gate
+membership and direct dependencies and drives CMake targets. `tools/check_modules.py` (run at configure)
 rejects cycles, unowned compiler files, undeclared component includes and LLVM
 leaks. Direct includes are checked; this is not a C++ semantic dependency proof.
 The design below also identifies later components; do not create empty targets

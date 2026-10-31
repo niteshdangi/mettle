@@ -12,21 +12,20 @@ For milestone work, follow the
 scope before compiler edits, batch shared-interface changes, and separate
 focused implementation checks from frozen-source qualification.
 
+Until self-hosting (I15), limit C++ compiler changes to what V1 requires; see
+the [C++ compiler scope](docs/implementation-plan.md#8-delivery-milestones).
+
 ## Local checks
 
 Run from the project root with the selected local toolchain installed:
 
 ```sh
-python3 tools/check_quality.py
-python3 tools/check_quality.py --build-dir build/macos-arm64/Debug
+cmake --build build/macos-arm64/Debug
+ctest --test-dir build/macos-arm64/Debug --output-on-failure
 ```
 
-The first command checks authored-file hygiene, pinned C++ formatting,
-component ownership/public-header boundaries, Python syntax, quality-rule regressions and the
-frozen specification audit. The second additionally builds the selected
-configuration, runs project static analysis, and executes CTest.
-It requires an existing project build directory and does not install tools.
-Both write revision-bound receipts under `build/quality/`.
+Configuring and building runs `tools/check_modules.py` (component ownership,
+public headers, dependency DAG). Format C++ with the pinned `clang-format`.
 CMake also validates the module graph at configure time and checks direct
 component boundaries on builds, including individual component targets.
 
