@@ -1,7 +1,8 @@
 import std.thread
-import std.sync.{mutex, condvar, rwlock, once, barrier, mpsc, tls}
+import std.sync.{mutex, condvar, rwlock, once, once_lock, barrier, mpsc, tls}
 import std.panic.{catch_panic, CatchResult}
 import alloc.arc
+import core.iter.Iterator
 
 type Flag {
   ready: core.sync.atomic.AtomicBool
@@ -52,6 +53,51 @@ fn main(): i32 {
   if sum != 4950 { return 3 }
   if !join_ok(producer) { return 4 }
 
+  let iter_pair = mpsc.channel<i32>()
+  let iter_tx = iter_pair.0
+  let iter_rx = iter_pair.1
+  let _first_send = capture iter_tx.send(4)
+  let _second_send = capture iter_tx.send(5)
+  discard(take iter_tx)
+  var blocking_iter = iter_rx.iter()
+  var iter_sum = 0
+  while true {
+    match take blocking_iter.next() {
+      present(value) => { iter_sum += value },
+      none => { break }
+    }
+  }
+  if iter_sum != 9 { return 54 }
+
+  let try_pair = mpsc.channel<i32>()
+  let try_tx = try_pair.0
+  let try_rx = try_pair.1
+  let _try_send = capture try_tx.send(6)
+  var immediate_iter = try_rx.try_iter()
+  match take immediate_iter.next() {
+    present(value) => { if value != 6 { return 55 } },
+    none => { return 56 }
+  }
+  match take immediate_iter.next() {
+    present(value) => { return 57 },
+    none => {}
+  }
+
+  let owned_pair = mpsc.channel<i32>()
+  let owned_tx = owned_pair.0
+  let owned_rx = owned_pair.1
+  let _owned_send = capture owned_tx.send(8)
+  discard(take owned_tx)
+  var owned_iter = owned_rx.into_iter()
+  match take owned_iter.next() {
+    present(value) => { if value != 8 { return 58 } },
+    none => { return 59 }
+  }
+  match take owned_iter.next() {
+    present(value) => { return 60 },
+    none => {}
+  }
+
   // send after the receiver is gone hands the value back
   let pair2 = mpsc.channel<i32>()
   let tx3 = pair2.0
@@ -70,7 +116,9 @@ fn main(): i32 {
     workers.push(thread.spawn(take fn(): i32 {
       var round = 0
       while round < 3 {
-        if g.get().wait() { let _old = l.get().fetch_add(1usize, core.sync.atomic.Ordering.Relaxed) }
+        if g.get().wait().is_leader() {
+          let _old = l.get().fetch_add(1usize, core.sync.atomic.Ordering.Relaxed)
+        }
         round = round + 1
       }
       0
@@ -108,7 +156,7 @@ fn main(): i32 {
   cell.get().wait()
   cell.get().wait_force()
 
-  // a panicking Once initializer is re-armed for the next caller
+  // a panicking Once initializer poisons the cell until forced recovery
   let retry = once.new()
   let failed_init = catch_panic(fn(): Unit {
     retry.call_once(take fn(): Unit { panic("initializer failed") })
@@ -118,8 +166,28 @@ fn main(): i32 {
     CatchResult.Returned(value) => { return 28 }
   }
   if retry.is_completed() { return 29 }
-  retry.call_once(take fn(): Unit {})
-  if !retry.is_completed() { return 30 }
+  let poisoned_call = catch_panic(fn(): Unit {
+    retry.call_once(take fn(): Unit {})
+  })
+  match poisoned_call {
+    CatchResult.Panicked(info) => {},
+    CatchResult.Returned(value) => { return 30 }
+  }
+  let poisoned_wait = catch_panic(fn(): Unit { retry.wait() })
+  match poisoned_wait {
+    CatchResult.Panicked(info) => {},
+    CatchResult.Returned(value) => { return 38 }
+  }
+  retry.wait_force()
+  let recovered = core.sync.atomic.AtomicBool.new(false)
+  let saw_poison = core.sync.atomic.AtomicBool.new(false)
+  retry.call_once_force(fn(state: once.OnceState): Unit {
+    recovered.store(true, core.sync.atomic.Ordering.Relaxed)
+    saw_poison.store(state.is_poisoned(), core.sync.atomic.Ordering.Relaxed)
+  })
+  if !recovered.load(core.sync.atomic.Ordering.Relaxed) ||
+     !saw_poison.load(core.sync.atomic.Ordering.Relaxed) { return 31 }
+  if !retry.is_completed() { return 32 }
   let forced = once.new()
   let force_ran = core.sync.atomic.AtomicBool.new(false)
   let force_saw_poison = core.sync.atomic.AtomicBool.new(false)
@@ -128,7 +196,81 @@ fn main(): i32 {
     force_saw_poison.store(state.is_poisoned(), core.sync.atomic.Ordering.Relaxed)
   })
   if !force_ran.load(core.sync.atomic.Ordering.Relaxed) ||
-     force_saw_poison.load(core.sync.atomic.Ordering.Relaxed) { return 31 }
+     force_saw_poison.load(core.sync.atomic.Ordering.Relaxed) { return 33 }
+
+  // OnceLock retries a panicking initializer and publishes one value to readers.
+  let cell = arc.new(once_lock.new<i32>())
+  let attempts = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
+  var readers = alloc.vec.new<thread.JoinHandle<i32>>()
+  k = 0
+  while k < 4 {
+    let shared_cell = cell.retain()
+    let shared_attempts = attempts.retain()
+    readers.push(thread.spawn(take fn(): i32 {
+      let value = shared_cell.get().get_or_init(fn(): i32 {
+        let _previous = shared_attempts.get().fetch_add(
+          1usize, core.sync.atomic.Ordering.Relaxed
+        )
+        73
+      })
+      if value == 73 { 0 } else { 1 }
+    }))
+    k += 1
+  }
+  more = true
+  while more {
+    let next = readers.pop()
+    match take next {
+      present(worker) => { if !join_ok(worker) { return 39 } },
+      none => { more = false }
+    }
+  }
+  if attempts.get().load(core.sync.atomic.Ordering.Relaxed) != 1usize {
+    return 40
+  }
+  let duplicate = capture cell.get().set(74)
+  match take duplicate {
+    success(value) => { return 41 },
+    failure(error) => { if error.into_inner() != 74 { return 42 } }
+  }
+  var manual_cell = once_lock.new<i32>()
+  let inserted = capture manual_cell.set(76)
+  if inserted.is_failure() { return 46 }
+  match manual_cell.get_mut() {
+    present(value) => { *value = 77 },
+    none => { return 47 }
+  }
+  match manual_cell.take() {
+    present(value) => { if value != 77 { return 48 } },
+    none => { return 49 }
+  }
+  let reinserted = capture manual_cell.set(78)
+  if reinserted.is_failure() { return 50 }
+  match manual_cell.into_inner() {
+    present(value) => { if value != 78 { return 51 } },
+    none => { return 52 }
+  }
+  let waiting_cell = arc.new(once_lock.new<i32>())
+  let waiting_copy = waiting_cell.retain()
+  let waiting_thread = thread.spawn(take fn(): i32 {
+    if waiting_copy.get().wait() == 79 { 0 } else { 1 }
+  })
+  let initialized = capture waiting_cell.get().set(79)
+  if initialized.is_failure() || !join_ok(waiting_thread) { return 53 }
+  let retry_cell = once_lock.new<i32>()
+  let failed_once_lock_init = catch_panic(fn(): Unit {
+    retry_cell.get_or_init(take fn(): i32 { panic("OnceLock initializer failed") })
+  })
+  match failed_once_lock_init {
+    CatchResult.Panicked(info) => {},
+    CatchResult.Returned(value) => { return 43 }
+  }
+  match retry_cell.get() {
+    present(value) => { return 44 },
+    none => {}
+  }
+  let recovered_value = retry_cell.get_or_init(fn(): i32 { 75 })
+  if recovered_value != 75 { return 45 }
 
   // rwlock: readers share, writer excludes
   let lock = arc.new(rwlock.new(10))
@@ -182,6 +324,22 @@ fn main(): i32 {
   poisoned_lock.get().clear_poison()
   if poisoned_lock.get().is_poisoned() { return 26 }
 
+  // Unshared locks expose mutation and extraction without a guard.
+  var unique_mutex = mutex.new(40)
+  *unique_mutex.get_mut() = 41
+  let mutex_value = capture unique_mutex.into_inner()
+  match take mutex_value {
+    success(value) => { if value != 41 { return 34 } },
+    failure(error) => { return 35 }
+  }
+  var unique_rwlock = rwlock.new(50)
+  *unique_rwlock.get_mut() = 51
+  let rwlock_value = capture unique_rwlock.into_inner()
+  match take rwlock_value {
+    success(value) => { if value != 51 { return 36 } },
+    failure(error) => { return 37 }
+  }
+
   // condvar: a waiter wakes on notification
   let state = arc.new(mutex.new(false))
   let cv = arc.new(condvar.new())
@@ -205,8 +363,10 @@ fn main(): i32 {
     success(guard) => guard,
     failure(error) => error.into_inner()
   }
-  let timeout = cv.get().wait_timeout(timeout_guard, 0u64)
-  if !timeout.1.timed_out { return 27 }
+  let timeout = cv.get().wait_timeout_while(
+    timeout_guard, 0u64, take fn(ready: read bool): bool { !ready }
+  )
+  if !timeout.1.timed_out() { return 27 }
 
   // thread-local values are per thread
   let key = arc.new(tls.new<i32>())

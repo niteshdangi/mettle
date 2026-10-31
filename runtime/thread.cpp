@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <ctime>
+#include <cstring>
 #include <exception>
 #include <limits.h>
 #include <memory>
@@ -20,17 +21,109 @@
 extern "C" void mettleRtTlsThreadDestructor(void *raw);
 
 namespace {
+struct ParkingState {
+  pthread_mutex_t mutex{};
+  pthread_cond_t condition{};
+  bool token = false;
+  bool registered = false;
+};
+
+pthread_mutex_t parkingRegistryMutex = PTHREAD_MUTEX_INITIALIZER;
+std::vector<std::pair<std::uintptr_t, ParkingState *>> parkingRegistry;
+
+std::uintptr_t threadToken(pthread_t thread) {
+  return std::bit_cast<std::uintptr_t>(thread);
+}
+
+void destroyParkingState(ParkingState *state) {
+  if (!state)
+    return;
+  pthread_cond_destroy(&state->condition);
+  pthread_mutex_destroy(&state->mutex);
+  delete state;
+}
+
+struct ParkingStateHolder {
+  ParkingState *state = nullptr;
+  ~ParkingStateHolder() {
+    if (!state)
+      return;
+    const auto token = threadToken(pthread_self());
+    pthread_mutex_lock(&parkingRegistryMutex);
+    for (auto it = parkingRegistry.begin(); it != parkingRegistry.end(); ++it) {
+      if (it->first == token && it->second == state) {
+        parkingRegistry.erase(it);
+        break;
+      }
+    }
+    pthread_mutex_unlock(&parkingRegistryMutex);
+    destroyParkingState(state);
+  }
+};
+
+thread_local ParkingStateHolder parkingHolder;
+
+ParkingState *newParkingState() {
+  auto *state = new (std::nothrow) ParkingState;
+  if (!state)
+    return nullptr;
+  if (pthread_mutex_init(&state->mutex, nullptr) != 0) {
+    delete state;
+    return nullptr;
+  }
+  if (pthread_cond_init(&state->condition, nullptr) != 0) {
+    pthread_mutex_destroy(&state->mutex);
+    delete state;
+    return nullptr;
+  }
+  return state;
+}
+
+ParkingState *currentParkingState() {
+  if (parkingHolder.state)
+    return parkingHolder.state;
+  auto *state = newParkingState();
+  if (!state)
+    return nullptr;
+  const auto token = threadToken(pthread_self());
+  if (pthread_mutex_lock(&parkingRegistryMutex) != 0) {
+    destroyParkingState(state);
+    return nullptr;
+  }
+  try {
+    parkingRegistry.reserve(parkingRegistry.size() + 1);
+    parkingRegistry.emplace_back(token, state);
+  } catch (...) {
+    pthread_mutex_unlock(&parkingRegistryMutex);
+    destroyParkingState(state);
+    return nullptr;
+  }
+  pthread_mutex_unlock(&parkingRegistryMutex);
+  parkingHolder.state = state;
+  return state;
+}
+
 struct Start {
   MettleThreadEntry entry;
   void *argument;
   std::string name;
+  ParkingState *parking;
 };
 extern "C" void *threadMain(void *raw) {
   auto *start = static_cast<Start *>(raw);
   auto entry = start->entry;
   auto *argument = start->argument;
   auto name = std::move(start->name);
+  auto *parking = start->parking;
   delete start;
+  if (pthread_mutex_lock(&parking->mutex) != 0)
+    std::abort();
+  while (!parking->registered)
+    pthread_cond_wait(&parking->condition, &parking->mutex);
+  pthread_mutex_unlock(&parking->mutex);
+  // The registry entry and the thread-local owner keep the state alive while
+  // unpark races with this thread's exit.
+  parkingHolder.state = parking;
 #if defined(__APPLE__)
   // pthread name limits include the terminating NUL byte.
   if (name.size() > 63)
@@ -226,17 +319,24 @@ std::int32_t mettle_rt_thread_spawn_configured(
     const char *name, std::size_t nameLength, std::size_t stackSize) {
   if (!entry || !handle || (!name && nameLength != 0))
     return EINVAL;
+  auto *parking = newParkingState();
+  if (!parking)
+    return ENOMEM;
   Start *start = nullptr;
   try {
     start = new (std::nothrow)
         Start{entry, argument,
               name && nameLength != 0 ? std::string(name, nameLength)
-                                      : std::string{}};
+                                      : std::string{},
+              parking};
   } catch (...) {
+    destroyParkingState(parking);
     return ENOMEM;
   }
-  if (!start)
+  if (!start) {
+    destroyParkingState(parking);
     return ENOMEM;
+  }
   pthread_attr_t attributes{};
   pthread_attr_t *attributesPointer = nullptr;
   int status = 0;
@@ -244,25 +344,50 @@ std::int32_t mettle_rt_thread_spawn_configured(
     status = pthread_attr_init(&attributes);
     if (status != 0) {
       delete start;
+      destroyParkingState(parking);
       return status;
     }
     status = pthread_attr_setstacksize(&attributes, stackSize);
     if (status != 0) {
       pthread_attr_destroy(&attributes);
       delete start;
+      destroyParkingState(parking);
       return status;
     }
     attributesPointer = &attributes;
   }
   pthread_t thread{};
+  if (pthread_mutex_lock(&parkingRegistryMutex) != 0) {
+    delete start;
+    destroyParkingState(parking);
+    return EINVAL;
+  }
+  try {
+    parkingRegistry.reserve(parkingRegistry.size() + 1);
+  } catch (...) {
+    pthread_mutex_unlock(&parkingRegistryMutex);
+    delete start;
+    destroyParkingState(parking);
+    return ENOMEM;
+  }
   status = pthread_create(&thread, attributesPointer, threadMain, start);
   if (attributesPointer)
     pthread_attr_destroy(&attributes);
   if (status != 0) {
+    pthread_mutex_unlock(&parkingRegistryMutex);
     delete start;
+    destroyParkingState(parking);
     return status;
   }
-  *handle = std::bit_cast<std::uintptr_t>(thread);
+  const auto token = threadToken(thread);
+  parkingRegistry.emplace_back(token, parking);
+  if (pthread_mutex_lock(&parking->mutex) != 0)
+    std::abort();
+  parking->registered = true;
+  pthread_cond_broadcast(&parking->condition);
+  pthread_mutex_unlock(&parking->mutex);
+  pthread_mutex_unlock(&parkingRegistryMutex);
+  *handle = token;
   return 0;
 }
 std::int32_t mettle_rt_thread_join(std::uintptr_t handle) {
@@ -279,7 +404,59 @@ std::int32_t mettle_rt_thread_catch(void *context, MettleThreadBody body) {
   return status == 0 ? tlsStatus : status;
 }
 std::uintptr_t mettle_rt_thread_current() {
-  return std::bit_cast<std::uintptr_t>(pthread_self());
+  return threadToken(pthread_self());
+}
+void mettle_rt_thread_park() {
+  auto *state = currentParkingState();
+  if (!state || pthread_mutex_lock(&state->mutex) != 0)
+    return;
+  while (!state->token)
+    pthread_cond_wait(&state->condition, &state->mutex);
+  state->token = false;
+  pthread_mutex_unlock(&state->mutex);
+}
+void mettle_rt_thread_park_timeout(std::uint64_t nanoseconds) {
+  auto *state = currentParkingState();
+  if (!state || pthread_mutex_lock(&state->mutex) != 0)
+    return;
+  if (!state->token) {
+    const auto until = deadline(nanoseconds);
+    while (!state->token) {
+      const int status =
+          pthread_cond_timedwait(&state->condition, &state->mutex, &until);
+      if (status == ETIMEDOUT || status != 0)
+        break;
+    }
+  }
+  state->token = false;
+  pthread_mutex_unlock(&state->mutex);
+}
+void mettle_rt_thread_unpark(std::uintptr_t handle) {
+  if (pthread_mutex_lock(&parkingRegistryMutex) != 0)
+    return;
+  for (const auto &entry : parkingRegistry) {
+    if (entry.first != handle)
+      continue;
+    auto *state = entry.second;
+    if (pthread_mutex_lock(&state->mutex) == 0) {
+      state->token = true;
+      pthread_cond_signal(&state->condition);
+      pthread_mutex_unlock(&state->mutex);
+    }
+    break;
+  }
+  pthread_mutex_unlock(&parkingRegistryMutex);
+}
+std::intptr_t mettle_rt_thread_name(std::uintptr_t handle, char *buffer,
+                                    std::size_t capacity) {
+  if (!buffer || capacity == 0)
+    return -EINVAL;
+  const int status =
+      pthread_getname_np(std::bit_cast<pthread_t>(handle), buffer, capacity);
+  if (status != 0)
+    return -status;
+  const auto length = std::strlen(buffer);
+  return length == 0 ? -ENOENT : static_cast<std::intptr_t>(length);
 }
 void mettle_rt_thread_yield() { sched_yield(); }
 void mettle_rt_thread_sleep(std::uint64_t nanoseconds) {

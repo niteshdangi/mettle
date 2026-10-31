@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 // Hosted threading and synchronization support for the native `std` library.
@@ -21,6 +22,12 @@ std::int32_t mettle_rt_thread_detach(std::uintptr_t handle);
 // Catches a body panic, then catches any panic from this thread's TLS cleanup.
 std::int32_t mettle_rt_thread_catch(void *context, MettleThreadBody body);
 std::uintptr_t mettle_rt_thread_current();
+// Parking retains one unpark token, including when unpark precedes park.
+void mettle_rt_thread_park();
+void mettle_rt_thread_park_timeout(std::uint64_t nanoseconds);
+void mettle_rt_thread_unpark(std::uintptr_t handle);
+std::intptr_t mettle_rt_thread_name(std::uintptr_t handle, char *buffer,
+                                    std::size_t capacity);
 void mettle_rt_thread_yield();
 void mettle_rt_thread_sleep(std::uint64_t nanoseconds);
 std::uint64_t mettle_rt_thread_parallelism();

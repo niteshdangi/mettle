@@ -38,5 +38,37 @@ fn main(): i32 {
     if !buf.as_path().same(path_from_text("a/b/c")) { return 17 }
     let popped = buf.pop()
     if !popped || !buf.as_path().same(path_from_text("a/b")) { return 18 }
+    if !path_from_text("/a").has_root() || path_from_text("a").is_absolute() ||
+       !path_from_text("a").is_relative() { return 19 }
+    if !path_from_text("a/b/").ends_with(path_from_text("b")) ||
+       path_from_text("a/bc").ends_with(path_from_text("b")) { return 20 }
+    match path_from_text("a/b/c").strip_prefix(path_from_text("a")) {
+        present(rest) => { if !rest.same(path_from_text("b/c")) { return 21 } },
+        none => { return 21 }
+    }
+    match path_from_text("file.tar.gz").file_prefix() {
+        present(prefix) => {
+            match prefix.to_str() {
+                present(text) => { if text != "file" { return 22 } },
+                none => { return 22 }
+            }
+        },
+        none => { return 22 }
+    }
+    let replaced = path_from_text("dir/name.txt").with_extension(
+        std.ffi.os_str_from_text("log")
+    )
+    if !replaced.as_path().same(path_from_text("dir/name.log")) { return 23 }
+    let added = path_from_text("dir/name.txt").with_added_extension(
+        std.ffi.os_str_from_text("bak")
+    )
+    if !added.as_path().same(path_from_text("dir/name.txt.bak")) { return 24 }
+    var changed = path_from_text("dir/name.txt").to_path_buf()
+    if !changed.set_file_name(std.ffi.os_str_from_text("other")) ||
+       !changed.as_path().same(path_from_text("dir/other")) { return 25 }
+    if !changed.set_extension(std.ffi.os_str_from_text("log")) ||
+       !changed.as_path().same(path_from_text("dir/other.log")) { return 26 }
+    changed.clear()
+    if !changed.is_empty() { return 27 }
     0
 }

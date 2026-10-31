@@ -82,6 +82,38 @@ fn run(): i32 throws Error {
     }
     let m2 = try std.fs.metadata(path_from_text("t"))
     if m2.len() != 2u64 { return 14 }
+    try std.fs.create_dir_all(path_from_text("ops/nested"))
+    try std.fs.write(path_from_text("ops/source"), "copy me".as_bytes())
+    if try std.fs.copy(path_from_text("ops/source"), path_from_text("ops/copied")) != 7u64 {
+        return 16
+    }
+    if try std.fs.read_to_string(path_from_text("ops/copied")) != "copy me" { return 17 }
+    try std.fs.hard_link(path_from_text("ops/source"), path_from_text("ops/hard"))
+    if try std.fs.read_to_string(path_from_text("ops/hard")) != "copy me" { return 18 }
+    try std.fs.soft_link(path_from_text("source"), path_from_text("ops/soft"))
+    let target = try std.fs.read_link(path_from_text("ops/soft"))
+    if !target.same(std.ffi.os_string_from_text("source")) { return 19 }
+    let source_path = path_from_text("ops/source")
+    if !source_path.exists() || !source_path.is_file() || source_path.is_dir() ||
+       !(try source_path.try_exists()) { return 24 }
+    if !(try source_path.canonicalize()).is_absolute() ||
+       !path_from_text("ops/soft").is_symlink() {
+        return 25
+    }
+    try std.fs.set_permissions(path_from_text("ops/copied"), std.fs.Permissions(384u32))
+    let copied_metadata = try std.fs.metadata(path_from_text("ops/copied"))
+    if (copied_metadata.permissions().mode() & 511u32) != 384u32 {
+        return 20
+    }
+    if !(try std.fs.canonicalize(path_from_text("ops/source"))).is_absolute() { return 21 }
+    if !try std.fs.try_exists(path_from_text("ops/source")) { return 22 }
+    try std.fs.remove_dir_all(path_from_text("ops"))
+    if std.fs.exists(path_from_text("ops")) { return 23 }
+    var dirs = std.fs.DirBuilder.new()
+    dirs.recursive(true)
+    try dirs.create(path_from_text("builder/a/b"))
+    if !(try std.fs.metadata(path_from_text("builder/a/b"))).is_dir() { return 26 }
+    try std.fs.remove_dir_all(path_from_text("builder"))
     0
 }
 
