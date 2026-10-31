@@ -698,12 +698,19 @@ def debug_info():
         "    doubled + 1\n"
         "}\n"
         "fn first(values: read [i32]): i32 { values[0] }\n"
+        "async fn debug_inner(): i32 { 3 }\n"
+        "async fn debug_coroutine(): i32 {\n"
+        "    let saved: i32 = 4\n"
+        "    let resumed = await debug_inner()\n"
+        "    saved + resumed\n"
+        "}\n"
         "fn main(): i32 {\n"
         "    let pair: Pair<i64> = Pair<i64>(20i64, 22i64)\n"
         "    let data: [i32; 1] = [42; 1]\n"
         "    let data_view: read [i32] = read data\n"
         "    let seed: i32 = 7\n"
         "    let closure = fn(): i32 { seed }\n"
+        "    let pending = debug_coroutine()\n"
         "    let choice = Choice.Value(42i64)\n"
         "    match choice {\n"
         "        Choice.Empty => 1,\n"
@@ -739,6 +746,9 @@ def debug_info():
                      info, re.DOTALL), info
     assert "DW_TAG_variant_part" in info and '"Value"' in info, info
     assert '"discriminant"' in info, info
+    assert '"state"' in info and "await #1 (line " in info, info
+    assert re.search(r'DW_TAG_member(?:(?!DW_TAG_).)*"saved"',
+                     info, re.DOTALL), info
     for discriminant in ("7", "9"):
         assert re.search(r"DW_AT_discr_value\s*\(\s*(?:0x0*)?" +
                          discriminant + r"\b", info), info

@@ -56,6 +56,20 @@ def sum_summary(value, _internal_dict):
     return labels[tag] if tag < len(labels) else "<invalid discriminant>"
 
 
+def coroutine_summary(value, _internal_dict):
+    state = value.GetChildMemberWithName("state")
+    raw = _unsigned(state)
+    if raw is None:
+        return "state = <unavailable>"
+    tag = raw if raw < (1 << 31) else raw - (1 << 32)
+    members = state.GetType().GetEnumMembers()
+    for index in range(members.GetSize()):
+        member = members.GetTypeEnumMemberAtIndex(index)
+        if member.GetValueAsSigned() == tag:
+            return f"state = {member.GetName()}"
+    return "state = <invalid>"
+
+
 def __lldb_init_module(debugger, _internal_dict):
     commands = [
         r"type summary add -w Mettle -x '(^|\.)List<.*>$' "
@@ -68,6 +82,8 @@ def __lldb_init_module(debugger, _internal_dict):
         r"-F mettle_lldb.sum_summary",
         r"type summary add -w Mettle -x '^\(.* throws .*\)$' "
         r"-F mettle_lldb.sum_summary",
+        r"type summary add -w Mettle -x '(^|\.)CoroutineState<.*>$' "
+        r"-F mettle_lldb.coroutine_summary",
         "type category enable Mettle",
     ]
     for command in commands:

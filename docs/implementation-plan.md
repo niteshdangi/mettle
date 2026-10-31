@@ -1074,10 +1074,10 @@ Open: `try await f()` is not accepted (`try` needs a typed throwing call);
 `async fn(..) => expr` arrow closures are not lowered as async; recursive async
 is rejected only by the generic Sized diagnostic; async interface methods
 still hit the bodyless-async feature diagnostic
-(`syntax/parser/declarations.cpp::function`); debug information describes a
-coroutine state as a sized structure without members or a resume
-discriminator. Region-carrying erased futures, asynchronous borrowed-task
-scopes, async I/O and P10 remain open. Linux and Windows targets, the Debug
+(`syntax/parser/declarations.cpp::function`); coroutine-state DWARF metadata
+and its LLDB summary are implemented, unverified (not yet built).
+Region-carrying erased futures, asynchronous borrowed-task scopes, async I/O
+and P10 remain open. Linux and Windows targets, the Debug
 profile CTest and TSan of executor code are not run for the coroutine path.
 
 #### I11 coroutine replacement inventory
@@ -1091,7 +1091,7 @@ Revision: uncommitted on `efd0b32`; scope as stated per row.
 | Inline pinned state and poll | Implemented: `types` coroutine aggregate and layout resolver, `instances/specialize.cpp`, backend frame/dispatch. Transferable/Shareable/Static in `semantics/interface_solver.cpp` with the interior from `semantics/captures.cpp`. | Liveness-precise interior (optional precision gain). |
 | Control flow | Implemented: ordinary CFG of the closure body. | None known. |
 | Cleanup and cancellation | Implemented: persistent frame flags and `unwind` in `backend/llvm/cleanup.cpp`; exactly-once drops verified. | Dedicated lexical drop-order-across-suspension fixture. |
-| Integration and qualification | Release CTest, sanitized compiler CTest and ASan/UBSan emitted async programs pass on macOS arm64. | Debug-profile CTest, debug-info state discriminator, Linux/Windows (owner-run). |
+| Integration and qualification | Release CTest, sanitized compiler CTest and ASan/UBSan emitted async programs pass on macOS arm64. The debug-info state discriminator is implemented, unverified (not yet built). | Debug-profile CTest, Linux/Windows (owner-run). |
 
 The source-freeze gate depends on all rows, fixtures and documentation; a
 design or a partially implemented row is not a verified milestone.
@@ -1141,9 +1141,12 @@ length-bearing pointer fields and corresponding LLDB summary updates are
 implemented; the `debug_info` package test, which asserts variant and slice
 metadata, passes on the I06 freeze. Product/generic/closure capture and macro
 invocation locations have prior macOS arm64 verification. The updated LLDB
-summaries have not been re-run interactively. Async combinator fields and optional tags describe nested state, but
-a source await-point discriminator/display is not yet established; erasure,
-moved-value liveness, scopes, inlining and CodeView remain open.
+summaries have not been re-run interactively. Coroutine resume-state variants,
+the discriminator, scope-initialized saved-local fields, captured environment
+and output fields, and the LLDB `state = await #N (line L)` summary are
+implemented, unverified (not yet built); the focused `debug_info` assertions
+are also unverified. Erasure, moved-value liveness, scopes, inlining and
+CodeView remain open.
 T006 and I12 are not complete.
 
 I13 closes remaining operation mappings with compiled native declarations and
