@@ -7,9 +7,16 @@
 // negative zero `-0`. `Spec.precision` is not applied to floats yet. Width,
 // fill, alignment, `plus` and `zero` follow the integer rules.
 import super.fmt.{Formatter, Write, Display, Debug, Error}
-import super.cmp.Ordering
+import super.cmp.{Eq, Ordering, PartialEq}
 import super.slice
 import super.text.from_utf8_unchecked
+
+pub copy enum FpCategory { Nan, Infinite, Zero, Subnormal, Normal }
+
+extend FpCategory implements PartialEq {
+    fn eq(other: read FpCategory): bool { (self as u8) == (other as u8) }
+}
+extend FpCategory implements Eq {}
 
 // 40 little-endian 32-bit limbs hold every intermediate value for f64 (about
 // 1100 bits at most); `len` counts the significant limbs, so zero has none.
@@ -361,5 +368,25 @@ extend f32 {
         if left_key < right_key { Ordering.Less }
         else if left_key > right_key { Ordering.Greater }
         else { Ordering.Equal }
+    }
+}
+
+extend f64 {
+    pub fn classify(): FpCategory {
+        if self.is_nan() { return FpCategory.Nan }
+        if self.is_infinite() { return FpCategory.Infinite }
+        if self == 0.0f64 { return FpCategory.Zero }
+        if self.is_subnormal() { return FpCategory.Subnormal }
+        FpCategory.Normal
+    }
+}
+
+extend f32 {
+    pub fn classify(): FpCategory {
+        if self.is_nan() { return FpCategory.Nan }
+        if self.is_infinite() { return FpCategory.Infinite }
+        if self == 0.0f32 { return FpCategory.Zero }
+        if self.is_subnormal() { return FpCategory.Subnormal }
+        FpCategory.Normal
     }
 }

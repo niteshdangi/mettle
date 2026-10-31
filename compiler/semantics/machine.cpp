@@ -138,6 +138,7 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       operation = "type_id";
     else if (owner == "core::mem" &&
              (name == "transmute" || name == "zeroed" || name == "forget" ||
+              name == "drop" ||
               name == "replace" || name == "swap" || name == "size_of_val" ||
               name == "align_of_val"))
       operation = "mem." + name;
@@ -189,6 +190,11 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
   std::vector<ParameterMode> borrowed;
   if (receiver >= 0) {
     auto mode = ParameterMode::Value;
+    if (operation == "numeric.make_ascii_lowercase" ||
+        operation == "numeric.make_ascii_uppercase") {
+      mode = ParameterMode::Mut;
+      requireMutablePlace(*callee.children[0]);
+    }
     if (operation.starts_with("va.")) {
       mode = callee.text == "end"    ? ParameterMode::Take
              : callee.text == "copy" ? ParameterMode::Read
@@ -290,18 +296,64 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       else if (position >= 1)
         expected = payload;
     }
-    if (receiver >= 0 && isNumeric(self))
-      expected = method.ends_with("_shl") || method.ends_with("_shr") ||
-                         method == "numeric.rotate_left" ||
-                         method == "numeric.rotate_right"
-                     ? Type::U32
-                     : self;
+    if (receiver >= 0 && isNumeric(self)) {
+      auto numericMethod = method.substr(8);
+      auto signedType = [&] {
+        if (self == Type::I8 || self == Type::U8)
+          return Type::I8;
+        if (self == Type::I16 || self == Type::U16)
+          return Type::I16;
+        if (self == Type::I32 || self == Type::U32)
+          return Type::I32;
+        if (self == Type::I64 || self == Type::U64)
+          return Type::I64;
+        if (self == Type::I128 || self == Type::U128)
+          return Type::I128;
+        return Type::Isize;
+      };
+      auto unsignedType = [&] {
+        if (self == Type::I8 || self == Type::U8)
+          return Type::U8;
+        if (self == Type::I16 || self == Type::U16)
+          return Type::U16;
+        if (self == Type::I32 || self == Type::U32)
+          return Type::U32;
+        if (self == Type::I64 || self == Type::U64)
+          return Type::U64;
+        if (self == Type::I128 || self == Type::U128)
+          return Type::U128;
+        return Type::Usize;
+      };
+      expected =
+          numericMethod == "powi"
+              ? Type::I32
+          : numericMethod.ends_with("_add_signed") ||
+                  numericMethod.ends_with("_sub_signed")
+              ? signedType()
+          : numericMethod.ends_with("_add_unsigned") ||
+                    numericMethod.ends_with("_sub_unsigned")
+              ? unsignedType()
+          : numericMethod.ends_with("_shl") ||
+                    numericMethod.ends_with("_shr") ||
+                    numericMethod == "unbounded_shl" ||
+                    numericMethod == "unbounded_shr" ||
+                    numericMethod == "unchecked_shl" ||
+                    numericMethod == "unchecked_shr" ||
+                    numericMethod.ends_with("_pow") ||
+                    numericMethod == "pow" ||
+                    method == "numeric.rotate_left" ||
+                    method == "numeric.rotate_right"
+              ? Type::U32
+              : self;
+    }
     if (receiver < 0 && operation.starts_with("numeric.") &&
         operation != "numeric.from_bits" && isNumeric(argument))
       expected = i > 1 && (operation.ends_with("_shl") ||
                            operation.ends_with("_shr") ||
                            operation.ends_with("rotate_left") ||
-                           operation.ends_with("rotate_right"))
+                           operation.ends_with("rotate_right") ||
+                           operation.ends_with("_pow") ||
+                           operation == "numeric.pow")
                      ? Type::U32
                      : argument;
     if (receiver >= 0 && checked.types->isPointer(self)) {
@@ -319,6 +371,18 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       expected = Type::Usize;
     if (operation == "numeric.from_bits")
       expected = argument == Type::F32 ? Type::U32 : Type::U64;
+    if (receiver < 0 && operation.starts_with("numeric.from_") &&
+        operation.ends_with("_bytes") && isNumeric(argument)) {
+      auto width = isInteger(argument)
+                       ? integerWidth(
+                             argument,
+                             checked.targetDescription.pointerBits)
+                       : argument == Type::F32 ? 32u : 64u;
+      expected = checked.types->arrayType(
+          Type::U8,
+          checked.types->constant(Type::I32,
+                                  static_cast<std::int64_t>(width / 8)));
+    }
     if (operation == "ptr.copy" || operation == "ptr.copy_nonoverlapping" ||
         operation == "ptr.swap_nonoverlapping")
       expected = operands.size() == 2 ? Type::Usize : Type::Unknown;
@@ -358,6 +422,7 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     if (operation.starts_with("ptr.write") && operands.size() == 1)
       mode = ParameterMode::Take;
     if (operation == "mem.transmute" || operation == "mem.forget" ||
+        operation == "mem.drop" ||
         operation == "hint.black_box" || operation == "coroutine.start" ||
         (operation == "ptr.replace" && operands.size() == 1) ||
         (operation == "mem.replace" && operands.size() == 1))
@@ -400,6 +465,23 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       operation != "mem.zeroed" && operation != "mem.forget" &&
       !operands.empty() && checked.types->isView(operands[0]))
     argument = checked.types->view(operands[0]).payload;
+  if ((operation == "numeric.to_be_bytes" ||
+       operation == "numeric.to_le_bytes" ||
+       operation == "numeric.to_ne_bytes") &&
+      operands.size() == 1 && isNumeric(operands[0])) {
+    auto width = isInteger(operands[0])
+                     ? integerWidth(operands[0],
+                                    checked.targetDescription.pointerBits)
+                     : operands[0] == Type::F32 ? 32u : 64u;
+    argument = checked.types->arrayType(
+        Type::U8,
+        checked.types->constant(Type::I32,
+                                static_cast<std::int64_t>(width / 8)));
+  }
+  if (operation == "numeric.sin_cos" && operands.size() == 1 &&
+      isFloating(operands[0]))
+    argument = checked.types->structural(
+        AggregateKind::Tuple, {operands[0], operands[0]});
   if (operation == "coroutine.resume" && !operands.empty() &&
       checked.types->isView(operands[0]))
     argument = checked.types->view(operands[0]).payload;
