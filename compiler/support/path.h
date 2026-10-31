@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -17,5 +18,25 @@ inline std::string displayPath(std::string_view canonical) {
       result += canonical[i];
   }
   return result;
+}
+
+inline std::string displayPath(
+    std::string_view canonical,
+    std::span<const std::string_view> namesInMessage) {
+  const auto separator = canonical.rfind("::");
+  if (separator == std::string_view::npos)
+    return std::string(canonical);
+  const auto shortName = canonical.substr(separator + 2);
+  for (auto name : namesInMessage) {
+    if (name == canonical)
+      continue;
+    const auto otherSeparator = name.rfind("::");
+    const auto otherShort = otherSeparator == std::string_view::npos
+                                ? name
+                                : name.substr(otherSeparator + 2);
+    if (otherShort == shortName)
+      return displayPath(canonical);
+  }
+  return std::string(shortName);
 }
 } // namespace mettle

@@ -1,5 +1,4 @@
 #include "semantics/inference.h"
-#include "support/path.h"
 #include <algorithm>
 
 namespace mettle {
@@ -114,6 +113,26 @@ void TypeInference::equal(int a, int b, Span span, bool coercion) {
   if (a == b)
     return;
   auto at = variables[a].type, bt = variables[b].type;
+  auto reportMismatch = [&](Type expected, Type found) {
+    const std::array<Type, 2> namesInMessage{expected, found};
+    std::vector<DiagnosticMessage> related;
+    if (types.isView(expected) && types.isView(found)) {
+      const auto &wanted = types.view(expected);
+      const auto &actual = types.view(found);
+      if (wanted.payload == actual.payload && wanted.mode != actual.mode) {
+        related.push_back(
+            {"help", {},
+             wanted.mode == ParameterMode::Mut
+                 ? "this position requires a mutable view; pass `mut value`"
+                 : "this position requires a read view; pass `read value`"});
+      }
+    }
+    diagnostics.error(
+        "type", span,
+        "expected " + displayType(types, expected, namesInMessage) +
+            ", found " + displayType(types, found, namesInMessage),
+        std::move(related));
+  };
   if (coercion && at == Type::Never)
     return;
   auto an = variables[a].numeric, bn = variables[b].numeric;
@@ -125,9 +144,7 @@ void TypeInference::equal(int a, int b, Span span, bool coercion) {
   if (!accepts(an, bt) || !accepts(bn, at) ||
       (an != Variable::Numeric::None && bn != Variable::Numeric::None &&
        an != bn)) {
-    diagnostics.error("type", span,
-                      "expected " + displayPath(types.name(value(b))) +
-                          ", found " + displayPath(types.name(value(a))));
+    reportMismatch(value(b), value(a));
     return;
   }
   if (variables[a].kind || variables[b].kind) {
@@ -175,9 +192,7 @@ void TypeInference::equal(int a, int b, Span span, bool coercion) {
     return;
   }
   if (at != Type::Unknown && bt != Type::Unknown && at != bt) {
-    diagnostics.error("type", span,
-                      "expected " + displayPath(types.name(bt)) + ", found " +
-                          displayPath(types.name(at)));
+    reportMismatch(bt, at);
     return;
   }
   variables[a].parent = b;

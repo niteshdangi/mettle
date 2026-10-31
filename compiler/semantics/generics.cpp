@@ -479,7 +479,7 @@ Type Checker::constantType(const Node &node, Type expected) {
         !integerLiteralFits(*facts(syntax).numeric, type, pointerBits())) {
       error("type", node.span,
             "required integer constant is outside the " +
-                displayPath(checked.types->name(type)) + " range");
+                displayType(*checked.types, type) + " range");
       return Type::Unknown;
     }
     facts(syntax).type = type;
@@ -566,7 +566,7 @@ Checker::genericArguments(const std::vector<GenericParameter> &parameters,
     if (binding.argument == Type::Unknown)
       error("type", span,
             "missing generic argument '" +
-                displayPath(checked.types->name(binding.parameter)) + "'");
+                displayType(*checked.types, binding.parameter) + "'");
     result.push_back(binding.argument);
   }
   std::vector<Type> concrete;

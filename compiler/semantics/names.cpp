@@ -5,6 +5,15 @@
 
 namespace mettle {
 
+std::vector<DiagnosticMessage>
+Checker::vocabularyHelp(std::string_view spelling) const {
+  if (spelling == "Vec")
+    return {{"help", {}, "use `List` for the growable sequence type"}};
+  if (spelling == "HashMap")
+    return {{"help", {}, "use `Map` for the hash-based key/value collection"}};
+  return {};
+}
+
 Checker::Binding Checker::lookup(const std::string &name, Span span) {
   for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
     auto found = it->find(name);
@@ -53,7 +62,8 @@ Checker::Binding Checker::lookup(const std::string &name, Span span) {
       return {localVariables[current][i], static_cast<int>(i), current};
     }
   }
-  error("name", span, "unresolved value '" + displayPath(name) + "'");
+  error("name", span, "unresolved value '" + displayPath(name) + "'",
+        vocabularyHelp(name));
   return {inference.fresh(), -1};
 }
 // A path container qualifies a following segment: a module, a type (including

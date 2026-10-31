@@ -6,8 +6,13 @@ std::unique_ptr<Node> Parser::stmt() {
   auto start = peek().span;
   if (is("let") || is("var")) {
     bool mutableBinding = take("var");
-    if (!mutableBinding)
+    if (!mutableBinding) {
       expect("let");
+      if (is("mut"))
+        fail("`let mut` is not valid syntax",
+             "parse",
+             {{"help", {}, "use `var` for a mutable local binding"}});
+    }
     auto result = node(Kind::Binding, start);
     result->flag = mutableBinding;
     if (is("(") || is("[") || is("none") || is("present") || is("success") ||

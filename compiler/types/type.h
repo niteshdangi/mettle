@@ -467,6 +467,9 @@ private:
   }
 };
 std::string_view typeName(Type type);
+std::string displayType(Type type);
+std::string displayType(const TypeStore &types, Type type,
+                        std::span<const Type> namesInMessage = {});
 std::optional<std::vector<std::pair<std::uint32_t, Type>>>
 staticConstantFields(const TypeStore &types, const StaticConstant &constant);
 } // namespace mettle

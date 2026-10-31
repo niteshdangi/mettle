@@ -1,4 +1,5 @@
-// expect-error: type 6:8 unsatisfied interface obligation
+// expect-error: type 7:8 unsatisfied interface obligation
+// expect-help: add `extend
 import alloc.hash_map
 fn main(): i32 {
     var m = hash_map.new<i32, i32>()

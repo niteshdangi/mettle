@@ -150,7 +150,7 @@ void Checker::registerConstructors() {
                                module.functions[later.function].span, {}, true))
           error("type", module.functions[later.function].span,
                 "overlapping constructor argument shapes for '" +
-                    displayPath(checked.types->name(origin)) + "'");
+                    displayType(*checked.types, origin) + "'");
       }
   }
 }

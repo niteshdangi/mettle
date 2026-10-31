@@ -55,7 +55,7 @@
     },
     {
       "name": "types", "directory": "types", "kind": "STATIC",
-      "dependencies": [], "public_headers": ["types/type.h", "types/regions.h", "types/machine.h", "types/layout.h", "types/target.h", "types/assembly.h"],
+      "dependencies": ["support"], "public_headers": ["types/type.h", "types/regions.h", "types/machine.h", "types/layout.h", "types/target.h", "types/assembly.h"],
       "files": ["types/type.h", "types/type.cpp", "types/numeric.cpp", "types/integer.cpp", "types/machine.h", "types/machine.cpp", "types/layout.h", "types/layout.cpp", "types/callables.cpp", "types/parameters.cpp", "types/regions.h", "types/regions.cpp", "types/target.h", "types/target.cpp", "types/assembly.h", "types/assembly.cpp", "types/region_types.cpp", "types/erasure.cpp", "types/metadata.cpp"]
     },
     {

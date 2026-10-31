@@ -77,7 +77,7 @@ std::string describe(const Value &value) {
   switch (value.kind) {
   case Value::Kind::Integer:
     return value.type == Type::Unknown ? "integer"
-                                       : std::string(typeName(value.type));
+                                       : displayType(value.type);
   case Value::Kind::Bool:
     return "bool";
   case Value::Kind::Char:
@@ -95,7 +95,7 @@ std::string describe(const Shape &shape) {
   switch (shape.kind) {
   case Shape::Kind::Scalar:
     return shape.type == Type::Unknown ? "integer"
-                                       : std::string(typeName(shape.type));
+                                       : displayType(shape.type);
   case Shape::Kind::Unit:
     return "Unit";
   case Shape::Kind::Tuple:
@@ -350,7 +350,7 @@ private:
                                   options.pointerBits)) {
             fail("constant", span,
                  "integer constant " + integerLiteralName(value.number) +
-                     " does not fit type " + std::string(typeName(want.type)));
+                     " does not fit type " + displayType(want.type));
             return false;
           }
           value.type = want.type;
@@ -429,7 +429,7 @@ private:
       if (message == "required integer constant overflows")
         message =
             "integer overflow in constant expression (" + op + " on " +
-            (type == Type::Unknown ? "integer" : std::string(typeName(type))) +
+            (type == Type::Unknown ? "integer" : displayType(type)) +
             ")";
       return fail("constant", span, message);
     }
@@ -717,7 +717,7 @@ private:
       if (!integerLiteralFits(value.number, value.type, options.pointerBits))
         return fail("constant", node.span,
                     "integer literal does not fit type " +
-                        std::string(typeName(value.type)));
+                        displayType(value.type));
       return value;
     }
     if (want && want->kind == Shape::Kind::Scalar && isInteger(want->type) &&
