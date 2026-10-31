@@ -1,10 +1,54 @@
 # I13 library work package
 
-Repo: /Users/niteshkumar/Projects/mettle-lang, main at `940637d`. I01-I12 are
-closed for the macOS ARM64 host and Darwin ARM64 target only. You own I13's
-library work and the compiler changes it needs, except pinned owners (S003),
-erased async methods (L048/L053) and the language/ABI/target probe rows, which
-the orchestrator handles.
+Repo: /Users/niteshkumar/Projects/mettle-lang, main at `02d2cd0`. I01-I12 are
+closed for the macOS ARM64 host and Darwin ARM64 target only. All non-library
+I13 rows are closed. What remains is library work: the 18 `P` rows in
+docs/capability-coverage.md (L003 L005 L009 S005-S014 S019-S021 S024 S025).
+
+## Handoff (start here in a new session)
+The previous attempt (`origin/libs`, 23.6k lines) was never compiled against
+main and was discarded. Its useful compiler fixes are in `02d2cd0`. Do not
+merge or cherry-pick from it; write each lane fresh against current main.
+
+**Execution model.** One orchestrator owns the compiler: it builds, changes
+compiler/** and runtime C++, runs ctest, and merges lanes. Lane agents
+(`gpt-6-luna` only) write library code and tests in their own worktree. They
+never build the compiler; they use the orchestrator's binary with their own
+library directory:
+
+    M=/Users/niteshkumar/Projects/mettle-lang/build/macos-arm64/Release/mettle
+    $M check --library-dir $PWD/library FILE.mt
+    $M build --library-dir $PWD/library FILE.mt -o /tmp/x && /tmp/x
+
+Lane agents run only targeted checks on the files they touch, never the full
+suites or ctest. A lane that needs a compiler change stops and reports a
+minimal repro (a short `.mt` file plus the error) to the orchestrator. It must
+not work around the compiler by weakening an API or a test.
+
+**Lanes** (independent file sets; a lane commits only its own files):
+1. Collections: vec, vec_deque, linked_list, binary_heap (S006, S010).
+2. Maps/sets: hash_map, btree, collections (S008, S009).
+3. Iterators: core/iter (S011), then slice (L009).
+4. Text: core/text, char, alloc/string (S007).
+5. Numbers/format: num, float, fmt, cmp, hash (L003, L005, S012, S013).
+6. Owners/alloc: arc, rc, boxed, alloc (S005, S014).
+7. Hosted: std thread, sync, fs, path, net (S019-S021, S024, S025).
+
+**Merge gate (orchestrator, once per lane batch):** rebuild, fail and run
+suites, `tests/std.py`, ctest, doc validator. Merge only if all pass.
+
+**Lessons from the discarded branch** (each caused errors there):
+- Reserved words cannot be identifiers: `var copy read mut take shared heap
+  local weak pinned success failure present none interface`, among others; see
+  `isReservedWord` in compiler/syntax/token.cpp. Use backticks for a public
+  name (`` `var` ``, `` `success` ``) or rename locals and fields.
+- An explicit receiver (`receiver self: ...`) cannot combine with `mut`/`take`.
+- Every name used needs an import (`import package.core.fmt` and so on);
+  duplicate bindings (an import and a local fn of the same name) are errors.
+- Do not add a second form of an existing method (for example two `pop_if`
+  or two `fmt.write`); extend or replace the existing one.
+- `format` parameters take f-strings: `fmt.write(mut w, f"{value}")`.
+- Check each file after every edit; never batch thousands of unchecked lines.
 
 ## Read first
 - AGENTS.md, CONTRIBUTING.md, docs/code-quality.md
@@ -104,15 +148,16 @@ Compiler work also in your scope:
 - **Subagents:** only model gpt-6-luna.
 - **Git:**
   - Never touch the untracked `.vscode/`.
-  - Work on branch `lib/i13` in a worktree:
-    `git worktree add ../mettle-wt/lib-i13 -b lib/i13 main`
+  - Each lane works on its own branch and worktree, for example
+    `git worktree add ../mettle-wt/lib-iter -b lib/iter main`; the
+    orchestrator rebases and merges lanes one at a time.
   - Commit small, coherent batches with the trailer
     `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`.
   - The owner merges.
 
 ## Commands
-Run from the worktree root, after configuring your own build directory once
-with `python3 tools/build.py --configuration Release`.
+These are orchestrator commands. Lane agents use only the `--library-dir`
+commands in the handoff section. Run from the repository root.
 
 - **Build:**
   `.tools/macos-arm64/cmake/CMake.app/Contents/bin/cmake --build build/macos-arm64/Release --parallel 10`
