@@ -26,7 +26,12 @@ llvm::Expected<llvm::DataLayout> targetDataLayout(llvm::StringRef triple);
 // with the target machine's data layout.
 llvm::Error checkTargetLayout(const TypeStore &types, llvm::StringRef triple);
 
+llvm::Error instrumentModule(llvm::Module &module, bool sanitizeAddress,
+                             bool sanitizeThread);
+
 llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
-                       llvm::StringRef output, bool optimize = false);
+                       llvm::StringRef output, bool optimize = false,
+                       bool sanitizeAddress = false,
+                       bool sanitizeThread = false);
 
 } // namespace mettle::backend

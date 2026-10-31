@@ -28,6 +28,8 @@ struct Options {
   std::vector<std::string> features, registries;
   bool defaultFeatures = true, locked = false, offline = false;
   bool packageOptions = false;
+  std::set<std::string> sanitizers;
+  std::string sanitizerError;
   // Build cache (see docs/performance.md section 5.1.1). An empty directory
   // selects METTLE_CACHE_DIR, then the user cache directory.
   std::string cacheDir;

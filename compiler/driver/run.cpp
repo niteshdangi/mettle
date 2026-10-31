@@ -276,6 +276,35 @@ bool reportFindings(const std::vector<lint::Finding> &findings,
 } // namespace
 
 int run(const Options &requested) {
+  if (!requested.sanitizerError.empty()) {
+    std::cerr << "mettle: error[option]: " << requested.sanitizerError << '\n';
+    return 2;
+  }
+  if (!requested.sanitizers.empty() &&
+      requested.command != "build" && requested.command != "run" &&
+      requested.command != "test") {
+    std::cerr << "mettle: error[option]: --sanitize is supported only by "
+                 "build, run and test\n";
+    return 2;
+  }
+  if (requested.sanitizers.contains("undefined")) {
+    std::cerr << "mettle: error[feature]: --sanitize undefined is not "
+                 "implemented for emitted Mettle IR; Mettle already checks "
+                 "integer overflow\n";
+    return 1;
+  }
+  if (requested.sanitizers.contains("address") &&
+      requested.sanitizers.contains("thread")) {
+    std::cerr << "mettle: error[feature]: --sanitize address and thread "
+                 "cannot be combined\n";
+    return 1;
+  }
+  if (!requested.sanitizers.empty() && requested.command == "build" &&
+      requested.emit == "ir") {
+    std::cerr << "mettle: error[feature]: --sanitize requires LLVM "
+                 "instrumentation and cannot be used with --emit ir\n";
+    return 1;
+  }
   if (requested.command == "clean")
     return clean(requested);
   if (requested.command == "fmt")

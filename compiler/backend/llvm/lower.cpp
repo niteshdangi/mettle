@@ -7,6 +7,7 @@
 #include "llvm/IR/InlineAsm.h"
 
 #include "llvm/ADT/APFloat.h"
+#include "llvm/IR/Attributes.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/Error.h"
@@ -24,7 +25,8 @@ class Lowerer {
 public:
   Lowerer(const ir::Program &program, llvm::LLVMContext &context,
           llvm::StringRef target, bool freestanding,
-          const DebugInfoRequest *debug)
+          const DebugInfoRequest *debug, bool sanitizeAddress,
+          bool sanitizeThread)
       : program(program), context(context),
         module(std::make_unique<llvm::Module>("mettle", context)),
         builder(context),
@@ -34,6 +36,8 @@ public:
                           : llvm::Triple(target.empty() ? defaultTargetTriple()
                                                         : target.str())
                                 .isAArch64()) {
+    this->sanitizeAddress = sanitizeAddress;
+    this->sanitizeThread = sanitizeThread;
     const auto triple = target.empty() ? defaultTargetTriple() : target.str();
     auto layout = targetDataLayout(triple);
     if (!layout)
@@ -71,6 +75,14 @@ public:
   Lowerer &operator=(const Lowerer &) = delete;
   std::unique_ptr<llvm::Module> run() {
     auto result = build();
+    for (auto &function : *result) {
+      if (function.isDeclaration())
+        continue;
+      if (sanitizeAddress)
+        function.addFnAttr(llvm::Attribute::SanitizeAddress);
+      if (sanitizeThread)
+        function.addFnAttr(llvm::Attribute::SanitizeThread);
+    }
     if (debugInfo)
       debugInfo->finalize();
     return result;
@@ -251,6 +263,7 @@ public:
 private:
   const ir::Program &program;
   llvm::LLVMContext &context;
+  bool sanitizeAddress = false, sanitizeThread = false;
   std::unique_ptr<llvm::Module> module;
   llvm::IRBuilder<> builder;
   std::vector<llvm::Function *> functions;
@@ -2396,11 +2409,14 @@ private:
 std::unique_ptr<llvm::Module> lower(const ir::VerifiedProgram &program,
                                     llvm::LLVMContext &context, bool checked,
                                     llvm::StringRef target, bool freestanding,
-                                    const DebugInfoRequest *debug) {
+                                    const DebugInfoRequest *debug,
+                                    bool sanitizeAddress,
+                                    bool sanitizeThread) {
   auto selected = program.program().target.triple.empty()
                       ? target
                       : llvm::StringRef(program.program().target.triple);
-  Lowerer lowerer(program.program(), context, selected, freestanding, debug);
+  Lowerer lowerer(program.program(), context, selected, freestanding, debug,
+                  sanitizeAddress, sanitizeThread);
   lowerer.checked = checked;
   return lowerer.run();
 }

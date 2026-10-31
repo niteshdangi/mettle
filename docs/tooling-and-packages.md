@@ -5,6 +5,24 @@ Status: selected design. Only the subset in section 1.1 is implemented
 installed toolchain are not available.
 These operations are native equivalents, not Cargo-manifest compatibility.
 
+### Emitted-program sanitizers (I10/I11)
+
+Status: implemented, unverified (not yet built). `mettle build`, `mettle run`
+and `mettle test` accept `--sanitize address` or `--sanitize thread` for
+single-file and package inputs. The driver instruments emitted LLVM/object
+code, links the matching instrumented `alloc`, `panic`, `sys` and `thread`
+runtime, and includes the sanitizer set in its build-cache key. `address,thread`
+is rejected with a driver diagnostic because the runtimes cannot be combined.
+Sanitized object output must be linked by its consumer with the matching
+compiler-rt option and runtime.
+
+Although `undefined` is a recognized sanitizer name, it currently produces a
+clear unsupported-feature diagnostic. Mettle defines checked integer overflow
+itself, and this backend does not yet emit UBSan checks for other undefined
+operations; linking the UBSan runtime alone would not instrument emitted code.
+Do not treat this mode as ASan/UBSan/TSan qualification: ASan and TSan probes
+have been added but are not yet built or run.
+
 ### 1.1. Implemented subset (I09 T001)
 
 `mettle check|build DIR_OR_Mettle.toml` plans the package in the `packages`

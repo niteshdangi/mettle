@@ -35,6 +35,8 @@ void usage() {
          "         [--profile debug|release] [--overflow-checks on|off]\n"
          "         [--target TRIPLE] [--cc CXX] [--sysroot PATH]\n"
          "         [--library-dir PATH] [--features a,b]\n"
+         "         [--sanitize address|undefined|thread] "
+         "(instrument emitted programs)\n"
          "         [-g] (source-level DWARF; on Darwin an executable also gets "
          "OUTPUT.dSYM from dsymutil)\n"
          "         [--freestanding] (object/LLVM/IR output, aborting panics, "
@@ -187,7 +189,22 @@ std::optional<Options> options(int argc, char **argv) {
         result.cc = value;
       else if (arg == "--library-dir")
         result.libraryDirectory = value;
-      else if (arg == "--sysroot")
+      else if (arg == "--sanitize") {
+        for (std::size_t begin = 0; begin <= value.size();) {
+          auto end = std::min(value.find(',', begin), value.size());
+          if (end == begin) {
+            result.sanitizerError = "--sanitize requires a non-empty list";
+            break;
+          }
+          auto sanitizer = value.substr(begin, end - begin);
+          if (sanitizer != "address" && sanitizer != "undefined" &&
+              sanitizer != "thread")
+            result.sanitizerError = "unknown sanitizer '" + sanitizer + "'";
+          else if (!result.sanitizers.insert(sanitizer).second)
+            result.sanitizerError = "duplicate sanitizer '" + sanitizer + "'";
+          begin = end + 1;
+        }
+      } else if (arg == "--sysroot")
         result.sysroot = value;
       else if (arg == "--cache-dir")
         result.cacheDir = value;

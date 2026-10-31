@@ -6,11 +6,14 @@
               tests/source/run/machine-numeric-explicit-function-and-module-relaxations.mt
   broken-pipe `print` to a closed stdout: SIGPIPE under the default disposition,
               a quiet exit status 141 when SIGPIPE is ignored
+  sanitizers  ASan heap-overflow and TSan data-race checks on emitted Mettle
+              programs
 """
 
 import argparse
 import hashlib
 import json
+import os
 import platform
 import re
 import resource
@@ -34,9 +37,10 @@ def run_suite(mode, executable, directory):
                 "status": "in_progress", "mode": mode, "compiler_sha256": digest(executable),
                 "host": platform.platform(), "commands": [], "cases": []}
 
-    def run(arguments, expected=0, timeout=30):
+    def run(arguments, expected=0, timeout=30, env=None):
         begin = time.perf_counter()
-        result = subprocess.run(arguments, text=True, capture_output=True, timeout=timeout)
+        result = subprocess.run(arguments, text=True, capture_output=True,
+                                timeout=timeout, env=env)
         evidence["commands"].append({"command": list(map(str, arguments)),
                                     "exit_status": result.returncode,
                                     "elapsed_seconds": time.perf_counter() - begin,
@@ -112,11 +116,80 @@ def run_suite(mode, executable, directory):
                 raise AssertionError(f"closed stdout (SIGPIPE ignored={ignored}): expected "
                                      f"{expected} and no output, got {status}: {stderr!r}")
 
+    def sanitizer_probes():
+        address = source(
+            "asan-heap-overflow",
+            "import alloc.boxed\n"
+            "fn main(): i32 {\n"
+            "    let raw = alloc.boxed.new([42i32; 1]).into_raw()\n"
+            "    let value = unsafe { *raw.0.add(1usize) }\n"
+            "    value\n"
+            "}\n")
+        address_binary = directory / "asan-heap-overflow"
+        run([executable, "build", str(address), "-o", str(address_binary),
+             "--sanitize", "address"])
+        address_env = {**os.environ,
+                       "ASAN_OPTIONS": "halt_on_error=1:abort_on_error=0:exitcode=99"}
+        report = run([str(address_binary)], expected=99, env=address_env)
+        if "AddressSanitizer: heap-buffer-overflow" not in report.stderr:
+            raise AssertionError("ASan did not report the emitted heap overflow")
+        evidence["cases"].append({
+            "file": str(address), "source_sha256": digest(address),
+            "sanitizer": "address", "exit_status": report.returncode})
+
+        race = source(
+            "tsan-data-race",
+            "import std.thread\n"
+            "static READY: core.sync.atomic.AtomicUsize = "
+            "core.sync.atomic.AtomicUsize.new(0usize)\n"
+            "static mut VALUE: i32 = 0\n"
+            "fn worker(): i32 {\n"
+            "    READY.fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)\n"
+            "    while READY.load(core.sync.atomic.Ordering.SeqCst) < 2usize "
+            "{ thread.yield_now() }\n"
+            "    unsafe { VALUE = 1 }\n"
+            "    0\n"
+            "}\n"
+            "fn main(): i32 {\n"
+            "    let first = thread.spawn(take worker)\n"
+            "    let second = thread.spawn(take worker)\n"
+            "    let a = capture first.join()\n"
+            "    let b = capture second.join()\n"
+            "    match take a { success(_) => {}, failure(_) => { return 1 } }\n"
+            "    match take b { success(_) => {}, failure(_) => { return 2 } }\n"
+            "    0\n"
+            "}\n")
+        race_binary = directory / "tsan-data-race"
+        run([executable, "build", str(race), "-o", str(race_binary),
+             "--sanitize", "thread"])
+        race_env = {**os.environ,
+                    "TSAN_OPTIONS": "halt_on_error=1:abort_on_error=0:exitcode=99"}
+        report = run([str(race_binary)], expected=99, env=race_env)
+        if "ThreadSanitizer: data race" not in report.stderr:
+            raise AssertionError("TSan did not report the emitted data race")
+        evidence["cases"].append({
+            "file": str(race), "source_sha256": digest(race),
+            "sanitizer": "thread", "exit_status": report.returncode})
+
+        incompatible = run(
+            [executable, "build", str(race), "-o", str(directory / "bad"),
+             "--sanitize", "address,thread"], expected=1)
+        if "error[feature]" not in incompatible.stderr:
+            raise AssertionError("address+thread was not rejected diagnostically")
+        unsupported = run(
+            [executable, "build", str(race), "-o", str(directory / "bad"),
+             "--sanitize", "undefined"], expected=1)
+        if "error[feature]" not in unsupported.stderr or \
+                "Mettle already checks integer overflow" not in unsupported.stderr:
+            raise AssertionError("undefined sanitization was not explained")
+
     try:
         if mode == "fast-math":
             inspect_fast_math()
         elif mode == "broken-pipe":
             broken_pipe()
+        elif mode == "sanitizers":
+            sanitizer_probes()
         elif mode == "syntax":
             pure = source("no-cleanup-trampoline",
                           "fn add(a:i32,b:i32):i32 {a+b}\nfn main(){add(20,22)-42}\n")
@@ -268,7 +341,8 @@ def run_suite(mode, executable, directory):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("syntax", "fast-math", "broken-pipe"))
+    parser.add_argument("mode", choices=("syntax", "fast-math", "broken-pipe",
+                                         "sanitizers"))
     parser.add_argument("executable")
     parser.add_argument("directory")
     args = parser.parse_args()

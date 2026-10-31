@@ -50,15 +50,23 @@ bool sameRuntimeTarget(llvm::StringRef requested, llvm::StringRef runtime) {
          a.getOSVersion() == b.getOSVersion();
 }
 
+std::string runtimePath(const Options &options) {
+  if (options.sanitizers.contains("address"))
+    return METTLE_RUNTIME_ASAN_PATH;
+  if (options.sanitizers.contains("thread"))
+    return METTLE_RUNTIME_TSAN_PATH;
+  return METTLE_RUNTIME_PATH;
+}
+
 // Reports why the runtime library and native link are unavailable, if so.
 std::optional<std::string> linkUnavailable(const Options &options,
                                            std::string &compiler) {
+  const auto runtime = runtimePath(options);
   if (!sameRuntimeTarget(options.target, METTLE_RUNTIME_TARGET))
     return std::string("runtime is built for ") + METTLE_RUNTIME_TARGET +
            "; use --emit object and link with a target runtime";
-  if (!llvm::sys::fs::exists(METTLE_RUNTIME_PATH))
-    return std::string("runtime library ") + METTLE_RUNTIME_PATH +
-           " is missing";
+  if (!llvm::sys::fs::exists(runtime))
+    return std::string("runtime library ") + runtime + " is missing";
   auto found = llvm::sys::findProgramByName(options.cc);
   if (!found)
     return "cannot find selected C++ linker";
@@ -174,7 +182,9 @@ int emit(const Options &options, const Source &source,
         [&diagnostics](Span span) { return diagnostics.debugSpan(span); }};
     auto module = mettle::backend::lower(
         program, context, checked, options.target, options.freestanding,
-        options.debugInfo && options.emit != "ir" ? &debugRequest : nullptr);
+        options.debugInfo && options.emit != "ir" ? &debugRequest : nullptr,
+        options.sanitizers.contains("address"),
+        options.sanitizers.contains("thread"));
     module->setSourceFileName(source.path);
     module->setTargetTriple(
         llvm::Triple(llvm::Triple::normalize(options.target)));
@@ -183,6 +193,13 @@ int emit(const Options &options, const Source &source,
       return 1;
     }
     if (options.emit == "llvm") {
+      if (auto error = mettle::backend::instrumentModule(
+              *module, options.sanitizers.contains("address"),
+              options.sanitizers.contains("thread"))) {
+        std::cerr << "mettle: error[backend]: "
+                  << llvm::toString(std::move(error)) << '\n';
+        return 1;
+      }
       llvm::raw_fd_ostream out(output.path, fileError);
       if (fileError)
         return ioFailure("cannot open " + options.output, fileError);
@@ -209,7 +226,11 @@ int emit(const Options &options, const Source &source,
                      .string();
       }
       if (auto error = mettle::backend::emitObject(*module, options.target,
-                                                   objectPath, release)) {
+                                                   objectPath, release,
+                                                   options.sanitizers.contains(
+                                                       "address"),
+                                                   options.sanitizers.contains(
+                                                       "thread"))) {
         std::cerr << "mettle: error[backend]: "
                   << llvm::toString(std::move(error)) << '\n';
         return 1;
@@ -223,7 +244,7 @@ int emit(const Options &options, const Source &source,
       if (options.emit == "executable") {
         std::vector<std::string> arguments{
             linker,     "--target=" + options.target,
-            objectPath, METTLE_RUNTIME_PATH,
+            objectPath, runtimePath(options),
             "-o",       linked};
         if (!options.sysroot.empty())
           arguments.push_back("--sysroot=" + options.sysroot);
@@ -235,9 +256,20 @@ int emit(const Options &options, const Source &source,
           arguments.push_back("-fuse-ld=lld");
           arguments.push_back("-pthread");
         }
+        if (options.sanitizers.contains("address")) {
+          arguments.push_back("-fsanitize=address");
+          arguments.push_back("-fno-sanitize-recover=all");
+          arguments.push_back("-fno-omit-frame-pointer");
+        } else if (options.sanitizers.contains("thread")) {
+          arguments.push_back("-fsanitize=thread");
+          arguments.push_back("-fno-sanitize-recover=all");
+          arguments.push_back("-fno-omit-frame-pointer");
+        }
 #if METTLE_RUNTIME_SANITIZED
-        arguments.push_back("-fsanitize=address,undefined");
-        arguments.push_back("-fno-sanitize-recover=all");
+        else {
+          arguments.push_back("-fsanitize=address,undefined");
+          arguments.push_back("-fno-sanitize-recover=all");
+        }
 #endif
         std::vector<llvm::StringRef> refs(arguments.begin(), arguments.end());
         if (llvm::sys::ExecuteAndWait(linker, refs) != 0) {

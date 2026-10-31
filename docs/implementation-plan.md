@@ -966,10 +966,16 @@ measurement (performance.md 5.1.1) and Linux evidence.
 
 I10 can progress alongside I08/I09 after I07. The initial I10 surface is
 implemented (see S018-S023) with `library.std`, `runtime.thread` and scalar
-compiler cases; Linux-target and TSan qualification of the library remain open
-(a manual out-of-tree TSan run of five threaded programs reported nothing; the
-driver has no TSan link mode). The S022/S023 additions are implemented and
-verified on macOS arm64 (std programs). Channels provide an unbounded `channel`, bounded
+compiler cases; Linux-target qualification remains open. Emitted-program
+`--sanitize address` and `--sanitize thread` support, including runtime variants
+and cache separation, is implemented, unverified (not yet built); probes for an
+ASan heap overflow and TSan data race are added but have not run.
+`--sanitize address,thread` is rejected. UBSan for emitted Mettle IR is not
+implemented; `--sanitize undefined` produces an explicit unsupported diagnostic
+because Mettle already checks integer overflow and this backend emits no other
+UBSan checks. The prior manual out-of-tree TSan run is not qualification. The
+S022/S023 additions are implemented and verified on macOS arm64 (std programs).
+Channels provide an unbounded `channel`, bounded
 `sync_channel` including zero-capacity rendezvous, timeout/try operations,
 receiver iteration and `Select`. TLS supports static lazy-initialized keys and
 documented thread/main-exit destruction ordering. Static keys use aggregate
