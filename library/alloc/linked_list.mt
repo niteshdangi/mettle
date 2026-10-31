@@ -4,7 +4,7 @@ import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import package.core.hash.{Hash, Hasher}
 import package.core.fmt
 
-import super.alloc.{Allocator, Global, AllocError, layout_of, handle_alloc_error}
+import super.alloc.{Allocator, Global, AllocError, PushError, layout_of, handle_alloc_error}
 
 type Node<T> {
     value: T
@@ -40,14 +40,24 @@ extend<T, A: Allocator> LinkedList<T, A> {
         unsafe { core.ptr.write(n, Node(value, prev, next)) }
         n
     }
-    pub mut fn try_push_back(value: take T): Unit throws AllocError {
-        let n = try self.alloc_node(value, self.tail, core.ptr.null_mut<Node<T>>())
+    pub mut fn try_push_back(value: take T): Unit throws PushError<T> {
+        let raw = match capture self.a.allocate(layout_of<Node<T>>()) {
+            success(p) => p,
+            failure(error) => { throw PushError(value, error) }
+        }
+        let n = raw.cast<Node<T>>()
+        unsafe { core.ptr.write(n, Node(value, self.tail, core.ptr.null_mut<Node<T>>())) }
         if self.tail == core.ptr.null_mut<Node<T>>() { self.head = n } else { unsafe { (*self.tail).next = n } }
         self.tail = n
         self.len += 1usize
     }
-    pub mut fn try_push_front(value: take T): Unit throws AllocError {
-        let n = try self.alloc_node(value, core.ptr.null_mut<Node<T>>(), self.head)
+    pub mut fn try_push_front(value: take T): Unit throws PushError<T> {
+        let raw = match capture self.a.allocate(layout_of<Node<T>>()) {
+            success(p) => p,
+            failure(error) => { throw PushError(value, error) }
+        }
+        let n = raw.cast<Node<T>>()
+        unsafe { core.ptr.write(n, Node(value, core.ptr.null_mut<Node<T>>(), self.head)) }
         if self.head == core.ptr.null_mut<Node<T>>() { self.tail = n } else { unsafe { (*self.head).prev = n } }
         self.head = n
         self.len += 1usize
@@ -102,6 +112,10 @@ extend<T, A: Allocator> LinkedList<T, A> {
         if self.len == 0usize { return none }
         present(unsafe { mut (*self.head).value })
     }
+    pub mut fn back_mut(): (mut T from self)? {
+        if self.len == 0usize { return none }
+        present(unsafe { mut (*self.tail).value })
+    }
     // Element at position `i`, walking from the nearer end.
     pub fn get(i: usize): (read T from self)? {
         if i >= self.len { return none }
@@ -112,6 +126,16 @@ extend<T, A: Allocator> LinkedList<T, A> {
             k += 1usize
         }
         present(unsafe { read (*p).value })
+    }
+    pub mut fn get_mut(i: usize): (mut T from self)? {
+        if i >= self.len { return none }
+        var p = self.head
+        var k = 0usize
+        while k < i {
+            p = unsafe { (*p).next }
+            k += 1usize
+        }
+        present(unsafe { mut (*p).value })
     }
     pub mut fn clear(): Unit {
         while self.len != 0usize {

@@ -3,6 +3,7 @@
 // is shared between threads only when `T` is both Transferable and Shareable.
 import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, handle_alloc_error}
 import package.core.clone.Clone
+import package.core.ops.Deref
 
 // Shared header and payload. `wk` counts every Weak plus one implicit
 // reference held collectively by all strong owners, so the block is released
@@ -95,12 +96,14 @@ unsafe fn increment(count: ptr<mut core.sync.atomic.AtomicUsize>) {
 extend<T, A: Allocator + Clone> Arc<T, A> {
     // Another strong owner of the same payload; the payload is not cloned.
     pub fn retain(): Arc<T, A> {
+        let allocator = self.a.clone()
         unsafe { increment(core.ptr.from_mut((*self.p).strong)) }
-        Arc(self.p, self.a.clone())
+        Arc(self.p, allocator)
     }
     pub fn downgrade(): Weak<T, A> {
+        let allocator = self.a.clone()
         unsafe { increment(core.ptr.from_mut((*self.p).wk)) }
-        Weak(self.p, self.a.clone())
+        Weak(self.p, allocator)
     }
 }
 extend<T, A: Allocator + Clone> Arc<T, A> implements Clone {
@@ -109,6 +112,8 @@ extend<T, A: Allocator + Clone> Arc<T, A> implements Clone {
 
 extend<T, A: Allocator> Arc<T, A> {
     pub fn get(): read T from self { unsafe { read *(*self.p).value.as_ptr() } }
+    // The pointer is valid while this strong owner remains alive.
+    pub fn as_ptr(): ptr<read T> { unsafe { (*self.p).value.as_ptr() } }
     pub fn strong_count(): usize { unsafe { (*self.p).strong.load(core.sync.atomic.Ordering.Acquire) } }
     pub fn weak_count(): usize {
         unsafe {
@@ -155,6 +160,11 @@ extend<T, A: Allocator> Arc<T, A> {
     }
 }
 
+extend<T, A: Allocator> Arc<T, A> implements Deref {
+    type Target = T
+    fn deref(): read T from self { self.get() }
+}
+
 extend<T, A: Allocator + Clone> Weak<T, A> {
     // Succeeds only while a strong owner exists; the count only moves up from
     // a nonzero value, so a block already being destroyed is never revived.
@@ -164,9 +174,10 @@ extend<T, A: Allocator + Clone> Weak<T, A> {
             var current = (*b).strong.load(core.sync.atomic.Ordering.Relaxed)
             while current != 0usize {
                 if current > 0x7fffffffffffffffusize { core.intrinsics.abort() }
+                let allocator = self.a.clone()
                 match (*b).strong.compare_exchange_weak(current, current + 1usize,
                         core.sync.atomic.Ordering.Acquire, core.sync.atomic.Ordering.Relaxed) {
-                    success(_) => { return present(Arc(b, self.a.clone())) },
+                    success(_) => { return present(Arc(b, allocator)) },
                     failure(seen) => { current = seen }
                 }
             }
@@ -174,11 +185,16 @@ extend<T, A: Allocator + Clone> Weak<T, A> {
         }
     }
     pub fn retain(): Weak<T, A> {
+        let allocator = self.a.clone()
         unsafe { increment(core.ptr.from_mut((*self.p).wk)) }
-        Weak(self.p, self.a.clone())
+        Weak(self.p, allocator)
     }
 }
 extend<T, A: Allocator> Weak<T, A> {
+    // The allocation remains alive while this weak owner exists, but its
+    // payload may already have been destroyed; dereferencing is never valid
+    // without first upgrading.
+    pub fn as_ptr(): ptr<read T> { unsafe { (*self.p).value.as_ptr() } }
     pub fn strong_count(): usize { unsafe { (*self.p).strong.load(core.sync.atomic.Ordering.Acquire) } }
     pub fn weak_count(): usize {
         unsafe {

@@ -166,9 +166,12 @@ extend<T, A: Allocator> List<T, A> {
         }
     }
 
-    // Fallible append: on failure the value is dropped and the vector is unchanged.
-    pub mut fn try_push(value: take T): Unit throws AllocError {
-        try self.try_reserve(1usize)
+    // On allocation failure the error retains the value and the vector is unchanged.
+    pub mut fn try_push(value: take T): Unit throws super.alloc.PushError<T> {
+        match capture self.try_reserve(1usize) {
+            success(_) => {},
+            failure(error) => { throw super.alloc.PushError(value, error) }
+        }
         unsafe { core.ptr.write(self.ptr.add(self.len), value) }
         self.len += 1usize
     }
@@ -222,6 +225,13 @@ extend<T, A: Allocator> List<T, A> {
     }
     pub mut fn clear(): Unit { self.truncate(0usize) }
 
+    pub mut fn drain(start: usize, end: usize): Drain<region self, T, A> {
+        if start > end || end > self.len { panic_precondition() }
+        let tail_len = self.len - end
+        self.len = start
+        Drain(mut self, start, start, end, end, tail_len)
+    }
+
     pub fn get(index: usize): (read T from self)? {
         if index < self.len { present(unsafe { read *self.ptr.add(index) }) } else { none }
     }
@@ -252,6 +262,22 @@ extend<T, A: Allocator> List<T, A> {
         other.len = 0usize
     }
 
+    pub mut fn split_off(at: usize): List<T, A> where A: Clone {
+        if at > self.len { panic_precondition() }
+        let count = self.len - at
+        var other = new_in<T, A>(self.a.clone())
+        other.reserve_exact(count)
+        var i = 0usize
+        while i < count {
+            let value = unsafe { core.ptr.`read`(self.ptr.add(at + i)) }
+            unsafe { core.ptr.write(other.ptr.add(i), value) }
+            i += 1usize
+        }
+        other.len = count
+        self.len = at
+        other
+    }
+
     // Keeps elements for which `keep` is true, in order. The length is zeroed
     // while running, so a panic in `keep` or a destructor leaks the rest
     // instead of exposing moved-from slots.
@@ -272,6 +298,58 @@ extend<T, A: Allocator> List<T, A> {
             }
         }
         self.len = kept
+    }
+}
+
+type DrainFinish<T, A: Allocator> {
+    list: ptr<mut List<T, A>>
+    start: usize
+    tail_start: usize
+    tail_len: usize
+    drop {
+        // Safety: the live exclusive drain loan keeps the list allocation
+        // stable; its validated range bounds both source and destination.
+        unsafe {
+            let list = self.list
+            if self.tail_len != 0usize {
+                core.ptr.`copy`((*list).ptr.add(self.tail_start).cast_const(),
+                                (*list).ptr.add(self.start), self.tail_len)
+            }
+            (*list).len = self.start + self.tail_len
+        }
+    }
+}
+
+// The tail remains excluded from the list until this iterator is dropped.
+pub type Drain<region r, T, A: Allocator> {
+    list: mut List<T, A> from r
+    start: usize
+    front: usize
+    back: usize
+    tail_start: usize
+    tail_len: usize
+    drop {
+        let _finish = DrainFinish(core.ptr.from_mut(self.list), self.start,
+                                  self.tail_start, self.tail_len)
+        drop_run(unsafe { self.list.ptr.add(self.front) }, self.back - self.front)
+    }
+}
+
+extend<region r, T, A: Allocator> Drain<region r, T, A> implements Iterator {
+    type Item = T
+    mut fn next(): T? {
+        if self.front == self.back { return none }
+        let index = self.front
+        self.front += 1usize
+        present(unsafe { core.ptr.`read`(self.list.ptr.add(index)) })
+    }
+}
+
+extend<region r, T, A: Allocator> Drain<region r, T, A> implements BidirectionalIterator {
+    mut fn next_back(): T? {
+        if self.front == self.back { return none }
+        self.back -= 1usize
+        present(unsafe { core.ptr.`read`(self.list.ptr.add(self.back)) })
     }
 }
 

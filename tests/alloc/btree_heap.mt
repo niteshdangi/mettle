@@ -13,11 +13,24 @@ fn main(): i32 {
     match m.remove(5 + 0) { present(v) => { if v != 10 { return 4 } }, none => { return 5 } }
     if m.contains_key(5 + 0) { return 6 }
     var h = alloc.binary_heap.new<i32>()
+    h.reserve(100usize)
+    if h.capacity() < 100usize { return 8 }
     i = 0
     while i < 100 { h.push((i * 73) % 101); i += 1 }
     var prev = 1000
     while true {
         match h.pop() { present(x) => { if x > prev { return 7 }; prev = x }, none => { break } }
+    }
+    var sorted = alloc.binary_heap.new<i32>()
+    sorted.push(4)
+    sorted.push(1)
+    sorted.push(3)
+    sorted.push(2)
+    let ordered = sorted.into_sorted_vec()
+    var index = 0usize
+    while index < ordered.len() {
+        if ordered[index] != (index as i32) + 1 { return 9 }
+        index += 1usize
     }
     0
 }

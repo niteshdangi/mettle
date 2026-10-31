@@ -18,9 +18,9 @@ pub type Bucket<K, V> {
     pub value: V
 }
 
-// Insertion-ordered open-addressing table: entries live densely in a `List`
-// and a power-of-two index table (linear probing, backward-shift deletion)
-// maps hashes to entry positions. Both blocks come from the same allocator.
+// Entries live densely in a `List` and a power-of-two index table (linear
+// probing, backward-shift deletion) maps hashes to entry positions. Both
+// blocks come from the same allocator; iteration order is unspecified.
 pub type Map<K, V, A: Allocator = Global> {
     entries: List<Bucket<K, V>, A>
     idx: ptr<mut usize>
@@ -59,9 +59,13 @@ fn hash_of<Q: Hash + unsized>(k: read Q): u64 { hash_one(k) }
 extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
     pub fn len(): usize { self.entries.len() }
     pub fn is_empty(): bool { self.entries.is_empty() }
-    pub fn capacity(): usize { self.icap / 4usize * 3usize }
+    pub fn capacity(): usize {
+        let index_capacity = self.icap / 4usize * 3usize
+        let entry_capacity = self.entries.capacity()
+        if index_capacity < entry_capacity { index_capacity } else { entry_capacity }
+    }
     pub fn allocator(): read A from self { self.entries.allocator() }
-    // Entries in insertion order (removal moves the last entry into the hole).
+    // Dense entries; callers must not depend on their iteration order.
     pub fn as_entries(): read [Bucket<K, V>] from self { self.entries.as_slice() }
 
     fn slot(pos: usize): usize { unsafe { *self.idx.add(pos) } }
@@ -98,6 +102,9 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
             present(b) => b,
             none => throw AllocError(empty(), 8usize)
         }
+        if bytes > 0x7fffffffffffffffusize - 7usize {
+            throw AllocError(bytes, 8usize)
+        }
         let layout = unsafe { layout_unchecked(bytes, 8usize) }
         let np = try self.entries.allocator_mut().allocate(layout)
         let nidx = np.cast<usize>()
@@ -129,9 +136,66 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
             none => throw AllocError(empty(), 8usize)
         }
         try self.entries.try_reserve(extra)
+        if need <= self.capacity() { return () }
         var ncap = if self.icap == 0usize { 8usize } else { self.icap }
-        while need * 4usize > ncap * 3usize { ncap *= 2usize }
+        while need > ncap - ncap / 4usize {
+            if ncap > 0x7fffffffffffffffusize / 2usize {
+                throw AllocError(empty(), 8usize)
+            }
+            ncap *= 2usize
+        }
         if ncap != self.icap { try self.rebuild(ncap) }
+    }
+    pub mut fn try_reserve_exact(extra: usize): Unit throws AllocError {
+        let need = match self.entries.len().checked_add(extra) {
+            present(n) => n,
+            none => throw AllocError(empty(), 8usize)
+        }
+        try self.entries.try_reserve_exact(extra)
+        if need <= self.capacity() { return () }
+        var ncap = 8usize
+        while need > ncap - ncap / 4usize {
+            if ncap > 0x7fffffffffffffffusize / 2usize {
+                throw AllocError(empty(), 8usize)
+            }
+            ncap *= 2usize
+        }
+        if ncap > self.icap { try self.rebuild(ncap) }
+    }
+    pub mut fn reserve(extra: usize): Unit {
+        match capture self.try_reserve(extra) {
+            success(_) => (),
+            failure(_) => handle_alloc_error(layout_of<Bucket<K, V>>())
+        }
+    }
+    pub mut fn reserve_exact(extra: usize): Unit {
+        match capture self.try_reserve_exact(extra) {
+            success(_) => (),
+            failure(_) => handle_alloc_error(layout_of<Bucket<K, V>>())
+        }
+    }
+    pub mut fn shrink_to_fit(): Unit {
+        var target = 0usize
+        if self.entries.len() != 0usize {
+            target = 8usize
+            while self.entries.len() > target - target / 4usize {
+                target *= 2usize
+            }
+        }
+        if target == 0usize && self.icap != 0usize {
+            let old = unsafe { layout_unchecked(self.icap * 8usize, 8usize) }
+            unsafe {
+                self.entries.allocator_mut().deallocate(self.idx.cast<u8>(), old)
+            }
+            self.idx = core.ptr.null_mut<usize>()
+            self.icap = 0usize
+        } else if target < self.icap {
+            match capture self.rebuild(target) {
+                success(_) => (),
+                failure(_) => ()
+            }
+        }
+        self.entries.shrink_to_fit()
     }
 
     // Lookups take a borrowed query `Q` that the stored key views as (a
@@ -195,7 +259,7 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
         unsafe { mut (*self.entries.as_mut_ptr().add(s)).value }
     }
 
-    pub mut fn remove<Q: Hash + PartialEq + unsized>(key: read Q): V? where K: KeyView<Q> {
+    pub mut fn remove_entry<Q: Hash + PartialEq + unsized>(key: read Q): (K, V)? where K: KeyView<Q> {
         let hash = hash_of(key)
         let pos = match self.find_pos(hash, key) { present(p) => p, none => { return none } }
         let s = self.slot(pos)
@@ -221,7 +285,13 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
             self.set_slot(p, s)
         }
         let b = self.entries.swap_remove(s)
-        present(b.value)
+        present((b.key, b.value))
+    }
+    pub mut fn remove<Q: Hash + PartialEq + unsized>(key: read Q): V? where K: KeyView<Q> {
+        match self.remove_entry(key) {
+            present(entry) => present(entry.1),
+            none => none
+        }
     }
 
     pub mut fn clear(): Unit {
@@ -260,8 +330,27 @@ extend<K, A: Allocator> Set<K, A> {
 
 extend<K: Hash + PartialEq, A: Allocator> Set<K, A> {
     pub fn len(): usize { self.map.len() }
+    pub fn capacity(): usize { self.map.capacity() }
     pub fn is_empty(): bool { self.map.is_empty() }
+    pub mut fn try_reserve(extra: usize): Unit throws AllocError {
+        try self.map.try_reserve(extra)
+    }
+    pub mut fn try_reserve_exact(extra: usize): Unit throws AllocError {
+        try self.map.try_reserve_exact(extra)
+    }
+    pub mut fn reserve(extra: usize): Unit { self.map.reserve(extra) }
+    pub mut fn reserve_exact(extra: usize): Unit { self.map.reserve_exact(extra) }
+    pub mut fn shrink_to_fit(): Unit { self.map.shrink_to_fit() }
     pub fn contains<Q: Hash + PartialEq + unsized>(key: read Q): bool where K: KeyView<Q> { self.map.contains_key(key) }
+    pub fn get<Q: Hash + PartialEq + unsized>(key: read Q): (read K from self)? where K: KeyView<Q> {
+        match self.map.find_entry(key) {
+            present(index) => match self.map.entries.get(index) {
+                present(entry) => present(read entry.key),
+                none => none
+            },
+            none => none
+        }
+    }
     // True when the key was newly added.
     pub mut fn insert(key: take K): bool {
         match self.map.insert(key, ()) { present(_) => false, none => true }
@@ -271,6 +360,12 @@ extend<K: Hash + PartialEq, A: Allocator> Set<K, A> {
     }
     pub mut fn remove<Q: Hash + PartialEq + unsized>(key: read Q): bool where K: KeyView<Q> {
         match self.map.remove(key) { present(_) => true, none => false }
+    }
+    pub mut fn take<Q: Hash + PartialEq + unsized>(key: read Q): K? where K: KeyView<Q> {
+        match self.map.remove_entry(key) {
+            present(entry) => present(entry.0),
+            none => none
+        }
     }
     pub mut fn clear(): Unit { self.map.clear() }
     pub fn as_entries(): read [Bucket<K, Unit>] from self { self.map.as_entries() }

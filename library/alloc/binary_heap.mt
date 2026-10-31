@@ -2,7 +2,7 @@ import package.core.iter.{Iterator, OwnedIterable, Iterable, FromItems, ExtendIt
 import package.core.clone.Clone
 import package.core.fmt
 import package.core.slice.SliceIter
-import super.alloc.{Allocator, Global, AllocError}
+import super.alloc.{Allocator, Global, AllocError, PushError}
 import super.vec.List
 import package.core.cmp.Ord
 
@@ -11,10 +11,35 @@ pub type BinaryHeap<T, A: Allocator = Global> { data: List<T, A> }
 
 pub fn new_in<T, A: Allocator>(a: take A): BinaryHeap<T, A> { BinaryHeap(super.vec.new_in<T, A>(a)) }
 pub fn new<T>(): BinaryHeap<T> { new_in(Global()) }
+pub fn try_with_capacity_in<T, A: Allocator>(n: usize, a: take A): BinaryHeap<T, A> throws AllocError {
+    BinaryHeap(try super.vec.try_with_capacity_in<T, A>(n, take a))
+}
+pub fn with_capacity_in<T, A: Allocator>(n: usize, a: take A): BinaryHeap<T, A> {
+    BinaryHeap(super.vec.with_capacity_in<T, A>(n, take a))
+}
+pub fn try_with_capacity<T>(n: usize): BinaryHeap<T> throws AllocError {
+    try try_with_capacity_in<T, Global>(n, Global())
+}
+pub fn with_capacity<T>(n: usize): BinaryHeap<T> { with_capacity_in(n, Global()) }
+
+extend<T, A: Allocator> BinaryHeap<T, A> {
+    pub fn len(): usize { self.data.len() }
+    pub fn capacity(): usize { self.data.capacity() }
+    pub fn is_empty(): bool { self.data.is_empty() }
+    pub mut fn try_reserve(additional: usize): Unit throws AllocError {
+        try self.data.try_reserve(additional)
+    }
+    pub mut fn reserve(additional: usize): Unit { self.data.reserve(additional) }
+    pub mut fn try_reserve_exact(additional: usize): Unit throws AllocError {
+        try self.data.try_reserve_exact(additional)
+    }
+    pub mut fn reserve_exact(additional: usize): Unit {
+        self.data.reserve_exact(additional)
+    }
+    pub mut fn shrink_to_fit(): Unit { self.data.shrink_to_fit() }
+}
 
 extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
-    pub fn len(): usize { self.data.len() }
-    pub fn is_empty(): bool { self.data.is_empty() }
     pub fn peek(): (read T from self)? { self.data.get(0usize) }
     pub fn as_slice(): read [T] from self { self.data.as_slice() }
 
@@ -39,8 +64,11 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
             i = parent
         }
     }
-    pub mut fn try_push(value: take T): Unit throws AllocError {
-        try self.data.try_reserve(1usize)
+    pub mut fn try_push(value: take T): Unit throws PushError<T> {
+        match capture self.data.try_reserve(1usize) {
+            success(_) => {},
+            failure(error) => { throw PushError(value, error) }
+        }
         self.push_reserved(value)
     }
     pub mut fn push(value: take T): Unit {
@@ -84,6 +112,12 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
         top
     }
     pub mut fn clear(): Unit { self.data.clear() }
+
+    pub take fn into_sorted_vec(): List<T, A> {
+        var out = self.into_vec()
+        out.sort()
+        out
+    }
 }
 
 extend<T, A: Allocator> BinaryHeap<T, A> {

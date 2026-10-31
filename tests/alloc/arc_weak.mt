@@ -9,9 +9,16 @@ fn main(): i32 {
         let a = alloc.arc.new(D(cp))
         let b = a.retain()
         if a.strong_count() != 2usize || a.weak_count() != 0usize { return 90 }
+        if !a.ptr_eq(b) || a.as_ptr() != b.as_ptr() { return 89 }
         w = present(a.downgrade())
         if a.weak_count() != 1usize { return 91 }
-        match w { present(ww) => { match ww.upgrade() { present(_) => {}, none => { return 92 } } }, none => { return 93 } }
+        match w {
+            present(ww) => {
+                if ww.as_ptr() != a.as_ptr() { return 88 }
+                match ww.upgrade() { present(_) => {}, none => { return 92 } }
+            },
+            none => { return 93 }
+        }
         if n != 0 { return 94 }
     }
     if n != 1 { return 95 }

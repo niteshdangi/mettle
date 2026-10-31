@@ -25,6 +25,14 @@ fn main(): i32 {
     var sum = 0
     while true { match it.next() { present(e) => { sum += e }, none => { break } } }
     if sum != 16 + 1 + 2 { return 8 + sum }
+    var left = alloc.vec.new<i32>()
+    left.push(1)
+    left.push(2)
+    left.push(3)
+    left.push(4)
+    let right = left.split_off(2usize)
+    if left.len() != 2usize || left[0usize] != 1 || left[1usize] != 2 { return 9 }
+    if right.len() != 2usize || right[0usize] != 3 || right[1usize] != 4 { return 10 }
     var n = 0
     {
         var d = alloc.vec.new<D>()
