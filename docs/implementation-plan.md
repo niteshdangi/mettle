@@ -1192,10 +1192,13 @@ and their feature-fail fixtures are removed.
 The recursive async future-cycle diagnostic is implemented and verified on
 macOS arm64: direct and mutual recursive async call cycles are diagnosed in the
 type phase at the call span (`async-recursive-future-{direct,mutual}.mt`).
-Async interface default bodies still require an explicit result type; an
-inferred-output attempt was withdrawn (its default future failed the Sized
-obligation). Explicit erased-future storage and erased async-interface dispatch
-remain unsupported.
+Inferred outputs for async interface default bodies are implemented but
+unverified (not built). Their associated future output and Sized/Copy/Unpin
+checks are resolved after body inference. The new source run fixtures cover an
+inferred default, an implementation override, and a default awaiting another
+interface method. Ordinary async named functions retain their omitted-annotation
+`Unit` output. Explicit erased-future storage and erased async-interface
+dispatch remain unsupported.
 Coroutine-state DWARF metadata (a `state` discriminator with per-state
 variants) and its LLDB summary are implemented and verified by `debug_info`
 on macOS arm64; the LLDB summary has not been re-run interactively.
@@ -1215,7 +1218,7 @@ Revision: uncommitted lane changes on `c81bc6d`; scope as stated per row.
 | Requirement | State and owning files | Remaining work and required fixtures |
 | --- | --- | --- |
 | Preserve async source; type future and await | Implemented and verified on macOS arm64, including arrow async closures and `try await`: `syntax/parser/closures.cpp`, `syntax/parser/async.cpp`, `semantics/sums.cpp`, `semantics/regions.cpp`, `lowering/sums.cpp`. | `async-arrow-closure.mt`, `async-try-await.mt`. |
-| Async interface futures and dispatch | Bodyless async methods publish region- and output-constrained associated future families; implementations bind concrete opaque coroutine futures; concrete and generic-bound calls use the family. Verified on macOS arm64. Async default bodies require an explicit result type. | `async-interface-method.mt`, `async-interface-erased-dispatch.mt`; inferred async default outputs remain open. Explicit erased-future storage and erased async-interface dispatch remain unsupported. |
+| Async interface futures and dispatch | Bodyless async methods publish region- and output-constrained associated future families; implementations bind concrete opaque coroutine futures; concrete and generic-bound calls use the family. Existing dispatch is verified on macOS arm64. Inferred async default outputs and deferred associated-default obligations are implemented, unverified (not built): `syntax/ast.h`, `syntax/parser/{detail.h,interfaces.cpp,async.cpp,declarations.cpp}`, `semantics/{interfaces.h,interfaces.cpp,interface_implementations.cpp,check.cpp}`. | Verify `async-interface-default-inferred-output.mt`, `async-interface-default-overridden.mt`, and `async-interface-default-awaits-method.mt`; retain `async-interface-method.mt` and `async-interface-erased-dispatch.mt`. Explicit erased-future storage and erased async-interface dispatch remain unsupported. |
 | Erased Future polling and storage | Pinned poll dispatch through `any Future<Output = T>` and the `alloc.future.Erased<T>` static heap wrapper are implemented. The verifier accepts the Pin-wrapped erased receiver, and LLVM emits a witness adapter that repackages the data pointer as `Pin<mut Concrete>`; the adapter and verifier changes are implemented but unverified (not yet built). The wrapper owns a stable concrete payload and uses typed poll/release callbacks. | Build/run `tests/std/erased_future_dispatch.mt`; general `Box<any Future<Output = T>>` remains blocked on I07 unsized-owner support and a compiler-owned dynamic drop contract. |
 | Recursive async future cycles | Implemented and verified on macOS arm64: `semantics/check.cpp` diagnoses direct and mutual recursive async call cycles in the type phase at the recursive call span and names the cycle. | `async-recursive-future-direct.mt`, `async-recursive-future-mutual.mt`. |
 | Ownership-checked suspension CFG | Implemented: `ir/ir.h` `Exit::Suspend`, `ir/verify.cpp`, successor updates in `analysis/*`, `ir/dominance.cpp`, `instances/arrays.cpp`, `lowering/scalar.cpp`. | None known; borrow-across-await is covered by `async-await-anywhere.mt`. |
