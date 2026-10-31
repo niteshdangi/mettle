@@ -737,12 +737,15 @@ int build(const Options &requested,
     return 0;
   std::vector<PackageObject> packageObjects;
   const auto &irProgram = program->program();
+  // Coroutine frames are built by whichever object first uses them, so their
+  // bodies have no single owning object; such programs use one object.
   bool splitPackages =
       options.command == "build" && options.emit == "executable" &&
       options.profile == "debug" && !options.debugInfo &&
       options.sanitizers.empty() && options.harness.empty() &&
       !options.freestanding && !options.packageContext &&
-      irProgram.globalAssembly.empty() && inputs.packageObjectsSafe() &&
+      irProgram.globalAssembly.empty() && irProgram.coroutines.empty() &&
+      inputs.packageObjectsSafe() &&
       irProgram.functionPackages.size() == irProgram.functions.size() &&
       irProgram.staticPackages.size() == irProgram.statics.size();
   std::map<std::string, const resolution::Library::Package *> packagesById;
