@@ -429,7 +429,8 @@ public:
       std::function<Type(Type, std::span<const TypeBinding>, std::size_t, Span,
                          const RegionEnvironment &)>
           normalizeContract,
-      std::function<Type(Type, Type, Span, const RegionEnvironment &)>
+      std::function<Type(Type, Type, std::size_t, Span,
+                         const RegionEnvironment &)>
           eraseContract,
       std::function<bool(Type, std::size_t, Span, const RegionEnvironment &)>
           unpinContract)
@@ -464,7 +465,7 @@ private:
   std::function<Type(Type, std::span<const TypeBinding>, std::size_t, Span,
                      const RegionEnvironment &)>
       normalizeContract;
-  std::function<Type(Type, Type, Span, const RegionEnvironment &)>
+  std::function<Type(Type, Type, std::size_t, Span, const RegionEnvironment &)>
       eraseContract;
   std::function<bool(Type, std::size_t, Span, const RegionEnvironment &)>
       unpinContract;
@@ -695,10 +696,23 @@ Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
       descriptor.parameterRegions.push_back(region);
       if (!syntax.callable->parameters[i].name.empty())
         nested.names[syntax.callable->parameters[i].name] = region;
+      // As for function parameters, an elided payload region of a
+      // `read`/`mut` parameter is its own quantified region.
+      auto payloadRegion = region;
+      bool viewed = !types.isView(descriptor.parameters[i].type) &&
+                    (descriptor.parameters[i].mode == ParameterMode::Read ||
+                     descriptor.parameters[i].mode == ParameterMode::Mut);
+      if (viewed)
+        payloadRegion = store.bound(nested.scope, "<elided>");
       descriptor.parameters[i].type =
           decorate(descriptor.parameters[i].type,
                    syntax.callable->parameters[i].annotation, nested, span,
-                   region, stored);
+                   payloadRegion, stored);
+      if (viewed) {
+        auto used = contained(descriptor.parameters[i].type);
+        if (std::find(used.begin(), used.end(), payloadRegion) != used.end())
+          descriptor.regionParameters.push_back(payloadRegion);
+      }
       if ((descriptor.parameters[i].mode == ParameterMode::Read ||
            descriptor.parameters[i].mode == ParameterMode::Mut ||
            types.containsViews(descriptor.parameters[i].type)) &&
@@ -937,6 +951,16 @@ Type RegionPass::inferred(Type type, RegionId region) {
                    ? types.structural(AggregateKind::Array, {element},
                                       record.fields.size())
                    : types.arrayType(element, record.arrayCount);
+    } else if (!record.components.empty() &&
+               record.kind != AggregateKind::Opaque && !declaration(type)) {
+      // Structural aggregates carry their payloads as components, as in
+      // `decorate`.
+      std::vector<Type> components;
+      for (auto component : record.components)
+        components.push_back(inferred(component, region));
+      result =
+          types.structural(record.kind, std::move(components),
+                           static_cast<std::uint32_t>(record.fields.size()));
     } else {
       auto fields = record.fields;
       for (auto &field : fields)
@@ -1487,6 +1511,36 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
     return wrapped ? types.structural(AggregateKind::Pin, {projected})
                    : projected;
   }
+  // Storage wrappers are transparent to regions: `new` holds its argument, an
+  // argument-free constructor holds no live view (so any region, `static`,
+  // describes it), and unwrapping yields the receiver's own payload.
+  if (facts(node).machineOperation.starts_with("storage.")) {
+    auto method = std::string_view(facts(node).machineOperation).substr(8);
+    if (!methodReceiver && types.isProduct(originalType(node))) {
+      if (method == "new" && arguments.size() == 1)
+        return types.structural(types.product(originalType(node)).kind,
+                                {arguments[0]});
+      if (arguments.empty() && (method == "uninit" || method == "zeroed"))
+        return inferred(originalType(node), RegionId::Static);
+    }
+    if (methodReceiver) {
+      auto owner = *methodReceiver;
+      auto location = methodLocation;
+      while (types.isView(owner)) {
+        location = types.view(owner).region;
+        owner = types.view(owner).payload;
+      }
+      if (types.isProduct(owner) && !types.product(owner).components.empty()) {
+        auto payload = types.product(owner).components[0];
+        if (method == "assume_init" || method == "into_inner")
+          return payload;
+        if (method == "get_ref" || method == "assume_init_ref")
+          return types.viewType(payload, ParameterMode::Read, location);
+        if (method == "get_mut" || method == "assume_init_mut")
+          return types.viewType(payload, ParameterMode::Mut, location);
+      }
+    }
+  }
   if (facts(node).machineOperation.starts_with("cell.")) {
     auto method = std::string_view(facts(node).machineOperation).substr(5);
     if (method == "new")
@@ -1971,6 +2025,34 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
     auto target = parameterForArgument(i);
     argument(target, arguments[i], *node.children[i + 1], argumentLocations[i],
              facts(*node.children[i + 1]).borrowConversion.has_value());
+  }
+  // A region named only by a where-equality, as `r` in
+  // `where Self.Item = read T from r`, is bound by the normalized projection.
+  // Checked equalities follow the declaration's equality constraints in order.
+  {
+    const auto &equalities = functions[callee].genericEqualities;
+    std::size_t index = 0;
+    for (const auto &constraint : declaration.constraints) {
+      if (!constraint.equality)
+        continue;
+      if (index >= equalities.size())
+        break;
+      const auto &equality = equalities[index++];
+      auto probe = types.callable(signatureType(callee));
+      if (probe.parameters.empty())
+        break;
+      probe.parameters.resize(1);
+      probe.parameters[0].type = types.substitute(
+          replace(equality.parameter, substitution), typeBindings);
+      probe.result =
+          types.substitute(decorate(equality.argument, *constraint.equality,
+                                    declarationContext, node.span),
+                           typeBindings);
+      auto normalized = types.callable(normalizeContract(
+          types.callableType(std::move(probe)), {}, currentFunction, node.span,
+          current->context.environment));
+      infer(normalized.parameters[0].type, normalized.result, bindings);
+    }
   }
   for (std::size_t pass = 0; pass <= signature.obligations.size(); ++pass) {
     bool changed = false;
@@ -2834,7 +2916,8 @@ Type RegionPass::erased(Type source, Type target, Span span) {
   if (types.isErased(target)) {
     if (types.isView(source))
       source = types.view(source).payload;
-    return eraseContract(source, target, span, current->context.environment);
+    return eraseContract(source, target, currentFunction, span,
+                         current->context.environment);
   }
   if (types.isProduct(source) && types.isProduct(target)) {
     const auto actual = types.product(source);
@@ -3327,9 +3410,32 @@ void RegionPass::run() {
           continue;
         }
       }
-      signature.parameters.push_back(decorate(type, *annotation, context,
-                                              syntax.parameters[p].span,
-                                              signature.backing[p]));
+      // An elided region argument of a `read`/`mut` parameter's payload is
+      // its own quantified region, outliving the parameter's view region, so
+      // reborrows of nested views satisfy the invariant payload.
+      auto fallback = signature.backing[p];
+      bool viewed = syntax.parameters[p].name != "self" &&
+                    !types.isView(type) &&
+                    (functions[i].locals[p].mode == ParameterMode::Read ||
+                     functions[i].locals[p].mode == ParameterMode::Mut);
+      if (viewed)
+        fallback = store.bound(context.scope, "<elided>");
+      signature.parameters.push_back(decorate(
+          type, *annotation, context, syntax.parameters[p].span, fallback));
+      if (viewed) {
+        auto used = contained(signature.parameters.back());
+        if (std::find(used.begin(), used.end(), fallback) != used.end())
+          signature.quantified.push_back(fallback);
+      }
+      // `Self` names the receiver's target with its declared region arguments,
+      // not a fresh instance at the annotation's fallback region.
+      if (syntax.parameters[p].name == "self" && syntax.implementation >= 0) {
+        auto self = signature.parameters.back();
+        if (types.isView(self))
+          self = types.view(self).payload;
+        if (types.isProduct(self))
+          context.types["Self"] = self;
+      }
     }
     for (std::size_t p = 0; p < signature.parameters.size(); ++p)
       for (auto region : contained(signature.parameters[p]))
@@ -3644,6 +3750,10 @@ void Checker::checkRegions() {
         genericBindings(*current);
         std::vector<TypeBinding> substitutions(bindings.begin(),
                                                bindings.end());
+        // The implementation's own requirements keep their declared regions;
+        // they precede the region-erased method bounds so associated
+        // projections such as `Item = read T from r` normalize with `r`.
+        std::vector<interfaces::Obligation> assumptions;
         if (current->implementation >= 0) {
           const auto index = static_cast<std::size_t>(current->implementation);
           const auto &syntax = module.implementations[index];
@@ -3674,7 +3784,29 @@ void Checker::checkRegions() {
           for (auto &binding : substitutions)
             binding.argument = checked.types->substituteRegions(
                 binding.argument, ownerRegions);
+          // The rule was elaborated in the implementation's own generic
+          // environment; rebind its parameters to this method's identities.
+          std::vector<TypeBinding> ownerTypes;
+          for (auto parameter : compiled.parameters)
+            if (auto found = genericEnvironment->names.find(
+                    std::string(checked.types->name(parameter)));
+                found != genericEnvironment->names.end() &&
+                found->second != parameter)
+              ownerTypes.push_back({parameter, found->second});
+          for (auto requirement : compiled.requirements) {
+            requirement.subject = checked.types->substituteRegions(
+                checked.types->substitute(requirement.subject, ownerTypes),
+                ownerRegions);
+            if (requirement.interfaceType != Type::Unknown)
+              requirement.interfaceType = checked.types->substituteRegions(
+                  checked.types->substitute(requirement.interfaceType,
+                                            ownerTypes),
+                  ownerRegions);
+            assumptions.push_back(requirement);
+          }
         }
+        for (auto &assumption : interfaceAssumptions())
+          assumptions.push_back(assumption);
         auto descriptor = checked.types->callable(
             checked.types->substitute(signature, substitutions));
         auto regions = environment;
@@ -3682,7 +3814,7 @@ void Checker::checkRegions() {
                                    descriptor.regionRequirements.begin(),
                                    descriptor.regionRequirements.end());
         interfaces::Solver solver(*checked.types, *checked.interfaceData,
-                                  diagnostics, interfaceAssumptions(),
+                                  diagnostics, std::move(assumptions),
                                   std::move(regions));
         for (auto &parameter : descriptor.parameters)
           parameter.type = solver.normalize(parameter.type, {}, span);
@@ -3693,10 +3825,25 @@ void Checker::checkRegions() {
         genericEnvironment = savedEnvironment;
         return checked.types->callableType(std::move(descriptor));
       },
-      [&](Type actual, Type target, Span span,
+      [&](Type actual, Type target, std::size_t function, Span span,
           const RegionEnvironment &environment) {
+        // A generic source is erased under the enclosing function's bounds.
+        std::vector<interfaces::Obligation> assumptions;
+        const auto &context = checked.functions.at(function);
+        for (auto [type, bound] : context.interfaceBounds)
+          assumptions.push_back({type, bound});
+        for (const auto &[type, declared] : context.interfaceBounds)
+          if (type == actual)
+            for (auto bound :
+                 interfaces::hierarchy(*checked.types, *checked.interfaceData,
+                                       actual, declared, span, diagnostics))
+              if (checked.types->eraseRegions(bound) ==
+                  checked.types->eraseRegions(target))
+                return bound;
         interfaces::Solver solver(*checked.types, *checked.interfaceData,
-                                  diagnostics, {}, environment);
+                                  diagnostics, std::move(assumptions),
+                                  environment);
+        solver.setEqualities(context.genericEqualities);
         if (checked.types->isErased(actual))
           for (auto bound :
                interfaces::hierarchy(*checked.types, *checked.interfaceData,

@@ -121,7 +121,8 @@ void TypeInference::equal(int a, int b, Span span, bool coercion) {
       const auto &actual = types.view(found);
       if (wanted.payload == actual.payload && wanted.mode != actual.mode) {
         related.push_back(
-            {"help", {},
+            {"help",
+             {},
              wanted.mode == ParameterMode::Mut
                  ? "this position requires a mutable view; pass `mut value`"
                  : "this position requires a read view; pass `read value`"});

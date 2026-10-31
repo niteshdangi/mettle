@@ -21,19 +21,18 @@ extend<T> T implements Any {
     fn type_id(): TypeId { type_id<T>() }
 }
 
-pub fn is<T, U>(value: read U): bool { type_id<T>() == type_id<U>() }
+// Compares `T` with the dynamic type of `value`: the type it was erased from.
+pub fn is<T>(value: read any Any): bool { value.type_id() == type_id<T>() }
 
-// Reinterprets `value` as a `T` when both are the same type.
-pub fn downcast_ref<T, U>(value: read U): (read T from value)? {
-    if type_id<T>() != type_id<U>() { return none }
-    let pointer = core.ptr.from_ref(value)
-    let same = unsafe { core.mem.transmute<ptr<read T>>(pointer) }
+// Reinterprets `value` as a `T` when its dynamic type is `T`.
+pub fn downcast_ref<T>(value: read any Any): (read T from value)? {
+    if !is<T>(value) { return none }
+    let same = core.ptr.from_ref(value).cast<T>()
     present(unsafe { read *same })
 }
 
-pub fn downcast_mut<T, U>(value: mut U): (mut T from value)? {
-    if type_id<T>() != type_id<U>() { return none }
-    let pointer = core.ptr.from_mut(value)
-    let same = unsafe { core.mem.transmute<ptr<mut T>>(pointer) }
+pub fn downcast_mut<T>(value: mut any Any): (mut T from value)? {
+    if !is<T>(read value) { return none }
+    let same = core.ptr.from_mut(value).cast<T>()
     present(unsafe { mut *same })
 }

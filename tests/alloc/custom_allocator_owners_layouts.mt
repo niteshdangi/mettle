@@ -44,8 +44,7 @@ extend AuditedAllocator implements Allocator {
         global.deallocate(pointer, layout)
     }
 
-    mut fn grow(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8>
-        throws AllocError {
+    mut fn grow(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
         let fail = unsafe { (*self.record).fail_grow }
         unsafe {
             if (*self.record).size != old.size() ||
@@ -61,8 +60,7 @@ extend AuditedAllocator implements Allocator {
         grown
     }
 
-    mut fn shrink(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8>
-        throws AllocError {
+    mut fn shrink(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
         unsafe {
             if (*self.record).size != old.size() ||
                 (*self.record).alignment != old.align() {

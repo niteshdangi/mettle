@@ -448,10 +448,14 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                 if (write && external) {
                   Place destination{static_cast<int>(p), path};
                   // A view of an object that holds the destination cannot be
-                  // stored in that destination.
+                  // stored in that destination. A view reached through the
+                  // destination can only be its current referent again: a
+                  // reborrow through the call-local access view cannot have
+                  // the destination's region, so the backing is unchanged.
                   std::set<Place> others;
                   for (const auto &input : inputs)
-                    if (!prefix(input, destination))
+                    if (!prefix(input, destination) &&
+                        !prefix(destination, input))
                       others.insert(input);
                   for (auto backing : others) {
                     backing.fields.push_back(

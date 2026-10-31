@@ -5,8 +5,8 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdlib>
-#include <ctime>
 #include <cstring>
+#include <ctime>
 #include <exception>
 #include <limits.h>
 #include <memory>
@@ -324,11 +324,10 @@ std::int32_t mettle_rt_thread_spawn_configured(
     return ENOMEM;
   Start *start = nullptr;
   try {
-    start = new (std::nothrow)
-        Start{entry, argument,
-              name && nameLength != 0 ? std::string(name, nameLength)
-                                      : std::string{},
-              parking};
+    start = new (std::nothrow) Start{
+        entry, argument,
+        name && nameLength != 0 ? std::string(name, nameLength) : std::string{},
+        parking};
   } catch (...) {
     destroyParkingState(parking);
     return ENOMEM;

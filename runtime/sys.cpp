@@ -864,7 +864,7 @@ extern "C" std::int32_t mettle_rt_sock_timeout(std::int32_t fd,
 }
 
 extern "C" std::int32_t mettle_rt_sock_set_nodelay(std::int32_t fd,
-                                                    std::int32_t enabled) {
+                                                   std::int32_t enabled) {
   const int value = enabled != 0;
   return retry([&] {
     return setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &value, sizeof(value));
@@ -872,7 +872,7 @@ extern "C" std::int32_t mettle_rt_sock_set_nodelay(std::int32_t fd,
 }
 
 extern "C" std::int32_t mettle_rt_sock_get_nodelay(std::int32_t fd,
-                                                    std::int32_t *enabled) {
+                                                   std::int32_t *enabled) {
   if (!enabled) {
     errno = EINVAL;
     return -1;
@@ -888,15 +888,14 @@ extern "C" std::int32_t mettle_rt_sock_get_nodelay(std::int32_t fd,
 }
 
 extern "C" std::int32_t mettle_rt_sock_error(std::int32_t fd,
-                                              std::int32_t *error) {
+                                             std::int32_t *error) {
   if (!error) {
     errno = EINVAL;
     return -1;
   }
   socklen_t size = sizeof(*error);
-  return retry([&] {
-    return getsockopt(fd, SOL_SOCKET, SO_ERROR, error, &size);
-  });
+  return retry(
+      [&] { return getsockopt(fd, SOL_SOCKET, SO_ERROR, error, &size); });
 }
 
 extern "C" std::uint8_t *mettle_rt_resolve(const std::uint8_t *host,

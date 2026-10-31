@@ -142,7 +142,7 @@ fn main(): i32 {
         'é'.is_ascii() { return 25 }
     if !'z'.is_ascii_alphanumeric() || !'7'.is_ascii_digit() ||
         !'~'.is_ascii_graphic() || !'a'.is_ascii_lowercase() ||
-        !'Z'.is_ascii_uppercase() || !' '.is_ascii_whitespace() { return 139 }
+        !'Z'.is_ascii_uppercase() || !' '.is_ascii() || !' '.is_whitespace() { return 139 }
     if !'\u{7f}'.is_control() { return 140 }
     match 'Z'.to_digit(36u32) {
         present(value) => { if value != 35u32 { return 26 } },
@@ -195,12 +195,15 @@ fn main(): i32 {
     match utf16.next() { present(unit) => { if unit != 0x61u16 { return 59 } }, none => { return 59 } }
     match utf16.next() { present(unit) => { if unit != 0xd83eu16 { return 60 } }, none => { return 60 } }
     match utf16.next() { present(unit) => { if unit != 0xdd80u16 { return 61 } }, none => { return 61 } }
-    var string_words = string.from_text("alpha beta").split_whitespace()
+    let words_source = string.from_text("alpha beta")
+    var string_words = words_source.split_whitespace()
     match string_words.next() { present(word) => { if word != "alpha" { return 128 } }, none => { return 128 } }
     match string_words.next() { present(word) => { if word != "beta" { return 129 } }, none => { return 129 } }
     let units = [0x61u16, 0xd83eu16, 0xdd80u16]
-    let from_units = string.from_utf16(units)
-    if from_units.as_text() != "a🦀" { return 62 }
+    match capture string.from_utf16(units) {
+        success(from_units) => { if from_units.as_text() != "a🦀" { return 62 } },
+        failure(_) => { return 62 }
+    }
     match capture string.from_utf16([0xd800u16]) {
         success(_) => { return 63 },
         failure(error) => { if error.index != 0usize { return 63 } }
@@ -235,7 +238,7 @@ fn main(): i32 {
     var mutable_chunks_source = [1, 2, 3, 4, 5]
     {
         var mutable_chunks = mutable_chunks_source.chunks_exact_mut(2usize)
-        match mutable_chunks.next() {
+        match take mutable_chunks.next() {
             present(part) => { part[0] = 9 },
             none => { return 107 }
         }
@@ -250,13 +253,13 @@ fn main(): i32 {
     var reverse_mut_source = [1, 2, 3, 4, 5]
     {
         var reverse_mut = reverse_mut_source.rchunks_mut(2usize)
-        match reverse_mut.next() { present(part) => { part[0] = 9 }, none => { return 109 } }
+        match take reverse_mut.next() { present(part) => { part[0] = 9 }, none => { return 109 } }
     }
     if reverse_mut_source[3] != 9 { return 110 }
     var reverse_exact_mut_source = [1, 2, 3, 4, 5]
     {
         var reverse_exact_mut = reverse_exact_mut_source.rchunks_exact_mut(2usize)
-        match reverse_exact_mut.next() { present(part) => { part[1] = 9 }, none => { return 111 } }
+        match take reverse_exact_mut.next() { present(part) => { part[1] = 9 }, none => { return 111 } }
     }
     if reverse_exact_mut_source[4] != 9 { return 112 }
     var even_split = slice_values.split(fn(value: read i32): bool { value == 3 })
@@ -268,11 +271,11 @@ fn main(): i32 {
     match reverse_split.next() { present(part) => { if part[0] != 4 { return 84 } }, none => { return 84 } }
     var limited_split = slice_values.splitn(2usize, fn(value: read i32): bool { value == 3 })
     match limited_split.next() { present(part) => { if part.len() != 2usize { return 113 } }, none => { return 113 } }
-    match limited_split.next() { present(part) => { if part.len() != 3usize { return 114 } }, none => { return 114 } }
+    match limited_split.next() { present(part) => { if part.len() != 2usize { return 114 } }, none => { return 114 } }
     var mutable_split_source = [1, 0, 2, 3]
     {
         var mutable_split = mutable_split_source.split_mut(fn(value: read i32): bool { value == 0 })
-        match mutable_split.next() { present(part) => { part[0] = 8 }, none => { return 115 } }
+        match take mutable_split.next() { present(part) => { part[0] = 8 }, none => { return 115 } }
     }
     if mutable_split_source[0] != 8 { return 116 }
     var mutable_inclusive_source = [1, 0, 2]
@@ -280,7 +283,7 @@ fn main(): i32 {
         var mutable_inclusive = mutable_inclusive_source.split_inclusive_mut(
             fn(value: read i32): bool { value == 0 }
         )
-        match mutable_inclusive.next() {
+        match take mutable_inclusive.next() {
             present(part) => { if part.len() != 2usize { return 117 }; part[0] = 9 },
             none => { return 117 }
         }
@@ -297,11 +300,11 @@ fn main(): i32 {
         var mutable_groups = mutable_groups_source.chunk_by_mut(
             fn(left: read i32, right: read i32): bool { left == right }
         )
-        match mutable_groups.next() {
+        match take mutable_groups.next() {
             present(part) => { if part.len() != 2usize { return 119 }; part[0] = 7 },
             none => { return 119 }
         }
-        match mutable_groups.next_back() {
+        match take mutable_groups.next_back() {
             present(part) => { if part.len() != 2usize { return 137 }; part[0] = 8 },
             none => { return 137 }
         }
@@ -309,33 +312,33 @@ fn main(): i32 {
     if mutable_groups_source[0] != 7 || mutable_groups_source[2] != 8 { return 120 }
     var selected = [8, 2, 5, 1, 9]
     let median_parts = selected.select_nth_unstable(2usize)
-    if median_parts.1 != 5 || median_parts.0.len() != 2usize ||
+    if *median_parts.1 != 5 || median_parts.0.len() != 2usize ||
         median_parts.2.len() != 2usize { return 86 }
     var duplicate_selection = [4, 4, 4, 4]
     let duplicate_parts = duplicate_selection.select_nth_unstable(2usize)
-    if duplicate_parts.1 != 4 || duplicate_parts.0.len() != 2usize { return 138 }
+    if *duplicate_parts.1 != 4 || duplicate_parts.0.len() != 2usize { return 138 }
     var selected_by_key = [14, 22, 31, 43]
     let key_parts = selected_by_key.select_nth_unstable_by_key(
         1usize,
         fn(value: read i32): i32 { value % 10 }
     )
-    if key_parts.1 % 10 != 2 { return 87 }
+    if *key_parts.1 % 10 != 2 { return 87 }
     var selected_by_compare = [4, 1, 3, 2]
     let compare_parts = selected_by_compare.select_nth_unstable_by(
         1usize,
         fn(left: read i32, right: read i32): Ordering { left.cmp(right) }
     )
-    if compare_parts.1 != 2 { return 121 }
+    if *compare_parts.1 != 2 { return 121 }
     var sorted_by_cached_key = [21, 12, 31, 22]
     sorted_by_cached_key.sort_by_cached_key(fn(value: read i32): i32 { value % 10 })
     if sorted_by_cached_key[0] != 21 || sorted_by_cached_key[1] != 31 ||
         sorted_by_cached_key[2] != 12 || sorted_by_cached_key[3] != 22 { return 88 }
     let array = [4, 5, 6]
     let array_ref = array.each_ref()
-    if array_ref[1] != 5 { return 89 }
+    if *array_ref[1] != 5 { return 89 }
     var array_mut = [4, 5, 6]
     var array_view = array_mut.each_mut()
-    array_view[1] = 9
+    *array_view[1] = 9
     if array_mut[1] != 9 { return 90 }
 
     var list = vec.new<i32>()
@@ -346,8 +349,8 @@ fn main(): i32 {
     if list.len() != 2usize { return 91 }
     list.dedup_by_key(fn(value: mut i32): i32 { value })
     list.retain_mut(fn(value: mut i32): bool { value += 1; true })
-    if list[0] != 2 || list[1] != 3 { return 92 }
-    match list.pop_if(fn(value: read i32): bool { value == 3 }) {
+    if list[0usize] != 2 || list[1usize] != 3 { return 92 }
+    match list.pop_if(fn(value: mut i32): bool { value == 3 }) {
         present(value) => { if value != 3 { return 93 } },
         none => { return 93 }
     }
@@ -356,13 +359,17 @@ fn main(): i32 {
     keyed_list.push(12)
     keyed_list.push(23)
     keyed_list.dedup_by_key(fn(value: mut i32): i32 { value / 10 })
-    if keyed_list.len() != 2usize || keyed_list[1] != 23 { return 106 }
+    if keyed_list.len() != 2usize || keyed_list[1usize] != 23 { return 106 }
     var extracted_source = vec.new<i32>()
     extracted_source.push(1)
     extracted_source.push(2)
     extracted_source.push(3)
     {
-        var extracted = extracted_source.extract_if(fn(value: mut i32): bool { value % 2 == 1 })
+        var extracted = extracted_source.extract_if(
+            0usize,
+            extracted_source.len(),
+            fn(value: mut i32): bool { value % 2 == 1 }
+        )
         match extracted.next() { present(value) => { if value != 1 { return 94 } }, none => { return 94 } }
     }
     if extracted_source.len() != 2usize { return 95 }
@@ -371,11 +378,11 @@ fn main(): i32 {
         {
             var spare = spare_test.spare_capacity_mut()
             if spare.len() != 2usize { return 122 }
-            spare[0usize] = core.mem.MaybeUninit.new(2)
+            spare[0] = core.mem.MaybeUninit.new(2)
         }
         unsafe { spare_test.set_len(2usize) }
         spare_test.shrink_to(1usize)
-        if spare_test[0] != 1 || spare_test[1] != 2 { return 123 }
+        if spare_test[0usize] != 1 || spare_test[1usize] != 2 { return 123 }
         var splice_source = vec.new<i32>()
         splice_source.push(1)
         splice_source.push(2)
@@ -387,7 +394,8 @@ fn main(): i32 {
             var splice = splice_source.splice(1usize, 2usize, replacement)
         match splice.next() { present(value) => { if value != 2 { return 96 } }, none => { return 96 } }
     }
-    if splice_source.len() != 4usize || splice_source[1] != 8 || splice_source[2] != 9 { return 97 }
+    if splice_source.len() != 4usize || splice_source[1usize] != 8 ||
+        splice_source[2usize] != 9 { return 97 }
     let boxed = splice_source.into_boxed_slice()
     if boxed.get()[3] != 3 { return 98 }
     var leak_source = vec.new<i32>()
@@ -401,15 +409,15 @@ fn main(): i32 {
     deque.push_back(3)
     {
         var range = deque.range_mut(1usize, 3usize)
-        match range.next() { present(value) => { value += 1 }, none => { return 100 } }
+        match take range.next() { present(value) => { *value += 2 }, none => { return 100 } }
     }
     deque.retain_mut(fn(value: mut i32): bool { value != 3 })
-    if deque.len() != 2usize || deque[1] != 4 { return 101 }
-    match deque.pop_front_if(fn(value: read i32): bool { value == 1 }) {
+    if deque.len() != 2usize || deque[1usize] != 4 { return 101 }
+    match deque.pop_front_if(fn(value: mut i32): bool { value == 1 }) {
         present(value) => { if value != 1 { return 102 } },
         none => { return 102 }
     }
-    match deque.pop_back_if(fn(value: read i32): bool { value == 4 }) {
+    match deque.pop_back_if(fn(value: mut i32): bool { value == 4 }) {
         present(value) => { if value != 4 { return 103 } },
         none => { return 103 }
     }

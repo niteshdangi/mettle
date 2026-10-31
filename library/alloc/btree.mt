@@ -421,7 +421,7 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
         match hit {
             present(at) => {
                 let entry = unsafe { node_entry(at.0, at.1) }
-                present((read (*entry).key, read (*entry).value))
+                unsafe { present((read (*entry).key, read (*entry).value)) }
             },
             none => none
         }
@@ -447,13 +447,13 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
         if self.root == null_node<K, V>() { return none }
         let at = unsafe { first_pos(self.root) }
         let entry = unsafe { node_entry(at.0, at.1) }
-        present((read (*entry).key, read (*entry).value))
+        unsafe { present((read (*entry).key, read (*entry).value)) }
     }
     pub fn last_key_value(): (read K from self, read V from self)? {
         if self.root == null_node<K, V>() { return none }
         let at = unsafe { last_pos(self.root) }
         let entry = unsafe { node_entry(at.0, at.1) }
-        present((read (*entry).key, read (*entry).value))
+        unsafe { present((read (*entry).key, read (*entry).value)) }
     }
     pub mut fn first_entry(): OccupiedEntry<region self, K, V, A>? {
         if self.root == null_node<K, V>() { return none }
@@ -681,19 +681,23 @@ extend<region r, K: Ord, V, A: Allocator> Entry<region r, K, V, A> {
     pub take fn or_insert_with_key<F: take fn(read K): V>(make: take F): mut V from r {
         match take self {
             Entry.Occupied(entry) => entry.into_mut(),
-            Entry.Vacant(entry) => entry.insert(make(read entry.key))
+            Entry.Vacant(entry) => {
+                let value = make(read entry.key)
+                entry.insert(value)
+            }
         }
     }
     pub take fn insert_entry(value: take V): OccupiedEntry<region r, K, V, A> {
         match take self {
             Entry.Occupied(entry) => {
-                let _old = entry.insert(value)
-                entry
+                var occupied = entry
+                let _old = occupied.insert(value)
+                occupied
             },
             Entry.Vacant(entry) => {
                 let outcome = capture entry.map.try_insert_with_slot(entry.key, value)
                 match take outcome {
-                    success(result) => OccupiedEntry(mut entry.map, result.1, result.2),
+                    success(result) => OccupiedEntry(entry.map, result.1, result.2),
                     failure(_) => handle_alloc_error(layout_of<Node<K, V>>())
                 }
             }
@@ -802,16 +806,16 @@ extend<region r, K: Ord, A: Allocator> SortedSetAlgebra<region r, K, A> implemen
 
 extend<K: Ord, A: Allocator> SortedSet<K, A> {
     pub fn `union`(other: read SortedSet<K, A> from self): SortedSetAlgebra<region self, K, A> {
-        SortedSetAlgebra(read self, other, self.iter(), other.iter(), 0u8, 0u8)
+        SortedSetAlgebra(read self, read other, self.iter(), other.iter(), 0u8, 0u8)
     }
     pub fn intersection(other: read SortedSet<K, A> from self): SortedSetAlgebra<region self, K, A> {
-        SortedSetAlgebra(read self, other, self.iter(), other.iter(), 1u8, 0u8)
+        SortedSetAlgebra(read self, read other, self.iter(), other.iter(), 1u8, 0u8)
     }
     pub fn difference(other: read SortedSet<K, A> from self): SortedSetAlgebra<region self, K, A> {
-        SortedSetAlgebra(read self, other, self.iter(), other.iter(), 2u8, 0u8)
+        SortedSetAlgebra(read self, read other, self.iter(), other.iter(), 2u8, 0u8)
     }
     pub fn symmetric_difference(other: read SortedSet<K, A> from self): SortedSetAlgebra<region self, K, A> {
-        SortedSetAlgebra(read self, other, self.iter(), other.iter(), 3u8, 0u8)
+        SortedSetAlgebra(read self, read other, self.iter(), other.iter(), 3u8, 0u8)
     }
     pub fn is_subset(other: read SortedSet<K, A>): bool {
         var iter = self.iter()
@@ -1291,7 +1295,7 @@ extend<K: Hash, V: Hash, A: Allocator> SortedMap<K, V, A> implements Hash {
     }
 }
 extend<K: fmt.Debug, V: fmt.Debug, A: Allocator> SortedMap<K, V, A> implements fmt.Debug {
-    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
         try f.debug_open("{")
         var x = unsafe { first_pos(self.root) }
         var left = self.len
@@ -1348,7 +1352,7 @@ extend<K: Hash, A: Allocator> SortedSet<K, A> implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { self.map.hash(mut state) }
 }
 extend<K: fmt.Debug, A: Allocator> SortedSet<K, A> implements fmt.Debug {
-    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
         try f.debug_open("{")
         var x = unsafe { first_pos(self.map.root) }
         var left = self.map.len

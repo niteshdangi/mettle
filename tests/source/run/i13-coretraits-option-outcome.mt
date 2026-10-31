@@ -17,15 +17,18 @@ fn main(): i32 {
     if !present(6i32).is_some_and(fn(value: take i32): bool { value == 6 }) {
         return 6
     }
-    if !none.is_none_or(fn(value: take i32): bool { value == 0 }) { return 7 }
+    let absent_for_none_or: i32? = none
+    if !absent_for_none_or.is_none_or(fn(value: take i32): bool { value == 0 }) { return 7 }
     if present(8i32).map_or_else(
         fn(): i32 { 0 },
         fn(value: take i32): i32 { value }
     ) != 8 {
         return 8
     }
-    if none.map_or_default(fn(value: take i32): i32 { value }) != 0 { return 9 }
-    if none.unwrap_or_default() != 0 { return 10 }
+    let absent_for_map: i32? = none
+    if absent_for_map.map_or_default(fn(value: take i32): i32 { value }) != 0 { return 9 }
+    let absent_for_default: i32? = none
+    if absent_for_default.unwrap_or_default() != 0 { return 10 }
 
     let (left, right) = present((11i32, 12i32)).unzip()
     if left.unwrap() != 11 || right.unwrap() != 12 { return 11 }

@@ -118,16 +118,17 @@ private:
       fail("expected '" + std::string(text) + "'");
     return tokens[position++];
   }
-  [[noreturn]] void fail(
-      std::string message, std::string phase = "parse",
-      std::vector<DiagnosticMessage> related = {}) {
+  [[noreturn]] void fail(std::string message, std::string phase = "parse",
+                         std::vector<DiagnosticMessage> related = {}) {
     // Recovery that fails again at the same token is a cascade, not news.
     if (speculating)
       throw ParseFailure{};
     auto span = peek().span;
     if (is("::"))
       related.push_back(
-          {"help", {}, "use dotted paths for qualified names in Mettle source"});
+          {"help",
+           {},
+           "use dotted paths for qualified names in Mettle source"});
     if (!failedAt || *failedAt != span.begin)
       diagnostics.error(std::move(phase), span, std::move(message),
                         std::move(related));

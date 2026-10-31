@@ -30,7 +30,7 @@ pub type StringDrain<region r, A: Allocator> {
     bytes: super.vec.Drain<region r, u8, A>
 }
 extend<region r, A: Allocator> StringDrain<region r, A> {
-    pub fn as_str(): read Text from r {
+    pub fn as_str(): read Text from self {
         unsafe { from_utf8_unchecked(self.bytes.as_slice()) }
     }
 }
@@ -494,7 +494,8 @@ extend<A: Allocator> String<A> {
         let bytes = replacement.as_bytes()
         var index = 0usize
         while index < bytes.len() {
-            self.v.insert(start + index, bytes[index])
+            let byte = bytes[index]
+            self.v.insert(start + index, byte)
             index += 1usize
         }
     }
@@ -564,10 +565,10 @@ extend<A: Allocator> String<A> implements IndexRange {
     fn index_range(start: usize, end: usize): read Text from self { self.as_text().index_range(start, end) }
 }
 extend<A: Allocator> String<A> implements fmt.Display {
-    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error { try f.pad(self.as_text()) }
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.pad(self.as_text()) }
 }
 extend<A: Allocator> String<A> implements fmt.Debug {
-    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error { try Text.(fmt.Debug).fmt(self.as_text(), mut f) }
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try Text.(fmt.Debug).fmt(self.as_text(), mut f) }
 }
 
 // Concatenation: a new string holding `a` followed by `b`.

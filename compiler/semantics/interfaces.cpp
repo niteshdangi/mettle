@@ -373,8 +373,7 @@ bool Checker::interfaceObligation(Type actual, const TypeSyntax &bound,
   auto interfaceType = property == interfaces::Property::Interface
                            ? interfaceBound(bound, span, {}, actual)
                            : Type::Unknown;
-  interfaces::Obligation obligation{
-      actual, interfaceType, property};
+  interfaces::Obligation obligation{actual, interfaceType, property};
   interfaces::Solver solver(*checked.types, *checked.interfaceData, diagnostics,
                             interfaceAssumptions(), regionEnvironment());
   if (solver.prove(obligation, span, false))
@@ -388,12 +387,16 @@ bool Checker::interfaceObligation(Type actual, const TypeSyntax &bound,
   const auto subject = displayType(*checked.types, actual, namesInMessage);
   const auto interface =
       displayType(*checked.types, interfaceType, namesInMessage);
-  error("type", span,
-        "unsatisfied interface bound '" + displayPath(bound.name) + "'",
-        {{"note", {}, "no implementation of '" + interface +
-                         "' is available for '" + subject + "'"},
-         {"help", {}, "add `extend " + subject + " implements " + interface +
-                          " { ... }`"}});
+  error(
+      "type", span,
+      "unsatisfied interface bound '" + displayPath(bound.name) + "'",
+      {{"note",
+        {},
+        "no implementation of '" + interface + "' is available for '" +
+            subject + "'"},
+       {"help",
+        {},
+        "add `extend " + subject + " implements " + interface + " { ... }`"}});
   return false;
 }
 bool Checker::interfaceObligation(Type actual, Type interfaceType, Span span) {
@@ -419,11 +422,13 @@ bool Checker::interfaceObligation(Type actual, Type interfaceType, Span span) {
   const auto subject = displayType(*checked.types, actual, namesInMessage);
   const auto interface =
       displayType(*checked.types, interfaceType, namesInMessage);
-  error("type", span,
-        "unsatisfied interface obligation: no implementation of '" +
-            interface + "' is available for '" + subject + "'",
-        {{"help", {}, "add `extend " + subject + " implements " + interface +
-                         " { ... }`"}});
+  error(
+      "type", span,
+      "unsatisfied interface obligation: no implementation of '" + interface +
+          "' is available for '" + subject + "'",
+      {{"help",
+        {},
+        "add `extend " + subject + " implements " + interface + " { ... }`"}});
   return false;
 }
 Type Checker::normalizeGenericType(Type type,

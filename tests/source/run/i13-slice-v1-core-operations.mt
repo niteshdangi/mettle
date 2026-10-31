@@ -1,5 +1,6 @@
 import core.iter.BidirectionalIterator
 import core.iter.Iterator
+import core.cmp.{Ord, Ordering}
 
 fn main(): i32 {
     var values = [1, 2, 3, 4, 5]
@@ -198,7 +199,7 @@ fn main(): i32 {
         left.swap_with_slice(right)
     }
     if values[0usize] != 8 || values[1usize] != 9 ||
-        source[0usize] != 7 || source[1usize] != 7 {
+        source[0usize] != 2 || source[1usize] != 8 {
         return 16
     }
     {
@@ -259,7 +260,7 @@ fn main(): i32 {
     }
     match inclusive.next() { present(part) => { if part[0usize] != 2 { return 61 } }, none => { return 61 } }
     match inclusive.next() { present(_) => { return 62 }, none => {} }
-    let grouped = [1, 1, 2, 3, 3]
+    var grouped = [1, 1, 2, 3, 3]
     {
         let grouped_slice: read [i32] = read grouped
         var groups = grouped_slice.chunk_by(fn(a: read i32, b: read i32): bool { a == b })
@@ -307,7 +308,7 @@ fn main(): i32 {
         let mutable = mut keyed
         let parts = take mutable.select_nth_unstable_by(
             1usize,
-            fn(a: read i32, b: read i32): bool { a < b }
+            fn(a: read i32, b: read i32): Ordering { a.cmp(b) }
         )
         if *parts.1 != 2 { return 74 }
     }

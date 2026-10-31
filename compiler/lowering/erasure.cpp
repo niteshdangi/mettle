@@ -132,6 +132,27 @@ void Builder::dynamicDispatch(Instruction &call, const NodeFacts &facts,
   call.op = ir::Op::IndirectCall;
   call.indirectType = signature;
   call.erasedDispatch = true;
+  // An access parameter without a declared region is call-local in the
+  // interface declaration, so the dispatched implementation cannot retain it.
+  const auto &types = *module.typeStore();
+  const auto &owner = types.erased(descriptor.methodOwners[slot]);
+  const auto declared = module.interfaceDatabase()
+                            .definitions[owner.declaration]
+                            .methods[descriptor.methodSlots[slot]]
+                            .function;
+  const auto regionSignature = module.function(declared).regionSignature;
+  call.callLocalParameters.clear();
+  if (types.isFunctionPointer(regionSignature)) {
+    const auto &contract = types.callable(regionSignature);
+    for (std::size_t p = 0;
+         p < contract.parameters.size() && p < contract.parameterRegions.size();
+         ++p)
+      if ((contract.parameters[p].mode == ParameterMode::Read ||
+           contract.parameters[p].mode == ParameterMode::Mut) &&
+          types.regions().get(contract.parameterRegions[p]).name ==
+              contract.parameters[p].name)
+        call.callLocalParameters.push_back(p);
+  }
   call.callee = -1;
   call.typeArguments.clear();
   call.interfaceMethod = -1;

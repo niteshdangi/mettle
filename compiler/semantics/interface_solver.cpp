@@ -355,8 +355,16 @@ bool Solver::prove(const Obligation &obligation, Span span, bool report) {
                   projectedBinding(obligation.subject, wanted, required, span);
               continue;
             }
-            compatible &= types.substituteRegions(item->argument, bindings) ==
-                          required.argument;
+            auto value = types.substituteRegions(item->argument, bindings);
+            // Generic bounds are checked with erased regions, so an erased
+            // binding stands for the same value at any region.
+            auto erased = [&](Type type) {
+              return types.eraseRegions(type) == type;
+            };
+            compatible &= value == required.argument ||
+                          ((erased(value) || erased(required.argument)) &&
+                           types.eraseRegions(value) ==
+                               types.eraseRegions(required.argument));
           }
           if (compatible)
             return true;
@@ -416,16 +424,17 @@ bool Solver::prove(const Obligation &obligation, Span span, bool report) {
   if (report) {
     const std::array<Type, 2> namesInMessage{obligation.subject,
                                              obligation.interfaceType};
-    const auto subject =
-        displayType(types, obligation.subject, namesInMessage);
+    const auto subject = displayType(types, obligation.subject, namesInMessage);
     const auto interface =
         displayType(types, obligation.interfaceType, namesInMessage);
     diagnostics.error(
         "type", span,
-        "unsatisfied interface obligation: no implementation of '" +
-            interface + "' is available for '" + subject + "'",
-        {{"help", {},
-          "add `extend " + subject + " implements " + interface + " { ... }`"}});
+        "unsatisfied interface obligation: no implementation of '" + interface +
+            "' is available for '" + subject + "'",
+        {{"help",
+          {},
+          "add `extend " + subject + " implements " + interface +
+              " { ... }`"}});
   }
   return false;
 }

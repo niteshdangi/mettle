@@ -544,9 +544,9 @@ std::optional<CallContext> SymbolIndex::callAt(std::size_t offset) const {
     if (symbol(tokens[callee], ">") || symbol(tokens[callee], ">>")) {
       int depth = 0;
       for (;;) {
-        depth += symbol(tokens[callee], ">")
-                     ? 1
-                     : symbol(tokens[callee], ">>") ? 2 : 0;
+        depth += symbol(tokens[callee], ">")    ? 1
+                 : symbol(tokens[callee], ">>") ? 2
+                                                : 0;
         if (symbol(tokens[callee], "<"))
           depth -= 1;
         if (depth <= 0 || callee == 0)

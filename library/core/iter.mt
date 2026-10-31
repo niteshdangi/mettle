@@ -255,7 +255,7 @@ pub interface Iterator: Sized {
         FlatMapped(self, none, f)
     }
     take fn flatten(): Flatten<Self.Item, Self> where Self.Item: Iterator {
-        Flatten(self, none)
+        Flatten(self, none, none, false)
     }
     take fn cloned<region r, T: Clone>(): Cloned<region r, T, Self> where Self.Item = read T from r {
         Cloned(self, Phantom<T>())
@@ -931,7 +931,7 @@ pub type Successors<T, F> { current: T?; step: F }
 extend<T, F: fn(read T): T?> Successors<T, F> implements Iterator {
     type Item = T
     mut fn next(): T? {
-        match take self.current {
+        match take self.current.take_value() {
             present(value) => {
                 self.current = self.step(read value)
                 present(value)
@@ -971,7 +971,7 @@ extend<T: Step> RangeFrom<T> implements Iterator {
 pub fn range_from<T: Step>(start: T): RangeFrom<T> { RangeFrom(start, false) }
 
 // The half-open range `[start, end)`.
-pub type Range<T> { start: T; end: T }
+pub type Range<T> { pub start: T; pub end: T }
 extend<T: Step> Range<T> implements Clone {
     fn clone(): Range<T> { Range(self.start, self.end) }
 }

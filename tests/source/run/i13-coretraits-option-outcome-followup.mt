@@ -15,7 +15,7 @@ extend Wrapped implements DerefMut {
 }
 
 fn expect_15(value: read i32): Unit {
-    if *value != 15 { core.panic.panic("inspect did not receive the success value") }
+    if value != 15 { core.panic.panic("inspect did not receive the success value") }
 }
 
 fn borrowed_success<region r>(
@@ -57,7 +57,7 @@ fn main(): i32 {
         failure(_) => { return 5 }
     }
     var mutable_wrapped: Wrapped? = present(Wrapped(6))
-    match mutable_wrapped.as_deref_mut() {
+    match take mutable_wrapped.as_deref_mut() {
         present(value) => { *value += 1 },
         none => { return 6 }
     }
@@ -66,7 +66,7 @@ fn main(): i32 {
         none => { return 7 }
     }
     var mutable_wrapped_outcome: (Wrapped throws i32) = success(Wrapped(8))
-    match mutable_wrapped_outcome.as_deref_mut() {
+    match take mutable_wrapped_outcome.as_deref_mut() {
         success(value) => { *value += 1 },
         failure(_) => { return 8 }
     }
@@ -92,7 +92,7 @@ fn main(): i32 {
     if *inserted != 0 { return 13 }
 
     var selected: i32? = present(9)
-    match selected.take_if(fn(value: mut i32): bool { *value > 8 }) {
+    match selected.take_if(take fn(value: mut i32): bool { value > 8 }) {
         present(value) => { if value != 9 { return 14 } },
         none => { return 14 }
     }
@@ -105,7 +105,8 @@ fn main(): i32 {
         success(value) => { if *value != 12 { return 17 } },
         failure(_) => { return 17 }
     }
-    let flattened: (i32 throws i32) = success(success(13i32)).flatten()
+    let nested: ((i32 throws i32) throws i32) = success(success(13i32))
+    let flattened: (i32 throws i32) = nested.flatten()
     if flattened.unwrap() != 13 { return 18 }
     let copied_outcome = borrowed_success(read source).copied()
     match copied_outcome {
@@ -118,7 +119,7 @@ fn main(): i32 {
         failure(error) => { if error != 7 { return 20 } }
     }
     var mutable_outcome: (i32 throws i32) = success(19)
-    match mutable_outcome.as_mut() {
+    match take mutable_outcome.as_mut() {
         success(value) => { *value += 1 },
         failure(_) => { return 21 }
     }
@@ -126,19 +127,25 @@ fn main(): i32 {
         success(value) => { if value != 20 { return 22 } },
         failure(_) => { return 22 }
     }
-    if !success(13i32).is_ok_and(fn(value: take i32): bool { value == 13 }) {
+    let checked_success: (i32 throws i32) = success(13i32)
+    if !checked_success.is_ok_and(fn(value: take i32): bool { value == 13 }) {
         return 23
     }
-    if !failure(14i32).is_err_and(fn(error: take i32): bool { error == 14 }) {
+    let checked_failure: (i32 throws i32) = failure(14i32)
+    if !checked_failure.is_err_and(fn(error: take i32): bool { error == 14 }) {
         return 24
     }
-    match success(15i32).inspect(expect_15) {
+    let inspected_success: (i32 throws i32) = success(15i32)
+    match inspected_success.inspect(expect_15) {
         success(value) => { if value != 15 { return 25 } },
         failure(_) => { return 25 }
     }
-    if failure(16i32).unwrap_err() != 16 { return 26 }
-    if failure(17i32).expect_err("expected failure") != 17 { return 27 }
-    let unchecked_error = unsafe { failure(18i32).unwrap_err_unchecked() }
+    let unwrapped_failure: (i32 throws i32) = failure(16i32)
+    if unwrapped_failure.unwrap_err() != 16 { return 26 }
+    let expected_failure: (i32 throws i32) = failure(17i32)
+    if expected_failure.expect_err("expected failure") != 17 { return 27 }
+    let unchecked_failure: (i32 throws i32) = failure(18i32)
+    let unchecked_error = unsafe { unchecked_failure.unwrap_err_unchecked() }
     if unchecked_error != 18 { return 28 }
     0
 }

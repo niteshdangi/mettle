@@ -12,6 +12,8 @@ fn check_i8(): bool {
     let (wrappedMixed, mixedOverflow) = 127i8.overflowing_add_unsigned(1u8)
     let (wrappedQuotient, quotientOverflow) =
         minimum.overflowing_div_euclid(-1i8)
+    let bigEndian = 0x1234i16.to_be_bytes()
+    let littleEndian = 0x1234i16.to_le_bytes()
     minimum.unsigned_abs() == 128u8 &&
         (-5i8).abs_diff(3i8) == 8u8 &&
     15i8.ilog(2i8) == 3u32 &&
@@ -40,14 +42,14 @@ fn check_i8(): bool {
         1i8.add_unsigned(2u8) == 3i8 &&
         1i8.checked_add_unsigned(2u8) == present(3i8) &&
         127i8.wrapping_add_unsigned(1u8) == minimum &&
-        127i8.checked_add_unsigned(1u8) == none &&
+        missing(127i8.checked_add_unsigned(1u8)) &&
         127i8.saturating_add_unsigned(1u8) == 127i8 &&
         wrappedMixed == minimum && mixedOverflow &&
         5i8.sub_unsigned(3u8) == 2i8 &&
         (-1i8).cast_unsigned() == 255u8 &&
         i16.from_be_bytes([0x12u8, 0x34u8]) == 0x1234i16 &&
-        0x1234i16.to_be_bytes() == [0x12u8, 0x34u8] &&
-        0x1234i16.to_le_bytes() == [0x34u8, 0x12u8] &&
+        bigEndian[0usize] == 0x12u8 && bigEndian[1usize] == 0x34u8 &&
+        littleEndian[0usize] == 0x34u8 && littleEndian[1usize] == 0x12u8 &&
         i16.from_be(0x1234i16.to_be()) == 0x1234i16 &&
         i16.from_le(0x1234i16.to_le()) == 0x1234i16 &&
         i16.from_ne_bytes(0x1234i16.to_ne_bytes()) == 0x1234i16
@@ -80,8 +82,8 @@ fn check_i32(): bool {
         20u32.div_ceil(6u32) == 4u32 &&
         10u32.next_multiple_of(4u32) == 12u32 &&
         10u32.checked_next_multiple_of(4u32) == present(12u32) &&
-        10u32.checked_next_multiple_of(0u32) == none &&
-        4294967295u32.checked_next_multiple_of(2u32) == none &&
+        missing(10u32.checked_next_multiple_of(0u32)) &&
+        missing(4294967295u32.checked_next_multiple_of(2u32)) &&
         12u32.is_multiple_of(4u32) &&
         2147483647i32.midpoint(-2147483648i32) == 0i32 &&
         15i32.checked_ilog(2i32) == present(3u32) &&
@@ -153,7 +155,7 @@ fn check_unsigned(): bool {
     4u8.is_power_of_two() && !0u8.is_power_of_two() &&
     255u8.cast_signed() == -1i8 &&
     1u8.wrapping_add_signed(-2i8) == 255u8 &&
-    1u8.checked_add_signed(-2i8) == none &&
+    missing(1u8.checked_add_signed(-2i8)) &&
     1u8.saturating_add_signed(-2i8) == 0u8 &&
     mixedWrapped == 255u8 && mixedOverflow &&
     3u8.sub_signed(-2i8) == 5u8 &&
@@ -167,7 +169,7 @@ fn check_unsigned(): bool {
     81u128.isqrt() == 9u128 &&
     1000u128.ilog10() == 3u32 &&
     5u128.midpoint(2u128) == 3u128 &&
-    129u8.checked_next_power_of_two() == none &&
+    missing(129u8.checked_next_power_of_two()) &&
     0u8.checked_next_power_of_two() == present(1u8) &&
     0u8.is_multiple_of(0u8) && !1u8.is_multiple_of(0u8) &&
     0x41u8.is_ascii() &&

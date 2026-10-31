@@ -4,7 +4,7 @@ import core.fmt.Display
 
 type Pt { x: i32; y: i32 }
 extend Pt implements Display {
-    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
         try f.write_str("(")
         try self.x.fmt(mut f)
         try f.write_str(",")
@@ -15,7 +15,7 @@ extend Pt implements Display {
 
 type Word {}
 extend Word implements Display {
-    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error { try f.pad("hello") }
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.pad("hello") }
 }
 
 fn write_text<W: fmt.Write>(sink: mut W, text: read core.text.Text, options: fmt.Spec): Unit throws fmt.Error {

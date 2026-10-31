@@ -76,8 +76,7 @@ bool complete(const Shape &shape) {
 std::string describe(const Value &value) {
   switch (value.kind) {
   case Value::Kind::Integer:
-    return value.type == Type::Unknown ? "integer"
-                                       : displayType(value.type);
+    return value.type == Type::Unknown ? "integer" : displayType(value.type);
   case Value::Kind::Bool:
     return "bool";
   case Value::Kind::Char:
@@ -94,8 +93,7 @@ std::string describe(const Value &value) {
 std::string describe(const Shape &shape) {
   switch (shape.kind) {
   case Shape::Kind::Scalar:
-    return shape.type == Type::Unknown ? "integer"
-                                       : displayType(shape.type);
+    return shape.type == Type::Unknown ? "integer" : displayType(shape.type);
   case Shape::Kind::Unit:
     return "Unit";
   case Shape::Kind::Tuple:
@@ -427,10 +425,8 @@ private:
     } catch (const std::invalid_argument &error) {
       std::string message = error.what();
       if (message == "required integer constant overflows")
-        message =
-            "integer overflow in constant expression (" + op + " on " +
-            (type == Type::Unknown ? "integer" : displayType(type)) +
-            ")";
+        message = "integer overflow in constant expression (" + op + " on " +
+                  (type == Type::Unknown ? "integer" : displayType(type)) + ")";
       return fail("constant", span, message);
     }
   }

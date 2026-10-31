@@ -2,8 +2,8 @@ import core.iter
 import core.iter.Iterator
 
 fn accumulate(state: mut i32, item: take i32): i32? {
-    *state += item
-    present(*state)
+    state += item
+    present(state)
 }
 
 fn checked_add(total: take i32, item: take i32): i32 throws i32 {
@@ -17,7 +17,17 @@ fn checked_item(item: take i32): Unit throws i32 {
 
 fn main(): i32 {
     var remaining = iter.range(1, 5)
-    if remaining.by_ref().take_n(2usize).count() != 2usize { return 1 }
+    {
+        var borrowed = remaining.by_ref()
+        match take borrowed.next() {
+            present(value) => { if value != 1 { return 1 } },
+            none => { return 1 }
+        }
+        match take borrowed.next() {
+            present(value) => { if value != 2 { return 1 } },
+            none => { return 1 }
+        }
+    }
     if remaining.count() != 2usize { return 2 }
 
     let values = [1i32, 2i32, 3i32]
@@ -32,7 +42,7 @@ fn main(): i32 {
         return 4
     }
 
-    let scanned = iter.range(1, 4).scan(0i32, accumulate)
+    var scanned = iter.range(1, 4).scan(0i32, accumulate)
     if scanned.fold(0, fn(sum: take i32, value: take i32): i32 {
         sum + value
     }) != 10 {

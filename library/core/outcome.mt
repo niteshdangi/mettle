@@ -34,7 +34,7 @@ extend<T, E> (T throws E) {
             failure(error) => failure(read error)
         }
     }
-    pub mut fn as_deref_mut(): ((mut T.(Deref).Target from self) throws (mut E from self)) where T: Deref + DerefMut {
+    pub mut fn as_deref_mut(): ((mut T.(DerefMut).Target from self) throws (mut E from self)) where T: DerefMut {
         match mut self {
             success(value) => success(value.deref_mut()),
             failure(error) => failure(mut error)

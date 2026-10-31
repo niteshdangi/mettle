@@ -248,8 +248,8 @@ private:
   }
 
   void debug() {
-    put("fn fmt<__W: " + core + "fmt.Write>(f: mut " + core +
-        "fmt.Formatter<__W>): Unit throws " + core + "fmt.Error {\n");
+    put("fn fmt(f: mut " + core + "fmt.Formatter): Unit throws " + core +
+        "fmt.Error {\n");
     auto emit = [&](const Shape &shape) {
       auto &fields = *shape.fields;
       put("try f.write_str(\"" + shape.label + "\")\n");

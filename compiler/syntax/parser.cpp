@@ -66,8 +66,7 @@ void Parser::run(Module &module, std::vector<std::string> scope, bool nested) {
           fail("alias declaration limit exceeded", "limit");
       } else {
         if (is("impl"))
-          fail("implementation blocks must start with `extend`",
-               "parse",
+          fail("implementation blocks must start with `extend`", "parse",
                {{"help", {}, "write `extend Type implements Interface`"}});
         std::size_t keyword = is("unsafe") ? 1 : 0;
         if (peek(keyword).text == "const")

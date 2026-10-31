@@ -9,8 +9,8 @@ fn main(): i32 {
     }
 
     let owner: heap any Any = heap origin.Shared(42)
-    if !any.is<relay.Shared, any Any>(owner.get()) { return 2 }
-    match any.downcast_ref<relay.Shared, any Any>(owner.get()) {
+    if !any.is<relay.Shared>(owner.get()) { return 2 }
+    match any.downcast_ref<relay.Shared>(owner.get()) {
         present(value) => { if value.number() != 42 { return 3 } },
         none => { return 4 }
     }

@@ -223,8 +223,24 @@ extend char {
 
     pub fn escape_unicode(): Escape { unicode_escape(self as u32) }
 
+    // Printable ASCII stays literal; everything else uses `\u{...}`.
     pub fn escape_default(): Escape {
-        match short_escape(self) {
+        match take short_escape(self) {
+            present(escaped) => escaped,
+            none => {
+                let value = self as u32
+                if value >= 0x20u32 && value < 0x7fu32 {
+                    Escape([self, '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0'], 1usize, 0usize)
+                } else {
+                    unicode_escape(value)
+                }
+            }
+        }
+    }
+
+    // Only control characters are escaped; other scalars stay literal.
+    pub fn escape_debug(): Escape {
+        match take short_escape(self) {
             present(escaped) => escaped,
             none => {
                 if self.is_control() {
@@ -235,8 +251,6 @@ extend char {
             }
         }
     }
-
-    pub fn escape_debug(): Escape { self.escape_default() }
 
     pub fn is_whitespace(): bool {
         let value = self as u32

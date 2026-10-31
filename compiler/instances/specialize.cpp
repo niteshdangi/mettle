@@ -89,8 +89,7 @@ private:
         return types->slice(payload).element;
       if (types->isSized(payload))
         return payload;
-      if (!types->isProduct(payload) ||
-          types->product(payload).fields.empty())
+      if (!types->isProduct(payload) || types->product(payload).fields.empty())
         return Type::Unknown;
       payload = types->product(payload).fields.back().type;
     }
@@ -130,9 +129,9 @@ private:
               request(sourcePayload, instruction.span);
             else if (types->needsDrop(targetPayload)) {
               if (tailDropElement(targetPayload) == Type::Unknown)
-                diagnostics.error(
-                    "feature", instruction.span,
-                    "dynamic drop for this unsized owner payload is unsupported");
+                diagnostics.error("feature", instruction.span,
+                                  "dynamic drop for this unsized owner payload "
+                                  "is unsupported");
               else
                 requestTail(targetPayload, instruction.span);
             }

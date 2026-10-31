@@ -1704,12 +1704,18 @@ private:
           return invoke(llvm::Intrinsic::exp2, arguments);
         if (method == "ln")
           return invoke(llvm::Intrinsic::log, arguments);
+        if (method == "log2")
+          return invoke(llvm::Intrinsic::log2, arguments);
         if (method == "log10")
           return invoke(llvm::Intrinsic::log10, arguments);
         if (method == "powf")
           return invoke(llvm::Intrinsic::pow, arguments);
         if (method == "powi")
-          return invoke(llvm::Intrinsic::powi, arguments);
+          return builder.CreateCall(
+              llvm::Intrinsic::getOrInsertDeclaration(
+                  module.get(), llvm::Intrinsic::powi,
+                  {arguments[0]->getType(), arguments[1]->getType()}),
+              arguments);
         if (method == "log") {
           auto *numerator = invoke(llvm::Intrinsic::log, {a});
           auto *denominator = invoke(llvm::Intrinsic::log, {b});

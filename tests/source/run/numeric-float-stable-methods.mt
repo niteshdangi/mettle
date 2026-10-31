@@ -11,6 +11,7 @@ fn check_f64(): bool {
     let subnormal = f64.from_bits(1u64)
     let infinity = f64.from_bits(0x7ff0000000000000u64)
     let negativeInfinity = f64.from_bits(0xfff0000000000000u64)
+    let beBytes64 = 1.0f64.to_be_bytes()
     let (sine, cosine) = 0.0f64.sin_cos()
     close(0.0f64.sin(), 0.0f64) &&
         close(0.0f64.cos(), 1.0f64) &&
@@ -44,7 +45,7 @@ fn check_f64(): bool {
         (-2.0f64).signum() == -1.0f64 &&
         close(3.141592653589793f64.to_degrees(), 180.0f64) &&
         close(180.0f64.to_radians(), 3.141592653589793f64) &&
-        (-7.0f64).div_euclid(3.0f64) == -2.0f64 &&
+        (-7.0f64).div_euclid(3.0f64) == -3.0f64 &&
         (-7.0f64).rem_euclid(3.0f64) == 2.0f64 &&
         2.0f64.midpoint(4.0f64) == 3.0f64 &&
         1.0f64.next_up() > 1.0f64 &&
@@ -72,8 +73,10 @@ fn check_f64(): bool {
         0.0f64.next_down().to_bits() == 0x8000000000000001u64 &&
         1.0f64.classify() == FpCategory.Normal &&
         i64.from_be_bytes(1.0f64.to_be_bytes()) == 4607182418800017408i64 &&
-        1.0f64.to_be_bytes() ==
-            [0x3fu8, 0xf0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8] &&
+        beBytes64[0usize] == 0x3fu8 && beBytes64[1usize] == 0xf0u8 &&
+        beBytes64[2usize] == 0u8 && beBytes64[3usize] == 0u8 &&
+        beBytes64[4usize] == 0u8 && beBytes64[5usize] == 0u8 &&
+        beBytes64[6usize] == 0u8 && beBytes64[7usize] == 0u8 &&
         f64.from_ne_bytes(1.0f64.to_ne_bytes()) == 1.0f64 &&
         f64.from_be_bytes([0x3fu8, 0xf0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]) ==
             1.0f64
@@ -85,6 +88,8 @@ fn check_f32(): bool {
     let subnormal = f32.from_bits(1u32)
     let infinity = f32.from_bits(0x7f800000u32)
     let negativeInfinity = f32.from_bits(0xff800000u32)
+    let beBytes32 = 1.0f32.to_be_bytes()
+    let leBytes32 = 1.0f32.to_le_bytes()
     let (sine, cosine) = 0.0f32.sin_cos()
     close(0.0f32.sin() as f64, 0.0f64) &&
         0.0f32.tan() == 0.0f32 &&
@@ -126,7 +131,7 @@ fn check_f32(): bool {
         negativeZero.fract().is_sign_negative() &&
         4.0f32.recip() == 0.25f32 &&
         (-2.0f32).signum() == -1.0f32 &&
-        (-7.0f32).div_euclid(3.0f32) == -2.0f32 &&
+        (-7.0f32).div_euclid(3.0f32) == -3.0f32 &&
         (-7.0f32).rem_euclid(3.0f32) == 2.0f32 &&
         2.0f32.midpoint(4.0f32) == 3.0f32 &&
         1.0f32.next_up() > 1.0f32 &&
@@ -146,8 +151,10 @@ fn check_f32(): bool {
         f32.from_le_bytes([0u8, 0u8, 0x80u8, 0x3fu8]) == 1.0f32 &&
         f32.from_be_bytes([0x3fu8, 0x80u8, 0u8, 0u8]) == 1.0f32 &&
         f32.from_ne_bytes(1.0f32.to_ne_bytes()) == 1.0f32 &&
-        1.0f32.to_be_bytes() == [0x3fu8, 0x80u8, 0u8, 0u8] &&
-        1.0f32.to_le_bytes() == [0u8, 0u8, 0x80u8, 0x3fu8] &&
+        beBytes32[0usize] == 0x3fu8 && beBytes32[1usize] == 0x80u8 &&
+        beBytes32[2usize] == 0u8 && beBytes32[3usize] == 0u8 &&
+        leBytes32[0usize] == 0u8 && leBytes32[1usize] == 0u8 &&
+        leBytes32[2usize] == 0x80u8 && leBytes32[3usize] == 0x3fu8 &&
         nan.total_cmp(nan) == Ordering.Equal
 }
 

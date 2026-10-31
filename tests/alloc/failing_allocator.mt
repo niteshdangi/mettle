@@ -1,5 +1,6 @@
 import alloc.alloc.{Allocator, Layout, AllocError, Global, layout_unchecked}
 import alloc.vec.List
+import core.clone.Clone
 
 // Allocator that fails once the shared budget of successful allocations runs out.
 copy type Limited {
@@ -125,42 +126,42 @@ fn main(): i32 {
     var live2 = 0
     let b = Limited(core.ptr.from_mut(budget2), core.ptr.from_mut(live2),
                     core.ptr.from_mut(alignment_errors))
-    match capture alloc.boxed.try_new_in(5, b) {
+    match capture alloc.boxed.try_new_in(5, b.clone()) {
         success(_) => { return 6 },
         failure(_) => {}
     }
-    match capture alloc.boxed.try_new_uninit_in<i32, Limited>(b) {
+    match capture alloc.boxed.try_new_uninit_in<i32, Limited>(b.clone()) {
         success(_) => { return 33 },
         failure(_) => {}
     }
-    match capture alloc.boxed.try_new_zeroed_in<i32, Limited>(b) {
+    match capture alloc.boxed.try_new_zeroed_in<i32, Limited>(b.clone()) {
         success(_) => { return 34 },
         failure(_) => {}
     }
-    match capture alloc.rc.try_new_uninit_in<i32, Limited>(b) {
+    match capture alloc.rc.try_new_uninit_in<i32, Limited>(b.clone()) {
         success(_) => { return 35 },
         failure(_) => {}
     }
-    match capture alloc.rc.try_new_zeroed_in<i32, Limited>(b) {
+    match capture alloc.rc.try_new_zeroed_in<i32, Limited>(b.clone()) {
         success(_) => { return 36 },
         failure(_) => {}
     }
     match capture alloc.rc.try_new_cyclic_in<i32, Limited>(
-        b, take fn(w: read alloc.rc.Weak<i32>): i32 { 1 }
+        b.clone(), take fn(w: read alloc.rc.Weak<i32, Limited>): i32 { 1 }
     ) {
         success(_) => { return 37 },
         failure(_) => {}
     }
-    match capture alloc.arc.try_new_uninit_in<i32, Limited>(b) {
+    match capture alloc.arc.try_new_uninit_in<i32, Limited>(b.clone()) {
         success(_) => { return 38 },
         failure(_) => {}
     }
-    match capture alloc.arc.try_new_zeroed_in<i32, Limited>(b) {
+    match capture alloc.arc.try_new_zeroed_in<i32, Limited>(b.clone()) {
         success(_) => { return 39 },
         failure(_) => {}
     }
     match capture alloc.arc.try_new_cyclic_in<i32, Limited>(
-        b, take fn(w: read alloc.arc.Weak<i32>): i32 { 1 }
+        b.clone(), take fn(w: read alloc.arc.Weak<i32, Limited>): i32 { 1 }
     ) {
         success(_) => { return 40 },
         failure(_) => {}

@@ -37,7 +37,7 @@ pub fn new<T>(value: take T): Box<T> { new_in(value, Global()) }
 pub fn try_new_uninit_in<T, A: Allocator>(
     allocator: take A
 ): Box<core.mem.MaybeUninit<T>, A> throws AllocError {
-    try_new_in(core.mem.MaybeUninit<T>.uninit(), allocator)
+    try try_new_in(core.mem.MaybeUninit<T>.uninit(), allocator)
 }
 pub fn new_uninit_in<T, A: Allocator>(allocator: take A): Box<core.mem.MaybeUninit<T>, A> {
     let result = capture try_new_uninit_in<T, A>(allocator)
@@ -54,7 +54,7 @@ pub fn new_uninit<T>(): Box<core.mem.MaybeUninit<T>> { new_uninit_in<T, Global>(
 pub fn try_new_zeroed_in<T, A: Allocator>(
     allocator: take A
 ): Box<core.mem.MaybeUninit<T>, A> throws AllocError {
-    try_new_in(core.mem.MaybeUninit<T>.zeroed(), allocator)
+    try try_new_in(core.mem.MaybeUninit<T>.zeroed(), allocator)
 }
 pub fn new_zeroed_in<T, A: Allocator>(allocator: take A): Box<core.mem.MaybeUninit<T>, A> {
     let result = capture try_new_zeroed_in<T, A>(allocator)
@@ -145,10 +145,10 @@ extend<T: Hash, A: Allocator> Box<T, A> implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { self.get().hash(mut state) }
 }
 extend<T: fmt.Display, A: Allocator> Box<T, A> implements fmt.Display {
-    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error { try T.(fmt.Display).fmt(self.get(), mut f) }
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try T.(fmt.Display).fmt(self.get(), mut f) }
 }
 extend<T: fmt.Debug, A: Allocator> Box<T, A> implements fmt.Debug {
-    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error { try T.(fmt.Debug).fmt(self.get(), mut f) }
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try T.(fmt.Debug).fmt(self.get(), mut f) }
 }
 
 // Owned storage moves or is shared exactly when its elements and allocator do.

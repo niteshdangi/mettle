@@ -27,7 +27,7 @@ extend Positive implements TryFrom<i32> {
 fn main(): i32 {
     let wrapped = Wrapped.(From<i32>).`from`(17)
     if wrapped.value != 17 { return 1 }
-    let via_into: Wrapped = 18i32.into()
+    let via_into: Wrapped = i32.(Into<Wrapped>).into(18i32)
     if via_into.value != 18 { return 2 }
     let via_try_from: (Positive throws ConversionError) =
         Positive.(TryFrom<i32>).try_from(19)
@@ -35,7 +35,8 @@ fn main(): i32 {
         success(value) => { if value.value != 19 { return 3 } },
         failure(_) => { return 3 }
     }
-    let via_try_into: (Positive throws ConversionError) = 20i32.try_into()
+    let via_try_into: (Positive throws ConversionError) =
+        i32.(TryInto<Positive>).try_into(20i32)
     match via_try_into {
         success(value) => { if value.value != 20 { return 4 } },
         failure(_) => { return 4 }

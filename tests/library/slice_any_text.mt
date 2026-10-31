@@ -107,11 +107,11 @@ fn main(): i32 {
     if total != 10 + 8 + 30 + 6 + 5 || a[0] != 11 { return 15 }
     // any
     let num = 5
-    if !any.is<i32, i32>(read num) || any.is<u32, i32>(read num) { return 16 }
-    match any.downcast_ref<i32, i32>(read num) { present(d) => { if *d != 5 { return 17 } }, none => { return 17 } }
-    match any.downcast_ref<u8, i32>(read num) { present(d) => { return 18 }, none => {} }
+    if !any.is<i32>(read num) || any.is<u32>(read num) { return 16 }
+    match any.downcast_ref<i32>(read num) { present(d) => { if *d != 5 { return 17 } }, none => { return 17 } }
+    match any.downcast_ref<u8>(read num) { present(d) => { return 18 }, none => {} }
     var p = P(1)
-    match take any.downcast_mut<P, P>(mut p) { present(d) => { d.x = 9 }, none => { return 19 } }
+    match take any.downcast_mut<P>(mut p) { present(d) => { d.x = 9 }, none => { return 19 } }
     if p.x != 9 || any.type_id<P>() == any.type_id<i32>() { return 20 }
     // text
     let s = "  h\u{e9}llo, w\u{f6}rld \n"

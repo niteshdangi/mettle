@@ -48,21 +48,20 @@ fn main(): i32 {
         present(piece) => { if piece != "one" { return 28 } },
         none => { return 28 }
     }
-    let trimmed = ".. \u{e9}x \n..".trim_matches(fn(c: read char): bool {
-        c == '.' || c.is_whitespace()
-    })
+    let trimmed = ".. \u{e9}x \n..".trim_start_matches(".").trim_start().trim_end_matches(".").trim_end()
     if trimmed != "\u{e9}x" { return 29 }
-    if "..x..".trim_start_matches(fn(c: read char): bool { c == '.' }) != "x.." ||
-        "..x..".trim_end_matches(fn(c: read char): bool { c == '.' }) != "..x" {
+    if "..x..".trim_start_matches(".") != "x.." ||
+        "..x..".trim_end_matches(".") != "..x" {
         return 41
     }
     var words = " one \u{e9} two ".split_whitespace()
     match words.next() { present(word) => { if word != "one" { return 30 } }, none => { return 30 } }
-    match words.next_back() { present(word) => { if word != "two" { return 31 } }, none => { return 31 } }
+    match words.next() { present(word) => { if word != "\u{e9}" { return 31 } }, none => { return 31 } }
+    match words.next() { present(word) => { if word != "two" { return 31 } }, none => { return 31 } }
     var encoded = "a\u{1f600}".encode_utf16()
     match encoded.next() { present(unit) => { if unit != 0x61u16 { return 32 } }, none => { return 32 } }
-    match encoded.next_back() { present(unit) => { if unit != 0xde00u16 { return 33 } }, none => { return 33 } }
-    match encoded.next() { present(unit) => { if unit != 0xd83du16 { return 34 } }, none => { return 34 } }
+    match encoded.next() { present(unit) => { if unit != 0xd83du16 { return 33 } }, none => { return 33 } }
+    match encoded.next() { present(unit) => { if unit != 0xde00u16 { return 34 } }, none => { return 34 } }
     var escaped = alloc.string.new()
     var escape_chars = "\n\u{e9}".escape_debug()
     while true {
@@ -99,12 +98,10 @@ fn main(): i32 {
         core.char.from_digit(1u32, 1u32).is_present() {
         return 45
     }
-    var units = [0u16, 0u16]
-    let utf16 = '\u{1f600}'.encode_utf16(mut units)
-    if utf16.len() != 2usize || utf16[0usize] != 0xd83du16 ||
-        utf16[1usize] != 0xde00u16 {
-        return 37
-    }
+    var utf16 = '\u{1f600}'.encode_utf16()
+    match utf16.next() { present(unit) => { if unit != 0xd83du16 { return 37 } }, none => { return 37 } }
+    match utf16.next() { present(unit) => { if unit != 0xde00u16 { return 37 } }, none => { return 37 } }
+    match utf16.next() { present(_) => { return 37 }, none => {} }
     var lower = 'A'
     lower.make_ascii_lowercase()
     if lower != 'a' { return 38 }

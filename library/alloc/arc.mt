@@ -114,7 +114,7 @@ pub fn try_new<T>(value: take T): Arc<T> throws AllocError { try try_new_in(valu
 pub fn try_new_uninit_in<T, A: Allocator>(
     allocator: take A
 ): Arc<core.mem.MaybeUninit<T>, A> throws AllocError {
-    try_new_in(core.mem.MaybeUninit<T>.uninit(), allocator)
+    try try_new_in(core.mem.MaybeUninit<T>.uninit(), allocator)
 }
 pub fn new_uninit_in<T, A: Allocator>(
     allocator: take A
@@ -133,7 +133,7 @@ pub fn new_uninit<T>(): Arc<core.mem.MaybeUninit<T>> { new_uninit_in<T, Global>(
 pub fn try_new_zeroed_in<T, A: Allocator>(
     allocator: take A
 ): Arc<core.mem.MaybeUninit<T>, A> throws AllocError {
-    try_new_in(core.mem.MaybeUninit<T>.zeroed(), allocator)
+    try try_new_in(core.mem.MaybeUninit<T>.zeroed(), allocator)
 }
 pub fn new_zeroed_in<T, A: Allocator>(
     allocator: take A
@@ -266,7 +266,8 @@ extend<T: unsized, A: Allocator + Clone> Arc<T, A> implements Clone {
 extend<T, A: Allocator> Arc<core.mem.MaybeUninit<T>, A> {
     // Safety: the caller initialized the payload before taking ownership as T.
     pub take unsafe fn assume_init(): Arc<T, A> {
-        unsafe { core.mem.transmute<Arc<T, A>>(take self) }
+        let raw = self.into_raw()
+        unsafe { from_raw(RawArc(raw.p.cast<T>(), raw.h, raw.a)) }
     }
 }
 

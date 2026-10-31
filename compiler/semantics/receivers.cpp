@@ -378,7 +378,11 @@ Checker::receiverConversion(Type source, Type target, ParameterMode mode,
         return std::nullopt;
       return plan;
     }
-    if (checked.types->isErased(target) &&
+    // The source's own outer view is the borrow being converted, so erasure
+    // starts at its referent even when the view type itself implements the
+    // interface (as with a blanket implementation).
+    const bool borrowView = plan.steps.empty() && checked.types->isView(source);
+    if (!borrowView && checked.types->isErased(target) &&
         !checked.types->isErased(plan.target) &&
         checked.types->isSized(plan.target)) {
       interfaces::Solver solver(*checked.types, *checked.interfaceData,

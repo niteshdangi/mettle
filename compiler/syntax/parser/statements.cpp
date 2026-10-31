@@ -9,8 +9,7 @@ std::unique_ptr<Node> Parser::stmt() {
     if (!mutableBinding) {
       expect("let");
       if (is("mut"))
-        fail("`let mut` is not valid syntax",
-             "parse",
+        fail("`let mut` is not valid syntax", "parse",
              {{"help", {}, "use `var` for a mutable local binding"}});
     }
     auto result = node(Kind::Binding, start);

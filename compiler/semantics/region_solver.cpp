@@ -336,6 +336,8 @@ RegionAnswer RegionTypeSolver::compare(
         from.kind == AggregateKind::Range || from.kind == AggregateKind::Cell ||
         from.kind == AggregateKind::RefCell ||
         from.kind == AggregateKind::UnsafeCell ||
+        from.kind == AggregateKind::Uninit ||
+        from.kind == AggregateKind::ManualDrop ||
         from.kind == AggregateKind::Ref || from.kind == AggregateKind::RefMut ||
         from.kind == AggregateKind::Pin;
     if (from.kind == to.kind && from.fields.size() == to.fields.size() &&

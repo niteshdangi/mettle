@@ -96,7 +96,7 @@ std::vector<Site> definitionsAt(const Files &files, std::size_t file,
 }
 
 std::vector<Site> referencesAt(const Files &files, std::size_t file,
-                              std::size_t offset, bool includeDeclaration) {
+                               std::size_t offset, bool includeDeclaration) {
   const auto *use = files[file].index->occurrenceAt(offset);
   auto targets = targetsAt(files, file, offset);
   if (!use || targets.size() != 1)
@@ -107,8 +107,7 @@ std::vector<Site> referencesAt(const Files &files, std::size_t file,
   for (std::size_t g = 0; g < files.size(); ++g) {
     const auto &items = files[g].index->declarations();
     for (std::size_t d = 0; d < items.size(); ++d)
-      if (!items[d].scoped() &&
-          items[d].kind != SymbolKind::Implementation &&
+      if (!items[d].scoped() && items[d].kind != SymbolKind::Implementation &&
           items[d].name == item.name && topLevel(files, g, items[d]))
         globalItems.push_back({g, static_cast<int>(d)});
   }
@@ -117,8 +116,7 @@ std::vector<Site> referencesAt(const Files &files, std::size_t file,
     std::vector<Target> localItems;
     const auto &items = files[g].index->declarations();
     for (std::size_t d = 0; d < items.size(); ++d)
-      if (!items[d].scoped() &&
-          items[d].kind != SymbolKind::Implementation &&
+      if (!items[d].scoped() && items[d].kind != SymbolKind::Implementation &&
           items[d].name == item.name && topLevel(files, g, items[d]))
         localItems.push_back({g, static_cast<int>(d)});
     for (const auto &occurrence : files[g].index->occurrences()) {
@@ -133,12 +131,11 @@ std::vector<Site> referencesAt(const Files &files, std::size_t file,
       } else if (occurrence.role == Role::Declaration ||
                  (occurrence.role == Role::Member &&
                   occurrence.declaration >= 0)) {
-        matches = g == target.file &&
-                  occurrence.declaration == target.declaration;
+        matches =
+            g == target.file && occurrence.declaration == target.declaration;
       } else if (occurrence.role == Role::Lexical &&
                  occurrence.declaration < 0 && occurrence.name == item.name) {
-        const auto &candidates =
-            localItems.empty() ? globalItems : localItems;
+        const auto &candidates = localItems.empty() ? globalItems : localItems;
         matches = candidates.size() == 1 &&
                   candidates.front().file == target.file &&
                   candidates.front().declaration == target.declaration;

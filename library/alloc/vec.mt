@@ -342,7 +342,7 @@ extend<T, A: Allocator> List<T, A> {
         start: usize,
         end: usize,
         replacement: take I
-    ): Splice<region self, T, A, I.IntoIter> where A: Clone {
+    ): Splice<region self, T, A, I.(OwnedIterable).IntoIter> where A: Clone {
         if start > end || end > self.len { panic_precondition() }
         var removed = new_in<T, A>(self.a.clone())
         {
@@ -469,14 +469,21 @@ extend<region r, T, A: Allocator, F: fn(mut T): bool> ExtractIf<region r, T, A, 
     mut fn next(): T? {
         while self.remaining > 0usize {
             self.remaining -= 1usize
-            let remove = match self.list.get_mut(self.index) {
-                present(value) => self.test(value),
+            let remove = match take self.list.get_mut(self.index) {
+                present(value) => self.test(mut *value),
                 none => { return none }
             }
             if remove { return present(self.list.remove(self.index)) }
             self.index += 1usize
         }
         none
+    }
+}
+
+extend<region r, T, A: Allocator> Drain<region r, T, A> {
+    // The unyielded drained elements stay initialized between front and back.
+    pub fn as_slice(): read [T] from self {
+        unsafe { read *slice_ptr(self.list.ptr.add(self.front), self.back - self.front) }
     }
 }
 
@@ -946,7 +953,7 @@ extend<T> List<T> implements FromItems<T> {
 }
 
 extend<T: fmt.Debug, A: Allocator> List<T, A> implements fmt.Debug {
-    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
         try fmt.debug_slice(self.as_slice(), mut f)
     }
 }

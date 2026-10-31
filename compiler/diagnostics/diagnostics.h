@@ -2,8 +2,8 @@
 #include "source/source.h"
 #include "support/limits.h"
 #include <algorithm>
-#include <ostream>
 #include <optional>
+#include <ostream>
 #include <utility>
 #include <vector>
 
@@ -75,8 +75,7 @@ public:
     add("warning", std::move(phase), span, std::move(message), {});
   }
   void add(std::string severity, std::string phase, Span span,
-           std::string message,
-           std::vector<DiagnosticMessage> related = {}) {
+           std::string message, std::vector<DiagnosticMessage> related = {}) {
     if (span.source == 0)
       span.source = currentSource;
     // A repeated report of the same fault at the same place adds no

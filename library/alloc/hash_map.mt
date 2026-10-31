@@ -614,16 +614,16 @@ extend<region r, K: Hash + PartialEq, A: Allocator> SetAlgebra<region r, K, A> i
 
 extend<K: Hash + PartialEq, A: Allocator> Set<K, A> {
     pub fn `union`(other: read Set<K, A> from self): SetAlgebra<region self, K, A> {
-        SetAlgebra(read self, other, 0u8, 0u8, 0usize)
+        SetAlgebra(read self, read other, 0u8, 0u8, 0usize)
     }
     pub fn intersection(other: read Set<K, A> from self): SetAlgebra<region self, K, A> {
-        SetAlgebra(read self, other, 1u8, 0u8, 0usize)
+        SetAlgebra(read self, read other, 1u8, 0u8, 0usize)
     }
     pub fn difference(other: read Set<K, A> from self): SetAlgebra<region self, K, A> {
-        SetAlgebra(read self, other, 2u8, 0u8, 0usize)
+        SetAlgebra(read self, read other, 2u8, 0u8, 0usize)
     }
     pub fn symmetric_difference(other: read Set<K, A> from self): SetAlgebra<region self, K, A> {
-        SetAlgebra(read self, other, 3u8, 0u8, 0usize)
+        SetAlgebra(read self, read other, 3u8, 0u8, 0usize)
     }
     pub fn is_subset(other: read Set<K, A>): bool {
         var i = 0usize
@@ -806,7 +806,7 @@ extend<K: Hash + PartialEq, V: PartialEq, A: Allocator> Map<K, V, A> implements 
 }
 extend<K: Hash + PartialEq, V: Eq, A: Allocator> Map<K, V, A> implements Eq {}
 extend<K: fmt.Debug, V: fmt.Debug, A: Allocator> Map<K, V, A> implements fmt.Debug {
-    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
         try f.debug_open("{")
         var i = 0usize
         while i < self.entries.len() {
@@ -860,7 +860,7 @@ extend<K: Hash + PartialEq, A: Allocator> Set<K, A> implements PartialEq {
 }
 extend<K: Hash + PartialEq, A: Allocator> Set<K, A> implements Eq {}
 extend<K: fmt.Debug, A: Allocator> Set<K, A> implements fmt.Debug {
-    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
         try f.debug_open("{")
         var i = 0usize
         while i < self.map.entries.len() {
@@ -962,19 +962,23 @@ extend<region r, K: Hash + PartialEq, V, A: Allocator> Entry<region r, K, V, A> 
     pub take fn or_insert_with_key<F: take fn(read K): V>(make: take F): mut V from r {
         match take self {
             Entry.Occupied(entry) => entry.into_mut(),
-            Entry.Vacant(entry) => entry.insert(make(read entry.key))
+            Entry.Vacant(entry) => {
+                let value = make(read entry.key)
+                entry.insert(value)
+            }
         }
     }
     pub take fn insert_entry(value: take V): OccupiedEntry<region r, K, V, A> {
         match take self {
             Entry.Occupied(entry) => {
-                let _old = entry.insert(value)
-                entry
+                var occupied = entry
+                let _old = occupied.insert(value)
+                occupied
             },
             Entry.Vacant(entry) => {
                 let index = entry.map.entries.len()
                 let _old = entry.map.insert(entry.key, value)
-                OccupiedEntry(mut entry.map, index)
+                OccupiedEntry(entry.map, index)
             }
         }
     }

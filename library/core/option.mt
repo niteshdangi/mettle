@@ -154,8 +154,8 @@ extend<T: Deref> T? {
     }
 }
 
-extend<T: Deref + DerefMut> T? {
-    pub mut fn as_deref_mut(): (mut T.(Deref).Target from self)? {
+extend<T: DerefMut> T? {
+    pub mut fn as_deref_mut(): (mut T.(DerefMut).Target from self)? {
         match mut self { present(value) => present(value.deref_mut()), none => none }
     }
 }

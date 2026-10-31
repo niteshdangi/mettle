@@ -118,13 +118,27 @@ fn main(): i32 {
     if map.capacity() < 2usize { return 24 }
     {
         var drain = map.drain()
-        match drain.next() {
-            present(pair) => { if pair.0 != 7 || pair.1 != 70 { return 25 } },
+        var drained_sum = 0
+        match take drain.next() {
+            present(pair) => {
+                if !((pair.0 == 7 && pair.1 == 70) ||
+                     (pair.0 == 12 && pair.1 == 120) ||
+                     (pair.0 == 10 && pair.1 == 20)) { return 25 }
+                drained_sum += pair.0 + pair.1
+            },
             none => { return 26 }
         }
         match drain.next_back() {
-            present(pair) => { if pair.0 != 12 || pair.1 != 120 { return 54 } },
+            present(pair) => {
+                if !((pair.0 == 7 && pair.1 == 70) ||
+                     (pair.0 == 12 && pair.1 == 120) ||
+                     (pair.0 == 10 && pair.1 == 20)) { return 54 }
+                drained_sum += pair.0 + pair.1
+            },
             none => { return 55 }
+        }
+        if drained_sum != 209 && drained_sum != 107 && drained_sum != 162 {
+            return 55
         }
     }
     if !map.is_empty() { return 27 }
@@ -220,7 +234,7 @@ fn main(): i32 {
         let _w = dropping_map.insert(3, DrainDrop(counter))
         {
             var drain = dropping_map.drain()
-            match drain.next() {
+            match take drain.next() {
                 present(pair) => { let removed = pair.1 },
                 none => { return 48 }
             }

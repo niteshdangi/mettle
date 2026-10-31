@@ -1,3 +1,5 @@
+import core.clone.Clone
+
 type RcCycle { pub link: alloc.rc.Weak<RcCycle> }
 type ArcCycle { pub link: alloc.arc.Weak<ArcCycle> }
 
@@ -17,7 +19,7 @@ fn main(): i32 {
     if unsafe { *leaked } != 17 { return 4 }
 
     var rc_uninit = alloc.rc.new_uninit<i32>()
-    match rc_uninit.get_mut() {
+    match take rc_uninit.get_mut() {
         present(slot) => { let _rc_written = slot.write(33) },
         none => { return 23 }
     }
@@ -55,7 +57,7 @@ fn main(): i32 {
     }
 
     var arc_uninit = alloc.arc.new_uninit<i32>()
-    match arc_uninit.get_mut() {
+    match take arc_uninit.get_mut() {
         present(slot) => { let _arc_written = slot.write(55) },
         none => { return 24 }
     }

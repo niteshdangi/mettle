@@ -24,7 +24,7 @@ pub interface ToOwned {
     type Owned: Borrow<Self>;
     fn to_owned(): Self.Owned;
     fn clone_into(owned: mut Self.Owned): Unit where Self.Owned: Clone {
-        *owned = self.to_owned()
+        owned = self.to_owned()
     }
 }
 

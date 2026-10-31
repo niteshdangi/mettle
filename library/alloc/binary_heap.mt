@@ -11,7 +11,7 @@ import package.core.ops.{Deref, DerefMut}
 pub type BinaryHeap<T, A: Allocator = Global> { data: List<T, A> }
 pub type PeekMut<region r, T: Ord, A: Allocator> {
     queue: mut BinaryHeap<T, A> from r
-    drop { sift_down(mut self.queue) }
+    drop { sift_down(mut *self.queue) }
 }
 
 fn sift_down<T: Ord, A: Allocator>(queue: mut BinaryHeap<T, A>): Unit {
@@ -210,7 +210,7 @@ extend<T: Clone, A: Allocator + Clone> BinaryHeap<T, A> implements Clone {
 }
 // Elements appear in heap (storage) order.
 extend<T: fmt.Debug, A: Allocator> BinaryHeap<T, A> implements fmt.Debug {
-    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
         try fmt.debug_slice(self.data.as_slice(), mut f)
     }
 }

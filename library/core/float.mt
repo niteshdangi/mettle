@@ -243,7 +243,7 @@ fn shortest_digits(mantissa: u64, exponent: i32, unequal: bool, digits: mut [u8]
 }
 
 // Formats a value given by its sign, stored fraction and biased exponent field.
-fn fmt_float<W: Write>(f: mut Formatter<W>, negative: bool, fraction: u64, biased: u64, fraction_bits: u64, bias: i32, special: u64, keep_point: bool): Unit throws Error {
+fn fmt_float(f: mut Formatter, negative: bool, fraction: u64, biased: u64, fraction_bits: u64, bias: i32, special: u64, keep_point: bool): Unit throws Error {
     if biased == special {
         if fraction != 0u64 { return try f.pad("NaN") }
         return try f.pad_integral(!negative, "", "inf")
@@ -305,27 +305,27 @@ fn fmt_float<W: Write>(f: mut Formatter<W>, negative: bool, fraction: u64, biase
     try f.pad_integral(!negative, "", text)
 }
 
-fn fmt_f64<W: Write>(f: mut Formatter<W>, value: f64, keep_point: bool): Unit throws Error {
+fn fmt_f64(f: mut Formatter, value: f64, keep_point: bool): Unit throws Error {
     let bits = unsafe { core.mem.transmute<u64>(value) }
     try fmt_float(mut f, (bits >> 63u64) != 0u64, bits & 0xfffffffffffffu64, (bits >> 52u64) & 0x7ffu64, 52u64, 1075, 0x7ffu64, keep_point)
 }
 
-fn fmt_f32<W: Write>(f: mut Formatter<W>, value: f32, keep_point: bool): Unit throws Error {
+fn fmt_f32(f: mut Formatter, value: f32, keep_point: bool): Unit throws Error {
     let bits = unsafe { core.mem.transmute<u32>(value) }
     try fmt_float(mut f, (bits >> 31u32) != 0u32, (bits & 0x7fffffu32) as u64, ((bits >> 23u32) & 0xffu32) as u64, 23u64, 150, 0xffu64, keep_point)
 }
 
 extend f64 implements Display {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_f64(mut f, self, false) }
+    fn fmt(f: mut Formatter): Unit throws Error { try fmt_f64(mut f, self, false) }
 }
 extend f64 implements Debug {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_f64(mut f, self, true) }
+    fn fmt(f: mut Formatter): Unit throws Error { try fmt_f64(mut f, self, true) }
 }
 extend f32 implements Display {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_f32(mut f, self, false) }
+    fn fmt(f: mut Formatter): Unit throws Error { try fmt_f32(mut f, self, false) }
 }
 extend f32 implements Debug {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_f32(mut f, self, true) }
+    fn fmt(f: mut Formatter): Unit throws Error { try fmt_f32(mut f, self, true) }
 }
 
 // Map IEEE bit patterns to integer keys in total-order sequence.

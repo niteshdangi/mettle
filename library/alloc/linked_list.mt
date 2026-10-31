@@ -258,7 +258,7 @@ extend<T: Hash, A: Allocator> LinkedList<T, A> implements Hash {
     }
 }
 extend<T: fmt.Debug, A: Allocator> LinkedList<T, A> implements fmt.Debug {
-    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
         try f.debug_open("[")
         var p = self.head
         var first = true

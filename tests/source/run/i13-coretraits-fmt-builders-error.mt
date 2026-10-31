@@ -10,25 +10,26 @@ import core.option
 type LocalError {}
 type OuterError { cause: LocalError }
 extend LocalError implements Debug {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws fmt.Error { try f.write_str("local") }
+    fn fmt(f: mut Formatter): Unit throws fmt.Error { try f.write_str("local") }
 }
 extend LocalError implements Display {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws fmt.Error { try f.write_str("local") }
+    fn fmt(f: mut Formatter): Unit throws fmt.Error { try f.write_str("local") }
 }
 extend LocalError implements Error {}
 extend OuterError implements Debug {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws fmt.Error {
-        var builder = f.debug_struct("OuterError")
+    fn fmt(f: mut Formatter): Unit throws fmt.Error {
+        var builder = try f.debug_struct("OuterError")
         try builder.field("cause", read self.cause)
         try builder.finish()
     }
 }
 extend OuterError implements Display {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws fmt.Error { try f.write_str("outer") }
+    fn fmt(f: mut Formatter): Unit throws fmt.Error { try f.write_str("outer") }
 }
 extend OuterError implements Error {
     fn source<region r>(receiver self: read OuterError from r): (read any Error from r)? {
-        present(read self.cause)
+        let cause: read any Error = read self.cause
+        present(cause)
     }
 }
 
@@ -39,27 +40,27 @@ fn render(): i32 throws fmt.Error {
     var f = fmt.formatter(mut output, options)
     if !f.sign_minus() || f.sign_plus() || f.sign_aware_zero_pad() { return 1 }
 
-    var structure = f.debug_struct("S")
+    var structure = try f.debug_struct("S")
     try structure.field("x", 1i32)
     try structure.finish()
 
-    var tuple = f.debug_tuple("T")
+    var tuple = try f.debug_tuple("T")
     try tuple.field(2i32)
     try tuple.finish()
 
-    var list = f.debug_list()
+    var list = try f.debug_list()
     try list.entry(3i32)
     try list.finish()
 
-    var set = f.debug_set()
+    var set = try f.debug_set()
     try set.entry(4i32)
     try set.finish()
 
-    var map = f.debug_map()
+    var map = try f.debug_map()
     try map.entry(5i32, 6i32)
     try map.finish()
 
-    var split_map = f.debug_map()
+    var split_map = try f.debug_map()
     try split_map.key(7i32)
     try split_map.value(8i32)
     try split_map.finish()

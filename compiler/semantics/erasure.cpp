@@ -153,9 +153,14 @@ void Checker::finalizeErasure() {
                                  return fixedParameters.contains(parameter);
                                });
           if (!receiver) {
+            // Test the unsubstituted type: `Self` is bound to the erased
+            // interface, which an explicit `any Interface` result also names.
+            const auto self = function.genericParameters.empty()
+                                  ? Type::Unknown
+                                  : function.genericParameters.front();
             std::set<Type> visited;
             std::function<bool(Type)> hasSelf = [&](Type current) {
-              if (current == interface)
+              if (current == definition.self || current == self)
                 return true;
               if (!visited.insert(current).second)
                 return false;
@@ -188,7 +193,7 @@ void Checker::finalizeErasure() {
               }
               return false;
             };
-            valid &= !hasSelf(result);
+            valid &= !hasSelf(type);
           }
           return result;
         };

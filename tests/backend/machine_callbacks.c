@@ -146,19 +146,16 @@ struct MettleDarwinHfa3 mettle_c_darwin_hfa(struct MettleDarwinHfa3 value) {
   value.third += 1.0;
   return value;
 }
-struct MettleDarwinHfa1
-mettle_c_darwin_hfa1(struct MettleDarwinHfa1 value) {
+struct MettleDarwinHfa1 mettle_c_darwin_hfa1(struct MettleDarwinHfa1 value) {
   value.first += 1.0;
   return value;
 }
-struct MettleDarwinHfa2
-mettle_c_darwin_hfa2(struct MettleDarwinHfa2 value) {
+struct MettleDarwinHfa2 mettle_c_darwin_hfa2(struct MettleDarwinHfa2 value) {
   value.first += 1.0;
   value.second += 1.0;
   return value;
 }
-struct MettleDarwinHfa4
-mettle_c_darwin_hfa4(struct MettleDarwinHfa4 value) {
+struct MettleDarwinHfa4 mettle_c_darwin_hfa4(struct MettleDarwinHfa4 value) {
   value.first += 1.0;
   value.second += 1.0;
   value.third += 1.0;
@@ -185,20 +182,17 @@ struct MettleDarwinHva2 mettle_c_darwin_hva(struct MettleDarwinHva2 value) {
   value.second += (MettleMachineVector){2, 2, 2, 2};
   return value;
 }
-struct MettleDarwinHva1
-mettle_c_darwin_hva1(struct MettleDarwinHva1 value) {
+struct MettleDarwinHva1 mettle_c_darwin_hva1(struct MettleDarwinHva1 value) {
   value.first += (MettleMachineVector){1, 1, 1, 1};
   return value;
 }
-struct MettleDarwinHva3
-mettle_c_darwin_hva3(struct MettleDarwinHva3 value) {
+struct MettleDarwinHva3 mettle_c_darwin_hva3(struct MettleDarwinHva3 value) {
   value.first += (MettleMachineVector){1, 1, 1, 1};
   value.second += (MettleMachineVector){2, 2, 2, 2};
   value.third += (MettleMachineVector){3, 3, 3, 3};
   return value;
 }
-struct MettleDarwinHva4
-mettle_c_darwin_hva4(struct MettleDarwinHva4 value) {
+struct MettleDarwinHva4 mettle_c_darwin_hva4(struct MettleDarwinHva4 value) {
   value.first += (MettleMachineVector){1, 1, 1, 1};
   value.second += (MettleMachineVector){2, 2, 2, 2};
   value.third += (MettleMachineVector){3, 3, 3, 3};

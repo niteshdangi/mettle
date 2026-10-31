@@ -24,7 +24,7 @@ fn same(buffer: read [u8], length: usize, expected: read Text): bool {
 
 type Meters { value: i32 }
 extend Meters implements Display {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
+    fn fmt(f: mut Formatter): Unit throws Error {
         try f.write_str("m=")
         try i32.(Display).fmt(self.value, mut f)
     }

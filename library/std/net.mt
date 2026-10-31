@@ -567,7 +567,7 @@ extend SocketAddr {
     pub static fn parse(text: read Text): SocketAddr throws Error { try parse_socket_addr(text) }
 }
 
-fn write_hex16<W: Write>(value: u16, f: mut Formatter<W>): Unit throws package.core.fmt.Error {
+fn write_hex16(value: u16, f: mut Formatter): Unit throws package.core.fmt.Error {
     let digits = "0123456789abcdef".as_bytes()
     var shift = 12u32
     var started = false
@@ -582,7 +582,7 @@ fn write_hex16<W: Write>(value: u16, f: mut Formatter<W>): Unit throws package.c
     }
 }
 
-fn write_ipv6<W: Write>(value: Ipv6Addr, f: mut Formatter<W>): Unit throws package.core.fmt.Error {
+fn write_ipv6(value: Ipv6Addr, f: mut Formatter): Unit throws package.core.fmt.Error {
     var mapped = true
     var byte_index = 0usize
     while byte_index < 10usize {
@@ -633,7 +633,7 @@ fn write_ipv6<W: Write>(value: Ipv6Addr, f: mut Formatter<W>): Unit throws packa
 }
 
 extend Ipv4Addr implements Display {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws package.core.fmt.Error {
+    fn fmt(f: mut Formatter): Unit throws package.core.fmt.Error {
         let values = self.octets()
         var i = 0usize
         while i < 4usize {
@@ -644,22 +644,22 @@ extend Ipv4Addr implements Display {
     }
 }
 extend Ipv4Addr implements Debug {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws package.core.fmt.Error {
+    fn fmt(f: mut Formatter): Unit throws package.core.fmt.Error {
         try Ipv4Addr.(Display).fmt(self, mut f)
     }
 }
 extend Ipv6Addr implements Display {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws package.core.fmt.Error {
+    fn fmt(f: mut Formatter): Unit throws package.core.fmt.Error {
         try write_ipv6(self, mut f)
     }
 }
 extend Ipv6Addr implements Debug {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws package.core.fmt.Error {
+    fn fmt(f: mut Formatter): Unit throws package.core.fmt.Error {
         try write_ipv6(self, mut f)
     }
 }
 extend IpAddr implements Display {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws package.core.fmt.Error {
+    fn fmt(f: mut Formatter): Unit throws package.core.fmt.Error {
         match self {
             IpAddr.V4(ip) => try Ipv4Addr.(Display).fmt(ip, mut f),
             IpAddr.V6(ip) => try Ipv6Addr.(Display).fmt(ip, mut f)
@@ -667,7 +667,7 @@ extend IpAddr implements Display {
     }
 }
 extend IpAddr implements Debug {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws package.core.fmt.Error {
+    fn fmt(f: mut Formatter): Unit throws package.core.fmt.Error {
         match self {
             IpAddr.V4(ip) => try Ipv4Addr.(Debug).fmt(ip, mut f),
             IpAddr.V6(ip) => try Ipv6Addr.(Debug).fmt(ip, mut f)
@@ -675,7 +675,7 @@ extend IpAddr implements Debug {
     }
 }
 extend SocketAddr implements Display {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws package.core.fmt.Error {
+    fn fmt(f: mut Formatter): Unit throws package.core.fmt.Error {
         match self.ip {
             IpAddr.V4(ip) => try Ipv4Addr.(Display).fmt(ip, mut f),
             IpAddr.V6(ip) => {
@@ -693,7 +693,7 @@ extend SocketAddr implements Display {
     }
 }
 extend SocketAddr implements Debug {
-    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws package.core.fmt.Error {
+    fn fmt(f: mut Formatter): Unit throws package.core.fmt.Error {
         try SocketAddr.(Display).fmt(self, mut f)
     }
 }

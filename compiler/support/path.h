@@ -20,9 +20,9 @@ inline std::string displayPath(std::string_view canonical) {
   return result;
 }
 
-inline std::string displayPath(
-    std::string_view canonical,
-    std::span<const std::string_view> namesInMessage) {
+inline std::string
+displayPath(std::string_view canonical,
+            std::span<const std::string_view> namesInMessage) {
   const auto separator = canonical.rfind("::");
   if (separator == std::string_view::npos)
     return std::string(canonical);

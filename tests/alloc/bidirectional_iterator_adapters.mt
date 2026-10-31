@@ -23,7 +23,7 @@ fn main(): i32 {
     }
 
     var filtered = four_values().into_iter().filter(fn(value: read i32): bool {
-        *value % 2 == 0
+        value % 2 == 0
     })
     match filtered.next_back() {
         present(value) => { if value != 4 { return 5 } },

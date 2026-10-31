@@ -326,6 +326,36 @@ void Checker::propagateGenericBindings(const GenericEnvironment &environment,
     }
     return progress;
   };
+  auto open = [&](Type type) {
+    for (auto parameter : checked.types->typeParameters(type))
+      for (const auto &binding : bindings)
+        if (binding.parameter == parameter && binding.argument == Type::Unknown)
+          return true;
+    return false;
+  };
+  // `where Self.Item = read T from r` determines `T` once `Self` is known:
+  // normalize the closed side and match the open side against it.
+  auto structural = [&](Type pattern, Type closed) {
+    if (!open(pattern) || open(closed) || checked.types->isParameter(pattern))
+      return false;
+    interfaces::Solver solver(*checked.types, *checked.interfaceData,
+                              diagnostics, interfaceAssumptions(),
+                              regionEnvironment());
+    auto actual = solver.normalize(closed, bindings, span);
+    if (actual == Type::Unknown || open(actual))
+      return false;
+    auto attempt = bindings;
+    if (!inferGeneric(pattern, actual, attempt, span))
+      return false;
+    bool progress = false;
+    for (std::size_t index = 0; index < bindings.size(); ++index)
+      if (bindings[index].argument == Type::Unknown &&
+          attempt[index].argument != Type::Unknown) {
+        bindings[index].argument = attempt[index].argument;
+        progress = true;
+      }
+    return progress;
+  };
   bool changed;
   do {
     changed = fromBounds();
@@ -334,6 +364,8 @@ void Checker::propagateGenericBindings(const GenericEnvironment &environment,
       auto right = checked.types->substitute(equality.argument, bindings);
       changed |= solve(equality.parameter, right);
       changed |= solve(equality.argument, left);
+      changed |= structural(equality.argument, left);
+      changed |= structural(equality.parameter, right);
     }
   } while (changed);
 }
@@ -358,7 +390,9 @@ void Checker::completeGenericBindings(const GenericEnvironment &environment,
   for (const auto &equality : environment.equalities) {
     auto left = solver.normalize(equality.parameter, bindings, span);
     auto right = solver.normalize(equality.argument, bindings, span);
-    if (left != Type::Unknown && right != Type::Unknown && left != right)
+    // Region parameters are solved by the region pass, not by type equality.
+    if (left != Type::Unknown && right != Type::Unknown &&
+        checked.types->eraseRegions(left) != checked.types->eraseRegions(right))
       error("type", span, "generic type equality is not satisfied");
   }
 }

@@ -1049,13 +1049,13 @@ extend Text {
         TextUtf16(self.chars(), 0u16, false)
     }
     pub fn escape_debug(): TextEscape<region self> {
-        TextEscape(self.chars(), '\0'.escape_debug(), false, true)
+        TextEscape(self.chars(), '\0'.escape_debug(), false, false, true)
     }
     pub fn escape_default(): TextEscape<region self> {
-        TextEscape(self.chars(), '\0'.escape_default(), false, false)
+        TextEscape(self.chars(), '\0'.escape_default(), false, false, false)
     }
     pub fn escape_unicode(): TextEscape<region self> {
-        TextEscape(self.chars(), '\0'.escape_unicode(), true, false)
+        TextEscape(self.chars(), '\0'.escape_unicode(), false, true, false)
     }
     pub fn lowercase_chars(): LowercaseChars<region self> {
         LowercaseChars(read self, self.char_indices(), '\0'.to_lowercase(), false, false)

@@ -107,7 +107,7 @@ pub fn try_new<T>(value: take T): Rc<T> throws AllocError { try try_new_in(value
 pub fn try_new_uninit_in<T, A: Allocator>(
     allocator: take A
 ): Rc<core.mem.MaybeUninit<T>, A> throws AllocError {
-    try_new_in(core.mem.MaybeUninit<T>.uninit(), allocator)
+    try try_new_in(core.mem.MaybeUninit<T>.uninit(), allocator)
 }
 pub fn new_uninit_in<T, A: Allocator>(allocator: take A): Rc<core.mem.MaybeUninit<T>, A> {
     let result = capture try_new_uninit_in<T, A>(allocator)
@@ -124,7 +124,7 @@ pub fn new_uninit<T>(): Rc<core.mem.MaybeUninit<T>> { new_uninit_in<T, Global>(G
 pub fn try_new_zeroed_in<T, A: Allocator>(
     allocator: take A
 ): Rc<core.mem.MaybeUninit<T>, A> throws AllocError {
-    try_new_in(core.mem.MaybeUninit<T>.zeroed(), allocator)
+    try try_new_in(core.mem.MaybeUninit<T>.zeroed(), allocator)
 }
 pub fn new_zeroed_in<T, A: Allocator>(allocator: take A): Rc<core.mem.MaybeUninit<T>, A> {
     let result = capture try_new_zeroed_in<T, A>(allocator)
@@ -238,7 +238,8 @@ extend<T: unsized, A: Allocator + Clone> Rc<T, A> implements Clone {
 extend<T, A: Allocator> Rc<core.mem.MaybeUninit<T>, A> {
     // Safety: the caller initialized the payload before taking ownership as T.
     pub take unsafe fn assume_init(): Rc<T, A> {
-        unsafe { core.mem.transmute<Rc<T, A>>(take self) }
+        let raw = self.into_raw()
+        unsafe { from_raw(RawRc(raw.p.cast<T>(), raw.h, raw.a)) }
     }
 }
 
@@ -384,8 +385,8 @@ extend<T: Hash, A: Allocator> Rc<T, A> implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { self.get().hash(mut state) }
 }
 extend<T: fmt.Display, A: Allocator> Rc<T, A> implements fmt.Display {
-    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error { try T.(fmt.Display).fmt(self.get(), mut f) }
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try T.(fmt.Display).fmt(self.get(), mut f) }
 }
 extend<T: fmt.Debug, A: Allocator> Rc<T, A> implements fmt.Debug {
-    fn fmt<W: fmt.Write>(f: mut fmt.Formatter<W>): Unit throws fmt.Error { try T.(fmt.Debug).fmt(self.get(), mut f) }
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try T.(fmt.Debug).fmt(self.get(), mut f) }
 }
