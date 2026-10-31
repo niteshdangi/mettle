@@ -137,6 +137,24 @@ def run_suite(mode, executable, directory):
             "file": str(address), "source_sha256": digest(address),
             "sanitizer": "address", "exit_status": report.returncode})
 
+        # Zero-sized values (here the Global allocator) emit no checked access.
+        zero_sized = source(
+            "asan-zero-sized",
+            "import alloc.vec_deque\n"
+            "fn main(): i32 {\n"
+            "    let queue = vec_deque.new<i32>()\n"
+            "    queue.len() as i32\n"
+            "}\n")
+        zero_sized_binary = directory / "asan-zero-sized"
+        run([executable, "build", str(zero_sized), "-o", str(zero_sized_binary),
+             "--sanitize", "address"])
+        report = run([str(zero_sized_binary)], env=address_env)
+        if report.stderr:
+            raise AssertionError(f"ASan zero-sized access: {report.stderr!r}")
+        evidence["cases"].append({
+            "file": str(zero_sized), "source_sha256": digest(zero_sized),
+            "sanitizer": "address", "exit_status": report.returncode})
+
         race = source(
             "tsan-data-race",
             "import std.thread\n"

@@ -249,8 +249,8 @@ private:
     for (std::size_t i = 0; i < significant.size(); ++i) {
       const auto &token = *significant[i];
       // Async functions and closures are typed by `core.future.Future`.
-      if (token.text == "async" && from(token).empty() && available("core"))
-        found.push_back({"core", "future", "", token.span, false});
+      if (token.text == "async" && from(token) != "core" && available("core"))
+        found.push_back({"core", "future", from(token), token.span, false});
       if (token.kind == TokenKind::Word && from(token).empty() && i > 0 &&
           significant[i - 1]->text == "." && i + 1 < significant.size() &&
           significant[i + 1]->text == "(" && available("core")) {

@@ -56,11 +56,14 @@ extend Waker {
     pub fn will_wake(other: read Waker): bool {
         self.raw.data == other.raw.data
     }
+    // Identifies wakers built from one vtable by its callback addresses.
     pub fn uses_vtable(other: RawWakerVTable): bool {
-        self.raw.vtable.clone == other.clone &&
-            self.raw.vtable.wake == other.wake &&
-            self.raw.vtable.wake_by_ref == other.wake_by_ref &&
-            self.raw.vtable.release == other.release
+        unsafe {
+            core.mem.transmute<usize>(self.raw.vtable.clone) == core.mem.transmute<usize>(other.clone) &&
+                core.mem.transmute<usize>(self.raw.vtable.wake) == core.mem.transmute<usize>(other.wake) &&
+                core.mem.transmute<usize>(self.raw.vtable.wake_by_ref) == core.mem.transmute<usize>(other.wake_by_ref) &&
+                core.mem.transmute<usize>(self.raw.vtable.release) == core.mem.transmute<usize>(other.release)
+        }
     }
     pub fn clone(): Waker {
         Waker((self.raw.vtable.clone)(self.raw.data))

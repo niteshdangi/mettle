@@ -998,8 +998,10 @@ implemented (see S018-S023) with `library.std`, `runtime.thread` and scalar
 compiler cases; Linux-target qualification remains open. Emitted-program
 `--sanitize address` and `--sanitize thread` support, including runtime variants
 and cache separation, is implemented and verified on macOS arm64 by
-`probe.sanitizers`, which requires an ASan heap-buffer-overflow report and a
-TSan data-race report from emitted programs.
+`probe.sanitizers`, which requires an ASan heap-buffer-overflow report, a
+clean ASan run of a program holding a zero-sized allocator (zero-sized loads
+and stores are removed before instrumentation), and a TSan data-race report
+from emitted programs.
 `--sanitize address,thread` is rejected. UBSan for emitted Mettle IR is not
 implemented; `--sanitize undefined` produces an explicit unsupported diagnostic
 because Mettle already checks integer overflow and this backend emits no other
@@ -1052,7 +1054,11 @@ The async-I/O sub-batch: `std.task` parks the optional executor in a hosted
 reactor, provides readiness and timer futures, and `std.net` exposes
 nonblocking async TCP wrappers. `runtime/sys.cpp` uses kqueue on macOS and a
 POSIX poll fallback elsewhere. `tests/std/async_net_echo.mt` covers concurrent
-echo clients, timer sleep, and dropping a suspended accept. ASYNCIO_STATUS
+echo clients, timer sleep, and dropping a suspended accept. It passes in the
+Release `library.std` CTest and as an emitted program under ASan and TSan on
+macOS arm64. Async retry loops classify `EAGAIN` from the raw OS error (the
+blocking-socket timeout mapping does not apply), and unsized slice-view
+parameters are captured as views by async bodies.
 
 The async arrow-closure, `try await`, and async-interface changes below are
 implemented and verified by the Release CTest on macOS arm64. Async interface declarations now preserve their
@@ -1069,8 +1075,8 @@ P10 has only a backlog entry, not a specified benchmark source; an async
 network service, measurement protocol and equivalent comparator remain open.
 
 I11 status (partial; the prior core coroutine/executor paths were built and run
-on macOS arm64 Release; the async-I/O addition above is implemented, unverified
-(not yet built)): `core.future` has
+on macOS arm64 Release; the async-I/O addition above is verified there):
+`core.future` has
 `Future`/`Poll`/`Context`/`Waker` (vtable protocol, no allocation) and the
 inline coroutine future `Coroutine<T, C>`; `std.task` is the optional executor
 (`block_on`, `Executor` with spawn/run, `yield_now`). Async bodies are
@@ -1141,7 +1147,7 @@ Revision: uncommitted lane changes on `c81bc6d`; scope as stated per row.
 | Inline pinned state and poll | Implemented: `types` coroutine aggregate and layout resolver, `instances/specialize.cpp`, backend frame/dispatch. Transferable/Shareable/Static in `semantics/interface_solver.cpp` with the interior from `semantics/captures.cpp`. | Liveness-precise interior (optional precision gain). |
 | Control flow | Implemented: ordinary CFG of the closure body. | None known. |
 | Cleanup and cancellation | Implemented: persistent frame flags and `unwind` in `backend/llvm/cleanup.cpp`; exactly-once drops verified. | Dedicated lexical drop-order-across-suspension fixture. |
-| Optional executor drives async I/O (S030) | ASYNCIO_ROW: `library/std/task.mt`, `library/std/net.mt`, `library/std/sys.mt`, `library/core/future.mt`, `runtime/sys.{h,cpp}`. | Build and run `tests/std/async_net_echo.mt`; verify kqueue readiness/timers, cancellation and wake races under sanitizers; Linux fallback qualification remains open. |
+| Optional executor drives async I/O (S030) | Implemented and verified on macOS arm64: `library/std/task.mt`, `library/std/net.mt`, `library/std/sys.mt`, `library/core/future.mt`, `runtime/sys.{h,cpp}`; `tests/std/async_net_echo.mt` passes in Release CTest and under emitted ASan/TSan. | Kqueue wake-race stress; Linux poll-fallback qualification (owner-run). |
 | Integration and qualification | Release CTest, sanitized compiler CTest and ASan/UBSan emitted async programs passed on macOS arm64 before this change; the Debug-profile CTest passed 23/23 at `c81bc6d`. The full Release CTest passed 24/24 with the async closure, `try await`, interface dispatch, erasure-diagnostic and debug-info state-discriminator changes. | Linux/Windows (owner-run). |
 
 The source-freeze gate depends on all rows, fixtures and documentation; a

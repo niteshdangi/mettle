@@ -180,7 +180,8 @@ void Checker::completeClosure(ClosureFacts &closure, bool final) {
     capture.viaView =
         syntax.flag && capture.mode != ParameterMode::Take &&
         (rootMode == ParameterMode::Read || rootMode == ParameterMode::Mut) &&
-        !checked.types->isCopy(capture.type);
+        (!checked.types->isCopy(capture.type) ||
+         !checked.types->isSized(capture.type));
     capture.storedType =
         syntax.flag && !capture.viaView
             ? capture.type
@@ -581,6 +582,10 @@ void Checker::inferCaptures(ClosureFacts &closure) {
               visit(*node.children[i], i <= signature.parameters.size()
                                            ? signature.parameters[i - 1].mode
                                            : ParameterMode::Value);
+          } else if (call.callee < 0) {
+            // Unresolved callee: its diagnostic is already reported.
+            for (std::size_t i = 1; i < node.children.size(); ++i)
+              visit(*node.children[i], ParameterMode::Value);
           } else {
             if (call.method) {
               const auto &receiver = *node.children[0]->children[0];

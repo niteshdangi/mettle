@@ -3,6 +3,7 @@
 #include "types/layout.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
@@ -24,6 +25,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace mettle::backend {
 
@@ -149,10 +151,36 @@ llvm::Error checkTargetLayout(const TypeStore &types, llvm::StringRef triple) {
   return mismatch("pointer", 8, 8, pointer);
 }
 
+// Zero-sized loads and stores carry no bits. Sanitizers would check them as
+// variable-sized accesses of length zero, which ASan reports and then aborts.
+void dropZeroSizedAccesses(llvm::Module &module) {
+  const auto &layout = module.getDataLayout();
+  std::vector<llvm::Instruction *> dead;
+  for (auto &function : module)
+    for (auto &block : function)
+      for (auto &instruction : block) {
+        if (auto *load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
+            load && !load->isVolatile() && load->getType()->isSized() &&
+            layout.getTypeStoreSize(load->getType()).isZero()) {
+          load->replaceAllUsesWith(
+              llvm::Constant::getNullValue(load->getType()));
+          dead.push_back(load);
+        } else if (auto *store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+                   store && !store->isVolatile() &&
+                   store->getValueOperand()->getType()->isSized() &&
+                   layout.getTypeStoreSize(store->getValueOperand()->getType())
+                       .isZero())
+          dead.push_back(store);
+      }
+  for (auto *instruction : dead)
+    instruction->eraseFromParent();
+}
+
 llvm::Error instrumentModule(llvm::Module &module, bool sanitizeAddress,
                              bool sanitizeThread) {
   if (!sanitizeAddress && !sanitizeThread)
     return llvm::Error::success();
+  dropZeroSizedAccesses(module);
   llvm::LoopAnalysisManager loops;
   llvm::FunctionAnalysisManager functions;
   llvm::CGSCCAnalysisManager calls;
@@ -217,6 +245,8 @@ llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "invalid backend module: " + diagnostic);
   }
+  if (sanitizeAddress || sanitizeThread)
+    dropZeroSizedAccesses(module);
   if (optimize || sanitizeAddress || sanitizeThread) {
     llvm::LoopAnalysisManager loops;
     llvm::FunctionAnalysisManager functions;

@@ -681,7 +681,7 @@ pub fn tcp_listen(addr: SocketAddr): TcpListener throws Error {
     listener
 }
 
-pub fn async_tcp_connect(addr: SocketAddr): AsyncTcpStream throws Error {
+pub async fn async_tcp_connect(addr: SocketAddr): AsyncTcpStream throws Error {
     let fd = try new_socket(0, family_of(addr.ip))
     let stream = AsyncTcpStream(fd)
     if unsafe { sys.mettle_rt_set_nonblocking(fd) } != 0 {
@@ -784,7 +784,7 @@ extend AsyncTcpListener {
                 return (AsyncTcpStream(fd),
                         decode_socket_addr(family, bytes, port, flowinfo, scope_id))
             }
-            let error = net_error()
+            let error = io.last_os_error()
             if error.kind().is(ErrorKind.Interrupted) { continue }
             if error.kind().is(ErrorKind.WouldBlock) {
                 let waited = await task.readable(self.fd)
@@ -852,7 +852,7 @@ extend AsyncTcpStream {
         while true {
             let n = unsafe { sys.`read`(self.fd, sys.data_mut(buf), buf.len()) }
             if n >= 0isize { return n as usize }
-            let error = net_error()
+            let error = io.last_os_error()
             if error.kind().is(ErrorKind.Interrupted) { continue }
             if error.kind().is(ErrorKind.WouldBlock) {
                 let waited = await task.readable(self.fd)
@@ -870,7 +870,7 @@ extend AsyncTcpStream {
         while true {
             let n = unsafe { sys.mettle_rt_sock_send(self.fd, slice.data(buf), buf.len()) }
             if n >= 0isize { return n as usize }
-            let error = net_error()
+            let error = io.last_os_error()
             if error.kind().is(ErrorKind.Interrupted) { continue }
             if error.kind().is(ErrorKind.WouldBlock) {
                 let waited = await task.writable(self.fd)

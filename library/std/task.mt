@@ -205,6 +205,12 @@ extend IoWait implements Future {
     }
 }
 
+// While registered, the reactor holds a waker that retains the reactor's
+// owner, and cancellation is serialized by the reactor, so a wait may move to
+// and be dropped on another thread.
+unsafe extend IoWait implements Transferable {}
+unsafe extend Sleep implements Transferable {}
+
 pub fn readable(fd: i32): IoWait {
     IoWait(fd, false, core.ptr.null_mut<u8>(), 0u64, false)
 }
@@ -420,7 +426,7 @@ extend ExecutorWake implements Wake {
     }
 }
 
-fn executor_waker(target: WakeTarget, reactor: ptr<mut u8>): Waker {
+fn executor_waker(target: take WakeTarget, reactor: ptr<mut u8>): Waker {
     let handle = arc.new(ExecutorWake(target, reactor))
     waker_from_arc(read handle)
 }

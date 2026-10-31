@@ -117,13 +117,13 @@ void mettle_rt_sleep(std::uint64_t seconds, std::uint32_t nanos);
 void *mettle_rt_reactor_new();
 void mettle_rt_reactor_close(void *reactor);
 std::uint64_t mettle_rt_reactor_watch(void *reactor, std::int32_t fd,
-                                     std::int32_t write, void *data,
-                                     void (*wake)(void *),
-                                     void (*release)(void *));
+                                      std::int32_t write, void *data,
+                                      void (*wake)(void *),
+                                      void (*release)(void *));
 std::uint64_t mettle_rt_reactor_timer(void *reactor, std::uint64_t seconds,
-                                     std::uint32_t nanos, void *data,
-                                     void (*wake)(void *),
-                                     void (*release)(void *));
+                                      std::uint32_t nanos, void *data,
+                                      void (*wake)(void *),
+                                      void (*release)(void *));
 void mettle_rt_reactor_cancel(void *reactor, std::uint64_t token);
 void mettle_rt_reactor_wake(void *reactor);
 // Blocks until a registered event or timer invokes its waker. Returns zero on
@@ -132,9 +132,11 @@ std::int32_t mettle_rt_reactor_wait(void *reactor);
 
 // Nonblocking socket operations used by `std.net`'s async wrappers.
 std::int32_t mettle_rt_set_nonblocking(std::int32_t fd);
-std::int32_t mettle_rt_sock_connect_start(
-    std::int32_t fd, std::int32_t family, const std::uint8_t *address,
-    std::size_t addressSize, std::uint16_t port, std::uint32_t flowinfo,
-    std::uint32_t scopeId);
+std::int32_t mettle_rt_sock_connect_start(std::int32_t fd, std::int32_t family,
+                                          const std::uint8_t *address,
+                                          std::size_t addressSize,
+                                          std::uint16_t port,
+                                          std::uint32_t flowinfo,
+                                          std::uint32_t scopeId);
 std::int32_t mettle_rt_sock_connect_status(std::int32_t fd);
 }

@@ -204,6 +204,11 @@ std::optional<std::string> Resolution::lookup(ModuleId from,
     ++position;
   } else if (path[0] == "self") {
     ++position;
+  } else if (path.size() > 1 &&
+             (path[0] == "core" || path[0] == "alloc" || path[0] == "std") &&
+             find(scope, path[0], Namespace::Module, from).empty()) {
+    // A mounted library root is reachable from every module unless shadowed.
+    scope = 0;
   }
   while (position < path.size() && path[position] == "super") {
     if (scope == 0) {

@@ -387,7 +387,7 @@ void triggerReactor(ReactorState &state) {
 }
 
 std::chrono::nanoseconds timerInterval(std::uint64_t seconds,
-                                      std::uint32_t nanos) {
+                                       std::uint32_t nanos) {
   constexpr auto maxNanos =
       static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
   if (seconds > maxNanos / 1000000000ULL)
@@ -422,8 +422,8 @@ std::uint64_t addReactorRegistration(ReactorState &state,
 #ifdef __APPLE__
   struct kevent change;
   if (registration.timer) {
-    const auto interval = std::max<std::int64_t>(
-        1, timerInterval(seconds, nanos).count());
+    const auto interval =
+        std::max<std::int64_t>(1, timerInterval(seconds, nanos).count());
     EV_SET(&change, static_cast<std::uintptr_t>(token), EVFILT_TIMER,
            EV_ADD | EV_ONESHOT, NOTE_NSECONDS, interval,
            reinterpret_cast<void *>(static_cast<std::uintptr_t>(token)));
@@ -443,8 +443,7 @@ std::uint64_t addReactorRegistration(ReactorState &state,
   } catch (...) {
     state.registrations.erase(token);
     auto descriptor = state.descriptors.find(descriptorKey);
-    if (descriptor != state.descriptors.end() &&
-        descriptor->second.empty())
+    if (descriptor != state.descriptors.end() && descriptor->second.empty())
       state.descriptors.erase(descriptor);
     errno = ENOMEM;
     return 0;
@@ -455,8 +454,8 @@ std::uint64_t addReactorRegistration(ReactorState &state,
 #ifdef __APPLE__
   if (!registration.timer && addDescriptorEvent) {
     EV_SET(&change, registration.fd,
-           registration.write ? EVFILT_WRITE : EVFILT_READ,
-           EV_ADD | EV_ONESHOT, 0, 0, nullptr);
+           registration.write ? EVFILT_WRITE : EVFILT_READ, EV_ADD | EV_ONESHOT,
+           0, 0, nullptr);
   }
   if ((registration.timer || addDescriptorEvent) &&
       kevent(state.fd, &change, 1, nullptr, 0, nullptr) != 0) {
@@ -505,9 +504,9 @@ void eraseReactorRegistration(ReactorState &state, std::uint64_t token,
       EV_SET(&change,
              registration.timer ? static_cast<std::uintptr_t>(token)
                                 : static_cast<std::uintptr_t>(registration.fd),
-             registration.timer
-                 ? EVFILT_TIMER
-                 : registration.write ? EVFILT_WRITE : EVFILT_READ,
+             registration.timer   ? EVFILT_TIMER
+             : registration.write ? EVFILT_WRITE
+                                  : EVFILT_READ,
              EV_DELETE, 0, 0, nullptr);
       kevent(state.fd, &change, 1, nullptr, 0, nullptr);
     }
@@ -1007,9 +1006,11 @@ extern "C" void mettle_rt_reactor_close(void *rawReactor) {
   delete state;
 }
 
-extern "C" std::uint64_t mettle_rt_reactor_watch(
-    void *rawReactor, std::int32_t fd, std::int32_t write, void *data,
-    void (*wake)(void *), void (*release)(void *)) {
+extern "C" std::uint64_t mettle_rt_reactor_watch(void *rawReactor,
+                                                 std::int32_t fd,
+                                                 std::int32_t write, void *data,
+                                                 void (*wake)(void *),
+                                                 void (*release)(void *)) {
   if (!rawReactor || fd < 0 || !wake || !release) {
     errno = EINVAL;
     return 0;
@@ -1024,9 +1025,10 @@ extern "C" std::uint64_t mettle_rt_reactor_watch(
                                 registration, 0, 0);
 }
 
-extern "C" std::uint64_t mettle_rt_reactor_timer(
-    void *rawReactor, std::uint64_t seconds, std::uint32_t nanos, void *data,
-    void (*wake)(void *), void (*release)(void *)) {
+extern "C" std::uint64_t
+mettle_rt_reactor_timer(void *rawReactor, std::uint64_t seconds,
+                        std::uint32_t nanos, void *data, void (*wake)(void *),
+                        void (*release)(void *)) {
   if (!rawReactor || !wake || !release || nanos >= 1000000000U) {
     errno = EINVAL;
     return 0;
@@ -1096,9 +1098,8 @@ extern "C" std::int32_t mettle_rt_reactor_wait(void *rawReactor) {
       return 1;
     }
 
-    const auto key =
-        std::make_pair(static_cast<int>(event.ident),
-                       event.filter == EVFILT_WRITE);
+    const auto key = std::make_pair(static_cast<int>(event.ident),
+                                    event.filter == EVFILT_WRITE);
     std::vector<std::uint64_t> tokens;
     {
       std::lock_guard lock(state.mutex);
@@ -1145,8 +1146,9 @@ extern "C" std::int32_t mettle_rt_reactor_wait(void *rawReactor) {
               timeout = 0;
             } else if (timeout != 0) {
               const auto remaining = registration.deadline - now;
-              auto millis = std::chrono::duration_cast<
-                  std::chrono::milliseconds>(remaining);
+              auto millis =
+                  std::chrono::duration_cast<std::chrono::milliseconds>(
+                      remaining);
               if (std::chrono::duration_cast<
                       std::chrono::steady_clock::duration>(millis) < remaining)
                 millis += std::chrono::milliseconds(1);
@@ -1235,18 +1237,18 @@ extern "C" std::int32_t mettle_rt_set_nonblocking(std::int32_t fd) {
   return retry([&] { return fcntl(fd, F_SETFL, flags | O_NONBLOCK); });
 }
 
-extern "C" std::int32_t mettle_rt_sock_connect_start(
-    std::int32_t fd, std::int32_t family, const std::uint8_t *address,
-    std::size_t addressSize, std::uint16_t port, std::uint32_t flowinfo,
-    std::uint32_t scopeId) {
+extern "C" std::int32_t
+mettle_rt_sock_connect_start(std::int32_t fd, std::int32_t family,
+                             const std::uint8_t *address,
+                             std::size_t addressSize, std::uint16_t port,
+                             std::uint32_t flowinfo, std::uint32_t scopeId) {
   sockaddr_storage value;
   socklen_t size = 0;
   if (!socketAddress(family, address, addressSize, port, flowinfo, scopeId,
                      value, size))
     return -1;
-  const int result = retry([&] {
-    return connect(fd, reinterpret_cast<sockaddr *>(&value), size);
-  });
+  const int result = retry(
+      [&] { return connect(fd, reinterpret_cast<sockaddr *>(&value), size); });
   if (result == 0)
     return 0;
   if (errno == EISCONN)
@@ -1256,8 +1258,7 @@ extern "C" std::int32_t mettle_rt_sock_connect_start(
   return -1;
 }
 
-extern "C" std::int32_t
-mettle_rt_sock_connect_status(std::int32_t fd) {
+extern "C" std::int32_t mettle_rt_sock_connect_status(std::int32_t fd) {
   int failure = 0;
   socklen_t size = sizeof failure;
   if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &failure, &size) != 0)

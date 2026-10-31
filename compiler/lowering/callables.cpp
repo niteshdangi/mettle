@@ -116,6 +116,10 @@ ir::Function Builder::runClosure(std::size_t index) {
     Place target{0, {Projection::field(static_cast<std::uint32_t>(i))}};
     if (!closure.syntax->flag || capture.viaView)
       target.fields.push_back(Projection::dereference());
+    // Accesses go through the environment; an unsized proxy keeps only a view.
+    auto &proxy = function.locals[localRemap.at(capture.proxy.root)];
+    if (!module.typeStore()->isSized(proxy.type))
+      proxy.type = capture.storedType;
     capturedPlaces.emplace_back(capture.proxy, std::move(target));
   }
   current = block();

@@ -5,7 +5,7 @@ import std.io.Writer
 import std.time.from_millis
 import core.future.{Context, Future, Poll}
 
-async fn echo(listener: AsyncTcpListener, count: i32): i32 {
+async fn echo(listener: take AsyncTcpListener, count: i32): i32 {
     var served = 0
     while served < count {
         let accepted = await listener.accept()
@@ -73,7 +73,7 @@ extend<F: Future> AcceptTimeout<F> implements Future {
             core.pin.Pin.new_unchecked(mut me.timer).poll(mut cx)
         }
         match take timer {
-            Poll.Ready(()) => Poll.Ready(true),
+            Poll.Ready(_) => Poll.Ready(true),
             Poll.Pending => Poll.Pending
         }
     }
@@ -102,7 +102,7 @@ fn main(): i32 {
     }
 
     let executor = task.executor()
-    let server = executor.spawn(echo(listener, 4))
+    let server = executor.spawn(echo(take listener, 4))
     let first = executor.spawn(client(address, 31u8))
     let second = executor.spawn(client(address, 47u8))
     let third = executor.spawn(client(address, 83u8))
