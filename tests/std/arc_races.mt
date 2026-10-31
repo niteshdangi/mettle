@@ -42,13 +42,24 @@ fn round(drops: read arc.Arc<core.sync.atomic.AtomicUsize>): i32 {
 }
 
 fn main(): i32 {
+  let owner = arc.new(7)
+  let copy = owner.retain()
+  if !owner.ptr_eq(copy) { return 3 }
+  let observer = owner.downgrade()
+  let duplicate = observer.retain()
+  if !observer.ptr_eq(duplicate) || observer.weak_count() != 2usize { return 4 }
+  discard(take owner)
+  discard(take copy)
+  if observer.strong_count() != 0usize || observer.weak_count() != 2usize { return 5 }
+  match observer.upgrade() { present(_) => { return 6 }, none => {} }
+
   let drops = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
   var r = 0
   while r < 20 {
     let result = round(drops)
-    if result != 0 { return 1 }
+    if result != 0 { return 7 }
     r = r + 1
   }
-  if drops.get().load(core.sync.atomic.Ordering.SeqCst) != 20usize { return 2 }
+  if drops.get().load(core.sync.atomic.Ordering.SeqCst) != 20usize { return 8 }
   0
 }

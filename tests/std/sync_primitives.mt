@@ -1,5 +1,6 @@
 import std.thread
 import std.sync.{mutex, condvar, rwlock, once, barrier, mpsc, tls}
+import std.panic.{catch_panic, CatchResult}
 import alloc.arc
 
 type Flag {
@@ -104,23 +105,82 @@ fn main(): i32 {
     match take next { present(w) => { if !join_ok(w) { return 9 } }, none => { more = false } }
   }
   if runs.get().load(core.sync.atomic.Ordering.Relaxed) != 1usize { return 10 }
+  cell.get().wait()
+  cell.get().wait_force()
+
+  // a panicking Once initializer is re-armed for the next caller
+  let retry = once.new()
+  let failed_init = catch_panic(take fn(): Unit {
+    retry.call_once(take fn(): Unit { panic("initializer failed") })
+  })
+  match failed_init {
+    CatchResult.Panicked(info) => {},
+    CatchResult.Returned(value) => { return 28 }
+  }
+  if retry.is_completed() { return 29 }
+  retry.call_once(take fn(): Unit {})
+  if !retry.is_completed() { return 30 }
+  let forced = once.new()
+  let force_ran = core.sync.atomic.AtomicBool.new(false)
+  let force_saw_poison = core.sync.atomic.AtomicBool.new(false)
+  forced.call_once_force(take fn(state: once.OnceState): Unit {
+    force_ran.store(true, core.sync.atomic.Ordering.Relaxed)
+    force_saw_poison.store(state.is_poisoned(), core.sync.atomic.Ordering.Relaxed)
+  })
+  if !force_ran.load(core.sync.atomic.Ordering.Relaxed) ||
+     force_saw_poison.load(core.sync.atomic.Ordering.Relaxed) { return 31 }
 
   // rwlock: readers share, writer excludes
   let lock = arc.new(rwlock.new(10))
   let l2 = lock.retain()
   let wr = thread.spawn(take fn(): i32 {
-    let w = l2.get().writer()
+    let locked = capture l2.get().writer()
+    let w = match take locked { success(g) => g, failure(e) => e.into_inner() }
     var g = w
     *g.get_mut() = 11
     0
   })
   if !join_ok(wr) { return 11 }
-  let r1 = lock.get().reader()
+  let locked_reader = capture lock.get().reader()
+  let r1 = match take locked_reader { success(g) => g, failure(e) => e.into_inner() }
   let r2 = capture lock.get().try_reader()
   match take r2 { success(g) => { if *g.get() != 11 { return 12 } }, failure(e) => { return 13 } }
   let blocked = capture lock.get().try_writer()
-  match take blocked { success(g) => { return 14 }, failure(e) => {} }
+  match take blocked {
+    success(g) => { return 14 },
+    failure(e) => match e {
+      mutex.TryLockError.WouldBlock => {},
+      mutex.TryLockError.Poisoned(g) => { return 20 }
+    }
+  }
   if *r1.get() != 11 { return 15 }
+  discard(take r1)
+
+  // a writer panic poisons the rwlock and the error retains its guard
+  let poisoned_lock = arc.new(rwlock.new(1))
+  let poisoned_copy = poisoned_lock.retain()
+  let panicker = thread.spawn(take fn(): i32 {
+    let locked = capture poisoned_copy.get().writer()
+    var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
+    *guard.get_mut() = 5
+    panic("writer died")
+  })
+  let panic_result = capture panicker.join()
+  match take panic_result {
+    success(value) => { return 21 },
+    failure(error) => { if error.code != 101 { return 22 } }
+  }
+  if !poisoned_lock.get().is_poisoned() { return 23 }
+  let poisoned_read = capture poisoned_lock.get().reader()
+  match take poisoned_read {
+    success(guard) => { return 24 },
+    failure(error) => {
+      let guard = error.into_inner()
+      if *guard.get() != 5 { return 25 }
+    }
+  }
+  poisoned_lock.get().clear_poison()
+  if poisoned_lock.get().is_poisoned() { return 26 }
 
   // condvar: a waiter wakes on notification
   let state = arc.new(mutex.new(false))
@@ -130,16 +190,22 @@ fn main(): i32 {
   let waiter = thread.spawn(take fn(): i32 {
     let o = capture s2.get().lock()
     var g = match take o { success(g) => g, failure(e) => e.into_inner() }
-    while !*g.get() { g = c2.get().wait(g) }
+    g = c2.get().wait_while(g, take fn(ready: read bool): bool { !*ready })
     0
   })
-  thread.sleep_nanos(1000000u64)
   let o = capture state.get().lock()
   var g = match take o { success(g) => g, failure(e) => e.into_inner() }
   *g.get_mut() = true
   cv.get().notify_all()
   discard(take g)
   if !join_ok(waiter) { return 16 }
+  let timeout_lock = mutex.new(false)
+  let timeout_guard = match capture timeout_lock.lock() {
+    success(guard) => guard,
+    failure(error) => error.into_inner()
+  }
+  let timeout = cv.get().wait_timeout(timeout_guard, 0u64)
+  if !timeout.1.timed_out { return 27 }
 
   // thread-local values are per thread
   let key = arc.new(tls.new<i32>())

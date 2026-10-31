@@ -23,6 +23,16 @@ fn main(): i32 {
   discard(take g)
   // a guard drops its lock: a second acquisition does not deadlock
   let again = capture lock.get().try_lock()
-  match take again { success(g) => {}, failure(e) => { return 5 } }
+  match take again {
+    success(g) => { return 5 },
+    failure(e) => match e {
+      mutex.TryLockError.Poisoned(g) => { if *g.get() != 2 { return 6 } },
+      mutex.TryLockError.WouldBlock => { return 7 }
+    }
+  }
+  lock.get().clear_poison()
+  if lock.get().is_poisoned() { return 8 }
+  let recovered = capture lock.get().try_lock()
+  match take recovered { success(g) => {}, failure(e) => { return 9 } }
   0
 }

@@ -14,7 +14,7 @@ extend<G> PoisonError<G> {
     pub take fn into_inner(): G { self.guard }
 }
 
-pub copy type WouldBlock {}
+pub enum TryLockError<G> { WouldBlock; Poisoned(G) }
 
 // Mutual exclusion around `value`. Only one guard exists at a time, so `T`
 // needs to be Transferable (the lock moves it between threads) but not
@@ -60,12 +60,31 @@ extend<T> Mutex<T> {
         if self.poisoned.load(core.sync.atomic.Ordering.Acquire) { throw PoisonError(guard) }
         guard
     }
-    pub fn try_lock(): MutexGuard<T, region self> throws WouldBlock {
+    pub fn try_lock(): MutexGuard<T, region self> throws TryLockError<MutexGuard<T, region self>> {
         let status = unsafe { mettle_rt_mutex_try_lock(self.raw) }
-        if status != 0 { throw WouldBlock() }
-        MutexGuard(read self)
+        if status == 1 { throw TryLockError.WouldBlock }
+        if status != 0 { panic("mutex try_lock failed") }
+        let guard = MutexGuard(read self)
+        if self.poisoned.load(core.sync.atomic.Ordering.Acquire) {
+            throw TryLockError.Poisoned(guard)
+        }
+        guard
     }
     pub fn is_poisoned(): bool { self.poisoned.load(core.sync.atomic.Ordering.Acquire) }
+    pub mut fn get_mut(): mut T from self { unsafe { mut *self.value.get() } }
+    pub fn clear_poison(): Unit {
+        self.poisoned.store(false, core.sync.atomic.Ordering.Release)
+    }
+
+    pub take fn into_inner(): T throws PoisonError<T> {
+        let raw = self.raw
+        let poisoned = self.poisoned.load(core.sync.atomic.Ordering.Acquire)
+        let value = unsafe { core.ptr.`read`(self.value.get()) }
+        core.mem.forget(take self)
+        unsafe { mettle_rt_mutex_free(raw) }
+        if poisoned { throw PoisonError(value) }
+        value
+    }
 }
 extend<T, region r> MutexGuard<T, region r> {
     pub fn get(): read T from self { unsafe { read *self.lock.value.get() } }

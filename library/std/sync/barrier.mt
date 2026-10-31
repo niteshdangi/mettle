@@ -1,5 +1,6 @@
 import super.mutex
 import super.condvar
+import package.core.panic.panic
 
 type State {
     count: usize
@@ -16,6 +17,7 @@ unsafe extend Barrier implements Transferable {}
 unsafe extend Barrier implements Shareable {}
 
 pub fn new(parties: usize): Barrier {
+    if parties == 0usize { panic("barrier requires at least one party") }
     Barrier(parties, mutex.new(State(0usize, 0usize)), condvar.new())
 }
 
@@ -28,7 +30,10 @@ extend Barrier {
         let next = guard.get().count + 1usize
         if next >= self.parties {
             guard.get_mut().count = 0usize
-            guard.get_mut().generation = round + 1usize
+            guard.get_mut().generation = match round.checked_add(1usize) {
+                present(next_round) => next_round,
+                none => 0usize
+            }
             self.arrived.notify_all()
             return true
         }

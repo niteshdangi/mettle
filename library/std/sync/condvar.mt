@@ -1,4 +1,6 @@
 import super.mutex.MutexGuard
+import package.core.panic.panic
+import super.time
 
 extern "C" {
     unsafe fn mettle_rt_cond_new(): ptr<mut u8>;
@@ -29,13 +31,59 @@ pub copy type TimedOut { pub timed_out: bool }
 
 extend Condvar {
     pub fn wait<T, region r>(guard: take MutexGuard<T, region r>): MutexGuard<T, region r> {
-        let _status = unsafe { mettle_rt_cond_wait(self.raw, guard.lock.raw) }
+        let status = unsafe { mettle_rt_cond_wait(self.raw, guard.lock.raw) }
+        if status != 0 { panic("condition wait failed") }
         guard
     }
     pub fn wait_timeout<T, region r>(guard: take MutexGuard<T, region r>, nanoseconds: u64): (MutexGuard<T, region r>, TimedOut) {
         let status = unsafe { mettle_rt_cond_wait_timeout(self.raw, guard.lock.raw, nanoseconds) }
+        if status < 0 { panic("timed condition wait failed") }
         (guard, TimedOut(status == 1))
     }
-    pub fn notify_one(): Unit { let _status = unsafe { mettle_rt_cond_notify_one(self.raw) } }
-    pub fn notify_all(): Unit { let _status = unsafe { mettle_rt_cond_notify_all(self.raw) } }
+    pub fn wait_while<T, region r, F: fn(read T): bool>(
+        guard: take MutexGuard<T, region r>,
+        predicate: take F
+    ): MutexGuard<T, region r> {
+        var current = guard
+        while predicate(current.get()) {
+            current = self.wait(current)
+        }
+        current
+    }
+    pub fn wait_timeout_while<T, region r, F: fn(read T): bool>(
+        guard: take MutexGuard<T, region r>,
+        nanoseconds: u64,
+        predicate: take F
+    ): (MutexGuard<T, region r>, TimedOut) {
+        let start = time.now()
+        var current = guard
+        while predicate(current.get()) {
+            let elapsed = time.now().duration_since(start).as_nanos()
+            if elapsed >= nanoseconds as u128 {
+                return (current, TimedOut(true))
+            }
+            let remaining = nanoseconds - elapsed as u64
+            let waited = self.wait_timeout(current, remaining)
+            current = waited.0
+            if waited.1.timed_out { return (current, waited.1) }
+        }
+        (current, TimedOut(false))
+    }
+    pub fn wait_timeout_ms<T, region r>(
+        guard: take MutexGuard<T, region r>,
+        milliseconds: u64
+    ): (MutexGuard<T, region r>, TimedOut) {
+        let nanos = milliseconds.saturating_mul(1000000u64)
+        self.wait_timeout(guard, nanos)
+    }
+    pub fn notify_one(): Unit {
+        if unsafe { mettle_rt_cond_notify_one(self.raw) } != 0 {
+            panic("condition notification failed")
+        }
+    }
+    pub fn notify_all(): Unit {
+        if unsafe { mettle_rt_cond_notify_all(self.raw) } != 0 {
+            panic("condition notification failed")
+        }
+    }
 }
