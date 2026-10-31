@@ -1755,11 +1755,13 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
                                   ? store.inference(current->context.scope)
                                   : explicitArgument->second);
   }
+  std::vector<std::pair<std::string, RegionId>> receiverOwnerRegions;
   if (receiverCall) {
     // Extension-owner regions are implicit method arguments, not call-site
     // generic arguments.
     auto instantiateOwnerRegions =
-        [&](const std::vector<GenericParameter> &parameters) {
+        [&](const std::vector<GenericParameter> &parameters,
+            const std::vector<std::string> &targetRegions) {
           // A covariant read-view reborrow cannot shorten the owner's nominal
           // region argument used by a method-level bound.
           auto actualReceiver = *methodReceiver;
@@ -1793,7 +1795,16 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
             if (found == signature.context.names.end())
               continue;
             auto argument = RegionId::Unspecified;
-            if (sameReceiverType) {
+            auto targetRegion =
+                std::find(targetRegions.begin(), targetRegions.end(),
+                          parameter.name);
+            if (actualProduct && targetRegion != targetRegions.end()) {
+              auto index = static_cast<std::size_t>(
+                  targetRegion - targetRegions.begin());
+              if (index < actualProduct->regionArguments.size())
+                argument = actualProduct->regionArguments[index];
+            }
+            if (argument == RegionId::Unspecified && sameReceiverType) {
               for (std::size_t i = 0;
                    i < formalProduct->regionArguments.size(); ++i)
                 if (formalProduct->regionArguments[i] == found->second) {
@@ -1801,6 +1812,8 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
                   break;
                 }
             }
+            if (argument != RegionId::Unspecified)
+              receiverOwnerRegions.emplace_back(parameter.name, argument);
             if (argument == RegionId::Unspecified)
               argument = store.inference(current->context.scope);
             auto existing = std::find_if(
@@ -1818,8 +1831,10 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
     if (method.implementation >= 0 &&
         static_cast<std::size_t>(method.implementation) <
             module.implementations.size()) {
-      instantiateOwnerRegions(
-          module.implementations[method.implementation].genericParameters);
+      const auto &implementation =
+          module.implementations[method.implementation];
+      instantiateOwnerRegions(implementation.genericParameters,
+                             implementation.target.regions);
     } else if (!method.interfaceOwner.empty()) {
       auto owner = std::find_if(
           module.interfaces.begin(), module.interfaces.end(),
@@ -1827,7 +1842,7 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
             return candidate.name == method.interfaceOwner;
           });
       if (owner != module.interfaces.end())
-        instantiateOwnerRegions(owner->genericParameters);
+        instantiateOwnerRegions(owner->genericParameters, {});
     }
   }
   for (auto region : signature.backing)
@@ -1983,6 +1998,24 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
             replace(replace(edge.shorter, substitution), bindings), node.span);
   for (const auto &edge : argumentLifetimes)
     require(edge.longer, replace(edge.shorter, bindings), node.span);
+  // `withinBounds` substitutes the declaration context through `bindings`.
+  // Bridge owner regions using that context's resolved key, rather than only
+  // the signature-context key used by `substitution`.
+  for (const auto &[name, region] : receiverOwnerRegions) {
+    auto found = declarationContext.names.find(name);
+    if (found == declarationContext.names.end())
+      continue;
+    auto existing = std::find_if(
+        bindings.begin(), bindings.end(), [&](const auto &entry) {
+          return entry.first == found->second;
+        });
+    if (existing == bindings.end()) {
+      if (found->second != region)
+        bindings.emplace_back(found->second, region);
+    } else {
+      existing->second = region;
+    }
+  }
   withinBounds(declaration.genericParameters, declaration.constraints,
                typeBindings, declarationContext, bindings, node.span);
   if (receiverCall && !formals.empty()) {
