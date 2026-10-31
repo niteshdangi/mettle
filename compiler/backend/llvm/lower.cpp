@@ -21,6 +21,23 @@
 
 namespace mettle::backend {
 namespace {
+std::optional<Type> pinnedViewPayload(const TypeStore &types, Type type) {
+  if (!types.isProduct(type) ||
+      types.product(type).kind != AggregateKind::Pin ||
+      types.product(type).components.empty())
+    return std::nullopt;
+  auto view = types.product(type).components.front();
+  if (!types.isView(view) ||
+      types.view(view).mode != ParameterMode::Mut)
+    return std::nullopt;
+  return types.view(view).payload;
+}
+
+bool pinnedErasedReceiver(const TypeStore &types, Type type) {
+  auto payload = pinnedViewPayload(types, type);
+  return payload && types.isErased(*payload);
+}
+
 void applyInlineHint(llvm::Function &function, ir::InlineHint hint) {
   switch (hint) {
   case ir::InlineHint::Default:
@@ -292,6 +309,7 @@ private:
   using WitnessKey =
       std::tuple<Type, Type, Type, std::vector<llvm::Constant *>>;
   std::map<WitnessKey, llvm::GlobalVariable *> witnesses;
+  std::map<std::tuple<int, Type, Type>, llvm::Function *> pinnedWitnessThunks;
   std::map<std::string, llvm::GlobalVariable *> textLiterals;
   std::unique_ptr<DebugInfo> debugInfo;
   std::map<Type, int> coroutineStates;
@@ -537,6 +555,36 @@ private:
   llvm::Value *call(const ir::Instruction &instruction, llvm::Value *target,
                     llvm::ArrayRef<llvm::Value *> arguments,
                     const std::set<std::string> &callerFeatures) {
+    if (instruction.op == ir::Op::IndirectCall &&
+        instruction.erasedDispatch) {
+      const auto &signature =
+          program.types->callable(instruction.indirectType);
+      std::vector<llvm::Type *> parameters;
+      for (const auto &parameter : signature.parameters)
+        parameters.push_back(
+            parameter.mode == ParameterMode::Read ||
+                    parameter.mode == ParameterMode::Mut
+                ? builder.getPtrTy()
+                : type(parameter.type));
+      if (lowering.indirect(signature.abiResult))
+        parameters.push_back(builder.getPtrTy());
+      auto *callType = llvm::FunctionType::get(
+          resultType(signature.abiResult), parameters, signature.variadic);
+      std::vector<llvm::Value *> actual(arguments.begin(), arguments.end());
+      llvm::Value *returned = nullptr;
+      if (lowering.indirect(signature.abiResult)) {
+        returned = resultDestination
+                       ? resultDestination
+                       : lowering.temporary(signature.abiResult);
+        actual.push_back(returned);
+      }
+      auto *value = builder.CreateCall(callType, target, actual);
+      return returned ? returned
+             : signature.abiResult == Type::Unit ||
+                     signature.abiResult == Type::Never
+                 ? unit()
+                 : value;
+    }
     auto index = instruction.callee;
     const auto &callee = program.functions[index];
     if (!target)
@@ -630,6 +678,61 @@ private:
     builder.CreateCall(bridge, storage);
     return hasResult ? builder.CreateLoad(type(instruction.result.type), result)
                      : unit();
+  }
+  llvm::Function *pinnedWitnessThunk(const ir::Instruction &instruction) {
+    auto key = std::tuple{instruction.callee, instruction.interfaceSelf,
+                          instruction.result.type};
+    if (auto found = pinnedWitnessThunks.find(key);
+        found != pinnedWitnessThunks.end())
+      return found->second;
+    const auto &contract = program.types->callable(instruction.result.type);
+    const auto &implementation = program.functions[instruction.callee];
+    std::vector<llvm::Type *> parameters;
+    for (const auto &parameter : contract.parameters)
+      parameters.push_back(
+          parameter.mode == ParameterMode::Read ||
+                  parameter.mode == ParameterMode::Mut
+              ? builder.getPtrTy()
+              : type(parameter.type));
+    bool indirectResult = lowering.indirect(contract.abiResult);
+    if (indirectResult)
+      parameters.push_back(builder.getPtrTy());
+    auto *signature = llvm::FunctionType::get(
+        resultType(contract.abiResult), parameters, contract.variadic);
+    auto *thunk = llvm::Function::Create(
+        signature, llvm::GlobalValue::InternalLinkage,
+        "mettle.pinned-witness." +
+            std::to_string(pinnedWitnessThunks.size()),
+        *module);
+    thunk->setUWTableKind(llvm::UWTableKind::Default);
+    targetAttributes(*thunk, program.target, implementation.targetFeatures);
+    pinnedWitnessThunks.emplace(key, thunk);
+
+    auto saved = builder.saveIP();
+    builder.SetInsertPoint(llvm::BasicBlock::Create(context, "entry", thunk));
+    auto receiverType = contract.parameters.front().type;
+    auto *view =
+        lowering.extract(thunk->getArg(0), receiverType, 0);
+    auto *data = builder.CreateExtractValue(view, 0);
+    auto concreteReceiver = implementation.locals[0].type;
+    auto *pinned = lowering.construct(concreteReceiver, {data});
+    std::vector<llvm::Value *> arguments{pinned};
+    for (std::size_t p = 1; p < contract.parameters.size(); ++p)
+      arguments.push_back(thunk->getArg(static_cast<unsigned>(p)));
+    if (indirectResult)
+      arguments.push_back(
+          thunk->getArg(static_cast<unsigned>(contract.parameters.size())));
+    auto *result = builder.CreateCall(
+        functions[instruction.callee]->getFunctionType(),
+        functions[instruction.callee], arguments);
+    if (contract.abiResult == Type::Never)
+      builder.CreateUnreachable();
+    else if (indirectResult)
+      builder.CreateRetVoid();
+    else
+      builder.CreateRet(result);
+    builder.restoreIP(saved);
+    return thunk;
   }
   llvm::Value *repack(llvm::Value *value, Type source, Type target) {
     if (source == target ||
@@ -2021,12 +2124,9 @@ private:
         }
         case ir::Op::WitnessMethod: {
           auto handleType = n.operands[0].type;
-          // `Pin` is a transparent wrapper; its first field is the view.
-          if (program.types->isProduct(handleType) &&
-              program.types->product(handleType).kind == AggregateKind::Pin &&
-              !program.types->product(handleType).components.empty())
-            handleType = program.types->product(handleType).components.front();
-          auto *handle = builder.CreateLoad(type(handleType), get(0));
+          auto *handle = pinnedErasedReceiver(*program.types, handleType)
+                             ? lowering.extract(get(0), handleType, 0)
+                             : builder.CreateLoad(type(handleType), get(0));
           auto *table = builder.CreateExtractValue(handle, 2);
           auto *slot = builder.CreateGEP(builder.getPtrTy(), table,
                                          builder.getInt32(n.number + 2));
@@ -2034,8 +2134,15 @@ private:
           break;
         }
         case ir::Op::FunctionAddress:
-          result =
-              externals[n.callee] ? externals[n.callee] : functions[n.callee];
+          if (n.erasedDispatch &&
+              !program.types->callable(n.result.type).parameters.empty() &&
+              pinnedErasedReceiver(
+                  *program.types,
+                  program.types->callable(n.result.type).parameters[0].type))
+            result = pinnedWitnessThunk(n);
+          else
+            result =
+                externals[n.callee] ? externals[n.callee] : functions[n.callee];
           break;
         case ir::Op::CallableCoerce:
           result = get(0);
@@ -2245,7 +2352,8 @@ private:
             arguments.push_back(values[value.id]);
             frame.consume(value);
           }
-          if (n.erasedDispatch) {
+          if (n.erasedDispatch &&
+              !pinnedErasedReceiver(*program.types, n.operands[0].type)) {
             auto *handle =
                 builder.CreateLoad(type(n.operands[0].type), arguments[0]);
             auto *data = builder.CreateExtractValue(handle, 0);
