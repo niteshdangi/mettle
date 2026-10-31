@@ -7,6 +7,7 @@
 #include "lsp/text.h"
 #include "pipeline/compile.h"
 #include "source/source.h"
+#include "support/path.h"
 #include "syntax/format.h"
 #include <algorithm>
 #include <cctype>
@@ -31,6 +32,21 @@ constexpr std::size_t maxMessage = 64u << 20;
 
 std::string normalize(const std::string &path) {
   return std::filesystem::path(path).lexically_normal().generic_string();
+}
+
+std::string uriFromPath(const std::string &path) {
+  constexpr char hex[] = "0123456789ABCDEF";
+  std::string uri = "file://";
+  for (unsigned char c : path) {
+    if (c == ' ' || c == '#' || c == '?' || c == '%') {
+      uri += '%';
+      uri += hex[c >> 4];
+      uri += hex[c & 0x0F];
+    } else {
+      uri += static_cast<char>(c);
+    }
+  }
+  return uri;
 }
 
 Json positionJson(Position position) {
@@ -62,6 +78,10 @@ std::size_t previousCharacter(const std::string &s, std::size_t at) {
 }
 
 struct Document {
+  struct TypeFact {
+    Span span;
+    std::string display;
+  };
   Document(std::string documentUri, std::string contents)
       : uri(std::move(documentUri)), path(normalize(pathFromUri(uri))),
         lines(std::move(contents)), index(lines.contents()) {}
@@ -74,6 +94,8 @@ struct Document {
   SymbolIndex index;
   // Paths of every source the last analysis read, for incremental updates.
   std::set<std::string> dependencies;
+  std::vector<TypeFact> typeFacts;
+  SourceId sourceId = 0;
   bool analyzed = false;
   std::string published;
 };
@@ -137,6 +159,7 @@ private:
   std::ostream &out;
   const Configuration &config;
   std::map<std::string, std::unique_ptr<Document>> documents;
+  std::map<std::string, std::unique_ptr<Document>> sourceDocuments;
   bool initialized = false, shutdownSeen = false, exited = false;
 
   struct Workspace {
@@ -254,7 +277,16 @@ private:
                               {"change", Json::integer(2)}})},
                {"hoverProvider", Json::boolean(true)},
                {"definitionProvider", Json::boolean(true)},
+               {"referencesProvider", Json::boolean(true)},
                {"documentSymbolProvider", Json::boolean(true)},
+               {"completionProvider",
+                Json::object({{"resolveProvider", Json::boolean(false)},
+                              {"triggerCharacters",
+                               Json::array({Json::string(".")})}})},
+               {"signatureHelpProvider",
+                Json::object({{"triggerCharacters",
+                               Json::array({Json::string("("),
+                                            Json::string(",")})}})},
                {"documentFormattingProvider", Json::boolean(true)},
                {"renameProvider",
                 Json::object({{"prepareProvider", Json::boolean(true)}})},
@@ -350,6 +382,9 @@ private:
 
   void analyze(Document &doc) {
     Diagnostics diagnostics;
+    doc.index = SymbolIndex(doc.lines.contents());
+    doc.typeFacts.clear();
+    doc.sourceId = 0;
     try {
       resolution::SourceProvider provider =
           [&](const std::string &requested) -> std::optional<Source> {
@@ -363,15 +398,166 @@ private:
       };
       auto tree = resolution::load(Source{doc.path, doc.lines.contents()},
                                    provider, diagnostics, config.library);
-      if (tree)
-        pipeline::compile(std::move(*tree), diagnostics, false, config.target);
+      if (tree) {
+        for (const auto &source : diagnostics.registeredSources())
+          if (normalize(source.path) == doc.path)
+            doc.sourceId = source.id;
+        pipeline::compile(
+            std::move(*tree), diagnostics, false, config.target,
+            [&](const CheckedModule &checked) {
+              auto types = checked.typeStore();
+              auto collectPattern = [&](auto &self, const Pattern &pattern,
+                                        std::size_t scopeBegin,
+                                        std::size_t scopeEnd) -> void {
+                if (pattern.kind == PatternKind::Binding &&
+                    pattern.span.source == doc.sourceId)
+                  doc.index.addBinding(pattern.text, pattern.span, scopeBegin,
+                                       scopeEnd);
+                for (const auto &child : pattern.children)
+                  self(self, child, scopeBegin, scopeEnd);
+              };
+              auto collect = [&](auto &self, const Node &node) -> void {
+                auto *fact = checked.find(node);
+                if (fact && fact->type != Type::Unknown)
+                  doc.typeFacts.push_back(
+                      {node.span, displayPath(types->name(fact->type))});
+                auto bindDeclaration = [&](const std::string &name,
+                                           std::size_t offset,
+                                           SymbolKind kind,
+                                           Span declarationSpan,
+                                           const std::string &ownerName) {
+                  const auto &items = doc.index.declarations();
+                  for (std::size_t i = 0; i < items.size(); ++i) {
+                    const auto &item = items[i];
+                    if (item.kind != kind || item.name != name ||
+                        (kind != SymbolKind::Field &&
+                         (item.nameBegin < declarationSpan.begin ||
+                          item.nameBegin >= declarationSpan.end)))
+                      continue;
+                    if (kind == SymbolKind::Field) {
+                      if (item.parent < 0 ||
+                          static_cast<std::size_t>(item.parent) >= items.size())
+                        continue;
+                      auto owner =
+                          items[static_cast<std::size_t>(item.parent)].name;
+                      auto generic = owner.find('<');
+                      if (generic != std::string::npos)
+                        owner.resize(generic);
+                      auto actual = ownerName;
+                      generic = actual.find('<');
+                      if (generic != std::string::npos)
+                        actual.resize(generic);
+                      auto dot = actual.rfind('.');
+                      if (dot != std::string::npos)
+                        actual = actual.substr(dot + 1);
+                      if (owner != actual)
+                        continue;
+                    }
+                    doc.index.bindOccurrence(offset, static_cast<int>(i));
+                    break;
+                  }
+                };
+                if (node.span.source == doc.sourceId &&
+                    node.kind == Kind::Call && fact && fact->callee >= 0 &&
+                    !node.children.empty() &&
+                    node.children.front().get() &&
+                    node.children.front().get()->kind == Kind::Field) {
+                  const auto functionIndex =
+                      static_cast<std::size_t>(fact->callee);
+                  if (functionIndex < checked.syntax().functions.size()) {
+                    const auto &function =
+                        checked.syntax().functions[functionIndex];
+                    const auto &member = *node.children.front().get();
+                    auto offset = member.span.end >= member.text.size()
+                                      ? member.span.end - member.text.size()
+                                      : member.span.begin;
+                    bindDeclaration(function.name, offset,
+                                    SymbolKind::Function, function.span, {});
+                  }
+                }
+                if (node.span.source == doc.sourceId &&
+                    node.kind == Kind::Field && fact && fact->field >= 0 &&
+                    !node.children.empty() &&
+                    node.children.front().get()) {
+                  auto *receiver = checked.find(*node.children.front().get());
+                  if (receiver) {
+                    auto receiverType = receiver->type;
+                    if (types->isView(receiverType))
+                      receiverType = types->view(receiverType).payload;
+                    if (types->isProduct(receiverType)) {
+                      const auto &product = types->product(receiverType);
+                      auto field = static_cast<std::size_t>(fact->field);
+                      if (field < product.fields.size()) {
+                        auto offset = node.span.end >= node.text.size()
+                                          ? node.span.end - node.text.size()
+                                          : node.span.begin;
+                        bindDeclaration(product.fields[field].name, offset,
+                                        SymbolKind::Field, node.span,
+                                        displayPath(product.name));
+                      }
+                    }
+                  }
+                }
+                if (node.kind == Kind::Arm)
+                  for (const auto &pattern : node.patterns)
+                    collectPattern(collectPattern, pattern, node.span.begin,
+                                   node.span.end);
+                if (node.kind == Kind::Closure)
+                  for (const auto &parameter : node.parameters) {
+                    if (parameter.pattern)
+                      collectPattern(collectPattern, *parameter.pattern,
+                                     node.span.begin, node.span.end);
+                    else if (!parameter.name.empty() &&
+                             parameter.span.source == doc.sourceId)
+                      doc.index.addBinding(parameter.name, parameter.span,
+                                           node.span.begin, node.span.end);
+                  }
+                for (const auto &child : node.children)
+                  if (child.get())
+                    self(self, *child.get());
+              };
+              for (std::size_t i = 0;
+                   i < checked.syntax().functions.size(); ++i) {
+                const auto &function = checked.syntax().functions[i];
+                if (function.body.get())
+                  collect(collect, *function.body.get());
+                if (function.span.source == doc.sourceId &&
+                    function.annotation.empty()) {
+                  auto result = checked.function(i).result;
+                  if (result != Type::Unknown)
+                    doc.index.setFunctionResult(
+                        function.span, function.name,
+                        displayPath(types->name(result)));
+                }
+              }
+            });
+      }
     } catch (const std::exception &error) {
       diagnostics.error("internal", {}, error.what());
     }
     const auto &sources = diagnostics.registeredSources();
     doc.dependencies.clear();
-    for (const auto &source : sources)
-      doc.dependencies.insert(normalize(source.path));
+    doc.sourceId = 0;
+    for (const auto &source : sources) {
+      auto path = normalize(source.path);
+      doc.dependencies.insert(path);
+      if (path == doc.path)
+        doc.sourceId = source.id;
+      if (path.empty() || path.front() != '/' || path == doc.path)
+        continue;
+      bool open = std::any_of(documents.begin(), documents.end(),
+                              [&](const auto &entry) {
+                                return entry.second->path == path;
+                              });
+      if (open)
+        continue;
+      auto found = sourceDocuments.find(path);
+      if (found == sourceDocuments.end())
+        sourceDocuments.emplace(
+            path, std::make_unique<Document>(uriFromPath(path), source.text));
+      else if (found->second->lines.contents() != source.text)
+        found->second->replace(source.text);
+    }
     const std::string &contents = doc.lines.contents();
     auto list = Json::array();
     for (const auto &item : diagnostics.items) {
@@ -381,14 +567,23 @@ private:
           where = &source;
           break;
         }
+      Span shown = item.span;
+      if (diagnostics.isGenerated(item.span.source)) {
+        shown = diagnostics.debugSpan(item.span);
+        for (const auto &source : sources)
+          if (source.id == shown.source) {
+            where = &source;
+            break;
+          }
+      }
       bool own =
           where ? normalize(where->path) == doc.path && where->text == contents
-                : item.span.source == 0;
+                : shown.source == doc.sourceId;
       std::size_t begin = 0, end = 0;
       std::string message = item.message;
       if (own) {
-        begin = std::min(item.span.begin, contents.size());
-        end = std::clamp(item.span.end, begin, contents.size());
+        begin = std::min(shown.begin, contents.size());
+        end = std::clamp(shown.end, begin, contents.size());
         if (begin == end) {
           if (end < contents.size())
             end = nextCharacter(contents, end);
@@ -398,7 +593,7 @@ private:
       } else if (where) {
         LineIndex other(where->text);
         auto [line, column] =
-            other.lineColumn(std::min(item.span.begin, where->text.size()));
+            other.lineColumn(std::min(shown.begin, where->text.size()));
         message = where->path + ":" + std::to_string(line) + ":" +
                   std::to_string(column) + ": " + message;
         end = contents.empty() ? 0 : nextCharacter(contents, 0);
@@ -421,13 +616,38 @@ private:
 
   Workspace workspace(Document &current) {
     Workspace result;
+    std::set<std::string> included;
     for (auto &entry : documents) {
       if (entry.second.get() == &current)
         result.current = result.documents.size();
       result.documents.push_back(entry.second.get());
+      included.insert(entry.second->path);
       result.files.push_back(
           {entry.second->uri, &entry.second->lines, &entry.second->index});
     }
+    for (const auto &entry : documents)
+      for (const auto &path : entry.second->dependencies) {
+        if (included.contains(path))
+          continue;
+        auto source = sourceDocuments.find(path);
+        if (source == sourceDocuments.end())
+          continue;
+        included.insert(path);
+        result.documents.push_back(source->second.get());
+        result.files.push_back({source->second->uri, &source->second->lines,
+                                &source->second->index});
+      }
+    return result;
+  }
+  static const Document::TypeFact *typeAt(const Document &doc,
+                                          std::size_t offset) {
+    const Document::TypeFact *result = nullptr;
+    for (const auto &fact : doc.typeFacts)
+      if (fact.span.source == doc.sourceId && fact.span.begin <= offset &&
+          offset <= fact.span.end &&
+          (!result || fact.span.end - fact.span.begin <
+                          result->span.end - result->span.begin))
+        result = &fact;
     return result;
   }
   static Json location(const Workspace &space, const Site &site) {
@@ -442,6 +662,8 @@ private:
     static const std::set<std::string> known = {
         "textDocument/hover",          "textDocument/definition",
         "textDocument/documentSymbol", "textDocument/formatting",
+        "textDocument/references",     "textDocument/completion",
+        "textDocument/signatureHelp",
         "textDocument/rename",         "textDocument/prepareRename"};
     if (!known.contains(method))
       return false;
@@ -455,9 +677,37 @@ private:
       respond(id, symbols(*doc));
     } else if (method == "textDocument/formatting") {
       respond(id, formatting(*doc));
+    } else if (method == "textDocument/completion") {
+      auto space = workspace(*doc);
+      respond(id, completion(space, *doc, at));
+    } else if (method == "textDocument/signatureHelp") {
+      auto space = workspace(*doc);
+      respond(id, signatureHelp(space, *doc, at));
     } else if (method == "textDocument/hover") {
       auto space = workspace(*doc);
       auto hover = hoverAt(space.files, space.current, at);
+      auto *inferred = typeAt(*doc, at);
+      bool expressionHover = false;
+      if (inferred && hover) {
+        const auto *use = doc->index.occurrenceAt(at);
+        auto targets = targetsAt(space.files, space.current, at);
+        if (use && !targets.empty()) {
+          const auto &target = declarationOf(space.files, targets.front());
+          expressionHover =
+              target.scoped() || target.kind == SymbolKind::Field;
+        }
+      }
+      if (inferred && (!hover || expressionHover)) {
+        auto value = Json::object(
+            {{"kind", Json::string("markdown")},
+             {"value", Json::string("```mettle\n" + inferred->display +
+                                    "\n```")}});
+        respond(id, Json::object(
+                        {{"contents", std::move(value)},
+                         {"range", rangeJson(doc->lines, inferred->span.begin,
+                                             inferred->span.end)}}));
+        return true;
+      }
       if (!hover) {
         respond(id, Json());
         return true;
@@ -474,10 +724,186 @@ private:
       for (const auto &site : definitionsAt(space.files, space.current, at))
         result.push(location(space, site));
       respond(id, std::move(result));
+    } else if (method == "textDocument/references") {
+      auto space = workspace(*doc);
+      bool includeDeclaration = false;
+      if (auto context = member(params, "context"))
+        if (auto include = member(context, "includeDeclaration");
+            include && include->asBoolean())
+          includeDeclaration = *include->asBoolean();
+      auto result = Json::array();
+      for (const auto &site : referencesAt(space.files, space.current, at,
+                                           includeDeclaration))
+        result.push(location(space, site));
+      respond(id, std::move(result));
     } else {
       rename(*doc, params, id, at, method == "textDocument/prepareRename");
     }
     return true;
+  }
+
+  static Json completion(const Workspace &space, const Document &doc,
+                         std::size_t offset) {
+    const auto &contents = doc.lines.contents();
+    offset = std::min(offset, contents.size());
+    auto prefixBegin = offset;
+    while (prefixBegin > 0) {
+      auto c = static_cast<unsigned char>(contents[prefixBegin - 1]);
+      if (!(std::isalnum(c) || c == '_' || c >= 0x80))
+        break;
+      --prefixBegin;
+    }
+    auto prefix = contents.substr(prefixBegin, offset - prefixBegin);
+    auto before = prefixBegin;
+    while (before > 0 &&
+           std::isspace(static_cast<unsigned char>(contents[before - 1])))
+      --before;
+    bool member = before > 0 && contents[before - 1] == '.';
+    const Document::TypeFact *receiverType =
+        member && before > 1 ? typeAt(doc, before - 2) : nullptr;
+    auto shortType = [](std::string value) {
+      while (!value.empty() &&
+             std::isspace(static_cast<unsigned char>(value.front())))
+        value.erase(value.begin());
+      while (!value.empty() &&
+             std::isspace(static_cast<unsigned char>(value.back())))
+        value.pop_back();
+      for (std::string_view mode : {"read ", "mut ", "take "})
+        if (value.starts_with(mode)) {
+          value.erase(0, mode.size());
+          break;
+        }
+      auto generic = value.find('<');
+      if (generic != std::string::npos)
+        value.resize(generic);
+      auto dot = value.rfind('.');
+      return dot == std::string::npos ? value : value.substr(dot + 1);
+    };
+    std::set<std::string> emitted;
+    auto result = Json::array();
+    for (const auto *candidateDocument : space.documents) {
+      const auto &items = candidateDocument->index.declarations();
+      for (const auto &item : items) {
+        if (item.kind == SymbolKind::Implementation ||
+            (!prefix.empty() &&
+             item.name.compare(0, prefix.size(), prefix) != 0))
+          continue;
+        bool candidate = !member
+                             ? !item.scoped() ||
+                                   (candidateDocument == &doc &&
+                                    item.scopeBegin <= offset &&
+                                    offset < item.scopeEnd)
+                             : receiverType
+                                   ? item.kind == SymbolKind::Field ||
+                                         item.kind == SymbolKind::Function
+                                   : !item.scoped();
+        if (candidate && member && receiverType && item.parent >= 0) {
+          const auto &owner = items[static_cast<std::size_t>(item.parent)];
+          std::string ownerName;
+          if (item.kind == SymbolKind::Field)
+            ownerName = owner.name;
+          else if (owner.kind == SymbolKind::Implementation) {
+            auto start = owner.signature.find("extend ");
+            if (start != std::string::npos) {
+              start += 7;
+              auto end = owner.signature.find(" implements", start);
+              if (end == std::string::npos)
+                end = owner.signature.find('{', start);
+              if (end != std::string::npos)
+                ownerName = owner.signature.substr(start, end - start);
+            }
+          } else if (owner.kind == SymbolKind::Type ||
+                     owner.kind == SymbolKind::Union)
+            ownerName = owner.name;
+          candidate = !ownerName.empty() &&
+                      shortType(receiverType->display) == shortType(ownerName);
+        } else if (candidate && member && receiverType && item.parent < 0) {
+          candidate = false;
+        }
+        if (!candidate || !emitted.insert(item.name).second)
+          continue;
+        int kind = item.kind == SymbolKind::Field ? 5
+                   : item.kind == SymbolKind::Function ? 3
+                   : item.scoped() ? 6
+                                   : 9;
+        result.push(Json::object({{"label", Json::string(item.name)},
+                                  {"kind", Json::integer(kind)},
+                                  {"detail", Json::string(item.signature)}}));
+      }
+    }
+    if (!member) {
+      static constexpr std::string_view keywords[] = {
+          "as", "break", "const", "continue", "else", "enum", "extend",
+          "false", "fn", "for", "if", "in", "let", "loop", "match",
+          "module", "return", "static", "true", "type", "var", "while"};
+      for (auto keyword : keywords)
+        if ((prefix.empty() || keyword.substr(0, prefix.size()) == prefix) &&
+            emitted.insert(std::string(keyword)).second)
+          result.push(Json::object(
+              {{"label", Json::string(std::string(keyword))},
+               {"kind", Json::integer(14)}}));
+    }
+    return result;
+  }
+
+  static std::vector<std::string> signatureParameters(
+      const std::string &signature) {
+    auto open = signature.find('(');
+    if (open == std::string::npos)
+      return {};
+    std::vector<std::string> result;
+    std::size_t begin = open + 1;
+    int depth = 0;
+    for (std::size_t i = begin; i < signature.size(); ++i) {
+      char c = signature[i];
+      if (c == '(' || c == '[' || c == '<')
+        ++depth;
+      else if (c == ')' || c == ']' || c == '>')
+        if (depth == 0) {
+          if (i > begin)
+            result.push_back(signature.substr(begin, i - begin));
+          return result;
+        } else
+          --depth;
+      if (c == ',' && depth == 0) {
+        result.push_back(signature.substr(begin, i - begin));
+        begin = i + 1;
+      }
+    }
+    if (begin < signature.size())
+      result.push_back(signature.substr(begin));
+    return result;
+  }
+
+  static Json signatureHelp(const Workspace &space, const Document &doc,
+                            std::size_t offset) {
+    auto call = doc.index.callAt(offset);
+    if (!call)
+      return Json();
+    std::vector<const Declaration *> candidates;
+    for (const auto *candidateDocument : space.documents)
+      for (const auto &item : candidateDocument->index.declarations())
+        if (item.kind == SymbolKind::Function &&
+            item.name == call->callee->name)
+          candidates.push_back(&item);
+    if (candidates.empty())
+      return Json();
+    auto signatures = Json::array();
+    for (const auto *item : candidates) {
+      auto parameters = signatureParameters(item->signature);
+      auto label = item->signature;
+      auto parameterInfo = Json::array();
+      for (const auto &parameter : parameters)
+        parameterInfo.push(Json::object({{"label", Json::string(parameter)}}));
+      signatures.push(Json::object(
+          {{"label", Json::string(label)},
+           {"parameters", std::move(parameterInfo)}}));
+    }
+    return Json::object(
+        {{"signatures", std::move(signatures)},
+         {"activeSignature", Json::integer(0)},
+         {"activeParameter", Json::integer(static_cast<std::int64_t>(
+                                 call->activeParameter))}});
   }
 
   void rename(Document &doc, const Json *params, const Json &id, std::size_t at,

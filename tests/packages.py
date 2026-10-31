@@ -1367,6 +1367,9 @@ def language_server():
                                               "capabilities": {}})
         capabilities = reply["result"]["capabilities"]
         assert capabilities["definitionProvider"], capabilities
+        assert capabilities["referencesProvider"], capabilities
+        assert capabilities["completionProvider"], capabilities
+        assert capabilities["signatureHelpProvider"], capabilities
         assert capabilities["renameProvider"], capabilities
         client.notify("initialized", {})
 
@@ -1419,6 +1422,21 @@ def language_server():
             ({"line": 3, "character": 4}, {"line": 3, "character": 9}, "sum"),
         ], changes
 
+        references = client.request("textDocument/references", {
+            "textDocument": document,
+            "position": {"line": 3, "character": 5},
+            "context": {"includeDeclaration": True}})["result"]
+        assert [ref["range"]["start"] for ref in references] == [
+            {"line": 2, "character": 8},
+            {"line": 3, "character": 4},
+        ], references
+
+        completions = client.request("textDocument/completion", {
+            "textDocument": document,
+            "position": {"line": 2, "character": 19}})["result"]
+        assert any(item["label"] == "double" for item in completions), \
+            completions
+
         refused = client.request("textDocument/rename", {
             "textDocument": document,
             "position": {"line": 3, "character": 5},
@@ -1428,6 +1446,40 @@ def language_server():
         symbols = client.request("textDocument/documentSymbol",
                                  {"textDocument": document})["result"]
         assert [s["name"] for s in symbols] == ["double", "main"], symbols
+
+        inferred = "file:///workspace/inferred.mt"
+        client.open(inferred, "fn inferred(value: i32) { value }\n"
+                             "fn main(): i32 { inferred(1) }\n")
+        client.wait(
+            lambda m: m.get("method") == "textDocument/publishDiagnostics"
+            and m["params"]["uri"] == inferred)
+        inferred_hover = client.request("textDocument/hover", {
+            "textDocument": {"uri": inferred},
+            "position": {"line": 0, "character": 5}})["result"]
+        assert ": i32" in inferred_hover["contents"]["value"], inferred_hover
+
+        signature = "file:///workspace/signature.mt"
+        client.open(signature,
+                    "fn add(left: i32, right: i32): i32 { left + right }\n"
+                    "fn main(): i32 { add(1, ) }\n")
+        client.wait(
+            lambda m: m.get("method") == "textDocument/publishDiagnostics"
+            and m["params"]["uri"] == signature)
+        help_result = client.request("textDocument/signatureHelp", {
+            "textDocument": {"uri": signature},
+            "position": {"line": 1, "character": 24}})["result"]
+        assert help_result["activeParameter"] == 1, help_result
+
+        pattern = "file:///workspace/pattern.mt"
+        client.open(pattern, "fn main(): i32 { match 1 { value => value } }\n")
+        client.wait(
+            lambda m: m.get("method") == "textDocument/publishDiagnostics"
+            and m["params"]["uri"] == pattern)
+        pattern_references = client.request("textDocument/references", {
+            "textDocument": {"uri": pattern},
+            "position": {"line": 0, "character": 30},
+            "context": {"includeDeclaration": True}})["result"]
+        assert len(pattern_references) == 2, pattern_references
 
         assert "result" in client.request("shutdown", None)
         client.notify("exit", None)
