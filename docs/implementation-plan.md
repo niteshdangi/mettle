@@ -753,8 +753,8 @@ two index buffers from the global allocator and only swap initialized elements a
 comparisons; verified by `tests/alloc/stable_sort.mt` and
 `tests/library/range_value.mt`. Slice stable methods are provided by
 `alloc.vec`, which must be mounted. Slice `Iterable`/`MutableIterable`
-implementations are implemented, unverified
-(not yet built); the inherent slice `iter()`/`iter_mut()` methods remain for
+implementations are implemented and verified on macOS arm64
+(`slice_iterable`); the inherent slice `iter()`/`iter_mut()` methods remain for
 resolution precedence. Composite Debug implementations and the
 generic mutable-formatter loan correction are already present, with nested
 collection coverage described below; they have not been reverified by this
@@ -799,7 +799,8 @@ result; only views carried by the instantiated argument flow
 mutable, consuming and half-open `range`); the old contiguous `as_entries()`
 and the position-based `range` result are replaced by ordered iterators.
 Known gaps: the `SortedMap` entry API and BTree-specific `try_` allocation
-tests are implemented, unverified (not yet built). Panics are runtime traps
+tests are implemented and verified on macOS arm64 (`sorted_entry`,
+`btree_alloc_failure`). Panics are runtime traps
 without unwinding or catch, so cleanup cannot continue after a key/value
 destructor traps; recoverable post-trap cleanup is not a supported contract.
 Borrowed iteration is implemented through the core interfaces: see the integration
@@ -904,8 +905,8 @@ I08 status (initial macOS ARM64 hosted profile): `library/std` provides `io`
 `read_to_end`, buffered reader/writer, an `io.Error` that round-trips the raw
 errno), `ffi` (`OsStr`/`OsString`), `path`, `fs`, `process`, `env`, `time`,
 `net` (synchronous IPv4/IPv6 TCP and UDP, socket timeouts, timed TCP connects
-and DNS; the IPv6/connect-timeout/DNS additions are implemented, unverified
-(not yet built)) and `panic` (hook around the runtime's exit-101 path). The
+and DNS; the IPv6/connect-timeout/DNS additions are implemented and verified on macOS
+arm64) and `panic` (hook around the runtime's exit-101 path). The
 POSIX layer is the libc calls declared in
 `library/std/sys.mt` plus the thin shims in `runtime/sys.cpp`. `tests/std` is
 run as `library.std` and holds the file-processing CLI (`cli_wordcount`), the
@@ -1255,10 +1256,10 @@ ergonomics, API composition, precise new contracts and their verification.
 | Order | Deliverable and gate | Status |
 | --- | --- | --- |
 | Cutover | Dotted paths, `extend` implementation blocks, D21 vocabulary, and optional item-level semicolons | Implemented and verified |
-| R1 | Bounded lookup, associated namespace, constructor selection, inference, vocabulary and the `experience-1` prelude | Associated-namespace resolution, dotted-path resolution, and the syntax/vocabulary cutover are implemented and verified. Generic inference from slice elements and fixed-array arguments to slice parameters is implemented, unverified here. Constructor shape selection, extension applicability, overlap checks and the collection and String inits in semantic-rules section 13.4 are implemented and verified by `custom-init-shapes`, `collection-inits` and the constructor fail fixtures; private adopting inits currently need marker parameters because shape overlap is arity-only. The existing parser and annotation paths appear to support slice, array, tuple and parenthesized-view projection subjects; the grammar records fixed-array subjects, but behavior remains unverified. Slice-interface bounded lookup and projection support are implemented, unverified (not yet built). Focused R1 verification remains open. |
+| R1 | Bounded lookup, associated namespace, constructor selection, inference, vocabulary and the `experience-1` prelude | Associated-namespace resolution, dotted-path resolution, and the syntax/vocabulary cutover are implemented and verified. Generic inference from slice elements and fixed-array arguments to slice parameters is implemented, unverified here. Constructor shape selection, extension applicability, overlap checks and the collection and String inits in semantic-rules section 13.4 are implemented and verified by `custom-init-shapes`, `collection-inits` and the constructor fail fixtures; private adopting inits currently need marker parameters because shape overlap is arity-only. The existing parser and annotation paths appear to support slice, array, tuple and parenthesized-view projection subjects; the grammar records fixed-array subjects, but behavior remains unverified. Slice-interface bounded lookup, projection and `[T].(I).member` expressions are implemented and verified by `slice-interface-implementations` and `slice_iterable`. Focused R1 verification remains open. |
 | F1 | Fixed borrowed `Message`, `format` parameters, two-level forwarding and the std Writer adapter (library-surface section 10); lifetime, error and code-size tests; measure indirect-call cost, renderer/code size and check cost | In progress |
 | R2 | Lending lines, Copy-valued `[u8].bytes()`, KeyView, PathInput/`write_path` and equivalent workloads within qualified profiles; reconcile `library-and-abi.md` POSIX path statements with the native Windows path contract before delivering that profile | Implemented for POSIX in current spelling, focused fixtures pass; Windows paths and collision stress pending |
-| R3 | Expression-bodied `fn`, diagnostics, formatter/editor completion | Expression-bodied named functions (`=> expression`, the closure body form) are implemented, including methods and interface default methods; verified by source and formatter regressions. The actionable ownership diagnostic for moving a non-Copy payload from a read match without `take` is implemented, unverified (not yet built). Readable type display/notes/help and LSP completion remain gaps pending a more specific selection. |
+| R3 | Expression-bodied `fn`, diagnostics, formatter/editor completion | Expression-bodied named functions (`=> expression`, the closure body form) are implemented, including methods and interface default methods; verified by source and formatter regressions. The actionable ownership diagnostic for moving a non-Copy payload from a read match without `take` is implemented and verified by the `match-move-*-without-take` fail fixtures, including region-generic `take` callees. Readable type display/notes/help and LSP completion remain gaps pending a more specific selection. |
 | Qualification | Frozen-input quality, target, safety and performance checks, including performance.md sections 5.1-5.2. D17 comparison harness (`tools/bench_compare.py`, `benchmarks/`, performance.md section 5.3): implemented; its `.mt` workloads type-check, but the harness has not been run and no result is claimed | After R1-R3 |
 | WP-S | Storage audit work package of tooling-and-packages.md section 7.1; operational, no dependency on an artifact store | Open |
 

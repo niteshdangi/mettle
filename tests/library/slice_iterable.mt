@@ -1,7 +1,7 @@
 import alloc.vec.List
 import core.iter.{Iterator, Iterable, MutableIterable}
 
-fn sum<C: Iterable<Item = i32>>(items: read C): i32 {
+fn sum<C: Iterable<Item = i32> + unsized>(items: read C): i32 {
     var total = 0
     for item in items { total += *item }
     total
@@ -12,7 +12,7 @@ fn main(): i32 {
     {
         let slice: read [i32] = read values
         var total = 0
-        for item in slice { total += *item }
+        for item in slice { total += item }
         if total != 6 { return 1 }
 
         var iter = slice.iter()
@@ -30,7 +30,7 @@ fn main(): i32 {
 
     {
         let slice: mut [i32] = mut values
-        var iter = [i32].(MutableIterable).iter_mut(mut slice)
+        var iter = [i32].(MutableIterable).iter_mut(slice)
         match take iter.next() {
             present(item) => { if *item != 1 { return 2 } },
             none => { return 2 }
@@ -38,7 +38,7 @@ fn main(): i32 {
     }
     {
         let slice: mut [i32] = mut values
-        for item in mut slice { *item += 1 }
+        for item in slice { item += 1 }
     }
     if values[0] != 2 || values[1] != 3 || values[2] != 4 { return 3 }
 

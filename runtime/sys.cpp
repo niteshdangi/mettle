@@ -246,9 +246,7 @@ std::int32_t resolverErrno(int result) {
   return EINVAL;
 }
 
-void setResolverError(int result) {
-  errno = resolverErrno(result);
-}
+void setResolverError(int result) { errno = resolverErrno(result); }
 
 // Closes both ends of a pipe on scope exit unless released.
 struct Pipe {
@@ -474,14 +472,14 @@ extern "C" std::int32_t mettle_rt_poll_pair(std::int32_t first,
 
 extern "C" std::int32_t mettle_rt_sock_new(std::int32_t kind,
                                            std::int32_t family) {
-  const int nativeFamily =
-      family == 4 ? AF_INET : family == 6 ? AF_INET6 : AF_UNSPEC;
+  const int nativeFamily = family == 4   ? AF_INET
+                           : family == 6 ? AF_INET6
+                                         : AF_UNSPEC;
   if (nativeFamily == AF_UNSPEC) {
     errno = EAFNOSUPPORT;
     return -1;
   }
-  int fd =
-      socket(nativeFamily, kind == 0 ? SOCK_STREAM : SOCK_DGRAM, 0);
+  int fd = socket(nativeFamily, kind == 0 ? SOCK_STREAM : SOCK_DGRAM, 0);
   if (fd < 0)
     return -1;
   setCloseOnExec(fd);
@@ -492,13 +490,11 @@ extern "C" std::int32_t mettle_rt_sock_new(std::int32_t kind,
   return fd;
 }
 
-extern "C" std::int32_t mettle_rt_sock_bind(std::int32_t fd,
-                                            std::int32_t family,
-                                            const std::uint8_t *address,
-                                            std::size_t addressSize,
-                                            std::uint16_t port,
-                                            std::uint32_t flowinfo,
-                                            std::uint32_t scopeId) {
+extern "C" std::int32_t
+mettle_rt_sock_bind(std::int32_t fd, std::int32_t family,
+                    const std::uint8_t *address, std::size_t addressSize,
+                    std::uint16_t port, std::uint32_t flowinfo,
+                    std::uint32_t scopeId) {
   int on = 1;
   setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on);
   sockaddr_storage value;
@@ -509,21 +505,18 @@ extern "C" std::int32_t mettle_rt_sock_bind(std::int32_t fd,
   return bind(fd, reinterpret_cast<sockaddr *>(&value), size);
 }
 
-extern "C" std::int32_t mettle_rt_sock_connect(std::int32_t fd,
-                                               std::int32_t family,
-                                               const std::uint8_t *address,
-                                               std::size_t addressSize,
-                                               std::uint16_t port,
-                                               std::uint32_t flowinfo,
-                                               std::uint32_t scopeId) {
+extern "C" std::int32_t
+mettle_rt_sock_connect(std::int32_t fd, std::int32_t family,
+                       const std::uint8_t *address, std::size_t addressSize,
+                       std::uint16_t port, std::uint32_t flowinfo,
+                       std::uint32_t scopeId) {
   sockaddr_storage value;
   socklen_t size = 0;
   if (!socketAddress(family, address, addressSize, port, flowinfo, scopeId,
                      value, size))
     return -1;
-  return retry([&] {
-    return connect(fd, reinterpret_cast<sockaddr *>(&value), size);
-  });
+  return retry(
+      [&] { return connect(fd, reinterpret_cast<sockaddr *>(&value), size); });
 }
 
 extern "C" std::int32_t mettle_rt_sock_connect_timeout(
@@ -539,14 +532,11 @@ extern "C" std::int32_t mettle_rt_sock_connect_timeout(
                       timeoutMicros);
 }
 
-extern "C" std::int32_t mettle_rt_sock_accept(std::int32_t fd,
-                                              std::int32_t timeoutMillis,
-                                              std::int32_t *family,
-                                              std::uint8_t *address,
-                                              std::size_t addressCapacity,
-                                              std::uint16_t *port,
-                                              std::uint32_t *flowinfo,
-                                              std::uint32_t *scopeId) {
+extern "C" std::int32_t
+mettle_rt_sock_accept(std::int32_t fd, std::int32_t timeoutMillis,
+                      std::int32_t *family, std::uint8_t *address,
+                      std::size_t addressCapacity, std::uint16_t *port,
+                      std::uint32_t *flowinfo, std::uint32_t *scopeId) {
   if (timeoutMillis >= 0) {
     std::int32_t ready = mettle_rt_poll(fd, 0, timeoutMillis);
     if (ready < 0)
@@ -577,13 +567,11 @@ extern "C" std::int32_t mettle_rt_sock_accept(std::int32_t fd,
   return accepted;
 }
 
-extern "C" std::int32_t mettle_rt_sock_name(std::int32_t fd, std::int32_t peer,
-                                            std::int32_t *family,
-                                            std::uint8_t *address,
-                                            std::size_t addressCapacity,
-                                            std::uint16_t *port,
-                                            std::uint32_t *flowinfo,
-                                            std::uint32_t *scopeId) {
+extern "C" std::int32_t
+mettle_rt_sock_name(std::int32_t fd, std::int32_t peer, std::int32_t *family,
+                    std::uint8_t *address, std::size_t addressCapacity,
+                    std::uint16_t *port, std::uint32_t *flowinfo,
+                    std::uint32_t *scopeId) {
   sockaddr_storage value;
   socklen_t size = sizeof value;
   auto *raw = reinterpret_cast<sockaddr *>(&value);
@@ -606,15 +594,10 @@ extern "C" std::int64_t mettle_rt_sock_send(std::int32_t fd,
   return retry([&] { return send(fd, data, size, flags); });
 }
 
-extern "C" std::int64_t mettle_rt_sock_sendto(std::int32_t fd,
-                                              const std::uint8_t *data,
-                                              std::size_t size,
-                                              std::int32_t family,
-                                              const std::uint8_t *address,
-                                              std::size_t addressSize,
-                                              std::uint16_t port,
-                                              std::uint32_t flowinfo,
-                                              std::uint32_t scopeId) {
+extern "C" std::int64_t mettle_rt_sock_sendto(
+    std::int32_t fd, const std::uint8_t *data, std::size_t size,
+    std::int32_t family, const std::uint8_t *address, std::size_t addressSize,
+    std::uint16_t port, std::uint32_t flowinfo, std::uint32_t scopeId) {
   sockaddr_storage value;
   socklen_t addressLength = 0;
   if (!socketAddress(family, address, addressSize, port, flowinfo, scopeId,
@@ -661,9 +644,10 @@ extern "C" std::int32_t mettle_rt_sock_timeout(std::int32_t fd,
                     sizeof value);
 }
 
-extern "C" std::uint8_t *
-mettle_rt_resolve(const std::uint8_t *host, std::size_t hostSize,
-                  std::uint16_t port, std::size_t *count) {
+extern "C" std::uint8_t *mettle_rt_resolve(const std::uint8_t *host,
+                                           std::size_t hostSize,
+                                           std::uint16_t port,
+                                           std::size_t *count) {
   if (!count || (!host && hostSize != 0) ||
       (hostSize != 0 && std::memchr(host, 0, hostSize) != nullptr)) {
     errno = EINVAL;
@@ -713,10 +697,11 @@ mettle_rt_resolve(const std::uint8_t *host, std::size_t hostSize,
   }
 }
 
-extern "C" std::int32_t mettle_rt_resolve_get(
-    std::uint8_t *rawHandle, std::size_t index, std::int32_t *family,
-    std::uint8_t *address, std::size_t addressCapacity, std::uint16_t *port,
-    std::uint32_t *flowinfo, std::uint32_t *scopeId) {
+extern "C" std::int32_t
+mettle_rt_resolve_get(std::uint8_t *rawHandle, std::size_t index,
+                      std::int32_t *family, std::uint8_t *address,
+                      std::size_t addressCapacity, std::uint16_t *port,
+                      std::uint32_t *flowinfo, std::uint32_t *scopeId) {
   if (!rawHandle) {
     errno = EINVAL;
     return -1;

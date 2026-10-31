@@ -137,6 +137,9 @@ std::optional<int> Checker::genericCall(
     }
     used[target] = true;
     facts(n).argumentOrder.push_back(target);
+    if (modes[target] == ParameterMode::Take &&
+        !(argument.kind == Kind::Unary && argument.text == "take"))
+      diagnoseBorrowedMatchMove(argument, variable);
     if (modes[target] == ParameterMode::Mut)
       requireMutablePlace(argument);
     auto actual = inference.value(variable);

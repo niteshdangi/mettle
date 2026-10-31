@@ -421,8 +421,7 @@ int Checker::call(Node &n, bool reachable) {
         static_cast<std::size_t>(facts(n).callee) < module.functions.size() &&
         target < module.functions[facts(n).callee].parameters.size() &&
         module.functions[facts(n).callee].parameters[target].mode == "take" &&
-        !(argumentValue->kind == Kind::Unary &&
-          argumentValue->text == "take"))
+        !(argumentValue->kind == Kind::Unary && argumentValue->text == "take"))
       diagnoseBorrowedMatchMove(argument, type);
     if (!facts(n).constructor) {
       const auto &formal = module.functions[facts(n).callee].parameters[target];

@@ -35,25 +35,25 @@ fn run(): i32 throws Error {
     try client.read_exact(bytes.split_at_mut(3usize).0)
     if bytes[0usize] != 97u8 || bytes[1usize] != 99u8 || bytes[2usize] != 107u8 { return 3 }
 
-    let receiver = try std.net.udp_bind(
+    let inbox = try std.net.udp_bind(
         std.net.socket_addr_v6(std.net.ipv6_localhost(), 0u16, 0u32, 0u32)
     )
     let sender = try std.net.udp_bind(
         std.net.socket_addr_v6(std.net.ipv6_localhost(), 0u16, 0u32, 0u32)
     )
-    let receive_address = try receiver.local_addr()
+    let receive_address = try inbox.local_addr()
     let sender_address = try sender.local_addr()
     try sender.set_read_timeout(present(from_millis(1000u64)))
-    try receiver.set_read_timeout(present(from_millis(1000u64)))
+    try inbox.set_read_timeout(present(from_millis(1000u64)))
     if try sender.send_to("v6-udp".as_bytes(), receive_address) != 6usize { return 4 }
-    let packet = try receiver.recv_from(bytes)
+    let packet = try inbox.recv_from(bytes)
     if packet.0 != 6usize || bytes[0usize] != 118u8 ||
         packet.1.port != sender_address.port { return 5 }
     match packet.1.ip {
         IpAddr.V6(ip) => { if !ip.is_loopback() { return 6 } },
         IpAddr.V4(_) => { return 7 }
     }
-    if try receiver.send_to("ack".as_bytes(), packet.1) != 3usize { return 8 }
+    if try inbox.send_to("ack".as_bytes(), packet.1) != 3usize { return 8 }
     let reply = try sender.recv_from(bytes)
     if reply.0 != 3usize || bytes[0usize] != 97u8 ||
         reply.1.port != receive_address.port { return 9 }

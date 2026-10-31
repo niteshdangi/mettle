@@ -36,6 +36,19 @@ std::unique_ptr<Node> Parser::interfaceMember(std::unique_ptr<Node> subject) {
   result->span.end = member.span.end;
   return result;
 }
+// `[T].(Interface).member` names a slice-type member, never an array literal.
+bool Parser::sliceInterfaceMember() const {
+  int depth = 0;
+  for (auto index = position; index < tokens.size(); ++index) {
+    const auto &text = tokens[index].text;
+    if (text == "[")
+      ++depth;
+    else if (text == "]" && --depth == 0)
+      return index + 2 < tokens.size() && tokens[index + 1].text == "." &&
+             tokens[index + 2].text == "(";
+  }
+  return false;
+}
 std::unique_ptr<Node> Parser::expr(int minimum) {
   StateGuard guard(*this);
   if (++nesting > limits::parserNesting)
@@ -164,7 +177,14 @@ std::unique_ptr<Node> Parser::primary() {
     result->children.push_back(block());
   } else if (is("fn") || is("async") || (is("take") && peek(1).text == "fn"))
     result = closure();
-  else if (take("[")) {
+  else if (is("[") && sliceInterfaceMember()) {
+    auto projection = type(false);
+    if (projection.form != TypeForm::Projection)
+      fail("expected an interface member after a slice type");
+    result = node(Kind::Name, token.span, projection.name);
+    result->annotation = std::move(projection);
+    result->span.end = tokens[position - 1].span.end;
+  } else if (take("[")) {
     result = node(Kind::Array, token.span);
     ++parens;
     if (!is("]")) {

@@ -620,7 +620,7 @@ contract before that profile is delivered (implementation-plan section 8.7, R2).
 ## 13. Hosted networking
 
 Status: IPv6 addresses and sockets, timed TCP connection, and name resolution
-are implemented, unverified (not yet built), for the existing POSIX hosted
+are implemented and verified on macOS arm64, for the existing POSIX hosted
 profile. The selected `std.net` names are `Ipv6Addr`, `IpAddr`, and
 `SocketAddr`; constructors are `ipv6`, `ipv6_localhost`, `ipv6_unspecified`,
 `Ipv6Addr.localhost`, `Ipv6Addr.unspecified`, `socket_addr_v6`, and

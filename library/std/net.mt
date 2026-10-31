@@ -336,7 +336,7 @@ pub fn parse_socket_addr(text: read Text): SocketAddr throws Error {
             present(value) => value,
             none => throw invalid_address()
         }
-        let mut scope_id = 0u32
+        var scope_id = 0u32
         let ip_text = match host.find_byte(37u8) {
             present(mark) => {
                 let scope_text = match host.get(mark + 1usize, host.len()) {

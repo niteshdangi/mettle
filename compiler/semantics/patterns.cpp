@@ -348,9 +348,8 @@ int Checker::match(Node &n, bool reachable) {
   int result = inference.fresh(expectedTypes.contains(&n) ? expectedTypes.at(&n)
                                                           : Type::Never);
   const bool deferJoin = !expectedTypes.contains(&n);
-  const auto expected = expectedTypes.contains(&n)
-                            ? expectedTypes.at(&n)
-                            : Type::Unknown;
+  const auto expected =
+      expectedTypes.contains(&n) ? expectedTypes.at(&n) : Type::Unknown;
   const bool ownedResult =
       mode == ParameterMode::Read && expected != Type::Unknown &&
       !checked.types->isView(expected) && !checked.types->isCopy(expected);

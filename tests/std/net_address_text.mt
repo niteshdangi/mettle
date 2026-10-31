@@ -1,24 +1,27 @@
-import core.fmt.{Debug, Display, Error, buffer_writer, formatter, spec, written_text}
+import core.fmt.{Debug, Display, buffer_writer, formatter, spec, written_text}
 import core.text.Text
 import std.net.{Ipv6Addr, SocketAddr, ipv6}
-import std.io.ErrorKind
+import std.io.{Error, ErrorKind}
 
-fn render<T: Display>(value: read T, buffer: mut [u8]): usize throws Error {
+fn render<T: Display>(value: read T, buffer: mut [u8]): usize throws core.fmt.Error {
     var writer = buffer_writer(mut buffer)
     var output = formatter(mut writer, spec())
     try value.fmt(mut output)
     writer.len()
 }
 
-fn render_debug<T: Debug>(value: read T, buffer: mut [u8]): usize throws Error {
+fn render_debug<T: Debug>(value: read T, buffer: mut [u8]): usize throws core.fmt.Error {
     var writer = buffer_writer(mut buffer)
     var output = formatter(mut writer, spec())
     try value.fmt(mut output)
     writer.len()
 }
 
-fn equals<T: Display>(value: read T, expected: read Text, buffer: mut [u8]): bool throws Error {
-    let length = try render(read value, mut buffer)
+fn equals<T: Display>(value: read T, expected: read Text, buffer: mut [u8]): bool {
+    let length = match take capture render(read value, mut buffer) {
+        success(length) => length,
+        failure(error) => { return false }
+    }
     match written_text(read buffer, length) {
         present(text) => text == expected,
         none => false
@@ -40,7 +43,10 @@ fn run(): i32 throws Error {
     if !equals(read longest, "2001:0:0:1::1", mut buffer) { return 6 }
     let tie = try std.net.parse_ipv6("2001:0:0:1:0:0:1:1")
     if !equals(read tie, "2001::1:0:0:1:1", mut buffer) { return 7 }
-    let length = try render_debug(read tie, mut buffer)
+    let length = match take capture render_debug(read tie, mut buffer) {
+        success(length) => length,
+        failure(error) => { return 8 }
+    }
     match written_text(read buffer, length) {
         present(text) => { if text != "2001::1:0:0:1:1" { return 8 } },
         none => { return 9 }

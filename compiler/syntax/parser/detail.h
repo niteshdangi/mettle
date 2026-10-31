@@ -167,6 +167,7 @@ private:
   TypeSyntax callableType();
   std::unique_ptr<Node> closure();
   std::unique_ptr<Node> interfaceMember(std::unique_ptr<Node> subject);
+  bool sliceInterfaceMember() const;
   bool nameToken(const Token &token) const {
     return token.kind == TokenKind::Word || token.kind == TokenKind::QuotedWord;
   }
