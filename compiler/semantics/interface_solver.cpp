@@ -1077,8 +1077,29 @@ Type Solver::normalize(Type type, std::span<const TypeBinding> bindings,
         return Type::Unknown;
       }
     }
+    auto associatedValue = found->second.value;
+    if (associatedValue == Type::Unknown && found->second.fromDefault) {
+      associatedValue =
+          definition.associated[projection->associated].defaultValue;
+      auto bindDefault = [&](Type parameter, Type argument) {
+        if (std::none_of(substitutions.begin(), substitutions.end(),
+                         [&](const auto &binding) {
+                           return binding.parameter == parameter;
+                         }))
+          substitutions.push_back({parameter, argument});
+      };
+      bindDefault(definition.self, subject);
+      for (std::size_t p = 0;
+           p < definition.parameters.size() && p < interface.arguments.size();
+           ++p)
+        bindDefault(definition.parameters[p], interface.arguments[p]);
+    }
+    if (associatedValue == Type::Unknown) {
+      normalizing.erase(type);
+      return type;
+    }
     auto result =
-        normalize(types.substituteRegions(found->second.value, regions),
+        normalize(types.substituteRegions(associatedValue, regions),
                   substitutions, span);
     normalizing.erase(type);
     return result;

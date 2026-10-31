@@ -170,6 +170,8 @@ Module::Interface Parser::interfaceDeclaration() {
           futureBound.arguments.push_back(std::move(binding));
         }
         future.bounds.push_back(std::move(futureBound));
+        if (method.asyncDefaultOutputInferred)
+          method.asyncDefaultBodyResult = method.annotation;
         if (method.body.get() && !method.asyncDefaultOutputInferred)
           future.value = method.annotation;
 

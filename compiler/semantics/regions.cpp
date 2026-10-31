@@ -3227,6 +3227,89 @@ void RegionPass::run() {
   }
   if (!diagnostics.empty())
     return;
+  auto inferredAsyncBodyResult = [&](std::size_t index,
+                                     RegionContext &context,
+                                     RegionId fallback) {
+    const auto &syntax = module.functions[index];
+    if (!syntax.asyncDefaultOutputInferred ||
+        syntax.asyncDefaultBodyResult.form != TypeForm::Opaque)
+      return signatures[index].result;
+    auto owner = std::find_if(
+        module.interfaces.begin(), module.interfaces.end(),
+                              [&](const auto &candidate) {
+                                return candidate.name == syntax.interfaceOwner;
+                              });
+    if (owner == module.interfaces.end())
+      return signatures[index].result;
+    const auto declaration =
+        static_cast<std::size_t>(owner - module.interfaces.begin());
+    if (declaration >= interfaceData.definitions.size())
+      return signatures[index].result;
+    const auto &definition = interfaceData.definitions[declaration];
+    auto family = std::find_if(
+        definition.associated.begin(), definition.associated.end(),
+        [&](const auto &candidate) {
+          return candidate.name == syntax.asyncFuture;
+        });
+    auto familySyntax = std::find_if(
+        owner->associated.begin(), owner->associated.end(),
+        [&](const auto &candidate) {
+          return candidate.name == syntax.asyncFuture;
+        });
+    if (family == definition.associated.end() ||
+        familySyntax == owner->associated.end() ||
+        family->defaultValue == Type::Unknown)
+      return signatures[index].result;
+
+    auto future = family->defaultValue;
+    std::vector<TypeBinding> typeBindings;
+    std::size_t type = 0;
+    auto bindType = [&](Type parameter) {
+      if (type < functions[index].genericParameters.size())
+        typeBindings.push_back(
+            {parameter, functions[index].genericParameters[type++]});
+    };
+    bindType(definition.self);
+    std::size_t parameter = 0;
+    for (const auto &generic : owner->genericParameters)
+      if (generic.kind != GenericParameterKind::Region &&
+          parameter < definition.parameters.size()) {
+        bindType(definition.parameters[parameter]);
+        ++parameter;
+      }
+    parameter = 0;
+    for (const auto &generic : familySyntax->genericParameters)
+      if (generic.kind != GenericParameterKind::Region &&
+          parameter < family->parameters.size()) {
+        bindType(family->parameters[parameter]);
+        ++parameter;
+      }
+    future = types.substitute(future, typeBindings);
+
+    std::vector<RegionBinding> regionBindings;
+    std::size_t region = 0;
+    for (const auto &generic : owner->genericParameters)
+      if (generic.kind == GenericParameterKind::Region &&
+          region < definition.regions.size()) {
+        auto found = context.names.find(generic.name);
+        if (found != context.names.end())
+          regionBindings.push_back(
+              {definition.regions[region], found->second});
+        ++region;
+      }
+    region = 0;
+    for (const auto &generic : familySyntax->genericParameters)
+      if (generic.kind == GenericParameterKind::Region &&
+          region < family->regions.size()) {
+        auto found = context.names.find(generic.name);
+        if (found != context.names.end())
+          regionBindings.push_back(
+              {family->regions[region], found->second});
+        ++region;
+      }
+    future = types.substituteRegions(future, regionBindings);
+    return decorate(future, TypeSyntax{}, context, syntax.span, fallback);
+  };
   for (std::size_t i = 0; i < module.functions.size(); ++i) {
     currentFunction = i;
     current = &signatures[i];
@@ -3258,11 +3341,26 @@ void RegionPass::run() {
         expression(*parameter.defaultValue);
     if (!module.functions[i].body.get())
       continue;
-    expectClosure(*module.functions[i].body, current->result);
+    auto bodyResult = current->result;
+    if (module.functions[i].asyncDefaultOutputInferred) {
+      std::vector<RegionId> eligible;
+      for (std::size_t p = 0; p < current->parameters.size(); ++p)
+        if (functions[i].locals[p].mode == ParameterMode::Read ||
+            functions[i].locals[p].mode == ParameterMode::Mut ||
+            types.containsViews(current->parameters[p].type))
+          eligible.push_back(
+              types.isView(current->parameters[p].type)
+                  ? types.view(current->parameters[p].type).region
+                  : current->backing[p]);
+      auto fallback =
+          eligible.size() == 1 ? eligible.front() : RegionId::Unspecified;
+      bodyResult = inferredAsyncBodyResult(i, current->context, fallback);
+    }
+    expectClosure(*module.functions[i].body, bodyResult);
     auto result = expression(*module.functions[i].body);
     if (facts(*module.functions[i].body).flow.normal &&
         !module.functions[i].constructor)
-      require(result, current->result, module.functions[i].body->span);
+      require(result, bodyResult, module.functions[i].body->span);
   }
   for (const auto &contract : contracts) {
     if (contract.implementation >= signatures.size() ||

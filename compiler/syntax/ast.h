@@ -280,6 +280,7 @@ struct Function {
   bool constFunction = false;
   bool asynchronous = false;
   bool asyncDefaultOutputInferred = false;
+  TypeSyntax asyncDefaultBodyResult{};
   TypeSyntax asyncOutput{}, asyncError{};
   std::string asyncFuture{};
   std::string abi{};

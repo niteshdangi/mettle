@@ -258,6 +258,138 @@ std::optional<CheckedModule> Checker::run() {
     if (f.body.get())
       flow(*f.body, f.owner);
 
+  auto canonicalAsyncDefault = [&](const Function &function,
+                                   const interfaces::Definition &definition,
+                                   const interfaces::Associated &family,
+                                   const Module::Interface &interfaceSyntax,
+                                   Type future) {
+    auto familySyntax =
+        std::find_if(interfaceSyntax.associated.begin(),
+                     interfaceSyntax.associated.end(), [&](const auto &item) {
+                       return item.name == function.asyncFuture;
+                     });
+    std::vector<TypeBinding> typeBindings;
+    const auto &environment = functionGenerics.at(&function);
+    auto bindType = [&](std::string_view name, Type target) {
+      auto found = environment.names.find(std::string(name));
+      if (found != environment.names.end())
+        typeBindings.push_back({found->second, target});
+    };
+    bindType("Self", definition.self);
+    std::size_t parameter = 0;
+    for (const auto &generic : interfaceSyntax.genericParameters)
+      if (generic.kind != GenericParameterKind::Region &&
+          parameter < definition.parameters.size())
+        bindType(generic.name, definition.parameters[parameter++]);
+    parameter = 0;
+    if (familySyntax != interfaceSyntax.associated.end())
+      for (const auto &generic : familySyntax->genericParameters)
+        if (generic.kind != GenericParameterKind::Region &&
+            parameter < family.parameters.size())
+          bindType(generic.name, family.parameters[parameter++]);
+    future = checked.types->substitute(future, typeBindings);
+
+    std::vector<RegionBinding> regionBindings;
+    const auto &functionRegionsValue = functionRegions(function);
+    std::size_t region = 0;
+    for (const auto &generic : interfaceSyntax.genericParameters)
+      if (generic.kind == GenericParameterKind::Region &&
+          region < definition.regions.size()) {
+        auto found = functionRegionsValue.names.find(generic.name);
+        if (found != functionRegionsValue.names.end())
+          regionBindings.push_back(
+              {found->second, definition.regions[region]});
+        ++region;
+      }
+    region = 0;
+    if (familySyntax != interfaceSyntax.associated.end())
+      for (const auto &generic : familySyntax->genericParameters)
+        if (generic.kind == GenericParameterKind::Region &&
+            region < family.regions.size()) {
+          auto found = functionRegionsValue.names.find(generic.name);
+          if (found != functionRegionsValue.names.end())
+            regionBindings.push_back(
+                {found->second, family.regions[region]});
+          ++region;
+        }
+    return checked.types->substituteRegions(future, regionBindings);
+  };
+  auto publishAsyncDefault = [&](const Function &function) {
+    if (!function.asyncDefaultOutputInferred)
+      return;
+    const Node *futureNode = function.body.get();
+    if (!futureNode)
+      return;
+    if (futureNode->kind == Kind::Block && futureNode->children.size() == 1)
+      futureNode = futureNode->children[0].get();
+    if (futureNode->kind != Kind::Call || futureNode->children.size() < 2 ||
+        futureNode->children[1]->kind != Kind::Closure)
+      return;
+    const auto &closure = *futureNode->children[1];
+    if (facts(closure).closure < 0 ||
+        static_cast<std::size_t>(facts(closure).closure) >=
+            checked.closureBodies.size())
+      return;
+    auto output =
+        checked.closureBodies[facts(closure).closure]->function.abiResult;
+    auto defaultFuture =
+        inference.value(asyncDefaultBodyVariables.at(&function));
+    if (output == Type::Unknown || defaultFuture == Type::Unknown)
+      return;
+    auto interfaceName =
+        typeName(function.interfaceOwner, function.span, function.owner);
+    auto interface = interfaceNames.find(interfaceName);
+    if (interface == interfaceNames.end())
+      return;
+    auto &definition =
+        checked.interfaceData->definitions[interface->second];
+    auto family = std::find_if(
+        definition.associated.begin(), definition.associated.end(),
+        [&](const auto &associated) {
+          return associated.name == function.asyncFuture;
+        });
+    if (family == definition.associated.end())
+      return;
+    auto futureInterface = std::find_if(
+        checked.interfaceData->definitions.begin(),
+        checked.interfaceData->definitions.end(), [](const auto &candidate) {
+          return candidate.name == "core::future::Future";
+        });
+    if (futureInterface != checked.interfaceData->definitions.end()) {
+      const auto declaration = static_cast<std::uint32_t>(
+          futureInterface - checked.interfaceData->definitions.begin());
+      auto outputItem = std::find_if(
+          futureInterface->associated.begin(),
+          futureInterface->associated.end(),
+          [](const auto &associated) { return associated.name == "Output"; });
+      if (outputItem != futureInterface->associated.end())
+        for (auto &bound : family->bounds)
+          if (bound.property == interfaces::Property::Interface &&
+              checked.types->isErased(bound.interfaceType)) {
+            auto descriptor = checked.types->erased(bound.interfaceType);
+            if (descriptor.declaration != declaration)
+              continue;
+            auto binding = std::find_if(
+                descriptor.associated.begin(), descriptor.associated.end(),
+                [&](const auto &associated) {
+                  return associated.parameter == outputItem->parameter;
+                });
+            if (binding == descriptor.associated.end())
+              descriptor.associated.push_back(
+                  {outputItem->parameter, output});
+            else
+              binding->argument = output;
+            bound.interfaceType =
+                checked.types->erasedType(std::move(descriptor));
+          }
+    }
+    family->defaultValue =
+        canonicalAsyncDefault(function, definition, *family,
+                              module.interfaces[interface->second],
+                              defaultFuture);
+    family->asyncFutureOutputInferred = false;
+  };
+
   std::vector<std::vector<std::size_t>> edges(module.functions.size());
   std::function<void(Node &, std::vector<std::size_t> &, std::string_view)>
       calls = [&](Node &n, std::vector<std::size_t> &out,
@@ -340,6 +472,8 @@ std::optional<CheckedModule> Checker::run() {
       function(module.functions[w]);
     resolveGenericCalls();
     fields();
+    for (auto w : component)
+      publishAsyncDefault(module.functions[w]);
     for (auto w : component) {
       auto &f = module.functions[w];
       facts(f).result = inference.value(functionVariables[&f]);
@@ -451,62 +585,10 @@ std::optional<CheckedModule> Checker::run() {
                   "cannot infer async interface default future");
             continue;
           }
-          const auto &interfaceSyntax = module.interfaces[interface->second];
-          auto familySyntax =
-              std::find_if(interfaceSyntax.associated.begin(),
-                           interfaceSyntax.associated.end(),
-                           [&](const auto &item) {
-                             return item.name == function.asyncFuture;
-                           });
-          std::vector<TypeBinding> familyTypes;
-          auto bindTypeParameter = [&](std::string_view name, Type target) {
-            if (auto found =
-                    functionGenerics.at(&function).names.find(std::string(name));
-                found != functionGenerics.at(&function).names.end())
-              familyTypes.push_back({found->second, target});
-          };
-          bindTypeParameter("Self", definition.self);
-          std::size_t parameter = 0;
-          for (const auto &generic : interfaceSyntax.genericParameters)
-            if (generic.kind != GenericParameterKind::Region &&
-                parameter < definition.parameters.size())
-              bindTypeParameter(generic.name,
-                                definition.parameters[parameter++]);
-          parameter = 0;
-          if (familySyntax != interfaceSyntax.associated.end())
-            for (const auto &generic : familySyntax->genericParameters)
-              if (generic.kind != GenericParameterKind::Region &&
-                  parameter < family->parameters.size())
-                bindTypeParameter(generic.name,
-                                  family->parameters[parameter++]);
           defaultFuture =
-              checked.types->substitute(defaultFuture, familyTypes);
-
-          std::vector<RegionBinding> familyRegions;
-          const auto &functionRegionSet = functionRegions(function);
-          std::size_t region = 0;
-          for (const auto &generic : interfaceSyntax.genericParameters)
-            if (generic.kind == GenericParameterKind::Region &&
-                region < definition.regions.size()) {
-              auto found = functionRegionSet.names.find(generic.name);
-              if (found != functionRegionSet.names.end())
-                familyRegions.push_back(
-                    {found->second, definition.regions[region]});
-              ++region;
-            }
-          region = 0;
-          if (familySyntax != interfaceSyntax.associated.end())
-            for (const auto &generic : familySyntax->genericParameters)
-              if (generic.kind == GenericParameterKind::Region &&
-                  region < family->regions.size()) {
-                auto found = functionRegionSet.names.find(generic.name);
-                if (found != functionRegionSet.names.end())
-                  familyRegions.push_back(
-                      {found->second, family->regions[region]});
-                ++region;
-              }
-          defaultFuture =
-              checked.types->substituteRegions(defaultFuture, familyRegions);
+              canonicalAsyncDefault(function, definition, *family,
+                                    module.interfaces[interface->second],
+                                    defaultFuture);
           family->defaultValue = defaultFuture;
           family->asyncFutureOutputInferred = false;
           if (checked.types->isSized(family->parameter) &&
