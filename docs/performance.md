@@ -266,6 +266,28 @@ signal. Mettle caches whole programs, so its edit rebuilds are hits or full
 rebuilds rather than partial recompilation; peak scratch bytes and the
 section 5.2 instruction counters are not collected here.
 
+### 5.4. Loan-analysis compile-time work
+
+Status: implemented, unmeasured and unverified. The ownership loan analysis
+in `compiler/analysis/loans.cpp` previously retained a complete `availableAfter`
+loan set for every instruction. It now reconstructs each point's availability
+by walking backward from the fixed-point block output, and filters the live set
+in place. This removes per-instruction availability snapshots and their
+repeated set-node copies; expected benefit is lower analysis time and memory for
+loan-rich CFGs, including hosted standard-library builds. Ownership results are
+intended to be unchanged; no build, regression suite or timing measurement was
+run for this change.
+
+The reported debug/sanitizer compile-time baseline (~37 seconds versus 2.7
+seconds for Release) was not reproduced here. Debug object emission currently
+uses `CodeGenOptLevel::None` and does not run LLVM's per-module O2 pipeline.
+The compiler does not explicitly select FastISel or GlobalISel, and sanitizer
+instrumentation still runs in debug emission. No selector change was made
+without measured evidence across supported targets.
+The compiler architecture requires checking every symbolic body, including
+unused declarations, so lazy checking of unused standard-library items was not
+introduced.
+
 ## 6. V1 / V1.1 / V1.2 evidence
 
 V1 requires the audited capability denominator, supported-profile probes, semantic
