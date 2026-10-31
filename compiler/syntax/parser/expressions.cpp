@@ -233,6 +233,33 @@ std::unique_ptr<Node> Parser::primary() {
     ++position;
     newlines();
     result = awaitExpression(NodeOwner(primary()), token.span);
+  } else if (is("heap") || is("shared") || is("weak") ||
+             (is("local") && peek(1).text == "shared")) {
+    const auto operation = tokens[position++];
+    std::string constructor;
+    bool downgrade = operation.text == "weak";
+    if (operation.text == "heap")
+      constructor = "alloc::boxed::new";
+    else if (operation.text == "shared")
+      constructor = "alloc::arc::new";
+    else if (operation.text == "local") {
+      expect("shared");
+      constructor = "alloc::rc::new";
+    }
+    newlines();
+    auto operand = primary();
+    result = node(Kind::Call, operation.span);
+    if (downgrade) {
+      auto member = node(Kind::Field, operation.span, "downgrade");
+      member->children.push_back(std::move(operand));
+      finish(*member);
+      result->children.push_back(std::move(member));
+    } else {
+      result->children.push_back(
+          node(Kind::Name, operation.span, std::move(constructor)));
+      result->children.push_back(std::move(operand));
+    }
+    finish(*result);
   } else if (take("-") || take("!") || take("take") || take("read") ||
              take("mut") || take("*")) {
     result = node(Kind::Unary, token.span, token.text);

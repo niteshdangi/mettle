@@ -28,6 +28,8 @@ void argumentsFingerprint(const std::vector<GenericArgument> &arguments,
 void typeFingerprint(const TypeSyntax &type, std::string &out) {
   out += "T(" + std::to_string(static_cast<int>(type.form)) + ' ' + type.view +
          ' ' + type.name;
+  if (type.form == TypeForm::Owner)
+    out += " owner " + std::to_string(static_cast<int>(type.ownerKind));
   for (const auto &source : type.sources)
     out += " from " + source;
   for (const auto &region : type.regions)

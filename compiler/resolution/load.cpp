@@ -124,6 +124,7 @@ private:
     std::string root, member, from;
     Span span;
     bool text = false;
+    bool ownerSyntax = false;
   };
 
   std::vector<Token> lex(const Source &source, Diagnostics &sink) const {
@@ -296,6 +297,10 @@ private:
         declaredTypes.insert(significant[i + 1]->text);
     for (std::size_t i = 0; i < significant.size(); ++i) {
       const auto &token = *significant[i];
+      if (token.kind == TokenKind::Word && from(token).empty() &&
+          (token.text == "heap" || token.text == "shared" ||
+           token.text == "weak" || token.text == "local"))
+        found.push_back({"alloc", "", "", token.span, false, true});
       // Async functions and closures are typed by `core.future.Future`.
       if (token.text == "async" && from(token) != "core" && available("core"))
         found.push_back({"core", "future", from(token), token.span, false});
@@ -403,6 +408,14 @@ private:
                             "library module '" + reference.from +
                                 "' may not depend on '" + reference.root +
                                 "' (core <- alloc <- std)");
+          return;
+        }
+        if (reference.ownerSyntax &&
+            (shadowed.contains(reference.root) ||
+             !available(reference.root))) {
+          diagnostics.error(
+              "feature", reference.span,
+              "native owner syntax requires the alloc library");
           return;
         }
         if (shadowed.contains(reference.root) ||

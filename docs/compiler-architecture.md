@@ -57,6 +57,17 @@ kind, children, spelling, annotations, separators and provenance. Type variables
 resolved locals/callees, normalized values and flow facts do not belong in AST
 nodes.
 
+Owner type annotations retain an `Owner` syntax form and resolve in semantics to
+the nominal `alloc` library types: `heap T` to `Box<T>`, `shared T` to `Arc<T>`,
+`local shared T` to `Rc<T>`, and the corresponding atomic/local `Weak<T>`
+handles. Expression constructors and `weak owner` use ordinary checked library
+calls, so allocator defaults, methods, dereference projections and destruction
+remain library-owned. The loader mounts `alloc` for reserved owner syntax and
+reports a structured feature diagnostic when that library is unavailable.
+Unsized owner payloads remain unsupported because the current owner
+implementations require sized payloads; they receive a specific feature
+diagnostic. This syntax mapping is implemented but unverified (not yet built).
+
 The driver may inject a bounded-store cache for lexed module tokens during
 ordinary builds. Its identity includes compiler identity, token content and the
 exact source bytes so cached offsets remain valid; source IDs are rebound to the

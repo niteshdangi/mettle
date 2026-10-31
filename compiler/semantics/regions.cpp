@@ -24,6 +24,39 @@ Type Checker::annotation(const TypeSyntax &syntax, Span span,
     }
     return checked.types->structural(AggregateKind::Pin, {value});
   }
+  if (syntax.form == TypeForm::Owner) {
+    auto payload = annotation(*syntax.nested, span, owner);
+    if (payload == Type::Unknown)
+      return Type::Unknown;
+    if (!checked.types->isSized(payload)) {
+      error("feature", span,
+            "unsized owner payloads are not implemented yet");
+      return Type::Unknown;
+    }
+    TypeSyntax nominal;
+    switch (syntax.ownerKind) {
+    case OwnerKind::Heap:
+      nominal.name = "alloc::boxed::Box";
+      break;
+    case OwnerKind::Shared:
+      nominal.name = "alloc::arc::Arc";
+      break;
+    case OwnerKind::LocalShared:
+      nominal.name = "alloc::rc::Rc";
+      break;
+    case OwnerKind::Weak:
+      nominal.name = "alloc::arc::Weak";
+      break;
+    case OwnerKind::LocalWeak:
+      nominal.name = "alloc::rc::Weak";
+      break;
+    }
+    GenericArgument argument;
+    argument.type = syntax.nested;
+    argument.span = span;
+    nominal.arguments.push_back(std::move(argument));
+    return annotation(nominal, span, owner);
+  }
   if (syntax.form == TypeForm::Pointer)
     return checked.types->pointerType(
         annotation(syntax.elements.at(0), span, owner),
@@ -766,6 +799,11 @@ Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
                  syntax.arguments[argumentIndex].type)
           argument = decorate(argument, *syntax.arguments[argumentIndex].type,
                               context, span, fallback, stored);
+        else if (syntax.form == TypeForm::Owner && typeIndex == 0 &&
+                 syntax.nested)
+          argument =
+              decorate(argument, *syntax.nested, context, span, fallback,
+                       stored);
         else
           argument = inferred(argument, store.inference(context.scope));
         nested.types[parameter.name] = argument;
