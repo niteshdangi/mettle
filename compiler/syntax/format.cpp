@@ -61,6 +61,10 @@ bool oneOf(const Piece &piece, std::initializer_list<std::string_view> texts) {
   return piece.kind == TokenKind::Symbol &&
          std::find(texts.begin(), texts.end(), piece.text) != texts.end();
 }
+bool oneOfText(std::string_view text,
+               std::initializer_list<std::string_view> choices) {
+  return std::find(choices.begin(), choices.end(), text) != choices.end();
+}
 bool symbol(const Piece &piece, std::string_view text) {
   return oneOf(piece, {text});
 }
@@ -151,11 +155,35 @@ bool continued(const Line &previous, const Piece &first) {
   for (auto piece = previous.rbegin(); piece != previous.rend(); ++piece) {
     if (piece->kind == TokenKind::Comment)
       continue;
-    return oneOf(*piece, {"=",  "==", "!=", "<=", ">=", "+=", "-=", "*=",
-                          "/=", "%=", "&=", "|=", "^=", "&&", "||", "+",
-                          "-",  "*",  "/",  "%",  "=>", "??"});
+    return binaryPrecedence(piece->text) > 0 ||
+           oneOf(*piece, {"=", "+=", "-=", "*=", "/=", "%=", "&=", "|=",
+                          "^=", "<<=", ">>=", "=>", "->", ","});
   }
   return false;
+}
+
+bool binaryBoundary(const std::vector<Token> &tokens, std::size_t index) {
+  auto previous = index;
+  while (previous && tokens[previous - 1].kind == TokenKind::Space)
+    --previous;
+  bool spacedLeft = previous < index;
+  if (!previous)
+    return false;
+  const auto &left = tokens[previous - 1];
+  if (left.kind == TokenKind::Newline || left.kind == TokenKind::Comment ||
+      (left.kind == TokenKind::Symbol &&
+       !oneOfText(left.text, {")", "]", "}", "?", "!"})))
+    return false;
+  if (left.kind == TokenKind::Word &&
+      oneOfText(left.text, {"return", "throw", "yield", "if", "else", "match",
+                            "while", "for", "in", "let", "var", "take",
+                            "read", "mut", "await"}))
+    return false;
+  if ((tokens[index].text == "<" || tokens[index].text == ">") &&
+      (!spacedLeft || index + 1 == tokens.size() ||
+       tokens[index + 1].kind != TokenKind::Space))
+    return false;
+  return true;
 }
 
 std::string layout(const Source &source, const std::vector<Token> &tokens) {
@@ -267,8 +295,9 @@ std::vector<Signature> signature(const Source &source,
   return result;
 }
 
-// Wrap only at token boundaries where the parser may continue. Macro token
-// trees and multiline tokens are left untouched because their trivia matters.
+// Wrap at token boundaries where the grammar can continue: list separators,
+// binary operators and chained member access. Macro token trees and
+// multiline tokens are left untouched because their trivia matters.
 std::string wrap(const Source &source, const std::vector<Token> &tokens) {
   for (std::size_t i = 0; i < tokens.size(); ++i) {
     const auto &token = tokens[i];
@@ -286,7 +315,7 @@ std::string wrap(const Source &source, const std::vector<Token> &tokens) {
     }
   }
   std::vector<std::size_t> breaks, candidates;
-  std::size_t start = 0, parens = 0;
+  std::size_t start = 0;
   bool comment = false;
   auto line = [&](std::size_t end) {
     if (!comment && end - start > 100 && !candidates.empty()) {
@@ -324,14 +353,11 @@ std::string wrap(const Source &source, const std::vector<Token> &tokens) {
       comment = true;
     if (token.kind != TokenKind::Symbol)
       continue;
-    if (token.text == "(")
-      ++parens;
-    else if (token.text == ")" && parens)
-      --parens;
-    else if ((token.text == "," && parens) || token.text == "&&" ||
-             token.text == "||" || token.text == "+" || token.text == "-" ||
-             token.text == "*" || token.text == "/" || token.text == "??")
+    if (token.text == "," ||
+        (binaryPrecedence(token.text) > 0 && binaryBoundary(tokens, i)))
       candidates.push_back(token.span.end);
+    else if (token.text == "." || token.text == "?.")
+      candidates.push_back(token.span.begin);
   }
   std::string result;
   std::size_t at = 0;

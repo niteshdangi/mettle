@@ -1105,9 +1105,12 @@ Build minimal formatting/editor/debug support as the relevant syntax and IR land
 do not wait until I12 to preserve spans or discover uninspectable values.
 I12 is the completion gate, not the first tooling work.
 
-I12 status: `mettle fmt FILE... [--check]` implemented and verified (see
-`docs/tooling-and-packages.md` section 3): whitespace-only, token-based layout
-checked by token sequence, syntax-tree fingerprint and idempotence. `mettle run`,
+I12 status: `mettle fmt FILE... [--check]` was previously implemented and
+verified (see `docs/tooling-and-packages.md` section 3): whitespace-only,
+token-based layout checked by token sequence, syntax-tree fingerprint and
+idempotence. Full line breaking across call/parameter/generic lists, chained
+calls, binary expressions, constructors and match arms is implemented,
+unverified (not yet built). `mettle run`,
 `mettle test` and `mettle bench` are implemented and verified (driver
 `execute.cpp`, expansion `harness.cpp`; contract in tooling-and-packages sections
 3 and 4). T007's package-wide test/benchmark collection, qualified names,
@@ -1121,16 +1124,16 @@ tooling-and-packages section 4.1; tests `doc_writes_deterministic_html` and
 `doctests_run_isolated_examples` in `tests/packages.py`). `mettle lint` is
 implemented and verified on macOS arm64 (test `lint_reports_semantic_findings`):
 five semantic rules over checked facts, `--allow/--warn/--deny` and
-function-level `@allow/@warn/@deny` (tooling-and-packages section 3). Remaining
-I12 work includes full line breaking, resolved doc references and debugger
-workflows. JSON lint findings, conservative 100-byte wrapping, lexical dotted
-doc links and the static search index are implemented and verified on macOS
-arm64 (`fmt_`, `lint_` and `doc` cases of `tests/packages.py`); see their
-limitations in tooling-and-packages.
+function-level `@allow/@warn/@deny` (tooling-and-packages section 3). Resolved
+documentation references, dependency-package pages and unresolved-link warnings
+are implemented, unverified (not yet built). JSON lint findings and the static
+search index remain implemented and previously verified on macOS arm64
+(`lint_` and prior `doc` cases of `tests/packages.py`); this lane's full
+wrapping and resolved-link regressions have no current build/test evidence.
 Section 3 currently selects the five existing lint rules; it names no additional
 rules. The benchmark contract explicitly provides `black_box` and excludes
-handles, so no handle API was invented. Resolved cross-package references,
-full wrapping coverage and debugger metadata/workflows remain open. The language
+handles, so no handle API was invented. Debugger metadata/workflows remain
+open. The language
 server (`mettle lsp`, T005) is implemented
 and verified on macOS arm64 (test `language_server`); see
 `docs/tooling-and-packages.md` section 5. The milestone is not complete.

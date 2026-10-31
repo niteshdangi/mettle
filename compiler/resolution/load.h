@@ -46,9 +46,8 @@ struct Library {
   // The host must outlive the load.
   const expansion::Procedures *procedures = nullptr;
 };
-// An original source file in the selected package and its external-module
-// path. The driver uses these inputs to discover and overlay doctests without
-// changing files in the package.
+// An original source file and its external-module path. The driver uses these
+// inputs to discover and overlay doctests without changing package files.
 struct SourceModule {
   Source source;
   std::vector<std::string> path;
@@ -56,7 +55,8 @@ struct SourceModule {
 std::optional<Module> load(Source root, const SourceProvider &provider,
                            Diagnostics &diagnostics,
                            const Library &library = {},
-                           std::vector<SourceModule> *sourceModules = nullptr);
+                           std::vector<SourceModule> *sourceModules = nullptr,
+                           std::vector<SourceModule> *allSources = nullptr);
 std::optional<Module> load(const std::vector<Source> &sources,
                            Diagnostics &diagnostics,
                            const Library &library = {});

@@ -12,14 +12,15 @@ namespace mettle {
 //
 // The formatter works on the token stream and changes only whitespace:
 // indentation follows bracket nesting (4 spaces; a line continued inside
-// brackets or after a trailing operator gets one more level), horizontal
+// brackets, after a comma or trailing operator, or starting with `.` gets one
+// more level), horizontal
 // spacing is normalized around commas, colons, `::`, `.`, braces and
 // assignment/comparison operators (other gaps keep one space or none as
 // written), trailing whitespace is removed, blank lines are collapsed to at
-// most one and the file ends in exactly one newline. Line breaks are never
-// added or removed, so the newline-sensitive grammar sees the same
-// statements. Comments, text literals (including multi-line raw text) and
-// f-strings keep their bytes (line comments lose trailing whitespace).
+// most one and the file ends in exactly one newline. Long lines may break at
+// commas, selected binary operators and chained member access. Comments, text
+// literals (including multi-line raw text) and f-strings keep their bytes
+// (line comments lose trailing whitespace).
 //
 // The result is checked before it is returned: it must lex and parse, have
 // the same token sequence (kinds, texts and whether a line break separates

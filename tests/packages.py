@@ -495,21 +495,66 @@ def fmt_normalizes_layout_only():
     assert macro.read_text() == ("macro square {\n    ($x:expr) => { $x*$x };\n}\n"
                                  "fn main(): i32 {\n    square!(3) - 9\n}\n"), \
         macro.read_text()
-    long = evidence / "long-layout.mt"
-    long.write_text(
-        "fn total(first_value: i32, second_value: i32, third_value: i32, "
-        "fourth_value: i32, fifth_value: i32, sixth_value: i32): i32 {\n"
-        "    first_value + second_value + third_value + fourth_value + "
-        "fifth_value + sixth_value + first_value + second_value\n"
+    wide_left = "left_" + "x" * 60
+    wide_right = "right_" + "y" * 60
+    before = (
+        f"fn generic<{wide_left}, {wide_right}>() {{}}\n"
+        f"fn parameters({wide_left}: i32, {wide_right}: i32) {{}}\n"
+        "fn call_wrap() {\n"
+        f"    call({wide_left}, {wide_right})\n"
         "}\n"
-        "fn main(): i32 {\n"
-        "    total(100000000 + 100, 200000000 + 100, 300000000 + 100, "
-        "400000000 + 100, 500000000 + 100, 600000000 + 100)\n"
+        "fn chain_wrap() {\n"
+        f"    {wide_left}.first().long_method_name_that_is_long_enough()\n"
+        "}\n"
+        "fn binary_wrap() {\n"
+        f"    let sum = {wide_left} + {wide_right} + 1\n"
+        "}\n"
+        "fn collection_wrap() {\n"
+        f"    let values = [{wide_left}, {wide_right}]\n"
+        "}\n"
+        "fn record_wrap() {\n"
+        f"    let value = Record({wide_left}, {wide_right})\n"
+        "}\n"
+        "fn match_wrap(input: i32) {\n"
+        f"    match input {{ {wide_left} => 1, {wide_right} => 2 }}\n"
         "}\n")
+    expected_after = (
+        f"fn generic<{wide_left},\n"
+        f"    {wide_right}>() {{}}\n"
+        f"fn parameters({wide_left}: i32,\n"
+        f"    {wide_right}: i32) {{}}\n"
+        "fn call_wrap() {\n"
+        f"    call({wide_left},\n"
+        f"        {wide_right})\n"
+        "}\n"
+        "fn chain_wrap() {\n"
+        f"    {wide_left}.first()\n"
+        "        .long_method_name_that_is_long_enough()\n"
+        "}\n"
+        "fn binary_wrap() {\n"
+        f"    let sum = {wide_left} +\n"
+        f"        {wide_right} + 1\n"
+        "}\n"
+        "fn collection_wrap() {\n"
+        f"    let values = [{wide_left},\n"
+        f"        {wide_right}]\n"
+        "}\n"
+        "fn record_wrap() {\n"
+        f"    let value = Record({wide_left},\n"
+        f"        {wide_right})\n"
+        "}\n"
+        "fn match_wrap(input: i32) {\n"
+        f"    match input {{ {wide_left} => 1,\n"
+        f"            {wide_right} => 2 }}\n"
+        "}\n")
+    long = evidence / "long-layout.mt"
+    long.write_text(before)
+    expected = evidence / "long-layout.expected.mt"
+    expected.write_text(expected_after)
     invoke(["fmt", long])
     formatted = long.read_text()
+    assert formatted == expected.read_text(), formatted
     assert all(len(line) <= 100 for line in formatted.splitlines()), formatted
-    assert formatted.count("\n") > 6, formatted
     invoke(["fmt", long, "--check"])
     assert long.read_text() == formatted
 
@@ -826,12 +871,30 @@ def doc_writes_deterministic_html():
     broken = evidence / "broken.mt"
     broken.write_text("pub fn (\n")
     invoke(["doc", broken, "-o", evidence / "doc-c"], 1, "error[parse]")
-    linked = evidence / "linked.mt"
-    linked.write_text("/// Refers to `maths.add`.\n"
-                      "pub fn example(value: maths.add) {}\n")
-    invoke(["doc", source, linked, "-o", evidence / "doc-links"])
-    page = (evidence / "doc-links" / "linked.html").read_text()
-    assert page.count('<a href="maths.html#add">maths.add</a>') == 2, page
+
+
+def doc_resolves_dependency_links_and_warns():
+    app = packages("path-dependency/app")
+    source = app / "src/main.mt"
+    source.write_text(
+        "/// Links: [mathlib.twice.double], `mathlib.answer`, and "
+        "a missing [missing.item].\n" +
+        source.read_text())
+    mathlib_source = app.parent / "mathlib/src/lib.mt"
+    mathlib_text = mathlib_source.read_text()
+    assert "pub fn answer" in mathlib_text
+    mathlib_source.write_text(mathlib_text.replace(
+        "pub fn answer",
+        "/// Transitive dependency link: [units.base].\npub fn answer"))
+    output = evidence / "doc-package"
+    text = invoke(["doc", app, "--offline", "--private", "-o", output],
+                  0, "warning[doc-link]")
+    assert "unresolved documentation reference 'missing.item'" in text, text
+    page = (output / "main.html").read_text()
+    assert '<a href="mathlib.twice.html#double">mathlib.twice.double</a>' in page
+    assert '<a href="mathlib.html#answer">mathlib.answer</a>' in page
+    math_page = (output / "mathlib.html").read_text()
+    assert '<a href="units.html#base">units.base</a>' in math_page
 
 
 def doctests_run_isolated_examples():
@@ -1068,7 +1131,9 @@ CASES = [path_dependency, missing_lock_locked, lock_corruption,
          run_forwards_args_and_exit_status,
          test_reports_pass_fail_ignored_and_isolates_panics,
          test_filter_exact, bench_reports_timing, fmt_normalizes_layout_only,
-         doc_writes_deterministic_html, doctests_run_isolated_examples,
+         doc_writes_deterministic_html,
+         doc_resolves_dependency_links_and_warns,
+         doctests_run_isolated_examples,
          lint_reports_semantic_findings, debug_info, language_server,
          test_json_timeout_and_modules]
 

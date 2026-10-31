@@ -107,6 +107,7 @@ private:
     Doc &target = inside ? *inner : outer;
     target.lines.emplace_back(text);
     target.numbers.push_back(lineOf(token.span.begin));
+    target.spans.push_back(token.span);
   }
 
   void skipBlank(Doc &doc) {
@@ -285,6 +286,10 @@ private:
     }
     auto end = headerEnd(begin, hasBody(item.kind) && !member);
     item.signature = text(begin, end);
+    auto signatureEnd =
+        end > begin ? tokens[end - 1].span.end : tokens[begin].span.end;
+    item.span = {tokens[begin].span.begin, signatureEnd,
+                 tokens[begin].span.source};
     item.line = lineOf(tokens[begin].span.begin);
     bool plain = item.kind != Kind::Implementation;
     item.name = j < tokens.size() && tokens[j].kind == TokenKind::Word && plain
@@ -318,6 +323,7 @@ Page extract(const Source &source, std::string name, bool includePrivate) {
   Page page;
   page.name = std::move(name);
   page.path = source.path;
+  page.span = {0, source.text.size(), source.id};
   Extractor(source, includePrivate).run(page);
   return page;
 }

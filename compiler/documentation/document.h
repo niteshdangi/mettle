@@ -1,6 +1,7 @@
 #pragma once
 
 #include "source/source.h"
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -10,6 +11,7 @@ namespace mettle::documentation {
 struct Doc {
   std::vector<std::string> lines;
   std::vector<std::size_t> numbers;
+  std::vector<Span> spans;
   bool empty() const { return lines.empty(); }
 };
 
@@ -35,6 +37,9 @@ enum class Kind {
 struct Item {
   Kind kind = Kind::Function;
   std::string name, signature;
+  std::string canonical;
+  Span span;
+  std::uint32_t scope = 0;
   std::vector<std::string> attributes;
   Doc doc;
   std::size_t line = 0;
@@ -45,6 +50,9 @@ struct Item {
 // source order.
 struct Page {
   std::string name, path;
+  std::string canonical;
+  Span span;
+  std::uint32_t scope = 0;
   Doc doc;
   std::vector<Item> items;
 };

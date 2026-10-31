@@ -1,6 +1,9 @@
 #include "driver/document.h"
 #include "documentation/html.h"
 #include "expansion/macros.h"
+#include "packages/plan.h"
+#include "resolution/load.h"
+#include "resolution/resolve.h"
 #include "support/path.h"
 #include "syntax/parser.h"
 #include <algorithm>
@@ -8,7 +11,10 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <set>
+#include <string_view>
+#include <utility>
 
 namespace mettle::driver {
 namespace {
@@ -71,49 +77,318 @@ bool write(const fs::path &path, const std::string &content) {
   out.flush();
   return static_cast<bool>(out);
 }
+
+bool packageInput(const std::string &argument) {
+  std::error_code error;
+  auto path = fs::path(argument);
+  if (fs::is_regular_file(path, error))
+    return path.filename() == "Mettle.toml";
+  error.clear();
+  return fs::is_directory(path, error) &&
+         fs::is_regular_file(path / "Mettle.toml", error);
+}
+
+std::string joined(const std::vector<std::string> &path, std::string_view sep) {
+  std::string result;
+  for (const auto &part : path)
+    result += (result.empty() ? "" : std::string(sep)) + part;
+  return result;
+}
+
+resolution::Namespace itemNamespace(documentation::Kind kind) {
+  using Kind = documentation::Kind;
+  switch (kind) {
+  case Kind::Function:
+  case Kind::Constant:
+  case Kind::Variant:
+    return resolution::Namespace::Value;
+  case Kind::Type:
+  case Kind::Union:
+  case Kind::Enum:
+  case Kind::Interface:
+  case Kind::Alias:
+    return resolution::Namespace::Type;
+  case Kind::Module:
+    return resolution::Namespace::Module;
+  case Kind::Implementation:
+  case Kind::Macro:
+    return resolution::Namespace::Value;
+  }
+  return resolution::Namespace::Value;
+}
+
+void resolveItems(std::vector<documentation::Item> &items,
+                  const resolution::Resolution &names,
+                  std::set<std::string> &documented,
+                  std::string_view owner = {}) {
+  for (auto &item : items) {
+    item.scope = names.moduleOf(item.span);
+    bool associated =
+        item.kind == documentation::Kind::Variant ||
+        (!owner.empty() && item.kind == documentation::Kind::Function);
+    bool resolvable = item.kind != documentation::Kind::Field &&
+                      item.kind != documentation::Kind::Implementation &&
+                      item.kind != documentation::Kind::Macro;
+    if (resolvable) {
+      auto spelling = associated ? std::string(owner) + "::" + item.name
+                                 : item.name;
+      auto canonical =
+          names.lookup(item.scope, spelling,
+                       itemNamespace(item.kind), item.span, nullptr);
+      if (canonical) {
+        item.canonical = *canonical;
+        documented.insert(*canonical);
+        if (item.kind == documentation::Kind::Module)
+          for (std::size_t module = 0; module < names.modules().size();
+               ++module)
+            if (names.modules()[module].canonical == *canonical) {
+              item.scope = static_cast<std::uint32_t>(module);
+              break;
+            }
+      }
+    }
+    auto memberOwner =
+        item.kind == documentation::Kind::Type ||
+                item.kind == documentation::Kind::Union ||
+                item.kind == documentation::Kind::Enum ||
+                item.kind == documentation::Kind::Interface
+            ? std::string_view(item.name)
+            : std::string_view{};
+    resolveItems(item.members, names, documented, memberOwner);
+  }
+}
+
+void replaceDots(std::string &path) {
+  for (std::size_t at = path.find('.'); at != std::string::npos;
+       at = path.find('.', at + 2))
+    path.replace(at, 1, "::");
+}
 } // namespace
 
 int document(const Options &options) {
-  std::vector<std::string> arguments{options.input};
-  arguments.insert(arguments.end(), options.moreInputs.begin(),
-                   options.moreInputs.end());
-  std::vector<Input> inputs;
-  int status = 0;
-  for (const auto &argument : arguments)
-    if (!gather(argument, inputs))
-      status = 1;
-  std::stable_sort(
-      inputs.begin(), inputs.end(), [](const Input &left, const Input &right) {
-        return left.file.generic_string() < right.file.generic_string();
-      });
   std::vector<documentation::Page> pages;
-  std::set<std::string> seen;
-  for (const auto &input : inputs) {
-    auto display = input.file.lexically_normal().generic_string();
-    if (!seen.insert(display).second)
-      continue;
-    std::ifstream in(input.file, std::ios::binary);
-    std::string text((std::istreambuf_iterator<char>(in)),
-                     std::istreambuf_iterator<char>());
-    if (!in && !in.eof()) {
-      std::cerr << "mettle: error[io]: cannot read " << display << '\n';
-      status = 1;
-      continue;
+  Diagnostics diagnostics;
+  std::map<SourceId, Source> sources;
+  std::set<SourceId> resolvedSources;
+  std::shared_ptr<const resolution::Resolution> names;
+  std::set<std::string> loadedPaths;
+  int status = 0;
+  bool package = packageInput(options.input);
+  if (package) {
+    auto outcome = packages::plan(
+        {options.input, options.bin, options.features, options.defaultFeatures,
+         options.locked, options.offline, options.registries},
+        diagnostics);
+    if (!outcome.plan) {
+      diagnostics.print(outcome.fallback, std::cerr);
+      return 1;
     }
-    // Documentation is published only for a source that parses.
-    Source source{display, text};
-    Diagnostics diagnostics;
-    SourceId next = source.id + 1;
-    auto expanded =
-        expansion::expandMacros(source, diagnostics, [&] { return next++; });
-    parse(expanded ? *expanded : source, diagnostics);
-    if (!diagnostics.empty()) {
-      diagnostics.print(source, std::cerr);
-      status = 1;
-      continue;
+    auto read = [](const std::string &path) -> std::optional<Source> {
+      std::ifstream in(path, std::ios::binary);
+      if (!in)
+        return std::nullopt;
+      std::string text((std::istreambuf_iterator<char>(in)),
+                       std::istreambuf_iterator<char>());
+      if (!in && !in.eof())
+        return std::nullopt;
+      std::error_code error;
+      auto canonical = fs::canonical(path, error);
+      return Source{error ? fs::path(path).lexically_normal().generic_string()
+                          : canonical.generic_string(),
+                    std::move(text)};
+    };
+    auto root = read(outcome.plan->root);
+    if (!root) {
+      std::cerr << "mettle: error[io]: cannot read " << outcome.plan->root
+                << '\n';
+      return 1;
     }
-    pages.push_back(
-        documentation::extract(source, input.name, options.documentPrivate));
+    resolution::SourceProvider provider =
+        [&](const std::string &path) { return read(path); };
+    resolution::Library library;
+    library.directory = options.libraryDirectory;
+    library.freestanding = options.freestanding;
+    library.configuration.features =
+        std::set<std::string>(outcome.plan->features.begin(),
+                              outcome.plan->features.end());
+    for (const auto &mount : outcome.plan->mounts) {
+      std::set<std::string> features(mount.features.begin(),
+                                     mount.features.end());
+      library.packages.push_back(
+          {mount.name, mount.source, std::move(features)});
+    }
+    std::vector<resolution::SourceModule> loadedSources;
+    auto tree = resolution::load(*root, provider, diagnostics, library, nullptr,
+                                 &loadedSources);
+    if (tree)
+      names = resolution::resolve(*tree, diagnostics);
+    if (!tree || !names || !diagnostics.empty()) {
+      diagnostics.print(*root, std::cerr);
+      return 1;
+    }
+    for (const auto &loaded : loadedSources) {
+      auto page = joined(loaded.path, ".");
+      if (page.empty()) {
+        std::error_code error;
+        auto sourceRoot = fs::path(outcome.plan->root).parent_path();
+        page = pageName(fs::relative(loaded.source.path, sourceRoot, error));
+        if (error)
+          page = pageName(fs::path(loaded.source.path).filename());
+      }
+      auto extracted = documentation::extract(
+          loaded.source, std::move(page), options.documentPrivate);
+      extracted.canonical = joined(loaded.path, "::");
+      for (std::size_t module = 0; module < names->modules().size(); ++module)
+        if (names->modules()[module].canonical == extracted.canonical) {
+          extracted.scope = static_cast<std::uint32_t>(module);
+          break;
+        }
+      sources.emplace(loaded.source.id, loaded.source);
+      resolvedSources.insert(loaded.source.id);
+      loadedPaths.insert(
+          fs::path(loaded.source.path).lexically_normal().generic_string());
+      pages.push_back(std::move(extracted));
+    }
+    SourceId nextSource =
+        sources.empty()
+            ? 0
+            : static_cast<SourceId>(sources.rbegin()->first + 1);
+    std::vector<Input> extraInputs;
+    for (const auto &argument : options.moreInputs)
+      if (!gather(argument, extraInputs))
+        status = 1;
+    std::stable_sort(extraInputs.begin(), extraInputs.end(),
+                     [](const Input &left, const Input &right) {
+                       return left.file.generic_string() <
+                              right.file.generic_string();
+                     });
+    for (const auto &input : extraInputs) {
+      auto identity =
+          input.file.lexically_normal().generic_string();
+      if (!loadedPaths.insert(identity).second)
+        continue;
+      auto source = read(identity);
+      if (!source) {
+        std::cerr << "mettle: error[io]: cannot read " << identity << '\n';
+        status = 1;
+        continue;
+      }
+      source->id = nextSource++;
+      auto expanded = expansion::expandMacros(*source, diagnostics,
+                                              [&] { return nextSource++; });
+      parse(expanded ? *expanded : *source, diagnostics);
+      if (!diagnostics.empty()) {
+        diagnostics.print(*source, std::cerr);
+        diagnostics = {};
+        status = 1;
+        continue;
+      }
+      sources.emplace(source->id, *source);
+      pages.push_back(documentation::extract(
+          *source, input.name, options.documentPrivate));
+    }
+  } else {
+    if (options.packageOptions) {
+      std::cerr << "mettle: error[package]: package options need a package "
+                   "directory or Mettle.toml\n";
+      return 2;
+    }
+    std::vector<std::string> arguments{options.input};
+    arguments.insert(arguments.end(), options.moreInputs.begin(),
+                     options.moreInputs.end());
+    std::vector<Input> inputs;
+    for (const auto &argument : arguments)
+      if (!gather(argument, inputs))
+        status = 1;
+    std::stable_sort(inputs.begin(), inputs.end(),
+                     [](const Input &left, const Input &right) {
+                       return left.file.generic_string() <
+                              right.file.generic_string();
+                     });
+    std::set<std::string> seen;
+    for (const auto &input : inputs) {
+      auto display = input.file.lexically_normal().generic_string();
+      if (!seen.insert(display).second)
+        continue;
+      std::ifstream in(input.file, std::ios::binary);
+      std::string text((std::istreambuf_iterator<char>(in)),
+                       std::istreambuf_iterator<char>());
+      if (!in && !in.eof()) {
+        std::cerr << "mettle: error[io]: cannot read " << display << '\n';
+        status = 1;
+        continue;
+      }
+      Source source{display, std::move(text)};
+      SourceId next = source.id + 1;
+      auto expanded =
+          expansion::expandMacros(source, diagnostics, [&] { return next++; });
+      parse(expanded ? *expanded : source, diagnostics);
+      if (!diagnostics.empty()) {
+        diagnostics.print(source, std::cerr);
+        status = 1;
+        diagnostics = {};
+        continue;
+      }
+      source.id = static_cast<SourceId>(sources.size());
+      sources.emplace(source.id, source);
+      pages.push_back(documentation::extract(
+          source, input.name, options.documentPrivate));
+    }
+  }
+  std::set<std::string> documented;
+  if (names)
+    for (auto &page : pages)
+      if (resolvedSources.contains(page.span.source))
+        resolveItems(page.items, *names, documented);
+  for (const auto &page : pages)
+    if (!page.canonical.empty())
+      documented.insert(page.canonical);
+  documentation::ReferenceResolver resolver;
+  if (names) {
+    resolver = [&](std::uint32_t scope, Span span,
+                   std::string_view spelling) -> std::optional<std::string> {
+      std::string canonicalPath(spelling);
+      replaceDots(canonicalPath);
+      std::set<std::string> matches;
+      for (auto space : {resolution::Namespace::Type,
+                         resolution::Namespace::Value,
+                         resolution::Namespace::Module})
+        if (auto resolved =
+                names->lookup(scope, canonicalPath, space, span, nullptr))
+          matches.insert(*resolved);
+      auto warn = [&](std::string message) {
+        auto source = sources.find(span.source);
+        if (source != sources.end()) {
+          Diagnostics::SourceContext context(diagnostics, source->second);
+          diagnostics.warning("doc-link", span, std::move(message));
+        }
+      };
+      if (matches.size() != 1) {
+        warn("unresolved documentation reference '" + std::string(spelling) +
+             "'");
+        return std::nullopt;
+      }
+      const auto &target = *matches.begin();
+      if (!documented.contains(target)) {
+        warn("documentation reference '" + std::string(spelling) +
+             "' has no generated page");
+        return std::nullopt;
+      }
+      return target;
+    };
+  } else {
+    resolver = [&](std::uint32_t, Span span,
+                   std::string_view spelling) -> std::optional<std::string> {
+      auto source = sources.find(span.source);
+      if (source != sources.end()) {
+        Diagnostics::SourceContext context(diagnostics, source->second);
+        diagnostics.warning(
+            "doc-link", span,
+            "cannot resolve documentation reference '" +
+                std::string(spelling) + "' without a package name graph");
+      }
+      return std::nullopt;
+    };
   }
   fs::path directory = options.output;
   if (directory.empty()) {
@@ -131,12 +406,16 @@ int document(const Options &options) {
               << ": " << error.message() << '\n';
     return 1;
   }
-  for (const auto &file : documentation::render(pages))
+  for (const auto &file : documentation::render(pages, resolver))
     if (!write(directory / file.name, file.content)) {
       std::cerr << "mettle: error[io]: cannot write "
                 << (directory / file.name).string() << '\n';
       return 1;
     }
+  if (!diagnostics.empty()) {
+    auto source = sources.empty() ? Source{} : sources.begin()->second;
+    diagnostics.print(source, std::cerr);
+  }
   std::cout << "mettle: documented " << pages.size()
             << (pages.size() == 1 ? " module" : " modules") << " into "
             << (directory / "index.html").generic_string() << '\n';
