@@ -60,6 +60,7 @@ After fixing each one, restore the test that was weakened to work around it.
 - List.retain takes `fn`, not `mut fn`, so stateful predicates are rejected.
   `i13_slice_collections` works around this with a keep field.
 - by_ref().take_n consumes the view. The iter-followup test was rewritten.
+- `heap Text` has no constructor (Rust `Box<str>` from `&str`/`String`).
 - The filter+map drop-count case was replaced by filter_map in
   iterator_adapter_drop_count.
 

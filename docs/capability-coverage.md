@@ -98,7 +98,7 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | L012 | E | `tests/source/fail/machine-union-read-requires-unsafe.mt`; `tests/source/run/machine-union-overlap-safe-write-and-delayed-initialization.mt` (ASan) | macOS ARM64 evidenced; Linux/Windows not qualified. |
 | L013 | E | `tests/source/run/unit-never.mt` | `compiler/semantics`; check remaining divergent control-flow combinations. |
 | L014 | E | `tests/source/run/machine-raw-pointers-and-unsafe-callable-capabilities.mt`; `tests/source/run/safe-function-item-coerces-to-unsafe-pointer.mt` | macOS ARM64 evidenced; Linux/Windows not qualified. |
-| L015 | P | `tests/source/run/slice-metadata-reborrowing-and-unsized-tails.mt` | `compiler/types`, `compiler/backend/llvm`; metadata-preserving conversion/owner closure remains incomplete. |
+| L015 | E | `tests/source/run/slice-metadata-reborrowing-and-unsized-tails.mt`; `tests/source/run/unsized-slice-and-tail-owners-preserve-metadata.mt` (ASan; heap/shared/local shared slices and struct tails) | `heap Text` construction is library work (docs/i13-library.md). macOS ARM64 evidenced; Linux/Windows not qualified. |
 | L016 | E | `tests/source/run/array-dynamic-zero-length-bound.mt`; `tests/source/run/array-layout-pointer-iteration-drop-closure.mt` | macOS ARM64 evidenced; Linux/Windows not qualified. |
 | L017 | E | `tests/source/run/aliases-and-static-associated-functions.mt` | `compiler/resolution`; close the full alias identity/use matrix. |
 | L018 | E | `tests/source/fail/no-implicit-numeric-widening.mt`; `tests/source/fail/no-implicit-retain-of-shared-owner.mt`; `tests/source/fail/no-implicit-borrow-to-owner-upgrade.mt` | Erasure requested by an expected type annotation is explicit. macOS ARM64 evidenced; Linux/Windows not qualified. |
@@ -192,7 +192,7 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | T006 | E | `tests/packages.py::debug_info`; `tests/packages.py::debugger_workflow` | `compiler/backend/llvm/debug.cpp`, `tools/debug`; expanded workflow/LLDB checks pass on macOS arm64; Windows CodeView/PDB is excluded and not qualified. |
 | T007 | E | `tests/packages.py::test_reports_pass_fail_ignored_and_isolates_panics`; `tests/packages.py::bench_reports_timing` | `compiler/driver/execute.cpp`; package-wide collection and doctest cases are evidenced; finish the remaining runner contract. |
 
-Inventory totals: **84 evidenced, 22 partial, 1 missing (A009, deferred to
+Inventory totals: **85 evidenced, 21 partial, 1 missing (A009, deferred to
 I17)**. Remaining partial rows are I13
 operation-closure obligations. Full operation closure is a separate, still
 open obligation: `docs/baseline/audit-summary.json` reports 106,125 canonical
