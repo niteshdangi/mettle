@@ -282,23 +282,29 @@ generic bounds, macro results or ABI layout.
 
 `mettle fmt FILE... [--check]` is implemented and verified: it
 works on the token stream (`syntax/format.{h,cpp}`) and changes only whitespace.
-Indentation is 4 spaces per bracket level (a line continued inside brackets, after
-a trailing operator or starting with `.` gets one more level); spacing is
+Indentation is 4 spaces per bracket level (a continuation after a comma or
+trailing operator, or starting with `.`, gets one more level where applicable);
+spacing is
 normalized after `,` `;` `:`, around `=`, comparison/compound-assignment/`=>`/`->`/`??`,
 inside one-line `{ }` and removed around `.` and inside `()`/`[]`; other
 gaps (`<`, `-`, `&`, ...) keep one space or none as written. Trailing whitespace
 goes, blank-line runs collapse to one (none after `{` or before `}`), the file
-ends in one newline. The wrapping path (implemented and verified on macOS arm64) attempts a 100-byte line width at commas inside parentheses and selected
-binary operators. It leaves files with macro definitions/invocations,
-f-strings or multiline tokens, and lines with comments, unwrapped. Long
-unbreakable segments may exceed the width; when wrapping changes the parse it
-falls back to the unwrapped layout. Comments, text literals and macro gaps
-remain intact. Each result is re-lexed and re-parsed and must have
+ends in one newline. Full line breaking is implemented, unverified (not yet
+built): it targets 100 bytes and can break call and parameter lists, generic
+lists, chained member calls, binary expressions, struct/collection
+constructors and match arms. Continuation indentation follows the bracket
+nesting and continuation rules above. It leaves files with macro
+definitions/invocations, f-strings or multiline tokens, and lines with comments,
+unwrapped. Long unbreakable segments may exceed the width; when wrapping
+changes the parse it falls back to the unwrapped layout. Comments, text
+literals and macro gaps remain intact. Each result is re-lexed and re-parsed and must have
 the same token sequence, the same syntax-tree fingerprint and be a fixed point;
 otherwise the file is reported and left untouched. Files that define
-declarative macros are parsed after expansion for both fingerprints. Over the
-source corpus every formatted run case still passes and formatted fail cases
-report the same phase, line and message (columns may move). `--check` prints each file
+declarative macros are parsed after expansion for both fingerprints. In the
+prior formatter verification, every source-corpus run case passed and
+formatted fail cases reported the same phase, line and message (columns may
+move); this expanded wrapping implementation has not been built or tested.
+`--check` prints each file
 that would change with its first differing line and exits 1 without writing;
 otherwise changed files are replaced atomically (temporary file and rename).
 
@@ -348,7 +354,7 @@ mettle test  FILE|PACKAGE [FILTER...] [--exact] [--include-ignored | --ignored]
              [--jobs N] [--timeout SECONDS] [--format human|json] [build options]
 mettle bench FILE|PACKAGE [FILTER...] [--exact] [--include-ignored]
              [--format human|json] [build options]
-mettle doc   [PATH...] [-o DIR] [--private]
+mettle doc   [PATH...] [-o DIR] [--private] [package options]
 mettle test  FILE|PACKAGE --doc [FILTER...]
 ```
 
@@ -430,7 +436,10 @@ Benchmark runners do not weaken the performance protocol's registered metrics.
 
 ### 4.1. Documentation comments, `mettle doc` and doctests
 
-Status: implemented and verified on macOS arm64 (packages cases `doc_writes_deterministic_html`, `doctests_run_isolated_examples`).
+Status: documentation generation and doctests were previously verified on
+macOS arm64 (packages cases `doc_writes_deterministic_html`,
+`doctests_run_isolated_examples`). Resolved reference links and dependency
+package pages are implemented, unverified (not yet built).
 
 `///` documents the item that follows it (before or between its attributes) and
 `//!` the enclosing file or inline module. The lexer already keeps comments as
@@ -454,11 +463,16 @@ and sorted by name; fields, variants and the members of an interface or of an
 omitted. A signature is the declaration header exactly as written
 (whitespace collapsed, no body) with its attributes, so an omitted result is
 not guessed. Output is deterministic (no timestamps, stable order, stale files
-are not removed). Not yet provided: resolved cross-package references, source
-hyperlinks (the page shows `file:line`) and inferred result types. The
-cross-reference and search path is implemented and verified on macOS arm64: dotted names matching unambiguous documented items are linked
-lexically in signatures and prose, including inline code. This is not semantic
-resolution: aliases, imports and separately generated packages are not resolved.
+are not removed). Documentation references use checked name resolution:
+`[name]` references and dotted paths in signatures and prose, including inline
+code, link to the resolved documented item. Aliases and imports follow the
+same visibility and lookup rules as source names. When `mettle doc` receives a
+package directory or manifest, dependency packages are included in the site
+and cross-package links target their pages. Unresolved or inaccessible
+references, and resolved items without generated pages, produce
+`warning[doc-link]`. Standalone paths without a package graph cannot resolve
+names and report references as unresolved. Source hyperlinks (the page shows
+`file:line`) and inferred result types are not provided.
 An index page searches deterministic item names using local `search-index.json`,
 `search-index.js` and `search.js`; the JS copy allows search when opened from
 the filesystem without a local web server. Fenced code remains unlinked.

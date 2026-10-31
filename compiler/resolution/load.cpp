@@ -32,9 +32,10 @@ void merge(std::vector<Item> &destination, std::vector<Item> source,
 class Loader {
 public:
   Loader(const SourceProvider &provider, Diagnostics &diagnostics,
-         const Library &library, std::vector<SourceModule> *sourceModules)
+         const Library &library, std::vector<SourceModule> *sourceModules,
+         std::vector<SourceModule> *allSources)
       : provider(provider), diagnostics(diagnostics), library(library),
-        sourceModules(sourceModules) {}
+        sourceModules(sourceModules), allSources(allSources) {}
 
   std::optional<Module> run(Source root) {
     auto directory = fs::path(root.path).parent_path();
@@ -93,6 +94,7 @@ private:
   Diagnostics &diagnostics;
   const Library &library;
   std::vector<SourceModule> *sourceModules;
+  std::vector<SourceModule> *allSources;
   Module result;
   std::unordered_set<std::string> loaded;
   SourceId nextSource = 0;
@@ -472,6 +474,8 @@ private:
     source.id = nextSource++;
     if (rootPackageSource && sourceModules)
       sourceModules->push_back({source, prefix});
+    if (allSources && (rootPackageSource || currentPackage))
+      allSources->push_back({source, prefix});
     if (!currentRoot.empty())
       owner[source.id] = currentRoot;
     // Declarative macros expand on the token level, before parsing.
@@ -581,10 +585,11 @@ private:
 
 std::optional<Module> load(Source root, const SourceProvider &provider,
                            Diagnostics &diagnostics, const Library &library,
-                           std::vector<SourceModule> *sourceModules) {
+                           std::vector<SourceModule> *sourceModules,
+                           std::vector<SourceModule> *allSources) {
   if (!diagnostics.empty())
     return std::nullopt;
-  return Loader(provider, diagnostics, library, sourceModules)
+  return Loader(provider, diagnostics, library, sourceModules, allSources)
       .run(std::move(root));
 }
 
