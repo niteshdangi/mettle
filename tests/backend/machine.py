@@ -11,6 +11,7 @@ from pathlib import Path
 
 
 ARM64 = globals().get("TARGET_ARCH", platform.machine()).lower() in ("aarch64", "arm64")
+DARWIN_ARM64 = platform.system() == "Darwin" and ARM64
 VECTOR = "core.arch.aarch64.int32x4_t" if ARM64 else "core.arch.x86_64.__m128i"
 MACHINE_FREESTANDING_SOURCE = ("""
 @export_name("mettle_core_count")
@@ -335,6 +336,213 @@ unsafe extern "C" fn acquire_flag(context: ptr<mut Unit>): u32 {
 }
 """
 
+DARWIN_ABI_COMMON = """
+@layout(C)
+copy type DarwinExportPair { first:i32; second:i32 }
+@export_name("mettle_export_pair")
+extern "C" fn darwin_export_pair(value:DarwinExportPair):DarwinExportPair {
+    DarwinExportPair(value.first + 1,value.second + 1)
+}
+@export_name("mettle_darwin_exported_increment")
+extern "C" fn darwin_exported_increment(value:i32):i32 { value + 1 }
+"""
+
+DARWIN_ARM64_SOURCES = ({
+    "darwin-arm64-c-hfa-hva-large-and-varargs": """
+@layout(C)
+copy type DarwinHfa3 { first:f64; second:f64; third:f64 }
+@layout(C)
+copy type DarwinHva2 {
+    first:core.arch.aarch64.int32x4_t;
+    second:core.arch.aarch64.int32x4_t
+}
+@layout(C)
+copy type DarwinLarge { first:i64; second:i64; third:i64 }
+unsafe extern "C" fn hfa_callback(value:DarwinHfa3):DarwinHfa3 {
+    DarwinHfa3(value.first + 1.0f64,value.second + 1.0f64,
+               value.third + 1.0f64)
+}
+unsafe extern "C" fn hva_callback(value:DarwinHva2):DarwinHva2 {
+    DarwinHva2(
+        core.arch.aarch64.vaddq_s32(
+            value.first,core.arch.aarch64.vdupq_n_s32(3)),
+        core.arch.aarch64.vaddq_s32(
+            value.second,core.arch.aarch64.vdupq_n_s32(4)))
+}
+unsafe extern "C" fn large_callback(value:DarwinLarge):DarwinLarge {
+    DarwinLarge(value.first + 1i64,value.second + 1i64,value.third + 1i64)
+}
+unsafe extern "C" fn inspect(count:i32,args: ...):i32 {
+    let hfa = args.arg<DarwinHfa3>()
+    let hva = args.arg<DarwinHva2>()
+    let large = args.arg<DarwinLarge>()
+    if count == 3 && hfa.first == 1.0f64 && hfa.second == 2.0f64 &&
+       hfa.third == 3.0f64 &&
+       core.arch.aarch64.vgetq_lane_s32(hva.first,0) == 4 &&
+       core.arch.aarch64.vgetq_lane_s32(hva.second,3) == 5 &&
+       large.first == 10i64 && large.second == 12i64 && large.third == 20i64 {
+        42
+    } else { -1 }
+}
+extern "C" {
+    unsafe fn mettle_c_darwin_hfa(value:DarwinHfa3):DarwinHfa3;
+    unsafe fn mettle_c_darwin_hfa_callback(
+        callback:unsafe extern "C" fn(DarwinHfa3):DarwinHfa3,
+        value:DarwinHfa3):DarwinHfa3;
+    unsafe fn mettle_c_darwin_hva(value:DarwinHva2):DarwinHva2;
+    unsafe fn mettle_c_darwin_hva_callback(
+        callback:unsafe extern "C" fn(DarwinHva2):DarwinHva2,
+        value:DarwinHva2):DarwinHva2;
+    unsafe fn mettle_c_darwin_large_callback(
+        callback:unsafe extern "C" fn(DarwinLarge):DarwinLarge):i32;
+    unsafe fn mettle_c_darwin_variadic(count:i32,...):i32;
+    unsafe fn mettle_c_darwin_variadic_definition(
+        callback:unsafe extern "C" fn(i32,...):i32):i32;
+}
+fn main() {
+    unsafe {
+        let hfa = mettle_c_darwin_hfa(DarwinHfa3(10.0f64,12.0f64,20.0f64))
+        let hfa_callback_result = mettle_c_darwin_hfa_callback(
+            hfa_callback,DarwinHfa3(1.0f64,2.0f64,3.0f64))
+        let initial = core.arch.aarch64.vdupq_n_s32(20)
+        let hva = mettle_c_darwin_hva(DarwinHva2(initial,initial))
+        let hva_callback_result = mettle_c_darwin_hva_callback(
+            hva_callback,DarwinHva2(initial,initial))
+        let large_callback_ok = mettle_c_darwin_large_callback(large_callback)
+        let c_varargs_ok = mettle_c_darwin_variadic(
+            3,DarwinHfa3(1.0f64,2.0f64,3.0f64),
+            DarwinHva2(core.arch.aarch64.vdupq_n_s32(4),
+                       core.arch.aarch64.vdupq_n_s32(5)),
+            DarwinLarge(10i64,12i64,20i64))
+        let callback_varargs_ok = mettle_c_darwin_variadic_definition(inspect)
+        if hfa.first == 11.0f64 && hfa.second == 13.0f64 &&
+           hfa.third == 21.0f64 &&
+           hfa_callback_result.first == 2.0f64 &&
+           hfa_callback_result.third == 4.0f64 &&
+           core.arch.aarch64.vgetq_lane_s32(hva.first,0) == 21 &&
+           core.arch.aarch64.vgetq_lane_s32(hva.second,3) == 22 &&
+           core.arch.aarch64.vgetq_lane_s32(hva_callback_result.first,0) == 23 &&
+           core.arch.aarch64.vgetq_lane_s32(hva_callback_result.second,3) == 24 &&
+           large_callback_ok == 1 && c_varargs_ok == 1 &&
+           callback_varargs_ok == 42 { 0 } else { 1 }
+    }
+}
+""",
+    "darwin-arm64-c-layout-alignment-packed-and-offsets": """
+@layout(C)
+copy type DarwinLayoutLeaf { tag:u8; value:u64 }
+@layout(C)
+@align(32)
+copy type DarwinLayout {
+    prefix:u8;
+    leaf:DarwinLayoutLeaf;
+    tail:u32
+}
+@layout(C)
+@packed(1)
+copy type DarwinPacked { tag:u8; payload:u32 }
+extern "C" {
+    unsafe fn mettle_c_darwin_layout_metrics(
+        size:usize,alignment:usize,leaf_offset:usize,value_offset:usize,
+        tail_offset:usize):i32;
+    unsafe fn mettle_c_darwin_packed_echo(value:DarwinPacked):DarwinPacked;
+}
+fn main() {
+    let value = DarwinLayout(1u8,DarwinLayoutLeaf(2u8,3u64),4u32)
+    let base = core.ptr.from_ref(value).cast<u8>()
+    let leaf = core.ptr.from_ref(value.leaf).cast<u8>()
+    let nested_value = core.ptr.from_ref(value.leaf.value).cast<u8>()
+    let tail = core.ptr.from_ref(value.tail).cast<u8>()
+    let leaf_offset = unsafe { leaf.byte_offset_from_unsigned(base) }
+    let value_offset = unsafe { nested_value.byte_offset_from_unsigned(base) }
+    let tail_offset = unsafe { tail.byte_offset_from_unsigned(base) }
+    let metrics_match = unsafe {
+        mettle_c_darwin_layout_metrics(
+            core.mem.size_of<DarwinLayout>(),
+            core.mem.align_of<DarwinLayout>(),
+            leaf_offset,value_offset,tail_offset)
+    }
+    let packed = unsafe { mettle_c_darwin_packed_echo(DarwinPacked(7u8,41u32)) }
+    if metrics_match == 1 && packed.tag == 7u8 && packed.payload == 42u32 &&
+       core.mem.size_of<DarwinPacked>() == 5usize { 0 } else { 1 }
+}
+""",
+"darwin-arm64-c-export-link-and-relocation": """
+extern "C" {
+unsafe fn mettle_c_darwin_exported_call(value:i32):i32;
+}
+fn main() {
+    if unsafe { mettle_c_darwin_exported_call(41) } == 42 { 0 } else { 1 }
+}
+""",
+    "darwin-arm64-inline-assembly-c-caller-and-clobbers": """
+unsafe extern "C" fn assembly_sum(left:i32,right:i32):i32 {
+    var sum = left
+    asm!("add {sum:w}, {sum:w}, {right:w}",
+         sum = inout(reg) sum,right = in(reg) right,options(nomem,nostack))
+    var answer = 0i32
+    asm!("bl {symbol}",symbol = sym mettle_c_machine_answer,
+         out("w0") answer,clobber_abi("C"))
+    if answer == 42 { sum } else { -1 }
+}
+extern "C" {
+    unsafe fn mettle_c_darwin_asm_call(
+        callback:unsafe extern "C" fn(i32,i32):i32,
+        left:i32,right:i32):i32;
+}
+fn main() {
+    if unsafe { mettle_c_darwin_asm_call(assembly_sum,20,22) } == 42 {
+        0
+    } else { 1 }
+}
+""",
+    "darwin-arm64-neon-operation-c-parity": """
+extern "C" {
+    unsafe fn mettle_c_darwin_neon_transform(
+        left:ptr<read i32>,right:ptr<read i32>,output:ptr<mut i32>):Unit;
+}
+fn main() {
+    let left = [20i32,21i32,22i32,23i32]
+    let right = [1i32,2i32,3i32,4i32]
+    var mettle_output = [0i32,0i32,0i32,0i32]
+    var c_output = [0i32,0i32,0i32,0i32]
+    let left_pointer = core.ptr.from_ref(left[0])
+    let right_pointer = core.ptr.from_ref(right[0])
+    let mettle_pointer = core.ptr.from_mut(mettle_output[0])
+    let c_pointer = core.ptr.from_mut(c_output[0])
+    unsafe {
+        let first = core.arch.aarch64.vld1q_s32(left_pointer)
+        let second = core.arch.aarch64.vld1q_s32(right_pointer)
+        let sum = core.arch.aarch64.vaddq_s32(first,second)
+        core.arch.aarch64.vst1q_s32(mettle_pointer,sum)
+        mettle_c_darwin_neon_transform(left_pointer,right_pointer,c_pointer)
+    }
+    if mettle_output[0] == 21 && mettle_output[3] == 27 &&
+       c_output[0] == mettle_output[0] &&
+       c_output[1] == mettle_output[1] &&
+       c_output[2] == mettle_output[2] &&
+       c_output[3] == mettle_output[3] { 0 } else { 1 }
+}
+""",
+    "darwin-arm64-volatile-c-observer": """
+unsafe extern "C" fn volatile_update(pointer:ptr<mut i32>):i32 {
+    pointer.write_volatile(41)
+    let observed = pointer.read_volatile()
+    pointer.write_volatile(observed + 1)
+    observed
+}
+extern "C" {
+    unsafe fn mettle_c_darwin_volatile_observe(
+        callback:unsafe extern "C" fn(ptr<mut i32>):i32):i32;
+}
+fn main() {
+    if unsafe { mettle_c_darwin_volatile_observe(volatile_update) } == 42 {
+        0
+    } else { 1 }
+}
+""",
+} if DARWIN_ARM64 else {})
+
 SOURCES = {
     "review-aligned-wide-aggregate-stack-and-varargs": PRELUDE + """
 @layout(C)
@@ -611,6 +819,8 @@ fn main() {
 }
 """,
     **{name: PRELUDE + source for name, source in MACHINE_SOURCES.items()},
+    **{name: DARWIN_ABI_COMMON + source
+       for name, source in DARWIN_ARM64_SOURCES.items()},
     "c-zero-size-owned-iteration-drops-every-element-once": PRELUDE + """
 extern "C" {
     unsafe fn mettle_c_zst_reset(): Unit;
@@ -968,12 +1178,31 @@ def main():
         return result
 
     try:
+        selected_darwin_cases = [
+            name for name in DARWIN_ARM64_SOURCES
+            if (not args.case or name in args.case) and name.startswith(args.case_prefix)
+        ]
+        darwin_callbacks_object = None
+        if selected_darwin_cases:
+            darwin_callbacks_object = directory / "machine_callbacks-darwin-arm64.o"
+            command = [
+                args.cxx.with_name("clang"), "-std=c11", "-Wall", "-Wextra",
+                "-Wpedantic", "-Werror", "-DMETTLE_DARWIN_PROBE=1",
+                "--target=arm64-apple-macosx15.0",
+                "-c", Path(__file__).with_name("machine_callbacks.c"),
+                "-o", darwin_callbacks_object,
+            ]
+            if args.sysroot:
+                command.append("--sysroot=" + args.sysroot)
+            run(command)
         for name, source in SOURCES.items():
             if (args.case and name not in args.case) or not name.startswith(args.case_prefix):
                 continue
             path = directory / (name + ".mt")
             path.write_text(source)
             libraries = [args.callbacks, args.runtime]
+            if name in DARWIN_ARM64_SOURCES:
+                libraries = [darwin_callbacks_object, args.runtime]
             if name == "machine-target-guarded-wide-vector-c-physical-abi":
                 vector_object = directory / "machine_vectors.o"
                 command = [args.cxx.with_name("clang"), "-std=c11", "-mavx",
@@ -998,10 +1227,15 @@ def main():
                     command.append("-fsanitize=address,undefined")
                 run(command)
                 run([program])
-                evidence["cases"].append({"name": name, "profile": profile,
-                                          "source_sha256": digest(path),
-                                          "object_sha256": digest(obj),
-                                          "program_sha256": digest(program)})
+                case = {"name": name, "profile": profile,
+                        "source_sha256": digest(path),
+                        "object_sha256": digest(obj),
+                        "program_sha256": digest(program)}
+                if name in DARWIN_ARM64_SOURCES:
+                    case["c_fixture_sha256"] = digest(
+                        Path(__file__).with_name("machine_callbacks.c"))
+                    case["c_object_sha256"] = digest(darwin_callbacks_object)
+                evidence["cases"].append(case)
         for name, source in MACHINE_REJECTIONS.items():
             if args.case or not name.startswith(args.case_prefix):
                 continue

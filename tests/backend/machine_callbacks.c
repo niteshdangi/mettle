@@ -1,6 +1,9 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#endif
 
 int32_t mettle_c_machine_answer(void) { return 42; }
 int32_t mettle_c_machine_binary(int32_t (*callback)(int32_t, int32_t)) {
@@ -88,6 +91,117 @@ struct MettleLarge {
   int64_t second;
   int64_t third;
 };
+struct MettleDarwinHfa3 {
+  double first;
+  double second;
+  double third;
+};
+struct MettleDarwinHva2 {
+  MettleMachineVector first;
+  MettleMachineVector second;
+};
+struct MettleDarwinLayoutLeaf {
+  uint8_t tag;
+  uint64_t value;
+};
+struct __attribute__((aligned(32))) MettleDarwinLayout {
+  uint8_t prefix;
+  struct MettleDarwinLayoutLeaf leaf;
+  uint32_t tail;
+};
+struct __attribute__((packed)) MettleDarwinPacked {
+  uint8_t tag;
+  uint32_t payload;
+};
+struct MettleDarwinHfa3 mettle_c_darwin_hfa(struct MettleDarwinHfa3 value) {
+  value.first += 1.0;
+  value.second += 1.0;
+  value.third += 1.0;
+  return value;
+}
+struct MettleDarwinHfa3 mettle_c_darwin_hfa_callback(
+    struct MettleDarwinHfa3 (*callback)(struct MettleDarwinHfa3),
+    struct MettleDarwinHfa3 value) {
+  return callback(value);
+}
+struct MettleDarwinHva2 mettle_c_darwin_hva(struct MettleDarwinHva2 value) {
+  value.first += (MettleMachineVector){1, 1, 1, 1};
+  value.second += (MettleMachineVector){2, 2, 2, 2};
+  return value;
+}
+struct MettleDarwinHva2 mettle_c_darwin_hva_callback(
+    struct MettleDarwinHva2 (*callback)(struct MettleDarwinHva2),
+    struct MettleDarwinHva2 value) {
+  return callback(value);
+}
+int32_t mettle_c_darwin_large_callback(
+    struct MettleLarge (*callback)(struct MettleLarge)) {
+  struct MettleLarge value = {10, 12, 20};
+  struct MettleLarge result = callback(value);
+  return result.first == 11 && result.second == 13 && result.third == 21;
+}
+int32_t mettle_c_darwin_variadic(int32_t count, ...) {
+  va_list arguments;
+  va_start(arguments, count);
+  struct MettleDarwinHfa3 hfa =
+      va_arg(arguments, struct MettleDarwinHfa3);
+  struct MettleDarwinHva2 hva =
+      va_arg(arguments, struct MettleDarwinHva2);
+  struct MettleLarge large = va_arg(arguments, struct MettleLarge);
+  va_end(arguments);
+  return count == 3 && hfa.first == 1.0 && hfa.second == 2.0 &&
+         hfa.third == 3.0 && hva.first[0] == 4 && hva.second[3] == 5 &&
+         large.first == 10 && large.second == 12 && large.third == 20;
+}
+int32_t mettle_c_darwin_variadic_definition(
+    int32_t (*callback)(int32_t, ...)) {
+  struct MettleDarwinHfa3 hfa = {1.0, 2.0, 3.0};
+  struct MettleDarwinHva2 hva = {
+      (MettleMachineVector){4, 4, 4, 4},
+      (MettleMachineVector){5, 5, 5, 5}};
+  struct MettleLarge large = {10, 12, 20};
+  return callback(3, hfa, hva, large);
+}
+int32_t mettle_c_darwin_layout_metrics(size_t size, size_t alignment,
+                                      size_t leaf_offset,
+                                      size_t value_offset,
+                                      size_t tail_offset) {
+  return size == sizeof(struct MettleDarwinLayout) &&
+         alignment == _Alignof(struct MettleDarwinLayout) &&
+         leaf_offset == offsetof(struct MettleDarwinLayout, leaf) &&
+         value_offset == offsetof(struct MettleDarwinLayout, leaf) +
+                             offsetof(struct MettleDarwinLayoutLeaf, value) &&
+         tail_offset == offsetof(struct MettleDarwinLayout, tail);
+}
+struct MettleDarwinPacked
+mettle_c_darwin_packed_echo(struct MettleDarwinPacked value) {
+  value.payload += 1;
+  return value;
+}
+#if defined(METTLE_DARWIN_PROBE)
+extern int32_t mettle_darwin_exported_increment(int32_t);
+int32_t mettle_c_darwin_exported_call(int32_t value) {
+  return mettle_darwin_exported_increment(value);
+}
+#endif
+int32_t mettle_c_darwin_asm_call(
+    int32_t (*callback)(int32_t, int32_t), int32_t left, int32_t right) {
+  return callback(left, right);
+}
+int32_t mettle_c_darwin_volatile_observe(
+    int32_t (*callback)(volatile int32_t *)) {
+  volatile int32_t value = 40;
+  int32_t before = callback(&value);
+  return before == 41 && value == 42 ? 42 : -1;
+}
+#if defined(__aarch64__)
+void mettle_c_darwin_neon_transform(const int32_t *left,
+                                    const int32_t *right, int32_t *output) {
+  int32x4_t first = vld1q_s32(left);
+  int32x4_t second = vld1q_s32(right);
+  vst1q_s32(output, vaddq_s32(first, second));
+}
+#endif
 struct MettleAlignedWide {
   __int128 value;
 };
