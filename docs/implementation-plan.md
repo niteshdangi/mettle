@@ -1012,16 +1012,18 @@ construction now requires thread-safe callbacks and `Waker` is Transferable
 and Shareable. None has been built or run at this revision; this is not I11
 completion or sanitizer evidence.
 
+The async arrow-closure, `try await`, and async-interface changes below are
+implemented but unverified (not yet built); the verification evidence that
+follows predates those changes. Async interface declarations now preserve their
+async modifier and publish a per-method associated future family constrained by
+its output (including typed error outcomes) and declared method regions.
+Implementations bind the family to their concrete opaque coroutine future,
+allowing concrete and generic-bound calls to await it. Erased dispatch reports a
+feature diagnostic until an explicit future-storage erasure contract exists.
 Remaining I11 work includes async I/O and a full asynchronous borrowed-scope
 interface using the poll epochs in memory-and-concurrency section 6, including
 its independent soundness/race review and sanitizer qualification. Borrowed
-heap-erased futures require region-carrying erasure. Async interface
-declarations currently hit the bodyless-async feature diagnostic in
-`syntax/parser/declarations.cpp::function`. The checker/IR async implementation
-must preserve the async modifier on interface declarations, publish per-method
-associated future families carrying the declared receiver/argument regions and
-error outcome, and bind each implementation's concrete state to its witness;
-erased dispatch must explicitly declare its future erasure contract.
+heap-erased futures require region-carrying erasure.
 P10 has only a backlog entry, not a specified benchmark source; an async
 network service, measurement protocol and equivalent comparator remain open.
 
@@ -1070,28 +1072,28 @@ programs, Debug and Release profiles (a throwaway harness, not a repository
 gate). The CPS combinators (`Lazy`, `Then`, `Defer`, `Either`, `Repeat`)
 and their feature-fail fixtures are removed.
 
-Open: `try await f()` is not accepted (`try` needs a typed throwing call);
-`async fn(..) => expr` arrow closures are not lowered as async; recursive async
-is rejected only by the generic Sized diagnostic; async interface methods
-still hit the bodyless-async feature diagnostic
-(`syntax/parser/declarations.cpp::function`); debug information describes a
-coroutine state as a sized structure without members or a resume
-discriminator. Region-carrying erased futures, asynchronous borrowed-task
-scopes, async I/O and P10 remain open. Linux and Windows targets, the Debug
-profile CTest and TSan of executor code are not run for the coroutine path.
+Open: recursive async is rejected only by the generic Sized diagnostic; debug
+information describes a coroutine state as a sized structure without members
+or a resume discriminator. Async interface default bodies with inferred results
+remain feature-diagnosed. Region-carrying erased futures, asynchronous
+borrowed-task scopes, async I/O and P10 remain open. Erased async dispatch is
+explicitly rejected pending a future-storage erasure contract. Linux and
+Windows targets, the Debug profile CTest and TSan of executor code are not run
+for the coroutine path.
 
 #### I11 coroutine replacement inventory
 
-Revision: uncommitted on `efd0b32`; scope as stated per row.
+Revision: uncommitted lane changes on `c81bc6d`; scope as stated per row.
 
 | Requirement | State and owning files | Remaining work and required fixtures |
 | --- | --- | --- |
-| Preserve async source; type future and await | Implemented (verified macOS arm64): `syntax/parser/async.cpp` desugars to coroutine closures; `semantics/machine*.cpp` types the coroutine intrinsics; `library/core/future.mt` owns `Coroutine`. | Async interface methods; arrow async closures; `try await`. |
+| Preserve async source; type future and await | Existing coroutine path implemented (verified macOS arm64); arrow async closures and `try await` implemented, unverified (not yet built): `syntax/parser/closures.cpp`, `syntax/parser/async.cpp`, `semantics/sums.cpp`, `semantics/regions.cpp`, `lowering/sums.cpp`. | New fixtures `async-arrow-closure.mt` and `async-try-await.mt` are unverified. |
+| Async interface futures and dispatch | Implemented, unverified (not yet built): bodyless async methods publish region- and output-constrained associated future families; implementations bind concrete opaque coroutine futures; concrete and generic-bound calls use the family. Erased async dispatch reports an explicit future-storage-contract diagnostic. | `async-interface-method.mt` and `async-interface-erased-dispatch.mt` are unverified; async default bodies with inferred results and explicit erased-future storage remain open. |
 | Ownership-checked suspension CFG | Implemented: `ir/ir.h` `Exit::Suspend`, `ir/verify.cpp`, successor updates in `analysis/*`, `ir/dominance.cpp`, `instances/arrays.cpp`, `lowering/scalar.cpp`. | None known; borrow-across-await is covered by `async-await-anywhere.mt`. |
 | Inline pinned state and poll | Implemented: `types` coroutine aggregate and layout resolver, `instances/specialize.cpp`, backend frame/dispatch. Transferable/Shareable/Static in `semantics/interface_solver.cpp` with the interior from `semantics/captures.cpp`. | Liveness-precise interior (optional precision gain). |
 | Control flow | Implemented: ordinary CFG of the closure body. | None known. |
 | Cleanup and cancellation | Implemented: persistent frame flags and `unwind` in `backend/llvm/cleanup.cpp`; exactly-once drops verified. | Dedicated lexical drop-order-across-suspension fixture. |
-| Integration and qualification | Release CTest, sanitized compiler CTest and ASan/UBSan emitted async programs pass on macOS arm64. | Debug-profile CTest, debug-info state discriminator, Linux/Windows (owner-run). |
+| Integration and qualification | Existing Release CTest, sanitized compiler CTest and ASan/UBSan emitted async programs passed on macOS arm64 before this change. New async closure, `try await`, interface dispatch and erasure-diagnostic changes are implemented, unverified (not yet built). | New source fixtures are unverified; Debug-profile CTest, debug-info state discriminator, Linux/Windows (owner-run). |
 
 The source-freeze gate depends on all rows, fixtures and documentation; a
 design or a partially implemented row is not a verified milestone.

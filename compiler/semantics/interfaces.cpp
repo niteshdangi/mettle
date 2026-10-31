@@ -35,6 +35,7 @@ void Checker::interfaceHeaders() {
       interfaces::Associated item;
       item.name = associated.name;
       item.constant = associated.constant;
+      item.asyncFuture = associated.asyncFuture;
       item.parameter =
           associated.constant
               ? checked.types->declareConstParameter(

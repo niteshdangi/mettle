@@ -212,6 +212,11 @@ Function Parser::function(bool allowDeclaration) {
   }
   if (take("throws"))
     result.error = type();
+  result.asynchronous = asyncFunction;
+  if (asyncFunction) {
+    result.asyncOutput = result.annotation;
+    result.asyncError = result.error;
+  }
   result.constraints = genericConstraints();
   if (allowDeclaration &&
       (is(";") || peek().kind == TokenKind::Newline || is("}"))) {
@@ -219,8 +224,6 @@ Function Parser::function(bool allowDeclaration) {
     newlines();
     if (!is("{") && !is("=>")) {
       position = saved;
-      if (asyncFunction)
-        feature("async functions without a body are not implemented");
       if (result.annotation.empty())
         fail("interface method declarations require an explicit result type",
              "signature");
