@@ -956,10 +956,15 @@ abort-on-hook-panic are covered by `panic_catch.mt` and `panic_hook_abort.mt`.
 Other profiles and targets remain unqualified. Freestanding/abort execution does not provide recovery.
 Spawned-thread panics continue to be caught and reported by `join()`.
 Remaining I08 gaps: macOS file systems may reject non-UTF-8 names (EILSEQ),
-which the tests check but cannot exercise on-disk there; hosted names avoid
-reserved words
-(`read_some`, `write_some`, `read_bytes`, `var_os`, `set_*` open options).
-`ReadDir` implements `Iterator` (`next_entry` remains).
+which the tests check but cannot exercise on-disk there. `ReadDir.next_entry`
+is implemented with terminal EOF/error state and a focused regression, but this
+change is unverified (not yet built). The other hosted APIs listed above have no
+additional clearly specified missing implementation found in this inventory
+audit; `std.thread` and `std.sync` are present, with their remaining target
+qualification tracked by S019-S023. Hosted names use nonreserved spellings such
+as `read_some`, `write_some`, `read_bytes`, `var_os` and the `set_*` open-option
+methods. Windows-native paths/networking and other profiles remain outside the
+initial POSIX hosted profile.
 
 ### 8.4. Builds, concurrency and async: I09-I11
 

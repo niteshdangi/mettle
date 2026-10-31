@@ -251,11 +251,13 @@ pub fn read_dir(input: read PathInput): ReadDir throws Error {
 }
 
 extend ReadDir {
-    // The next entry, or none at the end of the listing.
+    // EOF or a read error permanently ends this listing.
     pub mut fn next_entry(): DirEntry? throws Error {
+        if self.finished { return none }
         let name = unsafe { sys.mettle_rt_readdir(self.handle) }
         if name == core.ptr.null<u8>() {
             let code = sys.errno()
+            self.finished = true
             if code != 0 { throw io.from_raw_os_error(code) }
             return none
         }
