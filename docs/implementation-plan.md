@@ -12,7 +12,9 @@ covered by historical native, sanitizer, quality, reproducibility and target
 receipts; their re-review findings are covered by the I06 requalification.
 I06 is complete within the scope above. I07-I11 are partially implemented on macOS arm64 (per-item
 status in sections 8.3-8.4); none is qualified. I12 workflow commands are in
-progress; I13-I16 are not started.
+progress. I13's macOS ARM64 capability inventory is implemented, unverified
+(not yet built); complete operation closure is not qualified. I14-I16 are not
+started.
 The selected design is in the linked specifications. Scalar execution does not
 establish full language, library or release correctness.
 
@@ -1333,11 +1335,32 @@ T006 and I12 are not complete.
 I13 closes remaining operation mappings with compiled native declarations and
 per-operation semantic evidence, including supporting protocols, reexports,
 deprecated stable APIs and target cfg branches missing from rendered docs.
-Exercise the selected Linux x86-64/ARM64, Windows, macOS, Android, WASI,
-non-hosted Wasm and freestanding references with their appropriate layers.
-Verify native C ABI, debug/unwind/TLS/atomic behavior and optional Rust adapters.
-Cross-compiling an artifact is not a substitute for execution/probes; an
-inapplicable service is not a pass. Evidence must retain exact target applicability.
+For this lane, gate only the macOS ARM64 compiler-host/Darwin ARM64 target
+profile. Linux and Windows are excluded from gates by the owner and remain not
+qualified. Other target references (Android, WASI, non-hosted Wasm and
+freestanding) are likewise not qualified by this lane. Verify applicable native
+C ABI, debug/unwind/TLS/atomic behavior and optional Rust adapters on the
+selected profile. Cross-compiling an artifact is not a substitute for
+execution/probes; an inapplicable service is not a pass. Evidence must retain
+exact target applicability.
+
+I13 status for the macOS ARM64 inventory lane: the 107-row capability
+acceptance inventory is implemented, unverified (not yet built); it is a
+documentation-only source/fixture review at `0eea2fa`, with no new compiler or
+library implementation, test fixture, build, or test run. The inventory records
+61 evidenced, 1 implemented-without-evidence, 44 partial and 1 missing
+capability. It does not claim complete I13 operation closure: the pinned
+baseline has 106,125 canonical required contracts, and no receipt proves
+macOS ARM64 declaration typechecking and per-operation execution/probes for
+the applicable stable surface. Concrete open work includes the A009 optional
+Rust bridge decision/implementation, unsupported unsized heap owners and
+erased async-interface dispatch (S003/L053), the macOS per-item target/cfg
+audit (S031), and the remaining stable operation, supporting-protocol,
+reexport, deprecated-operation and Darwin ABI/debug/unwind/TLS/atomic probes
+listed in `docs/capability-coverage.md` and `docs/library-surface.md`.
+Unverified changes with existing fixtures, including qualified macro
+imports/reexports, dependency-object reuse, expanded debugger checks and async
+borrowed scopes, still require execution and applicable review.
 
 I14 freezes a release candidate and checks the whole accepted scope, rather than
 removing difficult capabilities to produce a smaller V1. Run the predeclared
