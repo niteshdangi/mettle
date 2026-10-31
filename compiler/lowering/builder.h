@@ -90,6 +90,8 @@ private:
     const auto &facts = module.facts(node);
     if (facts.opaqueSource != Type::Unknown)
       return facts.opaqueSource;
+    if (facts.ownerUnsizeSource != Type::Unknown)
+      return facts.ownerUnsizeSource;
     if (facts.unsizedSource != Type::Unknown)
       return facts.unsizedSource;
     if (facts.erasedSource != Type::Unknown)

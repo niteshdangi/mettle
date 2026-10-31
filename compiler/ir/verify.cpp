@@ -478,10 +478,9 @@ bool function(const Function &f, const Program &program,
             if (origin == Type::Unknown)
               return false;
             auto name = program.types->product(origin).name;
-            return name == "alloc::boxed::Box" ||
-                   name == "alloc::arc::Arc" ||
-                   name == "alloc::arc::Weak" ||
-                   name == "alloc::rc::Rc" || name == "alloc::rc::Weak";
+            return name == "alloc::boxed::Box" || name == "alloc::arc::Arc" ||
+                   name == "alloc::arc::Weak" || name == "alloc::rc::Rc" ||
+                   name == "alloc::rc::Weak";
           };
           bool compatible = isOwner(n.operands[0].type) && isOwner(result) &&
                             source.genericOrigin == target.genericOrigin &&
@@ -1134,9 +1133,13 @@ bool function(const Function &f, const Program &program,
               program.types->isFunctionPointer(n.indirectType))
             require(program.types->callable(n.indirectType).resultSources ==
                     callee.resultSources);
-          require(n.op == Op::CatchCall ? result == Type::I32 &&
-                                              matches(callee.result, Type::Unit)
-                                        : matches(callee.result, result));
+          auto declared =
+              n.interfaceMethod >= 0 && callee.interfaceResult != Type::Unknown
+                  ? callee.interfaceResult
+                  : callee.result;
+          require(n.op == Op::CatchCall
+                      ? result == Type::I32 && matches(declared, Type::Unit)
+                      : matches(declared, result));
           if (callee.parameters > callee.locals.size()) {
             fail(n.span, "invalid callee signature");
             break;

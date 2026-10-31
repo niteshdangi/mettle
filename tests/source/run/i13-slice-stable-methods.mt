@@ -1,7 +1,7 @@
 fn main(): i32 {
     var values = [5, 1, 3, 2, 4]
     {
-        let slice = read values
+        let slice: read [i32] = read values
         if slice.is_empty() || slice.len() != 5usize { return 1 }
         match slice.get(0usize) {
             present(value) => { if *value != 5 { return 2 } },

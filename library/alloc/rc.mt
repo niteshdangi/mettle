@@ -68,7 +68,7 @@ pub fn try_new_in<T, A: Allocator>(value: take T, allocator: take A): Rc<T, A> t
     let (layout, offset) = try allocation_layout<T>()
     let raw = try a.allocate(layout)
     let b = raw.cast<RcHeader>()
-    let p = raw.add(offset).cast<T>()
+    let p = unsafe { raw.add(offset) }.cast<T>()
     unsafe {
         core.ptr.write(b, RcHeader(1usize, 1usize, layout))
         core.ptr.write(p, value)
@@ -85,45 +85,39 @@ pub fn new_in<T, A: Allocator>(value: take T, allocator: take A): Rc<T, A> {
 pub fn new<T>(value: take T): Rc<T> { new_in(value, Global()) }
 pub fn try_new<T>(value: take T): Rc<T> throws AllocError { try try_new_in(value, Global()) }
 
-extend<A: Allocator> Rc<Text, A> {
-    // Copies only from a validated Text view, preserving Text's UTF-8 invariant.
-    pub fn try_copy_text_in(value: read Text, allocator: take A): Rc<Text, A> throws AllocError {
-        var a = allocator
-        let bytes = value.as_bytes()
-        let result = capture extend_layout(layout_of<RcHeader>(), super.alloc.layout_of_val(bytes))
-        let (layout, offset) = match take result {
-            success(layout) => layout,
-            failure(error) => throw AllocError(error.size, error.align)
-        }
-        let raw = try a.allocate(layout)
-        let h = raw.cast<RcHeader>()
-        let data = raw.add(offset).cast<u8>()
-        unsafe {
-            core.ptr.write(h, RcHeader(1usize, 1usize, layout))
-            core.ptr.copy(package.core.slice.data(bytes), data, bytes.len())
-        }
-        let slice = slice_ptr_mut(data, bytes.len())
-        let text = unsafe { core.mem.transmute<ptr<mut Text>>(slice) }
-        Rc(text, h, a)
+// Copies only from a validated Text view, preserving Text's UTF-8 invariant.
+pub fn try_copy_text_in<A: Allocator>(value: read Text, allocator: take A): Rc<Text, A> throws AllocError {
+    var a = allocator
+    let bytes = value.as_bytes()
+    let result = capture extend_layout(layout_of<RcHeader>(), super.alloc.layout_of_val(bytes))
+    let (layout, offset) = match take result {
+        success(layout) => layout,
+        failure(error) => throw AllocError(error.size, error.align)
     }
+    let raw = try a.allocate(layout)
+    let h = raw.cast<RcHeader>()
+    let data = unsafe { raw.add(offset) }.cast<u8>()
+    unsafe {
+        core.ptr.write(h, RcHeader(1usize, 1usize, layout))
+        core.ptr.copy(package.core.slice.data(bytes), data, bytes.len())
+    }
+    let slice = slice_ptr_mut(data, bytes.len())
+    let text = unsafe { core.mem.transmute<ptr<mut Text>>(slice) }
+    Rc(text, h, a)
+}
 
-    pub fn copy_text_in(value: read Text, allocator: take A): Rc<Text, A> {
-        let outcome = capture Rc<Text, A>.try_copy_text_in(value, allocator)
-        match take outcome {
-            success(owner) => owner,
-            failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
-        }
+pub fn copy_text_in<A: Allocator>(value: read Text, allocator: take A): Rc<Text, A> {
+    let outcome = capture try_copy_text_in(value, allocator)
+    match take outcome {
+        success(owner) => owner,
+        failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
     }
 }
 
-extend Rc<Text> {
-    pub fn try_copy_text(value: read Text): Rc<Text> throws AllocError {
-        try Rc<Text>.try_copy_text_in(value, Global())
-    }
-    pub fn copy_text(value: read Text): Rc<Text> {
-        Rc<Text>.copy_text_in(value, Global())
-    }
+pub fn try_copy_text(value: read Text): Rc<Text> throws AllocError {
+    try try_copy_text_in(value, Global())
 }
+pub fn copy_text(value: read Text): Rc<Text> { copy_text_in(value, Global()) }
 
 fn bump(count: usize): usize {
     // Overflow would let a count wrap to zero and free a live payload.

@@ -55,14 +55,14 @@ fn main(): i32 {
         core.ptr.from_mut(frees),
         core.ptr.from_mut(mismatches)
     )
-    let weak: alloc.arc.Weak<[i32], Tracker> = {
+    let observer: alloc.arc.Weak<[i32], Tracker> = {
         let sized = alloc.arc.new_in([1, 2, 3], tracker)
         let owner: Arc<[i32], Tracker> = sized
         weak owner
     }
     if frees != 0 { return 1 }
     {
-        let last = weak
+        let last = observer
         if last.strong_count() != 0usize { return 2 }
     }
     if frees == 1 && mismatches == 0 && size != 0usize && align != 0usize {

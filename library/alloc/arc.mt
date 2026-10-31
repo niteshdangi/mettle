@@ -72,7 +72,7 @@ pub fn try_new_in<T, A: Allocator>(value: take T, allocator: take A): Arc<T, A> 
     let (layout, offset) = try allocation_layout<T>()
     let raw = try a.allocate(layout)
     let b = raw.cast<ArcHeader>()
-    let p = raw.add(offset).cast<T>()
+    let p = unsafe { raw.add(offset) }.cast<T>()
     unsafe {
         core.ptr.write(b, ArcHeader(core.sync.atomic.AtomicUsize.new(1usize),
                                     core.sync.atomic.AtomicUsize.new(1usize),
@@ -91,47 +91,41 @@ pub fn new_in<T, A: Allocator>(value: take T, allocator: take A): Arc<T, A> {
 pub fn new<T>(value: take T): Arc<T> { new_in(value, Global()) }
 pub fn try_new<T>(value: take T): Arc<T> throws AllocError { try try_new_in(value, Global()) }
 
-extend<A: Allocator> Arc<Text, A> {
-    // Copies only from a validated Text view, preserving Text's UTF-8 invariant.
-    pub fn try_copy_text_in(value: read Text, allocator: take A): Arc<Text, A> throws AllocError {
-        var a = allocator
-        let bytes = value.as_bytes()
-        let result = capture extend_layout(layout_of<ArcHeader>(), super.alloc.layout_of_val(bytes))
-        let (layout, offset) = match take result {
-            success(layout) => layout,
-            failure(error) => throw AllocError(error.size, error.align)
-        }
-        let raw = try a.allocate(layout)
-        let h = raw.cast<ArcHeader>()
-        let data = raw.add(offset).cast<u8>()
-        unsafe {
-            core.ptr.write(h, ArcHeader(core.sync.atomic.AtomicUsize.new(1usize),
-                                        core.sync.atomic.AtomicUsize.new(1usize),
-                                        layout))
-            core.ptr.copy(package.core.slice.data(bytes), data, bytes.len())
-        }
-        let slice = slice_ptr_mut(data, bytes.len())
-        let text = unsafe { core.mem.transmute<ptr<mut Text>>(slice) }
-        Arc(text, h, a)
+// Copies only from a validated Text view, preserving Text's UTF-8 invariant.
+pub fn try_copy_text_in<A: Allocator>(value: read Text, allocator: take A): Arc<Text, A> throws AllocError {
+    var a = allocator
+    let bytes = value.as_bytes()
+    let result = capture extend_layout(layout_of<ArcHeader>(), super.alloc.layout_of_val(bytes))
+    let (layout, offset) = match take result {
+        success(layout) => layout,
+        failure(error) => throw AllocError(error.size, error.align)
     }
+    let raw = try a.allocate(layout)
+    let h = raw.cast<ArcHeader>()
+    let data = unsafe { raw.add(offset) }.cast<u8>()
+    unsafe {
+        core.ptr.write(h, ArcHeader(core.sync.atomic.AtomicUsize.new(1usize),
+                                    core.sync.atomic.AtomicUsize.new(1usize),
+                                    layout))
+        core.ptr.copy(package.core.slice.data(bytes), data, bytes.len())
+    }
+    let slice = slice_ptr_mut(data, bytes.len())
+    let text = unsafe { core.mem.transmute<ptr<mut Text>>(slice) }
+    Arc(text, h, a)
+}
 
-    pub fn copy_text_in(value: read Text, allocator: take A): Arc<Text, A> {
-        let outcome = capture Arc<Text, A>.try_copy_text_in(value, allocator)
-        match take outcome {
-            success(owner) => owner,
-            failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
-        }
+pub fn copy_text_in<A: Allocator>(value: read Text, allocator: take A): Arc<Text, A> {
+    let outcome = capture try_copy_text_in(value, allocator)
+    match take outcome {
+        success(owner) => owner,
+        failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
     }
 }
 
-extend Arc<Text> {
-    pub fn try_copy_text(value: read Text): Arc<Text> throws AllocError {
-        try Arc<Text>.try_copy_text_in(value, Global())
-    }
-    pub fn copy_text(value: read Text): Arc<Text> {
-        Arc<Text>.copy_text_in(value, Global())
-    }
+pub fn try_copy_text(value: read Text): Arc<Text> throws AllocError {
+    try try_copy_text_in(value, Global())
 }
+pub fn copy_text(value: read Text): Arc<Text> { copy_text_in(value, Global()) }
 
 // Transfer and sharing of the handles require the payload to be both
 // Transferable and Shareable (the last owner may drop it on any thread, and

@@ -280,13 +280,13 @@ private:
                {"referencesProvider", Json::boolean(true)},
                {"documentSymbolProvider", Json::boolean(true)},
                {"completionProvider",
-                Json::object({{"resolveProvider", Json::boolean(false)},
-                              {"triggerCharacters",
-                               Json::array({Json::string(".")})}})},
+                Json::object(
+                    {{"resolveProvider", Json::boolean(false)},
+                     {"triggerCharacters", Json::array({Json::string(".")})}})},
                {"signatureHelpProvider",
-                Json::object({{"triggerCharacters",
-                               Json::array({Json::string("("),
-                                            Json::string(",")})}})},
+                Json::object(
+                    {{"triggerCharacters",
+                      Json::array({Json::string("("), Json::string(",")})}})},
                {"documentFormattingProvider", Json::boolean(true)},
                {"renameProvider",
                 Json::object({{"prepareProvider", Json::boolean(true)}})},
@@ -422,8 +422,7 @@ private:
                   doc.typeFacts.push_back(
                       {node.span, displayPath(types->name(fact->type))});
                 auto bindDeclaration = [&](const std::string &name,
-                                           std::size_t offset,
-                                           SymbolKind kind,
+                                           std::size_t offset, SymbolKind kind,
                                            Span declarationSpan,
                                            const std::string &ownerName) {
                   const auto &items = doc.index.declarations();
@@ -459,8 +458,7 @@ private:
                 };
                 if (node.span.source == doc.sourceId &&
                     node.kind == Kind::Call && fact && fact->callee >= 0 &&
-                    !node.children.empty() &&
-                    node.children.front().get() &&
+                    !node.children.empty() && node.children.front().get() &&
                     node.children.front().get()->kind == Kind::Field) {
                   const auto functionIndex =
                       static_cast<std::size_t>(fact->callee);
@@ -471,14 +469,13 @@ private:
                     auto offset = member.span.end >= member.text.size()
                                       ? member.span.end - member.text.size()
                                       : member.span.begin;
-                    bindDeclaration(function.name, offset,
-                                    SymbolKind::Function, function.span, {});
+                    bindDeclaration(function.name, offset, SymbolKind::Function,
+                                    function.span, {});
                   }
                 }
                 if (node.span.source == doc.sourceId &&
                     node.kind == Kind::Field && fact && fact->field >= 0 &&
-                    !node.children.empty() &&
-                    node.children.front().get()) {
+                    !node.children.empty() && node.children.front().get()) {
                   auto *receiver = checked.find(*node.children.front().get());
                   if (receiver) {
                     auto receiverType = receiver->type;
@@ -516,8 +513,8 @@ private:
                   if (child.get())
                     self(self, *child.get());
               };
-              for (std::size_t i = 0;
-                   i < checked.syntax().functions.size(); ++i) {
+              for (std::size_t i = 0; i < checked.syntax().functions.size();
+                   ++i) {
                 const auto &function = checked.syntax().functions[i];
                 if (function.body.get())
                   collect(collect, *function.body.get());
@@ -545,10 +542,9 @@ private:
         doc.sourceId = source.id;
       if (path.empty() || path.front() != '/' || path == doc.path)
         continue;
-      bool open = std::any_of(documents.begin(), documents.end(),
-                              [&](const auto &entry) {
-                                return entry.second->path == path;
-                              });
+      bool open = std::any_of(
+          documents.begin(), documents.end(),
+          [&](const auto &entry) { return entry.second->path == path; });
       if (open)
         continue;
       auto found = sourceDocuments.find(path);
@@ -663,8 +659,8 @@ private:
         "textDocument/hover",          "textDocument/definition",
         "textDocument/documentSymbol", "textDocument/formatting",
         "textDocument/references",     "textDocument/completion",
-        "textDocument/signatureHelp",
-        "textDocument/rename",         "textDocument/prepareRename"};
+        "textDocument/signatureHelp",  "textDocument/rename",
+        "textDocument/prepareRename"};
     if (!known.contains(method))
       return false;
     auto *doc = find(params);
@@ -693,15 +689,14 @@ private:
         auto targets = targetsAt(space.files, space.current, at);
         if (use && !targets.empty()) {
           const auto &target = declarationOf(space.files, targets.front());
-          expressionHover =
-              target.scoped() || target.kind == SymbolKind::Field;
+          expressionHover = target.scoped() || target.kind == SymbolKind::Field;
         }
       }
       if (inferred && (!hover || expressionHover)) {
         auto value = Json::object(
             {{"kind", Json::string("markdown")},
-             {"value", Json::string("```mettle\n" + inferred->display +
-                                    "\n```")}});
+             {"value",
+              Json::string("```mettle\n" + inferred->display + "\n```")}});
         respond(id, Json::object(
                         {{"contents", std::move(value)},
                          {"range", rangeJson(doc->lines, inferred->span.begin,
@@ -732,8 +727,8 @@ private:
             include && include->asBoolean())
           includeDeclaration = *include->asBoolean();
       auto result = Json::array();
-      for (const auto &site : referencesAt(space.files, space.current, at,
-                                           includeDeclaration))
+      for (const auto &site :
+           referencesAt(space.files, space.current, at, includeDeclaration))
         result.push(location(space, site));
       respond(id, std::move(result));
     } else {
@@ -789,14 +784,12 @@ private:
              item.name.compare(0, prefix.size(), prefix) != 0))
           continue;
         bool candidate = !member
-                             ? !item.scoped() ||
-                                   (candidateDocument == &doc &&
-                                    item.scopeBegin <= offset &&
-                                    offset < item.scopeEnd)
-                             : receiverType
-                                   ? item.kind == SymbolKind::Field ||
-                                         item.kind == SymbolKind::Function
-                                   : !item.scoped();
+                             ? !item.scoped() || (candidateDocument == &doc &&
+                                                  item.scopeBegin <= offset &&
+                                                  offset < item.scopeEnd)
+                         : receiverType ? item.kind == SymbolKind::Field ||
+                                              item.kind == SymbolKind::Function
+                                        : !item.scoped();
         if (candidate && member && receiverType && item.parent >= 0) {
           const auto &owner = items[static_cast<std::size_t>(item.parent)];
           std::string ownerName;
@@ -822,10 +815,10 @@ private:
         }
         if (!candidate || !emitted.insert(item.name).second)
           continue;
-        int kind = item.kind == SymbolKind::Field ? 5
+        int kind = item.kind == SymbolKind::Field      ? 5
                    : item.kind == SymbolKind::Function ? 3
-                   : item.scoped() ? 6
-                                   : 9;
+                   : item.scoped()                     ? 6
+                                                       : 9;
         result.push(Json::object({{"label", Json::string(item.name)},
                                   {"kind", Json::integer(kind)},
                                   {"detail", Json::string(item.signature)}}));
@@ -833,21 +826,22 @@ private:
     }
     if (!member) {
       static constexpr std::string_view keywords[] = {
-          "as", "break", "const", "continue", "else", "enum", "extend",
-          "false", "fn", "for", "if", "in", "let", "loop", "match",
-          "module", "return", "static", "true", "type", "var", "while"};
+          "as",     "break", "const", "continue", "else",   "enum",
+          "extend", "false", "fn",    "for",      "if",     "in",
+          "let",    "loop",  "match", "module",   "return", "static",
+          "true",   "type",  "var",   "while"};
       for (auto keyword : keywords)
         if ((prefix.empty() || keyword.substr(0, prefix.size()) == prefix) &&
             emitted.insert(std::string(keyword)).second)
-          result.push(Json::object(
-              {{"label", Json::string(std::string(keyword))},
-               {"kind", Json::integer(14)}}));
+          result.push(
+              Json::object({{"label", Json::string(std::string(keyword))},
+                            {"kind", Json::integer(14)}}));
     }
     return result;
   }
 
-  static std::vector<std::string> signatureParameters(
-      const std::string &signature) {
+  static std::vector<std::string>
+  signatureParameters(const std::string &signature) {
     auto open = signature.find('(');
     if (open == std::string::npos)
       return {};
@@ -856,15 +850,17 @@ private:
     int depth = 0;
     for (std::size_t i = begin; i < signature.size(); ++i) {
       char c = signature[i];
-      if (c == '(' || c == '[' || c == '<')
+      if (c == '(' || c == '[' || c == '<') {
         ++depth;
-      else if (c == ')' || c == ']' || c == '>')
+      } else if (c == ')' || c == ']' ||
+                 (c == '>' && (i == 0 || signature[i - 1] != '-'))) {
         if (depth == 0) {
           if (i > begin)
             result.push_back(signature.substr(begin, i - begin));
           return result;
-        } else
-          --depth;
+        }
+        --depth;
+      }
       if (c == ',' && depth == 0) {
         result.push_back(signature.substr(begin, i - begin));
         begin = i + 1;
@@ -895,15 +891,14 @@ private:
       auto parameterInfo = Json::array();
       for (const auto &parameter : parameters)
         parameterInfo.push(Json::object({{"label", Json::string(parameter)}}));
-      signatures.push(Json::object(
-          {{"label", Json::string(label)},
-           {"parameters", std::move(parameterInfo)}}));
+      signatures.push(Json::object({{"label", Json::string(label)},
+                                    {"parameters", std::move(parameterInfo)}}));
     }
     return Json::object(
         {{"signatures", std::move(signatures)},
          {"activeSignature", Json::integer(0)},
-         {"activeParameter", Json::integer(static_cast<std::int64_t>(
-                                 call->activeParameter))}});
+         {"activeParameter",
+          Json::integer(static_cast<std::int64_t>(call->activeParameter))}});
   }
 
   void rename(Document &doc, const Json *params, const Json &id, std::size_t at,

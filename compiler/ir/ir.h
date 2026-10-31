@@ -153,6 +153,10 @@ struct Function {
   std::vector<std::pair<Type, Type>> interfaceBounds{};
   std::vector<Type> unpinBounds{};
   Type regionSignature = Type::Unknown;
+  // Declared interface signature result when the body's concrete result
+  // differs (an async default with an inferred future); calls not yet
+  // resolved to an implementation are checked against it.
+  Type interfaceResult = Type::Unknown;
   std::vector<TypeBinding> genericEqualities{};
   bool unsafeFunction = false;
   std::string abi{};

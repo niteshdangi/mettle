@@ -10,26 +10,26 @@ extend Circle implements Shape { fn area(): i32 { 42 } }
 fn main(): i32 {
     var dropped = 0
     let count = core.ptr.from_mut(dropped)
-    let weak: weak any Shape = {
+    let observer: weak any Shape = {
         let concrete: shared Circle = shared Circle(count)
         let owner: shared any Shape = concrete
         let duplicate = owner.clone()
         if duplicate.get().area() != 42 { return 1 }
         weak owner
     }
-    if dropped != 1 || weak.strong_count() != 0usize { return 2 }
-    match weak.upgrade() {
+    if dropped != 1 || observer.strong_count() != 0usize { return 2 }
+    match observer.upgrade() {
         none => {},
         present(_) => { return 3 }
     }
 
-    let local: local weak any Shape = {
+    let counted: local weak any Shape = {
         let concrete: local shared Circle = local shared Circle(count)
         let owner: local shared any Shape = concrete
         weak owner
     }
-    if dropped != 2 || local.strong_count() != 0usize { return 4 }
-    match local.upgrade() {
+    if dropped != 2 || counted.strong_count() != 0usize { return 4 }
+    match counted.upgrade() {
         none => {},
         present(_) => { return 5 }
     }

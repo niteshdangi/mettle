@@ -13,6 +13,8 @@ ir::Function Builder::run(const mettle::Function &source, std::size_t index) {
               {},
               {},
               0};
+  if (source.asyncDefaultOutputInferred)
+    function.interfaceResult = module.function(index).abiResult;
   errorType = module.function(index).error;
   function.genericParameters = module.function(index).genericParameters;
   for (const auto &attribute : source.item.attributes)
