@@ -1,4 +1,6 @@
 
+// flags: --sanitize address
+
 type Slot<region r> { value: read i32 from r }
 fn assign<region r>(cell: read core.cell.RefCell<Slot<region r>>,
                      value: read i32 from r) {

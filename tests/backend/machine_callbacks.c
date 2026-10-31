@@ -140,6 +140,17 @@ struct __attribute__((packed)) MettleDarwinPacked {
   uint8_t tag;
   uint32_t payload;
 };
+union MettleDarwinLayoutUnion {
+  int64_t integer;
+  double real;
+};
+struct MettleDarwinLayoutTagged {
+  int32_t tag;
+  union {
+    int64_t integer;
+    double real;
+  } payload;
+};
 struct MettleDarwinHfa3 mettle_c_darwin_hfa(struct MettleDarwinHfa3 value) {
   value.first += 1.0;
   value.second += 1.0;
@@ -244,6 +255,42 @@ struct MettleDarwinPacked
 mettle_c_darwin_packed_echo(struct MettleDarwinPacked value) {
   value.payload += 1;
   return value;
+}
+int32_t mettle_c_darwin_layout_extra_metrics(
+    size_t union_size, size_t union_alignment, size_t tagged_size,
+    size_t tagged_alignment, size_t transparent_size,
+    size_t transparent_alignment) {
+  return union_size == sizeof(union MettleDarwinLayoutUnion) &&
+         union_alignment == _Alignof(union MettleDarwinLayoutUnion) &&
+         tagged_size == sizeof(struct MettleDarwinLayoutTagged) &&
+         tagged_alignment == _Alignof(struct MettleDarwinLayoutTagged) &&
+         offsetof(struct MettleDarwinLayoutTagged, tag) == 0 &&
+         offsetof(struct MettleDarwinLayoutTagged, payload) ==
+             _Alignof(union MettleDarwinLayoutUnion) &&
+         transparent_size == sizeof(uint64_t) &&
+         transparent_alignment == _Alignof(uint64_t);
+}
+union MettleDarwinLayoutUnion
+mettle_c_darwin_layout_union(union MettleDarwinLayoutUnion value) {
+  value.integer += 1;
+  return value;
+}
+struct MettleDarwinLayoutTagged
+mettle_c_darwin_layout_tagged(struct MettleDarwinLayoutTagged value) {
+  if (value.tag == 7)
+    value.payload.integer += 1;
+  return value;
+}
+uint64_t mettle_c_darwin_layout_transparent(uint64_t value) {
+  return value + 1;
+}
+_Bool mettle_c_darwin_bool_roundtrip(_Bool value) { return value; }
+_Bool mettle_c_darwin_bool_callback(_Bool (*callback)(_Bool), _Bool value) {
+  return callback(value);
+}
+int32_t mettle_c_darwin_variadic_float_definition(
+    int32_t (*callback)(int32_t, ...)) {
+  return callback(1, (float)42.0f);
 }
 #if defined(METTLE_DARWIN_PROBE)
 extern int32_t mettle_darwin_exported_increment(int32_t);

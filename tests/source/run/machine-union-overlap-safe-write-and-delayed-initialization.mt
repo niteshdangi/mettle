@@ -1,4 +1,6 @@
 
+// flags: --sanitize address
+
 @layout(C)
 union Bits { integer: u32, real: f32 }
 union Generic<T: Copy> { value: T; bytes: u64 }

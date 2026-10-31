@@ -138,6 +138,10 @@ callable_type = [ "for", "<", region_list, ">" ],
 result_annotation = ":", simple_type ;
 ```
 
+`pinned heap T`, `pinned shared T` and `pinned local shared T` are pinned
+owners, built by the matching `pinned heap|shared|local shared expr` forms.
+`pinned` on a view pins the borrow. Weak handles cannot be pinned.
+
 Lists may be empty only where the corresponding construct permits it.
 `[T]` is an unsized slice; `[T; N]` is a fixed array. A borrow of an optional
 payload is `read T? from r`; an optional borrowed view is `(read T from r)?`.
@@ -189,7 +193,7 @@ implementation = [ "unsafe" ], "extend", [ generics ], type,
                  [ "implements", bound ], [ where_clause ],
                  "{", associated_items, "}" ;
 function      = attributes, [ visibility ], [ "unsafe" ], [ "const" ],
-                [ "async" ], [ "mut" | "take" | "static" ],
+                [ "async", [ "(", "heap", ")" ] ], [ "mut" | "take" | "static" ],
                 "fn", IDENT, [ generics ], "(", [ parameters ], ")",
                 [ result_annotation ], [ "throws", type ],
                 [ where_clause ], ( block | "=>", expression | ";" ) ;
@@ -199,6 +203,11 @@ constant      = [ visibility ], "const", IDENT, ":", type,
                 "=", const_expression, [ ";" ] ;
 destructor    = "drop", block ;
 ```
+
+`async(heap)` is valid only on interface methods with a read or mut receiver
+and a declared output. A call through `any Interface` returns
+`pinned heap any Future<Output = T>` bounded by the call's borrowed inputs.
+Async methods without it cannot be called through `any`.
 
 Members include fields, methods, constructors, associated constants, and one
 destructor. Interfaces have associated declarations/default method bodies,
@@ -484,7 +493,9 @@ product_expr  = cast_expr, { ( "*" | "/" | "%" ), cast_expr } ;
 cast_expr     = unary, { "as", type } ;
 unary         = ( "-" | "!" | "*" | "take" | "read" | "mut" | "weak"
                 | "heap" | "shared" | "await" | "try" | "capture" ), unary
-              | "local", "shared", unary | postfix ;
+              | "local", "shared", unary
+              | "pinned", ( "heap" | "shared" | "local", "shared" ), unary
+              | postfix ;
 postfix       = primary, { call_suffix | field_suffix | index_suffix
                          | optional_suffix | generic_suffix } ;
 field_suffix  = ".", ( IDENT | INTEGER ) ;

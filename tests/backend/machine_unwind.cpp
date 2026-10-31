@@ -9,6 +9,20 @@ struct Guard {
 };
 } // namespace
 
+extern "C" [[noreturn]] void mettle_cpp_throw() { throw 42; }
+
+extern "C" std::int32_t
+mettle_cpp_indirect_throw_catch(void (*callback)(void *),
+                                std::int32_t *context) {
+  try {
+    Guard guard{context};
+    callback(context);
+  } catch (...) {
+    return 1;
+  }
+  return 0;
+}
+
 extern "C" std::int32_t
 mettle_c_variadic_definition_catch(std::int32_t (*callback)(void *, ...),
                                    void *context) {

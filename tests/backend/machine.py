@@ -43,6 +43,379 @@ MACHINE_REJECTIONS = {
     "machine-asm-invalid-instruction-preserves-artifact":
         'fn main() { unsafe { asm!("mettle_invalid_instruction",options(nostack)) }; 0 }',
 }
+
+
+def atomic_operation_matrix(category):
+    orderings = ("Relaxed", "Acquire", "Release", "AcqRel", "SeqCst")
+    all_orders = ", ".join(
+        f"core.sync.atomic.Ordering.{name}" for name in orderings)
+    load_orders = ", ".join(
+        f"core.sync.atomic.Ordering.{name}"
+        for name in ("Relaxed", "Acquire", "SeqCst"))
+    store_orders = ", ".join(
+        f"core.sync.atomic.Ordering.{name}"
+        for name in ("Relaxed", "Release", "SeqCst"))
+    valid_pairs = (
+        ("Relaxed", "Relaxed"),
+        ("Acquire", "Relaxed"), ("Acquire", "Acquire"),
+        ("Release", "Relaxed"),
+        ("AcqRel", "Relaxed"), ("AcqRel", "Acquire"),
+        ("SeqCst", "Relaxed"), ("SeqCst", "Acquire"),
+        ("SeqCst", "SeqCst"),
+    )
+    pair_values = ", ".join(
+        "(core.sync.atomic.Ordering.{},core.sync.atomic.Ordering.{})".format(
+            success, failure)
+        for success, failure in valid_pairs)
+    types = (
+        ("i8", "AtomicI8", "40i8", "42i8", "41i8", "2i8",
+         "12i8", "10i8", "8i8", "-9i8"),
+        ("u8", "AtomicU8", "40u8", "42u8", "41u8", "2u8",
+         "12u8", "10u8", "8u8", "247u8"),
+        ("i16", "AtomicI16", "40i16", "42i16", "41i16", "2i16",
+         "12i16", "10i16", "8i16", "-9i16"),
+        ("u16", "AtomicU16", "40u16", "42u16", "41u16", "2u16",
+         "12u16", "10u16", "8u16", "65527u16"),
+        ("i32", "AtomicI32", "40i32", "42i32", "41i32", "2i32",
+         "12i32", "10i32", "8i32", "-9i32"),
+        ("u32", "AtomicU32", "40u32", "42u32", "41u32", "2u32",
+         "12u32", "10u32", "8u32", "4294967287u32"),
+        ("i64", "AtomicI64", "40i64", "42i64", "41i64", "2i64",
+         "12i64", "10i64", "8i64", "-9i64"),
+        ("u64", "AtomicU64", "40u64", "42u64", "41u64", "2u64",
+         "12u64", "10u64", "8u64", "18446744073709551607u64"),
+        ("isize", "AtomicIsize", "40isize", "42isize", "41isize", "2isize",
+         "12isize", "10isize", "8isize", "-9isize"),
+        ("usize", "AtomicUsize", "40usize", "42usize", "41usize", "2usize",
+         "12usize", "10usize", "8usize", "18446744073709551607usize"),
+    )
+    sections = []
+
+    def append_cas_helpers(suffix, atomic, zero, one, two):
+        prefix = f"check_{suffix}_cas"
+        ordering_type = "core.sync.atomic.Ordering"
+        for kind, method in (("strong_success", "compare_exchange"),
+                             ("strong_failure", "compare_exchange"),
+                             ("weak_failure", "compare_exchange_weak")):
+            expected = zero
+            desired = two
+            start = zero if kind == "strong_success" else one
+            body = [
+                f"fn {prefix}_{kind}(success_order: {ordering_type}, "
+                f"failure_order: {ordering_type}): bool {{",
+                f"    let value = core.sync.atomic.{atomic}.new({start})",
+                f"    match value.{method}({expected},{desired},success_order,"
+                "failure_order) {",
+            ]
+            if kind == "strong_success":
+                body.extend((
+                    f"        success(old) => old == {zero} && "
+                    f"value.load(core.sync.atomic.Ordering.Relaxed) == {two}",
+                    "        failure(_) => false",
+                ))
+            else:
+                body.extend((
+                    "        success(_) => false",
+                    f"        failure(old) => old == {one} && "
+                    f"value.load(core.sync.atomic.Ordering.Relaxed) == {one}",
+                ))
+            body.extend(("    }", "}"))
+            sections.append("\n".join(body))
+        body = [
+            f"fn {prefix}_weak_success(success_order: {ordering_type}, "
+            f"failure_order: {ordering_type}): bool {{",
+            f"    let value = core.sync.atomic.{atomic}.new({zero})",
+            f"    match value.compare_exchange_weak({zero},{two},"
+            "success_order,failure_order) {",
+            f"        success(old) => old == {zero} && "
+            f"value.load(core.sync.atomic.Ordering.Relaxed) == {two}",
+            f"        failure(old) => old == {zero} && "
+            f"value.load(core.sync.atomic.Ordering.Relaxed) == {zero}",
+            "    }",
+            "}",
+        ]
+        sections.append("\n".join(body))
+
+    def append_scalar_matrix(suffix, atomic, zero, forty_two, forty_one,
+                             two, twelve, ten, eight, nand_result):
+        body = [f"fn check_{suffix}(): bool {{"]
+        if category == "basic":
+            body.extend((
+                f"    for order in [{load_orders}] {{",
+                f"        let value = core.sync.atomic.{atomic}.new({forty_two})",
+                f"        if value.load(order) != {forty_two} {{ return false }}",
+                "    }",
+                f"    for order in [{store_orders}] {{",
+                f"        let value = core.sync.atomic.{atomic}.new({zero})",
+                f"        value.store({forty_two},order)",
+                "        if value.load(core.sync.atomic.Ordering.Relaxed) != "
+                f"{forty_two} {{ return false }}",
+                "    }",
+                f"    for order in [{all_orders}] {{",
+                f"        let value = core.sync.atomic.{atomic}.new({zero})",
+                f"        if value.swap({forty_two},order) != {zero} || "
+                f"value.load(core.sync.atomic.Ordering.Relaxed) != {forty_two} "
+                "{ return false }",
+                "    }",
+            ))
+        elif category == "fetch":
+            body.extend((
+                f"    for order in [{all_orders}] {{",
+                f"        let added = core.sync.atomic.{atomic}.new({zero})",
+                f"        if added.fetch_add({two},order) != {zero} || "
+                f"added.load(core.sync.atomic.Ordering.Relaxed) != {forty_two} "
+                "{ return false }",
+                f"        let subtracted = core.sync.atomic.{atomic}.new({forty_two})",
+                f"        if subtracted.fetch_sub({two},order) != {forty_two} || "
+                f"subtracted.load(core.sync.atomic.Ordering.Relaxed) != {zero} "
+                "{ return false }",
+                f"        let anded = core.sync.atomic.{atomic}.new({twelve})",
+                f"        if anded.fetch_and({ten},order) != {twelve} || "
+                f"anded.load(core.sync.atomic.Ordering.Relaxed) != {eight} "
+                "{ return false }",
+                f"        let ored = core.sync.atomic.{atomic}.new({eight})",
+                f"        if ored.fetch_or(3{suffix},order) != {eight} || "
+                f"ored.load(core.sync.atomic.Ordering.Relaxed) != 11{suffix} "
+                "{ return false }",
+                f"        let xored = core.sync.atomic.{atomic}.new(10{suffix})",
+                f"        if xored.fetch_xor(3{suffix},order) != 10{suffix} || "
+                f"xored.load(core.sync.atomic.Ordering.Relaxed) != 9{suffix} "
+                "{ return false }",
+                f"        let nanded = core.sync.atomic.{atomic}.new({twelve})",
+                f"        if nanded.fetch_nand({ten},order) != {twelve} || "
+                f"nanded.load(core.sync.atomic.Ordering.Relaxed) != {nand_result} "
+                "{ return false }",
+                f"        let minimum = core.sync.atomic.{atomic}.new({forty_two})",
+                f"        if minimum.fetch_min({forty_one},order) != {forty_two} || "
+                f"minimum.load(core.sync.atomic.Ordering.Relaxed) != {forty_one} "
+                "{ return false }",
+                f"        let maximum = core.sync.atomic.{atomic}.new({forty_one})",
+                f"        if maximum.fetch_max({forty_two},order) != {forty_one} || "
+                f"maximum.load(core.sync.atomic.Ordering.Relaxed) != {forty_two} "
+                "{ return false }",
+                "    }",
+            ))
+        else:
+            append_cas_helpers(suffix, atomic, zero, forty_one, forty_two)
+            prefix = f"check_{suffix}_cas"
+            body.extend((
+                f"    for (success_order,failure_order) in [{pair_values}] {{",
+                f"        if !{prefix}_strong_success(success_order,failure_order) ||",
+                f"           !{prefix}_strong_failure(success_order,failure_order) ||",
+                f"           !{prefix}_weak_failure(success_order,failure_order) ||",
+                f"           !{prefix}_weak_success(success_order,failure_order) "
+                "{ return false }",
+                "    }",
+            ))
+        body.extend(("    true", "}"))
+        sections.append("\n".join(body))
+
+    for spec in types:
+        append_scalar_matrix(*spec)
+
+    if category == "basic":
+        sections.extend((
+        """fn check_bool_cas(success_order: core.sync.atomic.Ordering,
+                           failure_order: core.sync.atomic.Ordering): bool {
+    let value = core.sync.atomic.AtomicBool.new(false)
+    match value.compare_exchange(false,true,success_order,failure_order) {
+        success(old) => !old && value.load(core.sync.atomic.Ordering.Relaxed),
+        failure(_) => false
+    }
+}""",
+        """fn check_bool_cas_failure(success_order: core.sync.atomic.Ordering,
+                                   failure_order: core.sync.atomic.Ordering): bool {
+    let value = core.sync.atomic.AtomicBool.new(true)
+    match value.compare_exchange(false,false,success_order,failure_order) {
+        success(_) => false,
+        failure(old) => old && value.load(core.sync.atomic.Ordering.Relaxed)
+    }
+}""",
+        """fn check_bool_cas_weak_failure(success_order: core.sync.atomic.Ordering,
+                                        failure_order: core.sync.atomic.Ordering): bool {
+    let value = core.sync.atomic.AtomicBool.new(true)
+    match value.compare_exchange_weak(false,false,success_order,failure_order) {
+        success(_) => false,
+        failure(old) => old && value.load(core.sync.atomic.Ordering.Relaxed)
+    }
+}""",
+        """fn check_bool_cas_weak_success(success_order: core.sync.atomic.Ordering,
+                                        failure_order: core.sync.atomic.Ordering): bool {
+    let value = core.sync.atomic.AtomicBool.new(false)
+    match value.compare_exchange_weak(false,true,success_order,failure_order) {
+        success(old) => !old && value.load(core.sync.atomic.Ordering.Relaxed),
+        failure(old) => !old && !value.load(core.sync.atomic.Ordering.Relaxed)
+    }
+}""",
+        """fn check_bool(): bool {
+    for order in [core.sync.atomic.Ordering.Relaxed,
+                  core.sync.atomic.Ordering.Acquire,
+                  core.sync.atomic.Ordering.SeqCst] {
+        if !core.sync.atomic.AtomicBool.new(true).load(order) { return false }
+    }
+    for order in [core.sync.atomic.Ordering.Relaxed,
+                  core.sync.atomic.Ordering.Release,
+                  core.sync.atomic.Ordering.SeqCst] {
+        let value = core.sync.atomic.AtomicBool.new(false)
+        value.store(true,order)
+        if !value.load(core.sync.atomic.Ordering.Relaxed) { return false }
+    }
+    for order in [""" + all_orders + """] {
+        let swapped = core.sync.atomic.AtomicBool.new(false)
+        if swapped.swap(true,order) || !swapped.load(core.sync.atomic.Ordering.Relaxed) {
+            return false
+        }
+        let anded = core.sync.atomic.AtomicBool.new(true)
+        if !anded.fetch_and(false,order) || anded.load(core.sync.atomic.Ordering.Relaxed) {
+            return false
+        }
+        let ored = core.sync.atomic.AtomicBool.new(false)
+        if ored.fetch_or(true,order) || !ored.load(core.sync.atomic.Ordering.Relaxed) {
+            return false
+        }
+        let xored = core.sync.atomic.AtomicBool.new(true)
+        if !xored.fetch_xor(true,order) || xored.load(core.sync.atomic.Ordering.Relaxed) {
+            return false
+        }
+        let nanded = core.sync.atomic.AtomicBool.new(true)
+        if !nanded.fetch_nand(true,order) || nanded.load(core.sync.atomic.Ordering.Relaxed) {
+            return false
+        }
+    }
+    for (success_order,failure_order) in [""" + pair_values + """] {
+        if !check_bool_cas(success_order,failure_order) ||
+           !check_bool_cas_failure(success_order,failure_order) ||
+           !check_bool_cas_weak_failure(success_order,failure_order) ||
+           !check_bool_cas_weak_success(success_order,failure_order) {
+            return false
+        }
+    }
+    true
+}""",
+        ))
+    pointer = """fn check_pointer_cas(success_order: core.sync.atomic.Ordering,
+                            failure_order: core.sync.atomic.Ordering): bool {
+    var storage = [1i32,2i32,3i32]
+    let first = core.ptr.from_mut(storage[0])
+    let second = unsafe { first.add(1) }
+    let value = core.sync.atomic.AtomicPtr<i32>.new(first)
+    match value.compare_exchange(first,second,success_order,failure_order) {
+        success(old) => old == first && value.load(core.sync.atomic.Ordering.Relaxed) == second,
+        failure(_) => false
+    }
+}
+fn check_pointer_cas_failure(success_order: core.sync.atomic.Ordering,
+                                    failure_order: core.sync.atomic.Ordering): bool {
+    var storage = [1i32,2i32,3i32]
+    let first = core.ptr.from_mut(storage[0])
+    let second = unsafe { first.add(1) }
+    let value = core.sync.atomic.AtomicPtr<i32>.new(second)
+    match value.compare_exchange(first,first,success_order,failure_order) {
+        success(_) => false,
+        failure(old) => old == second && value.load(core.sync.atomic.Ordering.Relaxed) == second
+    }
+}
+fn check_pointer_cas_weak_failure(success_order: core.sync.atomic.Ordering,
+                                         failure_order: core.sync.atomic.Ordering): bool {
+    var storage = [1i32,2i32,3i32]
+    let first = core.ptr.from_mut(storage[0])
+    let second = unsafe { first.add(1) }
+    let value = core.sync.atomic.AtomicPtr<i32>.new(second)
+    match value.compare_exchange_weak(first,first,success_order,failure_order) {
+        success(_) => false,
+        failure(old) => old == second && value.load(core.sync.atomic.Ordering.Relaxed) == second
+    }
+}
+fn check_pointer_cas_weak_success(success_order: core.sync.atomic.Ordering,
+                                         failure_order: core.sync.atomic.Ordering): bool {
+    var storage = [1i32,2i32,3i32]
+    let first = core.ptr.from_mut(storage[0])
+    let second = unsafe { first.add(1) }
+    let value = core.sync.atomic.AtomicPtr<i32>.new(first)
+    match value.compare_exchange_weak(first,second,success_order,failure_order) {
+        success(old) => old == first && value.load(core.sync.atomic.Ordering.Relaxed) == second,
+        failure(old) => old == first && value.load(core.sync.atomic.Ordering.Relaxed) == first
+    }
+}
+fn check_pointer(): bool {
+    for order in [""" + load_orders + """] {
+        var storage = [1i32,2i32,3i32]
+        let first = core.ptr.from_mut(storage[0])
+        if core.sync.atomic.AtomicPtr<i32>.new(first).load(order) != first {
+            return false
+        }
+    }
+    for order in [""" + store_orders + """] {
+        var storage = [1i32,2i32,3i32]
+        let first = core.ptr.from_mut(storage[0])
+        let second = unsafe { first.add(1) }
+        let value = core.sync.atomic.AtomicPtr<i32>.new(first)
+        value.store(second,order)
+        if value.load(core.sync.atomic.Ordering.Relaxed) != second { return false }
+    }
+    for order in [""" + all_orders + """] {
+        var storage = [1i32,2i32,3i32]
+        let first = core.ptr.from_mut(storage[0])
+        let second = unsafe { first.add(1) }
+        let swapped = core.sync.atomic.AtomicPtr<i32>.new(first)
+        if swapped.swap(second,order) != first ||
+           swapped.load(core.sync.atomic.Ordering.Relaxed) != second {
+            return false
+        }
+        let added = core.sync.atomic.AtomicPtr<i32>.new(first)
+        if added.fetch_ptr_add(1usize,order) != first ||
+           added.load(core.sync.atomic.Ordering.Relaxed) != second {
+            return false
+        }
+        let subtracted = core.sync.atomic.AtomicPtr<i32>.new(second)
+        if subtracted.fetch_ptr_sub(1usize,order) != second ||
+           subtracted.load(core.sync.atomic.Ordering.Relaxed) != first {
+            return false
+        }
+        let byte_added = core.sync.atomic.AtomicPtr<i32>.new(first)
+        if byte_added.fetch_byte_add(core.mem.size_of<i32>(),order) != first ||
+           byte_added.load(core.sync.atomic.Ordering.Relaxed) != second {
+            return false
+        }
+        let byte_subtracted = core.sync.atomic.AtomicPtr<i32>.new(second)
+        if byte_subtracted.fetch_byte_sub(core.mem.size_of<i32>(),order) != second ||
+           byte_subtracted.load(core.sync.atomic.Ordering.Relaxed) != first {
+            return false
+        }
+    }
+    for (success_order,failure_order) in [""" + pair_values + """] {
+        if !check_pointer_cas(success_order,failure_order) ||
+           !check_pointer_cas_failure(success_order,failure_order) ||
+           !check_pointer_cas_weak_failure(success_order,failure_order) ||
+           !check_pointer_cas_weak_success(success_order,failure_order) {
+            return false
+        }
+    }
+    true
+}"""
+    sections.append(pointer) if category == "basic" else None
+    sections.append(
+        """fn check_fences(): bool {
+    core.sync.atomic.fence(core.sync.atomic.Ordering.Acquire)
+    core.sync.atomic.fence(core.sync.atomic.Ordering.Release)
+    core.sync.atomic.fence(core.sync.atomic.Ordering.AcqRel)
+    core.sync.atomic.fence(core.sync.atomic.Ordering.SeqCst)
+    core.sync.atomic.compiler_fence(core.sync.atomic.Ordering.Acquire)
+    core.sync.atomic.compiler_fence(core.sync.atomic.Ordering.Release)
+    core.sync.atomic.compiler_fence(core.sync.atomic.Ordering.AcqRel)
+    core.sync.atomic.compiler_fence(core.sync.atomic.Ordering.SeqCst)
+    true
+}""") if category == "basic" else None
+    checks = [f"check_{spec[0]}()" for spec in types]
+    if category == "basic":
+        checks.extend(("check_bool()", "check_pointer()", "check_fences()"))
+    main = ["fn main(): i32 {"]
+    main.extend(f"    if !{check} {{ return {index} }}" for index, check in
+                enumerate(checks, 1))
+    main.extend(("    0", "}"))
+    return "\n\n".join(sections) + "\n" + "\n".join(main) + "\n"
+
+
 MACHINE_SOURCES = {
     "machine-target-variadic-vector-c-physical-entry": """
 unsafe extern "C" fn inspect(first:i32,args: ...):i32 {
@@ -646,6 +1019,104 @@ fn main() {
        core.mem.size_of<DarwinPacked>() == 5usize { 0 } else { 1 }
 }
 """,
+"darwin-arm64-c-layout-union-tagged-and-transparent": """
+@layout(C)
+union DarwinLayoutUnion { integer:i64; real:f64 }
+@layout(C)
+copy enum DarwinLayoutTagged {
+    Empty = 1;
+    Integer(i64) = 7;
+    Real(f64) = 11
+}
+@layout(transparent)
+copy type DarwinLayoutTransparent { value:u64 }
+extern "C" {
+    unsafe fn mettle_c_darwin_layout_extra_metrics(
+        union_size:usize,union_alignment:usize,tagged_size:usize,
+        tagged_alignment:usize,transparent_size:usize,
+        transparent_alignment:usize):i32;
+    unsafe fn mettle_c_darwin_layout_union(
+        value:take DarwinLayoutUnion):DarwinLayoutUnion;
+    unsafe fn mettle_c_darwin_layout_tagged(
+        value:DarwinLayoutTagged):DarwinLayoutTagged;
+    unsafe fn mettle_c_darwin_layout_transparent(
+        value:DarwinLayoutTransparent):DarwinLayoutTransparent;
+}
+fn main() {
+    let union_value = unsafe {
+        mettle_c_darwin_layout_union(DarwinLayoutUnion(integer:41i64))
+    }
+    let tagged = unsafe {
+        mettle_c_darwin_layout_tagged(DarwinLayoutTagged.Integer(41i64))
+    }
+    let transparent = unsafe {
+        mettle_c_darwin_layout_transparent(DarwinLayoutTransparent(41u64))
+    }
+    let metrics = unsafe {
+        mettle_c_darwin_layout_extra_metrics(
+            core.mem.size_of<DarwinLayoutUnion>(),
+            core.mem.align_of<DarwinLayoutUnion>(),
+            core.mem.size_of<DarwinLayoutTagged>(),
+            core.mem.align_of<DarwinLayoutTagged>(),
+            core.mem.size_of<DarwinLayoutTransparent>(),
+            core.mem.align_of<DarwinLayoutTransparent>())
+    }
+    let tagged_ok = match tagged {
+        DarwinLayoutTagged.Integer(value) => value == 42i64,
+        _ => false
+    }
+    if metrics == 1 && unsafe { union_value.integer == 42i64 } &&
+       tagged_ok && transparent.value == 42u64 { 0 } else { 1 }
+}
+""",
+"darwin-arm64-c-scalar-bool-callback-and-float-promotion": """
+unsafe extern "C" fn invert(value:bool):bool { !value }
+unsafe extern "C" fn inspect_float(count:i32,args: ...):i32 {
+    let value = args.arg<f64>()
+    if count == 1 && value == 42.0f64 { 42 } else { -1 }
+}
+extern "C" {
+    unsafe fn mettle_c_darwin_bool_roundtrip(value:bool):bool;
+    unsafe fn mettle_c_darwin_bool_callback(
+        callback:unsafe extern "C" fn(bool):bool,value:bool):bool;
+    unsafe fn mettle_c_darwin_variadic_float_definition(
+        callback:unsafe extern "C" fn(i32,...):i32):i32;
+}
+fn main() {
+    let roundtrip = unsafe { mettle_c_darwin_bool_roundtrip(true) }
+    let callback = unsafe { mettle_c_darwin_bool_callback(invert,true) }
+    let promoted = unsafe {
+        mettle_c_darwin_variadic_float_definition(inspect_float)
+    }
+    if roundtrip && !callback && promoted == 42 { 0 } else { 1 }
+}
+""",
+"darwin-arm64-cpp-exception-unwinds-through-mettle-cleanup": """
+type UnwindGuard {
+    counter: ptr<mut i32>
+    drop { unsafe { *self.counter += 1 } }
+}
+unsafe extern "C-unwind" fn indirect_throw(context:ptr<mut i32>):Unit {
+    let guard = UnwindGuard(context)
+    unsafe { mettle_cpp_throw() }
+}
+extern "C-unwind" {
+    unsafe fn mettle_cpp_throw():Never;
+}
+extern "C" {
+    unsafe fn mettle_cpp_indirect_throw_catch(
+        callback:unsafe extern "C-unwind" fn(ptr<mut i32>):Unit,
+        context:ptr<mut i32>):i32;
+}
+fn main() {
+    var count = 0
+    let indirect = unsafe {
+        mettle_cpp_indirect_throw_catch(
+            indirect_throw,core.ptr.from_mut(count))
+    }
+    if indirect == 1 && count == 2 { 0 } else { 1 }
+}
+""",
 "darwin-arm64-c-export-link-and-relocation": """
 extern "C" {
 unsafe fn mettle_c_darwin_exported_call(value:i32):i32;
@@ -1001,6 +1472,14 @@ fn main() {
 }
 """,
     **{name: PRELUDE + source for name, source in MACHINE_SOURCES.items()},
+    **({
+        "machine-atomic-basic-ordering-matrix":
+            PRELUDE + atomic_operation_matrix("basic"),
+        "machine-atomic-fetch-ordering-matrix":
+            PRELUDE + atomic_operation_matrix("fetch"),
+        "machine-atomic-compare-exchange-ordering-matrix":
+            PRELUDE + atomic_operation_matrix("compare-exchange"),
+    } if DARWIN_ARM64 else {}),
     **{name: DARWIN_ABI_COMMON + source
        for name, source in DARWIN_ARM64_SOURCES.items()},
     "c-zero-size-owned-iteration-drops-every-element-once": PRELUDE + """
@@ -1413,7 +1892,9 @@ def main():
             path.write_text(source)
             libraries = [args.callbacks, args.runtime]
             if name in DARWIN_ARM64_SOURCES:
-                libraries = [darwin_callbacks_object, args.runtime]
+                libraries = [
+                    darwin_callbacks_object, args.callbacks, args.runtime
+                ]
             if name == "machine-target-guarded-wide-vector-c-physical-abi":
                 vector_object = directory / "machine_vectors.o"
                 command = [args.cxx.with_name("clang"), "-std=c11", "-mavx",
@@ -1430,6 +1911,30 @@ def main():
                 program = directory / (name + "-" + profile)
                 run([args.compiler, "build", path, "--emit", "object", "-o", obj,
                      "--profile", profile])
+                volatile_disassembly = None
+                if name == "darwin-arm64-volatile-c-observer" and profile == "release":
+                    volatile_disassembly = run([
+                        args.cxx.with_name("llvm-objdump"), "-d", obj
+                    ]).stdout
+                    body = re.search(
+                        r"<_mettle\.abi\.volatile_update\.body>:\n(.*?)(?=\n\n|\n[0-9a-fA-F]+ <)",
+                        volatile_disassembly, re.S)
+                    if body is None:
+                        raise AssertionError(
+                            "Release object has no volatile_update body:\n" +
+                            volatile_disassembly)
+                    instructions = body.group(1)
+                    loads = re.findall(r"\bldr\s+w\d+,\s*\[x\d+\]", instructions)
+                    stores = re.findall(r"\bstr\s+w\d+,\s*\[x\d+\]", instructions)
+                    if len(loads) < 1 or len(stores) < 2:
+                        raise AssertionError(
+                            "Release volatile callback lost load/store instructions:\n" +
+                            instructions)
+                    if re.search(r"\b(?:ldar|stlr|ldaxr|stlxr|cas|swp|dmb)\b",
+                                 instructions):
+                        raise AssertionError(
+                            "Volatile callback was lowered as synchronization:\n" +
+                            instructions)
                 command = [args.cxx, obj, *libraries, "-o", program]
                 command.extend(args.link_arg)
                 if args.sysroot:
@@ -1442,6 +1947,9 @@ def main():
                         "source_sha256": digest(path),
                         "object_sha256": digest(obj),
                         "program_sha256": digest(program)}
+                if volatile_disassembly is not None:
+                    case["release_volatile_instruction_counts"] = {
+                        "loads": len(loads), "stores": len(stores)}
                 if name in DARWIN_ARM64_SOURCES:
                     case["c_fixture_sha256"] = digest(
                         Path(__file__).with_name("machine_callbacks.c"))

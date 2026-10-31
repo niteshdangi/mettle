@@ -95,13 +95,13 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | L009 | P | `tests/library/slice_iterable.mt`; `tests/source/fail/array-rest-does-not-permit-overlapping-mutation.mt` | `library/core/slice.mt`, `compiler/semantics`; full stable slice operation and checked disjoint-split closure is outstanding. |
 | L010 | E | `tests/source/fail/field-read-before-init.mt` | `compiler/semantics`, `compiler/cleanup`; complete construction/partial-init path matrix. |
 | L011 | E | `tests/source/fail/sum-match-must-be-exhaustive.mt` | `compiler/semantics`, `compiler/backend/llvm`; finish layout and active-variant cleanup combinations. |
-| L012 | P | `tests/source/fail/machine-union-read-requires-unsafe.mt` | `compiler/semantics`, `compiler/backend/llvm`; sanitizer/validity and overlapping-loan combinations remain open. |
+| L012 | E | `tests/source/fail/machine-union-read-requires-unsafe.mt`; `tests/source/run/machine-union-overlap-safe-write-and-delayed-initialization.mt` (ASan) | macOS ARM64 evidenced; Linux/Windows not qualified. |
 | L013 | E | `tests/source/run/unit-never.mt` | `compiler/semantics`; check remaining divergent control-flow combinations. |
-| L014 | P | `tests/source/run/machine-raw-pointers-and-unsafe-callable-capabilities.mt` | `compiler/types`, `compiler/backend/llvm`; target qualification for extent, alignment, provenance and validity is incomplete. |
+| L014 | E | `tests/source/run/machine-raw-pointers-and-unsafe-callable-capabilities.mt`; `tests/source/run/safe-function-item-coerces-to-unsafe-pointer.mt` | macOS ARM64 evidenced; Linux/Windows not qualified. |
 | L015 | P | `tests/source/run/slice-metadata-reborrowing-and-unsized-tails.mt` | `compiler/types`, `compiler/backend/llvm`; metadata-preserving conversion/owner closure remains incomplete. |
-| L016 | P | `tests/source/run/array-dynamic-zero-length-bound.mt`; `tests/source/run/machine-numeric-wide-bounded-array-count-and-zero-array-alignment.mt` | `compiler/types`, `compiler/cleanup`; combine layout, pointer arithmetic, iteration and destruction on the frozen input. |
+| L016 | E | `tests/source/run/array-dynamic-zero-length-bound.mt`; `tests/source/run/array-layout-pointer-iteration-drop-closure.mt` | macOS ARM64 evidenced; Linux/Windows not qualified. |
 | L017 | E | `tests/source/run/aliases-and-static-associated-functions.mt` | `compiler/resolution`; close the full alias identity/use matrix. |
-| L018 | P | `tests/source/run/machine-numeric-checked-integer-and-floating-conversions.mt` | `compiler/semantics`; prove complete coercion closure without implicit retain, erasure or ownership upgrade. |
+| L018 | P | `tests/source/run/machine-numeric-checked-integer-and-floating-conversions.mt` | `compiler/semantics`; implicit widening, retain and owner upgrade are rejected (`tests/source/fail/no-implicit-*.mt`); the row must state whether expected-type erasure counts as implicit erasure. |
 | L019 | E | `tests/source/fail/loop-use-after-move.mt` | `compiler/analysis`; extend move-use coverage across the operation corpus. |
 | L020 | E | `tests/source/fail/alias-does-not-grant-copy.mt` | `compiler/semantics`, `compiler/analysis`; constructor/destructor edge matrix remains. |
 | L021 | E | `tests/source/fail/immutable-exclusive-borrow.mt` | `compiler/analysis`; complete read-loan lifetime/alias closure. |
@@ -114,9 +114,9 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | L028 | E | `tests/source/fail/partial-initialization.mt` | `compiler/analysis`, `compiler/cleanup`; field cleanup evidence remains bounded to existing cases. |
 | L029 | E | `tests/backend/cleanup_frame.py`; `tests/backend/cleanup_frame.cpp` | `compiler/cleanup`, `compiler/backend/llvm`; complete exit/failure cleanup traces. |
 | L030 | E | `tests/source/run/direct-borrow-temporary-extension.mt` | `compiler/semantics`; complete call-vs-direct initializer lifetime table. |
-| L031 | P | `tests/source/run/machine-cell-conflicting-exclusive-guard-panics.mt` | `library/core/borrow.mt`, `compiler/semantics`; panic, forgetting, and safety closure remain. |
+| L031 | E | `tests/source/run/machine-cell-conflicting-exclusive-guard-panics.mt`; `tests/source/run/machine-cell-refmut-view-writeback.mt` (ASan) | macOS ARM64 evidenced; Linux/Windows not qualified. |
 | L032 | E | `tests/source/run/machine-manual-take-and-uninitialized-explicit-destruction.mt` | `compiler/cleanup`; close panic/forget and repeated destruction cases under sanitizers. |
-| L033 | P | `tests/source/run/machine-inline-pin-keeps-payload-and-destruction-address-stable.mt` | `compiler/types`, `compiler/semantics`; generic/projection/writeback and pinned-owner operation closure remains. |
+| L033 | E | `tests/source/run/machine-inline-pin-keeps-payload-and-destruction-address-stable.mt`; `tests/source/run/machine-structural-pin-projections-and-pinned-destruction.mt` (ASan) | macOS ARM64 evidenced; Linux/Windows not qualified. |
 | L034 | E | `tests/source/run/capture-composes-across-expressions.mt` | `compiler/syntax`; finish the full grammar/precedence corpus. |
 | L035 | E | `tests/source/run/sum-or-pattern-bindings.mt` | `compiler/semantics`; complete ownership-sensitive pattern forms. |
 | L036 | E | `tests/source/fail/sum-match-must-be-exhaustive.mt` | `compiler/semantics`; complete guards and all variant forms. |
@@ -128,15 +128,15 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | L042 | E | `tests/source/fail/unused-generic-body-is-checked.mt` | `compiler/semantics`, `compiler/instances`; close all declared-specialization contracts. |
 | L043 | E | `tests/source/fail/implementation-cannot-strengthen-generic-bounds.mt` | `compiler/semantics`; close the full unsatisfied-obligation matrix. |
 | L044 | E | `tests/source/run/associated-families-and-typed-constants.mt` | `compiler/semantics`; finish equality/const/projection operation closure. |
-| L045 | P | `tests/source/run/borrowed-parameter-captures-keep-views.mt` | `compiler/semantics`, `compiler/types`; complete lending-family region and operation closure. |
+| L045 | E | `tests/source/run/borrowed-parameter-captures-keep-views.mt`; `tests/source/run/async-mut-parameter-writes-reach-the-caller.mt` | macOS ARM64 evidenced; Linux/Windows not qualified. |
 | L046 | E | `tests/source/run/constant-array-lengths-are-profile-independent.mt` | `compiler/consteval`, `compiler/instances`; finish value-parameter/layout combinations. |
 | L047 | E | `tests/source/run/coherent-implementation-type-and-const-equality-selection.mt` | `compiler/semantics`; complete overlap/coherence cases. |
-| L048 | P | `tests/library/slice_any_text.mt`; `tests/source/fail/async-interface-erased-dispatch.mt` | `compiler/semantics`, `compiler/backend/llvm`; explicit erased async-future dispatch remains unsupported; complete unsized/associated-binding closure. |
+| L048 | P | `tests/source/run/generic-unsized-bound-dispatches-through-any.mt`; `tests/source/run/generic-mut-receiver-dispatches-through-any.mt` | `compiler/lowering/opaque.cpp`; generic `any I` dispatch and `async(heap)` erased calls work; owners do not yet carry payload loans. |
 | L049 | E | `tests/source/fail/opaque-return-paths-share-one-hidden-type.mt` | `compiler/semantics`; finish cross-package identity/capture evidence. |
 | L050 | E | `tests/library/ops.mt` | `library/core/ops.mt`, `compiler/semantics`; complete compound-assignment single-evaluation closure. |
 | L051 | E | `tests/source/run/two-phase-method-receiver.mt` | `compiler/semantics`; complete inherent/interface collision and explicit qualification cases. |
 | L052 | E | `tests/source/run/async-fn-state-machine.mt` | `compiler/syntax`, `compiler/semantics`, `compiler/backend/llvm`; target/cancellation qualification remains. |
-| L053 | P | `tests/source/run/async-blocks-and-closures.mt`; `tests/source/fail/async-interface-erased-dispatch.mt` | `compiler/syntax`, `compiler/semantics`; erased interface future storage/dispatch is explicitly unsupported. |
+| L053 | P | `tests/source/run/async-heap-interface-methods-dispatch-through-any.mt`; `tests/source/fail/async-interface-erased-dispatch.mt` | `compiler/syntax`, `compiler/semantics`; `async(heap)` methods dispatch through `any I`; an erased future may outlive its receiver until owners carry payload loans. |
 | L054 | E | `tests/source/run/const-eval-*.mt`; `tests/consteval/target_width.cpp` | `compiler/consteval`; target width beyond the supported driver targets is covered only by checker unit evidence. |
 | L055 | E | `tests/source/run/macro-declarative-expansion.mt`; `tests/source/run/macro-import-reexport.mt`; `tests/source/fail/macro-recursion-limit.mt`; `tests/source/fail/macro-import-ambiguous.mt` | `compiler/expansion`, `compiler/resolution`; macro import paths follow item import rules (module-relative, `super`). Verified macOS ARM64 Release at `0eea2fa`+macro fix. |
 | L056 | E | `tests/packages.py::procedural_macro`; `tests/packages.py::procedural_macro_failure` | `compiler/expansion`, `compiler/driver`; per-package namespaces and attribute/derive procedural macros remain out of contract. |
@@ -146,7 +146,7 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | L060 | E | `tests/packages.py::doc_writes_deterministic_html`; `tests/packages.py::doctests_run_isolated_examples` | `compiler/documentation`, `compiler/driver`; debugger support is separately tracked by T006. |
 | S001 | E | `tests/library/option_outcome.mt`; `tests/library/nested_option_extraction.mt` | `library/core/option.mt`; finish nested presence and consuming-extraction operation closure. |
 | S002 | E | `tests/library/option_outcome.mt`; `tests/library/nested_outcome_transpose.mt` | `library/core/option.mt`, `library/core/outcome.mt`; transpose verified on macOS arm64. |
-| S003 | P | `tests/source/run/native-heap-owner.mt`; `tests/alloc/box_rc_traits.mt` | `library/alloc/boxed.mt`; unsized owner payloads and pinned owning handles are unsupported. |
+| S003 | P | `tests/source/run/pinned-heap-owner-drop-and-unpin-access.mt`; `tests/source/run/pinned-shared-owners-retain-and-drop.mt`; `tests/source/fail/pinned-weak-handle.mt` | `library/alloc/{boxed,arc,rc}.mt`; pinned owners are implemented; owners do not yet carry their payload's loans. |
 | S004 | E | `tests/alloc/rc_weak.mt`; `tests/alloc/arc_weak.mt` | `library/alloc/rc.mt`; complete retain/weak/unique-extraction failure cases. |
 | S005 | P | `tests/alloc/arc_weak.mt`; `tests/std/arc_races.mt` | `library/alloc/arc.mt`; full operation matrix and current target race/last-owner qualification remain. |
 | S006 | P | `tests/alloc/vec_basic.mt`; `tests/alloc/stable_sort.mt`; `tests/std/collection_panic_safety_vec.mt`; `tests/source/fail/list-element-view-blocks-list-push.mt` | `library/alloc/vec.mt`; complete reserve/insert/drain/invalidation closure. |
@@ -160,8 +160,8 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | S014 | P | `tests/alloc/failing_allocator.mt`; `tests/alloc/btree_alloc_failure.mt`; `tests/alloc/custom_allocator_owners_layouts.mt` | `library/alloc/alloc.mt`; allocator alignment/exhaustion/deallocation and every owner path need closure. |
 | S015 | E | `tests/source/run/machine-cell-safe-exchange-and-exclusive-access.mt` | `library/core/borrow.mt`; raw safety, panic and forgetting qualification remains. |
 | S016 | E | `tests/source/run/machine-manual-take-and-uninitialized-explicit-destruction.mt` | `library/core/` storage declarations; close partial-init, alignment and unwind cases. |
-| S017 | P | `tests/backend/memory.py`; `tests/source/fail/machine-atomic-handles-are-not-implicitly-copy.mt` | `compiler/types/machine.cpp`; target width/order closure and independent memory-model evidence remain. |
-| S018 | P | `tests/source/fail/manual-transferable-requires-unsafe.mt`; `tests/source/fail/machine-static-immutable-requires-shareable.mt` | `compiler/semantics/interface_solver.cpp`; generic/region/projection and static-property closure remains. |
+| S017 | E | `tests/backend/memory.py`; `tests/backend/machine.py` (atomic width/order/CAS matrix) | macOS ARM64 evidenced; Linux/Windows not qualified. |
+| S018 | E | `tests/source/fail/manual-transferable-requires-unsafe.mt`; `tests/source/fail/transferable-unbounded-region-projection-rejected.mt` | macOS ARM64 evidenced; Linux/Windows not qualified. |
 | S019 | P | `tests/std/threads_basic.mt`; `tests/std/thread_scope.mt` | `library/std/thread.mt`, `runtime/thread.cpp`; macOS stress/panic and complete operation closure remain. |
 | S020 | P | `tests/std/mutex_poison.mt`; `tests/std/sync_primitives.mt` | `library/std/sync/mutex.mt`, `rwlock.mt`; guard affinity, failure and full operation closure remain. |
 | S021 | P | `tests/std/sync_primitives.mt` | `library/std/sync/condvar.mt`, `barrier.mt`, `once.mt`; wake/failure/target stress closure remains. |
@@ -174,14 +174,14 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | S028 | E | `tests/std/panic_catch.mt`; `tests/std/panic_hook_abort.mt` | `library/std/panic.mt`; complete payload/hook/recovery failure closure remains. |
 | S029 | E | `tests/library/slice_any_text.mt`; `tests/packages.py::type_id_survives_public_reexport` | `library/core/any.mt`; cross-package identity and erased-owner operation fixtures verified on macOS arm64. |
 | S030 | E | `tests/std/async_executor.mt`; `tests/std/async_scope_borrowed.mt` | `library/core/future.mt`, `library/std/task.mt`; async-scope fixtures pass in `library.std` and under emitted ASan/TSan; independent soundness/race review found no blocking issues. |
-| S031 | P | `tests/source/run/machine-target-direct-guarded-vector.aarch64.mt` | `compiler/types/target.cpp`, `library/std/sys.mt`; finish the macOS-applicable per-item target/cfg audit; Linux/Windows remain not qualified. |
-| A001 | P | `tests/backend/machine.py`; `tests/backend/machine_callbacks.c` | `compiler/backend/llvm/abi.cpp`; complete Darwin ARM64 argument/return/callback/variadic ABI probes. |
-| A002 | P | `tests/backend/machine.py`; `tests/source/fail/machine-packed-fields-cannot-form-aligned-views.mt` | `compiler/types/layout.cpp`, `compiler/backend/llvm/abi.cpp`; finish layout/calling/validity probes. |
-| A003 | P | `tests/source/run/machine-static-union-enum-and-nested-relocations.mt` | `compiler/backend/llvm/object.cpp`, `compiler/driver`; finish symbol/link/lifetime/freestanding closure. |
-| A004 | P | `tests/backend/machine_unwind.cpp` | `compiler/backend/llvm/abi.cpp`, `runtime`; complete direct/indirect ABI and cross-language cleanup/escape probes. |
-| A005 | P | `tests/source/run/machine-asm-static-symbol-global-and-naked-entry.aarch64.mt` | `compiler/types/assembly.cpp`, `compiler/backend/llvm`; complete ARM64 operand, clobber, unwind and evaluation probes. |
-| A006 | P | `tests/backend/machine_vectors.c`; `tests/source/fail/machine-target-rejects-vector-element-shape-mismatch.aarch64.mt` | `compiler/types/target.cpp`, `compiler/backend/llvm`; only initial operation tables exist; enumerate and execute each applicable Darwin ARM64 operation/feature contract. |
-| A007 | P | `tests/source/run/machine-pointer-provenance-volatile-and-layout.mt` | `compiler/backend/llvm`; preserve optimized accesses without treating volatile as synchronization; no full operation matrix. |
+| S031 | E | `tests/source/run/darwin-arm64-cfg-target-facts.mt`; `tests/source/run/machine-target-direct-guarded-vector.aarch64.mt` | macOS ARM64 evidenced; Linux/Windows not qualified. |
+| A001 | P | `tests/backend/machine.py`; `tests/backend/machine_callbacks.c` | `compiler/backend/llvm/abi.cpp`; argument/return/callback/variadic probes pass; the C ABI mapping of `char` is unspecified. |
+| A002 | E | `tests/backend/machine.py` (layout/calling probes); `tests/source/fail/machine-packed-fields-cannot-form-aligned-views.mt` | macOS ARM64 evidenced; Linux/Windows not qualified. |
+| A003 | E | `tests/backend/machine.py` (symbol/link probes); `tests/source/run/machine-static-union-enum-and-nested-relocations.mt` | macOS ARM64 evidenced; Linux/Windows not qualified. |
+| A004 | E | `tests/backend/machine_unwind.cpp`; `tests/backend/machine.py` | macOS ARM64 evidenced; Linux/Windows not qualified. |
+| A005 | E | `tests/source/run/machine-asm-static-symbol-global-and-naked-entry.aarch64.mt`; `tests/backend/machine.py` | macOS ARM64 evidenced; Linux/Windows not qualified. |
+| A006 | E | `tests/backend/machine.py` (NEON matrix: 20 shapes, 206 operations); `tests/backend/machine_vectors.c` | macOS ARM64 evidenced; Linux/Windows not qualified. |
+| A007 | E | `tests/source/run/machine-pointer-provenance-volatile-and-layout.mt`; `tests/backend/machine.py` | macOS ARM64 evidenced; Linux/Windows not qualified. |
 | A008 | E | `tests/backend/machine.py` (`machine-target-freestanding-no-services`) | `compiler/driver`, `runtime`; freestanding debug/release objects have no undefined service symbols and run linked to a C driver on macOS ARM64 (CTest `backend.machine`). |
 | A009 | M | — | Deferred to I17 by owner decision (2026-10-31); not a V1 gate. Optional Rust interoperability package per `library-and-abi.md` section 7 and `tooling-and-packages.md` section 5. |
 | T001 | E | `tests/packages.py::path_dependency`; `tests/packages.py::registry_resolution` | `compiler/packages`; complete remaining resolver conflict/offline/target-feature cases. |
@@ -192,7 +192,7 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | T006 | E | `tests/packages.py::debug_info`; `tests/packages.py::debugger_workflow` | `compiler/backend/llvm/debug.cpp`, `tools/debug`; expanded workflow/LLDB checks pass on macOS arm64; Windows CodeView/PDB is excluded and not qualified. |
 | T007 | E | `tests/packages.py::test_reports_pass_fail_ignored_and_isolates_panics`; `tests/packages.py::bench_reports_timing` | `compiler/driver/execute.cpp`; package-wide collection and doctest cases are evidenced; finish the remaining runner contract. |
 
-Inventory totals: **67 evidenced, 39 partial, 1 missing (A009, deferred to
+Inventory totals: **82 evidenced, 24 partial, 1 missing (A009, deferred to
 I17)**. Remaining partial rows are I13
 operation-closure obligations. Full operation closure is a separate, still
 open obligation: `docs/baseline/audit-summary.json` reports 106,125 canonical

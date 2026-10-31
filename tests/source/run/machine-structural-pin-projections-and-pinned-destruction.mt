@@ -1,4 +1,6 @@
 
+// flags: --sanitize address
+
 type Child {
     original: usize; counter: ptr<mut i32>; marker: core.marker.PhantomPinned
     drop {
