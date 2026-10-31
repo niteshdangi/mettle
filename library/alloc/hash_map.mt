@@ -237,6 +237,12 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
 // Set of keys backed by a map with unit values.
 pub type Set<K, A: Allocator = Global> { map: Map<K, Unit, A> }
 
+fn set_from_map<K, A: Allocator>(map: take Map<K, Unit, A>): Set<K, A> {
+    let result: Set<K, A>
+    result.map = take map
+    result
+}
+
 pub fn set_new_in<K, A: Allocator>(a: take A): Set<K, A> {
     Set<K, A>(allocator: take a)
 }
@@ -249,9 +255,6 @@ extend<K> Set<K> {
 extend<K, A: Allocator> Set<K, A> {
     pub init(allocator: take A) {
         self.map = new_in<K, Unit, A>(take allocator)
-    }
-    init(map: take Map<K, Unit, A>, marker: bool) {
-        self.map = take map
     }
 }
 
@@ -394,7 +397,7 @@ extend<K: Hash + PartialEq, V> Map<K, V> implements FromItems<(K, V)> {
 }
 
 extend<K: Hash + PartialEq + Clone, A: Allocator + Clone> Set<K, A> implements Clone {
-    fn clone(): Set<K, A> { Set<K, A>(self.map.clone(), true) }
+    fn clone(): Set<K, A> { set_from_map(self.map.clone()) }
 }
 // Equal when both hold the same elements, in any order.
 extend<K: Hash + PartialEq, A: Allocator> Set<K, A> implements PartialEq {

@@ -21,12 +21,19 @@ pub type FromUtf8Error<A: Allocator = Global> {
     pub valid_up_to: usize
 }
 
+// Callers must provide well-formed UTF-8 bytes.
+fn from_valid_bytes<A: Allocator>(bytes: take List<u8, A>): String<A> {
+    let result: String<A>
+    result.v = take bytes
+    result
+}
+
 pub fn new_in<A: Allocator>(a: take A): String<A> {
-    String<A>(super.vec.new_in<u8, A>(take a), true, true)
+    from_valid_bytes(super.vec.new_in<u8, A>(take a))
 }
 pub fn new(): String { new_in(Global()) }
 pub fn with_capacity(n: usize): String {
-    String(super.vec.with_capacity<u8>(n), true, true)
+    from_valid_bytes(super.vec.with_capacity<u8>(n))
 }
 pub fn from_text(t: read Text): String {
     var s = new()
@@ -49,7 +56,7 @@ pub fn from_utf8<A: Allocator>(bytes: take List<u8, A>): String<A> throws FromUt
         let n = valid_prefix(bytes.as_slice())
         throw FromUtf8Error(bytes, n)
     }
-    String<A>(take bytes, true, true)
+    from_valid_bytes(take bytes)
 }
 
 extend String {
@@ -63,9 +70,6 @@ extend<A: Allocator> String<A> {
     pub init(text: read Text, allocator: take A) {
         self.v = super.vec.new_in<u8, A>(take allocator)
         self.push_str(text)
-    }
-    init(bytes: take List<u8, A>, marker: bool, marker2: bool) {
-        self.v = take bytes
     }
 }
 
@@ -222,7 +226,7 @@ extend<A: Allocator> String<A> {
 }
 
 extend<A: Allocator + Clone> String<A> implements Clone {
-    fn clone(): String<A> { String<A>(self.v.clone(), true, true) }
+    fn clone(): String<A> { from_valid_bytes(self.v.clone()) }
 }
 extend<A: Allocator + Default> String<A> implements Default {
     static fn default(): String<A> { new_in<A>(A.(Default).default()) }
