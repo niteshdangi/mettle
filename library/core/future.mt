@@ -56,10 +56,23 @@ extend Waker {
     pub fn will_wake(other: read Waker): bool {
         self.raw.data == other.raw.data
     }
+    pub fn uses_vtable(other: RawWakerVTable): bool {
+        self.raw.vtable.clone == other.clone &&
+            self.raw.vtable.wake == other.wake &&
+            self.raw.vtable.wake_by_ref == other.wake_by_ref &&
+            self.raw.vtable.release == other.release
+    }
     pub fn clone(): Waker {
         Waker((self.raw.vtable.clone)(self.raw.data))
     }
     pub fn data(): ptr<mut u8> { self.raw.data }
+    // Transfers this reference to a caller that will invoke exactly one
+    // `wake` or `release` callback.
+    pub take fn into_raw(): RawWaker {
+        let raw = self.raw
+        core.mem.forget(self)
+        raw
+    }
 }
 
 fn noop_clone(data: ptr<mut u8>): RawWaker { RawWaker(data, noop_table()) }

@@ -61,6 +61,14 @@ Cancellation request is cooperative and distinct from destruction. Owned task
 handles can expose request_cancel, join and completion inspection. A timeout that
 only requests cancellation must not report completed cleanup.
 
+The optional hosted `std.task` executor may park in an OS reactor when its ready
+queue is empty. A readiness registration owns a clone of the current task waker;
+dropping its future deregisters the registration, and event delivery after
+deregistration is ignored. Descriptor readiness is advisory and may be spurious,
+so I/O futures retry their nonblocking operation. Timer futures use the same
+reactor and recompute their remaining duration after every wake. The core future
+protocol remains OS-independent and does not select or install an executor.
+
 ## 3. Borrowed task scope enforcement
 
 Choose lexical containment with poll-scoped execution epochs for borrowed tasks.

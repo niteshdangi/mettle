@@ -32,6 +32,16 @@ extern "C" {
     pub unsafe fn mettle_rt_resolve_free(handle: ptr<mut u8>): Unit;
     pub unsafe fn mettle_rt_clock(clock: i32, out: ptr<mut i64>): i32;
     pub unsafe fn mettle_rt_sleep(seconds: u64, nanos: u32): Unit;
+    pub unsafe fn mettle_rt_reactor_new(): ptr<mut u8>;
+    pub unsafe fn mettle_rt_reactor_close(reactor: ptr<mut u8>): Unit;
+    pub unsafe fn mettle_rt_reactor_watch(reactor: ptr<mut u8>, fd: i32, write: i32, data: ptr<mut u8>, wake: extern "C" fn(ptr<mut u8>): Unit, release: extern "C" fn(ptr<mut u8>): Unit): u64;
+    pub unsafe fn mettle_rt_reactor_timer(reactor: ptr<mut u8>, seconds: u64, nanos: u32, data: ptr<mut u8>, wake: extern "C" fn(ptr<mut u8>): Unit, release: extern "C" fn(ptr<mut u8>): Unit): u64;
+    pub unsafe fn mettle_rt_reactor_cancel(reactor: ptr<mut u8>, token: u64): Unit;
+    pub unsafe fn mettle_rt_reactor_wake(reactor: ptr<mut u8>): Unit;
+    pub unsafe fn mettle_rt_reactor_wait(reactor: ptr<mut u8>): i32;
+    pub unsafe fn mettle_rt_set_nonblocking(fd: i32): i32;
+    pub unsafe fn mettle_rt_sock_connect_start(fd: i32, family: i32, address: ptr<read u8>, address_size: usize, port: u16, flowinfo: u32, scope_id: u32): i32;
+    pub unsafe fn mettle_rt_sock_connect_status(fd: i32): i32;
 
     pub unsafe fn `read`(fd: i32, buffer: ptr<mut u8>, count: usize): isize;
     pub unsafe fn write(fd: i32, buffer: ptr<read u8>, count: usize): isize;

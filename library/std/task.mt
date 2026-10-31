@@ -9,7 +9,8 @@
 // A task whose future returned `Ready` is removed from its slot, so a later
 // wake finds nothing to poll: the executor never polls a completed future.
 import super.sync.mutex
-import super.sync.condvar
+import super.sys
+import super.time.{Duration, Instant}
 import super.thread.{Brand, Within}
 import package.alloc.arc
 import package.alloc.arc.Arc
@@ -67,27 +68,45 @@ pub fn waker_from_arc<W: Wake + Transferable + Shareable>(handle: read Arc<W>): 
 
 // A latch that a waker sets and a blocked thread consumes.
 type Signal {
+    reactor: ptr<mut u8>
     set: mutex.Mutex<bool>
-    changed: condvar.Condvar
+    drop { unsafe { sys.mettle_rt_reactor_close(self.reactor) } }
 }
-fn new_signal(): Signal { Signal(mutex.new(false), condvar.new()) }
+fn new_signal(): Signal {
+    let reactor = unsafe { sys.mettle_rt_reactor_new() }
+    if reactor == core.ptr.null_mut<u8>() {
+        package.core.panic.panic("async reactor creation failed")
+    }
+    Signal(reactor, mutex.new(false))
+}
 
 extend Signal implements Wake {
     fn wake(me: read Arc<Signal>): Unit {
         let locked = capture self.set.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
         *guard.get_mut() = true
-        self.changed.notify_one()
+        unsafe { sys.mettle_rt_reactor_wake(self.reactor) }
     }
 }
 extend Signal {
     fn wait(): Unit {
-        let locked = capture self.set.lock()
-        var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
-        while !*guard.get() { guard = self.changed.wait(guard) }
-        *guard.get_mut() = false
+        var waiting = true
+        while waiting {
+            {
+                let locked = capture self.set.lock()
+                var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
+                if *guard.get() {
+                    *guard.get_mut() = false
+                    waiting = false
+                }
+            }
+            if waiting && unsafe { sys.mettle_rt_reactor_wait(self.reactor) } < 0 {
+                package.core.panic.panic("async reactor wait failed")
+            }
+        }
     }
 }
+// Every executor waker retains the Signal Arc, which owns this reactor handle.
 unsafe extend Signal implements Transferable {}
 unsafe extend Signal implements Shareable {}
 
@@ -95,7 +114,9 @@ unsafe extend Signal implements Shareable {}
 // ready. The future is pinned in this frame and dropped before returning.
 pub fn block_on<F: Future>(future: take F): F.Output {
     let signal = arc.new(new_signal())
-    let waker = waker_from_arc(read signal)
+    let waker = executor_waker(
+        WakeTarget.Signal(signal.retain()), signal.get().reactor
+    )
     var pin_ = core.pin.pin(future)
     var result: F.Output? = none
     while result.is_none() {
@@ -123,6 +144,141 @@ extend YieldNow implements Future {
             Poll.Pending
         }
     }
+}
+
+// Readiness is one-shot. After any wake this future completes and its caller
+// retries the nonblocking operation; a spurious wake is therefore harmless.
+pub type IoWait {
+    fd: i32
+    write: bool
+    reactor: ptr<mut u8>
+    token: u64
+    registered: bool
+    drop {
+        if self.registered {
+            unsafe { sys.mettle_rt_reactor_cancel(self.reactor, self.token) }
+        }
+    }
+}
+
+extend IoWait implements Future {
+    type Output = i32
+    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> {
+        // These fields are address-independent; the pinned value is only
+        // mutated in place and is never moved by this projection.
+        let me = unsafe { self.get_unchecked_mut() }
+        if me.registered {
+            unsafe { sys.mettle_rt_reactor_cancel(me.reactor, me.token) }
+            me.registered = false
+            me.reactor = core.ptr.null_mut<u8>()
+            me.token = 0u64
+            return Poll.Ready(0)
+        }
+        let reactor = match take reactor_from_waker(read cx.waker()) {
+            present(value) => value,
+            none => { return Poll.Ready(-1) }
+        }
+        let raw = cx.waker().clone().into_raw()
+        // The sys shim stores and invokes this owned, pointer-only callback;
+        // cancellation invokes release instead, never both.
+        let wake = unsafe {
+            core.mem.transmute<extern "C" fn(ptr<mut u8>): Unit>(raw.vtable.wake)
+        }
+        let release = unsafe {
+            core.mem.transmute<extern "C" fn(ptr<mut u8>): Unit>(raw.vtable.release)
+        }
+        let token = unsafe {
+            sys.mettle_rt_reactor_watch(
+                reactor, me.fd, if me.write { 1 } else { 0 }, raw.data,
+                wake, release
+            )
+        }
+        if token == 0u64 {
+            let error = sys.errno()
+            (raw.vtable.release)(raw.data)
+            return Poll.Ready(error)
+        }
+        me.reactor = reactor
+        me.token = token
+        me.registered = true
+        Poll.Pending
+    }
+}
+
+pub fn readable(fd: i32): IoWait {
+    IoWait(fd, false, core.ptr.null_mut<u8>(), 0u64, false)
+}
+pub fn writable(fd: i32): IoWait {
+    IoWait(fd, true, core.ptr.null_mut<u8>(), 0u64, false)
+}
+
+// Timers are registered in the same reactor as descriptor readiness. The
+// absolute remainder is recomputed after every wake, so unrelated wakes never
+// make sleep return early and very long durations can be chunked by the shim.
+pub type Sleep {
+    remaining: Duration
+    last: Instant
+    started: bool
+    reactor: ptr<mut u8>
+    token: u64
+    registered: bool
+    drop {
+        if self.registered {
+            unsafe { sys.mettle_rt_reactor_cancel(self.reactor, self.token) }
+        }
+    }
+}
+
+extend Sleep implements Future {
+    type Output = Unit
+    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Unit> {
+        // Sleep has no self-references; its pinned state is only mutated.
+        let me = unsafe { self.get_unchecked_mut() }
+        let now = super.time.now()
+        if me.started {
+            me.remaining = me.remaining.saturating_sub(now.duration_since(me.last))
+        } else {
+            me.started = true
+        }
+        if me.registered {
+            unsafe { sys.mettle_rt_reactor_cancel(me.reactor, me.token) }
+            me.registered = false
+            me.reactor = core.ptr.null_mut<u8>()
+            me.token = 0u64
+        }
+        if me.remaining.is_zero() { return Poll.Ready(()) }
+        let reactor = match take reactor_from_waker(read cx.waker()) {
+            present(value) => value,
+            none => package.core.panic.panic("sleep requires the std.task executor")
+        }
+        let raw = cx.waker().clone().into_raw()
+        let wake = unsafe {
+            core.mem.transmute<extern "C" fn(ptr<mut u8>): Unit>(raw.vtable.wake)
+        }
+        let release = unsafe {
+            core.mem.transmute<extern "C" fn(ptr<mut u8>): Unit>(raw.vtable.release)
+        }
+        let token = unsafe {
+            sys.mettle_rt_reactor_timer(
+                reactor, me.remaining.as_secs(), me.remaining.subsec_nanos(), raw.data,
+                wake, release
+            )
+        }
+        if token == 0u64 {
+            (raw.vtable.release)(raw.data)
+            package.core.panic.panic("async reactor timer registration failed")
+        }
+        me.last = now
+        me.reactor = reactor
+        me.token = token
+        me.registered = true
+        Poll.Pending
+    }
+}
+
+pub fn sleep(duration: Duration): Sleep {
+    Sleep(duration, super.time.now(), false, core.ptr.null_mut<u8>(),
+          0u64, false)
 }
 
 // The result is independent of task/waker lifetime. Status is protected by
@@ -226,9 +382,10 @@ fn reclaim_task(raw: ptr<mut u8>): Arc<Task> {
 
 type Shared {
     queue: mutex.Mutex<Queue>
-    ready: condvar.Condvar
+    reactor: ptr<mut u8>
     live: core.sync.atomic.AtomicUsize
     polling: core.sync.atomic.AtomicBool
+    drop { unsafe { sys.mettle_rt_reactor_close(self.reactor) } }
 }
 type Queue { items: Deque<ptr<mut u8>>; closed: bool }
 type Task {
@@ -241,6 +398,44 @@ type Task {
     cancel_requested: core.sync.atomic.AtomicBool
     hub: Arc<Shared>
 }
+
+enum WakeTarget { Task(Arc<Task>); Signal(Arc<Signal>) }
+type ExecutorWake {
+    target: WakeTarget
+    reactor: ptr<mut u8>
+}
+
+// The retained target owns the reactor handle for the entire waker lifetime.
+unsafe extend WakeTarget implements Transferable {}
+unsafe extend WakeTarget implements Shareable {}
+unsafe extend ExecutorWake implements Transferable {}
+unsafe extend ExecutorWake implements Shareable {}
+
+extend ExecutorWake implements Wake {
+    fn wake(me: read Arc<ExecutorWake>): Unit {
+        match self.target {
+            WakeTarget.Task(task) => task.get().wake(read task),
+            WakeTarget.Signal(signal) => signal.get().wake(read signal)
+        }
+    }
+}
+
+fn executor_waker(target: WakeTarget, reactor: ptr<mut u8>): Waker {
+    let handle = arc.new(ExecutorWake(target, reactor))
+    waker_from_arc(read handle)
+}
+
+fn reactor_from_waker(waker: read Waker): ptr<mut u8>? {
+    if !waker.uses_vtable(waker_table<ExecutorWake>()) { return none }
+    let raw = waker.clone().into_raw()
+    // The exact executor vtable identifies data as its boxed Arc payload.
+    let reactor = unsafe {
+        (*raw.data.cast<Arc<ExecutorWake>>()).get().reactor
+    }
+    (raw.vtable.release)(raw.data)
+    present(reactor)
+}
+
 // The executor and handles cannot cross threads. Its registry owns every
 // active task until the unique poll has returned and the future and erased
 // result report have been removed. The scoped entry additionally proves that
@@ -249,6 +444,8 @@ type Task {
 // payload. The queue lock orders close/finish against enqueue, and the atomic
 // flags publish completion to handles. Thus a wake retained after scope exit
 // can retain metadata but cannot touch borrowed storage.
+// The retained Shared reference also keeps its C reactor handle alive until
+// the last executor, task, and executor waker has been dropped.
 unsafe extend Shared implements Transferable {}
 unsafe extend Shared implements Shareable {}
 unsafe extend Task implements Transferable {}
@@ -262,7 +459,7 @@ extend Task implements Wake {
         if !guard.get().closed && self.active.load(core.sync.atomic.Ordering.Acquire) &&
            !self.queued.swap(true, core.sync.atomic.Ordering.AcqRel) {
             guard.get_mut().items.push_back(leak_task(me.retain()))
-            hub.ready.notify_one()
+            unsafe { sys.mettle_rt_reactor_wake(hub.reactor) }
         }
     }
 }
@@ -279,8 +476,8 @@ pub type Executor {
             let locked = capture hub.queue.lock()
             var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
             guard.get_mut().closed = true
-            hub.ready.notify_all()
         }
+        unsafe { sys.mettle_rt_reactor_wake(hub.reactor) }
         var more = true
         while more {
             match take next_task(hub, false) {
@@ -316,7 +513,11 @@ type CancelRest {
 
 pub fn executor(): Executor {
     let queue = Queue(package.alloc.vec_deque.new<ptr<mut u8>>(), false)
-    Executor(arc.new(Shared(mutex.new(queue), condvar.new(),
+    let reactor = unsafe { sys.mettle_rt_reactor_new() }
+    if reactor == core.ptr.null_mut<u8>() {
+        package.core.panic.panic("async reactor creation failed")
+    }
+    Executor(arc.new(Shared(mutex.new(queue), reactor,
                              core.sync.atomic.AtomicUsize.new(0usize),
                              core.sync.atomic.AtomicBool.new(false))),
              core.cell.UnsafeCell.new(package.alloc.vec.new<ptr<mut u8>>()))
@@ -391,20 +592,27 @@ extend Executor {
 }
 
 fn next_task(hub: read Shared, block: bool): Arc<Task>? {
-    let locked = capture hub.queue.lock()
-    var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
-    var result: Arc<Task>? = none
-    var waiting = true
-    while waiting {
-        let next = guard.get_mut().items.pop_front()
+    loop {
+        var next: ptr<mut u8>? = none
+        var closed = false
+        {
+            let locked = capture hub.queue.lock()
+            var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
+            next = guard.get_mut().items.pop_front()
+            closed = guard.get().closed
+        }
         match take next {
-            present(raw) => { result = present(reclaim_task(raw)); waiting = false },
-            none => {
-                if !block || guard.get().closed || hub.live.load(core.sync.atomic.Ordering.Acquire) == 0usize { waiting = false } else { guard = hub.ready.wait(guard) }
-            }
+            present(raw) => { return present(reclaim_task(raw)) },
+            none => {}
+        }
+        if !block || closed ||
+           hub.live.load(core.sync.atomic.Ordering.Acquire) == 0usize {
+            return none
+        }
+        if unsafe { sys.mettle_rt_reactor_wait(hub.reactor) } < 0 {
+            package.core.panic.panic("async reactor wait failed")
         }
     }
-    result
 }
 
 // Lock order is future then queue. Wake takes only queue; the queue lock
@@ -416,7 +624,7 @@ fn finish_task(task: read Arc<Task>): Unit {
     task.get().finalizing.store(true, core.sync.atomic.Ordering.Release)
     task.get().active.store(false, core.sync.atomic.Ordering.Release)
     let _old = hub.live.fetch_sub(1usize, core.sync.atomic.Ordering.AcqRel)
-    hub.ready.notify_all()
+    unsafe { sys.mettle_rt_reactor_wake(hub.reactor) }
 }
 
 fn cancel(task: read Arc<Task>): Unit {
@@ -452,7 +660,9 @@ fn cancel(task: read Arc<Task>): Unit {
 
 fn poll_task(task: take Arc<Task>): bool {
     task.get().queued.store(false, core.sync.atomic.Ordering.Release)
-    var waker = waker_from_arc(read task)
+    var waker = executor_waker(
+        WakeTarget.Task(task.retain()), task.get().hub.get().reactor
+    )
     var removed: ErasedFuture? = none
     var panic_code = 0
     var cancelled = false

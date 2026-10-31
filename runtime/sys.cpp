@@ -4,12 +4,16 @@
 #include <cerrno>
 #include <chrono>
 #include <climits>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <limits>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <dirent.h>
@@ -26,6 +30,7 @@
 
 #ifdef __APPLE__
 #include <crt_externs.h>
+#include <sys/event.h>
 #else
 extern char **environ;
 #endif
@@ -298,6 +303,219 @@ struct Pipe {
     environment() = const_cast<char **>(envp);
   execvp(program, const_cast<char *const *>(argv));
   childFailure(report);
+}
+
+using ReactorCallback = void (*)(void *);
+
+struct ReactorRegistration {
+  int fd = -1;
+  bool write = false;
+  bool timer = false;
+  void *data = nullptr;
+  ReactorCallback wake = nullptr;
+  ReactorCallback release = nullptr;
+  std::chrono::steady_clock::time_point deadline;
+};
+
+struct ReactorState {
+  std::mutex mutex;
+  int fd = -1;
+  int wakeRead = -1;
+  int wakeWrite = -1;
+  std::uint64_t nextToken = 1;
+  std::unordered_map<std::uint64_t, ReactorRegistration> registrations;
+  std::map<std::pair<int, bool>, std::vector<std::uint64_t>> descriptors;
+};
+
+bool initializeReactor(ReactorState &state) {
+  if (state.fd >= 0)
+    return true;
+#ifdef __APPLE__
+  state.fd = kqueue();
+  if (state.fd < 0)
+    return false;
+  setCloseOnExec(state.fd);
+  struct kevent control;
+  EV_SET(&control, 1, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, nullptr);
+  if (kevent(state.fd, &control, 1, nullptr, 0, nullptr) != 0) {
+    const int failure = errno;
+    close(state.fd);
+    state.fd = -1;
+    errno = failure;
+    return false;
+  }
+#else
+  int pipeFds[2];
+  if (pipe(pipeFds) != 0)
+    return false;
+  state.wakeRead = pipeFds[0];
+  state.wakeWrite = pipeFds[1];
+  for (int fd : pipeFds) {
+    const int descriptorFlags = fcntl(fd, F_GETFD);
+    const int statusFlags = fcntl(fd, F_GETFL);
+    if (descriptorFlags < 0 || statusFlags < 0 ||
+        fcntl(fd, F_SETFD, descriptorFlags | FD_CLOEXEC) != 0 ||
+        fcntl(fd, F_SETFL, statusFlags | O_NONBLOCK) != 0) {
+      const int failure = errno;
+      close(state.wakeRead);
+      close(state.wakeWrite);
+      state.wakeRead = -1;
+      state.wakeWrite = -1;
+      errno = failure;
+      return false;
+    }
+  }
+  state.fd = state.wakeRead;
+#endif
+  return true;
+}
+
+void triggerReactor(ReactorState &state) {
+#ifdef __APPLE__
+  struct kevent event;
+  EV_SET(&event, 1, EVFILT_USER, 0, NOTE_TRIGGER, 0, nullptr);
+  if (retry([&] { return kevent(state.fd, &event, 1, nullptr, 0, nullptr); }) !=
+      0)
+    std::abort();
+#else
+  const std::uint8_t byte = 1;
+  const auto result =
+      retry([&] { return write(state.wakeWrite, &byte, sizeof byte); });
+  if (result < 0 && errno != EAGAIN)
+    std::abort();
+#endif
+}
+
+std::chrono::nanoseconds timerInterval(std::uint64_t seconds,
+                                      std::uint32_t nanos) {
+  constexpr auto maxNanos =
+      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+  if (seconds > maxNanos / 1000000000ULL)
+    return std::chrono::nanoseconds::max();
+  const auto total = seconds * 1000000000ULL + nanos;
+  return std::chrono::nanoseconds(
+      static_cast<std::int64_t>(std::min(total, maxNanos)));
+}
+
+std::uint64_t addReactorRegistration(ReactorState &state,
+                                     ReactorRegistration registration,
+                                     std::uint64_t seconds,
+                                     std::uint32_t nanos) {
+  std::lock_guard lock(state.mutex);
+  if (!initializeReactor(state))
+    return 0;
+  const std::uint64_t token = state.nextToken;
+  if (token == 0) {
+    errno = EOVERFLOW;
+    return 0;
+  }
+  ++state.nextToken;
+  if (registration.timer) {
+    const auto interval = timerInterval(seconds, nanos);
+    const auto now = std::chrono::steady_clock::now();
+    const auto maxDelay = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::time_point::max() - now);
+    registration.deadline =
+        now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                  std::min(interval, maxDelay));
+  }
+#ifdef __APPLE__
+  struct kevent change;
+  if (registration.timer) {
+    const auto interval = std::max<std::int64_t>(
+        1, timerInterval(seconds, nanos).count());
+    EV_SET(&change, static_cast<std::uintptr_t>(token), EVFILT_TIMER,
+           EV_ADD | EV_ONESHOT, NOTE_NSECONDS, interval,
+           reinterpret_cast<void *>(static_cast<std::uintptr_t>(token)));
+  }
+#endif
+  bool addDescriptorEvent = false;
+  const auto descriptorKey =
+      std::make_pair(registration.fd, registration.write);
+  try {
+    state.registrations.emplace(token, registration);
+    if (!registration.timer) {
+      auto [descriptor, inserted] =
+          state.descriptors.try_emplace(descriptorKey);
+      descriptor->second.push_back(token);
+      addDescriptorEvent = inserted;
+    }
+  } catch (...) {
+    state.registrations.erase(token);
+    auto descriptor = state.descriptors.find(descriptorKey);
+    if (descriptor != state.descriptors.end() &&
+        descriptor->second.empty())
+      state.descriptors.erase(descriptor);
+    errno = ENOMEM;
+    return 0;
+  }
+#ifndef __APPLE__
+  (void)addDescriptorEvent;
+#endif
+#ifdef __APPLE__
+  if (!registration.timer && addDescriptorEvent) {
+    EV_SET(&change, registration.fd,
+           registration.write ? EVFILT_WRITE : EVFILT_READ,
+           EV_ADD | EV_ONESHOT, 0, 0, nullptr);
+  }
+  if ((registration.timer || addDescriptorEvent) &&
+      kevent(state.fd, &change, 1, nullptr, 0, nullptr) != 0) {
+    const int failure = errno;
+    state.registrations.erase(token);
+    if (!registration.timer)
+      state.descriptors.erase(descriptorKey);
+    errno = failure;
+    return 0;
+  }
+#endif
+  triggerReactor(state);
+  return token;
+}
+
+void eraseReactorRegistration(ReactorState &state, std::uint64_t token,
+                              bool releaseWaker) {
+  ReactorRegistration registration;
+  {
+    std::lock_guard lock(state.mutex);
+    auto entry = state.registrations.find(token);
+    if (entry == state.registrations.end())
+      return;
+    registration = entry->second;
+    state.registrations.erase(entry);
+    bool removeDescriptorEvent = false;
+    if (!registration.timer) {
+      auto descriptor =
+          state.descriptors.find({registration.fd, registration.write});
+      if (descriptor != state.descriptors.end()) {
+        auto &tokens = descriptor->second;
+        tokens.erase(std::remove(tokens.begin(), tokens.end(), token),
+                     tokens.end());
+        if (tokens.empty()) {
+          state.descriptors.erase(descriptor);
+          removeDescriptorEvent = true;
+        }
+      }
+    }
+#ifndef __APPLE__
+    (void)removeDescriptorEvent;
+#endif
+#ifdef __APPLE__
+    struct kevent change;
+    if (registration.timer || removeDescriptorEvent) {
+      EV_SET(&change,
+             registration.timer ? static_cast<std::uintptr_t>(token)
+                                : static_cast<std::uintptr_t>(registration.fd),
+             registration.timer
+                 ? EVFILT_TIMER
+                 : registration.write ? EVFILT_WRITE : EVFILT_READ,
+             EV_DELETE, 0, 0, nullptr);
+      kevent(state.fd, &change, 1, nullptr, 0, nullptr);
+    }
+#endif
+    triggerReactor(state);
+  }
+  if (releaseWaker && registration.release)
+    registration.release(registration.data);
 }
 } // namespace
 
@@ -737,4 +955,316 @@ extern "C" void mettle_rt_sleep(std::uint64_t seconds, std::uint32_t nanos) {
   timespec remaining;
   while (nanosleep(&request, &remaining) != 0 && errno == EINTR)
     request = remaining;
+}
+
+extern "C" void *mettle_rt_reactor_new() {
+  auto state = std::unique_ptr<ReactorState>(new (std::nothrow) ReactorState);
+  if (!state)
+    return nullptr;
+  {
+    std::lock_guard lock(state->mutex);
+    if (!initializeReactor(*state))
+      return nullptr;
+  }
+  return state.release();
+}
+
+extern "C" void mettle_rt_reactor_close(void *rawReactor) {
+  if (!rawReactor)
+    return;
+  auto *state = static_cast<ReactorState *>(rawReactor);
+  for (;;) {
+    ReactorRegistration registration;
+    {
+      std::lock_guard lock(state->mutex);
+      if (state->registrations.empty())
+        break;
+      auto entry = state->registrations.begin();
+      registration = entry->second;
+      const auto token = entry->first;
+      state->registrations.erase(entry);
+      if (!registration.timer) {
+        auto descriptor =
+            state->descriptors.find({registration.fd, registration.write});
+        if (descriptor != state->descriptors.end()) {
+          auto &tokens = descriptor->second;
+          tokens.erase(std::remove(tokens.begin(), tokens.end(), token),
+                       tokens.end());
+          if (tokens.empty())
+            state->descriptors.erase(descriptor);
+        }
+      }
+    }
+    if (registration.release)
+      registration.release(registration.data);
+  }
+  if (state->fd >= 0)
+    close(state->fd);
+#ifndef __APPLE__
+  if (state->wakeWrite >= 0)
+    close(state->wakeWrite);
+#endif
+  delete state;
+}
+
+extern "C" std::uint64_t mettle_rt_reactor_watch(
+    void *rawReactor, std::int32_t fd, std::int32_t write, void *data,
+    void (*wake)(void *), void (*release)(void *)) {
+  if (!rawReactor || fd < 0 || !wake || !release) {
+    errno = EINVAL;
+    return 0;
+  }
+  ReactorRegistration registration;
+  registration.fd = fd;
+  registration.write = write != 0;
+  registration.data = data;
+  registration.wake = wake;
+  registration.release = release;
+  return addReactorRegistration(*static_cast<ReactorState *>(rawReactor),
+                                registration, 0, 0);
+}
+
+extern "C" std::uint64_t mettle_rt_reactor_timer(
+    void *rawReactor, std::uint64_t seconds, std::uint32_t nanos, void *data,
+    void (*wake)(void *), void (*release)(void *)) {
+  if (!rawReactor || !wake || !release || nanos >= 1000000000U) {
+    errno = EINVAL;
+    return 0;
+  }
+  ReactorRegistration registration;
+  registration.timer = true;
+  registration.data = data;
+  registration.wake = wake;
+  registration.release = release;
+  return addReactorRegistration(*static_cast<ReactorState *>(rawReactor),
+                                registration, seconds, nanos);
+}
+
+extern "C" void mettle_rt_reactor_cancel(void *rawReactor,
+                                         std::uint64_t token) {
+  if (!rawReactor)
+    return;
+  if (token != 0)
+    eraseReactorRegistration(*static_cast<ReactorState *>(rawReactor), token,
+                             true);
+}
+
+extern "C" void mettle_rt_reactor_wake(void *rawReactor) {
+  if (!rawReactor)
+    return;
+  auto &state = *static_cast<ReactorState *>(rawReactor);
+  std::lock_guard lock(state.mutex);
+  if (initializeReactor(state))
+    triggerReactor(state);
+}
+
+extern "C" std::int32_t mettle_rt_reactor_wait(void *rawReactor) {
+  if (!rawReactor) {
+    errno = EINVAL;
+    return -1;
+  }
+  auto &state = *static_cast<ReactorState *>(rawReactor);
+  {
+    std::lock_guard lock(state.mutex);
+    if (!initializeReactor(state))
+      return -1;
+  }
+#ifdef __APPLE__
+  for (;;) {
+    struct kevent event;
+    const int count = kevent(state.fd, nullptr, 0, &event, 1, nullptr);
+    if (count < 0 && errno == EINTR)
+      continue;
+    if (count < 0)
+      return -1;
+    if (count == 0 || event.filter == EVFILT_USER)
+      return 0;
+    if (event.filter == EVFILT_TIMER) {
+      const auto token = static_cast<std::uint64_t>(
+          reinterpret_cast<std::uintptr_t>(event.udata));
+      ReactorRegistration registration;
+      {
+        std::lock_guard lock(state.mutex);
+        auto entry = state.registrations.find(token);
+        if (entry == state.registrations.end())
+          return 0;
+        registration = entry->second;
+        state.registrations.erase(entry);
+      }
+      if (registration.wake)
+        registration.wake(registration.data);
+      return 1;
+    }
+
+    const auto key =
+        std::make_pair(static_cast<int>(event.ident),
+                       event.filter == EVFILT_WRITE);
+    std::vector<std::uint64_t> tokens;
+    {
+      std::lock_guard lock(state.mutex);
+      auto descriptor = state.descriptors.find(key);
+      if (descriptor == state.descriptors.end())
+        return 0;
+      tokens = std::move(descriptor->second);
+      state.descriptors.erase(descriptor);
+    }
+    bool woke = false;
+    for (const auto token : tokens) {
+      ReactorRegistration registration;
+      bool found = false;
+      {
+        std::lock_guard lock(state.mutex);
+        auto entry = state.registrations.find(token);
+        if (entry != state.registrations.end()) {
+          registration = entry->second;
+          state.registrations.erase(entry);
+          found = true;
+        }
+      }
+      if (found && registration.wake) {
+        registration.wake(registration.data);
+        woke = true;
+      }
+    }
+    return woke ? 1 : 0;
+  }
+#else
+  try {
+    for (;;) {
+      std::vector<pollfd> requests;
+      std::vector<std::uint64_t> tokens;
+      int timeout = -1;
+      {
+        std::lock_guard lock(state.mutex);
+        const auto now = std::chrono::steady_clock::now();
+        requests.push_back({state.wakeRead, POLLIN, 0});
+        tokens.push_back(0);
+        for (const auto &[token, registration] : state.registrations) {
+          if (registration.timer) {
+            if (registration.deadline <= now) {
+              timeout = 0;
+            } else if (timeout != 0) {
+              const auto remaining = registration.deadline - now;
+              auto millis = std::chrono::duration_cast<
+                  std::chrono::milliseconds>(remaining);
+              if (std::chrono::duration_cast<
+                      std::chrono::steady_clock::duration>(millis) < remaining)
+                millis += std::chrono::milliseconds(1);
+              const int bounded = static_cast<int>(std::min<std::int64_t>(
+                  static_cast<std::int64_t>(millis.count()),
+                  std::numeric_limits<int>::max()));
+              if (timeout < 0 || bounded < timeout)
+                timeout = bounded;
+            }
+            continue;
+          }
+          requests.push_back(
+              {registration.fd,
+               static_cast<short>(registration.write ? POLLOUT : POLLIN), 0});
+          tokens.push_back(token);
+        }
+      }
+      const int result =
+          poll(requests.data(), static_cast<nfds_t>(requests.size()), timeout);
+      if (result < 0 && errno == EINTR)
+        continue;
+      if (result < 0)
+        return -1;
+      if (requests[0].revents != 0) {
+        std::uint8_t bytes[64];
+        while (read(state.wakeRead, bytes, sizeof bytes) > 0) {
+        }
+        return 0;
+      }
+      std::uint64_t token = 0;
+      if (result > 0) {
+        for (std::size_t i = 1; i < requests.size(); ++i)
+          if (requests[i].revents != 0) {
+            token = tokens[i];
+            break;
+          }
+      }
+      ReactorRegistration registration;
+      bool found = false;
+      {
+        std::lock_guard lock(state.mutex);
+        if (token == 0) {
+          const auto now = std::chrono::steady_clock::now();
+          for (const auto &[candidate, entry] : state.registrations)
+            if (entry.timer && entry.deadline <= now) {
+              token = candidate;
+              break;
+            }
+        }
+        auto entry = state.registrations.find(token);
+        if (token != 0 && entry != state.registrations.end()) {
+          registration = entry->second;
+          state.registrations.erase(entry);
+          if (!registration.timer) {
+            auto descriptor =
+                state.descriptors.find({registration.fd, registration.write});
+            if (descriptor != state.descriptors.end()) {
+              auto &registered = descriptor->second;
+              registered.erase(
+                  std::remove(registered.begin(), registered.end(), token),
+                  registered.end());
+              if (registered.empty())
+                state.descriptors.erase(descriptor);
+            }
+          }
+          found = true;
+        }
+      }
+      if (!found)
+        continue;
+      if (registration.wake)
+        registration.wake(registration.data);
+      return 1;
+    }
+  } catch (...) {
+    errno = ENOMEM;
+    return -1;
+  }
+#endif
+}
+
+extern "C" std::int32_t mettle_rt_set_nonblocking(std::int32_t fd) {
+  const int flags = retry([&] { return fcntl(fd, F_GETFL); });
+  if (flags < 0)
+    return -1;
+  return retry([&] { return fcntl(fd, F_SETFL, flags | O_NONBLOCK); });
+}
+
+extern "C" std::int32_t mettle_rt_sock_connect_start(
+    std::int32_t fd, std::int32_t family, const std::uint8_t *address,
+    std::size_t addressSize, std::uint16_t port, std::uint32_t flowinfo,
+    std::uint32_t scopeId) {
+  sockaddr_storage value;
+  socklen_t size = 0;
+  if (!socketAddress(family, address, addressSize, port, flowinfo, scopeId,
+                     value, size))
+    return -1;
+  const int result = retry([&] {
+    return connect(fd, reinterpret_cast<sockaddr *>(&value), size);
+  });
+  if (result == 0)
+    return 0;
+  if (errno == EISCONN)
+    return 0;
+  if (errno == EINPROGRESS || errno == EALREADY || errno == EWOULDBLOCK)
+    return 1;
+  return -1;
+}
+
+extern "C" std::int32_t
+mettle_rt_sock_connect_status(std::int32_t fd) {
+  int failure = 0;
+  socklen_t size = sizeof failure;
+  if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &failure, &size) != 0)
+    return -1;
+  if (failure != 0) {
+    errno = failure;
+    return -1;
+  }
+  return 0;
 }
