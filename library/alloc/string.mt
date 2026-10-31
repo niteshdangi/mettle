@@ -1,4 +1,4 @@
-import package.core.iter.Iterator
+import package.core.iter.{Iterator, BidirectionalIterator}
 import super.alloc.{Allocator, Global, AllocError, panic_precondition}
 import package.core.clone.Clone
 import package.core.default.Default
@@ -19,6 +19,66 @@ pub type String<A: Allocator = Global> {
 pub type FromUtf8Error<A: Allocator = Global> {
     pub bytes: List<u8, A>
     pub valid_up_to: usize
+}
+
+pub type FromUtf16Error {
+    pub index: usize
+    pub surrogate: u16
+}
+
+pub type StringDrain<region r, A: Allocator> {
+    bytes: super.vec.Drain<region r, u8, A>
+}
+extend<region r, A: Allocator> StringDrain<region r, A> {
+    pub fn as_str(): read Text from r {
+        unsafe { from_utf8_unchecked(self.bytes.as_slice()) }
+    }
+}
+extend<region r, A: Allocator> StringDrain<region r, A> implements Iterator {
+    type Item = char
+    mut fn next(): char? {
+        let next_char = {
+            let text = unsafe { from_utf8_unchecked(self.bytes.as_slice()) }
+            text.chars().next()
+        }
+        match next_char {
+            present(c) => {
+                var consumed = 0usize
+                while consumed < c.len_utf8() {
+                    match self.bytes.next() {
+                        present(_) => {},
+                        none => { panic_precondition() }
+                    }
+                    consumed += 1usize
+                }
+                present(c)
+            },
+            none => none
+        }
+    }
+}
+extend<region r, A: Allocator> StringDrain<region r, A> implements BidirectionalIterator {
+    mut fn next_back(): char? {
+        let previous_char = {
+            let text = unsafe { from_utf8_unchecked(self.bytes.as_slice()) }
+            var chars = text.chars()
+            chars.next_back()
+        }
+        match previous_char {
+            present(c) => {
+                var consumed = 0usize
+                while consumed < c.len_utf8() {
+                    match self.bytes.next_back() {
+                        present(_) => {},
+                        none => { panic_precondition() }
+                    }
+                    consumed += 1usize
+                }
+                present(c)
+            },
+            none => none
+        }
+    }
 }
 
 // Callers must provide well-formed UTF-8 bytes.
@@ -120,6 +180,148 @@ fn encode_utf8(c: char, out: mut [u8; 4]): usize {
     4usize
 }
 
+fn valid_utf8_width(bytes: read [u8], start: usize): usize {
+    let first = bytes[start]
+    if first < 0x80u8 { return 1usize }
+    if first >= 0xc2u8 && first <= 0xdfu8 {
+        if bytes.len() - start < 2usize { return 0usize }
+        return if bytes[start + 1usize] >= 0x80u8 && bytes[start + 1usize] <= 0xbfu8 { 2usize } else { 0usize }
+    }
+    if first >= 0xe0u8 && first <= 0xefu8 {
+        if bytes.len() - start < 3usize { return 0usize }
+        let second = bytes[start + 1usize]
+        let third = bytes[start + 2usize]
+        let second_ok = if first == 0xe0u8 { second >= 0xa0u8 && second <= 0xbfu8 }
+            else if first == 0xedu8 { second >= 0x80u8 && second <= 0x9fu8 }
+            else { second >= 0x80u8 && second <= 0xbfu8 }
+        if !second_ok || third < 0x80u8 || third > 0xbfu8 { return 0usize }
+        return 3usize
+    }
+    if first >= 0xf0u8 && first <= 0xf4u8 {
+        if bytes.len() - start < 4usize { return 0usize }
+        let second = bytes[start + 1usize]
+        let third = bytes[start + 2usize]
+        let fourth = bytes[start + 3usize]
+        let second_ok = if first == 0xf0u8 { second >= 0x90u8 && second <= 0xbfu8 }
+            else if first == 0xf4u8 { second >= 0x80u8 && second <= 0x8fu8 }
+            else { second >= 0x80u8 && second <= 0xbfu8 }
+        if !second_ok || third < 0x80u8 || third > 0xbfu8 ||
+            fourth < 0x80u8 || fourth > 0xbfu8 { return 0usize }
+        return 4usize
+    }
+    0usize
+}
+
+fn invalid_utf8_width(bytes: read [u8], start: usize): usize {
+    let first = bytes[start]
+    let expected = if first >= 0xc2u8 && first <= 0xdfu8 { 2usize }
+        else if first >= 0xe0u8 && first <= 0xefu8 { 3usize }
+        else if first >= 0xf0u8 && first <= 0xf4u8 { 4usize }
+        else { return 1usize }
+    var consumed = 1usize
+    while consumed < expected && start + consumed < bytes.len() {
+        let next = bytes[start + consumed]
+        if next < 0x80u8 || next > 0xbfu8 { break }
+        if consumed == 1usize &&
+            (first == 0xe0u8 && next < 0xa0u8 ||
+             first == 0xedu8 && next > 0x9fu8 ||
+             first == 0xf0u8 && next < 0x90u8 ||
+             first == 0xf4u8 && next > 0x8fu8) { break }
+        consumed += 1usize
+    }
+    consumed
+}
+
+pub fn from_utf8_lossy(bytes: read [u8]): String {
+    var result = new()
+    var index = 0usize
+    while index < bytes.len() {
+        let width = valid_utf8_width(bytes, index)
+        if width != 0usize {
+            let part = match package.core.slice.subslice(bytes, index, index + width) {
+                present(value) => value,
+                none => { panic_precondition() }
+            }
+            let text = match package.core.text.from_utf8(part) {
+                present(value) => value,
+                none => { panic_precondition() }
+            }
+            result.push_str(text)
+            index += width
+        } else {
+            result.push(match package.core.char.from_u32(0xfffdu32) {
+                present(value) => value,
+                none => { panic_precondition() }
+            })
+            index += invalid_utf8_width(bytes, index)
+        }
+    }
+    result
+}
+
+pub fn from_utf16(units: read [u16]): String throws FromUtf16Error {
+    var result = new()
+    var index = 0usize
+    while index < units.len() {
+        let first = units[index] as u32
+        var scalar = first
+        if first >= 0xd800u32 && first <= 0xdbffu32 {
+            if index + 1usize >= units.len() {
+                throw FromUtf16Error(index, units[index])
+            }
+            let second = units[index + 1usize] as u32
+            if second < 0xdc00u32 || second > 0xdfffu32 {
+                throw FromUtf16Error(index, units[index])
+            }
+            scalar = 0x10000u32 + ((first - 0xd800u32) << 10u32) +
+                (second - 0xdc00u32)
+            index += 1usize
+        } else if first >= 0xdc00u32 && first <= 0xdfffu32 {
+            throw FromUtf16Error(index, units[index])
+        }
+        result.push(match package.core.char.from_u32(scalar) {
+            present(value) => value,
+            none => { throw FromUtf16Error(index, units[index]) }
+        })
+        index += 1usize
+    }
+    result
+}
+
+pub fn from_utf16_lossy(units: read [u16]): String {
+    var result = new()
+    var index = 0usize
+    while index < units.len() {
+        let first = units[index] as u32
+        if first >= 0xd800u32 && first <= 0xdbffu32 &&
+            index + 1usize < units.len() &&
+            (units[index + 1usize] as u32) >= 0xdc00u32 &&
+            (units[index + 1usize] as u32) <= 0xdfffu32 {
+            let second = units[index + 1usize] as u32
+            let scalar = 0x10000u32 + ((first - 0xd800u32) << 10u32) +
+                (second - 0xdc00u32)
+            result.push(match package.core.char.from_u32(scalar) {
+                present(value) => value,
+                none => { panic_precondition() }
+            })
+            index += 2usize
+        } else if first >= 0xd800u32 && first <= 0xdfffu32 {
+            result.push(match package.core.char.from_u32(0xfffdu32) {
+                present(value) => value,
+                none => { panic_precondition() }
+            })
+            index += 1usize
+        } else {
+            result.push(match package.core.char.from_u32(first) {
+                present(value) => value,
+                none => { panic_precondition() }
+            })
+            index += 1usize
+        }
+    }
+    result
+}
+
 fn first_char(t: read Text): char {
     var it = t.chars()
     match it.next() { present(c) => c, none => panic_precondition() }
@@ -149,6 +351,28 @@ extend<A: Allocator> String<A> {
     }
     pub mut fn reserve_exact(extra: usize): Unit { self.v.reserve_exact(extra) }
     pub mut fn shrink_to_fit(): Unit { self.v.shrink_to_fit() }
+
+    pub mut fn make_ascii_lowercase(): Unit {
+        var index = 0usize
+        while index < self.v.len() {
+            let byte = self.v.as_slice()[index]
+            if byte >= 0x41u8 && byte <= 0x5au8 {
+                self.v.as_mut_slice()[index] = byte + 0x20u8
+            }
+            index += 1usize
+        }
+    }
+
+    pub mut fn make_ascii_uppercase(): Unit {
+        var index = 0usize
+        while index < self.v.len() {
+            let byte = self.v.as_slice()[index]
+            if byte >= 0x61u8 && byte <= 0x7au8 {
+                self.v.as_mut_slice()[index] = byte - 0x20u8
+            }
+            index += 1usize
+        }
+    }
 
     pub mut fn try_push_str(t: read Text): Unit throws AllocError {
         let bytes = t.as_bytes()
@@ -239,6 +463,58 @@ extend<A: Allocator> String<A> {
     pub mut fn split_off(at: usize): String<A> where A: Clone {
         if !self.as_text().is_char_boundary(at) { panic_precondition() }
         from_valid_bytes(self.v.split_off(at))
+    }
+    pub mut fn shrink_to(minimum: usize): Unit { self.v.shrink_to(minimum) }
+    pub mut fn drain(start: usize, end: usize): StringDrain<region self, A> {
+        let valid = {
+            let text = self.as_text()
+            start <= end && end <= text.len() &&
+                text.is_char_boundary(start) && text.is_char_boundary(end)
+        }
+        if !valid {
+            panic_precondition()
+        }
+        StringDrain(self.v.drain(start, end))
+    }
+    pub mut fn replace_range(start: usize, end: usize, replacement: read Text): Unit {
+        let valid = {
+            let text = self.as_text()
+            start <= end && end <= text.len() &&
+                text.is_char_boundary(start) && text.is_char_boundary(end)
+        }
+        if !valid {
+            panic_precondition()
+        }
+        self.v.reserve(replacement.len())
+        var removed = start
+        while removed < end {
+            let _byte = self.v.remove(start)
+            removed += 1usize
+        }
+        let bytes = replacement.as_bytes()
+        var index = 0usize
+        while index < bytes.len() {
+            self.v.insert(start + index, bytes[index])
+            index += 1usize
+        }
+    }
+    pub mut fn extend_from_within(start: usize, end: usize): Unit {
+        let valid = {
+            let text = self.as_text()
+            start <= end && end <= text.len() &&
+                text.is_char_boundary(start) && text.is_char_boundary(end)
+        }
+        if !valid {
+            panic_precondition()
+        }
+        let count = end - start
+        self.v.reserve(count)
+        var index = 0usize
+        while index < count {
+            let byte = self.v.as_slice()[start + index]
+            self.v.push(byte)
+            index += 1usize
+        }
     }
     pub mut fn clear(): Unit { self.v.clear() }
 }
@@ -350,6 +626,28 @@ fn replace_text(text: read Text, pattern: read Text, replacement: read Text, lim
 }
 
 extend Text {
+    pub fn repeat(count: usize): String {
+        var result = new()
+        var remaining = count
+        while remaining != 0usize {
+            result.push_str(read self)
+            remaining -= 1usize
+        }
+        result
+    }
+
+    pub fn to_ascii_lowercase(): String {
+        var result = self.repeat(1usize)
+        result.make_ascii_lowercase()
+        result
+    }
+
+    pub fn to_ascii_uppercase(): String {
+        var result = self.repeat(1usize)
+        result.make_ascii_uppercase()
+        result
+    }
+
     pub fn replace(pattern: read Text, replacement: read Text): String {
         replace_text(read self, pattern, replacement, 0xffffffffffffffffusize)
     }
