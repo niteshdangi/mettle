@@ -194,8 +194,12 @@ Builder::Value Builder::sumExpression(const Node &node) {
       fail(error, node.span);
     return {};
   }
-  if (node.kind == Kind::Try)
-    return expression(*node.children[0]);
+  if (node.kind == Kind::Try) {
+    auto value = expression(*node.children[0]);
+    if (facts.outcomePropagation && live())
+      return unwrapOutcome(value, node.span);
+    return value;
+  }
   int failed = block(), done = block();
   auto depth = scopes.size();
   int savedTemporary = temporaryScope;

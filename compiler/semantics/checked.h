@@ -52,6 +52,7 @@ struct NodeFacts {
   bool method = false;
   bool receiverReservation = false;
   bool optional = false;
+  bool outcomePropagation = false;
   Type interfaceType = Type::Unknown;
   Type interfaceSelf = Type::Unknown;
   int interfaceMethod = -1;

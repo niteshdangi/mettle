@@ -95,6 +95,19 @@ int Checker::sumExpression(Node &n, bool reachable) {
   int operand = node(*n.children[0], reachable);
   --effectContext;
   auto effect = facts(*n.children[0]).effect;
+  if (n.kind == Kind::Try && effect == Type::Unknown) {
+    auto type = inference.value(operand);
+    if (type != Type::Unknown && checked.types->isProduct(type) &&
+        checked.types->product(type).kind == AggregateKind::Outcome) {
+      auto components =
+          inference.components(operand, AggregateKind::Outcome, n.span);
+      if (components.size() == 2) {
+        operand = components[0];
+        effect = inference.value(components[1]);
+        facts(n).outcomePropagation = true;
+      }
+    }
+  }
   if (effect == Type::Unknown) {
     error("effects", n.span,
           "try/capture requires a typed throwing expression");

@@ -1,6 +1,53 @@
 #include "syntax/parser/detail.h"
+#include <string>
+#include <string_view>
+#include <utility>
 
 namespace mettle::parsing {
+namespace {
+TypeSyntax namedType(std::string name) {
+  TypeSyntax result;
+  result.name = std::move(name);
+  return result;
+}
+
+GenericArgument genericArgument(const GenericParameter &parameter) {
+  GenericArgument result;
+  result.span = parameter.span;
+  if (parameter.kind == GenericParameterKind::Type) {
+    result.type =
+        std::make_shared<const TypeSyntax>(namedType(parameter.name));
+  } else if (parameter.kind == GenericParameterKind::Region) {
+    result.region = parameter.name;
+  } else {
+    auto value = std::make_shared<Node>();
+    value->kind = Kind::Name;
+    value->span = parameter.span;
+    value->text = parameter.name;
+    result.value = std::move(value);
+  }
+  return result;
+}
+
+TypeSyntax asyncFutureProjection(const Module::Interface &interface,
+                                 const Function &method,
+                                 std::string_view family) {
+  TypeSyntax subject = namedType("Self");
+  TypeSyntax bound = namedType(interface.name);
+  for (const auto &parameter : interface.genericParameters)
+    bound.arguments.push_back(genericArgument(parameter));
+
+  TypeSyntax result;
+  result.form = TypeForm::Projection;
+  result.name = family;
+  result.elements.push_back(std::move(subject));
+  result.elements.push_back(std::move(bound));
+  for (const auto &parameter : method.genericParameters)
+    result.arguments.push_back(genericArgument(parameter));
+  return result;
+}
+} // namespace
+
 TypeSyntax Parser::boundType() {
   TypeSyntax bound;
   if (take("for")) {
@@ -93,6 +140,44 @@ Module::Interface Parser::interfaceDeclaration() {
       }
       method.name = result.name + "." + method.name;
       method.item.visibility = std::move(visible);
+      if (method.asynchronous) {
+        if (method.body.get() && method.asyncOutput.empty())
+          feature("async interface default methods require an explicit "
+                  "result type");
+        Module::Associated future;
+        future.name = "$async_future_" +
+                      method.name.substr(method.name.rfind('.') + 1);
+        future.span = method.span;
+        future.visibility = method.item.visibility;
+        future.asyncFuture = true;
+        future.genericParameters = method.genericParameters;
+        future.constraints = method.constraints;
+
+        TypeSyntax output = method.asyncOutput;
+        if (!method.asyncError.empty()) {
+          TypeSyntax outcome;
+          outcome.form = TypeForm::Outcome;
+          outcome.elements.push_back(std::move(output));
+          outcome.elements.push_back(method.asyncError);
+          output = std::move(outcome);
+        }
+        TypeSyntax futureBound = namedType("core::future::Future");
+        GenericArgument binding;
+        binding.binding = "Output";
+        binding.span = method.span;
+        binding.type =
+            std::make_shared<const TypeSyntax>(std::move(output));
+        futureBound.arguments.push_back(std::move(binding));
+        future.bounds.push_back(std::move(futureBound));
+        if (method.body.get())
+          future.value = method.annotation;
+
+        method.asyncFuture = future.name;
+        method.annotation =
+            asyncFutureProjection(result, method, method.asyncFuture);
+        method.error = {};
+        result.associated.push_back(std::move(future));
+      }
       if (mode != "static" && !method.explicitReceiver)
         method.parameters.insert(
             method.parameters.begin(),

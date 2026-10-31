@@ -97,7 +97,21 @@ std::unique_ptr<Node> Parser::closure() {
     auto body = node(Kind::Block, peek().span);
     body->children.push_back(expr());
     finish(*body);
-    result->children.push_back(std::move(body));
+    if (asynchronous) {
+      auto bodySpan = body->span;
+      auto future =
+          asyncBody(std::move(body),
+                    asyncResult(std::move(result->annotation), false),
+                    start.span, std::move(result->error));
+      auto asyncBlock = node(Kind::Block, bodySpan);
+      asyncBlock->children.push_back(std::move(future));
+      finish(*asyncBlock);
+      result->children.push_back(std::move(asyncBlock));
+      result->annotation = {};
+      result->error = {};
+    } else {
+      result->children.push_back(std::move(body));
+    }
     finish(*result);
     return result;
   }

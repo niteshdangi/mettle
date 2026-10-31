@@ -216,9 +216,9 @@ void Checker::interfaceImplementations() {
     implementation.requirements = interfaceAssumptions();
     if (!syntax.interface.empty() &&
         checked.types->isErased(implementation.interfaceType)) {
-      auto declaration =
+      auto interfaceDeclaration =
           checked.types->erased(implementation.interfaceType).declaration;
-      const auto &definition = database.definitions[declaration];
+      const auto &definition = database.definitions[interfaceDeclaration];
       for (std::size_t item = 0; item < definition.associated.size(); ++item) {
         const auto &required = definition.associated[item];
         auto provided =
@@ -227,6 +227,9 @@ void Checker::interfaceImplementations() {
                            return candidate.name == required.name;
                          });
         if (provided == syntax.associated.end()) {
+          if (required.asyncFuture &&
+              required.defaultValue == Type::Unknown)
+            continue;
           if (required.defaultValue == Type::Unknown) {
             error("type", syntax.span,
                   "missing associated item '" + required.name + "'");
@@ -361,6 +364,11 @@ void Checker::interfaceImplementations() {
           }
         }
         if (provided) {
+          if (module.functions[*provided].asynchronous !=
+              module.functions[required.function].asynchronous)
+            error("type", module.functions[*provided].span,
+                  "implementation method async modifier does not match "
+                  "interface");
           implementation.methods[method] = {*provided,
                                             implementation.parameters, false};
           regionContracts.push_back(
@@ -376,6 +384,65 @@ void Checker::interfaceImplementations() {
         } else
           error("type", syntax.span,
                 "missing interface method '" + required.name + "'");
+      }
+      for (std::size_t method = 0; method < definition.methods.size();
+           ++method) {
+        const auto &required = definition.methods[method];
+        const auto &declaration = module.functions[required.function];
+        if (!declaration.asynchronous)
+          continue;
+        auto associated = std::find_if(
+            definition.associated.begin(), definition.associated.end(),
+            [&](const auto &item) {
+              return item.asyncFuture &&
+                     item.name == declaration.asyncFuture;
+            });
+        auto binding = implementation.methods.find(method);
+        if (associated == definition.associated.end() ||
+            binding == implementation.methods.end() ||
+            binding->second.defaultMethod ||
+            !module.functions[binding->second.function].asynchronous)
+          continue;
+
+        const auto ordinal = static_cast<std::size_t>(
+            associated - definition.associated.begin());
+        const auto &provided =
+            module.functions[binding->second.function];
+        const auto &family =
+            module.interfaces[interfaceDeclaration].associated;
+        auto familySyntax = std::find_if(
+            family.begin(), family.end(), [&](const auto &item) {
+              return item.asyncFuture &&
+                     item.name == declaration.asyncFuture;
+            });
+        if (familySyntax == family.end())
+          continue;
+
+        auto *outer = genericEnvironment;
+        genericEnvironment = &functionGenerics.at(&provided);
+        interfaces::AssociatedValue value;
+        value.value =
+            annotation(provided.annotation, provided.span, provided.owner);
+        value.requirements = interfaceAssumptions();
+        const auto &regions = functionRegions(provided);
+        value.regionRequirements = regions.environment.assumptions;
+        for (const auto &parameter : familySyntax->genericParameters) {
+          if (parameter.kind == GenericParameterKind::Region) {
+            if (auto region = regions.names.find(parameter.name);
+                region != regions.names.end())
+              value.regions.push_back(region->second);
+          } else if (auto type =
+                         genericEnvironment->names.find(parameter.name);
+                     type != genericEnvironment->names.end()) {
+            value.parameters.push_back(type->second);
+          }
+        }
+        if (value.parameters.size() != associated->parameters.size() ||
+            value.regions.size() != associated->regions.size())
+          error("type", provided.span,
+                "async method future family parameters do not match");
+        implementation.associated[ordinal] = std::move(value);
+        genericEnvironment = outer;
       }
     } else if (syntax.interface.empty()) {
       for (std::size_t function = 0; function < module.functions.size();

@@ -2253,7 +2253,16 @@ Type RegionPass::expression(const Node &node) {
     break;
   case Kind::Try:
     type = expression(*node.children[0]);
-    if (!captureDepth && current->error != Type::Unknown)
+    if (facts(node).outcomePropagation && types.isProduct(type) &&
+        types.product(type).kind == AggregateKind::Outcome &&
+        types.product(type).fields.size() > 2) {
+      auto fields = types.product(type).fields;
+      auto error = fields[2].type;
+      type = fields[1].type;
+      expressionErrors[&node] = error;
+      if (!captureDepth && current->error != Type::Unknown)
+        require(error, current->error, node.span);
+    } else if (!captureDepth && current->error != Type::Unknown)
       if (auto found = expressionErrors.find(node.children[0].get());
           found != expressionErrors.end() && found->second != Type::Unknown)
         require(found->second, current->error, node.span);
