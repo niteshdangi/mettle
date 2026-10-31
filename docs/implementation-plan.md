@@ -984,7 +984,7 @@ registry sources, checksums, feature selection, `--locked/--offline/--frozen`
 and `mettle check|build` on package directories remain covered by
 `tests/packages.py`; the new cases have not been run.
 
-I09 T002/T003 status: implemented and verified on macOS arm64 (Release and Debug).
+I09 T002/T003 baseline: implemented and verified on macOS arm64 (Release and Debug).
 `[build] script` programs run on the host with declared `mettle:` outputs
 (generated modules, features, link libraries) and a `reproducible` input
 contract, otherwise rerun conservatively (`compiler/driver/build_script.cpp`);
@@ -992,15 +992,26 @@ contract, otherwise rerun conservatively (`compiler/driver/build_script.cpp`);
 deduplicated, byte/age-bounded store keyed by token-level source inputs and
 build options (`compiler/packages/store.cpp`, `compiler/driver/cache.cpp`),
 with `mettle clean`. `[build-dependencies]` and host dependency compilation
-were added as implemented, unverified (not yet built); the multi-package
-extension demonstration remains open. Tests: `incremental_reuse`,
+were added as implemented, unverified (not yet built).
+
+I09 cache lease work and the multi-package extension demonstration are
+implemented, unverified (not yet built). A build holds an RAII lease on its
+whole-program key through materialization, publication and pruning;
+`compiler/packages/store.cpp` excludes leased entries from age/byte eviction
+and refuses `clean` while a lease is live. The new
+`tests/packages/multi-package-extension` fixture combines a generated module,
+a procedural extension dependency and a regular dependency. The cache remains
+whole-program: per-module parse reuse and per-dependency-package analysis/object
+reuse are not implemented, so editing the root still recompiles the combined
+program. Tests: `incremental_reuse`,
 `edit_invalidation`,
 `cache_dedup_and_bound`, `cache_corruption_and_clean`, `build_script` and
-`build_script_untracked_inputs` cases of `tests/packages.py`. Open: reuse is
-whole-program, not per-query (parse/name/type/ownership/instantiation
-dependency separation); no live-build leases; the I09 multi-package extension
-demonstration, retained-byte/compile-time
-measurement (performance.md 5.1.1) and Linux evidence.
+`build_script_untracked_inputs` cases of `tests/packages.py` remain prior
+verified evidence for the original cache. The new demonstration is registered
+in `tests/packages.py`; neither it nor the lease changes have been run. Open:
+parse/name/type/ownership/instantiation dependency separation,
+retained-byte/compile-time measurement (performance.md 5.1.1) and Linux
+evidence.
 
 I10 can progress alongside I08/I09 after I07. The initial I10 surface is
 implemented (see S018-S023) with `library.std`, `runtime.thread` and scalar

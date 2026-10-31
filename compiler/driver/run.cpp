@@ -664,6 +664,7 @@ int build(const Options &requested,
   // Executables and objects are reused when every input of the build,
   // as gathered while loading, matches a stored result.
   std::optional<std::string> cacheKey;
+  packages::Store::Lease cacheLease;
   // `-g` builds are never cached: paths and the Darwin dSYM are outputs that
   // the cache does not store.
   if (tree && options.command == "build" && !options.debugInfo &&
@@ -675,19 +676,27 @@ int build(const Options &requested,
     if (store && (error || sourcePath != std::filesystem::weakly_canonical(
                                              options.output, error))) {
       cacheKey = inputs.key(options, mounts, configuration.features);
-      auto found = store->materialize(*cacheKey, options.output);
-      if (found == packages::Store::Lookup::Hit) {
+      cacheLease = store->acquireLease(*cacheKey);
+      if (!cacheLease) {
         if (options.explain)
-          std::cerr << "mettle: cache hit " << cacheKey->substr(0, 12)
-                    << ": compile and link skipped\n";
-        return 0;
+          std::cerr << "mettle: cache unavailable: could not acquire build "
+                       "lease\n";
+        cacheKey.reset();
+      } else {
+        auto found = store->materialize(*cacheKey, options.output);
+        if (found == packages::Store::Lookup::Hit) {
+          if (options.explain)
+            std::cerr << "mettle: cache hit " << cacheKey->substr(0, 12)
+                      << ": compile and link skipped\n";
+          return 0;
+        }
+        if (options.explain)
+          std::cerr << "mettle: cache "
+                    << (found == packages::Store::Lookup::Corrupt
+                            ? "entry corrupt, rebuilding "
+                            : "miss ")
+                    << cacheKey->substr(0, 12) << '\n';
       }
-      if (options.explain)
-        std::cerr << "mettle: cache "
-                  << (found == packages::Store::Lookup::Corrupt
-                          ? "entry corrupt, rebuilding "
-                          : "miss ")
-                  << cacheKey->substr(0, 12) << '\n';
     }
   }
   std::vector<lint::Finding> findings;
