@@ -4,11 +4,11 @@ namespace mettle::lowering {
 using ir::Exit;
 using ir::Op;
 ir::Function Builder::run(const mettle::Function &source, std::size_t index) {
-  auto result = module.function(index).abiResult;
+  auto abiResult = module.function(index).abiResult;
   if (source.asyncDefaultOutputInferred)
-    result = module.function(index).asyncDefaultBodyResult;
+    abiResult = module.function(index).asyncDefaultBodyResult;
   function = {module.function(index).canonicalName,
-              result,
+              abiResult,
               source.parameters.size(),
               {},
               {},
