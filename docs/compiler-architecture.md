@@ -70,12 +70,16 @@ owner. `OwnerUnsize` transfers the original allocation and allocator while
 attaching slice-count or witness metadata; it never reallocates. Dynamic
 `size_of_val`/`align_of_val` and drop use that metadata, and erased witness
 tables carry size, alignment and a specialized drop callback. The `Box` path is
-implemented but unverified (not yet built). Unsized `Text` construction remains
-unsupported because accepting arbitrary bytes would bypass `Text`'s UTF-8
-validity invariant. Unsized `Arc`, `Rc` and `Weak` remain unsupported: their
-current allocations store the payload inline and need a metadata-aware,
-correctly aligned header/payload layout and matching weak deallocation path.
-Droppable structural unsized tails also remain unsupported.
+implemented but unverified (not yet built). Unsized `Arc`, `Rc` and `Weak` use
+a separate count header followed by a metadata-aligned payload in one allocation;
+their handles preserve both the fat payload pointer and the thin header pointer,
+and the header retains the exact allocation layout for final-weak deallocation.
+Droppable structural slice tails use the tail metadata to reach their specialized
+element-drop loop. `Arc<Text>.copy_text` and `Rc<Text>.copy_text` accept only
+validated `Text` views, preserving UTF-8 validity while copying. These shared
+owner, structural-tail and Text paths are implemented, unverified (not yet
+built). Pinned owning handles remain unsupported; pinning does not follow merely
+from shared or unique heap ownership.
 
 Semantic checking produces a move-only checked module that owns the parsed
 module plus resolved facts. Facts are indexed by stable node addresses within

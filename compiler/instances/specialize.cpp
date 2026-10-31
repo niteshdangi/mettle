@@ -82,6 +82,20 @@ private:
       return types->slice(payload).element;
     return types->isSized(payload) ? payload : Type::Unknown;
   }
+  Type tailDropElement(Type payload) const {
+    std::set<Type> visited;
+    while (visited.insert(payload).second) {
+      if (types->isSlice(payload))
+        return types->slice(payload).element;
+      if (types->isSized(payload))
+        return payload;
+      if (!types->isProduct(payload) ||
+          types->product(payload).fields.empty())
+        return Type::Unknown;
+      payload = types->product(payload).fields.back().type;
+    }
+    return Type::Unknown;
+  }
   void prepareDynamicDrops() {
     int helper = -1;
     for (std::size_t i = 0; i < source.functions.size(); ++i)
@@ -93,6 +107,11 @@ private:
     std::map<Type, Span> requested;
     auto request = [&](Type payload, Span span) {
       auto element = dropElement(payload);
+      if (element != Type::Unknown && types->needsDrop(element))
+        requested.try_emplace(element, span);
+    };
+    auto requestTail = [&](Type payload, Span span) {
+      auto element = tailDropElement(payload);
       if (element != Type::Unknown && types->needsDrop(element))
         requested.try_emplace(element, span);
     };
@@ -109,10 +128,14 @@ private:
               request(targetPayload, instruction.span);
             else if (instruction.interfaceType != Type::Unknown)
               request(sourcePayload, instruction.span);
-            else if (types->needsDrop(targetPayload))
-              diagnostics.error(
-                  "feature", instruction.span,
-                  "dynamic drop for this unsized owner payload is unsupported");
+            else if (types->needsDrop(targetPayload)) {
+              if (tailDropElement(targetPayload) == Type::Unknown)
+                diagnostics.error(
+                    "feature", instruction.span,
+                    "dynamic drop for this unsized owner payload is unsupported");
+              else
+                requestTail(targetPayload, instruction.span);
+            }
           } else if (instruction.op == ir::Op::EraseView) {
             if (dropElement(instruction.interfaceSelf) == Type::Unknown &&
                 types->needsDrop(instruction.interfaceSelf))
@@ -132,10 +155,14 @@ private:
             } else if (payload &&
                        types->pointerMetadata(*payload) ==
                            PointerMetadata::ElementCount &&
-                       types->needsDrop(*payload))
-              diagnostics.error(
-                  "feature", instruction.span,
-                  "dynamic drop for this unsized payload is unsupported");
+                       types->needsDrop(*payload)) {
+              if (tailDropElement(*payload) == Type::Unknown)
+                diagnostics.error(
+                    "feature", instruction.span,
+                    "dynamic drop for this unsized payload is unsupported");
+              else
+                requestTail(*payload, instruction.span);
+            }
           }
         }
 
@@ -156,6 +183,8 @@ private:
       return found == specialized.end() ? -1 : found->second;
     };
     std::map<Type, int> dynamicDrops;
+    for (const auto &[element, function] : specialized)
+      dynamicDrops.emplace(element, function);
     for (auto &function : result.functions)
       for (auto &block : function.blocks)
         for (auto &instruction : block.instructions) {

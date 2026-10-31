@@ -864,6 +864,24 @@ void CleanupFrame::drop(unsigned node) {
     }
     builder.CreateCall(lowering.functions[entry.destructor], {self});
   }
+  if (lowering.program.types->isSlice(entry.type)) {
+    auto element = lowering.program.types->slice(entry.type).element;
+    if (lowering.program.types->needsDrop(element)) {
+      auto drop = std::find_if(
+          lowering.program.dynamicDropFunctions.begin(),
+          lowering.program.dynamicDropFunctions.end(),
+          [&](const auto &entry) { return entry.first == element; });
+      if (drop != lowering.program.dynamicDropFunctions.end()) {
+        auto *handle = builder.CreateAlignedLoad(
+            lowering.viewType(entry.type), nodeAddress(node), llvm::Align(1));
+        auto *data = builder.CreateExtractValue(handle, 0);
+        auto *count = builder.CreateExtractValue(handle, 1);
+        builder.CreateCall(
+            lowering.functions.at(static_cast<std::size_t>(drop->second)),
+            {data, count});
+      }
+    }
+  }
   builder.CreateBr(next);
   builder.SetInsertPoint(next);
   for (auto child : entry.children)

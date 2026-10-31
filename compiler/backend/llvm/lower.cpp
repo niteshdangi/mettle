@@ -2161,7 +2161,6 @@ private:
           auto targetPayload = target.genericArguments.front();
           auto *owner = get(0);
           auto *data = lowering.extract(owner, sourceOwner, 0);
-          auto allocator = lowering.extract(owner, sourceOwner, 1);
           auto pointerType = target.fields.front().type;
           llvm::Value *pointer = llvm::UndefValue::get(type(pointerType));
           pointer = builder.CreateInsertValue(pointer, data, 0);
@@ -2182,8 +2181,11 @@ private:
                 builder.CreateInsertValue(pointer, builder.getInt64(0), 1);
             pointer = builder.CreateInsertValue(pointer, table, 2);
           }
+          std::vector<llvm::Value *> fields{pointer};
+          for (std::size_t field = 1; field < source.fields.size(); ++field)
+            fields.push_back(lowering.extract(owner, sourceOwner, field));
           frame.consume(n.operands[0]);
-          result = lowering.construct(targetOwner, {pointer, allocator});
+          result = lowering.construct(targetOwner, fields);
           break;
         }
         case ir::Op::SliceBorrowRead:

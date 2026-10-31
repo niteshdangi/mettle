@@ -1,3 +1,3 @@
-// expect-error: feature 2:12 unsized owner payloads are not implemented yet
-fn invalid(value: shared [i32]) {}
+// expect-error: feature 2:12 pinned owning handles require the allocation library
+fn invalid(value: pinned heap i32) {}
 fn main() { 0 }

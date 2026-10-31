@@ -848,11 +848,24 @@ carry witness size/alignment and a specialized drop callback. The `Box` slice
 and erased-owner paths, including dynamic deallocation, are implemented but
 unverified (not yet built); see `native-heap-unsized-slice.mt`,
 `native-heap-erased-owner-drop.mt` and
-`native-heap-unsized-owner-use-after-move.mt`. Unsized `Text` construction is
-still unsupported because arbitrary byte owners cannot satisfy its UTF-8
-invariant. Droppable structural unsized tails and unsized `Arc`, `Rc` and
-`Weak` remain unsupported; the shared-owner allocations still need a dynamic
-header/payload layout and weak deallocation path. Pinned owning handles also
+`native-heap-unsized-owner-use-after-move.mt`. Unsized `Arc`, `Rc` and `Weak`
+now retain a fat payload pointer and a separate count-header pointer; their
+single allocation stores the counts and exact padded layout before the
+metadata-aligned payload. Last-strong destruction uses slice metadata or an
+erased witness, and last-weak destruction frees the stored dynamic layout.
+Owner coercion preserves the header and allocator fields. Droppable structural
+slice tails use the tail count to run the specialized element drop loop.
+`Arc<Text>.copy_text` and `Rc<Text>.copy_text` copy only from validated `Text`
+views, so arbitrary bytes cannot bypass UTF-8 validation. These shared-owner,
+structural-tail and Text paths are implemented, unverified (not yet built);
+fixtures are `native-shared-unsized-slice-weak-drop.mt`,
+`native-shared-unsized-erased-weak-drop.mt`,
+`native-unsized-structural-tail-drops.mt` and
+`native-shared-unsized-weak-dealloc-layout.mt`,
+`native-unsized-text-owner-copy.mt`; negative fixtures cover moved shared and
+structural owners, non-Text byte input, and unsupported pinned owners.
+`native-unsized-owner-payload.mt` now
+retains the pinned-owning-handle feature diagnostic; pinned owning handles
 remain unsupported. A `take` argument always moves even a `Copy` binding, so
 generic calls pass `i + 0` or a fresh `let`.
 Hosted panics unwind and can be caught; freestanding panics trap. Panic-safety
