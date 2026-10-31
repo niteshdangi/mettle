@@ -13,6 +13,6 @@ extend Value implements AsyncValue {
 
 fn main(): i32 {
     let value = Value(1)
-    let erased: any AsyncValue = read value
+    let erased: read any AsyncValue = read value
     0
 }

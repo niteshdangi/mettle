@@ -1,24 +1,24 @@
 import core.future.{Future, Poll, Context, noop_waker}
 
 interface AsyncCounter {
-    async fn read<region r>(receiver self: read Self from r): i32 throws i32
+    async fn fetch<region r>(receiver self: read Self from r): i32 throws i32
 }
 
 type Counter { value: i32 }
 
 extend Counter implements AsyncCounter {
-    async fn read<region r>(receiver self: read Self from r): i32 throws i32 {
+    async fn fetch<region r>(receiver self: read Self from r): i32 throws i32 {
         if self.value < 0 { throw self.value }
         self.value
     }
 }
 
 async fn read_generic<region r, T: AsyncCounter>(value: read T from r): i32 throws i32 {
-    try await value.read()
+    try await value.fetch()
 }
 
 async fn read_concrete<region r>(value: read Counter from r): i32 throws i32 {
-    try await value.read()
+    try await value.fetch()
 }
 
 fn drive<F: Future<Output = (i32 throws i32)>>(future: take F): (i32 throws i32) {

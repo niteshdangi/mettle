@@ -1049,8 +1049,7 @@ and Shareable. None has been built or run at this revision; this is not I11
 completion or sanitizer evidence.
 
 The async arrow-closure, `try await`, and async-interface changes below are
-implemented but unverified (not yet built); the verification evidence that
-follows predates those changes. Async interface declarations now preserve their
+implemented and verified by the Release CTest on macOS arm64. Async interface declarations now preserve their
 async modifier and publish a per-method associated future family constrained by
 its output (including typed error outcomes) and declared method regions.
 Implementations bind the family to their concrete opaque coroutine future,
@@ -1111,7 +1110,12 @@ and their feature-fail fixtures are removed.
 Open: recursive async is rejected only by the generic Sized diagnostic. Async
 interface default bodies with inferred results remain feature-diagnosed.
 Coroutine-state DWARF metadata (a `state` discriminator with per-state
-variants) and its LLDB summary are implemented, unverified.
+variants) and its LLDB summary are implemented and verified by `debug_info`
+on macOS arm64; the LLDB summary has not been re-run interactively.
+An async future borrows from every borrowed parameter, and an owning closure
+or async body captures a borrowed non-Copy parameter as a view
+(`borrowed-parameter-captures-keep-views`,
+`async-future-outlives-borrowed-argument`).
 Region-carrying erased futures, asynchronous borrowed-task scopes, async I/O
 and P10 remain open. Erased async dispatch is explicitly rejected pending a
 future-storage erasure contract. Linux and Windows targets and TSan of executor
@@ -1123,13 +1127,13 @@ Revision: uncommitted lane changes on `c81bc6d`; scope as stated per row.
 
 | Requirement | State and owning files | Remaining work and required fixtures |
 | --- | --- | --- |
-| Preserve async source; type future and await | Existing coroutine path implemented (verified macOS arm64); arrow async closures and `try await` implemented, unverified (not yet built): `syntax/parser/closures.cpp`, `syntax/parser/async.cpp`, `semantics/sums.cpp`, `semantics/regions.cpp`, `lowering/sums.cpp`. | New fixtures `async-arrow-closure.mt` and `async-try-await.mt` are unverified. |
-| Async interface futures and dispatch | Implemented, unverified (not yet built): bodyless async methods publish region- and output-constrained associated future families; implementations bind concrete opaque coroutine futures; concrete and generic-bound calls use the family. Erased async dispatch reports an explicit future-storage-contract diagnostic. | `async-interface-method.mt` and `async-interface-erased-dispatch.mt` are unverified; async default bodies with inferred results and explicit erased-future storage remain open. |
+| Preserve async source; type future and await | Implemented and verified on macOS arm64, including arrow async closures and `try await`: `syntax/parser/closures.cpp`, `syntax/parser/async.cpp`, `semantics/sums.cpp`, `semantics/regions.cpp`, `lowering/sums.cpp`. | `async-arrow-closure.mt`, `async-try-await.mt`. |
+| Async interface futures and dispatch | Implemented and verified on macOS arm64: bodyless async methods publish region- and output-constrained associated future families; implementations bind concrete opaque coroutine futures; concrete and generic-bound calls use the family. Erased async dispatch reports an explicit future-storage-contract diagnostic. | `async-interface-method.mt` and `async-interface-erased-dispatch.mt` pass; async default bodies with inferred results and explicit erased-future storage remain open. |
 | Ownership-checked suspension CFG | Implemented: `ir/ir.h` `Exit::Suspend`, `ir/verify.cpp`, successor updates in `analysis/*`, `ir/dominance.cpp`, `instances/arrays.cpp`, `lowering/scalar.cpp`. | None known; borrow-across-await is covered by `async-await-anywhere.mt`. |
 | Inline pinned state and poll | Implemented: `types` coroutine aggregate and layout resolver, `instances/specialize.cpp`, backend frame/dispatch. Transferable/Shareable/Static in `semantics/interface_solver.cpp` with the interior from `semantics/captures.cpp`. | Liveness-precise interior (optional precision gain). |
 | Control flow | Implemented: ordinary CFG of the closure body. | None known. |
 | Cleanup and cancellation | Implemented: persistent frame flags and `unwind` in `backend/llvm/cleanup.cpp`; exactly-once drops verified. | Dedicated lexical drop-order-across-suspension fixture. |
-| Integration and qualification | Release CTest, sanitized compiler CTest and ASan/UBSan emitted async programs passed on macOS arm64 before this change; the Debug-profile CTest passed 23/23 at `c81bc6d`. New async closure, `try await`, interface dispatch, erasure-diagnostic and debug-info state-discriminator changes are implemented, unverified. | New source fixtures and debug info are unverified; Linux/Windows (owner-run). |
+| Integration and qualification | Release CTest, sanitized compiler CTest and ASan/UBSan emitted async programs passed on macOS arm64 before this change; the Debug-profile CTest passed 23/23 at `c81bc6d`. The full Release CTest passed 24/24 with the async closure, `try await`, interface dispatch, erasure-diagnostic and debug-info state-discriminator changes. | Linux/Windows (owner-run). |
 
 The source-freeze gate depends on all rows, fixtures and documentation; a
 design or a partially implemented row is not a verified milestone.
@@ -1182,8 +1186,7 @@ invocation locations have prior macOS arm64 verification. The updated LLDB
 summaries have not been re-run interactively. Coroutine resume-state variants,
 the discriminator, scope-initialized saved-local fields, captured environment
 and output fields, and the LLDB `state = await #N (line L)` summary are
-implemented, unverified (not yet built); the focused `debug_info` assertions
-are also unverified. Erasure, moved-value liveness, scopes, inlining and
+implemented; the focused `debug_info` assertions pass on macOS arm64. Erasure, moved-value liveness, scopes, inlining and
 CodeView remain open.
 T006 and I12 are not complete.
 
@@ -1504,7 +1507,8 @@ I14-I16 own qualification/evolution rather than additional baseline capability I
 
 I09 status: L057 implemented and verified by focused source cases (attribute parsing with spans, unknown-attribute diagnostics, `@derive` of Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash on products and enums including generic types, generated-code provenance diagnostics). `Default`: implemented and verified on macOS arm64 (Release and Debug) - `core.default.Default` (`static fn default(): Self`) with implementations for integers, floats, `bool`, `char`, `Unit`, `T?` (none), 2- and 3-tuples, `Global`, `List` and `String`, and `@derive(Default)` for products including generic types (field defaults, `Default` bound on used type parameters); enums (no default-variant syntax), unions and arrays are not covered, so `derive(Default)` on an enum is a `feature` diagnostic. Fixtures: `tests/source/run/derive-default-and-manual-default.mt`, `tests/source/fail/derive-default-field-without-default.mt`, `tests/source/fail/derive-default-on-enum-is-unsupported.mt`. L058 implemented and verified (`@cfg` with `all`/`any`/`not`, `target_os/arch/family/endian/pointer_width/feature`, `feature`). Single-file builds take `--features a,b`; in a package build the root source tests its resolved features and each dependency its own (tests/packages.py `features`), while the standard libraries see none. Unions, empty enums and types with `init` constructors cannot derive; L056 procedural macros are implemented, unverified (see below).
 L055 (declarative macros) implementation status: the existing implementation and this
-lane's local expansion changes are implemented, unverified (not yet built). The
+lane's local expansion changes are implemented and verified by the Release
+CTest on macOS arm64. The
 token-level expander supports file-local definitions, `name!(...)`, `[...]` and
 `{...}` invocations, short and full fragment-kind spellings, repetitions,
 follow-set checks, generated-source provenance, template-bound local and

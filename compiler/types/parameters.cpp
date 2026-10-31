@@ -662,6 +662,9 @@ Type TypeStore::substitute(Type type, std::span<const TypeBinding> bindings) {
   if (isOpaque(type)) {
     auto origin =
         record.genericOrigin == Type::Unknown ? type : record.genericOrigin;
+    // A generic declaration's opaque result is named by its parameters.
+    if (record.genericOrigin == Type::Unknown)
+      record.genericArguments = record.genericParameters;
     bool changed = false;
     for (auto &argument : record.genericArguments) {
       auto replacement = substitute(argument, bindings);

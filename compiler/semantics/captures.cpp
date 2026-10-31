@@ -176,12 +176,18 @@ void Checker::completeClosure(ClosureFacts &closure, bool final) {
     if (final && !syntax.flag && capture.mode == ParameterMode::Take)
       error("ownership", capture.span,
             "moving a captured place requires a take closure");
+    auto rootMode = facts(*closure.parent).locals[capture.source.root].mode;
+    capture.viaView =
+        syntax.flag && capture.mode != ParameterMode::Take &&
+        (rootMode == ParameterMode::Read || rootMode == ParameterMode::Mut) &&
+        !checked.types->isCopy(capture.type);
     capture.storedType =
-        syntax.flag ? capture.type
-                    : checked.types->viewType(capture.type,
-                                              capture.mode == ParameterMode::Mut
-                                                  ? ParameterMode::Mut
-                                                  : ParameterMode::Read);
+        syntax.flag && !capture.viaView
+            ? capture.type
+            : checked.types->viewType(capture.type,
+                                      capture.mode == ParameterMode::Mut
+                                          ? ParameterMode::Mut
+                                          : ParameterMode::Read);
     const auto &local = closure.function.locals[capture.proxy.root];
     std::string name = local.name;
     auto current = local.type;

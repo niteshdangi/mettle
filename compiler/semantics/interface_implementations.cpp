@@ -227,8 +227,7 @@ void Checker::interfaceImplementations() {
                            return candidate.name == required.name;
                          });
         if (provided == syntax.associated.end()) {
-          if (required.asyncFuture &&
-              required.defaultValue == Type::Unknown)
+          if (required.asyncFuture && required.defaultValue == Type::Unknown)
             continue;
           if (required.defaultValue == Type::Unknown) {
             error("type", syntax.span,
@@ -394,8 +393,7 @@ void Checker::interfaceImplementations() {
         auto associated = std::find_if(
             definition.associated.begin(), definition.associated.end(),
             [&](const auto &item) {
-              return item.asyncFuture &&
-                     item.name == declaration.asyncFuture;
+              return item.asyncFuture && item.name == declaration.asyncFuture;
             });
         auto binding = implementation.methods.find(method);
         if (associated == definition.associated.end() ||
@@ -406,14 +404,11 @@ void Checker::interfaceImplementations() {
 
         const auto ordinal = static_cast<std::size_t>(
             associated - definition.associated.begin());
-        const auto &provided =
-            module.functions[binding->second.function];
-        const auto &family =
-            module.interfaces[interfaceDeclaration].associated;
-        auto familySyntax = std::find_if(
-            family.begin(), family.end(), [&](const auto &item) {
-              return item.asyncFuture &&
-                     item.name == declaration.asyncFuture;
+        const auto &provided = module.functions[binding->second.function];
+        const auto &family = module.interfaces[interfaceDeclaration].associated;
+        auto familySyntax =
+            std::find_if(family.begin(), family.end(), [&](const auto &item) {
+              return item.asyncFuture && item.name == declaration.asyncFuture;
             });
         if (familySyntax == family.end())
           continue;
@@ -431,8 +426,7 @@ void Checker::interfaceImplementations() {
             if (auto region = regions.names.find(parameter.name);
                 region != regions.names.end())
               value.regions.push_back(region->second);
-          } else if (auto type =
-                         genericEnvironment->names.find(parameter.name);
+          } else if (auto type = genericEnvironment->names.find(parameter.name);
                      type != genericEnvironment->names.end()) {
             value.parameters.push_back(type->second);
           }

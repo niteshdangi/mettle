@@ -114,7 +114,7 @@ ir::Function Builder::runClosure(std::size_t index) {
   for (std::size_t i = 0; i < closure.captures.size(); ++i) {
     const auto &capture = closure.captures[i];
     Place target{0, {Projection::field(static_cast<std::uint32_t>(i))}};
-    if (!closure.syntax->flag)
+    if (!closure.syntax->flag || capture.viaView)
       target.fields.push_back(Projection::dereference());
     capturedPlaces.emplace_back(capture.proxy, std::move(target));
   }
@@ -169,10 +169,11 @@ Builder::Value Builder::callableExpression(const Node &node) {
       }
     if (!mapped)
       source.root = localSlot(source.root);
-    auto op = node.flag ? (capture.mode == ParameterMode::Take ||
-                                   !module.typeStore()->isCopy(capture.type)
-                               ? Op::Move
-                               : Op::Load)
+    auto op = node.flag && !capture.viaView
+                  ? (capture.mode == ParameterMode::Take ||
+                             !module.typeStore()->isCopy(capture.type)
+                         ? Op::Move
+                         : Op::Load)
               : capture.mode == ParameterMode::Mut ? Op::ViewMut
                                                    : Op::ViewRead;
     captures.push_back(emit({op, {}, {}, {}, "", source, -1, 0, capture.span},

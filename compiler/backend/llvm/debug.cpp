@@ -49,8 +49,8 @@ initializedAtSuspensions(const ir::Function &source) {
   while (!work.empty()) {
     auto block = work.front();
     work.pop_front();
-    for (auto successor : {source.blocks[block].exit.first,
-                           source.blocks[block].exit.second})
+    for (auto successor :
+         {source.blocks[block].exit.first, source.blocks[block].exit.second})
       if (successor >= 0 && static_cast<std::size_t>(successor) < count &&
           !reachable[successor]) {
         reachable[successor] = true;
@@ -71,8 +71,8 @@ initializedAtSuspensions(const ir::Function &source) {
   std::vector<State> out(count, {allScopes, allLocals});
   std::set<int> entryScopes{0};
   std::set<int> entryLocals;
-  for (std::size_t i = 0;
-       i < source.parameters && i < source.locals.size(); ++i) {
+  for (std::size_t i = 0; i < source.parameters && i < source.locals.size();
+       ++i) {
     entryScopes.insert(source.locals[i].scope);
     entryLocals.insert(static_cast<int>(i));
   }
@@ -111,8 +111,7 @@ initializedAtSuspensions(const ir::Function &source) {
       }
       auto state = in[block];
       for (const auto &instruction : source.blocks[block].instructions) {
-        if (instruction.op == ir::Op::Declare &&
-            instruction.place.root >= 0 &&
+        if (instruction.op == ir::Op::Declare && instruction.place.root >= 0 &&
             static_cast<std::size_t>(instruction.place.root) <
                 source.locals.size()) {
           auto root = instruction.place.root;
@@ -146,8 +145,7 @@ initializedAtSuspensions(const ir::Function &source) {
 
   std::vector<std::set<int>> result(count);
   for (std::size_t block = 0; block < count; ++block)
-    if (reachable[block] &&
-        source.blocks[block].exit.kind == ir::Exit::Suspend)
+    if (reachable[block] && source.blocks[block].exit.kind == ir::Exit::Suspend)
       result[block] = out[block].second;
   return result;
 }
@@ -482,10 +480,10 @@ llvm::DIType *DebugInfo::build(Type type) {
   return dib.replaceTemporary(llvm::TempMDNode(temporary), composite);
 }
 
-void DebugInfo::describeCoroutine(
-    Type type, const ir::Function &source, llvm::StructType *frame,
-    unsigned stateField, unsigned outputField,
-    const std::vector<unsigned> &localFields) {
+void DebugInfo::describeCoroutine(Type type, const ir::Function &source,
+                                  llvm::StructType *frame, unsigned stateField,
+                                  unsigned outputField,
+                                  const std::vector<unsigned> &localFields) {
   if (!frame || !frame->isSized())
     return;
   const auto &store = *program.types;
@@ -493,11 +491,11 @@ void DebugInfo::describeCoroutine(
   const auto &dataLayout = module.getDataLayout();
   const auto *frameLayout = dataLayout.getStructLayout(frame);
   const auto frameBits = dataLayout.getTypeAllocSize(frame).getFixedValue() * 8;
-  const auto frameAlignment = static_cast<std::uint32_t>(
-      dataLayout.getABITypeAlign(frame).value() * 8);
+  const auto frameAlignment =
+      static_cast<std::uint32_t>(dataLayout.getABITypeAlign(frame).value() * 8);
   auto *temporary = dib.createReplaceableCompositeType(
-      llvm::dwarf::DW_TAG_structure_type, name, unit, rootFile, 0, 0,
-      frameBits, frameAlignment);
+      llvm::dwarf::DW_TAG_structure_type, name, unit, rootFile, 0, 0, frameBits,
+      frameAlignment);
   types[type.index()] = temporary;
 
   struct Suspension {
@@ -534,16 +532,16 @@ void DebugInfo::describeCoroutine(
   states.emplace_back(complete, "done");
   std::vector<llvm::Metadata *> enumerators;
   for (const auto &[value, label] : states) {
-    llvm::APInt bits(32, static_cast<std::uint64_t>(value), true);
-    enumerators.push_back(dib.createEnumerator(label, bits, false));
+    enumerators.push_back(
+        dib.createEnumerator(label, static_cast<std::uint64_t>(value), false));
   }
   auto *stateType = dib.createEnumerationType(
       unit, name + ".ResumeState", rootFile, 0, 32, 32,
       dib.getOrCreateArray(enumerators), describe(Type::I32), true);
-  auto *stateMember = dib.createMemberType(
-      temporary, "state", rootFile, 0, 32, 32,
-      frameLayout->getElementOffset(stateField) * 8, llvm::DINode::FlagZero,
-      stateType);
+  auto *stateMember =
+      dib.createMemberType(temporary, "state", rootFile, 0, 32, 32,
+                           frameLayout->getElementOffset(stateField) * 8,
+                           llvm::DINode::FlagZero, stateType);
 
   auto member = [&](std::vector<llvm::Metadata *> &members,
                     llvm::DIScope *scope, const std::string &fieldName,
@@ -554,10 +552,9 @@ void DebugInfo::describeCoroutine(
       return;
     auto fieldLayout = objectLayout(store, fieldType);
     auto size = fieldLayout ? fieldLayout->size * 8 : 0;
-    auto alignment = fieldLayout
-                         ? static_cast<std::uint32_t>(
-                               fieldLayout->alignment * 8)
-                         : 0;
+    auto alignment =
+        fieldLayout ? static_cast<std::uint32_t>(fieldLayout->alignment * 8)
+                    : 0;
     if (borrowed) {
       debugType = dib.createPointerType(debugType, store.targetPointerBits());
       size = store.targetPointerBits();
@@ -570,14 +567,13 @@ void DebugInfo::describeCoroutine(
       if (auto *found = info(sourceSpan.source)) {
         file = found->file;
         line = position(found->lines,
-                        std::min(sourceSpan.begin,
-                                 found->source->text.size()))
+                        std::min(sourceSpan.begin, found->source->text.size()))
                    .first;
       }
-    members.push_back(dib.createMemberType(
-        scope, fieldName, file, line, size, alignment,
-        frameLayout->getElementOffset(physicalField) * 8,
-        llvm::DINode::FlagZero, debugType));
+    members.push_back(
+        dib.createMemberType(scope, fieldName, file, line, size, alignment,
+                             frameLayout->getElementOffset(physicalField) * 8,
+                             llvm::DINode::FlagZero, debugType));
   };
 
   std::vector<llvm::Metadata *> members{stateMember};
@@ -585,9 +581,9 @@ void DebugInfo::describeCoroutine(
                           i < localFields.size();
        ++i) {
     const auto &local = source.locals[i];
-    bool borrowed =
-        local.storage == StorageDuration::Static ||
-        local.mode == ParameterMode::Read || local.mode == ParameterMode::Mut;
+    bool borrowed = local.storage == StorageDuration::Static ||
+                    local.mode == ParameterMode::Read ||
+                    local.mode == ParameterMode::Mut;
     member(members, temporary, i == 0 ? "captures" : local.name, local.type,
            localFields[i], borrowed, local.span);
   }
@@ -621,14 +617,13 @@ void DebugInfo::describeCoroutine(
     auto *payloadComposite = dib.createStructType(
         unit, label, rootFile, 0, frameBits, frameAlignment,
         llvm::DINode::FlagZero, nullptr, dib.getOrCreateArray(fields));
-    auto *payload =
-        dib.replaceTemporary(llvm::TempMDNode(payloadTemporary),
-                             payloadComposite);
+    auto *payload = dib.replaceTemporary(llvm::TempMDNode(payloadTemporary),
+                                         payloadComposite);
     llvm::APInt tag(32, static_cast<std::uint64_t>(value), true);
     auto *constant = llvm::ConstantInt::get(module.getContext(), tag);
-    return dib.createVariantMemberType(
-        temporary, label, rootFile, 0, frameBits, frameAlignment, 0, constant,
-        llvm::DINode::FlagZero, payload);
+    return dib.createVariantMemberType(temporary, label, rootFile, 0, frameBits,
+                                       frameAlignment, 0, constant,
+                                       llvm::DINode::FlagZero, payload);
   };
 
   std::vector<llvm::Metadata *> variants;

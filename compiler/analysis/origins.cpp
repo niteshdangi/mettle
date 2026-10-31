@@ -173,6 +173,11 @@ std::vector<std::pair<ViewPath, Type>> viewPaths(Type type,
       visit(aggregate.components[0], std::move(path));
       return;
     }
+    if (aggregate.kind == AggregateKind::Coroutine) {
+      path.push_back(Projection::opaque(aggregate.components[1]));
+      visit(aggregate.components[1], std::move(path));
+      return;
+    }
     const auto &fields = types.product(current).fields;
     for (std::size_t i = 0; i < fields.size(); ++i) {
       auto child = path;

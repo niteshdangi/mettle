@@ -15,8 +15,7 @@ GenericArgument genericArgument(const GenericParameter &parameter) {
   GenericArgument result;
   result.span = parameter.span;
   if (parameter.kind == GenericParameterKind::Type) {
-    result.type =
-        std::make_shared<const TypeSyntax>(namedType(parameter.name));
+    result.type = std::make_shared<const TypeSyntax>(namedType(parameter.name));
   } else if (parameter.kind == GenericParameterKind::Region) {
     result.region = parameter.name;
   } else {
@@ -145,8 +144,8 @@ Module::Interface Parser::interfaceDeclaration() {
           feature("async interface default methods require an explicit "
                   "result type");
         Module::Associated future;
-        future.name = "$async_future_" +
-                      method.name.substr(method.name.rfind('.') + 1);
+        future.name =
+            "$async_future_" + method.name.substr(method.name.rfind('.') + 1);
         future.span = method.span;
         future.visibility = method.item.visibility;
         future.asyncFuture = true;
@@ -165,8 +164,7 @@ Module::Interface Parser::interfaceDeclaration() {
         GenericArgument binding;
         binding.binding = "Output";
         binding.span = method.span;
-        binding.type =
-            std::make_shared<const TypeSyntax>(std::move(output));
+        binding.type = std::make_shared<const TypeSyntax>(std::move(output));
         futureBound.arguments.push_back(std::move(binding));
         future.bounds.push_back(std::move(futureBound));
         if (method.body.get())

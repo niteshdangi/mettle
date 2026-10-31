@@ -466,6 +466,8 @@ bool TypeStore::containsViews(Type type) const {
         record.arrayCount != Type::Unknown && !record.components.empty() &&
         containsViews(record.components[0]))
       return true;
+    if (record.kind == AggregateKind::Coroutine)
+      return containsViews(record.components[1]);
     for (const auto &field : product(type).fields)
       if (containsViews(field.type))
         return true;

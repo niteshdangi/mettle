@@ -142,10 +142,9 @@ struct Node {
 
 bool knownFragment(const std::string &fragment) {
   static const std::set<std::string> known{
-      "expr",       "expression", "stmt",       "statement", "pat",
-      "pattern",    "ty",         "type",       "path",      "ident",
-      "identifier", "literal",    "tt",         "token-tree", "block",
-      "item"};
+      "expr", "expression", "stmt",  "statement", "pat",        "pattern",
+      "ty",   "type",       "path",  "ident",     "identifier", "literal",
+      "tt",   "token-tree", "block", "item"};
   return known.contains(fragment);
 }
 
@@ -1144,8 +1143,7 @@ private:
            !isReservedWord(piece.text);
   }
 
-  static void bindPattern(const Pieces &out, std::size_t begin,
-                          std::size_t end,
+  static void bindPattern(const Pieces &out, std::size_t begin, std::size_t end,
                           std::set<std::size_t> &binders,
                           std::map<std::size_t, std::string> &shorthand) {
     for (auto k = begin; k < end; ++k) {
@@ -1155,15 +1153,13 @@ private:
                          (k + 1 < end && symbol(out[k + 1], "."));
       auto fieldName = k + 1 < end && symbol(out[k + 1], ":");
       auto constructor =
-          k + 1 < end &&
-          (symbol(out[k + 1], "(") || symbol(out[k + 1], "{"));
+          k + 1 < end && (symbol(out[k + 1], "(") || symbol(out[k + 1], "{"));
       if (!pathSegment && !fieldName && !constructor) {
         binders.insert(k);
         auto beforeField =
             k > begin && (symbol(out[k - 1], "{") || symbol(out[k - 1], ","));
         auto afterField =
-            k + 1 < end &&
-            (symbol(out[k + 1], ",") || symbol(out[k + 1], "}"));
+            k + 1 < end && (symbol(out[k + 1], ",") || symbol(out[k + 1], "}"));
         if (beforeField && afterField)
           shorthand.emplace(k, out[k].text);
       }
@@ -1182,8 +1178,7 @@ private:
         continue;
       }
       if (newline(out[k]) || symbol(out[k], ":") || symbol(out[k], "=") ||
-          (forLoop && out[k].kind == TokenKind::Word &&
-           out[k].text == "in"))
+          (forLoop && out[k].kind == TokenKind::Word && out[k].text == "in"))
         return k;
       ++k;
     }
@@ -1298,8 +1293,8 @@ private:
       } else if (word == "fn") {
         auto open = symbol(out[i + 1], "(") ? i + 1
                     : i + 2 < out.size() &&
-                              out[i + 1].kind == TokenKind::Word &&
-                              symbol(out[i + 2], "(")
+                            out[i + 1].kind == TokenKind::Word &&
+                            symbol(out[i + 2], "(")
                         ? i + 2
                         : none;
         if (open != none) {
@@ -1329,9 +1324,9 @@ private:
       for (const auto &name : renamed)
         markedNames.insert(name + "__m" + std::to_string(mark));
       static const std::set<std::string> primitiveTypes{
-          "Unit", "Never", "bool", "char", "f32", "f64", "i8", "i16",
-          "i32",   "i64",   "i128", "isize", "u8", "u16", "u32", "u64",
-          "u128",  "usize"};
+          "Unit", "Never", "bool", "char", "f32",  "f64",
+          "i8",   "i16",   "i32",  "i64",  "i128", "isize",
+          "u8",   "u16",   "u32",  "u64",  "u128", "usize"};
       for (std::size_t i = 0; i < out.size(); ++i) {
         const auto &piece = out[i];
         if (!piece.authored || piece.kind != TokenKind::Word ||
@@ -1339,8 +1334,7 @@ private:
             piece.text == "Self" || piece.text == "package" ||
             piece.text == "self" || piece.text == "super" ||
             primitiveTypes.contains(piece.text) ||
-            (i > 0 && (symbol(out[i - 1], ".") ||
-                       symbol(out[i - 1], "::"))) ||
+            (i > 0 && (symbol(out[i - 1], ".") || symbol(out[i - 1], "::"))) ||
             (i + 1 < out.size() &&
              (symbol(out[i + 1], ":") || symbol(out[i + 1], "!"))))
           continue;
@@ -1348,17 +1342,16 @@ private:
             (out[i - 1].text == "fn" || out[i - 1].text == "type" ||
              out[i - 1].text == "enum" || out[i - 1].text == "alias" ||
              out[i - 1].text == "const" || out[i - 1].text == "static" ||
-             out[i - 1].text == "union" ||
-             out[i - 1].text == "interface" ||
+             out[i - 1].text == "union" || out[i - 1].text == "interface" ||
              out[i - 1].text == "module"))
           continue;
         freeNames.insert(i);
       }
     }
     Pieces hygienic;
-    hygienic.reserve(
-        out.size() + freeNames.size() * (2 + 2 * definitionScope.size()) +
-        2 * shorthand.size());
+    hygienic.reserve(out.size() +
+                     freeNames.size() * (2 + 2 * definitionScope.size()) +
+                     2 * shorthand.size());
     for (std::size_t i = 0; i < out.size(); ++i) {
       const auto &piece = out[i];
       if (freeNames.contains(i)) {
@@ -1376,8 +1369,7 @@ private:
         auto field = piece;
         field.text = found->second;
         hygienic.push_back(std::move(field));
-        hygienic.push_back(
-            {TokenKind::Symbol, ":", piece.origin, false});
+        hygienic.push_back({TokenKind::Symbol, ":", piece.origin, false});
         auto binding = piece;
         binding.text = found->second + "__m" + std::to_string(mark);
         binding.space = false;

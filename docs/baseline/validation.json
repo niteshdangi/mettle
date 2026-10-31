@@ -30,7 +30,7 @@
     "fixture_expectations_checked": 23,
     "fixtures_executed": false
   },
-  "documentation_sha256": "8a9f0d6821fc0ecffcbb0e7ea9a00ee261a2a7e7779954295ea42da567dbc8d0",
+  "documentation_sha256": "f2207f0f8fe0a86c20b29b679fd838c048660cfdccfe329406eb52675e433305",
   "documentation_inputs": {
     "AGENTS.md": "33d2c795b34b8f4328f1df6e463cfdb2ec9e5c7ea4a14bad07e7cd5fd4b02c66",
     "CONTRIBUTING.md": "48e922caaaf6b55ebe4dcd05f79cba26ad3cfc9f7b9c69cb6e3d010309cb68f2",
@@ -51,7 +51,7 @@
     "docs/core-grammar.md": "24c851e523e7690ffc3a52dc971e2783c9aa198512c93f878fc3b797f78c500d",
     "docs/core-semantics.md": "ac5ba48bfc6e36d3ea7908d34998fb5e3d62085b54d0a882ed8f7468441e6c91",
     "docs/decisions.md": "9593518dcd6a8300546ba10ee4cd71e4c00ca0e5319d261e9c1eba58ee738e3f",
-    "docs/implementation-plan.md": "9bf235a124020aa4703de9282c38574ea347ce09c38514d344dcec7bbe3576f3",
+    "docs/implementation-plan.md": "4966b98a423de39460b23118de1a9e920350104c94a8e73204d0a091de84e2af",
     "docs/language-grammar.md": "8b54be9f7c112cbc96f08ab679f09ab05799f21faa7242e31aa44acee70f9970",
     "docs/language-identity.md": "7febf4dec2af3cf08e0852a2eaea4a427a884ebdaf72dae993991625ded37ab3",
     "docs/library-and-abi.md": "a7e784d3bea37762234eb78f8bae473acb82d6157c6ffcd7bf4287e98d0c00da",
@@ -64,7 +64,7 @@
     "docs/specification-annex.md": "f5fa10d4200b1c030bc4ff03922be9b1c8fb166dc054d680f9037c20c8f28433",
     "docs/specification-status.md": "3828a532f007ce92208051d6fb8934f193d4aec0d627ee7a068bdd9735dca38e",
     "docs/toolchain-pins.json": "b5af52658560cdbdfcb948f4315dafa80169799c096042f9dee3320ac0b72847",
-    "docs/tooling-and-packages.md": "832b21f5e540866953a32dbeda38226c6de611af69b23e7f8b51795a98c4352e",
+    "docs/tooling-and-packages.md": "1e316c5f66c40af9f2c22fe4ed5dd0514eb27c87a95a410fa79cd72a76842566",
     "examples/core/control-flow.mt": "e3a6e141592088fcca1afb830d94ca26ee149ef05efd3381644f6d48efac936f",
     "examples/core/expectations.json": "09d8ddf938cca152698d4e75fa152dceff08a13e43a7c734e0e903f5ec111f4a",
     "examples/core/generics.mt": "fb5da845d11cd846ea8691dde83631306175c6b42c89d878242a1fbfeafd60c4",

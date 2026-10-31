@@ -2449,14 +2449,19 @@ Type RegionPass::expression(const Node &node) {
 void RegionPass::resultSources(std::size_t index) {
   auto &facts = functions[index];
   const auto &syntax = module.functions[index];
-  if (!types.containsViews(facts.abiResult))
-    return;
   std::vector<std::size_t> eligible;
   for (std::size_t i = 0; i < syntax.parameters.size(); ++i)
     if (facts.locals[i].mode == ParameterMode::Read ||
         facts.locals[i].mode == ParameterMode::Mut ||
         types.containsViews(facts.locals[i].type))
       eligible.push_back(i);
+  // An async call's future holds its borrowed inputs until it is dropped.
+  if (syntax.asynchronous) {
+    facts.resultSources = eligible;
+    return;
+  }
+  if (!types.containsViews(facts.abiResult))
+    return;
   auto add = [&](std::size_t parameter) {
     if (std::find(facts.resultSources.begin(), facts.resultSources.end(),
                   parameter) == facts.resultSources.end())

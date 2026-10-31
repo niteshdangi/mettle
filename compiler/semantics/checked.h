@@ -169,6 +169,9 @@ struct ClosureCapture {
   Type type = Type::Unknown;
   Type storedType = Type::Unknown;
   ParameterMode mode = ParameterMode::Read;
+  // An owning closure keeps a view of a non-Copy place behind a borrowed
+  // parameter instead of moving out of it.
+  bool viaView = false;
   Span span;
 };
 struct ClosureFacts {
