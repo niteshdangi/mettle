@@ -87,9 +87,16 @@ Builder::Value Builder::machineExpression(const Node &node) {
   }
   if (facts.machineOperation == "storage.drop" ||
       facts.machineOperation == "storage.assume_init_drop" ||
-      facts.machineOperation == "ptr.drop_in_place") {
+      facts.machineOperation == "ptr.drop_in_place" ||
+      facts.machineOperation == "mem.drop") {
     Place location;
-    if (facts.machineOperation != "ptr.drop_in_place") {
+    if (facts.machineOperation == "mem.drop") {
+      auto value = use(expression(*node.children[1], true));
+      if (!live())
+        return {};
+      location = materialize(value, node.span, temporaryScope);
+      location.fields.push_back(Projection::dereference());
+    } else if (facts.machineOperation != "ptr.drop_in_place") {
       location = place(*node.children[0]->children[0]);
       if (!live())
         return {};

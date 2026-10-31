@@ -13,6 +13,68 @@ extend IntErrorKind implements PartialEq {
 extend IntErrorKind implements Eq {}
 
 pub copy type ParseIntError { pub kind: IntErrorKind }
+pub copy type Wrapping<T: Copy> { pub value: T }
+
+extend Wrapping<u8> {
+    pub fn reverse_bits(): Wrapping<u8> {
+        Wrapping { value: self.value.reverse_bits() }
+    }
+}
+extend Wrapping<u16> {
+    pub fn reverse_bits(): Wrapping<u16> {
+        Wrapping { value: self.value.reverse_bits() }
+    }
+}
+extend Wrapping<u32> {
+    pub fn reverse_bits(): Wrapping<u32> {
+        Wrapping { value: self.value.reverse_bits() }
+    }
+}
+extend Wrapping<u64> {
+    pub fn reverse_bits(): Wrapping<u64> {
+        Wrapping { value: self.value.reverse_bits() }
+    }
+}
+extend Wrapping<u128> {
+    pub fn reverse_bits(): Wrapping<u128> {
+        Wrapping { value: self.value.reverse_bits() }
+    }
+}
+extend Wrapping<usize> {
+    pub fn reverse_bits(): Wrapping<usize> {
+        Wrapping { value: self.value.reverse_bits() }
+    }
+}
+extend Wrapping<i8> {
+    pub fn reverse_bits(): Wrapping<i8> {
+        Wrapping { value: self.value.reverse_bits() }
+    }
+}
+extend Wrapping<i16> {
+    pub fn reverse_bits(): Wrapping<i16> {
+        Wrapping { value: self.value.reverse_bits() }
+    }
+}
+extend Wrapping<i32> {
+    pub fn reverse_bits(): Wrapping<i32> {
+        Wrapping { value: self.value.reverse_bits() }
+    }
+}
+extend Wrapping<i64> {
+    pub fn reverse_bits(): Wrapping<i64> {
+        Wrapping { value: self.value.reverse_bits() }
+    }
+}
+extend Wrapping<i128> {
+    pub fn reverse_bits(): Wrapping<i128> {
+        Wrapping { value: self.value.reverse_bits() }
+    }
+}
+extend Wrapping<isize> {
+    pub fn reverse_bits(): Wrapping<isize> {
+        Wrapping { value: self.value.reverse_bits() }
+    }
+}
 
 fn digit_value(byte: u8): u32 {
     if byte >= 0x30u8 && byte <= 0x39u8 { return (byte - 0x30u8) as u32 }
@@ -74,6 +136,13 @@ pub fn parse<T: FromText>(text: read Text): T throws ParseIntError {
 pub fn parse_radix<T: FromText>(text: read Text, radix: u32): T throws ParseIntError {
     try T.(FromText).from_text_radix(text, radix)
 }
+
+pub fn from_str_radix<T: FromText>(
+    text: read Text, radix: u32
+): T throws ParseIntError {
+    try parse_radix<T>(text, radix)
+}
+
 extend i8 implements FromText {
     static fn from_text_radix(text: read Text, radix: u32): i8 throws ParseIntError {
         let raw = try parse_magnitude(text, radix, true, 127u128, 128u128)

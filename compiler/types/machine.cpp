@@ -234,6 +234,10 @@ machineSignature(const TypeStore &types, std::string_view operation,
   }
   if (operation == "mem.forget")
     return operands.size() == 1 ? signature(Type::Unit) : std::nullopt;
+  if (operation == "mem.drop")
+    return operands.size() == 1 && types.isSized(operands[0])
+               ? signature(Type::Unit)
+               : std::nullopt;
   if (operation == "hint.black_box")
     return operands.size() == 1 && operands[0] == argument ? signature(argument)
                                                            : std::nullopt;
@@ -579,15 +583,52 @@ machineSignature(const TypeStore &types, std::string_view operation,
   }
   if (operation.starts_with("numeric.")) {
     auto method = operation.substr(8);
-    if (operands.empty() || !isNumeric(operands[0]))
+    bool fromBytes = method == "from_be_bytes" || method == "from_le_bytes" ||
+                     method == "from_ne_bytes";
+    if (fromBytes) {
+      if (operands.size() != 1 || !isNumeric(argument) ||
+          !types.isProduct(operands[0]) ||
+          types.product(operands[0]).kind != AggregateKind::Array ||
+          types.product(operands[0]).components.empty() ||
+          types.product(operands[0]).components[0] != Type::U8 ||
+          types.arrayLength(operands[0]) !=
+              std::optional<std::uint64_t>{
+              (isInteger(argument)
+                   ? integerWidth(argument, types.targetPointerBits())
+                                   : argument == Type::F32 ? 32u : 64u) /
+              8u})
+        return std::nullopt;
+      return signature(argument);
+    }
+    if (operands.empty())
       return std::nullopt;
+    bool makeAscii = method == "make_ascii_lowercase" ||
+                     method == "make_ascii_uppercase";
     auto self = operands[0];
+    if (types.isView(self)) {
+      if (!makeAscii || types.view(self).mode != ParameterMode::Mut ||
+          types.view(self).payload != Type::U8)
+        return std::nullopt;
+      self = types.view(self).payload;
+    } else if (!isNumeric(self))
+      return std::nullopt;
     if (method == "checked_cast")
       return operands.size() == 1 && isInteger(argument)
                  ? signature(argument, Shape::Optional)
                  : std::nullopt;
-    if (argument != Type::Unknown && method != "from_bits" && self != argument)
+    bool toBytes = method == "to_be_bytes" || method == "to_le_bytes" ||
+                   method == "to_ne_bytes";
+    if (argument != Type::Unknown && method != "from_bits" && !toBytes &&
+        method != "sin_cos" && self != argument)
       return std::nullopt;
+    if (method == "sin_cos")
+      return operands.size() == 1 && isFloating(self) &&
+                     types.isProduct(argument) &&
+                     types.product(argument).kind == AggregateKind::Tuple &&
+                     types.product(argument).components ==
+                         std::vector<Type>{self, self}
+                 ? signature(argument)
+                 : std::nullopt;
     if (method == "to_bits") {
       if (operands.size() != 1 || !isFloating(self))
         return std::nullopt;
@@ -599,18 +640,60 @@ machineSignature(const TypeStore &types, std::string_view operation,
         return std::nullopt;
       return signature(argument);
     }
+    if (method == "to_be_bytes" || method == "to_le_bytes" ||
+        method == "to_ne_bytes") {
+      if (operands.size() != 1 || !types.isProduct(argument) ||
+          types.product(argument).kind != AggregateKind::Array ||
+          types.product(argument).components.empty() ||
+          types.product(argument).components[0] != Type::U8)
+        return std::nullopt;
+      auto width =
+          isInteger(self) ? integerWidth(self, types.targetPointerBits())
+                          : self == Type::F32 ? 32u : 64u;
+      return types.arrayLength(argument) ==
+                     std::optional<std::uint64_t>{width / 8u}
+                 ? signature(argument)
+                 : std::nullopt;
+    }
+    if (method == "to_be" || method == "to_le" || method == "from_be" ||
+        method == "from_le")
+      return operands.size() == 1 && isInteger(self) ? signature(self)
+                                                     : std::nullopt;
     if (isFloating(self)) {
       bool predicate = method == "is_nan" || method == "is_infinite" ||
                        method == "is_finite" || method == "is_sign_negative" ||
                        method == "is_sign_positive" ||
                        method == "is_subnormal" || method == "is_normal";
-      bool unary = predicate || method == "abs" || method == "sqrt" ||
-                   method == "floor" || method == "ceil" || method == "trunc" ||
-                   method == "round" || method == "round_ties_even";
-      auto count = method == "mul_add" ? 3u : method == "copysign" ? 2u : 1u;
+      bool unary =
+          predicate || method == "abs" || method == "sqrt" ||
+          method == "floor" || method == "ceil" || method == "trunc" ||
+          method == "round" || method == "round_ties_even" ||
+          method == "sin" || method == "cos" || method == "tan" ||
+          method == "asin" || method == "acos" || method == "atan" ||
+          method == "sinh" || method == "cosh" || method == "tanh" ||
+          method == "asinh" || method == "acosh" || method == "atanh" ||
+          method == "exp" || method == "exp2" || method == "exp_m1" ||
+          method == "ln" || method == "ln_1p" || method == "log2" ||
+          method == "log10" || method == "cbrt" || method == "fract" ||
+          method == "recip" || method == "signum" ||
+          method == "to_degrees" || method == "to_radians" ||
+          method == "next_up" || method == "next_down";
+      bool clamp = method == "clamp";
+      bool binary =
+          method == "copysign" || method == "atan2" || method == "log" ||
+          method == "powf" || method == "hypot" || method == "div_euclid" ||
+          method == "rem_euclid" || method == "midpoint" ||
+          method == "min" || method == "max";
+      auto count = method == "mul_add" ? 3u
+                   : method == "powi" ? 2u
+                   : clamp           ? 3u
+                   : binary          ? 2u
+                                     : 1u;
+      bool powi = method == "powi";
       if ((!unary && count == 1) || operands.size() != count ||
-          !std::all_of(operands.begin(), operands.end(),
-                       [&](Type type) { return type == self; }))
+          (powi ? operands[1] != Type::I32
+                : !std::all_of(operands.begin(), operands.end(),
+                               [&](Type type) { return type == self; })))
         return std::nullopt;
       return signature(predicate ? Type::Bool : self);
     }
@@ -629,6 +712,156 @@ machineSignature(const TypeStore &types, std::string_view operation,
         return std::nullopt;
       return signature(self);
     }
+    if (!isInteger(self))
+      return std::nullopt;
+    auto unsignedType = [&] {
+      if (self == Type::I8 || self == Type::U8)
+        return Type::U8;
+      if (self == Type::I16 || self == Type::U16)
+        return Type::U16;
+      if (self == Type::I32 || self == Type::U32)
+        return Type::U32;
+      if (self == Type::I64 || self == Type::U64)
+        return Type::U64;
+      if (self == Type::I128 || self == Type::U128)
+        return Type::U128;
+      return Type::Usize;
+    };
+    auto signedType = [&] {
+      if (self == Type::I8 || self == Type::U8)
+        return Type::I8;
+      if (self == Type::I16 || self == Type::U16)
+        return Type::I16;
+      if (self == Type::I32 || self == Type::U32)
+        return Type::I32;
+      if (self == Type::I64 || self == Type::U64)
+        return Type::I64;
+      if (self == Type::I128 || self == Type::U128)
+        return Type::I128;
+      return Type::Isize;
+    };
+    if (method == "is_positive" || method == "is_negative" ||
+        method == "signum")
+      return operands.size() == 1 && isSignedInteger(self)
+                 ? signature(method == "signum" ? self : Type::Bool)
+                 : std::nullopt;
+    if (method == "is_power_of_two")
+      return operands.size() == 1 && !isSignedInteger(self)
+                 ? signature(Type::Bool)
+                 : std::nullopt;
+    if (method == "ilog2" || method == "ilog10" ||
+        method == "checked_ilog2" || method == "checked_ilog10")
+      return operands.size() == 1
+                 ? signature(Type::U32,
+                             method.starts_with("checked_") ? Shape::Optional
+                                                            : Shape::Value)
+                 : std::nullopt;
+    if (method == "ilog" || method == "checked_ilog")
+      return operands.size() == 2 && operands[1] == self
+                 ? signature(Type::U32,
+                             method.starts_with("checked_") ? Shape::Optional
+                                                            : Shape::Value)
+                 : std::nullopt;
+    if (method == "isqrt" || method == "checked_isqrt")
+      return operands.size() == 1
+                 ? signature(self,
+                             method.starts_with("checked_") ? Shape::Optional
+                                                            : Shape::Value)
+                 : std::nullopt;
+    if (method == "next_power_of_two" ||
+        method == "checked_next_power_of_two")
+      return operands.size() == 1 && !isSignedInteger(self)
+                 ? signature(self,
+                             method.starts_with("checked_") ? Shape::Optional
+                                                            : Shape::Value)
+                 : std::nullopt;
+    if (method == "div_ceil" || method == "next_multiple_of" ||
+        method == "checked_next_multiple_of" || method == "is_multiple_of")
+      return operands.size() == 2 && operands[1] == self &&
+                     !isSignedInteger(self)
+                 ? signature(method == "is_multiple_of" ? Type::Bool : self,
+                             method.starts_with("checked_") ? Shape::Optional
+                                                            : Shape::Value)
+                 : std::nullopt;
+    if (method == "midpoint")
+      return operands.size() == 2 && operands[1] == self
+                 ? signature(self)
+                 : std::nullopt;
+    if (method == "unbounded_shl" || method == "unbounded_shr")
+      return operands.size() == 2 && operands[1] == Type::U32
+                 ? signature(self)
+                 : std::nullopt;
+    if (method.starts_with("unchecked_")) {
+      auto unchecked = method.substr(10);
+      bool unary = unchecked == "neg";
+      bool shift = unchecked == "shl" || unchecked == "shr";
+      if (unchecked != "add" && unchecked != "sub" &&
+          unchecked != "mul" && !unary && !shift)
+        return std::nullopt;
+      return operands.size() == (unary ? 1u : 2u) &&
+                     (unary || operands[1] ==
+                                    (shift ? Type::U32 : self))
+                 ? signature(self, Shape::Value, true)
+                 : std::nullopt;
+    }
+    if (method == "cast_signed" || method == "cast_unsigned")
+      return operands.size() == 1 &&
+                     ((method == "cast_signed" && !isSignedInteger(self)) ||
+                      (method == "cast_unsigned" && isSignedInteger(self)))
+                 ? signature(method == "cast_signed" ? signedType()
+                                                      : unsignedType())
+                 : std::nullopt;
+    if (method == "is_ascii" || method == "is_ascii_alphabetic" ||
+        method == "is_ascii_alphanumeric" || method == "is_ascii_control" ||
+        method == "is_ascii_digit" || method == "is_ascii_graphic" ||
+        method == "is_ascii_hexdigit" ||
+        method == "is_ascii_lowercase" ||
+        method == "is_ascii_punctuation" ||
+        method == "is_ascii_uppercase" || method == "is_ascii_whitespace")
+      return self == Type::U8 && operands.size() == 1
+                 ? signature(Type::Bool)
+                 : std::nullopt;
+    if (method == "to_ascii_lowercase" || method == "to_ascii_uppercase")
+      return self == Type::U8 && operands.size() == 1
+                 ? signature(Type::U8)
+                 : std::nullopt;
+    if (makeAscii)
+      return self == Type::U8 && operands.size() == 1 &&
+                     types.isView(operands[0]) &&
+                     types.view(operands[0]).mode == ParameterMode::Mut
+                 ? signature(Type::Unit)
+                 : std::nullopt;
+    if (method == "eq_ignore_ascii_case")
+      return self == Type::U8 && operands.size() == 2 &&
+                     operands[1] == Type::U8
+                 ? signature(Type::Bool)
+                 : std::nullopt;
+    if (method == "unsigned_abs")
+      return operands.size() == 1 && isSignedInteger(self)
+                 ? signature(unsignedType())
+                 : std::nullopt;
+    if (method == "abs_diff")
+      return operands.size() == 2 && operands[1] == self
+                 ? signature(unsignedType())
+                 : std::nullopt;
+    if (method == "pow" || method == "checked_pow" ||
+        method == "wrapping_pow" || method == "overflowing_pow" ||
+        method == "saturating_pow" || method == "strict_pow") {
+      auto shape = method == "checked_pow" ? Shape::Optional
+                   : method == "overflowing_pow" ? Shape::Overflow
+                                                   : Shape::Value;
+      return operands.size() == 2 && operands[1] == Type::U32
+                 ? signature(self, shape)
+                 : std::nullopt;
+    }
+    bool strict = method.starts_with("strict_");
+    if (strict) {
+      method.remove_prefix(7);
+      if (method.starts_with("checked_") || method.starts_with("wrapping_") ||
+          method.starts_with("overflowing_") ||
+          method.starts_with("saturating_"))
+        return std::nullopt;
+    }
     Shape shape = Shape::Value;
     if (method.starts_with("wrapping_"))
       method.remove_prefix(9);
@@ -640,12 +873,27 @@ machineSignature(const TypeStore &types, std::string_view operation,
       shape = Shape::Overflow;
     } else if (method.starts_with("saturating_"))
       method.remove_prefix(11);
-    else
+    else if (!strict && !method.ends_with("_signed") &&
+             !method.ends_with("_unsigned"))
       return std::nullopt;
+    bool mixedSigned = method.ends_with("_signed");
+    bool mixedUnsigned = method.ends_with("_unsigned");
+    if (mixedSigned || mixedUnsigned) {
+      method.remove_suffix(mixedSigned ? 7 : 9);
+      bool validOperation = method == "add" || method == "sub";
+      bool validSign = mixedSigned ? !isSignedInteger(self)
+                                  : isSignedInteger(self);
+      auto expected = mixedSigned ? signedType() : unsignedType();
+      return validOperation && validSign && operands.size() == 2 &&
+                     operands[1] == expected
+                 ? signature(self, shape)
+                 : std::nullopt;
+    }
     bool unary = method == "neg" || method == "abs";
     bool shift = method == "shl" || method == "shr";
     if (method != "add" && method != "sub" && method != "mul" &&
-        method != "div" && method != "rem" && !unary && !shift)
+        method != "div" && method != "rem" && !unary && !shift &&
+        method != "div_euclid" && method != "rem_euclid")
       return std::nullopt;
     if (method == "abs" && !isSignedInteger(self))
       return std::nullopt;
@@ -654,6 +902,9 @@ machineSignature(const TypeStore &types, std::string_view operation,
       return std::nullopt;
     if (operation.starts_with("numeric.saturating_") &&
         (shift || method == "rem"))
+      return std::nullopt;
+    if (operation.starts_with("numeric.saturating_") &&
+        (method == "div_euclid" || method == "rem_euclid"))
       return std::nullopt;
     return signature(self, shape);
   }
