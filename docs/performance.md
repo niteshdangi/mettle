@@ -158,16 +158,11 @@ The user build cache is built to retain less than Cargo's `target/` directory:
   their bytes; entries (key to blob) are ~100-byte files. Different keys that
   yield identical bytes (for example a feature that changes no code) share one
   blob. Blobs are read-only; outputs are private copies, never links into the
-  store. Lexed-token payloads are currently stored directly in content-keyed
-  text entries rather than shared blobs, so those entries can be much larger.
-- **Scoped intermediate data.** Final executables/objects, tiny build-script
-  records and serialized lexed tokens for loaded modules share the bounded
-  store; there are no per-crate metadata, dependency-info or debug side trees.
-  Token entries include exact source bytes as well as token content because
-  spans are source-relative. Consequently a comment/layout edit can still hit
-  the whole-program artifact, but will not reuse that module's lexed-token
-  entry. Token entries are pruned under the same byte and age budgets; an
-  individual record larger than the configured byte budget is skipped.
+  store.
+- **No incidental data.** Only final executables/objects and tiny build-script
+  records are stored; there are no per-crate metadata, dependency-info,
+  incremental or debug side trees. Comment and layout edits reuse the existing
+  entry instead of adding one.
 - **Bounded.** After every publication the store applies a byte budget
   (default 512 MiB, `--cache-limit-kib`) and an age limit (default 30 days,
   `--cache-max-age-days`): entries unused longest are evicted first, the entry
@@ -183,14 +178,11 @@ The user build cache is built to retain less than Cargo's `target/` directory:
 
 Accounting uses logical file sizes; allocated bytes are at least as large, so
 the gate comparison must use allocated bytes per the definition above.
-Live-build leases and the per-module lexed-token cache are implemented,
-unverified (not yet built): the driver holds a lease for its active build key,
-pruning preserves leased entries, and `clean` refuses a store with live leases.
-The lexed-token cache avoids repeated lexing for unchanged exact module text;
-the parser and all later whole-program phases still run. Per-dependency-package
-analysis/object reuse and any measured claim remain open; no retained-byte or
-compile-time advantage over Cargo is asserted until the qualified-runner
-measurement exists.
+Live-build leases are implemented, unverified (not yet built): the driver holds
+a lease for its active build key, pruning preserves leased entries, and `clean`
+refuses a store with live leases. Per-module/per-package incremental data and
+any measured claim remain open; no retained-byte or compile-time advantage over
+Cargo is asserted until the qualified-runner measurement exists.
 
 ### 5.2. Compiler-work regression guard
 

@@ -76,18 +76,14 @@ def exit_code(program):
     return subprocess.run([str(program)], timeout=60).returncode
 
 
-def cache_files(kind, include_lexed=False):
-    files = [path for path in (evidence / "cache" / kind).rglob("*")
-             if path.is_file()]
-    if kind == "entries" and not include_lexed:
-        files = [path for path in files if not path.name.startswith("lex-")]
-    return files
+def cache_files(kind):
+    return [path for path in (evidence / "cache" / kind).rglob("*")
+            if path.is_file()]
 
 
 def cache_bytes():
-    return (sum(path.stat().st_size
-                for path in cache_files("entries", include_lexed=True)) +
-            sum(path.stat().st_size for path in cache_files("blobs")))
+    return sum(path.stat().st_size
+               for kind in ("entries", "blobs") for path in cache_files(kind))
 
 
 def edit(path, old, new):
@@ -318,26 +314,6 @@ def incremental_reuse():
     assert clean.read_bytes() == bytes_built
 
 
-def module_token_cache_reuse():
-    app = packages("path-dependency/app")
-    dependency = packages("path-dependency/mathlib/src/lib.mt")
-    first, _ = explained(app)
-    assert "module cache miss" in first, first
-
-    edit(app / "src/main.mt", "- 42", "- 41")
-    root_edit, _ = explained(app)
-    assert any("module cache hit" in line and "mathlib/src/lib.mt" in line
-               for line in root_edit.splitlines()), root_edit
-    assert "cache miss" in last_cache_event(root_edit), root_edit
-
-    edit(dependency, "twice.double(units.base())",
-         "twice.double(units.base()) + 0")
-    dependency_edit, _ = explained(app)
-    assert any("module cache miss" in line and "mathlib/src/lib.mt" in line
-               for line in dependency_edit.splitlines()), dependency_edit
-    assert "cache miss" in last_cache_event(dependency_edit), dependency_edit
-
-
 def sanitizer_cache_key():
     app = packages("incremental/app")
     plain, _ = explained(app)
@@ -427,11 +403,9 @@ def cache_corruption_and_clean():
     text, _ = explained(app)
     assert "cache hit" in text, text
     # `clean` reports, then empties, only a directory that is a store.
-    entries = len(cache_files("entries", include_lexed=True))
-    text = invoke(["clean", "--dry-run"],
-                  contains=f"would remove {entries} entries")
+    text = invoke(["clean", "--dry-run"], contains="would remove 1 entries")
     assert cache.exists()
-    invoke(["clean"], contains=f"removed {entries} entries")
+    invoke(["clean"], contains="removed 1 entries")
     assert not cache.exists()
     text, _ = explained(app)
     assert "cache miss" in text, text
@@ -1457,7 +1431,6 @@ CASES = [path_dependency, missing_lock_locked, lock_corruption,
          registry_resolution, version_conflict, backtracking, offline, features,
          coexisting_versions, git_source, host_target_separation,
          manifest_diagnostics, package_options_need_package, incremental_reuse,
-         module_token_cache_reuse,
          sanitizer_cache_key, edit_invalidation, cache_dedup_and_bound,
          cache_corruption_and_clean,
          build_script, build_script_untracked_inputs,

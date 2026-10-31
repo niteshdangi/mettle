@@ -2,7 +2,6 @@
 #include "expansion/harness.h"
 #include "expansion/macros.h"
 #include "support/limits.h"
-#include "syntax/lexer.h"
 #include "syntax/parser.h"
 #include <algorithm>
 #include <filesystem>
@@ -126,20 +125,6 @@ private:
     bool text = false;
   };
 
-  std::vector<Token> lex(const Source &source, Diagnostics &sink) const {
-    return library.lexedTokens ? library.lexedTokens(source, sink)
-                               : tokenize(source, sink);
-  }
-
-  Module parseSource(const Source &source, Diagnostics &sink) const {
-    return mettle::parse(source, lex(source, sink), sink);
-  }
-
-  Module parseDeclarationsSource(const Source &source,
-                                 Diagnostics &sink) const {
-    return mettle::parseDeclarations(source, lex(source, sink), sink);
-  }
-
   static bool libraryRoot(const std::string &name) {
     return name == "core" || name == "alloc" || name == "std";
   }
@@ -186,7 +171,7 @@ private:
     if (!source)
       names.any = true;
     else {
-      auto tree = parseSource(*source, scratch);
+      auto tree = parse(*source, scratch);
       names.any = !scratch.empty();
       for (const auto &item : tree.modules)
         names.names.insert(item.name);
@@ -229,7 +214,7 @@ private:
       if (!source)
         continue;
       Diagnostics scratch;
-      auto tree = parseSource(*source, scratch);
+      auto tree = parse(*source, scratch);
       if (!scratch.empty())
         continue;
       for (const auto &function : tree.functions)
@@ -242,7 +227,7 @@ private:
                          .lexically_normal()
                          .generic_string())) {
       Diagnostics scratch;
-      auto tree = parseSource(*source, scratch);
+      auto tree = parse(*source, scratch);
       if (scratch.empty())
         for (const auto &function : tree.functions)
           if (function.implementation < 0 &&
@@ -506,7 +491,7 @@ private:
       source = std::move(*generated);
     if (!diagnostics.empty())
       return;
-    auto tree = parseDeclarationsSource(source, diagnostics);
+    auto tree = parseDeclarations(source, diagnostics);
     if (!diagnostics.empty())
       return;
     // Expansion precedes member flattening and the external-module scan, so

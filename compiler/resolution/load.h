@@ -52,9 +52,6 @@ struct Library {
   // Host-program macros that every loaded source may invoke; null for none.
   // The host must outlive the load.
   const expansion::Procedures *procedures = nullptr;
-  // Optional driver-owned cache for lexed tokens. The callback preserves the
-  // caller's source identity in token spans and reports lexer diagnostics.
-  std::function<std::vector<Token>(const Source &, Diagnostics &)> lexedTokens;
 };
 // An original source file and its external-module path. The driver uses these
 // inputs to discover and overlay doctests without changing package files.
