@@ -1048,6 +1048,12 @@ construction now requires thread-safe callbacks and `Waker` is Transferable
 and Shareable. None has been built or run at this revision; this is not I11
 completion or sanitizer evidence.
 
+The async-I/O sub-batch: `std.task` parks the optional executor in a hosted
+reactor, provides readiness and timer futures, and `std.net` exposes
+nonblocking async TCP wrappers. `runtime/sys.cpp` uses kqueue on macOS and a
+POSIX poll fallback elsewhere. `tests/std/async_net_echo.mt` covers concurrent
+echo clients, timer sleep, and dropping a suspended accept. ASYNCIO_STATUS
+
 The async arrow-closure, `try await`, and async-interface changes below are
 implemented and verified by the Release CTest on macOS arm64. Async interface declarations now preserve their
 async modifier and publish a per-method associated future family constrained by
@@ -1055,14 +1061,16 @@ its output (including typed error outcomes) and declared method regions.
 Implementations bind the family to their concrete opaque coroutine future,
 allowing concrete and generic-bound calls to await it. Erased dispatch reports a
 feature diagnostic until an explicit future-storage erasure contract exists.
-Remaining I11 work includes async I/O and a full asynchronous borrowed-scope
+Remaining I11 work includes a full asynchronous borrowed-scope
 interface using the poll epochs in memory-and-concurrency section 6, including
 its independent soundness/race review and sanitizer qualification. Borrowed
 heap-erased futures require region-carrying erasure.
 P10 has only a backlog entry, not a specified benchmark source; an async
 network service, measurement protocol and equivalent comparator remain open.
 
-I11 status (partial; built and run on macOS arm64 Release): `core.future` has
+I11 status (partial; the prior core coroutine/executor paths were built and run
+on macOS arm64 Release; the async-I/O addition above is implemented, unverified
+(not yet built)): `core.future` has
 `Future`/`Poll`/`Context`/`Waker` (vtable protocol, no allocation) and the
 inline coroutine future `Coroutine<T, C>`; `std.task` is the optional executor
 (`block_on`, `Executor` with spawn/run, `yield_now`). Async bodies are
@@ -1116,8 +1124,8 @@ An async future borrows from every borrowed parameter, and an owning closure
 or async body captures a borrowed non-Copy parameter as a view
 (`borrowed-parameter-captures-keep-views`,
 `async-future-outlives-borrowed-argument`).
-Region-carrying erased futures, asynchronous borrowed-task scopes, async I/O
-and P10 remain open. Erased async dispatch is explicitly rejected pending a
+Region-carrying erased futures, asynchronous borrowed-task scopes and P10
+remain open; Linux poll-fallback qualification of async I/O is open. Erased async dispatch is explicitly rejected pending a
 future-storage erasure contract. Linux and Windows targets and TSan of executor
 code are not run for the coroutine path.
 
@@ -1133,6 +1141,7 @@ Revision: uncommitted lane changes on `c81bc6d`; scope as stated per row.
 | Inline pinned state and poll | Implemented: `types` coroutine aggregate and layout resolver, `instances/specialize.cpp`, backend frame/dispatch. Transferable/Shareable/Static in `semantics/interface_solver.cpp` with the interior from `semantics/captures.cpp`. | Liveness-precise interior (optional precision gain). |
 | Control flow | Implemented: ordinary CFG of the closure body. | None known. |
 | Cleanup and cancellation | Implemented: persistent frame flags and `unwind` in `backend/llvm/cleanup.cpp`; exactly-once drops verified. | Dedicated lexical drop-order-across-suspension fixture. |
+| Optional executor drives async I/O (S030) | ASYNCIO_ROW: `library/std/task.mt`, `library/std/net.mt`, `library/std/sys.mt`, `library/core/future.mt`, `runtime/sys.{h,cpp}`. | Build and run `tests/std/async_net_echo.mt`; verify kqueue readiness/timers, cancellation and wake races under sanitizers; Linux fallback qualification remains open. |
 | Integration and qualification | Release CTest, sanitized compiler CTest and ASan/UBSan emitted async programs passed on macOS arm64 before this change; the Debug-profile CTest passed 23/23 at `c81bc6d`. The full Release CTest passed 24/24 with the async closure, `try await`, interface dispatch, erasure-diagnostic and debug-info state-discriminator changes. | Linux/Windows (owner-run). |
 
 The source-freeze gate depends on all rows, fixtures and documentation; a

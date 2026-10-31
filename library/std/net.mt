@@ -8,6 +8,7 @@ import package.alloc.vec.List
 import super.io
 import super.io.{Error, ErrorKind, Reader, Writer}
 import super.sys
+import super.task
 import super.time.Duration
 
 pub copy type Ipv4Addr { bits: u32 }
@@ -642,6 +643,21 @@ pub type TcpListener {
     drop { if self.fd >= 0 { let closed = unsafe { sys.close(self.fd) } } }
 }
 
+// Nonblocking counterparts used by async methods. A pending operation keeps
+// only its readiness registration; dropping its future removes that token.
+pub type AsyncTcpStream {
+    fd: i32
+    drop { if self.fd >= 0 { let closed = unsafe { sys.close(self.fd) } } }
+}
+
+pub type AsyncTcpListener {
+    fd: i32
+    drop { if self.fd >= 0 { let closed = unsafe { sys.close(self.fd) } } }
+}
+
+unsafe extend AsyncTcpStream implements Transferable {}
+unsafe extend AsyncTcpListener implements Transferable {}
+
 pub fn tcp_connect(addr: SocketAddr): TcpStream throws Error {
     let fd = try new_socket(0, family_of(addr.ip))
     let stream = TcpStream(fd)
@@ -660,6 +676,51 @@ pub fn tcp_connect_timeout(addr: SocketAddr, timeout: Duration): TcpStream throw
 pub fn tcp_listen(addr: SocketAddr): TcpListener throws Error {
     let fd = try new_socket(0, family_of(addr.ip))
     let listener = TcpListener(fd, -1)
+    try bind_address(fd, addr)
+    if unsafe { sys.listen(fd, 128) } != 0 { throw io.last_os_error() }
+    listener
+}
+
+pub fn async_tcp_connect(addr: SocketAddr): AsyncTcpStream throws Error {
+    let fd = try new_socket(0, family_of(addr.ip))
+    let stream = AsyncTcpStream(fd)
+    if unsafe { sys.mettle_rt_set_nonblocking(fd) } != 0 {
+        throw io.last_os_error()
+    }
+    let started = match addr.ip {
+        IpAddr.V4(ip) => {
+            let bytes = ip.octets()
+            unsafe {
+                sys.mettle_rt_sock_connect_start(
+                    fd, 4, slice.data(bytes), 4usize, addr.port, 0u32, 0u32
+                )
+            }
+        },
+        IpAddr.V6(ip) => unsafe {
+            sys.mettle_rt_sock_connect_start(
+                fd, 6, slice.data(ip.bytes), 16usize, addr.port,
+                addr.flowinfo, addr.scope_id
+            )
+        }
+    }
+    if started < 0 { throw net_error() }
+    if started == 1 {
+        let waited = await task.writable(fd)
+        if waited == -1 { throw io.from_kind(ErrorKind.Unsupported) }
+        if waited != 0 { throw io.from_raw_os_error(waited) }
+        if unsafe { sys.mettle_rt_sock_connect_status(fd) } != 0 {
+            throw net_error()
+        }
+    }
+    stream
+}
+
+pub fn async_tcp_listen(addr: SocketAddr): AsyncTcpListener throws Error {
+    let fd = try new_socket(0, family_of(addr.ip))
+    let listener = AsyncTcpListener(fd)
+    if unsafe { sys.mettle_rt_set_nonblocking(fd) } != 0 {
+        throw io.last_os_error()
+    }
     try bind_address(fd, addr)
     if unsafe { sys.listen(fd, 128) } != 0 { throw io.last_os_error() }
     listener
@@ -695,6 +756,45 @@ extend TcpListener {
         }
         if fd < 0 { throw net_error() }
         (TcpStream(fd), decode_socket_addr(family, bytes, port, flowinfo, scope_id))
+    }
+}
+
+extend AsyncTcpListener {
+    pub fn local_addr(): SocketAddr throws Error { try local_of(self.fd, 0) }
+
+    pub async fn accept(): (AsyncTcpStream, SocketAddr) throws Error {
+        while true {
+            var family = 0i32
+            var bytes = [0u8; 16]
+            var port = 0u16
+            var flowinfo = 0u32
+            var scope_id = 0u32
+            let fd = unsafe {
+                sys.mettle_rt_sock_accept(
+                    self.fd, -1, core.ptr.from_mut(family),
+                    sys.data_mut(bytes), 16usize, core.ptr.from_mut(port),
+                    core.ptr.from_mut(flowinfo), core.ptr.from_mut(scope_id)
+                )
+            }
+            if fd >= 0 {
+                if unsafe { sys.mettle_rt_set_nonblocking(fd) } != 0 {
+                    let _closed = unsafe { sys.close(fd) }
+                    throw io.last_os_error()
+                }
+                return (AsyncTcpStream(fd),
+                        decode_socket_addr(family, bytes, port, flowinfo, scope_id))
+            }
+            let error = net_error()
+            if error.kind().is(ErrorKind.Interrupted) { continue }
+            if error.kind().is(ErrorKind.WouldBlock) {
+                let waited = await task.readable(self.fd)
+                if waited == -1 { throw io.from_kind(ErrorKind.Unsupported) }
+                if waited != 0 { throw io.from_raw_os_error(waited) }
+                continue
+            }
+            throw error
+        }
+        throw io.from_kind(ErrorKind.Other)
     }
 }
 
@@ -736,6 +836,68 @@ pub fn udp_bind(addr: SocketAddr): UdpSocket throws Error {
     let socket = UdpSocket(fd)
     try bind_address(fd, addr)
     socket
+}
+
+extend AsyncTcpStream {
+    pub async static fn connect(addr: SocketAddr): AsyncTcpStream throws Error {
+        let result = await async_tcp_connect(addr)
+        match take result {
+            success(stream) => stream,
+            failure(error) => throw error
+        }
+    }
+
+    pub async fn read_some(buf: mut [u8]): usize throws Error {
+        if buf.len() == 0usize { return 0usize }
+        while true {
+            let n = unsafe { sys.`read`(self.fd, sys.data_mut(buf), buf.len()) }
+            if n >= 0isize { return n as usize }
+            let error = net_error()
+            if error.kind().is(ErrorKind.Interrupted) { continue }
+            if error.kind().is(ErrorKind.WouldBlock) {
+                let waited = await task.readable(self.fd)
+                if waited == -1 { throw io.from_kind(ErrorKind.Unsupported) }
+                if waited != 0 { throw io.from_raw_os_error(waited) }
+                continue
+            }
+            throw error
+        }
+        0usize
+    }
+
+    pub async fn write_some(buf: read [u8]): usize throws Error {
+        if buf.len() == 0usize { return 0usize }
+        while true {
+            let n = unsafe { sys.mettle_rt_sock_send(self.fd, slice.data(buf), buf.len()) }
+            if n >= 0isize { return n as usize }
+            let error = net_error()
+            if error.kind().is(ErrorKind.Interrupted) { continue }
+            if error.kind().is(ErrorKind.WouldBlock) {
+                let waited = await task.writable(self.fd)
+                if waited == -1 { throw io.from_kind(ErrorKind.Unsupported) }
+                if waited != 0 { throw io.from_raw_os_error(waited) }
+                continue
+            }
+            throw error
+        }
+        0usize
+    }
+
+    pub async fn write_all(buf: read [u8]): Unit throws Error {
+        var written = 0usize
+        while written < buf.len() {
+            let result = await self.write_some(buf.split_at(written).1)
+            let n = match take result {
+                success(count) => count,
+                failure(error) => throw error
+            }
+            if n == 0usize { throw io.from_kind(ErrorKind.WriteZero) }
+            written += n
+        }
+    }
+
+    pub fn local_addr(): SocketAddr throws Error { try local_of(self.fd, 0) }
+    pub fn peer_addr(): SocketAddr throws Error { try local_of(self.fd, 1) }
 }
 
 extend UdpSocket {

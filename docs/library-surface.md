@@ -638,7 +638,18 @@ contract before that profile is delivered (implementation-plan section 8.7, R2).
 
 Status: IPv6 addresses and sockets, timed TCP connection, and name resolution
 are implemented and verified on macOS arm64, for the existing POSIX hosted
-profile. The selected `std.net` names are `Ipv6Addr`, `IpAddr`, and
+profile. Async networking and reactor integration are implemented but
+unverified (not yet built). The optional `std.task` executor adds `readable`,
+`writable`, and `sleep`; its per-executor reactor parks while no task is ready.
+These readiness futures require a `std.task` waker. `std.net` adds
+`AsyncTcpListener`/`AsyncTcpStream`, `async_tcp_listen`,
+`async_tcp_connect`/`AsyncTcpStream.connect`, and async `accept`, `read_some`,
+`write_some`, and `write_all`. These wrappers use nonblocking sockets and retry
+after advisory readiness. Dropping a pending I/O or timer future deregisters
+its reactor token. The macOS implementation uses kqueue; the POSIX fallback
+path and the public async API have not yet been built or run.
+
+The selected `std.net` names are `Ipv6Addr`, `IpAddr`, and
 `SocketAddr`; constructors are `ipv6`, `ipv6_localhost`, `ipv6_unspecified`,
 `Ipv6Addr.localhost`, `Ipv6Addr.unspecified`, `socket_addr_v6`, and
 `socket_addr_ip`. Text entry points are `Ipv6Addr.parse`, `SocketAddr.parse`,
