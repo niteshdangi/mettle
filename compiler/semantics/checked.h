@@ -118,6 +118,9 @@ struct FunctionFacts {
   // Result sources that name only regions carried inside a borrowed parameter
   // value, never the parameter's own borrow.
   std::vector<std::size_t> resultContents;
+  // (source, target) parameters: a `Within` bound lets the callee retain the
+  // source value in storage reachable from the target.
+  std::vector<std::pair<std::size_t, std::size_t>> withinFlows{};
   Type error = Type::Unknown;
   Type abiResult = Type::Unknown;
   std::vector<Type> defaultAbiResults;

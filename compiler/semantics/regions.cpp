@@ -29,8 +29,7 @@ Type Checker::annotation(const TypeSyntax &syntax, Span span,
     if (payload == Type::Unknown)
       return Type::Unknown;
     if (!checked.types->isSized(payload)) {
-      error("feature", span,
-            "unsized owner payloads are not implemented yet");
+      error("feature", span, "unsized owner payloads are not implemented yet");
       return Type::Unknown;
     }
     TypeSyntax nominal;
@@ -538,6 +537,7 @@ private:
   void pattern(const Pattern &pattern, Type type, RegionId region);
   void resultSources(std::size_t index);
   std::vector<RegionId> contained(Type type) const;
+  void withinFlows(std::size_t index);
   Type signatureType(std::size_t index);
   Type callableBound(Type type, RegionContext &context, Span span);
   void withinBounds(const std::vector<GenericParameter> &parameters,
@@ -801,9 +801,8 @@ Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
                               context, span, fallback, stored);
         else if (syntax.form == TypeForm::Owner && typeIndex == 0 &&
                  syntax.nested)
-          argument =
-              decorate(argument, *syntax.nested, context, span, fallback,
-                       stored);
+          argument = decorate(argument, *syntax.nested, context, span, fallback,
+                              stored);
         else
           argument = inferred(argument, store.inference(context.scope));
         nested.types[parameter.name] = argument;
@@ -1795,18 +1794,17 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
             if (found == signature.context.names.end())
               continue;
             auto argument = RegionId::Unspecified;
-            auto targetRegion =
-                std::find(targetRegions.begin(), targetRegions.end(),
-                          parameter.name);
+            auto targetRegion = std::find(targetRegions.begin(),
+                                          targetRegions.end(), parameter.name);
             if (actualProduct && targetRegion != targetRegions.end()) {
-              auto index = static_cast<std::size_t>(
-                  targetRegion - targetRegions.begin());
+              auto index = static_cast<std::size_t>(targetRegion -
+                                                    targetRegions.begin());
               if (index < actualProduct->regionArguments.size())
                 argument = actualProduct->regionArguments[index];
             }
             if (argument == RegionId::Unspecified && sameReceiverType) {
-              for (std::size_t i = 0;
-                   i < formalProduct->regionArguments.size(); ++i)
+              for (std::size_t i = 0; i < formalProduct->regionArguments.size();
+                   ++i)
                 if (formalProduct->regionArguments[i] == found->second) {
                   argument = actualProduct->regionArguments[i];
                   break;
@@ -1816,11 +1814,11 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
               receiverOwnerRegions.emplace_back(parameter.name, argument);
             if (argument == RegionId::Unspecified)
               argument = store.inference(current->context.scope);
-            auto existing = std::find_if(
-                substitution.begin(), substitution.end(),
-                [&](const auto &entry) {
-                  return entry.first == found->second;
-                });
+            auto existing =
+                std::find_if(substitution.begin(), substitution.end(),
+                             [&](const auto &entry) {
+                               return entry.first == found->second;
+                             });
             if (existing == substitution.end())
               substitution.emplace_back(found->second, argument);
             else if (store.get(existing->second).kind == RegionKind::Inference)
@@ -1834,13 +1832,13 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
       const auto &implementation =
           module.implementations[method.implementation];
       instantiateOwnerRegions(implementation.genericParameters,
-                             implementation.target.regions);
+                              implementation.target.regions);
     } else if (!method.interfaceOwner.empty()) {
-      auto owner = std::find_if(
-          module.interfaces.begin(), module.interfaces.end(),
-          [&](const auto &candidate) {
-            return candidate.name == method.interfaceOwner;
-          });
+      auto owner =
+          std::find_if(module.interfaces.begin(), module.interfaces.end(),
+                       [&](const auto &candidate) {
+                         return candidate.name == method.interfaceOwner;
+                       });
       if (owner != module.interfaces.end())
         instantiateOwnerRegions(owner->genericParameters, {});
     }
@@ -2005,8 +2003,8 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
     auto found = declarationContext.names.find(name);
     if (found == declarationContext.names.end())
       continue;
-    auto existing = std::find_if(
-        bindings.begin(), bindings.end(), [&](const auto &entry) {
+    auto existing =
+        std::find_if(bindings.begin(), bindings.end(), [&](const auto &entry) {
           return entry.first == found->second;
         });
     if (existing == bindings.end()) {
@@ -2958,6 +2956,54 @@ void RegionPass::inferArguments(Type pattern, Type actual,
 // A `Within<region r>` bound states that everything the generic argument
 // borrows outlives `r`. The library interface has a blanket implementation, so
 // this is the only place the obligation is enforced.
+// A `Within<region s>` bound lets the callee retain a value of its type
+// parameter for as long as `s`, typically inside storage reachable from a
+// parameter that carries `s`. Local regions do not distinguish scopes here, so
+// the retention is recorded for the loan analysis, which ties the argument's
+// loans to the views of every parameter that carries `s`.
+void RegionPass::withinFlows(std::size_t index) {
+  const auto &declaration = module.functions[index];
+  auto &flows = functions[index].withinFlows;
+  auto record = [&](const std::string &subject, const TypeSyntax &bound) {
+    const auto separator = bound.name.rfind("::");
+    const auto name = separator == std::string::npos
+                          ? bound.name
+                          : bound.name.substr(separator + 2);
+    if (name != "Within" || bound.arguments.size() != 1 ||
+        bound.arguments[0].region.empty())
+      return;
+    auto found = current->context.names.find(bound.arguments[0].region);
+    if (found == current->context.names.end() ||
+        found->second == RegionId::Static)
+      return;
+    const auto parameters =
+        std::min(declaration.parameters.size(), current->parameters.size());
+    for (std::size_t source = 0; source < parameters; ++source) {
+      auto type = functions[index].locals[source].type;
+      if (!types.isParameter(type) || types.parameter(type).name != subject)
+        continue;
+      for (std::size_t target = 0; target < parameters; ++target) {
+        if (target == source)
+          continue;
+        auto regions = contained(current->parameters[target]);
+        if (current->backing[target] != found->second &&
+            std::find(regions.begin(), regions.end(), found->second) ==
+                regions.end())
+          continue;
+        std::pair<std::size_t, std::size_t> flow{source, target};
+        if (std::find(flows.begin(), flows.end(), flow) == flows.end())
+          flows.push_back(flow);
+      }
+    }
+  };
+  for (const auto &parameter : declaration.genericParameters)
+    if (parameter.kind == GenericParameterKind::Type)
+      for (const auto &bound : parameter.bounds)
+        record(parameter.name, bound);
+  for (const auto &constraint : declaration.constraints)
+    for (const auto &bound : constraint.bounds)
+      record(constraint.subject.name, bound);
+}
 void RegionPass::withinBounds(
     const std::vector<GenericParameter> &parameters,
     const std::vector<GenericConstraint> &constraints,
@@ -3300,18 +3346,17 @@ void RegionPass::run() {
   }
   if (!diagnostics.empty())
     return;
-  auto inferredAsyncBodyResult = [&](std::size_t index,
-                                     RegionContext &context,
+  auto inferredAsyncBodyResult = [&](std::size_t index, RegionContext &context,
                                      RegionId fallback) {
     const auto &syntax = module.functions[index];
     if (!syntax.asyncDefaultOutputInferred ||
         syntax.asyncDefaultBodyResult.form != TypeForm::Opaque)
       return signatures[index].result;
-    auto owner = std::find_if(
-        module.interfaces.begin(), module.interfaces.end(),
-                              [&](const auto &candidate) {
-                                return candidate.name == syntax.interfaceOwner;
-                              });
+    auto owner =
+        std::find_if(module.interfaces.begin(), module.interfaces.end(),
+                     [&](const auto &candidate) {
+                       return candidate.name == syntax.interfaceOwner;
+                     });
     if (owner == module.interfaces.end())
       return signatures[index].result;
     const auto declaration =
@@ -3319,16 +3364,16 @@ void RegionPass::run() {
     if (declaration >= interfaceData.definitions.size())
       return signatures[index].result;
     const auto &definition = interfaceData.definitions[declaration];
-    auto family = std::find_if(
-        definition.associated.begin(), definition.associated.end(),
-        [&](const auto &candidate) {
-          return candidate.name == syntax.asyncFuture;
-        });
-    auto familySyntax = std::find_if(
-        owner->associated.begin(), owner->associated.end(),
-        [&](const auto &candidate) {
-          return candidate.name == syntax.asyncFuture;
-        });
+    auto family =
+        std::find_if(definition.associated.begin(), definition.associated.end(),
+                     [&](const auto &candidate) {
+                       return candidate.name == syntax.asyncFuture;
+                     });
+    auto familySyntax =
+        std::find_if(owner->associated.begin(), owner->associated.end(),
+                     [&](const auto &candidate) {
+                       return candidate.name == syntax.asyncFuture;
+                     });
     if (family == definition.associated.end() ||
         familySyntax == owner->associated.end() ||
         family->defaultValue == Type::Unknown)
@@ -3366,8 +3411,7 @@ void RegionPass::run() {
           region < definition.regions.size()) {
         auto found = context.names.find(generic.name);
         if (found != context.names.end())
-          regionBindings.push_back(
-              {definition.regions[region], found->second});
+          regionBindings.push_back({definition.regions[region], found->second});
         ++region;
       }
     region = 0;
@@ -3376,8 +3420,7 @@ void RegionPass::run() {
           region < family->regions.size()) {
         auto found = context.names.find(generic.name);
         if (found != context.names.end())
-          regionBindings.push_back(
-              {family->regions[region], found->second});
+          regionBindings.push_back({family->regions[region], found->second});
         ++region;
       }
     future = types.substituteRegions(future, regionBindings);
@@ -3409,6 +3452,7 @@ void RegionPass::run() {
     }
     resultSources(i);
     functions[i].regionSignature = signatureType(i);
+    withinFlows(i);
     for (const auto &parameter : module.functions[i].parameters)
       if (parameter.defaultValue.get())
         expression(*parameter.defaultValue);
@@ -3420,11 +3464,10 @@ void RegionPass::run() {
       for (std::size_t p = 0; p < current->parameters.size(); ++p)
         if (functions[i].locals[p].mode == ParameterMode::Read ||
             functions[i].locals[p].mode == ParameterMode::Mut ||
-            types.containsViews(current->parameters[p].type))
-          eligible.push_back(
-              types.isView(current->parameters[p].type)
-                  ? types.view(current->parameters[p].type).region
-                  : current->backing[p]);
+            types.containsViews(current->parameters[p]))
+          eligible.push_back(types.isView(current->parameters[p])
+                                 ? types.view(current->parameters[p]).region
+                                 : current->backing[p]);
       auto fallback =
           eligible.size() == 1 ? eligible.front() : RegionId::Unspecified;
       bodyResult = inferredAsyncBodyResult(i, current->context, fallback);

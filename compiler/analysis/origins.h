@@ -12,6 +12,9 @@ using ViewEffects = std::map<Place, std::set<Place>>;
 struct FunctionEffects {
   ViewEffects writes;
   ViewEffects wildWrites;
+  // Wild writes whose source loans stay live with the destination regardless
+  // of the borrowed place's type (`Within` retention).
+  ViewEffects retained;
   ViewEffects writeDependencies;
   std::set<Place> overwrites;
   std::map<ViewPath, std::set<Place>> returns;

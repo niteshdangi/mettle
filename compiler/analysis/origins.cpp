@@ -359,6 +359,27 @@ Origins strongAncestors(const Origins &origins,
   return result;
 }
 
+namespace {
+// A `Within` bound permits the callee to retain the views contained in the
+// source argument in storage reachable from the target argument.
+void retainWithin(const ir::Function &function, const TypeStore &types,
+                  FunctionEffects &effects) {
+  for (auto [source, target] : function.withinFlows) {
+    if (source >= function.parameters || target >= function.parameters)
+      continue;
+    Place destination{static_cast<int>(target), {}};
+    auto &inputs = effects.wildWrites[destination];
+    for (const auto &[path, type] :
+         viewPaths(function.locals[source].type, types)) {
+      (void)type;
+      Place place{static_cast<int>(source), path};
+      place.fields.push_back(Projection::dereference());
+      inputs.insert(place);
+      effects.retained[destination].insert(std::move(place));
+    }
+  }
+}
+} // namespace
 OriginInfo origins(const ir::Function &function, const ir::Program &program,
                    const EffectSummaries &summaries) {
   const auto &types = *program.types;
@@ -459,6 +480,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                  parameter.mode == ParameterMode::Mut);
       }
     }
+    retainWithin(function, types, result.effects);
     return result;
   }
   result.points.resize(function.blocks.size());
@@ -1439,6 +1461,15 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                       input.authority.insert(origin);
                   candidates.push_back(std::move(input));
                 }
+                // A retained value keeps every loan it carries, whatever the
+                // type of the borrowed place.
+                const auto &retained = summaries[instruction.callee].retained;
+                auto kept = retained.find(destination);
+                if (kept != retained.end() && kept->second.contains(source))
+                  for (const auto &target : candidates)
+                    for (auto parent : target.authority)
+                      if (parent != id)
+                        loan.parents.insert(parent);
                 std::set<std::pair<Place, bool>> seen;
                 std::vector<std::pair<Target, bool>> pending;
                 for (auto target : candidates)
@@ -1763,6 +1794,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
       append(relative, place.fields);
       result.effects.overwrites.insert(std::move(relative));
     }
+  retainWithin(function, types, result.effects);
   return result;
 }
 } // namespace mettle::analysis

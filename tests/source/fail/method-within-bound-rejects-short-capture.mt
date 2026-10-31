@@ -1,4 +1,4 @@
-// expect-error: region 15:18 borrowed source does not outlive the required region
+// expect-error: ownership 16:5 access or storage lifetime conflicts with a live read loan
 pub interface Within<region r> {}
 extend<region r, F> F implements Within<region r> {}
 type Anchor { value: i32 }
@@ -14,5 +14,5 @@ fn main(): i32 {
         let inner = Anchor(2)
         result = hub.run(fn(): i32 { inner.value })
     }
-    result
+    result + hub.anchor.value
 }

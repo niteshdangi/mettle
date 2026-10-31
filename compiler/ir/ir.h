@@ -137,6 +137,8 @@ struct Function {
   std::vector<Scope> scopes{{-1}};
   std::vector<std::size_t> resultSources{};
   std::vector<std::size_t> resultContents{};
+  // (source, target) parameters from `Within` bounds; see FunctionFacts.
+  std::vector<std::pair<std::size_t, std::size_t>> withinFlows{};
   std::string externalName{};
   bool twoPhaseReceiver = false;
   int constructorSelfSlot = -1;

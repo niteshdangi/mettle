@@ -878,12 +878,12 @@ fn erase_scoped<region s, T: Within<region s>, F: Future<Output = T> + Within<re
 // A handle owns only the result. Dropping or forgetting it never removes the
 // scope's child registration; forced scope destruction marks pending results
 // cancelled. Results and the handle remain bounded by the scope region.
-pub type AsyncJoinHandle<region s, T: Within<region s>> {
+pub type AsyncJoinHandle<region s, T> {
     result: Arc<ResultSlot<T>>
     brand: core.cell.Cell<Brand<region s>>
 }
-extend<region s, T: Within<region s>> AsyncJoinHandle<region s, T> not Transferable
-extend<region s, T: Within<region s>> AsyncJoinHandle<region s, T> not Shareable
+extend<region s, T> AsyncJoinHandle<region s, T> not Transferable
+extend<region s, T> AsyncJoinHandle<region s, T> not Shareable
 
 extend<region s, T: Within<region s>> AsyncJoinHandle<region s, T> {
     pub fn is_finished(): bool {
@@ -951,9 +951,10 @@ extend<region s, T> AsyncScope<region s, T> not Transferable
 extend<region s, T> AsyncScope<region s, T> not Shareable
 
 pub fn async_scope<region s, T>(anchor: read T from s): AsyncScope<region s, T> {
-    AsyncScope(read anchor, package.alloc.vec_deque.new(),
+    let brand: core.cell.Cell<Brand<region s>> = core.cell.Cell.new(Brand(0u8))
+    AsyncScope(read anchor, package.alloc.vec_deque.new<ScopedFuture<region s>>(),
                arc.new(ScopeWake(core.sync.atomic.AtomicBool.new(true), mutex.new(none))),
-               false, core.cell.Cell.new(Brand(0u8)))
+               false, brand)
 }
 
 extend<region s, T> AsyncScope<region s, T> {

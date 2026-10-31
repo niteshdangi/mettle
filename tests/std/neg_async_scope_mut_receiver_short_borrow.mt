@@ -1,4 +1,4 @@
-// expect-error: region
+// expect-error: ownership
 import core.future.{Context, Future, Poll}
 import std.thread.{Brand, Within}
 

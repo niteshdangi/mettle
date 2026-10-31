@@ -29,11 +29,11 @@ fn main(): i32 {
     let count = drops.retain()
     let retained = drops.retain()
     let caught = std.panic.catch_panic(take fn(): Unit {
-        let anchor = 0
-        var scope = task.async_scope(read anchor)
+        let counter = retained.get()
+        var scope = task.async_scope(counter)
         let panics = scope.spawn(Panics())
         core.mem.forget(take panics)
-        let sibling = scope.spawn(PendingDrop(read retained.get()))
+        let sibling = scope.spawn(PendingDrop(counter))
         core.mem.forget(take sibling)
         task.block_on(take scope)
     })

@@ -41,6 +41,7 @@ ir::Function Builder::run(const mettle::Function &source, std::size_t index) {
   function.genericEqualities = module.function(index).genericEqualities;
   function.resultSources = module.function(index).resultSources;
   function.resultContents = module.function(index).resultContents;
+  function.withinFlows = module.function(index).withinFlows;
   function.twoPhaseReceiver = source.receiver == "mut";
   function.span = source.span;
 
