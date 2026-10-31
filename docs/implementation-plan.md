@@ -828,9 +828,12 @@ mutable, consuming and half-open `range`); the old contiguous `as_entries()`
 and the position-based `range` result are replaced by ordered iterators.
 Known gaps: the `SortedMap` entry API and BTree-specific `try_` allocation
 tests are implemented and verified on macOS arm64 (`sorted_entry`,
-`btree_alloc_failure`). Panics are runtime traps
-without unwinding or catch, so cleanup cannot continue after a key/value
-destructor traps; recoverable post-trap cleanup is not a supported contract.
+`btree_alloc_failure`). Hosted panics unwind and can be caught with
+`std.panic.catch_panic`; freestanding panics trap. Collection panic-safety
+coverage for callback panics, partial initialization, invalidation and
+destructor panics is implemented, unverified. It checks valid post-panic
+collection state and exactly-once drops where cleanup proceeds; leaking
+unvisited values is permitted, and a second panic during unwinding aborts.
 Borrowed iteration is implemented through the core interfaces: see the integration
 note below. The native `heap T`, `shared T`, `local shared T`, `weak T` and
 `local weak T` syntax now maps to the existing `Box`, `Arc`, `Rc` and `Weak`
@@ -839,8 +842,9 @@ compiler mapping is implemented, unverified (not yet built). `Box<[T]>` and
 other unsized owner payloads remain unsupported with a specific feature
 diagnostic; pinned owning handles also remain unsupported. A `take` argument always
 moves even a `Copy` binding, so generic calls pass `i + 0` or a fresh `let`.
-Panics are runtime traps (no unwinding catch), so panic-safety is tested for
-drop order only. Alloc/core integration (lane allocint): `library/alloc/support.mt` is gone and
+Hosted panics unwind and can be caught; freestanding panics trap. Panic-safety
+coverage for collections is implemented, unverified. Alloc/core integration
+(lane allocint): `library/alloc/support.mt` is gone and
 `library/alloc` depends only on `core`. New `core.clone.Clone` (integers,
 `bool`, `char`, `Unit`, `Ordering`, pairs, `T?`); `core.iter.Iterable`/
 `MutableIterable` are region-family interfaces (`type Iter<region r>`,

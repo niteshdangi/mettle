@@ -49,8 +49,8 @@ pub type SortedMap<K, V, A: Allocator = Global> {
     root: ptr<mut Node<K, V>>
     len: usize
     a: A
-    // Panics are runtime traps without unwinding or catch; cleanup cannot
-    // continue after a destructor traps.
+    // Detach before invoking destructors; if one panics, remaining raw nodes
+    // may leak but this map is still empty and safe to drop again.
     drop {
         let root = self.root
         self.root = null_node<K, V>()
