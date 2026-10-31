@@ -69,6 +69,9 @@ public:
   llvm::Function *body() const { return bodyFunction; }
   llvm::Function *unwind() const { return cleanupFunction; }
   llvm::StructType *structure() const { return frameType; }
+  unsigned stateFieldIndex() const { return stateField; }
+  unsigned outputFieldIndex() const { return resultField; }
+  const std::vector<unsigned> &localFieldIndices() const { return localFields; }
   std::uint64_t size() const {
     return (frameSize + frameAlignment - 1) & ~(frameAlignment - 1);
   }

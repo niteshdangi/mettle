@@ -290,6 +290,13 @@ private:
     auto frame = std::make_unique<CleanupFrame>(
         lowering, program.functions[body],
         "mettle.coroutine." + std::to_string(body));
+    if (debugInfo)
+      for (const auto &[state, coroutineBody] : program.coroutines)
+        if (coroutineBody == body)
+          debugInfo->describeCoroutine(
+              state, program.functions[body], frame->structure(),
+              frame->stateFieldIndex(), frame->outputFieldIndex(),
+              frame->localFieldIndices());
     buildingFrames.erase(body);
     return *coroutineFrames.emplace(body, std::move(frame)).first->second;
   }

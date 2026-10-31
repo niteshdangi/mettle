@@ -4,6 +4,7 @@
 #include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
 #include <functional>
 #include <map>
 #include <set>
@@ -41,6 +42,10 @@ public:
   // local's storage holds a pointer to the value.
   void declare(llvm::IRBuilder<> &builder, const ir::Local &local,
                unsigned argument, bool borrowed, llvm::Value *storage);
+  void describeCoroutine(Type type, const ir::Function &source,
+                         llvm::StructType *frame, unsigned stateField,
+                         unsigned outputField,
+                         const std::vector<unsigned> &localFields);
   // Resolves types, drops locations that do not belong to the function that
   // carries them and gives every call a location.
   void finalize();

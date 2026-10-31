@@ -1,4 +1,5 @@
 #include "backend/llvm/debug.h"
+#include "backend/llvm/cleanup.h"
 #include "support/path.h"
 #include "types/layout.h"
 #include "llvm/ADT/APInt.h"
@@ -6,6 +7,9 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Metadata.h"
 #include <algorithm>
+#include <deque>
+#include <iterator>
+#include <set>
 
 namespace mettle::backend {
 namespace {
@@ -16,6 +20,136 @@ std::pair<unsigned, unsigned> position(const std::vector<std::size_t> &lines,
   auto next = std::upper_bound(lines.begin(), lines.end(), offset);
   auto line = static_cast<unsigned>(next - lines.begin());
   return {line, static_cast<unsigned>(offset - lines[line - 1] + 1)};
+}
+
+std::vector<std::set<int>>
+initializedAtSuspensions(const ir::Function &source) {
+  // Only expose locals definitely initialized and still in scope on every
+  // path to a suspension.
+  const auto count = source.blocks.size();
+  std::vector<std::vector<int>> predecessors(count);
+  auto edge = [&](std::size_t from, int to) {
+    if (to >= 0 && static_cast<std::size_t>(to) < count)
+      predecessors[to].push_back(static_cast<int>(from));
+  };
+  for (std::size_t i = 0; i < count; ++i) {
+    const auto &exit = source.blocks[i].exit;
+    if (exit.kind == ir::Exit::Jump || exit.kind == ir::Exit::Suspend)
+      edge(i, exit.first);
+    else if (exit.kind == ir::Exit::Branch) {
+      edge(i, exit.first);
+      edge(i, exit.second);
+    }
+  }
+  std::vector<bool> reachable(count);
+  if (!count)
+    return {};
+  std::deque<int> work{0};
+  reachable[0] = true;
+  while (!work.empty()) {
+    auto block = work.front();
+    work.pop_front();
+    for (auto successor : {source.blocks[block].exit.first,
+                           source.blocks[block].exit.second})
+      if (successor >= 0 && static_cast<std::size_t>(successor) < count &&
+          !reachable[successor]) {
+        reachable[successor] = true;
+        work.push_back(successor);
+      }
+  }
+
+  std::set<int> allScopes;
+  for (std::size_t i = 0; i < source.scopes.size(); ++i)
+    allScopes.insert(static_cast<int>(i));
+  for (const auto &local : source.locals)
+    allScopes.insert(local.scope);
+  std::set<int> allLocals;
+  for (std::size_t i = 0; i < source.locals.size(); ++i)
+    allLocals.insert(static_cast<int>(i));
+  using State = std::pair<std::set<int>, std::set<int>>;
+  std::vector<State> in(count, {allScopes, allLocals});
+  std::vector<State> out(count, {allScopes, allLocals});
+  std::set<int> entryScopes{0};
+  std::set<int> entryLocals;
+  for (std::size_t i = 0;
+       i < source.parameters && i < source.locals.size(); ++i) {
+    entryScopes.insert(source.locals[i].scope);
+    entryLocals.insert(static_cast<int>(i));
+  }
+  in[0] = {entryScopes, entryLocals};
+
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (std::size_t block = 0; block < count; ++block) {
+      if (!reachable[block])
+        continue;
+      if (block != 0) {
+        bool first = true;
+        State joined;
+        for (auto predecessor : predecessors[block]) {
+          if (!reachable[predecessor])
+            continue;
+          if (first) {
+            joined = out[predecessor];
+            first = false;
+            continue;
+          }
+          std::set<int> scopes, locals;
+          std::set_intersection(joined.first.begin(), joined.first.end(),
+                                out[predecessor].first.begin(),
+                                out[predecessor].first.end(),
+                                std::inserter(scopes, scopes.end()));
+          std::set_intersection(joined.second.begin(), joined.second.end(),
+                                out[predecessor].second.begin(),
+                                out[predecessor].second.end(),
+                                std::inserter(locals, locals.end()));
+          joined = {std::move(scopes), std::move(locals)};
+        }
+        if (!first)
+          in[block] = std::move(joined);
+      }
+      auto state = in[block];
+      for (const auto &instruction : source.blocks[block].instructions) {
+        if (instruction.op == ir::Op::Declare &&
+            instruction.place.root >= 0 &&
+            static_cast<std::size_t>(instruction.place.root) <
+                source.locals.size()) {
+          auto root = instruction.place.root;
+          state.first.insert(source.locals[root].scope);
+          state.second.erase(root);
+        } else if (instruction.op == ir::Op::Store &&
+                   instruction.place.root >= 0 &&
+                   instruction.place.fields.empty() &&
+                   static_cast<std::size_t>(instruction.place.root) <
+                       source.locals.size()) {
+          state.second.insert(instruction.place.root);
+        } else if ((instruction.op == ir::Op::Move ||
+                    instruction.op == ir::Op::DropPlace) &&
+                   instruction.place.root >= 0 &&
+                   static_cast<std::size_t>(instruction.place.root) <
+                       source.locals.size()) {
+          state.second.erase(instruction.place.root);
+        } else if (instruction.op == ir::Op::ScopeExit) {
+          state.first.erase(instruction.number);
+          for (std::size_t i = 0; i < source.locals.size(); ++i)
+            if (source.locals[i].scope == instruction.number)
+              state.second.erase(static_cast<int>(i));
+        }
+      }
+      if (out[block] != state) {
+        out[block] = std::move(state);
+        changed = true;
+      }
+    }
+  }
+
+  std::vector<std::set<int>> result(count);
+  for (std::size_t block = 0; block < count; ++block)
+    if (reachable[block] &&
+        source.blocks[block].exit.kind == ir::Exit::Suspend)
+      result[block] = out[block].second;
+  return result;
 }
 } // namespace
 
@@ -172,6 +306,11 @@ llvm::DIType *DebugInfo::build(Type type) {
   const auto layout = objectLayout(store, type);
   if (!layout)
     return nullptr;
+  if (store.isProduct(type) &&
+      store.product(type).kind == AggregateKind::Coroutine) {
+    if (auto found = types.find(type.index()); found != types.end())
+      return found->second;
+  }
   const std::string name = displayPath(store.name(type));
   const std::uint64_t bits = layout->size * 8;
   const auto alignment = static_cast<std::uint32_t>(layout->alignment * 8);
@@ -341,6 +480,176 @@ llvm::DIType *DebugInfo::build(Type type) {
       unit, name, rootFile, 0, bits, alignment, llvm::DINode::FlagZero, nullptr,
       dib.getOrCreateArray(members));
   return dib.replaceTemporary(llvm::TempMDNode(temporary), composite);
+}
+
+void DebugInfo::describeCoroutine(
+    Type type, const ir::Function &source, llvm::StructType *frame,
+    unsigned stateField, unsigned outputField,
+    const std::vector<unsigned> &localFields) {
+  if (!frame || !frame->isSized())
+    return;
+  const auto &store = *program.types;
+  const auto name = displayPath(store.name(type));
+  const auto &dataLayout = module.getDataLayout();
+  const auto *frameLayout = dataLayout.getStructLayout(frame);
+  const auto frameBits = dataLayout.getTypeAllocSize(frame).getFixedValue() * 8;
+  const auto frameAlignment = static_cast<std::uint32_t>(
+      dataLayout.getABITypeAlign(frame).value() * 8);
+  auto *temporary = dib.createReplaceableCompositeType(
+      llvm::dwarf::DW_TAG_structure_type, name, unit, rootFile, 0, 0,
+      frameBits, frameAlignment);
+  types[type.index()] = temporary;
+
+  struct Suspension {
+    std::int32_t state;
+    std::string name;
+    std::size_t block;
+  };
+  std::vector<Suspension> suspensions;
+  std::int32_t index = 0;
+  for (std::size_t block = 0; block < source.blocks.size(); ++block) {
+    const auto &exit = source.blocks[block].exit;
+    if (exit.kind != ir::Exit::Suspend)
+      continue;
+    auto span = request.sourceSpan ? request.sourceSpan(exit.span) : exit.span;
+    unsigned line = 0;
+    if (known(span))
+      if (auto *found = info(span.source))
+        line = position(found->lines,
+                        std::min(span.begin, found->source->text.size()))
+                   .first;
+    ++index;
+    suspensions.push_back({index,
+                           "await #" + std::to_string(index) + " (line " +
+                               std::to_string(line) + ")",
+                           block});
+  }
+
+  std::vector<std::pair<std::int32_t, std::string>> states{{0, "start"}};
+  for (const auto &suspension : suspensions)
+    states.emplace_back(suspension.state, suspension.name);
+  constexpr std::int32_t running = CleanupFrame::running;
+  constexpr std::int32_t complete = CleanupFrame::complete;
+  states.emplace_back(running, "running");
+  states.emplace_back(complete, "done");
+  std::vector<llvm::Metadata *> enumerators;
+  for (const auto &[value, label] : states) {
+    llvm::APInt bits(32, static_cast<std::uint64_t>(value), true);
+    enumerators.push_back(dib.createEnumerator(label, bits, false));
+  }
+  auto *stateType = dib.createEnumerationType(
+      unit, name + ".ResumeState", rootFile, 0, 32, 32,
+      dib.getOrCreateArray(enumerators), describe(Type::I32), true);
+  auto *stateMember = dib.createMemberType(
+      temporary, "state", rootFile, 0, 32, 32,
+      frameLayout->getElementOffset(stateField) * 8, llvm::DINode::FlagZero,
+      stateType);
+
+  auto member = [&](std::vector<llvm::Metadata *> &members,
+                    llvm::DIScope *scope, const std::string &fieldName,
+                    Type fieldType, unsigned physicalField, bool borrowed,
+                    Span span) {
+    auto *debugType = describe(fieldType);
+    if (!debugType)
+      return;
+    auto fieldLayout = objectLayout(store, fieldType);
+    auto size = fieldLayout ? fieldLayout->size * 8 : 0;
+    auto alignment = fieldLayout
+                         ? static_cast<std::uint32_t>(
+                               fieldLayout->alignment * 8)
+                         : 0;
+    if (borrowed) {
+      debugType = dib.createPointerType(debugType, store.targetPointerBits());
+      size = store.targetPointerBits();
+      alignment = store.targetPointerBits();
+    }
+    auto sourceSpan = request.sourceSpan ? request.sourceSpan(span) : span;
+    auto *file = rootFile;
+    unsigned line = 0;
+    if (known(sourceSpan))
+      if (auto *found = info(sourceSpan.source)) {
+        file = found->file;
+        line = position(found->lines,
+                        std::min(sourceSpan.begin,
+                                 found->source->text.size()))
+                   .first;
+      }
+    members.push_back(dib.createMemberType(
+        scope, fieldName, file, line, size, alignment,
+        frameLayout->getElementOffset(physicalField) * 8,
+        llvm::DINode::FlagZero, debugType));
+  };
+
+  std::vector<llvm::Metadata *> members{stateMember};
+  for (std::size_t i = 0; i < source.parameters && i < source.locals.size() &&
+                          i < localFields.size();
+       ++i) {
+    const auto &local = source.locals[i];
+    bool borrowed =
+        local.storage == StorageDuration::Static ||
+        local.mode == ParameterMode::Read || local.mode == ParameterMode::Mut;
+    member(members, temporary, i == 0 ? "captures" : local.name, local.type,
+           localFields[i], borrowed, local.span);
+  }
+
+  const auto initialized = initializedAtSuspensions(source);
+  auto variant = [&](const std::string &label, std::int32_t value,
+                     const std::set<int> *saved, bool output) {
+    std::vector<llvm::Metadata *> fields;
+    auto *payloadTemporary = dib.createReplaceableCompositeType(
+        llvm::dwarf::DW_TAG_structure_type, label, unit, rootFile, 0, 0,
+        frameBits, frameAlignment);
+    if (saved)
+      for (auto localIndex : *saved) {
+        if (localIndex < static_cast<int>(source.parameters) ||
+            static_cast<std::size_t>(localIndex) >= source.locals.size() ||
+            static_cast<std::size_t>(localIndex) >= localFields.size())
+          continue;
+        const auto &local = source.locals[localIndex];
+        bool borrowed =
+            local.storage == StorageDuration::Static ||
+            (static_cast<std::size_t>(localIndex) < source.parameters &&
+             (local.mode == ParameterMode::Read ||
+              local.mode == ParameterMode::Mut));
+        member(fields, payloadTemporary, local.name, local.type,
+               localFields[localIndex], borrowed, local.span);
+      }
+    if (output && source.result != Type::Unit && source.result != Type::Never &&
+        outputField < frame->getNumElements())
+      member(fields, payloadTemporary, "output", source.result, outputField,
+             false, source.span);
+    auto *payloadComposite = dib.createStructType(
+        unit, label, rootFile, 0, frameBits, frameAlignment,
+        llvm::DINode::FlagZero, nullptr, dib.getOrCreateArray(fields));
+    auto *payload =
+        dib.replaceTemporary(llvm::TempMDNode(payloadTemporary),
+                             payloadComposite);
+    llvm::APInt tag(32, static_cast<std::uint64_t>(value), true);
+    auto *constant = llvm::ConstantInt::get(module.getContext(), tag);
+    return dib.createVariantMemberType(
+        temporary, label, rootFile, 0, frameBits, frameAlignment, 0, constant,
+        llvm::DINode::FlagZero, payload);
+  };
+
+  std::vector<llvm::Metadata *> variants;
+  variants.push_back(variant("start", 0, nullptr, false));
+  for (const auto &suspension : suspensions) {
+    const auto *saved = suspension.block < initialized.size()
+                            ? &initialized[suspension.block]
+                            : nullptr;
+    variants.push_back(
+        variant(suspension.name, suspension.state, saved, false));
+  }
+  variants.push_back(variant("running", running, nullptr, false));
+  variants.push_back(variant("done", complete, nullptr, true));
+  members.push_back(dib.createVariantPart(
+      temporary, "", rootFile, 0, frameBits, frameAlignment,
+      llvm::DINode::FlagZero, stateMember, dib.getOrCreateArray(variants)));
+  auto *composite = dib.createStructType(
+      unit, name, rootFile, 0, frameBits, frameAlignment,
+      llvm::DINode::FlagZero, nullptr, dib.getOrCreateArray(members));
+  types[type.index()] =
+      dib.replaceTemporary(llvm::TempMDNode(temporary), composite);
 }
 
 void DebugInfo::finalize() {

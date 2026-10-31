@@ -521,8 +521,9 @@ Moved/uninitialized values must not be presented as live valid values.
 Optimization may eliminate values; report optimized-out rather than inventing
 their contents. Static region analysis does not require runtime region objects.
 
-Status (I12/T006, partial; the `debug_info` package test passes on macOS arm64,
-LLDB summaries not re-run interactively):
+Status (I12/T006, partial; coroutine metadata and summary changes are
+implemented, unverified (not yet built); prior `debug_info` assertions pass on
+macOS arm64 and LLDB summaries have not been re-run interactively):
 `mettle build -g`
 emits DWARF 4 through `llvm::DIBuilder` in the LLVM adapter
 (`backend/llvm/debug.*`): a compile unit and file per source, a subprogram per
@@ -538,18 +539,23 @@ per-variant fields at offsets from the shared payload storage. Explicit integer
 enum representations use their actual discriminants; transparent enums retain a
 product-like description. Macro
 tokens use the invocation location in line tables. A coroutine future's state
-(`core.future.CoroutineState`) is described as a structure of its actual size
-without members or a resume discriminator; exposing the suspended locals and
-the current suspension point remains open.
+(`core.future.CoroutineState`) exposes its `state` resume discriminator as a
+DWARF variant part (`start`, `await #N (line L)`, `running`, and `done`), with
+captured environment and output fields and per-suspension fields for
+scope-initialized locals. The LLDB summary renders `state = await #N (line L)`.
+These coroutine changes are implemented, unverified (not yet built); the
+focused `debug_info` assertions and interactive LLDB behavior remain unverified.
 
 For LLDB, import `tools/debug/mettle_lldb.py` with
 `command script import /path/to/mettle/tools/debug/mettle_lldb.py`. It registers
 best-effort summaries for native `List`, `String`, text views, optionals and
 outcomes; text reads are capped at 256 bytes. Summaries do not execute program
 code and report unavailable data rather than guessing. The updated `debug_info`
-regression passes on macOS arm64; LLDB summaries were checked manually (List
+baseline regression passes on macOS arm64; the coroutine assertions added here
+are unverified. Existing LLDB summaries were checked manually (List
 length/capacity and String text display; an optional shows only its variant,
-not its payload). No automated LLDB test exists.
+not its payload); the coroutine summary has not been checked interactively. No
+automated LLDB test exists.
 
 The comp dir is the root source's directory; without `-g` the adapter emits no
 debug metadata. `-g` is explicit (the `debug` profile does not
@@ -559,9 +565,9 @@ DWARF stays in the temporary object, so the link step runs `dsymutil` to write
 object. Gaps: subprogram types lack parameter/return types; locals are
 visible from function entry (no lexical scopes, so values before
 initialization are garbage); erased/witness pointers, some unsupported layouts
-and async await-point identity remain incomplete; no inlining/monomorphization
-records, no CodeView/PDB, no moved-value liveness. The packages `debug_info`
-case covers the new metadata.
+and async moved-value liveness remains incomplete; no inlining/monomorphization
+records, no CodeView/PDB. The packages `debug_info` case covers basic and
+coroutine metadata.
 
 Optional Rust bridges build as separate interoperability packages with explicit
 Rust toolchain/ABI adapters. They do not introduce a mandatory rustc dependency

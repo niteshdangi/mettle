@@ -1107,14 +1107,14 @@ programs, Debug and Release profiles (a throwaway harness, not a repository
 gate). The CPS combinators (`Lazy`, `Then`, `Defer`, `Either`, `Repeat`)
 and their feature-fail fixtures are removed.
 
-Open: recursive async is rejected only by the generic Sized diagnostic; debug
-information describes a coroutine state as a sized structure without members
-or a resume discriminator. Async interface default bodies with inferred results
-remain feature-diagnosed. Region-carrying erased futures, asynchronous
-borrowed-task scopes, async I/O and P10 remain open. Erased async dispatch is
-explicitly rejected pending a future-storage erasure contract. Linux and
-Windows targets, the Debug profile CTest and TSan of executor code are not run
-for the coroutine path.
+Open: recursive async is rejected only by the generic Sized diagnostic. Async
+interface default bodies with inferred results remain feature-diagnosed.
+Coroutine-state DWARF metadata (a `state` discriminator with per-state
+variants) and its LLDB summary are implemented, unverified.
+Region-carrying erased futures, asynchronous borrowed-task scopes, async I/O
+and P10 remain open. Erased async dispatch is explicitly rejected pending a
+future-storage erasure contract. Linux and Windows targets and TSan of executor
+code are not run for the coroutine path.
 
 #### I11 coroutine replacement inventory
 
@@ -1128,7 +1128,7 @@ Revision: uncommitted lane changes on `c81bc6d`; scope as stated per row.
 | Inline pinned state and poll | Implemented: `types` coroutine aggregate and layout resolver, `instances/specialize.cpp`, backend frame/dispatch. Transferable/Shareable/Static in `semantics/interface_solver.cpp` with the interior from `semantics/captures.cpp`. | Liveness-precise interior (optional precision gain). |
 | Control flow | Implemented: ordinary CFG of the closure body. | None known. |
 | Cleanup and cancellation | Implemented: persistent frame flags and `unwind` in `backend/llvm/cleanup.cpp`; exactly-once drops verified. | Dedicated lexical drop-order-across-suspension fixture. |
-| Integration and qualification | Existing Release CTest, sanitized compiler CTest and ASan/UBSan emitted async programs passed on macOS arm64 before this change. New async closure, `try await`, interface dispatch and erasure-diagnostic changes are implemented, unverified (not yet built). | New source fixtures are unverified; Debug-profile CTest, debug-info state discriminator, Linux/Windows (owner-run). |
+| Integration and qualification | Release CTest, sanitized compiler CTest and ASan/UBSan emitted async programs passed on macOS arm64 before this change; the Debug-profile CTest passed 23/23 at `c81bc6d`. New async closure, `try await`, interface dispatch, erasure-diagnostic and debug-info state-discriminator changes are implemented, unverified. | New source fixtures and debug info are unverified; Linux/Windows (owner-run). |
 
 The source-freeze gate depends on all rows, fixtures and documentation; a
 design or a partially implemented row is not a verified milestone.
@@ -1178,9 +1178,12 @@ length-bearing pointer fields and corresponding LLDB summary updates are
 implemented; the `debug_info` package test, which asserts variant and slice
 metadata, passes on the I06 freeze. Product/generic/closure capture and macro
 invocation locations have prior macOS arm64 verification. The updated LLDB
-summaries have not been re-run interactively. Async combinator fields and optional tags describe nested state, but
-a source await-point discriminator/display is not yet established; erasure,
-moved-value liveness, scopes, inlining and CodeView remain open.
+summaries have not been re-run interactively. Coroutine resume-state variants,
+the discriminator, scope-initialized saved-local fields, captured environment
+and output fields, and the LLDB `state = await #N (line L)` summary are
+implemented, unverified (not yet built); the focused `debug_info` assertions
+are also unverified. Erasure, moved-value liveness, scopes, inlining and
+CodeView remain open.
 T006 and I12 are not complete.
 
 I13 closes remaining operation mappings with compiled native declarations and
