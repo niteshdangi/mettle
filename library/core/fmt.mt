@@ -365,6 +365,19 @@ pub fn fmt_radix<W: Write>(f: mut Formatter<W>, magnitude: u64, negative: bool, 
     let text = unsafe { from_utf8_unchecked(unsafe { slice.subslice_unchecked(read digits, start, 64usize) }) }
     try f.pad_integral(!negative, prefix, text)
 }
+fn fmt_radix128<W: Write>(f: mut Formatter<W>, magnitude: u128, negative: bool, radix: u128, upper: bool, prefix: read Text): Unit throws Error {
+    var digits = [0u8; 128]
+    var start = 128usize
+    var rest = magnitude
+    while true {
+        start -= 1usize
+        digits[start] = digit_char((rest % radix) as u64, upper)
+        rest = rest / radix
+        if rest == 0u128 { break }
+    }
+    let text = unsafe { from_utf8_unchecked(unsafe { slice.subslice_unchecked(read digits, start, 128usize) }) }
+    try f.pad_integral(!negative, prefix, text)
+}
 extend i8 implements Display {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
         let wide = self as i64
@@ -559,6 +572,46 @@ extend usize implements LowerHex {
 }
 extend usize implements UpperHex {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix(mut f, (self as usize) as u64, false, 16u64, true, "0x") }
+}
+extend i128 implements Display {
+    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error {
+        let negative = self < 0i128
+        let magnitude = if negative { self.wrapping_neg() as u128 } else { self as u128 }
+        try fmt_radix128(mut f, magnitude, negative, 10u128, false, "")
+    }
+}
+extend i128 implements Debug {
+    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try i128.(Display).fmt(self, mut f) }
+}
+extend i128 implements Binary {
+    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix128(mut f, self as u128, false, 2u128, false, "0b") }
+}
+extend i128 implements Octal {
+    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix128(mut f, self as u128, false, 8u128, false, "0o") }
+}
+extend i128 implements LowerHex {
+    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix128(mut f, self as u128, false, 16u128, false, "0x") }
+}
+extend i128 implements UpperHex {
+    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix128(mut f, self as u128, false, 16u128, true, "0x") }
+}
+extend u128 implements Display {
+    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix128(mut f, self, false, 10u128, false, "") }
+}
+extend u128 implements Debug {
+    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix128(mut f, self, false, 10u128, false, "") }
+}
+extend u128 implements Binary {
+    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix128(mut f, self, false, 2u128, false, "0b") }
+}
+extend u128 implements Octal {
+    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix128(mut f, self, false, 8u128, false, "0o") }
+}
+extend u128 implements LowerHex {
+    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix128(mut f, self, false, 16u128, false, "0x") }
+}
+extend u128 implements UpperHex {
+    fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_radix128(mut f, self, false, 16u128, true, "0x") }
 }
 
 extend bool implements Display {

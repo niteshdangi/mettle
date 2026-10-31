@@ -56,5 +56,20 @@ fn main(): i32 {
     if hash.hash_one(read p) != hash.hash_one(read present(1)) || hash.hash_one(read p) == hash.hash_one(read n) { return 17 }
     // text and bytes are length-delimited: ("ab","c") differs from ("a","bc")
     if pair_hash("ab", "c") == pair_hash("a", "bc") { return 18 }
+    let low = -170141183460469231731687303715884105728i128
+    let same_low = -170141183460469231731687303715884105728i128
+    let high = 340282366920938463463374607431768211455u128
+    if !(low < 0i128) || !(0u128 < high) { return 19 }
+    if low.cmp(read 0i128) != Ordering.Less || high.cmp(read 1u128) != Ordering.Greater { return 20 }
+    if hash.hash_one(read low) != hash.hash_one(read same_low) ||
+       hash.hash_one(read high) != hash.hash_one(read 340282366920938463463374607431768211455u128) { return 23 }
+    let zero = 0.0f64
+    let negative_zero = -0.0f64
+    let nan = f64.from_bits(0x7ff8000000000042u64)
+    if !(zero == negative_zero) || !zero.partial_cmp(read negative_zero).is_present() { return 21 }
+    match nan.partial_cmp(read nan) {
+        none => {},
+        present(order) => { return 22 }
+    }
     0
 }

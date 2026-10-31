@@ -46,6 +46,10 @@ fn main(): i32 {
     if iter.sum(iter.range(0, 10).take_while(fn(x: read i32): bool { x < 4 })) != 6 { return 23 }
     if iter.sum(iter.range(0, 10).skip_while(fn(x: read i32): bool { x < 8 })) != 17 { return 24 }
     if iter.sum(iter.range(0, 5).rev().take_n(2usize)) != 7 { return 25 }
+    if iter.sum(iter.range_inclusive(1i128, 3i128)) != 6i128 ||
+       iter.product(iter.range_inclusive(1u128, 3u128)) != 6u128 { return 34 }
+    if iter.sum(iter.once(1.5f32).chain(iter.once(2.5f32))) != 4.0f32 ||
+       iter.product(iter.once(2.0f64).chain(iter.once(3.0f64))) != 6.0f64 { return 35 }
     var pk = iter.range(0, 3).peekable()
     match take pk.peek() { present(v) => { if *v != 0 { return 26 } }, none => { return 26 } }
     match take pk.next() { present(v) => { if v != 0 { return 27 } }, none => { return 27 } }

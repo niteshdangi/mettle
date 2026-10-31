@@ -720,6 +720,22 @@ extend u128 implements Step {
     fn successor(): u128? { self.checked_add(1u128) }
     fn predecessor(): u128? { self.checked_sub(1u128) }
 }
+extend i128 implements Sum {
+    static fn zero(): i128 { 0i128 }
+    fn plus(other: take i128): i128 { self + other }
+}
+extend i128 implements Product {
+    static fn one(): i128 { 1i128 }
+    fn times(other: take i128): i128 { self * other }
+}
+extend u128 implements Sum {
+    static fn zero(): u128 { 0u128 }
+    fn plus(other: take u128): u128 { self + other }
+}
+extend u128 implements Product {
+    static fn one(): u128 { 1u128 }
+    fn times(other: take u128): u128 { self * other }
+}
 
 extend usize implements Step {
     fn successor(): usize? { self.checked_add(1usize) }
@@ -746,4 +762,20 @@ extend usize implements Sum {
 extend usize implements Product {
     static fn one(): usize { 1usize }
     fn times(other: take usize): usize { self * other }
+}
+extend f32 implements Sum {
+    static fn zero(): f32 { 0.0f32 }
+    fn plus(other: take f32): f32 { self + other }
+}
+extend f32 implements Product {
+    static fn one(): f32 { 1.0f32 }
+    fn times(other: take f32): f32 { self * other }
+}
+extend f64 implements Sum {
+    static fn zero(): f64 { 0.0f64 }
+    fn plus(other: take f64): f64 { self + other }
+}
+extend f64 implements Product {
+    static fn one(): f64 { 1.0f64 }
+    fn times(other: take f64): f64 { self * other }
 }

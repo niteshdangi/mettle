@@ -124,6 +124,17 @@ extend i64 implements Ord {
     }
 }
 
+extend i128 implements PartialEq { fn eq(other: read i128): bool { self == other } }
+extend i128 implements Eq {}
+extend i128 implements PartialOrd {
+    fn partial_cmp(other: read i128): Ordering? { present(self.cmp(other)) }
+}
+extend i128 implements Ord {
+    fn cmp(other: read i128): Ordering {
+        if self < other { Ordering.Less } else if self == other { Ordering.Equal } else { Ordering.Greater }
+    }
+}
+
 extend isize implements PartialEq { fn eq(other: read isize): bool { self == other } }
 extend isize implements Eq {}
 extend isize implements PartialOrd {
@@ -179,6 +190,17 @@ extend u64 implements Ord {
     }
 }
 
+extend u128 implements PartialEq { fn eq(other: read u128): bool { self == other } }
+extend u128 implements Eq {}
+extend u128 implements PartialOrd {
+    fn partial_cmp(other: read u128): Ordering? { present(self.cmp(other)) }
+}
+extend u128 implements Ord {
+    fn cmp(other: read u128): Ordering {
+        if self < other { Ordering.Less } else if self == other { Ordering.Equal } else { Ordering.Greater }
+    }
+}
+
 extend usize implements PartialEq { fn eq(other: read usize): bool { self == other } }
 extend usize implements Eq {}
 extend usize implements PartialOrd {
@@ -187,6 +209,26 @@ extend usize implements PartialOrd {
 extend usize implements Ord {
     fn cmp(other: read usize): Ordering {
         if self < other { Ordering.Less } else if self == other { Ordering.Equal } else { Ordering.Greater }
+    }
+}
+
+extend f32 implements PartialEq { fn eq(other: read f32): bool { self == other } }
+extend f32 implements PartialOrd {
+    fn partial_cmp(other: read f32): Ordering? {
+        if self < other { present(Ordering.Less) }
+        else if self > other { present(Ordering.Greater) }
+        else if self == other { present(Ordering.Equal) }
+        else { none }
+    }
+}
+
+extend f64 implements PartialEq { fn eq(other: read f64): bool { self == other } }
+extend f64 implements PartialOrd {
+    fn partial_cmp(other: read f64): Ordering? {
+        if self < other { present(Ordering.Less) }
+        else if self > other { present(Ordering.Greater) }
+        else if self == other { present(Ordering.Equal) }
+        else { none }
     }
 }
 
