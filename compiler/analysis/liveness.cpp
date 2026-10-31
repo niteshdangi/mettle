@@ -34,8 +34,7 @@ ValueLiveness valueLiveness(const ir::Function &function) {
     if (block.exit.kind == ir::Exit::Branch ||
         block.exit.kind == ir::Exit::Return)
       use(b, block.exit.value);
-    if (block.exit.kind == ir::Exit::Jump ||
-        block.exit.kind == ir::Exit::Branch)
+    if (ir::continues(block.exit.kind) || block.exit.kind == ir::Exit::Branch)
       successors[b].push_back(block.exit.first);
     if (block.exit.kind == ir::Exit::Branch)
       successors[b].push_back(block.exit.second);

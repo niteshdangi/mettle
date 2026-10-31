@@ -147,6 +147,8 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       operation = "intrinsics.abort";
     else if (owner == "core::intrinsics" && name == "panic_message")
       operation = "intrinsics.panic_message";
+    else if (owner == "core::intrinsics" && name.starts_with("coroutine_"))
+      operation = "coroutine." + name.substr(10);
     else if (owner == "core::ptr")
       operation = "ptr." + name;
     else if (isNumeric(builtinType(owner))) {
@@ -154,6 +156,12 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       operation = "numeric." + name;
     } else
       return std::nullopt;
+  }
+  if (operation == "coroutine.suspend" || operation == "coroutine.context") {
+    auto found = closureFunctions.find(current);
+    if (found == closureFunctions.end() ||
+        checked.closureBodies[found->second]->syntax->text != "coroutine")
+      error("effects", call.span, "suspension outside an async body");
   }
   if (!callee.genericArguments.empty() && !operation.starts_with("atomic.") &&
       storageKind == AggregateKind::Product) {
@@ -350,7 +358,7 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     if (operation.starts_with("ptr.write") && operands.size() == 1)
       mode = ParameterMode::Take;
     if (operation == "mem.transmute" || operation == "mem.forget" ||
-        operation == "hint.black_box" ||
+        operation == "hint.black_box" || operation == "coroutine.start" ||
         (operation == "ptr.replace" && operands.size() == 1) ||
         (operation == "mem.replace" && operands.size() == 1))
       mode = ParameterMode::Take;
@@ -367,6 +375,7 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       type = checked.types->viewType(type, mode);
     }
     if ((operation == "mem.replace" && i == 1) ||
+        (operation == "coroutine.resume" && i == 1) ||
         (operation == "mem.swap" && i <= 2) ||
         (operation == "mem.size_of_val" && i == 1) ||
         (operation == "mem.align_of_val" && i == 1)) {
@@ -390,6 +399,9 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
   if (operation.starts_with("mem.") && operation != "mem.transmute" &&
       operation != "mem.zeroed" && operation != "mem.forget" &&
       !operands.empty() && checked.types->isView(operands[0]))
+    argument = checked.types->view(operands[0]).payload;
+  if (operation == "coroutine.resume" && !operands.empty() &&
+      checked.types->isView(operands[0]))
     argument = checked.types->view(operands[0]).payload;
   if (operation == "hint.black_box" && argument == Type::Unknown &&
       operands.size() == 1)

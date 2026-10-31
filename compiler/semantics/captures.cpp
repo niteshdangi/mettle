@@ -2,6 +2,7 @@
 #include "support/limits.h"
 #include <algorithm>
 #include <functional>
+#include <set>
 #include <tuple>
 
 namespace mettle {
@@ -244,8 +245,10 @@ void Checker::completeClosure(ClosureFacts &closure, bool final) {
       descriptor.resultSources.push_back(source - 1);
     else
       descriptor.resultFromEnvironment = true;
+  // A coroutine body outlives its start call, so its state owns the captures.
   descriptor.environmentMode =
-      !syntax.flag && descriptor.mode == ParameterMode::Read
+      syntax.text == "coroutine" ? ParameterMode::Take
+      : !syntax.flag && descriptor.mode == ParameterMode::Read
           ? ParameterMode::Value
           : descriptor.mode;
   if (closure.type == Type::Unknown)
@@ -258,6 +261,71 @@ void Checker::completeClosure(ClosureFacts &closure, bool final) {
   closure.function.canonicalName = closure.declaration.name;
   closure.function.locals[0].type = closure.type;
   closure.function.locals[0].mode = descriptor.environmentMode;
+  if (syntax.text == "coroutine" && !unresolved)
+    coroutineInterior(closure, syntax);
+}
+// Like Rust generators, the interior is scope-based rather than
+// liveness-based: the lexical bindings in scope at each suspension and the
+// operands already evaluated around it. It may over-approximate.
+void Checker::coroutineInterior(const ClosureFacts &closure,
+                                const Node &syntax) {
+  std::set<std::string> names;
+  std::vector<Type> held;
+  std::function<void(const Pattern &, std::vector<std::string> &)> bindings =
+      [&](const Pattern &pattern, std::vector<std::string> &scope) {
+        if (pattern.kind == PatternKind::Binding)
+          scope.push_back(pattern.text);
+        for (const auto &child : pattern.children)
+          bindings(child, scope);
+      };
+  auto callee = [](const Node &n, std::string_view name) {
+    return n.kind == Kind::Call && !n.children.empty() &&
+           n.children[0]->kind == Kind::Name && n.children[0]->text == name;
+  };
+  std::function<void(const Node &, std::vector<std::string>, std::vector<Type>)>
+      walk = [&](const Node &n, std::vector<std::string> scope,
+                 std::vector<Type> evaluated) {
+        if (&n != &syntax && n.kind == Kind::Closure)
+          return;
+        if (callee(n, "core::intrinsics::coroutine_suspend")) {
+          names.insert(scope.begin(), scope.end());
+          held.insert(held.end(), evaluated.begin(), evaluated.end());
+          return;
+        }
+        if (n.kind == Kind::Block) {
+          for (const auto &child : n.children) {
+            walk(*child, scope, evaluated);
+            if (child->kind != Kind::Binding)
+              continue;
+            if (child->text != "_")
+              scope.push_back(child->text);
+            for (const auto &pattern : child->patterns)
+              bindings(pattern, scope);
+          }
+          return;
+        }
+        if (n.kind != Kind::Binding)
+          for (const auto &pattern : n.patterns)
+            bindings(pattern, scope);
+        // The desugared await's poll result is consumed before suspending.
+        bool poll = n.kind == Kind::Match && !n.children.empty() &&
+                    callee(*n.children[0], "core::future::poll_await");
+        for (const auto &child : n.children) {
+          walk(*child, scope, evaluated);
+          if (auto found = checked.nodes.find(child.get());
+              !poll && found != checked.nodes.end() &&
+              found->second.type != Type::Unknown)
+            evaluated.push_back(found->second.type);
+        }
+      };
+  walk(syntax, {}, {});
+  for (std::size_t i = 1; i < closure.function.locals.size(); ++i)
+    if (names.contains(closure.function.locals[i].name) &&
+        closure.function.locals[i].type != Type::Unknown)
+      held.push_back(closure.function.locals[i].type);
+  std::sort(held.begin(), held.end());
+  held.erase(std::unique(held.begin(), held.end()), held.end());
+  checked.types->setCoroutineInterior(closure.type, std::move(held));
 }
 void Checker::finishClosures() {
   bool changed = true;

@@ -152,6 +152,10 @@ bool function(const Function &f, const Program &program,
     }
     const auto &exit = block.exit;
     switch (exit.kind) {
+    case Exit::Suspend:
+      if (!f.coroutine)
+        fail(exit.span, "suspension outside a coroutine body");
+      [[fallthrough]];
     case Exit::Jump:
     case Exit::Branch:
       if (!blockIndex(exit.first) ||
@@ -838,6 +842,8 @@ bool function(const Function &f, const Program &program,
               machineCastAllowed(*program.types, n.operands[0].type, result));
         break;
       case Op::Machine: {
+        if (n.text == "coroutine.context")
+          require(f.coroutine);
         if (n.text == "va.start")
           require(f.variadicCursor >= 0 &&
                   n.result.type == f.locals[f.variadicCursor].type);

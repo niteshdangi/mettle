@@ -79,6 +79,15 @@ std::optional<ObjectLayout> objectLayout(const TypeStore &types, Type type) {
       result.alignment = std::max<std::uint64_t>(1, record.layout.alignment);
       return result;
     }
+    if (record.kind == AggregateKind::Coroutine) {
+      active.erase(current);
+      auto physical = types.coroutineLayout(current);
+      if (!physical)
+        return std::nullopt;
+      result.size = physical->first;
+      result.alignment = physical->second;
+      return result;
+    }
     if (record.kind == AggregateKind::Opaque) {
       auto hidden = visit(record.fields[0].type);
       active.erase(current);
@@ -205,6 +214,21 @@ std::optional<ObjectLayout> objectLayout(const TypeStore &types, Type type) {
       result.size = align(result.size, result.alignment);
     }
     return complete();
+  };
+  return visit(type);
+}
+bool coroutineDependent(const TypeStore &types, Type type) {
+  std::set<Type> visited;
+  std::function<bool(Type)> visit = [&](Type current) {
+    if (!types.isProduct(current) || !visited.insert(current).second)
+      return false;
+    const auto &record = types.product(current);
+    if (record.kind == AggregateKind::Coroutine)
+      return true;
+    if (record.kind == AggregateKind::Array && !record.components.empty())
+      return visit(record.components[0]);
+    return std::any_of(record.fields.begin(), record.fields.end(),
+                       [&](const auto &field) { return visit(field.type); });
   };
   return visit(type);
 }

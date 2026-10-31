@@ -212,6 +212,7 @@ private:
   int indirectCall(Node &node, bool reachable, int calleeVariable = -1);
   int closure(Node &node, bool reachable);
   void inferCaptures(ClosureFacts &closure);
+  void coroutineInterior(const ClosureFacts &closure, const Node &syntax);
   void contextualize(Node &node, Type expected);
   void resolveClosure(ClosureFacts &closure, bool final = false);
   void completeClosure(ClosureFacts &closure, bool final = false);

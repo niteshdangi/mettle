@@ -4,9 +4,11 @@
 #include "types/layout.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
+#include <functional>
 #include <unordered_map>
 
 namespace mettle::backend {
+class CleanupFrame;
 struct LoweringContext {
   const ir::Program &program;
   llvm::LLVMContext &context;
@@ -18,6 +20,8 @@ struct LoweringContext {
   std::unordered_map<std::uint32_t, bool> indirects{};
   bool freestanding = false;
   std::vector<llvm::GlobalVariable *> statics{};
+  // The persistent frame of a coroutine state's body.
+  std::function<CleanupFrame &(Type)> coroutine{};
 
   const ObjectLayout &layout(Type type);
   std::uint64_t alignment(Type type);
@@ -58,7 +62,30 @@ class CleanupFrame {
 public:
   CleanupFrame(LoweringContext &lowering, const ir::Function &source,
                llvm::Function *wrapper);
+  // A coroutine body's frame is the state of its future. Its layout is known
+  // on construction; callbacks are emitted once every function is declared.
+  CleanupFrame(LoweringContext &lowering, const ir::Function &source,
+               std::string name);
   llvm::Function *body() const { return bodyFunction; }
+  llvm::Function *unwind() const { return cleanupFunction; }
+  llvm::StructType *structure() const { return frameType; }
+  std::uint64_t size() const {
+    return (frameSize + frameAlignment - 1) & ~(frameAlignment - 1);
+  }
+  std::uint64_t align() const { return frameAlignment; }
+  void finishCallbacks();
+  // Coroutine protocol. The state field holds 0 before the first resumption,
+  // the suspension point while suspended, `running` while the body executes
+  // or after it panicked, and `complete` after it returned.
+  static constexpr int running = -2, complete = -1;
+  void startCoroutine(llvm::Value *state, llvm::Value *environment);
+  // Runs the body once; the result is `optional` of the body's result.
+  llvm::Value *resumeCoroutine(llvm::Value *state, llvm::Value *context,
+                               Type optional);
+  llvm::Value *stateAddress() { return field(stateField); }
+  llvm::Value *contextAddress() { return field(contextField); }
+  bool spilled(int value) const { return spills.contains(value); }
+  llvm::Value *spillAddress(int value) { return field(spills.at(value)); }
   llvm::Value *createWrapper();
   llvm::Value *address(const Place &place);
   llvm::Align alignment(const Place &place);
@@ -79,6 +106,8 @@ public:
   }
 
 private:
+  CleanupFrame(LoweringContext &lowering, const ir::Function &source,
+               llvm::Function *wrapper, std::string name);
   struct Root {
     Type type;
     unsigned field;
@@ -114,6 +143,10 @@ private:
   llvm::StructType *frameType;
   llvm::Value *frame = nullptr;
   unsigned resultField;
+  std::string name;
+  bool callbacksEmitted = false;
+  unsigned stateField = 0, contextField = 0;
+  std::unordered_map<int, unsigned> spills;
   cleanup::Plan plan;
   std::vector<llvm::Type *> fields;
   std::uint64_t frameSize = 0, frameAlignment = 1;
@@ -128,6 +161,8 @@ private:
   std::unordered_map<unsigned, llvm::Function *> drops;
 
   unsigned addField(llvm::Type *type, std::uint64_t alignment = 0);
+  void clearFlags();
+  void bindStatics();
   unsigned addRoot(const cleanup::Plan &plan, int place, int local = -1);
   unsigned addNode(const cleanup::Plan &plan, int place, unsigned root,
                    int parent, std::vector<unsigned> path);

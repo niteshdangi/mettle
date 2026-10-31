@@ -259,6 +259,8 @@ void Checker::machineDeclarations() {
         checked.types->isSymbolic(type) || !checked.types->isSized(type))
       return;
     auto layout = objectLayout(*checked.types, type);
+    if (!layout && coroutineDependent(*checked.types, type))
+      return;
     if (!layout)
       error(
           checked.types->product(type).kind == AggregateKind::Array

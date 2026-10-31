@@ -242,6 +242,30 @@ machineSignature(const TypeStore &types, std::string_view operation,
       return std::nullopt;
   if (operation == "intrinsics.abort")
     return operands.empty() ? signature(Type::Never) : std::nullopt;
+  if (operation.starts_with("coroutine.")) {
+    bool state = types.isProduct(argument) &&
+                 types.product(argument).kind == AggregateKind::Coroutine;
+    if (operation == "coroutine.suspend")
+      return operands.empty() ? signature(Type::Unit) : std::nullopt;
+    if (operation == "coroutine.context")
+      return operands.empty() ? signature(Type::U8, Shape::PointerMut)
+                              : std::nullopt;
+    if (operation == "coroutine.start")
+      return state && operands.size() == 1 &&
+                     operands[0] == types.product(argument).components[1]
+                 ? signature(argument, Shape::Value, true)
+                 : std::nullopt;
+    if (operation == "coroutine.resume")
+      return state && operands.size() == 2 && types.isView(operands[0]) &&
+                     types.view(operands[0]).mode == ParameterMode::Mut &&
+                     types.isPointer(operands[1]) &&
+                     types.pointer(operands[1]).payload == Type::U8 &&
+                     types.pointer(operands[1]).mode == ParameterMode::Mut
+                 ? signature(types.product(argument).components[0],
+                             Shape::Optional, true)
+                 : std::nullopt;
+    return std::nullopt;
+  }
   if (operation == "intrinsics.panic_message")
     return operands.size() == 1 && types.isView(operands[0]) &&
                    types.view(operands[0]).mode == ParameterMode::Read &&

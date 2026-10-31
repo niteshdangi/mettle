@@ -58,8 +58,7 @@ std::unique_ptr<Node> Parser::closure() {
   } restore{inAsyncBody, inAsyncBody};
   inAsyncBody = asynchronous;
   if (asynchronous && is("{")) {
-    auto body = block();
-    return asyncBody(*body, TypeSyntax{}, start.span);
+    return asyncBody(NodeOwner(block()), TypeSyntax{}, start.span);
   }
   auto result = node(Kind::Closure, start.span);
   result->flag = take("take");
@@ -105,12 +104,11 @@ std::unique_ptr<Node> Parser::closure() {
   newlines();
   result->children.push_back(block());
   if (asynchronous) {
-    auto error = result->error;
-    auto output = asyncResult(std::move(result->annotation),
-                              std::move(result->error), false);
-    auto future = asyncBody(*result->children[0], std::move(output), start.span,
-                            std::move(error));
-    auto body = node(Kind::Block, result->children[0]->span);
+    auto bodySpan = result->children[0]->span;
+    auto future = asyncBody(std::move(result->children[0]),
+                            asyncResult(std::move(result->annotation), false),
+                            start.span, std::move(result->error));
+    auto body = node(Kind::Block, bodySpan);
     body->children.push_back(std::move(future));
     finish(*body);
     result->children[0] = std::move(body);

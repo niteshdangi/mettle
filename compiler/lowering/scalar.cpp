@@ -153,7 +153,7 @@ void Builder::finishControlFlow() {
       continue;
     reachable[block] = true;
     const auto &exit = function.blocks[block].exit;
-    if (exit.kind == Exit::Jump || exit.kind == Exit::Branch)
+    if (continues(exit.kind) || exit.kind == Exit::Branch)
       work.push_back(exit.first);
     if (exit.kind == Exit::Branch)
       work.push_back(exit.second);

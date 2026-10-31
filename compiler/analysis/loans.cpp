@@ -50,7 +50,7 @@ void check(const ir::Function &function, const ir::Program &program,
       continue;
     reachable[b] = true;
     const auto &exit = function.blocks[b].exit;
-    if (exit.kind == ir::Exit::Jump || exit.kind == ir::Exit::Branch)
+    if (ir::continues(exit.kind) || exit.kind == ir::Exit::Branch)
       successors[b].push_back(exit.first);
     if (exit.kind == ir::Exit::Branch)
       successors[b].push_back(exit.second);

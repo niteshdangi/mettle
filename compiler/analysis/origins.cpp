@@ -67,7 +67,7 @@ std::vector<bool> cyclicBlocks(const ir::Function &function) {
   std::vector<std::vector<std::size_t>> edges(count), reverse(count);
   for (std::size_t block = 0; block < count; ++block) {
     const auto &exit = function.blocks[block].exit;
-    if (exit.kind == ir::Exit::Jump || exit.kind == ir::Exit::Branch)
+    if (ir::continues(exit.kind) || exit.kind == ir::Exit::Branch)
       edges[block].push_back(exit.first);
     if (exit.kind == ir::Exit::Branch)
       edges[block].push_back(exit.second);
@@ -284,7 +284,7 @@ std::set<Place> overwrites(const ir::Function &function,
     outputs[block] = written;
     const auto &exit = function.blocks[block].exit;
     std::vector<int> successors;
-    if (exit.kind == ir::Exit::Jump || exit.kind == ir::Exit::Branch)
+    if (ir::continues(exit.kind) || exit.kind == ir::Exit::Branch)
       successors.push_back(exit.first);
     if (exit.kind == ir::Exit::Branch)
       successors.push_back(exit.second);
@@ -615,7 +615,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
   std::vector<std::vector<int>> predecessors(function.blocks.size());
   for (std::size_t b = 0; b < function.blocks.size(); ++b) {
     const auto &exit = function.blocks[b].exit;
-    if (exit.kind == ir::Exit::Jump || exit.kind == ir::Exit::Branch)
+    if (ir::continues(exit.kind) || exit.kind == ir::Exit::Branch)
       predecessors[exit.first].push_back(static_cast<int>(b));
     if (exit.kind == ir::Exit::Branch)
       predecessors[exit.second].push_back(static_cast<int>(b));

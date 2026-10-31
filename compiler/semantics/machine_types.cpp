@@ -42,6 +42,17 @@ std::optional<Type> Checker::machineAnnotation(const TypeSyntax &syntax,
   }
   if (syntax.name == "core::marker::PhantomPinned")
     return checked.types->structural(AggregateKind::PhantomPinned, {});
+  if (syntax.name == "core::future::CoroutineState") {
+    if (syntax.arguments.size() != 2 || !syntax.arguments[0].type ||
+        !syntax.arguments[1].type) {
+      error("type", span, "coroutine state requires output and body types");
+      return Type::Unknown;
+    }
+    return checked.types->structural(
+        AggregateKind::Coroutine,
+        {annotation(*syntax.arguments[0].type, span, owner),
+         annotation(*syntax.arguments[1].type, span, owner)});
+  }
   if (syntax.name == "core::sync::atomic::Ordering")
     return checked.types->structural(AggregateKind::Ordering, {});
   if (syntax.name == "core::cell::BorrowError" ||

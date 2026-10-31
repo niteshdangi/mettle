@@ -86,164 +86,44 @@ extend<region c> Context<region c> {
     pub fn waker(): read Waker from self { read *self.waker }
 }
 
-// Building blocks the compiler lowers `async fn` onto (S030, L052). An async
-// body becomes a chain of these typed states: nothing runs before the first
-// poll, awaited futures and the continuation closure live inline in the state
-// (no allocation), and dropping an unfinished chain drops exactly the state
-// that is currently initialized. A completed state panics if polled again.
-
-// Runs `f` once, on the first poll.
-pub type Lazy<T, F> { f: F?; result: super.iter.Phantom<T> }
-pub fn lazy<T, F: take fn(): T>(f: take F): Lazy<T, F> {
-    Lazy(present(f), super.iter.Phantom<T>())
+// The future of an `async` body (S030, L052). The compiler turns the body into
+// a coroutine closure: its locals, awaited futures and resume point live in the
+// inline `CoroutineState`, so nothing allocates and nothing runs before the
+// first poll. Dropping an unfinished future drops exactly the locals that are
+// initialized at its suspension point; polling a finished or panicked future
+// panics with a defined message.
+pub type Coroutine<T, C> {
+    state: core.future.CoroutineState<T, C>
+    marker: core.marker.PhantomPinned
 }
-extend<T, F: take fn(): T> Lazy<T, F> implements Future {
+
+pub fn coroutine<T, C: take fn(): T>(body: take C): Coroutine<T, C> {
+    Coroutine(unsafe { core.intrinsics.coroutine_start<core.future.CoroutineState<T, C>>(body) }, core.marker.PhantomPinned)
+}
+
+pub fn throwing_coroutine<T, E, C: take fn(): T throws E>(body: take C): Coroutine<(T throws E), C> {
+    Coroutine(unsafe { core.intrinsics.coroutine_start<core.future.CoroutineState<(T throws E), C>>(body) }, core.marker.PhantomPinned)
+}
+
+extend<T, C> Coroutine<T, C> implements Future {
     type Output = T
     fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<T> {
         let me = unsafe { self.get_unchecked_mut() }
-        match take me.f.take_value() {
-            present(body) => Poll.Ready(body()),
-            none => super.panic.panic("async future polled after completion")
+        let context = core.ptr.from_mut(mut cx).cast<u8>()
+        match take unsafe { core.intrinsics.coroutine_resume(mut me.state, context) } {
+            present(value) => Poll.Ready(value),
+            none => Poll.Pending
         }
     }
 }
 
-// Polls `first`; when it is ready its output feeds `cont`, whose future is
-// polled in the same place. The two futures never coexist.
-pub type Then<A, B, F> { first: A?; cont: F?; second: B?; done: bool }
-pub fn then<X, A: Future<Output = X>, B: Future, F: take fn(take X): B>(first: take A, cont: take F): Then<A, B, F> {
-    Then(present(first), present(cont), none, false)
-}
-extend<A: Future, B: Future, F: take fn(take A.Output): B> Then<A, B, F> implements Future {
-    type Output = B.Output
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<B.Output> {
-        let me = unsafe { self.get_unchecked_mut() }
-        if me.done { super.panic.panic("async future polled after completion") }
-        if me.second.is_none() {
-            let ready = poll_slot(mut me.first, mut cx)
-            match take ready {
-                present(value) => {
-                    let next = me.cont.take_value().unwrap()
-                    me.second = present(next(value))
-                },
-                none => { return Poll.Pending }
-            }
-        }
-        let polled = poll_slot_ready(mut me.second, mut cx)
-        match take polled {
-            Poll.Ready(value) => { me.second = none; me.done = true; Poll.Ready(value) },
-            Poll.Pending => Poll.Pending
-        }
-    }
-}
-
-// Polls the future in `slot`; on completion the finished future is dropped in
-// place and the slot becomes `none`. The raw pointer sidesteps the conservative
-// loan the interface call ties to the produced value.
-fn poll_slot<A: Future>(slot: mut A?, cx: mut Context): A.Output? {
-    let raw = core.ptr.from_mut(slot)
-    let ready = match mut slot {
-        present(inner) => match take unsafe { core.pin.Pin.new_unchecked(mut inner).poll(mut cx) } {
-            Poll.Ready(value) => present(value),
-            Poll.Pending => none
-        },
-        none => none
-    }
-    if ready.is_present() {
-        unsafe {
-            core.ptr.drop_in_place(raw)
-            core.ptr.write(raw, none)
-        }
-    }
-    ready
-}
-fn poll_slot_ready<A: Future>(slot: mut A?, cx: mut Context): Poll<A.Output> {
-    match mut slot {
-        present(inner) => unsafe { core.pin.Pin.new_unchecked(mut inner).poll(mut cx) },
-        none => Poll.Pending
-    }
-}
-
-// Calls `f` on the first poll to build the future for the whole body, then
-// polls that future in place.
-pub type Defer<B, F> { f: F?; inner: B?; done: bool }
-pub fn defer<B: Future, F: take fn(): B>(f: take F): Defer<B, F> { Defer(present(f), none, false) }
-extend<B: Future, F: take fn(): B> Defer<B, F> implements Future {
-    type Output = B.Output
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<B.Output> {
-        let me = unsafe { self.get_unchecked_mut() }
-        if me.done { super.panic.panic("async future polled after completion") }
-        if me.inner.is_none() {
-            let body = me.f.take_value().unwrap()
-            me.inner = present(body())
-        }
-        let polled = poll_slot_ready(mut me.inner, mut cx)
-        match take polled {
-            Poll.Ready(value) => { me.inner = none; me.done = true; Poll.Ready(value) },
-            Poll.Pending => Poll.Pending
-        }
-    }
-}
-
-// One step of a loop whose body awaits: either the next iteration's state (the
-// loop-carried locals) or the final state together with the `break` value.
-pub enum Flow<S, R> { Next(S); Done((S, R)) }
-// Names a loop's result type where no `break` value is in sight, so every step
-// of the loop agrees on `R` (`Unit` for a loop used as a statement).
-pub copy type LoopKind<R> {}
-pub fn next_iteration<S, R>(state: take S, kind: LoopKind<R>): Flow<S, R> { Flow.Next(state) }
-// The result of a loop that contains a `return`: it either leaves normally
-// with its `break` value or leaves the whole function with `F`.
-pub enum Exit<R, F> { Leave(R); Return(F) }
-pub fn leave<R, F>(value: take R, kind: LoopKind<Exit<R, F>>): Exit<R, F> { Exit.Leave(value) }
-pub fn give_up<R, F>(value: take F, kind: LoopKind<Exit<R, F>>): Exit<R, F> { Exit.Return(value) }
-pub fn finish_loop<S, R>(state: take S, value: take R): Flow<S, R> { Flow.Done((state, value)) }
-
-// Runs `step` over the state until it reports `Done`. The state or the future
-// of the current iteration is inline, never both; dropping an unfinished loop
-// drops whichever is initialized.
-pub type Repeat<S, R, B, F> { state: S?; step: F; current: B?; done: bool; result: super.iter.Phantom<R> }
-pub fn repeat<S, R, B: Future<Output = Flow<S, R>>, F: fn(take S): B>(state: take S, step: take F, kind: LoopKind<R>): Repeat<S, R, B, F> {
-    Repeat(present(state), step, none, false, super.iter.Phantom<R>())
-}
-extend<S, R, B: Future<Output = Flow<S, R>>, F: fn(take S): B> Repeat<S, R, B, F> implements Future {
-    type Output = (S, R)
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<(S, R)> {
-        let me = unsafe { self.get_unchecked_mut() }
-        if me.done { super.panic.panic("async future polled after completion") }
-        loop {
-            if me.current.is_none() {
-                let state = me.state.take_value().unwrap()
-                me.current = present((me.step)(state))
-            }
-            // Polled through a raw place, so the step's output (the next
-            // state) holds no loan of `me` across the loop's back edge.
-            let slot = core.ptr.from_mut(mut me.current)
-            let polled = unsafe { poll_slot(mut *slot, mut cx) }
-            match take polled {
-                present(flow) => match take flow {
-                    Flow.Next(state) => { me.state = present(state) },
-                    Flow.Done(result) => { me.done = true; return Poll.Ready(result) }
-                },
-                none => { return Poll.Pending }
-            }
-        }
-    }
-}
-
-// The two sides of a lowered `if`/`match` whose branches await: each branch is
-// its own future and exactly one of them is ever built, so the join costs one
-// discriminant and no allocation. `match` nests the pair to the right.
-pub enum Either<A, B> { Left(A); Right(B) }
-pub fn left<A, B>(value: take A): Either<A, B> { Either.Left(value) }
-pub fn right<A, B>(value: take B): Either<A, B> { Either.Right(value) }
-extend<A: Future, B: Future<Output = A.Output>> Either<A, B> implements Future {
-    type Output = A.Output
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<A.Output> {
-        let me = unsafe { self.get_unchecked_mut() }
-        match mut me {
-            Either.Left(inner) => unsafe { core.pin.Pin.new_unchecked(mut inner).poll(mut cx) },
-            Either.Right(inner) => unsafe { core.pin.Pin.new_unchecked(mut inner).poll(mut cx) }
-        }
+// One poll of an awaited future from inside an async body. `future` is a local
+// of the suspended body, so it never moves once polled; `cx` is the context of
+// the poll that resumed the body.
+pub fn poll_await<F: Future>(future: mut F, cx: ptr<mut u8>): F.Output? {
+    let context = unsafe { mut *cx.cast<Context>() }
+    match take unsafe { core.pin.Pin.new_unchecked(mut future).poll(context) } {
+        Poll.Ready(value) => present(value),
+        Poll.Pending => none
     }
 }

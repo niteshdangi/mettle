@@ -4,6 +4,12 @@
 namespace mettle::lowering {
 Builder::Value Builder::machineExpression(const Node &node) {
   const auto &facts = module.facts(node);
+  if (facts.machineOperation == "coroutine.suspend") {
+    auto resume = block();
+    terminate({ir::Exit::Suspend, {}, resume, -1, node.span});
+    current = resume;
+    return unit();
+  }
   if (facts.machineOperation == "slice.len") {
     auto location = place(*node.children[0]->children[0]);
     if (!live())

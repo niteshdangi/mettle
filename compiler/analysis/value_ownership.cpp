@@ -85,7 +85,7 @@ void valueOwnership(const ir::Function &function, const TypeStore &types,
     outputs[block] = state;
     const auto &exit = function.blocks[block].exit;
     std::vector<int> successors;
-    if (exit.kind == ir::Exit::Jump || exit.kind == ir::Exit::Branch)
+    if (ir::continues(exit.kind) || exit.kind == ir::Exit::Branch)
       successors.push_back(exit.first);
     if (exit.kind == ir::Exit::Branch)
       successors.push_back(exit.second);
@@ -105,7 +105,7 @@ void valueOwnership(const ir::Function &function, const TypeStore &types,
       continue;
     apply(*inputs[block], static_cast<int>(block), true);
     const auto &exit = function.blocks[block].exit;
-    if (exit.kind == ir::Exit::Jump || exit.kind == ir::Exit::Branch)
+    if (ir::continues(exit.kind) || exit.kind == ir::Exit::Branch)
       edge(*outputs[block], static_cast<int>(block), exit.first, true);
     if (exit.kind == ir::Exit::Branch)
       edge(*outputs[block], static_cast<int>(block), exit.second, true);

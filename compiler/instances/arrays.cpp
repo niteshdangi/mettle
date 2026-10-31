@@ -92,8 +92,7 @@ void unrollLoops(ir::Function &function, const TypeStore &types) {
             predecessor = target(predecessor);
         }
         remapValue(copy.exit.value);
-        if (copy.exit.kind == ir::Exit::Jump ||
-            copy.exit.kind == ir::Exit::Branch)
+        if (ir::continues(copy.exit.kind) || copy.exit.kind == ir::Exit::Branch)
           copy.exit.first = target(copy.exit.first);
         if (copy.exit.kind == ir::Exit::Branch)
           copy.exit.second = target(copy.exit.second);
@@ -172,7 +171,7 @@ void reachableBlocks(ir::Function &function) {
       continue;
     reachable[block] = true;
     auto exit = function.blocks[block].exit;
-    if (exit.kind == ir::Exit::Jump || exit.kind == ir::Exit::Branch)
+    if (ir::continues(exit.kind) || exit.kind == ir::Exit::Branch)
       work.push_back(exit.first);
     if (exit.kind == ir::Exit::Branch)
       work.push_back(exit.second);
@@ -195,7 +194,7 @@ void reachableBlocks(ir::Function &function) {
           auto predecessor = instruction.predecessors[p];
           const auto &exit = function.blocks[predecessor].exit;
           auto edge =
-              (exit.kind == ir::Exit::Jump || exit.kind == ir::Exit::Branch) &&
+              (ir::continues(exit.kind) || exit.kind == ir::Exit::Branch) &&
               exit.first == static_cast<int>(i);
           edge |= exit.kind == ir::Exit::Branch &&
                   exit.second == static_cast<int>(i);
@@ -207,8 +206,7 @@ void reachableBlocks(ir::Function &function) {
         instruction.predecessors = std::move(predecessors);
         instruction.operands = std::move(operands);
       }
-    if (block.exit.kind == ir::Exit::Jump ||
-        block.exit.kind == ir::Exit::Branch)
+    if (ir::continues(block.exit.kind) || block.exit.kind == ir::Exit::Branch)
       block.exit.first = mapping[block.exit.first];
     if (block.exit.kind == ir::Exit::Branch)
       block.exit.second = mapping[block.exit.second];

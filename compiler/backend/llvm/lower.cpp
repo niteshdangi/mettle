@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <map>
 #include <optional>
+#include <set>
 #include <tuple>
 
 namespace mettle::backend {
@@ -50,7 +51,24 @@ public:
     lowering.freestanding = freestanding;
     if (debug)
       debugInfo = std::make_unique<DebugInfo>(*module, program, *debug);
+    for (auto [state, body] : program.coroutines)
+      coroutineStates.emplace(state, body);
+    lowering.coroutine = [this](Type state) -> CleanupFrame & {
+      return coroutineFrame(coroutineStates.at(state));
+    };
+    program.types->resolveCoroutineLayouts(
+        [this](Type state)
+            -> std::optional<std::pair<std::uint64_t, std::uint64_t>> {
+          auto found = coroutineStates.find(state);
+          if (found == coroutineStates.end())
+            return std::nullopt;
+          auto &frame = coroutineFrame(found->second);
+          return std::pair{frame.size(), frame.align()};
+        });
   }
+  ~Lowerer() { program.types->resolveCoroutineLayouts({}); }
+  Lowerer(const Lowerer &) = delete;
+  Lowerer &operator=(const Lowerer &) = delete;
   std::unique_ptr<llvm::Module> run() {
     auto result = build();
     if (debugInfo)
@@ -245,6 +263,23 @@ private:
   std::map<WitnessKey, llvm::GlobalVariable *> witnesses;
   std::map<std::string, llvm::GlobalVariable *> textLiterals;
   std::unique_ptr<DebugInfo> debugInfo;
+  std::map<Type, int> coroutineStates;
+  std::map<int, std::unique_ptr<CleanupFrame>> coroutineFrames;
+  std::set<int> buildingFrames;
+
+  // Frames are built on first use, so a state embedding another state's
+  // future lays out the inner frame first.
+  CleanupFrame &coroutineFrame(int body) {
+    if (auto found = coroutineFrames.find(body); found != coroutineFrames.end())
+      return *found->second;
+    if (!buildingFrames.insert(body).second)
+      llvm::report_fatal_error("async body contains its own state");
+    auto frame = std::make_unique<CleanupFrame>(
+        lowering, program.functions[body],
+        "mettle.coroutine." + std::to_string(body));
+    buildingFrames.erase(body);
+    return *coroutineFrames.emplace(body, std::move(frame)).first->second;
+  }
 
   bool interiorMutable(Type value) {
     if (!program.types->isProduct(value))
@@ -1661,17 +1696,64 @@ private:
     builder.setFastMathFlags(flags);
     if (debugInfo)
       debugInfo->clear(builder);
-    CleanupFrame frame(lowering, source, target);
+    std::unique_ptr<CleanupFrame> ownFrame;
+    if (!source.coroutine)
+      ownFrame = std::make_unique<CleanupFrame>(lowering, source, target);
+    auto &frame = source.coroutine ? coroutineFrame(static_cast<int>(
+                                         &source - program.functions.data()))
+                                   : *ownFrame;
     if (debugInfo)
       debugInfo->begin(builder, debugInfo->attach(*target, source, true),
                        false);
-    frame.createWrapper();
+    if (source.coroutine) {
+      // A coroutine body runs only through its state's resumption.
+      frame.finishCallbacks();
+      builder.SetInsertPoint(
+          llvm::BasicBlock::Create(context, "entry", target));
+      builder.CreateUnreachable();
+    } else
+      frame.createWrapper();
     target = frame.body();
     if (debugInfo)
       debugInfo->begin(builder, debugInfo->attach(*target, source, false),
                        true);
     targetAttributes(*target, program.target, source.targetFeatures);
     std::vector<llvm::BasicBlock *> blocks, ends;
+    llvm::BasicBlock *dispatch =
+        source.coroutine ? llvm::BasicBlock::Create(context, "dispatch", target)
+                         : nullptr;
+    // Coroutine values crossing blocks are reloaded from their frame slots at
+    // the start of each using block (phi operands in the predecessor).
+    std::vector<std::vector<ir::Value>> reloads(source.blocks.size());
+    std::vector<int> resumes;
+    std::map<std::pair<int, int>, llvm::Value *> incoming;
+    if (source.coroutine) {
+      std::vector<int> defined(source.values, -1);
+      for (std::size_t b = 0; b < source.blocks.size(); ++b)
+        for (const auto &n : source.blocks[b].instructions)
+          if (n.result.id >= 0)
+            defined[n.result.id] = static_cast<int>(b);
+      std::set<std::pair<int, int>> seen;
+      auto reload = [&](const ir::Value &value, int block) {
+        if (value.id >= 0 && defined[value.id] != block &&
+            frame.spilled(value.id) && seen.insert({block, value.id}).second)
+          reloads[block].push_back(value);
+      };
+      for (std::size_t b = 0; b < source.blocks.size(); ++b) {
+        int block = static_cast<int>(b);
+        for (const auto &n : source.blocks[b].instructions) {
+          if (n.op == ir::Op::Phi) {
+            for (std::size_t i = 0; i < n.operands.size(); ++i)
+              reload(n.operands[i], n.predecessors[i]);
+            continue;
+          }
+          for (const auto &operand : n.operands)
+            reload(operand, block);
+          reload(n.target, block);
+        }
+        reload(source.blocks[b].exit.value, block);
+      }
+    }
     for (std::size_t i = 0; i < source.blocks.size(); ++i)
       blocks.push_back(
           llvm::BasicBlock::Create(context, "b" + std::to_string(i), target));
@@ -1755,6 +1837,10 @@ private:
           pending.push_back({phi, &n, static_cast<int>(b)});
           values[n.result.id] = phi;
         }
+      for (const auto &value : reloads[b])
+        values[value.id] =
+            lowering.load(value.type, frame.spillAddress(value.id),
+                          llvm::Align(lowering.alignment(value.type)));
       std::size_t position = static_cast<std::size_t>(-1);
       for (const auto &n : source.blocks[b].instructions) {
         ++position;
@@ -1941,7 +2027,19 @@ private:
           std::vector<llvm::Value *> arguments;
           for (std::size_t operand = 0; operand < n.operands.size(); ++operand)
             arguments.push_back(get(operand));
-          if (n.text == "va.start") {
+          if (n.text == "coroutine.start") {
+            auto *state = lowering.temporary(n.result.type);
+            coroutineFrame(n.callee).startCoroutine(state, arguments[0]);
+            result = lowering.indirect(n.result.type)
+                         ? static_cast<llvm::Value *>(state)
+                         : builder.CreateLoad(type(n.result.type), state);
+          } else if (n.text == "coroutine.resume")
+            result = coroutineFrame(n.callee).resumeCoroutine(
+                arguments[0], arguments[1], n.result.type);
+          else if (n.text == "coroutine.context")
+            result =
+                builder.CreateLoad(type(n.result.type), frame.contextAddress());
+          else if (n.text == "va.start") {
             result = builder.CreateLoad(type(n.result.type),
                                         frame.variadicContext());
             frame.move({source.variadicCursor, {}});
@@ -2176,8 +2274,20 @@ private:
         }
         frame.remember(n.result, result);
         values[n.result.id] = result;
+        if (source.coroutine && n.result.id >= 0 && frame.spilled(n.result.id))
+          lowering.store(n.result.type, result, frame.spillAddress(n.result.id),
+                         llvm::Align(lowering.alignment(n.result.type)));
       }
       const auto &exit = source.blocks[b].exit;
+      if (source.coroutine)
+        for (int successor : {exit.first, exit.second})
+          if (successor >= 0)
+            for (const auto &n : source.blocks[successor].instructions)
+              if (n.op == ir::Op::Phi)
+                for (std::size_t i = 0; i < n.operands.size(); ++i)
+                  if (n.predecessors[i] == static_cast<int>(b))
+                    incoming[{static_cast<int>(b), n.operands[i].id}] =
+                        values[n.operands[i].id];
       if (debugInfo)
         debugInfo->locate(builder, exit.span);
       switch (exit.kind) {
@@ -2188,7 +2298,16 @@ private:
         builder.CreateCondBr(values[exit.value.id], blocks[exit.first],
                              blocks[exit.second]);
         break;
+      case ir::Exit::Suspend:
+        resumes.push_back(exit.first);
+        builder.CreateStore(builder.getInt32(static_cast<int>(resumes.size())),
+                            frame.stateAddress());
+        builder.CreateRetVoid();
+        break;
       case ir::Exit::Return:
+        if (source.coroutine)
+          builder.CreateStore(builder.getInt32(CleanupFrame::complete),
+                              frame.stateAddress());
         frame.returnValue(exit.value, source.result == Type::Unit ||
                                               source.result == Type::Never
                                           ? nullptr
@@ -2228,10 +2347,48 @@ private:
       for (std::size_t i = 0; i < p.instruction->operands.size(); ++i) {
         int predecessor = p.instruction->predecessors[i];
         auto transfer = transfers.find({predecessor, p.block});
-        p.phi->addIncoming(values[p.instruction->operands[i].id],
+        auto id = p.instruction->operands[i].id;
+        auto value = incoming.find({predecessor, id});
+        p.phi->addIncoming(value == incoming.end() ? values[id] : value->second,
                            transfer == transfers.end() ? ends[predecessor]
                                                        : transfer->second);
       }
+    if (dispatch)
+      coroutineDispatch(frame, dispatch, blocks, resumes);
+  }
+  // Entry of a coroutine body: continue at the recorded suspension point and
+  // mark the state running, so a panic or a poll after completion is caught.
+  void coroutineDispatch(CleanupFrame &frame, llvm::BasicBlock *dispatch,
+                         const std::vector<llvm::BasicBlock *> &blocks,
+                         const std::vector<int> &resumes) {
+    auto *invalid = llvm::BasicBlock::Create(context, "resumed.invalid",
+                                             dispatch->getParent());
+    builder.SetInsertPoint(dispatch);
+    auto *state =
+        builder.CreateLoad(builder.getInt32Ty(), frame.stateAddress());
+    builder.CreateStore(builder.getInt32(CleanupFrame::running),
+                        frame.stateAddress());
+    auto *select = builder.CreateSwitch(state, invalid, resumes.size() + 1);
+    select->addCase(builder.getInt32(0), blocks[0]);
+    for (std::size_t i = 0; i < resumes.size(); ++i)
+      select->addCase(builder.getInt32(static_cast<int>(i + 1)),
+                      blocks[resumes[i]]);
+    builder.SetInsertPoint(invalid);
+    if (lowering.freestanding)
+      builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
+          module.get(), llvm::Intrinsic::trap));
+    else {
+      static const std::string message =
+          "async future polled after completion or panic";
+      auto function =
+          lowering.runtime("mettle_rt_panic_message", builder.getVoidTy(),
+                           {builder.getPtrTy(), builder.getInt64Ty()});
+      llvm::cast<llvm::Function>(function.getCallee())
+          ->addFnAttr(llvm::Attribute::NoReturn);
+      builder.CreateCall(
+          function, {textGlobal(message), builder.getInt64(message.size())});
+    }
+    builder.CreateUnreachable();
   }
 };
 } // namespace

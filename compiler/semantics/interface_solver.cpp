@@ -487,10 +487,14 @@ bool Solver::proveConcurrency(Property property, Type subject, Span span) {
     for (auto region : record.regionArguments)
       if (region != RegionId::Static)
         return finish(false);
-    if (record.kind == AggregateKind::Array && !record.components.empty() &&
-        !sub(property, record.components[0]))
-      return finish(false);
-    return finish(all(record.fields));
+    if (record.kind == AggregateKind::Array ||
+        record.kind == AggregateKind::Coroutine) {
+      auto components = record.components;
+      for (auto component : components)
+        if (!sub(property, component))
+          return finish(false);
+    }
+    return finish(all(types.product(subject).fields));
   }
   auto origin = subject;
   while (types.product(origin).regionOrigin != Type::Unknown)
@@ -518,6 +522,19 @@ bool Solver::proveConcurrency(Property property, Type subject, Span span) {
     if (!record.components.empty() && !sub(property, record.components[0]))
       return finish(false);
     break;
+  case AggregateKind::Coroutine: {
+    // The output, the closure's captures and what the body holds across a
+    // suspension. Copied first: deriving the interior may add types.
+    auto components = record.components;
+    for (auto component : components)
+      if (!sub(property, component))
+        return finish(false);
+    if (components.size() > 1)
+      for (auto held : types.coroutineInterior(components[1]))
+        if (!sub(property, held))
+          return finish(false);
+    return finish(true);
+  }
   default:
     break;
   }

@@ -130,7 +130,7 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
     outputs[block] = out;
     const auto &exit = function.blocks[block].exit;
     std::vector<int> successors;
-    if (exit.kind == ir::Exit::Jump || exit.kind == ir::Exit::Branch)
+    if (ir::continues(exit.kind) || exit.kind == ir::Exit::Branch)
       successors.push_back(exit.first);
     if (exit.kind == ir::Exit::Branch)
       successors.push_back(exit.second);

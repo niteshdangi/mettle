@@ -102,6 +102,31 @@ void TypeStore::defineClosure(Type type, std::vector<TypeField> captures,
   callables.at(static_cast<std::size_t>(record.callable)) =
       std::move(descriptor);
 }
+void TypeStore::setCoroutineInterior(Type closure, std::vector<Type> held) {
+  coroutineInteriors[closure.index()] = std::move(held);
+}
+std::vector<Type> TypeStore::coroutineInterior(Type closure) {
+  while (isProduct(closure) && product(closure).regionOrigin != Type::Unknown)
+    closure = product(closure).regionOrigin;
+  if (!isProduct(closure))
+    return {};
+  std::vector<TypeBinding> bindings;
+  if (auto origin = product(closure).genericOrigin; origin != Type::Unknown) {
+    const auto &parameters = product(origin).genericParameters;
+    const auto &arguments = product(closure).genericArguments;
+    for (std::size_t i = 0; i < parameters.size() && i < arguments.size(); ++i)
+      bindings.push_back({parameters[i], arguments[i]});
+    closure = origin;
+  }
+  auto found = coroutineInteriors.find(closure.index());
+  if (found == coroutineInteriors.end())
+    return {};
+  auto held = found->second;
+  if (!bindings.empty())
+    for (auto &type : held)
+      type = substitute(type, bindings);
+  return held;
+}
 bool TypeStore::isFunctionPointer(Type type) const {
   return type.index() >= builtins && contains(type) &&
          entries[type.index() - builtins].kind == EntryKind::Callable;

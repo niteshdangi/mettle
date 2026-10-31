@@ -9,7 +9,7 @@ Dominance::Dominance(const Function &function)
   std::vector<std::vector<int>> successors(function.blocks.size());
   for (std::size_t b = 0; b < function.blocks.size(); ++b) {
     const auto &exit = function.blocks[b].exit;
-    if (exit.kind == Exit::Jump || exit.kind == Exit::Branch)
+    if (continues(exit.kind) || exit.kind == Exit::Branch)
       successors[b].push_back(exit.first);
     if (exit.kind == Exit::Branch && exit.second != exit.first)
       successors[b].push_back(exit.second);

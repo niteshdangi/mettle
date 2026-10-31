@@ -72,6 +72,7 @@ private:
   std::map<Key, int> instances;
   std::map<std::pair<Type, Type>, int> callableAdapters;
   std::map<Type, int> callableContracts;
+  std::map<Type, int> coroutineBodies;
   std::set<Type> visitedTypes;
   unsigned instanceDepth = 0;
   void specializeAssembly(Assembly &assembly,
@@ -100,6 +101,37 @@ private:
           types->eraseRegions(types->substitute(operand.inputType, bindings));
     }
   }
+  int closureBody(Type receiver, Span span) {
+    const auto &signature = types->callable(receiver);
+    if (signature.function < 0 ||
+        static_cast<std::size_t>(signature.function) >=
+            source.closureFunctions.size())
+      throw std::invalid_argument("callable environment has no generated body");
+    auto body = source.closureFunctions[signature.function];
+    auto arguments = types->product(receiver).genericOrigin == Type::Unknown
+                         ? source.functions[body].genericParameters
+                         : types->product(receiver).genericArguments;
+    return instance(static_cast<std::size_t>(body), arguments, span);
+  }
+  // The body of a coroutine state is its closure's instance, marked so the
+  // backend lays out its frame inside the state.
+  int coroutineBody(Type state, Span span) {
+    if (auto found = coroutineBodies.find(state);
+        found != coroutineBodies.end())
+      return found->second;
+    auto closure = types->product(state).components[1];
+    if (!types->isCallable(closure) || types->isFunctionPointer(closure))
+      throw std::invalid_argument("coroutine body is not a closure");
+    auto function = types->callable(closure).function;
+    if (function < 0 ||
+        static_cast<std::size_t>(function) >= source.closureFunctions.size() ||
+        !source.functions[source.closureFunctions[function]].coroutine)
+      throw std::invalid_argument("coroutine body is not an async closure");
+    auto body = closureBody(closure, span);
+    coroutineBodies.emplace(state, body);
+    result.coroutines.emplace_back(state, body);
+    return body;
+  }
   int adaptCallable(Type receiver, Type contract, Span span) {
     if (!types->satisfiesCallable(receiver, contract))
       throw std::invalid_argument(
@@ -121,19 +153,8 @@ private:
         result.functions.push_back(callableContract(receiver, *types));
       }
       callee = entry->second;
-    } else {
-      const auto &signature = types->callable(receiver);
-      if (signature.function < 0 ||
-          static_cast<std::size_t>(signature.function) >=
-              source.closureFunctions.size())
-        throw std::invalid_argument(
-            "callable environment has no generated body");
-      auto body = source.closureFunctions[signature.function];
-      auto arguments = types->product(receiver).genericOrigin == Type::Unknown
-                           ? source.functions[body].genericParameters
-                           : types->product(receiver).genericArguments;
-      callee = instance(static_cast<std::size_t>(body), arguments, span);
-    }
+    } else
+      callee = closureBody(receiver, span);
     result.functions[id] =
         callableAdapter(receiver, contract, callee, *types,
                         "<callable-adapter-" + std::to_string(id) + ">");
@@ -145,11 +166,11 @@ private:
                         "generic instance contains an unresolved parameter");
     else if (types->isProduct(type) && types->isSized(type)) {
       auto layout = objectLayout(*types, type);
-      if (!layout)
+      if (!layout && !coroutineDependent(*types, type))
         diagnostics.error(
             "attribute", span,
             "object layout cannot be established for this representation");
-      else if (layout->size > limits::objectBytes)
+      else if (layout && layout->size > limits::objectBytes)
         diagnostics.error("limit", span,
                           "array size exceeds target address space");
     }
@@ -345,6 +366,13 @@ private:
           instruction.target = {};
           instruction.indirectType = Type::Unknown;
           instruction.typeArguments.clear();
+          continue;
+        }
+        if (instruction.op == ir::Op::Machine &&
+            (instruction.text == "coroutine.start" ||
+             instruction.text == "coroutine.resume")) {
+          instruction.callee =
+              coroutineBody(instruction.typeArguments.at(0), instruction.span);
           continue;
         }
         if (instruction.callee >= 0) {

@@ -290,6 +290,8 @@ llvm::Type *LoweringContext::layoutType(Type typeId) {
     return llvm::ArrayType::get(builder.getInt8Ty(), layout(typeId).size);
   if (auto found = products.find(typeId.index()); found != products.end())
     return found->second;
+  if (program.types->product(typeId).kind == AggregateKind::Coroutine)
+    return coroutine(typeId).structure();
   const auto &product = program.types->product(typeId);
   auto *result =
       llvm::StructType::create(context, "mettle.type." + product.name);
@@ -408,12 +410,18 @@ unsigned CleanupFrame::addRoot(const cleanup::Plan &sourcePlan, int place,
 
 CleanupFrame::CleanupFrame(LoweringContext &lowering,
                            const ir::Function &source, llvm::Function *wrapper)
+    : CleanupFrame(lowering, source, wrapper, wrapper->getName().str()) {}
+CleanupFrame::CleanupFrame(LoweringContext &lowering,
+                           const ir::Function &source, std::string name)
+    : CleanupFrame(lowering, source, nullptr, std::move(name)) {}
+CleanupFrame::CleanupFrame(LoweringContext &lowering,
+                           const ir::Function &source, llvm::Function *wrapper,
+                           std::string name)
     : lowering(lowering), source(source), wrapper(wrapper),
-      bodyFunction(lowering.callback(wrapper->getName() + ".body")),
-      cleanupFunction(lowering.callback(wrapper->getName() + ".unwind", true)),
-      frameType(llvm::StructType::create(
-          lowering.context, (wrapper->getName() + ".frame").str())),
-      plan(cleanup::plan(source, *lowering.program.types)) {
+      bodyFunction(lowering.callback(name + ".body")),
+      cleanupFunction(lowering.callback(name + ".unwind", true)),
+      frameType(llvm::StructType::create(lowering.context, name + ".frame")),
+      name(name), plan(cleanup::plan(source, *lowering.program.types)) {
   locals.resize(source.locals.size(), std::numeric_limits<unsigned>::max());
   for (std::size_t i = 0; i < source.locals.size(); ++i) {
     const auto &local = source.locals[i];
@@ -480,8 +488,52 @@ CleanupFrame::CleanupFrame(LoweringContext &lowering,
                               values.at(instruction.operands[0].id), nullptr,
                               nullptr});
     }
+  if (source.coroutine) {
+    stateField = addField(lowering.builder.getInt32Ty());
+    contextField = addField(lowering.builder.getPtrTy());
+    // A suspension ends the body callback, so every value used outside its
+    // defining block is kept in the frame. Phi operands are used at the end
+    // of their predecessor.
+    std::vector<int> defined(source.values, -1);
+    for (std::size_t b = 0; b < source.blocks.size(); ++b)
+      for (const auto &instruction : source.blocks[b].instructions)
+        if (instruction.result.id >= 0)
+          defined[instruction.result.id] = static_cast<int>(b);
+    auto use = [&](const ir::Value &value, int block) {
+      if (value.id < 0 || defined[value.id] == block ||
+          spills.contains(value.id))
+        return;
+      spills.emplace(value.id, addField(lowering.storageType(value.type),
+                                        lowering.alignment(value.type)));
+    };
+    for (std::size_t b = 0; b < source.blocks.size(); ++b) {
+      int block = static_cast<int>(b);
+      for (const auto &instruction : source.blocks[b].instructions) {
+        if (instruction.op == ir::Op::Phi) {
+          for (std::size_t i = 0; i < instruction.operands.size(); ++i)
+            use(instruction.operands[i], instruction.predecessors[i]);
+          continue;
+        }
+        for (const auto &operand : instruction.operands)
+          use(operand, block);
+        use(instruction.target, block);
+      }
+      use(source.blocks[b].exit.value, block);
+    }
+  }
+  if (source.coroutine && size() > frameSize) {
+    fields.push_back(
+        llvm::ArrayType::get(lowering.builder.getInt8Ty(), size() - frameSize));
+    frameSize = size();
+  }
   frameType->setBody(fields);
-  emitCallbacks();
+  if (!source.coroutine)
+    emitCallbacks();
+}
+
+void CleanupFrame::finishCallbacks() {
+  if (!callbacksEmitted)
+    emitCallbacks();
 }
 
 llvm::Value *CleanupFrame::field(unsigned index) {
@@ -723,7 +775,8 @@ void CleanupFrame::move(const Place &place) {
 void CleanupFrame::remember(ir::Value value, llvm::Value *result) {
   if (auto found = values.find(value.id); found != values.end()) {
     const auto &root = roots[found->second];
-    lowering.builder.CreateStore(result, field(root.field));
+    lowering.store(root.type, result, field(root.field),
+                   llvm::Align(lowering.alignment(root.type)));
     set(root.node, true);
   }
 }
@@ -788,6 +841,17 @@ void CleanupFrame::drop(unsigned node) {
             &lowering.module, llvm::Intrinsic::vaend, {builder.getPtrTy()}),
         {nodeAddress(node)});
   }
+  if (lowering.program.types->isProduct(entry.type) &&
+      lowering.program.types->product(entry.type).kind ==
+          AggregateKind::Coroutine) {
+    // Dropping a state drops whatever its body frame still owns, at any
+    // suspension point; the frame's flags make this exact.
+    auto *unwinding = function->arg_size() > 1
+                          ? static_cast<llvm::Value *>(function->getArg(1))
+                          : builder.getInt32(0);
+    builder.CreateCall(lowering.coroutine(entry.type).unwind(),
+                       {nodeAddress(node), unwinding});
+  }
   if (entry.destructor >= 0) {
     auto parameter =
         lowering.program.functions[entry.destructor].locals[0].type;
@@ -811,7 +875,7 @@ llvm::Function *CleanupFrame::dropCallback(unsigned node) {
     return found->second;
   auto saved = lowering.builder.saveIP();
   auto *savedFrame = frame;
-  auto *callback = lowering.callback(wrapper->getName() + ".drop", true);
+  auto *callback = lowering.callback(name + ".drop", true);
   drops[node] = callback;
   frame = callback->getArg(0);
   lowering.builder.SetInsertPoint(
@@ -848,7 +912,7 @@ std::vector<unsigned> CleanupFrame::cleanupOrder() const {
 void CleanupFrame::emitReplacement(Replacement &replacement) {
   auto &builder = lowering.builder;
   replacement.destroy = dropCallback(replacement.destination);
-  replacement.install = lowering.callback(wrapper->getName() + ".install");
+  replacement.install = lowering.callback(name + ".install");
   frame = replacement.install->getArg(0);
   builder.SetInsertPoint(
       llvm::BasicBlock::Create(lowering.context, "entry", replacement.install));
@@ -866,6 +930,7 @@ void CleanupFrame::emitReplacement(Replacement &replacement) {
 }
 
 void CleanupFrame::emitCallbacks() {
+  callbacksEmitted = true;
   auto saved = lowering.builder.saveIP();
   for (auto &replacement : replacements)
     emitReplacement(replacement);
@@ -886,11 +951,7 @@ llvm::Value *CleanupFrame::createWrapper() {
   frame = builder.CreateAlloca(frameType, nullptr, "frame");
   llvm::cast<llvm::AllocaInst>(frame)->setAlignment(
       llvm::Align(frameAlignment));
-  for (const auto &node : nodes) {
-    builder.CreateStore(builder.getFalse(), field(node.flag));
-    if (node.relocation >= 0)
-      builder.CreateStore(builder.getFalse(), field(node.relocatedFlag));
-  }
+  clearFlags();
   if (source.variadicCursor >= 0) {
     auto *cursor = field(localFields[source.variadicCursor]);
     builder.CreateStore(llvm::Constant::getNullValue(lowering.layoutType(
@@ -916,13 +977,7 @@ llvm::Value *CleanupFrame::createWrapper() {
     if (locals[i] != std::numeric_limits<unsigned>::max())
       set(roots[locals[i]].node, true);
   }
-  for (std::size_t i = 0; i < source.locals.size(); ++i)
-    if (source.locals[i].storage == StorageDuration::Static) {
-      builder.CreateStore(lowering.statics.at(source.locals[i].staticIndex),
-                          field(localFields[i]));
-      if (locals[i] != std::numeric_limits<unsigned>::max())
-        set(roots[locals[i]].node, true);
-    }
+  bindStatics();
   auto *outerFrame = frame;
   if (lowering.freestanding ||
       (nodes.empty() && source.abi != "C" && source.abi != "system"))
@@ -938,6 +993,83 @@ llvm::Value *CleanupFrame::createWrapper() {
   finishWrapper(outerFrame);
   frame = bodyFunction->getArg(0);
   return outerFrame;
+}
+void CleanupFrame::clearFlags() {
+  auto &builder = lowering.builder;
+  for (const auto &node : nodes) {
+    builder.CreateStore(builder.getFalse(), field(node.flag));
+    if (node.relocation >= 0)
+      builder.CreateStore(builder.getFalse(), field(node.relocatedFlag));
+  }
+}
+void CleanupFrame::bindStatics() {
+  for (std::size_t i = 0; i < source.locals.size(); ++i)
+    if (source.locals[i].storage == StorageDuration::Static) {
+      lowering.builder.CreateStore(
+          lowering.statics.at(source.locals[i].staticIndex),
+          field(localFields[i]));
+      if (locals[i] != std::numeric_limits<unsigned>::max())
+        set(roots[locals[i]].node, true);
+    }
+}
+// The unstarted state owns only the environment; it may be moved until it
+// is first resumed, after which it is pinned.
+void CleanupFrame::startCoroutine(llvm::Value *state,
+                                  llvm::Value *environment) {
+  auto *saved = frame;
+  frame = state;
+  clearFlags();
+  lowering.builder.CreateStore(lowering.builder.getInt32(0), field(stateField));
+  if (source.parameters == 1) {
+    lowering.store(source.locals[0].type, environment, field(localFields[0]),
+                   llvm::Align(lowering.alignment(source.locals[0].type)));
+    if (locals[0] != std::numeric_limits<unsigned>::max())
+      set(roots[locals[0]].node, true);
+  }
+  bindStatics();
+  frame = saved;
+}
+llvm::Value *CleanupFrame::resumeCoroutine(llvm::Value *state,
+                                           llvm::Value *context,
+                                           Type optional) {
+  auto &builder = lowering.builder;
+  auto *saved = frame;
+  frame = state;
+  builder.CreateStore(context, field(contextField));
+  if (lowering.freestanding || nodes.empty())
+    builder.CreateCall(bodyFunction, {frame});
+  else
+    builder.CreateCall(lowering.runtime("mettle_rt_run", builder.getVoidTy(),
+                                        {builder.getPtrTy(), builder.getPtrTy(),
+                                         builder.getPtrTy()}),
+                       {frame, bodyFunction, cleanupFunction});
+  auto *function = builder.GetInsertBlock()->getParent();
+  auto *ready = llvm::BasicBlock::Create(lowering.context, "ready", function);
+  auto *pending =
+      llvm::BasicBlock::Create(lowering.context, "pending", function);
+  auto *join = llvm::BasicBlock::Create(lowering.context, "resumed", function);
+  builder.CreateCondBr(
+      builder.CreateICmpEQ(
+          builder.CreateLoad(builder.getInt32Ty(), field(stateField)),
+          builder.getInt32(complete)),
+      ready, pending);
+  builder.SetInsertPoint(ready);
+  auto *value = lowering.variant(
+      optional, 1,
+      {lowering.load(source.result, field(resultField),
+                     llvm::Align(lowering.alignment(source.result)))});
+  auto *readyEnd = builder.GetInsertBlock();
+  builder.CreateBr(join);
+  builder.SetInsertPoint(pending);
+  auto *none = lowering.variant(optional, 0, {});
+  auto *pendingEnd = builder.GetInsertBlock();
+  builder.CreateBr(join);
+  builder.SetInsertPoint(join);
+  auto *result = builder.CreatePHI(value->getType(), 2);
+  result->addIncoming(value, readyEnd);
+  result->addIncoming(none, pendingEnd);
+  frame = saved;
+  return result;
 }
 llvm::Value *CleanupFrame::variadicContext() {
   return field(localFields[source.variadicCursor]);

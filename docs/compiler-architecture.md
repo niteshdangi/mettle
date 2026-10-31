@@ -533,17 +533,18 @@ inventory, fixtures and documentation satisfy the source-freeze gate.
 
 ### I11 async state-machine interface plan
 
-Status: partial; the awaiting-loop change is verified on macOS arm64
-(`async-await-loop-retains-local`, `await-borrow-in-loop`); the parser-combinator
-implementation remains in use. `analysis/liveness` computes SSA block-boundary
-liveness with phi uses on incoming edges, but does not yet analyze suspended
-places, loans or cleanup and is not connected to a coroutine transform.
-The current parser path also moves live immutable locals through an awaiting
-loop's carried state rather than recapturing them in each step; this does not
-enable borrowed locals across suspension.
-No coroutine IR, generated poll function or new cancellation path described
-below has been implemented or verified. The I11 inventory and the existing
-feature diagnostics remain in `implementation-plan.md` section 8.4.
+Status: implemented as a coroutine closure and backend state machine
+(verified on macOS arm64; see `implementation-plan.md` section 8.4 for the
+inventory and open items). The parser desugars async bodies into
+`core.future.coroutine(take fn(): T { .. })` and `await` into a poll loop
+around `core.intrinsics.coroutine_suspend`, so the closure body is checked and
+analyzed as ordinary code; `ir::Exit::Suspend` is the suspension edge and
+`ir::Function::coroutine` marks the body. `core.future.CoroutineState<T, C>`
+(`AggregateKind::Coroutine`) is laid out by the backend as the body's
+persistent cleanup frame through `TypeStore::coroutineLayout`; layout checks
+before the backend skip coroutine-dependent types (`types::coroutineDependent`).
+The interface plan below is the contract this implementation meets, except
+where the inventory lists open items.
 
 The shared interfaces must be implemented together, not enabled one at a time
 for source programs:
@@ -624,7 +625,7 @@ tests in the same change.
 | Layout, unsafe operations and C ABI (I06) | Target facts and object layout in `types`, distinct from language type identity; physical ABI lowering in `backend`; unsafe validity checks and explicit intrinsics; target-specific probes |
 | Core/alloc/hosted libraries (I07-I08) | Native Mettle modules and minimal runtime contracts, not hardcoded collections or OS calls inside the parser/checker. `alloc` reaches memory only through the `mettle_rt_alloc/dealloc/realloc` hooks (`runtime/alloc.cpp`). `std` reaches the OS through declared libc externs and the shims in `runtime/sys.cpp` (errno, flags, `stat`, `readdir`, `spawn`, sockets, clocks); the panic hook lives in `runtime/panic.cpp` |
 | Constants, macros and packages (I09) | Const evaluator over defined IR; hygienic expansion with source ancestry; package graph/build planner outside compiler semantics |
-| Threads and async (I10-I11) | Transferable/Shareable/Static are intrinsic properties proved structurally by `semantics/interface_solver.cpp` (`proveConcurrency`), with manual `unsafe extend`/negative `extend X not P` recorded in `interfaces::Database::concurrencyDeclarations`; thread/lock/TLS operations reach pthreads only through the `mettle_rt_thread_*`/`mettle_rt_mutex_*`/`mettle_rt_cond_*`/`mettle_rt_rwlock_*`/`mettle_rt_tls_*` hooks (`runtime/thread.cpp`), while channel selection uses its process-wide generation condition there to sleep without polling. Static TLS descriptors are keyed by their static addresses; TLS values share a per-thread active-key list so thread exit and the hosted main exit destroy them in reverse first-installation order. `std.thread`/`std.sync` and `alloc.arc` are native Mettle modules. `async fn` is lowered in the parser (`syntax/parser/async.cpp`) to `core.future` `defer`/`then`/`lazy`/`Either` state types behind an opaque `some Future` result (also async blocks/closures, hoisted subexpression awaits, tail-branch awaits and early returns); awaits in loops (`core.future.Repeat` over the carried `var` state with a `LoopKind<R>` result witness, `for` via `into_iterator` or a counted built-in range), nested blocks and non-tail branches are lowered the same way (verified); `return`/`?` inside them, `while let` with an await, borrowed `for` sources and a CFG-level coroutine transform remain; `std.task` is the separately selected executor |
+| Threads and async (I10-I11) | Transferable/Shareable/Static are intrinsic properties proved structurally by `semantics/interface_solver.cpp` (`proveConcurrency`), with manual `unsafe extend`/negative `extend X not P` recorded in `interfaces::Database::concurrencyDeclarations`; thread/lock/TLS operations reach pthreads only through the `mettle_rt_thread_*`/`mettle_rt_mutex_*`/`mettle_rt_cond_*`/`mettle_rt_rwlock_*`/`mettle_rt_tls_*` hooks (`runtime/thread.cpp`), while channel selection uses its process-wide generation condition there to sleep without polling. Static TLS descriptors are keyed by their static addresses; TLS values share a per-thread active-key list so thread exit and the hosted main exit destroy them in reverse first-installation order. `std.thread`/`std.sync` and `alloc.arc` are native Mettle modules. `async` bodies are coroutine closures desugared in `syntax/parser/async.cpp`; suspension is `ir::Exit::Suspend`, the state is the backend frame (`backend/llvm/cleanup.cpp`), and its Transferable/Shareable proof includes a scope-based interior recorded by `semantics/captures.cpp`; `std.task` is the separately selected executor |
 | IDE/tooling/incremental (I12) | Reusable in-memory pipeline, immutable inputs/results and revision-bound diagnostics; module/item query boundaries and dependency tracking |
 | Additional backends/self-hosting (I15-I16) | Preserve checked/runtime/ABI boundaries; replace compiler implementation/backend without importing LLVM into language representations |
 

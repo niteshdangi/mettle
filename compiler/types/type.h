@@ -4,6 +4,7 @@
 #include <array>
 #include <compare>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -164,7 +165,10 @@ enum class AggregateKind {
   Ordering,
   PhantomPinned,
   VarArgs,
-  NativeVector
+  NativeVector,
+  // Inline state of a compiler-generated future: components are the output
+  // and the coroutine closure; the backend owns its layout.
+  Coroutine
 };
 enum class NativeCleanup { None, RefRelease, RefMutRelease, VaListEnd };
 constexpr std::uint32_t cellPayloadField(AggregateKind kind) {
@@ -306,6 +310,23 @@ public:
   void setRegionPattern(Type type, Type pattern);
   void setDestructor(Type type, int function);
   void setNativeCleanup(Type type, NativeCleanup action);
+  // A coroutine state's size and alignment are backend facts: its frame is
+  // the lowered body's cleanup frame. The backend installs the resolver for
+  // the duration of code generation; it is not part of type identity.
+  using CoroutineLayout =
+      std::function<std::optional<std::pair<std::uint64_t, std::uint64_t>>(
+          Type)>;
+  void resolveCoroutineLayouts(CoroutineLayout resolver) const {
+    coroutineLayouts = std::move(resolver);
+  }
+  std::optional<std::pair<std::uint64_t, std::uint64_t>>
+  coroutineLayout(Type type) const {
+    return coroutineLayouts ? coroutineLayouts(type) : std::nullopt;
+  }
+  // Types a coroutine body may hold across a suspension, keyed by its
+  // symbolic closure; an instance substitutes its generic arguments.
+  void setCoroutineInterior(Type closure, std::vector<Type> held);
+  std::vector<Type> coroutineInterior(Type closure);
   bool needsDrop(Type type) const;
   bool containsViews(Type type) const;
   const ProductType &product(Type type) const;
@@ -374,6 +395,8 @@ public:
   void setOpaqueBounds(Type type, std::vector<Type> bounds);
 
 private:
+  mutable CoroutineLayout coroutineLayouts;
+  std::unordered_map<std::uint32_t, std::vector<Type>> coroutineInteriors;
   using RegionalSubstitution =
       std::pair<Type, std::vector<std::pair<Type, Type>>>;
   std::map<RegionalSubstitution, Type> regionalSubstitutions;

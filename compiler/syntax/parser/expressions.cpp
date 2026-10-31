@@ -229,9 +229,8 @@ std::unique_ptr<Node> Parser::primary() {
     if (!inAsyncBody)
       fail("`await` is only valid inside an async function body");
     ++position;
-    result = node(Kind::Unary, token.span, "await");
     newlines();
-    result->children.push_back(primary());
+    result = awaitExpression(NodeOwner(primary()), token.span);
   } else if (take("-") || take("!") || take("take") || take("read") ||
              take("mut") || take("*")) {
     result = node(Kind::Unary, token.span, token.text);

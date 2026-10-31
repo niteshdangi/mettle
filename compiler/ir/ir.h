@@ -103,7 +103,12 @@ struct Instruction {
   std::vector<std::pair<Type, Type>> unpinProofs{};
   std::optional<Assembly> assembly{};
 };
-enum class Exit { None, Jump, Branch, Return, Unreachable };
+// `Suspend` ends a coroutine poll; the next poll resumes at `first`. Analyses
+// treat it as a jump because the frame, its places and its loans persist.
+enum class Exit { None, Jump, Branch, Return, Unreachable, Suspend };
+constexpr bool continues(Exit kind) {
+  return kind == Exit::Jump || kind == Exit::Suspend;
+}
 struct Terminator {
   Exit kind = Exit::None;
   Value value{};
@@ -157,6 +162,8 @@ struct Function {
     ParameterMode mode;
   };
   std::vector<ArrayLoop> arrayLoops{};
+  // A coroutine body runs inside a `CoroutineState` frame and may suspend.
+  bool coroutine = false;
   // Declaration span of the source function; empty for synthesized ones.
   Span span{};
 };
@@ -182,6 +189,8 @@ struct Program {
   std::vector<std::string> libraries{};
   TargetFacts target{};
   std::vector<Assembly> globalAssembly{};
+  // Coroutine state types of the instance program and their body functions.
+  std::vector<std::pair<Type, int>> coroutines{};
 };
 
 void print(const Program &program, std::ostream &out);

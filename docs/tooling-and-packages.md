@@ -519,11 +519,10 @@ Tagged sums use a DWARF variant part with the physical discriminator and
 per-variant fields at offsets from the shared payload storage. Explicit integer
 enum representations use their actual discriminants; transparent enums retain a
 product-like description. Macro
-tokens use the invocation location in line tables. The current async lowering
-uses library combinators such as `Then` and `Defer`, whose named members and
-optional tags expose their nested state; it does not provide a single
-source-await-point discriminator. Another lowering implementation must retain
-readable field names and expose its actual state/discriminant in its type.
+tokens use the invocation location in line tables. A coroutine future's state
+(`core.future.CoroutineState`) is described as a structure of its actual size
+without members or a resume discriminator; exposing the suspended locals and
+the current suspension point remains open.
 
 For LLDB, import `tools/debug/mettle_lldb.py` with
 `command script import /path/to/mettle/tools/debug/mettle_lldb.py`. It registers

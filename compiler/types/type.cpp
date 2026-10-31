@@ -226,6 +226,11 @@ Type TypeStore::structural(AggregateKind kind, std::vector<Type> components,
                 {"SeqCst", {}}};
   } else if (kind == AggregateKind::PhantomPinned) {
     display = "core::marker::PhantomPinned";
+  } else if (kind == AggregateKind::Coroutine) {
+    display = "core::future::CoroutineState<" +
+              std::string(name(components.at(0))) + ", " +
+              std::string(name(components.at(1))) + ">";
+    copy = false;
   } else if (kind == AggregateKind::BorrowError ||
              kind == AggregateKind::BorrowMutError) {
     display = kind == AggregateKind::BorrowError ? "core::cell::BorrowError"
@@ -436,7 +441,8 @@ bool TypeStore::needsDrop(Type type) const {
       product(type).kind == AggregateKind::Atomic)
     return false;
   const auto &record = product(type);
-  if (record.kind == AggregateKind::VarArgs)
+  if (record.kind == AggregateKind::VarArgs ||
+      record.kind == AggregateKind::Coroutine)
     return true;
   if (record.kind == AggregateKind::Array &&
       record.arrayCount != Type::Unknown && !record.components.empty() &&
@@ -515,7 +521,8 @@ bool TypeStore::isUnpin(Type type) const {
         return false;
     return true;
   }
-  if (record.kind == AggregateKind::PhantomPinned)
+  if (record.kind == AggregateKind::PhantomPinned ||
+      record.kind == AggregateKind::Coroutine)
     return false;
   for (const auto &field : record.fields)
     if (!isUnpin(field.type))

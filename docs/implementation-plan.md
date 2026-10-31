@@ -1025,121 +1025,73 @@ erased dispatch must explicitly declare its future erasure contract.
 P10 has only a backlog entry, not a specified benchmark source; an async
 network service, measurement protocol and equivalent comparator remain open.
 
-I11 status (partial; built and run on macOS arm64 Release and Debug): `core.future`
-has `Future`/`Poll`/`Context`/`Waker` (vtable protocol, no allocation) and the
-inline state types `Lazy`, `Then`, `Defer`; `std.task` is the optional executor
-(`block_on`, `Executor` with spawn/run, `yield_now`). The parser lowers
-`async fn` (free functions and methods), `async { .. }` blocks and
-`async fn(..) { .. }` closures to `some Future<Output = T>` built from those
-states (`compiler/syntax/parser/async.cpp`), so there is no separate
-state-machine IR pass. Verified on macOS arm64 (Release and Debug): `await`
-in any eagerly
-evaluated subexpression (`f(await a) + 1`, `let (p, q) = await e`,
-`if await c {..}`) by hoisting into temporaries in evaluation order, with
-effectful operands evaluated before the await hoisted too; `await` inside the
-branches of an `if`/`else if`/`match` that is the last statement of its block
-(each branch is its own future, joined by the allocation-free
-`core.future.Either`; the checker completes each branch's `left`/`right`
-generic arguments from the other branches, see compiler-architecture
-"Cross-branch inference"); `return` before the last await when it ends a branch
-of an `if`/`match` with exactly one continuing branch (the statements after it
-move into that branch); async blocks and async closures (captured by move, the
-result type inferred); and a structured diagnostic for a `let r = read x` /
-`mut x` borrow still used after an await. Tests:
-`tests/source/run/async-branches-and-subexpressions.mt`,
-`async-blocks-and-closures.mt` and `tests/source/fail/await-in-{loop,
-branch-not-last,lazy-operand}.mt`, `await-borrow-across.mt`.
-Await in loops and nested blocks (implemented and verified): a
-`while`/`loop`/`for` statement that contains an `await`, a nested block, and an
-`if`/`match` that is not last in its block lower in the same parser pass. The
-carried state is the tuple of the `var` locals in scope. A loop body becomes a
-step closure over that state, driven by `core.future.Repeat`
-(`repeat`/`Flow`/`next_iteration`/`finish_loop`); `break`/`continue` (also
-labeled, targeting the loop itself) are rewritten to returns of
-`finish_loop`/`next_iteration` and placed by the existing early-return
-lowering; the loop's final state (and `break` value) feeds the continuation of
-the statements after it. Every loop binds a zero-size copyable witness
-`let <loop-kind>: core.future.LoopKind<R> = LoopKind()` (R is `Unit`, or the
-async function's result for a tail loop used as its value) and passes it to
-`repeat` and `next_iteration`, so all steps agree on the result type. The step
-future is polled through a raw place, so the next state holds no loan of the
-`Repeat` across its back edge. `for` desugars to
-`var <iter> = core.iter.into_iterator(source)` plus a `loop`/`match` over
-`next()`, so the iterator is one more carried `var`; over a built-in
-`lo..hi`/`lo..=hi` range (not an iterator) it counts a carried `var` instead,
-and `..=` ends with a flag rather than stepping past `hi`; a block or a joined branch
-becomes a sub-future that yields the state. Cancellation needs no special
-code: `Repeat` holds either the state or the current iteration's future, and
-dropping it drops whichever is initialized. Tests:
-`tests/source/run/async-await-in-loops.mt` and the
-`tests/source/fail/await-in-{loop,loop-return,branch-not-last}.mt` cases.
-Implemented and verified on macOS arm64: `return value` directly inside an awaiting
-loop of a non-throwing async function (the loop result becomes
-`core.future.Exit<R, F>`; `rewriteExits` turns `return` into
-`finish_loop(state, give_up(value, kind))` and the statements after the loop run
-only for `Exit.Leave`), and `while let p = e` with an await, lowered to
-`loop { match e { p => body, _ => break } }`. Tests: the `early_return*` and
-`while_let` cases of `async-await-in-loops.mt`; `await-in-loop-return.mt` now
-covers `throw`.
-Still diagnosed (feature errors): `await` in a lazily evaluated operand
-(`&&`, `||`, `??`); `throw`/`?` inside an awaiting loop (and `return` when the
-async function throws), `return`/`throw`/`?` inside an awaiting block or
-joined branch or a nested awaiting loop, and `break`/`continue` of an enclosing loop from inside a
-nested awaiting loop, block or branch (they cannot leave a sub-future); a loop
-used as a value other than a tail statement (`let n = loop { .. await .. }`);
-`for` over a borrowed place (use `take v`: the iterator's loan would live in the
-loop state across awaits, which needs the pinned self-reference design below); an inner
-binding with the name of a carried `var`. Immutable locals and parameters used
-by a loop are captured by the step closure, so one used after an await in the
-body, or both inside and after the loop, must be copyable. The general design (a checker/IR-level state machine over
-typed liveness with locals as fields of one state, loops as back-edges and
-borrows across an await as pinned self-references) remains open. Also not
-done: borrows of locals across an await beyond the explicit-binding diagnostic
-(the continuation captures by move, so the checker rejects the rest), async
-interface methods, region-carrying erased futures, asynchronous borrowed-task
-scopes, async I/O and P10. Drop order deviation, accepted
-and documented: a local that no continuation uses is dropped when its segment
-ends at the await, not at function exit, because keeping it alive needs a move
-analysis of which locals are still initialized (a rebinding of an already
-moved local would be an error), which the parser does not have; the same
-analysis belongs to the checker/IR transform above. Pattern bindings from an
-await now work through the temporary.
-`recursive region inference` now accepts a revisited type pair (function-pointer
-cycle) instead of reporting a limit error. Verified by
-`tests/source/run/async-fn-state-machine.mt`, `tests/std/async_executor.mt` and
-the `await-*` fail cases. Fixes found during verification: a continuation's
-parameter type is inferred through `A: Future<Output = X>` even when unused;
-closures capture a raw pointer rather than its target, and a take closure owns
-a whole value with a destructor rather than a copied field; a sum whose variant
-changed through a `mut` borrow drops by its current variant.
+I11 status (partial; built and run on macOS arm64 Release): `core.future` has
+`Future`/`Poll`/`Context`/`Waker` (vtable protocol, no allocation) and the
+inline coroutine future `Coroutine<T, C>`; `std.task` is the optional executor
+(`block_on`, `Executor` with spawn/run, `yield_now`). Async bodies are
+coroutines: the parser (`compiler/syntax/parser/async.cpp`) turns an
+`async fn` (free function or method), `async { .. }` block or
+`async fn(..) { .. }` closure into `core.future.coroutine(take fn(): T { body })`
+(`throwing_coroutine` when the body throws) behind an opaque
+`some Future<Output = T>` result, and `await e` into a poll loop over a
+temporary that suspends through `core.intrinsics.coroutine_suspend` while
+`core.future.poll_await` returns `none`. The body is checked, lowered and
+ownership-analyzed as an ordinary take closure, so `await` composes with every
+statement and expression form. Suspension is the IR terminator
+`Exit::Suspend` with a resume edge that the initialization, liveness, origin
+and loan analyses treat as an ordinary edge. `core.future.CoroutineState<T, C>`
+is a compiler aggregate whose layout is the body's persistent backend frame
+(`TypeStore::coroutineLayout`); `Coroutine` is `!Unpin` (`PhantomPinned`), so
+loans of state across a suspension are self-borrows of pinned storage. The
+LLVM backend (`backend/llvm/lower.cpp`, `cleanup.cpp`) keeps a resume state,
+spills values live across suspension into the frame, keeps drop flags across
+polls, destroys only initialized places on cancellation and panics on a poll
+after completion or panic. A coroutine state is Transferable/Shareable when
+its output, captures and interior are; the interior is scope-based like the
+original Rust generators (bindings in scope at a suspension and operands
+evaluated before it), so it may reject a value whose scope, but not its
+liveness, spans an await. Static requires the output and captures.
+
+Verified on macOS arm64 Release (all 23 CTest suites): `await` in loops,
+nested blocks, any branch, lazy operands, loop values and early
+`return`/`throw`, borrows of locals across an await, typed failure fed by
+await and exactly-once drops of unfinished futures
+(`tests/source/run/async-await-anywhere.mt` with the existing `async-*` run
+cases); executor and spawn use (`tests/std/async_executor.mt`,
+`async_spawn.mt`); and rejection of an `Rc` held across an await and of a
+borrowed capture by spawn (`neg_async_rc_across_await.mt`,
+`neg_async_borrow_static.mt`). In the `build/macos-arm64/Debug-sanitized`
+CTest 22 of 24 tests passed; `packages.resolution` and `probe.broken-pipe`
+exceeded their timeouts because the sanitized compiler is slow (43 s for the
+probe's std program against a 30 s bound, as at I06) and passed when rerun
+unmodified without the timeout. Every async run fixture and the
+std async programs above also ran clean as ASan/UBSan-instrumented emitted
+programs, Debug and Release profiles (a throwaway harness, not a repository
+gate). The CPS combinators (`Lazy`, `Then`, `Defer`, `Either`, `Repeat`)
+and their feature-fail fixtures are removed.
+
+Open: `try await f()` is not accepted (`try` needs a typed throwing call);
+`async fn(..) => expr` arrow closures are not lowered as async; recursive async
+is rejected only by the generic Sized diagnostic; async interface methods
+still hit the bodyless-async feature diagnostic
+(`syntax/parser/declarations.cpp::function`); debug information describes a
+coroutine state as a sized structure without members or a resume
+discriminator. Region-carrying erased futures, asynchronous borrowed-task
+scopes, async I/O and P10 remain open. Linux and Windows targets, the Debug
+profile CTest and TSan of executor code are not run for the coroutine path.
 
 #### I11 coroutine replacement inventory
 
-The state-machine replacement is **not implemented**. Initial code changes are
-implemented and verified on macOS arm64 (`tests/ir/verify.cpp`): `analysis/liveness` adds SSA
-block-boundary liveness with edge-specific phi uses; the parser's existing
-combinator path wraps a non-awaiting throwing body in a throwing closure
-captured as an outcome; and a live, immutable local is moved through the state
-of an awaiting loop instead of being recaptured by every step. These do not
-support throwing across an await or borrowed locals across suspension. Focused
-cases are `tests/ir/verify.cpp`,
-`tests/source/run/async-throwing-without-await.mt` and
-`tests/source/run/async-await-loop-retains-local.mt`, with
-`tests/source/fail/await-borrow-in-loop.mt` preserving the unsupported
-self-borrow diagnostic. The inventory was prepared against worktree base
-`b7670a5c9ef4c22a42a0f4f1c341f057a50edf79`; no build, test, formatter,
-quality gate or sanitizer was run for it. Earlier receipts above apply only to
-their documented revisions and scopes. The interface plan is in
-`compiler-architecture.md` under “I11 async state-machine interface plan”.
+Revision: uncommitted on `efd0b32`; scope as stated per row.
 
 | Requirement | State and owning files | Remaining work and required fixtures |
 | --- | --- | --- |
-| Preserve async source; type future and await | Partial: `syntax/parser/async.cpp` rewrites bodies; `semantics/checked.h` has no await facts. | Preserve source in `syntax`, resolve captures, regions, output, hidden future identity and poll witness in `semantics`/`types`; cover functions, methods, blocks, closures, generics and borrowed inputs. |
-| Ownership-checked suspension CFG | Partial (liveness verified by `tests/ir/verify.cpp`): `analysis/liveness` computes SSA block-boundary facts including phi edges; `ir/ir.h` has no suspension edge and initialization/loans do not publish suspension facts. | Add checked suspension, structural validation, initialization, loan/origin liveness including loops, retained destructors and partially moved fields; cover read/mut loans, non-Copy locals and moving a borrowed local. |
-| Inline pinned state and poll | Missing: `lowering` has ordinary closure environments but no coroutine transform. | Generate constructor/poll, stable child slots, self-loans, correct `Unpin` and Transferable properties, and verified CFG in `lowering`/`types`/`instances`/`pipeline`; cover repeated pending, nested awaits and move-before-pin. |
-| Control flow | Partial: parser `Repeat`/`Either` handles selected loops and branches; live immutable locals are now moved through awaiting-loop state (verified on macOS arm64). | Replace parser lowering; preserve CFG back-edges and exits; cover nested return, throw, `?`, labeled break/continue, lazy operands and `for` over borrowed List/slice; update obsolete `await-*` feature-fail cases. |
-| Cleanup and cancellation | Partial: combinator fields drop, but segment-local drop order deviates. `cleanup/plan.cpp` and `backend/llvm/cleanup.cpp` use per-frame plans/flags. | Make initialized-place flags persistent across polls; preserve lexical order and pinned addresses on success, typed failure, cancellation and unwind. Cover never-polled and suspended cancellation, partial moves and exactly-once drops. |
-| Integration and qualification | Missing for the new path; existing `core.future`/`std.task` exercise the parser path. | Reuse existing executors and protocol; complete focused run/fail, generic, cleanup and backend tests, update both architecture and this inventory, then freeze sources. The owner must run applicable quality, Debug/Release, ASan/UBSan, reproducibility and Linux-target gates after integration. |
+| Preserve async source; type future and await | Implemented (verified macOS arm64): `syntax/parser/async.cpp` desugars to coroutine closures; `semantics/machine*.cpp` types the coroutine intrinsics; `library/core/future.mt` owns `Coroutine`. | Async interface methods; arrow async closures; `try await`. |
+| Ownership-checked suspension CFG | Implemented: `ir/ir.h` `Exit::Suspend`, `ir/verify.cpp`, successor updates in `analysis/*`, `ir/dominance.cpp`, `instances/arrays.cpp`, `lowering/scalar.cpp`. | None known; borrow-across-await is covered by `async-await-anywhere.mt`. |
+| Inline pinned state and poll | Implemented: `types` coroutine aggregate and layout resolver, `instances/specialize.cpp`, backend frame/dispatch. Transferable/Shareable/Static in `semantics/interface_solver.cpp` with the interior from `semantics/captures.cpp`. | Liveness-precise interior (optional precision gain). |
+| Control flow | Implemented: ordinary CFG of the closure body. | None known. |
+| Cleanup and cancellation | Implemented: persistent frame flags and `unwind` in `backend/llvm/cleanup.cpp`; exactly-once drops verified. | Dedicated lexical drop-order-across-suspension fixture. |
+| Integration and qualification | Release CTest, sanitized compiler CTest and ASan/UBSan emitted async programs pass on macOS arm64. | Debug-profile CTest, debug-info state discriminator, Linux/Windows (owner-run). |
 
 The source-freeze gate depends on all rows, fixtures and documentation; a
 design or a partially implemented row is not a verified milestone.

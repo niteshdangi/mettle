@@ -298,8 +298,8 @@ void Checker::propagateGenericBindings(const GenericEnvironment &environment,
               stripped.arguments.end());
           auto savedEnvironment = genericEnvironment;
           genericEnvironment = const_cast<GenericEnvironment *>(&environment);
-          auto interfaceType =
-              interfaceBound(stripped, span, {}, owner->argument);
+          auto interfaceType = interfaceBound(
+              stripped, environment.declarationSpan, {}, owner->argument);
           genericEnvironment = savedEnvironment;
           if (interfaceType == Type::Unknown)
             continue;
