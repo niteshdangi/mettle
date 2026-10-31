@@ -25,50 +25,69 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
         }
     }
 
-    mut fn sift_up(start: usize): Unit {
-        var i = start
-        while i > 0usize {
-            let parent = (i - 1usize) / 2usize
-            if self.data[i].cmp(self.data[parent]).is_gt() {
-                self.data.swap(i, parent)
-                i = parent
+    // Compare the full path before changing the heap. If Ord panics, the
+    // caller has not yet inserted the value and the existing heap is intact.
+    mut fn push_reserved(value: take T): Unit {
+        let last = self.data.len()
+        var destination = last
+        while destination > 0usize {
+            let parent = (destination - 1usize) / 2usize
+            if value.cmp(self.data[parent]).is_gt() {
+                destination = parent
             } else {
-                return ()
+                break
             }
         }
-    }
-    mut fn sift_down(start: usize): Unit {
-        let n = self.data.len()
-        var i = start
-        while true {
-            let l = 2usize * i + 1usize
-            if l >= n { return () }
-            var big = l
-            if l + 1usize < n && self.data[l + 1usize].cmp(self.data[l]).is_gt() { big = l + 1usize }
-            if self.data[big].cmp(self.data[i]).is_gt() {
-                self.data.swap(big, i)
-                i = big
-            } else {
-                return ()
-            }
+        self.data.push(value)
+        var i = last
+        while i > destination {
+            let parent = (i - 1usize) / 2usize
+            self.data.swap(i, parent)
+            i = parent
         }
     }
     pub mut fn try_push(value: take T): Unit throws AllocError {
-        try self.data.try_push(value)
-        let last = self.data.len() - 1usize
-        self.sift_up(last)
+        try self.data.try_reserve(1usize)
+        self.push_reserved(value)
     }
     pub mut fn push(value: take T): Unit {
-        self.data.push(value)
-        let last = self.data.len() - 1usize
-        self.sift_up(last)
+        self.data.reserve(1usize)
+        self.push_reserved(value)
     }
     pub mut fn pop(): T? {
         let n = self.data.len()
         if n == 0usize { return none }
+        let last = n - 1usize
+        // Compare the repair path before mutating; usize indices bound it to
+        // at most 64 levels.
+        var path = [0usize; 64]
+        var depth = 0usize
+        var node = 0usize
+        while true {
+            let left = 2usize * node + 1usize
+            if left >= last { break }
+            var big = left
+            if left + 1usize < last && self.data[left + 1usize].cmp(self.data[left]).is_gt() {
+                big = left + 1usize
+            }
+            if self.data[big].cmp(self.data[last]).is_gt() {
+                path[depth] = big
+                depth += 1usize
+                node = big
+            } else {
+                break
+            }
+        }
         self.data.swap(0usize, n - 1usize)
         let top = self.data.pop()
-        self.sift_down(0usize)
+        node = 0usize
+        var i = 0usize
+        while i < depth {
+            let child = path[i]
+            self.data.swap(node, child)
+            node = child
+            i += 1usize
+        }
         top
     }
     pub mut fn clear(): Unit { self.data.clear() }
