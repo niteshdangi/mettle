@@ -6,6 +6,19 @@ additions below are implemented, unverified (not yet built). Other commands
 and an installed toolchain are not available.
 These operations are native equivalents, not Cargo-manifest compatibility.
 
+### Unicode table generation (I07)
+
+`tools/unicode_tables.py UCD_DIR OUTPUT.mt` generates the Unicode 16.0.0
+property and case-mapping module used by `library/core/char.mt`. Keep the UCD
+input files and the generated `library/core/unicode_data.mt` synchronized with
+the version recorded in that module; the Unicode license notice is
+`library/core/UNICODE-LICENSE.txt`. The generator validates the release headers
+in the versioned UCD files. `UnicodeData.txt` itself has no release header, so
+its version is identified by the companion files in the same UCD distribution.
+Case folding data is version-checked but is not used as lower/uppercase
+mapping: those mappings come from `UnicodeData.txt` and unconditional
+`SpecialCasing.txt`.
+
 ### Emitted-program sanitizers (I10/I11)
 
 Status: implemented and verified on macOS arm64 (`probe.sanitizers`). `mettle build`, `mettle run`
