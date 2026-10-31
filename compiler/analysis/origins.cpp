@@ -379,8 +379,12 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
         // An access view with no declared region is call-local, so an erased
         // receiver cannot retain it. Declared regions and every contained
         // view may flow.
-        auto transient = false;
-        if (own && types.isFunctionPointer(function.regionSignature)) {
+        auto transient =
+            own && std::find(function.callLocalParameters.begin(),
+                             function.callLocalParameters.end(),
+                             p) != function.callLocalParameters.end();
+        if (!transient && own &&
+            types.isFunctionPointer(function.regionSignature)) {
           const auto &signature = types.callable(function.regionSignature);
           if (p < signature.parameterRegions.size()) {
             transient =

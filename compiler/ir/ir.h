@@ -85,6 +85,7 @@ struct Instruction {
   Span span;
   Value target{};
   Type indirectType = Type::Unknown;
+  std::vector<std::size_t> callLocalParameters{};
   std::vector<Type> typeArguments{};
   Type constantParameter = Type::Unknown;
   Type interfaceType = Type::Unknown;
@@ -137,6 +138,8 @@ struct Function {
   bool twoPhaseReceiver = false;
   int constructorSelfSlot = -1;
   bool indirectContract = false;
+  // Access parameters whose views a called value cannot retain.
+  std::vector<std::size_t> callLocalParameters{};
   std::vector<Type> genericParameters{};
   bool declarationOnly = false;
   std::vector<std::size_t> genericResultSources{};

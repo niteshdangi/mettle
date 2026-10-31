@@ -1,5 +1,6 @@
 #include "lowering/builder.h"
 #include <algorithm>
+#include <tuple>
 
 namespace mettle::lowering {
 using ir::Access;
@@ -11,9 +12,10 @@ void callableContracts(ir::Program &program) {
     bool twoPhase = instruction.erasedDispatch &&
                     !signature.parameters.empty() &&
                     signature.parameters[0].mode == ParameterMode::Mut;
-    return std::pair{instruction.indirectType, twoPhase};
+    return std::tuple{instruction.indirectType, twoPhase,
+                      instruction.callLocalParameters};
   };
-  std::map<std::pair<Type, bool>, int> contracts;
+  std::map<std::tuple<Type, bool, std::vector<std::size_t>>, int> contracts;
   for (const auto &function : program.functions)
     for (const auto &block : function.blocks)
       for (const auto &instruction : block.instructions)
@@ -21,7 +23,7 @@ void callableContracts(ir::Program &program) {
           contracts.try_emplace(key(instruction), -1);
   auto ordinary = program.functions.size();
   for (auto &[identity, index] : contracts) {
-    auto [type, twoPhase] = identity;
+    const auto &[type, twoPhase, local] = identity;
     const auto &signature = program.types->callable(type);
     auto suffix = twoPhase ? ".two-phase" : "";
     ir::Function contract{"<indirect-" + std::to_string(type.index()) + suffix +
@@ -40,6 +42,7 @@ void callableContracts(ir::Program &program) {
     contract.targetFeatures = signature.targetFeatures;
     contract.twoPhaseReceiver = twoPhase;
     contract.resultSources = signature.resultSources;
+    contract.callLocalParameters = local;
     contract.genericParameters = program.types->typeParameters(type);
     for (const auto &parameter : signature.parameters)
       contract.locals.push_back(
@@ -294,6 +297,9 @@ Builder::Value Builder::indirectCallExpression(const Node &node) {
       abstract ? module.typeStore()->parameter(type).callableConstraint
       : thin   ? type
                : Type::Unknown;
+  if (abstract)
+    instruction.callLocalParameters =
+        module.typeStore()->parameter(type).callableLocalParameters;
   if (!thin)
     instruction.typeArguments = closureArguments(type);
   auto value = emit(std::move(instruction), signature.abiResult);

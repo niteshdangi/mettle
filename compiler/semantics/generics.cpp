@@ -163,7 +163,16 @@ void Checker::validateGenericEnvironment(
       if (bound.form == TypeForm::Callable) {
         auto contract =
             callableAnnotation(bound, environment.declarationSpan, {});
-        if (!checked.types->constrainCallableParameter(subject, contract))
+        std::vector<std::size_t> local;
+        const auto &declared = bound.callable->parameters;
+        const auto &formal = checked.types->callable(contract).parameters;
+        for (std::size_t p = 0; p < declared.size() && p < formal.size(); ++p)
+          if (declared[p].annotation.sources.empty() &&
+              (formal[p].mode == ParameterMode::Read ||
+               formal[p].mode == ParameterMode::Mut))
+            local.push_back(p);
+        if (!checked.types->constrainCallableParameter(subject, contract,
+                                                       std::move(local)))
           error("type", environment.declarationSpan,
                 "incompatible declared callable bounds");
       } else if (!propertyBound(bound, environment.declarationSpan) &&

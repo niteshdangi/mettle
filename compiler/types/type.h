@@ -230,6 +230,8 @@ struct TypeParameter {
   std::string operation{};
   std::vector<Type> operands{};
   Type callableConstraint = Type::Unknown;
+  // Access parameters of the callable bound without a declared source region.
+  std::vector<std::size_t> callableLocalParameters{};
   std::vector<RegionId> regionArguments{};
   bool unpin = false;
   NumericLiteral numeric{};
@@ -342,7 +344,8 @@ public:
   bool isCallable(Type type) const;
   bool isFunctionPointer(Type type) const;
   const CallableType &callable(Type type) const;
-  bool constrainCallableParameter(Type parameter, Type contract);
+  bool constrainCallableParameter(Type parameter, Type contract,
+                                  std::vector<std::size_t> localParameters);
   bool satisfiesCallable(Type actual, Type contract) const;
   Type declareParameter(std::string name, bool copyRequested,
                         bool sized = true);

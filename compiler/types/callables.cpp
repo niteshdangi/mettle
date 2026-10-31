@@ -171,16 +171,19 @@ bool TypeStore::satisfiesCallable(Type actual, Type contract) const {
       return false;
   return true;
 }
-bool TypeStore::constrainCallableParameter(Type type, Type contract) {
+bool TypeStore::constrainCallableParameter(
+    Type type, Type contract, std::vector<std::size_t> localParameters) {
   if (!isParameter(type) || !isFunctionPointer(contract))
     return false;
   auto prior = parameter(type).callableConstraint;
   if (prior != Type::Unknown && !satisfiesCallable(prior, contract) &&
       !satisfiesCallable(contract, prior))
     return false;
-  if (prior == Type::Unknown || satisfiesCallable(contract, prior))
-    parameters.at(entries.at(type.index() - builtins).index)
-        .callableConstraint = contract;
+  if (prior == Type::Unknown || satisfiesCallable(contract, prior)) {
+    auto &stored = parameters.at(entries.at(type.index() - builtins).index);
+    stored.callableConstraint = contract;
+    stored.callableLocalParameters = std::move(localParameters);
+  }
   return true;
 }
 } // namespace mettle
