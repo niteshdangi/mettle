@@ -104,6 +104,8 @@ void Checker::coerce(Node &expression, int actual, int expected, Span span) {
     facts(expression).rebuiltType = target;
     return;
   }
+  if (source != target && ownerUnsizeCoercion(expression, source, target, span))
+    return;
   if (source != target && unsizeCoercion(expression, source, target, span))
     return;
   if (source != target && checked.types->isView(source) &&

@@ -354,6 +354,8 @@ private:
   void finalizeErasure();
   bool eraseCoercion(Node &expression, Type source, Type target, Span span);
   bool unsizeCoercion(Node &expression, Type source, Type target, Span span);
+  bool ownerUnsizeCoercion(Node &expression, Type source, Type target,
+                           Span span);
   std::optional<int> operatorCall(Node &node, int left, int right = -1,
                                   bool mutableIndex = false);
   void requireMutablePlace(Node &node);

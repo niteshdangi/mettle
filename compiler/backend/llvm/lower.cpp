@@ -553,8 +553,35 @@ private:
                           ? llvm::ConstantExpr::getIntToPtr(builder.getInt64(1),
                                                             builder.getPtrTy())
                           : llvm::ConstantPointerNull::get(builder.getPtrTy()));
+    auto layoutType = concrete;
+    std::uint64_t prefixSize = 0;
+    if (metadata == PointerMetadata::ElementCount) {
+      while (program.types->isProduct(layoutType) &&
+             !program.types->product(layoutType).fields.empty()) {
+        prefixSize += lowering.layout(layoutType).fields.back();
+        layoutType = program.types->product(layoutType).fields.back().type;
+      }
+      if (program.types->isSlice(layoutType))
+        layoutType = program.types->slice(layoutType).element;
+    }
+    entries.push_back(llvm::ConstantExpr::getIntToPtr(
+        builder.getInt64(lowering.layout(layoutType).size),
+        builder.getPtrTy()));
     entries.push_back(llvm::ConstantExpr::getIntToPtr(
         builder.getInt64(lowering.alignment(concrete)), builder.getPtrTy()));
+    auto drop = std::find_if(
+        program.dynamicDropFunctions.begin(),
+        program.dynamicDropFunctions.end(),
+        [&](const auto &entry) { return entry.first == concrete; });
+    bool hasDrop = drop != program.dynamicDropFunctions.end() &&
+                   drop->second >= 0 &&
+                   static_cast<std::size_t>(drop->second) < functions.size();
+    entries.push_back(hasDrop
+                          ? static_cast<llvm::Constant *>(functions.at(
+                                static_cast<std::size_t>(drop->second)))
+                          : llvm::ConstantPointerNull::get(builder.getPtrTy()));
+    entries.push_back(llvm::ConstantExpr::getIntToPtr(
+        builder.getInt64(prefixSize), builder.getPtrTy()));
     for (std::size_t method = 0; method < destination.methodSlots.size();
          ++method) {
       std::size_t index = source.methodSlots.size();
@@ -1492,16 +1519,75 @@ private:
       return unit();
     }
     if (operation == "mem.size_of_val" || operation == "mem.align_of_val") {
+      if (program.types->isErased(argument)) {
+        auto *table = builder.CreateExtractValue(arguments[0], 2);
+        auto slotIndex = operation == "mem.size_of_val" ? std::uint32_t{1}
+                                                        : std::uint32_t{2};
+        auto *slot = builder.CreateGEP(builder.getPtrTy(), table,
+                                       builder.getInt32(slotIndex));
+        auto *value = builder.CreatePtrToInt(
+            builder.CreateLoad(builder.getPtrTy(), slot), builder.getInt64Ty());
+        if (operation == "mem.align_of_val")
+          return value;
+        auto *kind = builder.CreateLoad(
+            builder.getPtrTy(),
+            builder.CreateGEP(builder.getPtrTy(), table, builder.getInt32(0)));
+        auto *count = builder.CreateExtractValue(arguments[0], 1);
+        auto *prefixSlot =
+            builder.CreateGEP(builder.getPtrTy(), table, builder.getInt32(4));
+        auto *prefix = builder.CreatePtrToInt(
+            builder.CreateLoad(builder.getPtrTy(), prefixSlot),
+            builder.getInt64Ty());
+        auto *alignSlot =
+            builder.CreateGEP(builder.getPtrTy(), table, builder.getInt32(2));
+        auto *alignment = builder.CreatePtrToInt(
+            builder.CreateLoad(builder.getPtrTy(), alignSlot),
+            builder.getInt64Ty());
+        auto *dynamicSize =
+            builder.CreateAdd(prefix, builder.CreateMul(count, value));
+        auto *mask = builder.CreateSub(alignment, builder.getInt64(1));
+        dynamicSize = builder.CreateAnd(builder.CreateAdd(dynamicSize, mask),
+                                        builder.CreateNot(mask));
+        return builder.CreateSelect(
+            builder.CreateICmpNE(
+                kind, llvm::ConstantPointerNull::get(builder.getPtrTy())),
+            dynamicSize, value);
+      }
       auto element = program.types->isSlice(argument)
                          ? program.types->slice(argument).element
                          : argument;
       if (operation == "mem.align_of_val")
         return builder.getInt64(lowering.alignment(element));
       auto *size = builder.getInt64(lowering.layout(element).size);
-      return program.types->isSlice(argument)
-                 ? builder.CreateMul(
-                       builder.CreateExtractValue(arguments[0], 1), size)
-                 : size;
+      if (program.types->isSlice(argument))
+        return builder.CreateMul(builder.CreateExtractValue(arguments[0], 1),
+                                 size);
+      if (program.types->pointerMetadata(argument) ==
+          PointerMetadata::ElementCount) {
+        Type tail = argument;
+        std::uint64_t offset = 0;
+        while (program.types->isProduct(tail) &&
+               !program.types->product(tail).fields.empty()) {
+          const auto &record = program.types->product(tail);
+          offset += lowering.layout(tail).fields.back();
+          tail = record.fields.back().type;
+        }
+        if (!program.types->isSlice(tail))
+          llvm::report_fatal_error(
+              "element-count metadata has no unsized slice tail");
+        auto *count = builder.CreateExtractValue(arguments[0], 1);
+        auto *dynamic = builder.CreateAdd(
+            builder.getInt64(offset),
+            builder.CreateMul(
+                count,
+                builder.getInt64(
+                    lowering.layout(program.types->slice(tail).element).size)));
+        auto alignment = builder.getInt64(lowering.alignment(argument));
+        auto mask = builder.CreateSub(alignment, builder.getInt64(1));
+        return builder.CreateAnd(builder.CreateAdd(dynamic, mask),
+                                 builder.CreateNot(mask));
+      }
+      return size;
     }
     if (operation == "mem.zeroed")
       return lowering.zero(instruction.result.type);
@@ -2066,6 +2152,40 @@ private:
           result = builder.CreateInsertValue(
               result, builder.CreateZExt(get(0), builder.getInt64Ty()), 1);
           break;
+        case ir::Op::OwnerUnsize: {
+          auto sourceOwner = n.operands[0].type;
+          auto targetOwner = n.result.type;
+          const auto &source = program.types->product(sourceOwner);
+          const auto &target = program.types->product(targetOwner);
+          auto sourcePayload = source.genericArguments.front();
+          auto targetPayload = target.genericArguments.front();
+          auto *owner = get(0);
+          auto *data = lowering.extract(owner, sourceOwner, 0);
+          auto allocator = lowering.extract(owner, sourceOwner, 1);
+          auto pointerType = target.fields.front().type;
+          llvm::Value *pointer = llvm::UndefValue::get(type(pointerType));
+          pointer = builder.CreateInsertValue(pointer, data, 0);
+          if (program.types->pointerMetadata(targetPayload) ==
+              PointerMetadata::ElementCount) {
+            pointer = builder.CreateInsertValue(
+                pointer, builder.CreateZExt(get(1), builder.getInt64Ty()), 1);
+          } else {
+            std::vector<llvm::Constant *> methods;
+            for (std::size_t method = 1; method < n.operands.size(); ++method)
+              methods.push_back(
+                  n.operands[method].type == Type::Unit
+                      ? llvm::ConstantPointerNull::get(builder.getPtrTy())
+                      : llvm::cast<llvm::Constant>(get(method)));
+            auto *table =
+                witness(sourcePayload, targetPayload, targetPayload, methods);
+            pointer =
+                builder.CreateInsertValue(pointer, builder.getInt64(0), 1);
+            pointer = builder.CreateInsertValue(pointer, table, 2);
+          }
+          frame.consume(n.operands[0]);
+          result = lowering.construct(targetOwner, {pointer, allocator});
+          break;
+        }
         case ir::Op::SliceBorrowRead:
         case ir::Op::SliceBorrowMut: {
           auto slice = *projectedType(
@@ -2140,7 +2260,7 @@ private:
                                             address(n.place));
           auto *table = builder.CreateExtractValue(handle, 2);
           auto offset =
-              2 + program.types->erased(n.interfaceSelf).methodTypes.size() +
+              5 + program.types->erased(n.interfaceSelf).methodTypes.size() +
               n.number;
           auto *slot = builder.CreateGEP(
               builder.getPtrTy(), table,
@@ -2156,7 +2276,7 @@ private:
                              : builder.CreateLoad(type(handleType), get(0));
           auto *table = builder.CreateExtractValue(handle, 2);
           auto *slot = builder.CreateGEP(builder.getPtrTy(), table,
-                                         builder.getInt32(n.number + 2));
+                                         builder.getInt32(n.number + 5));
           result = builder.CreateLoad(builder.getPtrTy(), slot);
           break;
         }
@@ -2347,14 +2467,74 @@ private:
           if (n.op == ir::Op::StorageWrite)
             frame.consume(n.operands[0]);
           break;
-        case ir::Op::DropPlace:
-          frame.dropPlace(n.place);
+        case ir::Op::DropPlace: {
+          auto payload = projectedType(
+              *program.types, source.locals[n.place.root].type, n.place.fields);
+          if (payload && !n.place.fields.empty() &&
+              n.place.fields.back().kind == Projection::Kind::Dereference &&
+              (program.types->isSlice(*payload) ||
+               program.types->isErased(*payload))) {
+            auto pointerPlace = n.place;
+            pointerPlace.fields.pop_back();
+            auto pointerType = projectedType(
+                *program.types, source.locals[pointerPlace.root].type,
+                pointerPlace.fields);
+            if (pointerType && program.types->isPointer(*pointerType)) {
+              auto *handle =
+                  builder.CreateLoad(type(*pointerType), address(pointerPlace));
+              auto *data = handle->getType()->isStructTy()
+                               ? builder.CreateExtractValue(handle, 0)
+                               : handle;
+              if (program.types->isSlice(*payload)) {
+                if (program.types->needsDrop(
+                        program.types->slice(*payload).element)) {
+                  auto *count = builder.CreateExtractValue(handle, 1);
+                  if (n.dropFunction >= 0)
+                    builder.CreateCall(
+                        functions.at(static_cast<std::size_t>(n.dropFunction)),
+                        {data, count});
+                }
+              } else {
+                auto *table = builder.CreateExtractValue(handle, 2);
+                auto *dropSlot = builder.CreateGEP(builder.getPtrTy(), table,
+                                                   builder.getInt32(3));
+                auto *drop = builder.CreateLoad(builder.getPtrTy(), dropSlot);
+                auto *kind = builder.CreateLoad(
+                    builder.getPtrTy(),
+                    builder.CreateGEP(builder.getPtrTy(), table,
+                                      builder.getInt32(0)));
+                auto *count = builder.CreateSelect(
+                    builder.CreateICmpNE(kind, llvm::ConstantPointerNull::get(
+                                                   builder.getPtrTy())),
+                    builder.CreateExtractValue(handle, 1), builder.getInt64(1));
+                auto *signature = llvm::FunctionType::get(
+                    builder.getVoidTy(),
+                    {builder.getPtrTy(), builder.getInt64Ty()}, false);
+                auto *function = builder.GetInsertBlock()->getParent();
+                auto *callDrop =
+                    llvm::BasicBlock::Create(context, "drop.erased", function);
+                auto *done = llvm::BasicBlock::Create(
+                    context, "drop.erased.done", function);
+                builder.CreateCondBr(
+                    builder.CreateICmpNE(drop, llvm::ConstantPointerNull::get(
+                                                   builder.getPtrTy())),
+                    callDrop, done);
+                builder.SetInsertPoint(callDrop);
+                builder.CreateCall(signature, drop, {data, count});
+                builder.CreateBr(done);
+                builder.SetInsertPoint(done);
+              }
+            } else
+              frame.dropPlace(n.place);
+          } else
+            frame.dropPlace(n.place);
           if (debugInfo && n.place.root >= 0 &&
               static_cast<std::size_t>(n.place.root) < source.locals.size())
             debugInfo->invalidate(builder,
                                   static_cast<std::size_t>(n.place.root),
                                   n.span, n.scope);
           break;
+        }
         case ir::Op::ScopeExit:
           frame.scopeExit(n.number);
           if (debugInfo)

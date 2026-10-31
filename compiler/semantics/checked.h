@@ -63,6 +63,7 @@ struct NodeFacts {
   std::string text;
   Type unsizedSource = Type::Unknown;
   Type unsizedCount = Type::Unknown;
+  Type ownerUnsizeSource = Type::Unknown;
   Type reborrowSource = Type::Unknown;
   unsigned dereferences = 0;
   std::optional<Place> place;

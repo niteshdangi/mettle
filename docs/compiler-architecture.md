@@ -64,9 +64,18 @@ handles. Expression constructors and `weak owner` use ordinary checked library
 calls, so allocator defaults, methods, dereference projections and destruction
 remain library-owned. The loader mounts `alloc` for reserved owner syntax and
 reports a structured feature diagnostic when that library is unavailable.
-Unsized owner payloads remain unsupported because the current owner
-implementations require sized payloads; they receive a specific feature
-diagnostic. This syntax mapping is implemented but unverified (not yet built).
+`Box<T: unsized>` supports ownership-preserving coercion from a sized array
+owner to a slice owner and from a sized concrete owner to an erased-interface
+owner. `OwnerUnsize` transfers the original allocation and allocator while
+attaching slice-count or witness metadata; it never reallocates. Dynamic
+`size_of_val`/`align_of_val` and drop use that metadata, and erased witness
+tables carry size, alignment and a specialized drop callback. The `Box` path is
+implemented but unverified (not yet built). Unsized `Text` construction remains
+unsupported because accepting arbitrary bytes would bypass `Text`'s UTF-8
+validity invariant. Unsized `Arc`, `Rc` and `Weak` remain unsupported: their
+current allocations store the payload inline and need a metadata-aware,
+correctly aligned header/payload layout and matching weak deallocation path.
+Droppable structural unsized tails also remain unsupported.
 
 Semantic checking produces a move-only checked module that owns the parsed
 module plus resolved facts. Facts are indexed by stable node addresses within
@@ -562,11 +571,12 @@ where the inventory lists open items.
 Compiler erasure also admits pinned `Future.poll` dispatch through
 `any Future<Output = T>` when the associated output is fixed; this addition is
 implemented, unverified (not yet built). It is borrowed interface dispatch, not
-an owning erased value. `alloc.future.Erased<T>` remains the explicit heap owner
-for `Static` futures, using typed poll/release callbacks. `Box<any Future>` and
-erased async-interface returns remain unsupported: the former needs the
-unimplemented unsized-owner/drop path, and the latter needs an explicit
-future-storage contract in the source interface.
+an owning erased value. `alloc.future.Erased<T>` remains the tested explicit
+heap owner for `Static` futures, using typed poll/release callbacks.
+`Box<any Future>` now uses the general heap-unsizing and dynamic-drop path, but
+has not been validated by a dedicated fixture. Erased async-interface returns
+remain unsupported until the source interface has an explicit future-storage
+contract.
 
 The shared interfaces must be implemented together, not enabled one at a time
 for source programs:
