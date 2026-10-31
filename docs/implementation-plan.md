@@ -1655,11 +1655,18 @@ dependencies, including the `package.<dependency>` root; a private macro found
 through another module path is rejected in the name phase. Qualified lookup
 preserves the definition module as the hygiene context. The inline namespace,
 cross-module public invocation, private-access diagnostic and package fixtures
-are implemented, unverified (not yet built). Explicit macro imports,
-macro reexports and restricted `pub(path)` access remain unimplemented, so
-L055 is not closed. Arguments are expanded eagerly; the macro specifications do
-not require lazy argument expansion. Do not treat this work as verified until
-the fixtures and applicable compiler checks pass.
+are implemented, unverified (not yet built). Restricted macro visibility and
+package-relative item visibility boundaries, explicit and grouped macro
+imports, macro reexports, and macro namespace-aware import ambiguity have
+implementation and source/package fixtures. These additions are implemented,
+unverified (not yet built). `pub import` reexports macros; a private import
+does not. Macro declarations remain syntax-only in the AST, with visibility
+and resolved bindings represented in compiler side tables. Package and
+cross-file cases still need qualification, so L055 closure is pending
+orchestrator validation.
+Arguments are expanded eagerly; the macro specifications do not require lazy
+argument expansion. Do not treat this work as verified until the fixtures and
+applicable compiler checks pass.
 L056 (procedural macros): implemented and verified on macOS arm64 (tests `procedural_macro`, `procedural_macro_failure`). `[macros.NAME] source/api` in `Mettle.toml`, host-program build and run per invocation (`driver/procedural.cpp`), a versioned line-based token request/response (`expansion/procedural.{h,cpp}`, library side `std.macros`), output re-lexed and attributed to the invocation, failures as `macro` diagnostics, reuse only under a `reproducible` contract with declared files/environment (undeclared inputs rerun) and the response text part of the consumer's build key. Evidence to produce: `tests/packages.py` `procedural_macro` and `procedural_macro_failure`. Known gaps: macros are graph-global (no per-package namespace), no attribute/derive procedural macros, no definition-site/fresh identity constructors or per-token error spans, tokens are exposed as text (see tooling-and-packages, Procedural macros).
 | I10 | S005, S018-S023 |
 | I11 | L052-L053, S030 |

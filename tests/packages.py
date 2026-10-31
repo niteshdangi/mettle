@@ -116,6 +116,20 @@ def path_dependency():
     invoke(["check", app, "--locked"])
 
 
+def restricted_dependency_visibility():
+    app = packages("path-dependency/app")
+    library = packages("path-dependency/units/src/lib.mt")
+    library.write_text("pub(package) fn secret(): i32 { 21 }\n"
+                       "pub fn base(): i32 { secret() }\n")
+    build_and_run(app)
+    main = app / "src/main.mt"
+    main.write_text("import units.secret\nfn main(): i32 { secret() }\n")
+    text = invoke(["check", app], 1,
+                  ["error[name]", "unresolved, inaccessible, ambiguous or "
+                   "cyclic import"])
+    assert re.search(r"main\.mt:1:1", text), text
+
+
 def missing_lock_locked():
     app = packages("path-dependency/app")
     invoke(["check", app, "--locked"], 1, "Mettle.lock")
@@ -540,9 +554,15 @@ def public_declarative_macro_dependency():
         '[package]\nname = "units"\nversion = "0.1.0"\n'
         'language = "mettle-1"\n')
     (app / "src/main.mt").write_text(
-        "fn main(): i32 { package.units.value!() - 42 }\n")
+        "import package.units.value\n"
+        "fn main(): i32 { value!() - 42 }\n")
     (dependency / "src/lib.mt").write_text(
-        "pub macro value {\n    () => { 42 };\n}\n")
+        "module macros {\n"
+        "    pub macro value {\n"
+        "        () => { 42 };\n"
+        "    }\n"
+        "}\n"
+        "pub import macros.value\n")
     build_and_run(app)
 
 
@@ -1490,7 +1510,8 @@ def test_json_timeout_and_modules():
     ), doctests
 
 
-CASES = [path_dependency, missing_lock_locked, lock_corruption,
+CASES = [path_dependency, restricted_dependency_visibility,
+         missing_lock_locked, lock_corruption,
          registry_resolution, version_conflict, backtracking, offline, features,
          coexisting_versions, git_source, host_target_separation,
          manifest_diagnostics, package_options_need_package, incremental_reuse,

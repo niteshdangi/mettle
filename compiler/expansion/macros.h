@@ -18,7 +18,8 @@ struct MacroModuleSource {
   std::vector<std::string> sourcePath;
 };
 using MacroModuleProvider = std::function<std::optional<MacroModuleSource>(
-    const std::vector<std::string> &path)>;
+    const std::vector<std::string> &path,
+    const std::vector<std::string> &from)>;
 
 // Expands the declarative macros of one source before it is parsed.
 //
@@ -29,9 +30,10 @@ using MacroModuleProvider = std::function<std::optional<MacroModuleSource>(
 // Definitions are lexically inline-module-scoped within this source and order
 // independent. An invocation `name!(...)` (also `[...]` and `{...}`) selects
 // the first rule whose matcher recognizes the argument tokens; short and full
-// fragment-kind spellings are accepted. Explicit macro imports and reexports
-// are not resolved. A qualified invocation can resolve a public macro from an
-// external module through the loader-supplied provider.
+// fragment-kind spellings are accepted. Explicit imports bind macros in their
+// separate namespace, and public imports reexport them. A qualified invocation
+// can resolve a macro from an external module through the loader-supplied
+// provider, subject to its visibility boundary.
 // Structured fragments must parse with the native parser. Template-local
 // bindings, including match-arm pattern bindings, are renamed per expansion;
 // `$capture(name)` deliberately names an invocation-context identifier.
@@ -48,16 +50,20 @@ using MacroModuleProvider = std::function<std::optional<MacroModuleSource>(
 // `macro` diagnostic at the invocation. A lexically visible declarative macro
 // of the same name takes precedence.
 //
-// Returns nullopt when the source has no local or qualified macro invocation,
-// no procedural macro, or does not lex (the parser then reports it); otherwise
-// the generated source, which keeps the original path. Its registered
-// provenance maps every generated token back to the template or argument token
-// it came from, with the invocation as the origin, and unchanged text exactly,
-// so diagnostics keep their positions.
+// `declarations`, when supplied, receives the syntax-only declarations removed
+// from this source so name resolution can build their macro namespace.
+// Returns nullopt when the source has no local, imported or qualified macro
+// invocation, no procedural macro, or does not lex (the parser then reports
+// it); otherwise the generated source, which keeps the original path. Its
+// registered provenance maps every generated token back to the template or
+// argument token it came from, with the invocation as the origin, and unchanged
+// text exactly, so diagnostics keep their positions.
 std::optional<Source> expandMacros(const Source &source,
                                    Diagnostics &diagnostics,
                                    const SourceAllocator &allocate,
                                    const Procedures *procedural = nullptr,
                                    std::vector<std::string> modulePath = {},
-                                   const MacroModuleProvider &modules = {});
+                                   const MacroModuleProvider &modules = {},
+                                   std::vector<Module::MacroDeclaration>
+                                       *declarations = nullptr);
 } // namespace mettle::expansion

@@ -111,8 +111,9 @@ resolution::Namespace itemNamespace(documentation::Kind kind) {
     return resolution::Namespace::Type;
   case Kind::Module:
     return resolution::Namespace::Module;
-  case Kind::Implementation:
   case Kind::Macro:
+    return resolution::Namespace::Macro;
+  case Kind::Implementation:
     return resolution::Namespace::Value;
   }
   return resolution::Namespace::Value;
@@ -366,7 +367,7 @@ int document(const Options &options) {
       std::set<std::string> matches;
       for (auto space :
            {resolution::Namespace::Type, resolution::Namespace::Value,
-            resolution::Namespace::Module})
+            resolution::Namespace::Module, resolution::Namespace::Macro})
         if (auto resolved =
                 names->lookup(scope, canonicalPath, space, span, nullptr))
           matches.insert(*resolved);
