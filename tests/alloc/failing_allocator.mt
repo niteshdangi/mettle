@@ -129,6 +129,43 @@ fn main(): i32 {
         success(_) => { return 6 },
         failure(_) => {}
     }
+    match capture alloc.boxed.try_new_uninit_in<i32, Limited>(b) {
+        success(_) => { return 33 },
+        failure(_) => {}
+    }
+    match capture alloc.boxed.try_new_zeroed_in<i32, Limited>(b) {
+        success(_) => { return 34 },
+        failure(_) => {}
+    }
+    match capture alloc.rc.try_new_uninit_in<i32, Limited>(b) {
+        success(_) => { return 35 },
+        failure(_) => {}
+    }
+    match capture alloc.rc.try_new_zeroed_in<i32, Limited>(b) {
+        success(_) => { return 36 },
+        failure(_) => {}
+    }
+    match capture alloc.rc.try_new_cyclic_in<i32, Limited>(
+        b, take fn(w: read alloc.rc.Weak<i32>): i32 { 1 }
+    ) {
+        success(_) => { return 37 },
+        failure(_) => {}
+    }
+    match capture alloc.arc.try_new_uninit_in<i32, Limited>(b) {
+        success(_) => { return 38 },
+        failure(_) => {}
+    }
+    match capture alloc.arc.try_new_zeroed_in<i32, Limited>(b) {
+        success(_) => { return 39 },
+        failure(_) => {}
+    }
+    match capture alloc.arc.try_new_cyclic_in<i32, Limited>(
+        b, take fn(w: read alloc.arc.Weak<i32>): i32 { 1 }
+    ) {
+        success(_) => { return 40 },
+        failure(_) => {}
+    }
+    if live2 != 0 { return 41 }
     var m = alloc.hash_map.new_in<i32, i32, Limited>(
         Limited(core.ptr.from_mut(budget2), core.ptr.from_mut(live2),
                 core.ptr.from_mut(alignment_errors))

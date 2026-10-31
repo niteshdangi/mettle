@@ -34,6 +34,40 @@ pub fn new_in<T, A: Allocator>(value: take T, allocator: take A): Box<T, A> {
 pub fn try_new<T>(value: take T): Box<T> throws AllocError { try try_new_in(value, Global()) }
 pub fn new<T>(value: take T): Box<T> { new_in(value, Global()) }
 
+pub fn try_new_uninit_in<T, A: Allocator>(
+    allocator: take A
+): Box<core.mem.MaybeUninit<T>, A> throws AllocError {
+    try_new_in(core.mem.MaybeUninit<T>.uninit(), allocator)
+}
+pub fn new_uninit_in<T, A: Allocator>(allocator: take A): Box<core.mem.MaybeUninit<T>, A> {
+    let result = capture try_new_uninit_in<T, A>(allocator)
+    match take result {
+        success(owner) => owner,
+        failure(_) => handle_alloc_error(layout_of<T>())
+    }
+}
+pub fn try_new_uninit<T>(): Box<core.mem.MaybeUninit<T>> throws AllocError {
+    try try_new_uninit_in<T, Global>(Global())
+}
+pub fn new_uninit<T>(): Box<core.mem.MaybeUninit<T>> { new_uninit_in<T, Global>(Global()) }
+
+pub fn try_new_zeroed_in<T, A: Allocator>(
+    allocator: take A
+): Box<core.mem.MaybeUninit<T>, A> throws AllocError {
+    try_new_in(core.mem.MaybeUninit<T>.zeroed(), allocator)
+}
+pub fn new_zeroed_in<T, A: Allocator>(allocator: take A): Box<core.mem.MaybeUninit<T>, A> {
+    let result = capture try_new_zeroed_in<T, A>(allocator)
+    match take result {
+        success(owner) => owner,
+        failure(_) => handle_alloc_error(layout_of<T>())
+    }
+}
+pub fn try_new_zeroed<T>(): Box<core.mem.MaybeUninit<T>> throws AllocError {
+    try try_new_zeroed_in<T, Global>(Global())
+}
+pub fn new_zeroed<T>(): Box<core.mem.MaybeUninit<T>> { new_zeroed_in<T, Global>(Global()) }
+
 extend<T: unsized, A: Allocator> Box<T, A> {
     pub fn get(): read T from self { unsafe { read *self.p } }
     pub mut fn get_mut(): mut T from self { unsafe { mut *self.p } }
@@ -48,6 +82,20 @@ extend<T: unsized, A: Allocator> Box<T, A> {
             core.mem.forget(take self)
             (p, a)
         }
+    }
+    // The allocator is intentionally retained with the leaked allocation.
+    pub take fn leak(): ptr<mut T> {
+        let p = self.p
+        core.mem.forget(take self)
+        p
+    }
+}
+
+extend<T, A: Allocator> Box<core.mem.MaybeUninit<T>, A> {
+    // Safety: the caller initialized the payload before taking ownership as T.
+    pub take unsafe fn assume_init(): Box<T, A> {
+        let raw = self.into_raw()
+        unsafe { from_raw_in(raw.0.cast<T>(), raw.1) }
     }
 }
 
@@ -68,6 +116,7 @@ extend<T, A: Allocator> Box<T, A> {
 // Safety: `p` came from `into_raw` (or an equivalent allocation of the
 // dynamic layout of `T` by `a`) and holds an initialized `T`.
 pub unsafe fn from_raw_in<T: unsized, A: Allocator>(p: ptr<mut T>, a: take A): Box<T, A> { Box(p, a) }
+pub unsafe fn from_raw<T: unsized>(p: ptr<mut T>): Box<T> { Box(p, Global()) }
 
 
 // A box is transparent: comparison, hashing and formatting delegate to the payload.

@@ -1,4 +1,4 @@
-import package.core.iter.{Iterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import package.core.iter.{Iterator, BidirectionalIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
 import package.core.clone.Clone
 import package.core.default.Default
 import package.core.cmp.Eq
@@ -30,6 +30,49 @@ pub type Map<K, V, A: Allocator = Global> {
             let layout = unsafe { layout_unchecked(self.icap * 8usize, 8usize) }
             unsafe { self.entries.allocator_mut().deallocate(self.idx.cast<u8>(), layout) }
         }
+    }
+}
+
+pub type MapDrain<region r, K, V, A: Allocator> {
+    inner: super.vec.Drain<region r, Bucket<K, V>, A>
+}
+extend<region r, K, V, A: Allocator> MapDrain<region r, K, V, A> implements Iterator {
+    type Item = (K, V)
+    mut fn next(): (K, V)? {
+        match take self.inner.next() {
+            present(entry) => present((entry.key, entry.value)),
+            none => none
+        }
+    }
+}
+extend<region r, K, V, A: Allocator> MapDrain<region r, K, V, A> implements BidirectionalIterator {
+    mut fn next_back(): (K, V)? {
+        match take self.inner.next_back() {
+            present(entry) => present((entry.key, entry.value)),
+            none => none
+        }
+    }
+}
+
+pub type ExtractIf<region r, K, V, A: Allocator, F> {
+    map: mut Map<K, V, A> from r
+    predicate: F
+    index: usize
+}
+extend<region r, K: Hash + PartialEq, V, A: Allocator, F: fn(read K, mut V): bool>
+    ExtractIf<region r, K, V, A, F> implements Iterator {
+    type Item = (K, V)
+    mut fn next(): (K, V)? {
+        while self.index < self.map.entries.len() {
+            let index = self.index
+            let entry = unsafe { self.map.entries.as_mut_ptr().add(index) }
+            let matches = self.predicate(unsafe { read (*entry).key }, unsafe { mut (*entry).value })
+            if matches {
+                return present(self.map.remove_index(index))
+            }
+            self.index += 1usize
+        }
+        none
     }
 }
 
@@ -197,6 +240,34 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
         }
         self.entries.shrink_to_fit()
     }
+    pub mut fn shrink_to(min_capacity: usize): Unit {
+        let old_capacity = self.capacity()
+        if old_capacity <= min_capacity { return () }
+        let wanted = if min_capacity > self.entries.len() { min_capacity } else { self.entries.len() }
+        var target = 0usize
+        if wanted != 0usize {
+            target = 8usize
+            while wanted > target - target / 4usize {
+                if target > 0x7fffffffffffffffusize / 2usize { return () }
+                target *= 2usize
+            }
+        }
+        if target == 0usize && self.icap != 0usize {
+            let old = unsafe { layout_unchecked(self.icap * 8usize, 8usize) }
+            unsafe { self.entries.allocator_mut().deallocate(self.idx.cast<u8>(), old) }
+            self.idx = core.ptr.null_mut<usize>()
+            self.icap = 0usize
+        } else if target < self.icap {
+            match capture self.rebuild(target) {
+                success(_) => (),
+                failure(_) => ()
+            }
+        }
+        self.entries.shrink_to_fit()
+        if self.entries.capacity() < min_capacity {
+            self.entries.reserve(min_capacity - self.entries.len())
+        }
+    }
 
     // Lookups take a borrowed query `Q` that the stored key views as (a
     // `String` key is searched with a `Text`); equal keys and queries must hash
@@ -210,11 +281,62 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
             none => none
         }
     }
+    pub fn get_key_value<Q: Hash + PartialEq + unsized>(key: read Q): (read K from self, read V from self)? where K: KeyView<Q> {
+        match self.find_entry(key) {
+            present(s) => match self.entries.get(s) {
+                present(e) => present((read e.key, read e.value)),
+                none => none
+            },
+            none => none
+        }
+    }
     pub mut fn get_mut<Q: Hash + PartialEq + unsized>(key: read Q): (mut V from self)? where K: KeyView<Q> {
         match self.find_entry(key) {
             present(s) => present(unsafe { mut (*self.entries.as_mut_ptr().add(s)).value }),
             none => none
         }
+    }
+    pub mut fn get_disjoint_mut<Q: Hash + PartialEq + unsized, R: Hash + PartialEq + unsized>(
+        first: read Q,
+        second: read R
+    ): (mut V from self, mut V from self)? where K: KeyView<Q> + KeyView<R> {
+        let first_index = self.find_entry(first)
+        let second_index = self.find_entry(second)
+        match first_index {
+            present(i) => match second_index {
+                present(j) => {
+                    if i == j { return none }
+                    let entries = self.entries.as_mut_ptr()
+                    present((
+                        unsafe { mut (*entries.add(i)).value },
+                        unsafe { mut (*entries.add(j)).value }
+                    ))
+                },
+                none => none
+            },
+            none => none
+        }
+    }
+    pub mut unsafe fn get_disjoint_unchecked_mut<Q: Hash + PartialEq + unsized, R: Hash + PartialEq + unsized>(
+        first: read Q,
+        second: read R
+    ): (mut V from self, mut V from self) where K: KeyView<Q> + KeyView<R> {
+        let i = match self.find_entry(first) {
+            present(index) => index,
+            none => package.core.panic.unreachable()
+        }
+        let j = match self.find_entry(second) {
+            present(index) => index,
+            none => package.core.panic.unreachable()
+        }
+        if i == j { package.core.panic.unreachable() }
+        let entries = self.entries.as_mut_ptr()
+        (mut (*entries.add(i)).value, mut (*entries.add(j)).value)
+    }
+    pub mut fn extract_if<F: fn(read K, mut V): bool>(
+        predicate: take F
+    ): ExtractIf<region self, K, V, A, F> {
+        ExtractIf(mut self, predicate, 0usize)
     }
 
     // Inserts or replaces; a replaced value is returned. On allocation failure
@@ -259,10 +381,7 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
         unsafe { mut (*self.entries.as_mut_ptr().add(s)).value }
     }
 
-    pub mut fn remove_entry<Q: Hash + PartialEq + unsized>(key: read Q): (K, V)? where K: KeyView<Q> {
-        let hash = hash_of(key)
-        let pos = match self.find_pos(hash, key) { present(p) => p, none => { return none } }
-        let s = self.slot(pos)
+    mut fn remove_at(s: usize, pos: usize): (K, V) {
         let mask = self.icap - 1usize
         var hole = pos
         var j = (pos + 1usize) & mask
@@ -285,7 +404,26 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
             self.set_slot(p, s)
         }
         let b = self.entries.swap_remove(s)
-        present((b.key, b.value))
+        (b.key, b.value)
+    }
+    mut fn remove_index(s: usize): (K, V) {
+        let hash = match self.entries.get(s) {
+            present(entry) => entry.hash,
+            none => package.core.panic.unreachable()
+        }
+        let mask = self.icap - 1usize
+        var pos = (hash as usize) & mask
+        while self.slot(pos) != s {
+            if self.slot(pos) == empty() { package.core.panic.unreachable() }
+            pos = (pos + 1usize) & mask
+        }
+        self.remove_at(s, pos)
+    }
+    pub mut fn remove_entry<Q: Hash + PartialEq + unsized>(key: read Q): (K, V)? where K: KeyView<Q> {
+        let hash = hash_of(key)
+        let pos = match self.find_pos(hash, key) { present(p) => p, none => { return none } }
+        let s = self.slot(pos)
+        present(self.remove_at(s, pos))
     }
     pub mut fn remove<Q: Hash + PartialEq + unsized>(key: read Q): V? where K: KeyView<Q> {
         match take self.remove_entry(key) {
@@ -301,6 +439,16 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
             i += 1usize
         }
         self.entries.clear()
+    }
+
+    pub mut fn drain(): MapDrain<region self, K, V, A> {
+        var i = 0usize
+        while i < self.icap {
+            self.set_slot(i, empty())
+            i += 1usize
+        }
+        let count = self.entries.len()
+        MapDrain(self.entries.drain(0usize, count))
     }
 }
 
@@ -341,6 +489,7 @@ extend<K: Hash + PartialEq, A: Allocator> Set<K, A> {
     pub mut fn reserve(extra: usize): Unit { self.map.reserve(extra) }
     pub mut fn reserve_exact(extra: usize): Unit { self.map.reserve_exact(extra) }
     pub mut fn shrink_to_fit(): Unit { self.map.shrink_to_fit() }
+    pub mut fn shrink_to(min_capacity: usize): Unit { self.map.shrink_to(min_capacity) }
     pub fn contains<Q: Hash + PartialEq + unsized>(key: read Q): bool where K: KeyView<Q> { self.map.contains_key(key) }
     pub fn get<Q: Hash + PartialEq + unsized>(key: read Q): (read K from self)? where K: KeyView<Q> {
         match self.map.find_entry(key) {
@@ -369,6 +518,145 @@ extend<K: Hash + PartialEq, A: Allocator> Set<K, A> {
     }
     pub mut fn clear(): Unit { self.map.clear() }
     pub fn as_entries(): read [Bucket<K, Unit>] from self { self.map.as_entries() }
+}
+
+pub type SetDrain<region r, K, A: Allocator> {
+    inner: MapDrain<region r, K, Unit, A>
+}
+extend<region r, K, A: Allocator> SetDrain<region r, K, A> implements Iterator {
+    type Item = K
+    mut fn next(): K? {
+        match take self.inner.next() {
+            present(entry) => present(entry.0),
+            none => none
+        }
+    }
+}
+extend<region r, K, A: Allocator> SetDrain<region r, K, A> implements BidirectionalIterator {
+    mut fn next_back(): K? {
+        match take self.inner.next_back() {
+            present(entry) => present(entry.0),
+            none => none
+        }
+    }
+}
+
+pub type SetExtractIf<region r, K, A: Allocator, F> {
+    set: mut Set<K, A> from r
+    predicate: F
+    index: usize
+}
+extend<region r, K: Hash + PartialEq, A: Allocator, F: fn(read K): bool>
+    SetExtractIf<region r, K, A, F> implements Iterator {
+    type Item = K
+    mut fn next(): K? {
+        while self.index < self.set.map.entries.len() {
+            let index = self.index
+            let entry = unsafe { self.set.map.entries.as_mut_ptr().add(index) }
+            if self.predicate(unsafe { read (*entry).key }) {
+                return present(self.set.map.remove_index(index).0)
+            }
+            self.index += 1usize
+        }
+        none
+    }
+}
+
+// Each algebra iterator scans the left set first, then the right set when its
+// operation needs right-only elements. Set iteration order remains unspecified.
+pub type SetAlgebra<region r, K, A: Allocator> {
+    left: read Set<K, A> from r
+    right: read Set<K, A> from r
+    mode: u8
+    side: u8
+    index: usize
+}
+extend<region r, K: Hash + PartialEq, A: Allocator> SetAlgebra<region r, K, A> implements Iterator {
+    type Item = read K from r
+    mut fn next(): (read K from r)? {
+        while self.side < 2u8 {
+            if self.mode == 1u8 && self.side == 1u8 { return none }
+            if self.side == 0u8 {
+                if self.index >= self.left.map.entries.len() {
+                    self.side = 1u8
+                    self.index = 0usize
+                    continue
+                }
+                let i = self.index
+                self.index += 1usize
+                let key = read self.left.map.entries[i].key
+                let in_right = match self.right.map.find_entry(key) {
+                    present(_) => true,
+                    none => false
+                }
+                let include = match self.mode {
+                    0u8 => true,
+                    1u8 => in_right,
+                    2u8 => !in_right,
+                    _ => !in_right
+                }
+                if include { return present(read self.left.map.entries[i].key) }
+            } else {
+                if self.index >= self.right.map.entries.len() { return none }
+                let i = self.index
+                self.index += 1usize
+                let key = read self.right.map.entries[i].key
+                let in_left = match self.left.map.find_entry(key) {
+                    present(_) => true,
+                    none => false
+                }
+                if (self.mode == 0u8 || self.mode == 3u8) && !in_left {
+                    return present(read self.right.map.entries[i].key)
+                }
+            }
+        }
+        none
+    }
+}
+
+extend<K: Hash + PartialEq, A: Allocator> Set<K, A> {
+    pub fn `union`(other: read Set<K, A> from self): SetAlgebra<region self, K, A> {
+        SetAlgebra(read self, other, 0u8, 0u8, 0usize)
+    }
+    pub fn intersection(other: read Set<K, A> from self): SetAlgebra<region self, K, A> {
+        SetAlgebra(read self, other, 1u8, 0u8, 0usize)
+    }
+    pub fn difference(other: read Set<K, A> from self): SetAlgebra<region self, K, A> {
+        SetAlgebra(read self, other, 2u8, 0u8, 0usize)
+    }
+    pub fn symmetric_difference(other: read Set<K, A> from self): SetAlgebra<region self, K, A> {
+        SetAlgebra(read self, other, 3u8, 0u8, 0usize)
+    }
+    pub fn is_subset(other: read Set<K, A>): bool {
+        var i = 0usize
+        while i < self.map.entries.len() {
+            if !other.contains(self.map.entries[i].key) { return false }
+            i += 1usize
+        }
+        true
+    }
+    pub fn is_superset(other: read Set<K, A>): bool {
+        var i = 0usize
+        while i < other.map.entries.len() {
+            if !self.contains(other.map.entries[i].key) { return false }
+            i += 1usize
+        }
+        true
+    }
+    pub fn is_disjoint(other: read Set<K, A>): bool {
+        var i = 0usize
+        while i < self.map.entries.len() {
+            if other.contains(self.map.entries[i].key) { return false }
+            i += 1usize
+        }
+        true
+    }
+    pub mut fn drain(): SetDrain<region self, K, A> { SetDrain(self.map.drain()) }
+    pub mut fn extract_if<F: fn(read K): bool>(
+        predicate: take F
+    ): SetExtractIf<region self, K, A, F> {
+        SetExtractIf(mut self, predicate, 0usize)
+    }
 }
 
 
@@ -402,6 +690,31 @@ extend<K, V, A: Allocator> Map<K, V, A> implements OwnedIterable {
     type IntoIter = MapIntoIter<K, V, A>
     fn into_iter(receiver self: take Self): MapIntoIter<K, V, A> {
         MapIntoIter(take self)
+    }
+}
+
+extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
+    pub take fn into_keys(): IntoKeys<K, V, A> { IntoKeys(self.into_iter()) }
+    pub take fn into_values(): IntoValues<K, V, A> { IntoValues(self.into_iter()) }
+}
+pub type IntoKeys<K, V, A: Allocator> { inner: MapIntoIter<K, V, A> }
+extend<K, V, A: Allocator> IntoKeys<K, V, A> implements Iterator {
+    type Item = K
+    mut fn next(): K? {
+        match take self.inner.next() {
+            present(entry) => present(entry.0),
+            none => none
+        }
+    }
+}
+pub type IntoValues<K, V, A: Allocator> { inner: MapIntoIter<K, V, A> }
+extend<K, V, A: Allocator> IntoValues<K, V, A> implements Iterator {
+    type Item = V
+    mut fn next(): V? {
+        match take self.inner.next() {
+            present(entry) => present(entry.1),
+            none => none
+        }
     }
 }
 
@@ -585,7 +898,6 @@ unsafe extend<K: Shareable, V: Shareable, A: Allocator + Shareable> Map<K, V, A>
 // The occupied index remains valid because the loan excludes map mutation.
 pub type OccupiedEntry<region r, K, V, A: Allocator = Global> {
     map: mut Map<K, V, A> from r
-    key: K
     index: usize
 }
 pub type VacantEntry<region r, K, V, A: Allocator = Global> {
@@ -600,13 +912,14 @@ pub enum Entry<region r, K, V, A: Allocator = Global> {
 extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
     pub mut fn entry(key: take K): Entry<region self, K, V, A> {
         match self.find_entry(key) {
-            present(index) => Entry.Occupied(OccupiedEntry(mut self, key, index)),
+            present(index) => Entry.Occupied(OccupiedEntry(mut self, index)),
             none => Entry.Vacant(VacantEntry(mut self, key))
         }
     }
 }
 
 extend<region r, K: Hash + PartialEq, V, A: Allocator> OccupiedEntry<region r, K, V, A> {
+    pub fn key(): read K from self { read self.map.entries[self.index].key }
     pub fn get(): read V from self { read self.map.entries[self.index].value }
     // The exclusive map loan preserves this initialized index; the returned
     // view cannot outlive this reborrow of the entry.
@@ -621,10 +934,7 @@ extend<region r, K: Hash + PartialEq, V, A: Allocator> OccupiedEntry<region r, K
         unsafe { mut (*self.map.entries.as_mut_ptr().add(self.index)).value }
     }
     pub take fn remove(): V {
-        match take self.map.remove(read self.key) {
-            present(value) => value,
-            none => package.core.panic.unreachable()
-        }
+        self.map.remove_index(self.index).1
     }
 }
 
@@ -649,6 +959,25 @@ extend<region r, K: Hash + PartialEq, V, A: Allocator> Entry<region r, K, V, A> 
         match take self {
             Entry.Occupied(entry) => entry.into_mut(),
             Entry.Vacant(entry) => entry.insert(make())
+        }
+    }
+    pub take fn or_insert_with_key<F: take fn(read K): V>(make: take F): mut V from r {
+        match take self {
+            Entry.Occupied(entry) => entry.into_mut(),
+            Entry.Vacant(entry) => entry.insert(make(read entry.key))
+        }
+    }
+    pub take fn insert_entry(value: take V): OccupiedEntry<region r, K, V, A> {
+        match take self {
+            Entry.Occupied(entry) => {
+                let _old = entry.insert(value)
+                entry
+            },
+            Entry.Vacant(entry) => {
+                let index = entry.map.entries.len()
+                let _old = entry.map.insert(entry.key, value)
+                OccupiedEntry(mut entry.map, index)
+            }
         }
     }
     pub take fn and_modify<F: take fn(mut V): Unit>(modify: take F): Entry<region r, K, V, A> {

@@ -5,9 +5,55 @@ import package.core.slice.SliceIter
 import super.alloc.{Allocator, Global, AllocError, PushError}
 import super.vec.List
 import package.core.cmp.Ord
+import package.core.ops.{Deref, DerefMut}
 
 // Max-heap on a `List`.
 pub type BinaryHeap<T, A: Allocator = Global> { data: List<T, A> }
+pub type PeekMut<region r, T: Ord, A: Allocator> {
+    queue: mut BinaryHeap<T, A> from r
+    drop { sift_down(mut self.queue) }
+}
+
+fn sift_down<T: Ord, A: Allocator>(queue: mut BinaryHeap<T, A>): Unit {
+    let n = queue.data.len()
+    if n < 2usize { return () }
+    // Compare first so a panicking comparison does not leave a partial sift.
+    var path = [0usize; 64]
+    var depth = 0usize
+    var node = 0usize
+    while true {
+        let left = node * 2usize + 1usize
+        if left >= n { break }
+        var child = left
+        if left + 1usize < n && queue.data[left + 1usize].cmp(queue.data[left]).is_gt() {
+            child = left + 1usize
+        }
+        if queue.data[child].cmp(queue.data[0usize]).is_gt() {
+            path[depth] = child
+            depth += 1usize
+            node = child
+        } else {
+            break
+        }
+    }
+    node = 0usize
+    var i = 0usize
+    while i < depth {
+        let child = path[i]
+        queue.data.swap(node, child)
+        node = child
+        i += 1usize
+    }
+}
+
+extend<region r, T: Ord, A: Allocator> PeekMut<region r, T, A> implements Deref {
+    type Target = T
+    fn deref(): read T from self { unsafe { read *self.queue.data.as_ptr() } }
+}
+extend<region r, T: Ord, A: Allocator> PeekMut<region r, T, A> implements DerefMut {
+    type Target = T
+    mut fn deref_mut(): mut T from self { unsafe { mut *self.queue.data.as_mut_ptr() } }
+}
 
 pub fn new_in<T, A: Allocator>(a: take A): BinaryHeap<T, A> { BinaryHeap(super.vec.new_in<T, A>(a)) }
 pub fn new<T>(): BinaryHeap<T> { new_in(Global()) }
@@ -37,10 +83,20 @@ extend<T, A: Allocator> BinaryHeap<T, A> {
         self.data.reserve_exact(additional)
     }
     pub mut fn shrink_to_fit(): Unit { self.data.shrink_to_fit() }
+    pub mut fn shrink_to(min_capacity: usize): Unit {
+        let len = self.data.len()
+        let capacity = self.data.capacity()
+        if min_capacity > len || min_capacity >= capacity { return () }
+        self.data.shrink_to_fit()
+    }
 }
 
 extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
     pub fn peek(): (read T from self)? { self.data.get(0usize) }
+    pub mut fn peek_mut(): PeekMut<region self, T, A>? {
+        if self.data.is_empty() { return none }
+        present(PeekMut(mut self))
+    }
     pub fn as_slice(): read [T] from self { self.data.as_slice() }
 
     // Compare the full path before changing the heap. If Ord panics, the
@@ -112,6 +168,10 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
         top
     }
     pub mut fn clear(): Unit { self.data.clear() }
+    pub mut fn drain(): super.vec.Drain<region self, T, A> {
+        let count = self.data.len()
+        self.data.drain(0usize, count)
+    }
 
     pub take fn into_sorted_vec(): List<T, A> {
         var out = self.into_vec()
