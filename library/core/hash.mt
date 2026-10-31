@@ -29,13 +29,8 @@ pub interface Hasher {
         self.write(read bytes)
     }
     mut fn write_u128(value: u128): Unit {
-        var bytes = [0u8; 16]
-        var i = 0usize
-        while i < bytes.len() {
-            bytes[i] = (value >> ((i * 8usize) as u32)) as u8
-            i += 1usize
-        }
-        self.write(read bytes)
+        self.write_u64(value as u64)
+        self.write_u64((value >> 64u128) as u64)
     }
     // Widened so the stream does not depend on the pointer width.
     mut fn write_usize(value: usize): Unit { self.write_u64(value as u64) }

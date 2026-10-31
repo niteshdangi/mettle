@@ -34,16 +34,16 @@ fn main(): i32 {
     for value in take list { list_sum += value }
     if list_sum != 3i32 { return 8 }
 
-    var heap = binary_heap.new<i32>()
-    heap.push(2)
-    heap.push(9)
-    heap.push(4)
-    match heap.pop() {
+    var queue = binary_heap.new<i32>()
+    queue.push(2)
+    queue.push(9)
+    queue.push(4)
+    match queue.pop() {
         present(value) => { if value != 9 { return 9 } },
         none => { return 10 }
     }
     var heap_sum = 0i32
-    for value in take heap { heap_sum += value }
+    for value in take queue { heap_sum += value }
     if heap_sum != 6i32 { return 11 }
     0
 }

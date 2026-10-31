@@ -296,7 +296,7 @@ pub type MapIntoIter<K, V, A: Allocator = Global> { map: Map<K, V, A> }
 extend<K, V, A: Allocator> MapIntoIter<K, V, A> implements Iterator {
     type Item = (K, V)
     mut fn next(): (K, V)? {
-        match self.map.entries.pop() {
+        match take self.map.entries.pop() {
             present(entry) => present((entry.key, entry.value)),
             none => none
         }

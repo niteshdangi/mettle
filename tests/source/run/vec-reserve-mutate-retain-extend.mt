@@ -1,4 +1,5 @@
 import alloc.vec
+import core.iter.ExtendItems
 
 fn main(): i32 {
     var values = vec.new<i32>()

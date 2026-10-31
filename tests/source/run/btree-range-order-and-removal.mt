@@ -5,7 +5,9 @@ fn main(): i32 {
     var map = btree.new<i32, i32>()
     var key = 40i32
     while key > 0i32 {
-        let old = map.insert(key, key * 2i32)
+        let doubled = key * 2i32
+        let current = key
+        let old = map.insert(current, doubled)
         key -= 1i32
     }
 
