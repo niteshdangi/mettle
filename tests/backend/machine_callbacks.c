@@ -96,9 +96,36 @@ struct MettleDarwinHfa3 {
   double second;
   double third;
 };
+struct MettleDarwinHfa1 {
+  double first;
+};
+struct MettleDarwinHfa2 {
+  double first;
+  double second;
+};
+struct MettleDarwinHfa4 {
+  double first;
+  double second;
+  double third;
+  double fourth;
+};
 struct MettleDarwinHva2 {
   MettleMachineVector first;
   MettleMachineVector second;
+};
+struct MettleDarwinHva1 {
+  MettleMachineVector first;
+};
+struct MettleDarwinHva3 {
+  MettleMachineVector first;
+  MettleMachineVector second;
+  MettleMachineVector third;
+};
+struct MettleDarwinHva4 {
+  MettleMachineVector first;
+  MettleMachineVector second;
+  MettleMachineVector third;
+  MettleMachineVector fourth;
 };
 struct MettleDarwinLayoutLeaf {
   uint8_t tag;
@@ -119,6 +146,35 @@ struct MettleDarwinHfa3 mettle_c_darwin_hfa(struct MettleDarwinHfa3 value) {
   value.third += 1.0;
   return value;
 }
+struct MettleDarwinHfa1
+mettle_c_darwin_hfa1(struct MettleDarwinHfa1 value) {
+  value.first += 1.0;
+  return value;
+}
+struct MettleDarwinHfa2
+mettle_c_darwin_hfa2(struct MettleDarwinHfa2 value) {
+  value.first += 1.0;
+  value.second += 1.0;
+  return value;
+}
+struct MettleDarwinHfa4
+mettle_c_darwin_hfa4(struct MettleDarwinHfa4 value) {
+  value.first += 1.0;
+  value.second += 1.0;
+  value.third += 1.0;
+  value.fourth += 1.0;
+  return value;
+}
+struct MettleDarwinHfa1 mettle_c_darwin_hfa1_callback(
+    struct MettleDarwinHfa1 (*callback)(struct MettleDarwinHfa1),
+    struct MettleDarwinHfa1 value) {
+  return callback(value);
+}
+struct MettleDarwinHva4 mettle_c_darwin_hva4_callback(
+    struct MettleDarwinHva4 (*callback)(struct MettleDarwinHva4),
+    struct MettleDarwinHva4 value) {
+  return callback(value);
+}
 struct MettleDarwinHfa3 mettle_c_darwin_hfa_callback(
     struct MettleDarwinHfa3 (*callback)(struct MettleDarwinHfa3),
     struct MettleDarwinHfa3 value) {
@@ -127,6 +183,26 @@ struct MettleDarwinHfa3 mettle_c_darwin_hfa_callback(
 struct MettleDarwinHva2 mettle_c_darwin_hva(struct MettleDarwinHva2 value) {
   value.first += (MettleMachineVector){1, 1, 1, 1};
   value.second += (MettleMachineVector){2, 2, 2, 2};
+  return value;
+}
+struct MettleDarwinHva1
+mettle_c_darwin_hva1(struct MettleDarwinHva1 value) {
+  value.first += (MettleMachineVector){1, 1, 1, 1};
+  return value;
+}
+struct MettleDarwinHva3
+mettle_c_darwin_hva3(struct MettleDarwinHva3 value) {
+  value.first += (MettleMachineVector){1, 1, 1, 1};
+  value.second += (MettleMachineVector){2, 2, 2, 2};
+  value.third += (MettleMachineVector){3, 3, 3, 3};
+  return value;
+}
+struct MettleDarwinHva4
+mettle_c_darwin_hva4(struct MettleDarwinHva4 value) {
+  value.first += (MettleMachineVector){1, 1, 1, 1};
+  value.second += (MettleMachineVector){2, 2, 2, 2};
+  value.third += (MettleMachineVector){3, 3, 3, 3};
+  value.fourth += (MettleMachineVector){4, 4, 4, 4};
   return value;
 }
 struct MettleDarwinHva2 mettle_c_darwin_hva_callback(
