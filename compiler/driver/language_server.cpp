@@ -8,6 +8,7 @@
 #include <iostream>
 #include <iterator>
 #include <string>
+#include <utility>
 
 namespace mettle::driver {
 int languageServer(int argc, char **argv) {
@@ -35,8 +36,12 @@ int languageServer(int argc, char **argv) {
   configuration.endian = facts.littleEndian ? "little" : "big";
   configuration.pointerWidth = facts.pointerBits;
   configuration.targetFeatures = facts.baseline;
+  resolution::Library native;
+  native.directory = library;
+  native.freestanding = freestanding;
+  native.configuration = configuration;
   lsp::Configuration server{
-      resolution::Library{library, freestanding, {}, configuration},
+      std::move(native),
       [](const std::string &path) -> std::optional<Source> {
         std::error_code error;
         auto canonical = std::filesystem::canonical(path, error);

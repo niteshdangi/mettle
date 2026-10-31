@@ -27,8 +27,8 @@ for them.
 | `syntax` | Tokens, keyword/operator metadata, lexer, parsed AST and parser/recovery | Resolved bindings, inferred types, CFG slots, LLVM |
 | `expansion` | Attribute validation, `@cfg` target/feature predicate evaluation (inactive items are parsed but dropped before resolution), `@derive` generation of ordinary `extend` declarations as separately registered generated sources with span provenance back to the attribute and offending field/variant; test/benchmark collection and harness synthesis (`harness.cpp`: in a test build, the selected package's `@test`/`@bench` functions are recorded with qualified module paths, the root `main` is dropped and Mettle source for a selector-dispatching `main` is generated and loaded beside the root; each test then runs in its own process); declarative macro expansion (`macros.cpp`, token-level, before parsing; the generated source maps every token to its template/argument origin and the invocation) and the procedural-macro protocol (`procedural.{h,cpp}`: versioned request/response encoding and parsing; `macros.cpp` calls an injected host callback, re-lexes its text output and attributes the tokens to the invocation, and never starts a process itself) | Name resolution, type checking, LLVM |
 | `documentation` | `mettle doc` and doctests, verified on macOS arm64: documentation extraction from the lexer's comment tokens (`///` item docs, `//!` module docs, declaration headers as written, visibility filtering, `document.cpp`), reduced markdown blocks (`markdown.cpp`), fenced-example classification and generated `@test` functions (`doctest.cpp`) and deterministic dependency-free HTML (`html.cpp`). Lexical dotted links and a static search index are implemented, unverified (not yet built). | Name resolution, type checking, filesystem I/O, process execution, LLVM |
-| `resolution` | Compilation-local module identities, item/import scopes, visibility and canonical declaration names; source-provider-driven module assembly | Inference, backend types or filesystem I/O |
-| `packages` | Manifest/lock TOML, SemVer requirements, dependency solving with features, checksums, the package build plan (mounts, build scripts and `[macros]` programs handed to the driver) and the content-addressed build store (`store`) | Source parsing, semantics, network access or artifact publication |
+| `resolution` | Scopes and package aliases | Inference, IR, I/O |
+| `packages` | Manifests, solver and store | Parsing, semantics, execution |
 | `types` | Compiler-owned language type identities/operations, target facts and target-layout results | Parsed AST, LLVM types/target machines, toolchain state |
 | `consteval` | Pure target-aware compile-time interpreter over syntax: scalar/aggregate values at the selected target's integer widths, `const fn` calls, control flow, step/depth budgets (`error[limit]`); names and diagnostics come from a host interface | Name resolution, checker state, LLVM, host-width arithmetic |
 | `places` | Function-local storage roots, typed field paths and structural overlap | AST traversal, CFG control flow, mutability/loan policy |
@@ -42,7 +42,7 @@ for them.
 | `pipeline` | Backend-independent compilation entry points and stage ordering, including a read-only observer of the checked module before lowering | CLI parsing, output publication, package downloads |
 | `lsp` | `mettle lsp` language server: JSON-RPC/LSP framing over streams (`server.cpp`), a self-contained JSON reader/writer, UTF-16 position mapping, a token-based declaration/occurrence index that works on incomplete source (`symbols.cpp`) and definition, hover and rename planning over it (`navigation.cpp`); diagnostics come from the real front end (`resolution::load` + `pipeline::compile`) run on in-memory documents | LLVM, file I/O (the host supplies a source provider), process lifetime, checked-IR publication |
 | `backend` | LLVM adapter, target-machine setup, optimization and object emission | Discovering unresolved names/types or deciding ownership |
-| `driver` | CLI, inspection serialization, source loading, build-script and procedural-macro execution (`procedural.cpp`: host build, process run, reproducible-result reuse; `observe.cpp`: declared-input state shared with build scripts), cache-key assembly and lookup, artifact publication and native link invocation, `mettle run`/`test`/`bench` execution (`execute.cpp`: temporary builds, per-test process spawning and optional timeout, human/JSON result reporting, and doctest builds that overlay generated tests on package module sources and judge `compile_fail` examples from captured diagnostics) and `mettle doc` (`document.cpp`: path discovery, parse validation, output files) | Typing, inference, borrow rules or dataflow algorithms |
+| `driver` | CLI, Git, host tools, cache and linking | Semantics |
 
 Components are build/link units, not processes or public plugin APIs. Public
 headers expose the minimum boundary; algorithm context and mutable working state
@@ -747,8 +747,15 @@ integer panic codes. Internal checked-IR catch integration proves cleanup/recove
 it does not implement generic hosted panic APIs or C-unwind interoperability.
 
 Package resolution/build planning (`packages`, planned before compilation and
-handed to the loader as `Library::packages` mounts; failures carry the
-`manifest`, `package`, `lock` or `feature` phase), documentation, formatting and editor protocol
+handed to the loader as source/version/context-specific `Library::packages`
+mounts; each package instance gets a unique internal canonical prefix, while
+`package.NAME` imports resolve against the owning package's direct dependency
+aliases. The driver owns Git CLI execution; the lock records its immutable
+commit and source checksum. Host dependency mounts and feature sets are kept
+separate from target mounts. These T001 changes are implemented, unverified
+(not yet built); remote HTTP registries remain unspecified and unsupported.
+Failures carry the `manifest`, `package`, `lock` or `feature` phase.
+Documentation, formatting and editor protocol
 handling are clients of the compiler, not branches in semantic analysis.
 Expose internal library interfaces first; stabilize external APIs only with an
 explicit compatibility decision. The native compiler remains independent of

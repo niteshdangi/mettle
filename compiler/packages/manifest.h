@@ -14,6 +14,8 @@ struct DependencySpec {
   // (with '-' spelled '_').
   std::string name;
   std::optional<std::string> path;
+  std::optional<std::string> git;
+  std::optional<std::string> rev, tag, branch;
   std::optional<Requirement> requirement;
   std::vector<std::string> features;
   bool defaultFeatures = true;
@@ -49,7 +51,7 @@ struct Manifest {
   std::vector<Target> targets;
   // Only `dependencies` take part in builds; `dev-dependencies` are parsed and
   // validated but belong to a separate (test) context.
-  std::vector<DependencySpec> dependencies, devDependencies;
+  std::vector<DependencySpec> dependencies, buildDependencies, devDependencies;
   std::vector<Feature> features;
   // Local registry directory declared by the root package, if any.
   std::optional<std::string> registry;

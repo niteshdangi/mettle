@@ -54,6 +54,22 @@ std::string checksum(const fs::path &directory) {
   return "sha256:" + hash.finish();
 }
 
+std::string moduleRoot(const ResolvedPackage &package) {
+  Sha256 hash;
+  hash.update(package.identity);
+  auto version = toString(package.candidate.manifest->version);
+  std::replace_if(version.begin(), version.end(),
+                  [](char c) {
+                    return !((c >= 'a' && c <= 'z') ||
+                             (c >= 'A' && c <= 'Z') ||
+                             (c >= '0' && c <= '9') || c == '_');
+                  },
+                  '_');
+  return "mettle_pkg_" +
+         moduleName(package.candidate.manifest->name) + "_" + version + "_" +
+         hash.finish();
+}
+
 class Planner {
 public:
   Planner(const Request &request, Diagnostics &diagnostics)
@@ -154,8 +170,69 @@ private:
                             "' is the package '" + manifest->name + "'");
       return std::nullopt;
     }
-    return Candidate{
-        manifest, SourceKind::Path, directory.generic_string(), {}, false};
+    Candidate candidate;
+    candidate.manifest = std::move(manifest);
+    candidate.kind = SourceKind::Path;
+    candidate.location = directory.generic_string();
+    candidate.sourceIdentity =
+        "path+" + directory.lexically_relative(rootDirectory).generic_string();
+    return candidate;
+  }
+
+  std::optional<Candidate> loadGit(const Manifest &from,
+                                  const DependencySpec &spec,
+                                  const Lock *recorded) {
+    (void)from;
+    if (!request.gitCheckout) {
+      diagnostics.error("feature", spec.span,
+                        "git dependencies require the system git provider");
+      return std::nullopt;
+    }
+    std::string selector = "HEAD";
+    if (spec.rev)
+      selector = "rev=" + *spec.rev;
+    else if (spec.tag)
+      selector = "tag=" + *spec.tag;
+    else if (spec.branch)
+      selector = "branch=" + *spec.branch;
+    std::string lockedCommit;
+    if (recorded)
+      for (const auto &entry : recorded->packages)
+        if (entry.name == spec.name &&
+            entry.source.rfind("git+" + *spec.git + "#", 0) == 0) {
+          lockedCommit = entry.source.substr(
+              std::string("git+" + *spec.git + "#").size());
+          break;
+        }
+    std::string problem;
+    auto checkout = request.gitCheckout(*spec.git, selector, lockedCommit,
+                                        request.offline, problem);
+    if (!checkout) {
+      diagnostics.error(
+          "package", spec.span,
+          "cannot resolve git dependency '" + spec.name + "' from '" +
+              *spec.git + "': " + problem);
+      return std::nullopt;
+    }
+    auto directory = fs::canonical(checkout->directory);
+    auto manifest = loadManifest(directory, spec.span);
+    if (!manifest)
+      return std::nullopt;
+    if (manifest->name != spec.name) {
+      diagnostics.error("package", spec.span,
+                        "git dependency '" + spec.name + "' at '" + *spec.git +
+                            "' is the package '" + manifest->name + "'");
+      return std::nullopt;
+    }
+    Candidate candidate;
+    candidate.manifest = std::move(manifest);
+    candidate.kind = SourceKind::Git;
+    candidate.location = directory.generic_string();
+    candidate.git = *spec.git;
+    candidate.commit = checkout->commit;
+    candidate.sourceIdentity =
+        "git+" + candidate.git + "#" + candidate.commit;
+    return candidate;
   }
 
   std::vector<Candidate> registryCandidates(const std::string &name) {
@@ -187,9 +264,14 @@ private:
                                 toString(manifest->version));
           continue;
         }
-        found.push_back({manifest, SourceKind::Registry,
-                         directory.generic_string(), display(registry),
-                         fs::exists(directory / "YANKED")});
+        Candidate candidate;
+        candidate.manifest = std::move(manifest);
+        candidate.kind = SourceKind::Registry;
+        candidate.location = directory.generic_string();
+        candidate.registry = display(registry);
+        candidate.sourceIdentity = "registry+" + candidate.registry;
+        candidate.yanked = fs::exists(directory / "YANKED");
+        found.push_back(std::move(candidate));
       }
     }
     return found;
@@ -222,6 +304,8 @@ private:
                            .generic_string();
     case SourceKind::Registry:
       return "registry+" + candidate.registry;
+    case SourceKind::Git:
+      return "git+" + candidate.git + "#" + candidate.commit;
     }
     return {};
   }
@@ -232,29 +316,25 @@ private:
       LockedPackage entry;
       entry.name = package.name();
       entry.version = toString(package.candidate.manifest->version);
+      entry.id = package.identity;
       entry.source = sourceOf(package.candidate, rootDirectory);
       if (package.candidate.kind != SourceKind::Root)
         entry.checksum = checksum(package.candidate.location);
       entry.features = package.features;
-      entry.dependencies = package.dependencies;
+      for (const auto &[name, id] : package.dependencies) {
+        (void)name;
+        entry.dependencies.push_back(id);
+      }
       lock.packages.push_back(std::move(entry));
     }
     return lock;
   }
 
   bool validate(const Resolution &resolution) {
-    std::map<std::string, std::string> modules;
     for (const auto &package : resolution.packages) {
       const auto &manifest = *package.candidate.manifest;
       if (package.candidate.kind == SourceKind::Root)
         continue;
-      auto [entry, fresh] =
-          modules.emplace(moduleName(manifest.name), manifest.name);
-      if (!fresh)
-        diagnostics.error("package", manifest.nameSpan,
-                          "packages '" + entry->second + "' and '" +
-                              manifest.name + "' would both mount as module '" +
-                              entry->first + "'");
       const auto *library = manifest.library();
       if (!library && !manifest.macros.empty())
         continue;
@@ -334,44 +414,47 @@ private:
     universe.path = [&](const Manifest &from, const DependencySpec &spec) {
       return loadPath(from, spec);
     };
+    universe.git = [&](const Manifest &from, const DependencySpec &spec) {
+      return loadGit(from, spec, recorded ? &*recorded : nullptr);
+    };
     universe.registry = [&](const std::string &name) {
       return registryCandidates(name);
     };
     universe.absence = [&](const std::string &) { return absence(); };
     Problem solving;
-    solving.root = {root, SourceKind::Root, root->directory, {}, false};
+    solving.root = Candidate{root, SourceKind::Root, root->directory};
     solving.features = request.features;
     solving.defaultFeatures = request.defaultFeatures;
     if (recorded)
       for (const auto &package : recorded->packages)
         if (auto version = parseVersion(package.version))
-          solving.preferred[package.name] = *version;
+          solving.preferred[package.name].push_back(*version);
     auto resolution = resolve(solving, universe, diagnostics);
     if (!resolution || failed() || !validate(*resolution))
       return std::nullopt;
 
     auto fresh = lockOf(*resolution);
-    // Where the lock records `name`, else the start of the lock.
-    auto at = [&](const std::string &name) {
+    // Where the lock records `id`, else the start of the lock.
+    auto at = [&](const std::string &id) {
       Span span{0, 0, lockSource};
       if (recorded)
-        if (const auto *entry = recorded->find(name))
+        if (const auto *entry = recorded->find(id))
           span = entry->span;
       return span;
     };
     if (recorded)
       for (const auto &now : fresh.packages) {
-        const auto *then = recorded->find(now.name);
-        if (then && now.source.rfind("registry+", 0) == 0 &&
+        const auto *then = recorded->find(now.id);
+        if (then && (now.source.rfind("registry+", 0) == 0 ||
+                     now.source.rfind("git+", 0) == 0) &&
             then->source == now.source && then->version == now.version &&
             then->checksum != now.checksum) {
           diagnostics.error(
-              "lock", at(now.name),
-              "checksum mismatch for registry package '" + now.name + "' " +
+              "lock", at(now.id),
+              "checksum mismatch for immutable package '" + now.name + "' " +
                   now.version + ": the lock records " + then->checksum +
                   " but its sources hash to " + now.checksum +
-                  "; registry packages are immutable, so either the package "
-                  "or Mettle.lock was altered");
+                  "; either the package or Mettle.lock was altered");
           return std::nullopt;
         }
       }
@@ -383,9 +466,9 @@ private:
         for (const auto &note : differences(*recorded, fresh))
           why += "; " + note;
         for (const auto &package : fresh.packages) {
-          const auto *then = recorded->find(package.name);
+          const auto *then = recorded->find(package.id);
           if (!then || !equivalent(*then, package)) {
-            span = at(package.name);
+            span = at(package.id);
             break;
           }
         }
@@ -404,6 +487,11 @@ private:
     plan.version = toString(root->version);
     std::error_code error;
     plan.root = fs::canonical(rootSource, error).generic_string();
+    std::map<std::string, std::string> modules;
+    for (const auto &package : resolution->packages)
+      if (package.candidate.kind != SourceKind::Root &&
+          package.candidate.manifest->library())
+        modules.emplace(package.identity, moduleRoot(package));
     for (const auto &package : resolution->packages) {
       const auto &manifest = *package.candidate.manifest;
       if (manifest.buildScript) {
@@ -414,43 +502,115 @@ private:
                                 "' does not exist");
           return std::nullopt;
         }
-        plan.scripts.push_back({manifest.name, toString(manifest.version),
-                                manifest.directory,
-                                fs::canonical(script, error).generic_string(),
-                                package.candidate.kind == SourceKind::Root});
+        BuildScript buildScript;
+        buildScript.package = manifest.name;
+        buildScript.version = toString(manifest.version);
+        buildScript.identity = package.identity;
+        buildScript.directory = manifest.directory;
+        buildScript.source = fs::canonical(script, error).generic_string();
+        buildScript.features = package.features;
+        buildScript.root = package.candidate.kind == SourceKind::Root;
+        for (const auto &[name, dependency] : package.dependencies)
+          if (modules.contains(dependency) &&
+              std::find_if(resolution->packages.begin(),
+                           resolution->packages.end(),
+                           [&](const ResolvedPackage &candidate) {
+                             return candidate.identity == dependency &&
+                                    candidate.candidate.host;
+                           }) != resolution->packages.end())
+            buildScript.dependencies.emplace_back(moduleName(name),
+                                                  modules.at(dependency));
+        plan.scripts.push_back(std::move(buildScript));
       }
-      for (const auto &macro : manifest.macros) {
-        auto program = fs::path(manifest.directory) / macro.source;
-        if (!fs::is_regular_file(program)) {
-          diagnostics.error("package", macro.span,
-                            "macro source '" + macro.source +
-                                "' does not exist");
-          return std::nullopt;
-        }
-        for (const auto &known : plan.macros)
-          if (known.name == macro.name) {
+      if (!package.candidate.host) {
+        for (const auto &macro : manifest.macros) {
+          auto program = fs::path(manifest.directory) / macro.source;
+          if (!fs::is_regular_file(program)) {
             diagnostics.error("package", macro.span,
-                              "macro '" + macro.name +
-                                  "' is declared by both '" + known.package +
-                                  "' and '" + manifest.name + "'");
+                              "macro source '" + macro.source +
+                                  "' does not exist");
             return std::nullopt;
           }
-        plan.macros.push_back({macro.name, manifest.name,
-                               toString(manifest.version), manifest.directory,
-                               fs::canonical(program, error).generic_string()});
+          for (const auto &known : plan.macros)
+            if (known.name == macro.name) {
+              diagnostics.error("package", macro.span,
+                                "macro '" + macro.name +
+                                    "' is declared by both '" + known.package +
+                                    "' and '" + manifest.name + "'");
+              return std::nullopt;
+            }
+          Macro plannedMacro;
+          plannedMacro.name = macro.name;
+          plannedMacro.package = manifest.name;
+          plannedMacro.version = toString(manifest.version);
+          plannedMacro.directory = manifest.directory;
+          plannedMacro.source =
+              fs::canonical(program, error).generic_string();
+          plannedMacro.features = package.features;
+          for (const auto &[name, dependency] : package.dependencies)
+            if (modules.contains(dependency) &&
+                std::find_if(resolution->packages.begin(),
+                             resolution->packages.end(),
+                             [&](const ResolvedPackage &candidate) {
+                               return candidate.identity == dependency &&
+                                      candidate.candidate.host;
+                             }) != resolution->packages.end())
+              plannedMacro.dependencies.emplace_back(moduleName(name),
+                                                     modules.at(dependency));
+          plan.macros.push_back(std::move(plannedMacro));
+        }
       }
       if (package.candidate.kind == SourceKind::Root) {
         plan.features = package.features;
+        plan.rootIdentity = package.identity;
+        for (const auto &[name, dependency] : package.dependencies) {
+          auto child = std::find_if(
+              resolution->packages.begin(), resolution->packages.end(),
+              [&](const ResolvedPackage &candidate) {
+                return candidate.identity == dependency;
+              });
+          if (child != resolution->packages.end() &&
+              modules.contains(dependency)) {
+            if (child->candidate.host)
+              plan.hostDependencies.emplace_back(moduleName(name),
+                                                 modules.at(dependency));
+            else
+              plan.dependencies.emplace_back(moduleName(name),
+                                             modules.at(dependency));
+          }
+        }
         continue;
       }
       if (!manifest.library())
         continue;
-      plan.mounts.push_back(
-          {moduleName(manifest.name),
-           fs::canonical(
-               fs::path(manifest.directory) / manifest.library()->source, error)
-               .generic_string(),
-           manifest.name, toString(manifest.version), package.features});
+      Mount mount;
+      mount.name = moduleName(manifest.name);
+      mount.source =
+          fs::canonical(fs::path(manifest.directory) /
+                            manifest.library()->source,
+                        error)
+              .generic_string();
+      mount.module = modules.at(package.identity);
+      mount.package = manifest.name;
+      mount.version = toString(manifest.version);
+      mount.identity = package.identity;
+      mount.features = package.features;
+      for (const auto &[name, dependency] : package.dependencies) {
+        auto child = std::find_if(
+            resolution->packages.begin(), resolution->packages.end(),
+            [&](const ResolvedPackage &candidate) {
+              return candidate.identity == dependency;
+            });
+        if (child != resolution->packages.end() &&
+            child->candidate.host == package.candidate.host &&
+            modules.contains(dependency))
+          mount.dependencies.emplace_back(moduleName(name),
+                                          modules.at(dependency));
+      }
+      if (package.candidate.host)
+        plan.hostMounts.push_back(std::move(mount));
+      else
+        plan.mounts.push_back(std::move(mount));
     }
     Sha256 hash;
     hash.update(text);

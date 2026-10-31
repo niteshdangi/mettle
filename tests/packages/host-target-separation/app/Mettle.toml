@@ -1,0 +1,17 @@
+[package]
+name = "host-target-app"
+version = "0.1.0"
+language = "mettle-1"
+
+[targets.app]
+kind = "executable"
+source = "src/main.mt"
+
+[dependencies]
+helper = { path = "../helper", features = ["target"], default_features = false }
+
+[build-dependencies]
+helper = { path = "../helper", features = ["host"], default_features = false }
+
+[build]
+script = "build.mt"

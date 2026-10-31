@@ -1,8 +1,9 @@
 # Packages, tools and development contracts
 
-Status: selected design. Only the subset in section 1.1 is implemented
-(`mettle check|build` on a package directory); other commands and an
-installed toolchain are not available.
+Status: selected design. The package-directory `mettle check|build` path is
+implemented. The I09 T001 package-instance, Git-source and host/target-context
+additions below are implemented, unverified (not yet built). Other commands
+and an installed toolchain are not available.
 These operations are native equivalents, not Cargo-manifest compatibility.
 
 ### 1.1. Implemented subset (I09 T001)
@@ -15,35 +16,50 @@ with `import package.name`.
 
 - Manifest: `[package] name/version/language="mettle-1"`, `[targets.NAME]`
   (`kind`, `source`; defaults `src/main.mt` executable, `src/lib.mt` library),
-  `[dependencies]` (version string/array, or `{path, version, optional,
-  default_features}`), `[features]` (`feature`, `dep:x`, `x/f`; optional
-  dependencies imply a feature), `[registry] path` (root only) and parsed but
-  unused `[dev-dependencies]`. Unknown keys are errors. `git` and
-  `build-dependencies` are rejected as unsupported.
+  `[dependencies]` (version string/array, or `{path, git, rev|tag|branch,
+  version, optional, default_features}`), `[build-dependencies]` with source,
+  version and explicit features resolved for the host, `[features]`
+  (`feature`, `dep:x`, `x/f`; optional dependencies imply a feature),
+  `[registry] path` (root only) and parsed but unused `[dev-dependencies]`.
+  Unknown keys are errors.
 - Versions: SemVer requirements (`^`, `~`, comparators, `*`, comma
   intersections, arrays as unions). Highest non-yanked version wins; a
-  lock-recorded version is preferred (even if yanked); conflicts backtrack
-  chronologically and report each requirement with its requiring package.
+  lock-recorded version is preferred (even if yanked). Incompatible versions
+  of one package can coexist; each exact source/version/context has a distinct
+  package identity, internal module root and linked symbol namespace.
 - Local registry: `<registry>/<name>/<version>/Mettle.toml` plus sources; a
   `YANKED` file yanks a version. Select with `--registry DIR` (repeatable,
-  before the manifest `[registry]`). No network fetch exists; `--offline` only
-  changes the diagnostic.
-- `Mettle.lock`: `version = 1` plus `[[package]]` entries (name, version,
-  `source` = `root`/`path+REL`/`registry+REL`, `checksum`, resolved
-  `features`, dependencies). Checksum is SHA-256 over sorted relative paths,
+  before the manifest `[registry]`). No remote HTTP registry fetch exists;
+  `--offline` prevents Git fetching and uses only already-cached commits.
+- Git sources: `{ git = URL, rev = REV }`, `{ git = URL, tag = TAG }` or
+  `{ git = URL, branch = BRANCH }` use the system `git` CLI. Mirrors and
+  detached checkouts live under the configured Mettle cache's `sources/git`;
+  the lock records the resolved commit, not a moving selector. Offline mode
+  uses the locked commit only when it is already present in that store. A
+  dirty or mismatched cached checkout is rejected.
+- `Mettle.lock`: `version = 2` plus `[[package]]` entries (`id`, name,
+  version, `source` = `root`/`path+REL`/`registry+REL`/`git+URL#COMMIT`,
+  `checksum`, resolved `features`, dependency-instance IDs). Checksum is
+  SHA-256 over sorted relative paths,
   sizes and contents of `*.mt` and `Mettle.toml` (hidden, `target`, `build`
-  skipped). Registry checksum mismatches always fail; other drift is
+  skipped). Registry and Git checksum mismatches always fail; other drift is
   re-locked, or fails under `--locked`/`--frozen`. Missing lock fails under
   `--locked`.
 - Flags: `--bin NAME`, `--features a,b`, `--no-default-features`,
   `--registry DIR`, `--locked`, `--offline`, `--frozen`.
-- Limits: all packages share one flat module namespace, so one version per
-  package name and no coexisting majors; no git/remote registries,
-  host/target feature separation or build-dependencies; library-only roots
-  cannot be built. Build scripts (T002) and the content-addressed build cache
+- Limits: remote HTTP registries are not implemented because no registry
+  protocol is specified; no registry/account is created. Host and target
+  package instances resolve features independently. Host dependency mounts are
+  exposed only while compiling host build programs and procedural macros;
+  package build-script output directories still need isolation when the same
+  package is selected in both contexts. Optional build-dependencies are
+  rejected. Library-only roots cannot be built.
+  Build scripts (T002) and the content-addressed build cache
   (T003) follow; both are implemented and verified on macOS arm64 (Release
   and Debug).
-  Tests: `tests/packages.py`.
+  Existing package tests are in `tests/packages.py`; the new
+  `coexisting_versions`, `git_source` and `host_target_separation` cases are
+  implemented but unverified (not yet built).
 
 ### Build scripts (T002)
 

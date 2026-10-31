@@ -22,15 +22,16 @@ std::string join(const std::vector<std::string> &items) {
 } // namespace
 
 bool equivalent(const LockedPackage &left, const LockedPackage &right) {
-  return left.name == right.name && left.version == right.version &&
+  return left.id == right.id && left.name == right.name &&
+         left.version == right.version &&
          left.source == right.source && left.checksum == right.checksum &&
          left.features == right.features &&
          left.dependencies == right.dependencies;
 }
 
-const LockedPackage *Lock::find(const std::string &name) const {
+const LockedPackage *Lock::find(const std::string &id) const {
   for (const auto &package : packages)
-    if (package.name == name)
+    if (package.id == id)
       return &package;
   return nullptr;
 }
@@ -44,6 +45,7 @@ std::string serialize(const Lock &lock) {
   for (const auto &package : lock.packages) {
     out += "\n[[package]]\nname = " + toml::quote(package.name) +
            "\nversion = " + toml::quote(package.version) +
+           "\nid = " + toml::quote(package.id) +
            "\nsource = " + toml::quote(package.source) + "\n";
     if (!package.checksum.empty())
       out += "checksum = " + toml::quote(package.checksum) + "\n";
@@ -101,6 +103,7 @@ std::optional<Lock> parseLock(const toml::Value &root, const Source &source,
       };
       text("name", package.name, true);
       text("version", package.version, true);
+      text("id", package.id, true);
       text("source", package.source, true);
       text("checksum", package.checksum, false);
       strings("features", package.features);
@@ -117,7 +120,7 @@ std::optional<Lock> parseLock(const toml::Value &root, const Source &source,
 std::vector<std::string> differences(const Lock &recorded, const Lock &fresh) {
   std::vector<std::string> notes;
   for (const auto &now : fresh.packages) {
-    const auto *then = recorded.find(now.name);
+    const auto *then = recorded.find(now.id);
     if (!then) {
       notes.push_back("package '" + now.name + "' " + now.version +
                       " is not in the lock");
@@ -141,7 +144,7 @@ std::vector<std::string> differences(const Lock &recorded, const Lock &fresh) {
                       join(now.dependencies));
   }
   for (const auto &then : recorded.packages)
-    if (!fresh.find(then.name))
+    if (!fresh.find(then.id))
       notes.push_back("package '" + then.name + "' is no longer used");
   return notes;
 }

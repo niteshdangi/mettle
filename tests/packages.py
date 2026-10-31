@@ -129,7 +129,7 @@ def lock_corruption():
     (app / "Mettle.lock").write_text(lock + "[[package\n")
     invoke(["check", app], 1, "Mettle.lock")
     (app / "Mettle.lock").write_text(lock)
-    edit(app / "Mettle.lock", 'version = 1\n', 'version = 99\n')
+    edit(app / "Mettle.lock", 'version = 2\n', 'version = 99\n')
     invoke(["check", app], 1, "Mettle.lock")
 
 
@@ -155,9 +155,10 @@ def registry_resolution():
 def version_conflict():
     app = packages("resolution/app")
     edit(packages("resolution/right/Mettle.toml"), "=1.0.0", "^2")
-    invoke(["check", app], 1, ["no version of 'util' satisfies all requirements",
-                               "'^1' (required by 'left 0.1.0')",
-                               "'^2' (required by 'right 0.1.0')"])
+    build_and_run(app)
+    lock = lock_of(app)
+    assert 'name = "util"\nversion = "1.3.0"' in lock, lock
+    assert 'name = "util"\nversion = "2.0.0"' in lock, lock
 
 
 def backtracking():
@@ -193,6 +194,75 @@ def features():
     edit(main, "@cfg(not(feature = \"fancy\"))\nfn main(): i32 { widget.base() - 100 }\n", "")
     edit(main, "@cfg(feature = \"fancy\")\n", "")
     invoke(["check", app, "--no-default-features"], 1, "unresolved value \'extra\'")
+
+
+def coexisting_versions():
+    app = packages("coexisting-versions/app")
+    output = evidence / "out.bin"
+    invoke(["build", app, "-o", output])
+    result = subprocess.run([str(output)], capture_output=True, text=True,
+                            timeout=60)
+    assert result.returncode == 0, (
+        f"{app}: program exited {result.returncode}")
+    assert result.stdout == "alpha-1\nalpha-2\n", result.stdout
+    lock = lock_of(app)
+    assert 'name = "alpha"\nversion = "1.0.0"' in lock, lock
+    assert 'name = "alpha"\nversion = "2.0.0"' in lock, lock
+
+
+def git_source():
+    app = packages("git-source/app")
+    repository = packages("git-source/repository")
+    repository.mkdir(parents=True)
+    app.mkdir(parents=True)
+    (repository / "src").mkdir()
+    (app / "src").mkdir()
+    (repository / "Mettle.toml").write_text(
+        '[package]\nname = "gitlib"\nversion = "0.1.0"\n'
+        'language = "mettle-1"\n')
+    (repository / "src/lib.mt").write_text("pub fn value(): i32 { 7 }\n")
+    (app / "src/main.mt").write_text(
+        "fn main(): i32 { gitlib.value() - 7 }\n")
+    subprocess.run(["git", "init", repository], check=True,
+                   capture_output=True, text=True)
+    subprocess.run(["git", "-C", repository, "checkout", "-b", "main"],
+                   check=True, capture_output=True, text=True)
+    subprocess.run(["git", "-C", repository, "config", "user.name",
+                    "Mettle package test"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", repository, "config", "user.email",
+                    "packages-test@example.invalid"], check=True,
+                   capture_output=True)
+    subprocess.run(["git", "-C", repository, "add", "Mettle.toml",
+                    "src/lib.mt"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", repository, "commit", "-m", "first"],
+                   check=True, capture_output=True)
+    first = subprocess.run(
+        ["git", "-C", repository, "rev-parse", "HEAD"], check=True,
+        capture_output=True, text=True).stdout.strip()
+    (app / "Mettle.toml").write_text(
+        '[package]\nname = "git-app"\nversion = "0.1.0"\n'
+        'language = "mettle-1"\n\n[dependencies]\n'
+        f'gitlib = {{ git = "{repository.as_uri()}", branch = "main" }}\n')
+    build_and_run(app)
+    lock = lock_of(app)
+    assert first in lock and "sha256:" in lock, lock
+    invoke(["check", app, "--offline", "--locked"])
+    edit(repository / "src/lib.mt", "{ 7 }", "{ 8 }")
+    subprocess.run(["git", "-C", repository, "add", "src/lib.mt"],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", repository, "commit", "-m", "second"],
+                   check=True, capture_output=True)
+    invoke(["check", app, "--locked"], 1, "--locked forbids changing it")
+    invoke(["check", app, "--offline", "--locked"])
+    assert lock_of(app) == lock
+
+
+def host_target_separation():
+    app = packages("host-target-separation/app")
+    build_and_run(app)
+    lock = lock_of(app)
+    assert ('name = "helper"' in lock and '"host"' in lock and
+            '"target"' in lock), lock
 
 
 def manifest_diagnostics():
@@ -1061,6 +1131,7 @@ def test_json_timeout_and_modules():
 
 CASES = [path_dependency, missing_lock_locked, lock_corruption,
          registry_resolution, version_conflict, backtracking, offline, features,
+         coexisting_versions, git_source, host_target_separation,
          manifest_diagnostics, package_options_need_package, incremental_reuse,
          edit_invalidation, cache_dedup_and_bound, cache_corruption_and_clean,
          build_script, build_script_untracked_inputs,

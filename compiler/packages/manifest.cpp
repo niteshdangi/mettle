@@ -95,16 +95,9 @@ public:
         if (!spec.requirement)
           continue;
       } else if (value.kind == Kind::Table) {
-        if (const auto *git = value.find("git")) {
-          error(git->key,
-                "git dependencies are not supported yet; use a path or a "
-                "local registry dependency",
-                "feature");
-          continue;
-        }
         if (!known(value, "a dependency",
-                   {"path", "version", "features", "default_features",
-                    "optional"}))
+                   {"path", "git", "rev", "tag", "branch", "version",
+                    "features", "default_features", "optional"}))
           continue;
         if (const auto *path = value.find("path")) {
           if (const auto *text = string(*path, "'path'"))
@@ -112,12 +105,48 @@ public:
           else
             continue;
         }
+        if (const auto *git = value.find("git")) {
+          if (const auto *text = string(*git, "'git'"))
+            spec.git = *text;
+          else
+            continue;
+        }
+        for (auto [key, target] :
+             {std::pair<const char *, std::optional<std::string> *>{
+                  "rev", &spec.rev},
+              {"tag", &spec.tag},
+              {"branch", &spec.branch}}) {
+          if (const auto *selector = value.find(key))
+            if (const auto *text = string(*selector, key))
+              *target = *text;
+        }
+        auto selectors = static_cast<unsigned>(spec.rev.has_value()) +
+                         static_cast<unsigned>(spec.tag.has_value()) +
+                         static_cast<unsigned>(spec.branch.has_value());
+        if (spec.path && spec.git) {
+          error(value.key, "a dependency cannot specify both 'path' and 'git'");
+          continue;
+        }
+        if (spec.git && selectors > 1) {
+          error(value.key,
+                "a git dependency may specify only one of 'rev', 'tag' or "
+                "'branch'");
+          continue;
+        }
+        if (!spec.git && selectors != 0) {
+          error(value.key, "'rev', 'tag' and 'branch' require 'git'");
+          continue;
+        }
+        if (spec.git && spec.git->empty()) {
+          error(value.key, "'git' must not be empty");
+          continue;
+        }
         if (const auto *version = value.find("version")) {
           spec.requirement = requirement(*version);
           if (!spec.requirement)
             continue;
         }
-        if (!spec.path && !spec.requirement) {
+        if (!spec.path && !spec.git && !spec.requirement) {
           error(value.key, "dependency '" + name +
                                "' needs a 'path' or a 'version' requirement");
           continue;
@@ -208,12 +237,8 @@ std::optional<Manifest> parseManifest(const toml::Value &root,
   manifest.source = source.id;
   reader.known(root, "Mettle.toml",
                {"package", "targets", "dependencies", "dev-dependencies",
-                "features", "registry", "build", "macros"});
-  if (const auto *bad = root.find("build-dependencies"))
-    reader.error(bad->key,
-                 "build-dependencies need build programs, which are not "
-                 "supported yet",
-                 "feature");
+                "build-dependencies", "features", "registry", "build",
+                "macros"});
   const auto *package = root.find("package");
   if (!package || package->kind != Kind::Table) {
     reader.error({0, 0, source.id}, "Mettle.toml needs a [package] table");
@@ -307,6 +332,13 @@ std::optional<Manifest> parseManifest(const toml::Value &root,
   }
   if (const auto *table = root.find("dependencies"))
     reader.dependencies(*table, "dependencies", manifest.dependencies);
+  if (const auto *table = root.find("build-dependencies"))
+    reader.dependencies(*table, "build-dependencies",
+                        manifest.buildDependencies);
+  for (const auto &dependency : manifest.buildDependencies)
+    if (dependency.optional)
+      reader.error(dependency.span,
+                   "optional build-dependencies are not supported");
   if (const auto *table = root.find("dev-dependencies"))
     reader.dependencies(*table, "dev-dependencies", manifest.devDependencies);
   if (const auto *registry = root.find("registry")) {

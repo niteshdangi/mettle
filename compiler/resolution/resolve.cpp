@@ -200,8 +200,13 @@ std::optional<std::string> Resolution::lookup(ModuleId from,
   ModuleId scope = from;
   std::size_t position = 0;
   if (path[0] == "package") {
-    scope = 0;
+    while (scope != 0 && moduleInfos[scope].parent != 0)
+      scope = moduleInfos[scope].parent;
+    if (scope == 0 || !moduleInfos[scope].name.starts_with("mettle_pkg_"))
+      scope = 0;
     ++position;
+  } else if (path[0].starts_with("mettle_pkg_")) {
+    scope = 0;
   } else if (path[0] == "self") {
     ++position;
   }
