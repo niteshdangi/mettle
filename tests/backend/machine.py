@@ -347,7 +347,186 @@ extern "C" fn darwin_export_pair(value:DarwinExportPair):DarwinExportPair {
 extern "C" fn darwin_exported_increment(value:i32):i32 { value + 1 }
 """
 
+def darwin_neon_operation_matrix():
+    element_types = (
+        ("s8", "i8", 8, True),
+        ("u8", "u8", 8, True),
+        ("s16", "i16", 16, True),
+        ("u16", "u16", 16, True),
+        ("s32", "i32", 32, True),
+        ("u32", "u32", 32, True),
+        ("s64", "i64", 64, True),
+        ("u64", "u64", 64, True),
+        ("f32", "f32", 32, False),
+        ("f64", "f64", 64, False),
+    )
+    functions, calls = [], []
+    for suffix, scalar_type, width, integer in element_types:
+        def scalar(value):
+            return f"{value}{scalar_type}" if integer else f"{value}.0{scalar_type}"
+
+        for bits in (64, 128):
+            lanes = bits // width
+            q = "q" if bits == 128 else ""
+            prefix = "core.arch.aarch64."
+            splat = prefix + f"vdup{q}_n_{suffix}"
+            add = prefix + f"vadd{q}_{suffix}"
+            sub = prefix + f"vsub{q}_{suffix}"
+            mul = prefix + f"vmul{q}_{suffix}"
+            load = prefix + f"vld1{q}_{suffix}"
+            store = prefix + f"vst1{q}_{suffix}"
+            extract = prefix + f"vget{q}_lane_{suffix}"
+            insert = prefix + f"vset{q}_lane_{suffix}"
+            name = f"check_{suffix}x{lanes}"
+            source = [
+                f"unsafe fn {name}(): bool {{",
+                f"    let base = {splat}({scalar(10)})",
+                f"    let delta = {splat}({scalar(2)})",
+                f"    let added = {add}(base, delta)",
+                f"    let subtracted = {sub}(base, delta)",
+            ]
+            if not (integer and width == 64):
+                source.append(f"    let multiplied = {mul}(base, delta)")
+            if integer:
+                mask = splat + f"({scalar(3)})"
+                source.extend(
+                    (
+                        f"    let anded = core.arch.aarch64.vand{q}_{suffix}"
+                        f"(base, {mask})",
+                        f"    let ored = core.arch.aarch64.vorr{q}_{suffix}"
+                        f"(base, {mask})",
+                        f"    let xored = core.arch.aarch64.veor{q}_{suffix}"
+                        f"(base, {mask})",
+                    )
+                )
+            values = ", ".join(scalar(10) for _ in range(lanes))
+            zeroes = ", ".join(scalar(0) for _ in range(lanes))
+            source.extend(
+                (
+                    f"    let input = [{values}]",
+                    f"    let loaded = {load}(core.ptr.from_ref(input[0]))",
+                    f"    var output = [{zeroes}]",
+                    f"    {store}(core.ptr.from_mut(output[0]), loaded)",
+                )
+            )
+            checks = [
+                f"{extract}(added, 0) == {scalar(12)}",
+                f"{extract}(subtracted, {lanes - 1}) == {scalar(8)}",
+                f"{extract}(loaded, 0) == {scalar(10)}",
+                f"{extract}({insert}({scalar(12)}, base, {lanes - 1}), "
+                f"{lanes - 1}) == {scalar(12)}",
+                f"output[0] == {scalar(10)}",
+                f"output[{lanes - 1}] == {scalar(10)}",
+            ]
+            if not (integer and width == 64):
+                checks.append(f"{extract}(multiplied, 0) == {scalar(20)}")
+            if integer:
+                checks.extend((
+                    f"{extract}(anded, 0) == {scalar(2)}",
+                    f"{extract}(ored, 0) == {scalar(11)}",
+                    f"{extract}(xored, 0) == {scalar(9)}",
+                ))
+            source.append("    " + " &&\n        ".join(checks))
+            source.append("}")
+            functions.append("\n".join(source))
+            calls.append(f"check_{suffix}x{lanes}()")
+    return (
+        "\n".join(functions)
+        + "\nfn main(): i32 {\n    if unsafe {\n        "
+        + " &&\n        ".join(calls)
+        + "\n    } { 0 } else { 1 }\n}\n"
+    )
+
 DARWIN_ARM64_SOURCES = ({
+    "darwin-arm64-c-hfa-hva-shape-matrix": """
+@layout(C)
+copy type DarwinHfa1 { first:f64 }
+@layout(C)
+copy type DarwinHfa2 { first:f64; second:f64 }
+@layout(C)
+copy type DarwinHfa4 { first:f64; second:f64; third:f64; fourth:f64 }
+@layout(C)
+copy type DarwinHva1 { first:core.arch.aarch64.int32x4_t }
+@layout(C)
+copy type DarwinHva3 {
+    first:core.arch.aarch64.int32x4_t;
+    second:core.arch.aarch64.int32x4_t;
+    third:core.arch.aarch64.int32x4_t
+}
+@layout(C)
+copy type DarwinHva4 {
+    first:core.arch.aarch64.int32x4_t;
+    second:core.arch.aarch64.int32x4_t;
+    third:core.arch.aarch64.int32x4_t;
+    fourth:core.arch.aarch64.int32x4_t
+}
+unsafe extern "C" fn hfa1_callback(value:DarwinHfa1):DarwinHfa1 {
+    DarwinHfa1(value.first + 1.0f64)
+}
+unsafe extern "C" fn hva4_callback(value:DarwinHva4):DarwinHva4 {
+    DarwinHva4(
+        core.arch.aarch64.vaddq_s32(
+            value.first,core.arch.aarch64.vdupq_n_s32(1)),
+        core.arch.aarch64.vaddq_s32(
+            value.second,core.arch.aarch64.vdupq_n_s32(2)),
+        core.arch.aarch64.vaddq_s32(
+            value.third,core.arch.aarch64.vdupq_n_s32(3)),
+        core.arch.aarch64.vaddq_s32(
+            value.fourth,core.arch.aarch64.vdupq_n_s32(4)))
+}
+extern "C" {
+    unsafe fn mettle_c_darwin_hfa1(value:DarwinHfa1):DarwinHfa1;
+    unsafe fn mettle_c_darwin_hfa2(value:DarwinHfa2):DarwinHfa2;
+    unsafe fn mettle_c_darwin_hfa4(value:DarwinHfa4):DarwinHfa4;
+    unsafe fn mettle_c_darwin_hfa1_callback(
+        callback:unsafe extern "C" fn(DarwinHfa1):DarwinHfa1,
+        value:DarwinHfa1):DarwinHfa1;
+    unsafe fn mettle_c_darwin_hva1(value:DarwinHva1):DarwinHva1;
+    unsafe fn mettle_c_darwin_hva3(value:DarwinHva3):DarwinHva3;
+    unsafe fn mettle_c_darwin_hva4(value:DarwinHva4):DarwinHva4;
+    unsafe fn mettle_c_darwin_hva4_callback(
+        callback:unsafe extern "C" fn(DarwinHva4):DarwinHva4,
+        value:DarwinHva4):DarwinHva4;
+}
+fn main() {
+    unsafe {
+        let hfa1 = mettle_c_darwin_hfa1(DarwinHfa1(40.0f64))
+        let hfa2 = mettle_c_darwin_hfa2(DarwinHfa2(20.0f64,21.0f64))
+        let hfa4 = mettle_c_darwin_hfa4(
+            DarwinHfa4(10.0f64,11.0f64,12.0f64,13.0f64))
+        let hfa_callback = mettle_c_darwin_hfa1_callback(
+            hfa1_callback,DarwinHfa1(41.0f64))
+        let hva1 = mettle_c_darwin_hva1(
+            DarwinHva1(core.arch.aarch64.vdupq_n_s32(40)))
+        let hva3 = mettle_c_darwin_hva3(DarwinHva3(
+            core.arch.aarch64.vdupq_n_s32(10),
+            core.arch.aarch64.vdupq_n_s32(20),
+            core.arch.aarch64.vdupq_n_s32(30)))
+        let hva4_input = DarwinHva4(
+            core.arch.aarch64.vdupq_n_s32(10),
+            core.arch.aarch64.vdupq_n_s32(20),
+            core.arch.aarch64.vdupq_n_s32(30),
+            core.arch.aarch64.vdupq_n_s32(40))
+        let hva4 = mettle_c_darwin_hva4(hva4_input)
+        let hva4_callback_result = mettle_c_darwin_hva4_callback(
+            hva4_callback,hva4_input)
+        if hfa1.first == 41.0f64 &&
+           hfa2.first == 21.0f64 && hfa2.second == 22.0f64 &&
+           hfa4.first == 11.0f64 && hfa4.fourth == 14.0f64 &&
+           hfa_callback.first == 42.0f64 &&
+           core.arch.aarch64.vgetq_lane_s32(hva1.first,0) == 41 &&
+           core.arch.aarch64.vgetq_lane_s32(hva3.first,0) == 11 &&
+           core.arch.aarch64.vgetq_lane_s32(hva3.second,3) == 22 &&
+           core.arch.aarch64.vgetq_lane_s32(hva3.third,0) == 33 &&
+           core.arch.aarch64.vgetq_lane_s32(hva4.first,0) == 11 &&
+           core.arch.aarch64.vgetq_lane_s32(hva4.fourth,3) == 44 &&
+           core.arch.aarch64.vgetq_lane_s32(hva4_callback_result.first,0) == 11 &&
+           core.arch.aarch64.vgetq_lane_s32(hva4_callback_result.fourth,3) == 44 {
+            0
+        } else { 1 }
+    }
+}
+""",
     "darwin-arm64-c-hfa-hva-large-and-varargs": """
 @layout(C)
 copy type DarwinHfa3 { first:f64; second:f64; third:f64 }
@@ -542,6 +721,8 @@ fn main() {
     } else { 1 }
 }
 """,
+    "darwin-arm64-neon-operation-contract-matrix":
+        darwin_neon_operation_matrix(),
 } if DARWIN_ARM64 else {})
 
 SOURCES = {
@@ -1025,6 +1206,18 @@ unsafe extern "C" fn sum(count: i32, args: ...): i32 { args.arg<i32>() + count }
 fn main(): i32 { 0 }
 """
 INVALID_ASM_SOURCE = 'fn main() { unsafe { asm!("mettle_invalid_instruction",options(nostack)) }; 0 }\n'
+VOLATILE_SOURCE = """
+fn main(): i32 {
+    var value = 40i64
+    let pointer = core.ptr.from_mut(value)
+    unsafe {
+        pointer.write_volatile(41i64)
+        let observed = pointer.read_volatile()
+        pointer.write_volatile(observed + 1i64)
+    }
+    if value == 42i64 { 0 } else { 1 }
+}
+"""
 
 
 def functions(text):
@@ -1074,6 +1267,23 @@ def check_ir_shape(run, args, directory, evidence):
     if starts != 1:
         raise AssertionError("Expected exactly one physical va_start:\n" + variadic)
     evidence["cases"].append({"name": "variadic-va-start-end-same-function",
+                              "phase": "backend"})
+
+    volatile = emit_llvm("shape-volatile", VOLATILE_SOURCE,
+                         "--profile", "release")
+    volatile_bodies = [
+        body for _, _, body in functions(volatile)
+        if "load volatile" in body or "store volatile" in body
+    ]
+    if not volatile_bodies:
+        raise AssertionError("Optimized volatile accesses were removed:\n" + volatile)
+    volatile_body = "\n".join(volatile_bodies)
+    if "load volatile" not in volatile_body or "store volatile" not in volatile_body:
+        raise AssertionError("Expected both volatile loads and stores:\n" + volatile_body)
+    if re.search(r"\b(?:atomicrmw|cmpxchg|fence)\b", volatile_body):
+        raise AssertionError("Volatile accesses were incorrectly made atomic:\n" +
+                             volatile_body)
+    evidence["cases"].append({"name": "volatile-accesses-remain-nonsynchronizing",
                               "phase": "backend"})
 
     # The module data layout is the target machine's, not a hand-written one.
