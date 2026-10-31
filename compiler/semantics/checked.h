@@ -112,6 +112,7 @@ struct Local {
 };
 struct FunctionFacts {
   Type result = Type::Unknown;
+  Type asyncDefaultBodyResult = Type::Unknown;
   bool diverges = false;
   std::vector<Local> locals;
   std::vector<std::size_t> resultSources;

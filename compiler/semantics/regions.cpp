@@ -3347,10 +3347,10 @@ void RegionPass::run() {
       for (std::size_t p = 0; p < current->parameters.size(); ++p)
         if (functions[i].locals[p].mode == ParameterMode::Read ||
             functions[i].locals[p].mode == ParameterMode::Mut ||
-            types.containsViews(current->parameters[p].type))
+            types.containsViews(current->parameters[p]))
           eligible.push_back(
-              types.isView(current->parameters[p].type)
-                  ? types.view(current->parameters[p].type).region
+                types.isView(current->parameters[p])
+                    ? types.view(current->parameters[p]).region
                   : current->backing[p]);
       auto fallback =
           eligible.size() == 1 ? eligible.front() : RegionId::Unspecified;
