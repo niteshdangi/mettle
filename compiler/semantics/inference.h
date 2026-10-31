@@ -22,6 +22,9 @@ public:
   int representative(int variable) { return root(variable); }
   // Whether the variable is, or structurally contains, a listed representative.
   bool depends(int variable, const std::set<int> &representatives);
+  // An unsuffixed integer whose type has not been fixed yet. `value` reports
+  // that variable as `i32` without committing the default.
+  bool unresolvedInteger(int variable);
 
 private:
   struct Variable {

@@ -1407,17 +1407,24 @@ exact target applicability.
 
 I13 status for the macOS ARM64 inventory lane: the 107-row capability
 acceptance inventory is implemented, unverified (not yet built); it is a
-documentation-only source/fixture review at `0eea2fa`, with no new compiler or
-library implementation, test fixture, build, or test run. The inventory records
-67 evidenced, 39 partial and 1 missing capability (A009, deferred to I17 by
-owner decision 2026-10-31). It does not claim I13 operation closure: the pinned baseline has
-106,125 canonical contracts, of which the V1 subset is about 2,900 folded
-operation families and 1,760 trait/type pairs, and no receipt yet proves
-macOS ARM64 declaration typechecking and per-operation execution/probes for
-that subset. Concrete open work includes unsupported unsized heap owners and
-erased async-interface dispatch (S003/L053), the macOS per-item target/cfg
-audit (S031), and the remaining stable operation, supporting-protocol,
-reexport, deprecated-operation and Darwin ABI/debug/unwind/TLS/atomic probes
+documentation-only source/fixture review at `0eea2fa`, with no build or test
+run of that inventory. The inventory records 67 evidenced, 39 partial and 1
+missing capability (A009, deferred to I17 by owner decision 2026-10-31).
+`tools/v1_operations.py` applied library-surface.md section 6.1 to the pinned
+baseline and wrote `docs/baseline/v1-operations.csv`: 3,966 families, made up
+of 2,506 operation families and 1,460 trait/type pairs. 3,964 rows are missing
+and 2 are not-applicable (Windows `OwnedHandle` conversions for `Child` and
+`JoinHandle`). Section 6.1's "about 2,900" and "about 1,760" are the estimate
+this count replaces. No row is declared or evidenced. The not-applicable rows
+are not passes. Library sources now contain declarations for collections,
+iterators, text, char, owners (`Box`/`Rc`/`Arc`/`CStr`), hosted
+fs/io/process/net/env/time, formatting checks, and path/cursor operations,
+plus an index-literal `usize` inference fix. Those sources and their tests
+were not compiled or executed on macOS ARM64/Darwin ARM64, so every applicable
+CSV row stays missing. This does not claim I13 operation closure. Concrete open work includes those rows, unsupported unsized
+heap owners and erased async-interface dispatch (S003/L053), the macOS
+per-item target/cfg audit (S031), and the remaining stable operation,
+supporting-protocol, reexport and Darwin ABI/debug/unwind/TLS/atomic probes
 listed in `docs/capability-coverage.md` and `docs/library-surface.md`.
 Unverified changes with existing fixtures, including qualified macro
 imports/reexports, dependency-object reuse, expanded debugger checks and async

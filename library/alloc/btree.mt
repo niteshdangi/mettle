@@ -502,6 +502,29 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
     ): MapExtractIf<region self, K, V, A, F> {
         MapExtractIf(mut self, predicate, 0usize)
     }
+    pub mut fn retain<F: mut fn(read K, mut V): bool>(keep: mut F): Unit {
+        var index = 0usize
+        while index < self.len {
+            let at = unsafe { position_at_rank(self.root, index) }
+            let entry = unsafe { node_entry(at.0, at.1) }
+            let alive = keep(unsafe { read (*entry).key }, unsafe { mut (*entry).value })
+            if alive {
+                index += 1usize
+            } else {
+                let removed = unsafe { self.take_entry(at.0, at.1) }
+            }
+        }
+    }
+    // Moves every entry of `other` into this map. A duplicate key keeps the
+    // value from `other` and leaves `other` empty.
+    pub mut fn append(other: mut SortedMap<K, V, A>): Unit {
+        while true {
+            match take other.pop_first() {
+                present(entry) => { let replaced = self.insert(entry.0, entry.1) },
+                none => { break }
+            }
+        }
+    }
     pub mut fn split_off(key: read K): SortedMap<K, V, A> where A: Clone {
         var upper = new_in<K, V, A>(self.a.clone())
         while true {
@@ -759,6 +782,48 @@ extend<K: Ord, A: Allocator> SortedSet<K, A> {
         SetExtractIf(mut self, predicate, 0usize)
     }
     pub fn range(from: read K, to: read K): KeyRange<region self, K, Unit, A> { self.map.range(from, to) }
+    pub mut fn clear(): Unit { self.map.clear() }
+    pub fn get<Q: Ord + unsized>(key: read Q): (read K from self)? where K: KeyView<Q> {
+        match self.map.get_key_value(key) {
+            present(pair) => present(pair.0),
+            none => none
+        }
+    }
+    pub mut fn `take`<Q: Ord + unsized>(key: read Q): K? where K: KeyView<Q> {
+        match take self.map.remove_entry(key) {
+            present(entry) => present(entry.0),
+            none => none
+        }
+    }
+    pub mut fn replace(key: take K): K? {
+        match unsafe { find_slot(self.map.root, read key) } {
+            present(at) => {
+                let entry = unsafe { node_entry(at.0, at.1) }
+                let old = unsafe { core.ptr.replace(core.ptr.from_mut((*entry).key), key) }
+                present(old)
+            },
+            none => {
+                let _added = self.insert(key)
+                none
+            }
+        }
+    }
+    pub mut fn retain<F: mut fn(read K): bool>(keep: mut F): Unit {
+        var index = 0usize
+        while index < self.map.len {
+            let at = unsafe { position_at_rank(self.map.root, index) }
+            let entry = unsafe { node_entry(at.0, at.1) }
+            let alive = keep(unsafe { read (*entry).key })
+            if alive {
+                index += 1usize
+            } else {
+                let removed = unsafe { self.map.take_entry(at.0, at.1) }
+            }
+        }
+    }
+    pub mut fn append(other: mut SortedSet<K, A>): Unit {
+        self.map.append(mut other.map)
+    }
 }
 
 pub type SortedSetAlgebra<region r, K, A: Allocator> {

@@ -642,50 +642,78 @@ extend<region r> MatchIndices<region r> implements BidirectionalIterator {
     }
 }
 
+fn text_whitespace(text: read Text, index: usize, width: usize, ascii: bool): bool {
+    if ascii {
+        width == 1usize && is_ascii_whitespace(text.bytes[index])
+    } else {
+        scalar_at(text.bytes, index, width).is_whitespace()
+    }
+}
+
 pub type SplitWhitespace<region r> {
-    rest: read Text from r;
+    text: read Text from r;
+    front: usize;
+    back: usize;
     ascii: bool
 }
 extend<region r> SplitWhitespace<region r> implements Iterator {
     type Item = read Text from r
     mut fn next(): (read Text from r)? {
-        var start = 0usize
-        while start < self.rest.len() {
-            let width = scalar_width(self.rest.bytes, start)
-            let whitespace = if self.ascii {
-                width == 1usize && is_ascii_whitespace(self.rest.bytes[start])
-            } else {
-                scalar_at(self.rest.bytes, start, width).is_whitespace()
-            }
-            if !whitespace { break }
+        var start = self.front
+        while start < self.back {
+            let width = scalar_width(self.text.bytes, start)
+            if !text_whitespace(self.text, start, width, self.ascii) { break }
             start += width
         }
-        if start == self.rest.len() {
-            self.rest = match self.rest.get(start, start) {
-                present(empty) => empty,
-                none => { super.panic.panic("split boundary invariant failed") }
-            }
+        if start >= self.back {
+            self.front = self.back
             return none
         }
         var end = start
-        while end < self.rest.len() {
-            let width = scalar_width(self.rest.bytes, end)
-            let whitespace = if self.ascii {
-                width == 1usize && is_ascii_whitespace(self.rest.bytes[end])
-            } else {
-                scalar_at(self.rest.bytes, end, width).is_whitespace()
-            }
-            if whitespace { break }
+        while end < self.back {
+            let width = scalar_width(self.text.bytes, end)
+            if text_whitespace(self.text, end, width, self.ascii) { break }
             end += width
         }
-        let item = match self.rest.get(start, end) {
+        let item = match self.text.get(start, end) {
             present(value) => value,
             none => { super.panic.panic("split boundary invariant failed") }
         }
-        self.rest = match self.rest.get(end, self.rest.len()) {
+        self.front = end
+        present(item)
+    }
+}
+extend<region r> SplitWhitespace<region r> implements BidirectionalIterator {
+    mut fn next_back(): (read Text from r)? {
+        var end = self.back
+        while end > self.front {
+            var start = end - 1usize
+            while start > self.front && (self.text.bytes[start] & 0xc0u8) == 0x80u8 {
+                start -= 1usize
+            }
+            let width = end - start
+            if !text_whitespace(self.text, start, width, self.ascii) { break }
+            end = start
+        }
+        if end <= self.front {
+            self.back = self.front
+            return none
+        }
+        var start = end
+        while start > self.front {
+            var previous = start - 1usize
+            while previous > self.front && (self.text.bytes[previous] & 0xc0u8) == 0x80u8 {
+                previous -= 1usize
+            }
+            let width = start - previous
+            if text_whitespace(self.text, previous, width, self.ascii) { break }
+            start = previous
+        }
+        let item = match self.text.get(start, end) {
             present(value) => value,
             none => { super.panic.panic("split boundary invariant failed") }
         }
+        self.back = start
         present(item)
     }
 }
@@ -735,28 +763,69 @@ extend<region r> Bytes<region r> implements BidirectionalIterator {
 
 pub type TextUtf16<region r> {
     chars: Chars<region r>;
-    pending: u16;
-    pending_ready: bool
+    front_extra: u16;
+    front_ready: bool;
+    back_extra: u16;
+    back_ready: bool
 }
 extend<region r> TextUtf16<region r> implements Iterator {
     type Item = u16
     mut fn next(): u16? {
-        if self.pending_ready {
-            self.pending_ready = false
-            return present(self.pending)
+        if self.front_ready {
+            self.front_ready = false
+            return present(self.front_extra)
         }
         match self.chars.next() {
             present(c) => {
                 let value = c as u32
                 if value < 0x10000u32 { return present(value as u16) }
                 let scalar = value - 0x10000u32
-                self.pending = (0xdc00u32 + (scalar & 0x3ffu32)) as u16
-                self.pending_ready = true
+                self.front_extra = (0xdc00u32 + (scalar & 0x3ffu32)) as u16
+                self.front_ready = true
                 present((0xd800u32 + (scalar >> 10u32)) as u16)
             },
-            none => none
+            none => {
+                if self.back_ready {
+                    self.back_ready = false
+                    present(self.back_extra)
+                } else {
+                    none
+                }
+            }
         }
     }
+}
+extend<region r> TextUtf16<region r> implements BidirectionalIterator {
+    mut fn next_back(): u16? {
+        if self.back_ready {
+            self.back_ready = false
+            return present(self.back_extra)
+        }
+        match self.chars.next_back() {
+            present(c) => {
+                let value = c as u32
+                if value < 0x10000u32 { return present(value as u16) }
+                let scalar = value - 0x10000u32
+                self.back_extra = (0xd800u32 + (scalar >> 10u32)) as u16
+                self.back_ready = true
+                present((0xdc00u32 + (scalar & 0x3ffu32)) as u16)
+            },
+            none => {
+                if self.front_ready {
+                    self.front_ready = false
+                    present(self.front_extra)
+                } else {
+                    none
+                }
+            }
+        }
+    }
+}
+
+// Sealed prefix and suffix matches for text, one scalar, or a `fn(char): bool`.
+pub interface TextPattern {
+    fn matched_prefix(text: read Text): usize?;
+    fn matched_suffix(text: read Text): usize?;
 }
 
 extend Text {
@@ -812,16 +881,20 @@ extend Text {
             none => none
         }
     }
-    pub fn trim_start_matches(pattern: read Text): read Text from self {
-        if pattern.is_empty() { return read self }
+    pub fn trim_start_matches<P: TextPattern + unsized>(pattern: read P): read Text from self {
         var start = 0usize
-        while true {
+        while start < self.len() {
             let remaining = match self.get(start, self.len()) {
                 present(part) => part,
                 none => { break }
             }
-            if !remaining.starts_with(pattern) { break }
-            start += pattern.len()
+            match pattern.matched_prefix(remaining) {
+                present(n) => {
+                    if n == 0usize { break }
+                    start += n
+                },
+                none => { break }
+            }
         }
         match self.get(start, self.len()) { present(part) => part, none => read self }
     }
@@ -897,6 +970,26 @@ extend Text {
         }
         true
     }
+    pub fn strip_circumfix<P: TextPattern + unsized, S: TextPattern + unsized>(
+        prefix: read P, suffix: read S
+    ): (read Text from self)? {
+        let width = match prefix.matched_prefix(read self) {
+            present(width) => width,
+            none => { return none }
+        }
+        let rest = match self.get(width, self.len()) {
+            present(part) => part,
+            none => { return none }
+        }
+        let suffix_width = match suffix.matched_suffix(rest) {
+            present(width) => width,
+            none => { return none }
+        }
+        rest.get(0usize, rest.len() - suffix_width)
+    }
+    pub fn substr_range(part: read Text): super.iter.Range<usize>? {
+        self.bytes.subslice_range(part.bytes)
+    }
     pub fn strip_suffix(suffix: read Text): (read Text from self)? {
         if !self.ends_with(suffix) { return none }
         match self.get(0usize, self.len() - suffix.len()) {
@@ -904,20 +997,24 @@ extend Text {
             none => none
         }
     }
-    pub fn trim_end_matches(pattern: read Text): read Text from self {
-        if pattern.is_empty() { return read self }
+    pub fn trim_end_matches<P: TextPattern + unsized>(pattern: read P): read Text from self {
         var end = self.len()
-        while true {
+        while end > 0usize {
             let remaining = match self.get(0usize, end) {
                 present(part) => part,
                 none => { break }
             }
-            if !remaining.ends_with(pattern) { break }
-            end -= pattern.len()
+            match pattern.matched_suffix(remaining) {
+                present(n) => {
+                    if n == 0usize { break }
+                    end -= n
+                },
+                none => { break }
+            }
         }
         match self.get(0usize, end) { present(part) => part, none => read self }
     }
-    pub fn trim_matches(pattern: read Text): read Text from self {
+    pub fn trim_matches<P: TextPattern + unsized>(pattern: read P): read Text from self {
         self.trim_start_matches(pattern).trim_end_matches(pattern)
     }
     pub fn trim_start(): read Text from self {
@@ -1037,16 +1134,16 @@ extend Text {
         SplitInclusive(read self, read separator, false)
     }
     pub fn split_whitespace(): SplitWhitespace<region self> {
-        SplitWhitespace(read self, false)
+        SplitWhitespace(read self, 0usize, self.len(), false)
     }
     pub fn split_ascii_whitespace(): SplitWhitespace<region self> {
-        SplitWhitespace(read self, true)
+        SplitWhitespace(read self, 0usize, self.len(), true)
     }
     pub fn lines(): Lines<region self> { Lines(read self, "\n") }
     pub fn chars(): Chars<region self> { Chars(read self.bytes, 0usize, self.bytes.len()) }
     pub fn char_indices(): CharIndices<region self> { CharIndices(read self.bytes, 0usize, self.bytes.len()) }
     pub fn encode_utf16(): TextUtf16<region self> {
-        TextUtf16(self.chars(), 0u16, false)
+        TextUtf16(self.chars(), 0u16, false, 0u16, false)
     }
     pub fn escape_debug(): TextEscape<region self> {
         TextEscape(self.chars(), '\0'.escape_debug(), false, false, true)
@@ -1107,4 +1204,190 @@ extend Text implements Ord {
         }
         self.bytes.len().cmp(other.bytes.len())
     }
+}
+
+extend Text implements TextPattern {
+    fn matched_prefix(text: read Text): usize? {
+        if self.is_empty() || !text.starts_with(self) { return none }
+        present(self.len())
+    }
+    fn matched_suffix(text: read Text): usize? {
+        if self.is_empty() || !text.ends_with(self) { return none }
+        present(self.len())
+    }
+}
+
+extend char implements TextPattern {
+    fn matched_prefix(text: read Text): usize? {
+        if text.is_empty() { return none }
+        let width = scalar_width(text.bytes, 0usize)
+        if scalar_at(text.bytes, 0usize, width) == self { present(width) } else { none }
+    }
+    fn matched_suffix(text: read Text): usize? {
+        if text.is_empty() { return none }
+        var start = text.len() - 1usize
+        while start > 0usize && (text.bytes[start] & 0xc0u8) == 0x80u8 {
+            start -= 1usize
+        }
+        let width = text.len() - start
+        if scalar_at(text.bytes, start, width) == self { present(width) } else { none }
+    }
+}
+
+extend<F: fn(char): bool> F implements TextPattern {
+    fn matched_prefix(text: read Text): usize? {
+        if text.is_empty() { return none }
+        let width = scalar_width(text.bytes, 0usize)
+        let value = scalar_at(text.bytes, 0usize, width)
+        if self(value) { present(width) } else { none }
+    }
+    fn matched_suffix(text: read Text): usize? {
+        if text.is_empty() { return none }
+        var start = text.len() - 1usize
+        while start > 0usize && (text.bytes[start] & 0xc0u8) == 0x80u8 {
+            start -= 1usize
+        }
+        let width = text.len() - start
+        let value = scalar_at(text.bytes, start, width)
+        if self(value) { present(width) } else { none }
+    }
+}
+
+copy type ByteWindow { data: ptr<read u8>; len: usize }
+
+fn window(bytes: read [u8], start: usize, end: usize): read [u8] from bytes {
+    let fat = core.ptr.from_ref(bytes)
+    let raw = unsafe { core.mem.transmute<ByteWindow>(fat) }
+    let part = unsafe {
+        core.mem.transmute<ptr<read [u8]>>(ByteWindow(raw.data.add(start), end - start))
+    }
+    unsafe { read *part }
+}
+
+fn hex_digit(nibble: u8): u8 {
+    if nibble < 10u8 { 48u8 + nibble } else { 87u8 + nibble }
+}
+
+fn fill_escape(byte: u8, buf: mut [u8; 4]): u8 {
+    if byte == 0x09u8 { buf[0] = 0x5cu8; buf[1] = 0x74u8; return 2u8 }
+    if byte == 0x0du8 { buf[0] = 0x5cu8; buf[1] = 0x72u8; return 2u8 }
+    if byte == 0x0au8 { buf[0] = 0x5cu8; buf[1] = 0x6eu8; return 2u8 }
+    if byte == 0x5cu8 { buf[0] = 0x5cu8; buf[1] = 0x5cu8; return 2u8 }
+    if byte == 0x27u8 { buf[0] = 0x5cu8; buf[1] = 0x27u8; return 2u8 }
+    if byte >= 0x20u8 && byte < 0x7fu8 { buf[0] = byte; return 1u8 }
+    buf[0] = 0x5cu8
+    buf[1] = 0x78u8
+    buf[2] = hex_digit(byte >> 4u8)
+    buf[3] = hex_digit(byte & 0x0fu8)
+    4u8
+}
+
+// Escaped ASCII bytes of one `u8`. Printable bytes pass through; tab, CR, LF,
+// backslash and quote are escaped, and every other byte is `\xNN`.
+pub copy type ByteEscape { buf: [u8; 4]; len: u8; at: u8 }
+
+extend ByteEscape implements Iterator {
+    type Item = u8
+    mut fn next(): u8? {
+        if self.at >= self.len { return none }
+        let byte = self.buf[(self.at as usize)]
+        self.at += 1u8
+        present(byte)
+    }
+}
+
+extend u8 {
+    pub fn escape_ascii(): ByteEscape {
+        var buf = [0u8, 0u8, 0u8, 0u8]
+        let len = fill_escape(self, mut buf)
+        ByteEscape(buf, len, 0u8)
+    }
+}
+
+pub type EscapeAscii<region r> {
+    bytes: read [u8] from r
+    index: usize
+    pending: ByteEscape
+}
+
+extend<region r> EscapeAscii<region r> implements Iterator {
+    type Item = u8
+    mut fn next(): u8? {
+        if self.pending.at < self.pending.len {
+            let byte = self.pending.buf[(self.pending.at as usize)]
+            self.pending.at += 1u8
+            return present(byte)
+        }
+        if self.index >= self.bytes.len() { return none }
+        let source = self.bytes[self.index]
+        self.index += 1usize
+        var buf = [0u8, 0u8, 0u8, 0u8]
+        let len = fill_escape(source, mut buf)
+        self.pending = ByteEscape(buf, len, 1u8)
+        present(buf[0])
+    }
+}
+
+// Bytes of one maximal subpart that `scalar_width` rejected at `index`.
+fn invalid_span(bytes: read [u8], index: usize): usize {
+    let first = bytes[index]
+    let remaining = bytes.len() - index
+    if first < 0xc2u8 || first > 0xf4u8 { return 1usize }
+    let width = if first < 0xe0u8 { 2usize } else if first < 0xf0u8 { 3usize } else { 4usize }
+    if remaining < width { return remaining }
+    var low = 0x80u8
+    var high = 0xbfu8
+    if first == 0xe0u8 { low = 0xa0u8 }
+    if first == 0xedu8 { high = 0x9fu8 }
+    if first == 0xf0u8 { low = 0x90u8 }
+    if first == 0xf4u8 { high = 0x8fu8 }
+    if bytes[index + 1usize] < low || bytes[index + 1usize] > high { return 1usize }
+    var offset = 2usize
+    while offset < width {
+        if (bytes[index + offset] & 0xc0u8) != 0x80u8 { return offset }
+        offset += 1usize
+    }
+    1usize
+}
+
+pub type Utf8Chunk<region r> {
+    valid_bytes: read [u8] from r
+    invalid_bytes: read [u8] from r
+}
+
+extend<region r> Utf8Chunk<region r> {
+    pub fn valid(): read Text from self { unsafe { from_utf8_unchecked(self.valid_bytes) } }
+    pub fn invalid(): read [u8] from self { self.invalid_bytes }
+}
+
+pub type Utf8Chunks<region r> { bytes: read [u8] from r; index: usize }
+
+extend<region r> Utf8Chunks<region r> implements Iterator {
+    type Item = Utf8Chunk<region r>
+    mut fn next(): Utf8Chunk<region r>? {
+        if self.index >= self.bytes.len() { return none }
+        let start = self.index
+        var valid_end = start
+        while valid_end < self.bytes.len() {
+            let width = scalar_width(self.bytes, valid_end)
+            if width == 0usize { break }
+            valid_end += width
+        }
+        var invalid_end = valid_end
+        if valid_end < self.bytes.len() {
+            invalid_end = valid_end + invalid_span(self.bytes, valid_end)
+        }
+        self.index = invalid_end
+        present(Utf8Chunk(
+            window(self.bytes, start, valid_end),
+            window(self.bytes, valid_end, invalid_end)
+        ))
+    }
+}
+
+extend [u8] {
+    pub fn escape_ascii(): EscapeAscii<region self> {
+        EscapeAscii(read self, 0usize, ByteEscape([0u8, 0u8, 0u8, 0u8], 0u8, 0u8))
+    }
+    pub fn utf8_chunks(): Utf8Chunks<region self> { Utf8Chunks(read self, 0usize) }
 }

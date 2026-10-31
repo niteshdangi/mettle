@@ -1,6 +1,6 @@
 // File create/write/seek/read, metadata, rename, remove and directory listing.
 import std.io.{Error, ErrorKind, Reader, Writer}
-import std.fs.SeekFrom
+import std.io.SeekFrom
 import core.iter.Iterator
 import std.path.path_from_text
 
@@ -114,6 +114,38 @@ fn run(): i32 throws Error {
     try dirs.create(path_from_text("builder/a/b"))
     if !(try std.fs.metadata(path_from_text("builder/a/b"))).is_dir() { return 26 }
     try std.fs.remove_dir_all(path_from_text("builder"))
+    {
+        var locked = try std.fs.File.create_new(path_from_text("locks"))
+        try locked.lock()
+        try locked.unlock()
+        try locked.lock_shared()
+        try locked.unlock()
+        match capture locked.try_lock() {
+            success(_) => {},
+            failure(_) => { return 27 }
+        }
+        try locked.unlock()
+        match capture locked.try_lock_shared() {
+            success(_) => {},
+            failure(_) => { return 28 }
+        }
+        try locked.unlock()
+        try locked.set_modified(std.time.unix_epoch())
+        let stamped = try locked.metadata()
+        if stamped.modified().unix_secs() != 0i64 { return 29 }
+        var times = std.fs.FileTimes.new()
+        times.set_accessed(std.time.unix_epoch())
+        times.set_modified(std.time.unix_epoch())
+        try locked.set_times(times)
+        let again = try std.fs.File.open(path_from_text("locks"))
+        if again.as_raw_fd() < 0 { return 30 }
+        let _options = std.fs.File.options()
+    }
+    let existing = capture std.fs.File.create_new(path_from_text("locks"))
+    match take existing {
+        success(_) => { return 31 },
+        failure(_) => {}
+    }
     0
 }
 

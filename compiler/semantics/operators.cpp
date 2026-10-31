@@ -89,6 +89,41 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
   ErasedType descriptor{definition.name,
                         static_cast<std::uint32_t>(interface->second)};
   if (!definition.parameters.empty() && right >= 0) {
+    // `list[0]` is an unsuffixed integer. Built-in slices already demand
+    // `usize`; a library Index impl should do the same when it is the
+    // receiver's only integer index type. `value` would otherwise report i32.
+    if ((token == "[]" || token == "[]mut") &&
+        inference.unresolvedInteger(right)) {
+      auto declaration = static_cast<std::uint32_t>(interface->second);
+      Diagnostics ignored;
+      interfaces::Solver solver(*checked.types, *checked.interfaceData, ignored,
+                                interfaceAssumptions(), regionEnvironment());
+      std::optional<Type> indexType;
+      bool ambiguous = false;
+      for (const auto &implementation :
+           checked.interfaceData->implementations) {
+        if (!checked.types->isErased(implementation.interfaceType))
+          continue;
+        const auto &erased =
+            checked.types->erased(implementation.interfaceType);
+        if (erased.declaration != declaration || erased.arguments.size() != 1)
+          continue;
+        auto bindings = solver.applicable(implementation, self, node.span);
+        if (!bindings)
+          continue;
+        auto candidate =
+            solver.normalize(erased.arguments[0], *bindings, node.span);
+        if (!isInteger(candidate))
+          continue;
+        if (indexType && *indexType != candidate) {
+          ambiguous = true;
+          break;
+        }
+        indexType = candidate;
+      }
+      if (!ambiguous && indexType)
+        inference.set(right, *indexType);
+    }
     auto argument = inference.value(right);
     // A view operand compares through its payload like the receiver does.
     while (dereferences != 0 && checked.types->isView(argument))

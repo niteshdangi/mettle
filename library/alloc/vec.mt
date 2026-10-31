@@ -72,6 +72,26 @@ pub fn with_capacity_in<T, A: Allocator>(n: usize, a: take A): List<T, A> {
 }
 pub fn with_capacity<T>(n: usize): List<T> { with_capacity_in(n, Global()) }
 
+// Safety: `ptr` owns `capacity` slots from the global allocator, `length <= capacity`,
+// and the first `length` slots are initialized.
+pub unsafe fn from_raw_parts<T>(ptr: ptr<mut T>, length: usize, capacity: usize): List<T> {
+    unsafe { from_raw_parts_in(ptr, length, capacity, Global()) }
+}
+pub unsafe fn from_parts<T>(ptr: ptr<mut T>, length: usize, capacity: usize): List<T> {
+    unsafe { from_raw_parts(ptr, length, capacity) }
+}
+
+// Safety: as `from_raw_parts`, and `ptr` was allocated by `allocator`.
+pub unsafe fn from_raw_parts_in<T, A: Allocator>(
+    ptr: ptr<mut T>, length: usize, capacity: usize, allocator: take A
+): List<T, A> {
+    var list = new_in<T, A>(allocator)
+    list.ptr = ptr
+    list.len = length
+    list.cap = capacity
+    list
+}
+
 extend<T> List<T> {
     pub init() {
         self.ptr = dangling_for<T>()
@@ -182,8 +202,20 @@ extend<T, A: Allocator> List<T, A> {
         unsafe { core.ptr.write(self.ptr.add(self.len), value) }
         self.len += 1usize
     }
+    pub mut fn push_mut(value: take T): mut T from self {
+        self.push(value)
+        unsafe { mut *self.ptr.add(self.len - 1usize) }
+    }
     pub mut fn pop(): T? {
         if self.len == 0usize { return none }
+        self.len -= 1usize
+        present(unsafe { core.ptr.`read`(self.ptr.add(self.len)) })
+    }
+    // Leaves the tail in place when the predicate rejects it.
+    pub mut fn pop_if<F: fn(read T): bool>(test: take F): T? {
+        if self.len == 0usize { return none }
+        let accept = test(unsafe { read *self.ptr.add(self.len - 1usize) })
+        if !accept { return none }
         self.len -= 1usize
         present(unsafe { core.ptr.`read`(self.ptr.add(self.len)) })
     }
@@ -264,6 +296,9 @@ extend<T, A: Allocator> List<T, A> {
         other.len = 0usize
     }
 
+    pub mut fn split_off_mut(at: usize): List<T, A> where A: Clone {
+        self.split_off(at)
+    }
     pub mut fn split_off(at: usize): List<T, A> where A: Clone {
         if at > self.len { panic_precondition() }
         let count = self.len - at
@@ -283,7 +318,7 @@ extend<T, A: Allocator> List<T, A> {
     // Keeps elements for which `keep` is true, in order. The length is zeroed
     // while running, so a panic in `keep` or a destructor leaks the rest
     // instead of exposing moved-from slots.
-    pub mut fn retain(keep: fn(read T): bool): Unit {
+    pub mut fn retain<F: mut fn(read T): bool>(keep: mut F): Unit {
         let n = self.len
         self.len = 0usize
         var read_at = 0usize
@@ -368,6 +403,19 @@ extend<T, A: Allocator> List<T, A> {
         }
     }
 
+    pub take fn into_parts(): (ptr<mut T>, usize, usize) {
+        self.into_raw_parts()
+    }
+    pub take fn into_raw_parts(): (ptr<mut T>, usize, usize) {
+        unsafe {
+            let pointer = self.ptr
+            let length = self.len
+            let capacity = self.cap
+            core.mem.forget(take self)
+            (pointer, length, capacity)
+        }
+    }
+
     pub take fn leak(): mut [T] from static {
         let view = slice_ptr_mut(self.ptr, self.len)
         unsafe { core.mem.forget(take self) }
@@ -421,6 +469,25 @@ extend<T, A: Allocator> List<T, A> {
         }
         let slice = slice_ptr_mut(pointer, n)
         unsafe { super.boxed.from_raw_in(slice, allocator) }
+    }
+}
+
+// Flattens `List<[T; N]>` into `List<T>`. A zero-length element yields an empty list.
+extend<T, A: Allocator, const N: usize> List<[T; N], A> {
+    pub take fn into_flattened(): List<T> {
+        let parts = self.into_raw_parts()
+        if N == 0usize {
+            return unsafe { from_raw_parts(parts.0.cast<T>(), 0usize, 0usize) }
+        }
+        let count = match parts.1.checked_mul(N) {
+            present(value) => value,
+            none => panic_precondition()
+        }
+        let capacity = match parts.2.checked_mul(N) {
+            present(value) => value,
+            none => panic_precondition()
+        }
+        unsafe { from_raw_parts(parts.0.cast<T>(), count, capacity) }
     }
 }
 

@@ -8,7 +8,7 @@ import package.core.hash.{Hash, Hasher}
 import package.core.borrow.KeyView
 import super.vec.{List, slice_ptr}
 import package.core.cmp.{Ordering, PartialEq, Eq, PartialOrd, Ord}
-import package.core.text.{Text, from_utf8_unchecked}
+import package.core.text.{Text, from_utf8_unchecked, from_utf8_unchecked_mut}
 
 // Owned, growable UTF-8 text: a `List<u8>` whose bytes are always well formed.
 pub type String<A: Allocator = Global> {
@@ -24,6 +24,13 @@ pub type FromUtf8Error<A: Allocator = Global> {
 pub type FromUtf16Error {
     pub index: usize
     pub surrogate: u16
+}
+
+pub interface ToString {
+    fn to_string(): String;
+}
+extend Text implements ToString {
+    fn to_string(): String { from_text(self) }
 }
 
 pub type StringDrain<region r, A: Allocator> {
@@ -104,6 +111,12 @@ pub fn try_with_capacity(n: usize): String throws AllocError {
 pub fn with_capacity(n: usize): String {
     from_valid_bytes(super.vec.with_capacity<u8>(n))
 }
+// Safety: `buf` owns `capacity` bytes from the global allocator, `length <= capacity`,
+// and the first `length` bytes are well-formed UTF-8.
+pub unsafe fn from_raw_parts(buf: ptr<mut u8>, length: usize, capacity: usize): String {
+    from_valid_bytes(unsafe { super.vec.from_raw_parts(buf, length, capacity) })
+}
+
 pub fn from_text(t: read Text): String {
     var s = new()
     s.push_str(t)
@@ -116,6 +129,11 @@ pub fn from_text_in<A: Allocator>(t: read Text, a: take A): String<A> {
 }
 
 // Validates `bytes`; on failure the buffer comes back in the error.
+// Safety: `bytes` are well-formed UTF-8.
+pub unsafe fn from_utf8_unchecked<A: Allocator>(bytes: take List<u8, A>): String<A> {
+    from_valid_bytes(bytes)
+}
+
 pub fn from_utf8<A: Allocator>(bytes: take List<u8, A>): String<A> throws FromUtf8Error<A> {
     let ok = match package.core.text.from_utf8(bytes.as_slice()) {
         present(_) => true,
@@ -322,6 +340,104 @@ pub fn from_utf16_lossy(units: read [u16]): String {
     result
 }
 
+fn endian_unit(bytes: read [u8], index: usize, big: bool): u16 {
+    let first = bytes[index] as u32
+    let second = bytes[index + 1usize] as u32
+    let value = if big { (first << 8u32) | second } else { (second << 8u32) | first }
+    value as u16
+}
+
+fn push_scalar(result: mut String, scalar: u32, index: usize, unit: u16): Unit throws FromUtf16Error {
+    result.push(match package.core.char.from_u32(scalar) {
+        present(value) => value,
+        none => { throw FromUtf16Error(index, unit) }
+    })
+}
+
+fn replacement(): char {
+    match package.core.char.from_u32(0xfffdu32) {
+        present(value) => value,
+        none => { panic_precondition() }
+    }
+}
+
+fn decode_endian(bytes: read [u8], big: bool): String throws FromUtf16Error {
+    if bytes.len() % 2usize != 0usize {
+        throw FromUtf16Error(bytes.len() / 2usize, 0u16)
+    }
+    var result = new()
+    var index = 0usize
+    while index < bytes.len() {
+        let first = endian_unit(bytes, index, big) as u32
+        var scalar = first
+        var step = 2usize
+        if first >= 0xd800u32 && first <= 0xdbffu32 {
+            if index + 3usize >= bytes.len() {
+                throw FromUtf16Error(index / 2usize, first as u16)
+            }
+            let second = endian_unit(bytes, index + 2usize, big) as u32
+            if second < 0xdc00u32 || second > 0xdfffu32 {
+                throw FromUtf16Error(index / 2usize, first as u16)
+            }
+            scalar = 0x10000u32 + ((first - 0xd800u32) << 10u32) + (second - 0xdc00u32)
+            step = 4usize
+        } else if first >= 0xdc00u32 && first <= 0xdfffu32 {
+            throw FromUtf16Error(index / 2usize, first as u16)
+        }
+        try push_scalar(mut result, scalar, index / 2usize, first as u16)
+        index += step
+    }
+    result
+}
+
+fn decode_endian_lossy(bytes: read [u8], big: bool): String {
+    var result = new()
+    var index = 0usize
+    let end = bytes.len() - (bytes.len() % 2usize)
+    while index < end {
+        let first = endian_unit(bytes, index, big) as u32
+        if first >= 0xd800u32 && first <= 0xdbffu32 && index + 3usize < end {
+            let second = endian_unit(bytes, index + 2usize, big) as u32
+            if second >= 0xdc00u32 && second <= 0xdfffu32 {
+                let scalar = 0x10000u32 + ((first - 0xd800u32) << 10u32) + (second - 0xdc00u32)
+                result.push(match package.core.char.from_u32(scalar) {
+                    present(value) => value,
+                    none => replacement()
+                })
+                index += 4usize
+            } else {
+                result.push(replacement())
+                index += 2usize
+            }
+        } else if first >= 0xd800u32 && first <= 0xdfffu32 {
+            result.push(replacement())
+            index += 2usize
+        } else {
+            result.push(match package.core.char.from_u32(first) {
+                present(value) => value,
+                none => replacement()
+            })
+            index += 2usize
+        }
+    }
+    if end != bytes.len() { result.push(replacement()) }
+    result
+}
+
+pub fn from_utf16be(bytes: read [u8]): String throws FromUtf16Error {
+    try decode_endian(bytes, true)
+}
+pub fn from_utf16le(bytes: read [u8]): String throws FromUtf16Error {
+    try decode_endian(bytes, false)
+}
+pub fn from_utf16be_lossy(bytes: read [u8]): String { decode_endian_lossy(bytes, true) }
+pub fn from_utf16le_lossy(bytes: read [u8]): String { decode_endian_lossy(bytes, false) }
+
+pub fn from_utf8_lossy_owned(bytes: take List<u8>): String {
+    let valid = package.core.text.from_utf8(bytes.as_slice()).is_present()
+    if valid { from_valid_bytes(bytes) } else { from_utf8_lossy(bytes.as_slice()) }
+}
+
 fn first_char(t: read Text): char {
     var it = t.chars()
     match it.next() { present(c) => c, none => panic_precondition() }
@@ -332,8 +448,30 @@ extend<A: Allocator> String<A> {
     pub fn capacity(): usize { self.v.capacity() }
     pub fn is_empty(): bool { self.v.is_empty() }
     pub fn as_bytes(): read [u8] from self { self.v.as_slice() }
+    pub fn as_ptr(): ptr<read u8> { self.v.as_ptr() }
+    pub mut fn as_mut_ptr(): ptr<mut u8> { self.v.as_mut_ptr() }
+    // Safety: `bytes` are well-formed UTF-8.
+    pub unsafe static fn from_utf8_unchecked(bytes: take List<u8, A>): String<A> {
+        from_valid_bytes(bytes)
+    }
     // Borrowed text view; while it lives the string cannot change.
     pub fn as_text(): read Text from self { unsafe { from_utf8_unchecked(self.v.as_slice()) } }
+    pub mut fn as_mut_str(): mut Text from self {
+        unsafe { from_utf8_unchecked_mut(self.v.as_mut_slice()) }
+    }
+    // Safety: the bytes stay well-formed UTF-8 before the string is next read as text.
+    pub mut unsafe fn as_bytes_mut(): mut [u8] from self { self.v.as_mut_slice() }
+    pub take fn into_boxed_str(): super.boxed.Box<Text, A> {
+        let boxed = self.into_bytes().into_boxed_slice()
+        unsafe { core.mem.transmute<super.boxed.Box<Text, A>>(boxed) }
+    }
+    pub take fn into_raw_parts(): (ptr<mut u8>, usize, usize) {
+        unsafe {
+            let bytes = core.ptr.`read`(core.ptr.from_ref(self.v))
+            core.mem.forget(take self)
+            bytes.into_raw_parts()
+        }
+    }
     pub take fn into_bytes(): List<u8, A> {
         unsafe {
             let v = core.ptr.`read`(core.ptr.from_ref(self.v))
@@ -516,6 +654,43 @@ extend<A: Allocator> String<A> {
             self.v.push(byte)
             index += 1usize
         }
+    }
+    pub fn floor_char_boundary(index: usize): usize {
+        self.as_text().floor_char_boundary(index)
+    }
+    pub fn ceil_char_boundary(index: usize): usize {
+        self.as_text().ceil_char_boundary(index)
+    }
+    pub fn repeat(count: usize): String { self.as_text().repeat(count) }
+    pub mut fn retain<F: mut fn(char): bool>(keep: mut F): Unit {
+        var read_at = 0usize
+        var kept = 0usize
+        let n = self.len()
+        while read_at < n {
+            var end = read_at + 1usize
+            while end < n && !self.as_text().is_char_boundary(end) { end += 1usize }
+            let ch = match self.as_text().get(read_at, end) {
+                present(t) => first_char(t),
+                none => panic_precondition()
+            }
+            let width = end - read_at
+            if keep(ch) {
+                var offset = 0usize
+                while offset < width {
+                    let byte = self.as_bytes()[read_at + offset]
+                    unsafe { self.as_bytes_mut()[kept + offset] = byte }
+                    offset += 1usize
+                }
+                kept += width
+            }
+            read_at = end
+        }
+        self.v.truncate(kept)
+    }
+    pub take fn leak(): mut Text from static {
+        let parts = self.into_raw_parts()
+        let view = super.vec.slice_ptr_mut(parts.0, parts.1)
+        unsafe { from_utf8_unchecked_mut(mut *view) }
     }
     pub mut fn clear(): Unit { self.v.clear() }
 }

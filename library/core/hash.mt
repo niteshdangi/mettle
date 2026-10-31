@@ -56,6 +56,11 @@ pub interface Hash {
 pub interface BuildHasher {
     type Hasher: Hasher;
     fn build_hasher(): Self.Hasher;
+    fn hash_one<T: Hash + unsized>(value: read T): u64 {
+        var hasher = self.build_hasher()
+        value.hash(mut hasher)
+        hasher.finish()
+    }
 }
 
 // Hashes one value with the default keyed SipHash-1-3 (zero key).
@@ -68,6 +73,11 @@ pub fn hash_one<T: Hash + unsized>(value: read T): u64 {
 // FNV-1a, 64 bit: tiny and unkeyed (not collision-attack resistant).
 pub type Fnv1a { state: u64 }
 pub fn fnv1a(): Fnv1a { Fnv1a(0xcbf29ce484222325u64) }
+pub type FnvBuilder {}
+extend FnvBuilder implements BuildHasher {
+    type Hasher = Fnv1a;
+    fn build_hasher(): Fnv1a { fnv1a() }
+}
 extend Fnv1a implements Hasher {
     mut fn write(bytes: read [u8]): Unit {
         var i = 0usize

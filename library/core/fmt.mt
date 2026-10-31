@@ -40,6 +40,15 @@ pub interface Write {
     }
 }
 
+pub fn write<W: Write>(destination: mut W, message: format Message): Unit throws Error {
+    try message.write_to(mut destination)
+}
+
+pub fn writeln<W: Write>(destination: mut W, message: format Message): Unit throws Error {
+    try write(mut destination, message)
+    try destination.write_str("\n")
+}
+
 pub copy enum Align { Unknown, Left, Right, Center }
 
 // Rendering options for one value: `width` pads, `precision` truncates text
@@ -72,6 +81,8 @@ pub type DebugMap<region s, region b> {
 
 extend<region r> Formatter<region r> {
     pub fn options(): Spec { self.options }
+    pub fn align(): Align { self.options.align }
+    pub fn fill(): char { self.options.fill }
     pub fn width(): usize? { self.options.width }
     pub fn precision(): usize? { self.options.precision }
     pub fn alternate(): bool { self.options.alternate }
@@ -366,6 +377,13 @@ pub copy type Field {
     render: fn(ptr<read u8>, usize, mut Sink): Unit throws Error
 }
 pub type Message<region r> { fields: read [Field] from r; tail: Piece }
+extend<region r> Message<region r> {
+    // The whole recipe when it is one literal piece and no interpolated fields.
+    pub fn as_str(): (read Text from r)? {
+        if self.fields.len() != 0usize || self.tail.len == 0usize { return none }
+        present(unsafe { piece_text<r>(self.tail) })
+    }
+}
 
 fn piece(text: read Text): Piece {
     let bytes = text.as_bytes()

@@ -1,7 +1,9 @@
 // Process arguments, environment variables and the working directory. Names
 // and values are OS strings (arbitrary bytes), not text.
+import package.alloc.string
 import package.alloc.vec
 import package.alloc.vec.List
+import package.core.text.Text
 import super.ffi
 import super.ffi.{OsStr, OsString}
 import super.io
@@ -87,6 +89,33 @@ pub fn current_dir(): PathBuf throws io.Error {
         size *= 2usize
     }
     super.path.new_path_buf()
+}
+
+// The value of `name` as text. Unset is `NotFound`; bytes that are not UTF-8 are `InvalidData`.
+pub fn var(name: read Text): string.String throws io.Error {
+    match var_os(ffi.os_str_from_text(name)) {
+        present(value) => {
+            match package.core.text.from_utf8(value.as_bytes()) {
+                present(text) => string.from_text(text),
+                none => throw io.from_kind(io.ErrorKind.InvalidData)
+            }
+        },
+        none => throw io.from_kind(io.ErrorKind.NotFound)
+    }
+}
+
+// `TMPDIR` when it is set and non-empty, otherwise `/tmp`.
+pub fn temp_dir(): PathBuf {
+    match var_os(ffi.os_str_from_text("TMPDIR")) {
+        present(value) => {
+            if value.as_bytes().len() == 0usize {
+                super.path.path_buf_from_bytes("/tmp".as_bytes())
+            } else {
+                super.path.path_buf_from_bytes(value.as_bytes())
+            }
+        },
+        none => super.path.path_buf_from_bytes("/tmp".as_bytes())
+    }
 }
 
 pub fn set_current_dir(input: read PathInput): Unit throws io.Error {

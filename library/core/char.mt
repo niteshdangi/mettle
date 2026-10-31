@@ -9,6 +9,11 @@ pub fn from_u32(value: u32): char? {
     present(unsafe { core.mem.transmute<char>(value) })
 }
 
+// Safety: `value` is a Unicode scalar value, not a surrogate and not above U+10FFFF.
+pub unsafe fn from_u32_unchecked(value: u32): char {
+    unsafe { core.mem.transmute<char>(value) }
+}
+
 pub fn from_digit(value: u32, radix: u32): char? {
     if radix < 2u32 || radix > 36u32 || value >= radix { return none }
     let scalar = if value < 10u32 {
@@ -17,17 +22,6 @@ pub fn from_digit(value: u32, radix: u32): char? {
         0x61u32 + value - 10u32
     }
     from_u32(scalar)
-}
-
-pub type CharUtf16 { first: u16; second: u16; length: usize; position: usize }
-extend CharUtf16 implements Iterator {
-    type Item = u16
-    mut fn next(): u16? {
-        if self.position >= self.length { return none }
-        let value = if self.position == 0usize { self.first } else { self.second }
-        self.position += 1usize
-        present(value)
-    }
 }
 
 pub type Escape { values: [char; 10]; length: usize; position: usize }
@@ -90,6 +84,14 @@ fn short_escape(value: char): Escape? {
 }
 
 extend char {
+    pub const MIN: char = '\0'
+    pub const MAX: char = '\u{10ffff}'
+    pub const REPLACEMENT_CHARACTER: char = '\u{fffd}'
+    pub const MAX_LEN_UTF8: usize = 4usize
+    pub const MAX_LEN_UTF16: usize = 2usize
+    // Matches library/core/unicode_data.mt, Unicode 16.0.0.
+    pub const UNICODE_VERSION: (u8, u8, u8) = (16u8, 0u8, 0u8)
+
     pub fn is_ascii(): bool { (self as u32) <= 0x7fu32 }
 
     pub fn is_ascii_alphabetic(): bool {
@@ -138,6 +140,13 @@ extend char {
         value >= 0x41u32 && value <= 0x5au32
     }
 
+    // Horizontal tab, line feed, form feed, carriage return, and space.
+    pub fn is_ascii_whitespace(): bool {
+        let value = self as u32
+        value == 0x09u32 || value == 0x0au32 || value == 0x0cu32 ||
+            value == 0x0du32 || value == 0x20u32
+    }
+
     pub fn is_control(): bool {
         let value = self as u32
         value <= 0x1fu32 || value >= 0x7fu32 && value <= 0x9fu32
@@ -174,19 +183,22 @@ extend char {
         if (self as u32) < 0x10000u32 { 1usize } else { 2usize }
     }
 
-    pub fn encode_utf16(): CharUtf16 {
+    // Writes the scalar's UTF-16 code units into `dst` and returns that prefix.
+    // Panics when `dst` is shorter than `len_utf16`.
+    pub fn encode_utf16(dst: mut [u16]): mut [u16] from dst {
+        let count = self.len_utf16()
+        if dst.len() < count {
+            super.panic.panic("encode_utf16 destination is shorter than the encoded scalar")
+        }
         let value = self as u32
         if value < 0x10000u32 {
-            CharUtf16(value as u16, 0u16, 1usize, 0usize)
+            dst[0] = value as u16
         } else {
             let scalar = value - 0x10000u32
-            CharUtf16(
-                (0xd800u32 + (scalar >> 10u32)) as u16,
-                (0xdc00u32 + (scalar & 0x3ffu32)) as u16,
-                2usize,
-                0usize
-            )
+            dst[0] = (0xd800u32 + (scalar >> 10u32)) as u16
+            dst[1] = (0xdc00u32 + (scalar & 0x3ffu32)) as u16
         }
+        dst.split_at_mut(count).0
     }
 
     pub fn to_ascii_lowercase(): char {
@@ -359,5 +371,53 @@ extend CaseMapping implements Iterator {
         let value = self.values[self.position]
         self.position += 1usize
         present(value)
+    }
+}
+
+// One unpaired UTF-16 code unit. A following unit, if any, stays buffered.
+pub copy type DecodeUtf16Error { pub unpaired: u16 }
+
+pub type DecodeUtf16<I> { iter: I; buf: u16? }
+
+pub fn decode_utf16<I: Iterator<Item = u16>>(iter: take I): DecodeUtf16<I> {
+    DecodeUtf16(iter, none)
+}
+
+extend<I: Iterator<Item = u16>> DecodeUtf16<I> implements Iterator {
+    type Item = (char throws DecodeUtf16Error)
+    mut fn next(): ((char throws DecodeUtf16Error))? {
+        let unit = match take self.buf {
+            present(buffered) => buffered,
+            none => match take self.iter.next() {
+                present(value) => value,
+                none => { return none }
+            }
+        }
+        if unit >= 0xd800u16 && unit <= 0xdbffu16 {
+            match take self.iter.next() {
+                present(next) => {
+                    if next >= 0xdc00u16 && next <= 0xdfffu16 {
+                        let scalar = 0x10000u32 +
+                            ((unit as u32 - 0xd800u32) << 10u32) +
+                            (next as u32 - 0xdc00u32)
+                        match from_u32(scalar) {
+                            present(value) => present(success(value)),
+                            none => present(failure(DecodeUtf16Error(unit)))
+                        }
+                    } else {
+                        self.buf = present(next)
+                        present(failure(DecodeUtf16Error(unit)))
+                    }
+                },
+                none => present(failure(DecodeUtf16Error(unit)))
+            }
+        } else if unit >= 0xdc00u16 && unit <= 0xdfffu16 {
+            present(failure(DecodeUtf16Error(unit)))
+        } else {
+            match from_u32(unit as u32) {
+                present(value) => present(success(value)),
+                none => present(failure(DecodeUtf16Error(unit)))
+            }
+        }
     }
 }

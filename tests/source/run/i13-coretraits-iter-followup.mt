@@ -18,7 +18,7 @@ fn checked_item(item: take i32): Unit throws i32 {
 fn main(): i32 {
     var remaining = iter.range(1, 5)
     {
-        var borrowed = remaining.by_ref()
+        var borrowed = remaining.by_ref().take_n(2usize)
         match take borrowed.next() {
             present(value) => { if value != 1 { return 1 } },
             none => { return 1 }
@@ -27,6 +27,7 @@ fn main(): i32 {
             present(value) => { if value != 2 { return 1 } },
             none => { return 1 }
         }
+        match take borrowed.next() { present(_) => { return 1 }, none => {} }
     }
     if remaining.count() != 2usize { return 2 }
 

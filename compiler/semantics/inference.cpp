@@ -18,6 +18,12 @@ int TypeInference::root(int v) {
     variables[v].parent = root(variables[v].parent);
   return variables[v].parent;
 }
+bool TypeInference::unresolvedInteger(int variable) {
+  variable = root(variable);
+  const auto &item = variables[variable];
+  return item.type == Type::Unknown && !item.kind &&
+         item.numeric == Variable::Numeric::Integer;
+}
 bool TypeInference::depends(int variable,
                             const std::set<int> &representatives) {
   variable = root(variable);

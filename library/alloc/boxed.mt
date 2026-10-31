@@ -2,7 +2,7 @@ import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import package.core.fmt
 import package.core.hash.{Hash, Hasher}
 import package.core.ops.{Deref, DerefMut}
-import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, layout_of_val, free_block, handle_alloc_error}
+import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, layout_of_val, layout_unchecked, free_block, handle_alloc_error}
 import package.core.clone.Clone
 import package.core.slice.drop_values
 
@@ -68,11 +68,112 @@ pub fn try_new_zeroed<T>(): Box<core.mem.MaybeUninit<T>> throws AllocError {
 }
 pub fn new_zeroed<T>(): Box<core.mem.MaybeUninit<T>> { new_zeroed_in<T, Global>(Global()) }
 
+copy type RawSlice<T> { data: ptr<read T>; len: usize }
+
+fn dangling_slot<T>(): ptr<mut T> {
+    let align = core.mem.align_of<T>()
+    unsafe { core.mem.transmute<ptr<mut T>>(align) }
+}
+
+fn slice_pointer<T>(data: ptr<mut T>, len: usize): ptr<mut [T]> {
+    let raw = RawSlice(data.cast_const(), len)
+    unsafe { core.mem.transmute<ptr<mut [T]>>(raw) }
+}
+
+fn fill_slice<T, A: Allocator>(
+    len: usize,
+    allocator: take A,
+    zeroed: bool
+): Box<[core.mem.MaybeUninit<T>], A> throws AllocError {
+    var allocator = allocator
+    let size = core.mem.size_of<core.mem.MaybeUninit<T>>()
+    let align = core.mem.align_of<core.mem.MaybeUninit<T>>()
+    if len == 0usize || size == 0usize {
+        return Box(slice_pointer(dangling_slot<core.mem.MaybeUninit<T>>(), len), allocator)
+    }
+    let bytes = match len.checked_mul(size) {
+        present(value) => value,
+        none => throw AllocError(0xffffffffffffffffusize, align)
+    }
+    let layout = unsafe { layout_unchecked(bytes, align) }
+    let raw = try allocator.allocate(layout)
+    let base = raw.cast<core.mem.MaybeUninit<T>>()
+    var index = 0usize
+    while index < len {
+        let slot = if zeroed {
+            core.mem.MaybeUninit<T>.zeroed()
+        } else {
+            core.mem.MaybeUninit<T>.uninit()
+        }
+        unsafe { core.ptr.write(base.add(index), slot) }
+        index += 1usize
+    }
+    Box(slice_pointer(base, len), allocator)
+}
+
+pub fn try_new_uninit_slice_in<T, A: Allocator>(
+    len: usize,
+    allocator: take A
+): Box<[core.mem.MaybeUninit<T>], A> throws AllocError {
+    try fill_slice<T, A>(len, allocator, false)
+}
+pub fn new_uninit_slice_in<T, A: Allocator>(
+    len: usize,
+    allocator: take A
+): Box<[core.mem.MaybeUninit<T>], A> {
+    let result = capture try_new_uninit_slice_in<T, A>(len, allocator)
+    match take result {
+        success(owner) => owner,
+        failure(_) => handle_alloc_error(layout_of<T>())
+    }
+}
+pub fn try_new_uninit_slice<T>(len: usize): Box<[core.mem.MaybeUninit<T>]> throws AllocError {
+    try try_new_uninit_slice_in<T, Global>(len, Global())
+}
+pub fn new_uninit_slice<T>(len: usize): Box<[core.mem.MaybeUninit<T>]> {
+    new_uninit_slice_in<T, Global>(len, Global())
+}
+pub fn try_new_zeroed_slice_in<T, A: Allocator>(
+    len: usize,
+    allocator: take A
+): Box<[core.mem.MaybeUninit<T>], A> throws AllocError {
+    try fill_slice<T, A>(len, allocator, true)
+}
+pub fn new_zeroed_slice_in<T, A: Allocator>(
+    len: usize,
+    allocator: take A
+): Box<[core.mem.MaybeUninit<T>], A> {
+    let result = capture try_new_zeroed_slice_in<T, A>(len, allocator)
+    match take result {
+        success(owner) => owner,
+        failure(_) => handle_alloc_error(layout_of<T>())
+    }
+}
+pub fn try_new_zeroed_slice<T>(len: usize): Box<[core.mem.MaybeUninit<T>]> throws AllocError {
+    try try_new_zeroed_slice_in<T, Global>(len, Global())
+}
+pub fn new_zeroed_slice<T>(len: usize): Box<[core.mem.MaybeUninit<T>]> {
+    new_zeroed_slice_in<T, Global>(len, Global())
+}
+
+extend<T> Box<T> {
+    pub static fn new(value: take T): Box<T> { new_in(value, Global()) }
+    pub static fn new_uninit(): Box<core.mem.MaybeUninit<T>> { new_uninit_in<T, Global>(Global()) }
+    pub static fn new_zeroed(): Box<core.mem.MaybeUninit<T>> { new_zeroed_in<T, Global>(Global()) }
+    pub static fn new_uninit_slice(len: usize): Box<[core.mem.MaybeUninit<T>]> {
+        new_uninit_slice_in<T, Global>(len, Global())
+    }
+    pub static fn new_zeroed_slice(len: usize): Box<[core.mem.MaybeUninit<T>]> {
+        new_zeroed_slice_in<T, Global>(len, Global())
+    }
+}
+
 extend<T: unsized, A: Allocator> Box<T, A> {
     pub fn get(): read T from self { unsafe { read *self.p } }
     pub mut fn get_mut(): mut T from self { unsafe { mut *self.p } }
     pub fn allocator(): read A from self { read self.a }
     pub fn as_ptr(): ptr<mut T> { self.p }
+    pub mut fn as_mut_ptr(): ptr<mut T> { self.p }
     // Ownership conversion: the caller becomes responsible for the block and
     // must rebuild it with `from_raw_in` using a compatible allocator.
     pub take fn into_raw(): (ptr<mut T>, A) {
@@ -97,6 +198,7 @@ extend<T, A: Allocator> Box<core.mem.MaybeUninit<T>, A> {
         let raw = self.into_raw()
         unsafe { from_raw_in(raw.0.cast<T>(), raw.1) }
     }
+    pub mut fn write(value: take T): mut T from self { self.get_mut().write(value) }
 }
 
 extend<T, A: Allocator> Box<T, A> {

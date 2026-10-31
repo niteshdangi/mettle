@@ -88,6 +88,14 @@ extend<K, V> Map<K, V> {
     }
 }
 
+extend<K: Hash + PartialEq, V> Map<K, V> {
+    pub static fn with_capacity(n: usize): Map<K, V> {
+        var map = new<K, V>()
+        map.reserve(n)
+        map
+    }
+}
+
 extend<K, V, A: Allocator> Map<K, V, A> {
     pub init(allocator: take A) {
         self.entries = super.vec.new_in<Bucket<K, V>, A>(take allocator)
@@ -439,6 +447,18 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
         }
         self.entries.clear()
     }
+    pub mut fn retain<F: mut fn(read K, mut V): bool>(keep: mut F): Unit {
+        var index = 0usize
+        while index < self.entries.len() {
+            let entry = unsafe { self.entries.as_mut_ptr().add(index) }
+            let alive = keep(unsafe { read (*entry).key }, unsafe { mut (*entry).value })
+            if alive {
+                index += 1usize
+            } else {
+                let removed = self.remove_index(index)
+            }
+        }
+    }
 
     pub mut fn drain(): MapDrain<region self, K, V, A> {
         var i = 0usize
@@ -467,6 +487,14 @@ pub fn set_new<K>(): Set<K> { Set<K>() }
 
 extend<K> Set<K> {
     pub init() { self.map = new<K, Unit>() }
+}
+
+extend<K: Hash + PartialEq> Set<K> {
+    pub static fn with_capacity(n: usize): Set<K> {
+        var set = set_new<K>()
+        set.reserve(n)
+        set
+    }
 }
 
 extend<K, A: Allocator> Set<K, A> {
@@ -503,6 +531,21 @@ extend<K: Hash + PartialEq, A: Allocator> Set<K, A> {
     pub mut fn insert(key: take K): bool {
         match self.map.insert(key, ()) { present(_) => false, none => true }
     }
+    // Inserts `key`, returning the equal key that was already stored.
+    pub mut fn replace(key: take K): K? {
+        let hash = hash_of(key)
+        match self.map.find_pos(hash, key) {
+            present(pos) => {
+                let index = self.map.slot(pos)
+                let slot = unsafe { core.ptr.from_mut((*self.map.entries.as_mut_ptr().add(index)).key) }
+                present(unsafe { core.ptr.replace(slot, key) })
+            },
+            none => {
+                let _added = self.insert(key)
+                none
+            }
+        }
+    }
     pub mut fn try_insert(key: take K): bool throws AllocError {
         match try self.map.try_insert(key, ()) { present(_) => false, none => true }
     }
@@ -516,6 +559,18 @@ extend<K: Hash + PartialEq, A: Allocator> Set<K, A> {
         }
     }
     pub mut fn clear(): Unit { self.map.clear() }
+    pub mut fn retain<F: mut fn(read K): bool>(keep: mut F): Unit {
+        var index = 0usize
+        while index < self.map.entries.len() {
+            let entry = unsafe { self.map.entries.as_mut_ptr().add(index) }
+            let alive = keep(unsafe { read (*entry).key })
+            if alive {
+                index += 1usize
+            } else {
+                let removed = self.map.remove_index(index)
+            }
+        }
+    }
     pub fn as_entries(): read [Bucket<K, Unit>] from self { self.map.as_entries() }
 }
 

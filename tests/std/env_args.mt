@@ -12,6 +12,10 @@ fn run(): i32 throws Error {
     let name = ffi.os_str_from_text("MT_ENV_TEST")
     match std.env.var_os(name) { present(v) => { return 4 }, none => {} }
     try std.env.set_var(name, ffi.os_str_from_text("a=b"))
+    let as_text = try std.env.var("MT_ENV_TEST")
+    if as_text.as_text() != "a=b" { return 12 }
+    let temp = std.env.temp_dir()
+    if temp.as_path().as_bytes().len() == 0usize { return 13 }
     match std.env.var_os(name) { present(v) => { if !v.as_os_str().same(ffi.os_str_from_text("a=b")) { return 5 } }, none => { return 6 } }
     var seen = false
     let all = std.env.vars()

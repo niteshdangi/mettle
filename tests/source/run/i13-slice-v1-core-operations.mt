@@ -210,7 +210,8 @@ fn main(): i32 {
 
     var empty: [i32; 0] = []
     let empty_slice: read [i32] = read empty
-    if empty_slice.split_first().is_present() || empty_slice.windows(1usize).next().is_present() {
+    if empty_slice.split_first().is_present() || empty_slice.windows(1usize).next().is_present() ||
+        empty_slice.split_off_first().is_present() || empty_slice.split_off_last().is_present() {
         return 18
     }
     let empty_chunk = empty_slice.first_chunk<1usize>()
@@ -321,5 +322,76 @@ fn main(): i32 {
         )
         if *parts.1 != 5 { return 75 }
     }
+    var chunked = [1, 2, 3, 4, 5]
+    {
+        let slice: read [i32] = read chunked
+        match slice.as_array<5usize>() {
+            present(array) => { if array[0usize] != 1 || array[4usize] != 5 { return 86 } },
+            none => { return 86 }
+        }
+        if slice.as_array<4usize>().is_present() { return 87 }
+        let parts = slice.as_chunks<2usize>()
+        if parts.0.len() != 2usize || parts.0[0usize][0usize] != 1 ||
+            parts.0[1usize][0usize] != 3 || parts.0[1usize][1usize] != 4 {
+            return 88
+        }
+        if parts.1.len() != 1usize || parts.1[0usize] != 5 { return 89 }
+        let reverse = slice.as_rchunks<2usize>()
+        if reverse.0.len() != 1usize || reverse.0[0usize] != 1 { return 90 }
+        if reverse.1.len() != 2usize || reverse.1[0usize][0usize] != 2 ||
+            reverse.1[1usize][1usize] != 5 {
+            return 91
+        }
+        let exact = unsafe { slice.as_chunks_unchecked<1usize>() }
+        if exact.len() != 5usize || exact[4usize][0usize] != 5 { return 92 }
+        match slice.split_off_first() {
+            present(parts) => { if *parts.0 != 1 || parts.1[0usize] != 2 { return 93 } },
+            none => { return 93 }
+        }
+        match slice.split_off_last() {
+            present(parts) => { if *parts.0 != 5 || parts.1.len() != 4usize { return 94 } },
+            none => { return 94 }
+        }
+        var windows = slice.array_windows<2usize>()
+        match windows.next() {
+            present(window) => { if window[0usize] != 1 || window[1usize] != 2 { return 95 } },
+            none => { return 95 }
+        }
+        match windows.next_back() {
+            present(window) => { if window[0usize] != 4 || window[1usize] != 5 { return 96 } },
+            none => { return 96 }
+        }
+        match windows.next() {
+            present(window) => { if window[0usize] != 2 || window[1usize] != 3 { return 97 } },
+            none => { return 97 }
+        }
+        let rows = [[9, 8], [7, 6]]
+        let flat = rows.as_flattened()
+        if flat.len() != 4usize || flat[0usize] != 9 || flat[3usize] != 6 { return 98 }
+    }
+    {
+        let mutable = mut chunked
+        let range = mutable.as_mut_ptr_range()
+        if unsafe { *range.start } != 1 { return 99 }
+        let parts = mutable.as_chunks_mut<2usize>()
+        parts.0[0usize][0usize] = 8
+        parts.1[0usize] = 9
+    }
+    if chunked[0usize] != 8 || chunked[4usize] != 9 { return 100 }
+    {
+        let mutable = mut chunked
+        let parts = mutable.as_rchunks_mut<2usize>()
+        parts.0[0usize] = 3
+        parts.1[0usize][0usize] = 4
+    }
+    if chunked[0usize] != 3 || chunked[1usize] != 4 { return 101 }
+    var nested = [[1, 2], [3, 4]]
+    {
+        let mutable = mut nested
+        let flat = mutable.as_flattened_mut()
+        flat[0usize] = 5
+        flat[3usize] = 6
+    }
+    if nested[0usize][0usize] != 5 || nested[1usize][1usize] != 6 { return 102 }
     0
 }

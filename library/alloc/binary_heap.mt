@@ -14,13 +14,12 @@ pub type PeekMut<region r, T: Ord, A: Allocator> {
     drop { sift_down(mut *self.queue) }
 }
 
-fn sift_down<T: Ord, A: Allocator>(queue: mut BinaryHeap<T, A>): Unit {
+fn sift_down_from<T: Ord, A: Allocator>(queue: mut BinaryHeap<T, A>, start: usize): Unit {
     let n = queue.data.len()
-    if n < 2usize { return () }
     // Compare first so a panicking comparison does not leave a partial sift.
     var path = [0usize; 64]
     var depth = 0usize
-    var node = 0usize
+    var node = start
     while true {
         let left = node * 2usize + 1usize
         if left >= n { break }
@@ -28,7 +27,7 @@ fn sift_down<T: Ord, A: Allocator>(queue: mut BinaryHeap<T, A>): Unit {
         if left + 1usize < n && queue.data[left + 1usize].cmp(queue.data[left]).is_gt() {
             child = left + 1usize
         }
-        if queue.data[child].cmp(queue.data[0usize]).is_gt() {
+        if queue.data[child].cmp(queue.data[start]).is_gt() {
             path[depth] = child
             depth += 1usize
             node = child
@@ -36,13 +35,28 @@ fn sift_down<T: Ord, A: Allocator>(queue: mut BinaryHeap<T, A>): Unit {
             break
         }
     }
-    node = 0usize
+    node = start
     var i = 0usize
     while i < depth {
         let child = path[i]
         queue.data.swap(node, child)
         node = child
         i += 1usize
+    }
+}
+
+fn sift_down<T: Ord, A: Allocator>(queue: mut BinaryHeap<T, A>): Unit {
+    if queue.data.len() < 2usize { return () }
+    sift_down_from(mut queue, 0usize)
+}
+
+fn rebuild<T: Ord, A: Allocator>(queue: mut BinaryHeap<T, A>): Unit {
+    let n = queue.data.len()
+    if n < 2usize { return () }
+    var index = n / 2usize
+    while index > 0usize {
+        index -= 1usize
+        sift_down_from(mut queue, index)
     }
 }
 
@@ -67,6 +81,12 @@ pub fn try_with_capacity<T>(n: usize): BinaryHeap<T> throws AllocError {
     try try_with_capacity_in<T, Global>(n, Global())
 }
 pub fn with_capacity<T>(n: usize): BinaryHeap<T> { with_capacity_in(n, Global()) }
+
+extend<T> BinaryHeap<T> {
+    pub static fn with_capacity(n: usize): BinaryHeap<T> {
+        BinaryHeap(super.vec.with_capacity<T>(n))
+    }
+}
 
 extend<T, A: Allocator> BinaryHeap<T, A> {
     pub fn len(): usize { self.data.len() }
@@ -168,6 +188,15 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
         top
     }
     pub mut fn clear(): Unit { self.data.clear() }
+    // Moves every element of `other` into this heap. `other` is left empty.
+    pub mut fn append(other: mut BinaryHeap<T, A>): Unit {
+        self.data.append(mut other.data)
+        rebuild(mut self)
+    }
+    pub mut fn retain<F: mut fn(read T): bool>(keep: mut F): Unit {
+        self.data.retain(mut keep)
+        rebuild(mut self)
+    }
     pub mut fn drain(): super.vec.Drain<region self, T, A> {
         let count = self.data.len()
         self.data.drain(0usize, count)

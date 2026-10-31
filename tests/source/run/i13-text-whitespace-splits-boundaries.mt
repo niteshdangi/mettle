@@ -1,4 +1,4 @@
-import core.iter.Iterator
+import core.iter.{BidirectionalIterator, Iterator}
 import core.cmp.{Ord, Ordering}
 import core.slice
 import core.text
@@ -144,6 +144,14 @@ fn main(): i32 {
         !'~'.is_ascii_graphic() || !'a'.is_ascii_lowercase() ||
         !'Z'.is_ascii_uppercase() || !' '.is_ascii() || !' '.is_whitespace() { return 139 }
     if !'\u{7f}'.is_control() { return 140 }
+    if !' '.is_ascii_whitespace() || !'\n'.is_ascii_whitespace() ||
+        !'\t'.is_ascii_whitespace() || '\u{0b}'.is_ascii_whitespace() ||
+        'a'.is_ascii_whitespace() { return 141 }
+    if "xxbodyxx".trim_matches(fn(c: char): bool { c == 'x' }) != "body" ||
+        "xxbody".trim_start_matches(fn(c: char): bool { c == 'x' }) != "body" ||
+        "bodyxx".trim_end_matches(fn(c: char): bool { c == 'x' }) != "body" {
+        return 142
+    }
     match 'Z'.to_digit(36u32) {
         present(value) => { if value != 35u32 { return 26 } },
         none => { return 26 }
@@ -155,9 +163,13 @@ fn main(): i32 {
     if 'é'.len_utf8() != 2usize || 'é'.len_utf16() != 1usize ||
         '🦀'.len_utf8() != 4usize || '🦀'.len_utf16() != 2usize { return 28 }
     if !'7'.is_digit(8u32) || '9'.is_digit(8u32) { return 125 }
-    var char_utf16 = '🦀'.encode_utf16()
-    match char_utf16.next() { present(unit) => { if unit != 0xd83eu16 { return 51 } }, none => { return 51 } }
-    match char_utf16.next() { present(unit) => { if unit != 0xdd80u16 { return 52 } }, none => { return 52 } }
+    var crab_units = [0u16, 0u16]
+    let crab_utf16 = '🦀'.encode_utf16(mut crab_units)
+    if crab_utf16.len() != 2usize || crab_utf16[0] != 0xd83eu16 ||
+        crab_utf16[1] != 0xdd80u16 { return 51 }
+    var letter_units = [0u16, 0u16]
+    let letter_utf16 = 'a'.encode_utf16(mut letter_units)
+    if letter_utf16.len() != 1usize || letter_utf16[0] != 0x61u16 { return 52 }
     if '🦀'.to_ascii_lowercase() != '🦀' || 'z'.to_ascii_uppercase() != 'Z' ||
         !'A'.eq_ignore_ascii_case('a') { return 53 }
     var mutable_char = 'A'
@@ -195,10 +207,14 @@ fn main(): i32 {
     match utf16.next() { present(unit) => { if unit != 0x61u16 { return 59 } }, none => { return 59 } }
     match utf16.next() { present(unit) => { if unit != 0xd83eu16 { return 60 } }, none => { return 60 } }
     match utf16.next() { present(unit) => { if unit != 0xdd80u16 { return 61 } }, none => { return 61 } }
+    var utf16_back = "a🦀".encode_utf16()
+    match utf16_back.next_back() { present(unit) => { if unit != 0xdd80u16 { return 143 } }, none => { return 143 } }
+    match utf16_back.next_back() { present(unit) => { if unit != 0xd83eu16 { return 144 } }, none => { return 144 } }
+    match utf16_back.next_back() { present(unit) => { if unit != 0x61u16 { return 145 } }, none => { return 145 } }
     let words_source = string.from_text("alpha beta")
     var string_words = words_source.split_whitespace()
     match string_words.next() { present(word) => { if word != "alpha" { return 128 } }, none => { return 128 } }
-    match string_words.next() { present(word) => { if word != "beta" { return 129 } }, none => { return 129 } }
+    match string_words.next_back() { present(word) => { if word != "beta" { return 129 } }, none => { return 129 } }
     let units = [0x61u16, 0xd83eu16, 0xdd80u16]
     match capture string.from_utf16(units) {
         success(from_units) => { if from_units.as_text() != "a🦀" { return 62 } },
@@ -349,7 +365,7 @@ fn main(): i32 {
     if list.len() != 2usize { return 91 }
     list.dedup_by_key(fn(value: mut i32): i32 { value })
     list.retain_mut(fn(value: mut i32): bool { value += 1; true })
-    if list[0usize] != 2 || list[1usize] != 3 { return 92 }
+    if list[0] != 2 || list[1] != 3 { return 92 }
     match list.pop_if(fn(value: mut i32): bool { value == 3 }) {
         present(value) => { if value != 3 { return 93 } },
         none => { return 93 }
@@ -359,7 +375,7 @@ fn main(): i32 {
     keyed_list.push(12)
     keyed_list.push(23)
     keyed_list.dedup_by_key(fn(value: mut i32): i32 { value / 10 })
-    if keyed_list.len() != 2usize || keyed_list[1usize] != 23 { return 106 }
+    if keyed_list.len() != 2usize || keyed_list[1] != 23 { return 106 }
     var extracted_source = vec.new<i32>()
     extracted_source.push(1)
     extracted_source.push(2)
@@ -382,7 +398,7 @@ fn main(): i32 {
         }
         unsafe { spare_test.set_len(2usize) }
         spare_test.shrink_to(1usize)
-        if spare_test[0usize] != 1 || spare_test[1usize] != 2 { return 123 }
+        if spare_test[0] != 1 || spare_test[1] != 2 { return 123 }
         var splice_source = vec.new<i32>()
         splice_source.push(1)
         splice_source.push(2)

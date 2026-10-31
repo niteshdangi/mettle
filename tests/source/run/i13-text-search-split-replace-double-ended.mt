@@ -58,10 +58,17 @@ fn main(): i32 {
     match words.next() { present(word) => { if word != "one" { return 30 } }, none => { return 30 } }
     match words.next() { present(word) => { if word != "\u{e9}" { return 31 } }, none => { return 31 } }
     match words.next() { present(word) => { if word != "two" { return 31 } }, none => { return 31 } }
+    var reverse_words = " one \u{e9} two ".split_whitespace()
+    match reverse_words.next_back() { present(word) => { if word != "two" { return 48 } }, none => { return 48 } }
+    match reverse_words.next() { present(word) => { if word != "one" { return 49 } }, none => { return 49 } }
     var encoded = "a\u{1f600}".encode_utf16()
     match encoded.next() { present(unit) => { if unit != 0x61u16 { return 32 } }, none => { return 32 } }
     match encoded.next() { present(unit) => { if unit != 0xd83du16 { return 33 } }, none => { return 33 } }
     match encoded.next() { present(unit) => { if unit != 0xde00u16 { return 34 } }, none => { return 34 } }
+    var encoded_back = "a\u{1f600}".encode_utf16()
+    match encoded_back.next_back() { present(unit) => { if unit != 0xde00u16 { return 50 } }, none => { return 50 } }
+    match encoded_back.next_back() { present(unit) => { if unit != 0xd83du16 { return 51 } }, none => { return 51 } }
+    match encoded_back.next() { present(unit) => { if unit != 0x61u16 { return 52 } }, none => { return 52 } }
     var escaped = alloc.string.new()
     var escape_chars = "\n\u{e9}".escape_debug()
     while true {
@@ -98,10 +105,11 @@ fn main(): i32 {
         core.char.from_digit(1u32, 1u32).is_present() {
         return 45
     }
-    var utf16 = '\u{1f600}'.encode_utf16()
-    match utf16.next() { present(unit) => { if unit != 0xd83du16 { return 37 } }, none => { return 37 } }
-    match utf16.next() { present(unit) => { if unit != 0xde00u16 { return 37 } }, none => { return 37 } }
-    match utf16.next() { present(_) => { return 37 }, none => {} }
+    var emoji_units = [0u16, 0u16]
+    let utf16 = '\u{1f600}'.encode_utf16(mut emoji_units)
+    if utf16.len() != 2usize || utf16[0] != 0xd83du16 || utf16[1] != 0xde00u16 {
+        return 37
+    }
     var lower = 'A'
     lower.make_ascii_lowercase()
     if lower != 'a' { return 38 }

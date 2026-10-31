@@ -9,10 +9,43 @@ import package.alloc.string.String
 import package.alloc.string.FromUtf8Error
 import package.core.text.Text
 import package.core.slice
+import package.core.iter.Iterator
 import super.ffi
 import super.ffi.{OsStr, OsString}
 
 pub type Path { bytes: [u8] }
+
+pub type Components<region r> { bytes: read [u8] from r; index: usize }
+extend<region r> Components<region r> implements Iterator {
+    type Item = read OsStr from r;
+    mut fn next(): (read OsStr from r)? {
+        let bytes = self.bytes
+        if self.index >= bytes.len() { return none }
+        if self.index == 0usize && is_sep(bytes[0usize]) {
+            self.index = 1usize
+            return present(ffi.os_str(unsafe { slice.subslice_unchecked(bytes, 0usize, 1usize) }))
+        }
+        while self.index < bytes.len() && is_sep(bytes[self.index]) { self.index += 1usize }
+        if self.index >= bytes.len() { return none }
+        let start = self.index
+        while self.index < bytes.len() && !is_sep(bytes[self.index]) { self.index += 1usize }
+        present(ffi.os_str(unsafe { slice.subslice_unchecked(bytes, start, self.index) }))
+    }
+}
+
+pub type Ancestors<region r> { current: (read Path from r)? }
+extend<region r> Ancestors<region r> implements Iterator {
+    type Item = read Path from r;
+    mut fn next(): (read Path from r)? {
+        match self.current {
+            present(path) => {
+                self.current = path.parent()
+                present(path)
+            },
+            none => none
+        }
+    }
+}
 
 pub fn path(bytes: read [u8]): read Path from bytes {
     let fat = core.ptr.from_ref(bytes)
@@ -201,6 +234,16 @@ extend Path {
         result.add_extension(extension)
         result
     }
+
+    pub fn components<region r>(receiver self: read Self from r): Components<region r> {
+        Components(read self.bytes, 0usize)
+    }
+    pub fn iter<region r>(receiver self: read Self from r): Components<region r> {
+        self.components()
+    }
+    pub fn ancestors<region r>(receiver self: read Self from r): Ancestors<region r> {
+        Ancestors(present(read self))
+    }
 }
 
 // Index of the extension dot in a file name; a dot at the start is ignored.
@@ -348,6 +391,30 @@ extend PathBuf {
     }
 
     pub fn same(other: read PathBuf): bool { ffi.bytes_equal(self.v.as_slice(), other.as_bytes()) }
+    pub fn components<region r>(receiver self: read Self from r): Components<region r> {
+        self.as_path().components()
+    }
+    pub fn iter<region r>(receiver self: read Self from r): Components<region r> {
+        self.as_path().iter()
+    }
+    pub take fn leak(): mut Path from static {
+        let parts = self.v.into_raw_parts()
+        let view = package.alloc.vec.slice_ptr_mut(parts.0, parts.1)
+        let fat = core.ptr.from_mut(unsafe { mut *view })
+        let path = unsafe { core.mem.transmute<ptr<mut Path>>(fat) }
+        unsafe { mut *path }
+    }
+    pub fn ancestors<region r>(receiver self: read Self from r): Ancestors<region r> {
+        self.as_path().ancestors()
+    }
+    pub mut fn as_mut_os_string(): mut OsString from self {
+        let raw = unsafe { core.mem.transmute<ptr<mut OsString>>(core.ptr.from_mut(self)) }
+        unsafe { mut *raw }
+    }
+    pub take fn into_boxed_path(): package.alloc.boxed.Box<Path> {
+        let boxed = self.v.into_boxed_slice()
+        unsafe { core.mem.transmute<package.alloc.boxed.Box<Path>>(boxed) }
+    }
 }
 
 extend Path implements PathInput {

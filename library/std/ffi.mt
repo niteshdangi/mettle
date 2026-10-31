@@ -218,6 +218,10 @@ extend OsString {
         output.make_ascii_uppercase()
         output
     }
+    pub take fn into_boxed_os_str(): package.alloc.boxed.Box<OsStr> {
+        let boxed = self.v.into_boxed_slice()
+        unsafe { core.mem.transmute<package.alloc.boxed.Box<OsStr>>(boxed) }
+    }
     pub take fn into_bytes(): List<u8> { self.v }
     pub take fn into_encoded_bytes(): List<u8> { self.v }
     pub take fn into_string(): String throws FromUtf8Error {
@@ -237,4 +241,144 @@ pub fn cstring(bytes: read [u8]): List<u8> throws io.Error {
     out.extend_from_slice(bytes)
     out.push(0u8)
     out
+}
+
+// `interior` marks a zero byte before the final terminator. A missing
+// terminator uses `interior == false` and `position == bytes.len()`.
+pub copy type CStrError { pub position: usize; pub interior: bool }
+
+// Unsized NUL-terminated byte string. The bytes include the trailing zero,
+// and no earlier byte is zero.
+pub type CStr { bytes: [u8] }
+
+fn nul_at(bytes: read [u8]): usize? {
+    var index = 0usize
+    while index < bytes.len() {
+        if bytes[index] == 0u8 { return present(index) }
+        index += 1usize
+    }
+    none
+}
+
+fn check_terminated(bytes: read [u8]): Unit throws CStrError {
+    if bytes.len() == 0usize || bytes[bytes.len() - 1usize] != 0u8 {
+        throw CStrError(bytes.len(), false)
+    }
+    var index = 0usize
+    while index + 1usize < bytes.len() {
+        if bytes[index] == 0u8 { throw CStrError(index, true) }
+        index += 1usize
+    }
+}
+
+pub fn c_str_from_bytes_with_nul(bytes: read [u8]): read CStr from bytes throws CStrError {
+    try check_terminated(bytes)
+    unsafe { c_str_from_bytes_with_nul_unchecked(bytes) }
+}
+
+// Safety: `bytes` ends in NUL and contains no earlier NUL.
+pub unsafe fn c_str_from_bytes_with_nul_unchecked(bytes: read [u8]): read CStr from bytes {
+    let fat = core.ptr.from_ref(bytes)
+    let view = unsafe { core.mem.transmute<ptr<read CStr>>(fat) }
+    unsafe { read *view }
+}
+
+pub fn c_str_from_bytes_until_nul(bytes: read [u8]): (read CStr from bytes)? {
+    match nul_at(bytes) {
+        present(index) => present(unsafe {
+            c_str_from_bytes_with_nul_unchecked(
+                package.core.slice.subslice_unchecked(bytes, 0usize, index + 1usize))
+        }),
+        none => none
+    }
+}
+
+// Safety: `ptr` points at a NUL-terminated string that stays valid for `r`.
+pub unsafe fn c_str_from_ptr<region r>(ptr: ptr<read u8>): read CStr from r {
+    var length = 0usize
+    while unsafe { *ptr.add(length) } != 0u8 { length += 1usize }
+    let bytes = unsafe { package.core.slice.from_raw_parts<r, u8>(ptr, length + 1usize) }
+    unsafe { c_str_from_bytes_with_nul_unchecked(bytes) }
+}
+
+extend CStr {
+    pub static fn from_bytes_with_nul(bytes: read [u8]): read CStr from bytes throws CStrError {
+        try c_str_from_bytes_with_nul(bytes)
+    }
+    pub unsafe static fn from_bytes_with_nul_unchecked(bytes: read [u8]): read CStr from bytes {
+        unsafe { c_str_from_bytes_with_nul_unchecked(bytes) }
+    }
+    pub static fn from_bytes_until_nul(bytes: read [u8]): (read CStr from bytes)? {
+        c_str_from_bytes_until_nul(bytes)
+    }
+    pub unsafe static fn from_ptr<region r>(pointer: ptr<read u8>): read CStr from r {
+        unsafe { c_str_from_ptr<r>(pointer) }
+    }
+    pub fn to_bytes_with_nul(): read [u8] from self { read self.bytes }
+    pub fn to_bytes(): read [u8] from self {
+        let end = self.bytes.len() - 1usize
+        unsafe { package.core.slice.subslice_unchecked(read self.bytes, 0usize, end) }
+    }
+    pub fn count_bytes(): usize { self.bytes.len() - 1usize }
+    pub fn to_str(): (read Text from self)? { package.core.text.from_utf8(self.to_bytes()) }
+    pub fn to_string_lossy(): String { lossy(self.to_bytes()) }
+    pub fn into_c_string(): CString {
+        var owned = vec.with_capacity<u8>(self.bytes.len())
+        owned.extend_from_slice(read self.bytes)
+        CString(owned)
+    }
+}
+
+// Owned NUL-terminated bytes with no interior NUL. The stored list includes
+// the trailing zero.
+pub type CString { bytes: List<u8> }
+
+pub fn c_string_from_bytes(bytes: read [u8]): CString throws CStrError {
+    match nul_at(bytes) {
+        present(index) => { throw CStrError(index, true) },
+        none => {}
+    }
+    var owned = vec.with_capacity<u8>(bytes.len() + 1usize)
+    owned.extend_from_slice(bytes)
+    owned.push(0u8)
+    CString(owned)
+}
+
+extend CString {
+    // Safety: `bytes` has no interior NUL. A trailing NUL is appended.
+    pub unsafe static fn from_vec_unchecked(bytes: take List<u8>): CString {
+        var owned = bytes
+        owned.push(0u8)
+        CString(owned)
+    }
+    pub static fn from_vec_with_nul(bytes: take List<u8>): CString throws CStrError {
+        try check_terminated(bytes.as_slice())
+        CString(bytes)
+    }
+    // Safety: `bytes` ends in NUL and contains no earlier NUL.
+    pub unsafe static fn from_vec_with_nul_unchecked(bytes: take List<u8>): CString {
+        CString(bytes)
+    }
+    pub fn as_bytes_with_nul(): read [u8] from self { self.bytes.as_slice() }
+    pub fn as_bytes(): read [u8] from self { self.as_c_str().to_bytes() }
+    pub fn as_c_str(): read CStr from self {
+        unsafe { c_str_from_bytes_with_nul_unchecked(self.bytes.as_slice()) }
+    }
+    pub fn count_bytes(): usize { self.as_c_str().count_bytes() }
+    pub take fn into_bytes_with_nul(): List<u8> {
+        unsafe {
+            let bytes = core.ptr.`read`(core.ptr.from_ref(self.bytes))
+            core.mem.forget(take self)
+            bytes
+        }
+    }
+    pub take fn into_bytes(): List<u8> {
+        var bytes = self.into_bytes_with_nul()
+        let _ = bytes.pop()
+        bytes
+    }
+    pub take fn into_boxed_c_str(): package.alloc.boxed.Box<CStr> {
+        let boxed = self.into_bytes_with_nul().into_boxed_slice()
+        unsafe { core.mem.transmute<package.alloc.boxed.Box<CStr>>(boxed) }
+    }
 }

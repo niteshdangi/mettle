@@ -128,10 +128,16 @@ fn parse_magnitude(text: read Text, radix: u32, signed: bool, limit_pos: u128, l
 
 pub interface FromText: Sized {
     static fn from_text_radix(text: read Text, radix: u32): Self throws ParseIntError;
+    static fn from_text(text: read Text): Self throws ParseIntError {
+        try Self.(FromText).from_text_radix(text, 10u32)
+    }
 }
 
 pub fn parse<T: FromText>(text: read Text): T throws ParseIntError {
-    try T.(FromText).from_text_radix(text, 10u32)
+    try T.(FromText).from_text(text)
+}
+extend Text {
+    pub fn parse<T: FromText>(): T throws ParseIntError { try parse<T>(read self) }
 }
 pub fn parse_radix<T: FromText>(text: read Text, radix: u32): T throws ParseIntError {
     try T.(FromText).from_text_radix(text, radix)

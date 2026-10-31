@@ -149,6 +149,105 @@ pub fn try_new_zeroed<T>(): Arc<core.mem.MaybeUninit<T>> throws AllocError {
 }
 pub fn new_zeroed<T>(): Arc<core.mem.MaybeUninit<T>> { new_zeroed_in<T, Global>(Global()) }
 
+fn fill_arc_slice<T, A: Allocator>(
+    len: usize,
+    allocator: take A,
+    zeroed: bool
+): Arc<[core.mem.MaybeUninit<T>], A> throws AllocError {
+    var a = allocator
+    let size = core.mem.size_of<core.mem.MaybeUninit<T>>()
+    let align = core.mem.align_of<core.mem.MaybeUninit<T>>()
+    let bytes = if len == 0usize || size == 0usize {
+        0usize
+    } else {
+        match len.checked_mul(size) {
+            present(value) => value,
+            none => throw AllocError(0xffffffffffffffffusize, align)
+        }
+    }
+    let payload = unsafe { layout_unchecked(bytes, align) }
+    let laid_out = capture extend_layout(layout_of<ArcHeader>(), payload)
+    let (layout, offset) = match take laid_out {
+        success(value) => value,
+        failure(error) => throw AllocError(error.size, error.align)
+    }
+    let raw = try a.allocate(layout)
+    let header = raw.cast<ArcHeader>()
+    let data = unsafe { raw.add(offset) }.cast<core.mem.MaybeUninit<T>>()
+    unsafe {
+        core.ptr.write(header, ArcHeader(core.sync.atomic.AtomicUsize.new(1usize),
+                                          core.sync.atomic.AtomicUsize.new(1usize),
+                                          layout))
+    }
+    if size != 0usize {
+        var index = 0usize
+        while index < len {
+            let slot = if zeroed {
+                core.mem.MaybeUninit<T>.zeroed()
+            } else {
+                core.mem.MaybeUninit<T>.uninit()
+            }
+            unsafe { core.ptr.write(data.add(index), slot) }
+            index += 1usize
+        }
+    }
+    Arc(slice_ptr_mut(data, len), header, a)
+}
+
+pub fn try_new_uninit_slice_in<T, A: Allocator>(
+    len: usize,
+    allocator: take A
+): Arc<[core.mem.MaybeUninit<T>], A> throws AllocError {
+    try fill_arc_slice<T, A>(len, allocator, false)
+}
+pub fn new_uninit_slice_in<T, A: Allocator>(
+    len: usize,
+    allocator: take A
+): Arc<[core.mem.MaybeUninit<T>], A> {
+    let result = capture try_new_uninit_slice_in<T, A>(len, allocator)
+    match take result {
+        success(owner) => owner,
+        failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
+    }
+}
+pub fn try_new_uninit_slice<T>(len: usize): Arc<[core.mem.MaybeUninit<T>]> throws AllocError {
+    try try_new_uninit_slice_in<T, Global>(len, Global())
+}
+pub fn new_uninit_slice<T>(len: usize): Arc<[core.mem.MaybeUninit<T>]> {
+    new_uninit_slice_in<T, Global>(len, Global())
+}
+pub fn try_new_zeroed_slice_in<T, A: Allocator>(
+    len: usize,
+    allocator: take A
+): Arc<[core.mem.MaybeUninit<T>], A> throws AllocError {
+    try fill_arc_slice<T, A>(len, allocator, true)
+}
+pub fn new_zeroed_slice_in<T, A: Allocator>(
+    len: usize,
+    allocator: take A
+): Arc<[core.mem.MaybeUninit<T>], A> {
+    let result = capture try_new_zeroed_slice_in<T, A>(len, allocator)
+    match take result {
+        success(owner) => owner,
+        failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
+    }
+}
+pub fn try_new_zeroed_slice<T>(len: usize): Arc<[core.mem.MaybeUninit<T>]> throws AllocError {
+    try try_new_zeroed_slice_in<T, Global>(len, Global())
+}
+pub fn new_zeroed_slice<T>(len: usize): Arc<[core.mem.MaybeUninit<T>]> {
+    new_zeroed_slice_in<T, Global>(len, Global())
+}
+
+extend<T> Arc<T> {
+    pub static fn new_uninit_slice(len: usize): Arc<[core.mem.MaybeUninit<T>]> {
+        new_uninit_slice_in<T, Global>(len, Global())
+    }
+    pub static fn new_zeroed_slice(len: usize): Arc<[core.mem.MaybeUninit<T>]> {
+        new_zeroed_slice_in<T, Global>(len, Global())
+    }
+}
+
 // Copies only from a validated Text view, preserving Text's UTF-8 invariant.
 pub fn try_copy_text_in<A: Allocator>(value: read Text, allocator: take A): Arc<Text, A> throws AllocError {
     var a = allocator
@@ -268,6 +367,14 @@ extend<T, A: Allocator> Arc<core.mem.MaybeUninit<T>, A> {
     pub take unsafe fn assume_init(): Arc<T, A> {
         let raw = self.into_raw()
         unsafe { from_raw(RawArc(raw.p.cast<T>(), raw.h, raw.a)) }
+    }
+}
+extend<T, A: Allocator> Arc<[core.mem.MaybeUninit<T>], A> {
+    // Safety: every element was initialized before taking ownership as [T].
+    pub take unsafe fn assume_init(): Arc<[T], A> {
+        let raw = self.into_raw()
+        let payload = unsafe { core.mem.transmute<ptr<mut [T]>>(raw.p) }
+        unsafe { from_raw(RawArc(payload, raw.h, raw.a)) }
     }
 }
 

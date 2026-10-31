@@ -8,7 +8,7 @@ import package.core.outcome
 import super.ffi
 import super.ffi.{OsStr, OsString}
 import super.io
-import super.io.{Error, ErrorKind, Reader, Writer}
+import super.io.{Error, ErrorKind, Reader, Writer, SeekFrom, Seek}
 import super.path.{Path, PathBuf, PathInput}
 import super.sys
 import super.time.SystemTime
@@ -24,6 +24,8 @@ extern "C" {
     unsafe fn chmod(path: ptr<read u8>, mode: u32): i32;
     unsafe fn realpath(path: ptr<read u8>, resolved: ptr<mut u8>): ptr<mut u8>;
     unsafe fn free(memory: ptr<mut u8>): Unit;
+    unsafe fn flock(fd: i32, operation: i32): i32;
+    unsafe fn futimens(fd: i32, times: ptr<read i64>): i32;
 }
 
 // An open file; the descriptor is closed when the value is dropped.
@@ -33,8 +35,6 @@ pub type File {
         if self.fd >= 0 { let closed = unsafe { sys.close(self.fd) } }
     }
 }
-
-pub copy enum SeekFrom { Start(u64), End(i64), Current(i64) }
 
 pub copy enum FileType { File, Directory, Symlink, Other }
 
@@ -176,6 +176,32 @@ pub type DirBuilder { recursive: bool; mode: u32 }
 
 pub fn dir_builder(): DirBuilder { DirBuilder(false, 511u32) }
 
+// Access and modification times for `File.set_times`. An unset field is left unchanged.
+pub copy type FileTimes {
+    set_access: bool
+    access_secs: i64
+    access_nanos: i64
+    set_modify: bool
+    modify_secs: i64
+    modify_nanos: i64
+}
+
+pub fn file_times(): FileTimes { FileTimes(false, 0i64, 0i64, false, 0i64, 0i64) }
+
+extend FileTimes {
+    pub static fn new(): FileTimes { file_times() }
+    pub mut fn set_accessed(time: SystemTime): Unit {
+        self.set_access = true
+        self.access_secs = time.unix_secs()
+        self.access_nanos = time.subsec_nanos() as i64
+    }
+    pub mut fn set_modified(time: SystemTime): Unit {
+        self.set_modify = true
+        self.modify_secs = time.unix_secs()
+        self.modify_nanos = time.subsec_nanos() as i64
+    }
+}
+
 extend DirBuilder {
     pub static fn new(): DirBuilder { dir_builder() }
     pub mut fn recursive(on: bool): Unit { self.recursive = on }
@@ -230,6 +256,13 @@ extend File {
         if r < 0i64 { throw io.last_os_error() }
         r as u64
     }
+    pub mut fn rewind(): Unit throws Error {
+        let _ignored = try self.seek(SeekFrom.Start(0u64))
+    }
+    pub mut fn stream_position(): u64 throws Error { try self.seek(SeekFrom.Current(0i64)) }
+    pub mut fn seek_relative(offset: i64): Unit throws Error {
+        let _ignored = try self.seek(SeekFrom.Current(offset))
+    }
     pub fn sync_all(): Unit throws Error {
         if unsafe { fsync(self.fd) } != 0 { throw io.last_os_error() }
     }
@@ -242,8 +275,59 @@ extend File {
     pub fn set_len(length: u64): Unit throws Error {
         if unsafe { ftruncate(self.fd, length as i64) } != 0 { throw io.last_os_error() }
     }
+    pub static fn open(input: read PathInput): File throws Error {
+        var options = open_options()
+        options.set_read(true)
+        try options.open(input)
+    }
+    pub static fn create(input: read PathInput): File throws Error {
+        var options = open_options()
+        options.set_write(true)
+        options.set_create(true)
+        options.set_truncate(true)
+        try options.open(input)
+    }
+    pub static fn create_new(input: read PathInput): File throws Error {
+        var options = open_options()
+        options.set_write(true)
+        options.set_create_new(true)
+        try options.open(input)
+    }
+    pub static fn options(): OpenOptions { open_options() }
+    pub fn lock(): Unit throws Error { try lock_file(self.fd, 2) }
+    pub fn lock_shared(): Unit throws Error { try lock_file(self.fd, 1) }
+    pub fn try_lock(): Unit throws Error { try lock_file(self.fd, 6) }
+    pub fn try_lock_shared(): Unit throws Error { try lock_file(self.fd, 5) }
+    pub fn unlock(): Unit throws Error { try lock_file(self.fd, 8) }
+    pub fn set_times(times: FileTimes): Unit throws Error {
+        let omit = -2i64
+        var buf = [omit, omit, omit, omit]
+        if times.set_access {
+            buf[0usize] = times.access_secs
+            buf[1usize] = times.access_nanos
+        }
+        if times.set_modify {
+            buf[2usize] = times.modify_secs
+            buf[3usize] = times.modify_nanos
+        }
+        if unsafe { futimens(self.fd, core.ptr.from_ref(buf).cast<i64>()) } != 0 {
+            throw io.last_os_error()
+        }
+    }
+    pub fn set_modified(time: SystemTime): Unit throws Error {
+        var times = file_times()
+        times.set_modified(time)
+        try self.set_times(times)
+    }
 }
 
+fn lock_file(fd: i32, operation: i32): Unit throws Error {
+    if unsafe { flock(fd, operation) } != 0 { throw io.last_os_error() }
+}
+
+extend File implements Seek {
+    mut fn seek(pos: SeekFrom): u64 throws Error { try self.seek(pos) }
+}
 extend File implements Reader {
     mut fn read_some(buf: mut [u8]): usize throws Error { try io.read_fd(self.fd, buf) }
 }

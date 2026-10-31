@@ -1,5 +1,5 @@
 import super.cmp.{PartialEq, Ord, Ordering}
-import super.iter.{Iterator, BidirectionalIterator, Iterable, MutableIterable}
+import super.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, Iterable, MutableIterable}
 import super.clone.Clone
 
 copy type Raw { data: ptr<read u8>; len: usize }
@@ -111,6 +111,46 @@ extend<T> [T] {
         let end = unsafe { raw.data.add(self.len()) }
         super.iter.Range(raw.data, end)
     }
+    pub mut fn as_mut_ptr_range(): super.iter.Range<ptr<mut T>> {
+        let base = mutable_data_pointer(mut self)
+        // Safety: the slice pointer is valid through its one-past-end position.
+        let end = unsafe { base.add(self.len()) }
+        super.iter.Range(base, end)
+    }
+    pub fn element_offset(element: read T): usize? {
+        let size = core.mem.size_of<T>()
+        if size == 0usize {
+            if self.len() == 0usize { return none }
+            return present(0usize)
+        }
+        let raw = unsafe { core.mem.transmute<RawParts<T>>(core.ptr.from_ref(self)) }
+        let base = raw.data as usize
+        let address = core.ptr.from_ref(element) as usize
+        if address < base { return none }
+        let distance = address - base
+        if distance % size != 0usize { return none }
+        let index = distance / size
+        if index >= self.len() { return none }
+        present(index)
+    }
+    pub fn subslice_range(part: read [T]): super.iter.Range<usize>? {
+        let size = core.mem.size_of<T>()
+        if size == 0usize {
+            if part.len() > self.len() { return none }
+            return present(super.iter.Range(0usize, part.len()))
+        }
+        let raw = unsafe { core.mem.transmute<RawParts<T>>(core.ptr.from_ref(self)) }
+        let inner = unsafe { core.mem.transmute<RawParts<T>>(core.ptr.from_ref(part)) }
+        let base = raw.data as usize
+        let address = inner.data as usize
+        if address < base { return none }
+        let distance = address - base
+        if distance % size != 0usize { return none }
+        let start = distance / size
+        let end = start + part.len()
+        if end > self.len() { return none }
+        present(super.iter.Range(start, end))
+    }
     pub mut fn swap(a: usize, b: usize) {
         if a >= self.len() || b >= self.len() { super.panic.panic("swap index out of bounds") }
         if a != b {
@@ -206,6 +246,12 @@ extend<T: PartialEq> [T] {
     pub fn strip_suffix(suffix: read [T]): (read [T] from self)? {
         if !self.ends_with(suffix) { return none }
         present(unsafe { sub<T>(read self, 0usize, self.len() - suffix.len()) })
+    }
+    pub fn strip_circumfix(prefix: read [T], suffix: read [T]): (read [T] from self)? {
+        match self.strip_prefix(prefix) {
+            present(rest) => rest.strip_suffix(suffix),
+            none => none
+        }
     }
 }
 
@@ -502,6 +548,18 @@ fn introsort<T, F: fn(read T, read T): bool>(xs: mut [T], less: take F) {
 
 // Borrowing iteration over the elements of a slice.
 pub type SliceIter<region r, T> { items: read [T] from r; front: usize; back: usize }
+extend<region r, T> SliceIter<region r, T> {
+    pub fn as_slice(): read [T] from r {
+        self.items.split_at(self.back).0.split_at(self.front).1
+    }
+    fn size_hint(): (usize, usize?) {
+        let count = self.back - self.front
+        (count, present(count))
+    }
+}
+extend<region r, T> SliceIter<region r, T> implements ExactSizeIterator {
+    fn len(): usize { self.back - self.front }
+}
 extend<region r, T> SliceIter<region r, T> implements Iterator {
     type Item = read T from r
     mut fn next(): (read T from r)? {
@@ -526,6 +584,19 @@ extend<region r, T> SliceIter<region r, T> implements BidirectionalIterator {
 }
 
 pub type SliceIterMut<region r, T> { items: mut [T] from r; front: usize; back: usize }
+extend<region r, T> SliceIterMut<region r, T> {
+    pub fn as_slice(): read [T] from r {
+        let items: read [T] = read self.items
+        items.split_at(self.back).0.split_at(self.front).1
+    }
+    fn size_hint(): (usize, usize?) {
+        let count = self.back - self.front
+        (count, present(count))
+    }
+}
+extend<region r, T> SliceIterMut<region r, T> implements ExactSizeIterator {
+    fn len(): usize { self.back - self.front }
+}
 extend<region r, T> SliceIterMut<region r, T> implements Iterator {
     type Item = mut T from r
     mut fn next(): (mut T from r)? {
@@ -603,7 +674,218 @@ extend [u8] {
     pub fn bytes(): SliceBytes<region self> { SliceBytes(read self, 0usize, self.len()) }
 }
 
+extend<T> [T] {
+    pub fn align_to<U>(): (read [T] from self, read [U] from self, read [T] from self) {
+        let raw = unsafe { core.mem.transmute<RawRead<T>>(core.ptr.from_ref(self)) }
+        let len = self.len()
+        let size_t = core.mem.size_of<T>()
+        let size_u = core.mem.size_of<U>()
+        let align = core.mem.align_of<U>()
+        let prefix = match elements_until_aligned(raw.data as usize, size_t, align, len) {
+            present(n) => n,
+            none => {
+                let middle = unsafe { typed_slice<T, U>(read self, dangling_read<U>(), 0usize) }
+                let tail = unsafe { sub<T>(read self, len, len) }
+                return (read self, middle, tail)
+            }
+        }
+        if size_u != 0usize && size_t == 0usize {
+            let middle = unsafe { typed_slice<T, U>(read self, dangling_read<U>(), 0usize) }
+            let tail = unsafe { sub<T>(read self, len, len) }
+            return (read self, middle, tail)
+        }
+        let head = unsafe { sub<T>(read self, 0usize, prefix) }
+        if size_u == 0usize {
+            let middle = unsafe {
+                typed_slice<T, U>(read self, raw.data.add(prefix).cast<U>(),
+                                  0xffffffffffffffffusize)
+            }
+            let tail = unsafe { sub<T>(read self, prefix, len) }
+            return (head, middle, tail)
+        }
+        let rest_bytes = (len - prefix) * size_t
+        let step = match byte_step(size_u, size_t) {
+            present(value) => value,
+            none => {
+                let middle = unsafe { typed_slice<T, U>(read self, dangling_read<U>(), 0usize) }
+                let tail = unsafe { sub<T>(read self, len, len) }
+                return (read self, middle, tail)
+            }
+        }
+        if step == 0usize {
+            let middle = unsafe { typed_slice<T, U>(read self, dangling_read<U>(), 0usize) }
+            let tail = unsafe { sub<T>(read self, prefix, len) }
+            return (head, middle, tail)
+        }
+        let mid_bytes = (rest_bytes / step) * step
+        let middle = unsafe {
+            typed_slice<T, U>(read self, raw.data.add(prefix).cast<U>(), mid_bytes / size_u)
+        }
+        let tail = unsafe { sub<T>(read self, prefix + mid_bytes / size_t, len) }
+        (head, middle, tail)
+    }
+    pub mut fn align_to_mut<U>(): (mut [T] from self, mut [U] from self, mut [T] from self) {
+        let base = mutable_data_pointer(mut self)
+        let len = self.len()
+        let size_t = core.mem.size_of<T>()
+        let size_u = core.mem.size_of<U>()
+        let align = core.mem.align_of<U>()
+        let prefix = match elements_until_aligned(base as usize, size_t, align, len) {
+            present(n) => n,
+            none => {
+                let middle = unsafe { typed_slice_mut<T, U>(mut self, dangling_mut<U>(), 0usize) }
+                let tail = unsafe { sub_mut<T>(mut self, len, len) }
+                return (mut self, middle, tail)
+            }
+        }
+        if size_u != 0usize && size_t == 0usize {
+            let middle = unsafe { typed_slice_mut<T, U>(mut self, dangling_mut<U>(), 0usize) }
+            let tail = unsafe { sub_mut<T>(mut self, len, len) }
+            return (mut self, middle, tail)
+        }
+        let head = unsafe { sub_mut<T>(mut self, 0usize, prefix) }
+        if size_u == 0usize {
+            let middle = unsafe {
+                typed_slice_mut<T, U>(mut self, base.add(prefix).cast<U>(),
+                                      0xffffffffffffffffusize)
+            }
+            let tail = unsafe { sub_mut<T>(mut self, prefix, len) }
+            return (head, middle, tail)
+        }
+        let rest_bytes = (len - prefix) * size_t
+        let step = match byte_step(size_u, size_t) {
+            present(value) => value,
+            none => {
+                let middle = unsafe { typed_slice_mut<T, U>(mut self, dangling_mut<U>(), 0usize) }
+                let tail = unsafe { sub_mut<T>(mut self, len, len) }
+                return (mut self, middle, tail)
+            }
+        }
+        if step == 0usize {
+            let middle = unsafe { typed_slice_mut<T, U>(mut self, dangling_mut<U>(), 0usize) }
+            let tail = unsafe { sub_mut<T>(mut self, prefix, len) }
+            return (head, middle, tail)
+        }
+        let mid_bytes = (rest_bytes / step) * step
+        let middle = unsafe {
+            typed_slice_mut<T, U>(mut self, base.add(prefix).cast<U>(), mid_bytes / size_u)
+        }
+        let tail = unsafe { sub_mut<T>(mut self, prefix + mid_bytes / size_t, len) }
+        (head, middle, tail)
+    }
+}
+
+extend<T: Copy> [T] {
+    pub mut fn write_copy_of_slice(src: read [T]): Unit {
+        if self.len() != src.len() {
+            super.panic.panic("destination and source slices have different lengths")
+        }
+        if self.len() == 0usize { return () }
+        let source = unsafe { core.mem.transmute<RawRead<T>>(core.ptr.from_ref(src)) }
+        unsafe { core.ptr.`copy`(source.data, mutable_data_pointer(mut self), self.len()) }
+    }
+}
+
+extend<T: Clone> [T] {
+    pub mut fn write_clone_of_slice(src: read [T]): Unit {
+        if self.len() != src.len() {
+            super.panic.panic("destination and source slices have different lengths")
+        }
+        var index = 0usize
+        while index < self.len() {
+            self[index] = src[index].clone()
+            index += 1usize
+        }
+    }
+}
+
+extend<T> [core.mem.MaybeUninit<T>] {
+    // Safety: every element is initialized.
+    pub unsafe fn assume_init_ref(): read [T] from self {
+        let raw = unsafe {
+            core.mem.transmute<RawRead<core.mem.MaybeUninit<T>>>(core.ptr.from_ref(self))
+        }
+        unsafe { typed_slice<core.mem.MaybeUninit<T>, T>(read self, raw.data.cast<T>(), self.len()) }
+    }
+    // Safety: every element is initialized.
+    pub mut unsafe fn assume_init_mut(): mut [T] from self {
+        let base = mutable_data_pointer(mut self)
+        unsafe { typed_slice_mut<core.mem.MaybeUninit<T>, T>(mut self, base.cast<T>(), self.len()) }
+    }
+    // Safety: every element is initialized. Each value is dropped once.
+    pub mut unsafe fn assume_init_drop(): Unit {
+        var index = 0usize
+        while index < self.len() {
+            unsafe { self[index].assume_init_drop() }
+            index += 1usize
+        }
+    }
+}
+
+extend<T, const N: usize> [core.mem.MaybeUninit<T>; N] {
+    // Safety: every element is initialized. The array is consumed.
+    pub take unsafe fn assume_init(): [T; N] {
+        let pointer = core.ptr.from_ref(self).cast<[T; N]>()
+        let value = unsafe { core.ptr.`read`(pointer) }
+        core.mem.forget(take self)
+        value
+    }
+}
+
 copy type RawRead<T> { data: ptr<read T>; len: usize }
+
+fn dangling_read<T>(): ptr<read T> {
+    let align = core.mem.align_of<T>()
+    unsafe { core.mem.transmute<ptr<read T>>(align) }
+}
+
+fn dangling_mut<T>(): ptr<mut T> {
+    let align = core.mem.align_of<T>()
+    unsafe { core.mem.transmute<ptr<mut T>>(align) }
+}
+
+fn gcd_usize(a: usize, b: usize): usize {
+    var x = a
+    var y = b
+    while y != 0usize {
+        let next = x % y
+        x = y
+        y = next
+    }
+    x
+}
+
+// Smallest `n <= len` such that `address + n * size` is aligned, if one exists.
+fn elements_until_aligned(address: usize, size: usize, align: usize, len: usize): usize? {
+    if align == 0usize { return none }
+    var n = 0usize
+    var steps = 0usize
+    while n <= len && steps < align {
+        if (address + n * size) % align == 0usize { return present(n) }
+        n += 1usize
+        steps += 1usize
+    }
+    none
+}
+
+// The middle of `align_to` consumes whole elements of both types.
+fn byte_step(size_u: usize, size_t: usize): usize? {
+    let divisor = gcd_usize(size_u, size_t)
+    if divisor == 0usize { return present(0usize) }
+    (size_u / divisor).checked_mul(size_t)
+}
+
+// Safety: `data` is valid for `len` elements of `U` for the same region as `xs`.
+unsafe fn typed_slice<T, U>(xs: read [T], data: ptr<read U>, len: usize): read [U] from xs {
+    let part = unsafe { core.mem.transmute<ptr<read [U]>>(RawRead(data, len)) }
+    unsafe { read *part }
+}
+
+// Safety: `data` is valid for exclusive access to `len` elements of `U`.
+unsafe fn typed_slice_mut<T, U>(xs: mut [T], data: ptr<mut U>, len: usize): mut [U] from xs {
+    let part = unsafe { core.mem.transmute<ptr<mut [U]>>(RawMut(data, len)) }
+    unsafe { mut *part }
+}
 
 // Safety: start <= end <= xs.len().
 unsafe fn sub<T>(xs: read [T], start: usize, end: usize): read [T] from xs {
@@ -620,6 +902,27 @@ unsafe fn sub_mut<T>(xs: mut [T], start: usize, end: usize): mut [T] from xs {
     unsafe { mut *part }
 }
 
+// Safety: `index + N <= xs.len()`.
+unsafe fn array_at<T, const N: usize>(xs: read [T], index: usize): read [T; N] from xs {
+    let fat = core.ptr.from_ref(xs)
+    let raw = unsafe { core.mem.transmute<RawRead<T>>(fat) }
+    unsafe { read *raw.data.add(index).cast<[T; N]>() }
+}
+
+// Safety: `start + count * N <= xs.len()`.
+unsafe fn array_chunks_at<T, const N: usize>(
+    xs: read [T], start: usize, count: usize
+): read [[T; N]] from xs {
+    let fat = core.ptr.from_ref(xs)
+    let raw = unsafe { core.mem.transmute<RawRead<T>>(fat) }
+    let part = unsafe {
+        core.mem.transmute<ptr<read [[T; N]]>>(
+            RawRead(raw.data.add(start).cast<[T; N]>(), count)
+        )
+    }
+    unsafe { read *part }
+}
+
 extend<T> [T] {
     pub fn split_at(mid: usize): (read [T] from self, read [T] from self) {
         if mid > self.len() { super.panic.panic("split index out of bounds") }
@@ -629,11 +932,23 @@ extend<T> [T] {
         if mid > self.len() { return none }
         present((unsafe { sub<T>(read self, 0usize, mid) }, unsafe { sub<T>(read self, mid, self.len()) }))
     }
+    // Safety: `mid <= self.len()`.
+    pub unsafe fn split_at_unchecked(mid: usize): (read [T] from self, read [T] from self) {
+        (unsafe { sub<T>(read self, 0usize, mid) }, unsafe { sub<T>(read self, mid, self.len()) })
+    }
     pub mut fn split_at_mut(mid: usize): (mut [T] from self, mut [T] from self) {
         if mid > self.len() { super.panic.panic("split index out of bounds") }
         let n = self.len()
         let base = mutable_data_pointer(mut self)
         // The guard keeps both ranges within the initialized slice and disjoint.
+        let left = unsafe { core.mem.transmute<ptr<mut [T]>>(RawMut(base, mid)) }
+        let right = unsafe { core.mem.transmute<ptr<mut [T]>>(RawMut(base.add(mid), n - mid)) }
+        (unsafe { mut *left }, unsafe { mut *right })
+    }
+    // Safety: `mid <= self.len()`. The two results are disjoint.
+    pub mut unsafe fn split_at_mut_unchecked(mid: usize): (mut [T] from self, mut [T] from self) {
+        let n = self.len()
+        let base = mutable_data_pointer(mut self)
         let left = unsafe { core.mem.transmute<ptr<mut [T]>>(RawMut(base, mid)) }
         let right = unsafe { core.mem.transmute<ptr<mut [T]>>(RawMut(base.add(mid), n - mid)) }
         (unsafe { mut *left }, unsafe { mut *right })
@@ -671,6 +986,89 @@ extend<T> [T] {
         let last = unsafe { base.add(n - 1usize) }
         let head = unsafe { core.mem.transmute<ptr<mut [T]>>(RawMut(base, n - 1usize)) }
         present((unsafe { mut *last }, unsafe { mut *head }))
+    }
+
+    pub fn as_array<const N: usize>(): (read [T; N] from self)? {
+        if self.len() != N { return none }
+        // Safety: the length check covers exactly N initialized elements.
+        present(unsafe { array_at<T, N>(read self, 0usize) })
+    }
+    pub mut fn as_mut_array<const N: usize>(): (mut [T; N] from self)? {
+        if self.len() != N { return none }
+        let base = mutable_data_pointer(mut self)
+        // Safety: the length check covers exactly N initialized elements.
+        present(unsafe { mut *base.cast<[T; N]>() })
+    }
+    pub fn as_chunks<const N: usize>(): (read [[T; N]] from self, read [T] from self) {
+        if N == 0usize { super.panic.panic("chunk size must be nonzero") }
+        let count = self.len() / N
+        let head = count * N
+        (
+            unsafe { array_chunks_at<T, N>(read self, 0usize, count) },
+            unsafe { sub<T>(read self, head, self.len()) }
+        )
+    }
+    pub fn as_rchunks<const N: usize>(): (read [T] from self, read [[T; N]] from self) {
+        if N == 0usize { super.panic.panic("chunk size must be nonzero") }
+        let count = self.len() / N
+        let start = self.len() - count * N
+        (
+            unsafe { sub<T>(read self, 0usize, start) },
+            unsafe { array_chunks_at<T, N>(read self, start, count) }
+        )
+    }
+    // Safety: `N != 0` and `N` divides the slice length.
+    pub unsafe fn as_chunks_unchecked<const N: usize>(): read [[T; N]] from self {
+        unsafe { array_chunks_at<T, N>(read self, 0usize, self.len() / N) }
+    }
+    // Safety: `N != 0` and `N` divides the slice length.
+    pub mut unsafe fn as_chunks_unchecked_mut<const N: usize>(): mut [[T; N]] from self {
+        let count = self.len() / N
+        let base = mutable_data_pointer(mut self)
+        let chunks = unsafe {
+            core.mem.transmute<ptr<mut [[T; N]]>>(RawMut(base.cast<[T; N]>(), count))
+        }
+        unsafe { mut *chunks }
+    }
+    pub mut fn as_chunks_mut<const N: usize>(): (mut [[T; N]] from self, mut [T] from self) {
+        if N == 0usize { super.panic.panic("chunk size must be nonzero") }
+        let n = self.len()
+        let count = n / N
+        let head = count * N
+        let base = mutable_data_pointer(mut self)
+        // The chunk view and remainder are disjoint parts of the exclusive slice.
+        let chunks = unsafe {
+            core.mem.transmute<ptr<mut [[T; N]]>>(RawMut(base.cast<[T; N]>(), count))
+        }
+        let rest = unsafe {
+            core.mem.transmute<ptr<mut [T]>>(RawMut(base.add(head), n - head))
+        }
+        (unsafe { mut *chunks }, unsafe { mut *rest })
+    }
+    pub mut fn as_rchunks_mut<const N: usize>(): (mut [T] from self, mut [[T; N]] from self) {
+        if N == 0usize { super.panic.panic("chunk size must be nonzero") }
+        let n = self.len()
+        let count = n / N
+        let start = n - count * N
+        let base = mutable_data_pointer(mut self)
+        // The remainder and chunk view are disjoint parts of the exclusive slice.
+        let rest = unsafe {
+            core.mem.transmute<ptr<mut [T]>>(RawMut(base, start))
+        }
+        let chunks = unsafe {
+            core.mem.transmute<ptr<mut [[T; N]]>>(
+                RawMut(base.add(start).cast<[T; N]>(), count)
+            )
+        }
+        (unsafe { mut *rest }, unsafe { mut *chunks })
+    }
+    pub fn split_off_first(): (read T from self, read [T] from self)? { self.split_first() }
+    pub fn split_off_last(): (read T from self, read [T] from self)? { self.split_last() }
+    pub mut fn split_off_first_mut(): (mut T from self, mut [T] from self)? {
+        self.split_first_mut()
+    }
+    pub mut fn split_off_last_mut(): (mut T from self, mut [T] from self)? {
+        self.split_last_mut()
     }
 
     pub mut fn rotate_left(mid: usize): Unit {
@@ -822,6 +1220,12 @@ extend<T> [T] {
         let count = if size > n { 0usize } else { n - size + 1usize }
         SliceWindows(read self, size, 0usize, count)
     }
+    pub fn array_windows<const N: usize>(): ArrayWindows<region self, T, N> {
+        if N == 0usize { super.panic.panic("window size must be nonzero") }
+        let n = self.len()
+        let count = if N > n { 0usize } else { n - N + 1usize }
+        ArrayWindows(read self, 0usize, count)
+    }
 }
 
 pub type SliceChunks<region r, T> {
@@ -865,6 +1269,30 @@ extend<region r, T> SliceWindows<region r, T> implements Iterator {
         let start = self.front
         self.front += 1usize
         present(unsafe { sub<T>(self.items, start, start + self.size) })
+    }
+}
+
+pub type ArrayWindows<region r, T, const N: usize> {
+    items: read [T] from r
+    front: usize
+    back: usize
+}
+extend<region r, T, const N: usize> ArrayWindows<region r, T, N> implements Iterator {
+    type Item = read [T; N] from r
+    mut fn next(): (read [T; N] from r)? {
+        if self.front == self.back { return none }
+        let index = self.front
+        self.front += 1usize
+        // Safety: each index is a window start, so index + N stays inside the slice.
+        present(unsafe { array_at<T, N>(self.items, index) })
+    }
+}
+extend<region r, T, const N: usize> ArrayWindows<region r, T, N> implements BidirectionalIterator {
+    mut fn next_back(): (read [T; N] from r)? {
+        if self.front == self.back { return none }
+        self.back -= 1usize
+        // Safety: each index is a window start, so index + N stays inside the slice.
+        present(unsafe { array_at<T, N>(self.items, self.back) })
     }
 }
 
@@ -982,13 +1410,31 @@ extend<T> [T] {
         test: take F
     ): SliceSplitMut<region self, T, F> {
         let n = self.len()
-        SliceSplitMut(mut self, test, 0usize, n, false, false, false)
+        SliceSplitMut(mut self, test, 0usize, n, false, false, false, 0xffffffffffffffffusize, false)
+    }
+    pub mut fn rsplit_mut<F: fn(read T): bool>(
+        test: take F
+    ): SliceSplitMut<region self, T, F> {
+        let n = self.len()
+        SliceSplitMut(mut self, test, 0usize, n, false, false, false, 0xffffffffffffffffusize, true)
+    }
+    pub mut fn splitn_mut<F: fn(read T): bool>(
+        count: usize, test: take F
+    ): SliceSplitMut<region self, T, F> {
+        let n = self.len()
+        SliceSplitMut(mut self, test, 0usize, n, false, false, false, count, false)
+    }
+    pub mut fn rsplitn_mut<F: fn(read T): bool>(
+        count: usize, test: take F
+    ): SliceSplitMut<region self, T, F> {
+        let n = self.len()
+        SliceSplitMut(mut self, test, 0usize, n, false, false, false, count, true)
     }
     pub mut fn split_inclusive_mut<F: fn(read T): bool>(
         test: take F
     ): SliceSplitMut<region self, T, F> {
         let n = self.len()
-        SliceSplitMut(mut self, test, 0usize, n, true, false, false)
+        SliceSplitMut(mut self, test, 0usize, n, true, false, false, 0xffffffffffffffffusize, false)
     }
     pub fn chunk_by<F: fn(read T, read T): bool>(
         same: take F
@@ -1279,15 +1725,39 @@ pub type SliceSplitMut<region r, T, F> {
     inclusive: bool
     suppress_empty_tail: bool
     done: bool
+    remaining: usize
+    from_back: bool
 }
 extend<region r, T, F: fn(read T): bool> SliceSplitMut<region r, T, F> implements Iterator {
     type Item = mut [T] from r
     mut fn next(): (mut [T] from r)? {
-        if self.done { return none }
+        if self.done || self.remaining == 0usize { return none }
+        self.remaining -= 1usize
         if self.front == self.back {
             if self.inclusive && self.suppress_empty_tail {
                 self.done = true
                 return none
+            }
+            self.done = true
+            return present(unsafe { sub_mut<T>(mut *self.items, self.front, self.back) })
+        }
+        if self.remaining == 0usize {
+            self.done = true
+            return present(unsafe { sub_mut<T>(mut *self.items, self.front, self.back) })
+        }
+        if self.from_back {
+            var i = self.back
+            while i > self.front {
+                i -= 1usize
+                let matches = self.test(unsafe {
+                    read *mutable_data_pointer(mut *self.items).add(i)
+                })
+                if matches {
+                    let start = i + 1usize
+                    let part = unsafe { sub_mut<T>(mut *self.items, start, self.back) }
+                    self.back = i
+                    return present(part)
+                }
             }
             self.done = true
             return present(unsafe { sub_mut<T>(mut *self.items, self.front, self.back) })
@@ -1385,6 +1855,34 @@ extend<region r, T, F: fn(read T, read T): bool> SliceChunkByMut<region r, T, F>
 extend<region r, T> SliceIterMut<region r, T> {
     pub fn into_slice(receiver self: take Self): mut [T] from r {
         unsafe { sub_mut<T>(mut *self.items, self.front, self.back) }
+    }
+}
+
+extend<T, const N: usize> [[T; N]] {
+    pub fn as_flattened(): read [T] from self {
+        let total = match self.len().checked_mul(N) {
+            present(value) => value,
+            none => super.panic.panic("flattened length overflows")
+        }
+        let fat = core.ptr.from_ref(self)
+        let raw = unsafe { core.mem.transmute<RawRead<[T; N]>>(fat) }
+        // Safety: the arrays are packed, so the element pointer covers `total` values.
+        let part = unsafe {
+            core.mem.transmute<ptr<read [T]>>(RawRead(raw.data.cast<T>(), total))
+        }
+        unsafe { read *part }
+    }
+    pub mut fn as_flattened_mut(): mut [T] from self {
+        let total = match self.len().checked_mul(N) {
+            present(value) => value,
+            none => super.panic.panic("flattened length overflows")
+        }
+        let base = mutable_data_pointer(mut self)
+        // Safety: the arrays are packed, so the element pointer covers `total` values.
+        let part = unsafe {
+            core.mem.transmute<ptr<mut [T]>>(RawMut(base.cast<T>(), total))
+        }
+        unsafe { mut *part }
     }
 }
 

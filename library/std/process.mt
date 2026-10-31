@@ -41,6 +41,13 @@ extend ExitStatus {
     // The terminating signal when a signal ended the child.
     pub fn signal(): i32? { if (self.raw & 127) != 0 && (self.raw & 127) != 127 { present(self.raw & 127) } else { none } }
     pub fn succeeded(): bool { self.raw == 0 }
+    pub fn success(): bool { self.succeeded() }
+}
+
+extend Stdio {
+    pub static fn inherit(): Stdio { Stdio.Inherit }
+    pub static fn piped(): Stdio { Stdio.Piped }
+    pub static fn `null`(): Stdio { Stdio.Null }
 }
 
 // Write end of a child's standard input; dropping it closes the stream, which
@@ -150,6 +157,41 @@ extend Child {
             if e.raw_os_error() != present(3) { throw e }
         }
     }
+
+    // Closes the input pipe, reads both piped outputs to the end, then waits.
+    pub mut fn wait_with_output(): Output throws Error {
+        if self.stdin_fd >= 0 {
+            let closed = unsafe { sys.close(self.stdin_fd) }
+            self.stdin_fd = -1
+        }
+        var out = vec.new<u8>()
+        var err = vec.new<u8>()
+        var chunk = [0u8; 4096]
+        while self.stdout_fd >= 0 || self.stderr_fd >= 0 {
+            let ready = unsafe { sys.mettle_rt_poll_pair(self.stdout_fd, self.stderr_fd) }
+            if ready < 0 { throw io.last_os_error() }
+            if (ready & 1) != 0 {
+                let n = try io.read_fd(self.stdout_fd, chunk)
+                if n == 0usize {
+                    let closed = unsafe { sys.close(self.stdout_fd) }
+                    self.stdout_fd = -1
+                } else {
+                    out.extend_from_slice(chunk.split_at(n).0)
+                }
+            }
+            if (ready & 2) != 0 {
+                let n = try io.read_fd(self.stderr_fd, chunk)
+                if n == 0usize {
+                    let closed = unsafe { sys.close(self.stderr_fd) }
+                    self.stderr_fd = -1
+                } else {
+                    err.extend_from_slice(chunk.split_at(n).0)
+                }
+            }
+        }
+        let status = try self.wait()
+        Output(status, out, err)
+    }
 }
 
 type EnvChange { name: OsString; value: OsString; remove: bool }
@@ -176,7 +218,50 @@ pub fn command(program: read OsStr): Command {
 pub fn command_text(program: read Text): Command { command(ffi.os_str_from_text(program)) }
 
 extend Command {
+    pub static fn new(program: read OsStr): Command { command(program) }
     pub mut fn arg(a: read OsStr): Unit { self.args.push(a.to_os_string()) }
+    pub mut fn args(values: read [OsString]): Unit {
+        var index = 0usize
+        while index < values.len() {
+            self.args.push(values[index].as_os_str().to_os_string())
+            index += 1usize
+        }
+    }
+    pub fn get_program(): read OsStr from self { self.program.as_os_str() }
+    pub fn get_args(): read [OsString] from self { self.args.as_slice() }
+    pub fn get_current_dir(): (read PathBuf from self)? {
+        if self.has_cwd { present(read self.cwd) } else { none }
+    }
+    pub fn get_envs(): List<env.EnvVar> {
+        var entries = vec.new<env.EnvVar>()
+        if !self.clear_env {
+            let current = env.vars()
+            var index = 0usize
+            while index < current.len() {
+                entries.push(env.EnvVar(current[index].name.as_os_str().to_os_string(), current[index].value.as_os_str().to_os_string()))
+                index += 1usize
+            }
+        }
+        var change = 0usize
+        while change < self.changes.len() {
+            var slot = 0usize
+            while slot < entries.len() {
+                if entries[slot].name.same(self.changes[change].name) {
+                    let gone = entries.remove(slot)
+                } else {
+                    slot += 1usize
+                }
+            }
+            if !self.changes[change].remove {
+                entries.push(env.EnvVar(
+                    self.changes[change].name.as_os_str().to_os_string(),
+                    self.changes[change].value.as_os_str().to_os_string()
+                ))
+            }
+            change += 1usize
+        }
+        entries
+    }
     pub mut fn arg_text(a: read Text): Unit { self.args.push(ffi.os_string_from_text(a)) }
     // Sets `name` for the child only.
     pub mut fn env(name: read OsStr, value: read OsStr): Unit {
@@ -188,6 +273,13 @@ extend Command {
     }
     // Starts the child with an empty environment (plus later `env` calls).
     pub mut fn env_clear(): Unit { self.clear_env = true; self.changes.clear() }
+    pub mut fn envs(pairs: read [env.EnvVar]): Unit {
+        var index = 0usize
+        while index < pairs.len() {
+            self.env(pairs[index].name.as_os_str(), pairs[index].value.as_os_str())
+            index += 1usize
+        }
+    }
     pub mut fn current_dir(input: read PathInput): Unit {
         self.cwd = input.as_path().to_path_buf()
         self.has_cwd = true

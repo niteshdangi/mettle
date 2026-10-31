@@ -88,7 +88,21 @@ fn run(): i32 throws Error {
     me.arg_text("child")
     me.env(ffi.os_str_from_text("MT_GREETING"), ffi.os_str_from_text("hello"))
     let mo = try me.output()
-    if mo.status.code() != present(7) { return 30 }
+    if mo.status.code() != present(7) || mo.status.success() { return 30 }
+    var echo = std.process.Command.new(ffi.os_str_from_text("/bin/echo"))
+    if !echo.get_program().same(ffi.os_str_from_text("/bin/echo")) { return 32 }
+    var extra = [ffi.os_string_from_text("ok")]
+    echo.args(extra)
+    if echo.get_args().len() != 1usize { return 33 }
+    echo.stdout(std.process.Stdio.piped())
+    echo.stderr(std.process.Stdio.`null`())
+    var echoed = try echo.spawn()
+    let captured = try echoed.wait_with_output()
+    if !captured.status.success() || captured.stdout.len() < 2usize { return 34 }
+    match echo.get_current_dir() {
+        present(_) => { return 35 },
+        none => {}
+    }
     if mo.stdout.len() != 15usize || mo.stderr.len() != 10usize { return 31 }
     0
 }

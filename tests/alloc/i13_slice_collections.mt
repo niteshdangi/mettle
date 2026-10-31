@@ -1,6 +1,5 @@
 type DropCount {
     count: ptr<mut i32>
-    keep: bool
     drop { unsafe { *self.count += 1 } }
 }
 
@@ -160,9 +159,9 @@ fn main(): i32 {
     var dedup_drops = 0
     {
         var owned = alloc.vec.new<DropCount>()
-        owned.push(DropCount(core.ptr.from_mut(dedup_drops), false))
-        owned.push(DropCount(core.ptr.from_mut(dedup_drops), false))
-        owned.push(DropCount(core.ptr.from_mut(dedup_drops), false))
+        owned.push(DropCount(core.ptr.from_mut(dedup_drops)))
+        owned.push(DropCount(core.ptr.from_mut(dedup_drops)))
+        owned.push(DropCount(core.ptr.from_mut(dedup_drops)))
         owned.dedup_by(fn(current: mut DropCount, previous: mut DropCount): bool {
             true
         })
@@ -172,11 +171,14 @@ fn main(): i32 {
     var retain_drops = 0
     {
         var owned = alloc.vec.new<DropCount>()
-        owned.push(DropCount(core.ptr.from_mut(retain_drops), true))
-        owned.push(DropCount(core.ptr.from_mut(retain_drops), false))
-        owned.push(DropCount(core.ptr.from_mut(retain_drops), false))
-        owned.retain_mut(fn(value: mut DropCount): bool {
-            value.keep
+        owned.push(DropCount(core.ptr.from_mut(retain_drops)))
+        owned.push(DropCount(core.ptr.from_mut(retain_drops)))
+        owned.push(DropCount(core.ptr.from_mut(retain_drops)))
+        var seen = 0
+        owned.retain(fn(value: read DropCount): bool {
+            let _ = value
+            seen += 1
+            seen == 1
         })
         if owned.len() != 1usize || retain_drops != 2 { return 88 }
     }
@@ -184,11 +186,11 @@ fn main(): i32 {
     var splice_drops = 0
     {
         var owned = alloc.vec.new<DropCount>()
-        owned.push(DropCount(core.ptr.from_mut(splice_drops), false))
-        owned.push(DropCount(core.ptr.from_mut(splice_drops), false))
-        owned.push(DropCount(core.ptr.from_mut(splice_drops), false))
+        owned.push(DropCount(core.ptr.from_mut(splice_drops)))
+        owned.push(DropCount(core.ptr.from_mut(splice_drops)))
+        owned.push(DropCount(core.ptr.from_mut(splice_drops)))
         var replacement = alloc.vec.new<DropCount>()
-        replacement.push(DropCount(core.ptr.from_mut(splice_drops), false))
+        replacement.push(DropCount(core.ptr.from_mut(splice_drops)))
         {
             let _removed = owned.splice(1usize, 2usize, replacement)
         }
@@ -200,9 +202,9 @@ fn main(): i32 {
     let count = core.ptr.from_mut(drops)
     {
         var owned = alloc.vec_deque.new<DropCount>()
-        owned.push_back(DropCount(count, false))
-        owned.push_back(DropCount(count, false))
-        owned.push_back(DropCount(count, false))
+        owned.push_back(DropCount(count))
+        owned.push_back(DropCount(count))
+        owned.push_back(DropCount(count))
         let removed = owned.swap_remove_back(0usize)
         if drops != 0 || owned.len() != 2usize { return 12 }
     }

@@ -13,7 +13,60 @@ pub fn from_millis(millis: u64): Duration { Duration(millis / 1000u64, ((millis 
 pub fn from_micros(micros: u64): Duration { Duration(micros / 1000000u64, ((micros % 1000000u64) * 1000u64) as u32) }
 pub fn from_nanos(nanos: u64): Duration { Duration(nanos / 1000000000u64, (nanos % 1000000000u64) as u32) }
 
+fn duration_from_secs_float(secs: f64): Duration? {
+    if secs.is_nan() || secs.is_infinite() || secs < 0.0f64 { return none }
+    if secs >= 18446744073709551616.0f64 { return none }
+    let whole = secs as u64
+    var fraction = secs - (whole as f64)
+    if fraction < 0.0f64 { fraction = 0.0f64 }
+    var nanos = (fraction * 1000000000.0f64).round() as u32
+    var seconds = whole
+    if nanos >= 1000000000u32 {
+        nanos = 0u32
+        match seconds.checked_add(1u64) {
+            present(next) => { seconds = next },
+            none => { return none }
+        }
+    }
+    present(Duration(seconds, nanos))
+}
+
+fn duration_or_panic(value: Duration?): Duration {
+    match value {
+        present(duration) => duration,
+        none => package.core.panic.panic("duration overflow")
+    }
+}
+
 extend Duration {
+    pub const ZERO: Duration = Duration(0u64, 0u32)
+    pub const MAX: Duration = Duration(0xffffffffffffffffu64, 999999999u32)
+
+    pub static fn new(secs: u64, nanos: u32): Duration { duration(secs, nanos) }
+    pub static fn from_hours(hours: u64): Duration {
+        duration_or_panic(match hours.checked_mul(3600u64) {
+            present(secs) => present(Duration(secs, 0u32)),
+            none => none
+        })
+    }
+    pub static fn from_mins(mins: u64): Duration {
+        duration_or_panic(match mins.checked_mul(60u64) {
+            present(secs) => present(Duration(secs, 0u32)),
+            none => none
+        })
+    }
+    pub static fn from_nanos_u128(nanos: u128): Duration {
+        let secs = nanos / 1000000000u128
+        if secs > 0xffffffffffffffffu128 {
+            package.core.panic.panic("duration overflow")
+        }
+        Duration(secs as u64, (nanos % 1000000000u128) as u32)
+    }
+    pub static fn try_from_secs_f64(secs: f64): Duration? { duration_from_secs_float(secs) }
+    pub static fn try_from_secs_f32(secs: f32): Duration? { duration_from_secs_float(secs as f64) }
+    pub static fn from_secs_f64(secs: f64): Duration { duration_or_panic(duration_from_secs_float(secs)) }
+    pub static fn from_secs_f32(secs: f32): Duration { duration_or_panic(duration_from_secs_float(secs as f64)) }
+
     pub fn as_secs(): u64 { self.secs }
     pub fn subsec_nanos(): u32 { self.nanos }
     pub fn subsec_millis(): u32 { self.nanos / 1000000u32 }
@@ -21,7 +74,44 @@ extend Duration {
     pub fn as_millis(): u128 { self.secs as u128 * 1000u128 + (self.nanos / 1000000u32) as u128 }
     pub fn as_micros(): u128 { self.secs as u128 * 1000000u128 + (self.nanos / 1000u32) as u128 }
     pub fn as_nanos(): u128 { self.secs as u128 * 1000000000u128 + self.nanos as u128 }
+    pub fn as_secs_f64(): f64 { (self.secs as f64) + (self.nanos as f64) / 1000000000.0f64 }
+    pub fn as_secs_f32(): f32 { self.as_secs_f64() as f32 }
     pub fn is_zero(): bool { self.secs == 0u64 && self.nanos == 0u32 }
+
+    pub fn abs_diff(other: Duration): Duration {
+        if self.secs < other.secs || (self.secs == other.secs && self.nanos < other.nanos) {
+            match other.checked_sub(self) { present(gap) => gap, none => Duration.ZERO }
+        } else {
+            match self.checked_sub(other) { present(gap) => gap, none => Duration.ZERO }
+        }
+    }
+    pub fn saturating_add(other: Duration): Duration {
+        match self.checked_add(other) { present(sum) => sum, none => Duration.MAX }
+    }
+    pub fn checked_mul(rhs: u32): Duration? {
+        match self.as_nanos().checked_mul(rhs as u128) {
+            present(total) => {
+                let secs = total / 1000000000u128
+                if secs > 0xffffffffffffffffu128 { return none }
+                present(Duration(secs as u64, (total % 1000000000u128) as u32))
+            },
+            none => none
+        }
+    }
+    pub fn saturating_mul(rhs: u32): Duration {
+        match self.checked_mul(rhs) { present(product) => product, none => Duration.MAX }
+    }
+    pub fn checked_div(rhs: u32): Duration? {
+        if rhs == 0u32 { return none }
+        let total = self.as_nanos() / (rhs as u128)
+        present(Duration((total / 1000000000u128) as u64, (total % 1000000000u128) as u32))
+    }
+    pub fn mul_f64(rhs: f64): Duration { duration_or_panic(duration_from_secs_float(self.as_secs_f64() * rhs)) }
+    pub fn mul_f32(rhs: f32): Duration { duration_or_panic(duration_from_secs_float(self.as_secs_f32() as f64 * rhs as f64)) }
+    pub fn div_f64(rhs: f64): Duration { duration_or_panic(duration_from_secs_float(self.as_secs_f64() / rhs)) }
+    pub fn div_f32(rhs: f32): Duration { duration_or_panic(duration_from_secs_float(self.as_secs_f32() as f64 / rhs as f64)) }
+    pub fn div_duration_f64(other: Duration): f64 { self.as_secs_f64() / other.as_secs_f64() }
+    pub fn div_duration_f32(other: Duration): f32 { self.as_secs_f32() / other.as_secs_f32() }
 
     pub fn checked_add(other: Duration): Duration? {
         var nanos = self.nanos + other.nanos
@@ -76,6 +166,12 @@ extend Instant {
     pub fn elapsed(): Duration { now().duration_since(self) }
     // Zero if `earlier` is later (the clock is monotonic, so only for misuse).
     pub fn duration_since(earlier: Instant): Duration { self.since_start.saturating_sub(earlier.since_start) }
+    pub fn checked_duration_since(earlier: Instant): Duration? {
+        self.since_start.checked_sub(earlier.since_start)
+    }
+    pub fn saturating_duration_since(earlier: Instant): Duration {
+        self.since_start.saturating_sub(earlier.since_start)
+    }
     pub fn checked_add(d: Duration): Instant? {
         match self.since_start.checked_add(d) { present(t) => present(Instant(t)), none => none }
     }

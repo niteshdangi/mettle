@@ -1,6 +1,7 @@
 // Synchronous POSIX TCP and UDP sockets, IPv4/IPv6 addresses, and DNS lookup.
 import package.core.outcome
 import package.core.fmt.{Debug, Display, Formatter, Write}
+import package.core.iter.Iterator
 import package.core.slice
 import package.core.text.Text
 import package.alloc.vec
@@ -13,6 +14,17 @@ import super.time.Duration
 
 extern "C" {
     unsafe fn dup(fd: i32): i32;
+    unsafe fn setsockopt(fd: i32, level: i32, name: i32, value: ptr<read u8>, len: u32): i32;
+    unsafe fn getsockopt(fd: i32, level: i32, name: i32, value: ptr<mut u8>, len: ptr<mut u32>): i32;
+    unsafe fn recv(fd: i32, buf: ptr<mut u8>, len: usize, flags: i32): isize;
+    unsafe fn recvfrom(
+        fd: i32,
+        buf: ptr<mut u8>,
+        len: usize,
+        flags: i32,
+        address: ptr<mut u8>,
+        address_len: ptr<mut u32>
+    ): isize;
 }
 
 pub copy type Ipv4Addr { bits: u32 }
@@ -735,6 +747,111 @@ fn set_nonblocking(fd: i32, on: bool): Unit throws Error {
     if status != 0 { throw io.last_os_error() }
 }
 
+fn set_int_option(fd: i32, level: i32, name: i32, value: i32): Unit throws Error {
+    if unsafe { setsockopt(fd, level, name, core.ptr.from_ref(value).cast<u8>(), 4u32) } != 0 {
+        throw io.last_os_error()
+    }
+}
+
+fn get_int_option(fd: i32, level: i32, name: i32): i32 throws Error {
+    var value = 0i32
+    var len = 4u32
+    if unsafe { getsockopt(fd, level, name, core.ptr.from_mut(value).cast<u8>(), core.ptr.from_mut(len)) } != 0 {
+        throw io.last_os_error()
+    }
+    value
+}
+
+fn set_bytes_option(fd: i32, level: i32, name: i32, value: read [u8]): Unit throws Error {
+    if value.len() == 0usize { throw io.from_kind(ErrorKind.InvalidInput) }
+    if unsafe { setsockopt(fd, level, name, slice.data(value), value.len() as u32) } != 0 {
+        throw io.last_os_error()
+    }
+}
+
+fn socket_timeout(fd: i32, send: bool): Duration? throws Error {
+    var buf = [0u8; 16]
+    var len = 16u32
+    let name = if send { 0x1005 } else { 0x1006 }
+    if unsafe { getsockopt(fd, 0xffff, name, core.ptr.from_mut(buf).cast<u8>(), core.ptr.from_mut(len)) } != 0 {
+        throw io.last_os_error()
+    }
+    let secs = unsafe { core.ptr.`read`(core.ptr.from_ref(buf).cast<i64>()) }
+    let micros = unsafe { core.ptr.`read`(core.ptr.from_ref(buf).cast<u8>().add(8usize).cast<i32>()) }
+    if secs == 0i64 && micros == 0 { return none }
+    if secs < 0i64 { throw io.from_kind(ErrorKind.InvalidData) }
+    present(Duration.new(secs as u64, (micros as u32) * 1000u32))
+}
+
+fn set_socket_ttl(fd: i32, ttl: u32): Unit throws Error {
+    let address = try local_of(fd, 0)
+    if address.is_ipv4() {
+        try set_int_option(fd, 0, 4, ttl as i32)
+    } else {
+        try set_int_option(fd, 41, 4, ttl as i32)
+    }
+}
+
+fn socket_ttl(fd: i32): u32 throws Error {
+    let address = try local_of(fd, 0)
+    let value = if address.is_ipv4() {
+        try get_int_option(fd, 0, 4)
+    } else {
+        try get_int_option(fd, 41, 4)
+    }
+    value as u32
+}
+
+fn peek_bytes(fd: i32, buf: mut [u8]): usize throws Error {
+    if buf.len() == 0usize { return 0usize }
+    let n = unsafe { recv(fd, core.ptr.from_mut(buf[0usize]), buf.len(), 2) }
+    if n < 0isize { throw io.last_os_error() }
+    n as usize
+}
+
+fn be_u16(bytes: read [u8], at: usize): u16 {
+    (bytes[at] as u16) * 256u16 + (bytes[at + 1usize] as u16)
+}
+
+fn le_u32(bytes: read [u8], at: usize): u32 {
+    (bytes[at] as u32) +
+        (bytes[at + 1usize] as u32) * 256u32 +
+        (bytes[at + 2usize] as u32) * 65536u32 +
+        (bytes[at + 3usize] as u32) * 16777216u32
+}
+
+fn address_from_storage(bytes: read [u8]): SocketAddr throws Error {
+    if bytes[1usize] == 2u8 {
+        return socket_addr(ipv4(bytes[4usize], bytes[5usize], bytes[6usize], bytes[7usize]), be_u16(bytes, 2usize))
+    }
+    if bytes[1usize] == 30u8 {
+        let ip = ipv6(
+            be_u16(bytes, 8usize), be_u16(bytes, 10usize), be_u16(bytes, 12usize), be_u16(bytes, 14usize),
+            be_u16(bytes, 16usize), be_u16(bytes, 18usize), be_u16(bytes, 20usize), be_u16(bytes, 22usize)
+        )
+        return socket_addr_v6(ip, be_u16(bytes, 2usize), le_u32(bytes, 4usize), le_u32(bytes, 24usize))
+    }
+    throw io.from_kind(ErrorKind.InvalidData)
+}
+
+fn peek_packet(fd: i32, buf: mut [u8]): (usize, SocketAddr) throws Error {
+    var storage = [0u8; 128]
+    var len = 128u32
+    let destination = if buf.len() == 0usize { core.ptr.null_mut<u8>() } else { core.ptr.from_mut(buf[0usize]) }
+    let n = unsafe {
+        recvfrom(fd, destination, buf.len(), 2, core.ptr.from_mut(storage).cast<u8>(), core.ptr.from_mut(len))
+    }
+    if n < 0isize { throw io.last_os_error() }
+    (n as usize, try address_from_storage(storage))
+}
+
+fn write_u32_le(bytes: mut [u8], at: usize, value: u32): Unit {
+    bytes[at] = (value & 255u32) as u8
+    bytes[at + 1usize] = ((value >> 8u32) & 255u32) as u8
+    bytes[at + 2usize] = ((value >> 16u32) & 255u32) as u8
+    bytes[at + 3usize] = ((value >> 24u32) & 255u32) as u8
+}
+
 fn take_socket_error(fd: i32): Error? throws Error {
     var code = 0i32
     if unsafe { sys.mettle_rt_sock_error(fd, core.ptr.from_mut(code)) } != 0 {
@@ -933,7 +1050,20 @@ pub fn async_tcp_listen(addr: SocketAddr): AsyncTcpListener throws Error {
     listener
 }
 
+pub type Incoming<region r> { listener: mut TcpListener from r }
+extend<region r> Incoming<region r> implements Iterator {
+    type Item = (TcpStream throws Error)
+    mut fn next(): Self.Item? {
+        let outcome = capture self.listener.accept()
+        match take outcome {
+            success(pair) => present(success(pair.0)),
+            failure(error) => present(failure(error))
+        }
+    }
+}
+
 extend TcpListener {
+    pub static fn bind(addr: SocketAddr): TcpListener throws Error { try tcp_listen(addr) }
     pub fn take_error(): Error? throws Error { try take_socket_error(self.fd) }
     pub fn try_clone(): TcpListener throws Error {
         let cloned = unsafe { dup(self.fd) }
@@ -942,6 +1072,11 @@ extend TcpListener {
     }
     pub fn set_nonblocking(on: bool): Unit throws Error {
         try set_nonblocking(self.fd, on)
+    }
+    pub fn set_ttl(ttl: u32): Unit throws Error { try set_socket_ttl(self.fd, ttl) }
+    pub fn ttl(): u32 throws Error { try socket_ttl(self.fd) }
+    pub mut fn incoming<region r>(receiver self: mut Self from r): Incoming<region r> {
+        Incoming(mut self)
     }
     pub fn local_addr(): SocketAddr throws Error { try local_of(self.fd, 0) }
     pub mut fn set_accept_timeout(limit: Duration?): Unit throws Error {
@@ -1028,6 +1163,11 @@ extend TcpStream {
     pub fn set_nonblocking(on: bool): Unit throws Error {
         try set_nonblocking(self.fd, on)
     }
+    pub fn set_ttl(ttl: u32): Unit throws Error { try set_socket_ttl(self.fd, ttl) }
+    pub fn ttl(): u32 throws Error { try socket_ttl(self.fd) }
+    pub fn peek(buf: mut [u8]): usize throws Error { try peek_bytes(self.fd, buf) }
+    pub fn read_timeout(): Duration? throws Error { try socket_timeout(self.fd, false) }
+    pub fn write_timeout(): Duration? throws Error { try socket_timeout(self.fd, true) }
     pub fn set_nodelay(on: bool): Unit throws Error {
         var enabled = 0i32
         if on { enabled = 1 }
@@ -1140,6 +1280,7 @@ extend AsyncTcpStream {
 }
 
 extend UdpSocket {
+    pub static fn bind(addr: SocketAddr): UdpSocket throws Error { try udp_bind(addr) }
     pub fn local_addr(): SocketAddr throws Error { try local_of(self.fd, 0) }
     pub fn take_error(): Error? throws Error { try take_socket_error(self.fd) }
     pub fn try_clone(): UdpSocket throws Error {
@@ -1150,6 +1291,60 @@ extend UdpSocket {
     pub fn set_nonblocking(on: bool): Unit throws Error {
         try set_nonblocking(self.fd, on)
     }
+    pub fn set_broadcast(on: bool): Unit throws Error {
+        try set_int_option(self.fd, 0xffff, 0x20, if on { 1 } else { 0 })
+    }
+    pub fn broadcast(): bool throws Error { try get_int_option(self.fd, 0xffff, 0x20) != 0 }
+    pub fn set_ttl(ttl: u32): Unit throws Error { try set_socket_ttl(self.fd, ttl) }
+    pub fn ttl(): u32 throws Error { try socket_ttl(self.fd) }
+    pub fn set_multicast_loop_v4(on: bool): Unit throws Error {
+        try set_int_option(self.fd, 0, 11, if on { 1 } else { 0 })
+    }
+    pub fn multicast_loop_v4(): bool throws Error { try get_int_option(self.fd, 0, 11) != 0 }
+    pub fn set_multicast_ttl_v4(ttl: u32): Unit throws Error { try set_int_option(self.fd, 0, 10, ttl as i32) }
+    pub fn multicast_ttl_v4(): u32 throws Error { try get_int_option(self.fd, 0, 10) as u32 }
+    pub fn set_multicast_loop_v6(on: bool): Unit throws Error {
+        try set_int_option(self.fd, 41, 11, if on { 1 } else { 0 })
+    }
+    pub fn multicast_loop_v6(): bool throws Error { try get_int_option(self.fd, 41, 11) != 0 }
+    pub fn join_multicast_v4(multi: Ipv4Addr, interface: Ipv4Addr): Unit throws Error {
+        let group = multi.octets()
+        let iface = interface.octets()
+        let req = [group[0usize], group[1usize], group[2usize], group[3usize], iface[0usize], iface[1usize], iface[2usize], iface[3usize]]
+        try set_bytes_option(self.fd, 0, 12, req)
+    }
+    pub fn leave_multicast_v4(multi: Ipv4Addr, interface: Ipv4Addr): Unit throws Error {
+        let group = multi.octets()
+        let iface = interface.octets()
+        let req = [group[0usize], group[1usize], group[2usize], group[3usize], iface[0usize], iface[1usize], iface[2usize], iface[3usize]]
+        try set_bytes_option(self.fd, 0, 13, req)
+    }
+    pub fn join_multicast_v6(multi: Ipv6Addr, interface: u32): Unit throws Error {
+        var req = [0u8; 20]
+        let bytes = multi.octets()
+        var index = 0usize
+        while index < 16usize {
+            req[index] = bytes[index]
+            index += 1usize
+        }
+        write_u32_le(req, 16usize, interface)
+        try set_bytes_option(self.fd, 41, 12, req)
+    }
+    pub fn leave_multicast_v6(multi: Ipv6Addr, interface: u32): Unit throws Error {
+        var req = [0u8; 20]
+        let bytes = multi.octets()
+        var index = 0usize
+        while index < 16usize {
+            req[index] = bytes[index]
+            index += 1usize
+        }
+        write_u32_le(req, 16usize, interface)
+        try set_bytes_option(self.fd, 41, 13, req)
+    }
+    pub fn peek(buf: mut [u8]): usize throws Error { try peek_bytes(self.fd, buf) }
+    pub fn peek_from(buf: mut [u8]): (usize, SocketAddr) throws Error { try peek_packet(self.fd, buf) }
+    pub fn read_timeout(): Duration? throws Error { try socket_timeout(self.fd, false) }
+    pub fn write_timeout(): Duration? throws Error { try socket_timeout(self.fd, true) }
     pub fn set_read_timeout(limit: Duration?): Unit throws Error { try set_timeout(self.fd, 0, limit) }
     pub fn set_write_timeout(limit: Duration?): Unit throws Error { try set_timeout(self.fd, 1, limit) }
 

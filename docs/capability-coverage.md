@@ -198,12 +198,16 @@ operation-closure obligations. Full operation closure is a separate, still
 open obligation: `docs/baseline/audit-summary.json` reports 106,125 canonical
 required contracts, and the baseline explicitly says native declarations are
 not typechecked and cfg branches are not compiled. No operation-wide macOS
-ARM64 declaration/evidence receipt exists in this worktree. V1 requires only
-the operation subset of `docs/library-surface.md` section 6.1 (about 2,900
-folded operation families and 1,760 trait/type pairs); the remainder is I17. See
-`docs/library-surface.md` sections 6–8 for applicability and required
-supporting-protocol review; do not infer per-operation closure from the
-capability-level fixtures above.
+ARM64 declaration/evidence receipt exists in this worktree.
+`docs/baseline/v1-operations.csv`, written by `tools/v1_operations.py` from
+`docs/library-surface.md` section 6.1, lists 3,966 families: 2,506 operation
+families and 1,460 trait/type pairs. 3,964 are missing and 2 are not-applicable
+(Windows `OwnedHandle` conversions). No row is declared or evidenced. Library
+declarations for that subset are present and unrun; they were not compiled or
+executed on Darwin ARM64. The remainder of the 106,125 canonical contracts is
+I17. See `docs/library-surface.md` sections 6–8
+for applicability and required supporting-protocol review; do not infer
+per-operation closure from the capability-level fixtures above.
 
 Acceptance has independent axes: expressibility, sound observable semantics
 and measured runtime. A faster unsafe replacement cannot satisfy a safe API;

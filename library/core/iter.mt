@@ -4,9 +4,15 @@
 // methods stop at the first decisive item.
 import super.cmp.Ord
 import super.cmp.PartialEq
+import super.cmp.PartialOrd
+import super.default.Default
 import super.option
 import super.cmp.Ordering
 import super.clone.Clone
+
+// A mutable borrow of an iterator. Adapters move this borrow, so
+// `by_ref().take_n(n)` consumes only `n` items of the borrowed iterator.
+pub type ByRef<region r, I> { iter: mut I from r }
 
 pub interface Iterator: Sized {
     type Item;
@@ -14,7 +20,9 @@ pub interface Iterator: Sized {
 
     // Bounds on the remaining length: `(lower, upper)`; `upper` is none when unknown.
     fn size_hint(): (usize, usize?) { (0usize, none) }
-    fn by_ref<region r>(receiver self: mut Self from r): mut Self from r { mut self }
+    fn by_ref<region r>(receiver self: mut Self from r): ByRef<region r, Self> {
+        ByRef(mut self)
+    }
 
     mut fn count(): usize {
         var total = 0usize
@@ -282,6 +290,181 @@ pub interface Iterator: Sized {
         Stepped(self, step, true)
     }
     take fn peekable(): Peekable<Self> { Peekable(self, none, false) }
+    mut fn cmp<I: Iterator<Item = Self.Item>>(other: take I): Ordering where Self.Item: Ord {
+        var rest = other
+        while true {
+            match take self.next() {
+                present(left) => match take rest.next() {
+                    present(right) => {
+                        let order = left.cmp(read right)
+                        if !order.is_eq() { return order }
+                    },
+                    none => { return Ordering.Greater }
+                },
+                none => match take rest.next() {
+                    present(right) => { return Ordering.Less },
+                    none => { return Ordering.Equal }
+                }
+            }
+        }
+        Ordering.Equal
+    }
+    mut fn partial_cmp<I: Iterator<Item = Self.Item>>(other: take I): Ordering? where Self.Item: PartialOrd {
+        var rest = other
+        while true {
+            match take self.next() {
+                present(left) => match take rest.next() {
+                    present(right) => match left.partial_cmp(read right) {
+                        present(order) => { if !order.is_eq() { return present(order) } },
+                        none => { return none }
+                    },
+                    none => { return present(Ordering.Greater) }
+                },
+                none => match take rest.next() {
+                    present(right) => { return present(Ordering.Less) },
+                    none => { return present(Ordering.Equal) }
+                }
+            }
+        }
+        present(Ordering.Equal)
+    }
+    mut fn eq<I: Iterator<Item = Self.Item>>(other: take I): bool where Self.Item: PartialEq {
+        var rest = other
+        while true {
+            match take self.next() {
+                present(left) => match take rest.next() {
+                    present(right) => { if left != right { return false } },
+                    none => { return false }
+                },
+                none => match take rest.next() {
+                    present(right) => { return false },
+                    none => { return true }
+                }
+            }
+        }
+        true
+    }
+    mut fn ne<I: Iterator<Item = Self.Item>>(other: take I): bool where Self.Item: PartialEq {
+        !self.eq(other)
+    }
+    mut fn lt<I: Iterator<Item = Self.Item>>(other: take I): bool where Self.Item: PartialOrd {
+        match self.partial_cmp(other) {
+            present(order) => order.is_lt(),
+            none => false
+        }
+    }
+    mut fn le<I: Iterator<Item = Self.Item>>(other: take I): bool where Self.Item: PartialOrd {
+        match self.partial_cmp(other) {
+            present(order) => order.is_le(),
+            none => false
+        }
+    }
+    mut fn gt<I: Iterator<Item = Self.Item>>(other: take I): bool where Self.Item: PartialOrd {
+        match self.partial_cmp(other) {
+            present(order) => order.is_gt(),
+            none => false
+        }
+    }
+    mut fn ge<I: Iterator<Item = Self.Item>>(other: take I): bool where Self.Item: PartialOrd {
+        match self.partial_cmp(other) {
+            present(order) => order.is_ge(),
+            none => false
+        }
+    }
+    mut fn is_sorted(): bool where Self.Item: PartialOrd {
+        var previous = self.next()
+        while true {
+            match take self.next() {
+                present(item) => match take previous {
+                    present(before) => match before.partial_cmp(read item) {
+                        present(order) => {
+                            if order.is_gt() { return false }
+                            previous = present(item)
+                        },
+                        none => { return false }
+                    },
+                    none => { previous = present(item) }
+                },
+                none => { break }
+            }
+        }
+        true
+    }
+    mut fn is_sorted_by<F: fn(read Self.Item, read Self.Item): bool>(compare: take F): bool {
+        var previous = self.next()
+        while true {
+            match take self.next() {
+                present(item) => match take previous {
+                    present(before) => {
+                        if !compare(read before, read item) { return false }
+                        previous = present(item)
+                    },
+                    none => { previous = present(item) }
+                },
+                none => { break }
+            }
+        }
+        true
+    }
+    mut fn is_sorted_by_key<K: PartialOrd, F: fn(read Self.Item): K>(key: take F): bool {
+        var previous: K? = match take self.next() {
+            present(item) => present(key(read item)),
+            none => none
+        }
+        while true {
+            match take self.next() {
+                present(item) => {
+                    let item_key = key(read item)
+                    match take previous {
+                        present(before) => match before.partial_cmp(read item_key) {
+                            present(order) => {
+                                if order.is_gt() { return false }
+                                previous = present(item_key)
+                            },
+                            none => { return false }
+                        },
+                        none => { previous = present(item_key) }
+                    }
+                },
+                none => { break }
+            }
+        }
+        true
+    }
+    mut fn partition<B: Default + ExtendItems<Self.Item>, F: fn(read Self.Item): bool>(
+        test: take F
+    ): (B, B) {
+        var matched = B.(Default).default()
+        var rejected = B.(Default).default()
+        while true {
+            match take self.next() {
+                present(item) => {
+                    if test(read item) {
+                        matched.extend(once(item))
+                    } else {
+                        rejected.extend(once(item))
+                    }
+                },
+                none => { break }
+            }
+        }
+        (matched, rejected)
+    }
+    mut fn unzip<A, B, Left: Default + ExtendItems<A>, Right: Default + ExtendItems<B>>(): (Left, Right)
+        where Self.Item = (A, B) {
+        var left = Left.(Default).default()
+        var right = Right.(Default).default()
+        while true {
+            match take self.next() {
+                present(pair) => {
+                    left.extend(once(pair.0))
+                    right.extend(once(pair.1))
+                },
+                none => { break }
+            }
+        }
+        (left, right)
+    }
     take fn inspect<F: fn(read Self.Item): Unit>(f: take F): Inspected<Self, F> { Inspected(self, f) }
     take fn fuse(): Fused<Self> { Fused(self, false) }
     take fn cycle(): Cycled<Self> where Self: Clone {
@@ -313,6 +496,14 @@ pub fn zip<A: Iterator, B: Iterator>(first: take A, second: take B): Zipped<A, B
 // The iterator of an owned `for` source; async loops keep it in their state.
 pub fn into_iterator<T: OwnedIterable>(items: take T): T.IntoIter {
     T.(OwnedIterable).into_iter(items)
+}
+
+// Iterators whose remaining length is known exactly.
+pub interface ExactSizeIterator: Iterator {
+    fn len(): usize {
+        let hint = self.size_hint()
+        hint.0
+    }
 }
 
 // Iterators that can also yield from the back.
@@ -357,6 +548,22 @@ pub interface BidirectionalIterator: Iterator {
         }
         none
     }
+    mut fn try_rfold<B, E, F: mut fn(take B, take Self.(Iterator).Item): B throws E>(
+        start: take B,
+        f: mut F
+    ): (B throws E) {
+        var accumulator = start
+        while true {
+            match take self.next_back() {
+                present(item) => match take capture f(take accumulator, item) {
+                    success(value) => { accumulator = value },
+                    failure(error) => { return failure(error) }
+                },
+                none => { break }
+            }
+        }
+        success(accumulator)
+    }
     mut fn rfold<B, F: fn(take B, take Self.(Iterator).Item): B>(start: take B, f: take F): B {
         var accumulator = start
         while true {
@@ -368,6 +575,15 @@ pub interface BidirectionalIterator: Iterator {
         accumulator
     }
     take fn rev(): Reversed<Self> { Reversed(self) }
+}
+
+extend<region r, I: Iterator> ByRef<region r, I> implements Iterator {
+    type Item = I.Item
+    mut fn next(): I.Item? { self.iter.next() }
+    fn size_hint(): (usize, usize?) { self.iter.size_hint() }
+}
+extend<region r, I: Iterator + BidirectionalIterator> ByRef<region r, I> implements BidirectionalIterator {
+    mut fn next_back(): I.Item? { self.iter.next_back() }
 }
 
 pub interface OwnedIterable: Sized {
@@ -856,6 +1072,30 @@ extend<I: Iterator> Peekable<I> {
     pub mut fn next_if_eq(expected: read I.Item): I.Item? where I.Item: PartialEq {
         match self.peek() {
             present(item) => if item == expected { self.next() } else { none },
+            none => none
+        }
+    }
+    pub mut fn next_if_map<B, F: fn(read I.Item): B?>(map: take F): B? {
+        match self.peek() {
+            present(item) => match map(item) {
+                present(mapped) => {
+                    let _taken = self.next()
+                    present(mapped)
+                },
+                none => none
+            },
+            none => none
+        }
+    }
+    pub mut fn next_if_map_mut<B, F: fn(mut I.Item): B?>(map: take F): B? {
+        match self.peek_mut() {
+            present(item) => match map(mut item) {
+                present(mapped) => {
+                    let _taken = self.next()
+                    present(mapped)
+                },
+                none => none
+            },
             none => none
         }
     }
