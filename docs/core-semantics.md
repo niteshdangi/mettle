@@ -271,6 +271,12 @@ the parent. Suspend conflicting parent access until the derived loan ends.
 An exclusive reference is non-copyable but can be reborrowed for shorter use.
 Read-view duplication copies the loan-bearing view, not its backing object.
 
+Nominal generic values carry loans in their type arguments even when a library
+owner stores the payload behind a raw pointer. A raw pointer field alone does
+not create a loan. Erasing a loan-carrying payload into an owning interface must
+preserve those loans; any non-static loan returned through the erased owner
+must be covered by an explicit `from` source that it outlives.
+
 Allow independently accessible struct fields when disjointness is established.
 For slices and dynamic indices, use sound compile-time proofs or checked splitting
 APIs; inequality of two arbitrary expressions is not itself a proof. Unknown

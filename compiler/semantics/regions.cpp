@@ -20,8 +20,8 @@ Type Checker::annotation(const TypeSyntax &syntax, Span span,
       // A pinned owner is its own allocation-library type with the owner's
       // layout; weak handles do not own the payload and cannot pin it.
       const char *pinnedOwner =
-          element.ownerKind == OwnerKind::Heap     ? "alloc::boxed::Pinned"
-          : element.ownerKind == OwnerKind::Shared ? "alloc::arc::Pinned"
+          element.ownerKind == OwnerKind::Heap          ? "alloc::boxed::Pinned"
+          : element.ownerKind == OwnerKind::Shared      ? "alloc::arc::Pinned"
           : element.ownerKind == OwnerKind::LocalShared ? "alloc::rc::Pinned"
                                                         : nullptr;
       if (!pinnedOwner) {
@@ -2703,6 +2703,69 @@ Type RegionPass::expression(const Node &node) {
   if (facts(node).erasedSource != Type::Unknown) {
     type = erased(type, facts(node).rebuiltType, node.span);
   }
+  if (facts(node).ownerUnsizeSource != Type::Unknown && types.isProduct(type) &&
+      types.isProduct(facts(node).rebuiltType)) {
+    const auto &sourceOwner = types.product(type);
+    const auto &targetOwner = types.product(facts(node).rebuiltType);
+    if (!sourceOwner.genericArguments.empty() &&
+        !targetOwner.genericArguments.empty() &&
+        types.isErased(targetOwner.genericArguments.front())) {
+      auto sourcePayload = sourceOwner.genericArguments.front();
+      auto targetPayload = targetOwner.genericArguments.front();
+      auto erased = types.erasedTail(sourcePayload, targetPayload);
+      if (erased && erased->first == sourcePayload &&
+          erased->second == targetPayload) {
+        std::vector<RegionId> allowed;
+        const auto &syntax = module.functions[currentFunction];
+        auto allow = [&](std::string_view name) {
+          if (name == "static") {
+            allowed.push_back(RegionId::Static);
+            return;
+          }
+          if (auto region = current->context.names.find(std::string(name));
+              region != current->context.names.end())
+            allowed.push_back(region->second);
+          for (std::size_t p = 0; p < syntax.parameters.size(); ++p)
+            if (syntax.parameters[p].name == name) {
+              auto regions =
+                  contained(signatures[currentFunction].parameters[p]);
+              regions.push_back(signatures[currentFunction].backing[p]);
+              allowed.insert(allowed.end(), regions.begin(), regions.end());
+            }
+        };
+        auto collectSources = [&](auto &&self,
+                                  const TypeSyntax &annotation) -> void {
+          for (const auto &name : annotation.sources)
+            allow(name);
+          if (annotation.nested)
+            self(self, *annotation.nested);
+          for (const auto &element : annotation.elements)
+            self(self, element);
+        };
+        collectSources(collectSources, syntax.annotation);
+        std::sort(allowed.begin(), allowed.end());
+        allowed.erase(std::unique(allowed.begin(), allowed.end()),
+                      allowed.end());
+        for (auto borrow : contained(sourcePayload)) {
+          if (borrow == RegionId::Static)
+            continue;
+          bool outlives = std::any_of(
+              allowed.begin(), allowed.end(), [&](auto resultSource) {
+                return solver.outlives(borrow, resultSource,
+                                       current->context.environment) ==
+                       RegionAnswer::Proven;
+              });
+          if (!outlives) {
+            error(node.span,
+                  "erased owner payload borrow is not covered by its from "
+                  "sources");
+            break;
+          }
+        }
+      }
+    }
+    type = facts(node).rebuiltType;
+  }
   if (facts(node).callableCoercion != Type::Unknown) {
     auto expected = facts(node).callableCoercion;
     if (auto found = callableAdaptations.find(&node);
@@ -2741,17 +2804,6 @@ void RegionPass::resultSources(std::size_t index) {
     facts.resultSources = eligible;
     return;
   }
-  if (!types.containsViews(facts.abiResult))
-    return;
-  auto add = [&](std::size_t parameter) {
-    if (std::find(facts.resultSources.begin(), facts.resultSources.end(),
-                  parameter) == facts.resultSources.end())
-      facts.resultSources.push_back(parameter);
-  };
-  if (syntax.constructor) {
-    facts.resultSources = eligible;
-    return;
-  }
   // Sources written on views nested in optional, tuple and outcome results
   // declare the same relationship as a top-level `from` clause.
   std::vector<std::string> declaredSources;
@@ -2768,6 +2820,17 @@ void RegionPass::resultSources(std::size_t index) {
   };
   collect(collect, syntax.annotation);
   collect(collect, syntax.error);
+  if (!types.containsViews(facts.abiResult) && declaredSources.empty())
+    return;
+  auto add = [&](std::size_t parameter) {
+    if (std::find(facts.resultSources.begin(), facts.resultSources.end(),
+                  parameter) == facts.resultSources.end())
+      facts.resultSources.push_back(parameter);
+  };
+  if (syntax.constructor) {
+    facts.resultSources = eligible;
+    return;
+  }
   if (!declaredSources.empty()) {
     for (const auto &name : declaredSources) {
       if (name == "static") {
@@ -2867,17 +2930,33 @@ std::vector<RegionId> RegionPass::contained(Type type) const {
       return;
     active.push_back(nested);
     if (types.isView(nested)) {
-      result.push_back(types.view(nested).region);
+      auto region = types.view(nested).region;
+      if (std::find(result.begin(), result.end(), region) == result.end())
+        result.push_back(region);
       self(self, types.view(nested).payload);
     } else if (types.isSlice(nested))
       self(self, types.slice(nested).element);
-    else if (types.isProduct(nested)) {
+    else if (types.isErased(nested)) {
+      const auto &record = types.erased(nested);
+      for (auto region : record.regionArguments)
+        if (std::find(result.begin(), result.end(), region) == result.end())
+          result.push_back(region);
+      for (auto argument : record.arguments)
+        self(self, argument);
+      for (const auto &binding : record.associated)
+        self(self, binding.argument);
+    } else if (types.isProduct(nested)) {
       const auto &record = types.product(nested);
       if (record.kind == AggregateKind::Array && !record.components.empty())
         self(self, record.components[0]);
+      else if (record.kind == AggregateKind::Coroutine &&
+               record.components.size() > 1)
+        self(self, record.components[1]);
       else
         for (const auto &field : record.fields)
           self(self, field.type);
+      for (auto argument : record.genericArguments)
+        self(self, argument);
     }
     active.pop_back();
   };

@@ -131,12 +131,12 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | L045 | E | `tests/source/run/borrowed-parameter-captures-keep-views.mt`; `tests/source/run/async-mut-parameter-writes-reach-the-caller.mt` | macOS ARM64 evidenced; Linux/Windows not qualified. |
 | L046 | E | `tests/source/run/constant-array-lengths-are-profile-independent.mt` | `compiler/consteval`, `compiler/instances`; finish value-parameter/layout combinations. |
 | L047 | E | `tests/source/run/coherent-implementation-type-and-const-equality-selection.mt` | `compiler/semantics`; complete overlap/coherence cases. |
-| L048 | P | `tests/source/run/generic-unsized-bound-dispatches-through-any.mt`; `tests/source/run/generic-mut-receiver-dispatches-through-any.mt` | `compiler/lowering/opaque.cpp`; generic `any I` dispatch and `async(heap)` erased calls work; owners do not yet carry payload loans. |
+| L048 | E | `tests/source/run/generic-unsized-bound-dispatches-through-any.mt`; `tests/source/run/generic-mut-receiver-dispatches-through-any.mt`; `tests/source/run/heap-erased-owner-preserves-from-source.mt`; `tests/source/fail/erased-future-without-from-escapes-local.mt` | macOS ARM64 evidenced; Linux/Windows not qualified. |
 | L049 | E | `tests/source/fail/opaque-return-paths-share-one-hidden-type.mt` | `compiler/semantics`; finish cross-package identity/capture evidence. |
 | L050 | E | `tests/library/ops.mt` | `library/core/ops.mt`, `compiler/semantics`; complete compound-assignment single-evaluation closure. |
 | L051 | E | `tests/source/run/two-phase-method-receiver.mt` | `compiler/semantics`; complete inherent/interface collision and explicit qualification cases. |
 | L052 | E | `tests/source/run/async-fn-state-machine.mt` | `compiler/syntax`, `compiler/semantics`, `compiler/backend/llvm`; target/cancellation qualification remains. |
-| L053 | P | `tests/source/run/async-heap-interface-methods-dispatch-through-any.mt`; `tests/source/fail/async-interface-erased-dispatch.mt` | `compiler/syntax`, `compiler/semantics`; `async(heap)` methods dispatch through `any I`; an erased future may outlive its receiver until owners carry payload loans. |
+| L053 | E | `tests/source/run/async-heap-interface-methods-dispatch-through-any.mt`; `tests/source/fail/async-interface-erased-dispatch.mt`; `tests/source/fail/async-heap-erased-receiver-escapes-local.mt` | macOS ARM64 evidenced; Linux/Windows not qualified. |
 | L054 | E | `tests/source/run/const-eval-*.mt`; `tests/consteval/target_width.cpp` | `compiler/consteval`; target width beyond the supported driver targets is covered only by checker unit evidence. |
 | L055 | E | `tests/source/run/macro-declarative-expansion.mt`; `tests/source/run/macro-import-reexport.mt`; `tests/source/fail/macro-recursion-limit.mt`; `tests/source/fail/macro-import-ambiguous.mt` | `compiler/expansion`, `compiler/resolution`; macro import paths follow item import rules (module-relative, `super`). Verified macOS ARM64 Release at `0eea2fa`+macro fix. |
 | L056 | E | `tests/packages.py::procedural_macro`; `tests/packages.py::procedural_macro_failure` | `compiler/expansion`, `compiler/driver`; per-package namespaces and attribute/derive procedural macros remain out of contract. |
@@ -146,7 +146,7 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | L060 | E | `tests/packages.py::doc_writes_deterministic_html`; `tests/packages.py::doctests_run_isolated_examples` | `compiler/documentation`, `compiler/driver`; debugger support is separately tracked by T006. |
 | S001 | E | `tests/library/option_outcome.mt`; `tests/library/nested_option_extraction.mt` | `library/core/option.mt`; finish nested presence and consuming-extraction operation closure. |
 | S002 | E | `tests/library/option_outcome.mt`; `tests/library/nested_outcome_transpose.mt` | `library/core/option.mt`, `library/core/outcome.mt`; transpose verified on macOS arm64. |
-| S003 | P | `tests/source/run/pinned-heap-owner-drop-and-unpin-access.mt`; `tests/source/run/pinned-shared-owners-retain-and-drop.mt`; `tests/source/fail/pinned-weak-handle.mt` | `library/alloc/{boxed,arc,rc}.mt`; pinned owners are implemented; owners do not yet carry their payload's loans. |
+| S003 | E | `tests/source/run/pinned-heap-owner-drop-and-unpin-access.mt`; `tests/source/run/pinned-shared-owners-retain-and-drop.mt`; `tests/source/fail/pinned-weak-handle.mt`; `tests/source/fail/pinned-erased-future-without-from-escapes-local.mt` | macOS ARM64 evidenced; Linux/Windows not qualified. |
 | S004 | E | `tests/alloc/rc_weak.mt`; `tests/alloc/arc_weak.mt` | `library/alloc/rc.mt`; complete retain/weak/unique-extraction failure cases. |
 | S005 | P | `tests/alloc/arc_weak.mt`; `tests/std/arc_races.mt` | `library/alloc/arc.mt`; full operation matrix and current target race/last-owner qualification remain. |
 | S006 | P | `tests/alloc/vec_basic.mt`; `tests/alloc/stable_sort.mt`; `tests/std/collection_panic_safety_vec.mt`; `tests/source/fail/list-element-view-blocks-list-push.mt` | `library/alloc/vec.mt`; complete reserve/insert/drain/invalidation closure. |
@@ -192,7 +192,7 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | T006 | E | `tests/packages.py::debug_info`; `tests/packages.py::debugger_workflow` | `compiler/backend/llvm/debug.cpp`, `tools/debug`; expanded workflow/LLDB checks pass on macOS arm64; Windows CodeView/PDB is excluded and not qualified. |
 | T007 | E | `tests/packages.py::test_reports_pass_fail_ignored_and_isolates_panics`; `tests/packages.py::bench_reports_timing` | `compiler/driver/execute.cpp`; package-wide collection and doctest cases are evidenced; finish the remaining runner contract. |
 
-Inventory totals: **85 evidenced, 21 partial, 1 missing (A009, deferred to
+Inventory totals: **88 evidenced, 18 partial, 1 missing (A009, deferred to
 I17)**. Remaining partial rows are I13
 operation-closure obligations. Full operation closure is a separate, still
 open obligation: `docs/baseline/audit-summary.json` reports 106,125 canonical

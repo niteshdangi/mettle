@@ -478,23 +478,41 @@ bool TypeStore::needsDrop(Type type) const {
   return false;
 }
 bool TypeStore::containsViews(Type type) const {
-  if (isView(type))
-    return true;
-  if (isSlice(type))
-    return containsViews(slice(type).element);
-  if (isProduct(type)) {
-    const auto &record = product(type);
-    if (record.kind == AggregateKind::Array &&
-        record.arrayCount != Type::Unknown && !record.components.empty() &&
-        containsViews(record.components[0]))
+  std::vector<Type> active;
+  auto visit = [&](auto &&self, Type nested) -> bool {
+    if (isView(nested))
       return true;
-    if (record.kind == AggregateKind::Coroutine)
-      return containsViews(record.components[1]);
-    for (const auto &field : product(type).fields)
-      if (containsViews(field.type))
-        return true;
-  }
-  return false;
+    if (std::find(active.begin(), active.end(), nested) != active.end())
+      return false;
+    active.push_back(nested);
+    bool result = false;
+    if (isSlice(nested))
+      result = self(self, slice(nested).element);
+    else if (isErased(nested)) {
+      const auto &descriptor = erased(nested);
+      result = !descriptor.regionArguments.empty() ||
+               !descriptor.regionParameters.empty();
+      for (auto argument : descriptor.arguments)
+        result |= self(self, argument);
+      for (const auto &binding : descriptor.associated)
+        result |= self(self, binding.argument);
+    } else if (isProduct(nested)) {
+      const auto &record = product(nested);
+      if (record.kind == AggregateKind::Array &&
+          record.arrayCount != Type::Unknown && !record.components.empty())
+        result = self(self, record.components[0]);
+      else if (record.kind == AggregateKind::Coroutine &&
+               record.components.size() > 1)
+        result = self(self, record.components[1]);
+      for (const auto &field : record.fields)
+        result |= self(self, field.type);
+      for (auto argument : record.genericArguments)
+        result |= self(self, argument);
+    }
+    active.pop_back();
+    return result;
+  };
+  return visit(visit, type);
 }
 const ProductType &TypeStore::product(Type type) const {
   return products.at(entries.at(type.index() - builtins).index);

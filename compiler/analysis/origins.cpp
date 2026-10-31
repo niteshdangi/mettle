@@ -4,6 +4,7 @@
 #include <deque>
 #include <functional>
 #include <optional>
+#include <set>
 #include <stdexcept>
 
 namespace mettle::analysis {
@@ -61,6 +62,15 @@ bool returnPath(const ViewPath &pattern, const ViewPath &actual) {
           pattern[p].kind == Projection::Kind::Field))
       return false;
   return true;
+}
+bool owningHandle(Type type, const TypeStore &types) {
+  if (!types.isProduct(type))
+    return false;
+  auto origin = types.product(type).genericOrigin;
+  if (origin == Type::Unknown)
+    return false;
+  auto spelling = ownerSpelling(types.product(origin).name);
+  return !spelling.empty() && spelling != "weak" && spelling != "local weak";
 }
 std::vector<bool> cyclicBlocks(const ir::Function &function) {
   const auto count = function.blocks.size();
@@ -151,7 +161,15 @@ void append(Place &place, const ViewPath &path) {
 std::vector<std::pair<ViewPath, Type>> viewPaths(Type type,
                                                  const TypeStore &types) {
   std::vector<std::pair<ViewPath, Type>> result;
+  std::set<Type> active;
   std::function<void(Type, ViewPath)> visit = [&](Type current, ViewPath path) {
+    if (!active.insert(current).second)
+      return;
+    struct ActiveType {
+      std::set<Type> &active;
+      Type type;
+      ~ActiveType() { active.erase(type); }
+    } activeType{active, current};
     if (types.isView(current)) {
       if (result.size() >= limits::activeLoans)
         throw std::length_error("view projection limit exceeded");
@@ -178,12 +196,29 @@ std::vector<std::pair<ViewPath, Type>> viewPaths(Type type,
       visit(aggregate.components[1], std::move(path));
       return;
     }
+    if (owningHandle(current, types) && !aggregate.genericArguments.empty()) {
+      auto payload = aggregate.genericArguments.front();
+      auto prior = result.size();
+      visit(payload, {});
+      if (result.size() == prior && types.isErased(payload))
+        result.emplace_back(ViewPath{}, Type::Unknown);
+      return;
+    }
     const auto &fields = types.product(current).fields;
+    const auto prior = result.size();
     for (std::size_t i = 0; i < fields.size(); ++i) {
       auto child = path;
       child.push_back(Projection::field(static_cast<std::uint32_t>(i)));
       visit(fields[i].type, std::move(child));
     }
+    if (result.size() == prior && aggregate.genericOrigin != Type::Unknown)
+      for (auto argument : aggregate.genericArguments) {
+        auto argumentPrior = result.size();
+        visit(argument, {});
+        if (result.size() == argumentPrior && types.isErased(argument) &&
+            types.containsViews(argument))
+          result.emplace_back(ViewPath{}, Type::Unknown);
+      }
   };
   visit(type, {});
   return result;
@@ -431,8 +466,8 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
         for (auto source : function.resultSources) {
           const auto &sources = parameterInputs[static_cast<int>(source)];
           for (auto backing : sources) {
-            backing.fields.push_back(
-                Projection::opaque(types.view(type).payload));
+            backing.fields.push_back(Projection::opaque(
+                types.isView(type) ? types.view(type).payload : Type::Unknown));
             result.effects.returns[path].insert(std::move(backing));
           }
         }
@@ -501,7 +536,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
              instruction.text == "ptr.replace") &&
             instruction.text != "ptr.write_bytes" &&
             instruction.operands.size() == 2 &&
-            types.containsViews(instruction.operands[1].type))
+            !viewPaths(instruction.operands[1].type, types).empty())
           return true;
     return false;
   }();
@@ -532,8 +567,10 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
       throw std::length_error("view origin limit exceeded");
     int id = synthetic++;
     Loan loan;
-    loan.mode = types.view(type).mode;
-    loan.interiorRoot = loan.mode == ParameterMode::Read &&
+    loan.mode =
+        types.isView(type) ? types.view(type).mode : ParameterMode::Read;
+    loan.interiorRoot = types.isView(type) &&
+                        loan.mode == ParameterMode::Read &&
                         interiorStorage(types, types.view(type).payload);
     loan.parameter = parameter;
     int root = external--;
@@ -629,10 +666,9 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
       else if (instruction.op == ir::Op::OpaqueRepack &&
                instruction.result.access != ir::Access::Owned)
         created[b][i].push_back(synthetic++);
-      else if ((instruction.op == ir::Op::OpaqueRepack ||
-                instruction.op == ir::Op::Call ||
-                instruction.op == ir::Op::IndirectCall) &&
-               types.containsViews(instruction.result.type))
+      else if (instruction.op == ir::Op::OpaqueRepack ||
+               instruction.op == ir::Op::Call ||
+               instruction.op == ir::Op::IndirectCall)
         for (const auto &path : viewPaths(instruction.result.type, types)) {
           (void)path;
           created[b][i].push_back(synthetic++);
@@ -917,7 +953,8 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
           if (instruction.op == ir::Op::Move) {
             for (const auto &[path, view] :
                  viewPaths(instruction.result.type, types))
-              if (types.view(view).mode == ParameterMode::Mut)
+              if (types.isView(view) &&
+                  types.view(view).mode == ParameterMode::Mut)
                 join(point.movedViews, value[path]);
             for (const auto &target : targets)
               for (auto it = memory.begin(); it != memory.end();)
@@ -1275,22 +1312,32 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
         } else if (instruction.op == ir::Op::Phi) {
           for (auto operand : instruction.operands)
             join(value, result.values[operand.id]);
+        } else if (instruction.op == ir::Op::OwnerUnsize) {
+          if (!instruction.operands.empty()) {
+            const auto &source = result.values[instruction.operands[0].id];
+            join(value[{}], flatten(source));
+            join(uses, flatten(source));
+          }
         } else if ((instruction.op == ir::Op::Call ||
                     instruction.op == ir::Op::IndirectCall) &&
                    !created[b][i].empty()) {
           auto paths = viewPaths(instruction.result.type, types);
           for (std::size_t path = 0; path < paths.size(); ++path) {
             int id = created[b][i][path];
-            result.loans[id].mode = types.view(paths[path].second).mode;
+            auto &loan = result.loans[id];
+            if (types.isView(paths[path].second))
+              loan.mode = types.view(paths[path].second).mode;
             // Static output identities distinguish one invocation, not loop
             // epochs.
             if (!cyclic[b])
               for (std::size_t other = 0; other < created[b][i].size(); ++other)
-                if (other != path && (types.view(paths[path].second).mode ==
-                                          ParameterMode::Mut ||
-                                      types.view(paths[other].second).mode ==
-                                          ParameterMode::Mut))
-                  result.loans[id].disjointOutputs.insert(created[b][i][other]);
+                if (other != path && ((types.isView(paths[path].second) &&
+                                       types.view(paths[path].second).mode ==
+                                           ParameterMode::Mut) ||
+                                      (types.isView(paths[other].second) &&
+                                       types.view(paths[other].second).mode ==
+                                           ParameterMode::Mut)))
+                  loan.disjointOutputs.insert(created[b][i][other]);
             value[paths[path].first].insert(id);
             point.defines.insert(id);
           }
@@ -1352,7 +1399,10 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                          ? types.product(type).fields.at(projection.index).type
                      : projection.kind == Projection::Kind::Slice
                          ? projection.type
-                         : types.view(type).payload;
+                     : projection.kind == Projection::Kind::Opaque ? priorType
+                     : types.isView(type)        ? types.view(type).payload
+                     : owningHandle(type, types) ? type
+                                                 : Type::Unknown;
               if (!located) {
                 if (projection.kind != Projection::Kind::Dereference) {
                   path.push_back(projection);
@@ -1451,8 +1501,10 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
               auto &loan = result.loans[id];
               auto oldTargets = loan.targets.size(),
                    oldParents = loan.parents.size();
-              loan.mode = types.view(view).mode;
-              auto payload = types.view(view).payload;
+              loan.mode = types.isView(view) ? types.view(view).mode
+                                             : ParameterMode::Read;
+              auto payload =
+                  types.isView(view) ? types.view(view).payload : Type::Unknown;
               for (const auto &source : sources) {
                 bool mutableSource =
                     callee.locals[source.root].mode != ParameterMode::Read;
@@ -1613,6 +1665,12 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                                 std::inserter(borrowed, borrowed.end()));
             const bool borrowedChanged = borrowed != loan.borrowed;
             loan.borrowed = std::move(borrowed);
+            if (!types.isView(paths[path].second) &&
+                std::any_of(
+                    loan.parents.begin(), loan.parents.end(), [&](auto parent) {
+                      return result.loans.at(parent).mode == ParameterMode::Mut;
+                    }))
+              loan.mode = ParameterMode::Mut;
             if (borrowedChanged || oldTargets != loan.targets.size() ||
                 oldParents != loan.parents.size())
               changed = true;
@@ -1660,7 +1718,8 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
             auto viewType =
                 *projectedType(types, callee.locals[destination.root].type,
                                destination.fields);
-            loan.mode = types.view(viewType).mode;
+            loan.mode = types.isView(viewType) ? types.view(viewType).mode
+                                               : ParameterMode::Read;
             // Views moved within the written argument were reached through
             // loans of the object that holds the destination; those loans
             // govern the access to it, not the stored views.
@@ -1787,7 +1846,8 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
         backing.insert(std::move(place));
       }
       for (auto place : backing) {
-        place.fields.push_back(Projection::opaque(types.view(type).payload));
+        place.fields.push_back(Projection::opaque(
+            types.isView(type) ? types.view(type).payload : Type::Unknown));
         result.effects.returns[path].insert(std::move(place));
       }
     }
