@@ -1225,7 +1225,10 @@ boundary: instruction selection/legalization, registers, machine optimization,
 object/debug/unwind emission and each accepted target's ABI integration.
 System linkers/SDKs remain explicit profile dependencies; LLVM code generation
 cannot remain a hidden fallback. Compare both backend paths and Rust under
-equivalent semantics and requalify every accepted profile.
+equivalent semantics and requalify every accepted profile. The independent
+backend must provide address/undefined-behavior and thread checking equivalent
+to the current ASan/UBSan/TSan qualification, or run the full unsafe/runtime
+corpus under it; losing sanitizer coverage blocks I16.
 
 ### 8.7. Experience track: readability, compile cost and storage
 
