@@ -1315,16 +1315,12 @@ the discriminator, scope-initialized saved-local fields, captured environment
 and output fields, and the LLDB `state = await #N (line L)` summary are
 implemented; the focused `debug_info` assertions have prior macOS arm64
 evidence. This lane adds DWARF lexical scopes, moved-value location ranges,
-erased witness table types, release inlining metadata, and direct `dbg.declare`
-locations for memory-backed locals (including coroutine-frame addresses), while
-retaining indirect locations for parameters and statics; these changes and
-assertions are implemented, unverified (not yet built). The `debug_info`
-assertion now checks both the storage declaration and moved-value invalidation.
-The new `debugger_workflow` package case automates LLDB breakpoint,
-local/parameter, slice/List, tagged-variant, erased-view and suspended-coroutine
-summary checks; it and the updated LLDB formatters are implemented, unverified
-(not run on this lane). Windows CodeView/PDB remains open and is out of scope
-for this lane.
+erased witness table types, and release inlining metadata; these changes and
+assertions are implemented, unverified (not yet built). The new
+`debugger_workflow` package case automates LLDB breakpoint, local/parameter,
+slice/List, tagged-variant, erased-view and suspended-coroutine summary checks;
+it and the updated LLDB formatters are implemented, unverified (not run on this
+lane). Windows CodeView/PDB remains open and is out of scope for this lane.
 T006 and I12 are not complete.
 
 I13 closes remaining operation mappings with compiled native declarations and

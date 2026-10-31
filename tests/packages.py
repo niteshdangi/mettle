@@ -1019,9 +1019,6 @@ def debug_info():
     ir_text = debug_ir.read_text()
     moved = re.search(r'(!\d+) = !DILocalVariable\(name: "original"', ir_text)
     assert moved, ir_text
-    assert re.search(r'(?:@llvm\.dbg\.declare\(metadata |#dbg_declare\()'
-                     r'ptr [^,]+, (?:metadata )?' +
-                     re.escape(moved.group(1)) + r'\b', ir_text), ir_text
     assert re.search(r'(?:@llvm\.dbg\.value\(metadata |#dbg_value\()'
                      r'ptr undef, (?:metadata )?' +
                      re.escape(moved.group(1)) + r'\b', ir_text), ir_text
