@@ -409,7 +409,8 @@ foreign_declaration = [ "unsafe" ], [ visibility ], "fn", IDENT,
                 result_annotation, ";"
               | [ visibility ], "static", [ "mut" ], IDENT, ":", type, [ ";" ] ;
 foreign_function = "extern", TEXT, function ;
-macro_definition = "macro", IDENT, "{", TOKEN_TREE_CONTENTS, "}" ;
+macro_definition = [ visibility ], "macro", IDENT, "{",
+                   TOKEN_TREE_CONTENTS, "}" ;
 ```
 
 `TOKEN_TREE_CONTENTS` means a sequence of tokens and recursively balanced

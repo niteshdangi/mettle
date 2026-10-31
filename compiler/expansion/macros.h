@@ -14,9 +14,11 @@ namespace mettle::expansion {
 //       (matcher) => { expansion };
 //   }
 //
-// Definitions are file-local and order independent. An invocation `name!(...)`
-// (also `[...]` and `{...}`) selects the first rule whose matcher recognizes
-// the argument tokens; short and full fragment-kind spellings are accepted.
+// Definitions are lexically inline-module-scoped within this source and order
+// independent. An invocation `name!(...)` (also `[...]` and `{...}`) selects
+// the first rule whose matcher recognizes the argument tokens; short and full
+// fragment-kind spellings are accepted. Macro imports and reexports are not
+// yet resolved.
 // Structured fragments must parse with the native parser. Template-local
 // bindings, including match-arm pattern bindings, are renamed per expansion;
 // `$capture(name)` deliberately names an invocation-context identifier.
@@ -30,8 +32,8 @@ namespace mettle::expansion {
 // expansion/procedural.h), its text output is re-lexed and spliced in with
 // every token attributed to the invocation, and the result is expanded again.
 // A program failure, a protocol fault or output that does not lex is a
-// `macro` diagnostic at the invocation. A file-local `macro` of the same name
-// takes precedence.
+// `macro` diagnostic at the invocation. A lexically visible declarative macro
+// of the same name takes precedence.
 //
 // Returns nullopt when the source defines no macro or does not lex (the
 // parser then reports it); otherwise the generated source, which keeps the

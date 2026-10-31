@@ -697,7 +697,25 @@ public:
     for (std::size_t i = 0; i + 2 < pieces.size(); ++i)
       if (pieces[i].kind == TokenKind::Word && pieces[i].text == "macro" &&
           pieces[i + 1].kind == TokenKind::Word && symbol(pieces[i + 2], "{")) {
-        definitions.push_back({i, close[i + 2]});
+        auto begin = i;
+        auto prefix = begin;
+        if (prefix > 0 && symbol(pieces[prefix - 1], ")")) {
+          std::size_t depth = 1;
+          auto open = prefix - 1;
+          while (open > 0 && depth != 0) {
+            --open;
+            if (symbol(pieces[open], ")"))
+              ++depth;
+            else if (symbol(pieces[open], "("))
+              --depth;
+          }
+          if (depth == 0)
+            prefix = open;
+        }
+        if (prefix > 0 && pieces[prefix - 1].kind == TokenKind::Word &&
+            pieces[prefix - 1].text == "pub")
+          begin = prefix - 1;
+        definitions.push_back({begin, i, close[i + 2]});
         i = close[i + 2];
       }
     bool procedural = false;
@@ -707,11 +725,15 @@ public:
       return std::nullopt;
     Diagnostics::SourceContext context(diagnostics, source);
     for (const auto &definition : definitions)
-      define(definition.first, definition.second);
+      define(definition.macro, definition.end);
     return expandSource();
   }
 
 private:
+  struct Definition {
+    std::size_t begin, macro, end;
+  };
+
   struct ScopeRange {
     std::size_t begin, end;
     std::vector<std::string> path;
@@ -724,7 +746,7 @@ private:
   std::vector<std::string> modulePath;
   Pieces pieces;
   std::vector<std::size_t> close;
-  std::vector<std::pair<std::size_t, std::size_t>> definitions;
+  std::vector<Definition> definitions;
   std::vector<ScopeRange> moduleScopes;
   std::map<std::string, Macro> macros;
   std::set<std::string> broken;
@@ -777,6 +799,20 @@ private:
     return selected ? selected->path : std::vector<std::string>{};
   }
 
+  static std::string macroKey(const std::vector<std::string> &scope,
+                              std::string_view name) {
+    std::string result;
+    for (const auto &part : scope) {
+      if (!result.empty())
+        result += "::";
+      result += part;
+    }
+    if (!result.empty())
+      result += "::";
+    result += name;
+    return result;
+  }
+
   void define(std::size_t at, std::size_t last) {
     const auto &name = pieces[at + 1];
     auto before = diagnostics.count();
@@ -784,14 +820,16 @@ private:
       error(name.origin, "'" + name.text + "' cannot name a macro");
       return;
     }
-    if (macros.contains(name.text)) {
+    auto definitionScope = scopeAt(pieces[at].origin.begin);
+    auto key = macroKey(definitionScope, name.text);
+    if (macros.contains(key)) {
       error(name.origin, "macro '" + name.text + "' is already defined");
       return;
     }
     Macro macro;
     macro.name = name.text;
     macro.span = {pieces[at].origin.begin, pieces[last].origin.end, source.id};
-    macro.definitionScope = scopeAt(pieces[at].origin.begin);
+    macro.definitionScope = std::move(definitionScope);
     auto i = at + 3;
     auto expect = [&](bool condition, const Piece &where, const char *message) {
       if (!condition)
@@ -839,9 +877,9 @@ private:
       error(name.origin, "macro '" + macro.name + "' has no rules");
     if (diagnostics.count() != before) {
       failed = true;
-      broken.insert(macro.name);
+      broken.insert(key);
     }
-    macros.emplace(macro.name, std::move(macro));
+    macros.emplace(std::move(key), std::move(macro));
   }
 
   const Macro *invoked(const Pieces &in, std::size_t i) const {
@@ -850,12 +888,20 @@ private:
       return nullptr;
     if (i > 0 && (symbol(in[i - 1], ".") || symbol(in[i - 1], "::")))
       return nullptr;
-    auto found = macros.find(in[i].text);
-    return found == macros.end() ? nullptr : &found->second;
+    auto scope = scopeAt(in[i].origin.begin);
+    for (;;) {
+      auto found = macros.find(macroKey(scope, in[i].text));
+      if (found != macros.end())
+        return &found->second;
+      if (scope.empty())
+        break;
+      scope.pop_back();
+    }
+    return nullptr;
   }
 
   // Whether `in[i]` starts an invocation of a procedural macro that no
-  // file-local macro shadows.
+  // lexically visible declarative macro shadows.
   bool procedure(const Pieces &in, std::size_t i) const {
     if (!procedures || in[i].kind != TokenKind::Word || i + 2 >= in.size() ||
         !symbol(in[i + 1], "!") || in[i + 1].space || !opener(in[i + 2]))
@@ -863,7 +909,7 @@ private:
     if (i > 0 && (symbol(in[i - 1], ".") || symbol(in[i - 1], "::")))
       return false;
     return procedures->names.contains(in[i].text) &&
-           !macros.contains(in[i].text);
+           !invoked(in, i);
   }
 
   std::string path() const {
@@ -890,7 +936,8 @@ private:
       auto last = inner[i + 2];
       if (host)
         ok &= invokeProcedure(in, i, last, out, depth, use);
-      else if (!broken.contains(macro->name))
+      else if (!broken.contains(
+                   macroKey(macro->definitionScope, macro->name)))
         ok &= invoke(*macro, in, i, last, out, depth, use);
       i = last + 1;
       if (out.size() > limits::tokens) {
@@ -1420,10 +1467,10 @@ private:
   std::optional<Source> expandSource() {
     std::size_t next = 0;
     for (std::size_t i = 0; i < pieces.size();) {
-      if (next < definitions.size() && i == definitions[next].first) {
-        copy(pieces[i].origin.begin);
-        cursor = pieces[definitions[next].second].origin.end;
-        i = definitions[next].second + 1;
+      if (next < definitions.size() && i == definitions[next].begin) {
+        copy(pieces[definitions[next].begin].origin.begin);
+        cursor = pieces[definitions[next].end].origin.end;
+        i = definitions[next].end + 1;
         ++next;
         continue;
       }
@@ -1439,7 +1486,8 @@ private:
       copy(use.begin);
       cursor = use.end;
       i = last + 1;
-      if (macro && broken.contains(name))
+      if (macro && broken.contains(
+                       macroKey(macro->definitionScope, macro->name)))
         continue;
       chain.clear();
       Pieces call(pieces.begin() + first, pieces.begin() + last + 1), result;

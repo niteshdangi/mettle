@@ -120,10 +120,11 @@ api = 1                        # required extension API major version
 
 `api` is required; a major version the compiler does not support is a
 `feature` diagnostic before any program is built or run. A package may declare
-macros and no library target. Macro names are global to the package graph (a
-duplicate is a `package` error); a file-local declarative `macro` of the same
-name shadows it. An invocation `make_fn!(...)` (any delimiter) is recognized in
-every source of the build, before parsing, like a declarative one.
+macros and no library target. Procedural macro names are global to the package
+graph (a duplicate is a `package` error); a lexically visible declarative
+`macro` of the same name shadows it. An invocation `make_fn!(...)` (any
+delimiter) is recognized in every source of the build, before parsing, like a
+declarative one.
 
 Each program is compiled for the host (cached like any program) and run once
 per distinct invocation in its package directory. The compiler writes a
