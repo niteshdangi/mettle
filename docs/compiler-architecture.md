@@ -639,19 +639,26 @@ permission to remove capabilities.
 Every IR instruction, terminator and function (`ir::Function::span`, set by
 lowering from the declaration, closure or default body) carries one source
 `Span`; IR transforms and generic instantiation copy it. Spans are LLVM-free.
+Each instruction also retains its lexical scope index, and functions carry the
+source-level inline hint as compiler-owned metadata; CFG verification checks
+scope indices before backend emission.
 Only the LLVM adapter (`backend/llvm/debug.*`, active under the driver's `-g`)
 turns spans into `DILocation`s with line tables built from the loaded sources,
 and builds `DISubprogram`, `DILocalVariable` and type metadata (layout offsets
 come from `types/layout.h`). The driver supplies the diagnostics provenance
 mapping: copied text retains its source offset and macro-produced tokens use
-the invocation span. Closure environment fields use captured place names.
-Type names use dotted display paths and instantiated TypeStore names.
-Length-bearing views expose `data_ptr` and `length`; erased views expose their
-data pointer, alignment and witness fields. Sums use a discriminator and
-per-variant payload structures in a DWARF variant part; offsets come from the
-compiler layout, including overlapping payloads. A final pass drops locations
-that would not verify. Without `-g` the adapter emits no metadata. These
-changes are implemented but not yet built or verified.
+the invocation span. Lexical scope indices become nested DWARF lexical blocks;
+local locations end at moves, drops and scope exits and are restored on
+whole-place stores. Closure environment fields use captured place names. Type
+names use dotted display paths and instantiated TypeStore names. Length-bearing
+views expose `data_ptr` and `length`; erased views expose their data pointer,
+alignment and a typed witness-table pointer. Optimizer-created inline stacks
+are derived from each function's DISubprogram and call-site locations. Sums use
+a discriminator and per-variant payload structures in a DWARF variant part;
+offsets come from the compiler layout, including overlapping payloads. A final
+pass drops locations that would not verify. Without `-g` the adapter emits no
+metadata. The current DWARF additions are implemented, unverified (not yet
+built); CodeView/PDB remains open.
 
 ## 6. Compilation state, errors and side effects
 

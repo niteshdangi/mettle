@@ -537,9 +537,10 @@ Moved/uninitialized values must not be presented as live valid values.
 Optimization may eliminate values; report optimized-out rather than inventing
 their contents. Static region analysis does not require runtime region objects.
 
-Status (I12/T006, partial; coroutine metadata and summary changes are
-implemented, unverified (not yet built); prior `debug_info` assertions pass on
-macOS arm64 and LLDB summaries have not been re-run interactively):
+Status (I12/T006, partial; the current DWARF changes for lexical scopes,
+moved-value liveness, erased witness types and inlining are implemented,
+unverified (not yet built). Earlier `debug_info` assertions passed on macOS
+arm64; LLDB summaries have not been re-run interactively):
 `mettle build -g`
 emits DWARF 4 through `llvm::DIBuilder` in the LLVM adapter
 (`backend/llvm/debug.*`): a compile unit and file per source, a subprogram per
@@ -547,9 +548,13 @@ source function (source name; linkage name is the symbol), a line-table
 location on every instruction from the IR instruction spans, and a
 `DW_TAG_variable`/`DW_TAG_formal_parameter` per named local with basic,
 pointer, array and product (members at the compiler layout offsets) types.
-The new metadata describes captured places by name, generic products with
-their instantiated Mettle spelling, and length-bearing pointers as
-`{data_ptr, length}`; erased pointers expose `{data_ptr, alignment, witness}`.
+The metadata describes captured places by name, generic products with their
+instantiated Mettle spelling, and length-bearing pointers as
+`{data_ptr, length}`. Erased pointers expose `{data_ptr, alignment, witness}`;
+the witness member points to a DWARF description of the metadata marker,
+alignment, method slots and parent witnesses in the runtime table. The current
+runtime table does not carry a concrete type descriptor for sized erased
+values, so LLDB cannot recover their concrete dynamic type from it.
 Tagged sums use a DWARF variant part with the physical discriminator and
 per-variant fields at offsets from the shared payload storage. Explicit integer
 enum representations use their actual discriminants; transparent enums retain a
@@ -574,16 +579,21 @@ not its payload); the coroutine summary has not been checked interactively. No
 automated LLDB test exists.
 
 The comp dir is the root source's directory; without `-g` the adapter emits no
-debug metadata. `-g` is explicit (the `debug` profile does not
-imply it), and `-g` builds bypass the build cache. On Darwin an executable's
-DWARF stays in the temporary object, so the link step runs `dsymutil` to write
-`OUTPUT.dSYM` (warning if it is missing); `--emit object` keeps DWARF in the
-object. Gaps: subprogram types lack parameter/return types; locals are
-visible from function entry (no lexical scopes, so values before
-initialization are garbage); erased/witness pointers, some unsupported layouts
-and async moved-value liveness remains incomplete; no inlining/monomorphization
-records, no CodeView/PDB. The packages `debug_info` case covers basic and
-coroutine metadata.
+debug metadata. `-g` is explicit (the `debug` profile does not imply it), and
+`-g` builds bypass the build cache. On Darwin an executable's DWARF stays in
+the temporary object, so the link step runs `dsymutil` to write `OUTPUT.dSYM`
+(warning if it is missing); `--emit object` keeps DWARF in the object.
+Lexical blocks carry source scopes; named locals start unavailable until
+initialized, become unavailable after moves/drops or scope exit, and regain a
+location after a whole-place store. Optimizer-generated `inlinedAt` locations
+use source subprograms and call-site locations; `@inline`, `@inline(always)`
+and `@inline(never)` map to LLVM optimization hints. These changes and their
+new `debug_info` assertions are implemented, unverified (not yet built).
+Remaining gaps include subprogram parameter/return types, some unsupported
+layouts, concrete dynamic types for sized erased values, monomorphization
+records and interactive LLDB verification. Windows CodeView/PDB remains open
+and is outside this DWARF lane. The `debug_info` case covers basic, coroutine,
+scope, move, erasure and release-inlining metadata.
 
 Optional Rust bridges build as separate interoperability packages with explicit
 Rust toolchain/ABI adapters. They do not introduce a mandatory rustc dependency

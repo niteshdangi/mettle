@@ -21,6 +21,22 @@
 
 namespace mettle::backend {
 namespace {
+void applyInlineHint(llvm::Function &function, ir::InlineHint hint) {
+  switch (hint) {
+  case ir::InlineHint::Default:
+    break;
+  case ir::InlineHint::Hint:
+    function.addFnAttr(llvm::Attribute::InlineHint);
+    break;
+  case ir::InlineHint::Always:
+    function.addFnAttr(llvm::Attribute::AlwaysInline);
+    break;
+  case ir::InlineHint::Never:
+    function.addFnAttr(llvm::Attribute::NoInline);
+    break;
+  }
+}
+
 class Lowerer {
 public:
   Lowerer(const ir::Program &program, llvm::LLVMContext &context,
@@ -163,6 +179,8 @@ public:
                           .getCallee());
       function->setUWTableKind(llvm::UWTableKind::Default);
       targetAttributes(*function, program.target, f.targetFeatures);
+      if (!f.blocks.empty())
+        applyInlineHint(*function, f.inlineHint);
       if (lowering.freestanding)
         function->addFnAttr(llvm::Attribute::NoUnwind);
       if (!f.abi.empty() && !signatures[index]) {
@@ -1724,7 +1742,7 @@ private:
                                    : *ownFrame;
     if (debugInfo)
       debugInfo->begin(builder, debugInfo->attach(*target, source, true),
-                       false);
+                       nullptr, false);
     if (source.coroutine) {
       // A coroutine body runs only through its state's resumption.
       frame.finishCallbacks();
@@ -1734,9 +1752,10 @@ private:
     } else
       frame.createWrapper();
     target = frame.body();
+    applyInlineHint(*target, source.inlineHint);
     if (debugInfo)
       debugInfo->begin(builder, debugInfo->attach(*target, source, false),
-                       true);
+                       &source, true);
     targetAttributes(*target, program.target, source.targetFeatures);
     std::vector<llvm::BasicBlock *> blocks, ends;
     llvm::BasicBlock *dispatch =
@@ -1839,11 +1858,14 @@ private:
         const auto &local = source.locals[i];
         if (local.name.empty() || local.name.starts_with('<'))
           continue;
+        if (i >= source.parameters &&
+            local.storage != StorageDuration::Static)
+          continue;
         bool borrowed =
             local.storage == StorageDuration::Static ||
             (i < source.parameters && (local.mode == ParameterMode::Read ||
                                        local.mode == ParameterMode::Mut));
-        debugInfo->declare(builder, local,
+        debugInfo->declare(builder, i, local,
                            i < source.parameters ? static_cast<unsigned>(i + 1)
                                                  : 0,
                            borrowed, frame.localStorage(i));
@@ -1865,7 +1887,7 @@ private:
       for (const auto &n : source.blocks[b].instructions) {
         ++position;
         if (debugInfo)
-          debugInfo->locate(builder, n.span);
+          debugInfo->locate(builder, n.span, n.scope);
         llvm::Value *result = unit();
         auto get = [&](std::size_t i) { return values[n.operands[i].id]; };
         switch (n.op) {
@@ -2092,6 +2114,17 @@ private:
         }
         case ir::Op::Declare:
           frame.declare(n.place);
+          if (debugInfo && n.place.root >=
+                               static_cast<int>(source.parameters) &&
+              n.place.root >= 0 &&
+              static_cast<std::size_t>(n.place.root) < source.locals.size()) {
+            auto index = static_cast<std::size_t>(n.place.root);
+            const auto &local = source.locals[index];
+            if (!local.name.empty() && !local.name.starts_with('<') &&
+                local.storage != StorageDuration::Static)
+              debugInfo->declare(builder, index, local, 0, false,
+                                 frame.localStorage(index));
+          }
           break;
         case ir::Op::Load:
         case ir::Op::Move:
@@ -2101,6 +2134,11 @@ private:
                                        frame.alignment(n.place));
           if (n.op == ir::Op::Move)
             frame.move(n.place);
+          if (n.op == ir::Op::Move && debugInfo && n.place.root >= 0 &&
+              static_cast<std::size_t>(n.place.root) < source.locals.size())
+            debugInfo->invalidate(builder,
+                                  static_cast<std::size_t>(n.place.root),
+                                  n.span, n.scope);
           break;
         case ir::Op::BorrowRead:
         case ir::Op::BorrowMut:
@@ -2151,19 +2189,38 @@ private:
               lowering.alignment(array), lowering.alignment(n.result.type));
           result =
               lowering.load(n.result.type, element, llvm::Align(alignment));
+          if (debugInfo && n.place.root >= 0 &&
+              static_cast<std::size_t>(n.place.root) < source.locals.size())
+            debugInfo->invalidate(builder,
+                                  static_cast<std::size_t>(n.place.root),
+                                  n.span, n.scope);
           break;
         }
         case ir::Op::Store:
         case ir::Op::StorageWrite:
           frame.store(n, get(0));
+          if (n.op == ir::Op::Store && debugInfo && n.place.root >= 0 &&
+              n.place.fields.empty() &&
+              static_cast<std::size_t>(n.place.root) < source.locals.size())
+            debugInfo->restore(builder,
+                               static_cast<std::size_t>(n.place.root), n.span,
+                               n.scope,
+                               frame.localStorage(n.place.root));
           if (n.op == ir::Op::StorageWrite)
             frame.consume(n.operands[0]);
           break;
         case ir::Op::DropPlace:
           frame.dropPlace(n.place);
+          if (debugInfo && n.place.root >= 0 &&
+              static_cast<std::size_t>(n.place.root) < source.locals.size())
+            debugInfo->invalidate(builder,
+                                  static_cast<std::size_t>(n.place.root),
+                                  n.span, n.scope);
           break;
         case ir::Op::ScopeExit:
           frame.scopeExit(n.number);
+          if (debugInfo)
+            debugInfo->endScope(builder, source, n.number, n.span);
           break;
         case ir::Op::Unary:
           result =
@@ -2309,7 +2366,7 @@ private:
                     incoming[{static_cast<int>(b), n.operands[i].id}] =
                         values[n.operands[i].id];
       if (debugInfo)
-        debugInfo->locate(builder, exit.span);
+        debugInfo->locate(builder, exit.span, 0);
       switch (exit.kind) {
       case ir::Exit::Jump:
         builder.CreateBr(blocks[exit.first]);

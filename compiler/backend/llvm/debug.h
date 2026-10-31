@@ -35,13 +35,20 @@ public:
   // Makes `subprogram` the scope of the following locations. Statement
   // functions follow spans; the others stay at line 0.
   void begin(llvm::IRBuilder<> &builder, llvm::DISubprogram *subprogram,
-             bool statements);
-  void locate(llvm::IRBuilder<> &builder, Span span);
+             const ir::Function *source, bool statements);
+  void locate(llvm::IRBuilder<> &builder, Span span, int scope);
   void clear(llvm::IRBuilder<> &builder);
   // Declares a named local whose storage address is `storage`. A borrowed
   // local's storage holds a pointer to the value.
-  void declare(llvm::IRBuilder<> &builder, const ir::Local &local,
-               unsigned argument, bool borrowed, llvm::Value *storage);
+  void declare(llvm::IRBuilder<> &builder, std::size_t index,
+               const ir::Local &local, unsigned argument, bool borrowed,
+               llvm::Value *storage);
+  void invalidate(llvm::IRBuilder<> &builder, std::size_t index, Span span,
+                  int scope);
+  void restore(llvm::IRBuilder<> &builder, std::size_t index, Span span,
+               int scope, llvm::Value *storage);
+  void endScope(llvm::IRBuilder<> &builder, const ir::Function &source,
+                int scope, Span span);
   void describeCoroutine(Type type, const ir::Function &source,
                          llvm::StructType *frame, unsigned stateField,
                          unsigned outputField,
@@ -64,15 +71,20 @@ private:
   llvm::DIFile *rootFile = nullptr;
   llvm::DISubroutineType *subroutine = nullptr;
   std::unordered_map<SourceId, SourceInfo> infos;
-  std::map<std::pair<llvm::DISubprogram *, SourceId>, llvm::DIScope *> scopes;
+  std::map<std::pair<llvm::DILocalScope *, SourceId>, llvm::DILocalScope *>
+      scopes;
   std::unordered_map<std::uint32_t, llvm::DIType *> types;
+  std::unordered_map<std::size_t, llvm::DILocalVariable *> variables;
+  std::vector<llvm::DILocalScope *> lexicalScopes;
+  llvm::DIExpression *dereference = nullptr;
   std::set<std::uint32_t> building;
   llvm::DISubprogram *current = nullptr;
   llvm::DILocation *last = nullptr;
   bool following = false;
 
   SourceInfo *info(SourceId id);
-  llvm::DILocation *location(Span span);
+  llvm::DILocalScope *scope(int index) const;
+  llvm::DILocation *location(Span span, int scope);
   llvm::DIType *describe(Type type);
   llvm::DIType *build(Type type);
 };
