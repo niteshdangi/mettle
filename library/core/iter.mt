@@ -5,6 +5,7 @@
 import super.cmp.Ord
 import super.option
 import super.cmp.Ordering
+import super.clone.Clone
 
 pub interface Iterator: Sized {
     type Item;
@@ -102,11 +103,32 @@ pub interface Iterator: Sized {
         }
         none
     }
+    mut fn reduce<F: fn(take Self.Item, take Self.Item): Self.Item>(f: take F): Self.Item? {
+        var accumulator = self.next()
+        while true {
+            match take self.next() {
+                present(item) => {
+                    match take accumulator {
+                        present(value) => { accumulator = present(f(value, item)) },
+                        none => { accumulator = present(item) }
+                    }
+                },
+                none => { break }
+            }
+        }
+        accumulator
+    }
 
     take fn map<B, F: fn(take Self.Item): B>(f: take F): Mapped<B, Self, F> { Mapped(self, f, Phantom<B>()) }
     take fn filter<F: fn(read Self.Item): bool>(test: take F): Filtered<Self, F> { Filtered(self, test) }
     take fn filter_map<B, F: fn(take Self.Item): B?>(f: take F): FilterMapped<B, Self, F> {
         FilterMapped(self, f, Phantom<B>())
+    }
+    take fn map_while<B, F: fn(take Self.Item): B?>(f: take F): MappedWhile<B, Self, F> {
+        MappedWhile(self, f, Phantom<B>())
+    }
+    take fn flat_map<U: Iterator, F: fn(take Self.Item): U>(f: take F): FlatMapped<Self, U, F> {
+        FlatMapped(self, none, f)
     }
     take fn enumerate(): Enumerated<Self> { Enumerated(self, 0usize) }
     take fn zip<U: Iterator>(other: take U): Zipped<Self, U> { Zipped(self, other) }
@@ -120,6 +142,10 @@ pub interface Iterator: Sized {
     take fn peekable(): Peekable<Self> { Peekable(self, none, false) }
     take fn inspect<F: fn(read Self.Item): Unit>(f: take F): Inspected<Self, F> { Inspected(self, f) }
     take fn fuse(): Fused<Self> { Fused(self, false) }
+    take fn cycle(): Cycled<Self> where Self: Clone {
+        let original = self.clone()
+        Cycled(original, self, false, false)
+    }
     take fn collect<C: FromItems<Self.Item>>(): C { C.(FromItems<Self.Item>).from_iter(self) }
 }
 
@@ -135,6 +161,13 @@ pub fn collect<T, I: OwnedIterable<Item = T>, C: FromItems<T>>(items: take I): C
     C.(FromItems<T>).from_iter(items)
 }
 
+pub fn chain<T, A: Iterator<Item = T>, B: Iterator<Item = T>>(first: take A, second: take B): Chained<A, B> {
+    Chained(first, present(second), true)
+}
+pub fn zip<A: Iterator, B: Iterator>(first: take A, second: take B): Zipped<A, B> {
+    Zipped(first, second)
+}
+
 // The iterator of an owned `for` source; async loops keep it in their state.
 pub fn into_iterator<T: OwnedIterable>(items: take T): T.IntoIter {
     T.(OwnedIterable).into_iter(items)
@@ -143,6 +176,55 @@ pub fn into_iterator<T: OwnedIterable>(items: take T): T.IntoIter {
 // Iterators that can also yield from the back.
 pub interface BidirectionalIterator: Iterator {
     mut fn next_back(): Self.(Iterator).Item?;
+    mut fn nth_back(n: usize): Self.(Iterator).Item? {
+        var skipped = 0usize
+        while skipped < n {
+            match take self.next_back() {
+                present(item) => { skipped += 1usize },
+                none => { return none }
+            }
+        }
+        self.next_back()
+    }
+    mut fn rfind<F: fn(read Self.(Iterator).Item): bool>(test: take F): Self.(Iterator).Item? {
+        while true {
+            match take self.next_back() {
+                present(item) => { if test(read item) { return present(item) } },
+                none => { break }
+            }
+        }
+        none
+    }
+    mut fn rposition<F: fn(take Self.(Iterator).Item): bool>(test: take F): usize? {
+        while true {
+            match take self.next_back() {
+                present(item) => {
+                    if test(item) {
+                        var index = 0usize
+                        while true {
+                            match take self.next() {
+                                present(_) => { index += 1usize },
+                                none => { break }
+                            }
+                        }
+                        return present(index)
+                    }
+                },
+                none => { return none }
+            }
+        }
+        none
+    }
+    mut fn rfold<B, F: fn(take B, take Self.(Iterator).Item): B>(start: take B, f: take F): B {
+        var accumulator = start
+        while true {
+            match take self.next_back() {
+                present(item) => { accumulator = f(take accumulator, item) },
+                none => { break }
+            }
+        }
+        accumulator
+    }
     take fn rev(): Reversed<Self> { Reversed(self) }
 }
 
@@ -228,6 +310,72 @@ extend<B, I: Iterator, F: fn(take I.Item): B?> FilterMapped<B, I, F> implements 
         none
     }
 }
+extend<B, I: Iterator + BidirectionalIterator, F: fn(take I.(Iterator).Item): B?> FilterMapped<B, I, F> implements BidirectionalIterator {
+    mut fn next_back(): B? {
+        while true {
+            match take self.iter.next_back() {
+                present(item) => {
+                    match take self.f(item) {
+                        present(found) => { return present(found) },
+                        none => {}
+                    }
+                },
+                none => { break }
+            }
+        }
+        none
+    }
+}
+
+pub type MappedWhile<B, I, F> { iter: I; f: F; result: Phantom<B> }
+extend<B, I: Iterator, F: fn(take I.Item): B?> MappedWhile<B, I, F> implements Iterator {
+    type Item = B
+    mut fn next(): B? {
+        match take self.iter.next() {
+            present(item) => self.f(item),
+            none => none
+        }
+    }
+}
+
+pub type FlatMapped<O, U, F> { outer: O; inner: U?; f: F }
+extend<O: Iterator, U: Iterator, F: fn(take O.Item): U> FlatMapped<O, U, F> implements Iterator {
+    type Item = U.Item
+    mut fn next(): U.Item? {
+        while true {
+            match mut self.inner {
+                present(inner) => match inner.next() {
+                    present(item) => { return present(item) },
+                    none => { self.inner = none }
+                },
+                none => {}
+            }
+            match take self.outer.next() {
+                present(item) => { self.inner = present(self.f(item)) },
+                none => { return none }
+            }
+        }
+        none
+    }
+}
+extend<O: Iterator + BidirectionalIterator, U: Iterator + BidirectionalIterator, F: fn(take O.Item): U> FlatMapped<O, U, F> implements BidirectionalIterator {
+    mut fn next_back(): U.Item? {
+        while true {
+            match mut self.inner {
+                present(inner) => match inner.next_back() {
+                    present(item) => { return present(item) },
+                    none => { self.inner = none }
+                },
+                none => {}
+            }
+            match take self.outer.next_back() {
+                present(item) => { self.inner = present(self.f(item)) },
+                none => { return none }
+            }
+        }
+        none
+    }
+}
 
 pub type Enumerated<I> { iter: I; index: usize }
 extend<I: Iterator> Enumerated<I> implements Iterator {
@@ -273,6 +421,25 @@ extend<T, A: Iterator<Item = T>, B: Iterator<Item = T>> Chained<A, B> implements
         match mut self.second {
             present(rest) => rest.next(),
             none => none
+        }
+    }
+}
+extend<T, A: Iterator<Item = T> + BidirectionalIterator, B: Iterator<Item = T> + BidirectionalIterator> Chained<A, B> implements BidirectionalIterator {
+    mut fn next_back(): T? {
+        match mut self.second {
+            present(rest) => match rest.next_back() {
+                present(item) => { return present(item) },
+                none => { self.second = none }
+            },
+            none => {}
+        }
+        if self.first_live {
+            match take self.first.next_back() {
+                present(item) => present(item),
+                none => { self.first_live = false; none }
+            }
+        } else {
+            none
         }
     }
 }
@@ -371,6 +538,38 @@ extend<I: Iterator> Fused<I> implements Iterator {
         }
     }
 }
+extend<I: Iterator + BidirectionalIterator> Fused<I> implements BidirectionalIterator {
+    mut fn next_back(): I.(Iterator).Item? {
+        if self.done { return none }
+        match take self.iter.next_back() {
+            present(item) => present(item),
+            none => { self.done = true; none }
+        }
+    }
+}
+
+pub type Cycled<I> { original: I; iter: I; yielded: bool; done: bool }
+extend<I: Iterator + Clone> Cycled<I> implements Iterator {
+    type Item = I.Item
+    mut fn next(): I.Item? {
+        if self.done { return none }
+        while true {
+            match take self.iter.next() {
+                present(item) => { self.yielded = true; return present(item) },
+                none => {
+                    if self.yielded {
+                        self.iter = self.original.clone()
+                        self.yielded = false
+                    } else {
+                        self.done = true
+                        return none
+                    }
+                }
+            }
+        }
+        none
+    }
+}
 
 pub type Reversed<I> { iter: I }
 extend<I: Iterator + BidirectionalIterator> Reversed<I> implements Iterator {
@@ -403,6 +602,24 @@ extend<I: Iterator> Peekable<I> implements Iterator {
             return match take self.slot.take_value() { present(held) => held, none => none }
         }
         self.iter.next()
+    }
+}
+extend<I: Iterator + BidirectionalIterator> Peekable<I> implements BidirectionalIterator {
+    mut fn next_back(): I.(Iterator).Item? {
+        if self.filled {
+            match take self.iter.next_back() {
+                present(item) => present(item),
+                none => {
+                    self.filled = false
+                    match take self.slot.take_value() {
+                        present(held) => held,
+                        none => none
+                    }
+                }
+            }
+        } else {
+            self.iter.next_back()
+        }
     }
 }
 
@@ -446,6 +663,9 @@ pub interface Step: Sized + Copy + Ord {
 
 // The unbounded range stops after yielding the scalar maximum.
 pub type RangeFrom<T> { start: T; done: bool }
+extend<T: Step> RangeFrom<T> implements Clone {
+    fn clone(): RangeFrom<T> { RangeFrom(self.start, self.done) }
+}
 extend<T: Step> RangeFrom<T> implements Iterator {
     type Item = T
     mut fn next(): T? {
@@ -462,6 +682,9 @@ pub fn range_from<T: Step>(start: T): RangeFrom<T> { RangeFrom(start, false) }
 
 // The half-open range `[start, end)`.
 pub type Range<T> { start: T; end: T }
+extend<T: Step> Range<T> implements Clone {
+    fn clone(): Range<T> { Range(self.start, self.end) }
+}
 extend<T: Step> Range<T> implements Iterator {
     type Item = T
     mut fn next(): T? {
@@ -503,6 +726,9 @@ pub fn range_to_inclusive<T>(end: take T): RangeToInclusive<T> {
 
 // The closed range `[start, end]`; `done` avoids stepping past the type's bounds.
 pub type RangeInclusive<T> { start: T; end: T; done: bool }
+extend<T: Step> RangeInclusive<T> implements Clone {
+    fn clone(): RangeInclusive<T> { RangeInclusive(self.start, self.end, self.done) }
+}
 extend<T: Step> RangeInclusive<T> implements Iterator {
     type Item = T
     mut fn next(): T? {

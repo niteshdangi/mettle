@@ -4,7 +4,7 @@ import super.cmp.Ordering
 import super.cmp.PartialEq
 import super.cmp.PartialOrd
 import super.char
-import super.iter.Iterator
+import super.iter.{Iterator, BidirectionalIterator, Reversed}
 
 // Unsized, validated UTF-8 view; the view metadata is the byte count. Only
 // the checked constructors below create views of Text, which keeps the
@@ -62,6 +62,16 @@ pub fn from_utf8(bytes: read [u8]): (read Text from bytes)? {
     present(unsafe { from_utf8_unchecked(bytes) })
 }
 
+pub fn from_utf8_mut(bytes: mut [u8]): (mut Text from bytes)? {
+    var i = 0usize
+    while i < bytes.len() {
+        let width = scalar_width(read bytes, i)
+        if width == 0usize { return none }
+        i += width
+    }
+    present(unsafe { from_utf8_unchecked_mut(mut bytes) })
+}
+
 // Safety: `bytes` is well-formed UTF-8.
 pub unsafe fn from_utf8_unchecked(bytes: read [u8]): read Text from bytes {
     let fat = core.ptr.from_ref(bytes)
@@ -76,27 +86,53 @@ pub unsafe fn from_utf8_unchecked_mut(bytes: mut [u8]): mut Text from bytes {
     unsafe { mut *view }
 }
 
-pub type Chars<region r> { bytes: read [u8] from r; position: usize }
+pub type Chars<region r> { bytes: read [u8] from r; front: usize; back: usize }
 extend<region r> Chars<region r> implements Iterator {
     type Item = char
     mut fn next(): char? {
-        if self.position >= self.bytes.len() { return none }
-        let width = scalar_width(self.bytes, self.position)
-        let value = scalar_at(self.bytes, self.position, width)
-        self.position += width
+        if self.front >= self.back { return none }
+        let width = scalar_width(self.bytes, self.front)
+        let value = scalar_at(self.bytes, self.front, width)
+        self.front += width
+        present(value)
+    }
+}
+extend<region r> Chars<region r> implements BidirectionalIterator {
+    mut fn next_back(): char? {
+        if self.front >= self.back { return none }
+        var start = self.back - 1usize
+        while start > self.front && (self.bytes[start] & 0xc0u8) == 0x80u8 {
+            start -= 1usize
+        }
+        let width = self.back - start
+        let value = scalar_at(self.bytes, start, width)
+        self.back = start
         present(value)
     }
 }
 
-pub type CharIndices<region r> { bytes: read [u8] from r; position: usize }
+pub type CharIndices<region r> { bytes: read [u8] from r; front: usize; back: usize }
 extend<region r> CharIndices<region r> implements Iterator {
     type Item = (usize, char)
     mut fn next(): (usize, char)? {
-        if self.position >= self.bytes.len() { return none }
-        let start = self.position
+        if self.front >= self.back { return none }
+        let start = self.front
         let width = scalar_width(self.bytes, start)
         let value = scalar_at(self.bytes, start, width)
-        self.position += width
+        self.front += width
+        present((start, value))
+    }
+}
+extend<region r> CharIndices<region r> implements BidirectionalIterator {
+    mut fn next_back(): (usize, char)? {
+        if self.front >= self.back { return none }
+        var start = self.back - 1usize
+        while start > self.front && (self.bytes[start] & 0xc0u8) == 0x80u8 {
+            start -= 1usize
+        }
+        let width = self.back - start
+        let value = scalar_at(self.bytes, start, width)
+        self.back = start
         present((start, value))
     }
 }
@@ -118,6 +154,10 @@ fn has_cased_after(text: read Text, byte_index: usize): bool {
         },
         none => false
     }
+}
+
+fn is_ascii_whitespace(byte: u8): bool {
+    (byte >= 0x09u8 && byte <= 0x0du8) || byte == 0x20u8
 }
 
 pub type LowercaseChars<region r> {
@@ -201,6 +241,33 @@ extend<region r> Split<region r> implements Iterator {
         }
     }
 }
+extend<region r> Split<region r> implements BidirectionalIterator {
+    mut fn next_back(): (read Text from r)? {
+        if self.done { return none }
+        if self.separator.is_empty() {
+            self.done = true
+            return present(self.rest)
+        }
+        match self.rest.rfind(self.separator) {
+            present(at) => {
+                let start = at + self.separator.len()
+                let tail = match self.rest.get(start, self.rest.len()) {
+                    present(part) => part,
+                    none => { super.panic.panic("split boundary invariant failed") }
+                }
+                self.rest = match self.rest.get(0usize, at) {
+                    present(part) => part,
+                    none => { super.panic.panic("split boundary invariant failed") }
+                }
+                present(tail)
+            },
+            none => {
+                self.done = true
+                present(self.rest)
+            }
+        }
+    }
+}
 
 // Lines ended by `\n` or `\r\n`; a final line without a terminator is kept and
 // a trailing terminator does not produce an empty line.
@@ -227,20 +294,35 @@ extend<region r> Lines<region r> implements Iterator {
     }
 }
 
-pub type Bytes<region r> { bytes: read [u8] from r; position: usize }
+pub type Bytes<region r> { bytes: read [u8] from r; front: usize; back: usize }
 extend<region r> Bytes<region r> implements Iterator {
     type Item = u8
     mut fn next(): u8? {
-        if self.position >= self.bytes.len() { return none }
-        let value = self.bytes[self.position]
-        self.position += 1usize
+        if self.front >= self.back { return none }
+        let value = self.bytes[self.front]
+        self.front += 1usize
         present(value)
+    }
+}
+extend<region r> Bytes<region r> implements BidirectionalIterator {
+    mut fn next_back(): u8? {
+        if self.front >= self.back { return none }
+        self.back -= 1usize
+        present(self.bytes[self.back])
     }
 }
 
 extend Text {
     pub fn len(): usize { self.bytes.len() }
     pub fn is_empty(): bool { self.bytes.len() == 0usize }
+    pub fn is_ascii(): bool {
+        var i = 0usize
+        while i < self.bytes.len() {
+            if self.bytes[i] > 0x7fu8 { return false }
+            i += 1usize
+        }
+        true
+    }
     pub fn as_bytes(): read [u8] from self { read self.bytes }
     pub fn is_char_boundary(index: usize): bool {
         if index == 0usize || index == self.bytes.len() { return true }
@@ -284,6 +366,20 @@ extend Text {
             while j < n && self.bytes[i + j] == pattern.bytes[j] { j += 1usize }
             if j == n { return present(i) }
             i += 1usize
+        }
+        none
+    }
+    // Byte offset of the last occurrence of `pattern`; the empty pattern is at the end.
+    pub fn rfind(pattern: read Text): usize? {
+        let n = pattern.bytes.len()
+        if n > self.bytes.len() { return none }
+        var i = self.bytes.len() - n
+        while true {
+            var j = 0usize
+            while j < n && self.bytes[i + j] == pattern.bytes[j] { j += 1usize }
+            if j == n { return present(i) }
+            if i == 0usize { break }
+            i -= 1usize
         }
         none
     }
@@ -340,6 +436,31 @@ extend Text {
         }
         match self.get(i, end) { present(part) => part, none => read self }
     }
+    pub fn trim_ascii_start(): read Text from self {
+        var start = 0usize
+        while start < self.bytes.len() && is_ascii_whitespace(self.bytes[start]) {
+            start += 1usize
+        }
+        match self.get(start, self.bytes.len()) { present(part) => part, none => read self }
+    }
+    pub fn trim_ascii_end(): read Text from self {
+        var end = self.bytes.len()
+        while end > 0usize && is_ascii_whitespace(self.bytes[end - 1usize]) {
+            end -= 1usize
+        }
+        match self.get(0usize, end) { present(part) => part, none => read self }
+    }
+    pub fn trim_ascii(): read Text from self {
+        var start = 0usize
+        while start < self.bytes.len() && is_ascii_whitespace(self.bytes[start]) {
+            start += 1usize
+        }
+        var end = self.bytes.len()
+        while end > start && is_ascii_whitespace(self.bytes[end - 1usize]) {
+            end -= 1usize
+        }
+        match self.get(start, end) { present(part) => part, none => read self }
+    }
     // Splits at the first `separator` into the text before and after it.
     pub fn split_once(separator: read Text): (read Text from self, read Text from self)? {
         match self.find(separator) {
@@ -356,17 +477,35 @@ extend Text {
             none => none
         }
     }
+    pub fn rsplit_once(separator: read Text): (read Text from self, read Text from self)? {
+        match self.rfind(separator) {
+            present(at) => {
+                let end = at + separator.len()
+                match self.get(0usize, at) {
+                    present(head) => match self.get(end, self.len()) {
+                        present(tail) => present((head, tail)),
+                        none => none
+                    },
+                    none => none
+                }
+            },
+            none => none
+        }
+    }
     pub fn split(separator: read Text from self): Split<region self> { Split(read self, read separator, false) }
+    pub fn rsplit(separator: read Text from self): Reversed<Split<region self>> {
+        self.split(separator).rev()
+    }
     pub fn lines(): Lines<region self> { Lines(read self, "\n") }
-    pub fn chars(): Chars<region self> { Chars(read self.bytes, 0usize) }
-    pub fn char_indices(): CharIndices<region self> { CharIndices(read self.bytes, 0usize) }
+    pub fn chars(): Chars<region self> { Chars(read self.bytes, 0usize, self.bytes.len()) }
+    pub fn char_indices(): CharIndices<region self> { CharIndices(read self.bytes, 0usize, self.bytes.len()) }
     pub fn lowercase_chars(): LowercaseChars<region self> {
         LowercaseChars(read self, self.char_indices(), '\0'.to_lowercase(), false, false)
     }
     pub fn uppercase_chars(): UppercaseChars<region self> {
         UppercaseChars(self.char_indices(), '\0'.to_uppercase(), false)
     }
-    pub fn bytes(): Bytes<region self> { Bytes(read self.bytes, 0usize) }
+    pub fn bytes(): Bytes<region self> { Bytes(read self.bytes, 0usize, self.bytes.len()) }
 }
 
 extend Text implements PartialEq {
