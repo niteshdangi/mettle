@@ -32,6 +32,15 @@ pub fn new_in<A: Allocator>(a: take A): String<A> {
     from_valid_bytes(super.vec.new_in<u8, A>(take a))
 }
 pub fn new(): String { new_in(Global()) }
+pub fn try_with_capacity_in<A: Allocator>(n: usize, a: take A): String<A> throws AllocError {
+    from_valid_bytes(try super.vec.try_with_capacity_in<u8, A>(n, take a))
+}
+pub fn with_capacity_in<A: Allocator>(n: usize, a: take A): String<A> {
+    from_valid_bytes(super.vec.with_capacity_in<u8, A>(n, take a))
+}
+pub fn try_with_capacity(n: usize): String throws AllocError {
+    try try_with_capacity_in(n, Global())
+}
 pub fn with_capacity(n: usize): String {
     from_valid_bytes(super.vec.with_capacity<u8>(n))
 }
@@ -135,6 +144,11 @@ extend<A: Allocator> String<A> {
     pub mut unsafe fn as_mut_vec(): mut List<u8, A> from self { mut self.v }
     pub mut fn try_reserve(extra: usize): Unit throws AllocError { try self.v.try_reserve(extra) }
     pub mut fn reserve(extra: usize): Unit { self.v.reserve(extra) }
+    pub mut fn try_reserve_exact(extra: usize): Unit throws AllocError {
+        try self.v.try_reserve_exact(extra)
+    }
+    pub mut fn reserve_exact(extra: usize): Unit { self.v.reserve_exact(extra) }
+    pub mut fn shrink_to_fit(): Unit { self.v.shrink_to_fit() }
 
     pub mut fn try_push_str(t: read Text): Unit throws AllocError {
         let bytes = t.as_bytes()
@@ -221,6 +235,10 @@ extend<A: Allocator> String<A> {
         if n >= self.v.len() { return () }
         if !self.as_text().is_char_boundary(n) { panic_precondition() }
         self.v.truncate(n)
+    }
+    pub mut fn split_off(at: usize): String<A> where A: Clone {
+        if !self.as_text().is_char_boundary(at) { panic_precondition() }
+        from_valid_bytes(self.v.split_off(at))
     }
     pub mut fn clear(): Unit { self.v.clear() }
 }

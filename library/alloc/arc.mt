@@ -3,6 +3,7 @@
 // is shared between threads only when `T` is both Transferable and Shareable.
 import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, extend_layout, handle_alloc_error, layout_unchecked}
 import package.core.clone.Clone
+import package.core.ops.Deref
 import package.core.text.Text
 import super.vec.slice_ptr_mut
 
@@ -145,12 +146,14 @@ unsafe fn increment(count: ptr<mut core.sync.atomic.AtomicUsize>) {
 extend<T: unsized, A: Allocator + Clone> Arc<T, A> {
     // Another strong owner of the same payload; the payload is not cloned.
     pub fn retain(): Arc<T, A> {
+        let allocator = self.a.clone()
         unsafe { increment(core.ptr.from_mut((*self.h).strong)) }
-        Arc(self.p, self.h, self.a.clone())
+        Arc(self.p, self.h, allocator)
     }
     pub fn downgrade(): Weak<T, A> {
+        let allocator = self.a.clone()
         unsafe { increment(core.ptr.from_mut((*self.h).wk)) }
-        Weak(self.p, self.h, self.a.clone())
+        Weak(self.p, self.h, allocator)
     }
 }
 extend<T: unsized, A: Allocator + Clone> Arc<T, A> implements Clone {
@@ -159,6 +162,8 @@ extend<T: unsized, A: Allocator + Clone> Arc<T, A> implements Clone {
 
 extend<T: unsized, A: Allocator> Arc<T, A> {
     pub fn get(): read T from self { unsafe { read *self.p } }
+    // The pointer is valid while this strong owner remains alive.
+    pub fn as_ptr(): ptr<read T> { self.p.cast_const() }
     pub fn strong_count(): usize { unsafe { (*self.h).strong.load(core.sync.atomic.Ordering.Acquire) } }
     pub fn weak_count(): usize {
         unsafe {
@@ -217,9 +222,10 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
             var current = (*b).strong.load(core.sync.atomic.Ordering.Relaxed)
             while current != 0usize {
                 if current > 0x7fffffffffffffffusize { core.intrinsics.abort() }
+                let allocator = self.a.clone()
                 match (*b).strong.compare_exchange_weak(current, current + 1usize,
                         core.sync.atomic.Ordering.Acquire, core.sync.atomic.Ordering.Relaxed) {
-                    success(_) => { return present(Arc(self.p, b, self.a.clone())) },
+                    success(_) => { return present(Arc(self.p, b, allocator)) },
                     failure(seen) => { current = seen }
                 }
             }
@@ -227,11 +233,21 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
         }
     }
     pub fn retain(): Weak<T, A> {
+        let allocator = self.a.clone()
         unsafe { increment(core.ptr.from_mut((*self.h).wk)) }
-        Weak(self.p, self.h, self.a.clone())
+        Weak(self.p, self.h, allocator)
     }
 }
+extend<T: unsized, A: Allocator> Arc<T, A> implements Deref {
+    type Target = T
+    fn deref(): read T from self { self.get() }
+}
+
 extend<T: unsized, A: Allocator> Weak<T, A> {
+    // The allocation remains alive while this weak owner exists, but its
+    // payload may already have been destroyed; dereferencing is never valid
+    // without first upgrading.
+    pub fn as_ptr(): ptr<read T> { self.p.cast_const() }
     pub fn strong_count(): usize { unsafe { (*self.h).strong.load(core.sync.atomic.Ordering.Acquire) } }
     pub fn weak_count(): usize {
         unsafe {

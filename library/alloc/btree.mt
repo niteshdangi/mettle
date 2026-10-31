@@ -424,6 +424,18 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
         let at = unsafe { last_pos(self.root) }
         present(unsafe { read (*node_entry(at.0, at.1)).key })
     }
+    pub mut fn pop_first(): (K, V)? {
+        if self.root == null_node<K, V>() { return none }
+        let at = unsafe { first_pos(self.root) }
+        let entry = unsafe { self.take_entry(at.0, at.1) }
+        present((entry.key, entry.value))
+    }
+    pub mut fn pop_last(): (K, V)? {
+        if self.root == null_node<K, V>() { return none }
+        let at = unsafe { last_pos(self.root) }
+        let entry = unsafe { self.take_entry(at.0, at.1) }
+        present((entry.key, entry.value))
+    }
     // Entries with `from <= key < to` in ascending key order; empty when
     // `to` is not above `from`.
     pub fn range(from: read K, to: read K): KeyRange<region self, K, V, A> {
@@ -434,6 +446,15 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
             stop = unsafe { bound_pos(self.root, to) }
         }
         KeyRange(read self, start.0, start.1, stop.0, stop.1)
+    }
+    pub mut fn range_mut(from: read K, to: read K): RangeMut<region self, K, V, A> {
+        var start = (null_node<K, V>(), 0usize)
+        var stop = (null_node<K, V>(), 0usize)
+        if from.cmp(to).is_lt() {
+            start = unsafe { bound_pos(self.root, from) }
+            stop = unsafe { bound_pos(self.root, to) }
+        }
+        RangeMut(mut self, start.0, start.1, stop.0, stop.1)
     }
 
     // Inserts or replaces; a replaced value is returned (the stored key is
@@ -631,6 +652,18 @@ extend<K: Ord, A: Allocator> SortedSet<K, A> {
     }
     pub fn first(): (read K from self)? { self.map.first_key() }
     pub fn last(): (read K from self)? { self.map.last_key() }
+    pub mut fn pop_first(): K? {
+        match take self.map.pop_first() {
+            present(entry) => present(entry.0),
+            none => none
+        }
+    }
+    pub mut fn pop_last(): K? {
+        match take self.map.pop_last() {
+            present(entry) => present(entry.0),
+            none => none
+        }
+    }
     pub fn range(from: read K, to: read K): KeyRange<region self, K, Unit, A> { self.map.range(from, to) }
 }
 
@@ -681,6 +714,27 @@ pub type KeyRange<region r, K, V, A: Allocator> {
     end_node: ptr<mut Node<K, V>>
     end_idx: usize
 }
+
+// Mutably iterates values in a half-open range without exposing mutable keys.
+pub type RangeMut<region r, K, V, A: Allocator> {
+    map: mut SortedMap<K, V, A> from r
+    node: ptr<mut Node<K, V>>
+    idx: usize
+    end_node: ptr<mut Node<K, V>>
+    end_idx: usize
+}
+extend<region r, K, V, A: Allocator> RangeMut<region r, K, V, A> implements Iterator {
+    type Item = mut V from r
+    mut fn next(): (mut V from r)? {
+        if self.node == self.end_node && self.idx == self.end_idx { return none }
+        let at = unsafe { node_entry(self.node, self.idx) }
+        let after = unsafe { successor(self.node, self.idx) }
+        self.node = after.0
+        self.idx = after.1
+        present(unsafe { mut (*at).value })
+    }
+}
+
 extend<region r, K, V, A: Allocator> KeyRange<region r, K, V, A> implements Iterator {
     type Item = read Bucket<K, V> from r
     mut fn next(): (read Bucket<K, V> from r)? {

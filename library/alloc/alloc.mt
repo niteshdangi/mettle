@@ -12,6 +12,11 @@ pub copy type AllocError { pub size: usize; pub align: usize }
 
 pub copy type LayoutError { pub size: usize; pub align: usize }
 
+pub type PushError<T> {
+    pub value: T
+    pub allocation: AllocError
+}
+
 // Size and alignment of a block. `align` is a power of two and `size`
 // rounded up to `align` does not exceed `isize.MAX`.
 pub copy type Layout {
@@ -119,14 +124,21 @@ extend Global implements Allocator {
         if old.size == 0usize {
             return try self.allocate(Layout(new_size, old.align))
         }
+        if new_size == 0usize {
+            self.deallocate(p, old)
+            return dangling(old.align)
+        }
         let q = unsafe { mettle_rt_realloc(p, old.size, old.align, new_size) }
         if q == core.ptr.null_mut<u8>() { throw AllocError(new_size, old.align) }
         q
     }
     mut fn shrink(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
         if new_size == 0usize {
-            self.deallocate(p, old)
+            if old.size != 0usize { self.deallocate(p, old) }
             return dangling(old.align)
+        }
+        if old.size == 0usize {
+            throw AllocError(new_size, old.align)
         }
         let q = unsafe { mettle_rt_realloc(p, old.size, old.align, new_size) }
         if q == core.ptr.null_mut<u8>() { throw AllocError(new_size, old.align) }

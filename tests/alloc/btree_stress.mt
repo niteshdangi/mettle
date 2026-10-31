@@ -89,6 +89,25 @@ fn main(): i32 {
     if dup != small || dup.len() != 40usize { return 17 }
     match take small.get_mut(7) { present(v) => { *v = -1 }, none => { return 18 } }
     if dup == small { return 19 }
+    {
+        var mutable_range = small.range_mut(10, 20)
+        var changed = 0
+        while true {
+            match take mutable_range.next() {
+                present(value) => { *value += 1; changed += 1 },
+                none => { break }
+            }
+        }
+        if changed != 10 { return 22 }
+    }
+    match small.get(10) {
+        present(value) => { if *value != 11 { return 23 } },
+        none => { return 24 }
+    }
+    match small.get(20) {
+        present(value) => { if *value != 20 { return 25 } },
+        none => { return 26 }
+    }
 
     var set = alloc.btree.set_new<i32>()
     set.insert(8)
@@ -100,5 +119,31 @@ fn main(): i32 {
         want += 3
     }
     if want != 11 { return 21 }
+    var extremes = alloc.btree.new<i32, i32>()
+    let first = extremes.insert(2, 20)
+    let second = extremes.insert(1, 10)
+    let third = extremes.insert(3, 30)
+    match extremes.pop_first() {
+        present(entry) => { if entry.0 != 1 || entry.1 != 10 { return 27 } },
+        none => { return 28 }
+    }
+    match extremes.pop_last() {
+        present(entry) => { if entry.0 != 3 || entry.1 != 30 { return 29 } },
+        none => { return 30 }
+    }
+    if extremes.len() != 1usize || !extremes.contains_key(2) { return 31 }
+    var extremes_set = alloc.btree.set_new<i32>()
+    extremes_set.insert(2)
+    extremes_set.insert(1)
+    extremes_set.insert(3)
+    match extremes_set.pop_first() {
+        present(value) => { if value != 1 { return 32 } },
+        none => { return 33 }
+    }
+    match extremes_set.pop_last() {
+        present(value) => { if value != 3 { return 34 } },
+        none => { return 35 }
+    }
+    if extremes_set.len() != 1usize || !extremes_set.contains(2) { return 36 }
     0
 }

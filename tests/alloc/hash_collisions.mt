@@ -22,6 +22,13 @@ fn main(): i32 {
     i = 0
     while i < 300 { if m.contains_key(Same(i + 0)) != (i % 3 != 0) { return 5 }; i += 1 }
     if m.len() != 200usize { return 6 }
+    match m.remove_entry(Same(1)) {
+        present(entry) => {
+            if entry.0.id != 1 || entry.1 != 2 { return 9 }
+        },
+        none => { return 10 }
+    }
+    if m.contains_key(Same(1)) { return 11 }
     let v = m.or_insert(Same(1000), 5)
     var set = alloc.hash_map.set_new<i32>()
     if !set.insert(1) || set.insert(1) || !set.contains(1) || set.contains(2) { return 7 }

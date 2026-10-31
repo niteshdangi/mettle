@@ -4,7 +4,7 @@ import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import package.core.hash.{Hash, Hasher}
 import package.core.fmt
 
-import super.alloc.{Allocator, Global, AllocError, layout_unchecked, handle_alloc_error, layout_of, dangling_for}
+import super.alloc.{Allocator, Global, AllocError, PushError, layout_unchecked, handle_alloc_error, layout_of, dangling_for}
 
 // Growable ring buffer owning its block and allocator.
 pub type Deque<T, A: Allocator = Global> {
@@ -45,11 +45,17 @@ extend<T, A: Allocator> Deque<T, A> {
     mut fn grow(): Unit throws AllocError {
         let size = core.mem.size_of<T>()
         if size == 0usize { return () }
+        if self.cap > 0x7fffffffffffffffusize / 2usize {
+            throw AllocError(0xffffffffffffffffusize, core.mem.align_of<T>())
+        }
         let ncap = if self.cap == 0usize { 4usize } else { self.cap * 2usize }
         let align = core.mem.align_of<T>()
         let bytes = match ncap.checked_mul(size) {
             present(b) => b,
             none => throw AllocError(0xffffffffffffffffusize, align)
+        }
+        if bytes > 0x7fffffffffffffffusize - (align - 1usize) {
+            throw AllocError(bytes, align)
         }
         let np = (try self.a.allocate(unsafe { layout_unchecked(bytes, align) })).cast<T>()
         var i = 0usize
@@ -64,17 +70,81 @@ extend<T, A: Allocator> Deque<T, A> {
         self.cap = ncap
         self.head = 0usize
     }
-    pub mut fn try_reserve_one(): Unit throws AllocError {
-        if self.len == self.cap { try self.grow() }
+    pub mut fn try_reserve(additional: usize): Unit throws AllocError {
+        let need = match self.len.checked_add(additional) {
+            present(n) => n,
+            none => throw AllocError(0xffffffffffffffffusize, core.mem.align_of<T>())
+        }
+        while need > self.cap { try self.grow() }
     }
-    pub mut fn try_push_back(value: take T): Unit throws AllocError {
-        try self.try_reserve_one()
+    pub mut fn try_reserve_one(): Unit throws AllocError {
+        try self.try_reserve(1usize)
+    }
+    pub mut fn reserve(additional: usize): Unit {
+        match capture self.try_reserve(additional) {
+            success(_) => (),
+            failure(_) => handle_alloc_error(layout_of<T>())
+        }
+    }
+    pub mut fn try_reserve_exact(additional: usize): Unit throws AllocError {
+        try self.try_reserve(additional)
+    }
+    pub mut fn reserve_exact(additional: usize): Unit {
+        self.reserve(additional)
+    }
+    pub mut fn shrink_to_fit(): Unit {
+        let size = core.mem.size_of<T>()
+        if size == 0usize || self.cap == self.len { return () }
+        let align = core.mem.align_of<T>()
+        if self.len == 0usize {
+            if self.cap != 0usize {
+                unsafe { self.a.deallocate(self.buf.cast<u8>(), layout_unchecked(self.cap * size, align)) }
+            }
+            self.buf = dangling_for<T>()
+            self.cap = 0usize
+            self.head = 0usize
+            return ()
+        }
+        let bytes = match self.len.checked_mul(size) {
+            present(n) => n,
+            none => { return }
+        }
+        let layout = unsafe { layout_unchecked(bytes, align) }
+        let new_buf = match capture self.a.allocate(layout) {
+            success(p) => p.cast<T>(),
+            failure(_) => { return () }
+        }
+        // Safety: each logical source slot is initialized, and the fresh
+        // allocation has room for all `len` elements.
+        var i = 0usize
+        while i < self.len {
+            unsafe {
+                core.ptr.`copy`(self.buf.add(self.physical(i)).cast_const(),
+                                new_buf.add(i), 1usize)
+            }
+            i += 1usize
+        }
+        if self.cap != 0usize {
+            unsafe { self.a.deallocate(self.buf.cast<u8>(), layout_unchecked(self.cap * size, align)) }
+        }
+        self.buf = new_buf
+        self.cap = self.len
+        self.head = 0usize
+    }
+    pub mut fn try_push_back(value: take T): Unit throws PushError<T> {
+        match capture self.try_reserve_one() {
+            success(_) => {},
+            failure(error) => { throw PushError(value, error) }
+        }
         let at = self.physical(self.len)
         unsafe { core.ptr.write(self.buf.add(at), value) }
         self.len += 1usize
     }
-    pub mut fn try_push_front(value: take T): Unit throws AllocError {
-        try self.try_reserve_one()
+    pub mut fn try_push_front(value: take T): Unit throws PushError<T> {
+        match capture self.try_reserve_one() {
+            success(_) => {},
+            failure(error) => { throw PushError(value, error) }
+        }
         self.head = if self.head == 0usize { self.cap - 1usize } else { self.head - 1usize }
         unsafe { core.ptr.write(self.buf.add(self.head), value) }
         self.len += 1usize
@@ -117,9 +187,47 @@ extend<T, A: Allocator> Deque<T, A> {
         if i >= self.len { return none }
         present(unsafe { mut *self.buf.add(self.physical(i)) })
     }
+    pub mut fn insert(i: usize, value: take T): Unit {
+        if i > self.len { super.alloc.panic_precondition() }
+        if i == 0usize { self.push_front(value); return () }
+        if i == self.len { self.push_back(value); return () }
+        self.reserve(1usize)
+        var j = self.len
+        while j > i {
+            let from = self.physical(j - 1usize)
+            let to = self.physical(j)
+            unsafe {
+                let moved = core.ptr.`read`(self.buf.add(from))
+                core.ptr.write(self.buf.add(to), moved)
+            }
+            j -= 1usize
+        }
+        unsafe { core.ptr.write(self.buf.add(self.physical(i)), value) }
+        self.len += 1usize
+    }
+    pub mut fn remove(i: usize): T {
+        if i >= self.len { super.alloc.panic_precondition() }
+        let value = unsafe { core.ptr.`read`(self.buf.add(self.physical(i))) }
+        var j = i
+        while j + 1usize < self.len {
+            let from = self.physical(j + 1usize)
+            let to = self.physical(j)
+            unsafe {
+                let moved = core.ptr.`read`(self.buf.add(from))
+                core.ptr.write(self.buf.add(to), moved)
+            }
+            j += 1usize
+        }
+        self.len -= 1usize
+        value
+    }
     pub fn front(): (read T from self)? { self.get(0usize) }
+    pub mut fn front_mut(): (mut T from self)? { self.get_mut(0usize) }
     pub fn back(): (read T from self)? {
         if self.len == 0usize { none } else { self.get(self.len - 1usize) }
+    }
+    pub mut fn back_mut(): (mut T from self)? {
+        if self.len == 0usize { none } else { self.get_mut(self.len - 1usize) }
     }
     pub mut fn clear(): Unit {
         while self.len != 0usize {

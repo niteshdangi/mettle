@@ -20,6 +20,23 @@ fn main(): i32 {
     let b = alloc.string.from_text("banana")
     if !a.cmp(b).is_lt() || a == b { return 8 }
 
+    var reserved = alloc.string.with_capacity(4usize)
+    if reserved.capacity() < 4usize { return 13 }
+    reserved.reserve_exact(8usize)
+    if reserved.capacity() < 8usize { return 14 }
+    reserved.push_str("ok")
+    reserved.shrink_to_fit()
+    if reserved.capacity() < reserved.len() { return 15 }
+    var prefix = alloc.string.from_text("a\u{e9}\u{1F600}b")
+    let suffix = prefix.split_off(3usize)
+    if !(prefix.as_text() == "a\u{e9}") || !(suffix.as_text() == "\u{1F600}b") {
+        return 18
+    }
+    match capture alloc.string.try_with_capacity(8usize) {
+        success(sized) => { if sized.capacity() < 8usize { return 16 } },
+        failure(_) => { return 17 }
+    }
+
     var good = alloc.vec.new<u8>()
     good.push(0x68u8)
     good.push(0xc3u8)
