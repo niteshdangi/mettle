@@ -77,7 +77,7 @@ extend ThreadId {
 extend Thread {
     pub fn id(): ThreadId { ThreadId(self.raw) }
     pub fn unpark(): Unit { unsafe { mettle_rt_thread_unpark(self.raw) } }
-    pub fn name(): Text? {
+    pub fn name(): String? {
         var buffer = [0u8; 64]
         let length = unsafe {
             mettle_rt_thread_name(self.raw, core.ptr.from_mut(buffer).cast<u8>(), 64usize)
@@ -86,7 +86,10 @@ extend Thread {
         let bytes = unsafe {
             slice.subslice_unchecked(buffer, 0usize, length as usize)
         }
-        package.core.text.from_utf8(bytes)
+        match package.core.text.from_utf8(bytes) {
+            present(text) => present(package.alloc.string.from_text(text)),
+            none => none
+        }
     }
 }
 
@@ -292,9 +295,6 @@ extend<T> JoinHandle<T> {
         }
     }
     pub fn id(): ThreadId { ThreadId(unsafe { (*self.header).thread }) }
-    pub fn is_finished(): bool {
-        unsafe { (*self.header).finished.load(core.sync.atomic.Ordering.Acquire) }
-    }
 }
 
 // Everything a type borrows outlives the region `r`. The compiler enforces it

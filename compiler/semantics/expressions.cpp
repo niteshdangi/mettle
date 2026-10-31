@@ -70,7 +70,7 @@ void Checker::function(Function &f) {
   if (!f.body.get())
     return;
   auto result = functionVariables[&f];
-  if (f.asyncDefaultOutputInferred)
+  if (f.asyncDefaultFutureInferred)
     result = asyncDefaultBodyVariables.at(&f);
   contextualize(*f.body, inference.value(result));
   auto body = node(*f.body, true);

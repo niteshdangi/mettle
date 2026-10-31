@@ -52,20 +52,20 @@ extend<T: Default> RwLock<T> implements Default {
 }
 
 extend<T> RwLock<T> {
-    pub fn read(): ReadGuard<T, region self> throws PoisonError<ReadGuard<T, region self>> {
-        self.reader()
+    pub fn `read`(): ReadGuard<T, region self> throws PoisonError<ReadGuard<T, region self>> {
+        try self.reader()
     }
 
     pub fn write(): WriteGuard<T, region self> throws PoisonError<WriteGuard<T, region self>> {
-        self.writer()
+        try self.writer()
     }
 
     pub fn try_read(): ReadGuard<T, region self> throws TryLockError<ReadGuard<T, region self>> {
-        self.try_reader()
+        try self.try_reader()
     }
 
     pub fn try_write(): WriteGuard<T, region self> throws TryLockError<WriteGuard<T, region self>> {
-        self.try_writer()
+        try self.try_writer()
     }
 
     pub fn reader(): ReadGuard<T, region self> throws PoisonError<ReadGuard<T, region self>> {

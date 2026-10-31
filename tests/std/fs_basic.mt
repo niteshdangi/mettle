@@ -87,9 +87,9 @@ fn run(): i32 throws Error {
     if try std.fs.copy(path_from_text("ops/source"), path_from_text("ops/copied")) != 7u64 {
         return 16
     }
-    if try std.fs.read_to_string(path_from_text("ops/copied")) != "copy me" { return 17 }
+    if (try std.fs.read_to_string(path_from_text("ops/copied"))).as_text() != "copy me" { return 17 }
     try std.fs.hard_link(path_from_text("ops/source"), path_from_text("ops/hard"))
-    if try std.fs.read_to_string(path_from_text("ops/hard")) != "copy me" { return 18 }
+    if (try std.fs.read_to_string(path_from_text("ops/hard"))).as_text() != "copy me" { return 18 }
     try std.fs.soft_link(path_from_text("source"), path_from_text("ops/soft"))
     let target = try std.fs.read_link(path_from_text("ops/soft"))
     if !target.same(std.ffi.os_string_from_text("source")) { return 19 }
@@ -100,7 +100,7 @@ fn run(): i32 throws Error {
        !path_from_text("ops/soft").is_symlink() {
         return 25
     }
-    try std.fs.set_permissions(path_from_text("ops/copied"), std.fs.Permissions(384u32))
+    try std.fs.set_permissions(path_from_text("ops/copied"), std.fs.permissions_from_mode(384u32))
     let copied_metadata = try std.fs.metadata(path_from_text("ops/copied"))
     if (copied_metadata.permissions().mode() & 511u32) != 384u32 {
         return 20

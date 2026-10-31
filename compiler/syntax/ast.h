@@ -273,7 +273,7 @@ struct Function {
   bool unsafeFunction = false;
   bool constFunction = false;
   bool asynchronous = false;
-  bool asyncDefaultOutputInferred = false;
+  bool asyncDefaultFutureInferred = false;
   TypeSyntax asyncDefaultBodyResult{};
   TypeSyntax asyncOutput{}, asyncError{};
   std::string asyncFuture{};
@@ -309,7 +309,7 @@ struct Module {
     VisibilitySyntax visibility{};
     bool constant = false;
     bool asyncFuture = false;
-    bool asyncFutureOutputInferred = false;
+    bool asyncFutureDefaultInferred = false;
     TypeSyntax annotation{}, value{};
     std::shared_ptr<const Node> constantValue{};
     std::vector<GenericParameter> genericParameters{};

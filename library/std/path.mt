@@ -178,7 +178,7 @@ extend Path {
         if !self.starts_with(prefix) { return none }
         let bytes: read [u8] = read self.bytes
         let prefix_len = trimmed_end(prefix.as_bytes())
-        if prefix_len == 0usize { return present(self) }
+        if prefix_len == 0usize { return present(read self) }
         var start = prefix_len
         while start < bytes.len() && is_sep(bytes[start]) { start += 1usize }
         present(path(unsafe { slice.subslice_unchecked(bytes, start, bytes.len()) }))

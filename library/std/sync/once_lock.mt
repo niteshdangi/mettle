@@ -130,7 +130,7 @@ extend<T> OnceLock<T> {
                     core.sync.atomic.Ordering.Acquire
                 )
                 if changed.is_failure() { continue }
-                let mut guard = InitGuard(read self.state, false)
+                var guard = InitGuard(read self.state, false)
                 let value = initializer()
                 unsafe {
                     core.ptr.write(
@@ -152,12 +152,12 @@ extend<T> OnceLock<T> {
         unsafe { read *self.value.get().cast<T>() }
     }
 
-    pub mut fn take(): T? {
+    pub mut fn `take`(): T? {
         if self.state.load(core.sync.atomic.Ordering.Relaxed) != 2u32 {
             return none
         }
         self.state.store(0u32, core.sync.atomic.Ordering.Relaxed)
-        present(unsafe { core.ptr.read(self.value.get().cast<T>()) })
+        present(unsafe { core.ptr.`read`(self.value.get().cast<T>()) })
     }
 
     pub take fn into_inner(): T? {
@@ -165,6 +165,6 @@ extend<T> OnceLock<T> {
             return none
         }
         self.state.store(0u32, core.sync.atomic.Ordering.Relaxed)
-        present(unsafe { core.ptr.read(self.value.get().cast<T>()) })
+        present(unsafe { core.ptr.`read`(self.value.get().cast<T>()) })
     }
 }

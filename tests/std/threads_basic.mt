@@ -16,14 +16,15 @@ fn main(): i32 {
 
   var builder = thread.Builder.new()
   builder.name("parking-child")
-  let parked = builder.spawn(take fn(): i32 {
+  let spawned = capture builder.spawn(take fn(): i32 {
     thread.park()
     9
   })
+  let parked = match take spawned { success(handle) => handle, failure(error) => { return 14 } }
   let child = parked.thread()
   if child.id().raw == thread.current().raw { return 9 }
-  match child.name() {
-    present(name) => { if name != "parking-child" { return 10 } },
+  match take child.name() {
+    present(name) => { if name.as_text() != "parking-child" { return 10 } },
     none => { return 11 }
   }
   // An unpark before park stores a token for the next park.

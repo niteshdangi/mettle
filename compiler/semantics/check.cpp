@@ -47,7 +47,7 @@ std::optional<CheckedModule> Checker::run() {
                 "'");
     functionVariables[&f] =
         inference.fresh(annotation(f.annotation, f.span, f.owner));
-    if (f.asyncDefaultOutputInferred)
+    if (f.asyncDefaultFutureInferred)
       asyncDefaultBodyVariables[&f] = inference.fresh();
     facts(f).diverges = inference.value(functionVariables[&f]) == Type::Never;
     if (f.explicitReceiver) {
@@ -309,7 +309,7 @@ std::optional<CheckedModule> Checker::run() {
     return checked.types->substituteRegions(future, regionBindings);
   };
   auto publishAsyncDefault = [&](const Function &function) {
-    if (!function.asyncDefaultOutputInferred)
+    if (!function.asyncDefaultFutureInferred)
       return;
     const Node *futureNode = function.body.get();
     if (!futureNode)
@@ -526,8 +526,9 @@ std::optional<CheckedModule> Checker::run() {
       };
       for (std::size_t i = 0; i < module.functions.size(); ++i) {
         const auto &function = module.functions[i];
-        if (!function.asynchronous || !function.asyncOutput.empty() ||
-            !function.body.get())
+        bool outputInferred = function.asyncOutput.empty();
+        if (!function.asynchronous || !function.body.get() ||
+            (!outputInferred && !function.asyncDefaultFutureInferred))
           continue;
         const Node *future = function.body.get();
         if (future->kind == Kind::Block && future->children.size() == 1)
@@ -544,7 +545,8 @@ std::optional<CheckedModule> Checker::run() {
             checked.closureBodies[facts(closure).closure]->function.abiResult;
         if (output == Type::Unknown)
           continue;
-        updateOpaqueOutput(facts(function).opaqueResult, output);
+        if (outputInferred)
+          updateOpaqueOutput(facts(function).opaqueResult, output);
         if (function.asyncFuture.empty())
           continue;
         auto interfaceName =
@@ -561,13 +563,13 @@ std::optional<CheckedModule> Checker::run() {
             });
         if (family == definition.associated.end())
           continue;
-        for (auto &bound : family->bounds)
-          if (bound.property == interfaces::Property::Interface) {
-            auto updated = bindOutput(bound.interfaceType, output);
-            bound.interfaceType = updated;
-          }
-        updateOpaqueOutput(family->defaultValue, output);
-        if (function.asyncDefaultOutputInferred) {
+        if (outputInferred) {
+          for (auto &bound : family->bounds)
+            if (bound.property == interfaces::Property::Interface)
+              bound.interfaceType = bindOutput(bound.interfaceType, output);
+          updateOpaqueOutput(family->defaultValue, output);
+        }
+        if (function.asyncDefaultFutureInferred) {
           auto defaultFuture =
               inference.value(asyncDefaultBodyVariables.at(&function));
           if (defaultFuture == Type::Unknown) {
@@ -625,7 +627,7 @@ std::optional<CheckedModule> Checker::run() {
     }
   }
   for (const auto &function : module.functions)
-    if (function.asyncDefaultOutputInferred) {
+    if (function.asyncDefaultFutureInferred) {
       auto body = inference.value(asyncDefaultBodyVariables.at(&function));
       if (body != Type::Unknown)
         facts(function).asyncDefaultBodyResult = body;

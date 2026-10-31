@@ -140,20 +140,21 @@ Module::Interface Parser::interfaceDeclaration() {
       method.name = result.name + "." + method.name;
       method.item.visibility = std::move(visible);
       if (method.asynchronous) {
-        method.asyncDefaultOutputInferred =
-            method.body.get() && method.asyncOutput.empty();
+        // A default body's future type is always inferred from the body;
+        // a written output still binds the family's Future.Output.
+        method.asyncDefaultFutureInferred = method.body.get() != nullptr;
         Module::Associated future;
         future.name =
             "$async_future_" + method.name.substr(method.name.rfind('.') + 1);
         future.span = method.span;
         future.visibility = method.item.visibility;
         future.asyncFuture = true;
-        future.asyncFutureOutputInferred = method.asyncDefaultOutputInferred;
+        future.asyncFutureDefaultInferred = method.asyncDefaultFutureInferred;
         future.genericParameters = method.genericParameters;
         future.constraints = method.constraints;
 
         TypeSyntax futureBound = namedType("core::future::Future");
-        if (!method.asyncDefaultOutputInferred) {
+        if (!method.asyncOutput.empty() || !method.body.get()) {
           TypeSyntax output = method.asyncOutput;
           if (!method.asyncError.empty()) {
             TypeSyntax outcome;
@@ -169,10 +170,8 @@ Module::Interface Parser::interfaceDeclaration() {
           futureBound.arguments.push_back(std::move(binding));
         }
         future.bounds.push_back(std::move(futureBound));
-        if (method.asyncDefaultOutputInferred)
+        if (method.asyncDefaultFutureInferred)
           method.asyncDefaultBodyResult = method.annotation;
-        if (method.body.get() && !method.asyncDefaultOutputInferred)
-          future.value = method.annotation;
 
         method.asyncFuture = future.name;
         method.annotation =

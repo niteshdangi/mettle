@@ -611,7 +611,7 @@ void Checker::checkInterfaceContracts() {
       }
       interfaces::Solver associated(*checked.types, *checked.interfaceData,
                                     diagnostics, allowed);
-      if (!(provided.fromDefault && required.asyncFutureOutputInferred))
+      if (!(provided.fromDefault && required.asyncFutureDefaultInferred))
         for (auto obligation : provided.requirements) {
           obligation.subject =
               checked.types->substitute(obligation.subject, publicParameters);

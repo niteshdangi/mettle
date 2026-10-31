@@ -61,7 +61,7 @@ fn run(): i32 throws Error {
     if os.len() != 6usize || !ffi.bytes_equal(os.as_bytes(), raw) { return 10 }
     let raw_view = ffi.os_str(raw)
     if !os.as_os_str().same(raw_view) ||
-       !raw_view.to_os_string().same(os.as_os_str()) { return 14 }
+       !raw_view.to_os_string().same(read os) { return 14 }
     var appended = ffi.new_os_string()
     appended.push(ffi.os_str_from_text("prefix"))
     appended.push_bytes(raw)
@@ -105,7 +105,7 @@ fn run(): i32 throws Error {
     let encoded = ffi.OsString.from_encoded_bytes_unchecked(encoded_bytes)
     let decoded = capture encoded.into_string()
     match take decoded {
-        success(text) => { if text != "plain" { return 28 } },
+        success(text) => { if text.as_text() != "plain" { return 28 } },
         failure(error) => { return 29 }
     }
     var reserved = ffi.os_string_with_capacity(24usize)

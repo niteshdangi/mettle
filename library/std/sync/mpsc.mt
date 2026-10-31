@@ -333,11 +333,11 @@ extend<T> Receiver<T> {
 }
 
 // Blocks until the receiver disconnects, yielding each queued value.
-pub type Iter<region r, T> { receiver: read Receiver<T> from r }
+pub type Iter<region r, T> { channel: read Receiver<T> from r }
 extend<region r, T> Iter<region r, T> implements Iterator {
     type Item = T
     mut fn next(): T? {
-        let value = capture self.receiver.recv()
+        let value = capture self.channel.recv()
         match take value {
             success(item) => present(item),
             failure(error) => none
@@ -347,14 +347,14 @@ extend<region r, T> Iter<region r, T> implements Iterator {
 
 // Stops when no value is immediately available.
 pub type TryIter<region r, T> {
-    receiver: read Receiver<T> from r
+    channel: read Receiver<T> from r
     finished: bool
 }
 extend<region r, T> TryIter<region r, T> implements Iterator {
     type Item = T
     mut fn next(): T? {
         if self.finished { return none }
-        let value = capture self.receiver.try_recv()
+        let value = capture self.channel.try_recv()
         match take value {
             success(item) => present(item),
             failure(error) => {
@@ -366,11 +366,11 @@ extend<region r, T> TryIter<region r, T> implements Iterator {
 }
 
 // Owns the receiver and drains queued values before ending.
-pub type IntoIter<T> { receiver: Receiver<T> }
+pub type IntoIter<T> { channel: Receiver<T> }
 extend<T> IntoIter<T> implements Iterator {
     type Item = T
     mut fn next(): T? {
-        let value = capture self.receiver.recv()
+        let value = capture self.channel.recv()
         match take value {
             success(item) => present(item),
             failure(error) => none

@@ -38,7 +38,7 @@ struct Associated {
   std::vector<RegionId> regions{};
   std::vector<RegionRequirement> regionRequirements{};
   bool asyncFuture = false;
-  bool asyncFutureOutputInferred = false;
+  bool asyncFutureDefaultInferred = false;
 };
 struct Method {
   std::string name;

@@ -45,6 +45,9 @@ type RealPathBuffer {
 
 pub copy type Permissions { mode: u32 }
 
+// Unix permission bits, as `chmod` takes them.
+pub fn permissions_from_mode(mode: u32): Permissions { Permissions(mode) }
+
 extend Permissions {
     pub fn mode(): u32 { self.mode }
     pub fn readonly(): bool { (self.mode & 146u32) == 0u32 }
@@ -144,7 +147,7 @@ pub fn open_options(): OpenOptions { OpenOptions(0, 438u32) }
 
 extend OpenOptions {
     pub static fn new(): OpenOptions { open_options() }
-    pub mut fn read(on: bool): Unit { self.set_read(on) }
+    pub mut fn `read`(on: bool): Unit { self.set_read(on) }
     pub mut fn write(on: bool): Unit { self.set_write(on) }
     pub mut fn append(on: bool): Unit { self.set_append(on) }
     pub mut fn truncate(on: bool): Unit { self.set_truncate(on) }
@@ -258,7 +261,7 @@ pub fn read_bytes(input: read PathInput): List<u8> throws Error {
     out
 }
 
-pub fn read(input: read PathInput): List<u8> throws Error { try read_bytes(input) }
+pub fn `read`(input: read PathInput): List<u8> throws Error { try read_bytes(input) }
 
 // The whole file as text; ill-formed UTF-8 fails with `InvalidData`.
 pub fn read_to_string(input: read PathInput): String throws Error {
@@ -276,9 +279,9 @@ pub fn write(input: read PathInput, bytes: read [u8]): Unit throws Error {
     try f.write_all(bytes)
 }
 
-pub fn copy(from: read PathInput, to: read PathInput): u64 throws Error {
+pub fn `copy`(from: read PathInput, to: read PathInput): u64 throws Error {
     let source_metadata = try metadata(from)
-    if try_exists(to) {
+    if try try_exists(to) {
         let from_path = try canonicalize(from)
         let to_path = try canonicalize(to)
         if from_path.as_path().same(to_path.as_path()) {

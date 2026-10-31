@@ -3358,7 +3358,7 @@ void RegionPass::run() {
   auto inferredAsyncBodyResult = [&](std::size_t index, RegionContext &context,
                                      RegionId fallback) {
     const auto &syntax = module.functions[index];
-    if (!syntax.asyncDefaultOutputInferred ||
+    if (!syntax.asyncDefaultFutureInferred ||
         syntax.asyncDefaultBodyResult.form != TypeForm::Opaque)
       return signatures[index].result;
     auto owner =
@@ -3468,7 +3468,7 @@ void RegionPass::run() {
     if (!module.functions[i].body.get())
       continue;
     auto bodyResult = current->result;
-    if (module.functions[i].asyncDefaultOutputInferred) {
+    if (module.functions[i].asyncDefaultFutureInferred) {
       std::vector<RegionId> eligible;
       for (std::size_t p = 0; p < current->parameters.size(); ++p)
         if (functions[i].locals[p].mode == ParameterMode::Read ||

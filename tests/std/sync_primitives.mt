@@ -213,7 +213,7 @@ fn main(): i32 {
         )
         73
       })
-      if value == 73 { 0 } else { 1 }
+      if *value == 73 { 0 } else { 1 }
     }))
     k += 1
   }
@@ -236,11 +236,11 @@ fn main(): i32 {
   var manual_cell = once_lock.new<i32>()
   let inserted = capture manual_cell.set(76)
   if inserted.is_failure() { return 46 }
-  match manual_cell.get_mut() {
+  match take manual_cell.get_mut() {
     present(value) => { *value = 77 },
     none => { return 47 }
   }
-  match manual_cell.take() {
+  match manual_cell.`take`() {
     present(value) => { if value != 77 { return 48 } },
     none => { return 49 }
   }
@@ -253,13 +253,13 @@ fn main(): i32 {
   let waiting_cell = arc.new(once_lock.new<i32>())
   let waiting_copy = waiting_cell.retain()
   let waiting_thread = thread.spawn(take fn(): i32 {
-    if waiting_copy.get().wait() == 79 { 0 } else { 1 }
+    if *waiting_copy.get().wait() == 79 { 0 } else { 1 }
   })
   let initialized = capture waiting_cell.get().set(79)
   if initialized.is_failure() || !join_ok(waiting_thread) { return 53 }
   let retry_cell = once_lock.new<i32>()
   let failed_once_lock_init = catch_panic(fn(): Unit {
-    retry_cell.get_or_init(take fn(): i32 { panic("OnceLock initializer failed") })
+    let _value = retry_cell.get_or_init(take fn(): i32 { panic("OnceLock initializer failed") })
   })
   match failed_once_lock_init {
     CatchResult.Panicked(info) => {},
@@ -270,7 +270,7 @@ fn main(): i32 {
     none => {}
   }
   let recovered_value = retry_cell.get_or_init(fn(): i32 { 75 })
-  if recovered_value != 75 { return 45 }
+  if *recovered_value != 75 { return 45 }
 
   // rwlock: readers share, writer excludes
   let lock = arc.new(rwlock.new(10))
