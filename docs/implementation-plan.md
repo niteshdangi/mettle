@@ -1106,11 +1106,18 @@ region-parameterized type was not enforced). Borrowed
 heap-erased futures require region-carrying erasure.
 Compiler erasure admits the pinned `Future.poll` receiver when `Output` is
 fixed in `any Future<Output = T>`; the witness dispatches polling to the concrete
-implementation; type checking accepts it, but IR verification/lowering of the
-pinned erased call is incomplete, so `tests/std/erased_future_dispatch.mt`
-currently fails (open). Owned heap storage
-remains the explicit `alloc.future.Erased<T>` wrapper. `Box<any Future<Output =
-T>>` is still unsupported: the general unsized-owner mapping is an I07 gap.
+implementation. IR verification and lowering now preserve the pin-wrapped
+erased receiver; its witness entry uses an adapter that takes the erased fat
+view's data pointer and constructs `Pin<mut Concrete>` for the implementation.
+The earlier `EraseView` failure came from validating that adapter as an ordinary
+bare-erased `read`/`mut` receiver, rejecting the `Pin<mut erased>`/`take`
+signature instead.
+The `alloc.future.Erased<T>` wrapper is a concrete `Future<Output = T>`
+implementation, so its conversion to the erased view uses the same witness
+path rather than a special storage conversion. These compiler changes are
+implemented but unverified (not yet built); build/run
+`tests/std/erased_future_dispatch.mt`. `Box<any Future<Output = T>>` is still
+unsupported: the general unsized-owner mapping is an I07 gap.
 Erased async-interface dispatch remains unsupported until an explicit
 future-storage contract exists (`async-interface-erased-dispatch.mt`).
 P10 has only a backlog entry, not a specified benchmark source; an async
@@ -1190,7 +1197,7 @@ Revision: uncommitted lane changes on `c81bc6d`; scope as stated per row.
 | --- | --- | --- |
 | Preserve async source; type future and await | Implemented and verified on macOS arm64, including arrow async closures and `try await`: `syntax/parser/closures.cpp`, `syntax/parser/async.cpp`, `semantics/sums.cpp`, `semantics/regions.cpp`, `lowering/sums.cpp`. | `async-arrow-closure.mt`, `async-try-await.mt`. |
 | Async interface futures and dispatch | Bodyless async methods publish region- and output-constrained associated future families; implementations bind concrete opaque coroutine futures; concrete and generic-bound calls use the family. Verified on macOS arm64. Async default bodies require an explicit result type. | `async-interface-method.mt`, `async-interface-erased-dispatch.mt`; inferred async default outputs remain open. Explicit erased-future storage and erased async-interface dispatch remain unsupported. |
-| Erased Future polling and storage | Pinned poll dispatch through `any Future<Output = T>` and the `alloc.future.Erased<T>` static heap wrapper are implemented; compiler dispatch change is unverified (not yet built). The wrapper owns a stable concrete payload and uses typed poll/release callbacks. | Build/run `tests/std/erased_future_dispatch.mt`; general `Box<any Future<Output = T>>` remains blocked on I07 unsized-owner support and a compiler-owned dynamic drop contract. |
+| Erased Future polling and storage | Pinned poll dispatch through `any Future<Output = T>` and the `alloc.future.Erased<T>` static heap wrapper are implemented. The verifier accepts the Pin-wrapped erased receiver, and LLVM emits a witness adapter that repackages the data pointer as `Pin<mut Concrete>`; the adapter and verifier changes are implemented but unverified (not yet built). The wrapper owns a stable concrete payload and uses typed poll/release callbacks. | Build/run `tests/std/erased_future_dispatch.mt`; general `Box<any Future<Output = T>>` remains blocked on I07 unsized-owner support and a compiler-owned dynamic drop contract. |
 | Recursive async future cycles | Implemented and verified on macOS arm64: `semantics/check.cpp` diagnoses direct and mutual recursive async call cycles in the type phase at the recursive call span and names the cycle. | `async-recursive-future-direct.mt`, `async-recursive-future-mutual.mt`. |
 | Ownership-checked suspension CFG | Implemented: `ir/ir.h` `Exit::Suspend`, `ir/verify.cpp`, successor updates in `analysis/*`, `ir/dominance.cpp`, `instances/arrays.cpp`, `lowering/scalar.cpp`. | None known; borrow-across-await is covered by `async-await-anywhere.mt`. |
 | Inline pinned state and poll | Implemented: `types` coroutine aggregate and layout resolver, `instances/specialize.cpp`, backend frame/dispatch. Transferable/Shareable/Static in `semantics/interface_solver.cpp` with the interior from `semantics/captures.cpp`. | Liveness-precise interior (optional precision gain). |

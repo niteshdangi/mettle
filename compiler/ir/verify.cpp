@@ -12,6 +12,25 @@
 
 namespace mettle::ir {
 namespace {
+std::optional<Type> pinnedViewPayload(const TypeStore &types, Type type) {
+  if (!types.isProduct(type) ||
+      types.product(type).kind != AggregateKind::Pin ||
+      types.product(type).components.empty())
+    return std::nullopt;
+  auto view = types.product(type).components.front();
+  if (!types.isView(view) ||
+      types.view(view).mode != ParameterMode::Mut)
+    return std::nullopt;
+  return types.view(view).payload;
+}
+
+Type erasedReceiver(const TypeStore &types, Type type) {
+  if (types.isErased(type))
+    return type;
+  auto pinned = pinnedViewPayload(types, type);
+  return pinned && types.isErased(*pinned) ? *pinned : Type::Unknown;
+}
+
 bool scalar(Type type) {
   return isNumeric(type) || type == Type::Bool || type == Type::Unit ||
          type == Type::Char || type == Type::U8;
@@ -473,10 +492,12 @@ bool function(const Function &f, const Program &program,
       case Op::WitnessMethod:
         if (arity(1)) {
           auto interface = n.operands[0].type;
-          require(program.types->isErased(interface) &&
-                  n.operands[0].access != Access::Owned);
-          if (program.types->isErased(interface)) {
-            const auto &methods = program.types->erased(interface).methodTypes;
+          auto erased = erasedReceiver(*program.types, interface);
+          bool pinned = erased != interface;
+          require(erased != Type::Unknown &&
+                  (pinned || n.operands[0].access != Access::Owned));
+          if (erased != Type::Unknown) {
+            const auto &methods = program.types->erased(erased).methodTypes;
             require(n.number >= 0 &&
                     static_cast<std::size_t>(n.number) < methods.size());
             if (n.number >= 0 &&
@@ -520,11 +541,21 @@ bool function(const Function &f, const Program &program,
         }
         if (program.types->isFunctionPointer(result)) {
           const auto &signature = program.types->callable(result);
-          if (n.erasedDispatch)
-            require(!signature.parameters.empty() &&
-                    program.types->isErased(signature.parameters[0].type) &&
-                    (signature.parameters[0].mode == ParameterMode::Read ||
-                     signature.parameters[0].mode == ParameterMode::Mut));
+          bool pinnedDispatch = false;
+          if (n.erasedDispatch) {
+            auto receiver = signature.parameters.empty()
+                                ? Type::Unknown
+                                : signature.parameters[0].type;
+            auto erased = erasedReceiver(*program.types, receiver);
+            pinnedDispatch =
+                erased != Type::Unknown && erased != receiver;
+            require(erased != Type::Unknown &&
+                    (pinnedDispatch
+                         ? signature.parameters[0].mode == ParameterMode::Take
+                         : signature.parameters[0].mode == ParameterMode::Read ||
+                               signature.parameters[0].mode ==
+                                   ParameterMode::Mut));
+          }
           const auto &callee = program.functions[n.callee];
           require(!callee.indirectContract &&
                   (!callee.declarationOnly ||
@@ -555,10 +586,17 @@ bool function(const Function &f, const Program &program,
                                 }))));
           if (signature.parameters.size() == callee.parameters)
             for (std::size_t p = 0; p < callee.parameters; ++p)
-              require(matches(callee.locals[p].type,
-                              n.erasedDispatch && p == 0
-                                  ? n.interfaceSelf
-                                  : signature.parameters[p].type) &&
+              require((n.erasedDispatch && p == 0 && pinnedDispatch
+                           ? ([&] {
+                               auto payload = pinnedViewPayload(
+                                   *program.types, callee.locals[p].type);
+                               return payload &&
+                                      matches(*payload, n.interfaceSelf);
+                             })()
+                           : matches(callee.locals[p].type,
+                                     n.erasedDispatch && p == 0
+                                         ? n.interfaceSelf
+                                         : signature.parameters[p].type)) &&
                       signature.parameters[p].mode == callee.locals[p].mode);
         }
         break;
@@ -893,8 +931,11 @@ bool function(const Function &f, const Program &program,
       case Op::CatchCall:
         if (n.erasedDispatch)
           require(n.op == Op::IndirectCall && !n.operands.empty() &&
-                  program.types->isErased(n.operands[0].type) &&
-                  n.operands[0].access != Access::Owned);
+                  erasedReceiver(*program.types, n.operands[0].type) !=
+                      Type::Unknown &&
+                  (erasedReceiver(*program.types, n.operands[0].type) !=
+                       n.operands[0].type ||
+                   n.operands[0].access != Access::Owned));
         if (n.op == Op::IndirectCall) {
           value(n.target, static_cast<int>(b), i, n.span);
           require(
@@ -930,6 +971,8 @@ bool function(const Function &f, const Program &program,
         }
         if (n.callee < 0 ||
             static_cast<std::size_t>(n.callee) >= program.functions.size()) {
+          if (n.op == Op::IndirectCall)
+            break;
           fail(n.span, "invalid callee");
           break;
         case Op::Construct:
