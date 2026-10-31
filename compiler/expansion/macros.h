@@ -3,11 +3,23 @@
 #include "diagnostics/diagnostics.h"
 #include "expansion/expand.h"
 #include "expansion/procedural.h"
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace mettle::expansion {
+struct MacroModuleSource {
+  Source source;
+  // Canonical module path named by the invocation.
+  std::vector<std::string> path;
+  // File-module scope of `source`; trailing path components may be inline
+  // modules within that source.
+  std::vector<std::string> sourcePath;
+};
+using MacroModuleProvider = std::function<std::optional<MacroModuleSource>(
+    const std::vector<std::string> &path)>;
+
 // Expands the declarative macros of one source before it is parsed.
 //
 //   macro name {
@@ -17,8 +29,9 @@ namespace mettle::expansion {
 // Definitions are lexically inline-module-scoped within this source and order
 // independent. An invocation `name!(...)` (also `[...]` and `{...}`) selects
 // the first rule whose matcher recognizes the argument tokens; short and full
-// fragment-kind spellings are accepted. Macro imports and reexports are not
-// yet resolved.
+// fragment-kind spellings are accepted. Explicit macro imports and reexports
+// are not resolved. A qualified invocation can resolve a public macro from an
+// external module through the loader-supplied provider.
 // Structured fragments must parse with the native parser. Template-local
 // bindings, including match-arm pattern bindings, are renamed per expansion;
 // `$capture(name)` deliberately names an invocation-context identifier.
@@ -35,14 +48,16 @@ namespace mettle::expansion {
 // `macro` diagnostic at the invocation. A lexically visible declarative macro
 // of the same name takes precedence.
 //
-// Returns nullopt when the source defines no macro or does not lex (the
-// parser then reports it); otherwise the generated source, which keeps the
-// original path. Its registered provenance maps every generated token back to
-// the template or argument token it came from, with the invocation as the
-// origin, and unchanged text exactly, so diagnostics keep their positions.
+// Returns nullopt when the source has no local or qualified macro invocation,
+// no procedural macro, or does not lex (the parser then reports it); otherwise
+// the generated source, which keeps the original path. Its registered
+// provenance maps every generated token back to the template or argument token
+// it came from, with the invocation as the origin, and unchanged text exactly,
+// so diagnostics keep their positions.
 std::optional<Source> expandMacros(const Source &source,
                                    Diagnostics &diagnostics,
                                    const SourceAllocator &allocate,
                                    const Procedures *procedural = nullptr,
-                                   std::vector<std::string> modulePath = {});
+                                   std::vector<std::string> modulePath = {},
+                                   const MacroModuleProvider &modules = {});
 } // namespace mettle::expansion

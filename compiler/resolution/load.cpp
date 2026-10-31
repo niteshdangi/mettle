@@ -42,6 +42,16 @@ public:
     auto directory = fs::path(root.path).parent_path();
     auto harnessPath =
         (directory / "mettle-test-harness.mt").lexically_normal();
+    for (const auto &package : library.packages) {
+      auto source = provider(package.source);
+      if (!source)
+        continue;
+      auto name = package.module.empty() ? package.name : package.module;
+      sourceId(*source);
+      macroModules[{name}] =
+          {fs::path(source->path).parent_path(), source->path, source->id,
+           std::nullopt};
+    }
     read(std::move(root), {}, directory, 0, true);
     if (library.harness != Library::Harness::None && diagnostics.empty()) {
       bool bench = library.harness == Library::Harness::Bench;
@@ -99,6 +109,14 @@ private:
   Module result;
   std::unordered_set<std::string> loaded;
   SourceId nextSource = 0;
+  std::map<std::vector<std::string>, SourceId> sourceIds;
+  struct MacroModuleLocation {
+    fs::path directory;
+    std::string sourcePath;
+    SourceId sourceId = 0;
+    std::optional<Source> rootSource;
+  };
+  std::map<std::vector<std::string>, MacroModuleLocation> macroModules;
   // Library root that owns each loaded source; user sources are absent.
   std::unordered_map<SourceId, std::string> owner;
   std::string currentRoot;
@@ -119,6 +137,92 @@ private:
   std::unordered_set<std::string> iteratorMethods;
   bool builtinMethodsLoaded = false;
   std::size_t scanned = 0, scannedLiterals = 0;
+
+  SourceId sourceId(Source &source) {
+    auto identity = fs::path(source.path).lexically_normal().generic_string();
+    auto [found, inserted] = sourceIds.emplace(identity, nextSource);
+    if (inserted)
+      ++nextSource;
+    source.id = found->second;
+    return source.id;
+  }
+
+  std::optional<expansion::MacroModuleSource>
+  macroModule(const std::vector<std::string> &requested) {
+    auto path = requested;
+    if (path.size() >= 2 && path.front() == "package") {
+      auto alias = path[1];
+      std::replace(alias.begin(), alias.end(), '-', '_');
+      std::string module;
+      const auto &dependencies = currentPackage
+                                     ? currentPackage->dependencies
+                                     : library.packageDependencies;
+      for (const auto &[name, target] : dependencies)
+        if (name == alias || name == path[1]) {
+          module = target;
+          break;
+        }
+      if (module.empty())
+        return std::nullopt;
+      path.erase(path.begin(), path.begin() + 2);
+      path.insert(path.begin(), module);
+    }
+
+    auto base = macroModules.end();
+    for (auto candidate = macroModules.begin();
+         candidate != macroModules.end(); ++candidate)
+      if (candidate->first.size() <= path.size() &&
+          std::equal(candidate->first.begin(), candidate->first.end(),
+                     path.begin()) &&
+          (base == macroModules.end() ||
+           candidate->first.size() > base->first.size()))
+        base = candidate;
+    if (base == macroModules.end())
+      return std::nullopt;
+    if (base->first.size() == path.size()) {
+      auto source = base->second.rootSource
+                        ? base->second.rootSource
+                        : provider(base->second.sourcePath);
+      if (!source)
+        return std::nullopt;
+      source->id = base->second.sourceId;
+      return expansion::MacroModuleSource{std::move(*source), path,
+                                          base->first};
+    }
+
+    for (auto length = path.size(); length > base->first.size(); --length) {
+      auto directory = base->second.directory;
+      for (auto i = base->first.size(); i + 1 < length; ++i)
+        directory /= path[i];
+      auto name = path[length - 1];
+      auto firstPath = (directory / (name + ".mt"))
+                           .lexically_normal()
+                           .generic_string();
+      auto secondPath =
+          (directory / name / "module.mt").lexically_normal().generic_string();
+      auto first = provider(firstPath);
+      auto second = provider(secondPath);
+      if (first && second)
+        return std::nullopt;
+      if (!first && !second)
+        continue;
+      auto source = first ? std::move(*first) : std::move(*second);
+      sourceId(source);
+      std::vector<std::string> sourcePath(path.begin(),
+                                          path.begin() + length);
+      return expansion::MacroModuleSource{std::move(source), std::move(path),
+                                          std::move(sourcePath)};
+    }
+
+    auto source = base->second.rootSource
+                      ? base->second.rootSource
+                      : provider(base->second.sourcePath);
+    if (!source)
+      return std::nullopt;
+    source->id = base->second.sourceId;
+    return expansion::MacroModuleSource{std::move(*source), std::move(path),
+                                        base->first};
+  }
 
   struct Reference {
     std::string root, member, from;
@@ -486,7 +590,12 @@ private:
       diagnostics.error("limit", {}, "module loading limit exceeded");
       return;
     }
-    source.id = nextSource++;
+    sourceId(source);
+    MacroModuleLocation location{directory, source.path, source.id,
+                                 std::nullopt};
+    if (prefix.empty())
+      location.rootSource = source;
+    macroModules[prefix] = std::move(location);
     if (rootPackageSource && sourceModules)
       sourceModules->push_back({source, prefix});
     if (allSources && (rootPackageSource || currentPackage))
@@ -494,6 +603,10 @@ private:
     if (!currentRoot.empty())
       owner[source.id] = currentRoot;
     // Declarative macros expand on the token level, before parsing.
+    expansion::MacroModuleProvider macroProvider =
+        [this](const std::vector<std::string> &path) {
+          return macroModule(path);
+        };
     if (auto generated = expansion::expandMacros(
             source, diagnostics,
             [&] {
@@ -502,7 +615,7 @@ private:
                 owner[id] = currentRoot;
               return id;
             },
-            library.procedures, prefix))
+            library.procedures, prefix, macroProvider))
       source = std::move(*generated);
     if (!diagnostics.empty())
       return;

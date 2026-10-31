@@ -5,6 +5,7 @@
 #include "syntax/token.h"
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <string_view>
@@ -29,6 +30,7 @@ struct Piece {
   bool authored = false;
   // Written directly after the previous token of a procedural macro's output.
   bool glued = false;
+  std::vector<std::string> context;
 };
 using Pieces = std::vector<Piece>;
 
@@ -412,6 +414,7 @@ struct Macro {
   std::string name;
   Span span;
   std::vector<std::string> definitionScope;
+  bool publicItem = false;
   std::vector<Rule> rules;
 };
 
@@ -681,11 +684,16 @@ class Expander {
 public:
   Expander(const Source &source, Diagnostics &diagnostics,
            const SourceAllocator &allocate, const Procedures *procedures,
-           std::vector<std::string> modulePath)
+           std::vector<std::string> modulePath,
+           const MacroModuleProvider &modules = {},
+           std::shared_ptr<std::map<std::string, Macro>> macroIndex = {})
       : source(source), diagnostics(diagnostics), allocate(allocate),
-        procedures(procedures), modulePath(std::move(modulePath)) {}
+        procedures(procedures), modulePath(std::move(modulePath)),
+        modules(modules),
+        macros(macroIndex ? std::move(macroIndex)
+                          : std::make_shared<std::map<std::string, Macro>>()) {}
 
-  std::optional<Source> run() {
+  std::optional<Source> run(bool definitionsOnly = false) {
     Diagnostics scratch;
     auto tokens = tokenize(source, scratch);
     if (!scratch.empty())
@@ -715,23 +723,35 @@ public:
         if (prefix > 0 && pieces[prefix - 1].kind == TokenKind::Word &&
             pieces[prefix - 1].text == "pub")
           begin = prefix - 1;
-        definitions.push_back({begin, i, close[i + 2]});
+        definitions.push_back(
+            {begin, i, close[i + 2],
+             begin < i && pieces[begin].kind == TokenKind::Word &&
+                 pieces[begin].text == "pub" &&
+                 (begin + 1 >= i || !symbol(pieces[begin + 1], "("))});
         i = close[i + 2];
       }
     bool procedural = false;
     for (std::size_t i = 0; i < pieces.size() && !procedural; ++i)
       procedural = procedure(pieces, i);
-    if (definitions.empty() && !procedural)
+    bool qualified = false;
+    for (std::size_t i = 2; i + 2 < pieces.size() && !qualified; ++i)
+      qualified = pieces[i].kind == TokenKind::Word &&
+                  symbol(pieces[i - 1], ".") && symbol(pieces[i + 1], "!") &&
+                  !pieces[i + 1].space && opener(pieces[i + 2]);
+    if (definitions.empty() && !procedural && !qualified)
       return std::nullopt;
     Diagnostics::SourceContext context(diagnostics, source);
     for (const auto &definition : definitions)
-      define(definition.macro, definition.end);
+      define(definition.macro, definition.end, definition.publicItem);
+    if (definitionsOnly)
+      return std::nullopt;
     return expandSource();
   }
 
 private:
   struct Definition {
     std::size_t begin, macro, end;
+    bool publicItem;
   };
 
   struct ScopeRange {
@@ -744,12 +764,14 @@ private:
   const SourceAllocator &allocate;
   const Procedures *procedures;
   std::vector<std::string> modulePath;
+  const MacroModuleProvider &modules;
   Pieces pieces;
   std::vector<std::size_t> close;
   std::vector<Definition> definitions;
   std::vector<ScopeRange> moduleScopes;
-  std::map<std::string, Macro> macros;
+  std::shared_ptr<std::map<std::string, Macro>> macros;
   std::set<std::string> broken;
+  std::set<std::string> indexedModules;
   std::vector<std::string> chain;
   std::size_t marks = 0;
   bool failed = false;
@@ -796,7 +818,7 @@ private:
       if (range.begin <= offset && offset < range.end &&
           (!selected || range.path.size() > selected->path.size()))
         selected = &range;
-    return selected ? selected->path : std::vector<std::string>{};
+    return selected ? selected->path : modulePath;
   }
 
   static std::string macroKey(const std::vector<std::string> &scope,
@@ -813,7 +835,7 @@ private:
     return result;
   }
 
-  void define(std::size_t at, std::size_t last) {
+  void define(std::size_t at, std::size_t last, bool publicItem) {
     const auto &name = pieces[at + 1];
     auto before = diagnostics.count();
     if (isReservedWord(name.text)) {
@@ -822,7 +844,7 @@ private:
     }
     auto definitionScope = scopeAt(pieces[at].origin.begin);
     auto key = macroKey(definitionScope, name.text);
-    if (macros.contains(key)) {
+    if (macros->contains(key)) {
       error(name.origin, "macro '" + name.text + "' is already defined");
       return;
     }
@@ -830,6 +852,7 @@ private:
     macro.name = name.text;
     macro.span = {pieces[at].origin.begin, pieces[last].origin.end, source.id};
     macro.definitionScope = std::move(definitionScope);
+    macro.publicItem = publicItem;
     auto i = at + 3;
     auto expect = [&](bool condition, const Piece &where, const char *message) {
       if (!condition)
@@ -879,37 +902,116 @@ private:
       failed = true;
       broken.insert(key);
     }
-    macros.emplace(std::move(key), std::move(macro));
+    macros->emplace(std::move(key), std::move(macro));
   }
 
-  const Macro *invoked(const Pieces &in, std::size_t i) const {
+  struct Invocation {
+    const Macro *macro = nullptr;
+    bool privateAccess = false;
+  };
+
+  bool startsWith(const std::vector<std::string> &path,
+                  const std::vector<std::string> &prefix) const {
+    return path.size() >= prefix.size() &&
+           std::equal(prefix.begin(), prefix.end(), path.begin());
+  }
+
+  const Macro *macroAtPath(std::vector<std::string> &path,
+                           std::string_view name) {
+    auto found = macros->find(macroKey(path, name));
+    if (found != macros->end())
+      return &found->second;
+    if (!modules)
+      return nullptr;
+    auto loaded = modulesForPath(path);
+    if (!loaded)
+      return nullptr;
+    path = loaded->path;
+    found = macros->find(macroKey(path, name));
+    return found == macros->end() ? nullptr : &found->second;
+  }
+
+  const Macro *qualifiedMacro(const Pieces &in, std::size_t i,
+                              std::vector<std::string> &path) {
+    if (i < 2 || !symbol(in[i - 1], "."))
+      return nullptr;
+    auto first = i - 2;
+    while (first >= 2 && symbol(in[first - 1], "."))
+      first -= 2;
+    if (in[first].kind != TokenKind::Word)
+      return nullptr;
+    path.clear();
+    for (auto part = first; part <= i - 2; part += 2) {
+      if (in[part].kind != TokenKind::Word ||
+          (part != i - 2 && !symbol(in[part + 1], ".")))
+        return nullptr;
+      path.push_back(in[part].text);
+    }
+    return macroAtPath(path, in[i].text);
+  }
+
+  std::optional<MacroModuleSource>
+  modulesForPath(const std::vector<std::string> &path) {
+    auto module = modules(path);
+    if (!module)
+      return std::nullopt;
+    std::string key;
+    for (const auto &part : module->sourcePath)
+      key += (key.empty() ? "" : "::") + part;
+    if (indexedModules.insert(key).second) {
+      Expander indexer(module->source, diagnostics, allocate, nullptr,
+                       module->sourcePath, modules, macros);
+      indexer.run(true);
+    }
+    return module;
+  }
+
+  Invocation invoked(const Pieces &in, std::size_t i) {
     if (in[i].kind != TokenKind::Word || i + 2 >= in.size() ||
         !symbol(in[i + 1], "!") || in[i + 1].space || !opener(in[i + 2]))
-      return nullptr;
-    if (i > 0 && (symbol(in[i - 1], ".") || symbol(in[i - 1], "::")))
-      return nullptr;
-    auto scope = scopeAt(in[i].origin.begin);
-    for (;;) {
-      auto found = macros.find(macroKey(scope, in[i].text));
-      if (found != macros.end())
-        return &found->second;
-      if (scope.empty())
-        break;
-      scope.pop_back();
+      return {};
+    if (i > 0 && symbol(in[i - 1], "::"))
+      return {};
+    auto caller = in[i].context.empty() ? scopeAt(in[i].origin.begin)
+                                         : in[i].context;
+    std::vector<std::string> path;
+    const Macro *macro = nullptr;
+    if (i > 0 && symbol(in[i - 1], "."))
+      macro = qualifiedMacro(in, i, path);
+    else {
+      auto scope = caller;
+      for (;;) {
+        auto found = macros->find(macroKey(scope, in[i].text));
+        if (found != macros->end()) {
+          macro = &found->second;
+          break;
+        }
+        if (scope.empty())
+          break;
+        scope.pop_back();
+      }
     }
-    return nullptr;
+    if (macro && !macro->publicItem &&
+        !startsWith(caller, macro->definitionScope))
+      return {macro, true};
+    return {macro, false};
   }
 
-  // Whether `in[i]` starts an invocation of a procedural macro that no
-  // lexically visible declarative macro shadows.
-  bool procedure(const Pieces &in, std::size_t i) const {
+  void nameError(Span span, const Macro &macro) {
+    failed = true;
+    diagnostics.error("name", span,
+                      "private macro '" + macro.name +
+                          "' is not visible from this module");
+  }
+
+  bool procedure(const Pieces &in, std::size_t i) {
     if (!procedures || in[i].kind != TokenKind::Word || i + 2 >= in.size() ||
         !symbol(in[i + 1], "!") || in[i + 1].space || !opener(in[i + 2]))
       return false;
     if (i > 0 && (symbol(in[i - 1], ".") || symbol(in[i - 1], "::")))
       return false;
     return procedures->names.contains(in[i].text) &&
-           !invoked(in, i);
+           !invoked(in, i).macro;
   }
 
   std::string path() const {
@@ -927,13 +1029,22 @@ private:
     }
     bool ok = true;
     for (std::size_t i = 0; i < in.size();) {
-      const auto *macro = invoked(in, i);
+      auto invocation = invoked(in, i);
+      const auto *macro = invocation.macro;
       auto host = !macro && procedure(in, i);
       if (!macro && !host) {
         out.push_back(in[i++]);
         continue;
       }
       auto last = inner[i + 2];
+      if (invocation.privateAccess) {
+        nameError({in[i].origin.begin, in[last].origin.end,
+                   in[i].origin.source},
+                  *macro);
+        i = last + 1;
+        ok = false;
+        continue;
+      }
       if (host)
         ok &= invokeProcedure(in, i, last, out, depth, use);
       else if (!broken.contains(
@@ -985,7 +1096,12 @@ private:
       Pieces produced;
       if (!instantiate(macro, rule.expansion, environment, produced, use))
         return false;
-      hygiene(produced, ++marks, macro.definitionScope, scopeAt(use.begin));
+      for (auto &piece : produced)
+        if (piece.authored)
+          piece.context = macro.definitionScope;
+      auto invocationScope =
+          in[at].context.empty() ? scopeAt(use.begin) : in[at].context;
+      hygiene(produced, ++marks, macro.definitionScope, invocationScope);
       Pieces expanded;
       if (!expandPieces(produced, expanded, depth + 1, use))
         return false;
@@ -1474,7 +1590,8 @@ private:
         ++next;
         continue;
       }
-      const auto *macro = invoked(pieces, i);
+      auto invocation = invoked(pieces, i);
+      const auto *macro = invocation.macro;
       auto host = !macro && procedure(pieces, i);
       if (!macro && !host) {
         ++i;
@@ -1486,6 +1603,10 @@ private:
       copy(use.begin);
       cursor = use.end;
       i = last + 1;
+      if (invocation.privateAccess) {
+        nameError(use, *macro);
+        continue;
+      }
       if (macro && broken.contains(
                        macroKey(macro->definitionScope, macro->name)))
         continue;
@@ -1511,9 +1632,10 @@ std::optional<Source> expandMacros(const Source &source,
                                    Diagnostics &diagnostics,
                                    const SourceAllocator &allocate,
                                    const Procedures *procedural,
-                                   std::vector<std::string> modulePath) {
+                                   std::vector<std::string> modulePath,
+                                   const MacroModuleProvider &modules) {
   return Expander(source, diagnostics, allocate, procedural,
-                  std::move(modulePath))
+                  std::move(modulePath), modules)
       .run();
 }
 } // namespace mettle::expansion

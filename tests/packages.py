@@ -512,6 +512,26 @@ def procedural_macro_failure():
               contains="unsupported macro API major version 2")
 
 
+def public_declarative_macro_dependency():
+    app = packages("declarative-macro/app")
+    dependency = packages("declarative-macro/units")
+    (app / "src").mkdir(parents=True)
+    (dependency / "src").mkdir(parents=True)
+    (app / "Mettle.toml").write_text(
+        '[package]\nname = "macro-app"\nversion = "0.1.0"\n'
+        'language = "mettle-1"\n\n'
+        '[targets.app]\nkind = "executable"\nsource = "src/main.mt"\n\n'
+        '[dependencies]\nunits = { path = "../units" }\n')
+    (dependency / "Mettle.toml").write_text(
+        '[package]\nname = "units"\nversion = "0.1.0"\n'
+        'language = "mettle-1"\n')
+    (app / "src/main.mt").write_text(
+        "fn main(): i32 { package.units.value!() - 42 }\n")
+    (dependency / "src/lib.mt").write_text(
+        "pub macro value {\n    () => { 42 };\n}\n")
+    build_and_run(app)
+
+
 def multi_package_extension():
     app = packages("multi-package-extension/app")
     text, built = explained(app)
@@ -1340,6 +1360,7 @@ CASES = [path_dependency, missing_lock_locked, lock_corruption,
          cache_corruption_and_clean,
          build_script, build_script_untracked_inputs,
          procedural_macro, procedural_macro_failure,
+         public_declarative_macro_dependency,
          multi_package_extension,
          run_forwards_args_and_exit_status,
          test_reports_pass_fail_ignored_and_isolates_panics,
