@@ -101,6 +101,90 @@ extend<region r> CharIndices<region r> implements Iterator {
     }
 }
 
+fn has_cased_after(text: read Text, byte_index: usize): bool {
+    match text.get(byte_index, text.len()) {
+        present(suffix) => {
+            var chars = suffix.chars()
+            match chars.next() { present(_) => {}, none => { return false } }
+            while true {
+                match chars.next() {
+                    present(c) => {
+                        if !c.is_case_ignorable() { return c.is_cased() }
+                    },
+                    none => { return false }
+                }
+            }
+            false
+        },
+        none => false
+    }
+}
+
+pub type LowercaseChars<region r> {
+    text: read Text from r;
+    source: CharIndices<region r>;
+    pending: super.char.CaseMapping;
+    pending_ready: bool;
+    preceding_cased: bool
+}
+extend<region r> LowercaseChars<region r> implements Iterator {
+    type Item = char
+    mut fn next(): char? {
+        while true {
+            if self.pending_ready {
+                match self.pending.next() {
+                    present(c) => { return present(c) },
+                    none => { self.pending_ready = false }
+                }
+            }
+            match self.source.next() {
+                present(item) => {
+                    let c = item.1
+                    var mapping = c.to_lowercase()
+                    if c == '\u{03a3}' && self.preceding_cased &&
+                        !has_cased_after(self.text, item.0) {
+                        mapping = '\u{03c2}'.to_lowercase()
+                    }
+                    if !c.is_case_ignorable() {
+                        self.preceding_cased = c.is_cased()
+                    }
+                    self.pending = mapping
+                    self.pending_ready = true
+                },
+                none => { return none }
+            }
+        }
+        none
+    }
+}
+
+pub type UppercaseChars<region r> {
+    source: CharIndices<region r>;
+    pending: super.char.CaseMapping;
+    pending_ready: bool
+}
+extend<region r> UppercaseChars<region r> implements Iterator {
+    type Item = char
+    mut fn next(): char? {
+        while true {
+            if self.pending_ready {
+                match self.pending.next() {
+                    present(c) => { return present(c) },
+                    none => { self.pending_ready = false }
+                }
+            }
+            match self.source.next() {
+                present(item) => {
+                    self.pending = item.1.to_uppercase()
+                    self.pending_ready = true
+                },
+                none => { return none }
+            }
+        }
+        none
+    }
+}
+
 // Pieces between occurrences of `separator`; an empty separator yields the whole text.
 pub type Split<region r> { rest: read Text from r; separator: read Text from r; done: bool }
 extend<region r> Split<region r> implements Iterator {
@@ -276,6 +360,12 @@ extend Text {
     pub fn lines(): Lines<region self> { Lines(read self, "\n") }
     pub fn chars(): Chars<region self> { Chars(read self.bytes, 0usize) }
     pub fn char_indices(): CharIndices<region self> { CharIndices(read self.bytes, 0usize) }
+    pub fn lowercase_chars(): LowercaseChars<region self> {
+        LowercaseChars(read self, self.char_indices(), '\0'.to_lowercase(), false, false)
+    }
+    pub fn uppercase_chars(): UppercaseChars<region self> {
+        UppercaseChars(self.char_indices(), '\0'.to_uppercase(), false)
+    }
     pub fn bytes(): Bytes<region self> { Bytes(read self.bytes, 0usize) }
 }
 

@@ -19,3 +19,4 @@ pub module outcome
 pub module panic
 pub module slice
 pub module text
+module unicode_data

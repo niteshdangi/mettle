@@ -769,15 +769,17 @@ implementations are implemented and verified on macOS arm64
 resolution precedence. Composite Debug implementations and the
 generic mutable-formatter loan correction are already present, with nested
 collection coverage described below; the library suites passed on macOS arm64
-at `749854f`. Unicode `char.is_whitespace` and Unicode-aware `Text.trim*` are
-implemented with compact scalar ranges and verified on macOS arm64 by
-`tests/library/unicode_whitespace.mt`. Unicode
-alphabetic/numeric properties and full character/text case mapping remain
-unimplemented: the frozen operation inventory supplies signatures, but
-Unicode-16 generated property/case tables and multi-scalar mapping machinery
-are not present in core. No per-codepoint fallback tables or alternate Unicode
-version were introduced. Mounting compiles the whole of `core`, which costs
-seconds in Debug builds.
+at `749854f`. Unicode `char.is_whitespace` and Unicode-aware `Text.trim*` were verified on
+macOS arm64 by `tests/library/unicode_whitespace.mt`. Unicode 16.0.0
+alphabetic, lowercase, uppercase, whitespace and numeric properties, scalar
+case-mapping iterators, and allocation-backed text case conversion are now
+implemented but unverified (not yet built). The compact generated tables and
+their UCD-driven generator live in `library/core/unicode_data.mt` and
+`tools/unicode_tables.py`; text lowercase handles the Unicode final-sigma
+context. Focused fixtures are `tests/library/unicode_properties.mt` and
+`tests/alloc/unicode_case.mt`. Do not treat this implementation as verified
+until those fixtures and applicable library checks pass. Mounting compiles the
+whole of `core`, which costs seconds in Debug builds.
 Also: text literals are usable as `static` initializers and
 byte/raw literals (`b"..."` is `read [u8; N] from static`; `r"..."`, `r#"..."#`,
 `br"..."`); range slicing `read a[i..j]`, `a[i..]`, `a[..j]`, `a[..]`, `a[i..=j]`

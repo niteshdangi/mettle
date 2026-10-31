@@ -279,3 +279,29 @@ pub fn concat(a: read Text, b: read Text): String {
     s.push_str(b)
     s
 }
+
+extend Text {
+    pub fn to_lowercase(): String {
+        var result = new()
+        var chars = self.lowercase_chars()
+        while true {
+            match chars.next() {
+                present(c) => { result.push(c) },
+                none => { break }
+            }
+        }
+        result
+    }
+
+    pub fn to_uppercase(): String {
+        var result = new()
+        var chars = self.uppercase_chars()
+        while true {
+            match chars.next() {
+                present(c) => { result.push(c) },
+                none => { break }
+            }
+        }
+        result
+    }
+}
