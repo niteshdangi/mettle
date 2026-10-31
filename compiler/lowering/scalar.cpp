@@ -12,6 +12,17 @@ ir::Function Builder::run(const mettle::Function &source, std::size_t index) {
               0};
   errorType = module.function(index).error;
   function.genericParameters = module.function(index).genericParameters;
+  for (const auto &attribute : source.item.attributes)
+    if (attribute.name == "inline") {
+      if (attribute.arguments.empty())
+        function.inlineHint = ir::InlineHint::Hint;
+      else {
+        if (attribute.arguments.front().text == "always")
+          function.inlineHint = ir::InlineHint::Always;
+        else if (attribute.arguments.front().text == "never")
+          function.inlineHint = ir::InlineHint::Never;
+      }
+    }
   function.unsafeFunction = source.unsafeFunction;
   function.abi = source.abi;
   function.variadic = source.variadic;
@@ -176,6 +187,7 @@ void Builder::terminate(Terminator exit) {
 }
 ir::Value Builder::emit(Instruction instruction, Type type, ir::Access access) {
   instruction.unsafeAllowed |= unsafeDepth != 0;
+  instruction.scope = scopes.back();
   instruction.result = {function.values++, type, access};
   auto result = instruction.result;
   function.blocks[current].instructions.push_back(std::move(instruction));

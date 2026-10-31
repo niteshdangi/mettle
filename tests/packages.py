@@ -776,6 +776,12 @@ def debug_info():
     source.write_text(
         "macro twice { ($x:expr) => { $x * 2 }; }\n"
         "type Pair<T> { first: T; second: T }\n"
+        "interface DebugReadable { fn read_value(): i32; }\n"
+        "type DebugValue { value: i32 }\n"
+        "extend DebugValue implements DebugReadable {\n"
+        "    fn read_value(): i32 { self.value }\n"
+        "}\n"
+        "type DebugOwner { value: i32 }\n"
         "@layout(C,u8)\n"
         "copy enum Choice { Empty = 7; Value(i64) = 9 }\n"
         "fn add_up(base: i32): i32 {\n"
@@ -789,26 +795,52 @@ def debug_info():
         "    let resumed = await debug_inner()\n"
         "    saved + resumed\n"
         "}\n"
+        "fn scope_probe(): i32 {\n"
+        "    let shadowed: i32 = 1\n"
+        "    let inner: i32 = {\n"
+        "        let shadowed: i32 = 2\n"
+        "        shadowed\n"
+        "    }\n"
+        "    inner + shadowed\n"
+        "}\n"
+        "fn move_probe(): i32 {\n"
+        "    let original = DebugOwner(3)\n"
+        "    let moved = take original\n"
+        "    moved.value\n"
+        "}\n"
+        "@inline(always)\n"
+        "fn inline_increment(value: i32): i32 { value + 1 }\n"
+        "@inline(never)\n"
+        "fn inline_boundary(value: i32): i32 { inline_increment(value) }\n"
         "fn main(): i32 {\n"
         "    let pair: Pair<i64> = Pair<i64>(20i64, 22i64)\n"
         "    let data: [i32; 1] = [42; 1]\n"
         "    let data_view: read [i32] = read data\n"
         "    let seed: i32 = 7\n"
         "    let closure = fn(): i32 { seed }\n"
+        "    let concrete = DebugValue(1)\n"
+        "    let erased: read any DebugReadable = read concrete\n"
+        "    let inline_result = inline_boundary(core.hint.black_box(40))\n"
         "    let pending = debug_coroutine()\n"
         "    let choice = Choice.Value(42i64)\n"
         "    match choice {\n"
         "        Choice.Empty => 1,\n"
         "        Choice.Value(_) => add_up(20) - 41 + closure() - 7 + "
-        "first(data_view) - 42\n"
+        "first(data_view) - 42 + scope_probe() - 3 + move_probe() - 3 + "
+        "inline_result - 41 + erased.read_value() - 1\n"
         "    }\n"
         "}\n")
     plain = [evidence / "plain1.o", evidence / "plain2.o"]
     debug = [evidence / "debug1.o", evidence / "debug2.o"]
+    debug_ir = evidence / "debug.ll"
+    release = evidence / "debug-release.o"
     for output in plain:
         invoke(["build", source, "-o", output, "--emit", "object"])
     for output in debug:
         invoke(["build", source, "-o", output, "--emit", "object", "-g"])
+    invoke(["build", source, "-o", debug_ir, "--emit", "llvm", "-g"])
+    invoke(["build", source, "-o", release, "--emit", "object", "-g",
+            "--profile", "release"])
     assert plain[0].read_bytes() == plain[1].read_bytes()
     assert debug[0].read_bytes() == debug[1].read_bytes()
     assert plain[0].read_bytes() != debug[0].read_bytes()
@@ -825,10 +857,18 @@ def debug_info():
     assert re.search(r'DW_TAG_member(?:(?!DW_TAG_).)*"seed"',
                      info, re.DOTALL), info
     assert '"read [i32]"' in info, info
+    assert '"read any DebugReadable"' in info
     assert re.search(r'DW_TAG_member(?:(?!DW_TAG_).)*"data_ptr"',
                      info, re.DOTALL), info
     assert re.search(r'DW_TAG_member(?:(?!DW_TAG_).)*"length"',
                      info, re.DOTALL), info
+    assert re.search(r'DW_TAG_member(?:(?!DW_TAG_).)*"witness"',
+                     info, re.DOTALL), info
+    assert re.search(r'DW_TAG_member(?:(?!DW_TAG_).)*"alignment"',
+                     info, re.DOTALL), info
+    assert "MettleWitness<" in info, info
+    assert '"method.0"' in info, info
+    assert "DW_TAG_lexical_block" in info and info.count('"shadowed"') >= 2, info
     assert "DW_TAG_variant_part" in info and '"Value"' in info, info
     assert '"discriminant"' in info, info
     assert '"state"' in info and "await #1 (line " in info, info
@@ -838,6 +878,18 @@ def debug_info():
         assert re.search(r"DW_AT_discr_value\s*\(\s*(?:0x0*)?" +
                          discriminant + r"\b", info), info
     assert "debuggee.mt" in info, info
+    ir_text = debug_ir.read_text()
+    moved = re.search(r'(!\d+) = !DILocalVariable\(name: "original"', ir_text)
+    assert moved, ir_text
+    assert re.search(r'@llvm\.dbg\.value\(metadata ptr undef, metadata ' +
+                     re.escape(moved.group(1)) + r'\b', ir_text), ir_text
+    release_info = subprocess.run(
+        [str(dwarfdump), "--debug-info", str(release)],
+        text=True, capture_output=True, check=True).stdout
+    assert "DW_TAG_inlined_subroutine" in release_info, release_info
+    assert '"inline_increment"' in release_info, release_info
+    assert "DW_AT_call_file" in release_info and \
+        "DW_AT_call_line" in release_info, release_info
     lines = subprocess.run([str(dwarfdump), "--debug-line", str(debug[0])],
                            text=True, capture_output=True, check=True).stdout
     invocation_line = next(i for i, line in enumerate(

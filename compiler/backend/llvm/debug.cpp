@@ -213,40 +213,88 @@ llvm::DISubprogram *DebugInfo::attach(llvm::Function &function,
 }
 
 void DebugInfo::begin(llvm::IRBuilder<> &builder,
-                      llvm::DISubprogram *subprogram, bool statements) {
+                      llvm::DISubprogram *subprogram,
+                      const ir::Function *source, bool statements) {
   current = subprogram;
   following = statements;
+  variables.clear();
+  lexicalScopes.clear();
+  lexicalScopes.push_back(subprogram);
+  if (source && statements) {
+    lexicalScopes.resize(source->scopes.size(), nullptr);
+    lexicalScopes[0] = subprogram;
+    std::vector<Span> spans(source->scopes.size());
+    auto remember = [&](int index, Span span) {
+      if (index < 0)
+        return;
+      auto slot = static_cast<std::size_t>(index);
+      if (slot < spans.size() && !known(spans[slot]) && known(span))
+        spans[slot] = span;
+    };
+    for (const auto &local : source->locals)
+      remember(local.scope, local.span);
+    for (const auto &block : source->blocks)
+      for (const auto &instruction : block.instructions)
+        remember(instruction.scope, instruction.span);
+    for (std::size_t index = 1; index < lexicalScopes.size(); ++index) {
+      auto parent = source->scopes[index].parent;
+      if (parent < 0 || static_cast<std::size_t>(parent) >= index)
+        continue;
+      auto *parentScope = lexicalScopes[static_cast<std::size_t>(parent)];
+      auto span = request.sourceSpan ? request.sourceSpan(spans[index])
+                                     : spans[index];
+      auto *found = known(span) ? info(span.source) : nullptr;
+      if (parentScope && found) {
+        auto [line, column] =
+            position(found->lines,
+                     std::min(span.begin, found->source->text.size()));
+        lexicalScopes[index] =
+            dib.createLexicalBlock(parentScope, found->file, line, column);
+      } else
+        lexicalScopes[index] = parentScope;
+    }
+  }
   last = llvm::DILocation::get(module.getContext(),
                                statements ? subprogram->getLine() : 0, 0,
                                subprogram);
   builder.SetCurrentDebugLocation(last);
 }
 
-llvm::DILocation *DebugInfo::location(Span span) {
+llvm::DILocalScope *DebugInfo::scope(int index) const {
+  if (index >= 0) {
+    auto slot = static_cast<std::size_t>(index);
+    if (slot < lexicalScopes.size() && lexicalScopes[slot])
+      return lexicalScopes[slot];
+  }
+  return current;
+}
+
+llvm::DILocation *DebugInfo::location(Span span, int scopeIndex) {
   if (!current)
     return nullptr;
   if (request.sourceSpan)
     span = request.sourceSpan(span);
+  auto *locationScope = scope(scopeIndex);
   auto *found = known(span) ? info(span.source) : nullptr;
   if (!found)
     return last;
-  auto [line, column] =
-      position(found->lines, std::min(span.begin, found->source->text.size()));
-  llvm::DIScope *scope = current;
-  // Code expanded from another file keeps the function's subprogram.
-  if (found->file != current->getFile()) {
-    auto &cached = scopes[{current, span.source}];
+  auto [line, column] = position(
+      found->lines, std::min(span.begin, found->source->text.size()));
+  // Code expanded from another file retains its lexical ancestry.
+  if (found->file != locationScope->getFile()) {
+    auto &cached = scopes[{locationScope, span.source}];
     if (!cached)
-      cached = dib.createLexicalBlockFile(current, found->file);
-    scope = cached;
+      cached = dib.createLexicalBlockFile(locationScope, found->file);
+    locationScope = cached;
   }
-  last = llvm::DILocation::get(module.getContext(), line, column, scope);
+  last = llvm::DILocation::get(module.getContext(), line, column,
+                               locationScope);
   return last;
 }
 
-void DebugInfo::locate(llvm::IRBuilder<> &builder, Span span) {
+void DebugInfo::locate(llvm::IRBuilder<> &builder, Span span, int scopeIndex) {
   if (following)
-    builder.SetCurrentDebugLocation(location(span));
+    builder.SetCurrentDebugLocation(location(span, scopeIndex));
 }
 
 void DebugInfo::clear(llvm::IRBuilder<> &builder) {
@@ -255,9 +303,9 @@ void DebugInfo::clear(llvm::IRBuilder<> &builder) {
   builder.SetCurrentDebugLocation(llvm::DebugLoc());
 }
 
-void DebugInfo::declare(llvm::IRBuilder<> &builder, const ir::Local &local,
-                        unsigned argument, bool borrowed,
-                        llvm::Value *storage) {
+void DebugInfo::declare(llvm::IRBuilder<> &builder, std::size_t index,
+                        const ir::Local &local, unsigned argument,
+                        bool borrowed, llvm::Value *storage) {
   if (!current)
     return;
   auto *valueType = describe(local.type);
@@ -268,23 +316,69 @@ void DebugInfo::declare(llvm::IRBuilder<> &builder, const ir::Local &local,
   auto span = request.sourceSpan ? request.sourceSpan(local.span) : local.span;
   auto *found = known(span) ? info(span.source) : nullptr;
   auto *file = found ? found->file : current->getFile();
-  auto *place = location(local.span);
+  auto *variableScope = scope(local.scope);
+  auto *place = location(local.span, local.scope);
   auto *variable =
       argument
-          ? dib.createParameterVariable(current, local.name, argument, file,
-                                        place->getLine(), valueType, true)
-          : dib.createAutoVariable(current, local.name, file, place->getLine(),
-                                   valueType, true);
-  // The slot holds the variable's address: frame fields are not allocas, which
-  // a debug declaration needs to survive every code generator.
-  auto &entry = builder.GetInsertBlock()->getParent()->getEntryBlock();
-  llvm::IRBuilder<> allocation(&entry, entry.begin());
-  auto *slot = allocation.CreateAlloca(builder.getPtrTy());
-  builder.CreateStore(storage, slot);
-  const std::uint64_t dereference[] = {llvm::dwarf::DW_OP_deref};
-  static_cast<void>(dib.insertDeclare(slot, variable,
-                                      dib.createExpression(dereference), place,
-                                      builder.GetInsertBlock()));
+          ? dib.createParameterVariable(variableScope, local.name, argument,
+                                        file, place->getLine(), valueType, true)
+          : dib.createAutoVariable(variableScope, local.name, file,
+                                   place->getLine(), valueType, true);
+  variables[index] = variable;
+  if (!dereference) {
+    const std::uint64_t operation[] = {llvm::dwarf::DW_OP_deref};
+    dereference = dib.createExpression(operation);
+  }
+  if (argument || local.storage == StorageDuration::Static) {
+    // The slot holds the variable's address: frame fields are not allocas,
+    // which a debug declaration needs to survive every code generator.
+    auto &entry = builder.GetInsertBlock()->getParent()->getEntryBlock();
+    llvm::IRBuilder<> allocation(&entry, entry.begin());
+    auto *slot = allocation.CreateAlloca(builder.getPtrTy());
+    builder.CreateStore(storage, slot);
+    static_cast<void>(
+        dib.insertDeclare(slot, variable, dereference, place,
+                          builder.GetInsertBlock()));
+  } else
+    static_cast<void>(dib.insertDbgValueIntrinsic(
+        llvm::UndefValue::get(builder.getPtrTy()), variable, dereference,
+        place, builder.GetInsertBlock()));
+}
+
+void DebugInfo::invalidate(llvm::IRBuilder<> &builder, std::size_t index,
+                           Span span, int scopeIndex) {
+  auto found = variables.find(index);
+  if (found == variables.end())
+    return;
+  if (!dereference) {
+    const std::uint64_t operation[] = {llvm::dwarf::DW_OP_deref};
+    dereference = dib.createExpression(operation);
+  }
+  static_cast<void>(dib.insertDbgValueIntrinsic(
+      llvm::UndefValue::get(builder.getPtrTy()), found->second, dereference,
+      location(span, scopeIndex), builder.GetInsertBlock()));
+}
+
+void DebugInfo::restore(llvm::IRBuilder<> &builder, std::size_t index,
+                        Span span, int scopeIndex, llvm::Value *storage) {
+  auto found = variables.find(index);
+  if (found == variables.end())
+    return;
+  if (!dereference) {
+    const std::uint64_t operation[] = {llvm::dwarf::DW_OP_deref};
+    dereference = dib.createExpression(operation);
+  }
+  static_cast<void>(dib.insertDbgValueIntrinsic(
+      storage, found->second, dereference, location(span, scopeIndex),
+      builder.GetInsertBlock()));
+}
+
+void DebugInfo::endScope(llvm::IRBuilder<> &builder,
+                         const ir::Function &source, int scopeIndex,
+                         Span span) {
+  for (std::size_t index = 0; index < source.locals.size(); ++index)
+    if (source.locals[index].scope == scopeIndex)
+      invalidate(builder, index, span, scopeIndex);
 }
 
 llvm::DIType *DebugInfo::describe(Type type) {
@@ -339,6 +433,9 @@ llvm::DIType *DebugInfo::build(Type type) {
     if (metadata == PointerMetadata::None)
       return dib.createPointerType(describe(payload), pointerBits, 0,
                                    std::nullopt, name);
+    if (metadata != PointerMetadata::ElementCount &&
+        metadata != PointerMetadata::Witness)
+      return opaque();
     const auto metadataFields =
         metadata == PointerMetadata::ElementCount ? 2u : 3u;
     if (layout->fields.size() != metadataFields)
@@ -364,11 +461,50 @@ llvm::DIType *DebugInfo::build(Type type) {
         rootFile, 0, lengthLayout->size * 8,
         static_cast<std::uint32_t>(lengthLayout->alignment * 8),
         layout->fields[1] * 8, llvm::DINode::FlagZero, length));
-    if (metadata == PointerMetadata::Witness)
+    if (metadata == PointerMetadata::Witness) {
+      auto erased = payload;
+      while (!store.isErased(erased) && store.isProduct(erased) &&
+             !store.product(erased).fields.empty())
+        erased = store.product(erased).fields.back().type;
+      if (!store.isErased(erased))
+        return opaque();
+      const auto &descriptor = store.erased(erased);
+      auto *pointer = dib.createPointerType(nullptr, pointerBits);
+      auto tableLength = 2 + descriptor.methodSlots.size() +
+                         descriptor.parentInterfaces.size();
+      auto tableBits = static_cast<std::uint64_t>(tableLength) * pointerBits;
+      std::vector<llvm::Metadata *> tableMembers;
+      tableMembers.push_back(dib.createMemberType(
+          unit, "metadata_marker", rootFile, 0, pointerBits, pointerBits, 0,
+          llvm::DINode::FlagZero, pointer));
+      tableMembers.push_back(dib.createMemberType(
+          unit, "alignment", rootFile, 0, lengthLayout->size * 8,
+          static_cast<std::uint32_t>(lengthLayout->alignment * 8), pointerBits,
+          llvm::DINode::FlagZero, length));
+      for (std::size_t method = 0; method < descriptor.methodSlots.size();
+           ++method)
+        tableMembers.push_back(dib.createMemberType(
+            unit, "method." + std::to_string(method), rootFile, 0, pointerBits,
+            pointerBits, (method + 2) * pointerBits,
+            llvm::DINode::FlagZero, pointer));
+      for (std::size_t parent = 0;
+           parent < descriptor.parentInterfaces.size(); ++parent)
+        tableMembers.push_back(dib.createMemberType(
+            unit,
+            "parent." +
+                displayPath(store.name(descriptor.parentInterfaces[parent])),
+            rootFile, 0, pointerBits, pointerBits,
+            (descriptor.methodSlots.size() + parent + 2) * pointerBits,
+            llvm::DINode::FlagZero, pointer));
+      auto *table = dib.createStructType(
+          unit, "MettleWitness<" + displayPath(store.name(erased)) + ">",
+          rootFile, 0, tableBits, pointerBits, llvm::DINode::FlagZero, nullptr,
+          dib.getOrCreateArray(tableMembers));
       members.push_back(dib.createMemberType(
           unit, "witness", rootFile, 0, pointerBits, pointerBits,
           layout->fields[2] * 8, llvm::DINode::FlagZero,
-          dib.createPointerType(nullptr, pointerBits)));
+          dib.createPointerType(table, pointerBits)));
+    }
     return dib.createStructType(unit, name, rootFile, 0, bits, alignment,
                                 llvm::DINode::FlagZero, nullptr,
                                 dib.getOrCreateArray(members));

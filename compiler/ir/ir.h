@@ -11,6 +11,7 @@
 
 namespace mettle::ir {
 enum class Access { Owned, Read, Mut };
+enum class InlineHint { Default, Hint, Always, Never };
 struct Value {
   int id = -1;
   Type type = Type::Never;
@@ -103,6 +104,8 @@ struct Instruction {
   // Semantic subjects retain their regions; second members name runtime types.
   std::vector<std::pair<Type, Type>> unpinProofs{};
   std::optional<Assembly> assembly{};
+  // Source lexical scope active when this instruction was lowered.
+  int scope = 0;
 };
 // `Suspend` ends a coroutine poll; the next poll resumes at `first`. Analyses
 // treat it as a jump because the frame, its places and its loans persist.
@@ -169,6 +172,8 @@ struct Function {
   bool coroutine = false;
   // Declaration span of the source function; empty for synthesized ones.
   Span span{};
+  // Optimization policy only; never changes source-level execution.
+  InlineHint inlineHint = InlineHint::Default;
 };
 struct Program {
   struct Static {
