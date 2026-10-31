@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <functional>
 #include <map>
+#include <set>
 #include <stdexcept>
 
 namespace mettle {
@@ -398,6 +399,7 @@ std::optional<CheckedModule> Checker::run() {
         if (changed)
           checked.types->setOpaqueBounds(opaque, std::move(bounds));
       };
+      std::set<Type> resolvedAsyncDefaults;
       for (std::size_t i = 0; i < module.functions.size(); ++i) {
         const auto &function = module.functions[i];
         if (!function.asynchronous || !function.asyncOutput.empty() ||
@@ -441,7 +443,88 @@ std::optional<CheckedModule> Checker::run() {
             bound.interfaceType = updated;
           }
         updateOpaqueOutput(family->defaultValue, output);
+        const auto familyOrdinal = static_cast<std::size_t>(
+            family - definition.associated.begin());
+        for (auto &implementation : checked.interfaceData->implementations) {
+          if (!checked.types->isErased(implementation.interfaceType))
+            continue;
+          const auto descriptor =
+              checked.types->erased(implementation.interfaceType);
+          if (descriptor.declaration != interface->second)
+            continue;
+          auto provided = implementation.associated.find(familyOrdinal);
+          if (provided != implementation.associated.end() &&
+              provided->second.fromDefault)
+            updateOpaqueOutput(provided->second.value, output);
+        }
+        resolvedAsyncDefaults.insert(family->defaultValue);
       }
+
+      for (auto &implementation : checked.interfaceData->implementations) {
+        if (!checked.types->isErased(implementation.interfaceType))
+          continue;
+        const auto descriptor =
+            checked.types->erased(implementation.interfaceType);
+        const auto &definition =
+            checked.interfaceData->definitions[descriptor.declaration];
+        std::vector<TypeBinding> substitutions{
+            {definition.self, implementation.target}};
+        for (std::size_t p = 0;
+             p < descriptor.arguments.size() &&
+             p < definition.parameters.size();
+             ++p)
+          substitutions.push_back(
+              {definition.parameters[p], descriptor.arguments[p]});
+        for (auto &[ordinal, value] : implementation.associated) {
+          const auto &associated = definition.associated[ordinal];
+          if (value.fromDefault && associated.asyncFutureOutputInferred &&
+              resolvedAsyncDefaults.contains(associated.defaultValue))
+            value.value =
+                checked.types->substitute(associated.defaultValue,
+                                          substitutions);
+        }
+      }
+
+      auto *savedEnvironment = genericEnvironment;
+      for (std::size_t i = 0; i < module.interfaces.size(); ++i) {
+        const auto &syntax = module.interfaces[i];
+        auto &definition = checked.interfaceData->definitions[i];
+        auto &environment = interfaceGenerics.at(&syntax);
+        genericEnvironment = &environment;
+        pushRegionParameters(syntax.genericParameters, syntax.span);
+        assumeRegionConstraints(syntax.constraints, syntax.span);
+        for (std::size_t j = 0; j < syntax.associated.size(); ++j) {
+          const auto &item = syntax.associated[j];
+          auto &associated = definition.associated[j];
+          if (!item.asyncFutureOutputInferred)
+            continue;
+          if (!resolvedAsyncDefaults.contains(associated.defaultValue))
+            continue;
+
+          auto family = makeGenericEnvironment(
+              item.genericParameters, item.constraints, genericEnvironment);
+          auto *outer = genericEnvironment;
+          genericEnvironment = &family;
+          pushRegionParameters(item.genericParameters, item.span);
+          assumeRegionConstraints(item.constraints, item.span);
+          if (checked.types->isSized(associated.parameter) &&
+              !checked.types->isSized(associated.defaultValue))
+            error("type", item.span,
+                  "associated default type does not satisfy Sized");
+          if (checked.types->isCopy(associated.parameter) &&
+              !checked.types->isCopy(associated.defaultValue))
+            error("type", item.span,
+                  "associated default type does not satisfy Copy");
+          if (checked.types->isUnpin(associated.parameter) &&
+              !unpinObligation(associated.defaultValue, item.span))
+            error("type", item.span,
+                  "associated default type does not satisfy Unpin");
+          popRegionParameters();
+          genericEnvironment = outer;
+        }
+        popRegionParameters();
+      }
+      genericEnvironment = savedEnvironment;
     }
   }
   for (auto [variable, span] : integerOrBoolean) {

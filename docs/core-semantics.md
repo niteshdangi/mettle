@@ -296,8 +296,9 @@ without an explicit ownership-producing operation.
 
 ### 8.1. Optional result annotations
 
-Function definitions use `: Type` for an explicit result, or omit the annotation
-to infer the result from the body. `->` is no longer a result delimiter.
+Synchronous function definitions use `: Type` for an explicit result, or omit
+the annotation to infer the result from the body. Async named functions follow
+the async-specific omission rule below. `->` is no longer a result delimiter.
 Parameter types and access modes retain their existing declaration rules.
 
 - An explicit result supplies the expected type; every ordinary exit must fit
@@ -331,6 +332,13 @@ Parameter types and access modes retain their existing declaration rules.
   `fn parse() throws Error { ... }` may infer its success type, but result
   inference cannot silently introduce, erase or convert an error effect.
   Closure contextual inference remains separately permitted.
+
+An async named function outside an interface default body has `Unit` as its
+success output when its result annotation is omitted. A bodyful async interface
+method may omit the result annotation and infer its success output from the
+coroutine body. A bodyless async interface method still requires an explicit
+result type. Async closure result inference remains governed by the closure
+rules.
 
 `Unit` is the predeclared, Copy, zero-sized unit type; `()` is its only value.
 It is not a keyword, a newly named product, `none`, a failure, or `Never`.

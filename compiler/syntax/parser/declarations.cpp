@@ -130,7 +130,7 @@ Module::Product Parser::product() {
       }
   return result;
 }
-Function Parser::function(bool allowDeclaration) {
+Function Parser::function(bool allowDeclaration, bool inferAsyncResult) {
   Function result;
   result.unsafeFunction = take("unsafe");
   result.constFunction = take("const");
@@ -256,7 +256,7 @@ Function Parser::function(bool allowDeclaration) {
   }
   result.span.end = result.body->span.end;
   if (asyncFunction)
-    lowerAsync(result);
+    lowerAsync(result, inferAsyncResult);
   return result;
 }
 std::unique_ptr<Node> Parser::block() {

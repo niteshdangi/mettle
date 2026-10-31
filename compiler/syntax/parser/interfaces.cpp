@@ -122,7 +122,7 @@ Module::Interface Parser::interfaceDeclaration() {
       pendingAsync = take("async");
       if (is("mut") || is("take") || is("static"))
         mode = tokens[position++].text;
-      auto method = function(true);
+      auto method = function(true, true);
       if (method.constructor)
         fail("constructors cannot be declared in an interface", "signature");
       method.item.attributes = std::move(metadata);
@@ -140,15 +140,13 @@ Module::Interface Parser::interfaceDeclaration() {
       method.name = result.name + "." + method.name;
       method.item.visibility = std::move(visible);
       if (method.asynchronous) {
-        if (method.body.get() && method.asyncOutput.empty())
-          feature("async interface default methods require an explicit "
-                  "result type");
         Module::Associated future;
         future.name =
             "$async_future_" + method.name.substr(method.name.rfind('.') + 1);
         future.span = method.span;
         future.visibility = method.item.visibility;
         future.asyncFuture = true;
+        future.asyncFutureOutputInferred = method.asyncOutput.empty();
         future.genericParameters = method.genericParameters;
         future.constraints = method.constraints;
 

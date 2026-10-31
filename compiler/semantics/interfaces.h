@@ -38,6 +38,7 @@ struct Associated {
   std::vector<RegionId> regions{};
   std::vector<RegionRequirement> regionRequirements{};
   bool asyncFuture = false;
+  bool asyncFutureOutputInferred = false;
 };
 struct Method {
   std::string name;
@@ -69,6 +70,7 @@ struct AssociatedValue {
   std::vector<RegionId> regions{};
   std::vector<RegionRequirement> regionRequirements{};
   std::vector<Obligation> requirements{};
+  bool fromDefault = false;
 };
 struct Implementation {
   Type target = Type::Unknown, interfaceType = Type::Unknown;

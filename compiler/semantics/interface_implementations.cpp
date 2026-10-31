@@ -245,6 +245,7 @@ void Checker::interfaceImplementations() {
               required.parameters,
               checked.types->substitute(required.defaultValue, substitutions),
               required.regions, required.regionRequirements};
+          implementation.associated[item].fromDefault = true;
           continue;
         }
         if (provided->constant != required.constant)
