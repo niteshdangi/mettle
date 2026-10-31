@@ -248,7 +248,9 @@ does not permit forming an ordinarily aligned reference to an unaligned field.
 Use explicit unaligned access operations instead.
 
 Native bool has valid values false/true; arbitrary foreign bytes require
-validation or a documented ABI conversion. Function ABI passing is distinct from
+validation or a documented ABI conversion. Native `char` crosses the C ABI as
+`uint32_t` (`char32_t`); a foreign value must be a Unicode scalar, so unchecked
+foreign integers need validation. Function ABI passing is distinct from
 memory layout. A matching struct size does not establish call compatibility.
 
 Extern calls require named ABI, symbol resolution, linkage and target features.

@@ -101,7 +101,7 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | L015 | P | `tests/source/run/slice-metadata-reborrowing-and-unsized-tails.mt` | `compiler/types`, `compiler/backend/llvm`; metadata-preserving conversion/owner closure remains incomplete. |
 | L016 | E | `tests/source/run/array-dynamic-zero-length-bound.mt`; `tests/source/run/array-layout-pointer-iteration-drop-closure.mt` | macOS ARM64 evidenced; Linux/Windows not qualified. |
 | L017 | E | `tests/source/run/aliases-and-static-associated-functions.mt` | `compiler/resolution`; close the full alias identity/use matrix. |
-| L018 | P | `tests/source/run/machine-numeric-checked-integer-and-floating-conversions.mt` | `compiler/semantics`; implicit widening, retain and owner upgrade are rejected (`tests/source/fail/no-implicit-*.mt`); the row must state whether expected-type erasure counts as implicit erasure. |
+| L018 | E | `tests/source/fail/no-implicit-numeric-widening.mt`; `tests/source/fail/no-implicit-retain-of-shared-owner.mt`; `tests/source/fail/no-implicit-borrow-to-owner-upgrade.mt` | Erasure requested by an expected type annotation is explicit. macOS ARM64 evidenced; Linux/Windows not qualified. |
 | L019 | E | `tests/source/fail/loop-use-after-move.mt` | `compiler/analysis`; extend move-use coverage across the operation corpus. |
 | L020 | E | `tests/source/fail/alias-does-not-grant-copy.mt` | `compiler/semantics`, `compiler/analysis`; constructor/destructor edge matrix remains. |
 | L021 | E | `tests/source/fail/immutable-exclusive-borrow.mt` | `compiler/analysis`; complete read-loan lifetime/alias closure. |
@@ -175,7 +175,7 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | S029 | E | `tests/library/slice_any_text.mt`; `tests/packages.py::type_id_survives_public_reexport` | `library/core/any.mt`; cross-package identity and erased-owner operation fixtures verified on macOS arm64. |
 | S030 | E | `tests/std/async_executor.mt`; `tests/std/async_scope_borrowed.mt` | `library/core/future.mt`, `library/std/task.mt`; async-scope fixtures pass in `library.std` and under emitted ASan/TSan; independent soundness/race review found no blocking issues. |
 | S031 | E | `tests/source/run/darwin-arm64-cfg-target-facts.mt`; `tests/source/run/machine-target-direct-guarded-vector.aarch64.mt` | macOS ARM64 evidenced; Linux/Windows not qualified. |
-| A001 | P | `tests/backend/machine.py`; `tests/backend/machine_callbacks.c` | `compiler/backend/llvm/abi.cpp`; argument/return/callback/variadic probes pass; the C ABI mapping of `char` is unspecified. |
+| A001 | E | `tests/backend/machine.py` (scalar, bool and `char` as `uint32_t` round trips and callbacks); `tests/backend/machine_callbacks.c` | macOS ARM64 evidenced; Linux/Windows not qualified. |
 | A002 | E | `tests/backend/machine.py` (layout/calling probes); `tests/source/fail/machine-packed-fields-cannot-form-aligned-views.mt` | macOS ARM64 evidenced; Linux/Windows not qualified. |
 | A003 | E | `tests/backend/machine.py` (symbol/link probes); `tests/source/run/machine-static-union-enum-and-nested-relocations.mt` | macOS ARM64 evidenced; Linux/Windows not qualified. |
 | A004 | E | `tests/backend/machine_unwind.cpp`; `tests/backend/machine.py` | macOS ARM64 evidenced; Linux/Windows not qualified. |
@@ -192,7 +192,7 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | T006 | E | `tests/packages.py::debug_info`; `tests/packages.py::debugger_workflow` | `compiler/backend/llvm/debug.cpp`, `tools/debug`; expanded workflow/LLDB checks pass on macOS arm64; Windows CodeView/PDB is excluded and not qualified. |
 | T007 | E | `tests/packages.py::test_reports_pass_fail_ignored_and_isolates_panics`; `tests/packages.py::bench_reports_timing` | `compiler/driver/execute.cpp`; package-wide collection and doctest cases are evidenced; finish the remaining runner contract. |
 
-Inventory totals: **82 evidenced, 24 partial, 1 missing (A009, deferred to
+Inventory totals: **84 evidenced, 22 partial, 1 missing (A009, deferred to
 I17)**. Remaining partial rows are I13
 operation-closure obligations. Full operation closure is a separate, still
 open obligation: `docs/baseline/audit-summary.json` reports 106,125 canonical

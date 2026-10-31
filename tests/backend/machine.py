@@ -1071,6 +1071,9 @@ fn main() {
 """,
 "darwin-arm64-c-scalar-bool-callback-and-float-promotion": """
 unsafe extern "C" fn invert(value:bool):bool { !value }
+unsafe extern "C" fn next_char(value:char):char {
+    if value == '\\u{1f600}' { '\\u{1f601}' } else { 'x' }
+}
 unsafe extern "C" fn inspect_float(count:i32,args: ...):i32 {
     let value = args.arg<f64>()
     if count == 1 && value == 42.0f64 { 42 } else { -1 }
@@ -1081,8 +1084,18 @@ extern "C" {
         callback:unsafe extern "C" fn(bool):bool,value:bool):bool;
     unsafe fn mettle_c_darwin_variadic_float_definition(
         callback:unsafe extern "C" fn(i32,...):i32):i32;
+    unsafe fn mettle_c_darwin_char_next(value:char):char;
+    unsafe fn mettle_c_darwin_char_callback(
+        callback:unsafe extern "C" fn(char):char,value:char):char;
 }
 fn main() {
+    if unsafe { mettle_c_darwin_char_next('\\u{1f600}') } != '\\u{1f601}' {
+        return 2
+    }
+    let through = unsafe {
+        mettle_c_darwin_char_callback(next_char,'\\u{1f600}')
+    }
+    if through != '\\u{10ffff}' { return 3 }
     let roundtrip = unsafe { mettle_c_darwin_bool_roundtrip(true) }
     let callback = unsafe { mettle_c_darwin_bool_callback(invert,true) }
     let promoted = unsafe {

@@ -288,6 +288,12 @@ _Bool mettle_c_darwin_bool_roundtrip(_Bool value) { return value; }
 _Bool mettle_c_darwin_bool_callback(_Bool (*callback)(_Bool), _Bool value) {
   return callback(value);
 }
+// Mettle `char` is a Unicode scalar passed as uint32_t (char32_t).
+uint32_t mettle_c_darwin_char_next(uint32_t value) { return value + 1; }
+uint32_t mettle_c_darwin_char_callback(uint32_t (*callback)(uint32_t),
+                                       uint32_t value) {
+  return callback(value) == 0x1F601u ? 0x10FFFFu : 0;
+}
 int32_t mettle_c_darwin_variadic_float_definition(
     int32_t (*callback)(int32_t, ...)) {
   return callback(1, (float)42.0f);
