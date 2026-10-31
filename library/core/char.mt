@@ -9,7 +9,235 @@ pub fn from_u32(value: u32): char? {
     present(unsafe { core.mem.transmute<char>(value) })
 }
 
+pub fn from_digit(value: u32, radix: u32): char? {
+    if radix < 2u32 || radix > 36u32 || value >= radix { return none }
+    let scalar = if value < 10u32 {
+        0x30u32 + value
+    } else {
+        0x61u32 + value - 10u32
+    }
+    from_u32(scalar)
+}
+
+pub type CharUtf16 { first: u16; second: u16; length: usize; position: usize }
+extend CharUtf16 implements Iterator {
+    type Item = u16
+    mut fn next(): u16? {
+        if self.position >= self.length { return none }
+        let value = if self.position == 0usize { self.first } else { self.second }
+        self.position += 1usize
+        present(value)
+    }
+}
+
+pub type Escape { values: [char; 10]; length: usize; position: usize }
+extend Escape implements Iterator {
+    type Item = char
+    mut fn next(): char? {
+        if self.position >= self.length { return none }
+        let value = self.values[self.position]
+        self.position += 1usize
+        present(value)
+    }
+}
+
+fn hex_digit(value: u32): char {
+    let scalar = if value < 10u32 { 0x30u32 + value } else { 0x61u32 + value - 10u32 }
+    match from_u32(scalar) { present(c) => c, none => '0' }
+}
+
+fn unicode_escape(value: u32): Escape {
+    var values = ['\0'; 10]
+    var length = 0usize
+    values[length] = '\\'
+    length += 1usize
+    values[length] = 'u'
+    length += 1usize
+    values[length] = '{'
+    length += 1usize
+    var digits = [0u32; 6]
+    var digit_count = 0usize
+    var remaining = value
+    while remaining != 0u32 {
+        digits[digit_count] = remaining % 16u32
+        remaining /= 16u32
+        digit_count += 1usize
+    }
+    if digit_count == 0usize {
+        values[length] = '0'
+        length += 1usize
+    }
+    while digit_count != 0usize {
+        digit_count -= 1usize
+        values[length] = hex_digit(digits[digit_count])
+        length += 1usize
+    }
+    values[length] = '}'
+    length += 1usize
+    Escape(values, length, 0usize)
+}
+
+fn short_escape(value: char): Escape? {
+    let scalar = value as u32
+    let escaped = if scalar == 0x00u32 { '0' }
+        else if scalar == 0x09u32 { 't' }
+        else if scalar == 0x0au32 { 'n' }
+        else if scalar == 0x0du32 { 'r' }
+        else if scalar == 0x5cu32 { '\\' }
+        else if scalar == 0x27u32 { '\'' }
+        else { return none }
+    present(Escape(['\\', escaped, '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0'], 2usize, 0usize))
+}
+
 extend char {
+    pub fn is_ascii(): bool { (self as u32) <= 0x7fu32 }
+
+    pub fn is_ascii_alphabetic(): bool {
+        let value = self as u32
+        value >= 0x41u32 && value <= 0x5au32 ||
+            value >= 0x61u32 && value <= 0x7au32
+    }
+
+    pub fn is_ascii_alphanumeric(): bool {
+        self.is_ascii_alphabetic() || self.is_ascii_digit()
+    }
+
+    pub fn is_ascii_control(): bool {
+        let value = self as u32
+        value <= 0x1fu32 || value == 0x7fu32
+    }
+
+    pub fn is_ascii_digit(): bool {
+        let value = self as u32
+        value >= 0x30u32 && value <= 0x39u32
+    }
+
+    pub fn is_ascii_graphic(): bool {
+        let value = self as u32
+        value >= 0x21u32 && value <= 0x7eu32
+    }
+
+    pub fn is_ascii_hexdigit(): bool {
+        let value = self as u32
+        value >= 0x30u32 && value <= 0x39u32 ||
+            value >= 0x41u32 && value <= 0x46u32 ||
+            value >= 0x61u32 && value <= 0x66u32
+    }
+
+    pub fn is_ascii_lowercase(): bool {
+        let value = self as u32
+        value >= 0x61u32 && value <= 0x7au32
+    }
+
+    pub fn is_ascii_punctuation(): bool {
+        self.is_ascii_graphic() && !self.is_ascii_alphanumeric()
+    }
+
+    pub fn is_ascii_uppercase(): bool {
+        let value = self as u32
+        value >= 0x41u32 && value <= 0x5au32
+    }
+
+    pub fn is_control(): bool {
+        let value = self as u32
+        value <= 0x1fu32 || value >= 0x7fu32 && value <= 0x9fu32
+    }
+
+    pub fn is_digit(radix: u32): bool {
+        match self.to_digit(radix) { present(_) => true, none => false }
+    }
+
+    pub fn to_digit(radix: u32): u32? {
+        if radix < 2u32 || radix > 36u32 { return none }
+        let value = self as u32
+        let digit = if value >= 0x30u32 && value <= 0x39u32 {
+            value - 0x30u32
+        } else if value >= 0x61u32 && value <= 0x7au32 {
+            value - 0x61u32 + 10u32
+        } else if value >= 0x41u32 && value <= 0x5au32 {
+            value - 0x41u32 + 10u32
+        } else {
+            return none
+        }
+        if digit < radix { present(digit) } else { none }
+    }
+
+    pub fn len_utf8(): usize {
+        let value = self as u32
+        if value < 0x80u32 { 1usize }
+        else if value < 0x800u32 { 2usize }
+        else if value < 0x10000u32 { 3usize }
+        else { 4usize }
+    }
+
+    pub fn len_utf16(): usize {
+        if (self as u32) < 0x10000u32 { 1usize } else { 2usize }
+    }
+
+    pub fn encode_utf16(): CharUtf16 {
+        let value = self as u32
+        if value < 0x10000u32 {
+            CharUtf16(value as u16, 0u16, 1usize, 0usize)
+        } else {
+            let scalar = value - 0x10000u32
+            CharUtf16(
+                (0xd800u32 + (scalar >> 10u32)) as u16,
+                (0xdc00u32 + (scalar & 0x3ffu32)) as u16,
+                2usize,
+                0usize
+            )
+        }
+    }
+
+    pub fn to_ascii_lowercase(): char {
+        let value = self as u32
+        if value >= 0x41u32 && value <= 0x5au32 {
+            match from_u32(value + 0x20u32) { present(c) => c, none => self }
+        } else {
+            self
+        }
+    }
+
+    pub fn to_ascii_uppercase(): char {
+        let value = self as u32
+        if value >= 0x61u32 && value <= 0x7au32 {
+            match from_u32(value - 0x20u32) { present(c) => c, none => self }
+        } else {
+            self
+        }
+    }
+
+    pub mut fn make_ascii_lowercase(): Unit {
+        let value = self.to_ascii_lowercase()
+        unsafe { core.ptr.write(core.ptr.from_mut(self), value) }
+    }
+
+    pub mut fn make_ascii_uppercase(): Unit {
+        let value = self.to_ascii_uppercase()
+        unsafe { core.ptr.write(core.ptr.from_mut(self), value) }
+    }
+
+    pub fn eq_ignore_ascii_case(other: char): bool {
+        self.to_ascii_lowercase() == other.to_ascii_lowercase()
+    }
+
+    pub fn escape_unicode(): Escape { unicode_escape(self as u32) }
+
+    pub fn escape_default(): Escape {
+        match short_escape(self) {
+            present(escaped) => escaped,
+            none => {
+                if self.is_control() {
+                    unicode_escape(self as u32)
+                } else {
+                    Escape([self, '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0'], 1usize, 0usize)
+                }
+            }
+        }
+    }
+
+    pub fn escape_debug(): Escape { self.escape_default() }
+
     pub fn is_whitespace(): bool {
         let value = self as u32
         if value <= 0x7fu32 {

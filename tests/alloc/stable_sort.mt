@@ -49,6 +49,17 @@ fn main(): i32 {
     slice.sort_by(fn(a: read Pair, b: read Pair): Ordering { b.key.cmp(read a.key) })
     if values[0usize].serial != 0 || values[1usize].serial != 2 ||
         values[2usize].serial != 1 || values[3usize].serial != 3 { return 6 }
+    var calls = 0
+    let call_count = core.ptr.from_mut(calls)
+    let slice = mut values[0usize..4usize]
+    slice.sort_by_cached_key(fn(value: read Pair): i32 {
+        unsafe { *call_count += 1 }
+        value.key
+    })
+    if calls != 4 || values[0usize].serial != 1 || values[1usize].serial != 3 ||
+        values[2usize].serial != 0 || values[3usize].serial != 2 {
+        return 9
+    }
     var empty = vec.new<Pair>()
     empty.sort_by_key(fn(value: read Pair): i32 { value.key })
     empty.push(Pair(7, 9))
