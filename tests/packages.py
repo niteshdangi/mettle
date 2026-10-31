@@ -486,6 +486,37 @@ def procedural_macro_failure():
               contains="unsupported macro API major version 2")
 
 
+def multi_package_extension():
+    app = packages("multi-package-extension/app")
+    text, built = explained(app)
+    assert "rerun (no reproducible record)" in text, text
+    assert ("procedural macro 'make_fn!': rerun (no reproducible record)"
+            in text), text
+    assert exit_code(built) == 0
+
+    text, built = explained(app)
+    assert "reused (declared reproducible; inputs unchanged)" in text, text
+    assert ("procedural macro 'make_fn!': reused (declared reproducible"
+            in text), text
+    assert "cache hit" in last_cache_event(text), text
+    assert exit_code(built) == 0
+
+    main = app / "src/main.mt"
+    edit(main, "answer() - 41", "answer() - 40")
+    text, built = explained(app)
+    assert ("procedural macro 'make_fn!': reused (declared reproducible"
+            in text), text
+    assert "cache miss" in last_cache_event(text), text
+    assert exit_code(built) == 1
+
+    edit(main, "answer() - 40", "answer() - 41")
+    edit(packages("multi-package-extension/mathlib/src/lib.mt"),
+         "{ 7 }", "{ 8 }")
+    text, built = explained(app)
+    assert "cache miss" in last_cache_event(text), text
+    assert exit_code(built) == 1
+
+
 def package_options_need_package():
     source = evidence / "plain.mt"
     source.write_text("fn main(): i32 { 0 }\n")
@@ -1279,6 +1310,7 @@ CASES = [path_dependency, missing_lock_locked, lock_corruption,
          cache_corruption_and_clean,
          build_script, build_script_untracked_inputs,
          procedural_macro, procedural_macro_failure,
+         multi_package_extension,
          run_forwards_args_and_exit_status,
          test_reports_pass_fail_ignored_and_isolates_panics,
          test_filter_exact, bench_reports_timing, fmt_normalizes_layout_only,

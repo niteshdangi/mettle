@@ -164,17 +164,22 @@ output's file name (the linker embeds it as the code-signature identifier),
 enabled features, mounts, link libraries, and every source the load step read.
 User sources count by token stream (comments, spacing and blank lines do not
 matter; sound while no source position reaches the output, so debug info or
-panic locations must add positions to the key), library sources by content, and probed-but-absent paths as absent. A
+panic locations must add positions to the key), library sources by content,
+and probed-but-absent paths as absent. A
 hit copies the stored artifact and skips checking, lowering, code generation and
 linking; any miss does the full build, which is the same code path as a clean
 build, so incremental and clean results agree byte for byte (the driver links
 inside a private directory with fixed object and output names, so no
 temporary name reaches the executable). CTest builds use a cache in the build
-tree, never the user's. Reuse is whole-program: an edit
+tree, never the user's. Reuse remains whole-program: an edit
 to any loaded source (including a dependency package or generated file)
 recompiles; unloaded files, comments and layout do not. Finer
-parse/name/type/ownership/instantiation query reuse inside the compiler remains
-open. Storage design: performance.md section 5.1.1. Flags: `--cache-dir DIR`,
+per-module parse and per-dependency-package analysis/object reuse remain open.
+Builds hold an RAII lease for the active whole-program key while compiling,
+materializing or publishing; age/byte pruning preserves leased entries, and
+`clean` refuses to remove a store with live leases. Lease behavior is
+implemented, unverified (not yet built). Storage design:
+performance.md section 5.1.1. Flags: `--cache-dir DIR`,
 `--no-cache`, `--cache-limit-kib N`, `--cache-max-age-days N`, `--explain`;
 `METTLE_CACHE_DIR`; `mettle clean [PACKAGE] [--dry-run]`.
 

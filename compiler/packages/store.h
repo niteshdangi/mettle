@@ -15,6 +15,8 @@ namespace mettle::packages {
 //   VERSION            marks a directory as a store (required before `clear`)
 //   entries/AA/KEY     one small file per key; its mtime is the last use
 //   blobs/AA/SHA       immutable, read-only artifact bytes
+//   leases/KEY/TOKEN   live-build markers; excluded from cache accounting
+//   store.lock         cross-process lease/prune coordination
 //   tmp/               in-flight writes, published by atomic rename
 // Sizes are logical file sizes; allocated bytes are never smaller.
 struct StoreLimits {
@@ -31,9 +33,28 @@ struct StoreUsage {
 
 class Store {
 public:
+  class Lease {
+  public:
+    Lease() = default;
+    Lease(const Lease &) = delete;
+    Lease &operator=(const Lease &) = delete;
+    Lease(Lease &&other) noexcept;
+    Lease &operator=(Lease &&other) noexcept;
+    ~Lease();
+    explicit operator bool() const { return !marker.empty(); }
+
+  private:
+    friend class Store;
+    explicit Lease(std::filesystem::path marker);
+    void release() noexcept;
+    std::filesystem::path marker;
+  };
+
   Store(std::filesystem::path root, StoreLimits limits);
   const std::filesystem::path &root() const { return directory; }
   const StoreLimits &limits() const { return bounds; }
+  // Protects this key from age/size pruning until the lease is destroyed.
+  Lease acquireLease(const std::string &key);
 
   enum class Lookup {
     Miss,
@@ -72,6 +93,8 @@ private:
   std::filesystem::path scratch() const;
   bool prepare();
   bool publish(const std::filesystem::path &path, const std::string &content);
+  bool publishLocked(const std::filesystem::path &path,
+                     const std::string &content);
   std::vector<Record> records() const;
   std::filesystem::path directory;
   StoreLimits bounds;

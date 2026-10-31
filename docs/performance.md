@@ -177,11 +177,12 @@ The user build cache is built to retain less than Cargo's `target/` directory:
   package's `target/mettle` build-script outputs.
 
 Accounting uses logical file sizes; allocated bytes are at least as large, so
-the gate comparison must use allocated bytes per the definition above. Not yet
-done: live-build leases (concurrent builds rely on atomic rename and treat a
-vanished blob as a miss), per-query/incremental data, and any measured claim:
-no retained-byte or compile-time advantage over Cargo is asserted until the
-qualified-runner measurement exists.
+the gate comparison must use allocated bytes per the definition above.
+Live-build leases are implemented, unverified (not yet built): the driver holds
+a lease for its active build key, pruning preserves leased entries, and `clean`
+refuses a store with live leases. Per-module/per-package incremental data and
+any measured claim remain open; no retained-byte or compile-time advantage over
+Cargo is asserted until the qualified-runner measurement exists.
 
 ### 5.2. Compiler-work regression guard
 
