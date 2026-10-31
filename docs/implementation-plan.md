@@ -809,9 +809,11 @@ by `tests/alloc/map_entry.mt` on macOS; `Entry.and_modify` passes
 declared source region are call-local in the indirect-call summary, so they
 cannot be reported as retained
 (`tests/source/run/generic-callable-bound-mut-view-is-call-local.mt`).
-Region-declared callable bounds are not yet region-checked at call sites
-(open soundness gap). `tests/alloc/map_entry_blocks_map_use.mt` rejects map
-use while an entry holds its loan.
+Region-declared callable bounds now instantiate their region contracts for
+indirect calls, so argument regions and result sources remain tied to the
+declared callable contract. Implemented, unverified (not yet built).
+`tests/alloc/map_entry_blocks_map_use.mt` rejects map use while an entry holds
+its loan.
 `SortedMap`/`SortedSet` are a node B-tree (minimum degree 6, nodes from the
 map's allocator, parent links, split on the way down and borrow/merge on
 removal), verified on macOS by `tests/alloc/btree_stress.mt` and
