@@ -7,6 +7,7 @@
 // negative zero `-0`. `Spec.precision` is not applied to floats yet. Width,
 // fill, alignment, `plus` and `zero` follow the integer rules.
 import super.fmt.{Formatter, Write, Display, Debug, Error}
+import super.cmp.Ordering
 import super.slice
 import super.text.from_utf8_unchecked
 
@@ -318,4 +319,47 @@ extend f32 implements Display {
 }
 extend f32 implements Debug {
     fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error { try fmt_f32(mut f, self, true) }
+}
+
+// Map IEEE bit patterns to integer keys in total-order sequence.
+extend f64 {
+    pub fn total_cmp(other: f64): Ordering {
+        let sign = 0x8000000000000000u64
+        let left = self.to_bits()
+        let right = other.to_bits()
+        let left_key = if left & sign != 0u64 {
+            0xffffffffffffffffu64 - left
+        } else {
+            left | sign
+        }
+        let right_key = if right & sign != 0u64 {
+            0xffffffffffffffffu64 - right
+        } else {
+            right | sign
+        }
+        if left_key < right_key { Ordering.Less }
+        else if left_key > right_key { Ordering.Greater }
+        else { Ordering.Equal }
+    }
+}
+
+extend f32 {
+    pub fn total_cmp(other: f32): Ordering {
+        let sign = 0x80000000u32
+        let left = self.to_bits()
+        let right = other.to_bits()
+        let left_key = if left & sign != 0u32 {
+            0xffffffffu32 - left
+        } else {
+            left | sign
+        }
+        let right_key = if right & sign != 0u32 {
+            0xffffffffu32 - right
+        } else {
+            right | sign
+        }
+        if left_key < right_key { Ordering.Less }
+        else if left_key > right_key { Ordering.Greater }
+        else { Ordering.Equal }
+    }
 }
