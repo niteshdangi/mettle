@@ -1,23 +1,21 @@
 // expect-stdout: hook: main caught\nhook: replacement cleanup\nhook: nested inner\nhook: nested outer\ncontinued\n
 import alloc.arc
 import alloc.arc.Arc
-import core.sync.atomic.AtomicUsize
-import core.sync.atomic.Ordering
 import std.panic.CatchResult
 
 type Counted {
-    drops: Arc<AtomicUsize>
+    drops: Arc<core.sync.atomic.AtomicUsize>
     drop {
-        let _old = self.drops.get().fetch_add(1usize, Ordering.SeqCst)
+        let _old = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
     }
 }
 
 type Replacement {
-    drops: Arc<AtomicUsize>
+    drops: Arc<core.sync.atomic.AtomicUsize>
     value: i32
     panic_on_drop: bool
     drop {
-        let _old = self.drops.get().fetch_add(1usize, Ordering.SeqCst)
+        let _old = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
         if self.panic_on_drop { panic("replacement cleanup") }
     }
 }
@@ -46,8 +44,8 @@ fn main(): i32 {
     }
     std.panic.set_hook(previous)
 
-    let drops = arc.new(AtomicUsize.new(0usize))
-    let caught = std.panic.catch_panic(take fn(): i32 {
+    let drops = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
+    let caught = std.panic.catch_panic(fn(): i32 {
         let _local = Counted(drops.retain())
         panic("main caught")
         7
@@ -62,10 +60,10 @@ fn main(): i32 {
         },
         CatchResult.Returned(_) => { return 5 }
     }
-    if drops.get().load(Ordering.SeqCst) != 1usize { return 6 }
+    if drops.get().load(core.sync.atomic.Ordering.SeqCst) != 1usize { return 6 }
 
     var value = Replacement(drops.retain(), 1, true)
-    let restored = std.panic.catch_panic(take fn(): i32 {
+    let restored = std.panic.catch_panic(fn(): i32 {
         overwrite(mut value)
         0
     })
@@ -78,7 +76,7 @@ fn main(): i32 {
         CatchResult.Returned(_) => { return 12 }
     }
     if value.value != 42 || value.panic_on_drop { return 13 }
-    if drops.get().load(Ordering.SeqCst) != 2usize { return 14 }
+    if drops.get().load(core.sync.atomic.Ordering.SeqCst) != 2usize { return 14 }
 
     let outer = std.panic.catch_panic(take fn(): i32 {
         let inner = std.panic.catch_panic(take fn(): i32 {

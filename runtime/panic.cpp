@@ -125,9 +125,8 @@ extern "C" std::int32_t mettle_rt_catch(void *context, MettleAction body) {
   return 0;
 }
 
-extern "C" std::int32_t mettle_rt_catch_payload(void *context,
-                                                MettleAction body,
-                                                void **payload) {
+extern "C" std::int32_t
+mettle_rt_catch_payload(void *context, MettleAction body, void **payload) {
   if (!payload)
     std::abort();
   *payload = nullptr;
@@ -175,8 +174,7 @@ extern "C" [[noreturn]] void
 mettle_rt_panic_message(const std::uint8_t *message, std::uint64_t length) {
   const auto size = static_cast<std::size_t>(length);
   if (panicking() || invokingPanicHook ||
-      static_cast<std::uint64_t>(size) != length ||
-      (length != 0 && !message))
+      static_cast<std::uint64_t>(size) != length || (length != 0 && !message))
     std::abort();
   std::string payload;
   if (length)

@@ -748,9 +748,10 @@ structural. An iterator held in a local is consumed by `for x in it`. The
 bounded-range behavior was previously verified by `tests/library/range_value.mt`.
 Open-ended range values (`RangeFrom<T>`, `RangeTo<T>`,
 `RangeToInclusive<T>`, and `RangeFull`) and `RangeFrom` iteration are
-implemented, unverified (not yet built) by this lane; the added library and
-source fixtures cover value construction, bounded iteration and end-bounded
-non-iterator behavior. `RangeFrom` stops after yielding the integer type's
+implemented and verified on macOS arm64 (Release) by
+`tests/library/range_value.mt`, `open-ended-range-values` and
+`end-bounded-range-is-not-an-iterator`. In a `for` head, `{` at the head's
+parenthesis depth ends an open range, so `for v in 2.. { ... }` iterates. `RangeFrom` stops after yielding the integer type's
 maximum or Unicode scalar maximum by using checked stepping. The `Step`
 implementations cover primitive integers and Unicode scalar `char`, including
 skipping the surrogate interval.
@@ -768,7 +769,8 @@ resolution precedence. Composite Debug implementations and the
 generic mutable-formatter loan correction are already present, with nested
 collection coverage described below; they have not been reverified by this
 lane. Unicode `char.is_whitespace` and Unicode-aware `Text.trim*` are
-implemented with compact scalar ranges, unverified (not yet built). Unicode
+implemented with compact scalar ranges and verified on macOS arm64 by
+`tests/library/unicode_whitespace.mt`. Unicode
 alphabetic/numeric properties and full character/text case mapping remain
 unimplemented: the frozen operation inventory supplies signatures, but
 Unicode-16 generated property/case tables and multi-scalar mapping machinery
@@ -785,7 +787,7 @@ and `from_raw_parts_mut`, `core.text.from_utf8_unchecked[_mut]` (unsafe; the
 result region is the caller's choice); generic parameters determined by an
 `I: Iterator<Item = T>` bound; closures passed to generic callable parameters and
 explicit generic constructors. `core.char.from_u32` returns an optional scalar
-and is implemented, unverified (not yet built); direct `u32 as char` remains
+and is verified on macOS arm64 (`char_from_u32`, `char-from-u32-is-checked`); direct `u32 as char` remains
 invalid. `f"..."` interpolation and `const` items remain open. There is no
 `core.process.exit`; the hosted `std.process.exit` implementation above remains
 unverified by this lane. These changes do not constitute I07 completion or
@@ -943,11 +945,12 @@ EILSEQ 84 as well as 92. The same Debug-compiler run passed 740 source/profile
 cases and the six cleanup cases. Official evidence (`build/linux-target/
 foundation-evidence.json`) for both configurations is pending a fresh
 `tools/build.py` receipt, which the runner requires.
-S028 status: implemented, unverified (not yet built): `std.panic.catch_panic`
-recovers source-level panics on the current thread with an owned code/message
-payload after cleanup; hook take/reset semantics and abort-on-hook-panic are
-implemented, but the new std/runtime cases and profile behavior still need
-execution evidence. Freestanding/abort execution does not provide recovery.
+S028 status: implemented and verified on macOS arm64 (Release `library.std`):
+`std.panic.catch_panic` recovers source-level panics on the current thread with
+an owned code/message payload after cleanup, including nested catches and
+replacement cleanup (`tests/std/panic_catch.mt`); hook take/reset and
+abort-on-hook-panic are covered by `panic_catch.mt` and `panic_hook_abort.mt`.
+Other profiles and targets remain unqualified. Freestanding/abort execution does not provide recovery.
 Spawned-thread panics continue to be caught and reported by `join()`.
 Remaining I08 gaps: macOS file systems may reject non-UTF-8 names (EILSEQ),
 which the tests check but cannot exercise on-disk there; hosted names avoid
@@ -993,8 +996,9 @@ I10 can progress alongside I08/I09 after I07. The initial I10 surface is
 implemented (see S018-S023) with `library.std`, `runtime.thread` and scalar
 compiler cases; Linux-target qualification remains open. Emitted-program
 `--sanitize address` and `--sanitize thread` support, including runtime variants
-and cache separation, is implemented, unverified (not yet built); probes for an
-ASan heap overflow and TSan data race are added but have not run.
+and cache separation, is implemented and verified on macOS arm64 by
+`probe.sanitizers`, which requires an ASan heap-buffer-overflow report and a
+TSan data-race report from emitted programs.
 `--sanitize address,thread` is rejected. UBSan for emitted Mettle IR is not
 implemented; `--sanitize undefined` produces an explicit unsupported diagnostic
 because Mettle already checks integer overflow and this backend emits no other

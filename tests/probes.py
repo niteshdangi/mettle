@@ -122,7 +122,7 @@ def run_suite(mode, executable, directory):
             "import alloc.boxed\n"
             "fn main(): i32 {\n"
             "    let raw = alloc.boxed.new([42i32; 1]).into_raw()\n"
-            "    let value = unsafe { *raw.0.add(1usize) }\n"
+            "    let value = unsafe { *raw.0.cast<i32>().add(1usize) }\n"
             "    value\n"
             "}\n")
         address_binary = directory / "asan-heap-overflow"

@@ -506,6 +506,8 @@ macro_invocation = path, "!", DELIMITED_TOKEN_TREE ;
 ```
 
 The range operator cannot chain; an inclusive range requires an upper bound.
+In a `for` head, a `{` at the head's parenthesis depth starts the loop body, so
+it ends an open range: `for v in 2.. { ... }`.
 Generic application follows a name or dotted member chain.
 Integer field selectors are unsuffixed decimal tuple positions, not arbitrary
 integer expressions; ordinary named members still require identifiers.

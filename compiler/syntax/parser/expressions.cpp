@@ -203,7 +203,9 @@ std::unique_ptr<Node> Parser::primary() {
     result = node(Kind::For, token.span);
     result->patterns.push_back(pattern());
     expect("in");
+    loopHeadParens = parens;
     result->children.push_back(expr());
+    loopHeadParens.reset();
     newlines();
     result->children.push_back(block());
   } else if (is("match"))

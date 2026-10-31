@@ -7,7 +7,7 @@ extern "C" {
     unsafe fn mettle_rt_take_panic_hook(): ptr<mut u8>;
     unsafe fn mettle_rt_clear_panic_hook(): Unit;
     unsafe fn mettle_rt_panicking(): i32;
-    unsafe fn mettle_rt_catch_payload(context: ptr<mut u8>, body: extern "C" fn(ptr<mut u8>): Unit, payload: ptr<mut ptr<mut u8>): i32;
+    unsafe fn mettle_rt_catch_payload(context: ptr<mut u8>, body: extern "C" fn(ptr<mut u8>): Unit, payload: ptr<mut ptr<mut u8>>): i32;
     unsafe fn mettle_rt_panic_payload_code(payload: ptr<mut u8>): i32;
     unsafe fn mettle_rt_panic_payload_message(payload: ptr<mut u8>, length: ptr<mut u64>): ptr<read u8>;
     unsafe fn mettle_rt_panic_payload_free(payload: ptr<mut u8>): Unit;
@@ -26,8 +26,8 @@ extend PanicInfo {
     pub fn message(): read Text from self {
         var length = 0u64
         let data = unsafe { mettle_rt_panic_payload_message(self.payload, core.ptr.from_mut(length)) }
-        let bytes = unsafe { core.slice.from_raw_parts(data, length as usize) }
-        unsafe { core.text.from_utf8_unchecked(bytes) }
+        let bytes = unsafe { package.core.slice.from_raw_parts(data, length as usize) }
+        unsafe { package.core.text.from_utf8_unchecked(bytes) }
     }
 }
 
@@ -60,10 +60,10 @@ type CatchContext<T, F> {
     result: core.mem.MaybeUninit<T>
 }
 
-extern "C" fn run_catch<T, F: take fn(): T>(raw: ptr<mut u8>): Unit {
+fn run_catch<T, F: take fn(): T>(raw: ptr<mut u8>): Unit {
     unsafe {
         let context = raw.cast<CatchContext<T, F>>()
-        let operation = core.ptr.read((*context).operation.as_ptr())
+        let operation = core.ptr.`read`((*context).operation.as_ptr())
         (*context).operation = core.mem.MaybeUninit<F>.uninit()
         let value = operation()
         core.ptr.write((*context).result.as_mut_ptr(), value)
@@ -78,15 +78,17 @@ pub fn catch_panic<T, F: take fn(): T>(operation: take F): CatchResult<T> {
         core.mem.MaybeUninit<T>.uninit()
     )
     var payload = core.ptr.null_mut<u8>()
+    let action: fn(ptr<mut u8>): Unit = run_catch<T, F>
+    let body = unsafe { core.mem.transmute<extern "C" fn(ptr<mut u8>): Unit>(action) }
     let code = unsafe {
         mettle_rt_catch_payload(
             core.ptr.from_mut(context).cast<u8>(),
-            run_catch<T, F>,
+            body,
             core.ptr.from_mut(payload)
         )
     }
     if code == 0 {
-        CatchResult.Returned(unsafe { core.ptr.read(context.result.as_ptr()) })
+        CatchResult.Returned(unsafe { core.ptr.`read`(context.result.as_ptr()) })
     } else {
         CatchResult.Panicked(PanicInfo(payload))
     }

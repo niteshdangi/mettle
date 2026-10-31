@@ -263,6 +263,7 @@ std::unique_ptr<Node> Parser::block() {
   auto start = expect("{").span;
   auto savedParens = parens;
   parens = 0;
+  loopHeadParens.reset();
   auto result = node(Kind::Block, start);
   separators();
   while (!is("}") && peek().kind != TokenKind::End) {

@@ -96,7 +96,7 @@ status are tracked in [implementation-plan.md §8.7](implementation-plan.md#87-e
 | Grammar conflict/separator validation | Claim of parser-ready full grammar | I02-I05 check implemented scalar, product, composition and generic syntax; future constructs remain gated by their owning milestones |
 | Scalar lowering | Full scalar operation matrix | I02 executes the selected i32/bool/Unit subset and profile failures; other widths/floats remain I06 |
 | CFG joins, loans, temporary/drop table | Sound ownership compiler | I03-I05 check implemented move/loan/drop transitions and exceptional paths; passing cases are not a full soundness proof |
-| Exceptional replacement and recovery | Safe panic catch around resources | I03 native cleanup probes validate replacement restoration before resumed access; hosted `std.panic.catch_panic` is implemented but remains unverified until built and exercised |
+| Exceptional replacement and recovery | Safe panic catch around resources | I03 native cleanup probes validate replacement restoration before resumed access; hosted `std.panic.catch_panic` is implemented and verified on macOS arm64 (`tests/std/panic_catch.mt`) |
 | Native declarations and full source cfg expansion | Implemented library parity | Typecheck/execute each applicable native contract, including source branches absent from rendered docs |
 | LLVM/compiler/sysroot artifact locks | Reproducible native build | I01 records archive/tool/sysroot identities and same-environment clean rebuilds; cross-machine/release reproducibility remains later work |
 | Linux x86-64 runner | First-target execution evidence | I01-I05 cross-emitted source and cleanup objects link and execute under the actual Linux kernel; Linux-host compiler qualification remains separate |

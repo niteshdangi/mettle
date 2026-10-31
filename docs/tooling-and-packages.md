@@ -7,7 +7,7 @@ These operations are native equivalents, not Cargo-manifest compatibility.
 
 ### Emitted-program sanitizers (I10/I11)
 
-Status: implemented, unverified (not yet built). `mettle build`, `mettle run`
+Status: implemented and verified on macOS arm64 (`probe.sanitizers`). `mettle build`, `mettle run`
 and `mettle test` accept `--sanitize address` or `--sanitize thread` for
 single-file and package inputs. The driver instruments emitted LLVM/object
 code, links the matching instrumented `alloc`, `panic`, `sys` and `thread`
@@ -20,8 +20,8 @@ Although `undefined` is a recognized sanitizer name, it currently produces a
 clear unsupported-feature diagnostic. Mettle defines checked integer overflow
 itself, and this backend does not yet emit UBSan checks for other undefined
 operations; linking the UBSan runtime alone would not instrument emitted code.
-Do not treat this mode as ASan/UBSan/TSan qualification: ASan and TSan probes
-have been added but are not yet built or run.
+Do not treat this mode as UBSan or cross-target qualification; the ASan and
+TSan probes run on macOS arm64 only.
 
 ### 1.1. Implemented subset (I09 T001)
 

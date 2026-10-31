@@ -169,8 +169,8 @@ llvm::Error instrumentModule(llvm::Module &module, bool sanitizeAddress,
         llvm::AddressSanitizerPass(llvm::AddressSanitizerOptions{}));
   if (sanitizeThread) {
     pipeline.addPass(llvm::ModuleThreadSanitizerPass());
-    pipeline.addPass(llvm::createModuleToFunctionPassAdaptor(
-        llvm::ThreadSanitizerPass()));
+    pipeline.addPass(
+        llvm::createModuleToFunctionPassAdaptor(llvm::ThreadSanitizerPass()));
   }
   pipeline.run(module, modules);
   std::string diagnostic;
@@ -243,15 +243,13 @@ llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
       builder.registerOptimizerLastEPCallback(
           [addSanitizers](llvm::ModulePassManager &passes,
                           llvm::OptimizationLevel,
-                          llvm::ThinOrFullLTOPhase) {
-            addSanitizers(passes);
-          });
+                          llvm::ThinOrFullLTOPhase) { addSanitizers(passes); });
       pipeline =
           builder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
       pipeline.run(module, modules);
     } else {
-      if (auto error = instrumentModule(module, sanitizeAddress,
-                                        sanitizeThread))
+      if (auto error =
+              instrumentModule(module, sanitizeAddress, sanitizeThread))
         return error;
     }
     if (llvm::verifyModule(module, &diagnostics))

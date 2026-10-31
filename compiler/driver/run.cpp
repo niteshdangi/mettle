@@ -280,9 +280,8 @@ int run(const Options &requested) {
     std::cerr << "mettle: error[option]: " << requested.sanitizerError << '\n';
     return 2;
   }
-  if (!requested.sanitizers.empty() &&
-      requested.command != "build" && requested.command != "run" &&
-      requested.command != "test") {
+  if (!requested.sanitizers.empty() && requested.command != "build" &&
+      requested.command != "run" && requested.command != "test") {
     std::cerr << "mettle: error[option]: --sanitize is supported only by "
                  "build, run and test\n";
     return 2;

@@ -146,7 +146,7 @@ ASan/UBSan compiler runs are required for new memory/unsafe work and before
 ownership-milestone closure. They instrument project C++ code, not the prebuilt
 LLVM libraries or automatically every emitted Mettle program. The driver now
 has opt-in `--sanitize address|thread` instrumentation for emitted Mettle
-programs; this implementation is unverified until its executable probes pass.
+programs, verified on macOS arm64 by `probe.sanitizers`.
 The emitted-IR backend does not yet provide UBSan instrumentation:
 `--sanitize undefined` is rejected rather than promising checks that are not
 emitted. ThreadSanitizer, race/model checks and target-specific probes are
@@ -188,9 +188,8 @@ that for `tests/std/{threads_basic,thread_scope,
 sync_primitives,mutex_poison,arc_races}.mt`, `mettle build --emit llvm`, the
 `sanitize_thread` attribute rewrite used by `tests/backend/memory.py`, and a
 TSan-compiled `runtime/*.cpp` produced executables that ran clean (no report,
-exit 0). `--sanitize thread` and an intentional-race emitted-program probe are
-now implemented but unverified (not yet built); this is not a repository gate
-or a race-freedom proof until qualification passes.
+exit 0). `--sanitize thread` and an intentional-race emitted-program probe
+(`probe.sanitizers`) pass on macOS arm64; this is not a race-freedom proof.
 
 On the current macOS 27.0.1 host, the previous LLVM 21.1.8 ASan runtime stalled before
 `main`. A local startup sample shows reentrant initialization via dyld cache

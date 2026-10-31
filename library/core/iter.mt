@@ -491,13 +491,13 @@ extend<T: Step> Range<T> implements BidirectionalIterator {
 pub fn range<T: Step>(start: T, end: T): Range<T> { Range(start, end) }
 
 pub type RangeTo<T> { end: T }
-pub fn range_to<T>(end: T): RangeTo<T> { RangeTo(end) }
+pub fn range_to<T>(end: take T): RangeTo<T> { RangeTo(end) }
 
 pub type RangeFull {}
 pub fn range_full(): RangeFull { RangeFull() }
 
 pub type RangeToInclusive<T> { end: T }
-pub fn range_to_inclusive<T>(end: T): RangeToInclusive<T> {
+pub fn range_to_inclusive<T>(end: take T): RangeToInclusive<T> {
     RangeToInclusive(end)
 }
 

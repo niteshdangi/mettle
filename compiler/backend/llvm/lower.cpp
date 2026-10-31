@@ -2410,8 +2410,7 @@ std::unique_ptr<llvm::Module> lower(const ir::VerifiedProgram &program,
                                     llvm::LLVMContext &context, bool checked,
                                     llvm::StringRef target, bool freestanding,
                                     const DebugInfoRequest *debug,
-                                    bool sanitizeAddress,
-                                    bool sanitizeThread) {
+                                    bool sanitizeAddress, bool sanitizeThread) {
   auto selected = program.program().target.triple.empty()
                       ? target
                       : llvm::StringRef(program.program().target.triple);

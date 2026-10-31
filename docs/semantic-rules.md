@@ -347,8 +347,9 @@ Range indexing `read base[a..b]` (also `a..`, `..b`, `..`, `a..=b`; bounds are
 `a > b`; `mut base[..]` needs a mutable place. Other bases use
 `core.ops.IndexRange` (`fn index_range(start: usize, end: usize): read
 Self.Output from self`) or `IndexRangeMut`; an absent upper bound is passed as
-`usize.MAX` and `..=b` as `b + 1`. Open-ended ranges are not yet first-class
-values.
+`usize.MAX` and `..=b` as `b + 1`. Outside indexing, `a..`, `..b`, `..=b`
+and `..` are `core.iter.RangeFrom`, `RangeTo`, `RangeToInclusive` and
+`RangeFull` values; only `RangeFrom` iterates.
 
 The compiler recognizes the interfaces by canonical path, like `core.ops.*`:
 `core.iter.Iterator` (`type Item; mut fn next(): Self.Item?`),

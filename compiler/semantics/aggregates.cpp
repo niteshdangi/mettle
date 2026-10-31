@@ -68,7 +68,7 @@ int Checker::aggregate(Node &n, bool reachable) {
         target = "core::iter::range_from";
       else if (n.name == "to")
         target = n.text == "..=" ? "core::iter::range_to_inclusive"
-                                  : "core::iter::range_to";
+                                 : "core::iter::range_to";
       else if (n.name == "full")
         target = "core::iter::range_full";
       if (target.empty()) {

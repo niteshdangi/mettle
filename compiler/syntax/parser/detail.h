@@ -43,6 +43,8 @@ private:
   Diagnostics &diagnostics;
   std::size_t position = 0;
   unsigned parens = 0, nesting = 0;
+  // Paren depth of the enclosing `for` head, whose body block ends a range.
+  std::optional<unsigned> loopHeadParens{};
   // Reserved words already rejected as names, so later uses stay silent.
   std::set<std::string> rejectedNames;
   std::optional<std::size_t> failedAt;
@@ -69,11 +71,14 @@ private:
   struct StateGuard {
     Parser &parser;
     unsigned parens, nesting, genericExpressionLevel;
+    std::optional<unsigned> loopHeadParens;
     explicit StateGuard(Parser &parser)
         : parser(parser), parens(parser.parens), nesting(parser.nesting),
-          genericExpressionLevel(parser.genericExpressionLevel) {}
+          genericExpressionLevel(parser.genericExpressionLevel),
+          loopHeadParens(parser.loopHeadParens) {}
     ~StateGuard() {
       parser.parens = parens;
+      parser.loopHeadParens = loopHeadParens;
       parser.nesting = nesting;
       parser.genericExpressionLevel = genericExpressionLevel;
     }
@@ -131,7 +136,8 @@ private:
     auto &next = peek();
     return next.kind == TokenKind::Newline || next.kind == TokenKind::End ||
            next.text == "]" || next.text == ")" || next.text == "," ||
-           next.text == "}" || next.text == ";" || next.text == "=>";
+           next.text == "}" || next.text == ";" || next.text == "=>" ||
+           (next.text == "{" && loopHeadParens == parens);
   }
   void newlines() {
     while (peek().kind == TokenKind::Newline)

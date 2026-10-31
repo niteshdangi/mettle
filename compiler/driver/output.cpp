@@ -225,12 +225,10 @@ int emit(const Options &options, const Source &source,
         linked = (directory / std::filesystem::path(options.output).filename())
                      .string();
       }
-      if (auto error = mettle::backend::emitObject(*module, options.target,
-                                                   objectPath, release,
-                                                   options.sanitizers.contains(
-                                                       "address"),
-                                                   options.sanitizers.contains(
-                                                       "thread"))) {
+      if (auto error = mettle::backend::emitObject(
+              *module, options.target, objectPath, release,
+              options.sanitizers.contains("address"),
+              options.sanitizers.contains("thread"))) {
         std::cerr << "mettle: error[backend]: "
                   << llvm::toString(std::move(error)) << '\n';
         return 1;
