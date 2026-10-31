@@ -337,10 +337,11 @@ void DebugInfo::declare(llvm::IRBuilder<> &builder, std::size_t index,
     builder.CreateStore(storage, slot);
     static_cast<void>(dib.insertDeclare(slot, variable, dereference, place,
                                         builder.GetInsertBlock()));
-  } else
-    static_cast<void>(dib.insertDbgValueIntrinsic(
-        llvm::UndefValue::get(builder.getPtrTy()), variable, dereference, place,
-        builder.GetInsertBlock()));
+  } else {
+    static_cast<void>(dib.insertDeclare(storage, variable,
+                                        dib.createExpression(), place,
+                                        builder.GetInsertBlock()));
+  }
 }
 
 void DebugInfo::invalidate(llvm::IRBuilder<> &builder, std::size_t index,
@@ -353,22 +354,29 @@ void DebugInfo::invalidate(llvm::IRBuilder<> &builder, std::size_t index,
     dereference = dib.createExpression(operation);
   }
   static_cast<void>(dib.insertDbgValueIntrinsic(
-      llvm::UndefValue::get(builder.getPtrTy()), found->second, dereference,
-      location(span, scopeIndex), builder.GetInsertBlock()));
+      llvm::UndefValue::get(builder.getPtrTy()), found->second,
+      dereference, location(span, scopeIndex), builder.GetInsertBlock()));
 }
 
 void DebugInfo::restore(llvm::IRBuilder<> &builder, std::size_t index,
-                        Span span, int scopeIndex, llvm::Value *storage) {
+                        Span span, int scopeIndex, llvm::Value *storage,
+                        bool indirectLocation) {
   auto found = variables.find(index);
   if (found == variables.end())
     return;
+  auto place = location(span, scopeIndex);
+  if (!indirectLocation) {
+    static_cast<void>(dib.insertDeclare(storage, found->second,
+                                        dib.createExpression(), place,
+                                        builder.GetInsertBlock()));
+    return;
+  }
   if (!dereference) {
     const std::uint64_t operation[] = {llvm::dwarf::DW_OP_deref};
     dereference = dib.createExpression(operation);
   }
   static_cast<void>(dib.insertDbgValueIntrinsic(
-      storage, found->second, dereference, location(span, scopeIndex),
-      builder.GetInsertBlock()));
+      storage, found->second, dereference, place, builder.GetInsertBlock()));
 }
 
 void DebugInfo::endScope(llvm::IRBuilder<> &builder, const ir::Function &source,

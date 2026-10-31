@@ -46,7 +46,7 @@ public:
   void invalidate(llvm::IRBuilder<> &builder, std::size_t index, Span span,
                   int scope);
   void restore(llvm::IRBuilder<> &builder, std::size_t index, Span span,
-               int scope, llvm::Value *storage);
+               int scope, llvm::Value *storage, bool indirectLocation);
   void endScope(llvm::IRBuilder<> &builder, const ir::Function &source,
                 int scope, Span span);
   void describeCoroutine(Type type, const ir::Function &source,
