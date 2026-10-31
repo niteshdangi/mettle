@@ -1858,8 +1858,7 @@ private:
         const auto &local = source.locals[i];
         if (local.name.empty() || local.name.starts_with('<'))
           continue;
-        if (i >= source.parameters &&
-            local.storage != StorageDuration::Static)
+        if (i >= source.parameters && local.storage != StorageDuration::Static)
           continue;
         bool borrowed =
             local.storage == StorageDuration::Static ||
@@ -2114,8 +2113,8 @@ private:
         }
         case ir::Op::Declare:
           frame.declare(n.place);
-          if (debugInfo && n.place.root >=
-                               static_cast<int>(source.parameters) &&
+          if (debugInfo &&
+              n.place.root >= static_cast<int>(source.parameters) &&
               n.place.root >= 0 &&
               static_cast<std::size_t>(n.place.root) < source.locals.size()) {
             auto index = static_cast<std::size_t>(n.place.root);
@@ -2202,9 +2201,8 @@ private:
           if (n.op == ir::Op::Store && debugInfo && n.place.root >= 0 &&
               n.place.fields.empty() &&
               static_cast<std::size_t>(n.place.root) < source.locals.size())
-            debugInfo->restore(builder,
-                               static_cast<std::size_t>(n.place.root), n.span,
-                               n.scope,
+            debugInfo->restore(builder, static_cast<std::size_t>(n.place.root),
+                               n.span, n.scope,
                                frame.localStorage(n.place.root));
           if (n.op == ir::Op::StorageWrite)
             frame.consume(n.operands[0]);

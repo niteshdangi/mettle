@@ -734,7 +734,8 @@ runtime hook `mettle_rt_panic_message` when hosted (stderr `panicked: msg`,
 exit status 101); core `unwrap`/`expect`/slice-split failures use it. Builtin
 arithmetic/index traps still abort. Core has no process-exit API; hosted
 `std.process.exit` is implemented in `library/std/process.mt` and delegates to
-the hosted system boundary. Its current behavior is unverified by this lane.
+the hosted system boundary; exit status and prior output are verified on macOS
+arm64 by `tests/std/process_exit.mt`.
 `core.hint.black_box(value)` is a compiler intrinsic identity: the value
 round-trips through memory an empty `asm sideeffect` with a memory clobber may
 touch, so optimization cannot fold or delete it.
@@ -788,9 +789,8 @@ result region is the caller's choice); generic parameters determined by an
 `I: Iterator<Item = T>` bound; closures passed to generic callable parameters and
 explicit generic constructors. `core.char.from_u32` returns an optional scalar
 and is verified on macOS arm64 (`char_from_u32`, `char-from-u32-is-checked`); direct `u32 as char` remains
-invalid. `f"..."` interpolation and `const` items remain open. There is no
-`core.process.exit`; the hosted `std.process.exit` implementation above remains
-unverified by this lane. These changes do not constitute I07 completion or
+invalid. `f"..."` interpolation and `const` items are implemented (see `fstring-*` and `const-*` source cases). There is no
+`core.process.exit`; hosted `std.process.exit` is verified as above. These changes do not constitute I07 completion or
 qualification.
 The first native `library/alloc` now provides `alloc.alloc` (checked
 `Layout`, `Allocator` contract with `allocate/deallocate/grow/shrink` returning
@@ -1092,13 +1092,13 @@ its output (including typed error outcomes) and declared method regions.
 Implementations bind the family to their concrete opaque coroutine future,
 allowing concrete and generic-bound calls to await it. Erased dispatch reports a
 feature diagnostic until an explicit future-storage erasure contract exists.
-The borrowed async-scope API and region-carrying erased child futures are
-implemented in `std.task`, but are unverified (not yet built). The scope polls
-children cooperatively on the parent poll thread and does not schedule them on
-workers. Independent soundness/race review, sanitizer qualification and
-cross-target qualification remain open. The compiler's general erased
-`any Future` storage and erased async-interface dispatch are still unsupported;
-the region-carrying erasure is currently the scope-local library wrapper only.
+Remaining I11 work includes a full asynchronous borrowed-scope
+interface using the poll epochs in memory-and-concurrency section 6, including
+its independent soundness/race review and sanitizer qualification. A library
+`AsyncScope` attempt was withdrawn: it accepted a child future borrowing a
+local shorter than the scope (the `Within<region s>` bound on a method of a
+region-parameterized type was not enforced). Borrowed
+heap-erased futures require region-carrying erasure.
 P10 has only a backlog entry, not a specified benchmark source; an async
 network service, measurement protocol and equivalent comparator remain open.
 
@@ -1158,21 +1158,10 @@ An async future borrows from every borrowed parameter, and an owning closure
 or async body captures a borrowed non-Copy parameter as a view
 (`borrowed-parameter-captures-keep-views`,
 `async-future-outlives-borrowed-argument`).
-`std.task.async_scope` is implemented, unverified (not yet built): it is
-anchored to a borrowed value, owns region-branded erased child futures, and
-implements the poll-epoch rule by polling children synchronously within each
-parent poll and passing them the parent's waker. Its scope future drops all
-remaining children on cancellation; child outputs are retained by scoped
-handles. No child is independently scheduled, and wake callbacks retain no
-scope-storage pointer. The added hosted positive and negative fixtures are
-`tests/std/task_async_scope_borrowed.mt` and
-`tests/std/neg_task_async_scope_body_local.mt`.
-The implementation has not been built or run and has no independent
-soundness/race review or sanitizer evidence. The library erasure does not
-implement compiler-wide region-carrying `any Future` or erased async-interface
-dispatch; the latter remains feature-diagnosed. P10 remains open; Linux
-poll-fallback qualification of async I/O is open. Linux and Windows targets and
-TSan of executor code are not run for the coroutine path.
+Region-carrying erased futures, asynchronous borrowed-task scopes and P10
+remain open; Linux poll-fallback qualification of async I/O is open. Erased async dispatch is explicitly rejected pending a
+future-storage erasure contract. Linux and Windows targets and TSan of executor
+code are not run for the coroutine path.
 
 #### I11 coroutine replacement inventory
 
@@ -1187,7 +1176,6 @@ Revision: uncommitted lane changes on `c81bc6d`; scope as stated per row.
 | Control flow | Implemented: ordinary CFG of the closure body. | None known. |
 | Cleanup and cancellation | Implemented: persistent frame flags and `unwind` in `backend/llvm/cleanup.cpp`; exactly-once drops verified. | Dedicated lexical drop-order-across-suspension fixture. |
 | Optional executor drives async I/O (S030) | Implemented and verified on macOS arm64: `library/std/task.mt`, `library/std/net.mt`, `library/std/sys.mt`, `library/core/future.mt`, `runtime/sys.{h,cpp}`; `tests/std/async_net_echo.mt` passes in Release CTest and under emitted ASan/TSan. | Kqueue wake-race stress; Linux poll-fallback qualification (owner-run). |
-| Borrowed asynchronous scope and scope-local region erasure | Implemented, unverified (not yet built): `library/std/task.mt` provides `AsyncScope`, `AsyncJoinHandle` and region-branded erased child futures. Children are polled only in parent epochs; no concurrent worker polling is enabled. | Build/run `tests/std/task_async_scope_borrowed.mt` and `tests/std/neg_task_async_scope_body_local.mt`; independent soundness/race review; sanitizer and supported-target qualification. General `any Future` region erasure and erased async-interface dispatch remain unsupported. |
 | Integration and qualification | Release CTest, sanitized compiler CTest and ASan/UBSan emitted async programs passed on macOS arm64 before this change; the Debug-profile CTest passed 23/23 at `c81bc6d`. The full Release CTest passed 24/24 with the async closure, `try await`, interface dispatch, erasure-diagnostic and debug-info state-discriminator changes. | Linux/Windows (owner-run). |
 
 The source-freeze gate depends on all rows, fixtures and documentation; a
@@ -1205,9 +1193,9 @@ I12 is the completion gate, not the first tooling work.
 I12 status: `mettle fmt FILE... [--check]` was previously implemented and
 verified (see `docs/tooling-and-packages.md` section 3): whitespace-only,
 token-based layout checked by token sequence, syntax-tree fingerprint and
-idempotence. Full line breaking across call/parameter/generic lists, chained
-calls, binary expressions, constructors and match arms is implemented,
-unverified (not yet built). `mettle run`,
+idempotence. Line breaking after list commas and binary operators
+(call/parameter/generic lists, constructors, match arms) is implemented and
+verified on macOS arm64; chained calls are not broken (core-grammar section 3). `mettle run`,
 `mettle test` and `mettle bench` are implemented and verified (driver
 `execute.cpp`, expansion `harness.cpp`; contract in tooling-and-packages sections
 3 and 4). T007's package-wide test/benchmark collection, qualified names,

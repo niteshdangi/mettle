@@ -81,7 +81,7 @@ public:
       release();
       return;
     }
-    struct stat opened {}, current {};
+    struct stat opened{}, current{};
     if (fstat(descriptor, &opened) != 0 || stat(path.c_str(), &current) != 0 ||
         opened.st_dev != current.st_dev || opened.st_ino != current.st_ino)
       release();
@@ -109,8 +109,8 @@ std::set<std::string> liveLeaseKeys(const fs::path &directory) {
   std::set<std::string> keys;
   std::error_code error;
   auto root = directory / "leases";
-  for (fs::directory_iterator key(root, error), end;
-       !error && key != end; key.increment(error)) {
+  for (fs::directory_iterator key(root, error), end; !error && key != end;
+       key.increment(error)) {
     std::error_code statusError;
     if (!key->is_directory(statusError) || statusError)
       continue;
@@ -200,9 +200,8 @@ Store::Lease Store::acquireLease(const std::string &key) {
   if (error)
     return {};
   static std::atomic<unsigned> counter{0};
-  auto marker = leaseDirectory /
-                (std::to_string(getpid()) + "-" +
-                 std::to_string(counter.fetch_add(1)));
+  auto marker = leaseDirectory / (std::to_string(getpid()) + "-" +
+                                  std::to_string(counter.fetch_add(1)));
   int descriptor = open(marker.c_str(), O_CREAT | O_EXCL | O_WRONLY, 0600);
   if (descriptor < 0)
     return {};
@@ -412,7 +411,10 @@ std::vector<std::string> Store::prune(const std::string &keep) {
   StoreLock lock(directory);
   if (!lock)
     return notes;
-  const auto leased = liveLeaseKeys(directory);
+  // The caller's own output is already published, so its lease only protects
+  // the entry from other builds' pruning, not from this budget.
+  auto leased = liveLeaseKeys(directory);
+  leased.erase(keep);
   std::error_code error;
   auto now = fs::file_time_type::clock::now();
   // Scratch files left by a crashed build.

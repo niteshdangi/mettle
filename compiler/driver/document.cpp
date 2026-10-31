@@ -101,6 +101,7 @@ resolution::Namespace itemNamespace(documentation::Kind kind) {
   case Kind::Function:
   case Kind::Constant:
   case Kind::Variant:
+  case Kind::Field:
     return resolution::Namespace::Value;
   case Kind::Type:
   case Kind::Union:
@@ -119,10 +120,13 @@ resolution::Namespace itemNamespace(documentation::Kind kind) {
 
 void resolveItems(std::vector<documentation::Item> &items,
                   const resolution::Resolution &names,
-                  std::set<std::string> &documented,
+                  std::set<std::string> &documented, std::uint32_t pageScope,
                   std::string_view owner = {}) {
   for (auto &item : items) {
-    item.scope = names.moduleOf(item.span);
+    // Extracted item spans may extend past the resolver's item interval; the
+    // page's own module is then the enclosing scope.
+    auto inner = names.moduleOf(item.span);
+    item.scope = inner != 0 ? inner : pageScope;
     bool associated =
         item.kind == documentation::Kind::Variant ||
         (!owner.empty() && item.kind == documentation::Kind::Function);
@@ -130,11 +134,10 @@ void resolveItems(std::vector<documentation::Item> &items,
                       item.kind != documentation::Kind::Implementation &&
                       item.kind != documentation::Kind::Macro;
     if (resolvable) {
-      auto spelling = associated ? std::string(owner) + "::" + item.name
-                                 : item.name;
-      auto canonical =
-          names.lookup(item.scope, spelling,
-                       itemNamespace(item.kind), item.span, nullptr);
+      auto spelling =
+          associated ? std::string(owner) + "::" + item.name : item.name;
+      auto canonical = names.lookup(
+          item.scope, spelling, itemNamespace(item.kind), item.span, nullptr);
       if (canonical) {
         item.canonical = *canonical;
         documented.insert(*canonical);
@@ -147,14 +150,13 @@ void resolveItems(std::vector<documentation::Item> &items,
             }
       }
     }
-    auto memberOwner =
-        item.kind == documentation::Kind::Type ||
-                item.kind == documentation::Kind::Union ||
-                item.kind == documentation::Kind::Enum ||
-                item.kind == documentation::Kind::Interface
-            ? std::string_view(item.name)
-            : std::string_view{};
-    resolveItems(item.members, names, documented, memberOwner);
+    auto memberOwner = item.kind == documentation::Kind::Type ||
+                               item.kind == documentation::Kind::Union ||
+                               item.kind == documentation::Kind::Enum ||
+                               item.kind == documentation::Kind::Interface
+                           ? std::string_view(item.name)
+                           : std::string_view{};
+    resolveItems(item.members, names, documented, pageScope, memberOwner);
   }
 }
 
@@ -175,10 +177,7 @@ int document(const Options &options) {
   int status = 0;
   bool package = packageInput(options.input);
   if (package) {
-    auto outcome = packages::plan(
-        {options.input, options.bin, options.features, options.defaultFeatures,
-         options.locked, options.offline, options.registries},
-        diagnostics);
+    auto outcome = packages::plan(packageRequest(options), diagnostics);
     if (!outcome.plan) {
       diagnostics.print(outcome.fallback, std::cerr);
       return 1;
@@ -203,19 +202,25 @@ int document(const Options &options) {
                 << '\n';
       return 1;
     }
-    resolution::SourceProvider provider =
-        [&](const std::string &path) { return read(path); };
+    resolution::SourceProvider provider = [&](const std::string &path) {
+      return read(path);
+    };
     resolution::Library library;
     library.directory = options.libraryDirectory;
     library.freestanding = options.freestanding;
-    library.configuration.features =
-        std::set<std::string>(outcome.plan->features.begin(),
-                              outcome.plan->features.end());
+    library.configuration.features = std::set<std::string>(
+        outcome.plan->features.begin(), outcome.plan->features.end());
+    library.packageDependencies = outcome.plan->dependencies;
     for (const auto &mount : outcome.plan->mounts) {
       std::set<std::string> features(mount.features.begin(),
                                      mount.features.end());
-      library.packages.push_back(
-          {mount.name, mount.source, std::move(features)});
+      resolution::Library::Package dependency;
+      dependency.name = mount.name;
+      dependency.source = mount.source;
+      dependency.module = mount.module;
+      dependency.dependencies = mount.dependencies;
+      dependency.features = std::move(features);
+      library.packages.push_back(std::move(dependency));
     }
     std::vector<resolution::SourceModule> loadedSources;
     auto tree = resolution::load(*root, provider, diagnostics, library, nullptr,
@@ -226,8 +231,19 @@ int document(const Options &options) {
       diagnostics.print(*root, std::cerr);
       return 1;
     }
+    std::map<std::string, std::string> packageNames;
+    for (const auto &mount : outcome.plan->mounts) {
+      auto name = mount.name;
+      std::replace(name.begin(), name.end(), '-', '_');
+      packageNames.emplace(mount.module, std::move(name));
+    }
     for (const auto &loaded : loadedSources) {
-      auto page = joined(loaded.path, ".");
+      auto display = loaded.path;
+      if (!display.empty())
+        if (auto alias = packageNames.find(display.front());
+            alias != packageNames.end())
+          display.front() = alias->second;
+      auto page = joined(display, ".");
       if (page.empty()) {
         std::error_code error;
         auto sourceRoot = fs::path(outcome.plan->root).parent_path();
@@ -235,8 +251,8 @@ int document(const Options &options) {
         if (error)
           page = pageName(fs::path(loaded.source.path).filename());
       }
-      auto extracted = documentation::extract(
-          loaded.source, std::move(page), options.documentPrivate);
+      auto extracted = documentation::extract(loaded.source, std::move(page),
+                                              options.documentPrivate);
       extracted.canonical = joined(loaded.path, "::");
       for (std::size_t module = 0; module < names->modules().size(); ++module)
         if (names->modules()[module].canonical == extracted.canonical) {
@@ -250,9 +266,8 @@ int document(const Options &options) {
       pages.push_back(std::move(extracted));
     }
     SourceId nextSource =
-        sources.empty()
-            ? 0
-            : static_cast<SourceId>(sources.rbegin()->first + 1);
+        sources.empty() ? 0
+                        : static_cast<SourceId>(sources.rbegin()->first + 1);
     std::vector<Input> extraInputs;
     for (const auto &argument : options.moreInputs)
       if (!gather(argument, extraInputs))
@@ -263,8 +278,7 @@ int document(const Options &options) {
                               right.file.generic_string();
                      });
     for (const auto &input : extraInputs) {
-      auto identity =
-          input.file.lexically_normal().generic_string();
+      auto identity = input.file.lexically_normal().generic_string();
       if (!loadedPaths.insert(identity).second)
         continue;
       auto source = read(identity);
@@ -284,8 +298,8 @@ int document(const Options &options) {
         continue;
       }
       sources.emplace(source->id, *source);
-      pages.push_back(documentation::extract(
-          *source, input.name, options.documentPrivate));
+      pages.push_back(
+          documentation::extract(*source, input.name, options.documentPrivate));
     }
   } else {
     if (options.packageOptions) {
@@ -331,15 +345,15 @@ int document(const Options &options) {
       }
       source.id = static_cast<SourceId>(sources.size());
       sources.emplace(source.id, source);
-      pages.push_back(documentation::extract(
-          source, input.name, options.documentPrivate));
+      pages.push_back(
+          documentation::extract(source, input.name, options.documentPrivate));
     }
   }
   std::set<std::string> documented;
   if (names)
     for (auto &page : pages)
       if (resolvedSources.contains(page.span.source))
-        resolveItems(page.items, *names, documented);
+        resolveItems(page.items, *names, documented, page.scope);
   for (const auto &page : pages)
     if (!page.canonical.empty())
       documented.insert(page.canonical);
@@ -350,9 +364,9 @@ int document(const Options &options) {
       std::string canonicalPath(spelling);
       replaceDots(canonicalPath);
       std::set<std::string> matches;
-      for (auto space : {resolution::Namespace::Type,
-                         resolution::Namespace::Value,
-                         resolution::Namespace::Module})
+      for (auto space :
+           {resolution::Namespace::Type, resolution::Namespace::Value,
+            resolution::Namespace::Module})
         if (auto resolved =
                 names->lookup(scope, canonicalPath, space, span, nullptr))
           matches.insert(*resolved);
@@ -382,10 +396,10 @@ int document(const Options &options) {
       auto source = sources.find(span.source);
       if (source != sources.end()) {
         Diagnostics::SourceContext context(diagnostics, source->second);
-        diagnostics.warning(
-            "doc-link", span,
-            "cannot resolve documentation reference '" +
-                std::string(spelling) + "' without a package name graph");
+        diagnostics.warning("doc-link", span,
+                            "cannot resolve documentation reference '" +
+                                std::string(spelling) +
+                                "' without a package name graph");
       }
       return std::nullopt;
     };

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "packages/plan.h"
 #include "resolution/load.h"
 #include <cstdint>
 #include <optional>
@@ -63,4 +64,6 @@ struct Options {
 std::optional<Options> options(int argc, char **argv);
 void usage();
 int run(const Options &options);
+// The package-plan request for `options`, with Git checkouts via system `git`.
+packages::Request packageRequest(const Options &options);
 } // namespace mettle::driver

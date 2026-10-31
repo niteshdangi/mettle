@@ -95,8 +95,8 @@ std::string linkedText(std::string_view text, const Links &links,
         if (target) {
           auto found = links.find(*target);
           if (found != links.end() && !found->second.empty())
-            out += "<a href=\"" + escape(found->second) + "\">" +
-                   escape(name) + "</a>";
+            out += "<a href=\"" + escape(found->second) + "\">" + escape(name) +
+                   "</a>";
           else
             out += escape(name);
         } else
@@ -105,7 +105,7 @@ std::string linkedText(std::string_view text, const Links &links,
         continue;
       }
     }
-    if (!pathChar(text[i])) {
+    if (!pathChar(text[i]) || text[i] == '.') {
       put(out, text[i++]);
       continue;
     }
@@ -132,8 +132,8 @@ std::string inlineText(std::string_view text, const Links &links = {},
       auto close = text.find('`', i + 1);
       if (close != std::string_view::npos) {
         out += "<code>" +
-               linkedText(text.substr(i + 1, close - i - 1), links, scope,
-                          span, resolve, true) +
+               linkedText(text.substr(i + 1, close - i - 1), links, scope, span,
+                          resolve, true) +
                "</code>";
         i = close;
         continue;
@@ -146,8 +146,8 @@ std::string inlineText(std::string_view text, const Links &links = {},
       put(out, text[i]);
       continue;
     }
-    out += linkedText(text.substr(i, end - i), links, scope, span, resolve,
-                      true);
+    out +=
+        linkedText(text.substr(i, end - i), links, scope, span, resolve, true);
     i = end - 1;
   }
   return out;
@@ -161,18 +161,16 @@ std::string joined(const std::vector<std::string> &lines, char separator) {
 }
 
 std::string renderDoc(const Doc &doc, const Links &links, std::uint32_t scope,
-                      Span span,
-                      const ReferenceResolver &resolve) {
+                      Span span, const ReferenceResolver &resolve) {
   std::string out;
   if (!doc.spans.empty())
     span = doc.spans.front();
   for (const auto &block : blocks(doc)) {
     switch (block.kind) {
     case Block::Kind::Paragraph:
-      out +=
-          "<p>" + inlineText(joined(block.lines, ' '), links, scope, span,
-                               resolve) +
-          "</p>\n";
+      out += "<p>" +
+             inlineText(joined(block.lines, ' '), links, scope, span, resolve) +
+             "</p>\n";
       break;
     case Block::Kind::Heading: {
       auto level = std::to_string(std::min(block.level + 3, 6u));
@@ -184,8 +182,8 @@ std::string renderDoc(const Doc &doc, const Links &links, std::uint32_t scope,
     case Block::Kind::List:
       out += "<ul>\n";
       for (const auto &entry : block.lines)
-        out += "<li>" + inlineText(entry, links, scope, span, resolve) +
-               "</li>\n";
+        out +=
+            "<li>" + inlineText(entry, links, scope, span, resolve) + "</li>\n";
       out += "</ul>\n";
       break;
     case Block::Kind::Code: {
@@ -294,8 +292,7 @@ public:
         "</title>\n<link rel=\"stylesheet\" href=\"style.css\">\n<main>\n"
         "<nav><a href=\"index.html\">All modules</a></nav>\n<h1>" +
         escape(page.name) + "</h1>\n<p class=\"src\">" + escape(page.path) +
-        "</p>\n" +
-        renderDoc(page.doc, links, page.scope, page.span, resolve);
+        "</p>\n" + renderDoc(page.doc, links, page.scope, page.span, resolve);
     items(out, page.items);
     return out + "</main>\n";
   }
@@ -322,8 +319,7 @@ private:
                      ? page.name + "." +
                            (prefix.empty()
                                 ? std::string(name)
-                                : std::string(prefix) + "." +
-                                      std::string(name))
+                                : std::string(prefix) + "." + std::string(name))
                      : std::string(canonical);
       auto [it, inserted] = links.emplace(key, file + "#" + id);
       if (!inserted)
@@ -368,8 +364,8 @@ private:
   }
 
   void entry(std::string &out, const Item &item, const std::string &prefix) {
-    bool modulePage = item.kind == Kind::Module &&
-                      links.contains(item.canonical);
+    bool modulePage =
+        item.kind == Kind::Module && links.contains(item.canonical);
     auto id = identifier(prefix, item.name, item.canonical, !modulePage);
     out += "<article id=\"" + id + "\">\n<h3><a href=\"#" + id + "\">" +
            escape(item.kind == Kind::Implementation ? "extend" : item.name) +
@@ -384,13 +380,13 @@ private:
       out += "<dl class=\"members\">\n";
       for (const auto &member : item.members) {
         auto memberId = identifier(id, member.name, member.canonical);
-        out += "<dt id=\"" + memberId + "\"><code>" +
-               linkedText(member.signature, links, member.scope, member.span,
-                          resolve) +
-               "</code></dt>\n<dd>" +
-               renderDoc(member.doc, links, member.scope, member.span,
-                         resolve) +
-               "</dd>\n";
+        out +=
+            "<dt id=\"" + memberId + "\"><code>" +
+            linkedText(member.signature, links, member.scope, member.span,
+                       resolve) +
+            "</code></dt>\n<dd>" +
+            renderDoc(member.doc, links, member.scope, member.span, resolve) +
+            "</dd>\n";
       }
       out += "</dl>\n";
     }

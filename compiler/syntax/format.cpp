@@ -156,8 +156,8 @@ bool continued(const Line &previous, const Piece &first) {
     if (piece->kind == TokenKind::Comment)
       continue;
     return binaryPrecedence(piece->text) > 0 ||
-           oneOf(*piece, {"=", "+=", "-=", "*=", "/=", "%=", "&=", "|=",
-                          "^=", "<<=", ">>=", "=>", "->", ","});
+           oneOf(*piece, {"=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
+                          "<<=", ">>=", "=>", "->", ","});
   }
   return false;
 }
@@ -175,9 +175,9 @@ bool binaryBoundary(const std::vector<Token> &tokens, std::size_t index) {
        !oneOfText(left.text, {")", "]", "}", "?", "!"})))
     return false;
   if (left.kind == TokenKind::Word &&
-      oneOfText(left.text, {"return", "throw", "yield", "if", "else", "match",
-                            "while", "for", "in", "let", "var", "take",
-                            "read", "mut", "await"}))
+      oneOfText(left.text,
+                {"return", "throw", "yield", "if", "else", "match", "while",
+                 "for", "in", "let", "var", "take", "read", "mut", "await"}))
     return false;
   if ((tokens[index].text == "<" || tokens[index].text == ">") &&
       (!spacedLeft || index + 1 == tokens.size() ||
@@ -295,9 +295,11 @@ std::vector<Signature> signature(const Source &source,
   return result;
 }
 
-// Wrap at token boundaries where the grammar can continue: list separators,
-// binary operators and chained member access. Macro token trees and
-// multiline tokens are left untouched because their trivia matters.
+// Wrap at token boundaries where the grammar continues: after list
+// separators and binary operators. A line starting with `.` would not continue
+// the previous expression (core-grammar section 3), so chains stay unbroken.
+// Macro token trees and multiline tokens are left untouched because their
+// trivia matters.
 std::string wrap(const Source &source, const std::vector<Token> &tokens) {
   for (std::size_t i = 0; i < tokens.size(); ++i) {
     const auto &token = tokens[i];
@@ -344,7 +346,8 @@ std::string wrap(const Source &source, const std::vector<Token> &tokens) {
     comment = false;
     start = end + 1;
   };
-  for (const auto &token : tokens) {
+  for (std::size_t i = 0; i < tokens.size(); ++i) {
+    const auto &token = tokens[i];
     if (token.kind == TokenKind::Newline) {
       line(token.span.begin);
       continue;
@@ -356,8 +359,6 @@ std::string wrap(const Source &source, const std::vector<Token> &tokens) {
     if (token.text == "," ||
         (binaryPrecedence(token.text) > 0 && binaryBoundary(tokens, i)))
       candidates.push_back(token.span.end);
-    else if (token.text == "." || token.text == "?.")
-      candidates.push_back(token.span.begin);
   }
   std::string result;
   std::size_t at = 0;

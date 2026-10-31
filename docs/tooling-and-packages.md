@@ -294,10 +294,11 @@ normalized after `,` `;` `:`, around `=`, comparison/compound-assignment/`=>`/`-
 inside one-line `{ }` and removed around `.` and inside `()`/`[]`; other
 gaps (`<`, `-`, `&`, ...) keep one space or none as written. Trailing whitespace
 goes, blank-line runs collapse to one (none after `{` or before `}`), the file
-ends in one newline. Full line breaking is implemented, unverified (not yet
-built): it targets 100 bytes and can break call and parameter lists, generic
-lists, chained member calls, binary expressions, struct/collection
-constructors and match arms. Continuation indentation follows the bracket
+ends in one newline. Line breaking is implemented and verified on macOS arm64
+(`fmt_normalizes_layout_only`): it targets 100 bytes and breaks after commas in
+call, parameter, generic and collection lists, constructors and match arms,
+and after binary operators. Chained member calls are not broken, since a line
+starting with `.` does not continue an expression. Continuation indentation follows the bracket
 nesting and continuation rules above. It leaves files with macro
 definitions/invocations, f-strings or multiline tokens, and lines with comments,
 unwrapped. Long unbreakable segments may exceed the width; when wrapping

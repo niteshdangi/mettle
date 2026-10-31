@@ -137,8 +137,7 @@ bool function(const Function &f, const Program &program,
     const auto &block = f.blocks[b];
     for (std::size_t i = 0; i < block.instructions.size(); ++i) {
       const auto &n = block.instructions[i];
-      if (n.scope < 0 ||
-          static_cast<std::size_t>(n.scope) >= f.scopes.size())
+      if (n.scope < 0 || static_cast<std::size_t>(n.scope) >= f.scopes.size())
         fail(n.span, "invalid instruction scope");
       if (n.result.id < 0 || static_cast<std::size_t>(n.result.id) >= count ||
           !known(n.result.type)) {

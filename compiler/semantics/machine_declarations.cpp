@@ -439,6 +439,14 @@ void Checker::machineDeclarations() {
                 "0123456789_+.-") != std::string::npos)
           error("attribute", attribute.span, "invalid import library name");
         facts(function).library = std::move(library);
+      } else if (attribute.name == "inline") {
+        bool valid = attribute.arguments.empty() ||
+                     (attribute.arguments.size() == 1 &&
+                      (attribute.arguments[0].text == "always" ||
+                       attribute.arguments[0].text == "never"));
+        if (!valid)
+          error("attribute", attribute.span,
+                "inline accepts no argument, 'always' or 'never'");
       } else if (attribute.name == "target_feature" ||
                  attribute.name == "naked") {
         // Checked before bodies, so call-site feature checks are

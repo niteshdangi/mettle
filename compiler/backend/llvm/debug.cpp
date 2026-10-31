@@ -241,13 +241,12 @@ void DebugInfo::begin(llvm::IRBuilder<> &builder,
       if (parent < 0 || static_cast<std::size_t>(parent) >= index)
         continue;
       auto *parentScope = lexicalScopes[static_cast<std::size_t>(parent)];
-      auto span = request.sourceSpan ? request.sourceSpan(spans[index])
-                                     : spans[index];
+      auto span =
+          request.sourceSpan ? request.sourceSpan(spans[index]) : spans[index];
       auto *found = known(span) ? info(span.source) : nullptr;
       if (parentScope && found) {
-        auto [line, column] =
-            position(found->lines,
-                     std::min(span.begin, found->source->text.size()));
+        auto [line, column] = position(
+            found->lines, std::min(span.begin, found->source->text.size()));
         lexicalScopes[index] =
             dib.createLexicalBlock(parentScope, found->file, line, column);
       } else
@@ -278,8 +277,8 @@ llvm::DILocation *DebugInfo::location(Span span, int scopeIndex) {
   auto *found = known(span) ? info(span.source) : nullptr;
   if (!found)
     return last;
-  auto [line, column] = position(
-      found->lines, std::min(span.begin, found->source->text.size()));
+  auto [line, column] =
+      position(found->lines, std::min(span.begin, found->source->text.size()));
   // Code expanded from another file retains its lexical ancestry.
   if (found->file != locationScope->getFile()) {
     auto &cached = scopes[{locationScope, span.source}];
@@ -287,8 +286,8 @@ llvm::DILocation *DebugInfo::location(Span span, int scopeIndex) {
       cached = dib.createLexicalBlockFile(locationScope, found->file);
     locationScope = cached;
   }
-  last = llvm::DILocation::get(module.getContext(), line, column,
-                               locationScope);
+  last =
+      llvm::DILocation::get(module.getContext(), line, column, locationScope);
   return last;
 }
 
@@ -336,13 +335,12 @@ void DebugInfo::declare(llvm::IRBuilder<> &builder, std::size_t index,
     llvm::IRBuilder<> allocation(&entry, entry.begin());
     auto *slot = allocation.CreateAlloca(builder.getPtrTy());
     builder.CreateStore(storage, slot);
-    static_cast<void>(
-        dib.insertDeclare(slot, variable, dereference, place,
-                          builder.GetInsertBlock()));
+    static_cast<void>(dib.insertDeclare(slot, variable, dereference, place,
+                                        builder.GetInsertBlock()));
   } else
     static_cast<void>(dib.insertDbgValueIntrinsic(
-        llvm::UndefValue::get(builder.getPtrTy()), variable, dereference,
-        place, builder.GetInsertBlock()));
+        llvm::UndefValue::get(builder.getPtrTy()), variable, dereference, place,
+        builder.GetInsertBlock()));
 }
 
 void DebugInfo::invalidate(llvm::IRBuilder<> &builder, std::size_t index,
@@ -373,9 +371,8 @@ void DebugInfo::restore(llvm::IRBuilder<> &builder, std::size_t index,
       builder.GetInsertBlock()));
 }
 
-void DebugInfo::endScope(llvm::IRBuilder<> &builder,
-                         const ir::Function &source, int scopeIndex,
-                         Span span) {
+void DebugInfo::endScope(llvm::IRBuilder<> &builder, const ir::Function &source,
+                         int scopeIndex, Span span) {
   for (std::size_t index = 0; index < source.locals.size(); ++index)
     if (source.locals[index].scope == scopeIndex)
       invalidate(builder, index, span, scopeIndex);
@@ -403,7 +400,10 @@ llvm::DIType *DebugInfo::build(Type type) {
     if (auto found = types.find(type.index()); found != types.end())
       return found->second;
   }
-  const std::string name = displayPath(store.name(type));
+  std::string name = displayPath(store.name(type));
+  // Views of erased interfaces read as written: `read any I`.
+  if (store.isView(type) && store.isErased(store.view(type).payload))
+    name.insert(name.find(' ') + 1, "any ");
   const std::uint64_t bits = layout->size * 8;
   const auto alignment = static_cast<std::uint32_t>(layout->alignment * 8);
   if (type == Type::Bool || type == Type::Char || isInteger(type) ||
@@ -485,10 +485,10 @@ llvm::DIType *DebugInfo::build(Type type) {
            ++method)
         tableMembers.push_back(dib.createMemberType(
             unit, "method." + std::to_string(method), rootFile, 0, pointerBits,
-            pointerBits, (method + 2) * pointerBits,
-            llvm::DINode::FlagZero, pointer));
-      for (std::size_t parent = 0;
-           parent < descriptor.parentInterfaces.size(); ++parent)
+            pointerBits, (method + 2) * pointerBits, llvm::DINode::FlagZero,
+            pointer));
+      for (std::size_t parent = 0; parent < descriptor.parentInterfaces.size();
+           ++parent)
         tableMembers.push_back(dib.createMemberType(
             unit,
             "parent." +

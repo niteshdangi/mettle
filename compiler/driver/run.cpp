@@ -432,6 +432,24 @@ bool reportFindings(const std::vector<lint::Finding> &findings,
 }
 } // namespace
 
+packages::Request packageRequest(const Options &options) {
+  packages::Request request;
+  request.input = options.input;
+  request.target = options.bin;
+  request.features = options.features;
+  request.defaultFeatures = options.defaultFeatures;
+  request.locked = options.locked;
+  request.offline = options.offline;
+  request.registries = options.registries;
+  request.gitCheckout = [&options](const std::string &url,
+                                   const std::string &selector,
+                                   const std::string &lockedCommit,
+                                   bool offline, std::string &problem) {
+    return checkoutGit(options, url, selector, lockedCommit, offline, problem);
+  };
+  return request;
+}
+
 int run(const Options &requested) {
   if (!requested.sanitizerError.empty()) {
     std::cerr << "mettle: error[option]: " << requested.sanitizerError << '\n';
@@ -500,22 +518,7 @@ int build(const Options &requested,
       return 2;
     }
     Diagnostics planning;
-    packages::Request packageRequest;
-    packageRequest.input = options.input;
-    packageRequest.target = options.bin;
-    packageRequest.features = options.features;
-    packageRequest.defaultFeatures = options.defaultFeatures;
-    packageRequest.locked = options.locked;
-    packageRequest.offline = options.offline;
-    packageRequest.registries = options.registries;
-    packageRequest.gitCheckout =
-        [&options](const std::string &url, const std::string &selector,
-                   const std::string &lockedCommit, bool offline,
-                   std::string &problem) {
-          return checkoutGit(options, url, selector, lockedCommit, offline,
-                             problem);
-        };
-    auto outcome = packages::plan(packageRequest, planning);
+    auto outcome = packages::plan(packageRequest(options), planning);
     if (!outcome.plan) {
       planning.print(outcome.fallback, std::cerr);
       return 1;
