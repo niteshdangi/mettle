@@ -437,11 +437,28 @@ extend<T, F: fn(): T> RepeatWith<T, F> implements Iterator {
 }
 pub fn repeat_with<T, F: fn(): T>(f: take F): RepeatWith<T, F> { RepeatWith(f, Phantom<T>()) }
 
-// Stepping between neighbouring integers, used by the range iterators.
+// Stepping between neighbouring scalar values used by the range iterators.
+// Absence marks a scalar type's endpoint.
 pub interface Step: Sized + Copy + Ord {
-    fn successor(): Self;
-    fn predecessor(): Self;
+    fn successor(): Self?;
+    fn predecessor(): Self?;
 }
+
+// The unbounded range stops after yielding the scalar maximum.
+pub type RangeFrom<T> { start: T; done: bool }
+extend<T: Step> RangeFrom<T> implements Iterator {
+    type Item = T
+    mut fn next(): T? {
+        if self.done { return none }
+        let value = self.start
+        match value.successor() {
+            present(next) => { self.start = next },
+            none => { self.done = true }
+        }
+        present(value)
+    }
+}
+pub fn range_from<T: Step>(start: T): RangeFrom<T> { RangeFrom(start, false) }
 
 // The half-open range `[start, end)`.
 pub type Range<T> { start: T; end: T }
@@ -450,7 +467,10 @@ extend<T: Step> Range<T> implements Iterator {
     mut fn next(): T? {
         if self.start < self.end {
             let value = self.start
-            self.start = value.successor()
+            match value.successor() {
+                present(next) => { self.start = next },
+                none => { self.start = self.end }
+            }
             return present(value)
         }
         none
@@ -459,13 +479,27 @@ extend<T: Step> Range<T> implements Iterator {
 extend<T: Step> Range<T> implements BidirectionalIterator {
     mut fn next_back(): T? {
         if self.start < self.end {
-            self.end = self.end.predecessor()
+            match self.end.predecessor() {
+                present(previous) => { self.end = previous },
+                none => { self.start = self.end }
+            }
             return present(self.end)
         }
         none
     }
 }
 pub fn range<T: Step>(start: T, end: T): Range<T> { Range(start, end) }
+
+pub type RangeTo<T> { end: T }
+pub fn range_to<T>(end: T): RangeTo<T> { RangeTo(end) }
+
+pub type RangeFull {}
+pub fn range_full(): RangeFull { RangeFull() }
+
+pub type RangeToInclusive<T> { end: T }
+pub fn range_to_inclusive<T>(end: T): RangeToInclusive<T> {
+    RangeToInclusive(end)
+}
 
 // The closed range `[start, end]`; `done` avoids stepping past the type's bounds.
 pub type RangeInclusive<T> { start: T; end: T; done: bool }
@@ -474,7 +508,14 @@ extend<T: Step> RangeInclusive<T> implements Iterator {
     mut fn next(): T? {
         if self.done || self.start > self.end { return none }
         let value = self.start
-        if value == self.end { self.done = true } else { self.start = value.successor() }
+        if value == self.end {
+            self.done = true
+        } else {
+            match value.successor() {
+                present(next) => { self.start = next },
+                none => { self.done = true }
+            }
+        }
         present(value)
     }
 }
@@ -482,7 +523,14 @@ extend<T: Step> RangeInclusive<T> implements BidirectionalIterator {
     mut fn next_back(): T? {
         if self.done || self.start > self.end { return none }
         let value = self.end
-        if value == self.start { self.done = true } else { self.end = value.predecessor() }
+        if value == self.start {
+            self.done = true
+        } else {
+            match value.predecessor() {
+                present(previous) => { self.end = previous },
+                none => { self.done = true }
+            }
+        }
         present(value)
     }
 }
@@ -547,8 +595,8 @@ pub fn min<I: Iterator>(items: take I): I.Item? where I.Item: Ord {
 }
 
 extend i8 implements Step {
-    fn successor(): i8 { self + 1i8 }
-    fn predecessor(): i8 { self - 1i8 }
+    fn successor(): i8? { self.checked_add(1i8) }
+    fn predecessor(): i8? { self.checked_sub(1i8) }
 }
 extend i8 implements Sum {
     static fn zero(): i8 { 0i8 }
@@ -560,8 +608,8 @@ extend i8 implements Product {
 }
 
 extend i16 implements Step {
-    fn successor(): i16 { self + 1i16 }
-    fn predecessor(): i16 { self - 1i16 }
+    fn successor(): i16? { self.checked_add(1i16) }
+    fn predecessor(): i16? { self.checked_sub(1i16) }
 }
 extend i16 implements Sum {
     static fn zero(): i16 { 0i16 }
@@ -573,8 +621,8 @@ extend i16 implements Product {
 }
 
 extend i32 implements Step {
-    fn successor(): i32 { self + 1i32 }
-    fn predecessor(): i32 { self - 1i32 }
+    fn successor(): i32? { self.checked_add(1i32) }
+    fn predecessor(): i32? { self.checked_sub(1i32) }
 }
 extend i32 implements Sum {
     static fn zero(): i32 { 0i32 }
@@ -586,8 +634,8 @@ extend i32 implements Product {
 }
 
 extend i64 implements Step {
-    fn successor(): i64 { self + 1i64 }
-    fn predecessor(): i64 { self - 1i64 }
+    fn successor(): i64? { self.checked_add(1i64) }
+    fn predecessor(): i64? { self.checked_sub(1i64) }
 }
 extend i64 implements Sum {
     static fn zero(): i64 { 0i64 }
@@ -598,9 +646,14 @@ extend i64 implements Product {
     fn times(other: take i64): i64 { self * other }
 }
 
+extend i128 implements Step {
+    fn successor(): i128? { self.checked_add(1i128) }
+    fn predecessor(): i128? { self.checked_sub(1i128) }
+}
+
 extend isize implements Step {
-    fn successor(): isize { self + 1isize }
-    fn predecessor(): isize { self - 1isize }
+    fn successor(): isize? { self.checked_add(1isize) }
+    fn predecessor(): isize? { self.checked_sub(1isize) }
 }
 extend isize implements Sum {
     static fn zero(): isize { 0isize }
@@ -612,8 +665,8 @@ extend isize implements Product {
 }
 
 extend u8 implements Step {
-    fn successor(): u8 { self + 1u8 }
-    fn predecessor(): u8 { self - 1u8 }
+    fn successor(): u8? { self.checked_add(1u8) }
+    fn predecessor(): u8? { self.checked_sub(1u8) }
 }
 extend u8 implements Sum {
     static fn zero(): u8 { 0u8 }
@@ -625,8 +678,8 @@ extend u8 implements Product {
 }
 
 extend u16 implements Step {
-    fn successor(): u16 { self + 1u16 }
-    fn predecessor(): u16 { self - 1u16 }
+    fn successor(): u16? { self.checked_add(1u16) }
+    fn predecessor(): u16? { self.checked_sub(1u16) }
 }
 extend u16 implements Sum {
     static fn zero(): u16 { 0u16 }
@@ -638,8 +691,8 @@ extend u16 implements Product {
 }
 
 extend u32 implements Step {
-    fn successor(): u32 { self + 1u32 }
-    fn predecessor(): u32 { self - 1u32 }
+    fn successor(): u32? { self.checked_add(1u32) }
+    fn predecessor(): u32? { self.checked_sub(1u32) }
 }
 extend u32 implements Sum {
     static fn zero(): u32 { 0u32 }
@@ -651,8 +704,8 @@ extend u32 implements Product {
 }
 
 extend u64 implements Step {
-    fn successor(): u64 { self + 1u64 }
-    fn predecessor(): u64 { self - 1u64 }
+    fn successor(): u64? { self.checked_add(1u64) }
+    fn predecessor(): u64? { self.checked_sub(1u64) }
 }
 extend u64 implements Sum {
     static fn zero(): u64 { 0u64 }
@@ -663,9 +716,28 @@ extend u64 implements Product {
     fn times(other: take u64): u64 { self * other }
 }
 
+extend u128 implements Step {
+    fn successor(): u128? { self.checked_add(1u128) }
+    fn predecessor(): u128? { self.checked_sub(1u128) }
+}
+
 extend usize implements Step {
-    fn successor(): usize { self + 1usize }
-    fn predecessor(): usize { self - 1usize }
+    fn successor(): usize? { self.checked_add(1usize) }
+    fn predecessor(): usize? { self.checked_sub(1usize) }
+}
+
+extend char implements Step {
+    fn successor(): char? {
+        let value = self as u32
+        let next = if value == 0xd7ffu32 { 0xe000u32 } else { value + 1u32 }
+        super.char.from_u32(next)
+    }
+    fn predecessor(): char? {
+        let value = self as u32
+        if value == 0u32 { return none }
+        let previous = if value == 0xe000u32 { 0xd7ffu32 } else { value - 1u32 }
+        super.char.from_u32(previous)
+    }
 }
 extend usize implements Sum {
     static fn zero(): usize { 0usize }

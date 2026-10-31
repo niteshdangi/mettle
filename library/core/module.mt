@@ -3,6 +3,7 @@
 // (`ptr`, `mem`, `cell`, `sync`, `pin`, `arch`, `intrinsics`, `ffi`, `marker`).
 pub module any
 pub module borrow
+pub module char
 pub module clone
 pub module cmp
 pub module default

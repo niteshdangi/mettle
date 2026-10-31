@@ -732,19 +732,28 @@ run and fail cases). Panic:
 `core.intrinsics.panic_message`, which is `llvm.trap` freestanding and the
 runtime hook `mettle_rt_panic_message` when hosted (stderr `panicked: msg`,
 exit status 101); core `unwrap`/`expect`/slice-split failures use it. Builtin
-arithmetic/index traps still abort; there is no `core.process.exit` (core has
-no OS; std is a stub). `core.hint.black_box(value)` is a compiler intrinsic
-identity: the value round-trips through memory an empty `asm sideeffect` with a
-memory clobber may touch, so optimization cannot fold or delete it.
+arithmetic/index traps still abort. Core has no process-exit API; hosted
+`std.process.exit` is implemented in `library/std/process.mt` and delegates to
+the hosted system boundary. Its current behavior is unverified by this lane.
+`core.hint.black_box(value)` is a compiler intrinsic identity: the value
+round-trips through memory an empty `asm sideeffect` with a memory clobber may
+touch, so optimization cannot fold or delete it.
 Built-in ranges: `a..b`/`a..=b` map to the library `core.iter.range` /
 `range_inclusive` values (`Range<T>`/`RangeInclusive<T>`, Iterators and
 bidirectional) wherever the range is not the direct source of a `for`, when
 `core` is mounted; the checker rewrites the node to that call (calls chained on
 `)` with an Iterator method name mount `core`). A range that is the source of a
 `for` keeps the structural counted-loop form, and without `core` a range stays
-structural. An iterator held in a local is consumed by `for x in it`. Implemented
-and verified by `tests/library/range_value.mt`; open-ended range values and non-integer bounds are
-unchanged (not implemented).
+structural. An iterator held in a local is consumed by `for x in it`. The
+bounded-range behavior was previously verified by `tests/library/range_value.mt`.
+Open-ended range values (`RangeFrom<T>`, `RangeTo<T>`,
+`RangeToInclusive<T>`, and `RangeFull`) and `RangeFrom` iteration are
+implemented, unverified (not yet built) by this lane; the added library and
+source fixtures cover value construction, bounded iteration and end-bounded
+non-iterator behavior. `RangeFrom` stops after yielding the integer type's
+maximum or Unicode scalar maximum by using checked stepping. The `Step`
+implementations cover primitive integers and Unicode scalar `char`, including
+skipping the surrogate interval.
 Core slice `sort_unstable`, `sort_unstable_by` and `sort_unstable_by_key` are an
 allocation-free introsort (median-of-three quicksort, insertion sort for short
 ranges, heapsort fallback; fixed pending-range stack). Allocation-backed
@@ -758,8 +767,14 @@ implementations are implemented and verified on macOS arm64
 resolution precedence. Composite Debug implementations and the
 generic mutable-formatter loan correction are already present, with nested
 collection coverage described below; they have not been reverified by this
-lane. Unicode whitespace/case remain unimplemented; mounting compiles the
-whole of `core`, which costs seconds in Debug builds.
+lane. Unicode `char.is_whitespace` and Unicode-aware `Text.trim*` are
+implemented with compact scalar ranges, unverified (not yet built). Unicode
+alphabetic/numeric properties and full character/text case mapping remain
+unimplemented: the frozen operation inventory supplies signatures, but
+Unicode-16 generated property/case tables and multi-scalar mapping machinery
+are not present in core. No per-codepoint fallback tables or alternate Unicode
+version were introduced. Mounting compiles the whole of `core`, which costs
+seconds in Debug builds.
 Also: text literals are usable as `static` initializers and
 byte/raw literals (`b"..."` is `read [u8; N] from static`; `r"..."`, `r#"..."#`,
 `br"..."`); range slicing `read a[i..j]`, `a[i..]`, `a[..j]`, `a[..]`, `a[i..=j]`
@@ -769,10 +784,12 @@ out-of-range or non-char-boundary) and user types; `core.slice.from_raw_parts`
 and `from_raw_parts_mut`, `core.text.from_utf8_unchecked[_mut]` (unsafe; the
 result region is the caller's choice); generic parameters determined by an
 `I: Iterator<Item = T>` bound; closures passed to generic callable parameters and
-explicit generic constructors. Open-ended
-range values (as opposed to range indexing), `f"..."` interpolation, `const`
-items, `u32 as char` (only `u8 as char` is defined), `core.process.exit`,
-remain open; this is not I07 completion or qualification.
+explicit generic constructors. `core.char.from_u32` returns an optional scalar
+and is implemented, unverified (not yet built); direct `u32 as char` remains
+invalid. `f"..."` interpolation and `const` items remain open. There is no
+`core.process.exit`; the hosted `std.process.exit` implementation above remains
+unverified by this lane. These changes do not constitute I07 completion or
+qualification.
 The first native `library/alloc` now provides `alloc.alloc` (checked
 `Layout`, `Allocator` contract with `allocate/deallocate/grow/shrink` returning
 `AllocError`, stateless `Global`, `handle_alloc_error` = abort policy), `Box`,
