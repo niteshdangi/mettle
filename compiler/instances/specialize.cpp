@@ -265,6 +265,10 @@ private:
     // Instructions repeat a handful of types; a result is cached only after
     // it was fully validated without diagnostics.
     std::map<std::pair<Type, bool>, Type> resolved;
+    // Concrete selection can replace an interface default's inferred ABI
+    // result, so keep its SSA uses and dependent generic arguments consistent.
+    std::map<int, std::pair<Type, Type>> selectedCallResults;
+    std::set<const ir::Instruction *> failedSelections;
     auto substitute = [&](Type &type, bool runtime = true) {
       if (auto known = resolved.find({type, runtime});
           known != resolved.end()) {
@@ -283,6 +287,41 @@ private:
       }
       if (diagnostics.empty())
         resolved.emplace(std::pair{original, runtime}, type);
+    };
+    auto applySelectedCallResults = [&](ir::Instruction &instruction) {
+      std::vector<TypeBinding> corrections;
+      auto correctValue = [&](ir::Value &value) {
+        auto found = selectedCallResults.find(value.id);
+        if (found == selectedCallResults.end())
+          return;
+        if (value.type == found->second.first)
+          value.type = found->second.second;
+        corrections.push_back({found->second.first, found->second.second});
+      };
+      for (auto &operand : instruction.operands)
+        correctValue(operand);
+      correctValue(instruction.target);
+      if (corrections.empty())
+        return;
+      auto correctType = [&](Type &type) {
+        type = types->substitute(type, corrections);
+      };
+      correctType(instruction.result.type);
+      correctType(instruction.indirectType);
+      correctType(instruction.opaqueType);
+      correctType(instruction.interfaceSelf);
+      correctType(instruction.interfaceType);
+      correctType(instruction.constantParameter);
+      for (auto &argument : instruction.typeArguments)
+        correctType(argument);
+      for (auto &[subject, runtime] : instruction.unpinProofs) {
+        correctType(subject);
+        correctType(runtime);
+      }
+      for (auto &entry : instruction.witnessEntries)
+        correctType(entry.owner);
+      for (auto &projection : instruction.place.fields)
+        correctType(projection.type);
     };
     substitute(function.result);
     for (auto &local : function.locals)
@@ -360,9 +399,17 @@ private:
           }
           instruction.constantParameter = Type::Unknown;
         }
+        applySelectedCallResults(instruction);
+        const auto resultBeforeSelection = instruction.result.type;
         if (hooks.selectCall &&
-            !hooks.selectCall(instruction, bindings, *types, diagnostics))
+            !hooks.selectCall(instruction, bindings, *types, diagnostics)) {
+          failedSelections.insert(&instruction);
           continue;
+        }
+        if (instruction.result.id >= 0 &&
+            instruction.result.type != resultBeforeSelection)
+          selectedCallResults[instruction.result.id] =
+              {resultBeforeSelection, instruction.result.type};
         if (instruction.op == ir::Op::IndirectCall &&
             instruction.target.type != instruction.indirectType) {
           instruction.callee =
@@ -383,14 +430,30 @@ private:
               coroutineBody(instruction.typeArguments.at(0), instruction.span);
           continue;
         }
-        if (instruction.callee >= 0) {
+      }
+    }
+    for (auto &block : function.blocks) {
+      for (auto &instruction : block.instructions)
+        applySelectedCallResults(instruction);
+      auto found = selectedCallResults.find(block.exit.value.id);
+      if (found != selectedCallResults.end() &&
+          block.exit.value.type == found->second.first)
+        block.exit.value.type = found->second.second;
+    }
+    for (auto &block : function.blocks)
+      for (auto &instruction : block.instructions) {
+        const bool coroutineOperation =
+            instruction.op == ir::Op::Machine &&
+            (instruction.text == "coroutine.start" ||
+             instruction.text == "coroutine.resume");
+        if (instruction.callee >= 0 && !coroutineOperation &&
+            !failedSelections.contains(&instruction)) {
           instruction.callee =
               instance(static_cast<std::size_t>(instruction.callee),
                        instruction.typeArguments, instruction.span);
           instruction.typeArguments.clear();
         }
       }
-    }
     for (auto &loop : function.arrayLoops) {
       substitute(loop.index.type);
       for (auto &projection : loop.source.fields)

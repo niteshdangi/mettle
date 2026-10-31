@@ -312,6 +312,17 @@ public:
                                     methodArguments, call.span);
       if (!selected)
         return false;
+      const auto &selectedFunction = program.functions[selected->function];
+      std::vector<TypeBinding> selectedBindings;
+      for (std::size_t p = 0;
+           p < selectedFunction.genericParameters.size() &&
+           p < selected->arguments.size();
+           ++p)
+        selectedBindings.push_back(
+            {selectedFunction.genericParameters[p], selected->arguments[p]});
+      call.result.type = store.eraseRegions(
+          solver.normalize(selectedFunction.result, selectedBindings,
+                          call.span));
       call.callee = selected->function;
       call.typeArguments = std::move(selected->arguments);
       call.interfaceMethod = -1;
