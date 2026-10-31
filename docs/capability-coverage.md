@@ -144,20 +144,20 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | L058 | E | `tests/source/run/cfg-target-and-feature.mt`; `tests/source/fail/cfg-unknown-predicate.mt` | `compiler/expansion`, `compiler/driver`; finish host/target/inactive-branch combinations. |
 | L059 | E | `tests/source/run/restricted-visibility-enclosing-module.mt`; `tests/source/fail/restricted-*.mt`; `tests/modules.py` | `compiler/resolution`; restricted item/macro visibility verified macOS ARM64 Release. |
 | L060 | E | `tests/packages.py::doc_writes_deterministic_html`; `tests/packages.py::doctests_run_isolated_examples` | `compiler/documentation`, `compiler/driver`; debugger support is separately tracked by T006. |
-| S001 | E | `tests/library/option_outcome.mt` | `library/core/option.mt`; finish nested presence and consuming-extraction operation closure. |
-| S002 | E | `tests/library/option_outcome.mt` | `library/core/outcome.mt`; finish nested outcome/map/transpose operation closure. |
+| S001 | E | `tests/library/option_outcome.mt`; `tests/library/nested_option_extraction.mt` (added, unverified) | `library/core/option.mt`; finish nested presence and consuming-extraction operation closure. |
+| S002 | E | `tests/library/option_outcome.mt`; `tests/library/nested_outcome_transpose.mt` (added, unverified) | `library/core/option.mt`, `library/core/outcome.mt`; transpose added, fixture unverified. |
 | S003 | P | `tests/source/run/native-heap-owner.mt`; `tests/alloc/box_rc_traits.mt` | `library/alloc/boxed.mt`; unsized owner payloads and pinned owning handles are unsupported. |
 | S004 | E | `tests/alloc/rc_weak.mt`; `tests/alloc/arc_weak.mt` | `library/alloc/rc.mt`; complete retain/weak/unique-extraction failure cases. |
 | S005 | P | `tests/alloc/arc_weak.mt`; `tests/std/arc_races.mt` | `library/alloc/arc.mt`; full operation matrix and current target race/last-owner qualification remain. |
-| S006 | P | `tests/alloc/vec_basic.mt`; `tests/alloc/stable_sort.mt` | `library/alloc/vec.mt`; complete reserve/insert/drain/invalidation closure. |
+| S006 | P | `tests/alloc/vec_basic.mt`; `tests/alloc/stable_sort.mt`; `tests/std/collection_panic_safety_vec.mt`; `tests/source/fail/list-element-view-blocks-list-push.mt` (added, unverified) | `library/alloc/vec.mt`; complete reserve/insert/drain/invalidation closure. |
 | S007 | P | `tests/alloc/string_text.mt`; `tests/alloc/string_boundary_panic.mt` | `library/alloc/string.mt`, `library/core/text.mt`; operation closure and current Unicode-table work remain. |
-| S008 | P | `tests/alloc/hash_map.mt`; `tests/alloc/hash_collisions.mt` | `library/alloc/hash_map.mt`, `library/alloc/collections.mt`; entry, collision, ordering and complete stable-operation closure remain. |
-| S009 | P | `tests/alloc/btree_stress.mt`; `tests/alloc/sorted_entry.mt` | `library/alloc/btree.mt`; complete ordered range/mutation invalidation and operation closure remain. |
-| S010 | P | `tests/alloc/deque_list.mt`; `tests/alloc/btree_heap.mt` | `library/alloc/vec_deque.mt`, `linked_list.mt`, `binary_heap.mt`; complete operation and iterator/ownership closure remains. |
-| S011 | P | `tests/library/iter.mt`; `tests/alloc/collection_iteration.mt` | `library/core/iter.mt`; close all lazy, consuming, bidirectional and short-circuit adapters. |
+| S008 | P | `tests/alloc/hash_map.mt`; `tests/alloc/hash_collisions.mt`; `tests/std/collection_panic_safety_maps.mt` | `library/alloc/hash_map.mt`, `library/alloc/collections.mt`; entry, collision, ordering and complete stable-operation closure remain. |
+| S009 | P | `tests/alloc/btree_stress.mt`; `tests/alloc/sorted_entry.mt`; `tests/std/collection_panic_safety_maps.mt`; `tests/source/fail/btree-range-blocks-map-mutation.mt` (added, unverified) | `library/alloc/btree.mt`; complete ordered range/mutation invalidation and operation closure remain. |
+| S010 | P | `tests/alloc/deque_list.mt`; `tests/alloc/btree_heap.mt`; `tests/std/collection_panic_safety_vec.mt`; `tests/std/collection_panic_safety_heap.mt`; `tests/alloc/owned_collection_iteration_drops.mt` (added, unverified) | `library/alloc/vec_deque.mt`, `linked_list.mt`, `binary_heap.mt`; complete operation and iterator/ownership closure remains. |
+| S011 | P | `tests/library/iter.mt`; `tests/alloc/collection_iteration.mt`; `tests/alloc/bidirectional_iterator_adapters.mt` and `tests/alloc/iterator_adapter_drop_count.mt` (added, unverified) | `library/core/iter.mt`; close all lazy, consuming, bidirectional and short-circuit adapters. |
 | S012 | P | `tests/library/fmt.mt`; `tests/library/num.mt` | `library/core/fmt.mt`, `num.mt`; F1 specifiers/Debug holes and complete stable formatting/parsing operations remain. |
 | S013 | P | `tests/library/cmp_hash.mt`; `tests/alloc/collection_traits.mt` | `library/core/cmp.mt`, `hash.mt`, `num.mt`; complete stable comparison/hash/numeric trait closure remains. |
-| S014 | P | `tests/alloc/failing_allocator.mt`; `tests/alloc/btree_alloc_failure.mt` | `library/alloc/alloc.mt`; allocator alignment/exhaustion/deallocation and every owner path need closure. |
+| S014 | P | `tests/alloc/failing_allocator.mt`; `tests/alloc/btree_alloc_failure.mt`; `tests/alloc/custom_allocator_owners_layouts.mt` (added, unverified) | `library/alloc/alloc.mt`; allocator alignment/exhaustion/deallocation and every owner path need closure. |
 | S015 | E | `tests/source/run/machine-cell-safe-exchange-and-exclusive-access.mt` | `library/core/borrow.mt`; raw safety, panic and forgetting qualification remains. |
 | S016 | E | `tests/source/run/machine-manual-take-and-uninitialized-explicit-destruction.mt` | `library/core/` storage declarations; close partial-init, alignment and unwind cases. |
 | S017 | P | `tests/backend/memory.py`; `tests/source/fail/machine-atomic-handles-are-not-implicitly-copy.mt` | `compiler/types/machine.cpp`; target width/order closure and independent memory-model evidence remain. |
@@ -172,7 +172,7 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | S026 | E | `tests/std/process_roundtrip.mt`; `tests/std/env_args.mt` | `library/std/process.mt`, `env.mt`; child cleanup and complete process/environment closure remain. |
 | S027 | E | `tests/std/time_basic.mt` | `library/std/time.mt`; complete duration/clock overflow and adjustment closure remains. |
 | S028 | E | `tests/std/panic_catch.mt`; `tests/std/panic_hook_abort.mt` | `library/std/panic.mt`; complete payload/hook/recovery failure closure remains. |
-| S029 | E | `tests/library/slice_any_text.mt` | `library/core/any.mt`; cross-package identity and erased-owner operation closure remain. |
+| S029 | E | `tests/library/slice_any_text.mt`; `tests/packages.py::type_id_survives_public_reexport` (added, unverified) | `library/core/any.mt`; cross-package identity and erased-owner operation fixture added, unverified. |
 | S030 | P | `tests/std/async_executor.mt`; `tests/std/async_scope_borrowed.mt` | `library/core/future.mt`, `library/std/task.mt`; async-scope fixtures are unverified and soundness/race/sanitizer review remains. |
 | S031 | P | `tests/source/run/machine-target-direct-guarded-vector.aarch64.mt` | `compiler/types/target.cpp`, `library/std/sys.mt`; finish the macOS-applicable per-item target/cfg audit; Linux/Windows remain not qualified. |
 | A001 | P | `tests/backend/machine.py`; `tests/backend/machine_callbacks.c` | `compiler/backend/llvm/abi.cpp`; complete Darwin ARM64 argument/return/callback/variadic ABI probes. |

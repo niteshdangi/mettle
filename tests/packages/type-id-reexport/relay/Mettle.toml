@@ -1,0 +1,7 @@
+[package]
+name = "relay"
+version = "0.1.0"
+language = "mettle-1"
+
+[dependencies]
+origin = { path = "../origin" }
