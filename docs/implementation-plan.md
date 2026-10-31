@@ -1096,9 +1096,19 @@ The borrowed async-scope API and region-carrying erased child futures are
 implemented in `std.task`, but are unverified (not yet built). The scope polls
 children cooperatively on the parent poll thread and does not schedule them on
 workers. Independent soundness/race review, sanitizer qualification and
-cross-target qualification remain open. The compiler's general erased
-`any Future` storage and erased async-interface dispatch are still unsupported;
-the region-carrying erasure is currently the scope-local library wrapper only.
+cross-target qualification remain open. Compiler erasure now admits the pinned `Future.poll` receiver when `Output` is
+fixed in `any Future<Output = T>`; the witness dispatches polling to the concrete
+implementation. This compiler change and its new hosted regression are
+implemented, unverified (not yet built). Owned heap storage remains the explicit
+`alloc.future.Erased<T>` wrapper, which stores a static concrete future behind
+typed poll/release callbacks. `Box<any Future<Output = T>>` is still unsupported:
+the general unsized-owner mapping is an I07 gap, so this change does not invent
+an implicit owner or dynamic drop path. Erased async-interface dispatch remains
+unsupported: `specification-annex.md` requires an explicit future-storage
+contract, which the current async interface syntax does not declare. Its
+structured feature diagnostic remains covered by
+`tests/source/fail/async-interface-erased-dispatch.mt`. The region-carrying
+erasure is currently the scope-local library wrapper only.
 P10 has only a backlog entry, not a specified benchmark source; an async
 network service, measurement protocol and equivalent comparator remain open.
 
@@ -1181,13 +1191,14 @@ Revision: uncommitted lane changes on `c81bc6d`; scope as stated per row.
 | Requirement | State and owning files | Remaining work and required fixtures |
 | --- | --- | --- |
 | Preserve async source; type future and await | Implemented and verified on macOS arm64, including arrow async closures and `try await`: `syntax/parser/closures.cpp`, `syntax/parser/async.cpp`, `semantics/sums.cpp`, `semantics/regions.cpp`, `lowering/sums.cpp`. | `async-arrow-closure.mt`, `async-try-await.mt`. |
-| Async interface futures and dispatch | Implemented and verified on macOS arm64: bodyless async methods publish region- and output-constrained associated future families; implementations bind concrete opaque coroutine futures; concrete and generic-bound calls use the family. Erased async dispatch reports an explicit future-storage-contract diagnostic. | `async-interface-method.mt` and `async-interface-erased-dispatch.mt` pass; async default bodies with inferred results and explicit erased-future storage remain open. |
+| Async interface futures and dispatch | Bodyless async methods publish region- and output-constrained associated future families; implementations bind concrete opaque coroutine futures; concrete and generic-bound calls use the family. Erased async dispatch remains feature-diagnosed because there is no explicit future-storage contract. | `async-interface-method.mt` and `async-interface-erased-dispatch.mt`; async default bodies with inferred results and explicit erased-future storage remain open. |
+| Erased Future polling and storage | Pinned poll dispatch through `any Future<Output = T>` and the `alloc.future.Erased<T>` static heap wrapper are implemented; compiler dispatch change is unverified (not yet built). The wrapper owns a stable concrete payload and uses typed poll/release callbacks. | Build/run `tests/std/erased_future_dispatch.mt`; general `Box<any Future<Output = T>>` remains blocked on I07 unsized-owner support and a compiler-owned dynamic drop contract. |
 | Ownership-checked suspension CFG | Implemented: `ir/ir.h` `Exit::Suspend`, `ir/verify.cpp`, successor updates in `analysis/*`, `ir/dominance.cpp`, `instances/arrays.cpp`, `lowering/scalar.cpp`. | None known; borrow-across-await is covered by `async-await-anywhere.mt`. |
 | Inline pinned state and poll | Implemented: `types` coroutine aggregate and layout resolver, `instances/specialize.cpp`, backend frame/dispatch. Transferable/Shareable/Static in `semantics/interface_solver.cpp` with the interior from `semantics/captures.cpp`. | Liveness-precise interior (optional precision gain). |
 | Control flow | Implemented: ordinary CFG of the closure body. | None known. |
 | Cleanup and cancellation | Implemented: persistent frame flags and `unwind` in `backend/llvm/cleanup.cpp`; exactly-once drops verified. | Dedicated lexical drop-order-across-suspension fixture. |
 | Optional executor drives async I/O (S030) | Implemented and verified on macOS arm64: `library/std/task.mt`, `library/std/net.mt`, `library/std/sys.mt`, `library/core/future.mt`, `runtime/sys.{h,cpp}`; `tests/std/async_net_echo.mt` passes in Release CTest and under emitted ASan/TSan. | Kqueue wake-race stress; Linux poll-fallback qualification (owner-run). |
-| Borrowed asynchronous scope and scope-local region erasure | Implemented, unverified (not yet built): `library/std/task.mt` provides `AsyncScope`, `AsyncJoinHandle` and region-branded erased child futures. Children are polled only in parent epochs; no concurrent worker polling is enabled. | Build/run `tests/std/task_async_scope_borrowed.mt` and `tests/std/neg_task_async_scope_body_local.mt`; independent soundness/race review; sanitizer and supported-target qualification. General `any Future` region erasure and erased async-interface dispatch remain unsupported. |
+| Borrowed asynchronous scope and scope-local region erasure | Implemented, unverified (not yet built): `library/std/task.mt` provides `AsyncScope`, `AsyncJoinHandle` and region-branded erased child futures. Children are polled only in parent epochs; no concurrent worker polling is enabled. | Build/run `tests/std/task_async_scope_borrowed.mt` and `tests/std/neg_task_async_scope_body_local.mt`; independent soundness/race review; sanitizer and supported-target qualification. General region-carrying owned `any Future` storage and erased async-interface dispatch remain unsupported. |
 | Integration and qualification | Release CTest, sanitized compiler CTest and ASan/UBSan emitted async programs passed on macOS arm64 before this change; the Debug-profile CTest passed 23/23 at `c81bc6d`. The full Release CTest passed 24/24 with the async closure, `try await`, interface dispatch, erasure-diagnostic and debug-info state-discriminator changes. | Linux/Windows (owner-run). |
 
 The source-freeze gate depends on all rows, fixtures and documentation; a

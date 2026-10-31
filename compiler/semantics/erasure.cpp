@@ -106,7 +106,23 @@ void Checker::finalizeErasure() {
         bool valid =
             source.receiver != "static" &&
             (source.receiver == "read" || source.receiver == "mut" ||
-             source.receiver.empty()) &&
+             source.receiver.empty());
+        if (definition.name == "core::future::Future" &&
+            method.name == "poll" && source.receiver == "take" &&
+            !signature.parameters.empty()) {
+          const auto receiver = signature.parameters.front().type;
+          if (checked.types->isProduct(receiver)) {
+            const auto &pin = checked.types->product(receiver);
+            valid |= pin.kind == AggregateKind::Pin &&
+                     !pin.components.empty() &&
+                     checked.types->isView(pin.components.front()) &&
+                     checked.types->view(pin.components.front()).mode ==
+                         ParameterMode::Mut &&
+                     checked.types->view(pin.components.front()).payload ==
+                         definition.self;
+          }
+        }
+        valid &=
             function.genericParameters.size() == method.implicitParameters &&
             !method.signature.parameters.empty();
         auto signature = method.signature;

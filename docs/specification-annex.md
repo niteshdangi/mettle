@@ -294,6 +294,9 @@ or const parameters, and no use of unbound Self in its public inputs/outputs.
 Receiver/associated types needed by the method must be fixed in the erased
 interface contract. A method explicitly constrained to sized concrete Self is
 unavailable through erasure but may coexist in the interface.
+`Future.poll` is dispatchable through `any Future<Output = T>`: the output
+binding is fixed, and its pinned mutable receiver does not move the erased
+payload. This does not make arbitrary consuming or pinned receivers dispatchable.
 
 Generic region parameters do not by themselves require monomorphized dispatch.
 Associated type families that cannot be represented in a fixed erased signature
