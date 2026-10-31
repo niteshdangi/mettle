@@ -543,7 +543,7 @@ verdict. The last column names acceptance checks and explicit later limits.
 | S015 | Cell/RefCell/UnsafeCell: implemented initial facilities | Safe cell operations, dynamic borrow/try-borrow guards, native release and conflict/forget/unwind cases | Frozen-input sanitizer/target and applicable operation qualification; native thread libraries remain I10. |
 | S016 | Uninitialized/manual-drop storage: implemented | `MaybeUninit`/`ManuallyDrop` signatures and focused ownership cases | Current partial-initialization, validity, explicit-drop, alignment and unwind evidence. |
 | S017 | Atomics/fences: implemented initial scalar mechanisms | Ordering validation, RMW/CAS/fences; C++ thread publication case | Independent memory-model/race evidence and applicable target width/order cases. A publication example or ASan alone is insufficient; native thread libraries remain I10. |
-| S018 | Transferable/Shareable/Static: implemented initial contracts | Structural derivation in `interface_solver.cpp` (raw pointers, cells and `Ref`/`RefMut` opt out; atomics and plain data opt in), `unsafe extend`/negative `extend X not P` declarations, bounds enforced at call sites; Static additionally requires `static` regions | Frozen-input generic/region/projection qualification. Immutable statics must be Shareable (raw pointers and a bare `UnsafeCell` are exempt; `static mut` needs unsafe). Scoped spawns require `F: Within<region s>`, checked in `regions.cpp` (`withinBounds`), so closures cannot capture locals declared inside the scope body. Method-level bounds now instantiate extension-owner regions from the receiver; implemented, unverified (not yet built). `fs.ReadDir` is an `Iterator`; `mpsc.sync_channel(n)` has capacity `n`, including rendezvous at zero. A panic in a spawned thread is caught per thread and `join()` reports a Panicked result with code 101. Extension-level region names are now resolved from the current function's region scope when a callee's annotation scope is active (`regionReference`); verified on macOS arm64 (`impl-region-method-call-on-other-type.mt`), and `Scope.spawn` no longer needs its private `register` workaround. |
+| S018 | Transferable/Shareable/Static: implemented initial contracts | Structural derivation in `interface_solver.cpp` (raw pointers, cells and `Ref`/`RefMut` opt out; atomics and plain data opt in), `unsafe extend`/negative `extend X not P` declarations, bounds enforced at call sites; Static additionally requires `static` regions | Frozen-input generic/region/projection qualification. Immutable statics must be Shareable (raw pointers and a bare `UnsafeCell` are exempt; `static mut` needs unsafe). Scoped spawns require `F: Within<region s>`, checked in `regions.cpp` (`withinBounds`), so closures cannot capture locals declared inside the scope body. Method-level bounds bind extension-owner regions from the receiver's nominal region arguments before covariant view shortening; the short-capture regression is implemented, unverified (not built). `fs.ReadDir` is an `Iterator`; `mpsc.sync_channel(n)` has capacity `n`, including rendezvous at zero. A panic in a spawned thread is caught per thread and `join()` reports a Panicked result with code 101. Extension-level region names are now resolved from the current function's region scope when a callee's annotation scope is active (`regionReference`); verified on macOS arm64 (`impl-region-method-call-on-other-type.mt`), and `Scope.spawn` no longer needs its private `register` workaround. |
 | S019 | Thread spawn and scope: implemented initial library | `std.thread` (`spawn`, `JoinHandle.join` reporting `Panicked`, `scope` joining on panic) over `runtime/thread.cpp`; owned threads require Transferable + Static, scoped ones Transferable | Linux target execution of `library.std`, sanitizer/TSan evidence of the shim, stress on the target. Race freedom is not a fairness or deadlock-freedom claim. |
 | S020 | Mutex and RwLock: implemented initial library | `std.sync.{mutex,rwlock}` with poisoning, thread-affine guards (`not Transferable`) and an error-checking mutex that reports relock | Target stress and applicable poison/failure-policy cases. |
 | S021 | Condition variables, barriers, once: implemented initial library | `std.sync.{condvar,barrier,once}`; a panicking initialiser re-arms `Once` | Target stress. |
@@ -1129,15 +1129,18 @@ Remaining I11 work includes a full asynchronous borrowed-scope
 interface using the poll epochs in memory-and-concurrency section 6, including
 its independent soundness/race review and sanitizer qualification. A library
 `AsyncScope` attempt was withdrawn: it accepted a child future borrowing a
-local shorter than the scope (the `Within<region s>` bound on a method of a
-region-parameterized type was not enforced). The method-owner region
-instantiation fix in `compiler/semantics/regions.cpp` and source fixtures
-`method-within-bound-rejects-short-capture.mt` /
-`method-within-bound-accepts-receiver-region-capture.mt` are implemented,
-unverified at base revision `2b81a88` (the code-only lane ran no builds or
-source cases). Verify both fixtures and the rejection's recorded `15:18`
-diagnostic after integration; the async-scope attempt remains withdrawn pending
-that verification and its independent soundness/race review. As an I05
+local shorter than the scope because a method's `Within<region s>` obligation
+could use a covariantly shortened receiver view instead of the receiver's
+declared nominal region argument. `compiler/semantics/regions.cpp` now binds
+matching extension-owner regions from those nominal region arguments before
+checking the bound. The short-capture rejection
+`method-within-bound-rejects-short-capture.mt` and existing accepted cases
+`method-within-bound-accepts-receiver-region-capture.mt` /
+`impl-region-method-call-on-other-type.mt` are implemented, unverified on this
+worktree because the code-only lane ran no builds or source cases. Verify the
+rejection's recorded `15:18` diagnostic after integration; the async-scope
+attempt remains withdrawn pending that verification and its independent
+soundness/race review. As an I05
 region-inference follow-up, `RegionPass::infer` in
 `compiler/semantics/regions.cpp` now matches region arguments across same-origin
 nominal fields even when their region patterns differ. The invariant-field

@@ -171,6 +171,12 @@ in a shortened validity region through reborrowing. Interior-mutation cells
 are invariant in mutable payload positions. Function inputs are contravariant
 and outputs covariant where subtyping applies.
 
+When a method bound names a region parameter of its receiver's nominal type,
+that region is taken from the receiver's actual type argument. Covariantly
+shortening a read view at the call site limits access through that view; it
+does not weaken the method bound's outlives obligation against the nominal
+region.
+
 Derive user-type variance structurally; generic occurrences in invariant
 positions prevent an unsound widening. Higher-ranked region variables cannot
 escape their binder or unify with a shorter local allocation to satisfy a

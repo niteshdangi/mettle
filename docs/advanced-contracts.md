@@ -76,6 +76,11 @@ The compiler treats the scope as an owner of every borrowed child, not as a
 forgettable library guard. Handles may be forgotten without releasing the
 scope's registration of the child.
 
+Every region captured by a child must outlive the scope region required by its
+`Within` bound. If a method expresses that bound through a region parameter of
+its receiver type, the obligation uses the receiver's nominal region argument;
+a shorter call-site reborrow cannot reduce it.
+
 Required state machine:
 
 1. Open: parent storage is valid and new children may register.

@@ -118,6 +118,9 @@ Generic associated-region calls substitute declaration-owned family binders.
 `Within<region s>` bounds (used by scoped spawn) are enforced by the region
 pass (`withinBounds`): every region captured by the argument must outlive `s`,
 and closures checked against a callable bound receive a higher-ranked binder.
+For method bounds that name an extension-owner region, `s` comes from the
+receiver's nominal type argument before any covariant shortening of its read
+view. A call-site reborrow therefore cannot weaken the bound.
 Concurrency properties (Transferable/Shareable/Static) are structural proofs in
 `semantics/interface_solver`; immutable statics must be Shareable. Interface
 implementation candidates are indexed by interface declaration.
