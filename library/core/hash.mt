@@ -28,6 +28,15 @@ pub interface Hasher {
         ]
         self.write(read bytes)
     }
+    mut fn write_u128(value: u128): Unit {
+        var bytes = [0u8; 16]
+        var i = 0usize
+        while i < bytes.len() {
+            bytes[i] = (value >> ((i * 8usize) as u32)) as u8
+            i += 1usize
+        }
+        self.write(read bytes)
+    }
     // Widened so the stream does not depend on the pointer width.
     mut fn write_usize(value: usize): Unit { self.write_u64(value as u64) }
 }
@@ -129,6 +138,9 @@ extend u32 implements Hash {
 extend u64 implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { state.write_u64(self) }
 }
+extend u128 implements Hash {
+    fn hash<H: Hasher>(state: mut H): Unit { state.write_u128(self) }
+}
 extend usize implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { state.write_usize(self) }
 }
@@ -143,6 +155,9 @@ extend i32 implements Hash {
 }
 extend i64 implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { state.write_u64(self as u64) }
+}
+extend i128 implements Hash {
+    fn hash<H: Hasher>(state: mut H): Unit { state.write_u128(self as u128) }
 }
 extend isize implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { state.write_usize(self as usize) }

@@ -22,5 +22,35 @@ fn main(): i32 {
     match kind<u64>("18446744073709551616") { present(k) => { if k != IntErrorKind.PosOverflow { return 27 } }, none => { return 28 } }
     match kind<i32>("99999999999999999999999x") { present(k) => { if k != IntErrorKind.InvalidDigit { return 29 } }, none => { return 30 } }
     match kind<i32>("1") { present(k) => { return 31 }, none => {} }
+    match capture num.parse<i128>("-170141183460469231731687303715884105728") {
+        success(v) => { if v != -170141183460469231731687303715884105728i128 { return 32 } },
+        failure(e) => { return 33 }
+    }
+    match capture num.parse<i128>("170141183460469231731687303715884105727") {
+        success(v) => { if v != 170141183460469231731687303715884105727i128 { return 34 } },
+        failure(e) => { return 35 }
+    }
+    match capture num.parse_radix<u128>("ffffffffffffffffffffffffffffffff", 16u32) {
+        success(v) => { if v != 340282366920938463463374607431768211455u128 { return 36 } },
+        failure(e) => { return 37 }
+    }
+    match kind<u128>("340282366920938463463374607431768211456") {
+        present(k) => { if k != IntErrorKind.PosOverflow { return 38 } },
+        none => { return 39 }
+    }
+    match kind<i128>("-170141183460469231731687303715884105729") {
+        present(k) => { if k != IntErrorKind.NegOverflow { return 40 } },
+        none => { return 41 }
+    }
+    match kind<u128>("340282366920938463463374607431768211456x") {
+        present(k) => { if k != IntErrorKind.InvalidDigit { return 42 } },
+        none => { return 43 }
+    }
+    match capture num.parse<i8>("-128") { success(v) => { if v != -128i8 { return 44 } }, failure(e) => { return 45 } }
+    match capture num.parse<i16>("32767") { success(v) => { if v != 32767i16 { return 46 } }, failure(e) => { return 47 } }
+    match capture num.parse<u16>("65535") { success(v) => { if v != 65535u16 { return 48 } }, failure(e) => { return 49 } }
+    match capture num.parse<u32>("4294967295") { success(v) => { if v != 4294967295u32 { return 50 } }, failure(e) => { return 51 } }
+    match capture num.parse<isize>("-9223372036854775808") { success(v) => { if v != -9223372036854775808isize { return 52 } }, failure(e) => { return 53 } }
+    match capture num.parse<usize>("18446744073709551615") { success(v) => { if v != 18446744073709551615usize { return 54 } }, failure(e) => { return 55 } }
     0
 }

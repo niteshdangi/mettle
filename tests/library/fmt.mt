@@ -31,6 +31,66 @@ fn check<T: Display>(value: read T, options: fmt.Spec, expect: read core.text.Te
     match fmt.written_text(read storage, n) { present(t) => t == expect, none => false }
 }
 
+fn check_lower_hex<T: fmt.LowerHex>(value: read T, options: fmt.Spec, expect: read core.text.Text): bool {
+    var storage = [0u8; 64]
+    var w = fmt.buffer_writer(mut storage)
+    var f = fmt.formatter(mut w, options)
+    match capture T.(fmt.LowerHex).fmt(value, mut f) {
+        success(u) => {},
+        failure(e) => { return false }
+    }
+    let n = w.len()
+    match fmt.written_text(read storage, n) { present(t) => t == expect, none => false }
+}
+
+fn check_debug<T: fmt.Debug>(value: read T, options: fmt.Spec, expect: read core.text.Text): bool {
+    var storage = [0u8; 64]
+    var w = fmt.buffer_writer(mut storage)
+    var f = fmt.formatter(mut w, options)
+    match capture T.(fmt.Debug).fmt(value, mut f) {
+        success(u) => {},
+        failure(e) => { return false }
+    }
+    let n = w.len()
+    match fmt.written_text(read storage, n) { present(t) => t == expect, none => false }
+}
+
+fn check_binary<T: fmt.Binary>(value: read T, options: fmt.Spec, expect: read core.text.Text): bool {
+    var storage = [0u8; 64]
+    var w = fmt.buffer_writer(mut storage)
+    var f = fmt.formatter(mut w, options)
+    match capture T.(fmt.Binary).fmt(value, mut f) {
+        success(u) => {},
+        failure(e) => { return false }
+    }
+    let n = w.len()
+    match fmt.written_text(read storage, n) { present(t) => t == expect, none => false }
+}
+
+fn check_octal<T: fmt.Octal>(value: read T, options: fmt.Spec, expect: read core.text.Text): bool {
+    var storage = [0u8; 64]
+    var w = fmt.buffer_writer(mut storage)
+    var f = fmt.formatter(mut w, options)
+    match capture T.(fmt.Octal).fmt(value, mut f) {
+        success(u) => {},
+        failure(e) => { return false }
+    }
+    let n = w.len()
+    match fmt.written_text(read storage, n) { present(t) => t == expect, none => false }
+}
+
+fn check_upper_hex<T: fmt.UpperHex>(value: read T, options: fmt.Spec, expect: read core.text.Text): bool {
+    var storage = [0u8; 64]
+    var w = fmt.buffer_writer(mut storage)
+    var f = fmt.formatter(mut w, options)
+    match capture T.(fmt.UpperHex).fmt(value, mut f) {
+        success(u) => {},
+        failure(e) => { return false }
+    }
+    let n = w.len()
+    match fmt.written_text(read storage, n) { present(t) => t == expect, none => false }
+}
+
 fn main(): i32 {
     let s = fmt.spec()
     if !check(42, s, "42") { return 1 }
@@ -54,6 +114,18 @@ fn main(): i32 {
     var pr = fmt.spec()
     pr.precision = present(2usize)
     if !check(Word(), pr, "he") { return 13 }
+    if !check(-170141183460469231731687303715884105728i128, s, "-170141183460469231731687303715884105728") { return 18 }
+    if !check(340282366920938463463374607431768211455u128, s, "340282366920938463463374607431768211455") { return 19 }
+    if !check_lower_hex(340282366920938463463374607431768211455u128, s, "0xffffffffffffffffffffffffffffffff") { return 20 }
+    if !check_lower_hex(-170141183460469231731687303715884105728i128, s, "0x80000000000000000000000000000000") { return 21 }
+    if !check_debug(340282366920938463463374607431768211455u128, s, "340282366920938463463374607431768211455") { return 23 }
+    var prefixed = fmt.spec()
+    prefixed.alternate = true
+    prefixed.zero = true
+    prefixed.width = present(6usize)
+    if !check_lower_hex(42u128, prefixed, "0x002a") { return 22 }
+    if !check_binary(10u128, s, "1010") || !check_octal(10u128, s, "12") ||
+       !check_upper_hex(11259375u128, s, "ABCDEF") { return 24 }
     var padded = [0u8; 8]
     var pw = fmt.buffer_writer(mut padded)
     var width = fmt.spec()
