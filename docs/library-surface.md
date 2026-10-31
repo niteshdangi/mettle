@@ -24,6 +24,23 @@ Transparent source aliases remain aliases; newtypes remain distinct.
 Macro-generated declarations retain their generated name/signature and owner/
 implementation context, not merely the macro definition's source line.
 
+### Hosted panic recovery
+
+`std.panic.catch_panic` consumes a one-shot closure and returns
+`CatchResult.Returned(value)` or `CatchResult.Panicked(info)`. `PanicInfo`
+owns the recovered payload; it exposes the panic code and a `Text` view of
+the copied message, valid for the lifetime of that value. Runtime payload
+storage is allocated for recovery and released when `PanicInfo` is dropped.
+Source-level panic hooks receive the original borrowed message before
+unwinding. `set_hook` replaces the custom hook; `take_hook` returns it as an
+optional callback and restores the default reporter (`none` means the default
+was active).
+`reset_hook` restores that reporter without returning the previous callback.
+A hook must not panic; doing so aborts. Recovery runs only after normal unwind
+cleanup and replacement restoration, and does not roll back other closure side
+effects. The hosted std API is unavailable in freestanding/abort execution;
+an abort is not caught in-process.
+
 ## 2. Recursive translation rules
 
 The manifest records the applicable rule IDs. T01 applies to every declaration;

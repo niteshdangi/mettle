@@ -225,8 +225,11 @@ native Windows path encoding and its display (`write_path`) are specified in
 library-surface.md section 12 and reconciled with this statement before the
 Windows profile is delivered. A
 byte string containing NUL is rejected with `InvalidInput` before reaching the OS.
-The hosted panic hook (`std.panic.set_hook`) receives the message; the process
-still exits with status 101.
+The hosted panic hook (`std.panic.set_hook`) receives the message before
+unwinding. An uncaught message panic exits with status 101; hosted
+`std.panic.catch_panic` instead returns its code and owned message payload after
+cleanup completes. A panic raised by a hook aborts. Freestanding execution
+uses aborting traps and does not provide in-process panic recovery.
 
 Wall time and monotonic elapsed time are distinct types. No monotonicity promise
 is made for wall time. Timeouts distinguish expiration from completed cleanup.

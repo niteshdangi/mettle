@@ -922,11 +922,16 @@ when the non-UTF-8 name really lives on disk (asserted on Linux) and accepts
 EILSEQ 84 as well as 92. The same Debug-compiler run passed 740 source/profile
 cases and the six cleanup cases. Official evidence (`build/linux-target/
 foundation-evidence.json`) for both configurations is pending a fresh
-`tools/build.py` receipt, which the runner requires. Remaining I08 gaps:
-a panic in a spawned thread is caught and reported by `join()`, but there is no
-general panic recovery (S028), so a main-thread panic still ends the process;
-macOS file systems may reject non-UTF-8 names (EILSEQ), which the tests check
-but cannot exercise on-disk there; hosted names avoid reserved words
+`tools/build.py` receipt, which the runner requires.
+S028 status: implemented, unverified (not yet built): `std.panic.catch_panic`
+recovers source-level panics on the current thread with an owned code/message
+payload after cleanup; hook take/reset semantics and abort-on-hook-panic are
+implemented, but the new std/runtime cases and profile behavior still need
+execution evidence. Freestanding/abort execution does not provide recovery.
+Spawned-thread panics continue to be caught and reported by `join()`.
+Remaining I08 gaps: macOS file systems may reject non-UTF-8 names (EILSEQ),
+which the tests check but cannot exercise on-disk there; hosted names avoid
+reserved words
 (`read_some`, `write_some`, `read_bytes`, `var_os`, `set_*` open options).
 `ReadDir` implements `Iterator` (`next_entry` remains).
 

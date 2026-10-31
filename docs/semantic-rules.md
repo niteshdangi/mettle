@@ -218,6 +218,15 @@ uninitialized referenced destination. A local leaving scope may immediately
 drop the installed value during outer cleanup. This is not transactional
 replacement and does not promise preserving the old value.
 
+Hosted `std.panic.catch_panic` is a recovery boundary for source-level panics.
+The panicking function first completes its ordinary initialized-place cleanup;
+only then does the boundary return `CatchResult.Panicked` with the panic code
+and message. Its message is an owned payload whose text view is valid until
+the payload is dropped. A panic raised while running a panic hook, or a second
+panic during cleanup, aborts rather than becoming a nested recovery result.
+Recovery does not roll back other closure side effects. Freestanding/abort
+execution has no unwind recovery boundary.
+
 The store cannot invoke user code, allocate, throw or call an overloaded
 assignment operator. Existing live aliases cannot access the destination during
 the exclusive operation. Pinned destinations require a compatible in-place

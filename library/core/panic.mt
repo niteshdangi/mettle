@@ -1,7 +1,7 @@
-// Source-level panic: a nonrecoverable failure with a message, routed through
-// the single compiler-owned hook `core.intrinsics.panic_message`. A hosted
-// runtime reports the message on stderr, unwinds with cleanup and exits with
-// status 101; a freestanding build has no sink and aborts (trap).
+// Source-level panic: an unwind failure with a message, routed through the
+// compiler-owned hook `core.intrinsics.panic_message`. Hosted code may recover
+// it with `std.panic.catch_panic`; an uncaught panic exits with status 101.
+// Freestanding execution has no unwind runtime and aborts (trap).
 import super.text.Text
 
 pub fn panic(message: read Text): Never {

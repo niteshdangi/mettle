@@ -743,8 +743,10 @@ It does not become a hidden universal dependency of core/no-OS output.
 The async executor remains a separate opt-in facility.
 The current hosted runtime's panic ABI is private compiler support, not a stable
 public C ABI. It uses C++ exceptions, a thread-local unwind-depth indicator and
-integer panic codes. Internal checked-IR catch integration proves cleanup/recovery;
-it does not implement generic hosted panic APIs or C-unwind interoperability.
+integer panic codes. `std.panic.catch_panic` is a hosted language API layered on
+that boundary and returns an owned code/message payload after cleanup. This API
+does not establish compatible C-unwind interoperability or a stable public ABI;
+its implementation remains unverified until built and exercised.
 
 Package resolution/build planning (`packages`, planned before compilation and
 handed to the loader as `Library::packages` mounts; failures carry the
