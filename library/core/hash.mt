@@ -32,12 +32,30 @@ pub interface Hasher {
         self.write_u64(value as u64)
         self.write_u64((value >> 64u128) as u64)
     }
+    mut fn write_i8(value: i8): Unit { self.write_u8(value as u8) }
+    mut fn write_i16(value: i16): Unit { self.write_u16(value as u16) }
+    mut fn write_i32(value: i32): Unit { self.write_u32(value as u32) }
+    mut fn write_i64(value: i64): Unit { self.write_u64(value as u64) }
+    mut fn write_i128(value: i128): Unit { self.write_u128(value as u128) }
     // Widened so the stream does not depend on the pointer width.
     mut fn write_usize(value: usize): Unit { self.write_u64(value as u64) }
+    mut fn write_isize(value: isize): Unit { self.write_usize(value as usize) }
 }
 
 pub interface Hash {
     fn hash<H: Hasher>(state: mut H): Unit;
+    static fn hash_slice<H: Hasher>(values: read [Self], state: mut H): Unit where Self: Sized {
+        var i = 0usize
+        while i < values.len() {
+            values[i].hash(mut state)
+            i += 1usize
+        }
+    }
+}
+
+pub interface BuildHasher {
+    type Hasher: Hasher;
+    fn build_hasher(): Self.Hasher;
 }
 
 // Hashes one value with the default keyed SipHash-1-3 (zero key).

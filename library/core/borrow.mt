@@ -10,6 +10,36 @@
 // collections rely on `Q: Ord` agreeing with `K: Ord`. A type relates to a
 // given `Q` at most once; every type relates to itself.
 import super.text.Text
+import super.clone.Clone
+
+pub interface AsRef<T: unsized> {
+    fn as_ref(): read T from self;
+}
+
+pub interface Borrow<T: unsized> {
+    fn borrow(): read T from self;
+}
+
+pub interface ToOwned {
+    type Owned: Borrow<Self>;
+    fn to_owned(): Self.Owned;
+    fn clone_into(owned: mut Self.Owned): Unit where Self.Owned: Clone {
+        *owned = self.to_owned()
+    }
+}
+
+extend<T: unsized> T implements AsRef<T> {
+    fn as_ref(): read T from self { read self }
+}
+
+extend<T: unsized> T implements Borrow<T> {
+    fn borrow(): read T from self { read self }
+}
+
+extend<T: Clone> T implements ToOwned {
+    type Owned = T
+    fn to_owned(): T { self.clone() }
+}
 
 pub interface KeyView<Q: unsized> {
     fn key_view(): read Q from self;

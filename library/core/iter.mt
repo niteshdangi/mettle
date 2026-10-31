@@ -3,6 +3,7 @@
 // pull from the wrapped iterator only when `next` is called, and consuming
 // methods stop at the first decisive item.
 import super.cmp.Ord
+import super.cmp.PartialEq
 import super.option
 import super.cmp.Ordering
 import super.clone.Clone
@@ -13,6 +14,7 @@ pub interface Iterator: Sized {
 
     // Bounds on the remaining length: `(lower, upper)`; `upper` is none when unknown.
     fn size_hint(): (usize, usize?) { (0usize, none) }
+    fn by_ref<region r>(receiver self: mut Self from r): mut Self from r { mut self }
 
     mut fn count(): usize {
         var total = 0usize
@@ -51,6 +53,34 @@ pub interface Iterator: Sized {
         while true {
             match take self.next() { present(item) => { f(item) }, none => { break } }
         }
+    }
+    mut fn try_fold<B, E, F: mut fn(take B, take Self.Item): B throws E>(
+        start: take B,
+        f: mut F
+    ): (B throws E) {
+        var accumulator = start
+        while true {
+            match take self.next() {
+                present(item) => match take capture f(take accumulator, item) {
+                    success(value) => { accumulator = value },
+                    failure(error) => { return failure(error) }
+                },
+                none => { break }
+            }
+        }
+        success(accumulator)
+    }
+    mut fn try_for_each<E, F: mut fn(take Self.Item): Unit throws E>(f: mut F): (Unit throws E) {
+        while true {
+            match take self.next() {
+                present(item) => match take capture f(item) {
+                    success(_) => {},
+                    failure(error) => { return failure(error) }
+                },
+                none => { break }
+            }
+        }
+        success(())
     }
     // Stops at the first item for which `test` holds.
     mut fn any<F: fn(take Self.Item): bool>(test: take F): bool {
@@ -103,6 +133,100 @@ pub interface Iterator: Sized {
         }
         none
     }
+    mut fn min_by<F: fn(read Self.Item, read Self.Item): Ordering>(compare: take F): Self.Item? {
+        var best = self.next()
+        while true {
+            match take self.next() {
+                present(item) => match take best {
+                    present(current) => {
+                        if compare(read item, read current).is_lt() {
+                            best = present(item)
+                        } else {
+                            best = present(current)
+                        }
+                    },
+                    none => { best = present(item) }
+                },
+                none => { break }
+            }
+        }
+        best
+    }
+    mut fn max_by<F: fn(read Self.Item, read Self.Item): Ordering>(compare: take F): Self.Item? {
+        var best = self.next()
+        while true {
+            match take self.next() {
+                present(item) => match take best {
+                    present(current) => {
+                        if compare(read item, read current).is_gt() {
+                            best = present(item)
+                        } else {
+                            best = present(current)
+                        }
+                    },
+                    none => { best = present(item) }
+                },
+                none => { break }
+            }
+        }
+        best
+    }
+    mut fn min_by_key<K: Ord, F: fn(read Self.Item): K>(key: take F): Self.Item? {
+        var best: (Self.Item, K)? = match take self.next() {
+            present(item) => {
+                let item_key = key(read item)
+                present((item, item_key))
+            },
+            none => none
+        }
+        while true {
+            match take self.next() {
+                present(item) => {
+                    let item_key = key(read item)
+                    match take best {
+                        present((current, current_key)) => {
+                            if item_key.cmp(read current_key).is_lt() {
+                                best = present((item, item_key))
+                            } else {
+                                best = present((current, current_key))
+                            }
+                        },
+                        none => { best = present((item, item_key)) }
+                    }
+                },
+                none => { break }
+            }
+        }
+        match take best { present((item, _)) => present(item), none => none }
+    }
+    mut fn max_by_key<K: Ord, F: fn(read Self.Item): K>(key: take F): Self.Item? {
+        var best: (Self.Item, K)? = match take self.next() {
+            present(item) => {
+                let item_key = key(read item)
+                present((item, item_key))
+            },
+            none => none
+        }
+        while true {
+            match take self.next() {
+                present(item) => {
+                    let item_key = key(read item)
+                    match take best {
+                        present((current, current_key)) => {
+                            if item_key.cmp(read current_key).is_gt() {
+                                best = present((item, item_key))
+                            } else {
+                                best = present((current, current_key))
+                            }
+                        },
+                        none => { best = present((item, item_key)) }
+                    }
+                },
+                none => { break }
+            }
+        }
+        match take best { present((item, _)) => present(item), none => none }
+    }
     mut fn reduce<F: fn(take Self.Item, take Self.Item): Self.Item>(f: take F): Self.Item? {
         var accumulator = self.next()
         while true {
@@ -129,6 +253,23 @@ pub interface Iterator: Sized {
     }
     take fn flat_map<U: Iterator, F: fn(take Self.Item): U>(f: take F): FlatMapped<Self, U, F> {
         FlatMapped(self, none, f)
+    }
+    take fn flatten(): Flatten<Self.Item, Self> where Self.Item: Iterator {
+        Flatten(self, none)
+    }
+    take fn cloned<region r, T: Clone>(): Cloned<region r, T, Self>
+        where Self.Item = read T from r {
+        Cloned(self, Phantom<T>())
+    }
+    take fn copied<region r, T: Copy>(): Copied<region r, T, Self>
+        where Self.Item = read T from r {
+        Copied(self, Phantom<T>())
+    }
+    take fn scan<B, S, F: mut fn(mut S, take Self.Item): B?>(
+        state: take S,
+        f: take F
+    ): Scanned<B, Self, S, F> {
+        Scanned(self, state, f, Phantom<B>())
     }
     take fn enumerate(): Enumerated<Self> { Enumerated(self, 0usize) }
     take fn zip<U: Iterator>(other: take U): Zipped<Self, U> { Zipped(self, other) }
@@ -380,6 +521,102 @@ extend<O: Iterator + BidirectionalIterator, U: Iterator + BidirectionalIterator,
     }
 }
 
+pub type Flatten<U: Iterator, O: Iterator<Item = U>> {
+    outer: O
+    front: U?
+    back: U?
+    outer_done: bool
+}
+
+pub type Cloned<region r, T, I> { iter: I; result: Phantom<T> }
+extend<region r, T: Clone, I: Iterator<Item = read T from r>> Cloned<r, T, I> implements Iterator {
+    type Item = T
+    mut fn next(): T? {
+        match take self.iter.next() {
+            present(item) => present(item.clone()),
+            none => none
+        }
+    }
+}
+
+pub type Copied<region r, T, I> { iter: I; result: Phantom<T> }
+extend<region r, T: Copy, I: Iterator<Item = read T from r>> Copied<r, T, I> implements Iterator {
+    type Item = T
+    mut fn next(): T? {
+        match take self.iter.next() {
+            present(item) => present(*item),
+            none => none
+        }
+    }
+}
+
+pub type Scanned<B, I, S, F> { iter: I; state: S; f: F; result: Phantom<B> }
+extend<B, I: Iterator, S, F: mut fn(mut S, take I.Item): B?> Scanned<B, I, S, F> implements Iterator {
+    type Item = B
+    mut fn next(): B? {
+        match take self.iter.next() {
+            present(item) => self.f(mut self.state, item),
+            none => none
+        }
+    }
+}
+extend<U: Iterator, O: Iterator<Item = U>> Flatten<U, O> implements Iterator {
+    type Item = U.Item
+    mut fn next(): U.Item? {
+        while true {
+            match mut self.front {
+                present(inner) => match take inner.next() {
+                    present(item) => { return present(item) },
+                    none => { self.front = none }
+                },
+                none => {}
+            }
+            if self.outer_done {
+                match mut self.back {
+                    present(inner) => match take inner.next() {
+                        present(item) => { return present(item) },
+                        none => { self.back = none; return none }
+                    },
+                    none => { return none }
+                }
+            }
+            match take self.outer.next() {
+                present(inner) => { self.front = present(inner) },
+                none => { self.outer_done = true }
+            }
+        }
+        none
+    }
+}
+extend<U: Iterator + BidirectionalIterator, O: Iterator<Item = U> + BidirectionalIterator>
+    Flatten<U, O> implements BidirectionalIterator {
+    mut fn next_back(): U.Item? {
+        while true {
+            match mut self.back {
+                present(inner) => match take inner.next_back() {
+                    present(item) => { return present(item) },
+                    none => { self.back = none }
+                },
+                none => {}
+            }
+            if self.outer_done {
+                match mut self.front {
+                    present(inner) => match take inner.next_back() {
+                        present(item) => { return present(item) },
+                        none => { self.front = none; return none }
+                    },
+                    none => { return none }
+                }
+            }
+            match take self.outer.next_back() {
+                present(inner) => { self.back = present(inner) },
+                none => { self.outer_done = true }
+            }
+        }
+        none
+    }
+}
+
 pub type Enumerated<I> { iter: I; index: usize }
 extend<I: Iterator> Enumerated<I> implements Iterator {
     type Item = (usize, I.Item)
@@ -455,6 +692,10 @@ extend<I: Iterator> Limited<I> implements Iterator {
         self.remaining -= 1usize
         self.iter.next()
     }
+}
+extend<I: Iterator> Limited<I> {
+    pub fn limit(): usize { self.remaining }
+    pub mut fn set_limit(limit: usize): Unit { self.remaining = limit }
 }
 
 pub type Skipped<I> { iter: I; pending: usize }
@@ -596,6 +837,31 @@ extend<I: Iterator> Peekable<I> {
             none => none
         }
     }
+    pub mut fn peek_mut(): (mut I.Item from self)? {
+        if !self.filled {
+            self.slot = present(self.iter.next())
+            self.filled = true
+        }
+        match mut self.slot {
+            present(held) => match mut held {
+                present(item) => present(mut item),
+                none => none
+            },
+            none => none
+        }
+    }
+    pub mut fn next_if(test: fn(read I.Item): bool): I.Item? {
+        match self.peek() {
+            present(item) => if test(item) { self.next() } else { none },
+            none => none
+        }
+    }
+    pub mut fn next_if_eq(expected: read I.Item): I.Item? where I.Item: PartialEq {
+        match self.peek() {
+            present(item) => if item == expected { self.next() } else { none },
+            none => none
+        }
+    }
 }
 extend<I: Iterator> Peekable<I> implements Iterator {
     type Item = I.Item
@@ -656,6 +922,30 @@ extend<T, F: fn(): T> RepeatWith<T, F> implements Iterator {
     mut fn next(): T? { present(self.f()) }
 }
 pub fn repeat_with<T, F: fn(): T>(f: take F): RepeatWith<T, F> { RepeatWith(f, Phantom<T>()) }
+
+pub type Repeated<T> { value: T }
+extend<T: Clone> Repeated<T> implements Iterator {
+    type Item = T
+    mut fn next(): T? { present(self.value.clone()) }
+}
+pub fn repeat<T: Clone>(value: take T): Repeated<T> { Repeated(value) }
+
+pub type Successors<T, F> { current: T?; step: F }
+extend<T, F: fn(read T): T?> Successors<T, F> implements Iterator {
+    type Item = T
+    mut fn next(): T? {
+        match take self.current {
+            present(value) => {
+                self.current = self.step(read value)
+                present(value)
+            },
+            none => none
+        }
+    }
+}
+pub fn successors<T, F: fn(read T): T?>(first: take T?, step: take F): Successors<T, F> {
+    Successors(first, step)
+}
 
 // Stepping between neighbouring scalar values used by the range iterators.
 // Absence marks a scalar type's endpoint.
@@ -728,7 +1018,7 @@ pub fn range_to_inclusive<T>(end: take T): RangeToInclusive<T> {
 }
 
 // The closed range `[start, end]`; `done` avoids stepping past the type's bounds.
-pub type RangeInclusive<T> { start: T; end: T; done: bool }
+pub type RangeInclusive<T> { pub start: T; pub end: T; done: bool }
 extend<T: Step> RangeInclusive<T> implements Clone {
     fn clone(): RangeInclusive<T> { RangeInclusive(self.start, self.end, self.done) }
 }

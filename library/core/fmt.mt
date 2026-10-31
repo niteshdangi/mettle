@@ -43,26 +43,80 @@ pub interface Write {
 pub copy enum Align { Unknown, Left, Right, Center }
 
 // Rendering options for one value: `width` pads, `precision` truncates text
-// (or limits digits where a type defines it), `zero` pads numbers with zeros
-// after the sign, `plus` forces a sign, `alternate` adds radix prefixes.
+// (or limits digits where a type defines it), sign flags select positive-sign
+// behavior, `zero` pads numbers after the sign, and `alternate` adds prefixes.
 pub copy type Spec {
     pub fill: char
     pub align: Align
     pub width: usize?
     pub precision: usize?
     pub plus: bool
+    pub minus: bool
     pub alternate: bool
     pub zero: bool
 }
-pub fn spec(): Spec { Spec(' ', Align.Unknown, none, none, false, false, false) }
+pub fn spec(): Spec { Spec(' ', Align.Unknown, none, none, false, false, false, false) }
 
 pub type Formatter<region r, W: Write> { sink: mut W from r; options: Spec; indent: usize; line_start: bool }
 pub fn formatter<W: Write>(sink: mut W, options: Spec): Formatter<W> { Formatter(mut sink, options, 0usize, false) }
 
+pub type DebugStruct<region s, region b, W: Write> { f: mut Formatter<region s, W> from b; first: bool }
+pub type DebugTuple<region s, region b, W: Write> { f: mut Formatter<region s, W> from b; first: bool; count: usize }
+pub type DebugList<region s, region b, W: Write> { f: mut Formatter<region s, W> from b; first: bool }
+pub type DebugSet<region s, region b, W: Write> { f: mut Formatter<region s, W> from b; first: bool }
+pub type DebugMap<region s, region b, W: Write> {
+    f: mut Formatter<region s, W> from b
+    first: bool
+    awaiting_value: bool
+}
+
 extend<region r, W: Write> Formatter<region r, W> {
     pub fn options(): Spec { self.options }
+    pub fn width(): usize? { self.options.width }
+    pub fn precision(): usize? { self.options.precision }
+    pub fn alternate(): bool { self.options.alternate }
+    pub fn sign_plus(): bool { self.options.plus }
+    pub fn sign_minus(): bool { self.options.minus }
+    pub fn sign_aware_zero_pad(): bool { self.options.zero }
+    pub fn debug_struct<region b>(
+        receiver self: mut Formatter<region r, W> from b,
+        name: read Text from b
+    ): DebugStruct<region r, region b, W> throws Error {
+        try self.write_str(name)
+        try self.debug_open(" {")
+        DebugStruct(mut self, true)
+    }
+    pub fn debug_tuple<region b>(
+        receiver self: mut Formatter<region r, W> from b,
+        name: read Text from b
+    ): DebugTuple<region r, region b, W> throws Error {
+        try self.write_str(name)
+        try self.debug_open("(")
+        DebugTuple(mut self, true, 0usize)
+    }
+    pub fn debug_list<region b>(
+        receiver self: mut Formatter<region r, W> from b
+    ): DebugList<region r, region b, W> throws Error {
+        try self.debug_open("[")
+        DebugList(mut self, true)
+    }
+    pub fn debug_set<region b>(
+        receiver self: mut Formatter<region r, W> from b
+    ): DebugSet<region r, region b, W> throws Error {
+        try self.debug_open("{")
+        DebugSet(mut self, true)
+    }
+    pub fn debug_map<region b>(
+        receiver self: mut Formatter<region r, W> from b
+    ): DebugMap<region r, region b, W> throws Error {
+        try self.debug_open("{")
+        DebugMap(mut self, true, false)
+    }
     pub mut fn write_str(text: read Text): Unit throws Error { try self.emit_str(text) }
     pub mut fn write_char(value: char): Unit throws Error { try self.emit_char(value) }
+    pub mut fn write_fmt(message: format Message): Unit throws Error {
+        try message.write_to(mut self)
+    }
 
     // Every byte goes through `emit_char` so pretty (`alternate`) debug output
     // can indent lazily at the start of each non-empty line.
@@ -184,6 +238,92 @@ extend<region r, W: Write> Formatter<region r, W> {
         try self.emit_str(digits)
         if width > length { try self.fill_run(width - length - before) }
     }
+}
+
+extend<region s, region b, W: Write> DebugStruct<region s, region b, W> {
+    pub mut fn field<T: Debug>(name: read Text, value: read T): mut Self from self throws Error {
+        if self.first && !self.f.alternate() { try self.f.write_str(" ") }
+        try self.f.debug_item_start(self.first)
+        try self.f.write_str(name)
+        try self.f.write_str(": ")
+        try T.(Debug).fmt(value, self.f)
+        try self.f.debug_item_end()
+        self.first = false
+        mut self
+    }
+    pub take fn finish(): Unit throws Error {
+        if !self.first && !self.f.alternate() { try self.f.write_str(" ") }
+        try self.f.debug_close("}", self.first)
+    }
+}
+
+extend<region s, region b, W: Write> DebugTuple<region s, region b, W> {
+    pub mut fn field<T: Debug>(value: read T): mut Self from self throws Error {
+        try self.f.debug_item_start(self.first)
+        try T.(Debug).fmt(value, self.f)
+        try self.f.debug_item_end()
+        self.first = false
+        self.count += 1usize
+        mut self
+    }
+    pub take fn finish(): Unit throws Error {
+        if self.count == 1usize && !self.f.alternate() { try self.f.write_str(",") }
+        try self.f.debug_close(")", self.first)
+    }
+}
+
+extend<region s, region b, W: Write> DebugList<region s, region b, W> {
+    pub mut fn entry<T: Debug>(value: read T): mut Self from self throws Error {
+        try self.f.debug_item_start(self.first)
+        try T.(Debug).fmt(value, self.f)
+        try self.f.debug_item_end()
+        self.first = false
+        mut self
+    }
+    pub take fn finish(): Unit throws Error { try self.f.debug_close("]", self.first) }
+}
+
+extend<region s, region b, W: Write> DebugSet<region s, region b, W> {
+    pub mut fn entry<T: Debug>(value: read T): mut Self from self throws Error {
+        try self.f.debug_item_start(self.first)
+        try T.(Debug).fmt(value, self.f)
+        try self.f.debug_item_end()
+        self.first = false
+        mut self
+    }
+    pub take fn finish(): Unit throws Error { try self.f.debug_close("}", self.first) }
+}
+
+extend<region s, region b, W: Write> DebugMap<region s, region b, W> {
+    pub mut fn key<K: Debug>(key: read K): mut Self from self throws Error {
+        if self.awaiting_value { super.panic.panic("debug map key requires a value") }
+        try self.f.debug_item_start(self.first)
+        try K.(Debug).fmt(key, self.f)
+        try self.f.write_str(": ")
+        self.awaiting_value = true
+        mut self
+    }
+    pub mut fn value<V: Debug>(value: read V): mut Self from self throws Error {
+        if !self.awaiting_value { super.panic.panic("debug map value requires a key") }
+        try V.(Debug).fmt(value, self.f)
+        try self.f.debug_item_end()
+        self.awaiting_value = false
+        self.first = false
+        mut self
+    }
+    pub mut fn entry<K: Debug, V: Debug>(key: read K, value: read V): mut Self from self throws Error {
+        self.key(key)
+        self.value(value)
+        mut self
+    }
+    pub take fn finish(): Unit throws Error {
+        if self.awaiting_value { super.panic.panic("debug map entry is missing a value") }
+        try self.f.debug_close("}", self.first)
+    }
+}
+
+extend<region r, W: Write> Formatter<region r, W> implements Write {
+    mut fn write_str(text: read Text): Unit throws Error { try self.emit_str(text) }
 }
 
 pub interface Display { fn fmt<W: Write>(f: mut Formatter<W>): Unit throws Error; }
