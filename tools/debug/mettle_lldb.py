@@ -19,6 +19,23 @@ def list_summary(value, _internal_dict):
     return f"List len={length} cap={capacity}"
 
 
+def slice_summary(value, _internal_dict):
+    length = _unsigned(value.GetChildMemberWithName("length"))
+    if length is None:
+        return "slice <unavailable>"
+    return f"slice len={length}"
+
+
+def erased_summary(value, _internal_dict):
+    data = _unsigned(value.GetChildMemberWithName("data_ptr"))
+    alignment = _unsigned(value.GetChildMemberWithName("alignment"))
+    witness = _unsigned(value.GetChildMemberWithName("witness"))
+    if data is None or alignment is None or witness is None:
+        return "erased value <unavailable>"
+    return (f"erased data=0x{data:x} alignment={alignment} "
+            f"witness=0x{witness:x}")
+
+
 def _text(value):
     pointer = _unsigned(value.GetChildMemberWithName("data_ptr"))
     length = _unsigned(value.GetChildMemberWithName("length"))
@@ -57,6 +74,10 @@ def sum_summary(value, _internal_dict):
 
 
 def coroutine_summary(value, _internal_dict):
+    if value.GetType().IsPointerType():
+        value = value.Dereference()
+        if not value.IsValid():
+            return "state = <unavailable>"
     state = value.GetChildMemberWithName("state")
     raw = _unsigned(state)
     if raw is None:
@@ -74,6 +95,10 @@ def __lldb_init_module(debugger, _internal_dict):
     commands = [
         r"type summary add -w Mettle -x '(^|\.)List<.*>$' "
         r"-F mettle_lldb.list_summary",
+        r"type summary add -w Mettle -x '^(read |mut )?\[.*\]$' "
+        r"-F mettle_lldb.slice_summary",
+        r"type summary add -w Mettle -x '^(read |mut )?any .+$' "
+        r"-F mettle_lldb.erased_summary",
         r"type summary add -w Mettle -x '(^|\.)String<.*>$' "
         r"-F mettle_lldb.string_summary",
         r"type summary add -w Mettle -x '^(read |mut |ptr<read |ptr<mut )"
@@ -82,7 +107,8 @@ def __lldb_init_module(debugger, _internal_dict):
         r"-F mettle_lldb.sum_summary",
         r"type summary add -w Mettle -x '^\(.* throws .*\)$' "
         r"-F mettle_lldb.sum_summary",
-        r"type summary add -w Mettle -x '(^|\.)CoroutineState<.*>$' "
+        r"type summary add -w Mettle -x "
+        r"'^((read|mut) )?(.*\.)?CoroutineState<.*>$' "
         r"-F mettle_lldb.coroutine_summary",
         "type category enable Mettle",
     ]
