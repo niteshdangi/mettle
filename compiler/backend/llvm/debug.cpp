@@ -473,8 +473,8 @@ llvm::DIType *DebugInfo::build(Type type) {
           static_cast<std::uint32_t>(lengthLayout->alignment * 8),
           2 * pointerBits, llvm::DINode::FlagZero, length));
       tableMembers.push_back(dib.createMemberType(
-          unit, "drop", rootFile, 0, pointerBits, pointerBits,
-          3 * pointerBits, llvm::DINode::FlagZero, pointer));
+          unit, "drop", rootFile, 0, pointerBits, pointerBits, 3 * pointerBits,
+          llvm::DINode::FlagZero, pointer));
       tableMembers.push_back(dib.createMemberType(
           unit, "tail_prefix_size", rootFile, 0, lengthLayout->size * 8,
           static_cast<std::uint32_t>(lengthLayout->alignment * 8),

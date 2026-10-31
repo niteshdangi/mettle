@@ -137,7 +137,7 @@ fn main(): i32 {
     }
     values.push(DropBomb(drop_count.retain(), false))
     {
-        let value = match values.pop() {
+        let value = match take values.pop() {
             present(item) => item,
             none => { return 17 }
         }
@@ -163,7 +163,7 @@ fn main(): i32 {
         return 22
     }
     {
-        let value = match deque.pop_front() {
+        let value = match take deque.pop_front() {
             present(item) => item,
             none => { return 23 }
         }
@@ -189,7 +189,7 @@ fn main(): i32 {
         return 28
     }
     {
-        let value = match linked.pop_front() {
+        let value = match take linked.pop_front() {
             present(item) => item,
             none => { return 29 }
         }

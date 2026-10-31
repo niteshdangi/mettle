@@ -344,7 +344,7 @@ extend<O: Iterator, U: Iterator, F: fn(take O.Item): U> FlatMapped<O, U, F> impl
     mut fn next(): U.Item? {
         while true {
             match mut self.inner {
-                present(inner) => match inner.next() {
+                present(inner) => match take inner.next() {
                     present(item) => { return present(item) },
                     none => { self.inner = none }
                 },
@@ -362,7 +362,7 @@ extend<O: Iterator + BidirectionalIterator, U: Iterator + BidirectionalIterator,
     mut fn next_back(): U.Item? {
         while true {
             match mut self.inner {
-                present(inner) => match inner.next_back() {
+                present(inner) => match take inner.next_back() {
                     present(item) => { return present(item) },
                     none => { self.inner = none }
                 },
@@ -427,7 +427,7 @@ extend<T, A: Iterator<Item = T>, B: Iterator<Item = T>> Chained<A, B> implements
 extend<T, A: Iterator<Item = T> + BidirectionalIterator, B: Iterator<Item = T> + BidirectionalIterator> Chained<A, B> implements BidirectionalIterator {
     mut fn next_back(): T? {
         match mut self.second {
-            present(rest) => match rest.next_back() {
+            present(rest) => match take rest.next_back() {
                 present(item) => { return present(item) },
                 none => { self.second = none }
             },

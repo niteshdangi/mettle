@@ -63,7 +63,7 @@ extend Builder {
             present(name) => unsafe {
                 try start<T, F>(
                     f,
-                    name.as_bytes().as_ptr(),
+                    package.core.slice.data(name.as_bytes()),
                     name.as_bytes().len(),
                     self.stack_size
                 )
@@ -329,7 +329,7 @@ extend<region s> Scope<region s> {
             present(name) => unsafe {
                 try start<T, F>(
                     f,
-                    name.as_bytes().as_ptr(),
+                    package.core.slice.data(name.as_bytes()),
                     name.as_bytes().len(),
                     config.stack_size
                 )

@@ -113,8 +113,8 @@ extend<T, A: Allocator> Arc<T, A> {
     pub fn weak_count(): usize {
         unsafe {
             let strong = (*self.p).strong.load(core.sync.atomic.Ordering.Acquire)
-            let weak = (*self.p).wk.load(core.sync.atomic.Ordering.Acquire)
-            if strong == 0usize || weak == 0usize { weak } else { weak - 1usize }
+            let weak_total = (*self.p).wk.load(core.sync.atomic.Ordering.Acquire)
+            if strong == 0usize || weak_total == 0usize { weak_total } else { weak_total - 1usize }
         }
     }
     pub fn ptr_eq(other: read Arc<T, A>): bool { self.p == other.p }
@@ -180,6 +180,12 @@ extend<T, A: Allocator + Clone> Weak<T, A> {
 }
 extend<T, A: Allocator> Weak<T, A> {
     pub fn strong_count(): usize { unsafe { (*self.p).strong.load(core.sync.atomic.Ordering.Acquire) } }
-    pub fn weak_count(): usize { unsafe { (*self.p).wk.load(core.sync.atomic.Ordering.Acquire) } }
+    pub fn weak_count(): usize {
+        unsafe {
+            let strong = (*self.p).strong.load(core.sync.atomic.Ordering.Acquire)
+            let weak_total = (*self.p).wk.load(core.sync.atomic.Ordering.Acquire)
+            if strong == 0usize || weak_total == 0usize { weak_total } else { weak_total - 1usize }
+        }
+    }
     pub fn ptr_eq(other: read Weak<T, A>): bool { self.p == other.p }
 }

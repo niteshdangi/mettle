@@ -108,15 +108,16 @@ fn main(): i32 {
     }
     match map.get(make_key(1, panic_hash.retain(), panic_eq.retain(),
                            panic_cmp.retain())) {
-        present(value) => { if value != 3 { return 7 } },
+        present(value) => { if *value != 3 { return 7 } },
         none => { return 8 }
     }
 
     var tree = btree.new<Key, i32>()
     var value = 0
     while value < 11 {
+        let stored = value
         let _old = tree.insert(make_key(value, panic_hash.retain(), panic_eq.retain(),
-                                        panic_cmp.retain()), value)
+                                        panic_cmp.retain()), stored)
         value += 1
     }
     let _set = panic_cmp.get().store(1usize, core.sync.atomic.Ordering.SeqCst)

@@ -43,13 +43,13 @@ fn round(drops: read arc.Arc<core.sync.atomic.AtomicUsize>): i32 {
 
 fn main(): i32 {
   let owner = arc.new(7)
-  let copy = owner.retain()
-  if !owner.ptr_eq(copy) { return 3 }
+  let retained = owner.retain()
+  if !owner.ptr_eq(retained) { return 3 }
   let observer = owner.downgrade()
   let duplicate = observer.retain()
   if !observer.ptr_eq(duplicate) || observer.weak_count() != 2usize { return 4 }
   discard(take owner)
-  discard(take copy)
+  discard(take retained)
   if observer.strong_count() != 0usize || observer.weak_count() != 2usize { return 5 }
   match observer.upgrade() { present(_) => { return 6 }, none => {} }
 

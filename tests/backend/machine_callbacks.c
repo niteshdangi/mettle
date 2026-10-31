@@ -143,29 +143,24 @@ int32_t mettle_c_darwin_large_callback(
 int32_t mettle_c_darwin_variadic(int32_t count, ...) {
   va_list arguments;
   va_start(arguments, count);
-  struct MettleDarwinHfa3 hfa =
-      va_arg(arguments, struct MettleDarwinHfa3);
-  struct MettleDarwinHva2 hva =
-      va_arg(arguments, struct MettleDarwinHva2);
+  struct MettleDarwinHfa3 hfa = va_arg(arguments, struct MettleDarwinHfa3);
+  struct MettleDarwinHva2 hva = va_arg(arguments, struct MettleDarwinHva2);
   struct MettleLarge large = va_arg(arguments, struct MettleLarge);
   va_end(arguments);
   return count == 3 && hfa.first == 1.0 && hfa.second == 2.0 &&
          hfa.third == 3.0 && hva.first[0] == 4 && hva.second[3] == 5 &&
          large.first == 10 && large.second == 12 && large.third == 20;
 }
-int32_t mettle_c_darwin_variadic_definition(
-    int32_t (*callback)(int32_t, ...)) {
+int32_t mettle_c_darwin_variadic_definition(int32_t (*callback)(int32_t, ...)) {
   struct MettleDarwinHfa3 hfa = {1.0, 2.0, 3.0};
-  struct MettleDarwinHva2 hva = {
-      (MettleMachineVector){4, 4, 4, 4},
-      (MettleMachineVector){5, 5, 5, 5}};
+  struct MettleDarwinHva2 hva = {(MettleMachineVector){4, 4, 4, 4},
+                                 (MettleMachineVector){5, 5, 5, 5}};
   struct MettleLarge large = {10, 12, 20};
   return callback(3, hfa, hva, large);
 }
 int32_t mettle_c_darwin_layout_metrics(size_t size, size_t alignment,
-                                      size_t leaf_offset,
-                                      size_t value_offset,
-                                      size_t tail_offset) {
+                                       size_t leaf_offset, size_t value_offset,
+                                       size_t tail_offset) {
   return size == sizeof(struct MettleDarwinLayout) &&
          alignment == _Alignof(struct MettleDarwinLayout) &&
          leaf_offset == offsetof(struct MettleDarwinLayout, leaf) &&
@@ -184,19 +179,19 @@ int32_t mettle_c_darwin_exported_call(int32_t value) {
   return mettle_darwin_exported_increment(value);
 }
 #endif
-int32_t mettle_c_darwin_asm_call(
-    int32_t (*callback)(int32_t, int32_t), int32_t left, int32_t right) {
+int32_t mettle_c_darwin_asm_call(int32_t (*callback)(int32_t, int32_t),
+                                 int32_t left, int32_t right) {
   return callback(left, right);
 }
-int32_t mettle_c_darwin_volatile_observe(
-    int32_t (*callback)(volatile int32_t *)) {
+int32_t
+mettle_c_darwin_volatile_observe(int32_t (*callback)(volatile int32_t *)) {
   volatile int32_t value = 40;
   int32_t before = callback(&value);
   return before == 41 && value == 42 ? 42 : -1;
 }
 #if defined(__aarch64__)
-void mettle_c_darwin_neon_transform(const int32_t *left,
-                                    const int32_t *right, int32_t *output) {
+void mettle_c_darwin_neon_transform(const int32_t *left, const int32_t *right,
+                                    int32_t *output) {
   int32x4_t first = vld1q_s32(left);
   int32x4_t second = vld1q_s32(right);
   vst1q_s32(output, vaddq_s32(first, second));

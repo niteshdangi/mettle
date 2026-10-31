@@ -38,44 +38,44 @@ fn new_item(value: i32, panic_cmp: take Arc<core.sync.atomic.AtomicUsize>,
 fn main(): i32 {
     let panic_cmp = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
     let drops = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
-    var heap = binary_heap.new<Item>()
-    heap.push(new_item(10, panic_cmp.retain(), drops.retain()))
-    heap.push(new_item(5, panic_cmp.retain(), drops.retain()))
-    heap.push(new_item(1, panic_cmp.retain(), drops.retain()))
+    var queue = binary_heap.new<Item>()
+    queue.push(new_item(10, panic_cmp.retain(), drops.retain()))
+    queue.push(new_item(5, panic_cmp.retain(), drops.retain()))
+    queue.push(new_item(1, panic_cmp.retain(), drops.retain()))
 
     let _set = panic_cmp.get().store(1usize, core.sync.atomic.Ordering.SeqCst)
     let pushed = std.panic.catch_panic(fn(): i32 {
-        heap.push(new_item(99, panic_cmp.retain(), drops.retain()))
+        queue.push(new_item(99, panic_cmp.retain(), drops.retain()))
         0
     })
     match take pushed {
         CatchResult.Panicked(_) => {},
         CatchResult.Returned(_) => { return 1 }
     }
-    if heap.len() != 3usize { return 2 }
+    if queue.len() != 3usize { return 2 }
 
     let popped = std.panic.catch_panic(fn(): i32 {
-        let _item = heap.pop()
+        let _item = queue.pop()
         0
     })
     match take popped {
         CatchResult.Panicked(_) => {},
         CatchResult.Returned(_) => { return 3 }
     }
-    if heap.len() != 3usize { return 4 }
+    if queue.len() != 3usize { return 4 }
     let _set = panic_cmp.get().store(0usize, core.sync.atomic.Ordering.SeqCst)
 
     let expected = [10, 5, 1]
     var index = 0usize
-    while index < expected.len() {
-        let item = match heap.pop() {
+    while index < 3usize {
+        let item = match take queue.pop() {
             present(value) => value,
             none => { return 5 }
         }
         if item.value != expected[index] { return 6 }
         index += 1usize
     }
-    if !heap.is_empty() { return 7 }
+    if !queue.is_empty() { return 7 }
     if drops.get().load(core.sync.atomic.Ordering.SeqCst) != 4usize {
         return 8
     }

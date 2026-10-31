@@ -110,7 +110,7 @@ fn main(): i32 {
 
   // a panicking Once initializer is re-armed for the next caller
   let retry = once.new()
-  let failed_init = catch_panic(take fn(): Unit {
+  let failed_init = catch_panic(fn(): Unit {
     retry.call_once(take fn(): Unit { panic("initializer failed") })
   })
   match failed_init {
@@ -123,7 +123,7 @@ fn main(): i32 {
   let forced = once.new()
   let force_ran = core.sync.atomic.AtomicBool.new(false)
   let force_saw_poison = core.sync.atomic.AtomicBool.new(false)
-  forced.call_once_force(take fn(state: once.OnceState): Unit {
+  forced.call_once_force(fn(state: once.OnceState): Unit {
     force_ran.store(true, core.sync.atomic.Ordering.Relaxed)
     force_saw_poison.store(state.is_poisoned(), core.sync.atomic.Ordering.Relaxed)
   })
@@ -190,7 +190,7 @@ fn main(): i32 {
   let waiter = thread.spawn(take fn(): i32 {
     let o = capture s2.get().lock()
     var g = match take o { success(g) => g, failure(e) => e.into_inner() }
-    g = c2.get().wait_while(g, take fn(ready: read bool): bool { !*ready })
+    g = c2.get().wait_while(g, take fn(ready: read bool): bool { !ready })
     0
   })
   let o = capture state.get().lock()
@@ -200,7 +200,8 @@ fn main(): i32 {
   discard(take g)
   if !join_ok(waiter) { return 16 }
   let timeout_lock = mutex.new(false)
-  let timeout_guard = match capture timeout_lock.lock() {
+  let timeout_locked = capture timeout_lock.lock()
+  let timeout_guard = match take timeout_locked {
     success(guard) => guard,
     failure(error) => error.into_inner()
   }

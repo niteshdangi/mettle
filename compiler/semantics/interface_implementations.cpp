@@ -475,6 +475,9 @@ void Checker::interfaceImplementations() {
   interfacesReady = true;
   if (diagnostics.empty())
     for (auto &requirement : projectionRequirements) {
+      // Superinterfaces of interfaces still being declared were unknown when
+      // the requirement was recorded.
+      expandSuperinterfaces(requirement.assumptions);
       interfaces::Solver solver(*checked.types, database, diagnostics,
                                 std::move(requirement.assumptions),
                                 std::move(requirement.regions));

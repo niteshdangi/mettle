@@ -10,7 +10,7 @@ fn main(): i32 {
         failure(error) => error.into_inner()
     }
     thread.scope(fn(scope: read thread.Scope): i32 {
-        let child = scope.spawn(fn(): i32 { *guard.get() })
+        let child = scope.spawn(take fn(): i32 { *guard.get() })
         0
     })
 }

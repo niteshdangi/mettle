@@ -341,6 +341,7 @@ private:
   std::optional<interfaces::Property> propertyBound(const TypeSyntax &bound,
                                                     Span span) const;
   std::vector<interfaces::Obligation> interfaceAssumptions();
+  void expandSuperinterfaces(std::vector<interfaces::Obligation> &result);
   bool unpinObligation(Type type, Span span);
   bool shareable(Type type, Span span);
   std::optional<std::size_t> interfaceMethod(Type self, std::string_view method,

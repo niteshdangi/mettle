@@ -31,7 +31,7 @@ fn main(): i32 {
       let _old = hits.fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
       0
     })
-    gate.get().wait()
+    let _released = gate.get().wait()
   })
   if hits.load(core.sync.atomic.Ordering.SeqCst) != 1usize { return 2 }
 

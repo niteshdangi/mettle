@@ -19,7 +19,7 @@ fn main(): i32 {
         none => { return 23 }
     }
 
-    let flattened = iter.range(0, 4).flat_map(fn(x: take i32): iter.Range<i32> {
+    var flattened = iter.range(0, 4).flat_map(fn(x: take i32): iter.Range<i32> {
         iter.range(0, x)
     })
     if flattened.count() != 6usize { return 3 }

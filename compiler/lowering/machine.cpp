@@ -105,8 +105,8 @@ Builder::Value Builder::machineExpression(const Node &node) {
       location = materialize(pointer, node.span, temporaryScope);
       location.fields.push_back(Projection::dereference());
     }
-    Instruction drop{ir::Op::DropPlace, {}, {}, {}, "", location, -1, 0,
-                     node.span};
+    Instruction drop{ir::Op::DropPlace, {}, {}, {},       "",
+                     location,          -1, 0,  node.span};
     drop.unsafeAllowed =
         facts.machineOperation == "ptr.drop_in_place" && unsafeDepth != 0;
     return emit(std::move(drop), Type::Unit);

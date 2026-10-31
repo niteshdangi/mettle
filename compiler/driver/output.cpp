@@ -187,8 +187,7 @@ int emit(const Options &options, const Source &source,
         program, context, checked, options.target, options.freestanding,
         options.debugInfo && options.emit != "ir" ? &debugRequest : nullptr,
         options.sanitizers.contains("address"),
-        options.sanitizers.contains("thread"),
-        {splitPackages, {}});
+        options.sanitizers.contains("thread"), {splitPackages, {}});
     module->setSourceFileName(source.path);
     module->setTargetTriple(
         llvm::Triple(llvm::Triple::normalize(options.target)));
@@ -244,15 +243,15 @@ int emit(const Options &options, const Source &source,
             reused = true;
             if (options.explain)
               std::cerr << "mettle: package object cache hit "
-                        << package.identity << " "
-                        << package.key.substr(4, 12) << '\n';
+                        << package.identity << " " << package.key.substr(4, 12)
+                        << '\n';
           } else if (options.explain) {
             std::cerr << "mettle: package object cache "
                       << (found == packages::Store::Lookup::Corrupt
                               ? "entry corrupt, rebuilding "
                               : "miss ")
-                      << package.identity << " "
-                      << package.key.substr(4, 12) << '\n';
+                      << package.identity << " " << package.key.substr(4, 12)
+                      << '\n';
           }
         } else if (options.explain) {
           std::cerr << "mettle: package object cache miss " << package.identity

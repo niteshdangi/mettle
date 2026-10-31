@@ -160,9 +160,8 @@ private:
             ownerPackage = &package;
             break;
           }
-      const auto &dependencies =
-          ownerPackage ? ownerPackage->dependencies
-                       : library.packageDependencies;
+      const auto &dependencies = ownerPackage ? ownerPackage->dependencies
+                                              : library.packageDependencies;
       for (const auto &[name, target] : dependencies)
         if (name == alias || name == path[1]) {
           module = target;

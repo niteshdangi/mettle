@@ -1,17 +1,15 @@
 #include "semantics/checker.h"
 
 namespace mettle {
-bool Checker::ownerUnsizeCoercion(Node &expression, Type source,
-                                  Type target, Span span) {
-  if (!checked.types->isProduct(source) ||
-      !checked.types->isProduct(target))
+bool Checker::ownerUnsizeCoercion(Node &expression, Type source, Type target,
+                                  Span span) {
+  if (!checked.types->isProduct(source) || !checked.types->isProduct(target))
     return false;
   const auto &from = checked.types->product(source);
   const auto &to = checked.types->product(target);
   if (from.genericOrigin == Type::Unknown ||
       from.genericOrigin != to.genericOrigin ||
-      checked.types->product(from.genericOrigin).name !=
-          "alloc::boxed::Box" ||
+      checked.types->product(from.genericOrigin).name != "alloc::boxed::Box" ||
       from.genericArguments.size() < 2 ||
       from.genericArguments.size() != to.genericArguments.size() ||
       from.fields.empty() || from.fields.size() != to.fields.size())
@@ -23,8 +21,7 @@ bool Checker::ownerUnsizeCoercion(Node &expression, Type source,
       !checked.types->isPointer(from.fields.front().type) ||
       !checked.types->isPointer(to.fields.front().type))
     return false;
-  const auto &sourcePointer =
-      checked.types->pointer(from.fields.front().type);
+  const auto &sourcePointer = checked.types->pointer(from.fields.front().type);
   const auto &targetPointer = checked.types->pointer(to.fields.front().type);
   if (sourcePointer.mode != ParameterMode::Mut ||
       targetPointer.mode != ParameterMode::Mut ||
@@ -41,9 +38,9 @@ bool Checker::ownerUnsizeCoercion(Node &expression, Type source,
   bool unsizedArray =
       checked.types->unsizedArray(sourcePayload, targetPayload).has_value();
   auto erased = checked.types->erasedTail(sourcePayload, targetPayload);
-  bool erasedPayload =
-      erased && erased->first == sourcePayload &&
-      erased->second == targetPayload && checked.types->isErased(targetPayload);
+  bool erasedPayload = erased && erased->first == sourcePayload &&
+                       erased->second == targetPayload &&
+                       checked.types->isErased(targetPayload);
   if (!unsizedArray && !erasedPayload)
     return false;
   if (erasedPayload) {

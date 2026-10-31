@@ -148,8 +148,7 @@ Module::Interface Parser::interfaceDeclaration() {
         future.span = method.span;
         future.visibility = method.item.visibility;
         future.asyncFuture = true;
-        future.asyncFutureOutputInferred =
-            method.asyncDefaultOutputInferred;
+        future.asyncFutureOutputInferred = method.asyncDefaultOutputInferred;
         future.genericParameters = method.genericParameters;
         future.constraints = method.constraints;
 

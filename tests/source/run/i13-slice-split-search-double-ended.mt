@@ -47,7 +47,9 @@ fn main(): i32 {
     match read_iter.next_back() { present(x) => { if *x != 3 { return 8 } }, none => { return 8 } }
     match read_iter.next() { present(x) => { if *x != 2 { return 9 } }, none => { return 9 } }
 
-    var byte_iter = read [10u8, 20u8, 30u8].bytes()
+    let byte_values = [10u8, 20u8, 30u8]
+    let byte_slice: read [u8] = read byte_values
+    var byte_iter = byte_slice.bytes()
     match byte_iter.next_back() {
         present(byte) => { if byte != 30u8 { return 10 } },
         none => { return 10 }

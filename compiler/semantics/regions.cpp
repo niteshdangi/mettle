@@ -379,6 +379,19 @@ Checker::AnnotationRegions &Checker::functionRegions(const Function &function) {
       .first->second;
 }
 namespace {
+bool namesRegion(const TypeSyntax &type) {
+  if (!type.regions.empty() || (type.nested && namesRegion(*type.nested)))
+    return true;
+  for (const auto &element : type.elements)
+    if (namesRegion(element))
+      return true;
+  for (const auto &argument : type.arguments)
+    if (!argument.region.empty() ||
+        (argument.type && namesRegion(*argument.type)))
+      return true;
+  return false;
+}
+
 struct RegionContext {
   RegionScope scope;
   RegionEnvironment environment;
@@ -2708,7 +2721,7 @@ void RegionPass::resultSources(std::size_t index) {
     for (auto p : carried)
       if (!borrowed.contains(p) && !named.contains(p))
         facts.resultContents.push_back(p);
-  } else if (signatures[index].strict || !syntax.annotation.regions.empty()) {
+  } else if (signatures[index].strict || namesRegion(syntax.annotation)) {
     auto required = contained(signatures[index].result);
     auto errorRegions = contained(signatures[index].error);
     required.insert(required.end(), errorRegions.begin(), errorRegions.end());

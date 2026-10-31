@@ -52,8 +52,7 @@ TypeSyntax Parser::type(bool effect) {
       } else
         result.ownerKind = OwnerKind::Weak;
     }
-    auto payload =
-        std::make_shared<const TypeSyntax>(type(false));
+    auto payload = std::make_shared<const TypeSyntax>(type(false));
     result.nested = payload;
   } else if (take("pinned")) {
     result.form = TypeForm::Pinned;

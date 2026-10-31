@@ -55,7 +55,11 @@ void valueOwnership(const ir::Function &function, const TypeStore &types,
         use(state, instruction.target, true, instruction.span, report);
       if (instruction.op != ir::Op::Phi)
         for (auto operand : instruction.operands)
-          use(state, operand, instruction.op != ir::Op::Project,
+          // Witness lookup reads metadata; the receiver is transferred by
+          // the dispatched call.
+          use(state, operand,
+              instruction.op != ir::Op::Project &&
+                  instruction.op != ir::Op::WitnessMethod,
               instruction.span, report);
       int index = indices[instruction.result.id];
       if (index >= 0)

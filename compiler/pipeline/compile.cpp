@@ -124,23 +124,19 @@ public:
       return proveUnpin(*types, subject, runtime, function, span);
     };
     program.functionPackages.resize(program.functions.size());
-    for (std::size_t i = 0;
-         i < checked->syntax().functions.size() &&
-         i < program.functionPackages.size();
+    for (std::size_t i = 0; i < checked->syntax().functions.size() &&
+                            i < program.functionPackages.size();
          ++i) {
       auto source = checked->syntax().functions[i].span.source;
-      if (auto owner = packageOwners.find(source);
-          owner != packageOwners.end())
+      if (auto owner = packageOwners.find(source); owner != packageOwners.end())
         program.functionPackages[i] = owner->second;
     }
     program.staticPackages.resize(program.statics.size());
-    for (std::size_t i = 0;
-         i < checked->syntax().statics.size() &&
-         i < program.staticPackages.size();
+    for (std::size_t i = 0; i < checked->syntax().statics.size() &&
+                            i < program.staticPackages.size();
          ++i) {
       auto source = checked->syntax().statics[i].span.source;
-      if (auto owner = packageOwners.find(source);
-          owner != packageOwners.end())
+      if (auto owner = packageOwners.find(source); owner != packageOwners.end())
         program.staticPackages[i] = owner->second;
     }
     lowering::opaqueAdapters(program, *types, checked->interfaceDatabase(),

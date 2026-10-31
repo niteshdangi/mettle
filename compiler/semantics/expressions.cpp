@@ -75,8 +75,8 @@ void Checker::function(Function &f) {
   contextualize(*f.body, inference.value(result));
   auto body = node(*f.body, true);
   if (facts(*f.body).flow.normal)
-    coerce(*f.body, body,
-           f.constructor ? inference.fresh(Type::Unit) : result, f.body->span);
+    coerce(*f.body, body, f.constructor ? inference.fresh(Type::Unit) : result,
+           f.body->span);
   if (facts(f).diverges && f.annotation.empty())
     inference.equal(functionVariables[&f], inference.fresh(Type::Never),
                     f.span);

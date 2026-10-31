@@ -1,6 +1,6 @@
 import super.mutex.MutexGuard
 import package.core.panic.panic
-import super.time
+import package.std.time
 
 extern "C" {
     unsafe fn mettle_rt_cond_new(): ptr<mut u8>;

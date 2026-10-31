@@ -363,8 +363,8 @@ bool Store::putMany(const std::vector<Artifact> &artifacts) {
       discardTemporaries();
       return false;
     }
-    prepared.push_back({&artifact, std::move(*blob), size,
-                        std::move(temporary)});
+    prepared.push_back(
+        {&artifact, std::move(*blob), size, std::move(temporary)});
   }
 
   StoreLock lock(directory);
@@ -396,8 +396,7 @@ bool Store::putMany(const std::vector<Artifact> &artifacts) {
       }
     }
     if (!publishLocked(entryPath(item.artifact->key),
-                       "file " + item.blob + " " +
-                           std::to_string(item.size) +
+                       "file " + item.blob + " " + std::to_string(item.size) +
                            (item.artifact->executable ? " x\n" : " -\n"))) {
       discardTemporaries();
       return false;
@@ -514,8 +513,7 @@ std::vector<std::string> Store::prune(const std::string &keep) {
   return pruneLocked(retained);
 }
 
-std::vector<std::string>
-Store::pruneLocked(const std::set<std::string> &keep) {
+std::vector<std::string> Store::pruneLocked(const std::set<std::string> &keep) {
   std::vector<std::string> notes;
   // The caller's own output is already published, so its lease only protects
   // the entry from other builds' pruning, not from this budget.

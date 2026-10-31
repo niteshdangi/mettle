@@ -88,13 +88,7 @@ enum class TypeForm {
   Pinned,
   Owner
 };
-enum class OwnerKind {
-  Heap,
-  Shared,
-  LocalShared,
-  Weak,
-  LocalWeak
-};
+enum class OwnerKind { Heap, Shared, LocalShared, Weak, LocalWeak };
 struct TypeSyntax;
 struct GenericArgument {
   std::shared_ptr<const TypeSyntax> type{};

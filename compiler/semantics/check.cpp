@@ -103,55 +103,54 @@ std::optional<CheckedModule> Checker::run() {
     const auto &function = module.functions[caller];
     if (!function.asynchronous || !function.body.get())
       continue;
-    std::function<void(const Node &, bool)>
-        collect = [&](const Node &node, bool awaited) {
-          if (node.kind == Kind::Closure)
-            return;
-          if (node.kind == Kind::Binding && node.text.starts_with("<await-")) {
-            for (const auto &child : node.children)
-              collect(*child, true);
-            return;
+    std::function<void(const Node &, bool)> collect = [&](const Node &node,
+                                                          bool awaited) {
+      if (node.kind == Kind::Closure)
+        return;
+      if (node.kind == Kind::Binding && node.text.starts_with("<await-")) {
+        for (const auto &child : node.children)
+          collect(*child, true);
+        return;
+      }
+      if (awaited && node.kind == Kind::Call && !node.children.empty()) {
+        const auto &callee = *node.children[0];
+        if (callee.kind == Kind::Name) {
+          auto name = callableName(callee.text, function.owner, callee.span);
+          if (auto found = names.find(name);
+              found != names.end() &&
+              module.functions[found->second].asynchronous)
+            asyncCalls[caller].push_back({found->second, node.span});
+        } else if (callee.kind == Kind::Field && !callee.children.empty()) {
+          std::optional<std::size_t> selected;
+          if (!function.owner.empty()) {
+            auto name = callableName(function.owner + "::" + callee.text,
+                                     function.owner, callee.span);
+            if (auto found = names.find(name);
+                found != names.end() &&
+                module.functions[found->second].asynchronous)
+              selected = found->second;
           }
-          if (awaited && node.kind == Kind::Call && !node.children.empty()) {
-            const auto &callee = *node.children[0];
-            if (callee.kind == Kind::Name) {
-              auto name =
-                  callableName(callee.text, function.owner, callee.span);
-              if (auto found = names.find(name); found != names.end() &&
-                  module.functions[found->second].asynchronous)
-                asyncCalls[caller].push_back({found->second, node.span});
-            } else if (callee.kind == Kind::Field &&
-                       !callee.children.empty()) {
-              std::optional<std::size_t> selected;
-              if (!function.owner.empty()) {
-                auto name = callableName(function.owner + "::" + callee.text,
-                                         function.owner, callee.span);
-                if (auto found = names.find(name);
-                    found != names.end() &&
-                    module.functions[found->second].asynchronous)
-                  selected = found->second;
+          if (!selected) {
+            for (std::size_t candidate = 0; candidate < module.functions.size();
+                 ++candidate) {
+              const auto &method = module.functions[candidate];
+              if (!method.asynchronous ||
+                  !method.name.ends_with("." + callee.text))
+                continue;
+              if (selected) {
+                selected.reset();
+                break;
               }
-              if (!selected) {
-                for (std::size_t candidate = 0;
-                     candidate < module.functions.size(); ++candidate) {
-                  const auto &method = module.functions[candidate];
-                  if (!method.asynchronous ||
-                      !method.name.ends_with("." + callee.text))
-                    continue;
-                  if (selected) {
-                    selected.reset();
-                    break;
-                  }
-                  selected = candidate;
-                }
-              }
-              if (selected)
-                asyncCalls[caller].push_back({*selected, node.span});
+              selected = candidate;
             }
           }
-          for (const auto &child : node.children)
-            collect(*child, awaited);
-        };
+          if (selected)
+            asyncCalls[caller].push_back({*selected, node.span});
+        }
+      }
+      for (const auto &child : node.children)
+        collect(*child, awaited);
+    };
     const Node *body = function.body.get();
     if (body->kind == Kind::Block && body->children.size() == 1) {
       const auto &future = *body->children[0];
@@ -175,8 +174,7 @@ std::optional<CheckedModule> Checker::run() {
         visitAsync(call.target);
         asyncLow[caller] = std::min(asyncLow[caller], asyncLow[call.target]);
       } else if (asyncActive[call.target])
-        asyncLow[caller] =
-            std::min(asyncLow[caller], asyncIndex[call.target]);
+        asyncLow[caller] = std::min(asyncLow[caller], asyncIndex[call.target]);
     }
     if (asyncLow[caller] != asyncIndex[caller])
       return;
@@ -263,11 +261,9 @@ std::optional<CheckedModule> Checker::run() {
                                    const interfaces::Associated &family,
                                    const Module::Interface &interfaceSyntax,
                                    Type future) {
-    auto familySyntax =
-        std::find_if(interfaceSyntax.associated.begin(),
-                     interfaceSyntax.associated.end(), [&](const auto &item) {
-                       return item.name == function.asyncFuture;
-                     });
+    auto familySyntax = std::find_if(
+        interfaceSyntax.associated.begin(), interfaceSyntax.associated.end(),
+        [&](const auto &item) { return item.name == function.asyncFuture; });
     std::vector<TypeBinding> typeBindings;
     const auto &environment = functionGenerics.at(&function);
     auto bindType = [&](std::string_view name, Type target) {
@@ -297,8 +293,7 @@ std::optional<CheckedModule> Checker::run() {
           region < definition.regions.size()) {
         auto found = functionRegionsValue.names.find(generic.name);
         if (found != functionRegionsValue.names.end())
-          regionBindings.push_back(
-              {found->second, definition.regions[region]});
+          regionBindings.push_back({found->second, definition.regions[region]});
         ++region;
       }
     region = 0;
@@ -308,8 +303,7 @@ std::optional<CheckedModule> Checker::run() {
             region < family.regions.size()) {
           auto found = functionRegionsValue.names.find(generic.name);
           if (found != functionRegionsValue.names.end())
-            regionBindings.push_back(
-                {found->second, family.regions[region]});
+            regionBindings.push_back({found->second, family.regions[region]});
           ++region;
         }
     return checked.types->substituteRegions(future, regionBindings);
@@ -341,13 +335,12 @@ std::optional<CheckedModule> Checker::run() {
     auto interface = interfaceNames.find(interfaceName);
     if (interface == interfaceNames.end())
       return;
-    auto &definition =
-        checked.interfaceData->definitions[interface->second];
-    auto family = std::find_if(
-        definition.associated.begin(), definition.associated.end(),
-        [&](const auto &associated) {
-          return associated.name == function.asyncFuture;
-        });
+    auto &definition = checked.interfaceData->definitions[interface->second];
+    auto family =
+        std::find_if(definition.associated.begin(), definition.associated.end(),
+                     [&](const auto &associated) {
+                       return associated.name == function.asyncFuture;
+                     });
     if (family == definition.associated.end())
       return;
     auto futureInterface = std::find_if(
@@ -375,18 +368,16 @@ std::optional<CheckedModule> Checker::run() {
                   return associated.parameter == outputItem->parameter;
                 });
             if (binding == descriptor.associated.end())
-              descriptor.associated.push_back(
-                  {outputItem->parameter, output});
+              descriptor.associated.push_back({outputItem->parameter, output});
             else
               binding->argument = output;
             bound.interfaceType =
                 checked.types->erasedType(std::move(descriptor));
           }
     }
-    family->defaultValue =
-        canonicalAsyncDefault(function, definition, *family,
-                              module.interfaces[interface->second],
-                              defaultFuture);
+    family->defaultValue = canonicalAsyncDefault(
+        function, definition, *family, module.interfaces[interface->second],
+        defaultFuture);
   };
 
   std::vector<std::vector<std::size_t>> edges(module.functions.size());
@@ -584,10 +575,9 @@ std::optional<CheckedModule> Checker::run() {
                   "cannot infer async interface default future");
             continue;
           }
-          defaultFuture =
-              canonicalAsyncDefault(function, definition, *family,
-                                    module.interfaces[interface->second],
-                                    defaultFuture);
+          defaultFuture = canonicalAsyncDefault(
+              function, definition, *family,
+              module.interfaces[interface->second], defaultFuture);
           family->defaultValue = defaultFuture;
           if (checked.types->isSized(family->parameter) &&
               !checked.types->isSized(defaultFuture))
@@ -600,8 +590,7 @@ std::optional<CheckedModule> Checker::run() {
   for (auto &implementation : checked.interfaceData->implementations) {
     if (!checked.types->isErased(implementation.interfaceType))
       continue;
-    const auto descriptor =
-        checked.types->erased(implementation.interfaceType);
+    const auto descriptor = checked.types->erased(implementation.interfaceType);
     if (descriptor.declaration >= checked.interfaceData->definitions.size())
       continue;
     const auto &definition =

@@ -36,8 +36,7 @@ void Checker::interfaceHeaders() {
       item.name = associated.name;
       item.constant = associated.constant;
       item.asyncFuture = associated.asyncFuture;
-      item.asyncFutureOutputInferred =
-          associated.asyncFutureOutputInferred;
+      item.asyncFutureOutputInferred = associated.asyncFutureOutputInferred;
       item.parameter =
           associated.constant
               ? checked.types->declareConstParameter(
@@ -321,6 +320,12 @@ std::vector<interfaces::Obligation> Checker::interfaceAssumptions() {
         elaboratingBounds.erase(&bound);
       result.push_back({subject, type, property});
     }
+  expandSuperinterfaces(result);
+  return result;
+}
+
+void Checker::expandSuperinterfaces(
+    std::vector<interfaces::Obligation> &result) {
   std::set<std::pair<Type, Type>> expanded;
   for (std::size_t index = 0; index < result.size(); ++index) {
     auto obligation = result[index];
@@ -349,7 +354,6 @@ std::vector<interfaces::Obligation> Checker::interfaceAssumptions() {
       break;
     }
   }
-  return result;
 }
 
 bool Checker::unpinObligation(Type type, Span span) {

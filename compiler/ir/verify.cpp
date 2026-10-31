@@ -18,8 +18,7 @@ std::optional<Type> pinnedViewPayload(const TypeStore &types, Type type) {
       types.product(type).components.empty())
     return std::nullopt;
   auto view = types.product(type).components.front();
-  if (!types.isView(view) ||
-      types.view(view).mode != ParameterMode::Mut)
+  if (!types.isView(view) || types.view(view).mode != ParameterMode::Mut)
     return std::nullopt;
   return types.view(view).payload;
 }
@@ -479,13 +478,14 @@ bool function(const Function &f, const Program &program,
             return origin != Type::Unknown &&
                    program.types->product(origin).name == "alloc::boxed::Box";
           };
-          bool compatible =
-              isBox(n.operands[0].type) && isBox(result) &&
-              source.genericOrigin == target.genericOrigin &&
-              source.genericArguments.size() >= 2 &&
-              source.genericArguments.size() == target.genericArguments.size() &&
-              source.fields.size() == target.fields.size() &&
-              !source.fields.empty() && n.operands[0].access == Access::Owned;
+          bool compatible = isBox(n.operands[0].type) && isBox(result) &&
+                            source.genericOrigin == target.genericOrigin &&
+                            source.genericArguments.size() >= 2 &&
+                            source.genericArguments.size() ==
+                                target.genericArguments.size() &&
+                            source.fields.size() == target.fields.size() &&
+                            !source.fields.empty() &&
+                            n.operands[0].access == Access::Owned;
           require(compatible);
           if (compatible) {
             auto sourcePayload = source.genericArguments.front();
@@ -500,21 +500,18 @@ bool function(const Function &f, const Program &program,
                     program.types->pointer(targetPointer).payload ==
                         targetPayload);
             for (std::size_t p = 1; p < source.genericArguments.size(); ++p)
-              require(source.genericArguments[p] ==
-                      target.genericArguments[p]);
+              require(source.genericArguments[p] == target.genericArguments[p]);
             for (std::size_t p = 1; p < source.fields.size(); ++p)
               require(source.fields[p].type == target.fields[p].type);
             if (program.types->pointerMetadata(targetPayload) ==
                 PointerMetadata::ElementCount) {
               auto array =
                   program.types->unsizedArray(sourcePayload, targetPayload);
-              require(array && arity(2) &&
-                      n.operands[1].type == Type::I32 &&
+              require(array && arity(2) && n.operands[1].type == Type::I32 &&
                       n.witnessEntries.empty() &&
                       n.interfaceSelf == Type::Unknown &&
                       n.interfaceType == Type::Unknown);
-              if (array && n.operands.size() == 2 &&
-                  n.operands[1].id >= 0 &&
+              if (array && n.operands.size() == 2 && n.operands[1].id >= 0 &&
                   static_cast<std::size_t>(n.operands[1].id) <
                       definitions.size()) {
                 const auto &where = definitions[n.operands[1].id];
@@ -525,20 +522,18 @@ bool function(const Function &f, const Program &program,
                   require(length.op == Op::Constant);
                   if (descriptor.arrayCount != Type::Unknown &&
                       program.types->isSymbolic(descriptor.arrayCount))
-                    require(length.constantParameter ==
-                            descriptor.arrayCount);
+                    require(length.constantParameter == descriptor.arrayCount);
                   else {
                     auto actual =
                         length.constantParameter == Type::Unknown
                             ? std::optional<std::int64_t>(length.number)
                             : program.types->constantValue(
                                   length.constantParameter);
-                    auto expected =
-                        descriptor.arrayCount == Type::Unknown
-                            ? std::optional<std::int64_t>(
-                                  descriptor.fields.size())
-                            : program.types->constantValue(
-                                  descriptor.arrayCount);
+                    auto expected = descriptor.arrayCount == Type::Unknown
+                                        ? std::optional<std::int64_t>(
+                                              descriptor.fields.size())
+                                        : program.types->constantValue(
+                                              descriptor.arrayCount);
                     require(actual && expected && *actual >= 0 &&
                             *actual == *expected);
                   }
@@ -550,10 +545,8 @@ bool function(const Function &f, const Program &program,
                       n.interfaceType == targetPayload &&
                       n.witnessEntries.size() + 1 == n.operands.size());
               if (program.types->isErased(targetPayload)) {
-                const auto &descriptor =
-                    program.types->erased(targetPayload);
-                require(n.operands.size() ==
-                        descriptor.methodTypes.size() + 1);
+                const auto &descriptor = program.types->erased(targetPayload);
+                require(n.operands.size() == descriptor.methodTypes.size() + 1);
                 for (std::size_t method = 0;
                      method < descriptor.methodTypes.size() &&
                      method + 1 < n.operands.size();
@@ -648,14 +641,13 @@ bool function(const Function &f, const Program &program,
                                 ? Type::Unknown
                                 : signature.parameters[0].type;
             auto erased = erasedReceiver(*program.types, receiver);
-            pinnedDispatch =
-                erased != Type::Unknown && erased != receiver;
-            require(erased != Type::Unknown &&
-                    (pinnedDispatch
-                         ? signature.parameters[0].mode == ParameterMode::Take
-                         : signature.parameters[0].mode == ParameterMode::Read ||
-                               signature.parameters[0].mode ==
-                                   ParameterMode::Mut));
+            pinnedDispatch = erased != Type::Unknown && erased != receiver;
+            require(
+                erased != Type::Unknown &&
+                (pinnedDispatch
+                     ? signature.parameters[0].mode == ParameterMode::Take
+                     : signature.parameters[0].mode == ParameterMode::Read ||
+                           signature.parameters[0].mode == ParameterMode::Mut));
           }
           const auto &callee = program.functions[n.callee];
           require(!callee.indirectContract &&

@@ -58,12 +58,11 @@ using MacroModuleProvider = std::function<std::optional<MacroModuleSource>(
 // registered provenance maps every generated token back to the template or
 // argument token it came from, with the invocation as the origin, and unchanged
 // text exactly, so diagnostics keep their positions.
-std::optional<Source> expandMacros(const Source &source,
-                                   Diagnostics &diagnostics,
-                                   const SourceAllocator &allocate,
-                                   const Procedures *procedural = nullptr,
-                                   std::vector<std::string> modulePath = {},
-                                   const MacroModuleProvider &modules = {},
-                                   std::vector<Module::MacroDeclaration>
-                                       *declarations = nullptr);
+std::optional<Source>
+expandMacros(const Source &source, Diagnostics &diagnostics,
+             const SourceAllocator &allocate,
+             const Procedures *procedural = nullptr,
+             std::vector<std::string> modulePath = {},
+             const MacroModuleProvider &modules = {},
+             std::vector<Module::MacroDeclaration> *declarations = nullptr);
 } // namespace mettle::expansion

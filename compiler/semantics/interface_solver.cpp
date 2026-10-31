@@ -1098,9 +1098,8 @@ Type Solver::normalize(Type type, std::span<const TypeBinding> bindings,
       normalizing.erase(type);
       return type;
     }
-    auto result =
-        normalize(types.substituteRegions(associatedValue, regions),
-                  substitutions, span);
+    auto result = normalize(types.substituteRegions(associatedValue, regions),
+                            substitutions, span);
     normalizing.erase(type);
     return result;
   }

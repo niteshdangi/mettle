@@ -2,8 +2,8 @@ import std.thread
 
 fn main(): i32 {
     let owner: shared i32 = shared 41
-    let copy = owner.retain()
-    let handle = thread.spawn(take fn(): i32 { *copy.get() })
+    let retained = owner.retain()
+    let handle = thread.spawn(take fn(): i32 { *retained.get() })
     let outcome = capture handle.join()
     let value = match take outcome {
         success(result) => result,

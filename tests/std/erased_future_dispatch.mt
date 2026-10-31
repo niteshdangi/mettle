@@ -42,7 +42,7 @@ fn main(): i32 {
         let erased: mut any Future<Output = i32> = mut stored
         let waker = noop_waker()
         var cx = Context.from_waker(read waker)
-        if poll_erased(mut erased, mut cx) { return 1 }
+        if poll_erased(erased, mut cx) { return 1 }
     }
     if task.block_on(stored) != 42 { return 2 }
     if drops != 1 { return 3 }
