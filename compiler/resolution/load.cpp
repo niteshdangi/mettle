@@ -425,7 +425,7 @@ private:
                 owner[id] = currentRoot;
               return id;
             },
-            library.procedures))
+            library.procedures, prefix))
       source = std::move(*generated);
     if (!diagnostics.empty())
       return;

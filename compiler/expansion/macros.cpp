@@ -141,10 +141,28 @@ struct Node {
 };
 
 bool knownFragment(const std::string &fragment) {
-  static const std::set<std::string> known{"expr",  "stmt",  "pat",     "ty",
-                                           "path",  "ident", "literal", "tt",
-                                           "block", "item"};
+  static const std::set<std::string> known{
+      "expr",       "expression", "stmt",       "statement", "pat",
+      "pattern",    "ty",         "type",       "path",      "ident",
+      "identifier", "literal",    "tt",         "token-tree", "block",
+      "item"};
   return known.contains(fragment);
+}
+
+std::string fragmentKind(std::string fragment) {
+  if (fragment == "expression")
+    return "expr";
+  if (fragment == "statement")
+    return "stmt";
+  if (fragment == "pattern")
+    return "pat";
+  if (fragment == "type")
+    return "ty";
+  if (fragment == "identifier")
+    return "ident";
+  if (fragment == "token-tree")
+    return "tt";
+  return fragment;
 }
 
 bool repetitionOperator(const Pieces &tokens, std::size_t at, std::size_t end) {
@@ -230,12 +248,14 @@ bool parseNodes(const Pieces &tokens, const std::vector<std::size_t> &close,
     if (matcher) {
       if (i + 1 < end && symbol(tokens[i], ":") &&
           tokens[i + 1].kind == TokenKind::Word) {
-        node.fragment = tokens[i + 1].text;
-        if (!knownFragment(node.fragment))
+        auto spelling = tokens[i + 1].text;
+        if (!knownFragment(spelling))
           fail(tokens[i + 1],
-               "unknown fragment kind '" + node.fragment +
-                   "'; expected expr, stmt, pat, ty, path, ident, literal, "
-                   "tt, block or item");
+               "unknown fragment kind '" + spelling +
+                   "'; expected expression/expr, statement/stmt, pattern/pat, "
+                   "type/ty, path, identifier/ident, literal, token-tree/tt, "
+                   "block or item");
+        node.fragment = fragmentKind(std::move(spelling));
         i += 2;
       } else {
         fail(next, "metavariable '$" + node.name +
@@ -392,6 +412,7 @@ struct Rule {
 struct Macro {
   std::string name;
   Span span;
+  std::vector<std::string> definitionScope;
   std::vector<Rule> rules;
 };
 
@@ -419,11 +440,20 @@ void wrap(const std::string &fragment, std::string &text) {
 // Fragments that are not a single token invoke the native parser on the
 // tokens they captured, inside a context that accepts that fragment kind.
 bool parses(const std::string &fragment, const Pieces &tokens) {
-  if (fragment == "ident" || fragment == "literal" || fragment == "tt")
+  auto kind = fragmentKind(fragment);
+  if (kind == "ident" || kind == "literal" || kind == "tt")
     return true;
   auto text = render(tokens);
-  wrap(fragment, text);
+  wrap(kind, text);
   Source probe{"<macro fragment>", std::move(text), 0};
+  Diagnostics scratch;
+  parseDeclarations(probe, scratch);
+  return scratch.empty();
+}
+
+bool parsesExpression(const Pieces &tokens) {
+  auto text = "fn __fragment() { let __value = (" + render(tokens) + ")\n}";
+  Source probe{"<macro expression>", std::move(text), 0};
   Diagnostics scratch;
   parseDeclarations(probe, scratch);
   return scratch.empty();
@@ -651,9 +681,10 @@ private:
 class Expander {
 public:
   Expander(const Source &source, Diagnostics &diagnostics,
-           const SourceAllocator &allocate, const Procedures *procedures)
+           const SourceAllocator &allocate, const Procedures *procedures,
+           std::vector<std::string> modulePath)
       : source(source), diagnostics(diagnostics), allocate(allocate),
-        procedures(procedures) {}
+        procedures(procedures), modulePath(std::move(modulePath)) {}
 
   std::optional<Source> run() {
     Diagnostics scratch;
@@ -663,6 +694,7 @@ public:
     pieces = lower(source, tokens);
     if (!pairing(pieces, close))
       return std::nullopt;
+    collectModuleScopes(0, pieces.size(), modulePath);
     for (std::size_t i = 0; i + 2 < pieces.size(); ++i)
       if (pieces[i].kind == TokenKind::Word && pieces[i].text == "macro" &&
           pieces[i + 1].kind == TokenKind::Word && symbol(pieces[i + 2], "{")) {
@@ -681,13 +713,20 @@ public:
   }
 
 private:
+  struct ScopeRange {
+    std::size_t begin, end;
+    std::vector<std::string> path;
+  };
+
   const Source &source;
   Diagnostics &diagnostics;
   const SourceAllocator &allocate;
   const Procedures *procedures;
+  std::vector<std::string> modulePath;
   Pieces pieces;
   std::vector<std::size_t> close;
   std::vector<std::pair<std::size_t, std::size_t>> definitions;
+  std::vector<ScopeRange> moduleScopes;
   std::map<std::string, Macro> macros;
   std::set<std::string> broken;
   std::vector<std::string> chain;
@@ -699,6 +738,44 @@ private:
   void error(Span span, std::string message) {
     failed = true;
     diagnostics.error("macro", span, std::move(message));
+  }
+
+  void collectModuleScopes(std::size_t begin, std::size_t end,
+                           const std::vector<std::string> &path) {
+    for (auto i = begin; i < end;) {
+      if (pieces[i].kind == TokenKind::Word && pieces[i].text == "macro" &&
+          i + 2 < end && pieces[i + 1].kind == TokenKind::Word &&
+          symbol(pieces[i + 2], "{") && close[i + 2] != none) {
+        i = close[i + 2] + 1;
+        continue;
+      }
+      if (pieces[i].kind == TokenKind::Word && pieces[i].text == "module" &&
+          i + 2 < end && pieces[i + 1].kind == TokenKind::Word &&
+          symbol(pieces[i + 2], "{") && close[i + 2] != none) {
+        auto nested = path;
+        nested.push_back(pieces[i + 1].text);
+        auto last = close[i + 2];
+        moduleScopes.push_back(
+            {pieces[i + 2].origin.end, pieces[last].origin.begin, nested});
+        collectModuleScopes(i + 3, last, nested);
+        i = last + 1;
+        continue;
+      }
+      if (opener(pieces[i]) && close[i] != none) {
+        i = close[i] + 1;
+        continue;
+      }
+      ++i;
+    }
+  }
+
+  std::vector<std::string> scopeAt(std::size_t offset) const {
+    const ScopeRange *selected = nullptr;
+    for (const auto &range : moduleScopes)
+      if (range.begin <= offset && offset < range.end &&
+          (!selected || range.path.size() > selected->path.size()))
+        selected = &range;
+    return selected ? selected->path : std::vector<std::string>{};
   }
 
   void define(std::size_t at, std::size_t last) {
@@ -715,6 +792,7 @@ private:
     Macro macro;
     macro.name = name.text;
     macro.span = {pieces[at].origin.begin, pieces[last].origin.end, source.id};
+    macro.definitionScope = scopeAt(pieces[at].origin.begin);
     auto i = at + 3;
     auto expect = [&](bool condition, const Piece &where, const char *message) {
       if (!condition)
@@ -861,8 +939,18 @@ private:
       Pieces produced;
       if (!instantiate(macro, rule.expansion, environment, produced, use))
         return false;
-      hygiene(produced, ++marks);
-      return expandPieces(produced, out, depth + 1, use);
+      hygiene(produced, ++marks, macro.definitionScope, scopeAt(use.begin));
+      Pieces expanded;
+      if (!expandPieces(produced, expanded, depth + 1, use))
+        return false;
+      if (parsesExpression(expanded)) {
+        out.push_back({TokenKind::Symbol, "(", use, false});
+        out.insert(out.end(), expanded.begin(), expanded.end());
+        out.push_back({TokenKind::Symbol, ")", use, false});
+      } else {
+        out.insert(out.end(), expanded.begin(), expanded.end());
+      }
+      return true;
     }
     error(use, "no rule of macro '" + macro.name +
                    "' matches this invocation (" +
@@ -1056,46 +1144,171 @@ private:
            !isReservedWord(piece.text);
   }
 
-  // Names a group binds: tuple patterns after `let`, `var` or `for`, and
-  // closure parameters. `parameters` restricts the scan to the group's own
-  // level.
-  static void bindGroup(const Pieces &out, std::size_t open, bool parameters,
-                        std::set<std::size_t> &binders) {
-    unsigned depth = 0;
-    for (std::size_t k = open; k < out.size(); ++k) {
-      if (opener(out[k]))
-        ++depth;
-      else if (closer(out[k]) && --depth == 0)
-        return;
-      if (!bindable(out[k]) || (parameters && depth != 1) ||
-          k + 1 >= out.size())
+  static void bindPattern(const Pieces &out, std::size_t begin,
+                          std::size_t end,
+                          std::set<std::size_t> &binders,
+                          std::map<std::size_t, std::string> &shorthand) {
+    for (auto k = begin; k < end; ++k) {
+      if (!bindable(out[k]))
         continue;
-      auto before =
-          k > 0 && (symbol(out[k - 1], "(") || symbol(out[k - 1], ","));
-      auto next = symbol(out[k + 1], ",") || symbol(out[k + 1], ")") ||
-                  symbol(out[k + 1], ":");
-      if (before && next)
+      auto pathSegment = (k > begin && symbol(out[k - 1], ".")) ||
+                         (k + 1 < end && symbol(out[k + 1], "."));
+      auto fieldName = k + 1 < end && symbol(out[k + 1], ":");
+      auto constructor =
+          k + 1 < end &&
+          (symbol(out[k + 1], "(") || symbol(out[k + 1], "{"));
+      if (!pathSegment && !fieldName && !constructor) {
         binders.insert(k);
+        auto beforeField =
+            k > begin && (symbol(out[k - 1], "{") || symbol(out[k - 1], ","));
+        auto afterField =
+            k + 1 < end &&
+            (symbol(out[k + 1], ",") || symbol(out[k + 1], "}"));
+        if (beforeField && afterField)
+          shorthand.emplace(k, out[k].text);
+      }
+    }
+  }
+
+  static std::size_t patternEnd(const Pieces &out,
+                                const std::vector<std::size_t> &close,
+                                std::size_t begin, std::size_t end,
+                                bool forLoop) {
+    for (auto k = begin; k < end;) {
+      if (opener(out[k])) {
+        if (close[k] == none)
+          return end;
+        k = close[k] + 1;
+        continue;
+      }
+      if (newline(out[k]) || symbol(out[k], ":") || symbol(out[k], "=") ||
+          (forLoop && out[k].kind == TokenKind::Word &&
+           out[k].text == "in"))
+        return k;
+      ++k;
+    }
+    return end;
+  }
+
+  static void bindParameters(const Pieces &out,
+                             const std::vector<std::size_t> &close,
+                             std::size_t open, std::size_t end,
+                             std::set<std::size_t> &binders,
+                             std::map<std::size_t, std::string> &shorthand) {
+    auto begin = open + 1;
+    for (auto k = begin; k <= end;) {
+      if (k != end && opener(out[k])) {
+        if (close[k] == none)
+          break;
+        k = close[k] + 1;
+        continue;
+      }
+      if (k != end && !symbol(out[k], ",")) {
+        ++k;
+        continue;
+      }
+      auto patternEnd = k;
+      for (auto p = begin; p < k;) {
+        if (opener(out[p])) {
+          if (close[p] == none)
+            break;
+          p = close[p] + 1;
+          continue;
+        }
+        if (symbol(out[p], ":")) {
+          patternEnd = p;
+          break;
+        }
+        ++p;
+      }
+      bindPattern(out, begin, patternEnd, binders, shorthand);
+      begin = k + 1;
+      ++k;
+    }
+  }
+
+  static void bindMatchArms(const Pieces &out,
+                            const std::vector<std::size_t> &close,
+                            std::set<std::size_t> &binders,
+                            std::map<std::size_t, std::string> &shorthand) {
+    for (std::size_t i = 0; i + 1 < out.size(); ++i) {
+      if (out[i].kind != TokenKind::Word || out[i].text != "match")
+        continue;
+      auto open = i + 1;
+      while (open < out.size() && !symbol(out[open], "{")) {
+        if (opener(out[open])) {
+          if (close[open] == none)
+            break;
+          open = close[open] + 1;
+        } else {
+          ++open;
+        }
+      }
+      if (open >= out.size() || close[open] == none)
+        continue;
+
+      auto armStart = open + 1;
+      auto patternEnd = none;
+      bool inBody = false;
+      for (auto j = open + 1; j < close[open];) {
+        if (opener(out[j])) {
+          if (close[j] == none)
+            break;
+          j = close[j] + 1;
+          continue;
+        }
+        if (!inBody && patternEnd == none && out[j].kind == TokenKind::Word &&
+            out[j].text == "if")
+          patternEnd = j;
+        if (!inBody && symbol(out[j], "=>")) {
+          auto end = patternEnd == none ? j : patternEnd;
+          bindPattern(out, armStart, end, binders, shorthand);
+          inBody = true;
+          ++j;
+          continue;
+        }
+        if (inBody && (symbol(out[j], ",") || newline(out[j]))) {
+          armStart = j + 1;
+          patternEnd = none;
+          inBody = false;
+        }
+        ++j;
+      }
     }
   }
 
   // Identifiers that the template itself binds get a name unique to this
   // expansion, so they can neither capture nor shadow a name of the caller.
-  void hygiene(Pieces &out, std::size_t mark) {
+  void hygiene(Pieces &out, std::size_t mark,
+               const std::vector<std::string> &definitionScope,
+               const std::vector<std::string> &useScope) {
     std::set<std::size_t> binders;
+    std::map<std::size_t, std::string> shorthand;
+    std::vector<std::size_t> close;
+    if (!pairing(out, close))
+      return;
     for (std::size_t i = 0; i + 1 < out.size(); ++i) {
       if (!out[i].authored || out[i].kind != TokenKind::Word)
         continue;
       const auto &word = out[i].text;
       if (word == "let" || word == "var" || word == "for") {
-        if (bindable(out[i + 1]))
-          binders.insert(i + 1);
-        else if (symbol(out[i + 1], "(") && out[i + 1].authored)
-          bindGroup(out, i + 1, false, binders);
-      } else if (word == "fn" && symbol(out[i + 1], "(")) {
-        bindGroup(out, i + 1, true, binders);
+        auto begin = i + 1;
+        auto end = patternEnd(out, close, begin, out.size(), word == "for");
+        bindPattern(out, begin, end, binders, shorthand);
+      } else if (word == "fn") {
+        auto open = symbol(out[i + 1], "(") ? i + 1
+                    : i + 2 < out.size() &&
+                              out[i + 1].kind == TokenKind::Word &&
+                              symbol(out[i + 2], "(")
+                        ? i + 2
+                        : none;
+        if (open != none) {
+          if (close[open] != none)
+            bindParameters(out, close, open, close[open], binders, shorthand);
+        }
       }
     }
+    bindMatchArms(out, close, binders, shorthand);
     std::set<std::string> renamed;
     for (auto index : binders)
       renamed.insert(out[index].text);
@@ -1110,6 +1323,70 @@ private:
       if (!label)
         out[i].text += "__m" + std::to_string(mark);
     }
+    std::set<std::size_t> freeNames;
+    if (definitionScope != useScope) {
+      std::set<std::string> markedNames;
+      for (const auto &name : renamed)
+        markedNames.insert(name + "__m" + std::to_string(mark));
+      static const std::set<std::string> primitiveTypes{
+          "Unit", "Never", "bool", "char", "f32", "f64", "i8", "i16",
+          "i32",   "i64",   "i128", "isize", "u8", "u16", "u32", "u64",
+          "u128",  "usize"};
+      for (std::size_t i = 0; i < out.size(); ++i) {
+        const auto &piece = out[i];
+        if (!piece.authored || piece.kind != TokenKind::Word ||
+            isReservedWord(piece.text) || markedNames.contains(piece.text) ||
+            piece.text == "Self" || piece.text == "package" ||
+            piece.text == "self" || piece.text == "super" ||
+            primitiveTypes.contains(piece.text) ||
+            (i > 0 && (symbol(out[i - 1], ".") ||
+                       symbol(out[i - 1], "::"))) ||
+            (i + 1 < out.size() &&
+             (symbol(out[i + 1], ":") || symbol(out[i + 1], "!"))))
+          continue;
+        if (i > 0 && out[i - 1].kind == TokenKind::Word &&
+            (out[i - 1].text == "fn" || out[i - 1].text == "type" ||
+             out[i - 1].text == "enum" || out[i - 1].text == "alias" ||
+             out[i - 1].text == "const" || out[i - 1].text == "static" ||
+             out[i - 1].text == "union" ||
+             out[i - 1].text == "interface" ||
+             out[i - 1].text == "module"))
+          continue;
+        freeNames.insert(i);
+      }
+    }
+    Pieces hygienic;
+    hygienic.reserve(
+        out.size() + freeNames.size() * (2 + 2 * definitionScope.size()) +
+        2 * shorthand.size());
+    for (std::size_t i = 0; i < out.size(); ++i) {
+      const auto &piece = out[i];
+      if (freeNames.contains(i)) {
+        hygienic.push_back(
+            {TokenKind::Word, "package", piece.origin, piece.space});
+        for (const auto &part : definitionScope) {
+          hygienic.push_back({TokenKind::Symbol, ".", piece.origin, false});
+          hygienic.push_back({TokenKind::Word, part, piece.origin, false});
+        }
+        hygienic.push_back({TokenKind::Symbol, ".", piece.origin, false});
+        auto qualified = piece;
+        qualified.space = false;
+        hygienic.push_back(std::move(qualified));
+      } else if (auto found = shorthand.find(i); found != shorthand.end()) {
+        auto field = piece;
+        field.text = found->second;
+        hygienic.push_back(std::move(field));
+        hygienic.push_back(
+            {TokenKind::Symbol, ":", piece.origin, false});
+        auto binding = piece;
+        binding.text = found->second + "__m" + std::to_string(mark);
+        binding.space = false;
+        hygienic.push_back(std::move(binding));
+      } else {
+        hygienic.push_back(piece);
+      }
+    }
+    out = std::move(hygienic);
   }
 
   void copy(std::size_t to) {
@@ -1193,7 +1470,10 @@ private:
 std::optional<Source> expandMacros(const Source &source,
                                    Diagnostics &diagnostics,
                                    const SourceAllocator &allocate,
-                                   const Procedures *procedural) {
-  return Expander(source, diagnostics, allocate, procedural).run();
+                                   const Procedures *procedural,
+                                   std::vector<std::string> modulePath) {
+  return Expander(source, diagnostics, allocate, procedural,
+                  std::move(modulePath))
+      .run();
 }
 } // namespace mettle::expansion

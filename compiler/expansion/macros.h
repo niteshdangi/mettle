@@ -4,6 +4,8 @@
 #include "expansion/expand.h"
 #include "expansion/procedural.h"
 #include <optional>
+#include <string>
+#include <vector>
 
 namespace mettle::expansion {
 // Expands the declarative macros of one source before it is parsed.
@@ -14,13 +16,14 @@ namespace mettle::expansion {
 //
 // Definitions are file-local and order independent. An invocation `name!(...)`
 // (also `[...]` and `{...}`) selects the first rule whose matcher recognizes
-// the argument tokens; `expr`, `stmt`, `pat`, `ty`, `path` and `item`
-// fragments must parse with the native parser. Identifiers that an expansion
-// binds itself (`let`, `var`, `for`, closure parameters) are renamed per
-// expansion, so they never capture or shadow user names; `$capture(name)`
-// deliberately names an invocation-context identifier. A recursion limit and
-// every matching, definition or repetition fault is a structured `macro`
-// diagnostic at the use site.
+// the argument tokens; short and full fragment-kind spellings are accepted.
+// Structured fragments must parse with the native parser. Template-local
+// bindings, including match-arm pattern bindings, are renamed per expansion;
+// `$capture(name)` deliberately names an invocation-context identifier.
+// Expression-position expansions are grouped as a whole. Free names are
+// qualified to the definition's module across inline-module boundaries. A
+// recursion limit and every matching, definition or repetition fault is a
+// structured `macro` diagnostic at the use site.
 //
 // `procedural` (may be null) names host-program macros that are invoked the
 // same way (`name!(...)`): the argument tokens go to the program (see
@@ -38,5 +41,6 @@ namespace mettle::expansion {
 std::optional<Source> expandMacros(const Source &source,
                                    Diagnostics &diagnostics,
                                    const SourceAllocator &allocate,
-                                   const Procedures *procedural = nullptr);
+                                   const Procedures *procedural = nullptr,
+                                   std::vector<std::string> modulePath = {});
 } // namespace mettle::expansion
