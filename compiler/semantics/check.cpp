@@ -387,7 +387,6 @@ std::optional<CheckedModule> Checker::run() {
         canonicalAsyncDefault(function, definition, *family,
                               module.interfaces[interface->second],
                               defaultFuture);
-    family->asyncFutureOutputInferred = false;
   };
 
   std::vector<std::vector<std::size_t>> edges(module.functions.size());
@@ -590,7 +589,6 @@ std::optional<CheckedModule> Checker::run() {
                                     module.interfaces[interface->second],
                                     defaultFuture);
           family->defaultValue = defaultFuture;
-          family->asyncFutureOutputInferred = false;
           if (checked.types->isSized(family->parameter) &&
               !checked.types->isSized(defaultFuture))
             error("type", function.span,
@@ -640,9 +638,8 @@ std::optional<CheckedModule> Checker::run() {
   for (const auto &function : module.functions)
     if (function.asyncDefaultOutputInferred) {
       auto body = inference.value(asyncDefaultBodyVariables.at(&function));
-      auto expected = inference.value(functionVariables.at(&function));
-      if (body != Type::Unknown && expected != Type::Unknown)
-        facts(*function.body).rebuiltType = expected;
+      if (body != Type::Unknown)
+        facts(function).asyncDefaultBodyResult = body;
     }
   for (auto [variable, span] : integerOrBoolean) {
     auto t = inference.value(variable);

@@ -608,15 +608,16 @@ void Checker::checkInterfaceContracts() {
       }
       interfaces::Solver associated(*checked.types, *checked.interfaceData,
                                     diagnostics, allowed);
-      for (auto obligation : provided.requirements) {
-        obligation.subject =
-            checked.types->substitute(obligation.subject, publicParameters);
-        obligation.interfaceType = checked.types->substitute(
-            obligation.interfaceType, publicParameters);
-        if (!associated.prove(obligation, implementation.span, false))
-          error("type", implementation.span,
-                "associated family strengthens its interface bounds");
-      }
+      if (!(provided.fromDefault && required.asyncFutureOutputInferred))
+        for (auto obligation : provided.requirements) {
+          obligation.subject =
+              checked.types->substitute(obligation.subject, publicParameters);
+          obligation.interfaceType = checked.types->substitute(
+              obligation.interfaceType, publicParameters);
+          if (!associated.prove(obligation, implementation.span, false))
+            error("type", implementation.span,
+                  "associated family strengthens its interface bounds");
+        }
       auto value = checked.types->substitute(provided.value, publicParameters);
       if (!required.constant && checked.types->isSized(required.parameter) &&
           !checked.types->isSized(value))
