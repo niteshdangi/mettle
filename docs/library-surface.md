@@ -634,7 +634,25 @@ are target prerequisites, not established support. The POSIX byte-view statement
 in library-and-abi.md section 6 are reconciled with the native Windows path
 contract before that profile is delivered (implementation-plan section 8.7, R2).
 
-## 13. Hosted networking
+## 13. Hosted task scopes and networking
+
+`std.task.scope` is the synchronous, local borrowing scope: it drives ready
+children and destroys suspended children before returning. For async work,
+`std.task.async_scope(read anchor)` returns a `Future` that owns each child
+registered through its mutable `spawn` method. A child's captured regions and
+output must satisfy `Within` for the anchor's region. The returned
+`AsyncJoinHandle` only observes the result; dropping or forgetting it does not
+unregister the child. `is_finished` reports completion or cancellation, and
+`take_result` retrieves an available output without waiting.
+
+Each parent poll serially polls every registered child once. A child wake only
+notifies the parent task; it never polls the child directly. The scope becomes
+ready when all children complete. Dropping the parent future synchronously
+destroys every suspended child, while a child panic propagates after the other
+registrations have been closed and destroyed. Wake metadata may outlive the
+parent but cannot access its storage. Registration allocates pinned child
+storage and polling is proportional to the number of registered children; this
+is not a zero-cost or parallel-execution guarantee.
 
 Status: IPv6 addresses and sockets, timed TCP connection, and name resolution
 are implemented and verified on macOS arm64, for the existing POSIX hosted

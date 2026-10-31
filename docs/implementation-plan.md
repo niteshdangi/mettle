@@ -1132,22 +1132,26 @@ Implementations without an override inherit that instantiated future; overrides
 retain their own future family binding. This change and its three source
 regressions are implemented, unverified (not yet built); no build or test was run
 in the code-only lane.
-Remaining I11 work includes a full asynchronous borrowed-scope
-interface using the poll epochs in memory-and-concurrency section 6, including
-its independent soundness/race review and sanitizer qualification. A library
-`AsyncScope` attempt was withdrawn: it accepted a child future borrowing a
-local shorter than the scope because a method's `Within<region s>` obligation
-could use a covariantly shortened receiver view instead of the receiver's
-declared nominal region argument. `compiler/semantics/regions.cpp` now binds
-matching extension-owner regions from those nominal region arguments before
-checking the bound. The short-capture rejection
-`method-within-bound-rejects-short-capture.mt` and existing accepted cases
-`method-within-bound-accepts-receiver-region-capture.mt` /
-`impl-region-method-call-on-other-type.mt` are implemented, unverified on this
-worktree because the code-only lane ran no builds or source cases. Verify the
-rejection's recorded `15:18` diagnostic after integration; the async-scope
-attempt remains withdrawn pending that verification and its independent
-soundness/race review. As an I05
+The asynchronous borrowed scope is implemented, unverified (not yet built), in
+`library/std/task.mt` as `task.async_scope(anchor)`, a future that owns pinned
+child storage and serially polls children only during its own poll epochs.
+Registrations outlive handles; parent destruction synchronously closes wake
+metadata and destroys suspended children. Child panic closes and drains the
+scope before propagating. Child wakers retain readiness metadata and the
+caller-provided parent waker, never child or parent-storage pointers, and do
+not directly poll children. The scope's `Within` registration bounds use its
+nominal region argument; the mutable-receiver, invariant-region regression
+`tests/std/neg_async_scope_mut_receiver_short_borrow.mt` is retained alongside
+the actual-API short-capture rejection. The earlier async-scope attempt was
+withdrawn after the receiver-region issue was found; the companion region
+solver change and both accepted/rejected receiver-bound cases remain
+implemented but unverified here. Required hosted cases now cover borrowed
+completion, synchronous cancellation on parent destruction, panic propagation
+with sibling cleanup, repeated wake after parent destruction, and a child
+capture shorter than the scope region. No build or test was run in this
+code-only lane. Independent soundness/race review and sanitizer qualification
+remain open.
+As an I05
 region-inference follow-up, `RegionPass::infer` in
 `compiler/semantics/regions.cpp` now matches region arguments across same-origin
 nominal fields even when their region patterns differ. The invariant-field
@@ -1237,10 +1241,12 @@ An async future borrows from every borrowed parameter, and an owning closure
 or async body captures a borrowed non-Copy parameter as a view
 (`borrowed-parameter-captures-keep-views`,
 `async-future-outlives-borrowed-argument`).
-Region-carrying erased futures, asynchronous borrowed-task scopes and P10
-remain open; Linux poll-fallback qualification of async I/O is open. Erased async dispatch is explicitly rejected pending a
-future-storage erasure contract. Linux and Windows targets and TSan of executor
-code are not run for the coroutine path.
+Region-carrying erased futures and P10 remain open; asynchronous borrowed-task
+scopes are implemented, unverified (not yet built), with independent
+soundness/race review and sanitizer qualification outstanding. Linux
+poll-fallback qualification of async I/O is open. Erased async dispatch is
+explicitly rejected pending a future-storage erasure contract. Linux and
+Windows targets and TSan of executor code are not run for the coroutine path.
 
 #### I11 coroutine replacement inventory
 
@@ -1257,6 +1263,7 @@ Revision: uncommitted lane changes on `9d865a1`; scope as stated per row.
 | Control flow | Implemented: ordinary CFG of the closure body. | None known. |
 | Cleanup and cancellation | Implemented: persistent frame flags and `unwind` in `backend/llvm/cleanup.cpp`; exactly-once drops verified. | Dedicated lexical drop-order-across-suspension fixture. |
 | Optional executor drives async I/O (S030) | Implemented and verified on macOS arm64: `library/std/task.mt`, `library/std/net.mt`, `library/std/sys.mt`, `library/core/future.mt`, `runtime/sys.{h,cpp}`; `tests/std/async_net_echo.mt` passes in Release CTest and under emitted ASan/TSan. | Kqueue wake-race stress; Linux poll-fallback qualification (owner-run). |
+| Asynchronous borrowed task scopes | Implemented, unverified (not yet built): `library/std/task.mt` provides `task.async_scope(anchor)`, whose future owns registered borrowed children and polls them only inside parent epochs; handles do not own registrations, wake metadata cannot access parent storage, parent destruction synchronously drains children, and child panic drains before propagation. | Build/run `tests/std/async_scope_borrowed.mt`, `async_scope_cancel.mt`, `async_scope_panic.mt`, and `neg_async_scope_borrow_escape.mt`; verify `neg_async_scope_mut_receiver_short_borrow.mt` and the nominal receiver-region cases; independent soundness/race review and sanitizer qualification. |
 | Integration and qualification | Release CTest, sanitized compiler CTest and ASan/UBSan emitted async programs passed on macOS arm64 before this change; the Debug-profile CTest passed 23/23 at `c81bc6d`. The full Release CTest passed 24/24 with the async closure, `try await`, interface dispatch, erasure-diagnostic and debug-info state-discriminator changes. | Linux/Windows (owner-run). |
 
 The source-freeze gate depends on all rows, fixtures and documentation; a
