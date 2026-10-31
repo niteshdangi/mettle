@@ -1760,18 +1760,58 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
     // generic arguments.
     auto instantiateOwnerRegions =
         [&](const std::vector<GenericParameter> &parameters) {
+          // A covariant read-view reborrow cannot shorten the owner's nominal
+          // region argument used by a method-level bound.
+          auto actualReceiver = *methodReceiver;
+          while (types.isView(actualReceiver))
+            actualReceiver = types.view(actualReceiver).payload;
+          auto formalReceiver = signature.parameters.empty()
+                                    ? Type::Unknown
+                                    : signature.parameters[0];
+          while (types.isView(formalReceiver))
+            formalReceiver = types.view(formalReceiver).payload;
+          const ProductType *actualProduct = nullptr;
+          const ProductType *formalProduct = nullptr;
+          if (types.isProduct(actualReceiver) &&
+              types.isProduct(formalReceiver)) {
+            actualProduct = &types.product(actualReceiver);
+            formalProduct = &types.product(formalReceiver);
+          }
+          const bool sameReceiverType =
+              actualProduct && formalProduct &&
+              ((formalProduct->regionOrigin != Type::Unknown &&
+                formalProduct->regionOrigin == actualProduct->regionOrigin) ||
+               (formalProduct->regionPattern != Type::Unknown &&
+                formalProduct->regionPattern ==
+                    actualProduct->regionPattern)) &&
+              formalProduct->regionArguments.size() ==
+                  actualProduct->regionArguments.size();
           for (const auto &parameter : parameters) {
             if (parameter.kind != GenericParameterKind::Region)
               continue;
             auto found = signature.context.names.find(parameter.name);
-            if (found == signature.context.names.end() ||
-                std::any_of(substitution.begin(), substitution.end(),
-                            [&](const auto &entry) {
-                              return entry.first == found->second;
-                            }))
+            if (found == signature.context.names.end())
               continue;
-            substitution.emplace_back(
-                found->second, store.inference(current->context.scope));
+            auto argument = RegionId::Unspecified;
+            if (sameReceiverType) {
+              for (std::size_t i = 0;
+                   i < formalProduct->regionArguments.size(); ++i)
+                if (formalProduct->regionArguments[i] == found->second) {
+                  argument = actualProduct->regionArguments[i];
+                  break;
+                }
+            }
+            if (argument == RegionId::Unspecified)
+              argument = store.inference(current->context.scope);
+            auto existing = std::find_if(
+                substitution.begin(), substitution.end(),
+                [&](const auto &entry) {
+                  return entry.first == found->second;
+                });
+            if (existing == substitution.end())
+              substitution.emplace_back(found->second, argument);
+            else if (store.get(existing->second).kind == RegionKind::Inference)
+              existing->second = argument;
           }
         };
     const auto &method = module.functions[callee];
