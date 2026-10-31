@@ -36,7 +36,8 @@ endif()
 
 find_package(LLVM ${METTLE_LLVM_VERSION} EXACT REQUIRED CONFIG)
 llvm_map_components_to_libnames(METTLE_LLVM_LIBRARIES
-                               Core CodeGen MC Passes X86 AArch64 WebAssembly ARM)
+                               Core CodeGen MC Passes Instrumentation X86 AArch64
+                               WebAssembly ARM)
 
 if(METTLE_ENABLE_SANITIZERS)
   add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=all
@@ -57,14 +58,29 @@ endif()
 # version. The compiler itself is built for the host and is not affected.
 set(METTLE_MACOS_DEPLOYMENT_TARGET "15.0" CACHE STRING
     "Minimum macOS version of the Darwin ARM64 runtime and emitted objects")
-add_library(mettle_runtime STATIC runtime/panic.cpp runtime/panic.h
+set(METTLE_RUNTIME_SOURCES runtime/panic.cpp runtime/panic.h
   runtime/alloc.cpp runtime/alloc.h runtime/sys.cpp runtime/sys.h
   runtime/thread.cpp runtime/thread.h)
+add_library(mettle_runtime STATIC ${METTLE_RUNTIME_SOURCES})
 if(APPLE)
   target_compile_options(mettle_runtime PRIVATE
     "-mmacosx-version-min=${METTLE_MACOS_DEPLOYMENT_TARGET}")
 endif()
 target_compile_options(mettle_runtime PRIVATE -Wall -Wextra -Wpedantic -Werror)
+function(add_mettle_runtime_variant target sanitizer)
+  add_library(${target} STATIC ${METTLE_RUNTIME_SOURCES})
+  if(APPLE)
+    target_compile_options(${target} PRIVATE
+      "-mmacosx-version-min=${METTLE_MACOS_DEPLOYMENT_TARGET}")
+  endif()
+  # Override the compiler's own ASan/UBSan mode so these archives contain only
+  # the instrumentation selected by their name.
+  target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror
+    -fno-sanitize=address,undefined -fsanitize=${sanitizer}
+    -fno-sanitize-recover=all -fno-omit-frame-pointer)
+endfunction()
+add_mettle_runtime_variant(mettle_runtime_asan address)
+add_mettle_runtime_variant(mettle_runtime_tsan thread)
 set(METTLE_RUNTIME_TARGET_FLAGS "")
 if(CMAKE_CXX_COMPILER_TARGET)
   list(APPEND METTLE_RUNTIME_TARGET_FLAGS "--target=${CMAKE_CXX_COMPILER_TARGET}")
@@ -147,9 +163,11 @@ target_compile_definitions(mettle PRIVATE METTLE_VERSION="${PROJECT_VERSION}"
   METTLE_CXX_PATH="${CMAKE_CXX_COMPILER}" METTLE_SYSROOT_PATH="${CMAKE_OSX_SYSROOT}"
   METTLE_LIBRARY_PATH="${PROJECT_SOURCE_DIR}/library"
   METTLE_RUNTIME_PATH="$<TARGET_FILE:mettle_runtime>"
+  METTLE_RUNTIME_ASAN_PATH="$<TARGET_FILE:mettle_runtime_asan>"
+  METTLE_RUNTIME_TSAN_PATH="$<TARGET_FILE:mettle_runtime_tsan>"
   METTLE_RUNTIME_TARGET="${METTLE_RUNTIME_TARGET}"
   METTLE_RUNTIME_SANITIZED=$<BOOL:${METTLE_ENABLE_SANITIZERS}>)
-add_dependencies(mettle mettle_runtime)
+add_dependencies(mettle mettle_runtime mettle_runtime_asan mettle_runtime_tsan)
 target_compile_options(mettle PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 include(CTest)
@@ -308,7 +326,7 @@ if(BUILD_TESTING)
     set_tests_properties(source.${kind} PROPERTIES TIMEOUT 1800
                          PROCESSORS ${METTLE_SOURCE_TEST_JOBS})
   endforeach()
-  foreach(mode syntax fast-math broken-pipe)
+  foreach(mode syntax fast-math broken-pipe sanitizers)
     add_test(NAME probe.${mode}
              COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/probes.py"
                      "${mode}" "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/probe-evidence")

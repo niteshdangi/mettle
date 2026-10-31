@@ -242,6 +242,21 @@ def incremental_reuse():
     assert clean.read_bytes() == bytes_built
 
 
+def sanitizer_cache_key():
+    app = packages("incremental/app")
+    plain, _ = explained(app)
+    assert "cache miss" in plain and "cache stored" in plain, plain
+    sanitized, built = explained(app, "--sanitize", "address")
+    assert "cache miss" in sanitized and "cache stored" in sanitized, sanitized
+    assert exit_code(built) == 0
+    reused, _ = explained(app, "--sanitize", "address")
+    assert "cache hit" in reused, reused
+    plain_again, _ = explained(app)
+    assert "cache hit" in plain_again, plain_again
+    invoke(["run", app, "--sanitize", "address"])
+    invoke(["test", app, "--sanitize", "address"])
+
+
 def edit_invalidation():
     app = packages("incremental/app")
     math = app / "src/math.mt"
@@ -1062,7 +1077,8 @@ def test_json_timeout_and_modules():
 CASES = [path_dependency, missing_lock_locked, lock_corruption,
          registry_resolution, version_conflict, backtracking, offline, features,
          manifest_diagnostics, package_options_need_package, incremental_reuse,
-         edit_invalidation, cache_dedup_and_bound, cache_corruption_and_clean,
+         sanitizer_cache_key, edit_invalidation, cache_dedup_and_bound,
+         cache_corruption_and_clean,
          build_script, build_script_untracked_inputs,
          procedural_macro, procedural_macro_failure,
          run_forwards_args_and_exit_status,

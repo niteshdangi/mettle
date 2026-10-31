@@ -17,6 +17,8 @@
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
+#include "llvm/Transforms/Instrumentation/AddressSanitizer.h"
+#include "llvm/Transforms/Instrumentation/ThreadSanitizer.h"
 
 #include <memory>
 #include <mutex>
@@ -147,8 +149,42 @@ llvm::Error checkTargetLayout(const TypeStore &types, llvm::StringRef triple) {
   return mismatch("pointer", 8, 8, pointer);
 }
 
+llvm::Error instrumentModule(llvm::Module &module, bool sanitizeAddress,
+                             bool sanitizeThread) {
+  if (!sanitizeAddress && !sanitizeThread)
+    return llvm::Error::success();
+  llvm::LoopAnalysisManager loops;
+  llvm::FunctionAnalysisManager functions;
+  llvm::CGSCCAnalysisManager calls;
+  llvm::ModuleAnalysisManager modules;
+  llvm::PassBuilder builder;
+  builder.registerLoopAnalyses(loops);
+  builder.registerFunctionAnalyses(functions);
+  builder.registerCGSCCAnalyses(calls);
+  builder.registerModuleAnalyses(modules);
+  builder.crossRegisterProxies(loops, functions, calls, modules);
+  llvm::ModulePassManager pipeline;
+  if (sanitizeAddress)
+    pipeline.addPass(
+        llvm::AddressSanitizerPass(llvm::AddressSanitizerOptions{}));
+  if (sanitizeThread) {
+    pipeline.addPass(llvm::ModuleThreadSanitizerPass());
+    pipeline.addPass(llvm::createModuleToFunctionPassAdaptor(
+        llvm::ThreadSanitizerPass()));
+  }
+  pipeline.run(module, modules);
+  std::string diagnostic;
+  llvm::raw_string_ostream diagnostics(diagnostic);
+  if (llvm::verifyModule(module, &diagnostics))
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "invalid instrumented backend module: " +
+                                       diagnostic);
+  return llvm::Error::success();
+}
+
 llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
-                       llvm::StringRef output, bool optimize) {
+                       llvm::StringRef output, bool optimize,
+                       bool sanitizeAddress, bool sanitizeThread) {
   std::string diagnostic;
   const llvm::Triple targetTriple(llvm::Triple::normalize(triple));
   if (auto *identity = llvm::dyn_cast_or_null<llvm::MDString>(
@@ -181,7 +217,7 @@ llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "invalid backend module: " + diagnostic);
   }
-  if (optimize) {
+  if (optimize || sanitizeAddress || sanitizeThread) {
     llvm::LoopAnalysisManager loops;
     llvm::FunctionAnalysisManager functions;
     llvm::CGSCCAnalysisManager calls;
@@ -192,9 +228,32 @@ llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
     builder.registerCGSCCAnalyses(calls);
     builder.registerModuleAnalyses(modules);
     builder.crossRegisterProxies(loops, functions, calls, modules);
-    auto pipeline =
-        builder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
-    pipeline.run(module, modules);
+    auto addSanitizers = [=](llvm::ModulePassManager &pipeline) {
+      if (sanitizeAddress)
+        pipeline.addPass(
+            llvm::AddressSanitizerPass(llvm::AddressSanitizerOptions{}));
+      if (sanitizeThread) {
+        pipeline.addPass(llvm::ModuleThreadSanitizerPass());
+        pipeline.addPass(llvm::createModuleToFunctionPassAdaptor(
+            llvm::ThreadSanitizerPass()));
+      }
+    };
+    llvm::ModulePassManager pipeline;
+    if (optimize) {
+      builder.registerOptimizerLastEPCallback(
+          [addSanitizers](llvm::ModulePassManager &passes,
+                          llvm::OptimizationLevel,
+                          llvm::ThinOrFullLTOPhase) {
+            addSanitizers(passes);
+          });
+      pipeline =
+          builder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+      pipeline.run(module, modules);
+    } else {
+      if (auto error = instrumentModule(module, sanitizeAddress,
+                                        sanitizeThread))
+        return error;
+    }
     if (llvm::verifyModule(module, &diagnostics))
       return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                      "invalid optimized backend module: " +

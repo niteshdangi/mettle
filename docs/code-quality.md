@@ -144,9 +144,14 @@ from an informal ownership description.
 
 ASan/UBSan compiler runs are required for new memory/unsafe work and before
 ownership-milestone closure. They instrument project C++ code, not the prebuilt
-LLVM libraries or automatically every emitted Mettle program. ThreadSanitizer,
-race/model checks and target-specific probes become required when concurrency
-is implemented. A passing sanitizer cannot prove the language memory model sound.
+LLVM libraries or automatically every emitted Mettle program. The driver now
+has opt-in `--sanitize address|thread` instrumentation for emitted Mettle
+programs; this implementation is unverified until its executable probes pass.
+The emitted-IR backend does not yet provide UBSan instrumentation:
+`--sanitize undefined` is rejected rather than promising checks that are not
+emitted. ThreadSanitizer, race/model checks and target-specific probes are
+required when concurrency is implemented. A passing sanitizer cannot prove the
+language memory model sound.
 Sanitizer reports use exit status 99 in the selected scripts so compiler-negative
 tests expecting ordinary exit status 1 cannot count a report as a passing case.
 Sanitizer startup must pass before analysis/test execution; a failed startup is
@@ -178,13 +183,14 @@ diagnostic and a 430 KB valid program. Under heavy host load the fixed CTest
 timeouts of the sanitized scalar and machine suites can expire; those suites
 were rerun unmodified without the timeout and passed.
 
-Threaded Mettle programs: the driver does not offer a TSan link mode and emitted
-code is not TSan-instrumented, so there is no gating TSan CTest. Evidence
-outside the repository: for `tests/std/{threads_basic,thread_scope,
+Threaded Mettle programs: historical evidence outside the repository showed
+that for `tests/std/{threads_basic,thread_scope,
 sync_primitives,mutex_poison,arc_races}.mt`, `mettle build --emit llvm`, the
 `sanitize_thread` attribute rewrite used by `tests/backend/memory.py`, and a
 TSan-compiled `runtime/*.cpp` produced executables that ran clean (no report,
-exit 0). This is not a repository gate or a race-freedom proof.
+exit 0). `--sanitize thread` and an intentional-race emitted-program probe are
+now implemented but unverified (not yet built); this is not a repository gate
+or a race-freedom proof until qualification passes.
 
 On the current macOS 27.0.1 host, the previous LLVM 21.1.8 ASan runtime stalled before
 `main`. A local startup sample shows reentrant initialization via dyld cache

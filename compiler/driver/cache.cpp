@@ -143,6 +143,8 @@ BuildInputs::key(const Options &options,
   add(options.sysroot);
   add(options.freestanding ? "freestanding" : "hosted");
   add("harness:" + options.harness);
+  for (const auto &sanitizer : options.sanitizers)
+    add("sanitize:" + sanitizer);
   // The linker embeds the output's file name (code-signature identifier).
   add("name:" + fs::path(options.output).filename().string());
   for (const auto &library : options.extraLibraries)
