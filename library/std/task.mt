@@ -432,6 +432,17 @@ fn executor_waker(target: take WakeTarget, reactor: ptr<mut u8>): Waker {
 }
 
 fn reactor_from_waker(waker: read Waker): ptr<mut u8>? {
+    if waker.uses_vtable(waker_table<ScopeWake>()) {
+        let raw = waker.clone().into_raw()
+        let parent = unsafe {
+            (*raw.data.cast<Arc<ScopeWake>>()).get().parent_waker()
+        }
+        (raw.vtable.release)(raw.data)
+        return match take parent {
+            present(waker) => reactor_from_waker(read waker),
+            none => none
+        }
+    }
     if !waker.uses_vtable(waker_table<ExecutorWake>()) { return none }
     let raw = waker.clone().into_raw()
     // The exact executor vtable identifies data as its boxed Arc payload.
@@ -765,4 +776,240 @@ pub fn scope<R, F: for<region s> fn(read Scope<region s>): R>(f: take F): R {
     let result = f(read state)
     let _polls = state.executor.run_until_stalled()
     result
+}
+
+// Scope wakeups retain only this independent metadata and the caller's waker.
+// In particular they never own a pointer to a scope or to a child allocation.
+type ScopeWake {
+    ready: core.sync.atomic.AtomicBool
+    parent: mutex.Mutex<Waker?>
+}
+unsafe extend ScopeWake implements Transferable {}
+unsafe extend ScopeWake implements Shareable {}
+
+extend ScopeWake {
+    fn parent_waker(): Waker? {
+        let locked = capture self.parent.lock()
+        let guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
+        match guard.get() {
+            present(waker) => present(waker.clone()),
+            none => none
+        }
+    }
+
+    fn set_parent(waker: read Waker): Unit {
+        let locked = capture self.parent.lock()
+        var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
+        *guard.get_mut() = present(waker.clone())
+    }
+
+    fn close(): Unit {
+        let locked = capture self.parent.lock()
+        var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
+        *guard.get_mut() = none
+    }
+}
+
+extend ScopeWake implements Wake {
+    fn wake(me: read Arc<ScopeWake>): Unit {
+        self.ready.store(true, core.sync.atomic.Ordering.Release)
+        // Never invoke an arbitrary parent waker while holding the mutex: it
+        // can wake recursively or arrange a poll on another thread.
+        match take self.parent_waker() {
+            present(parent) => parent.wake(),
+            none => {}
+        }
+    }
+}
+
+type ScopedPacket<T, F> { future: F; result: Arc<ResultSlot<T>> }
+
+// Every allocation is pinned separately. The invariant brand and the Within
+// bounds on registration keep the erased future and its output within s.
+type ScopedFuture<region s> {
+    data: ptr<mut u8>
+    poll: fn(ptr<mut u8>, ptr<mut u8>): bool
+    release: fn(ptr<mut u8>): Unit
+    brand: core.cell.Cell<Brand<region s>>
+    drop { (self.release)(self.data) }
+}
+
+fn poll_scoped<T, F: Future<Output = T>>(data: ptr<mut u8>, context: ptr<mut u8>): bool {
+    let packet = data.cast<ScopedPacket<T, F>>()
+    // The parent poll exclusively owns the packet until this call returns.
+    // The Context is live for this call and a child may retain only its
+    // owned waker, not the Context pointer.
+    let cx = unsafe { mut *context.cast<Context>() }
+    let polled = unsafe {
+        core.pin.Pin.new_unchecked(mut (*packet).future).poll(cx)
+    }
+    match take polled {
+        Poll.Ready(value) => {
+            let locked = capture unsafe { (*packet).result.get().state.lock() }
+            var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
+            guard.get_mut().value = present(value)
+            guard.get_mut().status = 1u8
+            true
+        },
+        Poll.Pending => false
+    }
+}
+
+fn release_scoped<T, F>(data: ptr<mut u8>): Unit {
+    let packet = data.cast<ScopedPacket<T, F>>()
+    {
+        let locked = capture unsafe { (*packet).result.get().state.lock() }
+        var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
+        if guard.get().status == 0u8 { guard.get_mut().status = 2u8 }
+    }
+    // No poll can overlap this release: all polls are synchronous calls in the
+    // unique parent poll. This is the original Global allocation and type.
+    unsafe { let _owner = boxed.from_raw_in(packet, Global()) }
+}
+
+fn erase_scoped<region s, T: Within<region s>, F: Future<Output = T> + Within<region s>>(
+    future: take F, result: take Arc<ResultSlot<T>>
+): ScopedFuture<region s> {
+    let storage = boxed.new(ScopedPacket(future, result)).into_raw()
+    ScopedFuture(storage.0.cast<u8>(), poll_scoped<T, F>, release_scoped<T, F>,
+                 core.cell.Cell.new(Brand(0u8)))
+}
+
+// A handle owns only the result. Dropping or forgetting it never removes the
+// scope's child registration; forced scope destruction marks pending results
+// cancelled. Results and the handle remain bounded by the scope region.
+pub type AsyncJoinHandle<region s, T: Within<region s>> {
+    result: Arc<ResultSlot<T>>
+    brand: core.cell.Cell<Brand<region s>>
+}
+extend<region s, T: Within<region s>> AsyncJoinHandle<region s, T> not Transferable
+extend<region s, T: Within<region s>> AsyncJoinHandle<region s, T> not Shareable
+
+extend<region s, T: Within<region s>> AsyncJoinHandle<region s, T> {
+    pub fn is_finished(): bool {
+        let locked = capture self.result.get().state.lock()
+        let guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
+        guard.get().status != 0u8
+    }
+
+    pub mut fn take_result(): T? {
+        let locked = capture self.result.get().state.lock()
+        var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
+        if guard.get().status == 1u8 { guard.get_mut().value.take_value() }
+        else { none }
+    }
+}
+
+// Drains all remaining children even if one destructor unwinds. If a second
+// destructor panics during that unwind the language's double-panic rule aborts.
+type DrainScoped<region s> {
+    children: ptr<mut Deque<ScopedFuture<region s>>>
+    drop {
+        let remaining = DrainScoped(self.children)
+        var more = true
+        while more {
+            match take unsafe { (*self.children).pop_front() } {
+                present(child) => {},
+                none => { more = false }
+            }
+        }
+        core.mem.forget(take remaining)
+    }
+}
+
+// On panic during a poll, close registration and drain all children before the
+// panic leaves the epoch, even if a caller catches it and retains the parent.
+type ScopedPollGuard<region s> {
+    children: ptr<mut Deque<ScopedFuture<region s>>>
+    completed: ptr<mut bool>
+    wake: Arc<ScopeWake>
+    armed: bool
+    drop {
+        if self.armed {
+            unsafe { *self.completed = true }
+            self.wake.get().close()
+            let _drain = DrainScoped(self.children)
+        }
+    }
+}
+
+// The anchor supplies the region for all registrations. It is not dereferenced
+// by the runtime. The invariant brand prevents shortening s after construction.
+// An owned parent future retains that region for its entire lifetime.
+pub type AsyncScope<region s, T> {
+    anchor: read T from s
+    children: Deque<ScopedFuture<region s>>
+    wake: Arc<ScopeWake>
+    completed: bool
+    brand: core.cell.Cell<Brand<region s>>
+    drop {
+        let _drain = DrainScoped(core.ptr.from_mut(mut self.children))
+        self.wake.get().close()
+    }
+}
+extend<region s, T> AsyncScope<region s, T> not Transferable
+extend<region s, T> AsyncScope<region s, T> not Shareable
+
+pub fn async_scope<region s, T>(anchor: read T from s): AsyncScope<region s, T> {
+    AsyncScope(read anchor, package.alloc.vec_deque.new(),
+               arc.new(ScopeWake(core.sync.atomic.AtomicBool.new(true), mutex.new(none))),
+               false, core.cell.Cell.new(Brand(0u8)))
+}
+
+extend<region s, T> AsyncScope<region s, T> {
+    pub mut fn spawn<
+        Output: Within<region s>,
+        F: Future<Output = Output> + Within<region s>
+    >(
+        future: take F
+    ): AsyncJoinHandle<region s, Output> {
+        if self.completed { panic("cannot spawn on a closed async scope") }
+        let result = arc.new(ResultSlot(mutex.new(ResultState<Output>(none, 0u8, 0))))
+        self.children.push_back(erase_scoped(future, result.retain()))
+        AsyncJoinHandle(result, core.cell.Cell.new(Brand(0u8)))
+    }
+}
+
+extend<region s, T> AsyncScope<region s, T> implements Future {
+    type Output = Unit
+    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Unit> {
+        // No child is ever scheduled independently. Each child allocation is
+        // pinned until destruction and polled serially in this parent call.
+        // Thus return or unwind joins every poll; an uncooperative child may
+        // prevent return, but cannot leave an access running after the epoch.
+        let me = unsafe { self.get_unchecked_mut() }
+        if me.completed { panic("async scope polled after completion") }
+        me.wake.get().set_parent(read cx.waker())
+        let _old = me.wake.get().ready.swap(false, core.sync.atomic.Ordering.AcqRel)
+        let child_waker = waker_from_arc(read me.wake)
+        var child_cx = Context.from_waker(read child_waker)
+        var guard = ScopedPollGuard(core.ptr.from_mut(mut me.children),
+                                    core.ptr.from_mut(mut me.completed),
+                                    me.wake.retain(), true)
+        var count = me.children.len()
+        while count != 0usize {
+            let child = match take me.children.pop_front() {
+                present(child) => child,
+                none => { core.intrinsics.abort() }
+            }
+            if !(child.poll)(child.data, core.ptr.from_mut(mut child_cx).cast<u8>()) {
+                me.children.push_back(child)
+            }
+            count -= 1usize
+        }
+        if me.children.is_empty() {
+            me.completed = true
+            me.wake.get().close()
+            guard.armed = false
+            Poll.Ready(())
+        } else {
+            // A wake concurrent with this epoch is not lost when the parent
+            // waker was replaced. Spurious or repeated wakes are harmless.
+            if me.wake.get().ready.load(core.sync.atomic.Ordering.Acquire) {
+                cx.waker().wake_by_ref()
+            }
+            guard.armed = false
+            Poll.Pending
+        }
+    }
 }
