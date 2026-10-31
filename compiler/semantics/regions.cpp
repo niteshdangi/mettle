@@ -803,8 +803,12 @@ Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
                  syntax.nested)
           argument = decorate(argument, *syntax.nested, context, span, fallback,
                               stored);
-        else
-          argument = inferred(argument, store.inference(context.scope));
+        else {
+          auto region = fallback != RegionId::Unspecified
+                            ? fallback
+                            : store.inference(context.scope);
+          argument = inferred(argument, region);
+        }
         nested.types[parameter.name] = argument;
         typeArguments.push_back(argument);
       }
