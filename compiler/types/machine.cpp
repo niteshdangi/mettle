@@ -295,8 +295,7 @@ machineSignature(const TypeStore &types, std::string_view operation,
                    types.view(operands[0]).payload == argument &&
                    types.contains(argument) &&
                    (types.isSized(argument) ||
-                    (types.isSlice(argument) &&
-                     types.isSized(types.slice(argument).element)))
+                    types.pointerMetadata(argument) != PointerMetadata::None)
                ? signature(Type::Usize)
                : std::nullopt;
   if (operation == "mem.zeroed")
@@ -701,7 +700,13 @@ machineSignature(const TypeStore &types, std::string_view operation,
                : std::nullopt;
   if (method == "drop_in_place")
     return operands.size() == 1 && descriptor.mode == ParameterMode::Mut &&
-                   types.isSized(descriptor.payload)
+                   (types.isSized(descriptor.payload) ||
+                    types.isParameter(descriptor.payload) &&
+                        !types.isSized(descriptor.payload) ||
+                    types.isSlice(descriptor.payload) &&
+                        types.isSized(
+                            types.slice(descriptor.payload).element) ||
+                    types.isErased(descriptor.payload))
                ? signature(Type::Unit, Shape::Value, true)
                : std::nullopt;
   if (method == "is_null" || method == "addr" ||

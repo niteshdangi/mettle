@@ -470,7 +470,7 @@ llvm::DIType *DebugInfo::build(Type type) {
         return opaque();
       const auto &descriptor = store.erased(erased);
       auto *pointer = dib.createPointerType(nullptr, pointerBits);
-      auto tableLength = 2 + descriptor.methodSlots.size() +
+      auto tableLength = 5 + descriptor.methodSlots.size() +
                          descriptor.parentInterfaces.size();
       auto tableBits = static_cast<std::uint64_t>(tableLength) * pointerBits;
       std::vector<llvm::Metadata *> tableMembers;
@@ -478,14 +478,25 @@ llvm::DIType *DebugInfo::build(Type type) {
           unit, "metadata_marker", rootFile, 0, pointerBits, pointerBits, 0,
           llvm::DINode::FlagZero, pointer));
       tableMembers.push_back(dib.createMemberType(
-          unit, "alignment", rootFile, 0, lengthLayout->size * 8,
+          unit, "size", rootFile, 0, lengthLayout->size * 8,
           static_cast<std::uint32_t>(lengthLayout->alignment * 8), pointerBits,
           llvm::DINode::FlagZero, length));
+      tableMembers.push_back(dib.createMemberType(
+          unit, "alignment", rootFile, 0, lengthLayout->size * 8,
+          static_cast<std::uint32_t>(lengthLayout->alignment * 8),
+          2 * pointerBits, llvm::DINode::FlagZero, length));
+      tableMembers.push_back(dib.createMemberType(
+          unit, "drop", rootFile, 0, pointerBits, pointerBits,
+          3 * pointerBits, llvm::DINode::FlagZero, pointer));
+      tableMembers.push_back(dib.createMemberType(
+          unit, "tail_prefix_size", rootFile, 0, lengthLayout->size * 8,
+          static_cast<std::uint32_t>(lengthLayout->alignment * 8),
+          4 * pointerBits, llvm::DINode::FlagZero, length));
       for (std::size_t method = 0; method < descriptor.methodSlots.size();
            ++method)
         tableMembers.push_back(dib.createMemberType(
             unit, "method." + std::to_string(method), rootFile, 0, pointerBits,
-            pointerBits, (method + 2) * pointerBits, llvm::DINode::FlagZero,
+            pointerBits, (method + 5) * pointerBits, llvm::DINode::FlagZero,
             pointer));
       for (std::size_t parent = 0; parent < descriptor.parentInterfaces.size();
            ++parent)
@@ -494,7 +505,7 @@ llvm::DIType *DebugInfo::build(Type type) {
             "parent." +
                 displayPath(store.name(descriptor.parentInterfaces[parent])),
             rootFile, 0, pointerBits, pointerBits,
-            (descriptor.methodSlots.size() + parent + 2) * pointerBits,
+            (descriptor.methodSlots.size() + parent + 5) * pointerBits,
             llvm::DINode::FlagZero, pointer));
       auto *table = dib.createStructType(
           unit, "MettleWitness<" + displayPath(store.name(erased)) + ">",

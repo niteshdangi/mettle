@@ -239,7 +239,7 @@ void Checker::finalizeErasure() {
                                      std::move(slots));
     const auto &completed = checked.types->erased(interface);
     slotsUsed +=
-        2 + completed.methodTypes.size() + completed.parentInterfaces.size();
+        5 + completed.methodTypes.size() + completed.parentInterfaces.size();
     if (slotsUsed > limits::witnessSlots) {
       error("limit", span, "erased witness table limit exceeded");
       return;

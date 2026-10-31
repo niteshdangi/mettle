@@ -432,6 +432,10 @@ void TypeStore::setNativeCleanup(Type type, NativeCleanup action) {
   products.at(entries.at(type.index() - builtins).index).nativeCleanup = action;
 }
 bool TypeStore::needsDrop(Type type) const {
+  if (isErased(type))
+    return true;
+  if (isSlice(type))
+    return needsDrop(slice(type).element);
   if (isParameter(type))
     return !parameter(type).copyRequested;
   if (!isProduct(type))

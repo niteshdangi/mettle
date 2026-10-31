@@ -36,6 +36,7 @@ public:
         if (source.functions[i].genericParameters.empty() &&
             !source.functions[i].declarationOnly)
           instance(i, {}, {});
+      prepareDynamicDrops();
       std::function<void(StaticConstant &)> constant =
           [&](StaticConstant &value) {
             if (value.kind == StaticConstant::Kind::Function)
@@ -76,6 +77,125 @@ private:
   std::map<Type, int> coroutineBodies;
   std::set<Type> visitedTypes;
   unsigned instanceDepth = 0;
+  Type dropElement(Type payload) const {
+    if (types->isSlice(payload))
+      return types->slice(payload).element;
+    return types->isSized(payload) ? payload : Type::Unknown;
+  }
+  void prepareDynamicDrops() {
+    int helper = -1;
+    for (std::size_t i = 0; i < source.functions.size(); ++i)
+      if (displayPath(source.functions[i].name) ==
+          "core.slice.drop_values") {
+        helper = static_cast<int>(i);
+        break;
+      }
+
+    std::map<Type, Span> requested;
+    auto request = [&](Type payload, Span span) {
+      auto element = dropElement(payload);
+      if (element != Type::Unknown && types->needsDrop(element))
+        requested.try_emplace(element, span);
+    };
+    for (const auto &function : result.functions)
+      for (const auto &block : function.blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.op == ir::Op::OwnerUnsize) {
+            auto sourcePayload =
+                types->product(instruction.operands.front().type)
+                    .genericArguments.front();
+            auto targetPayload =
+                types->product(instruction.result.type).genericArguments.front();
+            if (types->isSlice(targetPayload))
+              request(targetPayload, instruction.span);
+            else if (instruction.interfaceType != Type::Unknown)
+              request(sourcePayload, instruction.span);
+            else if (types->needsDrop(targetPayload))
+              diagnostics.error(
+                  "feature", instruction.span,
+                  "dynamic drop for this unsized owner payload is unsupported");
+          } else if (instruction.op == ir::Op::EraseView) {
+            if (dropElement(instruction.interfaceSelf) == Type::Unknown &&
+                types->needsDrop(instruction.interfaceSelf))
+              diagnostics.error(
+                  "feature", instruction.span,
+                  "dynamic drop for this erased unsized payload is unsupported");
+            else
+              request(instruction.interfaceSelf, instruction.span);
+          } else if (instruction.op == ir::Op::DropPlace) {
+            auto payload = projectedType(
+                *types, function.locals[instruction.place.root].type,
+                instruction.place.fields);
+            if (payload && (types->isSlice(*payload) ||
+                            types->isErased(*payload))) {
+              if (!types->isErased(*payload))
+                request(*payload, instruction.span);
+            } else if (payload &&
+                       types->pointerMetadata(*payload) ==
+                           PointerMetadata::ElementCount &&
+                       types->needsDrop(*payload))
+              diagnostics.error(
+                  "feature", instruction.span,
+                  "dynamic drop for this unsized payload is unsupported");
+            }
+          }
+        }
+
+    std::map<Type, int> specialized;
+    for (const auto &[element, span] : requested) {
+      if (helper < 0) {
+        diagnostics.error(
+            "feature", span,
+            "dynamic drop requires core.slice.drop_values");
+        continue;
+      }
+      specialized.emplace(element,
+                          instance(static_cast<std::size_t>(helper), {element},
+                                   span));
+    }
+
+    auto functionFor = [&](Type payload) {
+      auto element = dropElement(payload);
+      auto found = specialized.find(element);
+      return found == specialized.end() ? -1 : found->second;
+    };
+    std::map<Type, int> dynamicDrops;
+    for (auto &function : result.functions)
+      for (auto &block : function.blocks)
+        for (auto &instruction : block.instructions) {
+          if (instruction.op == ir::Op::OwnerUnsize) {
+            auto sourcePayload =
+                types->product(instruction.operands.front().type)
+                    .genericArguments.front();
+            auto targetPayload =
+                types->product(instruction.result.type).genericArguments.front();
+            instruction.dropFunction =
+                instruction.interfaceType != Type::Unknown
+                    ? functionFor(sourcePayload)
+                : types->isSlice(targetPayload)
+                    ? functionFor(targetPayload)
+                    : -1;
+            if (instruction.interfaceType != Type::Unknown &&
+                instruction.dropFunction >= 0)
+              dynamicDrops.emplace(sourcePayload,
+                                   instruction.dropFunction);
+          } else if (instruction.op == ir::Op::EraseView) {
+            instruction.dropFunction =
+                functionFor(instruction.interfaceSelf);
+            if (instruction.dropFunction >= 0)
+              dynamicDrops.emplace(instruction.interfaceSelf,
+                                   instruction.dropFunction);
+          } else if (instruction.op == ir::Op::DropPlace) {
+            auto payload = projectedType(
+                *types, function.locals[instruction.place.root].type,
+                instruction.place.fields);
+            if (payload && types->isSlice(*payload))
+              instruction.dropFunction = functionFor(*payload);
+          }
+        }
+    result.dynamicDropFunctions.assign(dynamicDrops.begin(),
+                                       dynamicDrops.end());
+  }
   void specializeAssembly(Assembly &assembly,
                           std::span<const TypeBinding> bindings) {
     for (auto &operand : assembly.operands) {
@@ -329,6 +449,8 @@ private:
         substitute(instruction.result.type);
         substitute(instruction.indirectType);
         substitute(instruction.opaqueType);
+        substitute(instruction.interfaceType, false);
+        substitute(instruction.interfaceSelf, false);
         substitute(instruction.target.type);
         for (auto &projection : instruction.place.fields)
           substitute(projection.type);

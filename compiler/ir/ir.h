@@ -59,6 +59,7 @@ enum class Op {
   ArrayTake,
   CallableCoerce,
   EraseView,
+  OwnerUnsize,
   ErasedUpcast,
   WitnessMethod,
   OpaqueRepack,
@@ -92,6 +93,7 @@ struct Instruction {
   Type interfaceType = Type::Unknown;
   Type interfaceSelf = Type::Unknown;
   int interfaceMethod = -1;
+  int dropFunction = -1;
   bool erasedDispatch = false;
   Type opaqueType = Type::Unknown;
   struct WitnessEntry {
@@ -203,6 +205,8 @@ struct Program {
   std::vector<Assembly> globalAssembly{};
   // Coroutine state types of the instance program and their body functions.
   std::vector<std::pair<Type, int>> coroutines{};
+  // Specialized `core.slice.drop_values<T>` functions used for dynamic drops.
+  std::vector<std::pair<Type, int>> dynamicDropFunctions{};
 };
 
 void print(const Program &program, std::ostream &out);

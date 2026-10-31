@@ -3,6 +3,26 @@ import super.iter.{Iterator, Iterable, MutableIterable}
 
 copy type Raw { data: ptr<read u8>; len: usize }
 
+type DropValuesGuard<T> {
+    p: ptr<mut T>
+    n: usize
+    drop {
+        while self.n != 0usize {
+            // Advance before dropping so unwinding never revisits this value.
+            let current = self.p
+            self.p = unsafe { self.p.add(1usize) }
+            self.n -= 1usize
+            unsafe { core.ptr.drop_in_place(current) }
+        }
+    }
+}
+
+// Safety: `p` points to `n` initialized, aligned `T` values that may be
+// exclusively destroyed. The range remains valid until all drops complete.
+pub unsafe fn drop_values<T>(p: ptr<mut T>, n: usize): Unit {
+    let _guard = DropValuesGuard(p, n)
+}
+
 pub fn data(bytes: read [u8]): ptr<read u8> {
     let fat = core.ptr.from_ref(bytes)
     let raw = unsafe { core.mem.transmute<Raw>(fat) }

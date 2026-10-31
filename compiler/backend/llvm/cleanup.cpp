@@ -590,7 +590,7 @@ llvm::Value *LoweringContext::fieldAddress(llvm::Value *address, Type &type,
                       {builder.getInt32(0), builder.getInt32(index)}),
                   builder.getInt64Ty());
     auto *alignmentSlot =
-        builder.CreateGEP(builder.getPtrTy(), witness, builder.getInt32(1));
+        builder.CreateGEP(builder.getPtrTy(), witness, builder.getInt32(2));
     auto *alignment = builder.CreatePtrToInt(
         builder.CreateLoad(builder.getPtrTy(), alignmentSlot),
         builder.getInt64Ty());

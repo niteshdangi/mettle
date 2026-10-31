@@ -17,7 +17,10 @@ ir::Value Builder::expression(const Node &node, bool consume, bool valueUsed) {
                   facts.unsizedSource != Type::Unknown ||
                   facts.reborrowSource != Type::Unknown);
   auto value =
-      adapted ? viewCoercion(node) : rawExpression(node, consume, valueUsed);
+      facts.ownerUnsizeSource != Type::Unknown
+          ? ownerCoercion(node)
+      : adapted ? viewCoercion(node)
+                : rawExpression(node, consume, valueUsed);
   if (live() && facts.opaqueSource != Type::Unknown)
     value = track(emit({Op::Construct,
                         {},

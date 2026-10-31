@@ -112,6 +112,7 @@ private:
   Value convertedView(const Node &node);
   bool callHasFailure(const Node &node) const;
   Value erasedView(Place source, Type concrete, Type view, Span span);
+  Value ownerCoercion(const Node &node);
   Value erasedArgument(const Node &node, ParameterMode mode);
   Value unsizedView(Place source, Type view, Type count, Span span);
   Value unsizedArgument(const Node &node, ParameterMode mode);

@@ -839,9 +839,19 @@ note below. The native `heap T`, `shared T`, `local shared T`, `weak T` and
 `local weak T` syntax now maps to the existing `Box`, `Arc`, `Rc` and `Weak`
 library types; construction and downgrade use ordinary library calls. This
 compiler mapping is implemented, unverified (not yet built). `Box<[T]>` and
-other unsized owner payloads remain unsupported with a specific feature
-diagnostic; pinned owning handles also remain unsupported. A `take` argument always
-moves even a `Copy` binding, so generic calls pass `i + 0` or a fresh `let`.
+other heap unsized owners now use metadata-preserving coercion from sized
+owners. Slice payloads carry their element count; erased-interface payloads
+carry witness size/alignment and a specialized drop callback. The `Box` slice
+and erased-owner paths, including dynamic deallocation, are implemented but
+unverified (not yet built); see `native-heap-unsized-slice.mt`,
+`native-heap-erased-owner-drop.mt` and
+`native-heap-unsized-owner-use-after-move.mt`. Unsized `Text` construction is
+still unsupported because arbitrary byte owners cannot satisfy its UTF-8
+invariant. Droppable structural unsized tails and unsized `Arc`, `Rc` and
+`Weak` remain unsupported; the shared-owner allocations still need a dynamic
+header/payload layout and weak deallocation path. Pinned owning handles also
+remain unsupported. A `take` argument always moves even a `Copy` binding, so
+generic calls pass `i + 0` or a fresh `let`.
 Hosted panics unwind and can be caught; freestanding panics trap. Panic-safety
 coverage for collections is implemented, unverified. Alloc/core integration
 (lane allocint): `library/alloc/support.mt` is gone and
@@ -1157,8 +1167,9 @@ The `alloc.future.Erased<T>` wrapper is a concrete `Future<Output = T>`
 implementation, so its conversion to the erased view uses the same witness
 path rather than a special storage conversion. These compiler changes are
 implemented but unverified (not yet built); build/run
-`tests/std/erased_future_dispatch.mt`. `Box<any Future<Output = T>>` is still
-unsupported: the general unsized-owner mapping is an I07 gap.
+`tests/std/erased_future_dispatch.mt`. General
+`Box<any Future<Output = T>>` uses the new heap-unsizing path but remains
+implemented and unverified until a dedicated owned-erased-future fixture runs.
 Erased async-interface dispatch remains unsupported until an explicit
 future-storage contract exists (`async-interface-erased-dispatch.mt`).
 P10 has only a backlog entry, not a specified benchmark source; an async
@@ -1238,7 +1249,7 @@ Revision: uncommitted lane changes on `c81bc6d`; scope as stated per row.
 | --- | --- | --- |
 | Preserve async source; type future and await | Implemented and verified on macOS arm64, including arrow async closures and `try await`: `syntax/parser/closures.cpp`, `syntax/parser/async.cpp`, `semantics/sums.cpp`, `semantics/regions.cpp`, `lowering/sums.cpp`. | `async-arrow-closure.mt`, `async-try-await.mt`. |
 | Async interface futures and dispatch | Bodyless async methods publish region- and output-constrained associated future families; implementations bind concrete opaque coroutine futures; concrete and generic-bound calls use the family. Verified on macOS arm64. Async default bodies require an explicit result type. | `async-interface-method.mt`, `async-interface-erased-dispatch.mt`; inferred async default outputs remain open. Explicit erased-future storage and erased async-interface dispatch remain unsupported. |
-| Erased Future polling and storage | Pinned poll dispatch through `any Future<Output = T>` and the `alloc.future.Erased<T>` static heap wrapper are implemented. The verifier accepts the Pin-wrapped erased receiver, and LLVM emits a witness adapter that repackages the data pointer as `Pin<mut Concrete>`; the adapter and verifier changes are implemented but unverified (not yet built). The wrapper owns a stable concrete payload and uses typed poll/release callbacks. | Build/run `tests/std/erased_future_dispatch.mt`; general `Box<any Future<Output = T>>` remains blocked on I07 unsized-owner support and a compiler-owned dynamic drop contract. |
+| Erased Future polling and storage | Pinned poll dispatch through `any Future<Output = T>` and the `alloc.future.Erased<T>` static heap wrapper are implemented. The verifier accepts the Pin-wrapped erased receiver, and LLVM emits a witness adapter that repackages the data pointer as `Pin<mut Concrete>`; the adapter and verifier changes are implemented but unverified (not yet built). The wrapper owns a stable concrete payload and uses typed poll/release callbacks. The general `Box<any Future<Output = T>>` path is implemented but unverified. | Build/run `tests/std/erased_future_dispatch.mt` and add a dedicated owned-erased-future fixture; erased async-interface returns remain unsupported. |
 | Recursive async future cycles | Implemented and verified on macOS arm64: `semantics/check.cpp` diagnoses direct and mutual recursive async call cycles in the type phase at the recursive call span and names the cycle. | `async-recursive-future-direct.mt`, `async-recursive-future-mutual.mt`. |
 | Ownership-checked suspension CFG | Implemented: `ir/ir.h` `Exit::Suspend`, `ir/verify.cpp`, successor updates in `analysis/*`, `ir/dominance.cpp`, `instances/arrays.cpp`, `lowering/scalar.cpp`. | None known; borrow-across-await is covered by `async-await-anywhere.mt`. |
 | Inline pinned state and poll | Implemented: `types` coroutine aggregate and layout resolver, `instances/specialize.cpp`, backend frame/dispatch. Transferable/Shareable/Static in `semantics/interface_solver.cpp` with the interior from `semantics/captures.cpp`. | Liveness-precise interior (optional precision gain). |

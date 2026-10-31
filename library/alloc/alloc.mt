@@ -35,6 +35,14 @@ pub fn layout_of<T>(): Layout {
     Layout(core.mem.size_of<T>(), core.mem.align_of<T>())
 }
 
+// Safety: `value` is a valid unsized object whose metadata describes its
+// complete layout.
+pub fn layout_of_val<T: unsized>(value: read T): Layout {
+    let size = core.mem.size_of_val<T>(value)
+    let align = core.mem.align_of_val<T>(value)
+    unsafe { layout_unchecked(size, align) }
+}
+
 // Layout of `count` contiguous values of `T`.
 pub fn layout_array<T>(count: usize): Layout throws LayoutError {
     let each = core.mem.size_of<T>()

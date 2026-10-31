@@ -467,6 +467,107 @@ bool function(const Function &f, const Program &program,
           }
         }
         break;
+      case Op::OwnerUnsize:
+        if (!n.operands.empty() && program.types->isProduct(result) &&
+            program.types->isProduct(n.operands[0].type)) {
+          const auto &source = program.types->product(n.operands[0].type);
+          const auto &target = program.types->product(result);
+          auto isBox = [&](Type type) {
+            if (!program.types->isProduct(type))
+              return false;
+            auto origin = program.types->product(type).genericOrigin;
+            return origin != Type::Unknown &&
+                   program.types->product(origin).name == "alloc::boxed::Box";
+          };
+          bool compatible =
+              isBox(n.operands[0].type) && isBox(result) &&
+              source.genericOrigin == target.genericOrigin &&
+              source.genericArguments.size() >= 2 &&
+              source.genericArguments.size() == target.genericArguments.size() &&
+              source.fields.size() == target.fields.size() &&
+              !source.fields.empty() && n.operands[0].access == Access::Owned;
+          require(compatible);
+          if (compatible) {
+            auto sourcePayload = source.genericArguments.front();
+            auto targetPayload = target.genericArguments.front();
+            auto sourcePointer = source.fields.front().type;
+            auto targetPointer = target.fields.front().type;
+            require(program.types->isSized(sourcePayload) &&
+                    program.types->isPointer(sourcePointer) &&
+                    program.types->isPointer(targetPointer) &&
+                    program.types->pointer(sourcePointer).payload ==
+                        sourcePayload &&
+                    program.types->pointer(targetPointer).payload ==
+                        targetPayload);
+            for (std::size_t p = 1; p < source.genericArguments.size(); ++p)
+              require(source.genericArguments[p] ==
+                      target.genericArguments[p]);
+            for (std::size_t p = 1; p < source.fields.size(); ++p)
+              require(source.fields[p].type == target.fields[p].type);
+            if (program.types->pointerMetadata(targetPayload) ==
+                PointerMetadata::ElementCount) {
+              auto array =
+                  program.types->unsizedArray(sourcePayload, targetPayload);
+              require(array && arity(2) &&
+                      n.operands[1].type == Type::I32 &&
+                      n.witnessEntries.empty() &&
+                      n.interfaceSelf == Type::Unknown &&
+                      n.interfaceType == Type::Unknown);
+              if (array && n.operands.size() == 2 &&
+                  n.operands[1].id >= 0 &&
+                  static_cast<std::size_t>(n.operands[1].id) <
+                      definitions.size()) {
+                const auto &where = definitions[n.operands[1].id];
+                if (where.block >= 0) {
+                  const auto &length =
+                      f.blocks[where.block].instructions[where.position];
+                  const auto &descriptor = program.types->product(*array);
+                  require(length.op == Op::Constant);
+                  if (descriptor.arrayCount != Type::Unknown &&
+                      program.types->isSymbolic(descriptor.arrayCount))
+                    require(length.constantParameter ==
+                            descriptor.arrayCount);
+                  else {
+                    auto actual =
+                        length.constantParameter == Type::Unknown
+                            ? std::optional<std::int64_t>(length.number)
+                            : program.types->constantValue(
+                                  length.constantParameter);
+                    auto expected =
+                        descriptor.arrayCount == Type::Unknown
+                            ? std::optional<std::int64_t>(
+                                  descriptor.fields.size())
+                            : program.types->constantValue(
+                                  descriptor.arrayCount);
+                    require(actual && expected && *actual >= 0 &&
+                            *actual == *expected);
+                  }
+                }
+              }
+            } else {
+              require(program.types->isErased(targetPayload) &&
+                      n.interfaceSelf == sourcePayload &&
+                      n.interfaceType == targetPayload &&
+                      n.witnessEntries.size() + 1 == n.operands.size());
+              if (program.types->isErased(targetPayload)) {
+                const auto &descriptor =
+                    program.types->erased(targetPayload);
+                require(n.operands.size() ==
+                        descriptor.methodTypes.size() + 1);
+                for (std::size_t method = 0;
+                     method < descriptor.methodTypes.size() &&
+                     method + 1 < n.operands.size();
+                     ++method)
+                  require(n.operands[method + 1].type ==
+                          (descriptor.methodTypes[method] == Type::Unknown
+                               ? Type::Unit
+                               : descriptor.methodTypes[method]));
+              }
+            }
+          }
+        } else
+          require(false);
+        break;
       case Op::ErasedUpcast:
         arity(0);
         require(program.types->isView(result));

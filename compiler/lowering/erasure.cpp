@@ -59,15 +59,22 @@ bool witnessSlots(ir::Instruction &instruction, const TypeStore &types,
     instruction.number = static_cast<std::int32_t>(found - parents.begin());
     return true;
   }
-  if (instruction.op != ir::Op::EraseView)
+  if (instruction.op != ir::Op::EraseView &&
+      instruction.op != ir::Op::OwnerUnsize)
     return true;
   if (!types.isErased(instruction.interfaceType))
     return fail();
   const auto &descriptor = types.erased(instruction.interfaceType);
-  if (instruction.witnessEntries.size() != instruction.operands.size())
+  const std::size_t prefix =
+      instruction.op == ir::Op::OwnerUnsize ? 1 : 0;
+  if (instruction.operands.size() < prefix ||
+      instruction.witnessEntries.size() !=
+          instruction.operands.size() - prefix)
     return fail();
   std::vector<ir::Value> operands;
   std::vector<ir::Instruction::WitnessEntry> entries;
+  if (prefix)
+    operands.push_back(instruction.operands.front());
   for (std::size_t p = 0; p < descriptor.methodSlots.size(); ++p) {
     std::size_t found = instruction.witnessEntries.size();
     for (std::size_t i = 0; i < instruction.witnessEntries.size(); ++i)
@@ -78,7 +85,7 @@ bool witnessSlots(ir::Instruction &instruction, const TypeStore &types,
       }
     if (found == instruction.witnessEntries.size())
       return fail();
-    operands.push_back(instruction.operands[found]);
+    operands.push_back(instruction.operands[found + prefix]);
     entries.push_back(instruction.witnessEntries[found]);
   }
   instruction.operands = std::move(operands);
