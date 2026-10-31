@@ -8,7 +8,9 @@ namespace {
 constexpr ModuleId publicBoundary = std::numeric_limits<ModuleId>::max();
 
 std::string key(Namespace space, std::string_view name) {
-  char prefix = space == Namespace::Value ? 'v' : 't';
+  char prefix = space == Namespace::Value   ? 'v'
+                : space == Namespace::Macro ? 'm'
+                                            : 't';
   return std::string(1, prefix) + ":" + std::string(name);
 }
 std::vector<std::string> components(std::string_view spelling) {
@@ -323,17 +325,23 @@ private:
       return publicBoundary;
     auto path = visibility.restriction;
     ModuleId current = module;
+    ModuleId package = module;
+    while (package != 0 && result.moduleInfos[package].parent != 0)
+      package = result.moduleInfos[package].parent;
+    if (package == 0 ||
+        !result.moduleInfos[package].name.starts_with("mettle_pkg_"))
+      package = 0;
     std::size_t position = 0;
     if (path[0] == "package") {
-      current = 0;
+      current = package;
       ++position;
     } else if (path[0] == "self") {
       ++position;
     } else if (path[0] != "super") {
-      current = 0;
+      current = package;
     }
     while (position < path.size() && path[position] == "super") {
-      if (current == 0) {
+      if (current == package) {
         diagnostics.error("name", span,
                           "visibility restriction escapes the package root");
         return module;
@@ -367,6 +375,7 @@ private:
     auto &bindings = result.scopes[module].bindings[key(space, name)];
     if (!bindings.empty()) {
       auto kind = space == Namespace::Type     ? "type"
+                  : space == Namespace::Macro  ? "macro"
                   : space == Namespace::Module ? "module"
                                                : "function or value binding";
       diagnostics.error("name", span,
@@ -405,6 +414,13 @@ private:
   }
 
   void collectItems() {
+    for (const auto &macro : tree.macros) {
+      auto module = scope(macro.item.scope);
+      auto visible = boundary(macro.item, module, macro.span);
+      auto name = itemName(module, macro.name);
+      result.items.push_back({macro.span, module, name, visible});
+      define(Namespace::Macro, module, visible, macro.name, name, macro.span);
+    }
     for (const auto &storage : tree.statics) {
       auto module = scope(storage.item.scope);
       auto visible = boundary(storage.item, module, storage.span);
@@ -554,7 +570,8 @@ private:
                               bool moduleOnly = false) {
     std::vector<Target> resultTargets;
     auto spelling = join(path);
-    for (auto space : {Namespace::Type, Namespace::Value, Namespace::Module}) {
+    for (auto space : {Namespace::Type, Namespace::Value, Namespace::Module,
+                       Namespace::Macro}) {
       if (moduleOnly && space != Namespace::Module)
         continue;
       auto canonical = result.lookup(from, spelling, space, {}, nullptr);

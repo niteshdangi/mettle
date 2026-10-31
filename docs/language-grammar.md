@@ -78,8 +78,10 @@ constraint    = type, ":", bounds
 
 Item-level `import`, `module`, `const`, `static`, `alias`, and negative
 `extend` declarations may end at an unsuppressed newline without a semicolon.
-`pub import` reexports rather than creating a second module identity. Visibility is module-private by default;
-restricted `pub(path)` names an enclosing module boundary.
+`pub import` reexports rather than creating a second module identity; a private
+import is not reexported. Explicit imports bind names in the distinct type,
+value and macro namespaces. Visibility is module-private by default; restricted
+`pub(path)` applies to all item kinds and names an enclosing module boundary.
 
 Name resolution uses distinct type, value and macro namespaces. Reject ambiguous
 imports; import order cannot change implementation selection. Dependency package

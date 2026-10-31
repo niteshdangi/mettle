@@ -146,14 +146,23 @@ private:
   }
 
   std::optional<expansion::MacroModuleSource>
-  macroModule(const std::vector<std::string> &requested) {
+  macroModule(const std::vector<std::string> &requested,
+              const std::vector<std::string> &from) {
     auto path = requested;
     if (path.size() >= 2 && path.front() == "package") {
       auto alias = path[1];
       std::replace(alias.begin(), alias.end(), '-', '_');
       std::string module;
-      const auto &dependencies = currentPackage ? currentPackage->dependencies
-                                                : library.packageDependencies;
+      const Library::Package *ownerPackage = nullptr;
+      if (!from.empty())
+        for (const auto &package : library.packages)
+          if (package.module == from.front()) {
+            ownerPackage = &package;
+            break;
+          }
+      const auto &dependencies =
+          ownerPackage ? ownerPackage->dependencies
+                       : library.packageDependencies;
       for (const auto &[name, target] : dependencies)
         if (name == alias || name == path[1]) {
           module = target;
@@ -598,9 +607,11 @@ private:
       owner[source.id] = currentRoot;
     // Declarative macros expand on the token level, before parsing.
     expansion::MacroModuleProvider macroProvider =
-        [this](const std::vector<std::string> &path) {
-          return macroModule(path);
+        [this](const std::vector<std::string> &path,
+               const std::vector<std::string> &from) {
+          return macroModule(path, from);
         };
+    std::vector<Module::MacroDeclaration> macros;
     if (auto generated = expansion::expandMacros(
             source, diagnostics,
             [&] {
@@ -609,7 +620,7 @@ private:
                 owner[id] = currentRoot;
               return id;
             },
-            library.procedures, prefix, macroProvider))
+            library.procedures, prefix, macroProvider, &macros))
       source = std::move(*generated);
     if (!diagnostics.empty())
       return;
@@ -693,6 +704,7 @@ private:
     merge(result.aliases, std::move(tree.aliases), prefix);
     merge(result.modules, std::move(tree.modules), prefix);
     merge(result.imports, std::move(tree.imports), prefix);
+    merge(result.macros, std::move(macros), prefix);
     for (auto &assembly : tree.globalAssembly)
       result.globalAssembly.push_back(std::move(assembly));
     result.textLiterals.insert(result.textLiterals.end(),

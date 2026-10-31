@@ -162,11 +162,15 @@ capture operation. Record both invocation and definition spans for diagnostics.
 Expansion happens before ordinary name/type checking of emitted items.
 
 Declarative macros occupy a namespace distinct from values and types.
-`pub macro` makes a definition available to a qualified invocation through its
-module path, including a resolved package path. Private definitions are visible
-only within their defining module and descendants; attempting a qualified call
-from elsewhere is a name-phase diagnostic. Explicit macro imports, reexports
-and restricted visibility are not part of the implemented subset.
+`pub macro` makes a definition available to a qualified invocation or explicit
+import through its module path, including a resolved package path. Type, value
+and macro imports remain distinct, and one import can bind names in multiple
+namespaces. A `pub import` reexports an imported macro; a private import does
+not. Private definitions are visible only within their defining module and
+descendants; attempting an inaccessible qualified call or import is a
+name-phase diagnostic. Restricted `pub(path)` boundaries apply to macros and
+the other item kinds. These macro import, reexport and restricted-visibility
+changes are implemented, unverified (not yet built).
 
 Procedural extensions consume/produce versioned token streams and source spans.
 Derive and attribute extensions receive the relevant item tokens; they cannot

@@ -14,7 +14,7 @@
 
 namespace mettle::resolution {
 using ModuleId = std::uint32_t;
-enum class Namespace { Type, Value, Module };
+enum class Namespace { Type, Value, Module, Macro };
 
 struct ModuleInfo {
   ModuleId parent = 0;

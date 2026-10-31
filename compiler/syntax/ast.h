@@ -387,6 +387,13 @@ struct Module {
     bool external = false;
     ItemSyntax item;
   };
+  // Macro declarations are collected from the original token stream before
+  // expansion removes their bodies. Only source syntax is retained here.
+  struct MacroDeclaration {
+    std::string name;
+    Span span;
+    ItemSyntax item;
+  };
   struct Import {
     struct Name {
       std::string name, alias;
@@ -403,6 +410,7 @@ struct Module {
     ItemSyntax item;
   };
   std::vector<ModuleDeclaration> modules;
+  std::vector<MacroDeclaration> macros;
   std::vector<Import> imports;
   // Names the loader makes visible, below every explicit and glob binding, in
   // each module outside `libraryRoots`. Empty when no library supplies them.

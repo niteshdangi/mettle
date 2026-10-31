@@ -4,6 +4,7 @@
 #include "syntax/parser.h"
 #include "syntax/token.h"
 #include <algorithm>
+#include <cstddef>
 #include <map>
 #include <memory>
 #include <set>
@@ -414,9 +415,28 @@ struct Macro {
   std::string name;
   Span span;
   std::vector<std::string> definitionScope;
+  std::vector<std::string> visibilityBoundary;
   bool publicItem = false;
   std::vector<Rule> rules;
 };
+
+struct MacroBinding {
+  const Macro *macro = nullptr;
+  std::vector<std::string> visibilityBoundary;
+  bool publicItem = false;
+  bool ambiguous = false;
+};
+using MacroIndex = std::map<std::string, Macro>;
+using ImportedMacroIndex =
+    std::map<std::string, std::vector<MacroBinding>>;
+using IndexedModules = std::set<std::string>;
+struct PendingMacroImport {
+  std::vector<std::string> scope, path;
+  std::string alias, name;
+  VisibilitySyntax visibility;
+  bool resolved = false;
+};
+using PendingMacroImports = std::vector<PendingMacroImport>;
 
 struct Binding {
   bool list = false;
@@ -686,12 +706,25 @@ public:
            const SourceAllocator &allocate, const Procedures *procedures,
            std::vector<std::string> modulePath,
            const MacroModuleProvider &modules = {},
-           std::shared_ptr<std::map<std::string, Macro>> macroIndex = {})
+           std::shared_ptr<MacroIndex> macroIndex = {},
+           std::shared_ptr<ImportedMacroIndex> importIndex = {},
+           std::shared_ptr<IndexedModules> indexedIndex = {},
+           std::shared_ptr<PendingMacroImports> pendingIndex = {},
+           std::vector<Module::MacroDeclaration> *declarations = nullptr)
       : source(source), diagnostics(diagnostics), allocate(allocate),
         procedures(procedures), modulePath(std::move(modulePath)),
         modules(modules),
         macros(macroIndex ? std::move(macroIndex)
-                          : std::make_shared<std::map<std::string, Macro>>()) {}
+                          : std::make_shared<MacroIndex>()),
+        importedMacros(
+            importIndex
+                ? std::move(importIndex)
+                : std::make_shared<ImportedMacroIndex>()),
+        indexedModules(indexedIndex ? std::move(indexedIndex)
+                                    : std::make_shared<IndexedModules>()),
+        pendingImports(pendingIndex ? std::move(pendingIndex)
+                                    : std::make_shared<PendingMacroImports>()),
+        declarations(declarations) {}
 
   std::optional<Source> run(bool definitionsOnly = false) {
     Diagnostics scratch;
@@ -723,27 +756,22 @@ public:
         if (prefix > 0 && pieces[prefix - 1].kind == TokenKind::Word &&
             pieces[prefix - 1].text == "pub")
           begin = prefix - 1;
-        definitions.push_back(
-            {begin, i, close[i + 2],
-             begin < i && pieces[begin].kind == TokenKind::Word &&
-                 pieces[begin].text == "pub" &&
-                 (begin + 1 >= i || !symbol(pieces[begin + 1], "("))});
+        definitions.push_back({begin, i, close[i + 2]});
         i = close[i + 2];
       }
-    bool procedural = false;
-    for (std::size_t i = 0; i < pieces.size() && !procedural; ++i)
-      procedural = procedure(pieces, i);
-    bool qualified = false;
-    for (std::size_t i = 2; i + 2 < pieces.size() && !qualified; ++i)
-      qualified = pieces[i].kind == TokenKind::Word &&
-                  symbol(pieces[i - 1], ".") && symbol(pieces[i + 1], "!") &&
-                  !pieces[i + 1].space && opener(pieces[i + 2]);
-    if (definitions.empty() && !procedural && !qualified)
-      return std::nullopt;
     Diagnostics::SourceContext context(diagnostics, source);
     for (const auto &definition : definitions)
-      define(definition.macro, definition.end, definition.publicItem);
+      define(definition.begin, definition.macro, definition.end);
+    collectImports(0, pieces.size(), modulePath);
+    resolveMacroImports();
     if (definitionsOnly)
+      return std::nullopt;
+    bool procedural = false, macroInvocation = false;
+    for (std::size_t i = 0; i < pieces.size(); ++i) {
+      procedural |= procedure(pieces, i);
+      macroInvocation |= invoked(pieces, i).macro != nullptr;
+    }
+    if (definitions.empty() && !procedural && !macroInvocation)
       return std::nullopt;
     return expandSource();
   }
@@ -751,7 +779,6 @@ public:
 private:
   struct Definition {
     std::size_t begin, macro, end;
-    bool publicItem;
   };
 
   struct ScopeRange {
@@ -769,9 +796,12 @@ private:
   std::vector<std::size_t> close;
   std::vector<Definition> definitions;
   std::vector<ScopeRange> moduleScopes;
-  std::shared_ptr<std::map<std::string, Macro>> macros;
+  std::shared_ptr<MacroIndex> macros;
+  std::shared_ptr<ImportedMacroIndex> importedMacros;
+  std::shared_ptr<IndexedModules> indexedModules;
+  std::shared_ptr<PendingMacroImports> pendingImports;
+  std::vector<Module::MacroDeclaration> *declarations;
   std::set<std::string> broken;
-  std::set<std::string> indexedModules;
   std::vector<std::string> chain;
   std::size_t marks = 0;
   bool failed = false;
@@ -835,7 +865,47 @@ private:
     return result;
   }
 
-  void define(std::size_t at, std::size_t last, bool publicItem) {
+  bool startsWith(const std::vector<std::string> &path,
+                  const std::vector<std::string> &prefix) const {
+    return path.size() >= prefix.size() &&
+           std::equal(prefix.begin(), prefix.end(), path.begin());
+  }
+
+  bool visibilityBoundary(const std::vector<std::string> &scope,
+                          const VisibilitySyntax &visibility,
+                          std::vector<std::string> &boundary) {
+    boundary = scope;
+    if (!visibility.publicItem || visibility.restriction.empty())
+      return true;
+    auto package = scope;
+    if (!package.empty() && package.front().starts_with("mettle_pkg_"))
+      package.resize(1);
+    else
+      package.clear();
+    boundary = scope;
+    std::size_t position = 0;
+    if (visibility.restriction.front() == "package") {
+      boundary = package;
+      ++position;
+    } else if (visibility.restriction.front() == "self") {
+      ++position;
+    } else if (visibility.restriction.front() != "super") {
+      boundary = package;
+    }
+    while (position < visibility.restriction.size()) {
+      const auto &part = visibility.restriction[position++];
+      if (part == "super") {
+        if (boundary == package)
+          return false;
+        boundary.pop_back();
+      } else {
+        boundary.push_back(part);
+      }
+    }
+    return !visibility.restriction.empty() && startsWith(scope, boundary);
+  }
+
+  void define(std::size_t begin, std::size_t at, std::size_t last) {
     const auto &name = pieces[at + 1];
     auto before = diagnostics.count();
     if (isReservedWord(name.text)) {
@@ -852,7 +922,61 @@ private:
     macro.name = name.text;
     macro.span = {pieces[at].origin.begin, pieces[last].origin.end, source.id};
     macro.definitionScope = std::move(definitionScope);
-    macro.publicItem = publicItem;
+    macro.visibilityBoundary = macro.definitionScope;
+    Module::MacroDeclaration declaration;
+    declaration.name = name.text;
+    declaration.span = macro.span;
+    declaration.item.scope = macro.definitionScope;
+    if (startsWith(declaration.item.scope, modulePath))
+      declaration.item.scope.erase(
+          declaration.item.scope.begin(),
+          declaration.item.scope.begin() +
+              static_cast<std::ptrdiff_t>(modulePath.size()));
+    if (begin < at && pieces[begin].text == "pub") {
+      declaration.item.visibility.publicItem = true;
+      declaration.item.visibility.span = pieces[begin].origin;
+      if (begin + 1 == at) {
+        macro.publicItem = true;
+      } else {
+        auto position = begin + 2;
+        auto end = at - 1;
+        bool valid = symbol(pieces[begin + 1], "(") &&
+                     symbol(pieces[end], ")") && position < end;
+        if (symbol(pieces[end], ")"))
+          declaration.item.visibility.span.end = pieces[end].origin.end;
+        bool separator = false;
+        while (valid && position < end) {
+          if (separator) {
+            if (!symbol(pieces[position], ".")) {
+              valid = false;
+              break;
+            }
+            ++position;
+          }
+          if (position == end || pieces[position].kind != TokenKind::Word) {
+            valid = false;
+            break;
+          }
+          declaration.item.visibility.restriction.push_back(
+              pieces[position].text);
+          ++position;
+          separator = true;
+        }
+        std::vector<std::string> boundary;
+        if (!valid ||
+            !visibilityBoundary(macro.definitionScope,
+                                declaration.item.visibility, boundary)) {
+          failed = true;
+          diagnostics.error("name", pieces[begin].origin,
+                            "restricted visibility must name an enclosing "
+                            "module");
+        } else {
+          macro.visibilityBoundary = std::move(boundary);
+        }
+      }
+    }
+    if (declarations)
+      declarations->push_back(declaration);
     auto i = at + 3;
     auto expect = [&](bool condition, const Piece &where, const char *message) {
       if (!condition)
@@ -907,28 +1031,254 @@ private:
 
   struct Invocation {
     const Macro *macro = nullptr;
+    std::vector<std::string> visibilityBoundary;
+    bool publicItem = false;
     bool privateAccess = false;
+    bool ambiguous = false;
   };
 
-  bool startsWith(const std::vector<std::string> &path,
-                  const std::vector<std::string> &prefix) const {
-    return path.size() >= prefix.size() &&
-           std::equal(prefix.begin(), prefix.end(), path.begin());
+  std::optional<MacroBinding>
+  bindingInIndex(const std::vector<std::string> &path, std::string_view name) {
+    auto key = macroKey(path, name);
+    std::vector<MacroBinding> matches;
+    if (auto found = macros->find(key); found != macros->end())
+      matches.push_back({&found->second, found->second.visibilityBoundary,
+                         found->second.publicItem});
+    if (auto found = importedMacros->find(key);
+        found != importedMacros->end())
+      matches.insert(matches.end(), found->second.begin(),
+                     found->second.end());
+    if (matches.empty())
+      return std::nullopt;
+    auto binding = matches.front();
+    binding.ambiguous |= matches.size() > 1;
+    return binding;
   }
 
-  const Macro *macroAtPath(std::vector<std::string> &path,
-                           std::string_view name) {
-    auto found = macros->find(macroKey(path, name));
-    if (found != macros->end())
-      return &found->second;
+  std::optional<MacroBinding> bindingAtPath(
+      std::vector<std::string> &path, std::string_view name,
+      const std::vector<std::string> &from) {
+    if (auto binding = bindingInIndex(path, name))
+      return binding;
     if (!modules)
-      return nullptr;
-    auto loaded = modulesForPath(path);
+      return std::nullopt;
+    auto loaded = modulesForPath(path, from);
     if (!loaded)
-      return nullptr;
+      return std::nullopt;
     path = loaded->path;
-    found = macros->find(macroKey(path, name));
-    return found == macros->end() ? nullptr : &found->second;
+    return bindingInIndex(path, name);
+  }
+
+  std::vector<std::string> importBoundary(
+      const std::vector<std::string> &scope,
+      const VisibilitySyntax &visibility, bool &valid) {
+    std::vector<std::string> boundary;
+    valid = visibilityBoundary(scope, visibility, boundary);
+    return boundary;
+  }
+
+  MacroBinding reexportedBinding(
+      const MacroBinding &target, const std::vector<std::string> &scope,
+      const VisibilitySyntax &visibility) {
+    bool valid = true;
+    auto visible = importBoundary(scope, visibility, valid);
+    bool unrestricted = visibility.publicItem &&
+                        visibility.restriction.empty();
+    if (target.publicItem && unrestricted)
+      return {target.macro, {}, true, target.ambiguous};
+    if (target.publicItem)
+      return {target.macro, std::move(visible), false,
+              target.ambiguous || !valid};
+    if (unrestricted)
+      return target;
+    if (startsWith(visible, target.visibilityBoundary))
+      return {target.macro, std::move(visible), false,
+              target.ambiguous || !valid};
+    if (startsWith(target.visibilityBoundary, visible))
+      return {target.macro, target.visibilityBoundary, false,
+              target.ambiguous || !valid};
+    return {target.macro, {"__inaccessible_macro_import__"}, false, true};
+  }
+
+  void addMacroImport(const std::vector<std::string> &scope,
+                      std::string alias,
+                      std::vector<std::string> path, std::string name,
+                      const VisibilitySyntax &visibility) {
+    pendingImports->push_back(
+        {scope, std::move(path), std::move(alias), std::move(name),
+         visibility});
+  }
+
+  void resolveMacroImports() {
+    bool changed;
+    do {
+      changed = false;
+      for (std::size_t i = 0; i < pendingImports->size(); ++i) {
+        if ((*pendingImports)[i].resolved)
+          continue;
+        auto pending = (*pendingImports)[i];
+        auto path = pending.path;
+        auto target = bindingAtPath(path, pending.name, pending.scope);
+        if (!target || (*pendingImports)[i].resolved)
+          continue;
+        auto key = macroKey(pending.scope, pending.alias);
+        (*importedMacros)[key].push_back(reexportedBinding(
+            *target, pending.scope, pending.visibility));
+        (*pendingImports)[i].resolved = true;
+        changed = true;
+      }
+    } while (changed);
+  }
+
+  static std::vector<std::string> tokenPath(const Pieces &in,
+                                            std::size_t begin,
+                                            std::size_t end,
+                                            bool &valid) {
+    std::vector<std::string> result;
+    valid = begin < end && in[begin].kind == TokenKind::Word;
+    if (!valid)
+      return result;
+    result.push_back(in[begin++].text);
+    while (begin < end) {
+      if (!symbol(in[begin], ".") || begin + 1 == end ||
+          in[begin + 1].kind != TokenKind::Word) {
+        valid = false;
+        return {};
+      }
+      result.push_back(in[begin + 1].text);
+      begin += 2;
+    }
+    return result;
+  }
+
+  void importDeclaration(std::size_t at,
+                         const std::vector<std::string> &scope,
+                         std::size_t &after) {
+    VisibilitySyntax visibility;
+    auto import = at;
+    if (pieces[at].kind == TokenKind::Word && pieces[at].text == "pub") {
+      visibility.publicItem = true;
+      visibility.span = pieces[at].origin;
+      ++import;
+      if (import < pieces.size() && symbol(pieces[import], "(") &&
+          close[import] != none) {
+        bool valid = false;
+        auto restriction = tokenPath(pieces, import + 1, close[import],
+                                     valid);
+        if (valid)
+          visibility.restriction = std::move(restriction);
+        else
+          visibility.restriction.push_back("__invalid_visibility__");
+        import = close[import] + 1;
+      }
+    }
+    if (import >= pieces.size() || pieces[import].kind != TokenKind::Word ||
+        pieces[import].text != "import")
+      return;
+    auto position = import + 1;
+    bool pathValid = false;
+    std::vector<std::string> path;
+    if (position < pieces.size() && pieces[position].kind == TokenKind::Word) {
+      path.push_back(pieces[position++].text);
+      pathValid = true;
+    }
+    while (pathValid && position + 1 < pieces.size() &&
+           symbol(pieces[position], ".")) {
+      if (symbol(pieces[position + 1], "{") ||
+          symbol(pieces[position + 1], "*"))
+        break;
+      if (pieces[position + 1].kind != TokenKind::Word) {
+        pathValid = false;
+        break;
+      }
+      path.push_back(pieces[position + 1].text);
+      position += 2;
+    }
+    if (!pathValid)
+      return;
+    if (position + 1 < pieces.size() && symbol(pieces[position], ".") &&
+        symbol(pieces[position + 1], "{") && close[position + 1] != none) {
+      auto end = close[position + 1];
+      auto item = position + 2;
+      while (item < end) {
+        if (newline(pieces[item]) || symbol(pieces[item], ",")) {
+          ++item;
+          continue;
+        }
+        if (pieces[item].kind != TokenKind::Word)
+          break;
+        auto name = pieces[item++].text;
+        auto alias = name;
+        if (item + 1 < end && pieces[item].kind == TokenKind::Word &&
+            pieces[item].text == "as" &&
+            pieces[item + 1].kind == TokenKind::Word) {
+          alias = pieces[item + 1].text;
+          item += 2;
+        }
+        addMacroImport(scope, std::move(alias), path, std::move(name),
+                       visibility);
+        while (item < end && !symbol(pieces[item], ","))
+          ++item;
+      }
+      after = end + 1;
+      return;
+    }
+    if (position + 1 < pieces.size() && symbol(pieces[position], ".") &&
+        symbol(pieces[position + 1], "*")) {
+      after = position + 2;
+      return;
+    }
+    auto alias = path.back();
+    if (position + 1 < pieces.size() &&
+        pieces[position].kind == TokenKind::Word &&
+        pieces[position].text == "as" &&
+        pieces[position + 1].kind == TokenKind::Word) {
+      alias = pieces[position + 1].text;
+      position += 2;
+    }
+    if (path.size() > 1) {
+      auto macro = path.back();
+      path.pop_back();
+      addMacroImport(scope, std::move(alias), path, std::move(macro),
+                     visibility);
+    }
+    after = position;
+  }
+
+  void collectImports(std::size_t begin, std::size_t end,
+                      const std::vector<std::string> &path) {
+    for (auto i = begin; i < end;) {
+      if (pieces[i].kind == TokenKind::Word && pieces[i].text == "module" &&
+          i + 2 < end && pieces[i + 1].kind == TokenKind::Word &&
+          symbol(pieces[i + 2], "{") && close[i + 2] != none) {
+        auto nested = path;
+        nested.push_back(pieces[i + 1].text);
+        auto last = close[i + 2];
+        collectImports(i + 3, last, nested);
+        i = last + 1;
+        continue;
+      }
+      if (pieces[i].kind == TokenKind::Word &&
+          (pieces[i].text == "import" || pieces[i].text == "pub")) {
+        auto after = i;
+        importDeclaration(i, scopeAt(pieces[i].origin.begin), after);
+        if (after > i) {
+          i = after;
+          continue;
+        }
+      }
+      if (opener(pieces[i]) && close[i] != none) {
+        i = close[i] + 1;
+        continue;
+      }
+      ++i;
+    }
+  }
+
+  std::optional<MacroBinding> macroAtPath(
+      std::vector<std::string> &path, std::string_view name,
+      const std::vector<std::string> &from) {
+    return bindingAtPath(path, name, from);
   }
 
   // First token of the `a.b.` qualifier written before the macro name at `i`.
@@ -940,36 +1290,39 @@ private:
     return first;
   }
 
-  const Macro *qualifiedMacro(const Pieces &in, std::size_t i,
-                              std::vector<std::string> &path) {
+  std::optional<MacroBinding> qualifiedMacro(
+      const Pieces &in, std::size_t i, std::vector<std::string> &path,
+      const std::vector<std::string> &from) {
     if (i < 2 || !symbol(in[i - 1], "."))
-      return nullptr;
+      return std::nullopt;
     auto first = i - 2;
     while (first >= 2 && symbol(in[first - 1], "."))
       first -= 2;
     if (in[first].kind != TokenKind::Word)
-      return nullptr;
+      return std::nullopt;
     path.clear();
     for (auto part = first; part <= i - 2; part += 2) {
       if (in[part].kind != TokenKind::Word ||
           (part != i - 2 && !symbol(in[part + 1], ".")))
-        return nullptr;
+        return std::nullopt;
       path.push_back(in[part].text);
     }
-    return macroAtPath(path, in[i].text);
+    return macroAtPath(path, in[i].text, from);
   }
 
   std::optional<MacroModuleSource>
-  modulesForPath(const std::vector<std::string> &path) {
-    auto module = modules(path);
+  modulesForPath(const std::vector<std::string> &path,
+                 const std::vector<std::string> &from) {
+    auto module = modules(path, from);
     if (!module)
       return std::nullopt;
     std::string key;
     for (const auto &part : module->sourcePath)
       key += (key.empty() ? "" : "::") + part;
-    if (indexedModules.insert(key).second) {
+    if (indexedModules->insert(key).second) {
       Expander indexer(module->source, diagnostics, allocate, nullptr,
-                       module->sourcePath, modules, macros);
+                       module->sourcePath, modules, macros, importedMacros,
+                       indexedModules, pendingImports);
       indexer.run(true);
     }
     return module;
@@ -984,26 +1337,27 @@ private:
     auto caller =
         in[i].context.empty() ? scopeAt(in[i].origin.begin) : in[i].context;
     std::vector<std::string> path;
-    const Macro *macro = nullptr;
+    std::optional<MacroBinding> binding;
     if (i > 0 && symbol(in[i - 1], "."))
-      macro = qualifiedMacro(in, i, path);
+      binding = qualifiedMacro(in, i, path, caller);
     else {
       auto scope = caller;
       for (;;) {
-        auto found = macros->find(macroKey(scope, in[i].text));
-        if (found != macros->end()) {
-          macro = &found->second;
+        binding = bindingInIndex(scope, in[i].text);
+        if (binding)
           break;
-        }
         if (scope.empty())
           break;
         scope.pop_back();
       }
     }
-    if (macro && !macro->publicItem &&
-        !startsWith(caller, macro->definitionScope))
-      return {macro, true};
-    return {macro, false};
+    if (!binding)
+      return {};
+    auto privateAccess =
+        !binding->publicItem &&
+        !startsWith(caller, binding->visibilityBoundary);
+    return {binding->macro, binding->visibilityBoundary,
+            binding->publicItem, privateAccess, binding->ambiguous};
   }
 
   void nameError(Span span, const Macro &macro) {
@@ -1011,6 +1365,12 @@ private:
     diagnostics.error("name", span,
                       "private macro '" + macro.name +
                           "' is not visible from this module");
+  }
+
+  void ambiguousMacroError(Span span, const Macro &macro) {
+    failed = true;
+    diagnostics.error("name", span,
+                      "ambiguous macro import for '" + macro.name + "'");
   }
 
   bool procedure(const Pieces &in, std::size_t i) {
@@ -1053,6 +1413,14 @@ private:
       }
       if (invocation.privateAccess) {
         nameError(
+            {in[i].origin.begin, in[last].origin.end, in[i].origin.source},
+            *macro);
+        i = last + 1;
+        ok = false;
+        continue;
+      }
+      if (invocation.ambiguous) {
+        ambiguousMacroError(
             {in[i].origin.begin, in[last].origin.end, in[i].origin.source},
             *macro);
         i = last + 1;
@@ -1620,6 +1988,10 @@ private:
         nameError(use, *macro);
         continue;
       }
+      if (invocation.ambiguous) {
+        ambiguousMacroError(use, *macro);
+        continue;
+      }
       if (macro &&
           broken.contains(macroKey(macro->definitionScope, macro->name)))
         continue;
@@ -1646,9 +2018,11 @@ std::optional<Source> expandMacros(const Source &source,
                                    const SourceAllocator &allocate,
                                    const Procedures *procedural,
                                    std::vector<std::string> modulePath,
-                                   const MacroModuleProvider &modules) {
+                                   const MacroModuleProvider &modules,
+                                   std::vector<Module::MacroDeclaration>
+                                       *declarations) {
   return Expander(source, diagnostics, allocate, procedural,
-                  std::move(modulePath), modules)
+                  std::move(modulePath), modules, {}, {}, {}, {}, declarations)
       .run();
 }
 } // namespace mettle::expansion
