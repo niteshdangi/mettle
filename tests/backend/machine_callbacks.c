@@ -143,8 +143,10 @@ int32_t mettle_c_darwin_large_callback(
 int32_t mettle_c_darwin_variadic(int32_t count, ...) {
   va_list arguments;
   va_start(arguments, count);
-  struct MettleDarwinHfa3 hfa = va_arg(arguments, struct MettleDarwinHfa3);
+  // HVA precedes HFA: Apple clang's caller and va_arg disagree on HVA
+  // alignment directly after a 24-byte HFA, so C itself cannot round-trip it.
   struct MettleDarwinHva2 hva = va_arg(arguments, struct MettleDarwinHva2);
+  struct MettleDarwinHfa3 hfa = va_arg(arguments, struct MettleDarwinHfa3);
   struct MettleLarge large = va_arg(arguments, struct MettleLarge);
   va_end(arguments);
   return count == 3 && hfa.first == 1.0 && hfa.second == 2.0 &&
@@ -156,7 +158,7 @@ int32_t mettle_c_darwin_variadic_definition(int32_t (*callback)(int32_t, ...)) {
   struct MettleDarwinHva2 hva = {(MettleMachineVector){4, 4, 4, 4},
                                  (MettleMachineVector){5, 5, 5, 5}};
   struct MettleLarge large = {10, 12, 20};
-  return callback(3, hfa, hva, large);
+  return callback(3, hva, hfa, large);
 }
 int32_t mettle_c_darwin_layout_metrics(size_t size, size_t alignment,
                                        size_t leaf_offset, size_t value_offset,

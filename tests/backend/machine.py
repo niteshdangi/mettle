@@ -373,8 +373,8 @@ unsafe extern "C" fn large_callback(value:DarwinLarge):DarwinLarge {
     DarwinLarge(value.first + 1i64,value.second + 1i64,value.third + 1i64)
 }
 unsafe extern "C" fn inspect(count:i32,args: ...):i32 {
-    let hfa = args.arg<DarwinHfa3>()
     let hva = args.arg<DarwinHva2>()
+    let hfa = args.arg<DarwinHfa3>()
     let large = args.arg<DarwinLarge>()
     if count == 3 && hfa.first == 1.0f64 && hfa.second == 2.0f64 &&
        hfa.third == 3.0f64 &&
@@ -410,9 +410,9 @@ fn main() {
             hva_callback,DarwinHva2(initial,initial))
         let large_callback_ok = mettle_c_darwin_large_callback(large_callback)
         let c_varargs_ok = mettle_c_darwin_variadic(
-            3,DarwinHfa3(1.0f64,2.0f64,3.0f64),
-            DarwinHva2(core.arch.aarch64.vdupq_n_s32(4),
-                       core.arch.aarch64.vdupq_n_s32(5)),
+            3,DarwinHva2(core.arch.aarch64.vdupq_n_s32(4),
+                         core.arch.aarch64.vdupq_n_s32(5)),
+            DarwinHfa3(1.0f64,2.0f64,3.0f64),
             DarwinLarge(10i64,12i64,20i64))
         let callback_varargs_ok = mettle_c_darwin_variadic_definition(inspect)
         if hfa.first == 11.0f64 && hfa.second == 13.0f64 &&
@@ -486,6 +486,7 @@ unsafe extern "C" fn assembly_sum(left:i32,right:i32):i32 {
     if answer == 42 { sum } else { -1 }
 }
 extern "C" {
+    unsafe fn mettle_c_machine_answer():i32;
     unsafe fn mettle_c_darwin_asm_call(
         callback:unsafe extern "C" fn(i32,i32):i32,
         left:i32,right:i32):i32;

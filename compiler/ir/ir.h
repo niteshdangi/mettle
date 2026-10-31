@@ -190,7 +190,7 @@ struct Program {
   std::vector<Function> functions;
   // Optional package-instance ownership, aligned with `functions` and
   // `statics`; an empty entry means root-owned or owner-ambiguous.
-  std::vector<std::string> functionPackages;
+  std::vector<std::string> functionPackages{};
   std::shared_ptr<const TypeStore> types = std::make_shared<const TypeStore>();
   std::vector<int> closureFunctions{};
   struct OpaqueAdapter {
@@ -201,7 +201,7 @@ struct Program {
   std::vector<OpaqueAdapter> opaqueAdapters{};
   bool requireEntry = true;
   std::vector<Static> statics{};
-  std::vector<std::string> staticPackages;
+  std::vector<std::string> staticPackages{};
   std::vector<std::string> libraries{};
   TargetFacts target{};
   std::vector<Assembly> globalAssembly{};
