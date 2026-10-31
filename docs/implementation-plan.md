@@ -974,7 +974,10 @@ services delivered in I08, avoiding an undeclared compiler-bootstrap dependency.
 
 I09 T001 additions (package-instance identities, coexisting incompatible
 versions, Git commit sources, host/target feature contexts and
-`[build-dependencies]`) are implemented, unverified (not yet built). Package
+`[build-dependencies]`) are implemented and verified on macOS arm64 Release
+by `tests/packages.py`; SemVer-compatible registry versions unify (with
+backtracking) and only incompatible ones coexist. Every resolved package is
+mounted as a root module unless a root module of that name exists. Package
 instances receive unique internal module roots and symbol identities; Git
 sources use the system `git` CLI and are locked by commit and source checksum.
 The host graph is separate from target dependencies and features. Remote HTTP
@@ -982,7 +985,7 @@ registries remain open: the package specification does not define a registry
 protocol. Existing manifest parsing, SemVer solving over path and local
 registry sources, checksums, feature selection, `--locked/--offline/--frozen`
 and `mettle check|build` on package directories remain covered by
-`tests/packages.py`; the new cases have not been run.
+`tests/packages.py`.
 
 I09 T002/T003 status: implemented and verified on macOS arm64 (Release and Debug).
 `[build] script` programs run on the host with declared `mettle:` outputs
@@ -992,7 +995,7 @@ contract, otherwise rerun conservatively (`compiler/driver/build_script.cpp`);
 deduplicated, byte/age-bounded store keyed by token-level source inputs and
 build options (`compiler/packages/store.cpp`, `compiler/driver/cache.cpp`),
 with `mettle clean`. `[build-dependencies]` and host dependency compilation
-were added as implemented, unverified (not yet built); the multi-package
+are verified by the same suite; the multi-package
 extension demonstration remains open. Tests: `incremental_reuse`,
 `edit_invalidation`,
 `cache_dedup_and_bound`, `cache_corruption_and_clean`, `build_script` and

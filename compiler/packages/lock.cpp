@@ -23,9 +23,8 @@ std::string join(const std::vector<std::string> &items) {
 
 bool equivalent(const LockedPackage &left, const LockedPackage &right) {
   return left.id == right.id && left.name == right.name &&
-         left.version == right.version &&
-         left.source == right.source && left.checksum == right.checksum &&
-         left.features == right.features &&
+         left.version == right.version && left.source == right.source &&
+         left.checksum == right.checksum && left.features == right.features &&
          left.dependencies == right.dependencies;
 }
 

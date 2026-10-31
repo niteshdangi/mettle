@@ -58,16 +58,15 @@ std::string moduleRoot(const ResolvedPackage &package) {
   Sha256 hash;
   hash.update(package.identity);
   auto version = toString(package.candidate.manifest->version);
-  std::replace_if(version.begin(), version.end(),
-                  [](char c) {
-                    return !((c >= 'a' && c <= 'z') ||
-                             (c >= 'A' && c <= 'Z') ||
-                             (c >= '0' && c <= '9') || c == '_');
-                  },
-                  '_');
-  return "mettle_pkg_" +
-         moduleName(package.candidate.manifest->name) + "_" + version + "_" +
-         hash.finish();
+  std::replace_if(
+      version.begin(), version.end(),
+      [](char c) {
+        return !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                 (c >= '0' && c <= '9') || c == '_');
+      },
+      '_');
+  return "mettle_pkg_" + moduleName(package.candidate.manifest->name) + "_" +
+         version + "_" + hash.finish();
 }
 
 class Planner {
@@ -180,8 +179,8 @@ private:
   }
 
   std::optional<Candidate> loadGit(const Manifest &from,
-                                  const DependencySpec &spec,
-                                  const Lock *recorded) {
+                                   const DependencySpec &spec,
+                                   const Lock *recorded) {
     (void)from;
     if (!request.gitCheckout) {
       diagnostics.error("feature", spec.span,
@@ -200,18 +199,17 @@ private:
       for (const auto &entry : recorded->packages)
         if (entry.name == spec.name &&
             entry.source.rfind("git+" + *spec.git + "#", 0) == 0) {
-          lockedCommit = entry.source.substr(
-              std::string("git+" + *spec.git + "#").size());
+          lockedCommit =
+              entry.source.substr(std::string("git+" + *spec.git + "#").size());
           break;
         }
     std::string problem;
     auto checkout = request.gitCheckout(*spec.git, selector, lockedCommit,
                                         request.offline, problem);
     if (!checkout) {
-      diagnostics.error(
-          "package", spec.span,
-          "cannot resolve git dependency '" + spec.name + "' from '" +
-              *spec.git + "': " + problem);
+      diagnostics.error("package", spec.span,
+                        "cannot resolve git dependency '" + spec.name +
+                            "' from '" + *spec.git + "': " + problem);
       return std::nullopt;
     }
     auto directory = fs::canonical(checkout->directory);
@@ -230,8 +228,7 @@ private:
     candidate.location = directory.generic_string();
     candidate.git = *spec.git;
     candidate.commit = checkout->commit;
-    candidate.sourceIdentity =
-        "git+" + candidate.git + "#" + candidate.commit;
+    candidate.sourceIdentity = "git+" + candidate.git + "#" + candidate.commit;
     return candidate;
   }
 
@@ -422,7 +419,9 @@ private:
     };
     universe.absence = [&](const std::string &) { return absence(); };
     Problem solving;
-    solving.root = Candidate{root, SourceKind::Root, root->directory};
+    solving.root.manifest = root;
+    solving.root.kind = SourceKind::Root;
+    solving.root.location = root->directory;
     solving.features = request.features;
     solving.defaultFeatures = request.defaultFeatures;
     if (recorded)
@@ -445,8 +444,9 @@ private:
     if (recorded)
       for (const auto &now : fresh.packages) {
         const auto *then = recorded->find(now.id);
-        if (then && (now.source.rfind("registry+", 0) == 0 ||
-                     now.source.rfind("git+", 0) == 0) &&
+        if (then &&
+            (now.source.rfind("registry+", 0) == 0 ||
+             now.source.rfind("git+", 0) == 0) &&
             then->source == now.source && then->version == now.version &&
             then->checksum != now.checksum) {
           diagnostics.error(
@@ -544,8 +544,7 @@ private:
           plannedMacro.package = manifest.name;
           plannedMacro.version = toString(manifest.version);
           plannedMacro.directory = manifest.directory;
-          plannedMacro.source =
-              fs::canonical(program, error).generic_string();
+          plannedMacro.source = fs::canonical(program, error).generic_string();
           plannedMacro.features = package.features;
           for (const auto &[name, dependency] : package.dependencies)
             if (modules.contains(dependency) &&
@@ -564,11 +563,11 @@ private:
         plan.features = package.features;
         plan.rootIdentity = package.identity;
         for (const auto &[name, dependency] : package.dependencies) {
-          auto child = std::find_if(
-              resolution->packages.begin(), resolution->packages.end(),
-              [&](const ResolvedPackage &candidate) {
-                return candidate.identity == dependency;
-              });
+          auto child = std::find_if(resolution->packages.begin(),
+                                    resolution->packages.end(),
+                                    [&](const ResolvedPackage &candidate) {
+                                      return candidate.identity == dependency;
+                                    });
           if (child != resolution->packages.end() &&
               modules.contains(dependency)) {
             if (child->candidate.host)
@@ -586,9 +585,8 @@ private:
       Mount mount;
       mount.name = moduleName(manifest.name);
       mount.source =
-          fs::canonical(fs::path(manifest.directory) /
-                            manifest.library()->source,
-                        error)
+          fs::canonical(
+              fs::path(manifest.directory) / manifest.library()->source, error)
               .generic_string();
       mount.module = modules.at(package.identity);
       mount.package = manifest.name;
@@ -596,11 +594,11 @@ private:
       mount.identity = package.identity;
       mount.features = package.features;
       for (const auto &[name, dependency] : package.dependencies) {
-        auto child = std::find_if(
-            resolution->packages.begin(), resolution->packages.end(),
-            [&](const ResolvedPackage &candidate) {
-              return candidate.identity == dependency;
-            });
+        auto child = std::find_if(resolution->packages.begin(),
+                                  resolution->packages.end(),
+                                  [&](const ResolvedPackage &candidate) {
+                                    return candidate.identity == dependency;
+                                  });
         if (child != resolution->packages.end() &&
             child->candidate.host == package.candidate.host &&
             modules.contains(dependency))

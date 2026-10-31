@@ -385,6 +385,9 @@ struct Module {
     std::vector<Name> names;
     std::string alias;
     bool glob = false;
+    // Loader-synthesized dependency alias; an explicit import of the same item
+    // in its scope is not a duplicate binding.
+    bool synthesized = false;
     Span span;
     ItemSyntax item;
   };

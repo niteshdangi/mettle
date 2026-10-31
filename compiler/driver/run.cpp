@@ -65,10 +65,15 @@ bool runGit(const std::vector<std::string> &arguments,
       std::nullopt,
       stdoutPath ? std::optional<llvm::StringRef>(*stdoutPath) : std::nullopt,
       std::nullopt};
+  auto program = llvm::sys::findProgramByName("git");
+  if (!program) {
+    problem = "cannot find git on PATH";
+    return false;
+  }
   std::string message;
   bool notLaunched = false;
-  int status = llvm::sys::ExecuteAndWait("git", refs, std::nullopt, redirects,
-                                         0, 0, &message, &notLaunched);
+  int status = llvm::sys::ExecuteAndWait(
+      *program, refs, std::nullopt, redirects, 0, 0, &message, &notLaunched);
   if (!notLaunched && status == 0)
     return true;
   problem = notLaunched ? "cannot start git: " + message
@@ -76,14 +81,14 @@ bool runGit(const std::vector<std::string> &arguments,
   return false;
 }
 
-std::optional<std::string> gitOutput(
-    const std::vector<std::string> &arguments,
-    const std::filesystem::path &store, std::string &problem,
-    bool allowEmpty = false) {
-  auto output = store / ("mettle-git-output-" +
-                         std::to_string(std::hash<std::string>{}(
-                             arguments.back())) +
-                         ".txt");
+std::optional<std::string> gitOutput(const std::vector<std::string> &arguments,
+                                     const std::filesystem::path &store,
+                                     std::string &problem,
+                                     bool allowEmpty = false) {
+  auto output =
+      store /
+      ("mettle-git-output-" +
+       std::to_string(std::hash<std::string>{}(arguments.back())) + ".txt");
   if (!runGit(arguments, output.generic_string(), problem))
     return std::nullopt;
   std::ifstream stream(output, std::ios::binary);
@@ -121,14 +126,13 @@ checkoutGit(const Options &options, const std::string &url,
       problem = "offline mode has no cached repository";
       return std::nullopt;
     }
-    if (!runGit({"git", "clone", "--mirror", "--", url,
-                 mirror.generic_string()},
-                std::nullopt, problem))
+    if (!runGit(
+            {"git", "clone", "--mirror", "--", url, mirror.generic_string()},
+            std::nullopt, problem))
       return std::nullopt;
-  } else if (!offline &&
-             !runGit({"git", "--git-dir=" + mirror.generic_string(), "fetch",
-                      "--tags", "origin"},
-                     std::nullopt, problem))
+  } else if (!offline && !runGit({"git", "--git-dir=" + mirror.generic_string(),
+                                  "fetch", "--tags", "origin"},
+                                 std::nullopt, problem))
     return std::nullopt;
 
   std::string expression;
@@ -142,10 +146,10 @@ checkoutGit(const Options &options, const std::string &url,
     expression = "refs/heads/" + selector.substr(7) + "^{commit}";
   else
     expression = "HEAD^{commit}";
-  auto commit = gitOutput(
-      {"git", "--git-dir=" + mirror.generic_string(), "rev-parse", "--verify",
-       "--end-of-options", expression},
-      root, problem);
+  auto commit =
+      gitOutput({"git", "--git-dir=" + mirror.generic_string(), "rev-parse",
+                 "--verify", "--end-of-options", expression},
+                root, problem);
   if (!commit)
     return std::nullopt;
 
@@ -164,19 +168,17 @@ checkoutGit(const Options &options, const std::string &url,
                 std::nullopt, problem))
       return std::nullopt;
   }
-  auto head = gitOutput(
-      {"git", "-C", checkout.generic_string(), "rev-parse", "--verify",
-       "HEAD^{commit}"},
-      root, problem);
+  auto head = gitOutput({"git", "-C", checkout.generic_string(), "rev-parse",
+                         "--verify", "HEAD^{commit}"},
+                        root, problem);
   if (!head || *head != *commit) {
     if (head)
       problem = "cached checkout does not match commit " + *commit;
     return std::nullopt;
   }
-  auto status = gitOutput(
-      {"git", "-C", checkout.generic_string(), "status", "--porcelain",
-       "--untracked-files=all"},
-      root, problem, true);
+  auto status = gitOutput({"git", "-C", checkout.generic_string(), "status",
+                           "--porcelain", "--untracked-files=all"},
+                          root, problem, true);
   if (!status || !status->empty()) {
     if (status && !status->empty())
       problem = "cached checkout contains modified or untracked files";
@@ -483,10 +485,9 @@ int build(const Options &requested,
   std::vector<packages::Macro> macros;
   std::vector<packages::Mount> hostPackages;
   std::set<std::string> rootFeatures =
-      options.packageContext
-          ? options.injectedFeatures
-          : std::set<std::string>(options.features.begin(),
-                                  options.features.end());
+      options.packageContext ? options.injectedFeatures
+                             : std::set<std::string>(options.features.begin(),
+                                                     options.features.end());
   if (options.packageContext) {
     dependencies = options.injectedPackages;
     packageDependencies = options.packageDependencies;

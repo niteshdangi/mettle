@@ -112,8 +112,8 @@ public:
             continue;
         }
         for (auto [key, target] :
-             {std::pair<const char *, std::optional<std::string> *>{
-                  "rev", &spec.rev},
+             {std::pair<const char *, std::optional<std::string> *>{"rev",
+                                                                    &spec.rev},
               {"tag", &spec.tag},
               {"branch", &spec.branch}}) {
           if (const auto *selector = value.find(key))

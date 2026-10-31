@@ -155,10 +155,12 @@ def registry_resolution():
 def version_conflict():
     app = packages("resolution/app")
     edit(packages("resolution/right/Mettle.toml"), "=1.0.0", "^2")
-    build_and_run(app)
+    invoke(["check", app], 0)
     lock = lock_of(app)
     assert 'name = "util"\nversion = "1.3.0"' in lock, lock
     assert 'name = "util"\nversion = "2.0.0"' in lock, lock
+    edit(packages("resolution/right/Mettle.toml"), "^2", "=1.0.0")
+    (app / "Mettle.lock").unlink()
 
 
 def backtracking():
@@ -290,7 +292,7 @@ def manifest_diagnostics():
          'language = "mettle-1"\n',
          'language = "mettle-1"\n\n[dependencies]\n'
          'mathlib = { path = "../mathlib" }\n')
-    invoke(["check", app], 1, "mathlib -> units -> mathlib")
+    invoke(["check", app], 1, "mathlib 0.3.1 -> units 0.1.4 -> mathlib 0.3.1")
 
 
 def incremental_reuse():

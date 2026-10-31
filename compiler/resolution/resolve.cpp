@@ -581,7 +581,9 @@ private:
       if (binding.definition == target.definition &&
           binding.explicitBinding == explicitBinding &&
           binding.boundary == visible &&
-          (!explicitBinding || binding.import == importIndex))
+          (!explicitBinding || binding.import == importIndex ||
+           (binding.import && tree.imports[*binding.import].synthesized) ||
+           tree.imports[importIndex].synthesized))
         return false;
     if (explicitBinding &&
         std::any_of(bindings.begin(), bindings.end(),

@@ -3,8 +3,10 @@
 #include "expansion/macros.h"
 #include "support/limits.h"
 #include "syntax/parser.h"
+#include <algorithm>
 #include <filesystem>
 #include <iterator>
+#include <map>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -54,8 +56,30 @@ public:
       for (const auto &package : library.packages)
         for (const auto &[name, module] : package.dependencies)
           packageImport(package.module, name, module);
+      std::map<std::string, std::vector<std::string>> roots;
       for (const auto &[name, module] : library.packageDependencies)
-        packageImport({}, name, module);
+        roots[name].push_back(module);
+      // Every resolved package is a root module named after it; a direct
+      // alias wins, and an ambiguous transitive name (coexisting versions)
+      // stays reachable only through its dependents.
+      std::map<std::string, std::set<std::string>> transitive;
+      for (const auto &package : library.packages) {
+        auto name = package.name;
+        std::replace(name.begin(), name.end(), '-', '_');
+        bool local = std::any_of(result.modules.begin(), result.modules.end(),
+                                 [&](const auto &declaration) {
+                                   return declaration.item.scope.empty() &&
+                                          declaration.name == name;
+                                 });
+        if (!roots.contains(name) && !local)
+          transitive[name].insert(package.module);
+      }
+      for (const auto &[name, modules] : transitive)
+        if (modules.size() == 1)
+          roots[name].push_back(*modules.begin());
+      for (const auto &[name, modules] : roots)
+        for (const auto &module : modules)
+          packageImport({}, name, module);
     }
     if (diagnostics.empty() && !library.directory.empty())
       mountLibraries();
@@ -327,13 +351,12 @@ private:
     currentPackage = nullptr;
   }
 
-  void packageImport(const std::string &scope,
-                     const std::string &name,
+  void packageImport(const std::string &scope, const std::string &name,
                      const std::string &module) {
     for (const auto &declaration : result.modules)
-      if (declaration.item.scope ==
-              (scope.empty() ? std::vector<std::string>{}
-                             : std::vector<std::string>{scope}) &&
+      if (declaration.item.scope == (scope.empty()
+                                         ? std::vector<std::string>{}
+                                         : std::vector<std::string>{scope}) &&
           declaration.name == name) {
         diagnostics.error("name", declaration.span,
                           "module '" + name +
@@ -343,6 +366,7 @@ private:
     Module::Import imported;
     imported.path = {module};
     imported.alias = name;
+    imported.synthesized = true;
     imported.item.scope = scope.empty() ? std::vector<std::string>{}
                                         : std::vector<std::string>{scope};
     result.imports.push_back(std::move(imported));

@@ -127,8 +127,7 @@ bool ProcedureHost::prepare() {
     host.noCache = options.noCache;
     host.explain = options.explain;
     host.packageContext = true;
-    host.injectedFeatures.insert(macro.features.begin(),
-                                 macro.features.end());
+    host.injectedFeatures.insert(macro.features.begin(), macro.features.end());
     host.packageDependencies = macro.dependencies;
     for (const auto &mount : hostPackages) {
       resolution::Library::Package dependency;
