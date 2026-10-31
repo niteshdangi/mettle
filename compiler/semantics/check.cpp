@@ -47,7 +47,7 @@ std::optional<CheckedModule> Checker::run() {
                 "'");
     functionVariables[&f] =
         inference.fresh(annotation(f.annotation, f.span, f.owner));
-    if (f.asyncDefaultFutureInferred)
+    if (f.asyncDefaultOutputInferred)
       asyncDefaultBodyVariables[&f] = inference.fresh();
     facts(f).diverges = inference.value(functionVariables[&f]) == Type::Never;
     if (f.explicitReceiver) {
@@ -315,7 +315,7 @@ std::optional<CheckedModule> Checker::run() {
     return checked.types->substituteRegions(future, regionBindings);
   };
   auto publishAsyncDefault = [&](const Function &function) {
-    if (!function.asyncDefaultFutureInferred)
+    if (!function.asyncDefaultOutputInferred)
       return;
     const Node *futureNode = function.body.get();
     if (!futureNode)
@@ -535,9 +535,7 @@ std::optional<CheckedModule> Checker::run() {
       };
       for (std::size_t i = 0; i < module.functions.size(); ++i) {
         const auto &function = module.functions[i];
-        if (!function.asynchronous ||
-            (!function.asyncOutput.empty() &&
-             !function.asyncDefaultFutureInferred) ||
+        if (!function.asynchronous || !function.asyncOutput.empty() ||
             !function.body.get())
           continue;
         const Node *future = function.body.get();
@@ -578,7 +576,7 @@ std::optional<CheckedModule> Checker::run() {
             bound.interfaceType = updated;
           }
         updateOpaqueOutput(family->defaultValue, output);
-        if (function.asyncDefaultFutureInferred) {
+        if (function.asyncDefaultOutputInferred) {
           auto defaultFuture =
               inference.value(asyncDefaultBodyVariables.at(&function));
           if (defaultFuture == Type::Unknown) {
@@ -638,7 +636,7 @@ std::optional<CheckedModule> Checker::run() {
     }
   }
   for (const auto &function : module.functions)
-    if (function.asyncDefaultFutureInferred) {
+    if (function.asyncDefaultOutputInferred) {
       auto body = inference.value(asyncDefaultBodyVariables.at(&function));
       if (body != Type::Unknown)
         facts(function).asyncDefaultBodyResult = body;
