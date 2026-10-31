@@ -23,6 +23,7 @@ fail cases must be rejected with exit status 1, leave a pre-existing output
 file untouched, and report every expected diagnostic:
   expect-error         `PHASE LINE:COL MESSAGE`; one diagnostic must carry all three
   expect-error-count   exact number of diagnostics (optional)
+  expect-note/help     expected related diagnostic text (optional)
   profiles, flags, timeout, arch as above (default profile: debug)
 """
 
@@ -48,7 +49,8 @@ ROOT = Path(__file__).resolve().parent / "source"
 PROFILES = ("debug", "release")
 COMMON_KEYS = {"profiles", "flags", "timeout", "arch", "truncated"}
 KEYS = {"run": COMMON_KEYS | {"expect-exit", "expect-exit-debug", "expect-exit-release"},
-        "fail": COMMON_KEYS | {"expect-error", "expect-error-count"}}
+        "fail": COMMON_KEYS | {"expect-error", "expect-error-count",
+                               "expect-note", "expect-help"}}
 ERROR = re.compile(r"(\w+) (\d+):(\d+) (.+)")
 PRESERVED = b"preserve existing artifact"
 
@@ -64,6 +66,7 @@ class Case:
     arch: object
     exits: dict = field(default_factory=dict)
     errors: list = field(default_factory=list)
+    related: list = field(default_factory=list)
     count: object = None
     header_lines: int = 0
 
@@ -121,6 +124,9 @@ def parse_case(path, kind):
                 raise ValueError(f"{name}: expect-error must be `PHASE LINE:COL MESSAGE`, "
                                  f"not {entry!r}")
             case.errors.append((match[1], int(match[2]), int(match[3]), match[4]))
+        for kind in ("note", "help"):
+            for entry in options.get(f"expect-{kind}", []):
+                case.related.append((kind, entry))
         if "expect-error-count" in options:
             case.count = int(single(options, "expect-error-count", None, name))
     return case
@@ -189,6 +195,10 @@ class Runner:
                 if not re.search(intended, result.stderr):
                     raise AssertionError(f"{case.name}: expected error[{phase}] containing "
                                          f"{message!r} at {line}:{column}:\n{result.stderr}")
+            for kind, message in case.related:
+                if f"{kind}: {message}" not in result.stderr:
+                    raise AssertionError(f"{case.name}: expected {kind} containing "
+                                         f"{message!r}:\n{result.stderr}")
             if case.count is not None and len(re.findall(r": error\[", result.stderr)) != case.count:
                 raise AssertionError(f"{case.name}: expected exactly {case.count} "
                                      f"diagnostic(s):\n{result.stderr}")

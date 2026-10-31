@@ -368,17 +368,32 @@ bool Checker::interfaceObligation(Type actual, const TypeSyntax &bound,
                                   Span span) {
   if (bound.name == "unsized")
     return true;
+  const auto property =
+      propertyBound(bound, span).value_or(interfaces::Property::Interface);
+  auto interfaceType = property == interfaces::Property::Interface
+                           ? interfaceBound(bound, span, {}, actual)
+                           : Type::Unknown;
   interfaces::Obligation obligation{
-      actual, Type::Unknown,
-      propertyBound(bound, span).value_or(interfaces::Property::Interface)};
-  if (obligation.property == interfaces::Property::Interface)
-    obligation.interfaceType = interfaceBound(bound, span, {}, actual);
+      actual, interfaceType, property};
   interfaces::Solver solver(*checked.types, *checked.interfaceData, diagnostics,
                             interfaceAssumptions(), regionEnvironment());
   if (solver.prove(obligation, span, false))
     return true;
+  if (property != interfaces::Property::Interface) {
+    error("type", span,
+          "unsatisfied interface bound '" + displayPath(bound.name) + "'");
+    return false;
+  }
+  const std::array<Type, 2> namesInMessage{actual, interfaceType};
+  const auto subject = displayType(*checked.types, actual, namesInMessage);
+  const auto interface =
+      displayType(*checked.types, interfaceType, namesInMessage);
   error("type", span,
-        "unsatisfied interface bound '" + displayPath(bound.name) + "'");
+        "unsatisfied interface bound '" + displayPath(bound.name) + "'",
+        {{"note", {}, "no implementation of '" + interface +
+                         "' is available for '" + subject + "'"},
+         {"help", {}, "add `extend " + subject + " implements " + interface +
+                          " { ... }`"}});
   return false;
 }
 bool Checker::interfaceObligation(Type actual, Type interfaceType, Span span) {
@@ -400,7 +415,15 @@ bool Checker::interfaceObligation(Type actual, Type interfaceType, Span span) {
           "Text or implement core.fmt.Display");
     return false;
   }
-  error("type", span, "unsatisfied interface obligation");
+  const std::array<Type, 2> namesInMessage{actual, interfaceType};
+  const auto subject = displayType(*checked.types, actual, namesInMessage);
+  const auto interface =
+      displayType(*checked.types, interfaceType, namesInMessage);
+  error("type", span,
+        "unsatisfied interface obligation: no implementation of '" +
+            interface + "' is available for '" + subject + "'",
+        {{"help", {}, "add `extend " + subject + " implements " + interface +
+                         " { ... }`"}});
   return false;
 }
 Type Checker::normalizeGenericType(Type type,

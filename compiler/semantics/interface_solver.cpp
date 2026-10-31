@@ -413,8 +413,20 @@ bool Solver::prove(const Obligation &obligation, Span span, bool report) {
     limitReported = true;
     return false;
   }
-  if (report)
-    diagnostics.error("type", span, "unsatisfied interface obligation");
+  if (report) {
+    const std::array<Type, 2> namesInMessage{obligation.subject,
+                                             obligation.interfaceType};
+    const auto subject =
+        displayType(types, obligation.subject, namesInMessage);
+    const auto interface =
+        displayType(types, obligation.interfaceType, namesInMessage);
+    diagnostics.error(
+        "type", span,
+        "unsatisfied interface obligation: no implementation of '" +
+            interface + "' is available for '" + subject + "'",
+        {{"help", {},
+          "add `extend " + subject + " implements " + interface + " { ... }`"}});
+  }
   return false;
 }
 

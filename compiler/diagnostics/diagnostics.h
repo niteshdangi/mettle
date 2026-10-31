@@ -3,16 +3,24 @@
 #include "support/limits.h"
 #include <algorithm>
 #include <ostream>
+#include <optional>
 #include <utility>
 #include <vector>
 
 namespace mettle {
+struct DiagnosticMessage {
+  std::string kind;
+  std::optional<Span> span;
+  std::string message;
+};
+
 struct Diagnostic {
   std::string phase;
   Span span;
   std::string message;
   // "error" or "warning"; only lint findings are warnings.
   std::string severity = "error";
+  std::vector<DiagnosticMessage> related;
 };
 
 // Provenance of a compiler-generated source (an attribute expansion). Spans
@@ -58,14 +66,17 @@ public:
     Diagnostics &diagnostics;
     SourceId previous;
   };
-  void error(std::string phase, Span span, std::string message) {
-    add("error", std::move(phase), span, std::move(message));
+  void error(std::string phase, Span span, std::string message,
+             std::vector<DiagnosticMessage> related = {}) {
+    add("error", std::move(phase), span, std::move(message),
+        std::move(related));
   }
   void warning(std::string phase, Span span, std::string message) {
-    add("warning", std::move(phase), span, std::move(message));
+    add("warning", std::move(phase), span, std::move(message), {});
   }
   void add(std::string severity, std::string phase, Span span,
-           std::string message) {
+           std::string message,
+           std::vector<DiagnosticMessage> related = {}) {
     if (span.source == 0)
       span.source = currentSource;
     // A repeated report of the same fault at the same place adds no
@@ -77,8 +88,8 @@ public:
         }))
       return;
     if (items.size() < limits::diagnostics)
-      items.push_back(
-          {std::move(phase), span, std::move(message), std::move(severity)});
+      items.push_back({std::move(phase), span, std::move(message),
+                       std::move(severity), std::move(related)});
     else
       ++suppressed;
   }
@@ -102,6 +113,7 @@ public:
       if (generation == generations.end()) {
         printItem(sourceOf(source, item.span), item.span.begin,
                   item.severity + "[" + item.phase + "]", item.message, out);
+        printRelated(source, item, out);
         continue;
       }
       auto target = generation->origin;
@@ -122,6 +134,7 @@ public:
         }
       printItem(sourceOf(source, target), target.begin,
                 item.severity + "[" + item.phase + "]", item.message, out);
+      printRelated(source, item, out);
       if (!exact &&
           (target.begin != origin.begin || target.source != origin.source))
         printItem(sourceOf(source, origin), origin.begin, "note",
@@ -179,6 +192,17 @@ private:
           return entry.id == span.source;
         });
     return found == sources.end() ? fallback : *found;
+  }
+  void printRelated(const Source &fallback, const Diagnostic &diagnostic,
+                    std::ostream &out) const {
+    for (const auto &message : diagnostic.related) {
+      if (!message.span) {
+        out << message.kind << ": " << message.message << '\n';
+        continue;
+      }
+      printItem(sourceOf(fallback, *message.span), message.span->begin,
+                message.kind, message.message, out);
+    }
   }
   static void printItem(const Source &source, std::size_t position,
                         const std::string &label, const std::string &message,

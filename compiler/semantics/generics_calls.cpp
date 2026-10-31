@@ -213,7 +213,7 @@ std::optional<int> Checker::genericCall(
     if (bindings[i].argument == Type::Unknown)
       error("type", n.span,
             "cannot infer generic argument '" +
-                displayPath(checked.types->name(bindings[i].parameter)) +
+                displayType(*checked.types, bindings[i].parameter) +
                 "'; supply explicit <...> arguments");
   }
   genericEnvironment = caller;
@@ -447,7 +447,7 @@ void Checker::finishDeferred(Node &n, DeferredCall deferred, Type expected) {
     if (binding.argument == Type::Unknown)
       error("type", n.span,
             "cannot infer generic argument '" +
-                displayPath(checked.types->name(binding.parameter)) +
+                displayType(*checked.types, binding.parameter) +
                 "'; supply explicit <...> arguments");
   genericEnvironment = deferred.caller;
   genericObligations(*deferred.environment, bindings, n.span,

@@ -577,6 +577,8 @@ private:
                 : shown.source == doc.sourceId;
       std::size_t begin = 0, end = 0;
       std::string message = item.message;
+      for (const auto &related : item.related)
+        message += "\n" + related.kind + ": " + related.message;
       if (own) {
         begin = std::min(shown.begin, contents.size());
         end = std::clamp(shown.end, begin, contents.size());

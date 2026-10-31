@@ -407,7 +407,7 @@ bool Solver::coherent() {
       if (!known.contains(parameter)) {
         diagnostics.error("type", left.span,
                           "unconstrained implementation parameter '" +
-                              displayPath(types.name(parameter)) + "'");
+                              displayType(types, parameter) + "'");
         valid = false;
       }
     if (types.isErased(left.interfaceType)) {

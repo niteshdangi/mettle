@@ -591,8 +591,9 @@ facts do not yet disambiguate members across provider-loaded files. Provider
 sources are indexed only when encountered by an open document, not through
 workspace-wide package discovery. Generated diagnostics map to a user source
 span when possible but do not yet expose the full expansion chain as related
-information. Diagnostic type spelling, notes and help still need the readable,
-source-oriented display specified for R3.
+information. Readable source-oriented diagnostic type display and structured
+notes/help are implemented, unverified (not yet built); the LSP includes these
+subdiagnostics in the published message text.
 
 Rename observes namespaces, public paths and hygienic expansion identity.
 Generated identifiers are edited at their source/generator only when the mapping

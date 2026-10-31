@@ -442,8 +442,8 @@ void Checker::diagnoseBorrowedMatchMove(const Node &expression, int variable) {
   const auto &binding = facts(*current).locals[slot];
   error("ownership", binding.span,
         "pattern binding '" + binding.name +
-            "' moves a non-copyable payload out of a borrowed scrutinee; "
-            "write `match take <expr>` to consume it");
+            "' moves a non-copyable payload out of a borrowed scrutinee",
+        {{"help", {}, "write `match take <expr>` to consume the payload"}});
 }
 
 void Checker::resolvePatterns() {
@@ -454,7 +454,7 @@ void Checker::resolvePatterns() {
         !integerLiteralFits(*resolved.numeric, resolved.type, pointerBits()))
       error("type", pattern->span,
             "pattern literal is outside the " +
-                displayPath(checked.types->name(resolved.type)) + " range");
+                displayType(*checked.types, resolved.type) + " range");
   }
 }
 int Checker::bindingPattern(Node &n, bool reachable) {

@@ -1,6 +1,8 @@
 #include "types/type.h"
+#include "support/path.h"
 #include <algorithm>
 #include <limits>
+#include <set>
 #include <stdexcept>
 #include <utility>
 
@@ -489,6 +491,262 @@ std::string_view TypeStore::name(Type type) const {
          : isFunctionPointer(type)               ? callable(type).name
          : isParameter(type) || isConstant(type) ? parameter(type).name
                                                  : typeName(type);
+}
+std::string displayType(Type type) {
+  if (type == Type::Unknown)
+    return "unresolved type";
+  auto name = typeName(type);
+  return name == "<invalid>" ? "invalid type" : std::string(name);
+}
+
+std::string displayType(const TypeStore &types, Type type,
+                        std::span<const Type> namesInMessage) {
+  std::vector<std::string_view> paths;
+  auto structuralPath = [](AggregateKind kind) -> std::string_view {
+    switch (kind) {
+    case AggregateKind::VarArgs:
+      return "core::ffi::VarArgs";
+    case AggregateKind::Ordering:
+      return "core::sync::atomic::Ordering";
+    case AggregateKind::PhantomPinned:
+      return "core::marker::PhantomPinned";
+    case AggregateKind::BorrowError:
+      return "core::cell::BorrowError";
+    case AggregateKind::BorrowMutError:
+      return "core::cell::BorrowMutError";
+    case AggregateKind::Ref:
+      return "core::cell::Ref";
+    case AggregateKind::RefMut:
+      return "core::cell::RefMut";
+    case AggregateKind::Uninit:
+      return "core::mem::MaybeUninit";
+    case AggregateKind::ManualDrop:
+      return "core::mem::ManuallyDrop";
+    case AggregateKind::UnsafeCell:
+      return "core::cell::UnsafeCell";
+    case AggregateKind::Cell:
+      return "core::cell::Cell";
+    case AggregateKind::RefCell:
+      return "core::cell::RefCell";
+    case AggregateKind::Atomic:
+      return "core::sync::atomic::Atomic";
+    default:
+      return {};
+    }
+  };
+  std::set<Type> collected;
+  auto collect = [&](auto &&self, Type nested) -> void {
+    if (!types.contains(nested) || !collected.insert(nested).second)
+      return;
+    if (types.isView(nested) || types.isPointer(nested)) {
+      self(self, types.view(nested).payload);
+    } else if (types.isSlice(nested)) {
+      self(self, types.slice(nested).element);
+    } else if (types.isErased(nested)) {
+      const auto &record = types.erased(nested);
+      paths.push_back(record.name);
+      for (auto argument : record.arguments)
+        self(self, argument);
+    } else if (types.isCallable(nested) && !types.isParameter(nested)) {
+      const auto &signature = types.callable(nested);
+      for (const auto &parameter : signature.parameters)
+        self(self, parameter.type);
+      self(self, signature.result);
+      if (signature.error != Type::Unknown)
+        self(self, signature.error);
+    } else if (types.isProduct(nested)) {
+      const auto &record = types.product(nested);
+      if (auto name = structuralPath(record.kind); !name.empty())
+        paths.push_back(name);
+      else if (record.kind == AggregateKind::Product ||
+               record.kind == AggregateKind::Enumeration ||
+               record.kind == AggregateKind::Opaque ||
+               record.kind == AggregateKind::NativeVector) {
+        auto origin = record.genericOrigin == Type::Unknown
+                          ? nested
+                          : record.genericOrigin;
+        paths.push_back(types.product(origin).name);
+      }
+      if (record.genericOrigin != Type::Unknown) {
+        for (auto argument : record.genericArguments)
+          self(self, argument);
+      } else {
+        for (auto component : record.components)
+          self(self, component);
+      }
+    } else if (types.isParameter(nested)) {
+      const auto &parameter = types.parameter(nested);
+      if (parameter.kind == TypeParameterKind::Type)
+        paths.push_back(parameter.name);
+      for (auto operand : parameter.operands)
+        self(self, operand);
+    }
+  };
+  collect(collect, type);
+  for (auto related : namesInMessage)
+    collect(collect, related);
+
+  std::set<Type> active;
+  auto render = [&](auto &&self, Type nested) -> std::string {
+    if (!types.contains(nested))
+      return displayType(nested);
+    if (!active.insert(nested).second)
+      return std::string(types.name(nested));
+    struct Pop {
+      std::set<Type> &active;
+      Type type;
+      ~Pop() { active.erase(type); }
+    } pop{active, nested};
+    auto path = [&](std::string_view name) {
+      return displayPath(name, paths);
+    };
+    if (types.isView(nested) || types.isPointer(nested)) {
+      const auto &view = types.view(nested);
+      const auto access = view.mode == ParameterMode::Read ? "read " : "mut ";
+      if (types.isPointer(nested))
+        return "ptr<" + std::string(access) + self(self, view.payload) + ">";
+      return std::string(access) + self(self, view.payload);
+    }
+    if (types.isSlice(nested))
+      return "[" + self(self, types.slice(nested).element) + "]";
+    if (types.isErased(nested)) {
+      const auto &record = types.erased(nested);
+      std::string result = "any " + path(record.name);
+      if (!record.arguments.empty()) {
+        result += "<";
+        for (std::size_t i = 0; i < record.arguments.size(); ++i) {
+          if (i)
+            result += ", ";
+          result += self(self, record.arguments[i]);
+        }
+        result += ">";
+      }
+      return result;
+    }
+    if (types.isParameter(nested)) {
+      const auto &parameter = types.parameter(nested);
+      if (parameter.kind == TypeParameterKind::Constant)
+        return path(types.name(nested));
+      if (parameter.kind == TypeParameterKind::Type)
+        return path(parameter.name);
+      return path(types.name(nested));
+    }
+    if (types.isConstant(nested)) {
+      if (auto value = types.constantValue(nested))
+        return std::to_string(*value);
+      return path(types.name(nested));
+    }
+    if (types.isCallable(nested)) {
+      const auto &signature = types.callable(nested);
+      std::string result =
+          signature.mode == ParameterMode::Mut ? "mut fn("
+          : signature.mode == ParameterMode::Take ? "take fn("
+                                                  : "fn(";
+      for (std::size_t i = 0; i < signature.parameters.size(); ++i) {
+        if (i)
+          result += ", ";
+        const auto &parameter = signature.parameters[i];
+        if (parameter.mode == ParameterMode::Read)
+          result += "read ";
+        else if (parameter.mode == ParameterMode::Mut)
+          result += "mut ";
+        else if (parameter.mode == ParameterMode::Take)
+          result += "take ";
+        result += self(self, parameter.type);
+      }
+      if (signature.variadic)
+        result += signature.parameters.empty() ? "..." : ", ...";
+      result += "): " + self(self, signature.result);
+      if (signature.error != Type::Unknown)
+        result += " throws " + self(self, signature.error);
+      return result;
+    }
+    if (types.isProduct(nested)) {
+      const auto &record = types.product(nested);
+      if (record.kind == AggregateKind::Optional &&
+          !record.components.empty())
+        return self(self, record.components[0]) + "?";
+      if (record.kind == AggregateKind::Outcome &&
+          record.components.size() == 2)
+        return self(self, record.components[0]) + " throws " +
+               self(self, record.components[1]);
+      if (record.kind == AggregateKind::Tuple) {
+        std::string result = "(";
+        for (std::size_t i = 0; i < record.components.size(); ++i) {
+          if (i)
+            result += ", ";
+          result += self(self, record.components[i]);
+        }
+        if (record.components.size() == 1)
+          result += ",";
+        return result + ")";
+      }
+      if (record.kind == AggregateKind::Array &&
+          !record.components.empty()) {
+        auto count = types.constantValue(record.arrayCount);
+        return "[" + self(self, record.components[0]) + "; " +
+               (count ? std::to_string(*count)
+                      : record.arrayCount == Type::Unknown
+                            ? std::to_string(record.fields.size())
+                            : self(self, record.arrayCount)) +
+               "]";
+      }
+      if (record.kind == AggregateKind::Range &&
+          !record.components.empty())
+        return "Range<" + self(self, record.components[0]) + ">";
+      if (record.kind == AggregateKind::Pin && !record.components.empty())
+        return "pinned " + self(self, record.components[0]);
+      if (record.kind == AggregateKind::Coroutine &&
+          record.components.size() >= 2)
+        return "future yielding " + self(self, record.components[0]);
+      if (auto name = structuralPath(record.kind); !name.empty()) {
+        std::string result = path(name);
+        if (record.components.empty())
+          return result;
+        auto argument = record.components[0];
+        if ((record.kind == AggregateKind::Ref ||
+             record.kind == AggregateKind::RefMut) &&
+            types.isView(argument))
+          argument = types.view(argument).payload;
+        return result + "<" + self(self, argument) + ">";
+      }
+
+      const auto origin = record.genericOrigin == Type::Unknown
+                              ? nested
+                              : record.genericOrigin;
+      const auto &base = types.product(origin);
+      const auto name = path(base.name);
+      const auto &arguments = record.genericOrigin == Type::Unknown
+                                  ? record.genericParameters
+                                  : record.genericArguments;
+      if (!arguments.empty()) {
+        const auto &typeArgument = arguments.front();
+        if (base.name == "alloc::boxed::Box")
+          return "heap " + self(self, typeArgument);
+        if (base.name == "alloc::arc::Arc")
+          return "shared " + self(self, typeArgument);
+        if (base.name == "alloc::rc::Rc")
+          return "local shared " + self(self, typeArgument);
+        if (base.name == "alloc::arc::Weak")
+          return "weak " + self(self, typeArgument);
+        if (base.name == "alloc::rc::Weak")
+          return "local weak " + self(self, typeArgument);
+      }
+      if (record.genericOrigin != Type::Unknown &&
+          !record.genericArguments.empty()) {
+        std::string result = name + "<";
+        for (std::size_t i = 0; i < record.genericArguments.size(); ++i) {
+          if (i)
+            result += ", ";
+          result += self(self, record.genericArguments[i]);
+        }
+        return result + ">";
+      }
+      return name;
+    }
+    return displayType(nested);
+  };
+  return render(render, type);
 }
 bool TypeStore::isCopy(Type type) const {
   return isFunctionPointer(type) || isPointer(type) ? true

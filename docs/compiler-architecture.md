@@ -29,7 +29,7 @@ for them.
 | `documentation` | `mettle doc` and doctests, verified on macOS arm64: documentation extraction from the lexer's comment tokens (`///` item docs, `//!` module docs, declaration headers as written, visibility filtering, `document.cpp`), reduced markdown blocks (`markdown.cpp`), fenced-example classification and generated `@test` functions (`doctest.cpp`) and deterministic dependency-free HTML (`html.cpp`). Resolved-reference rendering accepts canonical identities from the driver; the static search index remains deterministic. The new reference rendering is implemented, unverified (not yet built). | Performing name resolution, type checking, filesystem I/O, process execution, LLVM |
 | `resolution` | Compilation-local module identities, distinct type/value/module/macro namespaces, item/import scopes, package alias mounting, `pub(path)` visibility boundaries and canonical declaration names; source-provider-driven module assembly | Inference, backend types or filesystem I/O |
 | `packages` | Manifest/lock TOML, SemVer requirements, dependency solving with features over path, local-registry and Git sources, checksums, the package build plan (mounts, build scripts and `[macros]` programs handed to the driver) and the content-addressed build store (`store`) | Source parsing, semantics, network access or artifact publication |
-| `types` | Compiler-owned language type identities/operations, target facts and target-layout results | Parsed AST, LLVM types/target machines, toolchain state |
+| `types` | Compiler-owned language type identities/operations, source-oriented diagnostic type display, target facts and target-layout results | Parsed AST, LLVM types/target machines, toolchain state |
 | `consteval` | Pure target-aware compile-time interpreter over syntax: scalar/aggregate values at the selected target's integer widths, `const fn` calls, control flow, step/depth budgets (`error[limit]`); names and diagnostics come from a host interface | Name resolution, checker state, LLVM, host-width arithmetic |
 | `places` | Function-local storage roots, typed field paths and structural overlap | AST traversal, CFG control flow, mutability/loan policy |
 | `semantics` | Lexical resolution, module-resolution consumption, inference, flow facts and checked syntax | LLVM, code emission, filesystem/linker side effects |
@@ -106,6 +106,13 @@ not across independent compilations. Name binding and constructor lookup stay
 in semantics; the type store holds identities, descriptors and display names,
 not the source namespace resolver. Generic/region identities must extend that
 ownership model; serialization/query identities are separate from in-memory IDs.
+
+Diagnostics format `TypeId`s through the types component's source-oriented
+display function rather than `TypeStore::name`, which remains an internal
+canonical identity. The display reconstructs source forms for views, owners,
+callables, sums, tuples and arrays; it omits regions unless a separate
+diagnostic explicitly concerns them. The support path formatter chooses short
+nominal names unless two names in the same diagnostic collide.
 
 `types/regions` owns compilation-local region identities, declaration binders,
 universe ancestry and intersection regions. Names resolve to identities within

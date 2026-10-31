@@ -251,7 +251,7 @@ std::optional<int> Checker::genericConstruction(Node &n, bool reachable,
     if (bindings[i].argument == Type::Unknown)
       error("type", n.span,
             "cannot infer generic constructor argument '" +
-                displayPath(checked.types->name(bindings[i].parameter)) + "'");
+                displayType(*checked.types, bindings[i].parameter) + "'");
   }
   genericEnvironment = caller;
   genericObligations(environment, bindings, n.span);

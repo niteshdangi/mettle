@@ -1386,6 +1386,28 @@ def language_server():
         assert diagnostic["range"]["end"] == {"line": 1, "character": 16}, \
             diagnostic
 
+        with_help = "file:///workspace/let-mut.mt"
+        client.open(with_help, "fn main() { let mut value = 1 }\n")
+        published = client.wait(
+            lambda m: m.get("method") == "textDocument/publishDiagnostics"
+            and m["params"]["uri"] == with_help)["params"]["diagnostics"]
+        assert any("help: use `var` for a mutable local binding"
+                   in item["message"] for item in published), published
+
+        readable = "file:///workspace/readable-types.mt"
+        client.open(readable,
+                    "type Record<T> { value: T }\n"
+                    "fn accepts(value: Record<i32>) {}\n"
+                    "fn main() {\n"
+                    "    let value: Record<bool> = Record(true)\n"
+                    "    accepts(value)\n"
+                    "}\n")
+        published = client.wait(
+            lambda m: m.get("method") == "textDocument/publishDiagnostics"
+            and m["params"]["uri"] == readable)["params"]["diagnostics"]
+        assert any("expected Record<i32>, found Record<bool>" in item["message"]
+                   for item in published), published
+
         # Incomplete source still produces diagnostics and keeps serving.
         client.notify("textDocument/didChange", {
             "textDocument": {"uri": broken, "version": 2},

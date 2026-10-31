@@ -168,7 +168,8 @@ private:
     return checked.functions.at(
         static_cast<std::size_t>(&function - module.functions.data()));
   }
-  void error(std::string phase, Span span, std::string message);
+  void error(std::string phase, Span span, std::string message,
+             std::vector<DiagnosticMessage> related = {});
   void diagnoseBorrowedMatchMove(const Node &expression, int variable);
   bool inOrdinaryMatchPattern = false;
   void coerce(Node &expression, int actual, int expected, Span span);
@@ -431,6 +432,8 @@ private:
   int bindingPattern(Node &node, bool reachable);
   int conditionalPattern(Node &node, bool reachable);
   std::string definitionName(Span span, std::string_view spelling) const;
+  std::vector<DiagnosticMessage>
+  vocabularyHelp(std::string_view spelling) const;
   // Product declarations with this canonical name, in declaration order.
   const std::vector<const Module::Product *> &
   productsNamed(const std::string &name) const;

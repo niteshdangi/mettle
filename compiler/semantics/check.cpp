@@ -8,12 +8,14 @@
 #include <stdexcept>
 
 namespace mettle {
-void Checker::error(std::string phase, Span span, std::string message) {
+void Checker::error(std::string phase, Span span, std::string message,
+                    std::vector<DiagnosticMessage> related) {
   if (phase == "type" && std::any_of(staticStates.begin(), staticStates.end(),
                                      [](auto state) { return state == 1; }))
     phase = "constant";
   ++reportedErrors;
-  diagnostics.error(std::move(phase), span, std::move(message));
+  diagnostics.error(std::move(phase), span, std::move(message),
+                    std::move(related));
 }
 
 std::optional<CheckedModule> Checker::run() {
@@ -763,7 +765,7 @@ std::optional<CheckedModule> Checker::run() {
         !integerLiteralFits(*resolved.numeric, resolved.type, pointerBits()))
       error("type", syntax->span,
             "integer literal is outside the " +
-                displayPath(checked.types->name(resolved.type)) + " range");
+                displayType(*checked.types, resolved.type) + " range");
     if (syntax->kind == Kind::Cast) {
       auto source = checked.nodes.at(syntax->children[0].get()).type;
       if (source != Type::Never && source != Type::Unknown &&
