@@ -141,6 +141,7 @@ public:
     }
     lowering::opaqueAdapters(program, *types, checked->interfaceDatabase(),
                              diagnostics);
+    lowering::erasedAdapters(program, *types, checked->interfaceDatabase());
     program.functionPackages.resize(program.functions.size());
     // Declaration-only normalization of a type is fixed per function.
     std::map<std::pair<const ir::Function *, Type>, Type> declared;
@@ -269,7 +270,7 @@ public:
       for (std::size_t i = prefix; i < call.typeArguments.size(); ++i)
         methodArguments.push_back(
             solver.normalize(call.typeArguments[i], bindings, call.span));
-      if (store.isOpaque(self)) {
+      if (store.isOpaque(self) || store.isErased(self)) {
         for (const auto &adapter : program.opaqueAdapters) {
           if (adapter.method != call.interfaceMethod ||
               store.erased(adapter.interfaceType).declaration !=
@@ -279,7 +280,14 @@ public:
           auto substitutions = solver.match(adapter.self, self);
           if (!substitutions)
             continue;
-          bool valid = true;
+          // Erased dispatch tables may hold one interface at several
+          // arguments; associated bindings do not select the method.
+          bool valid =
+              !store.isErased(self) ||
+              store
+                      .erased(solver.normalize(adapter.interfaceType,
+                                               *substitutions, call.span))
+                      .arguments == store.erased(interface).arguments;
           for (std::size_t i = 0; i < methodArguments.size(); ++i) {
             auto pattern = adapter.methodArguments[i];
             if (store.isParameter(pattern))
@@ -301,8 +309,11 @@ public:
           call.interfaceType = call.erasedDispatch ? interface : Type::Unknown;
           return true;
         }
-        errors.error("internal", call.span, "missing opaque interface adapter");
-        return false;
+        if (store.isOpaque(self)) {
+          errors.error("internal", call.span,
+                       "missing opaque interface adapter");
+          return false;
+        }
       }
       auto selected = solver.method(self, interface, call.interfaceMethod,
                                     methodArguments, call.span);

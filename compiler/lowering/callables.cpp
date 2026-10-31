@@ -6,6 +6,8 @@ namespace mettle::lowering {
 using ir::Access;
 using ir::Exit;
 using ir::Op;
+// Gives each unresolved indirect call the contract function of its signature;
+// rerunning it after later passes add calls reuses the existing contracts.
 void callableContracts(ir::Program &program) {
   auto key = [&](const ir::Instruction &instruction) {
     const auto &signature = program.types->callable(instruction.indirectType);
@@ -15,15 +17,30 @@ void callableContracts(ir::Program &program) {
     return std::tuple{instruction.indirectType, twoPhase,
                       instruction.callLocalParameters};
   };
+  auto externalName = [](Type type, bool twoPhase) {
+    return "mettle.indirect." + std::to_string(type.index()) +
+           (twoPhase ? ".two-phase" : "");
+  };
+  std::map<std::pair<std::string, std::vector<std::size_t>>, int> existing;
+  for (std::size_t f = 0; f < program.functions.size(); ++f)
+    if (program.functions[f].indirectContract)
+      existing.emplace(std::pair{program.functions[f].externalName,
+                                 program.functions[f].callLocalParameters},
+                       static_cast<int>(f));
   std::map<std::tuple<Type, bool, std::vector<std::size_t>>, int> contracts;
   for (const auto &function : program.functions)
     for (const auto &block : function.blocks)
       for (const auto &instruction : block.instructions)
-        if (instruction.op == Op::IndirectCall)
+        if (instruction.op == Op::IndirectCall && instruction.callee < 0)
           contracts.try_emplace(key(instruction), -1);
   auto ordinary = program.functions.size();
   for (auto &[identity, index] : contracts) {
     const auto &[type, twoPhase, local] = identity;
+    if (auto found = existing.find({externalName(type, twoPhase), local});
+        found != existing.end()) {
+      index = found->second;
+      continue;
+    }
     const auto &signature = program.types->callable(type);
     auto suffix = twoPhase ? ".two-phase" : "";
     ir::Function contract{"<indirect-" + std::to_string(type.index()) + suffix +
@@ -33,8 +50,7 @@ void callableContracts(ir::Program &program) {
                           {},
                           {},
                           0};
-    contract.externalName =
-        "mettle.indirect." + std::to_string(type.index()) + suffix;
+    contract.externalName = externalName(type, twoPhase);
     contract.indirectContract = true;
     contract.abi = signature.abi;
     contract.variadic = signature.variadic;
@@ -53,7 +69,7 @@ void callableContracts(ir::Program &program) {
   for (std::size_t f = 0; f < ordinary; ++f)
     for (auto &block : program.functions[f].blocks)
       for (auto &instruction : block.instructions)
-        if (instruction.op == Op::IndirectCall) {
+        if (instruction.op == Op::IndirectCall && instruction.callee < 0) {
           instruction.callee = contracts.at(key(instruction));
           instruction.typeArguments =
               program.functions[instruction.callee].genericParameters;

@@ -45,6 +45,97 @@ TypeSyntax asyncFutureProjection(const Module::Interface &interface,
     result.arguments.push_back(genericArgument(parameter));
   return result;
 }
+// Companion of an `async(heap) fn m`: a hidden default method with the same
+// parameters that pins the future of `self.m(...)` on the heap and returns it
+// erased. Each implementation's instance is that implementation's boxing shim,
+// so erased calls dispatch to it. Borrowed parameters without a named region
+// receive one, and the erased future lives no longer than every region.
+Function erasedAsyncCompanion(const Function &method, std::string_view name,
+                              const std::string &interface, Span span) {
+  Function result;
+  result.name = interface + "." + erasedAsyncName(name);
+  // Definitions are identified by span; the contract token names this one.
+  result.span = span;
+  result.item.visibility = method.item.visibility;
+  result.owner = method.owner;
+  result.interfaceOwner = method.interfaceOwner;
+  result.receiver = method.receiver;
+  result.explicitReceiver = method.explicitReceiver;
+  result.unsafeFunction = method.unsafeFunction;
+  result.genericParameters = method.genericParameters;
+  result.constraints = method.constraints;
+  for (const auto &parameter : method.parameters) {
+    result.parameters.push_back(
+        {parameter.name, parameter.annotation, parameter.span, parameter.mode});
+    auto &copy = result.parameters.back();
+    copy.format = parameter.format;
+    if ((copy.mode == "read" || copy.mode == "mut") &&
+        copy.annotation.sources.empty()) {
+      GenericParameter region;
+      region.kind = GenericParameterKind::Region;
+      region.name = "$erased_" + std::to_string(result.parameters.size());
+      region.span = parameter.span;
+      copy.annotation.sources.push_back(region.name);
+      result.genericParameters.push_back(std::move(region));
+    }
+  }
+  TypeSyntax output = method.asyncOutput;
+  if (!method.asyncError.empty()) {
+    TypeSyntax outcome;
+    outcome.form = TypeForm::Outcome;
+    outcome.elements.push_back(std::move(output));
+    outcome.elements.push_back(method.asyncError);
+    output = std::move(outcome);
+  }
+  TypeSyntax future = namedType("core::future::Future");
+  GenericArgument binding;
+  binding.binding = "Output";
+  binding.span = method.span;
+  binding.type = std::make_shared<const TypeSyntax>(std::move(output));
+  future.arguments.push_back(std::move(binding));
+  TypeSyntax erased;
+  erased.form = TypeForm::Erased;
+  erased.elements.push_back(std::move(future));
+  for (const auto &parameter : result.genericParameters)
+    if (parameter.kind == GenericParameterKind::Region)
+      erased.sources.push_back(parameter.name);
+  TypeSyntax owner;
+  owner.form = TypeForm::Owner;
+  owner.ownerKind = OwnerKind::Heap;
+  owner.nested = std::make_shared<const TypeSyntax>(std::move(erased));
+  result.annotation.form = TypeForm::Pinned;
+  result.annotation.elements.push_back(std::move(owner));
+
+  auto make = [&](Kind kind, std::string text = "") {
+    auto value = std::make_unique<Node>();
+    value->kind = kind;
+    value->span = method.span;
+    value->text = std::move(text);
+    return value;
+  };
+  auto receiver = make(Kind::Name, "self");
+  auto member = make(Kind::Field, std::string(name));
+  member->children.push_back(std::move(receiver));
+  auto call = make(Kind::Call);
+  call->children.push_back(std::move(member));
+  for (std::size_t p = 1; p < method.parameters.size(); ++p) {
+    const auto &parameter = method.parameters[p];
+    auto argument = make(Kind::Name, parameter.name);
+    if (parameter.mode == "read" || parameter.mode == "mut") {
+      auto borrow = make(Kind::Unary, parameter.mode);
+      borrow->children.push_back(std::move(argument));
+      argument = std::move(borrow);
+    }
+    call->children.push_back(std::move(argument));
+  }
+  auto pin = make(Kind::Call);
+  pin->children.push_back(make(Kind::Name, "alloc::boxed::pin"));
+  pin->children.push_back(std::move(call));
+  auto body = make(Kind::Block);
+  body->children.push_back(std::move(pin));
+  result.body = NodeOwner(std::move(body));
+  return result;
+}
 } // namespace
 
 TypeSyntax Parser::boundType() {
@@ -120,6 +211,16 @@ Module::Interface Parser::interfaceDeclaration() {
     } else {
       std::string mode = "read";
       pendingAsync = take("async");
+      std::string futureStorage;
+      Span storageSpan;
+      if (pendingAsync && take("(")) {
+        storageSpan = peek().span;
+        if (!take("heap"))
+          fail("expected `heap`, the supported erased future storage",
+               "signature");
+        futureStorage = "heap";
+        expect(")");
+      }
       if (is("mut") || is("take") || is("static"))
         mode = tokens[position++].text;
       auto method = function(true, true);
@@ -183,7 +284,25 @@ Module::Interface Parser::interfaceDeclaration() {
         method.parameters.insert(
             method.parameters.begin(),
             {"self", TypeSyntax{"Self", "", {}, {}}, method.span, mode});
-      result.methods.push_back(std::move(method));
+      if (!futureStorage.empty()) {
+        if (mode == "static" || mode == "take")
+          fail("an `async(heap)` method needs a read or mut receiver",
+               "signature");
+        if (method.asyncOutput.empty())
+          fail("an `async(heap)` method declares its output type",
+               "signature");
+        for (const auto &parameter : method.parameters)
+          if (parameter.pattern)
+            fail("`async(heap)` method parameters must be named",
+                 "signature");
+        method.futureStorage = futureStorage;
+        auto shortName = method.name.substr(method.name.rfind('.') + 1);
+        auto companion =
+            erasedAsyncCompanion(method, shortName, result.name, storageSpan);
+        result.methods.push_back(std::move(method));
+        result.methods.push_back(std::move(companion));
+      } else
+        result.methods.push_back(std::move(method));
     }
     separators();
   }
@@ -223,6 +342,16 @@ Module::Implementation Parser::implementationDeclaration() {
     } else {
       std::string mode = "read";
       pendingAsync = take("async");
+      std::string futureStorage;
+      Span storageSpan;
+      if (pendingAsync && take("(")) {
+        storageSpan = peek().span;
+        if (!take("heap"))
+          fail("expected `heap`, the supported erased future storage",
+               "signature");
+        futureStorage = "heap";
+        expect(")");
+      }
       if (is("mut") || is("take") || is("static"))
         mode = tokens[position++].text;
       auto method = function();

@@ -390,3 +390,50 @@ extend<T: fmt.Display, A: Allocator> Rc<T, A> implements fmt.Display {
 extend<T: fmt.Debug, A: Allocator> Rc<T, A> implements fmt.Debug {
     fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try T.(fmt.Debug).fmt(self.get(), mut f) }
 }
+
+// Shared owner whose payload never moves until the last owner destroys it.
+// Only `pin` creates one: an existing `Rc` may have unpinned siblings that
+// could still move the payload out. Owners reach the payload only by
+// shared or pinned-read access.
+pub type Pinned<T: unsized, A: Allocator = Global> {
+    p: ptr<mut T>
+    h: ptr<mut RcHeader>
+    a: A
+    drop {
+        unsafe {
+            let b = self.h
+            (*b).strong -= 1usize
+            if (*b).strong == 0usize {
+                let _implicit = WeakRelease(b, core.ptr.from_mut(self.a))
+                core.ptr.drop_in_place(self.p)
+            }
+        }
+    }
+}
+
+pub fn pin<T>(value: take T): Pinned<T> {
+    let raw = new(value).into_raw()
+    Pinned(raw.p, raw.h, raw.a)
+}
+
+extend<T: unsized, A: Allocator> Pinned<T, A> {
+    pub fn as_ref(): pinned read T from self { unsafe { core.pin.Pin.new_unchecked(read *self.p) } }
+    pub fn get_ref(): read T from self { unsafe { read *self.p } }
+    pub fn ptr_eq(other: read Pinned<T, A>): bool { self.h == other.h }
+}
+extend<T: unsized, A: Allocator + Clone> Pinned<T, A> {
+    // Another pinned owner of the same payload.
+    pub fn retain(): Pinned<T, A> {
+        let allocator = self.a.clone()
+        unsafe { (*self.h).strong = bump((*self.h).strong) }
+        Pinned(self.p, self.h, allocator)
+    }
+}
+extend<T: unsized, A: Allocator + Clone> Pinned<T, A> implements Clone {
+    fn clone(): Pinned<T, A> { self.retain() }
+}
+extend<T: unsized, A: Allocator> Pinned<T, A> implements Deref {
+    type Target = T
+    fn deref(): read T from self { self.get_ref() }
+}
+unsafe extend<T: unsized, A: Allocator> Pinned<T, A> implements Unpin {}

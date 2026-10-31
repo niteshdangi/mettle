@@ -85,10 +85,9 @@ void Checker::finalizeErasure() {
         slots.push_back(slot);
         const auto &source = module.functions[method.function];
         const auto &function = checked.functions[method.function];
+        // An async method's future type differs per implementation; erased
+        // calls go through its `async(heap)` companion instead.
         if (source.asynchronous) {
-          error("feature", span,
-                "erased async methods require an explicit future-storage "
-                "erasure contract");
           signatures.emplace_back();
           signatures.back().result = Type::Unknown;
           continue;

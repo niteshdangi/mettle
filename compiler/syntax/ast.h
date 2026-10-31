@@ -3,6 +3,8 @@
 #include "syntax/token.h"
 #include <memory>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <utility>
 
 namespace mettle {
@@ -253,6 +255,12 @@ struct Parameter {
   // `format Message`: the argument is a recipe that cannot escape the call.
   bool format = false;
 };
+// Hidden interface method that returns the erased future of an
+// `async(heap)` method.
+inline std::string erasedAsyncName(std::string_view method) {
+  return "$erased_" + std::string(method);
+}
+
 struct Function {
   std::string name;
   TypeSyntax annotation;
@@ -277,6 +285,9 @@ struct Function {
   TypeSyntax asyncDefaultBodyResult{};
   TypeSyntax asyncOutput{}, asyncError{};
   std::string asyncFuture{};
+  // `async(heap)` on an interface method: erased calls return the future in
+  // this storage through the generated companion method.
+  std::string futureStorage{};
   std::string abi{};
   bool foreignDeclaration = false;
   bool variadic = false;

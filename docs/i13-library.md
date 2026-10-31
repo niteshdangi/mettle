@@ -2,7 +2,9 @@
 
 Repo: /Users/niteshkumar/Projects/mettle-lang, main at `940637d`. I01-I12 are
 closed for the macOS ARM64 host and Darwin ARM64 target only. You own I13's
-library work and the compiler changes it needs.
+library work and the compiler changes it needs, except pinned owners (S003),
+erased async methods (L048/L053) and the language/ABI/target probe rows, which
+the orchestrator handles.
 
 ## Read first
 - AGENTS.md, CONTRIBUTING.md, docs/code-quality.md
@@ -87,7 +89,6 @@ Compiler work also in your scope:
   integer-literal variable should take the index type of the receiver's sole
   integer Index implementation. Then drop the `0usize` suffixes in
   tests/source/run/i13-text-whitespace-splits-boundaries.mt (~lines 352-415).
-- **S003:** pinned owning handles (safe `Pin` of heap/shared owners).
 - **Sanitized hosted-std compile time:** 37 s against a 30 s probe bound
   (Release is 2.7 s). Diagnose before changing anything.
 

@@ -118,10 +118,32 @@ std::optional<std::size_t> Checker::receiverCandidate(Type receiver,
       for (std::size_t method = 0; method < definition.methods.size();
            ++method) {
         const auto &entry = definition.methods[method];
-        if (entry.name == name &&
-            accepts(static_cast<std::size_t>(entry.function)))
-          candidates.emplace_back(entry.function, inherited,
-                                  static_cast<int>(method));
+        if (entry.name != name ||
+            !accepts(static_cast<std::size_t>(entry.function)))
+          continue;
+        const auto &source = module.functions[entry.function];
+        if (checked.types->isErased(self) && source.asynchronous) {
+          auto companion = std::find_if(
+              definition.methods.begin(), definition.methods.end(),
+              [&](const auto &other) {
+                return other.name == erasedAsyncName(name);
+              });
+          if (companion == definition.methods.end()) {
+            error("type", call.span,
+                  "async method '" + std::string(name) +
+                      "' is not available through '" +
+                      displayType(*checked.types, self) +
+                      "'; declare it `async(heap)` to return a pinned heap "
+                      "future");
+            continue;
+          }
+          candidates.emplace_back(
+              companion->function, inherited,
+              static_cast<int>(companion - definition.methods.begin()));
+          continue;
+        }
+        candidates.emplace_back(entry.function, inherited,
+                                static_cast<int>(method));
       }
     }
   };

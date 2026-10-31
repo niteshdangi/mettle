@@ -197,6 +197,8 @@ struct Program {
   std::vector<std::string> functionPackages{};
   std::shared_ptr<const TypeStore> types = std::make_shared<const TypeStore>();
   std::vector<int> closureFunctions{};
+  // Interface dispatch for an opaque or erased self type, selected when a
+  // generic call is instantiated with it.
   struct OpaqueAdapter {
     Type self, interfaceType;
     int method, function;

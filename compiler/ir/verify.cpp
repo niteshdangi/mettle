@@ -477,10 +477,8 @@ bool function(const Function &f, const Program &program,
             auto origin = program.types->product(type).genericOrigin;
             if (origin == Type::Unknown)
               return false;
-            auto name = program.types->product(origin).name;
-            return name == "alloc::boxed::Box" || name == "alloc::arc::Arc" ||
-                   name == "alloc::arc::Weak" || name == "alloc::rc::Rc" ||
-                   name == "alloc::rc::Weak";
+            return !ownerSpelling(program.types->product(origin).name)
+                        .empty();
           };
           bool compatible = isOwner(n.operands[0].type) && isOwner(result) &&
                             source.genericOrigin == target.genericOrigin &&

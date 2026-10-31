@@ -177,10 +177,13 @@ void Checker::completeClosure(ClosureFacts &closure, bool final) {
       error("ownership", capture.span,
             "moving a captured place requires a take closure");
     auto rootMode = facts(*closure.parent).locals[capture.source.root].mode;
+    // A copy of a borrowed place is only equivalent to the borrow when the
+    // closure does not write through it.
     capture.viaView =
         syntax.flag && capture.mode != ParameterMode::Take &&
         (rootMode == ParameterMode::Read || rootMode == ParameterMode::Mut) &&
-        (!checked.types->isCopy(capture.type) ||
+        (capture.mode == ParameterMode::Mut ||
+         !checked.types->isCopy(capture.type) ||
          !checked.types->isSized(capture.type));
     capture.storedType =
         syntax.flag && !capture.viaView

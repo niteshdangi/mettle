@@ -55,6 +55,22 @@ Type TypeStore::vectorType(std::string name, Type element, unsigned lanes,
   record.vector = ProductType::VectorShape{element, lanes, alignment};
   return result;
 }
+std::string_view ownerSpelling(std::string_view nominal) {
+  static constexpr std::pair<std::string_view, std::string_view> owners[] = {
+      {"alloc::boxed::Box", "heap"},
+      {"alloc::arc::Arc", "shared"},
+      {"alloc::rc::Rc", "local shared"},
+      {"alloc::arc::Weak", "weak"},
+      {"alloc::rc::Weak", "local weak"},
+      {"alloc::boxed::Pinned", "pinned heap"},
+      {"alloc::arc::Pinned", "pinned shared"},
+      {"alloc::rc::Pinned", "pinned local shared"}};
+  for (const auto &[name, spelling] : owners)
+    if (name == nominal)
+      return spelling;
+  return {};
+}
+
 std::string_view typeName(Type type) {
   for (auto [candidate, name] : {std::pair{Type::I8, "i8"},
                                  {Type::I16, "i16"},
@@ -718,16 +734,8 @@ std::string displayType(const TypeStore &types, Type type,
                                   : record.genericArguments;
       if (!arguments.empty()) {
         const auto &typeArgument = arguments.front();
-        if (base.name == "alloc::boxed::Box")
-          return "heap " + self(self, typeArgument);
-        if (base.name == "alloc::arc::Arc")
-          return "shared " + self(self, typeArgument);
-        if (base.name == "alloc::rc::Rc")
-          return "local shared " + self(self, typeArgument);
-        if (base.name == "alloc::arc::Weak")
-          return "weak " + self(self, typeArgument);
-        if (base.name == "alloc::rc::Weak")
-          return "local weak " + self(self, typeArgument);
+        if (auto spelling = ownerSpelling(base.name); !spelling.empty())
+          return std::string(spelling) + " " + self(self, typeArgument);
       }
       if (record.genericOrigin != Type::Unknown &&
           !record.genericArguments.empty()) {

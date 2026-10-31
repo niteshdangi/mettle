@@ -1,7 +1,9 @@
+#include "lowering/builder.h"
 #include "lowering/scalar.h"
 #include <algorithm>
 #include <functional>
 #include <map>
+#include <set>
 #include <tuple>
 
 namespace mettle::lowering {
@@ -207,5 +209,150 @@ void opaqueAdapters(ir::Program &program, TypeStore &types,
         adapt(call);
   for (auto &adapter : adapters)
     program.functions.push_back(std::move(adapter));
+}
+
+void erasedAdapters(ir::Program &program, TypeStore &types,
+                    const interfaces::Database &database) {
+  Diagnostics quiet;
+  interfaces::Solver solver(types, database, quiet, {}, {}, true);
+  std::set<Type> visited, erasedTypes;
+  std::function<void(Type)> visit = [&](Type type) {
+    if (type == Type::Unknown || !visited.insert(type).second)
+      return;
+    if (types.isErased(type))
+      erasedTypes.insert(type);
+    if (types.isView(type))
+      visit(types.view(type).payload);
+    if (types.isPointer(type))
+      visit(types.pointer(type).payload);
+    if (types.isProduct(type)) {
+      const auto &product = types.product(type);
+      for (const auto &field : product.fields)
+        visit(field.type);
+      for (auto argument : product.genericArguments)
+        visit(argument);
+      for (auto component : product.components)
+        visit(component);
+    }
+  };
+  for (const auto &function : program.functions) {
+    visit(function.result);
+    for (const auto &local : function.locals)
+      visit(local.type);
+  }
+  for (auto erased : erasedTypes) {
+    const auto &descriptor = types.erased(erased);
+    auto parameters = types.typeParameters(erased);
+    std::sort(parameters.begin(), parameters.end());
+    parameters.erase(std::unique(parameters.begin(), parameters.end()),
+                     parameters.end());
+    for (std::size_t slot = 0; slot < descriptor.methodSlots.size(); ++slot) {
+      if (descriptor.methods[slot].result == Type::Unknown)
+        continue;
+      const auto ownerType = descriptor.methodOwners[slot];
+      const auto &owner = types.erased(ownerType);
+      const auto method = descriptor.methodSlots[slot];
+      const auto &contract =
+          database.definitions[owner.declaration].methods[method];
+      const auto &declaration = program.functions[contract.function];
+      std::vector<Type> arguments{erased};
+      arguments.insert(arguments.end(), owner.arguments.begin(),
+                       owner.arguments.end());
+      if (arguments.size() != declaration.genericParameters.size())
+        continue;
+      std::vector<TypeBinding> bindings;
+      for (std::size_t p = 0; p < arguments.size(); ++p)
+        bindings.push_back({declaration.genericParameters[p], arguments[p]});
+      ir::Function adapter{"<erased-adapter." +
+                               std::to_string(program.functions.size()) + ">",
+                           solver.normalize(declaration.result, bindings, {}),
+                           declaration.parameters,
+                           {},
+                           {},
+                           0};
+      adapter.genericParameters = parameters;
+      adapter.targetFeatures = declaration.targetFeatures;
+      adapter.twoPhaseReceiver = declaration.twoPhaseReceiver;
+      adapter.resultSources = declaration.resultSources;
+      adapter.genericResultSources = declaration.genericResultSources;
+      adapter.blocks.emplace_back();
+      auto &instructions = adapter.blocks[0].instructions;
+      auto emit = [&](ir::Instruction instruction, Type type,
+                      ir::Access access = ir::Access::Owned) {
+        instruction.result = {adapter.values++, type, access};
+        auto result = instruction.result;
+        instructions.push_back(std::move(instruction));
+        return result;
+      };
+      std::vector<ir::Value> operands;
+      for (std::size_t p = 0; p < declaration.parameters; ++p) {
+        auto mode = declaration.locals[p].mode;
+        auto type = solver.normalize(declaration.locals[p].type, bindings, {});
+        adapter.locals.push_back({"argument", type, false, {}, mode, 0,
+                                  static_cast<std::uint32_t>(p)});
+        auto access = mode == ParameterMode::Read  ? ir::Access::Read
+                      : mode == ParameterMode::Mut ? ir::Access::Mut
+                                                   : ir::Access::Owned;
+        operands.push_back(emit({access == ir::Access::Read  ? ir::Op::BorrowRead
+                                 : access == ir::Access::Mut ? ir::Op::BorrowMut
+                                 : mode == ParameterMode::Take ||
+                                         !types.isCopy(type)
+                                     ? ir::Op::Move
+                                     : ir::Op::Load,
+                                 {},
+                                 {},
+                                 {},
+                                 "",
+                                 {static_cast<int>(p), {}},
+                                 -1,
+                                 0,
+                                 {}},
+                                type, access));
+      }
+      const auto signature = descriptor.methodTypes[slot];
+      ir::Instruction witness{ir::Op::WitnessMethod,
+                              {},
+                              {operands.front()},
+                              {},
+                              "",
+                              {-1, {}},
+                              -1,
+                              static_cast<std::int32_t>(slot),
+                              {}};
+      witness.interfaceType = ownerType;
+      witness.interfaceMethod = static_cast<int>(method);
+      ir::Instruction call{
+          ir::Op::IndirectCall, {}, std::move(operands), {}, "", {-1, {}}, -1,
+          0,                    {}};
+      call.target = emit(std::move(witness), signature);
+      call.indirectType = signature;
+      call.erasedDispatch = true;
+      // As in direct erased dispatch, an access parameter without a declared
+      // region is call-local and the implementation cannot retain it.
+      const auto regionSignature = declaration.regionSignature;
+      if (types.isFunctionPointer(regionSignature)) {
+        const auto &regions = types.callable(regionSignature);
+        for (std::size_t p = 0; p < regions.parameters.size() &&
+                                p < regions.parameterRegions.size();
+             ++p)
+          if ((regions.parameters[p].mode == ParameterMode::Read ||
+               regions.parameters[p].mode == ParameterMode::Mut) &&
+              types.regions().get(regions.parameterRegions[p]).name ==
+                  regions.parameters[p].name)
+            call.callLocalParameters.push_back(p);
+      }
+      auto result = emit(std::move(call), adapter.result);
+      emit({ir::Op::ScopeExit, {}, {}, {}, "", {-1, {}}, -1, 0, {}},
+           Type::Unit);
+      adapter.blocks[0].exit = adapter.result == Type::Never
+                                   ? ir::Terminator{ir::Exit::Unreachable}
+                                   : ir::Terminator{ir::Exit::Return, result};
+      program.opaqueAdapters.push_back(
+          {erased, ownerType, static_cast<int>(method),
+           static_cast<int>(program.functions.size()), {}});
+      program.functions.push_back(std::move(adapter));
+    }
+  }
+  callableContracts(program);
 }
 } // namespace mettle::lowering

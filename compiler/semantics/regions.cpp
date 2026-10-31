@@ -15,11 +15,34 @@ Type Checker::annotation(const TypeSyntax &syntax, Span span,
   if (syntax.empty())
     return Type::Unknown;
   if (syntax.form == TypeForm::Pinned) {
-    auto value = annotation(syntax.elements.at(0), span, owner);
+    const auto &element = syntax.elements.at(0);
+    if (element.form == TypeForm::Owner) {
+      // A pinned owner is its own allocation-library type with the owner's
+      // layout; weak handles do not own the payload and cannot pin it.
+      const char *pinnedOwner =
+          element.ownerKind == OwnerKind::Heap     ? "alloc::boxed::Pinned"
+          : element.ownerKind == OwnerKind::Shared ? "alloc::arc::Pinned"
+          : element.ownerKind == OwnerKind::LocalShared ? "alloc::rc::Pinned"
+                                                        : nullptr;
+      if (!pinnedOwner) {
+        error("type", span, "weak handles cannot be pinned");
+        return Type::Unknown;
+      }
+      if (annotation(*element.nested, span, owner) == Type::Unknown)
+        return Type::Unknown;
+      TypeSyntax nominal;
+      nominal.name = pinnedOwner;
+      GenericArgument argument;
+      argument.type = element.nested;
+      argument.span = span;
+      nominal.arguments.push_back(std::move(argument));
+      return annotation(nominal, span, owner);
+    }
+    auto value = annotation(element, span, owner);
     if (!checked.types->isView(value)) {
-      error("feature", span,
-            "pinned owning handles require the allocation library; use a "
-            "pinned view or inline pinned storage");
+      error("type", span,
+            "pinned requires a view or an owner; write `pinned heap T`, "
+            "`pinned shared T` or `pinned local shared T` for owned storage");
       return Type::Unknown;
     }
     return checked.types->structural(AggregateKind::Pin, {value});

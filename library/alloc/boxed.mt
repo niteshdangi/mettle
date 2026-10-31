@@ -2,6 +2,7 @@ import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import package.core.fmt
 import package.core.hash.{Hash, Hasher}
 import package.core.ops.{Deref, DerefMut}
+import package.core.future.{Future, Context, Poll}
 import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, layout_of_val, free_block, handle_alloc_error}
 import package.core.clone.Clone
 import package.core.slice.drop_values
@@ -154,3 +155,73 @@ extend<T: fmt.Debug, A: Allocator> Box<T, A> implements fmt.Debug {
 // Owned storage moves or is shared exactly when its elements and allocator do.
 unsafe extend<T: Transferable, A: Allocator + Transferable> Box<T, A> implements Transferable {}
 unsafe extend<T: Shareable, A: Allocator + Shareable> Box<T, A> implements Shareable {}
+
+// Unique heap owner whose payload stays at its address until destruction.
+// Moving the handle never moves the payload; safe code reaches the payload
+// mutably only through a pinned view, or directly when it is Unpin.
+pub type Pinned<T: unsized, A: Allocator = super.alloc.Global> {
+    p: ptr<mut T>
+    a: A
+    drop {
+        let _free = unsafe { free_block(self.p.cast<u8>(), layout_of_val(self.get_ref()), core.ptr.from_mut(self.a)) }
+        unsafe { core.ptr.drop_in_place(self.p) }
+    }
+}
+
+// `pinned heap value`: the payload is pinned from its first use.
+pub fn pin<T>(value: take T): Pinned<T> { new(value).into_pinned() }
+
+extend<T: unsized, A: Allocator> Box<T, A> {
+    // A unique heap payload does not move when its owner moves, so pinning
+    // consumes the owner and nothing safe can move the payload out again.
+    pub take fn into_pinned(): Pinned<T, A> {
+        let raw = self.into_raw()
+        Pinned(raw.0, raw.1)
+    }
+}
+
+extend<T: unsized, A: Allocator> Pinned<T, A> {
+    pub fn as_ref(): pinned read T from self { unsafe { core.pin.Pin.new_unchecked(read *self.p) } }
+    pub mut fn as_mut(): pinned mut T from self { unsafe { core.pin.Pin.new_unchecked(mut *self.p) } }
+    pub fn get_ref(): read T from self { unsafe { read *self.p } }
+    pub fn allocator(): read A from self { read self.a }
+    // Safety: the payload stays at its address until it is destroyed, even
+    // after the returned owner no longer pins it.
+    pub take unsafe fn into_inner_unchecked(): Box<T, A> {
+        unsafe {
+            let p = self.p
+            let a = core.ptr.`read`(core.ptr.from_ref(self.a))
+            core.mem.forget(take self)
+            from_raw_in(p, a)
+        }
+    }
+}
+
+extend<T: unsized + Unpin, A: Allocator> Pinned<T, A> {
+    pub mut fn get_mut(): mut T from self { unsafe { mut *self.p } }
+    pub take fn into_inner(): Box<T, A> { unsafe { self.into_inner_unchecked() } }
+}
+
+extend<T: unsized, A: Allocator> Pinned<T, A> implements Deref {
+    type Target = T
+    fn deref(): read T from self { self.get_ref() }
+}
+extend<T: unsized + Unpin, A: Allocator> Pinned<T, A> implements DerefMut {
+    type Target = T
+    mut fn deref_mut(): mut T from self { self.get_mut() }
+}
+// Awaiting a pinned owner polls its payload in place.
+extend<T: unsized + Future, A: Allocator> Pinned<T, A> implements Future {
+    type Output = T.(Future).Output
+    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<T.(Future).Output> {
+        let owner: mut Pinned<T, A> = unsafe { self.get_unchecked_mut() }
+        owner.as_mut().poll(mut cx)
+    }
+}
+extend<T: fmt.Debug, A: Allocator> Pinned<T, A> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try T.(fmt.Debug).fmt(self.get_ref(), mut f) }
+}
+// The handle is movable; pinning is a property of the payload's storage.
+unsafe extend<T: unsized, A: Allocator> Pinned<T, A> implements Unpin {}
+unsafe extend<T: Transferable, A: Allocator + Transferable> Pinned<T, A> implements Transferable {}
+unsafe extend<T: Shareable, A: Allocator + Shareable> Pinned<T, A> implements Shareable {}
