@@ -597,9 +597,7 @@ std::string displayType(const TypeStore &types, Type type,
       Type type;
       ~Pop() { active.erase(type); }
     } pop{active, nested};
-    auto path = [&](std::string_view name) {
-      return displayPath(name, paths);
-    };
+    auto path = [&](std::string_view name) { return displayPath(name, paths); };
     if (types.isView(nested) || types.isPointer(nested)) {
       const auto &view = types.view(nested);
       const auto access = view.mode == ParameterMode::Read ? "read " : "mut ";
@@ -638,10 +636,9 @@ std::string displayType(const TypeStore &types, Type type,
     }
     if (types.isCallable(nested)) {
       const auto &signature = types.callable(nested);
-      std::string result =
-          signature.mode == ParameterMode::Mut ? "mut fn("
-          : signature.mode == ParameterMode::Take ? "take fn("
-                                                  : "fn(";
+      std::string result = signature.mode == ParameterMode::Mut    ? "mut fn("
+                           : signature.mode == ParameterMode::Take ? "take fn("
+                                                                   : "fn(";
       for (std::size_t i = 0; i < signature.parameters.size(); ++i) {
         if (i)
           result += ", ";
@@ -659,12 +656,15 @@ std::string displayType(const TypeStore &types, Type type,
       result += "): " + self(self, signature.result);
       if (signature.error != Type::Unknown)
         result += " throws " + self(self, signature.error);
+      if (!signature.abi.empty())
+        result = "extern \"" + signature.abi + "\" " + result;
+      if (signature.unsafeCall)
+        result = "unsafe " + result;
       return result;
     }
     if (types.isProduct(nested)) {
       const auto &record = types.product(nested);
-      if (record.kind == AggregateKind::Optional &&
-          !record.components.empty())
+      if (record.kind == AggregateKind::Optional && !record.components.empty())
         return self(self, record.components[0]) + "?";
       if (record.kind == AggregateKind::Outcome &&
           record.components.size() == 2)
@@ -681,18 +681,16 @@ std::string displayType(const TypeStore &types, Type type,
           result += ",";
         return result + ")";
       }
-      if (record.kind == AggregateKind::Array &&
-          !record.components.empty()) {
+      if (record.kind == AggregateKind::Array && !record.components.empty()) {
         auto count = types.constantValue(record.arrayCount);
         return "[" + self(self, record.components[0]) + "; " +
                (count ? std::to_string(*count)
-                      : record.arrayCount == Type::Unknown
-                            ? std::to_string(record.fields.size())
-                            : self(self, record.arrayCount)) +
+                : record.arrayCount == Type::Unknown
+                    ? std::to_string(record.fields.size())
+                    : self(self, record.arrayCount)) +
                "]";
       }
-      if (record.kind == AggregateKind::Range &&
-          !record.components.empty())
+      if (record.kind == AggregateKind::Range && !record.components.empty())
         return "Range<" + self(self, record.components[0]) + ">";
       if (record.kind == AggregateKind::Pin && !record.components.empty())
         return "pinned " + self(self, record.components[0]);
@@ -711,9 +709,8 @@ std::string displayType(const TypeStore &types, Type type,
         return result + "<" + self(self, argument) + ">";
       }
 
-      const auto origin = record.genericOrigin == Type::Unknown
-                              ? nested
-                              : record.genericOrigin;
+      const auto origin =
+          record.genericOrigin == Type::Unknown ? nested : record.genericOrigin;
       const auto &base = types.product(origin);
       const auto name = path(base.name);
       const auto &arguments = record.genericOrigin == Type::Unknown

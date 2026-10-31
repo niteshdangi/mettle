@@ -779,7 +779,8 @@ std::optional<Type> Checker::genericAnnotation(const TypeSyntax &syntax,
       return result;
     }
   }
-  if (std::any_of(
+  if (typeNames.contains(name) &&
+      std::any_of(
           syntax.arguments.begin(), syntax.arguments.end(),
           [](const auto &argument) { return argument.region.empty(); })) {
     error("type", span, "type does not accept generic arguments");

@@ -28,14 +28,14 @@ extend<region r> CountedPending<region r> implements Future {
 }
 
 fn main(): i32 {
-    let anchor = 0
     let drops = core.sync.atomic.AtomicUsize.new(0usize)
+    let counter = read drops
     let caught = std.panic.catch_panic(take fn(): Unit {
         {
-            var scope = task.async_scope(read anchor)
+            var scope = task.async_scope(counter)
             let panicker = scope.spawn(PanicsOnDrop())
             core.mem.forget(take panicker)
-            let sibling = scope.spawn(CountedPending(read drops))
+            let sibling = scope.spawn(CountedPending(counter))
             core.mem.forget(take sibling)
             {
                 var pin_ = core.pin.Pin.new(mut scope)
