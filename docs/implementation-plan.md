@@ -768,8 +768,8 @@ implementations are implemented and verified on macOS arm64
 (`slice_iterable`); the inherent slice `iter()`/`iter_mut()` methods remain for
 resolution precedence. Composite Debug implementations and the
 generic mutable-formatter loan correction are already present, with nested
-collection coverage described below; they have not been reverified by this
-lane. Unicode `char.is_whitespace` and Unicode-aware `Text.trim*` are
+collection coverage described below; the library suites passed on macOS arm64
+at `749854f`. Unicode `char.is_whitespace` and Unicode-aware `Text.trim*` are
 implemented with compact scalar ranges and verified on macOS arm64 by
 `tests/library/unicode_whitespace.mt`. Unicode
 alphabetic/numeric properties and full character/text case mapping remain
@@ -811,7 +811,8 @@ cannot be reported as retained
 (`tests/source/run/generic-callable-bound-mut-view-is-call-local.mt`).
 Region-declared callable bounds now instantiate their region contracts for
 indirect calls, so argument regions and result sources remain tied to the
-declared callable contract. Implemented, unverified (not yet built).
+declared callable contract; verified on macOS arm64 by the
+`generic-callable-bound-*` source cases (Release CTest 24/24 at `749854f`).
 `tests/alloc/map_entry_blocks_map_use.mt` rejects map use while an entry holds
 its loan.
 `SortedMap`/`SortedSet` are a node B-tree (minimum degree 6, nodes from the
@@ -844,8 +845,8 @@ drop order only. Alloc/core integration (lane allocint): `library/alloc/support.
 `[T]`, `IndexRange`/`IndexRangeMut`, `Clone`, `PartialEq/Eq/PartialOrd/Ord` and
 `Hash`. Scalar `Index<usize>` on a `List` of region-bounded views preserves the
 element view's region separately from the temporary list borrow; focused
-acceptance and escaping-region regressions are added, but this fix is
-implemented and unverified pending lane integration. `String` implements
+acceptance and escaping-region regressions pass on macOS arm64 (Release CTest
+24/24 at `749854f`). `String` implements
 `fmt.Write` (`fmt.Error`), `Deref` to `Text`,
 `IndexRange` (-> `Text`), `Display`, `Debug`, `Hash` (equal to `Text`'s hash),
 `Ord`. `Box` and `Rc` are transparent over `Deref`, comparison, `Hash`,
