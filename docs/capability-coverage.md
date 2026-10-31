@@ -145,7 +145,7 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | L059 | E | `tests/source/run/restricted-visibility-enclosing-module.mt`; `tests/source/fail/restricted-*.mt`; `tests/modules.py` | `compiler/resolution`; restricted item/macro visibility verified macOS ARM64 Release. |
 | L060 | E | `tests/packages.py::doc_writes_deterministic_html`; `tests/packages.py::doctests_run_isolated_examples` | `compiler/documentation`, `compiler/driver`; debugger support is separately tracked by T006. |
 | S001 | E | `tests/library/option_outcome.mt`; `tests/library/nested_option_extraction.mt` (added, unverified) | `library/core/option.mt`; finish nested presence and consuming-extraction operation closure. |
-| S002 | E | `tests/library/option_outcome.mt`; `tests/library/nested_outcome_transpose.mt` (added, unverified) | `library/core/option.mt`, `library/core/outcome.mt`; transpose added, fixture unverified. |
+| S002 | E | `tests/library/option_outcome.mt`; `tests/library/nested_outcome_transpose.mt` (added, unverified) | `library/core/option.mt`, `library/core/outcome.mt`; transpose verified on macOS arm64. |
 | S003 | P | `tests/source/run/native-heap-owner.mt`; `tests/alloc/box_rc_traits.mt` | `library/alloc/boxed.mt`; unsized owner payloads and pinned owning handles are unsupported. |
 | S004 | E | `tests/alloc/rc_weak.mt`; `tests/alloc/arc_weak.mt` | `library/alloc/rc.mt`; complete retain/weak/unique-extraction failure cases. |
 | S005 | P | `tests/alloc/arc_weak.mt`; `tests/std/arc_races.mt` | `library/alloc/arc.mt`; full operation matrix and current target race/last-owner qualification remain. |
@@ -172,8 +172,8 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | S026 | E | `tests/std/process_roundtrip.mt`; `tests/std/env_args.mt` | `library/std/process.mt`, `env.mt`; child cleanup and complete process/environment closure remain. |
 | S027 | E | `tests/std/time_basic.mt` | `library/std/time.mt`; complete duration/clock overflow and adjustment closure remains. |
 | S028 | E | `tests/std/panic_catch.mt`; `tests/std/panic_hook_abort.mt` | `library/std/panic.mt`; complete payload/hook/recovery failure closure remains. |
-| S029 | E | `tests/library/slice_any_text.mt`; `tests/packages.py::type_id_survives_public_reexport` (added, unverified) | `library/core/any.mt`; cross-package identity and erased-owner operation fixture added, unverified. |
-| S030 | P | `tests/std/async_executor.mt`; `tests/std/async_scope_borrowed.mt` | `library/core/future.mt`, `library/std/task.mt`; async-scope fixtures are unverified and soundness/race/sanitizer review remains. |
+| S029 | E | `tests/library/slice_any_text.mt`; `tests/packages.py::type_id_survives_public_reexport` (added, unverified) | `library/core/any.mt`; cross-package identity and erased-owner operation fixtures verified on macOS arm64. |
+| S030 | E | `tests/std/async_executor.mt`; `tests/std/async_scope_borrowed.mt` | `library/core/future.mt`, `library/std/task.mt`; async-scope fixtures pass in `library.std` and under emitted ASan/TSan; independent soundness/race review found no blocking issues. |
 | S031 | P | `tests/source/run/machine-target-direct-guarded-vector.aarch64.mt` | `compiler/types/target.cpp`, `library/std/sys.mt`; finish the macOS-applicable per-item target/cfg audit; Linux/Windows remain not qualified. |
 | A001 | P | `tests/backend/machine.py`; `tests/backend/machine_callbacks.c` | `compiler/backend/llvm/abi.cpp`; complete Darwin ARM64 argument/return/callback/variadic ABI probes. |
 | A002 | P | `tests/backend/machine.py`; `tests/source/fail/machine-packed-fields-cannot-form-aligned-views.mt` | `compiler/types/layout.cpp`, `compiler/backend/llvm/abi.cpp`; finish layout/calling/validity probes. |
@@ -186,16 +186,16 @@ capability is not inferred from the frozen CSV's `implementation_status`.
 | A009 | M | — | No separate Rust interoperability package, generated adapter, or fixture found. Implement the optional package boundary and ownership/failure/generic-instantiation probes required by `library-and-abi.md` section 7 and `tooling-and-packages.md` section 5. |
 | T001 | E | `tests/packages.py::path_dependency`; `tests/packages.py::registry_resolution` | `compiler/packages`; complete remaining resolver conflict/offline/target-feature cases. |
 | T002 | E | `tests/packages.py::build_script`; `tests/packages.py::build_script_untracked_inputs` | `compiler/driver/build_script.cpp`; finish declared-input/platform closure. |
-| T003 | P | `tests/packages.py::incremental_reuse`; `tests/packages.py::object_cache_integrity` | `compiler/packages/store.cpp`, `compiler/driver/cache.cpp`; dependency-object reuse is implemented but unverified at this revision; front-end query separation and measurements remain open. |
+| T003 | E | `tests/packages.py::incremental_reuse`; `tests/packages.py::object_cache_integrity` | `compiler/packages/store.cpp`, `compiler/driver/cache.cpp`; dependency-object reuse is verified on macOS arm64; front-end query separation and measurements move to I14 (owner decision 2026-10-31). |
 | T004 | E | `tests/packages.py::fmt_normalizes_layout_only`; `tests/packages.py::lint_reports_semantic_findings` | `compiler/driver`; format/lint command evidence exists; close accepted source/profile combinations. |
 | T005 | E | `tests/packages.py::language_server` | `compiler/lsp`; finish incremental diagnostics/rename closure. |
-| T006 | P | `tests/packages.py::debug_info`; `tests/packages.py::debugger_workflow` | `compiler/backend/llvm/debug.cpp`, `tools/debug`; expanded workflow/LLDB checks are implemented but unverified; Windows CodeView/PDB is excluded and not qualified. |
+| T006 | E | `tests/packages.py::debug_info`; `tests/packages.py::debugger_workflow` | `compiler/backend/llvm/debug.cpp`, `tools/debug`; expanded workflow/LLDB checks pass on macOS arm64; Windows CodeView/PDB is excluded and not qualified. |
 | T007 | E | `tests/packages.py::test_reports_pass_fail_ignored_and_isolates_panics`; `tests/packages.py::bench_reports_timing` | `compiler/driver/execute.cpp`; package-wide collection and doctest cases are evidenced; finish the remaining runner contract. |
 
-Inventory totals: **61 evidenced, 1 implemented-without-evidence, 44
+Inventory totals: **66 evidenced, 1 implemented-without-evidence, 39
 partial, 1 missing**. The unevidenced row has an existing focused runner case,
-but no recorded macOS ARM64 execution receipt. Partial rows with unverified new
-fixtures are explicitly named. Full operation closure is a separate, still
+but no recorded macOS ARM64 execution receipt. Remaining partial rows are I13
+operation-closure obligations. Full operation closure is a separate, still
 open obligation: `docs/baseline/audit-summary.json` reports 106,125 canonical
 required contracts, and the baseline explicitly says native declarations are
 not typechecked and cfg branches are not compiled. No operation-wide macOS

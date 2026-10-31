@@ -2254,6 +2254,14 @@ Type RegionPass::closure(const Node &node) {
                                 ? ParameterMode::Mut
                                 : ParameterMode::Read,
                             lifetime);
+    else if (!types.isView(type) && outerFacts &&
+             root < outerFacts->locals.size() &&
+             (outerFacts->locals[root].mode == ParameterMode::Read ||
+              outerFacts->locals[root].mode == ParameterMode::Mut))
+      // Moving an access parameter copies its reference, which keeps the
+      // parameter's source region.
+      type = types.viewType(type, outerFacts->locals[root].mode,
+                            outerStorage[root]);
     captures.push_back({"<capture>", type});
   }
   for (std::size_t i = 0; i < node.parameters.size(); ++i) {
@@ -3539,7 +3547,20 @@ void RegionPass::run() {
           regionBindings.push_back({family->regions[region], found->second});
         ++region;
       }
+    // The checker leaves captured access-parameter views unregioned; they
+    // follow the same single-source elision as the declared result.
+    if (fallback != RegionId::Unspecified)
+      regionBindings.push_back({RegionId::Unspecified, fallback});
     future = types.substituteRegions(future, regionBindings);
+    // The coroutine closure is a generic argument of the future state.
+    if (types.isProduct(future) &&
+        types.product(future).genericOrigin != Type::Unknown) {
+      auto record = types.product(future);
+      for (auto &argument : record.genericArguments)
+        argument = types.substituteRegions(argument, regionBindings);
+      future = types.instantiateProduct(record.genericOrigin,
+                                        std::move(record.genericArguments));
+    }
     return decorate(future, TypeSyntax{}, context, syntax.span, fallback);
   };
   for (std::size_t i = 0; i < module.functions.size(); ++i) {

@@ -2,8 +2,8 @@
 
 Status: selected design. The package-directory `mettle check|build` path is
 implemented. The I09 T001 package-instance, Git-source and host/target-context
-additions below are implemented, unverified (not yet built). Other commands
-and an installed toolchain are not available.
+additions below are implemented and verified on macOS arm64. An installed
+toolchain is not yet available.
 These operations are native equivalents, not Cargo-manifest compatibility.
 
 ### Unicode table generation (I07)
@@ -89,8 +89,8 @@ with `import package.name`.
   (T003) follow; both are implemented and verified on macOS arm64 (Release
   and Debug).
   Existing package tests are in `tests/packages.py`; the new
-  `coexisting_versions`, `git_source` and `host_target_separation` cases are
-  implemented but unverified (not yet built).
+  `coexisting_versions`, `git_source` and `host_target_separation` cases pass
+  on macOS arm64 Release.
 
 ### Build scripts (T002)
 
@@ -211,8 +211,8 @@ a store with live leases.
 
 `object_cache_integrity` was updated to check dependency-object reuse after a
 root-only edit, compare incremental and clean executable outputs, and corrupt a
-cached dependency object to require checksum-triggered regeneration. This
-implementation and test are unverified (no builds or tests have been run).
+cached dependency object to require checksum-triggered regeneration; it passes
+on macOS arm64 Release.
 No performance benefit is claimed before measurement. `--no-cache` disables
 both whole-build and package-object caches. Storage design: performance.md
 section 5.1.1. Flags: `--cache-dir DIR`, `--no-cache`,
@@ -481,7 +481,8 @@ Benchmark runners do not weaken the performance protocol's registered metrics.
 Status: documentation generation and doctests were previously verified on
 macOS arm64 (packages cases `doc_writes_deterministic_html`,
 `doctests_run_isolated_examples`). Resolved reference links and dependency
-package pages are implemented, unverified (not yet built).
+package pages are implemented and verified on macOS arm64
+(`doc_resolves_dependency_links_and_warns`).
 
 `///` documents the item that follows it (before or between its attributes) and
 `//!` the enclosing file or inline module. The lexer already keeps comments as
@@ -560,9 +561,8 @@ analysis reports that state rather than guessing a result from callers.
 
 `mettle lsp [--library-dir DIR] [--target TRIPLE] [--freestanding]` runs the
 language server (LSP 3.17, JSON-RPC with `Content-Length` framing on standard
-input/output; UTF-16 positions). T005 status: implemented; the completion,
-signature-help, references and checked-facts changes below are unverified (not
-yet built). Earlier functionality was verified on macOS arm64 (test
+input/output; UTF-16 positions). T005 status: implemented and verified on macOS arm64, including the completion,
+signature-help, references and checked-facts changes below (test
 `language_server`). It supports full and ranged text synchronization with
 `publishDiagnostics` (each open document is analyzed by the compiler front end
 on its in-memory text; editing a document re-analyzes the open documents that
@@ -592,8 +592,9 @@ sources are indexed only when encountered by an open document, not through
 workspace-wide package discovery. Generated diagnostics map to a user source
 span when possible but do not yet expose the full expansion chain as related
 information. Readable source-oriented diagnostic type display and structured
-notes/help are implemented, unverified (not yet built); the LSP includes these
-subdiagnostics in the published message text.
+notes/help are implemented and verified on macOS arm64 (`diagnostic-help-*`
+source cases and `language_server`); the LSP includes these subdiagnostics in
+the published message text.
 
 Rename observes namespaces, public paths and hygienic expansion identity.
 Generated identifiers are edited at their source/generator only when the mapping
@@ -607,10 +608,9 @@ Moved/uninitialized values must not be presented as live valid values.
 Optimization may eliminate values; report optimized-out rather than inventing
 their contents. Static region analysis does not require runtime region objects.
 
-Status (I12/T006, partial; the current DWARF changes for lexical scopes,
-moved-value liveness, erased witness types and inlining are implemented,
-unverified (not yet built). Earlier `debug_info` assertions passed on macOS
-arm64; the LLDB workflow and current summaries are implemented, unverified):
+Status (I12/T006; the DWARF changes for lexical scopes, moved-value liveness,
+erased witness types and inlining are verified on macOS arm64 by `debug_info`,
+and the LLDB workflow and summaries by `debugger_workflow`):
 `mettle build -g`
 emits DWARF 4 through `llvm::DIBuilder` in the LLVM adapter
 (`backend/llvm/debug.*`): a compile unit and file per source, a subprogram per
@@ -634,9 +634,8 @@ tokens use the invocation location in line tables. A coroutine future's state
 DWARF variant part (`start`, `await #N (line L)`, `running`, and `done`), with
 captured environment and output fields and per-suspension fields for
 scope-initialized locals. The LLDB summary renders `state = await #N (line L)`.
-These coroutine changes are implemented, unverified (not yet built); the
-existing `debug_info` assertions have prior macOS arm64 evidence, but the
-current changes and interactive LLDB behavior remain unverified.
+These coroutine changes are verified on macOS arm64 by `debug_info` and the
+automated LLDB `debugger_workflow` case.
 
 For LLDB, import `tools/debug/mettle_lldb.py` with
 `command script import /path/to/mettle/tools/debug/mettle_lldb.py`. It registers
@@ -647,10 +646,8 @@ than guessing. `tests/packages.py::debugger_workflow` builds a `-g` executable,
 imports these summaries into batch LLDB, and checks source breakpoints,
 parameters/locals, list and slice lengths, a tagged variant, an erased view and
 a suspended coroutine state. It prints a clear skip if LLDB is unavailable.
-This workflow and the current summary changes are implemented, unverified (not
-run on this lane); prior macOS arm64 checks covered List length/capacity and
-String text display, while the coroutine summary has not been checked
-interactively.
+This workflow and the summaries pass on macOS arm64 Release with batch LLDB,
+including the suspended coroutine summary.
 
 The comp dir is the root source's directory; without `-g` the adapter emits no
 debug metadata. `-g` is explicit (the `debug` profile does not imply it), and
@@ -662,7 +659,7 @@ initialized, become unavailable after moves/drops or scope exit, and regain a
 location after a whole-place store. Optimizer-generated `inlinedAt` locations
 use source subprograms and call-site locations; `@inline`, `@inline(always)`
 and `@inline(never)` map to LLVM optimization hints. These changes and their
-new `debug_info` assertions are implemented, unverified (not yet built).
+new `debug_info` assertions are verified on macOS arm64.
 Remaining gaps include subprogram parameter/return types, some unsupported
 layouts, concrete dynamic types for sized erased values, monomorphization
 records and interactive LLDB verification. Windows CodeView/PDB remains open

@@ -10,10 +10,16 @@ that host/target scope. I03 concrete ownership and resource cleanup is qualified
 within the same scope. I04 composition and I05 generic typing/dispatch are
 covered by historical native, sanitizer, quality, reproducibility and target
 receipts; their re-review findings are covered by the I06 requalification.
-I06 is complete within the scope above. I07-I11 are partially implemented on macOS arm64 (per-item
-status in sections 8.3-8.4); none is qualified. I12 workflow commands are in
-progress. I13's macOS ARM64 capability inventory is implemented, unverified
-(not yet built); the V1 operation subset is not qualified. I14-I17 are not
+I06 is complete within the scope above. I07-I12 are closed for the native
+macOS ARM64 host and Darwin target by the commit that records this status
+(2026-10-31, parent `c6fe28c`):
+full Release CTest 24/24, both source suites, emitted
+ASan for the owner, collection and async cases and emitted TSan for the thread,
+sync and async cases. By owner decision (2026-10-31), pinned owning handles
+(S003) move to I13, and the I09-I11 performance measurements (compile-time and
+retained-byte measurement, P08, P09, P10) move to I14; they are not I07-I12
+gates. Per-item status is in sections 8.3-8.5. I13's capability inventory is a
+documentation audit; the V1 operation subset is not qualified. I14-I17 are not
 started.
 The selected design is in the linked specifications. Scalar execution does not
 establish full language, library or release correctness.
@@ -210,8 +216,20 @@ with positive/negative checks and retained evidence. Creating directories,
 emitting unchecked LLVM IR, assigning API mappings or counting source lines is
 not completion. Historical I01-I06 receipts record their tested host/target scope,
 and the `c485aa1` re-review's missed obligations were repaired before I06's
-requalification. I07-I11 items carry per-item implementation/verification
-status below; no milestone after I06 is complete.
+requalification. I07-I12 items carry per-item implementation/verification
+status below; I07-I12 are closed within the macOS ARM64 scope stated at the top
+of this plan, with the owner-approved moves recorded there.
+
+C++ compiler scope until I15 (owner decision, 2026-10-31): the C++ compiler is
+the bootstrap and reference implementation for the self-hosted compiler, not a
+long-term product. Until I15, change it only for what a V1 milestone (I07-I14)
+requires: language features and diagnostics selected for V1, correctness and
+soundness fixes, and changes needed to pass a measured I14 gate. Do not spend
+effort on C++-only performance tuning, internal refactors, architectural
+rework or tooling polish beyond those requirements; record such ideas for the
+Mettle implementation instead. Library work (`library/`) is unaffected because
+the self-hosted compiler reuses it. I16's LLVM-free backend is written in
+Mettle, not C++.
 
 | ID | Milestone | Exit artifact / decisive check | Prerequisites |
 | --- | --- | --- | --- |
@@ -546,7 +564,7 @@ verdict. The last column names acceptance checks and explicit later limits.
 | S015 | Cell/RefCell/UnsafeCell: implemented initial facilities | Safe cell operations, dynamic borrow/try-borrow guards, native release and conflict/forget/unwind cases | Frozen-input sanitizer/target and applicable operation qualification; native thread libraries remain I10. |
 | S016 | Uninitialized/manual-drop storage: implemented | `MaybeUninit`/`ManuallyDrop` signatures and focused ownership cases | Current partial-initialization, validity, explicit-drop, alignment and unwind evidence. |
 | S017 | Atomics/fences: implemented initial scalar mechanisms | Ordering validation, RMW/CAS/fences; C++ thread publication case | Independent memory-model/race evidence and applicable target width/order cases. A publication example or ASan alone is insufficient; native thread libraries remain I10. |
-| S018 | Transferable/Shareable/Static: implemented initial contracts | Structural derivation in `interface_solver.cpp` (raw pointers, cells and `Ref`/`RefMut` opt out; atomics and plain data opt in), `unsafe extend`/negative `extend X not P` declarations, bounds enforced at call sites; Static additionally requires `static` regions | Frozen-input generic/region/projection qualification. Immutable statics must be Shareable (raw pointers and a bare `UnsafeCell` are exempt; `static mut` needs unsafe). Scoped spawns require `F: Within<region s>`, checked in `regions.cpp` (`withinBounds`), so closures cannot capture locals declared inside the scope body. Method-level bounds bind extension-owner regions from the receiver's nominal region arguments before covariant view shortening; the short-capture regression is implemented, unverified (not built). `fs.ReadDir` is an `Iterator`; `mpsc.sync_channel(n)` has capacity `n`, including rendezvous at zero. A panic in a spawned thread is caught per thread and `join()` reports a Panicked result with code 101. Extension-level region names are now resolved from the current function's region scope when a callee's annotation scope is active (`regionReference`); verified on macOS arm64 (`impl-region-method-call-on-other-type.mt`), and `Scope.spawn` no longer needs its private `register` workaround. |
+| S018 | Transferable/Shareable/Static: implemented initial contracts | Structural derivation in `interface_solver.cpp` (raw pointers, cells and `Ref`/`RefMut` opt out; atomics and plain data opt in), `unsafe extend`/negative `extend X not P` declarations, bounds enforced at call sites; Static additionally requires `static` regions | Frozen-input generic/region/projection qualification. Immutable statics must be Shareable (raw pointers and a bare `UnsafeCell` are exempt; `static mut` needs unsafe). Scoped spawns require `F: Within<region s>`, checked in `regions.cpp` (`withinBounds`), so closures cannot capture locals declared inside the scope body. Method-level bounds bind extension-owner regions from the receiver's nominal region arguments before covariant view shortening; the short-capture regression is verified on macOS arm64 (`neg_async_scope_mut_receiver_short_borrow.mt`). `fs.ReadDir` is an `Iterator`; `mpsc.sync_channel(n)` has capacity `n`, including rendezvous at zero. A panic in a spawned thread is caught per thread and `join()` reports a Panicked result with code 101. Extension-level region names are now resolved from the current function's region scope when a callee's annotation scope is active (`regionReference`); verified on macOS arm64 (`impl-region-method-call-on-other-type.mt`), and `Scope.spawn` no longer needs its private `register` workaround. |
 | S019 | Thread spawn and scope: implemented initial library | `std.thread` (`spawn`, `JoinHandle.join` reporting `Panicked`, `scope` joining on panic) over `runtime/thread.cpp`; owned threads require Transferable + Static, scoped ones Transferable | Linux target execution of `library.std`, sanitizer/TSan evidence of the shim, stress on the target. Race freedom is not a fairness or deadlock-freedom claim. |
 | S020 | Mutex and RwLock: implemented initial library | `std.sync.{mutex,rwlock}` with poisoning, thread-affine guards (`not Transferable`) and an error-checking mutex that reports relock | Target stress and applicable poison/failure-policy cases. |
 | S021 | Condition variables, barriers, once: implemented initial library | `std.sync.{condvar,barrier,once}`; a panicking initialiser re-arms `Once` | Target stress. |
@@ -775,13 +793,13 @@ collection coverage described below; the library suites passed on macOS arm64
 at `749854f`. Unicode `char.is_whitespace` and Unicode-aware `Text.trim*` were verified on
 macOS arm64 by `tests/library/unicode_whitespace.mt`. Unicode 16.0.0
 alphabetic, lowercase, uppercase, whitespace and numeric properties, scalar
-case-mapping iterators, and allocation-backed text case conversion are now
-implemented but unverified (not yet built). The compact generated tables and
+case-mapping iterators, and allocation-backed text case conversion are
+implemented and verified on macOS arm64 Release. The compact generated tables and
 their UCD-driven generator live in `library/core/unicode_data.mt` and
 `tools/unicode_tables.py`; text lowercase handles the Unicode final-sigma
 context. Focused fixtures are `tests/library/unicode_properties.mt` and
-`tests/alloc/unicode_case.mt`. Do not treat this implementation as verified
-until those fixtures and applicable library checks pass. Mounting compiles the
+`tests/alloc/unicode_case.mt`, which pass in `library.core` and
+`library.alloc`. Mounting compiles the
 whole of `core`, which costs seconds in Debug builds.
 Also: text literals are usable as `static` initializers and
 byte/raw literals (`b"..."` is `read [u8; N] from static`; `r"..."`, `r#"..."#`,
@@ -834,19 +852,20 @@ tests are implemented and verified on macOS arm64 (`sorted_entry`,
 `btree_alloc_failure`). Hosted panics unwind and can be caught with
 `std.panic.catch_panic`; freestanding panics trap. Collection panic-safety
 coverage for callback panics, partial initialization, invalidation and
-destructor panics is implemented, unverified. It checks valid post-panic
+destructor panics is implemented and verified on macOS arm64
+(`tests/std/collection_panic_safety_{vec,maps,heap}.mt`). It checks valid post-panic
 collection state and exactly-once drops where cleanup proceeds; leaking
 unvisited values is permitted, and a second panic during unwinding aborts.
 Borrowed iteration is implemented through the core interfaces: see the integration
 note below. The native `heap T`, `shared T`, `local shared T`, `weak T` and
 `local weak T` syntax now maps to the existing `Box`, `Arc`, `Rc` and `Weak`
 library types; construction and downgrade use ordinary library calls. This
-compiler mapping is implemented, unverified (not yet built). `Box<[T]>` and
+compiler mapping is implemented and verified on macOS arm64. `Box<[T]>` and
 other heap unsized owners now use metadata-preserving coercion from sized
 owners. Slice payloads carry their element count; erased-interface payloads
 carry witness size/alignment and a specialized drop callback. The `Box` slice
-and erased-owner paths, including dynamic deallocation, are implemented but
-unverified (not yet built); see `native-heap-unsized-slice.mt`,
+and erased-owner paths, including dynamic deallocation, are implemented and
+verified on macOS arm64; see `native-heap-unsized-slice.mt`,
 `native-heap-erased-owner-drop.mt` and
 `native-heap-unsized-owner-use-after-move.mt`. Unsized `Arc`, `Rc` and `Weak`
 now retain a fat payload pointer and a separate count-header pointer; their
@@ -857,7 +876,7 @@ Owner coercion preserves the header and allocator fields. Droppable structural
 slice tails use the tail count to run the specialized element drop loop.
 `Arc<Text>.copy_text` and `Rc<Text>.copy_text` copy only from validated `Text`
 views, so arbitrary bytes cannot bypass UTF-8 validation. These shared-owner,
-structural-tail and Text paths are implemented, unverified (not yet built);
+structural-tail and Text paths are implemented and verified on macOS arm64;
 fixtures are `native-shared-unsized-slice-weak-drop.mt`,
 `native-shared-unsized-erased-weak-drop.mt`,
 `native-unsized-structural-tail-drops.mt` and
@@ -865,11 +884,12 @@ fixtures are `native-shared-unsized-slice-weak-drop.mt`,
 `native-unsized-text-owner-copy.mt`; negative fixtures cover moved shared and
 structural owners, non-Text byte input, and unsupported pinned owners.
 `native-unsized-owner-payload.mt` now
-retains the pinned-owning-handle feature diagnostic; pinned owning handles
-remain unsupported. A `take` argument always moves even a `Copy` binding, so
+retains the pinned-owning-handle feature diagnostic. By owner decision
+(2026-10-31), pinned owning handles (S003) are deferred from I07 to I13; I07
+closes without them. A `take` argument always moves even a `Copy` binding, so
 generic calls pass `i + 0` or a fresh `let`.
 Hosted panics unwind and can be caught; freestanding panics trap. Panic-safety
-coverage for collections is implemented, unverified. Alloc/core integration
+coverage for collections is verified as above. Alloc/core integration
 (lane allocint): `library/alloc/support.mt` is gone and
 `library/alloc` depends only on `core`. New `core.clone.Clone` (integers,
 `bool`, `char`, `Unit`, `Ordering`, pairs, `T?`); `core.iter.Iterable`/
@@ -993,8 +1013,8 @@ Other profiles and targets remain unqualified. Freestanding/abort execution does
 Spawned-thread panics continue to be caught and reported by `join()`.
 Remaining I08 gaps: macOS file systems may reject non-UTF-8 names (EILSEQ),
 which the tests check but cannot exercise on-disk there. `ReadDir.next_entry`
-is implemented with terminal EOF/error state and a focused regression, but this
-change is unverified (not yet built). The other hosted APIs listed above have no
+is implemented with terminal EOF/error state and verified on macOS arm64 by
+`tests/std/fs_basic.mt`. The other hosted APIs listed above have no
 additional clearly specified missing implementation found in this inventory
 audit; `std.thread` and `std.sync` are present, with their remaining target
 qualification tracked by S019-S023. Hosted names use nonreserved spellings such
@@ -1041,7 +1061,7 @@ with `mettle clean`. `[build-dependencies]` and host dependency compilation
 are verified by the same suite.
 
 I09 cache lease work and the multi-package extension demonstration are
-implemented, unverified (not yet built). A build holds an RAII lease on its
+implemented and verified on macOS arm64 Release (`multi_package_extension`). A build holds an RAII lease on its
 whole-program key through materialization, publication and pruning;
 `compiler/packages/store.cpp` excludes leased entries from age/byte eviction
 and refuses `clean` while a lease is live. The
@@ -1050,12 +1070,12 @@ a procedural extension dependency and a regular dependency. Existing
 whole-build cache behavior remains covered by `incremental_reuse`,
 `edit_invalidation`, `cache_dedup_and_bound`, `cache_corruption_and_clean`,
 `build_script` and `build_script_untracked_inputs` in `tests/packages.py`.
-Open: parsed-AST/name/type/ownership/instantiation dependency separation,
-retained-byte/compile-time measurement (performance.md 5.1.1) and Linux
-evidence.
+Parsed-AST/name/type/ownership/instantiation dependency separation and
+retained-byte/compile-time measurement (performance.md 5.1.1) move to I14 by
+owner decision (2026-10-31); Linux evidence is owner-run.
 
-Dependency-object reuse is implemented but unverified (no builds or tests have
-been run for this change). For eligible debug executable builds, the loader's
+Dependency-object reuse is implemented and verified on macOS arm64 Release
+(`object_cache_integrity`). For eligible debug executable builds, the loader's
 package-instance identity is carried into IR ownership side tables; ordinary
 unambiguous package functions/statics are emitted to one object per dependency.
 Generic instances, synthesized helpers and owner-ambiguous items stay in the
@@ -1071,9 +1091,8 @@ before reuse and regenerates corrupt objects. Package objects are staged and
 hashed outside the store lock, then batch-published under one lock for the
 build; unlike the whole-program entry, package entries use no per-object
 leases, so concurrent eviction can at worst cause a safe cache miss.
-`object_cache_integrity` now covers a root-only edit reusing a dependency
-object, clean/incremental executable equivalence, and corruption recovery; it
-is implemented but unverified. Front-end analysis and specialization still
+`object_cache_integrity` covers a root-only edit reusing a dependency
+object, clean/incremental executable equivalence, and corruption recovery. Front-end analysis and specialization still
 run for the whole program on a root edit; only dependency object codegen is
 reused. No performance benefit is claimed before measurement.
 
@@ -1102,7 +1121,9 @@ Transferable/Shareable, Arc/weak races, mutex/RwLock guards, condition variables
 barriers, once, channels and TLS. Test scope exit during panic, last-owner
 destruction, guard affinity, channel shutdown and atomic publication under
 contention. Race freedom is not a claim of fairness or deadlock freedom.
-Add P09 and complete concurrent P08 coverage.
+Add P09 and complete concurrent P08 coverage. (P08/P09 move to I14 by owner
+decision, 2026-10-31.) The thread, sync and async std programs ran clean under
+emitted TSan on macOS arm64 at the I07-I12 closure revision.
 
 I11 implements pinned future state machines, async callable/interface contracts,
 poll/wake integration and a separately selectable executor. Establish direct
@@ -1155,16 +1176,18 @@ Async interface default bodies may omit their result annotation: the body is
 checked against its own inferred coroutine result, which becomes the synthesized
 future family's default after substituting the interface and method binders.
 Implementations without an override inherit that instantiated future; overrides
-retain their own future family binding. Verified on macOS arm64 for an inherited
-default that does not await other interface methods
-(`async-interface-default-inferred-output.mt`). Open: overriding an async default
-binds the call to the interface default body while typing its result as the
-override's future (invalid CFG), a default body that awaits another interface
-method fails region checking, and an explicit-output default sets the future
-family value to the method annotation (unsized-default error). Those fixtures
-were withdrawn after three failed fix attempts; the diagnosis is the starting
-point for the next attempt.
-The asynchronous borrowed scope is implemented, unverified (not yet built), in
+retain their own future family binding. A call not yet resolved to an
+implementation is verified against the default body's own coroutine result
+(`ir::Function::interfaceResult`). A moving closure or async body that captures
+a `read`/`mut` parameter keeps a view on the parameter's region, and the
+expected default future binds the checker's unregioned capture views by the
+same single-source elision as a declared result. Verified on macOS arm64 for
+inherited, overridden, explicit-output, receiver-capturing and
+method-awaiting defaults, and for rejecting a default future that outlives its
+receiver (`async-interface-default-{inferred-output,overridden,explicit-output,captures-receiver}.mt`,
+`async-interface-default-awaits-method.mt`,
+`fail/async-interface-default-future-outlives-receiver.mt`).
+The asynchronous borrowed scope is implemented and verified on macOS arm64 in
 `library/std/task.mt` as `task.async_scope(anchor)`, a future that owns pinned
 child storage and serially polls children only during its own poll epochs.
 Registrations outlive handles; parent destruction synchronously closes wake
@@ -1176,20 +1199,20 @@ nominal region argument; the mutable-receiver, invariant-region regression
 `tests/std/neg_async_scope_mut_receiver_short_borrow.mt` is retained alongside
 the actual-API short-capture rejection. The earlier async-scope attempt was
 withdrawn after the receiver-region issue was found; the companion region
-solver change and both accepted/rejected receiver-bound cases remain
-implemented but unverified here. Required hosted cases now cover borrowed
+solver change and both accepted/rejected receiver-bound cases are verified on
+macOS arm64. Required hosted cases now cover borrowed
 completion, synchronous cancellation on parent destruction, panic propagation
 with sibling cleanup, repeated wake after parent destruction, and a child
-capture shorter than the scope region. No build or test was run in this
-code-only lane. Independent soundness/race review and sanitizer qualification
-remain open.
+capture shorter than the scope region. These cases pass in `library.std`; they
+ran clean under emitted ASan and TSan, and an independent soundness/race
+review found no blocking issues (its fixture gaps were added as the
+`async-scope-*` cases).
 As an I05
 region-inference follow-up, `RegionPass::infer` in
 `compiler/semantics/regions.cpp` now matches region arguments across same-origin
 nominal fields even when their region patterns differ. The invariant-field
 regression `constructor-infers-region-across-invariant-fields.mt` is
-implemented, unverified at `2b81a88`; run it after integration and confirm
-invariant checks remain intact.
+verified on macOS arm64 alongside the existing invariant-field rejections.
 Borrowed heap-erased futures require region-carrying erasure.
 Compiler erasure admits the pinned `Future.poll` receiver when `Output` is
 fixed in `any Future<Output = T>`; the witness dispatches polling to the concrete
@@ -1202,14 +1225,15 @@ signature instead.
 The `alloc.future.Erased<T>` wrapper is a concrete `Future<Output = T>`
 implementation, so its conversion to the erased view uses the same witness
 path rather than a special storage conversion. These compiler changes are
-implemented but unverified (not yet built); build/run
-`tests/std/erased_future_dispatch.mt`. General
-`Box<any Future<Output = T>>` uses the new heap-unsizing path but remains
-implemented and unverified until a dedicated owned-erased-future fixture runs.
+verified on macOS arm64 by `tests/std/erased_future_dispatch.mt`. General
+`Box<any Future<Output = T>>` uses the heap-unsizing path and is verified by
+`tests/std/owned_erased_future.mt` (polling through an unsafe pin of the
+stable heap payload, and exactly-once drop of polled and unpolled owners);
+safe pinned owning handles are deferred with S003.
 Erased async-interface dispatch remains unsupported until an explicit
 future-storage contract exists (`async-interface-erased-dispatch.mt`).
-P10 has only a backlog entry, not a specified benchmark source; an async
-network service, measurement protocol and equivalent comparator remain open.
+P10 has only a backlog entry, not a specified benchmark source; its async
+network service, measurement protocol and equivalent comparator move to I14.
 
 I11 status (partial; the prior core coroutine/executor paths were built and run
 on macOS arm64 Release; the async-I/O addition above is verified there):
@@ -1261,8 +1285,9 @@ and their feature-fail fixtures are removed.
 The recursive async future-cycle diagnostic is implemented and verified on
 macOS arm64: direct and mutual recursive async call cycles are diagnosed in the
 type phase at the call span (`async-recursive-future-{direct,mutual}.mt`).
-Async interface default bodies with inferred outputs are verified for inherited
-defaults; overridden and method-awaiting defaults remain open (see I11 above).
+Async interface default bodies are verified for inherited, overridden,
+explicit-output, receiver-capturing and method-awaiting defaults (see I11
+above).
 Explicit erased-future storage and erased async-interface dispatch remain
 unsupported.
 Coroutine-state DWARF metadata (a `state` discriminator with per-state
@@ -1272,9 +1297,9 @@ An async future borrows from every borrowed parameter, and an owning closure
 or async body captures a borrowed non-Copy parameter as a view
 (`borrowed-parameter-captures-keep-views`,
 `async-future-outlives-borrowed-argument`).
-Region-carrying erased futures and P10 remain open; asynchronous borrowed-task
-scopes are implemented, unverified (not yet built), with independent
-soundness/race review and sanitizer qualification outstanding. Linux
+P10 has no specified benchmark source and moves to I14 by owner decision
+(2026-10-31); asynchronous
+borrowed-task scopes are verified as above. Linux
 poll-fallback qualification of async I/O is open. Erased async dispatch is
 explicitly rejected pending a future-storage erasure contract. Linux and
 Windows targets and TSan of executor code are not run for the coroutine path.
@@ -1286,15 +1311,15 @@ Revision: uncommitted lane changes on `9d865a1`; scope as stated per row.
 | Requirement | State and owning files | Remaining work and required fixtures |
 | --- | --- | --- |
 | Preserve async source; type future and await | Implemented and verified on macOS arm64, including arrow async closures and `try await`: `syntax/parser/closures.cpp`, `syntax/parser/async.cpp`, `semantics/sums.cpp`, `semantics/regions.cpp`, `lowering/sums.cpp`. | `async-arrow-closure.mt`, `async-try-await.mt`. |
-| Async interface futures and dispatch | Bodyless async methods publish region- and output-constrained associated future families; implementations bind concrete opaque coroutine futures; concrete and generic-bound calls use the family. Existing behavior verified on macOS arm64. Async default bodies infer their own coroutine result and use it as the associated future default; implementations inherit its `Self`-instantiated type, while overrides keep their own family binding. Inherited inferred defaults verified on macOS arm64; overridden and method-awaiting defaults open. | `async-interface-method.mt`, `async-interface-erased-dispatch.mt`, `async-interface-default-inferred-output.mt`. Explicit erased-future storage and erased async-interface dispatch remain unsupported. |
-| Erased Future polling and storage | Pinned poll dispatch through `any Future<Output = T>` and the `alloc.future.Erased<T>` static heap wrapper are implemented. The verifier accepts the Pin-wrapped erased receiver, and LLVM emits a witness adapter that repackages the data pointer as `Pin<mut Concrete>`; the adapter and verifier changes are implemented but unverified (not yet built). The wrapper owns a stable concrete payload and uses typed poll/release callbacks. The general `Box<any Future<Output = T>>` path is implemented but unverified. | Build/run `tests/std/erased_future_dispatch.mt` and add a dedicated owned-erased-future fixture; erased async-interface returns remain unsupported. |
+| Async interface futures and dispatch | Bodyless async methods publish region- and output-constrained associated future families; implementations bind concrete opaque coroutine futures; concrete and generic-bound calls use the family. Existing behavior verified on macOS arm64. Async default bodies infer their own coroutine result and use it as the associated future default; implementations inherit its `Self`-instantiated type, while overrides keep their own family binding. Inherited, overridden, explicit-output, receiver-capturing and method-awaiting defaults verified on macOS arm64. | `async-interface-method.mt`, `async-interface-erased-dispatch.mt`, `async-interface-default-*.mt`, `async-interface-default-awaits-method.mt`, `fail/async-interface-default-future-outlives-receiver.mt`. Explicit erased-future storage and erased async-interface dispatch remain unsupported. |
+| Erased Future polling and storage | Pinned poll dispatch through `any Future<Output = T>` and the `alloc.future.Erased<T>` static heap wrapper are implemented. The verifier accepts the Pin-wrapped erased receiver, and LLVM emits a witness adapter that repackages the data pointer as `Pin<mut Concrete>`; the adapter and verifier changes are verified on macOS arm64. The wrapper owns a stable concrete payload and uses typed poll/release callbacks. The general `Box<any Future<Output = T>>` path is verified. | `tests/std/erased_future_dispatch.mt`, `tests/std/owned_erased_future.mt`; erased async-interface returns remain unsupported. |
 | Recursive async future cycles | Implemented and verified on macOS arm64: `semantics/check.cpp` diagnoses direct and mutual recursive async call cycles in the type phase at the recursive call span and names the cycle. | `async-recursive-future-direct.mt`, `async-recursive-future-mutual.mt`. |
 | Ownership-checked suspension CFG | Implemented: `ir/ir.h` `Exit::Suspend`, `ir/verify.cpp`, successor updates in `analysis/*`, `ir/dominance.cpp`, `instances/arrays.cpp`, `lowering/scalar.cpp`. | None known; borrow-across-await is covered by `async-await-anywhere.mt`. |
 | Inline pinned state and poll | Implemented: `types` coroutine aggregate and layout resolver, `instances/specialize.cpp`, backend frame/dispatch. Transferable/Shareable/Static in `semantics/interface_solver.cpp` with the interior from `semantics/captures.cpp`. | Liveness-precise interior (optional precision gain). |
 | Control flow | Implemented: ordinary CFG of the closure body. | None known. |
 | Cleanup and cancellation | Implemented: persistent frame flags and `unwind` in `backend/llvm/cleanup.cpp`; exactly-once drops verified. | None known; lexical drop order across suspension and cancellation is verified on macOS arm64 by `async-drop-order-across-await.mt`. |
 | Optional executor drives async I/O (S030) | Implemented and verified on macOS arm64: `library/std/task.mt`, `library/std/net.mt`, `library/std/sys.mt`, `library/core/future.mt`, `runtime/sys.{h,cpp}`; `tests/std/async_net_echo.mt` passes in Release CTest and under emitted ASan/TSan. | Kqueue wake-race stress; Linux poll-fallback qualification (owner-run). |
-| Asynchronous borrowed task scopes | Implemented, unverified (not yet built): `library/std/task.mt` provides `task.async_scope(anchor)`, whose future owns registered borrowed children and polls them only inside parent epochs; handles do not own registrations, wake metadata cannot access parent storage, parent destruction synchronously drains children, and child panic drains before propagation. `Executor.run` and `run_until_stalled` now reject same-executor reentrancy with a panic; this is also unverified. | Build/run `tests/std/async_scope_borrowed.mt`, `async_scope_cancel.mt`, `async_scope_panic.mt`, `neg_async_scope_borrow_escape.mt`, and `async-scope-{abandon,drop-panic,wake-close-race,pinned-children,completion,reentrant-executor}.mt`; verify `neg_async_scope_mut_receiver_short_borrow.mt` and the nominal receiver-region cases; independent soundness/race review and sanitizer qualification. |
+| Asynchronous borrowed task scopes | Implemented and verified on macOS arm64 (Release `library.std`, emitted ASan/TSan, independent review without blocking findings): `library/std/task.mt` provides `task.async_scope(anchor)`, whose future owns registered borrowed children and polls them only inside parent epochs; handles do not own registrations, wake metadata cannot access parent storage, parent destruction synchronously drains children, and child panic drains before propagation. `Executor.run` and `run_until_stalled` now reject same-executor reentrancy with a panic. | `tests/std/async_scope_borrowed.mt`, `async_scope_cancel.mt`, `async_scope_panic.mt`, `neg_async_scope_borrow_escape.mt`, `neg_async_scope_mut_receiver_short_borrow.mt` and `async-scope-{abandon,drop-panic,wake-close-race,pinned-children,completion,reentrant-executor}.mt`. |
 | Integration and qualification | Release CTest, sanitized compiler CTest and ASan/UBSan emitted async programs passed on macOS arm64 before this change; the Debug-profile CTest passed 23/23 at `c81bc6d`. The full Release CTest passed 24/24 with the async closure, `try await`, interface dispatch, erasure-diagnostic and debug-info state-discriminator changes. | Linux/Windows (owner-run). |
 
 The source-freeze gate depends on all rows, fixtures and documentation; a
@@ -1330,21 +1355,20 @@ implemented and verified on macOS arm64 (test `lint_reports_semantic_findings`):
 five semantic rules over checked facts, `--allow/--warn/--deny` and
 function-level `@allow/@warn/@deny` (tooling-and-packages section 3). Resolved
 documentation references, dependency-package pages and unresolved-link warnings
-are implemented, unverified (not yet built). JSON lint findings and the static
-search index remain implemented and previously verified on macOS arm64
-(`lint_` and prior `doc` cases of `tests/packages.py`); this lane's full
-wrapping and resolved-link regressions have no current build/test evidence.
+are implemented and verified on macOS arm64
+(`doc_resolves_dependency_links_and_warns`). JSON lint findings and the static
+search index are verified by the `lint_` and `doc` cases of `tests/packages.py`.
 Section 3 currently selects the five existing lint rules; it names no additional
 rules. The benchmark contract explicitly provides `black_box` and excludes
-handles, so no handle API was invented. Debugger metadata/workflows remain
-open. The language
+handles, so no handle API was invented. The language
 server (`mettle lsp`, T005) is implemented
 and verified on macOS arm64 (test `language_server`); see
-`docs/tooling-and-packages.md` section 5. This lane's checked-facts hover,
-completion, signature help, references, pattern-binding tracking and
-provider-source indexing are implemented, unverified (not yet built). The
-readable source-oriented diagnostic type display/notes/help and remaining LSP
-gaps documented there remain open. The milestone is not complete.
+`docs/tooling-and-packages.md` section 5. Checked-facts hover,
+completion, signature help, references, pattern-binding tracking,
+provider-source indexing and readable diagnostic notes/help are verified by
+the same test and the `diagnostic-help-*` source cases; the precision limits
+listed in `docs/tooling-and-packages.md` section 5 are documented known gaps,
+not I12 acceptance cases.
 
 I12/T006 status, source-level debug info: the earlier basic `-g` DWARF
 implementation was verified. This lane's layout-based sum variants,
@@ -1356,14 +1380,15 @@ summaries have not been re-run interactively. Coroutine resume-state variants,
 the discriminator, scope-initialized saved-local fields, captured environment
 and output fields, and the LLDB `state = await #N (line L)` summary are
 implemented; the focused `debug_info` assertions have prior macOS arm64
-evidence. This lane adds DWARF lexical scopes, moved-value location ranges,
-erased witness table types, and release inlining metadata; these changes and
-assertions are implemented, unverified (not yet built). The new
+evidence. DWARF lexical scopes, moved-value location ranges, erased witness table types
+and release inlining metadata are verified by `debug_info`. The
 `debugger_workflow` package case automates LLDB breakpoint, local/parameter,
-slice/List, tagged-variant, erased-view and suspended-coroutine summary checks;
-it and the updated LLDB formatters are implemented, unverified (not run on this
-lane). Windows CodeView/PDB remains open and is out of scope for this lane.
-T006 and I12 are not complete.
+slice/List, tagged-variant, erased-view and suspended-coroutine summary checks
+and passes on macOS arm64 Release. Windows CodeView/PDB is outside the gated
+macOS profile (owner decision 2026-10-31).
+
+Moved into I13 by owner decision (2026-10-31): pinned owning handles (S003,
+safe `Pin` of heap/shared owners), previously an I07 item.
 
 I13 closes the V1 operation subset defined in `docs/library-surface.md`
 section 6.1 with compiled native declarations and per-operation semantic
@@ -1383,7 +1408,7 @@ I13 status for the macOS ARM64 inventory lane: the 107-row capability
 acceptance inventory is implemented, unverified (not yet built); it is a
 documentation-only source/fixture review at `0eea2fa`, with no new compiler or
 library implementation, test fixture, build, or test run. The inventory records
-61 evidenced, 1 implemented-without-evidence, 44 partial and 1 missing
+66 evidenced, 1 implemented-without-evidence, 39 partial and 1 missing
 capability. It does not claim I13 operation closure: the pinned baseline has
 106,125 canonical contracts, of which the V1 subset is about 2,900 folded
 operation families and 1,760 trait/type pairs, and no receipt yet proves
@@ -1397,6 +1422,11 @@ listed in `docs/capability-coverage.md` and `docs/library-surface.md`.
 Unverified changes with existing fixtures, including qualified macro
 imports/reexports, dependency-object reuse, expanded debugger checks and async
 borrowed scopes, still require execution and applicable review.
+
+Moved into I14 by owner decision (2026-10-31): I09 compile-time and
+retained-byte measurement with front-end dependency separation (performance.md
+5.1.1), I10 benchmarks P08 and P09, and I11 benchmark P10 with its async
+network service, measurement protocol and comparator.
 
 I14 freezes a release candidate and checks the whole accepted scope, rather than
 removing difficult capabilities to produce a smaller V1. The owner-selected V1
@@ -1412,7 +1442,9 @@ publication; internal implementation does not require inventing those decisions.
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher
-around the C++ implementation. Retain the C++ bootstrap/compiler reference,
+around the C++ implementation. Port incrementally, starting with self-contained
+front-end components (lexer, parser) checked for identical output against the
+C++ reference. Retain the C++ bootstrap/compiler reference,
 record staged builds and exercise the resulting compiler on itself and the
 full capability/target corpus. Add the applicable P12 compiler workload.
 Self-hosting alone proves neither correctness nor improved runtime.
@@ -1712,7 +1744,7 @@ I14-I16 own qualification/evolution rather than additional baseline capability I
 | I08 | S024-S028 |
 | I09 | L054-L058, T001-T003 |
 
-I09 status: L057 implemented and verified by focused source cases (attribute parsing with spans, unknown-attribute diagnostics, `@derive` of Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash on products and enums including generic types, generated-code provenance diagnostics). `Default`: implemented and verified on macOS arm64 (Release and Debug) - `core.default.Default` (`static fn default(): Self`) with implementations for integers, floats, `bool`, `char`, `Unit`, `T?` (none), 2- and 3-tuples, `Global`, `List` and `String`, and `@derive(Default)` for products including generic types (field defaults, `Default` bound on used type parameters); enums (no default-variant syntax), unions and arrays are not covered, so `derive(Default)` on an enum is a `feature` diagnostic. Fixtures: `tests/source/run/derive-default-and-manual-default.mt`, `tests/source/fail/derive-default-field-without-default.mt`, `tests/source/fail/derive-default-on-enum-is-unsupported.mt`. L058 implemented and verified (`@cfg` with `all`/`any`/`not`, `target_os/arch/family/endian/pointer_width/feature`, `feature`). Single-file builds take `--features a,b`; in a package build the root source tests its resolved features and each dependency its own (tests/packages.py `features`), while the standard libraries see none. Unions, empty enums and types with `init` constructors cannot derive; L056 procedural macros are implemented, unverified (see below).
+I09 status: L057 implemented and verified by focused source cases (attribute parsing with spans, unknown-attribute diagnostics, `@derive` of Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash on products and enums including generic types, generated-code provenance diagnostics). `Default`: implemented and verified on macOS arm64 (Release and Debug) - `core.default.Default` (`static fn default(): Self`) with implementations for integers, floats, `bool`, `char`, `Unit`, `T?` (none), 2- and 3-tuples, `Global`, `List` and `String`, and `@derive(Default)` for products including generic types (field defaults, `Default` bound on used type parameters); enums (no default-variant syntax), unions and arrays are not covered, so `derive(Default)` on an enum is a `feature` diagnostic. Fixtures: `tests/source/run/derive-default-and-manual-default.mt`, `tests/source/fail/derive-default-field-without-default.mt`, `tests/source/fail/derive-default-on-enum-is-unsupported.mt`. L058 implemented and verified (`@cfg` with `all`/`any`/`not`, `target_os/arch/family/endian/pointer_width/feature`, `feature`). Single-file builds take `--features a,b`; in a package build the root source tests its resolved features and each dependency its own (tests/packages.py `features`), while the standard libraries see none. Unions, empty enums and types with `init` constructors cannot derive; L056 procedural macros are implemented and verified (see below).
 L055 (declarative macros): token-level matching, repetitions, follow-set
 checks, generated-source provenance, binder hygiene, expression grouping and
 `$capture(name)` remain implemented. Inline modules have separate lexical macro
@@ -1722,18 +1754,17 @@ dependencies, including the `package.<dependency>` root; a private macro found
 through another module path is rejected in the name phase. Qualified lookup
 preserves the definition module as the hygiene context. The inline namespace,
 cross-module public invocation, private-access diagnostic and package fixtures
-are implemented, unverified (not yet built). Restricted macro visibility and
+are verified on macOS arm64 (`macro-*` source cases). Restricted macro visibility and
 package-relative item visibility boundaries, explicit and grouped macro
 imports, macro reexports, and macro namespace-aware import ambiguity have
-implementation and source/package fixtures. These additions are implemented,
-unverified (not yet built). `pub import` reexports macros; a private import
+implementation and source/package fixtures, verified on macOS arm64
+(`macro-explicit-imports`, `macro-import-reexport`, `macro-import-ambiguous`,
+`restricted-macro-*`). `pub import` reexports macros; a private import
 does not. Macro declarations remain syntax-only in the AST, with visibility
-and resolved bindings represented in compiler side tables. Package and
-cross-file cases still need qualification, so L055 closure is pending
-orchestrator validation.
+and resolved bindings represented in compiler side tables. Package and cross-file
+cases pass in `tests/packages.py` and the source suites.
 Arguments are expanded eagerly; the macro specifications do not require lazy
-argument expansion. Do not treat this work as verified until the fixtures and
-applicable compiler checks pass.
+argument expansion.
 L056 (procedural macros): implemented and verified on macOS arm64 (tests `procedural_macro`, `procedural_macro_failure`). `[macros.NAME] source/api` in `Mettle.toml`, host-program build and run per invocation (`driver/procedural.cpp`), a versioned line-based token request/response (`expansion/procedural.{h,cpp}`, library side `std.macros`), output re-lexed and attributed to the invocation, failures as `macro` diagnostics, reuse only under a `reproducible` contract with declared files/environment (undeclared inputs rerun) and the response text part of the consumer's build key. Evidence to produce: `tests/packages.py` `procedural_macro` and `procedural_macro_failure`. Known gaps: macros are graph-global (no per-package namespace), no attribute/derive procedural macros, no definition-site/fresh identity constructors or per-token error spans, tokens are exposed as text (see tooling-and-packages, Procedural macros).
 | I10 | S005, S018-S023 |
 | I11 | L052-L053, S030 |
