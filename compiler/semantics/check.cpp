@@ -47,6 +47,8 @@ std::optional<CheckedModule> Checker::run() {
                 "'");
     functionVariables[&f] =
         inference.fresh(annotation(f.annotation, f.span, f.owner));
+    if (f.asyncDefaultOutputInferred)
+      asyncDefaultBodyVariables[&f] = inference.fresh();
     facts(f).diverges = inference.value(functionVariables[&f]) == Type::Never;
     if (f.explicitReceiver) {
       if (f.owner.empty() && f.implementation < 0)
@@ -441,9 +443,125 @@ std::optional<CheckedModule> Checker::run() {
             bound.interfaceType = updated;
           }
         updateOpaqueOutput(family->defaultValue, output);
+        if (function.asyncDefaultOutputInferred) {
+          auto defaultFuture =
+              inference.value(asyncDefaultBodyVariables.at(&function));
+          if (defaultFuture == Type::Unknown) {
+            error("type", function.span,
+                  "cannot infer async interface default future");
+            continue;
+          }
+          const auto &interfaceSyntax = module.interfaces[interface->second];
+          auto familySyntax =
+              std::find_if(interfaceSyntax.associated.begin(),
+                           interfaceSyntax.associated.end(),
+                           [&](const auto &item) {
+                             return item.name == function.asyncFuture;
+                           });
+          std::vector<TypeBinding> familyTypes;
+          auto bindTypeParameter = [&](std::string_view name, Type target) {
+            if (auto found =
+                    functionGenerics.at(&function).names.find(std::string(name));
+                found != functionGenerics.at(&function).names.end())
+              familyTypes.push_back({found->second, target});
+          };
+          bindTypeParameter("Self", definition.self);
+          std::size_t parameter = 0;
+          for (const auto &generic : interfaceSyntax.genericParameters)
+            if (generic.kind != GenericParameterKind::Region &&
+                parameter < definition.parameters.size())
+              bindTypeParameter(generic.name,
+                                definition.parameters[parameter++]);
+          parameter = 0;
+          if (familySyntax != interfaceSyntax.associated.end())
+            for (const auto &generic : familySyntax->genericParameters)
+              if (generic.kind != GenericParameterKind::Region &&
+                  parameter < family->parameters.size())
+                bindTypeParameter(generic.name,
+                                  family->parameters[parameter++]);
+          defaultFuture =
+              checked.types->substitute(defaultFuture, familyTypes);
+
+          std::vector<RegionBinding> familyRegions;
+          const auto &functionRegionSet = functionRegions(function);
+          std::size_t region = 0;
+          for (const auto &generic : interfaceSyntax.genericParameters)
+            if (generic.kind == GenericParameterKind::Region &&
+                region < definition.regions.size()) {
+              auto found = functionRegionSet.names.find(generic.name);
+              if (found != functionRegionSet.names.end())
+                familyRegions.push_back(
+                    {found->second, definition.regions[region]});
+              ++region;
+            }
+          region = 0;
+          if (familySyntax != interfaceSyntax.associated.end())
+            for (const auto &generic : familySyntax->genericParameters)
+              if (generic.kind == GenericParameterKind::Region &&
+                  region < family->regions.size()) {
+                auto found = functionRegionSet.names.find(generic.name);
+                if (found != functionRegionSet.names.end())
+                  familyRegions.push_back(
+                      {found->second, family->regions[region]});
+                ++region;
+              }
+          defaultFuture =
+              checked.types->substituteRegions(defaultFuture, familyRegions);
+          family->defaultValue = defaultFuture;
+          family->asyncFutureOutputInferred = false;
+          if (checked.types->isSized(family->parameter) &&
+              !checked.types->isSized(defaultFuture))
+            error("type", function.span,
+                  "async interface default future does not satisfy Sized");
+        }
       }
     }
   }
+  for (auto &implementation : checked.interfaceData->implementations) {
+    if (!checked.types->isErased(implementation.interfaceType))
+      continue;
+    const auto descriptor =
+        checked.types->erased(implementation.interfaceType);
+    if (descriptor.declaration >= checked.interfaceData->definitions.size())
+      continue;
+    const auto &definition =
+        checked.interfaceData->definitions[descriptor.declaration];
+    std::vector<TypeBinding> substitutions{
+        {definition.self, implementation.target}};
+    for (std::size_t p = 0;
+         p < descriptor.arguments.size() && p < definition.parameters.size();
+         ++p)
+      substitutions.push_back(
+          {definition.parameters[p], descriptor.arguments[p]});
+    for (auto &[ordinal, value] : implementation.associated) {
+      if (!value.fromDefault || ordinal >= definition.associated.size())
+        continue;
+      const auto &associated = definition.associated[ordinal];
+      if (associated.defaultValue == Type::Unknown)
+        continue;
+      value.value =
+          checked.types->substitute(associated.defaultValue, substitutions);
+      if (checked.types->isSized(associated.parameter) &&
+          !checked.types->isSized(value.value))
+        error("type", implementation.span,
+              "associated default type does not satisfy Sized");
+      if (checked.types->isCopy(associated.parameter) &&
+          !checked.types->isCopy(value.value))
+        error("type", implementation.span,
+              "associated default type does not satisfy Copy");
+      if (checked.types->isUnpin(associated.parameter) &&
+          !unpinObligation(value.value, implementation.span))
+        error("type", implementation.span,
+              "associated default type does not satisfy Unpin");
+    }
+  }
+  for (const auto &function : module.functions)
+    if (function.asyncDefaultOutputInferred) {
+      auto body = inference.value(asyncDefaultBodyVariables.at(&function));
+      auto expected = inference.value(functionVariables.at(&function));
+      if (body != Type::Unknown && expected != Type::Unknown)
+        facts(*function.body).rebuiltType = expected;
+    }
   for (auto [variable, span] : integerOrBoolean) {
     auto t = inference.value(variable);
     if (t != Type::Bool && !isInteger(t) && t != Type::Never)

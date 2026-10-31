@@ -69,12 +69,14 @@ void Checker::function(Function &f) {
   constructor(f);
   if (!f.body.get())
     return;
-  contextualize(*f.body, inference.value(functionVariables[&f]));
+  auto result = functionVariables[&f];
+  if (f.asyncDefaultOutputInferred)
+    result = asyncDefaultBodyVariables.at(&f);
+  contextualize(*f.body, inference.value(result));
   auto body = node(*f.body, true);
   if (facts(*f.body).flow.normal)
     coerce(*f.body, body,
-           f.constructor ? inference.fresh(Type::Unit) : functionVariables[&f],
-           f.body->span);
+           f.constructor ? inference.fresh(Type::Unit) : result, f.body->span);
   if (facts(f).diverges && f.annotation.empty())
     inference.equal(functionVariables[&f], inference.fresh(Type::Never),
                     f.span);

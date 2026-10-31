@@ -36,6 +36,8 @@ void Checker::interfaceHeaders() {
       item.name = associated.name;
       item.constant = associated.constant;
       item.asyncFuture = associated.asyncFuture;
+      item.asyncFutureOutputInferred =
+          associated.asyncFutureOutputInferred;
       item.parameter =
           associated.constant
               ? checked.types->declareConstParameter(
@@ -511,7 +513,8 @@ void Checker::interfaceSignatures() {
                     : Type::Unknown
           : !item.value.empty() ? annotation(item.value, item.span)
                                 : Type::Unknown;
-      if (!item.constant && compiled.defaultValue != Type::Unknown) {
+      if (!item.constant && compiled.defaultValue != Type::Unknown &&
+          !item.asyncFutureOutputInferred) {
         if (checked.types->isSized(compiled.parameter) &&
             !checked.types->isSized(compiled.defaultValue))
           error("type", item.span,

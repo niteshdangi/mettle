@@ -227,8 +227,17 @@ void Checker::interfaceImplementations() {
                            return candidate.name == required.name;
                          });
         if (provided == syntax.associated.end()) {
-          if (required.asyncFuture && required.defaultValue == Type::Unknown)
+          if (required.asyncFuture && required.defaultValue == Type::Unknown) {
+            interfaces::AssociatedValue value;
+            value.parameters = required.parameters;
+            value.value = Type::Unknown;
+            value.regions = required.regions;
+            value.regionRequirements = required.regionRequirements;
+            value.requirements = required.requirements;
+            value.fromDefault = true;
+            implementation.associated[item] = std::move(value);
             continue;
+          }
           if (required.defaultValue == Type::Unknown) {
             error("type", syntax.span,
                   "missing associated item '" + required.name + "'");
@@ -245,6 +254,7 @@ void Checker::interfaceImplementations() {
               required.parameters,
               checked.types->substitute(required.defaultValue, substitutions),
               required.regions, required.regionRequirements};
+          implementation.associated[item].fromDefault = true;
           continue;
         }
         if (provided->constant != required.constant)

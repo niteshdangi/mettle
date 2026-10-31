@@ -122,7 +122,7 @@ Module::Interface Parser::interfaceDeclaration() {
       pendingAsync = take("async");
       if (is("mut") || is("take") || is("static"))
         mode = tokens[position++].text;
-      auto method = function(true);
+      auto method = function(true, true);
       if (method.constructor)
         fail("constructors cannot be declared in an interface", "signature");
       method.item.attributes = std::move(metadata);
@@ -140,34 +140,37 @@ Module::Interface Parser::interfaceDeclaration() {
       method.name = result.name + "." + method.name;
       method.item.visibility = std::move(visible);
       if (method.asynchronous) {
-        if (method.body.get() && method.asyncOutput.empty())
-          feature("async interface default methods require an explicit "
-                  "result type");
+        method.asyncDefaultOutputInferred =
+            method.body.get() && method.asyncOutput.empty();
         Module::Associated future;
         future.name =
             "$async_future_" + method.name.substr(method.name.rfind('.') + 1);
         future.span = method.span;
         future.visibility = method.item.visibility;
         future.asyncFuture = true;
+        future.asyncFutureOutputInferred =
+            method.asyncDefaultOutputInferred;
         future.genericParameters = method.genericParameters;
         future.constraints = method.constraints;
 
-        TypeSyntax output = method.asyncOutput;
-        if (!method.asyncError.empty()) {
-          TypeSyntax outcome;
-          outcome.form = TypeForm::Outcome;
-          outcome.elements.push_back(std::move(output));
-          outcome.elements.push_back(method.asyncError);
-          output = std::move(outcome);
-        }
         TypeSyntax futureBound = namedType("core::future::Future");
-        GenericArgument binding;
-        binding.binding = "Output";
-        binding.span = method.span;
-        binding.type = std::make_shared<const TypeSyntax>(std::move(output));
-        futureBound.arguments.push_back(std::move(binding));
+        if (!method.asyncDefaultOutputInferred) {
+          TypeSyntax output = method.asyncOutput;
+          if (!method.asyncError.empty()) {
+            TypeSyntax outcome;
+            outcome.form = TypeForm::Outcome;
+            outcome.elements.push_back(std::move(output));
+            outcome.elements.push_back(method.asyncError);
+            output = std::move(outcome);
+          }
+          GenericArgument binding;
+          binding.binding = "Output";
+          binding.span = method.span;
+          binding.type = std::make_shared<const TypeSyntax>(std::move(output));
+          futureBound.arguments.push_back(std::move(binding));
+        }
         future.bounds.push_back(std::move(futureBound));
-        if (method.body.get())
+        if (method.body.get() && !method.asyncDefaultOutputInferred)
           future.value = method.annotation;
 
         method.asyncFuture = future.name;

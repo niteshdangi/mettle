@@ -116,6 +116,7 @@ private:
   std::vector<std::unordered_map<std::string, Binding>> scopes;
   std::unordered_map<Function *, std::vector<int>> localVariables;
   std::unordered_map<const Function *, int> functionVariables;
+  std::unordered_map<const Function *, int> asyncDefaultBodyVariables;
   std::unordered_map<const Node *, int> nodeVariables;
   // Expression results whose evaluation already reported an error.
   std::vector<int> poisonedVariables;

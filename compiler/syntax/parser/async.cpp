@@ -117,9 +117,9 @@ std::unique_ptr<Node> Parser::asyncBody(NodeOwner body, TypeSyntax result,
   return call;
 }
 
-void Parser::lowerAsync(Function &function) {
+void Parser::lowerAsync(Function &function, bool inferResult) {
   auto bodySpan = function.body->span;
-  auto result = asyncResult(function.annotation, true);
+  auto result = asyncResult(function.annotation, !inferResult);
   TypeSyntax output = result;
   if (!function.error.empty()) {
     TypeSyntax outcome;
