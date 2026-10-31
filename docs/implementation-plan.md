@@ -1609,20 +1609,20 @@ I14-I16 own qualification/evolution rather than additional baseline capability I
 | I09 | L054-L058, T001-T003 |
 
 I09 status: L057 implemented and verified by focused source cases (attribute parsing with spans, unknown-attribute diagnostics, `@derive` of Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash on products and enums including generic types, generated-code provenance diagnostics). `Default`: implemented and verified on macOS arm64 (Release and Debug) - `core.default.Default` (`static fn default(): Self`) with implementations for integers, floats, `bool`, `char`, `Unit`, `T?` (none), 2- and 3-tuples, `Global`, `List` and `String`, and `@derive(Default)` for products including generic types (field defaults, `Default` bound on used type parameters); enums (no default-variant syntax), unions and arrays are not covered, so `derive(Default)` on an enum is a `feature` diagnostic. Fixtures: `tests/source/run/derive-default-and-manual-default.mt`, `tests/source/fail/derive-default-field-without-default.mt`, `tests/source/fail/derive-default-on-enum-is-unsupported.mt`. L058 implemented and verified (`@cfg` with `all`/`any`/`not`, `target_os/arch/family/endian/pointer_width/feature`, `feature`). Single-file builds take `--features a,b`; in a package build the root source tests its resolved features and each dependency its own (tests/packages.py `features`), while the standard libraries see none. Unions, empty enums and types with `init` constructors cannot derive; L056 procedural macros are implemented, unverified (see below).
-L055 (declarative macros): existing token-level matching, repetitions,
-follow-set checks, generated-source provenance, binder hygiene, expression
-grouping and `$capture(name)` remain implemented. This lane adds lexical
-inline-module-scoped definitions within each source file (so sibling inline
-modules can define the same name independently) and accepts the item visibility
-form syntactically on macro definitions. The focused inline-module namespace
-fixture is implemented, unverified (not yet built). Public visibility is
-currently syntactic only:
-macro imports/reexports and macro-namespace resolution across files, modules
-and packages remain unimplemented, as does definition-site identity/visibility
-context for private names across module boundaries. This lane does not close
-L055. Arguments are expanded eagerly; the macro specifications do not require
-lazy argument expansion. Do not treat this work as verified until the fixture
-and applicable compiler checks pass.
+L055 (declarative macros): token-level matching, repetitions, follow-set
+checks, generated-source provenance, binder hygiene, expression grouping and
+`$capture(name)` remain implemented. Inline modules have separate lexical macro
+namespaces within each source file. This lane adds qualified invocation of
+`pub macro` definitions in external file modules and resolved package
+dependencies, including the `package.<dependency>` root; a private macro found
+through another module path is rejected in the name phase. Qualified lookup
+preserves the definition module as the hygiene context. The inline namespace,
+cross-module public invocation, private-access diagnostic and package fixtures
+are implemented, unverified (not yet built). Explicit macro imports,
+macro reexports and restricted `pub(path)` access remain unimplemented, so
+L055 is not closed. Arguments are expanded eagerly; the macro specifications do
+not require lazy argument expansion. Do not treat this work as verified until
+the fixtures and applicable compiler checks pass.
 L056 (procedural macros): implemented and verified on macOS arm64 (tests `procedural_macro`, `procedural_macro_failure`). `[macros.NAME] source/api` in `Mettle.toml`, host-program build and run per invocation (`driver/procedural.cpp`), a versioned line-based token request/response (`expansion/procedural.{h,cpp}`, library side `std.macros`), output re-lexed and attributed to the invocation, failures as `macro` diagnostics, reuse only under a `reproducible` contract with declared files/environment (undeclared inputs rerun) and the response text part of the consumer's build key. Evidence to produce: `tests/packages.py` `procedural_macro` and `procedural_macro_failure`. Known gaps: macros are graph-global (no per-package namespace), no attribute/derive procedural macros, no definition-site/fresh identity constructors or per-token error spans, tokens are exposed as text (see tooling-and-packages, Procedural macros).
 | I10 | S005, S018-S023 |
 | I11 | L052-L053, S030 |

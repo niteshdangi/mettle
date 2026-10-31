@@ -135,8 +135,10 @@ Status: proposed for owner review; implemented unverified in I09 (L055).
 
 - Definitions use the documented working form `macro name { (matcher) => { expansion }; }`;
   invocations are `name!(...)`, `name![...]` or `name!{...}`. Definitions are
-  order independent and scoped to their inline module within a source file;
-  imports, reexports and cross-file/package macro resolution remain unimplemented.
+  order independent and scoped to their inline module within a source file.
+  Qualified invocation of public definitions across file modules and package
+  dependencies is implemented but unverified; explicit macro imports and
+  reexports remain unimplemented.
 - Fragment kinds are `expr stmt pat ty path ident literal tt block item`
   (the spelling of the specification-annex follow-set table).
 - Hygiene: identifiers an expansion binds (`let`, `var`, `for`, closure
