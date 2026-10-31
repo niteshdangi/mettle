@@ -10,8 +10,8 @@ TypeSyntax Parser::type(bool effect) {
   std::string view;
   if (is("read") || (is("mut") && peek(1).text != "fn"))
     view = tokens[position++].text;
-  if ((is("take") && peek(1).text != "fn") || is("heap") || is("shared"))
-    feature("owning runtime handle types are not implemented yet");
+  if (is("take") && peek(1).text != "fn")
+    feature("'take' is an access mode, not a type qualifier");
   if (is("(") && peek(1).text == ")")
     fail("use Unit in type positions; () is a value");
   std::vector<std::string> binders;
@@ -34,7 +34,28 @@ TypeSyntax Parser::type(bool effect) {
   if (is("fn") || is("for") || is("unsafe") || is("extern") || is("async") ||
       ((is("mut") || is("take")) && peek(1).text == "fn"))
     result = callableType();
-  else if (take("pinned")) {
+  else if (is("heap") || is("shared") || is("weak") || is("local")) {
+    auto owner = tokens[position++];
+    result.form = TypeForm::Owner;
+    if (owner.text == "heap")
+      result.ownerKind = OwnerKind::Heap;
+    else if (owner.text == "shared")
+      result.ownerKind = OwnerKind::Shared;
+    else {
+      if (owner.text == "local") {
+        if (take("shared"))
+          result.ownerKind = OwnerKind::LocalShared;
+        else if (take("weak"))
+          result.ownerKind = OwnerKind::LocalWeak;
+        else
+          fail("expected 'shared' or 'weak' after 'local'");
+      } else
+        result.ownerKind = OwnerKind::Weak;
+    }
+    auto payload =
+        std::make_shared<const TypeSyntax>(type(false));
+    result.nested = payload;
+  } else if (take("pinned")) {
     result.form = TypeForm::Pinned;
     result.elements.push_back(type(false));
   } else if (take("ptr")) {

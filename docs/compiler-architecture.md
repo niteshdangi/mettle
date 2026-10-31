@@ -57,6 +57,17 @@ kind, children, spelling, annotations, separators and provenance. Type variables
 resolved locals/callees, normalized values and flow facts do not belong in AST
 nodes.
 
+Owner type annotations retain an `Owner` syntax form and resolve in semantics to
+the nominal `alloc` library types: `heap T` to `Box<T>`, `shared T` to `Arc<T>`,
+`local shared T` to `Rc<T>`, and the corresponding atomic/local `Weak<T>`
+handles. Expression constructors and `weak owner` use ordinary checked library
+calls, so allocator defaults, methods, dereference projections and destruction
+remain library-owned. The loader mounts `alloc` for reserved owner syntax and
+reports a structured feature diagnostic when that library is unavailable.
+Unsized owner payloads remain unsupported because the current owner
+implementations require sized payloads; they receive a specific feature
+diagnostic. This syntax mapping is implemented but unverified (not yet built).
+
 Semantic checking produces a move-only checked module that owns the parsed
 module plus resolved facts. Facts are indexed by stable node addresses within
 that owned tree and exposed read-only after checking. Inference variables remain

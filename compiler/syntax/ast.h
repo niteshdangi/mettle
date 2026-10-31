@@ -85,7 +85,15 @@ enum class TypeForm {
   Projection,
   Slice,
   Pointer,
-  Pinned
+  Pinned,
+  Owner
+};
+enum class OwnerKind {
+  Heap,
+  Shared,
+  LocalShared,
+  Weak,
+  LocalWeak
 };
 struct TypeSyntax;
 struct GenericArgument {
@@ -100,6 +108,7 @@ struct TypeSyntax {
   std::vector<std::string> sources, regions;
   std::shared_ptr<const TypeSyntax> nested{};
   TypeForm form = TypeForm::Named;
+  OwnerKind ownerKind = OwnerKind::Heap;
   std::vector<TypeSyntax> elements{};
   std::uint32_t count = 0;
   std::shared_ptr<const Node> countExpression{};
