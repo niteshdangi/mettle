@@ -17,13 +17,6 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
     pub fn is_empty(): bool { self.data.is_empty() }
     pub fn peek(): (read T from self)? { self.data.get(0usize) }
     pub fn as_slice(): read [T] from self { self.data.as_slice() }
-    pub take fn into_vec(): List<T, A> {
-        unsafe {
-            let v = core.ptr.`read`(core.ptr.from_ref(self.data))
-            core.mem.forget(take self)
-            v
-        }
-    }
 
     // Compare the full path before changing the heap. If Ord panics, the
     // caller has not yet inserted the value and the existing heap is intact.
@@ -93,12 +86,29 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
     pub mut fn clear(): Unit { self.data.clear() }
 }
 
+extend<T, A: Allocator> BinaryHeap<T, A> {
+    pub take fn into_vec(): List<T, A> {
+        unsafe {
+            let v = core.ptr.`read`(core.ptr.from_ref(self.data))
+            core.mem.forget(take self)
+            v
+        }
+    }
+}
 
 // Iteration is in heap (storage) order, not sorted order.
 extend<T, A: Allocator> BinaryHeap<T, A> implements Iterable {
     type Item = T
     type Iter<region r> = SliceIter<region r, T>
     fn iter<region r>(receiver self: read Self from r): SliceIter<region r, T> { self.data.as_slice().iter() }
+}
+
+extend<T, A: Allocator> BinaryHeap<T, A> implements OwnedIterable {
+    type Item = T
+    type IntoIter = super.vec.IntoIter<T, A>
+    fn into_iter(receiver self: take Self): super.vec.IntoIter<T, A> {
+        self.into_vec().into_iter()
+    }
 }
 
 extend<T: Clone, A: Allocator + Clone> BinaryHeap<T, A> implements Clone {

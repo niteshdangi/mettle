@@ -290,6 +290,44 @@ extend<K, A: Allocator> Set<K, A> implements Iterable {
     fn iter<region r>(receiver self: read Self from r): SliceIter<region r, Bucket<K, Unit>> { self.map.entries.as_slice().iter() }
 }
 
+// Consuming iteration moves out entries without consulting the now-stale
+// index; dropping the iterator releases the remaining buckets and index block.
+pub type MapIntoIter<K, V, A: Allocator = Global> { map: Map<K, V, A> }
+extend<K, V, A: Allocator> MapIntoIter<K, V, A> implements Iterator {
+    type Item = (K, V)
+    mut fn next(): (K, V)? {
+        match self.map.entries.pop() {
+            present(entry) => present((entry.key, entry.value)),
+            none => none
+        }
+    }
+}
+extend<K, V, A: Allocator> Map<K, V, A> implements OwnedIterable {
+    type Item = (K, V)
+    type IntoIter = MapIntoIter<K, V, A>
+    fn into_iter(receiver self: take Self): MapIntoIter<K, V, A> {
+        MapIntoIter(take self)
+    }
+}
+
+pub type SetIntoIter<K, A: Allocator = Global> { inner: MapIntoIter<K, Unit, A> }
+extend<K, A: Allocator> SetIntoIter<K, A> implements Iterator {
+    type Item = K
+    mut fn next(): K? {
+        match take self.inner.next() {
+            present(pair) => present(pair.0),
+            none => none
+        }
+    }
+}
+extend<K, A: Allocator> Set<K, A> implements OwnedIterable {
+    type Item = K
+    type IntoIter = SetIntoIter<K, A>
+    fn into_iter(receiver self: take Self): SetIntoIter<K, A> {
+        SetIntoIter(self.map.into_iter())
+    }
+}
+
 // Mutable iteration visits the values only: mutable keys could break the table's hash invariants.
 pub type ValuesMut<region r, K, V, A: Allocator> { map: mut Map<K, V, A> from r; index: usize }
 extend<region r, K, V, A: Allocator> ValuesMut<region r, K, V, A> implements Iterator {
