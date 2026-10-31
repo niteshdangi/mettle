@@ -2,7 +2,7 @@
 // equal under `Eq` must feed identical bytes, so every implementation below
 // hashes exactly what its `PartialEq` compares. Integers are written as
 // little-endian bytes, so results do not depend on the host byte order.
-import super.cmp.Ordering
+import super.cmp.{Ordering, Reverse}
 import super.text.Text
 
 pub interface Hasher {
@@ -177,6 +177,9 @@ extend Ordering implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit {
         state.write_u8(match self { Ordering.Less => 0u8, Ordering.Equal => 1u8, Ordering.Greater => 2u8 })
     }
+}
+extend<T: Hash> Reverse<T> implements Hash {
+    fn hash<H: Hasher>(state: mut H): Unit { self.value.hash(mut state) }
 }
 // Length-prefixed so nested slices cannot collide by regrouping.
 extend<T: Hash> [T] implements Hash {

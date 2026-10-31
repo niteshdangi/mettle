@@ -56,6 +56,7 @@ fn main(): i32 {
     if hash.hash_one(read p) != hash.hash_one(read present(1)) || hash.hash_one(read p) == hash.hash_one(read n) { return 17 }
     // text and bytes are length-delimited: ("ab","c") differs from ("a","bc")
     if pair_hash("ab", "c") == pair_hash("a", "bc") { return 18 }
+    if hash.hash_one(read cmp.Reverse(42)) != hash.hash_one(read 42) { return 24 }
     let low = -170141183460469231731687303715884105728i128
     let same_low = -170141183460469231731687303715884105728i128
     let high = 340282366920938463463374607431768211455u128
