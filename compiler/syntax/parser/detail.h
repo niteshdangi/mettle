@@ -205,8 +205,9 @@ private:
     if (value.depth > limits::syntaxDepth)
       fail("syntax nesting limit exceeded", "limit");
   }
-  Function function(bool allowDeclaration = false);
-  void lowerAsync(Function &function);
+  Function function(bool allowDeclaration = false,
+                    bool inferAsyncResult = false);
+  void lowerAsync(Function &function, bool inferResult = false);
   // The future expression for an async body; `result` is empty when inferred.
   std::unique_ptr<Node> asyncBody(NodeOwner body, TypeSyntax result, Span span,
                                   TypeSyntax error = {});
