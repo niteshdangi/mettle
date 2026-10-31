@@ -5,6 +5,18 @@
 // on. The compiler re-lexes and re-parses the text; every generated token is
 // attributed to the invocation. The wire format is documented in
 // compiler/expansion/procedural.h; a different major version is rejected.
+//
+// Standard macros are not declared here; Mettle has no Rust-style `name!`
+// forms, and each one maps to a native operation:
+//   print, println, eprint, eprintln -> std.io (`format` parameters)
+//   format                           -> alloc.fmt.string
+//   write, writeln                   -> core.fmt.write, core.fmt.writeln; Writer.write, write_line
+//   format_args                      -> the `format` parameter kind and f"..." recipes
+//   panic, todo, unimplemented,
+//   unreachable, assert*, debug_assert* -> core.panic
+//   dbg                              -> std.debug.dbg
+//   vec                              -> alloc.vec.from_array, [x].repeat(n)
+//   matches                          -> a `match` expression with a `_` arm
 import package.alloc.vec
 import package.alloc.vec.List
 import package.alloc.string

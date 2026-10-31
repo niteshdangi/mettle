@@ -113,6 +113,24 @@ fn run(): i32 throws Error {
     line.clear()
     let l5 = try r.read_line(line)
     if l5 != 0usize { return 17 }
+
+    var input = alloc.vec.new<u8>()
+    input.extend_from_slice("read".as_bytes())
+    var cursor_reader = std.io.buf_reader_with_capacity(
+        4usize, std.io.Cursor<List<u8>>.new(input))
+    var chunk = [0u8; 4]
+    if try cursor_reader.read_some(chunk) != 4usize { return 18 }
+    cursor_reader.get_mut().set_position(0u64)
+    if try cursor_reader.read_some(chunk) != 4usize || chunk[0usize] != 114u8 { return 19 }
+
+    var cursor_writer = std.io.buf_writer_with_capacity(
+        4usize, std.io.Cursor<List<u8>>.new(alloc.vec.new<u8>()))
+    try cursor_writer.write_all("data".as_bytes())
+    try cursor_writer.flush()
+    cursor_writer.get_mut().set_position(0u64)
+    try cursor_writer.write_all("new".as_bytes())
+    try cursor_writer.flush()
+    if cursor_writer.get_ref().get_ref().as_slice()[0usize] != 110u8 { return 20 }
     0
 }
 

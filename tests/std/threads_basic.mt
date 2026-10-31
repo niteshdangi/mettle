@@ -3,7 +3,7 @@ import std.sync.mutex
 import alloc.arc
 
 fn main(): i32 {
-  if thread.current().raw == 0usize ||
+  if thread.current().id().raw == 0usize ||
      thread.available_parallelism() == 0usize || thread.panicking() {
     return 8
   }
@@ -22,7 +22,7 @@ fn main(): i32 {
   })
   let parked = match take spawned { success(handle) => handle, failure(error) => { return 14 } }
   let child = parked.thread()
-  if child.id().raw == thread.current().raw { return 9 }
+  if child.id().raw == thread.current().id().raw { return 9 }
   match take child.name() {
     present(name) => { if name.as_text() != "parking-child" { return 10 } },
     none => { return 11 }

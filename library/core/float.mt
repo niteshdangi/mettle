@@ -8,6 +8,7 @@
 // fill, alignment, `plus` and `zero` follow the integer rules.
 import super.fmt.{Formatter, Write, Display, Debug, Error}
 import super.cmp.{Eq, Ordering, PartialEq}
+import super.convert.From
 import super.slice
 import super.text.from_utf8_unchecked
 
@@ -390,3 +391,70 @@ extend f32 {
         FpCategory.Normal
     }
 }
+
+// Algebraic operations permit reassociation in Rust; evaluating them as the
+// ordinary IEEE operation is a conforming (strictest) implementation.
+extend f64 {
+    pub fn algebraic_add(rhs: f64): f64 { self + rhs }
+    pub fn algebraic_sub(rhs: f64): f64 { self - rhs }
+    pub fn algebraic_mul(rhs: f64): f64 { self * rhs }
+    pub fn algebraic_div(rhs: f64): f64 { self / rhs }
+    pub fn algebraic_rem(rhs: f64): f64 { self % rhs }
+}
+
+extend f32 {
+    pub fn algebraic_add(rhs: f32): f32 { self + rhs }
+    pub fn algebraic_sub(rhs: f32): f32 { self - rhs }
+    pub fn algebraic_mul(rhs: f32): f32 { self * rhs }
+    pub fn algebraic_div(rhs: f32): f32 { self / rhs }
+    pub fn algebraic_rem(rhs: f32): f32 { self % rhs }
+}
+
+// `to_int_unchecked` is an `unsafe` operation: the caller promises the value is
+// finite and in range for the integer type. The conversion itself is the
+// saturating `as` cast, which agrees with every in-range input.
+pub interface FromF64: Sized { static fn from_f64_unchecked(value: f64): Self; }
+pub interface FromF32: Sized { static fn from_f32_unchecked(value: f32): Self; }
+extend i8 implements FromF64 { static fn from_f64_unchecked(value: f64): i8 { value as i8 } }
+extend i8 implements FromF32 { static fn from_f32_unchecked(value: f32): i8 { value as i8 } }
+extend i16 implements FromF64 { static fn from_f64_unchecked(value: f64): i16 { value as i16 } }
+extend i16 implements FromF32 { static fn from_f32_unchecked(value: f32): i16 { value as i16 } }
+extend i32 implements FromF64 { static fn from_f64_unchecked(value: f64): i32 { value as i32 } }
+extend i32 implements FromF32 { static fn from_f32_unchecked(value: f32): i32 { value as i32 } }
+extend i64 implements FromF64 { static fn from_f64_unchecked(value: f64): i64 { value as i64 } }
+extend i64 implements FromF32 { static fn from_f32_unchecked(value: f32): i64 { value as i64 } }
+extend i128 implements FromF64 { static fn from_f64_unchecked(value: f64): i128 { value as i128 } }
+extend i128 implements FromF32 { static fn from_f32_unchecked(value: f32): i128 { value as i128 } }
+extend isize implements FromF64 { static fn from_f64_unchecked(value: f64): isize { value as isize } }
+extend isize implements FromF32 { static fn from_f32_unchecked(value: f32): isize { value as isize } }
+extend u8 implements FromF64 { static fn from_f64_unchecked(value: f64): u8 { value as u8 } }
+extend u8 implements FromF32 { static fn from_f32_unchecked(value: f32): u8 { value as u8 } }
+extend u16 implements FromF64 { static fn from_f64_unchecked(value: f64): u16 { value as u16 } }
+extend u16 implements FromF32 { static fn from_f32_unchecked(value: f32): u16 { value as u16 } }
+extend u32 implements FromF64 { static fn from_f64_unchecked(value: f64): u32 { value as u32 } }
+extend u32 implements FromF32 { static fn from_f32_unchecked(value: f32): u32 { value as u32 } }
+extend u64 implements FromF64 { static fn from_f64_unchecked(value: f64): u64 { value as u64 } }
+extend u64 implements FromF32 { static fn from_f32_unchecked(value: f32): u64 { value as u64 } }
+extend u128 implements FromF64 { static fn from_f64_unchecked(value: f64): u128 { value as u128 } }
+extend u128 implements FromF32 { static fn from_f32_unchecked(value: f32): u128 { value as u128 } }
+extend usize implements FromF64 { static fn from_f64_unchecked(value: f64): usize { value as usize } }
+extend usize implements FromF32 { static fn from_f32_unchecked(value: f32): usize { value as usize } }
+extend f64 {
+    pub unsafe fn to_int_unchecked<I: FromF64>(): I { I.(FromF64).from_f64_unchecked(self) }
+}
+extend f32 {
+    pub unsafe fn to_int_unchecked<I: FromF32>(): I { I.(FromF32).from_f32_unchecked(self) }
+}
+
+// Lossless widening conversions into floating point.
+extend f64 implements From<f32> { static fn `from`(value: take f32): f64 { value as f64 } }
+extend f64 implements From<i8> { static fn `from`(value: take i8): f64 { value as f64 } }
+extend f64 implements From<i16> { static fn `from`(value: take i16): f64 { value as f64 } }
+extend f64 implements From<i32> { static fn `from`(value: take i32): f64 { value as f64 } }
+extend f64 implements From<u8> { static fn `from`(value: take u8): f64 { value as f64 } }
+extend f64 implements From<u16> { static fn `from`(value: take u16): f64 { value as f64 } }
+extend f64 implements From<u32> { static fn `from`(value: take u32): f64 { value as f64 } }
+extend f32 implements From<i8> { static fn `from`(value: take i8): f32 { value as f32 } }
+extend f32 implements From<i16> { static fn `from`(value: take i16): f32 { value as f32 } }
+extend f32 implements From<u8> { static fn `from`(value: take u8): f32 { value as f32 } }
+extend f32 implements From<u16> { static fn `from`(value: take u16): f32 { value as f32 } }

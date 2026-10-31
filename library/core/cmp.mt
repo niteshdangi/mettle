@@ -51,12 +51,29 @@ pub interface PartialOrd<Rhs: unsized = Self>: PartialEq<Rhs> {
 // Total order consistent with `PartialOrd` and `Eq`.
 pub interface Ord: Eq + PartialOrd {
     fn cmp(other: read Self): Ordering;
+    take fn min(other: take Self): Self where Self: Sized {
+        if other.cmp(read self).is_lt() { other } else { self }
+    }
+    take fn max(other: take Self): Self where Self: Sized {
+        if other.cmp(read self).is_lt() { self } else { other }
+    }
+    take fn clamp(low: take Self, high: take Self): Self where Self: Sized {
+        if high.cmp(read low).is_lt() {
+            super.panic.panic("clamp requires low <= high")
+        }
+        if self.cmp(read low).is_lt() { low }
+        else if high.cmp(read self).is_lt() { high }
+        else { self }
+    }
 }
 
 pub fn min<T: Ord>(a: take T, b: take T): T { if b.cmp(read a).is_lt() { b } else { a } }
 pub fn max<T: Ord>(a: take T, b: take T): T { if b.cmp(read a).is_lt() { a } else { b } }
-// Requires low <= high.
+// Panics when low > high, including when value is outside the bounds.
 pub fn clamp<T: Ord>(value: take T, low: take T, high: take T): T {
+    if high.cmp(read low).is_lt() {
+        super.panic.panic("clamp requires low <= high")
+    }
     if value.cmp(read low).is_lt() { low } else if high.cmp(read value).is_lt() { high } else { value }
 }
 
@@ -79,6 +96,19 @@ extend Ordering implements PartialEq {
     }
 }
 extend Ordering implements Eq {}
+extend Ordering implements PartialOrd {
+    fn partial_cmp(other: read Ordering): Ordering? { present(self.cmp(other)) }
+}
+// Less < Equal < Greater.
+extend Ordering implements Ord {
+    fn cmp(other: read Ordering): Ordering {
+        match self {
+            Ordering.Less => if other.is_lt() { Ordering.Equal } else { Ordering.Less },
+            Ordering.Equal => if other.is_lt() { Ordering.Greater } else if other.is_eq() { Ordering.Equal } else { Ordering.Less },
+            Ordering.Greater => if other.is_gt() { Ordering.Equal } else { Ordering.Greater }
+        }
+    }
+}
 
 extend i8 implements PartialEq { fn eq(other: read i8): bool { self == other } }
 extend i8 implements Eq {}
@@ -270,6 +300,32 @@ extend<A: Ord, B: Ord> (A, B) implements Ord {
     fn cmp(other: read (A, B)): Ordering {
         let first = self.0.cmp(read other.0)
         if first.is_eq() { self.1.cmp(read other.1) } else { first }
+    }
+}
+
+extend<A: PartialEq, B: PartialEq, C: PartialEq> (A, B, C) implements PartialEq {
+    fn eq(other: read (A, B, C)): bool { self.0 == other.0 && self.1 == other.1 && self.2 == other.2 }
+}
+extend<A: Eq, B: Eq, C: Eq> (A, B, C) implements Eq {}
+extend<A: PartialOrd, B: PartialOrd, C: PartialOrd> (A, B, C) implements PartialOrd {
+    fn partial_cmp(other: read (A, B, C)): Ordering? {
+        match self.0.partial_cmp(read other.0) {
+            present(first) => if first.is_eq() {
+                match self.1.partial_cmp(read other.1) {
+                    present(second) => if second.is_eq() { self.2.partial_cmp(read other.2) } else { present(second) },
+                    none => none
+                }
+            } else { present(first) },
+            none => none
+        }
+    }
+}
+extend<A: Ord, B: Ord, C: Ord> (A, B, C) implements Ord {
+    fn cmp(other: read (A, B, C)): Ordering {
+        let first = self.0.cmp(read other.0)
+        if !first.is_eq() { return first }
+        let second = self.1.cmp(read other.1)
+        if second.is_eq() { self.2.cmp(read other.2) } else { second }
     }
 }
 

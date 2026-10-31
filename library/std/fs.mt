@@ -66,6 +66,11 @@ pub copy type Metadata {
     mode: u32
     modified_secs: i64
     modified_nanos: u32
+    accessed_secs: i64
+    accessed_nanos: u32
+    created_secs: i64
+    created_nanos: u32
+    has_created: bool
 }
 
 extend Metadata {
@@ -77,19 +82,25 @@ extend Metadata {
     // Permission bits (`st_mode & 0o7777`).
     pub fn permissions(): Permissions { Permissions(self.mode) }
     pub fn modified(): SystemTime { super.time.system_time_from_parts(self.modified_secs, self.modified_nanos) }
+    pub fn accessed(): SystemTime { super.time.system_time_from_parts(self.accessed_secs, self.accessed_nanos) }
+    // Creation time; `Unsupported` where the platform does not record it (Darwin does).
+    pub fn created(): SystemTime throws Error {
+        if !self.has_created { throw io.from_kind(ErrorKind.Unsupported) }
+        super.time.system_time_from_parts(self.created_secs, self.created_nanos)
+    }
 }
 
 fn file_type_from(code: i64): FileType {
     if code == 0i64 { FileType.File } else if code == 1i64 { FileType.Directory } else if code == 2i64 { FileType.Symlink } else { FileType.Other }
 }
 
-fn metadata_from(info: read [i64; 5]): Metadata {
-    Metadata(info[0usize] as u64, file_type_from(info[1usize]), info[2usize] as u32, info[3usize], info[4usize] as u32)
+fn metadata_from(info: read [i64; 10]): Metadata {
+    Metadata(info[0usize] as u64, file_type_from(info[1usize]), info[2usize] as u32, info[3usize], info[4usize] as u32, info[5usize], info[6usize] as u32, info[7usize], info[8usize] as u32, info[9usize] != 0i64)
 }
 
 fn stat_path(p: read Path, follow: i32): Metadata throws Error {
     let c = try ffi.cstring(p.as_bytes())
-    var info = [0i64; 5]
+    var info = [0i64; 10]
     let r = unsafe { sys.mettle_rt_stat(c.as_ptr(), -1, follow, core.ptr.from_mut(info).cast<i64>()) }
     if r != 0 { throw io.last_os_error() }
     metadata_from(info)
@@ -239,7 +250,7 @@ extend File {
         File(cloned)
     }
     pub fn metadata(): Metadata throws Error {
-        var info = [0i64; 5]
+        var info = [0i64; 10]
         let r = unsafe { sys.mettle_rt_stat(core.ptr.null<u8>(), self.fd, 1, core.ptr.from_mut(info).cast<i64>()) }
         if r != 0 { throw io.last_os_error() }
         metadata_from(info)

@@ -1,11 +1,12 @@
 import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, layout_unchecked, free_block, handle_alloc_error, panic_precondition, dangling_for}
+import package.core.convert.From
 import package.core.clone.Clone
 import package.core.default.Default
 import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import package.core.hash.{Hash, Hasher}
 import package.core.fmt
 import package.core.ops.{Deref, DerefMut, IndexRange, IndexRangeMut}
-import package.core.iter.{Iterator, BidirectionalIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import package.core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
 import package.core.slice.{SliceIter, SliceIterMut}
 
 copy type RawSlice<T> { data: ptr<read T>; len: usize }
@@ -229,6 +230,10 @@ extend<T, A: Allocator> List<T, A> {
         }
         self.len += 1usize
     }
+    pub mut fn insert_mut(index: usize, value: take T): mut T from self {
+        self.insert(index, value)
+        unsafe { mut *self.ptr.add(index) }
+    }
     pub mut fn remove(index: usize): T {
         if index >= self.len { panic_precondition() }
         unsafe {
@@ -337,7 +342,7 @@ extend<T, A: Allocator> List<T, A> {
         self.len = kept
     }
 
-    pub mut fn retain_mut(keep: fn(mut T): bool): Unit {
+    pub mut fn retain_mut<F: mut fn(mut T): bool>(keep: mut F): Unit {
         let n = self.len
         self.len = 0usize
         var read_at = 0usize
@@ -364,7 +369,7 @@ extend<T, A: Allocator> List<T, A> {
         if test(unsafe { mut *last }) { self.pop() } else { none }
     }
 
-    pub mut fn extract_if<F: fn(mut T): bool>(
+    pub mut fn extract_if<F: mut fn(mut T): bool>(
         start: usize,
         end: usize,
         test: take F
@@ -531,7 +536,7 @@ pub type ExtractIf<region r, T, A: Allocator, F> {
     remaining: usize
     test: F
 }
-extend<region r, T, A: Allocator, F: fn(mut T): bool> ExtractIf<region r, T, A, F> implements Iterator {
+extend<region r, T, A: Allocator, F: mut fn(mut T): bool> ExtractIf<region r, T, A, F> implements Iterator {
     type Item = T
     mut fn next(): T? {
         while self.remaining > 0usize {
@@ -570,6 +575,9 @@ extend<region r, T, A: Allocator> Drain<region r, T, A> implements Bidirectional
         self.back -= 1usize
         present(unsafe { core.ptr.`read`(self.list.ptr.add(self.back)) })
     }
+}
+extend<region r, T, A: Allocator> Drain<region r, T, A> implements ExactSizeIterator {
+    fn len(): usize { self.back - self.front }
 }
 
 extend<T: Clone, A: Allocator> List<T, A> {
@@ -962,6 +970,9 @@ extend<T, A: Allocator> IntoIter<T, A> implements BidirectionalIterator {
         present(unsafe { core.ptr.`read`(self.buf.add(self.back)) })
     }
 }
+extend<T, A: Allocator> IntoIter<T, A> implements ExactSizeIterator {
+    fn len(): usize { self.back - self.front }
+}
 pub type Splice<region r, T, A: Allocator, I: Iterator<Item = T>> {
     list: mut List<T, A> from r
     removed: IntoIter<T, A>
@@ -1028,3 +1039,44 @@ extend<T: fmt.Debug, A: Allocator> List<T, A> implements fmt.Debug {
 // Owned storage moves or is shared exactly when its elements and allocator do.
 unsafe extend<T: Transferable, A: Allocator + Transferable> List<T, A> implements Transferable {}
 unsafe extend<T: Shareable, A: Allocator + Shareable> List<T, A> implements Shareable {}
+
+// Moves the elements of a fixed-size array into a list of exactly its length.
+pub fn from_array<T, const N: usize>(value: take [T; N]): List<T> {
+    var out = with_capacity<T>(N)
+    unsafe {
+        let source = core.ptr.from_ref(value).cast<T>()
+        var i = 0usize
+        while i < N {
+            out.push(core.ptr.`read`(source.add(i)))
+            i += 1usize
+        }
+        core.mem.forget(take value)
+    }
+    out
+}
+extend<T, const N: usize> List<T> implements From<[T; N]> {
+    static fn `from`(value: take [T; N]): List<T> { from_array(value) }
+}
+
+// Flattens nested lists by cloning, optionally placing `separator` between parts.
+extend<T: Clone, A: Allocator, B: Allocator> List<List<T, B>, A> {
+    pub fn concat(): List<T> {
+        var out = new<T>()
+        var i = 0usize
+        while i < self.len() {
+            out.extend_from_slice(self[i].as_slice())
+            i += 1usize
+        }
+        out
+    }
+    pub fn join(separator: read [T]): List<T> {
+        var out = new<T>()
+        var i = 0usize
+        while i < self.len() {
+            if i != 0usize { out.extend_from_slice(separator) }
+            out.extend_from_slice(self[i].as_slice())
+            i += 1usize
+        }
+        out
+    }
+}

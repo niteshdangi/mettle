@@ -1,6 +1,8 @@
 import super.cmp.{PartialEq, Ord, Ordering}
-import super.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, Iterable, MutableIterable}
+import super.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, FusedIterator, Iterable, MutableIterable}
 import super.clone.Clone
+import super.default.Default
+import super.fmt
 
 copy type Raw { data: ptr<read u8>; len: usize }
 
@@ -286,7 +288,7 @@ extend<T: Ord> [T] {
 }
 
 extend<T> [T] {
-    pub fn binary_search_by<F: fn(read T): Ordering>(compare: take F): usize throws usize {
+    pub fn binary_search_by<F: mut fn(read T): Ordering>(compare: mut F): usize throws usize {
         var low = 0usize
         var high = self.len()
         while low < high {
@@ -300,7 +302,7 @@ extend<T> [T] {
         }
         throw low
     }
-    pub fn binary_search_by_key<K: Ord, F: fn(read T): K>(key: read K, project: take F): usize throws usize {
+    pub fn binary_search_by_key<K: Ord, F: mut fn(read T): K>(key: read K, project: mut F): usize throws usize {
         var low = 0usize
         var high = self.len()
         while low < high {
@@ -315,7 +317,7 @@ extend<T> [T] {
         }
         throw low
     }
-    pub fn partition_point<F: fn(read T): bool>(before: take F): usize {
+    pub fn partition_point<F: mut fn(read T): bool>(before: mut F): usize {
         var low = 0usize
         var high = self.len()
         while low < high {
@@ -328,7 +330,7 @@ extend<T> [T] {
         }
         low
     }
-    pub fn is_sorted_by<F: fn(read T, read T): Ordering>(compare: take F): bool {
+    pub fn is_sorted_by<F: mut fn(read T, read T): Ordering>(compare: mut F): bool {
         var i = 1usize
         while i < self.len() {
             if compare(read self[i - 1usize], read self[i]).is_gt() { return false }
@@ -336,7 +338,7 @@ extend<T> [T] {
         }
         true
     }
-    pub fn is_sorted_by_key<K: Ord, F: fn(read T): K>(key: take F): bool {
+    pub fn is_sorted_by_key<K: Ord, F: mut fn(read T): K>(key: mut F): bool {
         var i = 1usize
         while i < self.len() {
             let previous = key(read self[i - 1usize])
@@ -349,10 +351,10 @@ extend<T> [T] {
 }
 
 extend<T> [T] {
-    pub mut fn sort_unstable_by<F: fn(read T, read T): Ordering>(compare: take F) {
+    pub mut fn sort_unstable_by<F: mut fn(read T, read T): Ordering>(compare: mut F) {
         introsort(mut self, fn(a: read T, b: read T): bool { compare(a, b).is_lt() })
     }
-    pub mut fn sort_unstable_by_key<K: Ord, F: fn(read T): K>(key: take F) {
+    pub mut fn sort_unstable_by_key<K: Ord, F: mut fn(read T): K>(key: mut F) {
         introsort(mut self, fn(a: read T, b: read T): bool {
             let left = key(a)
             let right = key(b)
@@ -370,9 +372,9 @@ extend<T: Ord> [T] {
 }
 
 extend<T> [T] {
-    pub mut fn select_nth_unstable_by<F: fn(read T, read T): Ordering>(
+    pub mut fn select_nth_unstable_by<F: mut fn(read T, read T): Ordering>(
         nth: usize,
-        compare: take F
+        compare: mut F
     ): (mut [T] from self, mut T from self, mut [T] from self) {
         let less = fn(a: read T, b: read T): bool { compare(a, b).is_lt() }
         let n = self.len()
@@ -423,9 +425,9 @@ extend<T> [T] {
         (unsafe { mut *left }, unsafe { mut *middle }, unsafe { mut *right })
     }
 
-    pub mut fn select_nth_unstable_by_key<K: Ord, F: fn(read T): K>(
+    pub mut fn select_nth_unstable_by_key<K: Ord, F: mut fn(read T): K>(
         nth: usize,
-        key: take F
+        key: mut F
     ): (mut [T] from self, mut T from self, mut [T] from self) {
         self.select_nth_unstable_by(nth, fn(a: read T, b: read T): Ordering {
             key(a).cmp(key(b))
@@ -437,7 +439,7 @@ extend<T> [T] {
 // ranges and an in-place heapsort once the depth budget (2 * log2 n) is spent.
 // Pending ranges live in a fixed stack; the smaller partition is pushed and the
 // larger is processed next, so at most log2 n + 1 ranges are pending.
-fn introsort<T, F: fn(read T, read T): bool>(xs: mut [T], less: take F) {
+fn introsort<T, F: mut fn(read T, read T): bool>(xs: mut [T], less: mut F) {
     let n = xs.len()
     if n < 2usize { return }
     var budget = 0usize
@@ -963,7 +965,42 @@ extend<T> [T] {
         present((unsafe { mut *left }, unsafe { mut *right }))
     }
 
-    pub fn split_first(): (read T from self, read [T] from self)? {
+    // Checked disjoint access: every index must be in bounds and pairwise
+    // distinct, otherwise nothing is lent and the result is `none`.
+    pub mut fn get_disjoint_mut<const N: usize>(
+        indices: [usize; N]
+    ): ([mut T from self; N])? {
+        var i = 0usize
+        while i < N {
+            if indices[i] >= self.len() { return none }
+            var j = 0usize
+            while j < i {
+                if indices[j] == indices[i] { return none }
+                j += 1usize
+            }
+            i += 1usize
+        }
+        present(unsafe { self.get_disjoint_unchecked_mut<N>(indices) })
+    }
+
+    // Safety: every index is `< self.len()` and no two indices are equal.
+    pub mut unsafe fn get_disjoint_unchecked_mut<const N: usize>(
+        indices: [usize; N]
+    ): [mut T from self; N] {
+        var result = core.mem.MaybeUninit<[mut T from self; N]>.uninit()
+        let slots = core.ptr.from_mut(result).cast<core.mem.MaybeUninit<mut T from self>>()
+        let base = mutable_data_pointer(mut self)
+        var i = 0usize
+        // Safety: the caller guarantees in-bounds, pairwise distinct indices,
+        // so each lent element is a disjoint part of the exclusive slice.
+        while i < N {
+            unsafe { mut *slots.add(i) }.write(unsafe { mut *base.add(indices[i]) })
+            i += 1usize
+        }
+        unsafe { result.assume_init() }
+    }
+
+    pub fn split_first():(read T from self, read [T] from self)? {
         if self.len() == 0usize { return none }
         present((read self[0usize], unsafe { sub<T>(read self, 1usize, self.len()) }))
     }
@@ -1146,7 +1183,7 @@ extend<T: Copy> [T] {
 }
 
 extend<T> [T] {
-    pub mut fn fill_with<F: fn(): T>(generate: take F): Unit {
+    pub mut fn fill_with<F: mut fn(): T>(generate: mut F): Unit {
         var i = 0usize
         while i < self.len() {
             self[i] = generate()
@@ -1236,12 +1273,25 @@ pub type SliceChunks<region r, T> {
 }
 extend<region r, T> SliceChunks<region r, T> implements Iterator {
     type Item = read [T] from r
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.back - self.front
+        let full = remaining / self.size
+        let count = if remaining % self.size == 0usize { full } else { full + 1usize }
+        (count, present(count))
+    }
     mut fn next(): (read [T] from r)? {
         if self.front == self.back { return none }
         let start = self.front
         let count = if self.back - start < self.size { self.back - start } else { self.size }
         self.front += count
         present(unsafe { sub<T>(self.items, start, start + count) })
+    }
+}
+extend<region r, T> SliceChunks<region r, T> implements ExactSizeIterator {
+    fn len(): usize {
+        let remaining = self.back - self.front
+        let full = remaining / self.size
+        if remaining % self.size == 0usize { full } else { full + 1usize }
     }
 }
 extend<region r, T> SliceChunks<region r, T> implements BidirectionalIterator {
@@ -1264,11 +1314,25 @@ pub type SliceWindows<region r, T> {
 }
 extend<region r, T> SliceWindows<region r, T> implements Iterator {
     type Item = read [T] from r
+    fn size_hint(): (usize, usize?) {
+        let count = self.back - self.front
+        (count, present(count))
+    }
     mut fn next(): (read [T] from r)? {
         if self.front == self.back { return none }
         let start = self.front
         self.front += 1usize
         present(unsafe { sub<T>(self.items, start, start + self.size) })
+    }
+}
+extend<region r, T> SliceWindows<region r, T> implements ExactSizeIterator {
+    fn len(): usize { self.back - self.front }
+}
+extend<region r, T> SliceWindows<region r, T> implements BidirectionalIterator {
+    mut fn next_back(): (read [T] from r)? {
+        if self.front == self.back { return none }
+        self.back -= 1usize
+        present(unsafe { sub<T>(self.items, self.back, self.back + self.size) })
     }
 }
 
@@ -1392,56 +1456,61 @@ extend<T> [T] {
 }
 
 extend<T> [T] {
-    pub fn split<F: fn(read T): bool>(test: take F): SliceSplit<region self, T, F> {
+    pub fn split<F: mut fn(read T): bool>(test: take F): SliceSplit<region self, T, F> {
         SliceSplit(read self, test, 0usize, self.len(), 0xffffffffffffffffusize, false, false, false, false)
     }
-    pub fn splitn<F: fn(read T): bool>(count: usize, test: take F): SliceSplit<region self, T, F> {
+    pub fn rsplit<F: mut fn(read T): bool>(
+        test: take F
+    ): super.iter.Reversed<SliceSplit<region self, T, F>> {
+        self.split(test).rev()
+    }
+    pub fn splitn<F: mut fn(read T): bool>(count: usize, test: take F): SliceSplit<region self, T, F> {
         SliceSplit(read self, test, 0usize, self.len(), count, false, false, false, false)
     }
-    pub fn rsplitn<F: fn(read T): bool>(count: usize, test: take F): SliceSplit<region self, T, F> {
+    pub fn rsplitn<F: mut fn(read T): bool>(count: usize, test: take F): SliceSplit<region self, T, F> {
         SliceSplit(read self, test, 0usize, self.len(), count, true, false, false, false)
     }
-    pub fn split_inclusive<F: fn(read T): bool>(
+    pub fn split_inclusive<F: mut fn(read T): bool>(
         test: take F
     ): SliceSplit<region self, T, F> {
         SliceSplit(read self, test, 0usize, self.len(), 0xffffffffffffffffusize, false, true, false, false)
     }
-    pub mut fn split_mut<F: fn(read T): bool>(
+    pub mut fn split_mut<F: mut fn(read T): bool>(
         test: take F
     ): SliceSplitMut<region self, T, F> {
         let n = self.len()
         SliceSplitMut(mut self, test, 0usize, n, false, false, false, 0xffffffffffffffffusize, false)
     }
-    pub mut fn rsplit_mut<F: fn(read T): bool>(
+    pub mut fn rsplit_mut<F: mut fn(read T): bool>(
         test: take F
     ): SliceSplitMut<region self, T, F> {
         let n = self.len()
         SliceSplitMut(mut self, test, 0usize, n, false, false, false, 0xffffffffffffffffusize, true)
     }
-    pub mut fn splitn_mut<F: fn(read T): bool>(
+    pub mut fn splitn_mut<F: mut fn(read T): bool>(
         count: usize, test: take F
     ): SliceSplitMut<region self, T, F> {
         let n = self.len()
         SliceSplitMut(mut self, test, 0usize, n, false, false, false, count, false)
     }
-    pub mut fn rsplitn_mut<F: fn(read T): bool>(
+    pub mut fn rsplitn_mut<F: mut fn(read T): bool>(
         count: usize, test: take F
     ): SliceSplitMut<region self, T, F> {
         let n = self.len()
         SliceSplitMut(mut self, test, 0usize, n, false, false, false, count, true)
     }
-    pub mut fn split_inclusive_mut<F: fn(read T): bool>(
+    pub mut fn split_inclusive_mut<F: mut fn(read T): bool>(
         test: take F
     ): SliceSplitMut<region self, T, F> {
         let n = self.len()
         SliceSplitMut(mut self, test, 0usize, n, true, false, false, 0xffffffffffffffffusize, false)
     }
-    pub fn chunk_by<F: fn(read T, read T): bool>(
+    pub fn chunk_by<F: mut fn(read T, read T): bool>(
         same: take F
     ): SliceChunkBy<region self, T, F> {
         SliceChunkBy(read self, same, 0usize, self.len())
     }
-    pub mut fn chunk_by_mut<F: fn(read T, read T): bool>(
+    pub mut fn chunk_by_mut<F: mut fn(read T, read T): bool>(
         same: take F
     ): SliceChunkByMut<region self, T, F> {
         let n = self.len()
@@ -1631,7 +1700,7 @@ pub type SliceSplit<region r, T, F> {
     suppress_empty_tail: bool
     done: bool
 }
-extend<region r, T, F: fn(read T): bool> SliceSplit<region r, T, F> implements Iterator {
+extend<region r, T, F: mut fn(read T): bool> SliceSplit<region r, T, F> implements Iterator {
     type Item = read [T] from r
     mut fn next(): (read [T] from r)? {
         if self.done || self.remaining == 0usize { return none }
@@ -1679,7 +1748,7 @@ extend<region r, T, F: fn(read T): bool> SliceSplit<region r, T, F> implements I
         present(unsafe { sub<T>(self.items, self.front, self.back) })
     }
 }
-extend<region r, T, F: fn(read T): bool> SliceSplit<region r, T, F> implements BidirectionalIterator {
+extend<region r, T, F: mut fn(read T): bool> SliceSplit<region r, T, F> implements BidirectionalIterator {
     mut fn next_back(): (read [T] from r)? {
         if self.done || self.remaining == 0usize { return none }
         self.remaining -= 1usize
@@ -1728,7 +1797,7 @@ pub type SliceSplitMut<region r, T, F> {
     remaining: usize
     from_back: bool
 }
-extend<region r, T, F: fn(read T): bool> SliceSplitMut<region r, T, F> implements Iterator {
+extend<region r, T, F: mut fn(read T): bool> SliceSplitMut<region r, T, F> implements Iterator {
     type Item = mut [T] from r
     mut fn next(): (mut [T] from r)? {
         if self.done || self.remaining == 0usize { return none }
@@ -1786,7 +1855,7 @@ pub type SliceChunkBy<region r, T, F> {
     front: usize
     back: usize
 }
-extend<region r, T, F: fn(read T, read T): bool> SliceChunkBy<region r, T, F> implements Iterator {
+extend<region r, T, F: mut fn(read T, read T): bool> SliceChunkBy<region r, T, F> implements Iterator {
     type Item = read [T] from r
     mut fn next(): (read [T] from r)? {
         if self.front == self.back { return none }
@@ -1799,7 +1868,7 @@ extend<region r, T, F: fn(read T, read T): bool> SliceChunkBy<region r, T, F> im
         present(unsafe { sub<T>(self.items, start, end) })
     }
 }
-extend<region r, T, F: fn(read T, read T): bool> SliceChunkBy<region r, T, F> implements BidirectionalIterator {
+extend<region r, T, F: mut fn(read T, read T): bool> SliceChunkBy<region r, T, F> implements BidirectionalIterator {
     mut fn next_back(): (read [T] from r)? {
         if self.front == self.back { return none }
         let end = self.back
@@ -1818,7 +1887,7 @@ pub type SliceChunkByMut<region r, T, F> {
     front: usize
     back: usize
 }
-extend<region r, T, F: fn(read T, read T): bool> SliceChunkByMut<region r, T, F> implements Iterator {
+extend<region r, T, F: mut fn(read T, read T): bool> SliceChunkByMut<region r, T, F> implements Iterator {
     type Item = mut [T] from r
     mut fn next(): (mut [T] from r)? {
         if self.front == self.back { return none }
@@ -1835,7 +1904,7 @@ extend<region r, T, F: fn(read T, read T): bool> SliceChunkByMut<region r, T, F>
         present(unsafe { sub_mut<T>(mut *self.items, start, end) })
     }
 }
-extend<region r, T, F: fn(read T, read T): bool> SliceChunkByMut<region r, T, F> implements BidirectionalIterator {
+extend<region r, T, F: mut fn(read T, read T): bool> SliceChunkByMut<region r, T, F> implements BidirectionalIterator {
     mut fn next_back(): (mut [T] from r)? {
         if self.front == self.back { return none }
         let end = self.back
@@ -1918,5 +1987,145 @@ extend<T, const N: usize> [T; N] {
         }
         // Safety: every element of the result array was initialized above.
         unsafe { result.assume_init() }
+    }
+}
+
+// Reverse iteration of the exclusive splitter mirrors `SliceSplit.next_back`;
+// a splitter that already runs from the back (`rsplit_mut`) takes its
+// `next_back` pieces from the front.
+extend<region r, T, F: mut fn(read T): bool> SliceSplitMut<region r, T, F> implements BidirectionalIterator {
+    mut fn next_back(): (mut [T] from r)? {
+        if self.done || self.remaining == 0usize { return none }
+        self.remaining -= 1usize
+        if self.front == self.back {
+            if self.inclusive && self.suppress_empty_tail {
+                self.done = true
+                return none
+            }
+            self.done = true
+            return present(unsafe { sub_mut<T>(mut *self.items, self.front, self.back) })
+        }
+        if self.remaining == 0usize {
+            self.done = true
+            return present(unsafe { sub_mut<T>(mut *self.items, self.front, self.back) })
+        }
+        if self.from_back {
+            var j = self.front
+            while j < self.back {
+                if self.test(unsafe { read *mutable_data_pointer(mut *self.items).add(j) }) {
+                    let part = unsafe { sub_mut<T>(mut *self.items, self.front, j) }
+                    self.front = j + 1usize
+                    return present(part)
+                }
+                j += 1usize
+            }
+            self.done = true
+            return present(unsafe { sub_mut<T>(mut *self.items, self.front, self.back) })
+        }
+        var i = self.back
+        while i > self.front {
+            i -= 1usize
+            let matches = self.test(unsafe {
+                read *mutable_data_pointer(mut *self.items).add(i)
+            })
+            if matches {
+                if self.inclusive {
+                    if i + 1usize == self.back { continue }
+                    let start = i + 1usize
+                    let part = unsafe { sub_mut<T>(mut *self.items, start, self.back) }
+                    self.back = start
+                    return present(part)
+                }
+                let start = i + 1usize
+                let part = unsafe { sub_mut<T>(mut *self.items, start, self.back) }
+                self.back = i
+                return present(part)
+            }
+        }
+        self.done = true
+        present(unsafe { sub_mut<T>(mut *self.items, self.front, self.back) })
+    }
+}
+
+// Slice iterators keep returning none once exhausted.
+extend<region r, T> SliceIter<region r, T> implements FusedIterator {}
+extend<region r, T> SliceIterMut<region r, T> implements FusedIterator {}
+extend<region r> SliceBytes<region r> implements FusedIterator {}
+extend<region r, T> SliceChunks<region r, T> implements FusedIterator {}
+extend<region r, T> SliceWindows<region r, T> implements FusedIterator {}
+extend<region r, T, const N: usize> ArrayWindows<region r, T, N> implements FusedIterator {}
+extend<region r, T> SliceChunksMut<region r, T> implements FusedIterator {}
+extend<region r, T> SliceChunksExact<region r, T> implements FusedIterator {}
+extend<region r, T> SliceRChunks<region r, T> implements FusedIterator {}
+extend<region r, T> SliceRChunksExact<region r, T> implements FusedIterator {}
+extend<region r, T> SliceChunksExactMut<region r, T> implements FusedIterator {}
+extend<region r, T> SliceRChunksMut<region r, T> implements FusedIterator {}
+extend<region r, T> SliceRChunksExactMut<region r, T> implements FusedIterator {}
+extend<region r, T, F: mut fn(read T): bool> SliceSplit<region r, T, F> implements FusedIterator {}
+extend<region r, T, F: mut fn(read T): bool> SliceSplitMut<region r, T, F> implements FusedIterator {}
+extend<region r, T, F: mut fn(read T, read T): bool> SliceChunkBy<region r, T, F> implements FusedIterator {}
+extend<region r, T, F: mut fn(read T, read T): bool> SliceChunkByMut<region r, T, F> implements FusedIterator {}
+
+// Read-only iterators are duplicated by copying the view and its cursors.
+extend<region r, T> SliceIter<region r, T> implements Clone {
+    fn clone(): SliceIter<region r, T> { SliceIter(self.items, self.front, self.back) }
+}
+extend<region r> SliceBytes<region r> implements Clone {
+    fn clone(): SliceBytes<region r> { SliceBytes(self.items, self.front, self.back) }
+}
+extend<region r, T> SliceChunks<region r, T> implements Clone {
+    fn clone(): SliceChunks<region r, T> { SliceChunks(self.items, self.size, self.front, self.back) }
+}
+extend<region r, T> SliceWindows<region r, T> implements Clone {
+    fn clone(): SliceWindows<region r, T> { SliceWindows(self.items, self.size, self.front, self.back) }
+}
+extend<region r, T, const N: usize> ArrayWindows<region r, T, N> implements Clone {
+    fn clone(): ArrayWindows<region r, T, N> { ArrayWindows(self.items, self.front, self.back) }
+}
+extend<region r, T> SliceChunksExact<region r, T> implements Clone {
+    fn clone(): SliceChunksExact<region r, T> {
+        SliceChunksExact(self.items, self.size, self.front, self.back, self.remainder_start)
+    }
+}
+extend<region r, T> SliceRChunks<region r, T> implements Clone {
+    fn clone(): SliceRChunks<region r, T> { SliceRChunks(self.items, self.size, self.front, self.back) }
+}
+extend<region r, T> SliceRChunksExact<region r, T> implements Clone {
+    fn clone(): SliceRChunksExact<region r, T> {
+        SliceRChunksExact(self.items, self.size, self.front, self.back, self.remainder_end)
+    }
+}
+extend<region r, T, F: Clone> SliceSplit<region r, T, F> implements Clone {
+    fn clone(): SliceSplit<region r, T, F> {
+        SliceSplit(self.items, self.test.clone(), self.front, self.back, self.remaining,
+                   self.from_back, self.inclusive, self.suppress_empty_tail, self.done)
+    }
+}
+
+// The default slice iterator is exhausted and borrows nothing.
+extend<region r, T> SliceIter<region r, T> implements Default {
+    static fn default(): SliceIter<region r, T> {
+        SliceIter(unsafe { from_raw_parts<r, T>(dangling_read<T>(), 0usize) }, 0usize, 0usize)
+    }
+}
+extend<region r, T> SliceIterMut<region r, T> implements Default {
+    static fn default(): SliceIterMut<region r, T> {
+        SliceIterMut(unsafe { from_raw_parts_mut<r, T>(dangling_mut<T>(), 0usize) }, 0usize, 0usize)
+    }
+}
+
+// Debug shows the elements that remain.
+extend<region r, T: fmt.Debug> SliceIter<region r, T> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("SliceIter(")
+        try fmt.debug_slice(self.as_slice(), mut f)
+        try f.write_str(")")
+    }
+}
+extend<region r, T: fmt.Debug> SliceIterMut<region r, T> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("SliceIterMut(")
+        try fmt.debug_slice(self.as_slice(), mut f)
+        try f.write_str(")")
     }
 }

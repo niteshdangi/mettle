@@ -1,5 +1,7 @@
-import package.core.iter.{Iterator, OwnedIterable, Iterable, FromItems, ExtendItems}
+import package.core.iter.{Iterator, ExactSizeIterator, OwnedIterable, Iterable, FromItems, ExtendItems}
+import package.core.convert.From
 import package.core.clone.Clone
+import package.core.default.Default
 import package.core.fmt
 import package.core.slice.SliceIter
 import super.alloc.{Allocator, Global, AllocError, PushError}
@@ -71,6 +73,9 @@ extend<region r, T: Ord, A: Allocator> PeekMut<region r, T, A> implements DerefM
 
 pub fn new_in<T, A: Allocator>(a: take A): BinaryHeap<T, A> { BinaryHeap(super.vec.new_in<T, A>(a)) }
 pub fn new<T>(): BinaryHeap<T> { new_in(Global()) }
+extend<T, A: Allocator + Default> BinaryHeap<T, A> implements Default {
+    static fn default(): BinaryHeap<T, A> { new_in(A.(Default).default()) }
+}
 pub fn try_with_capacity_in<T, A: Allocator>(n: usize, a: take A): BinaryHeap<T, A> throws AllocError {
     BinaryHeap(try super.vec.try_with_capacity_in<T, A>(n, take a))
 }
@@ -257,4 +262,58 @@ extend<T: Ord> BinaryHeap<T> implements FromItems<T> {
         out.extend(items)
         out
     }
+}
+
+extend<T: Ord> BinaryHeap<T> implements From<List<T>> {
+    static fn `from`(value: take List<T>): BinaryHeap<T> {
+        var out = BinaryHeap(value)
+        rebuild(mut out)
+        out
+    }
+}
+extend<T: Ord, const N: usize> BinaryHeap<T> implements From<[T; N]> {
+    static fn `from`(value: take [T; N]): BinaryHeap<T> {
+        var out = BinaryHeap(super.vec.from_array(value))
+        rebuild(mut out)
+        out
+    }
+}
+
+extend<region r, T: Ord, A: Allocator> PeekMut<region r, T, A> {
+    // Removes the largest element. The heap is valid afterwards, so the
+    // sift performed when the guard drops finds nothing to repair.
+    pub take fn pop(): T {
+        match take self.queue.pop() {
+            present(value) => value,
+            none => super.alloc.panic_precondition()
+        }
+    }
+}
+
+// Draining in descending order: each `next` pops the maximum. Dropping the
+// iterator discards whatever it did not yield, so the heap is left empty.
+pub type DrainSorted<region r, T: Ord, A: Allocator> {
+    heap: mut BinaryHeap<T, A> from r
+    drop { self.heap.clear() }
+}
+extend<region r, T: Ord, A: Allocator> DrainSorted<region r, T, A> implements Iterator {
+    type Item = T
+    mut fn next(): T? { self.heap.pop() }
+}
+extend<region r, T: Ord, A: Allocator> DrainSorted<region r, T, A> implements ExactSizeIterator {
+    fn len(): usize { self.heap.len() }
+}
+extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
+    pub mut fn drain_sorted(): DrainSorted<region self, T, A> { DrainSorted(mut self) }
+    pub take fn into_iter_sorted(): IntoIterSorted<T, A> { IntoIterSorted(self) }
+}
+
+// Consuming iteration in descending order.
+pub type IntoIterSorted<T: Ord, A: Allocator = Global> { heap: BinaryHeap<T, A> }
+extend<T: Ord, A: Allocator> IntoIterSorted<T, A> implements Iterator {
+    type Item = T
+    mut fn next(): T? { self.heap.pop() }
+}
+extend<T: Ord, A: Allocator> IntoIterSorted<T, A> implements ExactSizeIterator {
+    fn len(): usize { self.heap.len() }
 }

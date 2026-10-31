@@ -199,6 +199,14 @@ std::optional<std::string> Resolution::lookup(ModuleId from,
   if (from >= moduleInfos.size())
     return std::nullopt;
   auto path = components(spelling);
+  // `core.mem` and `core.ptr` are compiler-owned and cannot hold source
+  // declarations. The two members that need library code (`mem.take` uses the
+  // `Default` interface; `ptr.NonNull` is an ordinary wrapper type) are
+  // declared in `core.storage` and reached through their baseline paths.
+  if (path.size() >= 3 && path[0] == "core" &&
+      ((path[1] == "mem" && path[2] == "take") ||
+       (path[1] == "ptr" && path[2] == "NonNull")))
+    path[1] = "storage";
   ModuleId scope = from;
   std::size_t position = 0;
   if (path[0] == "package") {

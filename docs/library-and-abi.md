@@ -137,6 +137,14 @@ silently weaken take for library conveniences.
 
 Vector growth factor is not a semantic guarantee. Ordered maps guarantee key
 ordering; hash-map iteration order is unspecified and hash policy is visible.
+`Map<K, V, A = Global, H = DefaultMapHasher>` and
+`Set<K, A = Global, H = DefaultMapHasher>` carry the builder by value. The
+allocator keeps its existing parameter position. `with_hasher` and
+`with_capacity_and_hasher` consume the chosen builder; `hasher` borrows it.
+Lookup, insertion and entry operations use that builder, and cloning explicitly
+clones it. Equality and set algebra probe each operand with its own builder.
+These declarations and their custom-builder collision fixture are implemented
+in source, unverified on the selected host.
 Capacity/allocator choices must not change semantic ownership. Drain, entry,
 split, splice and cursor APIs need individual contracts before being counted as
 implemented equivalents.

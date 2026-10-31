@@ -1,4 +1,5 @@
-import package.core.iter.{Iterator, BidirectionalIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import package.core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import package.core.convert.From
 import package.core.clone.Clone
 import package.core.default.Default
 import package.core.cmp.{Eq, PartialEq, PartialOrd}
@@ -63,6 +64,9 @@ pub fn new_in<K, V, A: Allocator>(a: take A): SortedMap<K, V, A> {
     SortedMap(null_node<K, V>(), 0usize, a)
 }
 pub fn new<K, V>(): SortedMap<K, V> { new_in(Global()) }
+extend<K, V, A: Allocator + Default> SortedMap<K, V, A> implements Default {
+    static fn default(): SortedMap<K, V, A> { new_in(A.(Default).default()) }
+}
 
 fn null_node<K, V>(): ptr<mut Node<K, V>> { core.ptr.null_mut<Node<K, V>>() }
 
@@ -497,7 +501,7 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
         }
         RangeMut(mut self, start.0, start.1, stop.0, stop.1)
     }
-    pub mut fn extract_if<F: fn(read K, mut V): bool>(
+    pub mut fn extract_if<F: mut fn(read K, mut V): bool>(
         predicate: take F
     ): MapExtractIf<region self, K, V, A, F> {
         MapExtractIf(mut self, predicate, 0usize)
@@ -748,6 +752,9 @@ pub type SortedSet<K, A: Allocator = Global> { map: SortedMap<K, Unit, A> }
 
 pub fn set_new_in<K, A: Allocator>(a: take A): SortedSet<K, A> { SortedSet(new_in<K, Unit, A>(a)) }
 pub fn set_new<K>(): SortedSet<K> { SortedSet(new<K, Unit>()) }
+extend<K, A: Allocator + Default> SortedSet<K, A> implements Default {
+    static fn default(): SortedSet<K, A> { set_new_in(A.(Default).default()) }
+}
 
 extend<K: Ord, A: Allocator> SortedSet<K, A> {
     pub fn len(): usize { self.map.len() }
@@ -776,7 +783,7 @@ extend<K: Ord, A: Allocator> SortedSet<K, A> {
     pub mut fn split_off(key: read K): SortedSet<K, A> where A: Clone {
         SortedSet(self.map.split_off(key))
     }
-    pub mut fn extract_if<F: fn(read K): bool>(
+    pub mut fn extract_if<F: mut fn(read K): bool>(
         predicate: take F
     ): SetExtractIf<region self, K, A, F> {
         SetExtractIf(mut self, predicate, 0usize)
@@ -1001,7 +1008,7 @@ pub type MapExtractIf<region r, K, V, A: Allocator, F> {
 }
 // Recompute the node position from rank after each extraction because
 // rebalancing can invalidate every cached node position.
-extend<region r, K: Ord, V, A: Allocator, F: fn(read K, mut V): bool> MapExtractIf<region r, K, V, A, F> implements Iterator {
+extend<region r, K: Ord, V, A: Allocator, F: mut fn(read K, mut V): bool> MapExtractIf<region r, K, V, A, F> implements Iterator {
     type Item = (K, V)
     mut fn next(): (K, V)? {
         while self.index < self.map.len {
@@ -1022,7 +1029,7 @@ pub type SetExtractIf<region r, K, A: Allocator, F> {
     predicate: F
     index: usize
 }
-extend<region r, K: Ord, A: Allocator, F: fn(read K): bool> SetExtractIf<region r, K, A, F> implements Iterator {
+extend<region r, K: Ord, A: Allocator, F: mut fn(read K): bool> SetExtractIf<region r, K, A, F> implements Iterator {
     type Item = K
     mut fn next(): K? {
         while self.index < self.set.map.len {
@@ -1137,8 +1144,8 @@ extend<K, V, A: Allocator> IntoValues<K, V, A> implements Iterator {
         }
     }
 }
-extend<K, V, A: Allocator> MapIntoIter<K, V, A> {
-    pub fn len(): usize { self.left }
+extend<K, V, A: Allocator> MapIntoIter<K, V, A> implements ExactSizeIterator {
+    fn len(): usize { self.left }
 }
 
 pub type SetIntoIter<K, A: Allocator> { inner: MapIntoIter<K, Unit, A> }
@@ -1454,3 +1461,51 @@ extend<K: Ord> SortedSet<K> implements FromItems<K> {
 // Owned storage moves or is shared exactly when its elements and allocator do.
 unsafe extend<K: Transferable, V: Transferable, A: Allocator + Transferable> SortedMap<K, V, A> implements Transferable {}
 unsafe extend<K: Shareable, V: Shareable, A: Allocator + Shareable> SortedMap<K, V, A> implements Shareable {}
+
+// Exact remaining lengths for the sorted map and set iterators.
+extend<region r, K, V, A: Allocator> EntryIter<region r, K, V, A> implements ExactSizeIterator {
+    fn len(): usize { self.left }
+}
+extend<region r, K, V, A: Allocator> ValuesMut<region r, K, V, A> implements ExactSizeIterator {
+    fn len(): usize { self.left }
+}
+extend<region r, K, V, A: Allocator> Keys<region r, K, V, A> implements ExactSizeIterator {
+    fn len(): usize { self.inner.len() }
+}
+extend<region r, K, V, A: Allocator> Values<region r, K, V, A> implements ExactSizeIterator {
+    fn len(): usize { self.inner.len() }
+}
+extend<K, V, A: Allocator> IntoKeys<K, V, A> implements ExactSizeIterator {
+    fn len(): usize { self.inner.len() }
+}
+extend<K, V, A: Allocator> IntoValues<K, V, A> implements ExactSizeIterator {
+    fn len(): usize { self.inner.len() }
+}
+extend<K, A: Allocator> SetIntoIter<K, A> implements ExactSizeIterator {
+    fn len(): usize { self.inner.len() }
+}
+
+extend<K: Ord, V, const N: usize> SortedMap<K, V> implements From<[(K, V); N]> {
+    static fn `from`(value: take [(K, V); N]): SortedMap<K, V> {
+        var out = new<K, V>()
+        out.extend(super.vec.from_array(value))
+        out
+    }
+}
+extend<K: Ord, const N: usize> SortedSet<K> implements From<[K; N]> {
+    static fn `from`(value: take [K; N]): SortedSet<K> {
+        var out = set_new<K>()
+        out.extend(super.vec.from_array(value))
+        out
+    }
+}
+
+extend<K: Ord, V, A: Allocator, Q: Ord + unsized> SortedMap<K, V, A> implements package.core.ops.Index<Q> where K: KeyView<Q> {
+    type Output = V
+    fn index(key: read Q): read V from self {
+        match self.get(key) {
+            present(value) => value,
+            none => super.alloc.panic_precondition()
+        }
+    }
+}

@@ -6,8 +6,57 @@ import super.default.Default
 import super.clone.Clone
 import super.ops.Deref
 import super.ops.DerefMut
+import super.iter.{Iterator, BidirectionalIterator, ExactSizeIterator}
+
+pub type OutcomeIter<region r, T, E> { value: read (T throws E) from r; done: bool }
+extend<region r, T, E> OutcomeIter<region r, T, E> implements Iterator {
+    type Item = read T from r
+    mut fn next(): (read T from r)? {
+        if self.done { return none }
+        self.done = true
+        match self.value {
+            success(value) => present(read value),
+            failure(_) => none
+        }
+    }
+}
+extend<region r, T, E> OutcomeIter<region r, T, E> implements ExactSizeIterator {
+    fn len(): usize {
+        if !self.done && self.value.is_success() { 1usize } else { 0usize }
+    }
+}
+extend<region r, T, E> OutcomeIter<region r, T, E> implements BidirectionalIterator {
+    mut fn next_back(): (read T from r)? { self.next() }
+}
+
+pub type OutcomeIterMut<region r, T, E> { value: mut (T throws E) from r; done: bool }
+extend<region r, T, E> OutcomeIterMut<region r, T, E> implements Iterator {
+    type Item = mut T from r
+    mut fn next(): (mut T from r)? {
+        if self.done { return none }
+        self.done = true
+        match mut self.value {
+            success(value) => present(mut value),
+            failure(_) => none
+        }
+    }
+}
+extend<region r, T, E> OutcomeIterMut<region r, T, E> implements ExactSizeIterator {
+    fn len(): usize {
+        if !self.done && self.value.is_success() { 1usize } else { 0usize }
+    }
+}
+extend<region r, T, E> OutcomeIterMut<region r, T, E> implements BidirectionalIterator {
+    mut fn next_back(): (mut T from r)? { self.next() }
+}
 
 extend<T, E> (T throws E) {
+    pub fn iter<region r>(receiver self: read Self from r): OutcomeIter<region r, T, E> {
+        OutcomeIter(read self, false)
+    }
+    pub mut fn iter_mut<region r>(receiver self: mut Self from r): OutcomeIterMut<region r, T, E> {
+        OutcomeIterMut(mut self, false)
+    }
     pub fn is_success(): bool { match self { success(value) => true, failure(error) => false } }
     pub fn is_failure(): bool { match self { success(value) => false, failure(error) => true } }
     pub fn as_view(): ((read T from self) throws (read E from self)) {
@@ -129,8 +178,29 @@ extend<T, E> (T throws E) {
     pub take fn and_then<U>(f: fn(take T): (U throws E)): (U throws E) {
         match take self { success(value) => f(value), failure(error) => failure(error) }
     }
+    pub take fn or<F>(other: take (T throws F)): (T throws F) {
+        match take self { success(value) => success(value), failure(error) => other }
+    }
     pub take fn or_else<F>(f: fn(take E): (T throws F)): (T throws F) {
         match take self { success(value) => success(value), failure(error) => f(error) }
+    }
+}
+
+extend<region r, T: Clone, E: Clone> ((mut T from r) throws (mut E from r)) {
+    pub take fn cloned(): (T throws E) {
+        match take self {
+            success(value) => success(value.clone()),
+            failure(error) => failure(error.clone())
+        }
+    }
+}
+
+extend<region r, T: Copy, E: Copy> ((mut T from r) throws (mut E from r)) {
+    pub take fn copied(): (T throws E) {
+        match take self {
+            success(value) => success(*value),
+            failure(error) => failure(*error)
+        }
     }
 }
 

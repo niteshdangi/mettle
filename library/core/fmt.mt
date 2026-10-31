@@ -2,7 +2,7 @@
 // the sink propagate as `Error` through `try`. `BufferWriter` formats into a
 // caller-provided byte buffer. Format specifications are built explicitly with
 // `Spec` since text-interpolation syntax is not part of `core`.
-import super.cmp.Ordering
+import super.cmp.{Ordering, Reverse}
 import super.iter.Iterator
 import super.slice
 import super.text.Text
@@ -829,6 +829,20 @@ extend Ordering implements Debug {
             Ordering.Greater => { try f.write_str("Greater") }
         }
     }
+}
+extend<T: Debug> Reverse<T> implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        var tuple = try f.debug_tuple("Reverse")
+        try tuple.field(self.value)
+        try tuple.finish()
+    }
+}
+// A message renders as the text it describes.
+extend<region r> Message<region r> implements Display {
+    fn fmt(f: mut Formatter): Unit throws Error { try self.write_to(mut f) }
+}
+extend<region r> Message<region r> implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error { try self.write_to(mut f) }
 }
 extend Error implements Debug {
     fn fmt(f: mut Formatter): Unit throws Error { try f.write_str("Error") }

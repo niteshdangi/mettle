@@ -22,11 +22,11 @@ type Marker {
 }
 
 fn make_first(): Marker {
-    Marker(thread.current().raw == MAIN_THREAD.load(core.sync.atomic.Ordering.Relaxed), 1u8)
+    Marker(thread.current().id().raw == MAIN_THREAD.load(core.sync.atomic.Ordering.Relaxed), 1u8)
 }
 
 fn make_second(): Marker {
-    Marker(thread.current().raw == MAIN_THREAD.load(core.sync.atomic.Ordering.Relaxed), 2u8)
+    Marker(thread.current().id().raw == MAIN_THREAD.load(core.sync.atomic.Ordering.Relaxed), 2u8)
 }
 
 fn write_line(text: read [u8]): Unit {
@@ -34,7 +34,7 @@ fn write_line(text: read [u8]): Unit {
 }
 
 fn main(): i32 {
-    MAIN_THREAD.store(thread.current().raw, core.sync.atomic.Ordering.Relaxed)
+    MAIN_THREAD.store(thread.current().id().raw, core.sync.atomic.Ordering.Relaxed)
     let first = FIRST.with(take fn(value: read Marker): bool { value.main })
     match take first {
         present(value) => { if !value { return 1 } },

@@ -15,13 +15,18 @@ std::int32_t mettle_rt_errno();
 // (18 is the catch-all `Other`); platform errno numbers never leak into Mettle.
 std::int32_t mettle_rt_errno_kind(std::int32_t code);
 void mettle_rt_set_errno(std::int32_t value);
+// Process-wide exclusion for the shared standard input buffer; not reentrant.
+void mettle_rt_stdin_lock();
+void mettle_rt_stdin_unlock();
 
 // Portable open flags: 1 read, 2 write, 4 append, 8 truncate, 16 create,
 // 32 create-new. The descriptor is close-on-exec.
 std::int32_t mettle_rt_open(const char *path, std::int32_t flags,
                             std::uint32_t mode);
 // Fills `out` with size, kind (0 file, 1 directory, 2 symlink, 3 other),
-// permission bits, modification seconds and nanoseconds. A
+// permission bits, modification seconds and nanoseconds, access seconds and
+// nanoseconds, creation seconds and nanoseconds, and a creation-time-available
+// flag (1 on Darwin, 0 elsewhere). `out` holds ten values. A
 // non-negative `fd` selects fstat; otherwise `follow` selects stat or lstat.
 std::int32_t mettle_rt_stat(const char *path, std::int32_t fd,
                             std::int32_t follow, std::int64_t *out);

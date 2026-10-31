@@ -1,6 +1,7 @@
 import super.mutex
 import super.condvar
 import package.core.panic.panic
+import package.core.fmt
 
 type State {
     count: usize
@@ -20,6 +21,9 @@ pub type Barrier {
 }
 unsafe extend Barrier implements Transferable {}
 unsafe extend Barrier implements Shareable {}
+extend Barrier implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.write_str("Barrier { .. }") }
+}
 
 pub fn new(parties: usize): Barrier {
     if parties == 0usize { panic("barrier requires at least one party") }

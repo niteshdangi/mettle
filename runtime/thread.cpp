@@ -161,6 +161,14 @@ template <typename T, typename Init> void *create(Init init) {
   return object;
 }
 
+struct RwLockState {
+  pthread_mutex_t mutex{};
+  pthread_cond_t condition{};
+  std::size_t readers = 0;
+  std::size_t waitingWriters = 0;
+  bool writer = false;
+};
+
 struct TlsKeyInfo {
   std::uintptr_t handle;
   pthread_key_t key;
@@ -529,38 +537,107 @@ std::int32_t mettle_rt_cond_notify_all(void *cond) {
   return pthread_cond_broadcast(static_cast<pthread_cond_t *>(cond));
 }
 
+// The reader/writer lock is implemented over a mutex and condition variable
+// rather than pthread_rwlock_t: POSIX has no atomic write-to-read downgrade
+// (Darwin included), and downgrade must never let another writer intervene.
+// Waiting writers block new readers so a stream of readers cannot starve them.
 void *mettle_rt_rwlock_new() {
-  return create<pthread_rwlock_t>([](pthread_rwlock_t *lock) {
-    return pthread_rwlock_init(lock, nullptr);
-  });
+  auto *lock = new (std::nothrow) RwLockState;
+  if (!lock)
+    return nullptr;
+  if (pthread_mutex_init(&lock->mutex, nullptr) != 0) {
+    delete lock;
+    return nullptr;
+  }
+  if (pthread_cond_init(&lock->condition, nullptr) != 0) {
+    pthread_mutex_destroy(&lock->mutex);
+    delete lock;
+    return nullptr;
+  }
+  return lock;
 }
 void mettle_rt_rwlock_free(void *lock) {
-  auto *object = static_cast<pthread_rwlock_t *>(lock);
-  pthread_rwlock_destroy(object);
+  auto *object = static_cast<RwLockState *>(lock);
+  pthread_cond_destroy(&object->condition);
+  pthread_mutex_destroy(&object->mutex);
   delete object;
 }
 std::int32_t mettle_rt_rwlock_read(void *lock) {
-  return pthread_rwlock_rdlock(static_cast<pthread_rwlock_t *>(lock));
+  auto *object = static_cast<RwLockState *>(lock);
+  if (pthread_mutex_lock(&object->mutex) != 0)
+    return -1;
+  while (object->writer || object->waitingWriters != 0)
+    pthread_cond_wait(&object->condition, &object->mutex);
+  ++object->readers;
+  pthread_mutex_unlock(&object->mutex);
+  return 0;
 }
 std::int32_t mettle_rt_rwlock_try_read(void *lock) {
-  const int status =
-      pthread_rwlock_tryrdlock(static_cast<pthread_rwlock_t *>(lock));
-  if (status == EBUSY || status == EAGAIN)
-    return 1;
-  return status == 0 ? 0 : -1;
+  auto *object = static_cast<RwLockState *>(lock);
+  if (pthread_mutex_lock(&object->mutex) != 0)
+    return -1;
+  const bool busy = object->writer || object->waitingWriters != 0;
+  if (!busy)
+    ++object->readers;
+  pthread_mutex_unlock(&object->mutex);
+  return busy ? 1 : 0;
 }
 std::int32_t mettle_rt_rwlock_write(void *lock) {
-  return pthread_rwlock_wrlock(static_cast<pthread_rwlock_t *>(lock));
+  auto *object = static_cast<RwLockState *>(lock);
+  if (pthread_mutex_lock(&object->mutex) != 0)
+    return -1;
+  ++object->waitingWriters;
+  while (object->writer || object->readers != 0)
+    pthread_cond_wait(&object->condition, &object->mutex);
+  --object->waitingWriters;
+  object->writer = true;
+  pthread_mutex_unlock(&object->mutex);
+  return 0;
 }
 std::int32_t mettle_rt_rwlock_try_write(void *lock) {
-  const int status =
-      pthread_rwlock_trywrlock(static_cast<pthread_rwlock_t *>(lock));
-  if (status == EBUSY || status == EAGAIN)
-    return 1;
-  return status == 0 ? 0 : -1;
+  auto *object = static_cast<RwLockState *>(lock);
+  if (pthread_mutex_lock(&object->mutex) != 0)
+    return -1;
+  const bool busy = object->writer || object->readers != 0;
+  if (!busy)
+    object->writer = true;
+  pthread_mutex_unlock(&object->mutex);
+  return busy ? 1 : 0;
 }
 std::int32_t mettle_rt_rwlock_unlock(void *lock) {
-  return pthread_rwlock_unlock(static_cast<pthread_rwlock_t *>(lock));
+  auto *object = static_cast<RwLockState *>(lock);
+  if (pthread_mutex_lock(&object->mutex) != 0)
+    return -1;
+  std::int32_t status = 0;
+  if (object->writer) {
+    object->writer = false;
+    pthread_cond_broadcast(&object->condition);
+  } else if (object->readers != 0) {
+    if (--object->readers == 0)
+      pthread_cond_broadcast(&object->condition);
+  } else {
+    status = EPERM;
+  }
+  pthread_mutex_unlock(&object->mutex);
+  return status;
+}
+std::int32_t mettle_rt_rwlock_downgrade(void *lock) {
+  auto *object = static_cast<RwLockState *>(lock);
+  if (pthread_mutex_lock(&object->mutex) != 0)
+    return -1;
+  std::int32_t status = 0;
+  if (object->writer) {
+    // Exclusive ownership becomes one shared hold without releasing the mutex,
+    // so no other writer can be admitted in between. Waiting writers stay
+    // queued; readers blocked behind them wake once the hold count allows.
+    object->writer = false;
+    object->readers = 1;
+    pthread_cond_broadcast(&object->condition);
+  } else {
+    status = EPERM;
+  }
+  pthread_mutex_unlock(&object->mutex);
+  return status;
 }
 
 std::uintptr_t mettle_rt_tls_key_new(MettleTlsDestructor destructor) {

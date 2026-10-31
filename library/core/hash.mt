@@ -226,6 +226,13 @@ extend<A: Hash, B: Hash> (A, B) implements Hash {
         self.1.hash(mut state)
     }
 }
+extend<A: Hash, B: Hash, C: Hash> (A, B, C) implements Hash {
+    fn hash<H: Hasher>(state: mut H): Unit {
+        self.0.hash(mut state)
+        self.1.hash(mut state)
+        self.2.hash(mut state)
+    }
+}
 extend<T: Hash> T? implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit {
         match self {

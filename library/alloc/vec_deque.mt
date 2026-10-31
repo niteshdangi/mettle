@@ -1,5 +1,7 @@
-import package.core.iter.{Iterator, BidirectionalIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import package.core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import package.core.convert.From
 import package.core.clone.Clone
+import package.core.default.Default
 import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import package.core.hash.{Hash, Hasher}
 import package.core.fmt
@@ -40,6 +42,9 @@ pub fn new_in<T, A: Allocator>(a: take A): Deque<T, A> {
     Deque(dangling_for<T>(), cap, 0usize, 0usize, a)
 }
 pub fn new<T>(): Deque<T> { new_in(Global()) }
+extend<T, A: Allocator + Default> Deque<T, A> implements Default {
+    static fn default(): Deque<T, A> { new_in(A.(Default).default()) }
+}
 
 extend<T, A: Allocator> Deque<T, A> {
     pub fn len(): usize { self.len }
@@ -338,7 +343,7 @@ extend<T, A: Allocator> Deque<T, A> {
         }
         unsafe { mut *slice_ptr_mut(self.buf, self.len) }
     }
-    pub mut fn retain_mut(keep: fn(mut T): bool): Unit {
+    pub mut fn retain_mut<F: mut fn(mut T): bool>(keep: mut F): Unit {
         let n = self.len
         let _ = self.make_contiguous()
         let base = unsafe { self.buf.add(self.head) }
@@ -724,6 +729,9 @@ extend<region r, T, A: Allocator> DequeDrain<region r, T, A> implements Bidirect
         present(unsafe { core.ptr.`read`(self.deque.buf.add(self.back)) })
     }
 }
+extend<region r, T, A: Allocator> DequeDrain<region r, T, A> implements ExactSizeIterator {
+    fn len(): usize { self.back - self.front }
+}
 
 
 // Borrowed front-to-back iterator over a ring buffer.
@@ -739,6 +747,9 @@ extend<region r, T, A: Allocator> DequeIter<region r, T, A> implements Iterator 
             none
         }
     }
+}
+extend<region r, T, A: Allocator> DequeIter<region r, T, A> implements ExactSizeIterator {
+    fn len(): usize { self.deque.len - self.index }
 }
 extend<T, A: Allocator> Deque<T, A> implements Iterable {
     type Item = T
@@ -760,6 +771,9 @@ extend<region r, T, A: Allocator> DequeIterMut<region r, T, A> implements Iterat
         }
     }
 }
+extend<region r, T, A: Allocator> DequeIterMut<region r, T, A> implements ExactSizeIterator {
+    fn len(): usize { self.deque.len - self.index }
+}
 extend<T, A: Allocator> Deque<T, A> implements MutableIterable {
     type Item = T
     type IterMut<region r> = DequeIterMut<region r, T, A>
@@ -770,6 +784,9 @@ pub type DequeIntoIter<T, A: Allocator = Global> { deque: Deque<T, A> }
 extend<T, A: Allocator> DequeIntoIter<T, A> implements Iterator {
     type Item = T
     mut fn next(): T? { self.deque.pop_front() }
+}
+extend<T, A: Allocator> DequeIntoIter<T, A> implements ExactSizeIterator {
+    fn len(): usize { self.deque.len }
 }
 extend<T, A: Allocator> Deque<T, A> implements OwnedIterable {
     type Item = T
@@ -869,3 +886,22 @@ extend<T> Deque<T> implements FromItems<T> {
 // Owned storage moves or is shared exactly when its elements and allocator do.
 unsafe extend<T: Transferable, A: Allocator + Transferable> Deque<T, A> implements Transferable {}
 unsafe extend<T: Shareable, A: Allocator + Shareable> Deque<T, A> implements Shareable {}
+
+extend<T, const N: usize> Deque<T> implements From<[T; N]> {
+    static fn `from`(value: take [T; N]): Deque<T> {
+        var out = new<T>()
+        out.extend(super.vec.from_array(value))
+        out
+    }
+}
+extend<T> Deque<T> implements From<super.vec.List<T>> {
+    static fn `from`(value: take super.vec.List<T>): Deque<T> {
+        var out = new<T>()
+        out.extend(value)
+        out
+    }
+}
+
+extend<T, A: Allocator + Default> DequeIntoIter<T, A> implements Default {
+    static fn default(): DequeIntoIter<T, A> { DequeIntoIter(new_in(A.(Default).default())) }
+}

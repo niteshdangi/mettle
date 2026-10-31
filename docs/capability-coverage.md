@@ -209,6 +209,14 @@ I17. See `docs/library-surface.md` sections 6–8
 for applicability and required supporting-protocol review; do not infer
 per-operation closure from the capability-level fixtures above.
 
+The `libs` continuation adds mutable collection predicates, iterator trait
+forwarding, empty weak owners and owner protocols, ordering defaults, checked
+time operations, OnceLock protocols and sender cloning. Source-review findings
+and remaining implementation tasks are recorded in
+[i13-library.md](i13-library.md#libs-continuation-ledger-2026-10-31).
+These changes are uncompiled on the Windows editing host; the CSV remains at
+3,964 missing and 2 not-applicable, with no newly declared or evidenced rows.
+
 Acceptance has independent axes: expressibility, sound observable semantics
 and measured runtime. A faster unsafe replacement cannot satisfy a safe API;
 an equally expressive but slower implementation can fail the runtime gate.

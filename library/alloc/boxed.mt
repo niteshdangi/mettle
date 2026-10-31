@@ -1,10 +1,17 @@
 import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import package.core.fmt
 import package.core.hash.{Hash, Hasher}
+import package.core.error.Error
 import package.core.ops.{Deref, DerefMut}
 import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, layout_of_val, layout_unchecked, free_block, handle_alloc_error}
 import package.core.clone.Clone
+import package.core.borrow.{AsRef, Borrow}
+import package.core.default.Default
+import package.core.convert.{From, TryFrom}
+import package.core.iter.{OwnedIterable, Iterator, ExactSizeIterator, BidirectionalIterator, FromItems}
+import package.core.future.{Context, Future, Poll}
 import package.core.slice.drop_values
+import package.core.text.Text
 
 // Unique owner of one heap value, tied to the allocator that produced it.
 pub type Box<T: unsized, A: Allocator = super.alloc.Global> {
@@ -172,7 +179,7 @@ extend<T: unsized, A: Allocator> Box<T, A> {
     pub fn get(): read T from self { unsafe { read *self.p } }
     pub mut fn get_mut(): mut T from self { unsafe { mut *self.p } }
     pub fn allocator(): read A from self { read self.a }
-    pub fn as_ptr(): ptr<mut T> { self.p }
+    pub fn as_ptr(): ptr<read T> { self.p.cast_const() }
     pub mut fn as_mut_ptr(): ptr<mut T> { self.p }
     // Ownership conversion: the caller becomes responsible for the block and
     // must rebuild it with `from_raw_in` using a compatible allocator.
@@ -183,6 +190,12 @@ extend<T: unsized, A: Allocator> Box<T, A> {
             core.mem.forget(take self)
             (p, a)
         }
+    }
+    // Like `into_raw`, but the pointer is statically non-null, which every box
+    // pointer is (dangling and zero-sized payloads use the alignment address).
+    pub take fn into_non_null(): (core.ptr.NonNull<T>, A) {
+        let raw = self.into_raw()
+        (unsafe { core.ptr.NonNull<T>.new_unchecked(raw.0) }, raw.1)
     }
     // The allocator is intentionally retained with the leaked allocation.
     pub take fn leak(): ptr<mut T> {
@@ -215,10 +228,25 @@ extend<T, A: Allocator> Box<T, A> {
     }
 }
 
+extend<A: Allocator> Box<any core.any.Any, A> {
+    // Recovers the concrete box when the erased payload is a `T`; otherwise
+    // the box is returned unchanged.
+    pub take fn downcast<T>(): Box<T, A> throws Box<any core.any.Any, A> {
+        if !core.any.is<T>(self.get()) { throw self }
+        let raw = self.into_raw()
+        unsafe { from_raw_in(raw.0.cast<T>(), raw.1) }
+    }
+}
+
 // Safety: `p` came from `into_raw` (or an equivalent allocation of the
 // dynamic layout of `T` by `a`) and holds an initialized `T`.
 pub unsafe fn from_raw_in<T: unsized, A: Allocator>(p: ptr<mut T>, a: take A): Box<T, A> { Box(p, a) }
 pub unsafe fn from_raw<T: unsized>(p: ptr<mut T>): Box<T> { Box(p, Global()) }
+// Safety: same contract as `from_raw_in`; `p` came from `into_non_null`.
+pub unsafe fn from_non_null_in<T: unsized, A: Allocator>(p: core.ptr.NonNull<T>, a: take A): Box<T, A> {
+    Box(p.as_ptr(), a)
+}
+pub unsafe fn from_non_null<T: unsized>(p: core.ptr.NonNull<T>): Box<T> { Box(p.as_ptr(), Global()) }
 
 
 // A box is transparent: comparison, hashing and formatting delegate to the payload.
@@ -252,7 +280,79 @@ extend<T: fmt.Display, A: Allocator> Box<T, A> implements fmt.Display {
 extend<T: fmt.Debug, A: Allocator> Box<T, A> implements fmt.Debug {
     fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try T.(fmt.Debug).fmt(self.get(), mut f) }
 }
+extend<T: Error, A: Allocator> Box<T, A> implements Error {
+    fn source<region r>(receiver self: read Box<T, A> from r): (read any Error from r)? {
+        T.(Error).source(self.get())
+    }
+}
 
 // Owned storage moves or is shared exactly when its elements and allocator do.
 unsafe extend<T: Transferable, A: Allocator + Transferable> Box<T, A> implements Transferable {}
 unsafe extend<T: Shareable, A: Allocator + Shareable> Box<T, A> implements Shareable {}
+
+extend<T: unsized, A: Allocator> Box<T, A> implements AsRef<T> {
+    fn as_ref(): read T from self { self.get() }
+}
+extend<T: unsized, A: Allocator> Box<T, A> implements Borrow<T> {
+    fn borrow(): read T from self { self.get() }
+}
+extend<T: Default, A: Allocator + Default> Box<T, A> implements Default {
+    static fn default(): Box<T, A> { new_in(T.(Default).default(), A.(Default).default()) }
+}
+extend<T> Box<T> implements From<T> {
+    static fn `from`(value: take T): Box<T> { new(value) }
+}
+
+extend<A: Allocator> Box<Text, A> {
+    // Text and [u8] have the same byte extent and metadata; u8 has no drop glue.
+    pub take fn into_boxed_bytes(): Box<[u8], A> {
+        let raw = self.into_raw()
+        let bytes = unsafe { core.mem.transmute<ptr<mut [u8]>>(raw.0) }
+        unsafe { from_raw_in(bytes, raw.1) }
+    }
+}
+
+// Iteration, hashing and polling forward to the payload; the box only owns it.
+extend<I: Iterator, A: Allocator> Box<I, A> implements Iterator {
+    type Item = I.Item
+    mut fn next(): I.Item? { self.get_mut().next() }
+    fn size_hint(): (usize, usize?) { self.get().size_hint() }
+}
+extend<I: BidirectionalIterator, A: Allocator> Box<I, A> implements BidirectionalIterator {
+    mut fn next_back(): I.(Iterator).Item? { self.get_mut().next_back() }
+}
+extend<I: ExactSizeIterator, A: Allocator> Box<I, A> implements ExactSizeIterator {
+    fn len(): usize { self.get().len() }
+}
+extend<H: Hasher, A: Allocator> Box<H, A> implements Hasher {
+    mut fn write(bytes: read [u8]): Unit { self.get_mut().write(bytes) }
+    fn finish(): u64 { self.get().finish() }
+}
+// The payload has a stable address while the box lives, so a pinned box
+// projects to a pinned payload (as `Erased` does for its raw allocation).
+extend<F: Future, A: Allocator> Box<F, A> implements Future {
+    type Output = F.Output
+    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<F.Output> {
+        let me = unsafe { self.get_unchecked_mut() }
+        unsafe { core.pin.Pin.new_unchecked(me.get_mut()).poll(mut cx) }
+    }
+}
+
+extend<T> Box<[T]> implements FromItems<T> {
+    static fn from_iter<I: OwnedIterable<Item = T>>(items: take I): Box<[T]> {
+        let collected: super.vec.List<T> = core.iter.collect(items)
+        collected.into_boxed_slice()
+    }
+}
+extend<T, const N: usize> Box<[T]> implements From<[T; N]> {
+    static fn `from`(value: take [T; N]): Box<[T]> { super.vec.from_array(value).into_boxed_slice() }
+}
+// Fails with the original box when the length differs from `N`.
+extend<T, A: Allocator, const N: usize> Box<[T; N], A> implements TryFrom<Box<[T], A>> {
+    type Error = Box<[T], A>
+    static fn try_from(value: take Box<[T], A>): (Box<[T; N], A> throws Box<[T], A>) {
+        if value.get().len() != N { return failure(value) }
+        let raw = value.into_raw()
+        success(unsafe { from_raw_in(raw.0.cast<[T; N]>(), raw.1) })
+    }
+}

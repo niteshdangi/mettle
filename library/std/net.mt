@@ -27,17 +27,22 @@ extern "C" {
     ): isize;
 }
 
+@derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)
 pub copy type Ipv4Addr { bits: u32 }
 pub copy type Ipv6Addr { bytes: [u8; 16] }
+@derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)
 pub copy enum IpAddr { V4(Ipv4Addr), V6(Ipv6Addr) }
 
+@derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)
 pub copy type SocketAddr {
     pub ip: IpAddr
     pub port: u16
     pub flowinfo: u32
     pub scope_id: u32
 }
+@derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)
 pub copy type SocketAddrV4 { pub ip: Ipv4Addr; pub port: u16 }
+@derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)
 pub copy type SocketAddrV6 {
     pub ip: Ipv6Addr
     pub port: u16
@@ -1420,4 +1425,116 @@ pub fn resolve(host: read Text, port: u16): List<SocketAddr> throws Error {
         index += 1usize
     }
     addresses
+}
+
+extend Ipv4Addr {
+    pub const BITS: u32 = 32u32
+    pub const LOCALHOST: Ipv4Addr = Ipv4Addr(2130706433u32)
+    pub const UNSPECIFIED: Ipv4Addr = Ipv4Addr(0u32)
+    pub const BROADCAST: Ipv4Addr = Ipv4Addr(4294967295u32)
+}
+
+extend Ipv6Addr {
+    pub const BITS: u32 = 128u32
+    pub const LOCALHOST: Ipv6Addr = Ipv6Addr([0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8])
+    pub const UNSPECIFIED: Ipv6Addr = Ipv6Addr([0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8])
+}
+
+// Ipv6Addr compares, orders and hashes by its 128-bit big-endian value.
+extend Ipv6Addr implements package.core.cmp.PartialEq {
+    fn eq(other: read Ipv6Addr): bool { self.same(other) }
+}
+extend Ipv6Addr implements package.core.cmp.Eq {}
+extend Ipv6Addr implements package.core.cmp.PartialOrd {
+    fn partial_cmp(other: read Ipv6Addr): package.core.cmp.Ordering? { present(self.cmp(other)) }
+}
+extend Ipv6Addr implements package.core.cmp.Ord {
+    fn cmp(other: read Ipv6Addr): package.core.cmp.Ordering { self.to_bits().cmp(other.to_bits()) }
+}
+extend Ipv6Addr implements package.core.hash.Hash {
+    fn hash<H: package.core.hash.Hasher>(state: mut H): Unit { state.write_u128(self.to_bits()) }
+}
+
+extend Ipv4Addr implements package.core.ops.BitAnd<Ipv4Addr> {
+    type Output = Ipv4Addr
+    fn bitand(rhs: read Ipv4Addr): Ipv4Addr { Ipv4Addr(self.bits & rhs.bits) }
+}
+extend Ipv4Addr implements package.core.ops.BitOr<Ipv4Addr> {
+    type Output = Ipv4Addr
+    fn bitor(rhs: read Ipv4Addr): Ipv4Addr { Ipv4Addr(self.bits | rhs.bits) }
+}
+extend Ipv4Addr implements package.core.ops.BitAndAssign<Ipv4Addr> {
+    mut fn bitand_assign(rhs: read Ipv4Addr): Unit { self = Ipv4Addr(self.bits & rhs.bits) }
+}
+extend Ipv4Addr implements package.core.ops.BitOrAssign<Ipv4Addr> {
+    mut fn bitor_assign(rhs: read Ipv4Addr): Unit { self = Ipv4Addr(self.bits | rhs.bits) }
+}
+extend Ipv4Addr implements package.core.ops.Not {
+    type Output = Ipv4Addr
+    fn not(): Ipv4Addr { Ipv4Addr(!self.bits) }
+}
+extend Ipv6Addr implements package.core.ops.BitAnd<Ipv6Addr> {
+    type Output = Ipv6Addr
+    fn bitand(rhs: read Ipv6Addr): Ipv6Addr { Ipv6Addr.from_bits(self.to_bits() & rhs.to_bits()) }
+}
+extend Ipv6Addr implements package.core.ops.BitOr<Ipv6Addr> {
+    type Output = Ipv6Addr
+    fn bitor(rhs: read Ipv6Addr): Ipv6Addr { Ipv6Addr.from_bits(self.to_bits() | rhs.to_bits()) }
+}
+extend Ipv6Addr implements package.core.ops.BitAndAssign<Ipv6Addr> {
+    mut fn bitand_assign(rhs: read Ipv6Addr): Unit { self = Ipv6Addr.from_bits(self.to_bits() & rhs.to_bits()) }
+}
+extend Ipv6Addr implements package.core.ops.BitOrAssign<Ipv6Addr> {
+    mut fn bitor_assign(rhs: read Ipv6Addr): Unit { self = Ipv6Addr.from_bits(self.to_bits() | rhs.to_bits()) }
+}
+extend Ipv6Addr implements package.core.ops.Not {
+    type Output = Ipv6Addr
+    fn not(): Ipv6Addr { Ipv6Addr.from_bits(!self.to_bits()) }
+}
+
+extend Ipv4Addr implements package.core.convert.From<u32> {
+    static fn `from`(value: take u32): Ipv4Addr { Ipv4Addr(value) }
+}
+extend u32 implements package.core.convert.From<Ipv4Addr> {
+    static fn `from`(value: take Ipv4Addr): u32 { value.bits }
+}
+extend Ipv4Addr implements package.core.convert.From<[u8; 4]> {
+    static fn `from`(value: take [u8; 4]): Ipv4Addr { Ipv4Addr.from_octets(value) }
+}
+extend Ipv6Addr implements package.core.convert.From<u128> {
+    static fn `from`(value: take u128): Ipv6Addr { Ipv6Addr.from_bits(value) }
+}
+extend u128 implements package.core.convert.From<Ipv6Addr> {
+    static fn `from`(value: take Ipv6Addr): u128 { value.to_bits() }
+}
+extend Ipv6Addr implements package.core.convert.From<[u8; 16]> {
+    static fn `from`(value: take [u8; 16]): Ipv6Addr { Ipv6Addr(value) }
+}
+extend Ipv6Addr implements package.core.convert.From<[u16; 8]> {
+    static fn `from`(value: take [u16; 8]): Ipv6Addr { Ipv6Addr.from_segments(value) }
+}
+extend IpAddr implements package.core.convert.From<Ipv4Addr> {
+    static fn `from`(value: take Ipv4Addr): IpAddr { IpAddr.V4(value) }
+}
+extend IpAddr implements package.core.convert.From<Ipv6Addr> {
+    static fn `from`(value: take Ipv6Addr): IpAddr { IpAddr.V6(value) }
+}
+extend IpAddr implements package.core.convert.From<[u8; 4]> {
+    static fn `from`(value: take [u8; 4]): IpAddr { IpAddr.V4(Ipv4Addr.from_octets(value)) }
+}
+extend SocketAddr implements package.core.convert.From<SocketAddrV4> {
+    static fn `from`(value: take SocketAddrV4): SocketAddr { value.to_socket_addr() }
+}
+extend SocketAddr implements package.core.convert.From<SocketAddrV6> {
+    static fn `from`(value: take SocketAddrV6): SocketAddr { value.to_socket_addr() }
+}
+extend SocketAddr implements package.core.convert.From<(IpAddr, u16)> {
+    static fn `from`(value: take (IpAddr, u16)): SocketAddr { SocketAddr.new(value.0, value.1) }
+}
+extend SocketAddr implements package.core.convert.From<(Ipv4Addr, u16)> {
+    static fn `from`(value: take (Ipv4Addr, u16)): SocketAddr { socket_addr(value.0, value.1) }
+}
+
+extend Ipv6Addr implements package.core.clone.Clone {
+    fn clone(): Ipv6Addr { self }
 }

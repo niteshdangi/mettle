@@ -11,6 +11,7 @@ pub module default
 pub module error
 pub module float
 pub module fmt
+pub module from_str
 pub module future
 pub module hash
 pub module iter
@@ -20,5 +21,6 @@ pub module option
 pub module outcome
 pub module panic
 pub module slice
+pub module storage
 pub module text
 module unicode_data

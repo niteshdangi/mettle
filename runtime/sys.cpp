@@ -559,10 +559,64 @@ extern "C" std::int32_t mettle_rt_errno_kind(std::int32_t code) {
     return 16;
   case ENOTEMPTY:
     return 17;
+  case ENOSYS:
+  case EOPNOTSUPP:
+    return 22;
+  case E2BIG:
+    return 23;
+  case EXDEV:
+    return 24;
+  case EDEADLK:
+    return 25;
+  case ETXTBSY:
+    return 26;
+  case EFBIG:
+    return 27;
+  case ELOOP:
+    return 28;
+  case EHOSTUNREACH:
+    return 29;
+  case EINPROGRESS:
+    return 30;
+  case EIO:
+    return 31;
+  case ENAMETOOLONG:
+    return 32;
+  case ENETDOWN:
+    return 33;
+  case ENETUNREACH:
+    return 34;
+  case ESPIPE:
+    return 35;
+  case EDQUOT:
+    return 36;
+  case EROFS:
+    return 37;
+  case EBUSY:
+    return 38;
+  case ESTALE:
+    return 39;
+  case ENOSPC:
+    return 40;
+  case EMLINK:
+    return 41;
+  case EMFILE:
+  case ENFILE:
+    return 42;
   default:
     return 18;
   }
 }
+
+namespace {
+std::mutex &stdinMutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+} // namespace
+
+extern "C" void mettle_rt_stdin_lock() { stdinMutex().lock(); }
+extern "C" void mettle_rt_stdin_unlock() { stdinMutex().unlock(); }
 
 extern "C" void mettle_rt_set_errno(std::int32_t value) { errno = value; }
 
@@ -600,9 +654,19 @@ extern "C" std::int32_t mettle_rt_stat(const char *path, std::int32_t fd,
 #ifdef __APPLE__
   out[3] = info.st_mtimespec.tv_sec;
   out[4] = info.st_mtimespec.tv_nsec;
+  out[5] = info.st_atimespec.tv_sec;
+  out[6] = info.st_atimespec.tv_nsec;
+  out[7] = info.st_birthtimespec.tv_sec;
+  out[8] = info.st_birthtimespec.tv_nsec;
+  out[9] = 1;
 #else
   out[3] = info.st_mtim.tv_sec;
   out[4] = info.st_mtim.tv_nsec;
+  out[5] = info.st_atim.tv_sec;
+  out[6] = info.st_atim.tv_nsec;
+  out[7] = 0;
+  out[8] = 0;
+  out[9] = 0;
 #endif
   return 0;
 }

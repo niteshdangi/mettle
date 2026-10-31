@@ -42,12 +42,24 @@ fn main(): i32 {
         from_secs(3u64).div_duration_f64(from_secs(2u64)) > 1.5000001f64 {
         return 28
     }
-    let early = std.time.now()
+    let early = std.time.Instant.now()
     let later = std.time.now()
     match later.checked_duration_since(early) { none => { return 29 }, present(_) => {} }
     match early.checked_duration_since(later) {
         present(gap) => { if !gap.is_zero() { return 30 } },
         none => {}
+    }
+    if early.checked_sub(std.time.Duration.MAX).is_present() { return 32 }
+    match later.checked_add(from_millis(1u64)) {
+        present(advanced) => {
+            match advanced.checked_sub(from_millis(1u64)) {
+                present(restored) => {
+                    if restored.lt(later) || later.lt(restored) { return 33 }
+                },
+                none => { return 34 }
+            }
+        },
+        none => { return 35 }
     }
     if !later.saturating_duration_since(early).lt(from_secs(10u64)) { return 31 }
     let t0 = std.time.now()
@@ -59,6 +71,22 @@ fn main(): i32 {
     if t1.lt(t0) { return 9 }
     // The wall clock is after 2020 and orders against the epoch.
     let wall = std.time.system_now()
+    let wall_from_type = std.time.SystemTime.now()
+    if wall_from_type.unix_secs() < 1577836800i64 { return 36 }
+    if std.time.SystemTime.UNIX_EPOCH.unix_secs() != 0i64 { return 37 }
+    let epoch_elapsed = capture std.time.SystemTime.UNIX_EPOCH.elapsed()
+    match take epoch_elapsed { success(elapsed) => { if elapsed.as_secs() < 1577836800u64 { return 40 } }, failure(_) => { return 41 } }
+    let backwards = capture std.time.unix_epoch().duration_since(wall)
+    match take backwards {
+        success(_) => { return 42 },
+        failure(error) => { if error.duration().is_zero() { return 43 } }
+    }
+    match std.time.system_time_from_parts(9223372036854775807i64, 999999999u32).checked_add(from_nanos(1u64)) {
+        present(_) => { return 38 }, none => {}
+    }
+    match std.time.system_time_from_parts(-9223372036854775808i64, 0u32).checked_sub(from_nanos(1u64)) {
+        present(_) => { return 39 }, none => {}
+    }
     let since = capture wall.duration_since(std.time.unix_epoch())
     match take since { success(s) => { if s.as_secs() < 1577836800u64 { return 10 } }, failure(e) => { return 11 } }
     let back = capture std.time.unix_epoch().duration_since(wall)

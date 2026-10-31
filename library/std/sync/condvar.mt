@@ -1,6 +1,7 @@
 import super.mutex.MutexGuard
 import package.core.panic.panic
 import package.core.default.Default
+import package.core.fmt
 import package.std.time
 
 extern "C" {
@@ -29,6 +30,9 @@ pub fn new(): Condvar {
 extend Condvar implements Default {
     static fn default(): Condvar { new() }
 }
+extend Condvar implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.write_str("Condvar { .. }") }
+}
 
 // Whether a timed wait ended by its deadline.
 pub copy type TimedOut { expired: bool }
@@ -47,24 +51,24 @@ extend Condvar {
         if status < 0 { panic("timed condition wait failed") }
         (guard, TimedOut(status == 1))
     }
-    pub fn wait_while<T, region r, F: fn(read T): bool>(
+    pub fn wait_while<T, region r, F: mut fn(mut T): bool>(
         guard: take MutexGuard<T, region r>,
-        predicate: take F
+        predicate: mut F
     ): MutexGuard<T, region r> {
         var current = guard
-        while predicate(current.get()) {
+        while predicate(current.get_mut()) {
             current = self.wait(current)
         }
         current
     }
-    pub fn wait_timeout_while<T, region r, F: fn(read T): bool>(
+    pub fn wait_timeout_while<T, region r, F: mut fn(mut T): bool>(
         guard: take MutexGuard<T, region r>,
         nanoseconds: u64,
-        predicate: take F
+        predicate: mut F
     ): (MutexGuard<T, region r>, TimedOut) {
         let start = time.now()
         var current = guard
-        while predicate(current.get()) {
+        while predicate(current.get_mut()) {
             let elapsed = time.now().duration_since(start).as_nanos()
             if elapsed >= nanoseconds as u128 {
                 return (current, TimedOut(true))
@@ -72,7 +76,8 @@ extend Condvar {
             let remaining = nanoseconds - elapsed as u64
             let waited = self.wait_timeout(current, remaining)
             current = waited.0
-            if waited.1.timed_out() { return (current, waited.1) }
+            // The predicate decides success after reacquisition; a native
+            // timeout alone does not mean the condition is still pending.
         }
         (current, TimedOut(false))
     }

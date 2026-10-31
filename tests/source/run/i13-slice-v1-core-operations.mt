@@ -62,19 +62,23 @@ fn main(): i32 {
     }
 
     var chunks = slice.chunks(2usize)
+    if chunks.len() != 3usize { return 86 }
     match chunks.next() {
         present(part) => { if part.len() != 2usize || part[0usize] != 1 { return 5 } },
         none => { return 5 }
     }
+    if chunks.len() != 2usize { return 87 }
     match chunks.next_back() {
         present(part) => { if part.len() != 1usize || part[0usize] != 5 { return 6 } },
         none => { return 6 }
     }
+    if chunks.len() != 1usize { return 88 }
     match chunks.next() {
         present(part) => { if part[0usize] != 3 { return 7 } },
         none => { return 7 }
     }
     match chunks.next() { none => {}, present(_) => { return 8 } }
+    if chunks.len() != 0usize { return 89 }
     var exact_chunks = slice.chunks_exact(2usize)
     match exact_chunks.next_back() {
         present(part) => { if part[0usize] != 3 || part[1usize] != 4 { return 41 } },
@@ -104,9 +108,26 @@ fn main(): i32 {
     }
 
     var windows = slice.windows(3usize)
+    if windows.len() != 3usize { return 90 }
     match windows.next() {
         present(part) => { if part[0usize] != 1 || part[2usize] != 3 { return 9 } },
         none => { return 9 }
+    }
+    if windows.len() != 1usize { return 91 }
+    match windows.next_back() {
+        present(part) => { if part[0usize] != 3 || part[2usize] != 5 { return 92 } },
+        none => { return 92 }
+    }
+    if windows.len() != 0usize { return 93 }
+
+    var comparisons = 0
+    let sorted_values = [1i32, 2i32, 3i32]
+    let sorted_slice: read [i32] = read sorted_values
+    if !sorted_slice.is_sorted_by(fn(left: read i32, right: read i32): Ordering {
+        comparisons += 1
+        left.cmp(right)
+    }) || comparisons != 2 {
+        return 94
     }
     match windows.next() {
         present(part) => { if part[0usize] != 2 || part[2usize] != 4 { return 10 } },
@@ -238,6 +259,20 @@ fn main(): i32 {
     match split.next_back() { present(part) => { if part[0usize] != 3 { return 52 } }, none => { return 52 } }
     match split.next() { present(part) => { if part[0usize] != 2 { return 53 } }, none => { return 53 } }
     match split.next() { present(_) => { return 54 }, none => {} }
+    var reverse_parts = split_slice.rsplit(fn(value: read i32): bool { value == 0 })
+    match reverse_parts.next() {
+        present(part) => { if part.len() != 1usize || part[0usize] != 3 { return 95 } },
+        none => { return 95 }
+    }
+    match reverse_parts.next() {
+        present(part) => { if part.len() != 1usize || part[0usize] != 2 { return 96 } },
+        none => { return 96 }
+    }
+    match reverse_parts.next() {
+        present(part) => { if part.len() != 1usize || part[0usize] != 1 { return 97 } },
+        none => { return 97 }
+    }
+    match reverse_parts.next() { none => {}, present(_) => { return 98 } }
     var split_limit = split_slice.splitn(2usize, fn(value: read i32): bool { value == 0 })
     match split_limit.next() { present(part) => { if part[0usize] != 1 { return 55 } }, none => { return 55 } }
     match split_limit.next() {

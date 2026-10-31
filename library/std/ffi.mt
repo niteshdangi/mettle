@@ -9,6 +9,8 @@ import package.alloc.string.String
 import package.alloc.string.FromUtf8Error
 import package.core.text.Text
 import package.core.slice
+import package.core.cmp.Ord
+import package.core.hash.Hash
 import super.io
 import super.io.ErrorKind
 
@@ -222,6 +224,13 @@ extend OsString {
         let boxed = self.v.into_boxed_slice()
         unsafe { core.mem.transmute<package.alloc.boxed.Box<OsStr>>(boxed) }
     }
+    // Transfers the allocation to a mutable process-lifetime view.
+    pub take fn leak(): mut OsStr from static {
+        let bytes = self.v.leak()
+        let fat = core.ptr.from_mut(bytes)
+        let view = unsafe { core.mem.transmute<ptr<mut OsStr>>(fat) }
+        unsafe { mut *view }
+    }
     pub take fn into_bytes(): List<u8> { self.v }
     pub take fn into_encoded_bytes(): List<u8> { self.v }
     pub take fn into_string(): String throws FromUtf8Error {
@@ -250,6 +259,8 @@ pub copy type CStrError { pub position: usize; pub interior: bool }
 // Unsized NUL-terminated byte string. The bytes include the trailing zero,
 // and no earlier byte is zero.
 pub type CStr { bytes: [u8] }
+
+copy type RawRead { data: ptr<read u8>; len: usize }
 
 fn nul_at(bytes: read [u8]): usize? {
     var index = 0usize
@@ -320,6 +331,11 @@ extend CStr {
         unsafe { package.core.slice.subslice_unchecked(read self.bytes, 0usize, end) }
     }
     pub fn count_bytes(): usize { self.bytes.len() - 1usize }
+    pub fn is_empty(): bool { self.bytes.len() == 1usize }
+    pub fn as_ptr(): ptr<read u8> {
+        let fat = core.ptr.from_ref(read self.bytes)
+        unsafe { core.mem.transmute<RawRead>(fat) }.data
+    }
     pub fn to_str(): (read Text from self)? { package.core.text.from_utf8(self.to_bytes()) }
     pub fn to_string_lossy(): String { lossy(self.to_bytes()) }
     pub fn into_c_string(): CString {
@@ -365,6 +381,13 @@ extend CString {
         unsafe { c_str_from_bytes_with_nul_unchecked(self.bytes.as_slice()) }
     }
     pub fn count_bytes(): usize { self.as_c_str().count_bytes() }
+    pub fn is_empty(): bool { self.as_c_str().is_empty() }
+    pub fn as_ptr(): ptr<read u8> { self.bytes.as_ptr() }
+    pub fn to_bytes(): read [u8] from self { self.as_bytes() }
+    pub fn to_bytes_with_nul(): read [u8] from self { self.as_bytes_with_nul() }
+    pub fn to_str(): (read Text from self)? { self.as_c_str().to_str() }
+    pub fn to_string_lossy(): String { self.as_c_str().to_string_lossy() }
+    pub static fn new(bytes: read [u8]): CString throws CStrError { try c_string_from_bytes(bytes) }
     pub take fn into_bytes_with_nul(): List<u8> {
         unsafe {
             let bytes = core.ptr.`read`(core.ptr.from_ref(self.bytes))
@@ -377,8 +400,132 @@ extend CString {
         let _ = bytes.pop()
         bytes
     }
+    pub take fn into_string(): String throws FromUtf8Error {
+        try package.alloc.string.from_utf8(self.into_bytes())
+    }
+    // Hands the allocation to C as a NUL-terminated pointer. The capacity is
+    // trimmed to the terminated length so `from_raw` can rebuild the list.
+    pub take fn into_raw(): ptr<mut u8> {
+        self.into_bytes_with_nul().into_boxed_slice().leak().cast<u8>()
+    }
+    // Safety: `raw` came from `into_raw` and has not been used since.
+    pub unsafe static fn from_raw(raw: ptr<mut u8>): CString {
+        var length = 0usize
+        while unsafe { *raw.add(length) } != 0u8 { length += 1usize }
+        CString(unsafe { vec.from_raw_parts<u8>(raw, length + 1usize, length + 1usize) })
+    }
     pub take fn into_boxed_c_str(): package.alloc.boxed.Box<CStr> {
         let boxed = self.into_bytes_with_nul().into_boxed_slice()
         unsafe { core.mem.transmute<package.alloc.boxed.Box<CStr>>(boxed) }
     }
+}
+
+extend CString implements package.core.default.Default {
+    static fn default(): CString { CString(vec.from_array([0u8])) }
+}
+extend CString implements package.core.clone.Clone {
+    fn clone(): CString { self.as_c_str().into_c_string() }
+}
+extend CString implements package.core.cmp.PartialEq {
+    fn eq(other: read CString): bool { bytes_equal(self.as_bytes(), other.as_bytes()) }
+}
+extend CString implements package.core.cmp.Eq {}
+extend CString implements package.core.hash.Hash {
+    fn hash<H: package.core.hash.Hasher>(state: mut H): Unit {
+        u8.(package.core.hash.Hash).hash_slice(self.as_bytes(), mut state)
+    }
+}
+extend CString implements package.core.fmt.Debug {
+    fn fmt(f: mut package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+        try String.(package.core.fmt.Debug).fmt(read self.as_c_str().to_string_lossy(), mut f)
+    }
+}
+extend CStr implements package.core.cmp.PartialEq {
+    fn eq(other: read CStr): bool { bytes_equal(self.to_bytes(), other.to_bytes()) }
+}
+extend CStr implements package.core.cmp.Eq {}
+extend CStr implements package.core.hash.Hash {
+    fn hash<H: package.core.hash.Hasher>(state: mut H): Unit {
+        u8.(package.core.hash.Hash).hash_slice(self.to_bytes(), mut state)
+    }
+}
+extend CStr implements package.core.fmt.Debug {
+    fn fmt(f: mut package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+        try String.(package.core.fmt.Debug).fmt(read self.to_string_lossy(), mut f)
+    }
+}
+
+extend CStr implements package.core.cmp.PartialOrd {
+    fn partial_cmp(other: read CStr): package.core.cmp.Ordering? { present(self.cmp(other)) }
+}
+extend CStr implements package.core.cmp.Ord {
+    fn cmp(other: read CStr): package.core.cmp.Ordering { self.to_bytes().cmp(other.to_bytes()) }
+}
+extend CString implements package.core.cmp.PartialOrd {
+    fn partial_cmp(other: read CString): package.core.cmp.Ordering? { present(self.cmp(other)) }
+}
+extend CString implements package.core.cmp.Ord {
+    fn cmp(other: read CString): package.core.cmp.Ordering { self.as_bytes().cmp(other.as_bytes()) }
+}
+
+// OsStr and OsString compare, hash and format as their raw bytes, so the view
+// and the owner agree on equality, order and hash.
+extend OsStr implements package.core.cmp.PartialEq {
+    fn eq(other: read OsStr): bool { bytes_equal(self.as_bytes(), other.as_bytes()) }
+}
+extend OsStr implements package.core.cmp.Eq {}
+extend OsStr implements package.core.cmp.PartialOrd {
+    fn partial_cmp(other: read OsStr): package.core.cmp.Ordering? { present(self.cmp(other)) }
+}
+extend OsStr implements package.core.cmp.Ord {
+    fn cmp(other: read OsStr): package.core.cmp.Ordering { self.as_bytes().cmp(other.as_bytes()) }
+}
+extend OsStr implements package.core.hash.Hash {
+    fn hash<H: package.core.hash.Hasher>(state: mut H): Unit { self.as_bytes().hash(mut state) }
+}
+extend OsStr implements package.core.fmt.Debug {
+    fn fmt(f: mut package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+        try String.(package.core.fmt.Debug).fmt(read self.to_string_lossy(), mut f)
+    }
+}
+extend OsStr implements package.core.borrow.ToOwned {
+    type Owned = OsString
+    fn to_owned(): OsString { self.to_os_string() }
+}
+extend OsStr implements package.core.borrow.AsRef<OsStr> {
+    fn as_ref(): read OsStr from self { read self }
+}
+
+extend OsString implements package.core.default.Default {
+    static fn default(): OsString { new_os_string() }
+}
+extend OsString implements package.core.clone.Clone {
+    fn clone(): OsString { self.to_os_string() }
+}
+extend OsString implements package.core.cmp.PartialEq {
+    fn eq(other: read OsString): bool { bytes_equal(self.as_bytes(), other.as_bytes()) }
+}
+extend OsString implements package.core.cmp.Eq {}
+extend OsString implements package.core.cmp.PartialOrd {
+    fn partial_cmp(other: read OsString): package.core.cmp.Ordering? { present(self.cmp(other)) }
+}
+extend OsString implements package.core.cmp.Ord {
+    fn cmp(other: read OsString): package.core.cmp.Ordering { self.as_bytes().cmp(other.as_bytes()) }
+}
+extend OsString implements package.core.hash.Hash {
+    fn hash<H: package.core.hash.Hasher>(state: mut H): Unit { self.as_bytes().hash(mut state) }
+}
+extend OsString implements package.core.fmt.Debug {
+    fn fmt(f: mut package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+        try OsStr.(package.core.fmt.Debug).fmt(self.as_os_str(), mut f)
+    }
+}
+extend OsString implements package.core.borrow.Borrow<OsStr> {
+    fn borrow(): read OsStr from self { self.as_os_str() }
+}
+extend OsString implements package.core.borrow.AsRef<OsStr> {
+    fn as_ref(): read OsStr from self { self.as_os_str() }
+}
+extend OsString implements package.core.convert.From<String> {
+    static fn `from`(value: take String): OsString { OsString(value.into_bytes()) }
 }

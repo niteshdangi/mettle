@@ -3,6 +3,7 @@
 // them, and `Error` keeps the raw OS error number so it round-trips unchanged.
 import package.alloc.vec
 import package.alloc.vec.List
+import package.alloc.vec_deque.Deque
 import package.core.text.Text
 import package.core.cmp.{PartialEq, Eq}
 import package.core.clone.Clone
@@ -18,7 +19,12 @@ pub copy enum ErrorKind {
     NotFound, PermissionDenied, ConnectionRefused, ConnectionReset, ConnectionAborted,
     NotConnected, AddrInUse, AddrNotAvailable, BrokenPipe, AlreadyExists, WouldBlock,
     InvalidInput, TimedOut, Interrupted, OutOfMemory, IsADirectory, NotADirectory,
-    DirectoryNotEmpty, Other, InvalidData, WriteZero, UnexpectedEof, Unsupported
+    DirectoryNotEmpty, Other, InvalidData, WriteZero, UnexpectedEof, Unsupported,
+    ArgumentListTooLong, CrossesDevices, Deadlock, ExecutableFileBusy,
+    FileTooLarge, FilesystemLoop, HostUnreachable, InProgress,
+    InputOutputError, InvalidFilename, NetworkDown, NetworkUnreachable,
+    NotSeekable, QuotaExceeded, ReadOnlyFilesystem, ResourceBusy,
+    StaleNetworkFileHandle, StorageFull, TooManyLinks, TooManyOpenFiles
 }
 
 pub copy enum SeekFrom { Start(u64), End(i64), Current(i64) }
@@ -58,6 +64,30 @@ fn kind_from_index(index: i32): ErrorKind {
         15 => ErrorKind.IsADirectory,
         16 => ErrorKind.NotADirectory,
         17 => ErrorKind.DirectoryNotEmpty,
+        19 => ErrorKind.InvalidData,
+        20 => ErrorKind.WriteZero,
+        21 => ErrorKind.UnexpectedEof,
+        22 => ErrorKind.Unsupported,
+        23 => ErrorKind.ArgumentListTooLong,
+        24 => ErrorKind.CrossesDevices,
+        25 => ErrorKind.Deadlock,
+        26 => ErrorKind.ExecutableFileBusy,
+        27 => ErrorKind.FileTooLarge,
+        28 => ErrorKind.FilesystemLoop,
+        29 => ErrorKind.HostUnreachable,
+        30 => ErrorKind.InProgress,
+        31 => ErrorKind.InputOutputError,
+        32 => ErrorKind.InvalidFilename,
+        33 => ErrorKind.NetworkDown,
+        34 => ErrorKind.NetworkUnreachable,
+        35 => ErrorKind.NotSeekable,
+        36 => ErrorKind.QuotaExceeded,
+        37 => ErrorKind.ReadOnlyFilesystem,
+        38 => ErrorKind.ResourceBusy,
+        39 => ErrorKind.StaleNetworkFileHandle,
+        40 => ErrorKind.StorageFull,
+        41 => ErrorKind.TooManyLinks,
+        42 => ErrorKind.TooManyOpenFiles,
         _ => ErrorKind.Other
     }
 }
@@ -66,24 +96,29 @@ fn kind_from_index(index: i32): ErrorKind {
 // operating system, the unmodified `errno` value (`raw_os_error`). A kind-only
 // error carries no OS number. The kind of an OS error is derived from the
 // number but never replaces it, so `from_raw_os_error(n).raw_os_error() == n`.
-pub copy type Error {
+//
+// An error may also own an erased payload (`Error.new`): the value that
+// caused it, recoverable by `get_ref`, `get_mut`, `into_inner` or `downcast`.
+// A payload makes the error uniquely owned, so `Error` is not `copy`.
+pub type Error {
     code: i32
     os: bool
     kind: ErrorKind
+    payload: (heap any Any)?
 }
 
 pub fn from_raw_os_error(code: i32): Error {
     let kind = kind_from_index(unsafe { sys.mettle_rt_errno_kind(code) })
-    Error(code, true, kind)
+    Error(code, true, kind, none)
 }
 
 pub fn last_os_error(): Error { from_raw_os_error(sys.errno()) }
 
-pub fn from_kind(kind: ErrorKind): Error { Error(0, false, kind) }
+pub fn from_kind(kind: ErrorKind): Error { Error(0, false, kind, none) }
 
 // An OS error whose portable class is overridden (for example an expired
 // socket timeout reported by the OS as "try again"); the raw number is kept.
-pub fn with_kind(code: i32, kind: ErrorKind): Error { Error(code, true, kind) }
+pub fn with_kind(code: i32, kind: ErrorKind): Error { Error(code, true, kind, none) }
 
 fn kind_description(kind: ErrorKind): String {
     var s = package.alloc.string.new()
@@ -108,8 +143,49 @@ extend ErrorKind implements PartialEq {
 }
 
 extend Error {
+    pub static fn from_raw_os_error(code: i32): Error { super.io.from_raw_os_error(code) }
+    pub static fn last_os_error(): Error { super.io.last_os_error() }
     pub fn kind(): ErrorKind { self.kind }
     pub static fn other(): Error { from_kind(ErrorKind.Other) }
+
+    // A kind-only error owning `payload`; it has no OS error number.
+    pub static fn new<T>(kind: ErrorKind, payload: take T): Error {
+        let erased: heap any Any = heap payload
+        Error(0, false, kind, present(erased))
+    }
+    // The payload as an erased view; none for errors without one.
+    pub fn get_ref(): (read any Any from self)? {
+        match self.payload.as_ref() {
+            present(boxed) => present(boxed.get()),
+            none => none
+        }
+    }
+    pub mut fn get_mut(): (mut any Any from self)? {
+        match self.payload.as_mut() {
+            present(boxed) => present(boxed.get_mut()),
+            none => none
+        }
+    }
+    // The owned payload, if any; the error itself is consumed.
+    pub take fn into_inner(): (heap any Any)? { self.payload }
+    // The payload as a `T`. Without a payload, or with one of another type,
+    // the error is returned unchanged.
+    pub take fn downcast<T>(): T throws Error {
+        let code = self.code
+        let os = self.os
+        let kind = self.kind
+        let slot = self.payload
+        match take slot {
+            present(boxed) => {
+                let attempt = capture boxed.downcast<T>()
+                match take attempt {
+                    success(owner) => owner.into_inner(),
+                    failure(original) => throw Error(code, os, kind, present(original))
+                }
+            },
+            none => throw Error(code, os, kind, none)
+        }
+    }
     pub fn raw_os_error(): i32? { if self.os { present(self.code) } else { none } }
     pub fn is_os(): bool { self.os }
 
@@ -406,24 +482,24 @@ extend<R: Reader> LimitedReader<R> implements Reader {
 }
 
 // Adapts a byte writer to the formatting sink, keeping the first writer error.
-type FormatSink<region r, W: Writer + unsized> { inner: mut W from r; first_error: Error? }
+type FormatSink<region r, W: Writer + unsized> { inner: mut W from r; errors: List<Error> }
 extend<region r, W: Writer + unsized> FormatSink<region r, W> implements fmt.Write {
     mut fn write_str(text: read Text): Unit throws fmt.Error {
         let done = capture self.inner.write_all(text.as_bytes())
         match take done {
             success(_) => {},
-            failure(e) => { self.first_error = present(e); throw fmt.Error() }
+            failure(e) => { self.errors.push(e); throw fmt.Error() }
         }
     }
 }
 
 fn format_to<W: Writer + unsized>(writer: mut W, message: format fmt.Message, newline: bool): Unit throws Error {
-    var sink = FormatSink(mut writer, none)
+    var sink = FormatSink(mut writer, vec.new<Error>())
     let outcome = capture message.write_to(mut sink)
     match take outcome {
         success(_) => {},
         failure(_) => {
-            match sink.first_error {
+            match sink.errors.pop() {
                 present(e) => { throw e },
                 none => { throw from_kind(ErrorKind.InvalidData) }
             }
@@ -476,7 +552,10 @@ pub fn stdout(): Stdout { Stdout() }
 pub fn stderr(): Stderr { Stderr() }
 
 extend Stdin implements Reader {
-    mut fn read_some(buf: mut [u8]): usize throws Error { try fd_read(0, buf) }
+    mut fn read_some(buf: mut [u8]): usize throws Error {
+        let _guard = stdin_lock_guard()
+        try stdin_read(buf)
+    }
 }
 extend Stdout implements Writer {
     mut fn write_some(buf: read [u8]): usize throws Error { try fd_write(1, buf) }
@@ -485,6 +564,174 @@ extend Stdout implements Writer {
 extend Stderr implements Writer {
     mut fn write_some(buf: read [u8]): usize throws Error { try fd_write(2, buf) }
     mut fn flush(): Unit throws Error {}
+}
+
+// Stream handles returned by `lock()`. The runtime keeps no stream lock state,
+// so a handle gives no cross-thread exclusion: each `write_some` is a single
+// system call and concurrent writers may interleave between calls.
+pub copy type StdoutLock {}
+pub copy type StderrLock {}
+extend Stdout {
+    pub fn lock(): StdoutLock { StdoutLock() }
+}
+extend Stderr {
+    pub fn lock(): StderrLock { StderrLock() }
+}
+extend StdoutLock implements Writer {
+    mut fn write_some(buf: read [u8]): usize throws Error { try fd_write(1, buf) }
+    mut fn flush(): Unit throws Error {}
+}
+extend StderrLock implements Writer {
+    mut fn write_some(buf: read [u8]): usize throws Error { try fd_write(2, buf) }
+    mut fn flush(): Unit throws Error {}
+}
+
+// Standard input is read through one process-wide buffer so that bytes read
+// ahead by one handle are seen by every other handle. The buffer, its cursor
+// and the end of its valid bytes are guarded by the runtime stdin mutex, which
+// a `StdinLock` holds for its whole life (not reentrant, like the Rust lock:
+// using `Stdin` directly while this thread holds a `StdinLock` deadlocks).
+extern "C" {
+    unsafe fn mettle_rt_stdin_lock(): Unit;
+    unsafe fn mettle_rt_stdin_unlock(): Unit;
+}
+
+static mut STDIN_BUFFER: [u8; 8192] = [0u8; 8192]
+static mut STDIN_POS: usize = 0usize
+static mut STDIN_FILLED: usize = 0usize
+
+// Exclusive access to the shared standard input buffer until dropped.
+pub type StdinLock {
+    held: bool
+    drop {
+        unsafe { mettle_rt_stdin_unlock() }
+    }
+}
+
+fn stdin_lock_guard(): StdinLock {
+    unsafe { mettle_rt_stdin_lock() }
+    StdinLock(true)
+}
+
+extend Stdin {
+    pub fn lock(): StdinLock { stdin_lock_guard() }
+}
+
+// Refills the shared buffer when it is drained; an empty result is end of
+// input. The caller holds the stdin lock.
+fn stdin_fill(): Unit throws Error {
+    if unsafe { STDIN_POS } >= unsafe { STDIN_FILLED } {
+        let target = unsafe { mut STDIN_BUFFER }
+        let n = try fd_read(0, target)
+        unsafe { STDIN_POS = 0usize }
+        unsafe { STDIN_FILLED = n }
+    }
+}
+
+// Moves buffered bytes into `buf`. The caller holds the stdin lock.
+fn stdin_read(buf: mut [u8]): usize throws Error {
+    if buf.len() == 0usize { return 0usize }
+    try stdin_fill()
+    let all = unsafe { read STDIN_BUFFER }
+    let start = unsafe { STDIN_POS }
+    let end = unsafe { STDIN_FILLED }
+    var n = buf.len()
+    if end - start < n { n = end - start }
+    var i = 0usize
+    while i < n {
+        buf[i] = all[start + i]
+        i += 1usize
+    }
+    unsafe { STDIN_POS = start + n }
+    n
+}
+
+// Appends the line, terminator included, to `out`; zero means end of input.
+// Only the line is consumed from the shared buffer. The caller holds the lock.
+fn stdin_read_line_bytes(out: mut List<u8>): usize throws Error {
+    var total = 0usize
+    while true {
+        try stdin_fill()
+        let all = unsafe { read STDIN_BUFFER }
+        let start = unsafe { STDIN_POS }
+        let end = unsafe { STDIN_FILLED }
+        if start >= end { break }
+        var i = start
+        var found = false
+        while i < end {
+            if all[i] == 10u8 { found = true; break }
+            i += 1usize
+        }
+        let stop = if found { i + 1usize } else { end }
+        out.extend_from_slice(all.split_at(stop).0.split_at(start).1)
+        unsafe { STDIN_POS = stop }
+        total += stop - start
+        if found { break }
+    }
+    total
+}
+
+extend StdinLock implements Reader {
+    mut fn read_some(buf: mut [u8]): usize throws Error { try stdin_read(buf) }
+}
+
+extend StdinLock implements BufRead {
+    mut fn fill_buf(): read [u8] from self throws Error {
+        try stdin_fill()
+        let all = unsafe { read STDIN_BUFFER }
+        all.split_at(unsafe { STDIN_FILLED }).0.split_at(unsafe { STDIN_POS }).1
+    }
+    mut fn consume(amount: usize): Unit {
+        let start = unsafe { STDIN_POS }
+        let end = unsafe { STDIN_FILLED }
+        let rest = end - start
+        unsafe { STDIN_POS = start + (if amount > rest { rest } else { amount }) }
+    }
+}
+
+extend Stdin {
+    // Appends one line, newline included, to `out`. Bytes that are not UTF-8
+    // fail with `InvalidData` after they were consumed, leaving `out` unchanged.
+    pub fn read_line(out: mut String): usize throws Error {
+        let _guard = stdin_lock_guard()
+        let start = out.len()
+        let count = unsafe { try stdin_read_line_bytes(out.as_mut_vec()) }
+        match package.core.text.from_utf8(out.as_bytes()) {
+            present(_) => count,
+            none => {
+                out.truncate(start)
+                throw from_kind(ErrorKind.InvalidData)
+            }
+        }
+    }
+    pub fn lines(): StdinLines { StdinLines(false) }
+}
+
+// Lines of standard input without their LF or CRLF terminator.
+pub type StdinLines { done: bool }
+extend StdinLines implements Iterator {
+    type Item = (String throws Error);
+    mut fn next(): Self.Item? {
+        if self.done { return none }
+        var bytes = vec.new<u8>()
+        let _guard = stdin_lock_guard()
+        let count = match take capture stdin_read_line_bytes(bytes) {
+            success(n) => n,
+            failure(error) => { self.done = true; return present(failure(error)) }
+        }
+        if count == 0usize { self.done = true; return none }
+        var ended = false
+        if bytes.len() > 0usize && bytes[bytes.len() - 1usize] == 10u8 {
+            ended = true
+            bytes.pop()
+            if bytes.len() > 0usize && bytes[bytes.len() - 1usize] == 13u8 { bytes.pop() }
+        }
+        if !ended { self.done = true }
+        match take capture package.alloc.string.from_utf8(bytes) {
+            success(text) => present(success(text)),
+            failure(_) => present(failure(from_kind(ErrorKind.InvalidData)))
+        }
+    }
 }
 
 // Writes the formatted message to standard output without a newline. An
@@ -542,6 +789,46 @@ extend List<u8> implements Writer {
     mut fn flush(): Unit throws Error {}
 }
 
+// A byte deque is a FIFO pipe: writes append at the back, reads and `consume`
+// remove from the front, and `fill_buf` exposes the front contiguous run.
+extend Deque<u8> implements Writer {
+    mut fn write_some(buf: read [u8]): usize throws Error {
+        var index = 0usize
+        while index < buf.len() {
+            self.push_back(buf[index])
+            index += 1usize
+        }
+        buf.len()
+    }
+    mut fn flush(): Unit throws Error {}
+}
+extend Deque<u8> implements Reader {
+    mut fn read_some(buf: mut [u8]): usize throws Error {
+        var count = buf.len()
+        if self.len() < count { count = self.len() }
+        var index = 0usize
+        while index < count {
+            buf[index] = self.pop_front().unwrap()
+            index += 1usize
+        }
+        count
+    }
+}
+extend Deque<u8> implements BufRead {
+    mut fn fill_buf(): read [u8] from self throws Error {
+        let parts = self.as_slices()
+        if parts.0.len() != 0usize { return parts.0 }
+        parts.1
+    }
+    mut fn consume(amount: usize): Unit {
+        var left = amount
+        while left > 0usize {
+            if self.pop_front().is_none() { return }
+            left -= 1usize
+        }
+    }
+}
+
 // Reads from an in-memory slice, advancing past what was consumed.
 pub type SliceReader<region r> { data: read [u8] from r; pos: usize }
 pub fn slice_reader<region r>(data: read [u8] from r): SliceReader<region r> { SliceReader(read data, 0usize) }
@@ -597,6 +884,7 @@ extend<R: Reader> BufferedReader<R> {
         if self.pos > self.filled { self.pos = self.filled }
     }
     pub fn get_ref(): read R from self { read self.inner }
+    pub mut fn get_mut(): mut R from self { mut self.inner }
     pub take fn into_inner(): R { self.inner }
     pub fn buffer(): read [u8] from self {
         self.buf.as_slice().split_at(self.filled).0.split_at(self.pos).1
@@ -732,6 +1020,7 @@ extend<W: Writer> BufferedWriter<W> {
         }
     }
     pub fn get_ref(): read W from self { read self.inner }
+    pub mut fn get_mut(): mut W from self { mut self.inner }
     pub fn buffered(): usize { self.buf.len() }
     pub fn buffer(): read [u8] from self { self.buf.as_slice() }
     pub fn capacity(): usize { self.capacity }
@@ -865,4 +1154,20 @@ extend Cursor<List<u8>> implements Seek {
         self.pos = next
         next
     }
+}
+
+// A box forwards every stream operation to its payload.
+extend<R: Reader + unsized, A: package.alloc.alloc.Allocator> package.alloc.boxed.Box<R, A> implements Reader {
+    mut fn read_some(buf: mut [u8]): usize throws Error { try self.get_mut().read_some(buf) }
+}
+extend<W: Writer + unsized, A: package.alloc.alloc.Allocator> package.alloc.boxed.Box<W, A> implements Writer {
+    mut fn write_some(buf: read [u8]): usize throws Error { try self.get_mut().write_some(buf) }
+    mut fn flush(): Unit throws Error { try self.get_mut().flush() }
+}
+extend<S: Seek + unsized, A: package.alloc.alloc.Allocator> package.alloc.boxed.Box<S, A> implements Seek {
+    mut fn seek(pos: SeekFrom): u64 throws Error { try self.get_mut().seek(pos) }
+}
+extend<B: BufRead + unsized, A: package.alloc.alloc.Allocator> package.alloc.boxed.Box<B, A> implements BufRead {
+    mut fn fill_buf(): read [u8] from self throws Error { try self.get_mut().fill_buf() }
+    mut fn consume(amount: usize): Unit { self.get_mut().consume(amount) }
 }

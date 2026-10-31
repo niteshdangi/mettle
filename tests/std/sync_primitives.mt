@@ -3,6 +3,19 @@ import std.sync.{mutex, condvar, rwlock, once, once_lock, barrier, mpsc, tls}
 import std.panic.{catch_panic, CatchResult}
 import alloc.arc
 import core.iter.Iterator
+import core.clone.Clone
+import core.fmt
+import core.fmt.Debug
+
+fn debug_text<T: Debug>(value: read T): alloc.string.String {
+  var output = alloc.string.new()
+  var formatter = fmt.formatter(mut output, fmt.spec())
+  match capture T.(Debug).fmt(value, mut formatter) {
+    success(unit) => {},
+    failure(error) => { return alloc.string.new() }
+  }
+  output
+}
 
 type Flag {
   ready: core.sync.atomic.AtomicBool
@@ -53,6 +66,19 @@ fn main(): i32 {
   if sum != 4950 { return 3 }
   if !join_ok(producer) { return 4 }
 
+  let clone_pair = mpsc.channel<i32>()
+  let original_sender = clone_pair.0
+  let cloned_sender = original_sender.clone()
+  let clone_receiver = clone_pair.1
+  discard(take original_sender)
+  let cloned_send = capture cloned_sender.send(11)
+  if cloned_send.is_failure() { return 61 }
+  let cloned_receive = capture clone_receiver.recv()
+  match take cloned_receive {
+    success(value) => { if value != 11 { return 62 } },
+    failure(error) => { return 63 }
+  }
+
   let iter_pair = mpsc.channel<i32>()
   let iter_tx = iter_pair.0
   let iter_rx = iter_pair.1
@@ -81,6 +107,13 @@ fn main(): i32 {
   match take immediate_iter.next() {
     present(value) => { return 57 },
     none => {}
+  }
+
+  let resumed = capture try_tx.send(7)
+  if resumed.is_failure() { return 66 }
+  match take immediate_iter.next() {
+    present(value) => { if value != 7 { return 67 } },
+    none => { return 68 }
   }
 
   let owned_pair = mpsc.channel<i32>()
@@ -197,6 +230,17 @@ fn main(): i32 {
   })
   if !force_ran.load(core.sync.atomic.Ordering.Relaxed) ||
      force_saw_poison.load(core.sync.atomic.Ordering.Relaxed) { return 33 }
+
+  let empty_debug = once_lock.new<i32>()
+  if debug_text(empty_debug).as_text() != "OnceLock { value: none }" { return 64 }
+  let converted = once_lock.OnceLock<i32>.(core.convert.From<i32>).`from`(72)
+  if debug_text(converted).as_text() != "OnceLock { value: present(72) }" {
+    return 65
+  }
+  match converted.get() {
+    present(value) => { if *value != 72 { return 60 } },
+    none => { return 60 }
+  }
 
   // OnceLock retries a panicking initializer and publishes one value to readers.
   let cell = arc.new(once_lock.new<i32>())
@@ -326,14 +370,22 @@ fn main(): i32 {
 
   // Unshared locks expose mutation and extraction without a guard.
   var unique_mutex = mutex.new(40)
-  *unique_mutex.get_mut() = 41
+  let exclusive_mutex = capture unique_mutex.get_mut()
+  match take exclusive_mutex {
+    success(value) => { *value = 41 },
+    failure(_) => { return 69 }
+  }
   let mutex_value = capture unique_mutex.into_inner()
   match take mutex_value {
     success(value) => { if value != 41 { return 34 } },
     failure(error) => { return 35 }
   }
   var unique_rwlock = rwlock.new(50)
-  *unique_rwlock.get_mut() = 51
+  let exclusive_rwlock = capture unique_rwlock.get_mut()
+  match take exclusive_rwlock {
+    success(value) => { *value = 51 },
+    failure(_) => { return 70 }
+  }
   let rwlock_value = capture unique_rwlock.into_inner()
   match take rwlock_value {
     success(value) => { if value != 51 { return 36 } },
@@ -348,7 +400,7 @@ fn main(): i32 {
   let waiter = thread.spawn(take fn(): i32 {
     let o = capture s2.get().lock()
     var g = match take o { success(g) => g, failure(e) => e.into_inner() }
-    g = c2.get().wait_while(g, take fn(ready: read bool): bool { !ready })
+    g = c2.get().wait_while(g, take fn(ready: mut bool): bool { !*ready })
     0
   })
   let o = capture state.get().lock()
@@ -364,7 +416,7 @@ fn main(): i32 {
     failure(error) => error.into_inner()
   }
   let timeout = cv.get().wait_timeout_while(
-    timeout_guard, 0u64, take fn(ready: read bool): bool { !ready }
+    timeout_guard, 0u64, take fn(ready: mut bool): bool { !*ready }
   )
   if !timeout.1.timed_out() { return 27 }
 

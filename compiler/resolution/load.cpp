@@ -432,6 +432,19 @@ private:
       if (i + 2 < significant.size() &&
           significant[i + 2]->kind == TokenKind::Word)
         member = significant[i + 2]->text;
+      // `core.mem.take` and `core.ptr.NonNull` alias library declarations in
+      // `core.storage`, so they mount the library like any other member.
+      if (token.text == "core" && (member == "mem" || member == "ptr") &&
+          i + 4 < significant.size() &&
+          (significant[i + 3]->text == "::" ||
+           significant[i + 3]->text == ".")) {
+        auto last = significant[i + 4]->text;
+        if (last.size() > 2 && last.front() == '`' && last.back() == '`')
+          last = last.substr(1, last.size() - 2);
+        if ((member == "mem" && last == "take") ||
+            (member == "ptr" && last == "NonNull"))
+          member = "storage";
+      }
       found.push_back({token.text, member, from(token), token.span, false});
     }
     return found;

@@ -149,6 +149,68 @@ std::optional<int> Checker::machineValue(const Node &node) {
     }
   }
   auto type = builtinType(owner);
+  if (isFloating(type)) {
+    bool single = type == Type::F32;
+    NumericLiteral literal;
+    auto integer = [&](std::uint64_t magnitude, bool negative, Type result) {
+      literal.magnitude[0] = magnitude;
+      literal.negative = negative;
+      facts(node).numeric = literal;
+      return inference.fresh(result);
+    };
+    auto floating = [&](std::string spelling, bool negative) {
+      literal.floating = std::move(spelling);
+      literal.negative = negative;
+      facts(node).numeric = literal;
+      return inference.fresh(type);
+    };
+    // Decimal spellings are exact or round-trip digits that the backend
+    // converts with round-to-nearest-even; the special values use the names
+    // that conversion accepts.
+    if (member == "MAX")
+      return floating(single ? "3.4028234663852886e38"
+                             : "1.7976931348623157e308",
+                      false);
+    if (member == "MIN")
+      return floating(single ? "-3.4028234663852886e38"
+                             : "-1.7976931348623157e308",
+                      true);
+    if (member == "MIN_POSITIVE")
+      return floating(single ? "1.1754943508222875e-38"
+                             : "2.2250738585072014e-308",
+                      false);
+    if (member == "EPSILON")
+      return floating(single ? "1.1920928955078125e-7"
+                             : "2.220446049250313e-16",
+                      false);
+    if (member == "INFINITY")
+      return floating("inf", false);
+    if (member == "NEG_INFINITY")
+      return floating("-inf", true);
+    if (member == "NAN")
+      return floating("nan", false);
+    if (member == "RADIX")
+      return integer(2, false, Type::U32);
+    if (member == "MANTISSA_DIGITS")
+      return integer(single ? 24 : 53, false, Type::U32);
+    if (member == "DIGITS")
+      return integer(single ? 6 : 15, false, Type::U32);
+    if (member == "MIN_EXP")
+      return integer(single ? 125 : 1021, true, Type::I32);
+    if (member == "MAX_EXP")
+      return integer(single ? 128 : 1024, false, Type::I32);
+    if (member == "MIN_10_EXP")
+      return integer(single ? 37 : 307, true, Type::I32);
+    if (member == "MAX_10_EXP")
+      return integer(single ? 38 : 308, false, Type::I32);
+    return std::nullopt;
+  }
+  if (isInteger(type) && member == "BITS") {
+    NumericLiteral width;
+    width.magnitude[0] = integerWidth(type, pointerBits());
+    facts(node).numeric = width;
+    return inference.fresh(Type::U32);
+  }
   if (!isInteger(type) || (member != "MIN" && member != "MAX"))
     return std::nullopt;
   NumericLiteral literal;

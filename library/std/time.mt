@@ -1,8 +1,11 @@
 // Monotonic and wall-clock time. `Instant` never goes backwards; `SystemTime`
 // can (clock adjustments), so differences are fallible.
 import super.sys
+import package.core.fmt.{Debug, Display, Formatter}
+import package.core.ops
 
 // A length of time: whole seconds plus nanoseconds below one second.
+@derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)
 pub copy type Duration { secs: u64; nanos: u32 }
 
 pub fn duration(secs: u64, nanos: u32): Duration {
@@ -158,12 +161,14 @@ fn clock(which: i32): Duration {
 }
 
 // A point on the monotonic clock.
+@derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)
 pub copy type Instant { since_start: Duration }
 
 pub fn now(): Instant { Instant(clock(0)) }
 
 extend Instant {
-    pub fn elapsed(): Duration { now().duration_since(self) }
+    pub static fn now(): Instant { super.time.now() }
+    pub fn elapsed(): Duration { super.time.now().duration_since(self) }
     // Zero if `earlier` is later (the clock is monotonic, so only for misuse).
     pub fn duration_since(earlier: Instant): Duration { self.since_start.saturating_sub(earlier.since_start) }
     pub fn checked_duration_since(earlier: Instant): Duration? {
@@ -175,12 +180,20 @@ extend Instant {
     pub fn checked_add(d: Duration): Instant? {
         match self.since_start.checked_add(d) { present(t) => present(Instant(t)), none => none }
     }
+    pub fn checked_sub(d: Duration): Instant? {
+        match self.since_start.checked_sub(d) { present(t) => present(Instant(t)), none => none }
+    }
     pub fn lt(other: Instant): bool { self.since_start.lt(other.since_start) }
 }
 
 // A point on the wall clock, as seconds and nanoseconds from the Unix epoch
 // (negative seconds precede it).
+@derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)
 pub copy type SystemTime { secs: i64; nanos: u32 }
+
+extend SystemTime {
+    pub const UNIX_EPOCH: SystemTime = SystemTime(0i64, 0u32)
+}
 
 pub fn system_time_from_parts(secs: i64, nanos: u32): SystemTime { SystemTime(secs, nanos) }
 
@@ -193,9 +206,15 @@ pub fn system_now(): SystemTime {
     SystemTime(out[0usize], out[1usize] as u32)
 }
 
+@derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)
 pub copy type SystemTimeError { backwards_by: Duration }
 
+extend SystemTimeError {
+    pub fn duration(): Duration { self.backwards_by }
+}
+
 extend SystemTime {
+    pub static fn now(): SystemTime { system_now() }
     pub fn unix_secs(): i64 { self.secs }
     pub fn subsec_nanos(): u32 { self.nanos }
 
@@ -210,10 +229,28 @@ extend SystemTime {
 
     pub fn checked_add(d: Duration): SystemTime? {
         let t = self.total() + d.as_nanos() as i128
-        present(from_total(t))
+        checked_from_total(t)
+    }
+
+    pub fn checked_sub(d: Duration): SystemTime? {
+        let t = self.total() - d.as_nanos() as i128
+        checked_from_total(t)
+    }
+
+    pub fn elapsed(): Duration throws SystemTimeError {
+        try system_now().duration_since(self)
     }
 
     fn total(): i128 { self.secs as i128 * 1000000000i128 + self.nanos as i128 }
+}
+
+fn checked_from_total(n: i128): SystemTime? {
+    let seconds = n / 1000000000i128
+    let normalized = if n % 1000000000i128 < 0i128 { seconds - 1i128 } else { seconds }
+    if normalized < -9223372036854775808i128 || normalized > 9223372036854775807i128 {
+        return none
+    }
+    present(from_total(n))
 }
 
 fn from_i128(n: i128): Duration {
@@ -230,4 +267,124 @@ fn from_total(n: i128): SystemTime {
 // Blocks the calling thread for at least `d`.
 pub fn sleep(d: Duration): Unit {
     unsafe { sys.mettle_rt_sleep(d.secs, d.nanos) }
+}
+
+extend Duration implements ops.Add<Duration> {
+    type Output = Duration
+    fn add(rhs: read Duration): Duration { duration_or_panic(self.checked_add(rhs)) }
+}
+extend Duration implements ops.Sub<Duration> {
+    type Output = Duration
+    fn sub(rhs: read Duration): Duration { duration_sub_or_panic(self, rhs) }
+}
+extend Duration implements ops.Mul<u32> {
+    type Output = Duration
+    fn mul(rhs: read u32): Duration { duration_or_panic(self.checked_mul(rhs)) }
+}
+extend Duration implements ops.Div<u32> {
+    type Output = Duration
+    fn div(rhs: read u32): Duration { duration_div_or_panic(self, rhs) }
+}
+extend Duration implements ops.AddAssign<Duration> {
+    mut fn add_assign(rhs: read Duration): Unit { self = duration_or_panic(self.checked_add(rhs)) }
+}
+extend Duration implements ops.SubAssign<Duration> {
+    mut fn sub_assign(rhs: read Duration): Unit { self = duration_sub_or_panic(self, rhs) }
+}
+extend Duration implements ops.MulAssign<u32> {
+    mut fn mul_assign(rhs: read u32): Unit { self = duration_or_panic(self.checked_mul(rhs)) }
+}
+extend Duration implements ops.DivAssign<u32> {
+    mut fn div_assign(rhs: read u32): Unit { self = duration_div_or_panic(self, rhs) }
+}
+
+fn duration_sub_or_panic(left: Duration, right: Duration): Duration {
+    match left.checked_sub(right) {
+        present(value) => value,
+        none => package.core.panic.panic("overflow when subtracting durations")
+    }
+}
+fn duration_div_or_panic(left: Duration, divisor: u32): Duration {
+    match left.checked_div(divisor) {
+        present(value) => value,
+        none => package.core.panic.panic("divide a duration by zero")
+    }
+}
+
+// `1.5s`, `2s`, `0s`: whole seconds, then the fractional digits without
+// trailing zeros.
+extend Duration implements Debug {
+    fn fmt(f: mut Formatter): Unit throws package.core.fmt.Error {
+        try u64.(Display).fmt(self.secs, mut f)
+        if self.nanos != 0u32 {
+            try f.write_char('.')
+            var divisor = 100000000u32
+            var rest = self.nanos
+            while rest != 0u32 {
+                let digit = (48u32 + rest / divisor) as u8
+                try f.write_char(digit as char)
+                rest = rest % divisor
+                divisor = divisor / 10u32
+            }
+        }
+        try f.write_char('s')
+    }
+}
+
+fn instant_add(base: Instant, d: Duration): Instant {
+    match base.checked_add(d) {
+        present(value) => value,
+        none => package.core.panic.panic("overflow when adding duration to instant")
+    }
+}
+fn instant_sub(base: Instant, d: Duration): Instant {
+    match base.checked_sub(d) {
+        present(value) => value,
+        none => package.core.panic.panic("overflow when subtracting duration from instant")
+    }
+}
+extend Instant implements ops.Add<Duration> {
+    type Output = Instant
+    fn add(rhs: read Duration): Instant { instant_add(self, rhs) }
+}
+extend Instant implements ops.Sub<Duration> {
+    type Output = Instant
+    fn sub(rhs: read Duration): Instant { instant_sub(self, rhs) }
+}
+extend Instant implements ops.Sub<Instant> {
+    type Output = Duration
+    fn sub(rhs: read Instant): Duration { self.duration_since(rhs) }
+}
+extend Instant implements ops.AddAssign<Duration> {
+    mut fn add_assign(rhs: read Duration): Unit { self = instant_add(self, rhs) }
+}
+extend Instant implements ops.SubAssign<Duration> {
+    mut fn sub_assign(rhs: read Duration): Unit { self = instant_sub(self, rhs) }
+}
+
+fn system_time_add(base: SystemTime, d: Duration): SystemTime {
+    match base.checked_add(d) {
+        present(value) => value,
+        none => package.core.panic.panic("overflow when adding duration to system time")
+    }
+}
+fn system_time_sub(base: SystemTime, d: Duration): SystemTime {
+    match base.checked_sub(d) {
+        present(value) => value,
+        none => package.core.panic.panic("overflow when subtracting duration from system time")
+    }
+}
+extend SystemTime implements ops.Add<Duration> {
+    type Output = SystemTime
+    fn add(rhs: read Duration): SystemTime { system_time_add(self, rhs) }
+}
+extend SystemTime implements ops.Sub<Duration> {
+    type Output = SystemTime
+    fn sub(rhs: read Duration): SystemTime { system_time_sub(self, rhs) }
+}
+extend SystemTime implements ops.AddAssign<Duration> {
+    mut fn add_assign(rhs: read Duration): Unit { self = system_time_add(self, rhs) }
+}
+extend SystemTime implements ops.SubAssign<Duration> {
+    mut fn sub_assign(rhs: read Duration): Unit { self = system_time_sub(self, rhs) }
 }

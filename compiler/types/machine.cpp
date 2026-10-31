@@ -953,6 +953,11 @@ machineSignature(const TypeStore &types, std::string_view operation,
                     types.isErased(descriptor.payload))
                ? signature(Type::Unit, Shape::Value, true)
                : std::nullopt;
+  if (method == "eq")
+    return operands.size() == 2 && types.isPointer(operands[1]) &&
+                   types.pointer(operands[1]).payload == descriptor.payload
+               ? signature(Type::Bool)
+               : std::nullopt;
   if (method == "is_null" || method == "addr" ||
       method == "expose_provenance") {
     if (operands.size() != 1)

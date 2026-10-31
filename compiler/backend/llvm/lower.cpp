@@ -2580,6 +2580,18 @@ private:
       return builder.CreatePtrToInt(data, builder.getInt64Ty());
     if (method == "is_null")
       return builder.CreateIsNull(data);
+    if (method == "eq") {
+      // Fat pointers compare their metadata as well as the address.
+      auto *other = arguments[1];
+      if (!handle->getType()->isStructTy())
+        return builder.CreateICmpEQ(handle, other);
+      llvm::Value *equal = builder.getTrue();
+      for (unsigned i = 0; i < handle->getType()->getStructNumElements(); ++i)
+        equal = builder.CreateAnd(
+            equal, builder.CreateICmpEQ(builder.CreateExtractValue(handle, i),
+                                        builder.CreateExtractValue(other, i)));
+      return equal;
+    }
     if (method == "cast" || method == "cast_mut" || method == "cast_const")
       return type(instruction.result.type)->isPointerTy() ? data : handle;
     auto payload = program.types->pointer(instruction.operands[0].type).payload;

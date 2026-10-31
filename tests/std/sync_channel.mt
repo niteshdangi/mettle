@@ -1,6 +1,7 @@
 import std.thread
 import std.sync.mpsc
 import alloc.arc
+import core.clone.Clone
 
 fn discard<T>(value: take T): Unit {}
 
@@ -55,7 +56,7 @@ fn main(): i32 {
   var workers = alloc.vec.new<thread.JoinHandle<i32>>()
   var k = 0
   while k < 4 {
-    let mine = base.duplicate()
+    let mine = base.clone()
     workers.push(thread.spawn(take fn(): i32 {
       var i = 1
       while i <= 50 {

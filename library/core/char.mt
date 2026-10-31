@@ -1,5 +1,8 @@
 // Checked construction of Unicode scalar values.
 import super.iter.Iterator
+import super.convert.{From, TryFrom}
+import super.error.Error
+import super.fmt
 
 pub fn from_u32(value: u32): char? {
     if value > 0x10ffffu32 || (value >= 0xd800u32 && value <= 0xdfffu32) {
@@ -199,6 +202,36 @@ extend char {
             dst[1] = (0xdc00u32 + (scalar & 0x3ffu32)) as u16
         }
         dst.split_at_mut(count).0
+    }
+
+    // Writes the scalar's UTF-8 bytes into `dst` and returns the written prefix.
+    // Check capacity first so a short buffer is left untouched on panic.
+    pub fn encode_utf8(dst: mut [u8]): mut Text from dst {
+        let value = self as u32
+        let count = if value < 0x80u32 { 1usize }
+            else if value < 0x800u32 { 2usize }
+            else if value < 0x10000u32 { 3usize }
+            else { 4usize }
+        if dst.len() < count {
+            super.panic.panic("encode_utf8 destination is shorter than the encoded scalar")
+        }
+        if count == 1usize {
+            dst[0] = value as u8
+        } else if count == 2usize {
+            dst[0] = (0xc0u32 | (value >> 6u32)) as u8
+            dst[1] = (0x80u32 | (value & 0x3fu32)) as u8
+        } else if count == 3usize {
+            dst[0] = (0xe0u32 | (value >> 12u32)) as u8
+            dst[1] = (0x80u32 | ((value >> 6u32) & 0x3fu32)) as u8
+            dst[2] = (0x80u32 | (value & 0x3fu32)) as u8
+        } else {
+            dst[0] = (0xf0u32 | (value >> 18u32)) as u8
+            dst[1] = (0x80u32 | ((value >> 12u32) & 0x3fu32)) as u8
+            dst[2] = (0x80u32 | ((value >> 6u32) & 0x3fu32)) as u8
+            dst[3] = (0x80u32 | (value & 0x3fu32)) as u8
+        }
+        // Safety: these branches encode one validated scalar in canonical UTF-8.
+        unsafe { super.text.from_utf8_unchecked_mut(dst.split_at_mut(count).0) }
     }
 
     pub fn to_ascii_lowercase(): char {
@@ -419,5 +452,52 @@ extend<I: Iterator<Item = u16>> DecodeUtf16<I> implements Iterator {
                 none => present(failure(DecodeUtf16Error(unit)))
             }
         }
+    }
+}
+
+// Scalar and integer conversions. Widening is infallible; narrowing and
+// integer-to-scalar conversions fail with a unit error naming the direction.
+@derive(Clone, PartialEq, Eq, Debug)
+pub copy type CharTryFromError {}
+extend CharTryFromError implements fmt.Display {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("converted integer is not a Unicode scalar value")
+    }
+}
+extend CharTryFromError implements Error {}
+
+@derive(Clone, PartialEq, Eq, Debug)
+pub copy type TryFromCharError {}
+extend TryFromCharError implements fmt.Display {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("character does not fit in a byte")
+    }
+}
+extend TryFromCharError implements Error {}
+
+extend char implements From<u8> {
+    static fn `from`(value: take u8): char { unsafe { from_u32_unchecked(value as u32) } }
+}
+extend u32 implements From<char> {
+    static fn `from`(value: take char): u32 { value as u32 }
+}
+extend u64 implements From<char> {
+    static fn `from`(value: take char): u64 { (value as u32) as u64 }
+}
+extend char implements TryFrom<u32> {
+    type Error = CharTryFromError
+    static fn try_from(value: take u32): char throws CharTryFromError {
+        match from_u32(value) {
+            present(scalar) => scalar,
+            none => { throw CharTryFromError() }
+        }
+    }
+}
+extend u8 implements TryFrom<char> {
+    type Error = TryFromCharError
+    static fn try_from(value: take char): u8 throws TryFromCharError {
+        let scalar = value as u32
+        if scalar > 0xffu32 { throw TryFromCharError() }
+        scalar as u8
     }
 }

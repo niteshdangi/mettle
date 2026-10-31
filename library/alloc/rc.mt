@@ -4,6 +4,11 @@ import package.core.hash.{Hash, Hasher}
 import package.core.ops.Deref
 import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, extend_layout, handle_alloc_error, layout_unchecked}
 import package.core.clone.Clone
+import package.core.borrow.{AsRef, Borrow}
+import package.core.default.Default
+import package.core.error.Error
+import package.core.convert.{From, TryFrom}
+import package.core.iter.{OwnedIterable, FromItems}
 import package.core.text.Text
 import super.vec.slice_ptr_mut
 
@@ -57,14 +62,17 @@ pub type Rc<T: unsized, A: Allocator = Global> {
     }
 }
 
-// Non-owning handle: keeps the block (not the payload) alive.
+// Non-owning handle: keeps the block (not the payload) alive. A null header
+// marks an empty weak handle; its aligned payload pointer is never dereferenced.
 pub type Weak<T: unsized, A: Allocator = Global> {
     p: ptr<mut T>
     h: ptr<mut RcHeader>
     a: A
     drop {
-        unsafe {
-            let _guard = WeakRelease(self.h, core.ptr.from_mut(self.a))
+        if self.h != core.ptr.null_mut<RcHeader>() {
+            unsafe {
+                let _guard = WeakRelease(self.h, core.ptr.from_mut(self.a))
+            }
         }
     }
 }
@@ -420,6 +428,7 @@ pub unsafe fn decrement_strong_count<T: unsized, A: Allocator>(raw: take RawRc<T
 
 extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
     pub fn upgrade(): Rc<T, A>? {
+        if self.h == core.ptr.null_mut<RcHeader>() { return none }
         unsafe {
             let b = self.h
             if (*b).strong == 0usize { return none }
@@ -429,6 +438,7 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
     }
     pub fn retain(): Weak<T, A> {
         let allocator = self.a.clone()
+        if self.h == core.ptr.null_mut<RcHeader>() { return Weak(self.p, self.h, allocator) }
         unsafe { (*self.h).wk = bump((*self.h).wk) }
         Weak(self.p, self.h, allocator)
     }
@@ -442,12 +452,27 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
         }
     }
 }
+extend<T: unsized, A: Allocator + Clone> Weak<T, A> implements Clone {
+    fn clone(): Weak<T, A> { self.retain() }
+}
+
+// An empty weak handle owns no allocation and can never be upgraded.
+extend<T> Weak<T> {
+    pub static fn new(): Weak<T> {
+        Weak(super.alloc.dangling_for<T>(), core.ptr.null_mut<RcHeader>(), Global())
+    }
+}
+
 pub unsafe fn weak_from_raw<T: unsized, A: Allocator>(raw: take RawWeak<T, A>): Weak<T, A> {
     Weak(raw.p, raw.h, raw.a)
 }
 extend<T: unsized, A: Allocator> Weak<T, A> {
-    pub fn strong_count(): usize { unsafe { (*self.h).strong } }
+    pub fn strong_count(): usize {
+        if self.h == core.ptr.null_mut<RcHeader>() { return 0usize }
+        unsafe { (*self.h).strong }
+    }
     pub fn weak_count(): usize {
+        if self.h == core.ptr.null_mut<RcHeader>() { return 0usize }
         unsafe {
             if (*self.h).strong == 0usize {
                 (*self.h).wk
@@ -470,6 +495,31 @@ extend<T: Clone, A: Allocator + Clone> Rc<T, A> {
 
 
 // Shared handles compare, hash and format as their payload; `ptr_eq` tests identity.
+extend<T: unsized, A: Allocator> Rc<T, A> {
+    // The pointer is valid while this strong owner remains alive.
+    pub fn as_ptr(): ptr<read T> { self.p.cast_const() }
+}
+extend<T: unsized, A: Allocator> Weak<T, A> {
+    // May dangle once no strong owner remains; never dereference it then.
+    pub fn as_ptr(): ptr<read T> { self.p.cast_const() }
+}
+
+extend<A: Allocator> Rc<any core.any.Any, A> {
+    // Recovers the concrete owner when the erased payload is a `T`; otherwise
+    // the handle is returned unchanged.
+    pub take fn downcast<T>(): Rc<T, A> throws Rc<any core.any.Any, A> {
+        if !core.any.is<T>(self.get()) { throw self }
+        let raw = self.into_raw()
+        unsafe { from_raw(RawRc(raw.p.cast<T>(), raw.h, raw.a)) }
+    }
+}
+
+extend<T: Error, A: Allocator> Rc<T, A> implements Error {
+    fn source<region r>(receiver self: read Rc<T, A> from r): (read any Error from r)? {
+        T.(Error).source(self.get())
+    }
+}
+
 extend<T: unsized, A: Allocator> Rc<T, A> implements Deref {
     type Target = T
     fn deref(): read T from self { self.get() }
@@ -492,4 +542,52 @@ extend<T: fmt.Display, A: Allocator> Rc<T, A> implements fmt.Display {
 }
 extend<T: fmt.Debug, A: Allocator> Rc<T, A> implements fmt.Debug {
     fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try T.(fmt.Debug).fmt(self.get(), mut f) }
+}
+extend<T: fmt.Debug, A: Allocator> Weak<T, A> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.write_str("Weak") }
+}
+extend<T: unsized, A: Allocator> Rc<T, A> implements AsRef<T> {
+    fn as_ref(): read T from self { self.get() }
+}
+extend<T: unsized, A: Allocator> Rc<T, A> implements Borrow<T> {
+    fn borrow(): read T from self { self.get() }
+}
+extend<T: Default, A: Allocator + Default> Rc<T, A> implements Default {
+    static fn default(): Rc<T, A> { new_in(T.(Default).default(), A.(Default).default()) }
+}
+extend<T> Weak<T> implements Default {
+    static fn default(): Weak<T> { Weak<T>.new() }
+}
+extend<T> Rc<T> implements From<T> {
+    static fn `from`(value: take T): Rc<T> { new(value) }
+}
+
+// Moves the elements of `items` into one shared slice allocation.
+fn from_list<T>(items: take super.vec.List<T>): Rc<[T]> {
+    var items = items
+    let len = items.len()
+    let target = new_uninit_slice<T>(len)
+    unsafe {
+        core.ptr.copy(items.as_ptr(), target.p.cast<T>(), len)
+        items.set_len(0usize)
+        target.assume_init()
+    }
+}
+extend<T> Rc<[T]> implements FromItems<T> {
+    static fn from_iter<I: OwnedIterable<Item = T>>(items: take I): Rc<[T]> {
+        let collected: super.vec.List<T> = core.iter.collect(items)
+        from_list(collected)
+    }
+}
+extend<T, const N: usize> Rc<[T]> implements From<[T; N]> {
+    static fn `from`(value: take [T; N]): Rc<[T]> { from_list(super.vec.from_array(value)) }
+}
+// Fails with the original owner when the length differs from `N`.
+extend<T, A: Allocator, const N: usize> Rc<[T; N], A> implements TryFrom<Rc<[T], A>> {
+    type Error = Rc<[T], A>
+    static fn try_from(value: take Rc<[T], A>): (Rc<[T; N], A> throws Rc<[T], A>) {
+        if value.get().len() != N { return failure(value) }
+        let raw = value.into_raw()
+        success(unsafe { from_raw(RawRc(raw.p.cast<[T; N]>(), raw.h, raw.a)) })
+    }
 }

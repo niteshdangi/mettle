@@ -3,7 +3,14 @@
 // is shared between threads only when `T` is both Transferable and Shareable.
 import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, extend_layout, handle_alloc_error, layout_unchecked}
 import package.core.clone.Clone
+import package.core.borrow.{AsRef, Borrow}
+import package.core.default.Default
+import package.core.convert.{From, TryFrom}
+import package.core.iter.{OwnedIterable, FromItems}
 import package.core.ops.Deref
+import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import package.core.hash.{Hash, Hasher}
+import package.core.error.Error
 import package.core.text.Text
 import super.vec.slice_ptr_mut
 
@@ -60,14 +67,17 @@ pub type Arc<T: unsized, A: Allocator = Global> {
     }
 }
 
-// Non-owning handle: keeps the block (not the payload) alive.
+// Non-owning handle: keeps the block (not the payload) alive. A null header
+// marks an empty weak handle; its aligned payload pointer is never dereferenced.
 pub type Weak<T: unsized, A: Allocator = Global> {
     p: ptr<mut T>
     h: ptr<mut ArcHeader>
     a: A
     drop {
-        unsafe {
-            let _guard = WeakRelease(self.h, core.ptr.from_mut(self.a))
+        if self.h != core.ptr.null_mut<ArcHeader>() {
+            unsafe {
+                let _guard = WeakRelease(self.h, core.ptr.from_mut(self.a))
+            }
         }
     }
 }
@@ -468,6 +478,7 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
     // Succeeds only while a strong owner exists; the count only moves up from
     // a nonzero value, so a block already being destroyed is never revived.
     pub fn upgrade(): Arc<T, A>? {
+        if self.h == core.ptr.null_mut<ArcHeader>() { return none }
         unsafe {
             let b = self.h
             var current = (*b).strong.load(core.sync.atomic.Ordering.Relaxed)
@@ -485,6 +496,7 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
     }
     pub fn retain(): Weak<T, A> {
         let allocator = self.a.clone()
+        if self.h == core.ptr.null_mut<ArcHeader>() { return Weak(self.p, self.h, allocator) }
         unsafe { increment(core.ptr.from_mut((*self.h).wk)) }
         Weak(self.p, self.h, allocator)
     }
@@ -498,9 +510,30 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
         }
     }
 }
+extend<T: unsized, A: Allocator + Clone> Weak<T, A> implements Clone {
+    fn clone(): Weak<T, A> { self.retain() }
+}
+
+// An empty weak handle owns no allocation and can never be upgraded.
+extend<T> Weak<T> {
+    pub static fn new(): Weak<T> {
+        Weak(super.alloc.dangling_for<T>(), core.ptr.null_mut<ArcHeader>(), Global())
+    }
+}
+
 pub unsafe fn weak_from_raw<T: unsized, A: Allocator>(raw: take RawWeak<T, A>): Weak<T, A> {
     Weak(raw.p, raw.h, raw.a)
 }
+extend<A: Allocator> Arc<any core.any.Any, A> {
+    // Recovers the concrete owner when the erased payload is a `T`; otherwise
+    // the handle is returned unchanged.
+    pub take fn downcast<T>(): Arc<T, A> throws Arc<any core.any.Any, A> {
+        if !core.any.is<T>(self.get()) { throw self }
+        let raw = self.into_raw()
+        unsafe { from_raw(RawArc(raw.p.cast<T>(), raw.h, raw.a)) }
+    }
+}
+
 extend<T: unsized, A: Allocator> Arc<T, A> implements Deref {
     type Target = T
     fn deref(): read T from self { self.get() }
@@ -511,8 +544,12 @@ extend<T: unsized, A: Allocator> Weak<T, A> {
     // payload may already have been destroyed; dereferencing is never valid
     // without first upgrading.
     pub fn as_ptr(): ptr<read T> { self.p.cast_const() }
-    pub fn strong_count(): usize { unsafe { (*self.h).strong.load(core.sync.atomic.Ordering.Acquire) } }
+    pub fn strong_count(): usize {
+        if self.h == core.ptr.null_mut<ArcHeader>() { return 0usize }
+        unsafe { (*self.h).strong.load(core.sync.atomic.Ordering.Acquire) }
+    }
     pub fn weak_count(): usize {
+        if self.h == core.ptr.null_mut<ArcHeader>() { return 0usize }
         unsafe {
             let strong = (*self.h).strong.load(core.sync.atomic.Ordering.Acquire)
             let weak_total = (*self.h).wk.load(core.sync.atomic.Ordering.Acquire)
@@ -532,5 +569,83 @@ extend<T: Clone, A: Allocator + Clone> Arc<T, A> {
         let replacement = new_in(self.get().clone(), self.a.clone())
         let _old = unsafe { core.ptr.replace(core.ptr.from_mut(self), replacement) }
         unsafe { mut *self.p }
+    }
+}
+
+extend<T: unsized, A: Allocator> Arc<T, A> implements AsRef<T> {
+    fn as_ref(): read T from self { self.get() }
+}
+extend<T: unsized, A: Allocator> Arc<T, A> implements Borrow<T> {
+    fn borrow(): read T from self { self.get() }
+}
+extend<T: Default, A: Allocator + Default> Arc<T, A> implements Default {
+    static fn default(): Arc<T, A> { new_in(T.(Default).default(), A.(Default).default()) }
+}
+extend<T> Weak<T> implements Default {
+    static fn default(): Weak<T> { Weak<T>.new() }
+}
+extend<T> Arc<T> implements From<T> {
+    static fn `from`(value: take T): Arc<T> { new(value) }
+}
+
+extend<T: PartialEq, A: Allocator> Arc<T, A> implements PartialEq {
+    fn eq(other: read Arc<T, A>): bool { self.get().eq(other.get()) }
+}
+extend<T: Eq, A: Allocator> Arc<T, A> implements Eq {}
+extend<T: PartialOrd, A: Allocator> Arc<T, A> implements PartialOrd {
+    fn partial_cmp(other: read Arc<T, A>): Ordering? { self.get().partial_cmp(other.get()) }
+}
+extend<T: Ord, A: Allocator> Arc<T, A> implements Ord {
+    fn cmp(other: read Arc<T, A>): Ordering { self.get().cmp(other.get()) }
+}
+extend<T: Hash, A: Allocator> Arc<T, A> implements Hash {
+    fn hash<H: Hasher>(state: mut H): Unit { self.get().hash(mut state) }
+}
+extend<T: fmt.Display, A: Allocator> Arc<T, A> implements fmt.Display {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try T.(fmt.Display).fmt(self.get(), mut f)
+    }
+}
+extend<T: fmt.Debug, A: Allocator> Arc<T, A> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try T.(fmt.Debug).fmt(self.get(), mut f)
+    }
+}
+extend<T: Error, A: Allocator> Arc<T, A> implements Error {
+    fn source<region r>(receiver self: read Arc<T, A> from r): (read any Error from r)? {
+        T.(Error).source(self.get())
+    }
+}
+extend<T: fmt.Debug, A: Allocator> Weak<T, A> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.write_str("Weak") }
+}
+
+// Moves the elements of `items` into one shared slice allocation.
+fn from_list<T>(items: take super.vec.List<T>): Arc<[T]> {
+    var items = items
+    let len = items.len()
+    let target = new_uninit_slice<T>(len)
+    unsafe {
+        core.ptr.copy(items.as_ptr(), target.p.cast<T>(), len)
+        items.set_len(0usize)
+        target.assume_init()
+    }
+}
+extend<T> Arc<[T]> implements FromItems<T> {
+    static fn from_iter<I: OwnedIterable<Item = T>>(items: take I): Arc<[T]> {
+        let collected: super.vec.List<T> = core.iter.collect(items)
+        from_list(collected)
+    }
+}
+extend<T, const N: usize> Arc<[T]> implements From<[T; N]> {
+    static fn `from`(value: take [T; N]): Arc<[T]> { from_list(super.vec.from_array(value)) }
+}
+// Fails with the original owner when the length differs from `N`.
+extend<T, A: Allocator, const N: usize> Arc<[T; N], A> implements TryFrom<Arc<[T], A>> {
+    type Error = Arc<[T], A>
+    static fn try_from(value: take Arc<[T], A>): (Arc<[T; N], A> throws Arc<[T], A>) {
+        if value.get().len() != N { return failure(value) }
+        let raw = value.into_raw()
+        success(unsafe { from_raw(RawArc(raw.p.cast<[T; N]>(), raw.h, raw.a)) })
     }
 }

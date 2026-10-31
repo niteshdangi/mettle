@@ -7,6 +7,39 @@ import super.default.Default
 import super.clone.Clone
 import super.ops.Deref
 import super.ops.DerefMut
+import super.iter.{Iterator, BidirectionalIterator, ExactSizeIterator}
+
+pub type OptionIter<region r, T> { value: read T? from r; done: bool }
+extend<region r, T> OptionIter<region r, T> implements Iterator {
+    type Item = read T from r
+    mut fn next(): (read T from r)? {
+        if self.done { return none }
+        self.done = true
+        match self.value { present(value) => present(read value), none => none }
+    }
+}
+extend<region r, T> OptionIter<region r, T> implements ExactSizeIterator {
+    fn len(): usize { if !self.done && self.value.is_present() { 1usize } else { 0usize } }
+}
+extend<region r, T> OptionIter<region r, T> implements BidirectionalIterator {
+    mut fn next_back(): (read T from r)? { self.next() }
+}
+
+pub type OptionIterMut<region r, T> { value: mut T? from r; done: bool }
+extend<region r, T> OptionIterMut<region r, T> implements Iterator {
+    type Item = mut T from r
+    mut fn next(): (mut T from r)? {
+        if self.done { return none }
+        self.done = true
+        match mut self.value { present(value) => present(mut value), none => none }
+    }
+}
+extend<region r, T> OptionIterMut<region r, T> implements ExactSizeIterator {
+    fn len(): usize { if !self.done && self.value.is_present() { 1usize } else { 0usize } }
+}
+extend<region r, T> OptionIterMut<region r, T> implements BidirectionalIterator {
+    mut fn next_back(): (mut T from r)? { self.next() }
+}
 
 extend bool {
     // The value is evaluated before this method is called, whether or not it
@@ -29,6 +62,12 @@ extend<T> T? {
 
     pub mut fn as_mut(): (mut T from self)? {
         match mut self { present(value) => present(mut value), none => none }
+    }
+    pub fn iter<region r>(receiver self: read Self from r): OptionIter<region r, T> {
+        OptionIter(read self, false)
+    }
+    pub mut fn iter_mut<region r>(receiver self: mut Self from r): OptionIterMut<region r, T> {
+        OptionIterMut(mut self, false)
     }
     pub mut fn get_or_insert(value: take T): mut T from self {
         if self.is_none() { let _ = self.replace(value) }
@@ -146,6 +185,22 @@ extend<T> T? {
     pub mut fn replace(value: take T): T? {
         unsafe { core.ptr.replace(core.ptr.from_mut(self), present(value)) }
     }
+    pub mut fn insert(value: take T): mut T from self {
+        let _ = self.replace(value)
+        match mut self {
+            present(current) => mut current,
+            none => super.panic.panic("insert failed to install a value")
+        }
+    }
+    pub take fn zip<U>(other: take U?): (T, U)? {
+        match take self {
+            present(value) => match take other {
+                present(other_value) => present((value, other_value)),
+                none => none
+            },
+            none => none
+        }
+    }
 }
 
 extend<T: Deref> T? {
@@ -167,6 +222,18 @@ extend<region r, T: Clone> (read T from r)? {
 }
 
 extend<region r, T: Copy> (read T from r)? {
+    pub take fn copied(): T? {
+        match take self { present(value) => present(*value), none => none }
+    }
+}
+
+extend<region r, T: Clone> (mut T from r)? {
+    pub take fn cloned(): T? {
+        match take self { present(value) => present(value.clone()), none => none }
+    }
+}
+
+extend<region r, T: Copy> (mut T from r)? {
     pub take fn copied(): T? {
         match take self { present(value) => present(*value), none => none }
     }

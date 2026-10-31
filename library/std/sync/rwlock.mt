@@ -1,5 +1,8 @@
 import package.core.panic.panic
 import package.core.default.Default
+import package.core.convert.From
+import package.core.ops.{Deref, DerefMut}
+import package.core.fmt
 import super.mutex.{PoisonError, TryLockError}
 
 extern "C" {
@@ -11,6 +14,7 @@ extern "C" {
     unsafe fn mettle_rt_rwlock_write(lock: ptr<mut u8>): i32;
     unsafe fn mettle_rt_rwlock_try_write(lock: ptr<mut u8>): i32;
     unsafe fn mettle_rt_rwlock_unlock(lock: ptr<mut u8>): i32;
+    unsafe fn mettle_rt_rwlock_downgrade(lock: ptr<mut u8>): i32;
 }
 
 // Many readers or one writer. Readers share `T`, so sharing the lock needs
@@ -41,6 +45,8 @@ pub type WriteGuard<T, region r> {
 }
 extend<T, region r> ReadGuard<T, region r> not Transferable
 extend<T, region r> WriteGuard<T, region r> not Transferable
+unsafe extend<T: Shareable, region r> ReadGuard<T, region r> implements Shareable {}
+unsafe extend<T: Shareable, region r> WriteGuard<T, region r> implements Shareable {}
 
 pub fn new<T>(value: take T): RwLock<T> {
     let raw = unsafe { mettle_rt_rwlock_new() }
@@ -49,6 +55,24 @@ pub fn new<T>(value: take T): RwLock<T> {
 }
 extend<T: Default> RwLock<T> implements Default {
     static fn default(): RwLock<T> { new(T.(Default).default()) }
+}
+extend<T> RwLock<T> implements From<T> {
+    static fn `from`(value: take T): RwLock<T> { new(value) }
+}
+extend<T: fmt.Debug> RwLock<T> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        let acquired = capture self.try_reader()
+        var fields = try f.debug_struct("RwLock")
+        match take acquired {
+            success(guard) => { try fields.field("data", guard.get()) },
+            failure(error) => match take error {
+                TryLockError.Poisoned(guard) => { try fields.field("data", guard.get()) },
+                TryLockError.WouldBlock => { try fields.field("data", "<locked>") }
+            }
+        }
+        try fields.field("poisoned", self.is_poisoned())
+        try fields.finish()
+    }
 }
 
 extend<T> RwLock<T> {
@@ -101,7 +125,12 @@ extend<T> RwLock<T> {
         guard
     }
     pub fn is_poisoned(): bool { self.poisoned.load(core.sync.atomic.Ordering.Acquire) }
-    pub mut fn get_mut(): mut T from self { unsafe { mut *self.value.get() } }
+    pub mut fn get_mut(): mut T from self throws PoisonError<mut T from self> {
+        let poisoned = self.poisoned.load(core.sync.atomic.Ordering.Acquire)
+        let value = unsafe { mut *self.value.get() }
+        if poisoned { throw PoisonError(value) }
+        value
+    }
     pub fn clear_poison(): Unit {
         self.poisoned.store(false, core.sync.atomic.Ordering.Release)
     }
@@ -122,4 +151,48 @@ extend<T, region r> ReadGuard<T, region r> {
 extend<T, region r> WriteGuard<T, region r> {
     pub fn get(): read T from self { unsafe { read *self.lock.value.get() } }
     pub mut fn get_mut(): mut T from self { unsafe { mut *self.lock.value.get() } }
+
+    // Converts exclusive access into shared access in one runtime step, so no
+    // other writer can be admitted in between. The write guard's drop (and its
+    // panic poisoning) is skipped: the hold now belongs to the returned guard.
+    pub take fn downgrade(): ReadGuard<T, region r> {
+        let lock = self.lock
+        if unsafe { mettle_rt_rwlock_downgrade(lock.raw) } != 0 {
+            panic("rwlock downgrade without exclusive hold")
+        }
+        core.mem.forget(take self)
+        ReadGuard(lock)
+    }
+}
+extend<T, region r> ReadGuard<T, region r> implements Deref {
+    type Target = T
+    fn deref(): read T from self { self.get() }
+}
+extend<T, region r> WriteGuard<T, region r> implements Deref {
+    type Target = T
+    fn deref(): read T from self { self.get() }
+}
+extend<T, region r> WriteGuard<T, region r> implements DerefMut {
+    type Target = T
+    mut fn deref_mut(): mut T from self { self.get_mut() }
+}
+extend<T: fmt.Debug, region r> ReadGuard<T, region r> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try T.(fmt.Debug).fmt(self.get(), mut f)
+    }
+}
+extend<T: fmt.Display, region r> ReadGuard<T, region r> implements fmt.Display {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try T.(fmt.Display).fmt(self.get(), mut f)
+    }
+}
+extend<T: fmt.Debug, region r> WriteGuard<T, region r> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try T.(fmt.Debug).fmt(self.get(), mut f)
+    }
+}
+extend<T: fmt.Display, region r> WriteGuard<T, region r> implements fmt.Display {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try T.(fmt.Display).fmt(self.get(), mut f)
+    }
 }

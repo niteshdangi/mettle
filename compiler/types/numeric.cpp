@@ -73,6 +73,10 @@ bool integerLiteralFits(const NumericLiteral &literal, Type type,
   return integerLiteralFits(literal, integerEquivalent(type, pointerBits));
 }
 bool validFloatingLiteral(std::string_view spelling) {
+  // The associated constants INFINITY, NEG_INFINITY and NAN have no decimal
+  // spelling; source literals cannot produce these names.
+  if (spelling == "inf" || spelling == "-inf" || spelling == "nan")
+    return true;
   std::size_t position = spelling.starts_with("-") ? 1 : 0;
   auto digits = [&] {
     auto start = position;

@@ -41,11 +41,13 @@ pub copy type Panicked { pub code: i32 }
 pub copy type SpawnError { pub code: i32 }
 
 // Identity of a running thread.
+@derive(Clone, PartialEq, Eq, Hash, Debug)
 pub copy type ThreadId { pub raw: usize }
+@derive(Clone, PartialEq, Eq, Hash, Debug)
 pub copy type Thread { raw: usize }
 
-pub fn current(): ThreadId { ThreadId(unsafe { mettle_rt_thread_current() }) }
-pub fn current_thread(): Thread { Thread(unsafe { mettle_rt_thread_current() }) }
+pub fn current(): Thread { Thread(unsafe { mettle_rt_thread_current() }) }
+pub fn current_thread(): Thread { current() }
 pub fn panicking(): bool { unsafe { mettle_rt_panicking() != 0 } }
 pub fn yield_now(): Unit { unsafe { mettle_rt_thread_yield() } }
 pub fn sleep_nanos(nanoseconds: u64): Unit { unsafe { mettle_rt_thread_sleep(nanoseconds) } }
@@ -421,4 +423,21 @@ pub fn scope<R, F: for<region s> fn(read Scope<region s>): R>(f: take F): R {
     let state = Scope(core.cell.UnsafeCell.new(package.alloc.vec.new<ptr<mut Header>>()), core.cell.Cell.new(Brand(0u8)))
     let guard = ScopeGuard(read state, false)
     f(read state)
+}
+
+// Handles and scopes own runtime state that has no useful text form.
+extend<region s> Scope<region s> implements package.core.fmt.Debug {
+    fn fmt(f: mut package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+        try f.write_str("Scope { .. }")
+    }
+}
+extend<T> JoinHandle<T> implements package.core.fmt.Debug {
+    fn fmt(f: mut package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+        try f.write_str("JoinHandle { .. }")
+    }
+}
+extend<T> ScopedJoinHandle<T> implements package.core.fmt.Debug {
+    fn fmt(f: mut package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+        try f.write_str("ScopedJoinHandle { .. }")
+    }
 }

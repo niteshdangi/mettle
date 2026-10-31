@@ -1,0 +1,533 @@
+canonical_id,family,source,state,fixture
+Bfd3da3af7a462c67f59e5efe,boxed.Box,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B22020ed6d6fcd7fef6873eaa,boxed.Box implements AsMut,library/alloc/boxed.mt,missing,tests/source/run/i13-box-slice-and-write.mt
+B9ab6346af3372022a58ab1d9,boxed.Box implements AsRef,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+Bad130cac2c717fb075712f33,boxed.Box implements BidirectionalIterator,library/alloc/boxed.mt,missing,tests/source/run/i13-box-slice-and-write.mt
+B62efaee3cd46a1c76e99b37f,boxed.Box implements Borrow,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B70574b9d1bf4e44eb5e57e84,boxed.Box implements BufRead,library/alloc/boxed.mt,missing,tests/source/run/i13-box-slice-and-write.mt
+B03a5ddcdcef1ad88e92a84da,boxed.Box implements Clone,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B566010a423a5448837ae733a,boxed.Box implements Debug,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B02d1e5ce6553477ee10ffbac,boxed.Box implements Default,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+Be67045023dd0429b7fcc292d,boxed.Box implements Deref,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+Bf4a7a0ff531a0c281dff0d1d,boxed.Box implements DerefMut,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+Bd874121c379a9d54cbdf5138,boxed.Box implements Display,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B3d1573fb68d6dc194d931d7e,boxed.Box implements Drop,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B6edff95f7b6d014e149c2a69,boxed.Box implements Eq,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B319fecedb9565892ea1ebc2d,boxed.Box implements Error,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B68fb13caaa0b250ca7cd0dc5,boxed.Box implements ExactSizeIterator,library/alloc/boxed.mt,missing,tests/source/run/i13-box-slice-and-write.mt
+Ba8bbe41da727d8e910c3cda1,boxed.Box implements ExtendItems,library/alloc/boxed.mt,missing,tests/source/run/i13-box-slice-and-write.mt
+Bb64cf344566e18377a9589d5,boxed.Box implements Fn,library/alloc/boxed.mt,missing,tests/source/run/i13-box-slice-and-write.mt
+Bfa975f9b1fdc7431951e1a9d,boxed.Box implements FnMut,library/alloc/boxed.mt,missing,tests/source/run/i13-box-slice-and-write.mt
+B14e942c95164bffc6eac1b4b,boxed.Box implements FnOnce,library/alloc/boxed.mt,missing,tests/source/run/i13-box-slice-and-write.mt
+B036ff1d75955b0c46df80587,boxed.Box implements From,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B09ba0e6a1e01e11736d5a268,boxed.Box implements FromItems,library/alloc/boxed.mt,missing,tests/source/run/i13-box-slice-and-write.mt
+Bcbdc6398f68eafa9de00e545,boxed.Box implements Future,library/alloc/boxed.mt,missing,tests/source/run/i13-box-slice-and-write.mt
+B687468a68e15bbc4ddb951a5,boxed.Box implements Hash,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B65ab083761685441dd70acc8,boxed.Box implements Hasher,library/alloc/boxed.mt,missing,tests/source/run/i13-box-slice-and-write.mt
+B0e3f70d080eae96921ffc420,boxed.Box implements Iterator,library/alloc/boxed.mt,missing,tests/source/run/i13-box-slice-and-write.mt
+B0f30d944e8c3885f96962369,boxed.Box implements Ord,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+Bb3a8a7b528c8cf7f0ef2c952,boxed.Box implements OwnedIterable,library/alloc/boxed.mt,missing,tests/source/run/i13-box-slice-and-write.mt
+B875fe5449cefef8c3fca4c8d,boxed.Box implements PartialEq,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B99ab871b057b218bdd36bbf4,boxed.Box implements PartialOrd,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B7a7624c9369dca67378f6aa7,boxed.Box implements Reader,library/alloc/boxed.mt,missing,tests/source/run/i13-box-slice-and-write.mt
+B7120dfc949c5a648355b6d3e,boxed.Box implements Seek,library/alloc/boxed.mt,missing,tests/source/run/i13-box-slice-and-write.mt
+B4bc376595bd769954c3cf9a9,boxed.Box implements Send,library/alloc/boxed.mt;compiler/semantics/interface_solver.cpp,compiler-property-mapping-unverified,tests/source/run/i13-box-slice-and-write.mt
+B123db2d8011dd7e45c18d67e,boxed.Box implements Sync,library/alloc/boxed.mt;compiler/semantics/interface_solver.cpp,compiler-property-mapping-unverified,tests/source/run/i13-box-slice-and-write.mt
+B627f8b60545de7b08919ccd0,boxed.Box implements TryFrom,library/alloc/boxed.mt,missing,tests/source/run/i13-box-slice-and-write.mt
+Bf21d2f5247b0d8cb1bac6578,boxed.Box implements Writer,library/alloc/boxed.mt,missing,tests/source/run/i13-box-slice-and-write.mt
+Ba7f3a5efaa82ed469837292d,boxed.Box.as_mut_ptr,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+Bf983d1070e43e2fbd6dac60b,boxed.Box.as_ptr,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B53f29acb7525660c4e81efe7,boxed.Box.assume_init,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B34914cd762fdcc0f22cb8b51,boxed.Box.assume_init-1,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B12810ef3981468d4b530999a,boxed.Box.downcast,library/alloc/boxed.mt,blocked-compiler-or-owner-api,tests/source/run/i13-box-slice-and-write.mt
+B60b31551296bd3852384c648,boxed.Box.downcast-1,library/alloc/boxed.mt,blocked-compiler-or-owner-api,tests/source/run/i13-box-slice-and-write.mt
+B93d53e5096394768a6a3e2a1,boxed.Box.downcast-2,library/alloc/boxed.mt,blocked-compiler-or-owner-api,tests/source/run/i13-box-slice-and-write.mt
+B1c4efa0814b50f51af51bcff,boxed.Box.from_non_null,library/alloc/boxed.mt,blocked-compiler-or-owner-api,tests/source/run/i13-box-slice-and-write.mt
+Be649930741b42c97a84b6be3,boxed.Box.from_raw,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B752269e99a4b29f4f3baae90,boxed.Box.into_non_null,library/alloc/boxed.mt,blocked-compiler-or-owner-api,tests/source/run/i13-box-slice-and-write.mt
+B766843159ae9001db5bb87a3,boxed.Box.into_pin,library/alloc/boxed.mt,blocked-compiler-or-owner-api,tests/source/run/i13-box-slice-and-write.mt
+Ba02f56a09cee00ae609f3140,boxed.Box.into_raw,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B67bd3a3cfe34f813d6707b53,boxed.Box.leak,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+Bc90298d3408c9235891a87c8,boxed.Box.new,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B18c164df0c93ac5341f5dfc9,boxed.Box.new_uninit,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B75a15499aa9f6012811922ae,boxed.Box.new_uninit_slice,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B885fcfb72fafb9bbab963528,boxed.Box.new_zeroed,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+Bb55aa5e751a0f0f8ad938c40,boxed.Box.new_zeroed_slice,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B945be4cf3273b319f5b987a5,boxed.Box.pin,library/alloc/boxed.mt,blocked-compiler-or-owner-api,tests/source/run/i13-box-slice-and-write.mt
+B5a3ce20bcce56d30c7953d08,boxed.Box.write,library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-box-slice-and-write.mt
+B3fce861d92a93c1133ce3093,primitive.char,library/core/char.mt,compiler-type-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B29b70c68a20bf5f9db347437,primitive.char implements Clone,library/core/char.mt;library/core/clone.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bb0e23a69b43375bbe024cf43,primitive.char implements Copy,library/core/char.mt;compiler/semantics/interface_solver.cpp,compiler-derived-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B22be2a4aa8e18536cb037698,primitive.char implements Debug,library/core/char.mt,missing,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bccba58edd3f22969da1afb04,primitive.char implements Default,library/core/char.mt;library/core/default.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B3673270db40fe98df03cb4bd,primitive.char implements Display,library/core/char.mt,missing,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B98a79544fde78feccfe3647e,primitive.char implements Eq,library/core/char.mt;library/core/cmp.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Ba0b323d6fe85e116cac8d8fa,primitive.char implements ExtendItems,library/core/char.mt,missing,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B3fe5c5f8f5951f2baaf8f0b7,primitive.char implements From,library/core/char.mt,missing,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B571f7f300f0f8192b9cee765,primitive.char implements FromItems,library/core/char.mt,missing,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B794ae42923c688c92d87aeb6,primitive.char implements FromStr,library/core/char.mt,missing,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B864a857b9a55566f46ce5b65,primitive.char implements Hash,library/core/char.mt;library/core/hash.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bad7fc01b883034366e240761,primitive.char implements Ord,library/core/char.mt;library/core/cmp.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B999d4d2d87dd99991472d7eb,primitive.char implements PartialEq,library/core/char.mt;library/core/cmp.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bc0c083a9bb8c0fbdb54a2a13,primitive.char implements PartialOrd,library/core/char.mt;library/core/cmp.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B97436d34c4430a6c2fb17461,primitive.char implements Send,library/core/char.mt;compiler/semantics/interface_solver.cpp,compiler-derived-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bf5095b0c941b88b97aff7ded,primitive.char implements Sync,library/core/char.mt;compiler/semantics/interface_solver.cpp,compiler-derived-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B3aac5d7c16a0bfcd674c4423,primitive.char implements TryFrom,library/core/char.mt,missing,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bdcbfcf72d2cfdc841de00898,primitive.char.MAX,library/core/char.mt,missing,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B2a9ff836497650bb124a3879,primitive.char.MAX_LEN_UTF16,library/core/char.mt,missing,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B56f8d8bca65e4f4f916dd9a3,primitive.char.MAX_LEN_UTF8,library/core/char.mt,missing,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bdaee1a7317efcccf5ce1e0f3,primitive.char.MIN,library/core/char.mt,missing,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bec2557a5ebdfed67841d15b1,primitive.char.REPLACEMENT_CHARACTER,library/core/char.mt,missing,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B0b156830552a279439f11542,primitive.char.UNICODE_VERSION,library/core/char.mt,missing,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bc92933a567093d548a3fd6dc,primitive.char.decode_utf16,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bae2d7ea8fbe718a474f3b544,primitive.char.encode_utf16,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B5bb8642038411a746e15dd66,primitive.char.encode_utf8,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-encode-utf8-buffer.mt;tests/source/run/i13-char-encode-utf8-short-buffer-panics.mt
+Bf072e63da6b9858806b24255,primitive.char.eq_ignore_ascii_case,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Befcbc24c78240da9076117d3,primitive.char.escape_debug,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B2e6cdb933d214444b81ab0bd,primitive.char.escape_default,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B948cd450ca62f6d65b409325,primitive.char.escape_unicode,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B4641991f3e6ddf743c67892e,primitive.char.from_digit,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bfb901ac5acf4e5349ee0a9e3,primitive.char.from_u32,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Ba49a3406fa49bdeb8ec0bd7c,primitive.char.from_u32_unchecked,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B682eec1ecee6500d79d5b143,primitive.char.is_alphabetic,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bf2123809f9f7272ee3a0dd6b,primitive.char.is_alphanumeric,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bb880447e02cf736c1d1b65ef,primitive.char.is_ascii,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Beca6312f6bd85b344e42daa2,primitive.char.is_ascii_alphabetic,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B19734057099abf201e5b6cff,primitive.char.is_ascii_alphanumeric,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B82b31f821b7310fa7b52a1a4,primitive.char.is_ascii_control,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bdf20e8e6b6453a85abe6c4bd,primitive.char.is_ascii_digit,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B55b05c7360b731c495af9eb7,primitive.char.is_ascii_graphic,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B03efb8cd7da58aa75de425fe,primitive.char.is_ascii_hexdigit,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B014bd4a496bcda776fea52ef,primitive.char.is_ascii_lowercase,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bbfe9e3b16711dac568915302,primitive.char.is_ascii_punctuation,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bef2fda1791564482b9b721fe,primitive.char.is_ascii_uppercase,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B137958b11549245f93a31f71,primitive.char.is_ascii_whitespace,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B30600dcde51fc23f3b0997b0,primitive.char.is_control,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B2f54e8ccaaef9cfed9f61d97,primitive.char.is_digit,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B2b89c8d81101271a99a7584f,primitive.char.is_lowercase,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B2ed76c764832636de7a541dd,primitive.char.is_numeric,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B029dc0c67f7741de8dccef9d,primitive.char.is_uppercase,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bf727480d80773c1ac842fa72,primitive.char.is_whitespace,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bfba024bd0b1c1a815e8f52a7,primitive.char.len_utf16,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bd95fad91cf83c167447aaaf9,primitive.char.len_utf8,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B4af0bf776daeebc9439b3851,primitive.char.make_ascii_lowercase,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B54da8f799c7c7af3138f9316,primitive.char.make_ascii_uppercase,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bf639455388c7e51dca897be7,primitive.char.to_ascii_lowercase,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B096e2af43c8c753f779d18b0,primitive.char.to_ascii_uppercase,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B4247494992ace43c5c347539,primitive.char.to_digit,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B6383d6f3eefd887550bdb6b0,primitive.char.to_lowercase,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+B7123b1f2a327726f08eca30f,primitive.char.to_uppercase,library/core/char.mt,source-present-unverified,tests/source/run/i13-char-constants-and-decode-utf16.mt
+Bcdd860dbb3b4d3fcb792b0a0,primitive.str,library/core/text.mt;library/alloc/string.mt,compiler-type-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B1b06532043a73628db1a3a05,primitive.str implements Add,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B369cdded19588a6f7db49b87,primitive.str implements AddAssign,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B37e4e84fd8f9276a7bf85d67,primitive.str implements AsMut,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B18ff91544bcd3eba7d6466fb,primitive.str implements AsRef,library/core/text.mt;library/alloc/string.mt;library/core/borrow.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bb3041bab15e5eb563fa32a60,primitive.str implements Borrow,library/core/text.mt;library/alloc/string.mt;library/core/borrow.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B983ba2733d21d9dbb43fdc2a,primitive.str implements Clone,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bf8bd36a547bcd97226e43b31,primitive.str implements Debug,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bacf02d86eb9b4c0470e82a54,primitive.str implements Default,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bb6ed3b3c91c33a2275fdb323,primitive.str implements Display,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B34d6ce0edcc301008ea86a76,primitive.str implements Eq,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B15cac75e3ed23408e936b679,primitive.str implements ExtendItems,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B01fd8f2215c77d393aca3488,primitive.str implements From,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B0401aaea0f42e3c71bcc1f49,primitive.str implements FromItems,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bd94df6c04e9aaeb676046f96,primitive.str implements Hash,library/core/text.mt;library/alloc/string.mt;library/core/hash.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B8bddc4d64f7f9824faaf145d,primitive.str implements Index,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B94b8bb5ceae198fa676e4e39,primitive.str implements IndexMut,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B3f41701b8ef3bb53b16541a4,primitive.str implements Ord,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B3011b6f3d2705d571b16c8d6,primitive.str implements PartialEq,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B375fa98c64506b24e4cc79ea,primitive.str implements PartialOrd,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B58816c1b1f1a05970014e483,primitive.str implements Send,library/core/text.mt;library/alloc/string.mt;compiler/semantics/interface_solver.cpp,compiler-derived-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B517d9e7a837a308f9382b7bb,primitive.str implements Sized,library/core/text.mt;library/alloc/string.mt;compiler/semantics/interface_solver.cpp,compiler-derived-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B46db88e815efbb54953f4749,primitive.str implements Sync,library/core/text.mt;library/alloc/string.mt;compiler/semantics/interface_solver.cpp,compiler-derived-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bd943a5e06618ccecd9357d80,primitive.str implements ToOwned,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B9bc200b61b828bc742b7da3e,primitive.str.as_bytes,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B8e671abb912e848b9f9ab8cd,primitive.str.as_bytes_mut,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B59aa6ffd26b1411b651fb1dc,primitive.str.as_mut_ptr,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Baf0c74820f26991ae3323430,primitive.str.as_ptr,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B43410342aaa07915e7bfbb29,primitive.str.bytes,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B7afb340d6df447b486f097d2,primitive.str.ceil_char_boundary,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B7978ed507dd73ab93a33529b,primitive.str.char_indices,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bdb84d9f2afb7fc70ce74ce81,primitive.str.chars,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B831807a928a2254d5672027b,primitive.str.contains,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B8138356fa174224075edc254,primitive.str.encode_utf16,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bcc7d82715a64f64a57b4f339,primitive.str.ends_with,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B870ce0a71a585100cea170ae,primitive.str.eq_ignore_ascii_case,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B189c81e94c44c6db68ba4a82,primitive.str.escape_debug,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B6a4f1ff4420c62f78690db37,primitive.str.escape_default,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bfc20e578003cc3cc8b9e4d6a,primitive.str.escape_unicode,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bbb028fe03be344d7904f96f3,primitive.str.find,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bdc870c1de714d3a974873781,primitive.str.floor_char_boundary,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B3901b53e08bb02c9dea3a505,primitive.str.from_utf8,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Befb73317b9238bf10a3963a3,primitive.str.from_utf8_mut,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B554269eb4a893447951d7bf1,primitive.str.from_utf8_unchecked,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B4d42146002eb7cda0b0976ed,primitive.str.from_utf8_unchecked_mut,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B11820ea3a2b32b1637db51b9,primitive.str.get,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B6efd93ed1604219151efb389,primitive.str.get_mut,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B8da4760d16a1bbdceedd6587,primitive.str.get_unchecked,library/core/text.mt;library/alloc/string.mt,missing-unsafe-range-api,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B431e5a9b5b25e1121fe8f557,primitive.str.get_unchecked_mut,library/core/text.mt;library/alloc/string.mt,missing-unsafe-range-api,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B833da135e7458871e78f023b,primitive.str.into_boxed_bytes,library/core/text.mt;library/alloc/string.mt;library/alloc/boxed.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B56672c60f04d40bb98d0922e,primitive.str.into_string,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bf59bcef40ab497826934f476,primitive.str.is_ascii,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bbc948d93613084f6b5f48461,primitive.str.is_char_boundary,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B8e61633a52c21b55d6a91dee,primitive.str.is_empty,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Be61dcf3a7154376d65450157,primitive.str.len,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bc43bda231776ca652a6264e2,primitive.str.lines,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B8ddd0be0d4cbdb856e1d1979,primitive.str.make_ascii_lowercase,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B0d8f28874ed1991692938779,primitive.str.make_ascii_uppercase,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B3dff38c1c9f317bfba8462bd,primitive.str.match_indices,library/core/text.mt;library/alloc/string.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B65579a46f1c74acf90f66b64,primitive.str.matches,library/core/text.mt;library/alloc/string.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B60e8efb053f5adb8725f7630,primitive.str.parse,library/core/text.mt;library/alloc/string.mt,missing-FromStr-contract,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B8fa8a06d7d0b2fccb3b6da1a,primitive.str.repeat,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B010cafed736222b597675adf,primitive.str.replace,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B6e491af953cdb4a4faabb1a1,primitive.str.replacen,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bb6419f50c9ec4834f92ae985,primitive.str.rfind,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B2376af9fcfd74dbd8dacc5e7,primitive.str.rmatch_indices,library/core/text.mt;library/alloc/string.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B35674a5075b4a7bae6b3e6f6,primitive.str.rmatches,library/core/text.mt;library/alloc/string.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B5176cd474a07396a4bdd922c,primitive.str.rsplit,library/core/text.mt;library/alloc/string.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B0839338b8ce4d6e371e2f95e,primitive.str.rsplit_once,library/core/text.mt;library/alloc/string.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Be56f78ce4c698b86a7af1f65,primitive.str.rsplit_terminator,library/core/text.mt;library/alloc/string.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B1387409dcbe334959419d3af,primitive.str.rsplitn,library/core/text.mt;library/alloc/string.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B0bb999bdc5abb02d12f0d5d8,primitive.str.split,library/core/text.mt;library/alloc/string.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B3a6818a1e23f35113c56e66e,primitive.str.split_ascii_whitespace,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bbe344ffe25be80070eb9bafa,primitive.str.split_at,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bc87662e4d79e804a9def7953,primitive.str.split_at_checked,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B2eae250207deb296e90e4fb0,primitive.str.split_at_mut,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B4a0a4c0a5adf4e47b21e4db0,primitive.str.split_at_mut_checked,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bc2de477ee5e885b49a015da1,primitive.str.split_inclusive,library/core/text.mt;library/alloc/string.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B5bda48c8ffe01a699d36d275,primitive.str.split_once,library/core/text.mt;library/alloc/string.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bfe352f5baa5dc75b4e053e1f,primitive.str.split_terminator,library/core/text.mt;library/alloc/string.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bdb409f030eef96f1ccac1ab7,primitive.str.split_whitespace,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bd2ce5cb3f311fdecedede538,primitive.str.splitn,library/core/text.mt;library/alloc/string.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Befc98b9814e8e25aa44b9f16,primitive.str.starts_with,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B6d21e4abff3eedcc67427a06,primitive.str.strip_circumfix,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bc2ecc47f9e7fdc9e202979bd,primitive.str.strip_prefix,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Be087f1fa8d833ec328bb8b97,primitive.str.strip_suffix,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B33d4107b9ef8b8737de218eb,primitive.str.substr_range,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B57278db99721c598b9b7d3f1,primitive.str.to_ascii_lowercase,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bcf955e94b395f6068124ede3,primitive.str.to_ascii_uppercase,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B794acf42aaef797161f723c2,primitive.str.to_lowercase,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B4c3fa4088bdf3b7b71ef148a,primitive.str.to_uppercase,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B439b6184e30f6b1aca2101d5,primitive.str.trim,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B9a4175990a07d5a09de15444,primitive.str.trim_ascii,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B70329e99d2a0b20930eda030,primitive.str.trim_ascii_end,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Ba07600057dbf9cdd72d90ebe,primitive.str.trim_ascii_start,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B9a9ea0bb9cd37c41bdaac11e,primitive.str.trim_end,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bcc40814ef64ccdb461e28eaf,primitive.str.trim_end_matches,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bd21facba5d516d6919651dfa,primitive.str.trim_matches,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B7f73320abd88709e5242c104,primitive.str.trim_start,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Be61023205871db11a7876877,primitive.str.trim_start_matches,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B9a008ca251844f1139434c3d,rc.Rc,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B2b445f869e98141653c93b08,rc.Rc implements AsRef,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B1834613553fa10c47714f48c,rc.Rc implements Borrow,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B96dbeea2e10824f6590a7610,rc.Rc implements Clone,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Be454a4658d17c441dde6988d,rc.Rc implements Debug,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B0c88e0bc2cf629821bd99abb,rc.Rc implements Default,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt;tests/source/run/i13-owner-default-nonclone-allocator.mt
+B6a3703c4ca2b2c900de3924e,rc.Rc implements Deref,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B5b7b25652018a1b37800955d,rc.Rc implements Display,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B5b1b495182c160ac9356a97b,rc.Rc implements Drop,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B4037b9f211f8be8423716efb,rc.Rc implements Eq,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B07cc32edb52fbf2e6271822f,rc.Rc implements From,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Ba57cb4254b60f7158ee57abe,rc.Rc implements FromItems,library/alloc/rc.mt,missing,tests/source/run/i13-empty-weak.mt
+B834828e45a5aa8bfdafcc9dd,rc.Rc implements Hash,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B2fb84a713b2f49ad3142d367,rc.Rc implements Ord,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B35ac85e8ef851965d0f8d1b8,rc.Rc implements PartialEq,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B5f5d20ae5868fdff16ae9b31,rc.Rc implements PartialOrd,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B4536768fac81036526231adb,rc.Rc implements Send,library/alloc/rc.mt;compiler/semantics/interface_solver.cpp,negative-property-unverified,tests/source/run/i13-empty-weak.mt
+B30a34e6162e5f63ccfb4af71,rc.Rc implements Sync,library/alloc/rc.mt;compiler/semantics/interface_solver.cpp,negative-property-unverified,tests/source/run/i13-empty-weak.mt
+B130305338b1d0410ebf796a9,rc.Rc implements TryFrom,library/alloc/rc.mt,missing,tests/source/run/i13-empty-weak.mt
+Bde4502f4bf7d7dc4ce9924ab,rc.Rc.as_ptr,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B7f03cc3eb58d1c5494f75b67,rc.Rc.assume_init,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B62d0cdcdccf13473db319ade,rc.Rc.assume_init-1,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bbf8178c823cc36dd0a2df907,rc.Rc.decrement_strong_count,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B05da9767b580d38904b8a216,rc.Rc.downcast,library/alloc/rc.mt,blocked-compiler-or-owner-api,tests/source/run/i13-empty-weak.mt
+B6d82dbb395b11930f81d3a57,rc.Rc.downgrade,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B297d3c5ff0d363685f63cc35,rc.Rc.from_raw,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B50de3375622a5280c500e812,rc.Rc.get_mut,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bc048b74859451d504f04d92a,rc.Rc.increment_strong_count,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B217b572070d6c2adb4c0dcf7,rc.Rc.into_inner,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B918adc6f650ed674b451368a,rc.Rc.into_raw,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B5de7648cdb390ad17d49d6aa,rc.Rc.make_mut,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bf9d10e28920fc9fffde5e09f,rc.Rc.new,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B3c5827029cf75d9db95240da,rc.Rc.new_cyclic,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B6175a0804ac254e0d3c81503,rc.Rc.new_uninit,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B3a61621b42fd87c8bd800648,rc.Rc.new_uninit_slice,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B97f992336696c41152238030,rc.Rc.new_zeroed,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B38ce854190407c87b8ad6182,rc.Rc.new_zeroed_slice,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B800327d7dee444473b4b259d,rc.Rc.pin,library/alloc/rc.mt,blocked-compiler-or-owner-api,tests/source/run/i13-empty-weak.mt
+B70833021f0efcf4fcb54a7a5,rc.Rc.ptr_eq,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B6e2f6af5bac9e9ee6abfa89a,rc.Rc.strong_count,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Be3f5b7f588edf3f8227e464e,rc.Rc.try_unwrap,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B9e4b62fbc009948d73bee6de,rc.Rc.unwrap_or_clone,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B8194322d5e51c881f68b9395,rc.Rc.weak_count,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B173fa6eb4dfd791cd3ad190a,rc.Weak,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B2e62f9f0b38529b4c0cac77d,rc.Weak implements Clone,library/alloc/rc.mt;library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B13aff620bf29bac91522f87c,rc.Weak implements Debug,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B18124b68909806d9a76d7ff7,rc.Weak implements Default,library/alloc/rc.mt;library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bc5bd08282ae457d52eb6ae43,rc.Weak implements Drop,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bd70177fd1bceace4c770a09d,rc.Weak implements Send,library/alloc/rc.mt;compiler/semantics/interface_solver.cpp,negative-property-unverified,tests/source/run/i13-empty-weak.mt
+B04426fa3cf8a92637595e678,rc.Weak implements Sync,library/alloc/rc.mt;compiler/semantics/interface_solver.cpp,negative-property-unverified,tests/source/run/i13-empty-weak.mt
+Bac6e99eedfc90fb269283db2,rc.Weak.as_ptr,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bb3085b17c12a15b9527a2a75,rc.Weak.from_raw,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bc1c2b492d3d437643727421c,rc.Weak.into_raw,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B731b1719968e7f7ad63200bc,rc.Weak.new,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B667998be3da891ec5c97c8fb,rc.Weak.ptr_eq,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B3bddcad205e25cdd0c950e1b,rc.Weak.strong_count,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B4e264b34e1e41476f4a9fa9a,rc.Weak.upgrade,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B7e3840459f9abc6f9a6dceba,rc.Weak.weak_count,library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B6fe481ec8087ebd231352a99,str.Bytes,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B28f02986bcf7649e1c6e79a5,str.Bytes implements BidirectionalIterator,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B5bf118783357fdbf4afd957a,str.Bytes implements Clone,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+Baae0c9582a2907518df1fb5d,str.Bytes implements Debug,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B6e43df66cc7519654bfdade7,str.Bytes implements ExactSizeIterator,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B1d03d08c3c08cef44a5c1b45,str.Bytes implements Iterator,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+Be770213b18438eaccd6b382c,str.Bytes implements Send,library/core/text.mt;library/alloc/string.mt;compiler/semantics/interface_solver.cpp,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B4d8797ba7bbb1755459957be,str.Bytes implements Sync,library/core/text.mt;library/alloc/string.mt;compiler/semantics/interface_solver.cpp,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B2b9bead8f118ceb885ec9339,str.CharIndices,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B8c545b1b2f45157d9365440e,str.CharIndices implements BidirectionalIterator,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B2b6c0fb9950cdbc787839a4d,str.CharIndices implements Clone,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+Bfdf640b947bbc621d238678c,str.CharIndices implements Debug,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B2b93a27663ab6bd9b9c5f4f8,str.CharIndices implements Iterator,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B1f1a5e2d70857cca958e2624,str.CharIndices implements Send,library/core/text.mt;library/alloc/string.mt;compiler/semantics/interface_solver.cpp,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B2edfd2b4d72814d362c36f54,str.CharIndices implements Sync,library/core/text.mt;library/alloc/string.mt;compiler/semantics/interface_solver.cpp,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+Bd827d1ad9463f9484d020753,str.CharIndices.as_str,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B5ef930bc5f1bb82e04e9e5e8,str.CharIndices.offset,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B0ec98f8eb293ec1e8e555eda,str.Chars,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+Bc63320d4be5a42583fa4f417,str.Chars implements BidirectionalIterator,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B1c2a52186d87b851b7f54a11,str.Chars implements Clone,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B3e7b5a3056ff5f68d7389b81,str.Chars implements Debug,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B8a3f764166a759d5e0ea950e,str.Chars implements Iterator,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B5bacc02336ecece883698231,str.Chars implements Send,library/core/text.mt;library/alloc/string.mt;compiler/semantics/interface_solver.cpp,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B13b5ad649904520a1cba8667,str.Chars implements Sync,library/core/text.mt;library/alloc/string.mt;compiler/semantics/interface_solver.cpp,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B46ab7417cc83e2347e9d565d,str.Chars.as_str,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B46ad2bca15071d46a0f64744,str.FromStr,library/core/text.mt;library/alloc/string.mt,missing-FromStr-contract,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+Bdd322a611ccfdf82408eea3f,str.FromStr.Err,library/core/text.mt;library/alloc/string.mt,missing-FromStr-contract,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+Bcc3fea9ce5e64fd9a5284efe,str.FromStr.from_str,library/core/text.mt;library/alloc/string.mt,missing-FromStr-contract,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B15364109b348942bf4d55605,str.Split,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B4422f6daf67d83d97a339f10,str.Split implements BidirectionalIterator,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B1534860b6f1a5698483eb218,str.Split implements Clone,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B9414d4ff8e34feb82c013a85,str.Split implements Debug,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B592bfd0ce2bb4a31b2e83663,str.Split implements Iterator,library/core/text.mt;library/alloc/string.mt;library/std/io.mt,source-present-unverified,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B90d0d7cc09673b3070dd502b,str.Split implements Send,library/core/text.mt;library/alloc/string.mt;compiler/semantics/interface_solver.cpp,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B58b6d2809457661929dbbf05,str.Split implements Sync,library/core/text.mt;library/alloc/string.mt;compiler/semantics/interface_solver.cpp,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B0b3f1dc30ad508a97b040d5a,str.SplitWhitespace,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+Bbf1a39f0d88a4d33b3709d0b,str.SplitWhitespace implements BidirectionalIterator,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B4c7ee99ab875343463d8ea14,str.SplitWhitespace implements Clone,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+Bb5ee751869dd66636b35b856,str.SplitWhitespace implements Debug,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B6db0d3f55b431f0b43514cb3,str.SplitWhitespace implements Iterator,library/core/text.mt;library/alloc/string.mt,source-present-unverified,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B016a56b3fd6b89e7a9fbfae2,str.SplitWhitespace implements Send,library/core/text.mt;library/alloc/string.mt;compiler/semantics/interface_solver.cpp,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B76f44e59647a8169091fb587,str.SplitWhitespace implements Sync,library/core/text.mt;library/alloc/string.mt;compiler/semantics/interface_solver.cpp,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B34eced223847d1c13fa91fc1,str.from_utf8,library/core/text.mt;library/alloc/string.mt,missing,tests/source/run/i13-text-pattern-search-closures.mt;tests/source/run/i13-text-whitespace-splits-boundaries.mt
+B3a8a0e34be90368926264da8,string.Drain,library/alloc/string.mt;library/core/text.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/alloc/string_text.mt
+B35f7582c70b0331430b936b6,string.Drain implements AsRef,library/alloc/string.mt;library/core/text.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/alloc/string_text.mt
+Beac2c172513b6aeaa6699183,string.Drain implements BidirectionalIterator,library/alloc/string.mt;library/core/text.mt;library/alloc/vec.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/alloc/string_text.mt
+B28066ae9878b5a56c90f98cd,string.Drain implements Debug,library/alloc/string.mt;library/core/text.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/alloc/string_text.mt
+B01336701563a72eec414760b,string.Drain implements Drop,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/alloc/string_text.mt
+B1a9e140f71c66c56655878ca,string.Drain implements Iterator,library/alloc/string.mt;library/core/text.mt;library/alloc/vec.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/alloc/string_text.mt
+B089789c793bad9321e212959,string.Drain implements Send,library/alloc/string.mt;library/core/text.mt;compiler/semantics/interface_solver.cpp,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/alloc/string_text.mt
+Bf599eab0324c2b23aeb090b5,string.Drain implements Sync,library/alloc/string.mt;library/core/text.mt;compiler/semantics/interface_solver.cpp,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/alloc/string_text.mt
+B11eb91951cca26b8fd0e37e8,string.Drain.as_str,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/alloc/string_text.mt
+B4d443f9c9534100f5aad3dcb,string.String,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B25503ed61878fd103ee46a29,string.String implements Add,library/alloc/string.mt;library/core/text.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bcb347ef082fa660267f5518c,string.String implements AddAssign,library/alloc/string.mt;library/core/text.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B1fdd5e5d128110ea6c100d56,string.String implements AsMut,library/alloc/string.mt;library/core/text.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B57e70dcf03a0c0a03e0bfd3a,string.String implements AsRef,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B08de226250da476855eabce0,string.String implements Borrow,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bb418b6df45c63f1b55c65576,string.String implements Clone,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B281380f5737ffc4d42aa4086,string.String implements Debug,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Ba996d04a1363a636c4f589fd,string.String implements Default,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B91f7b2f079f26c2768613709,string.String implements Deref,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B5a11ba9770de328b90cc4edb,string.String implements DerefMut,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B9a28f45ce8b87f9b6b67c3d5,string.String implements Display,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bbfdc12d680ff0acdf4c1d8c1,string.String implements Eq,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B30d693104adbc9e5506f33ae,string.String implements ExtendItems,library/alloc/string.mt;library/core/text.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B0a9bb5b4ec7db5407c990eab,string.String implements From,library/alloc/string.mt;library/core/text.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B1d43efe70f209e0d65e15fec,string.String implements FromItems,library/alloc/string.mt;library/core/text.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B1e2f2e9e5f34fa0bfc3e39c8,string.String implements FromStr,library/alloc/string.mt;library/core/text.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bea11685403a21a94febe159d,string.String implements Hash,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B7695da6acbd23cb94c9bf611,string.String implements Index,library/alloc/string.mt;library/core/text.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bb683eade0e5cf1a73cbc3b97,string.String implements IndexMut,library/alloc/string.mt;library/core/text.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B815d674d1da39920c60171ba,string.String implements Ord,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B33de74dc4eb1e07bef5d707e,string.String implements PartialEq,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B8f58bcad4a536aaaa75866e4,string.String implements PartialOrd,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B047c4adc3e86d866c11304de,string.String implements Send,library/alloc/string.mt;library/core/text.mt;compiler/semantics/interface_solver.cpp,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bab1167a2193f71c0ed7cf907,string.String implements Sync,library/alloc/string.mt;library/core/text.mt;compiler/semantics/interface_solver.cpp,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B2b947755283053e18bfc4933,string.String implements TryFrom,library/alloc/string.mt;library/core/text.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B9580a5b78d0cfdc96961ebc5,string.String implements Write,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B0e161927bb0b83234ffa52d2,string.String.as_bytes,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B421501cfee4fb3c1f50eea56,string.String.as_bytes-1,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B1e82704f6b8ce41bb347930f,string.String.as_bytes_mut,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B66aaa659d96ab71262bc5ca4,string.String.as_mut_ptr,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bf016a2c57f132f5e1a0d92c6,string.String.as_mut_str,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bf4abcec598d2918db7067b05,string.String.as_mut_vec,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B063d212b97774a26c5c0d2c6,string.String.as_ptr,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B412fee31975ed03aa9ab9f83,string.String.as_str,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bd9c3121183bcc823f483649e,string.String.bytes,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B4cfb25b4d3227c0eb70b3ca4,string.String.capacity,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bba65cf061e3ea69192b35890,string.String.ceil_char_boundary,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B8ce1bff04ed7da7889eff6c5,string.String.char_indices,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B6a72e1f7186ee68c621ebdb9,string.String.chars,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bebfe26da6a327b5719e59e33,string.String.clear,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bd80d8463c8ecd3f91790b1af,string.String.contains,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bbb03d9f42defe754f9184385,string.String.drain,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B2e3fadd05e39693807588b43,string.String.encode_utf16,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bbc57311738c308f0459b55f4,string.String.ends_with,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B9eb39516fcf14736569f37c6,string.String.eq_ignore_ascii_case,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bca8ad59729c909d7ab2b1b15,string.String.escape_debug,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B3001dc9033a1d9086484b40f,string.String.escape_default,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B2bf928a9f5f34f00742eecf8,string.String.escape_unicode,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B27567318e47d187e05fefccd,string.String.extend_from_within,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bb7032d124069597039d5f3c3,string.String.find,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B88303edf4ae493a84910e411,string.String.floor_char_boundary,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bc5a0525650ee6b3cb8a8e874,string.String.from_raw_parts,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B51397a5d9c79b2adf41c71e5,string.String.from_utf16,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B7c32899a95f2504c0bc58bd9,string.String.from_utf16_lossy,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B881cca0e3d7d8a8d5dc09f77,string.String.from_utf16be,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bb7b8284209d1db34afe02084,string.String.from_utf16be_lossy,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B9689d97439dc4746ae9b6713,string.String.from_utf16le,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B987eaa9d6fe84bd478515c1b,string.String.from_utf16le_lossy,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B8b754ab7cee40a49ea2a0d43,string.String.from_utf8,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B5f52b8af6f33d845fcd2fdd5,string.String.from_utf8_lossy,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bdf327fb0ed8e186f21742436,string.String.from_utf8_lossy_owned,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B230b8348eacdfbd6fc58bdd7,string.String.from_utf8_unchecked,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bb2892820051f2bb0e5a30e20,string.String.get,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B1ff2b1519e6093821b384bda,string.String.get_mut,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B664a97113b159b2d12ac9107,string.String.get_unchecked,library/alloc/string.mt;library/core/text.mt,missing-unsafe-range-api,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bb478843443ba735b33d07978,string.String.get_unchecked_mut,library/alloc/string.mt;library/core/text.mt,missing-unsafe-range-api,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B30a649fc3417dd68b9271342,string.String.insert,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Ba2d46b48af812094be9abeab,string.String.insert_str,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B0924fef5e92fc68630a14dad,string.String.into_boxed_str,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B847c29d06d8a8d6a01acd95a,string.String.into_bytes,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B18d7b0ac430d4f7b159c0f04,string.String.into_raw_parts,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B849eb99ae600104a81dee398,string.String.is_ascii,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bbfbd4fc90259622eca23eb92,string.String.is_char_boundary,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B38f63bc1f6f25023cc9c3288,string.String.is_empty,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B1472f265e78c7e6489342560,string.String.is_empty-1,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B78e599790fd30a1fc162004f,string.String.leak,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B6aebb9a3ce3bd419c530428a,string.String.len,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bcc564063631d91c42abf5097,string.String.len-1,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B6cf2fc9c6b540f87529c3c6b,string.String.lines,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B105641e173224b4e54edd6d8,string.String.make_ascii_lowercase,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bf390f66ddea7f439d21debd7,string.String.make_ascii_uppercase,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B97402523a55abb40c203caa6,string.String.match_indices,library/alloc/string.mt;library/core/text.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bbe0b19bac250110699a9b986,string.String.matches,library/alloc/string.mt;library/core/text.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B88dee4a7df28cfc6cafb5db5,string.String.new,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B700c709a32669e0392ab1981,string.String.parse,library/alloc/string.mt;library/core/text.mt,missing-FromStr-contract,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Ba9045df8482be2e615a11948,string.String.pop,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B00ff60806c4931e615c85a11,string.String.push,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B8f50ca6f6fa8b48a7f0f3622,string.String.push_str,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bd6144ad28a6ac4dc747b2839,string.String.remove,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B5e86d82de19e0e4bba29de3d,string.String.repeat,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B2c9c284a030da8de6f392308,string.String.replace,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B3e33422a36855ad76e3e19c5,string.String.replace_range,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B421eca9a31cb53dc83b583a6,string.String.replacen,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B6f04a1fe2b20d23181a3631f,string.String.reserve,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B80c144a21c6c46457b0645ea,string.String.reserve_exact,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bb260f3fc03bdfb3f7cdc9e90,string.String.retain,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bda55a58cc14f5be1462c2927,string.String.rfind,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bf1fa0c7f95786d283e8769b9,string.String.rmatch_indices,library/alloc/string.mt;library/core/text.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B9a1ef4e2e229a8ad7c784bf3,string.String.rmatches,library/alloc/string.mt;library/core/text.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B52e7d7b6da65dd62100c9c6a,string.String.rsplit,library/alloc/string.mt;library/core/text.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bd7d98b6781df2312d6984fd8,string.String.rsplit_once,library/alloc/string.mt;library/core/text.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B50f4f5f8801378e75826fe70,string.String.rsplit_terminator,library/alloc/string.mt;library/core/text.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B608b8365aa40136cd0b5592b,string.String.rsplitn,library/alloc/string.mt;library/core/text.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Be76295d4769495420c33b49f,string.String.shrink_to,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B3e76fd5b62a3dfa775e078e4,string.String.shrink_to_fit,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B0ea80a5f307ba59e7c26ed13,string.String.split,library/alloc/string.mt;library/core/text.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Baeb350175505a6a788802856,string.String.split_ascii_whitespace,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Beaf919649fcb3f2197118491,string.String.split_at,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B274fad3a0db596b3276d5da1,string.String.split_at_checked,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B46660ccf9bd066dafceddbc5,string.String.split_at_mut,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B1fffadd435e0907b83835c9a,string.String.split_at_mut_checked,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B345853b0d6bc7a016c32a321,string.String.split_inclusive,library/alloc/string.mt;library/core/text.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Be4a23c8a7adc87a26a194d06,string.String.split_off,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B873a1e797c2c3edb8ecfff86,string.String.split_once,library/alloc/string.mt;library/core/text.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B2536845cc3e85e114c4f567e,string.String.split_terminator,library/alloc/string.mt;library/core/text.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B8b748321b92a703c90fd2ea4,string.String.split_whitespace,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B7c4e5bd7ff072f3d80ad556c,string.String.splitn,library/alloc/string.mt;library/core/text.mt,partial-pattern-closure,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B2945212062fb1e9a744c8b64,string.String.starts_with,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B2ffe393e8ae4b1c0061b86da,string.String.strip_circumfix,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B94b295eb786482c7d634892b,string.String.strip_prefix,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Be83daca236f08295c35b6bfb,string.String.strip_suffix,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B011dab5c8e42e4f10e5e9e98,string.String.substr_range,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bb8a15f6823f5f2ed6546823d,string.String.to_ascii_lowercase,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bbd64042f48691979a6de62c2,string.String.to_ascii_uppercase,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B09a5db73c3f5c77d6b26f905,string.String.to_lowercase,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B4b231a8b8f6d0e158e9a7d60,string.String.to_uppercase,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B635f9f4591191ff402dffecc,string.String.trim,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B033d7adc9fe1367232eaf4e0,string.String.trim_ascii,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B6602ad73c70678ee2236206c,string.String.trim_ascii_end,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B0838b5cb103ed6165debdd44,string.String.trim_ascii_start,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B08595bdb4efa4adb7715b9da,string.String.trim_end,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bc3afc731dd4886674cdaf356,string.String.trim_end_matches,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bec7b924a7def23a28787f35d,string.String.trim_matches,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bab6c55e43752f702681cf8c4,string.String.trim_start,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B8cee1e71b76c6fa33b2241d2,string.String.trim_start_matches,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B79830fed07310c9b81bca67c,string.String.truncate,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Bef3f1f78c7b1f072e98d476b,string.String.try_reserve,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B8ed41f31ebb2e68692254a14,string.String.try_reserve_exact,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B837b53a197b7d7776faa74f9,string.String.with_capacity,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B16a53b0e22459fcc2c0525de,string.ToString,library/alloc/string.mt;library/core/text.mt,missing,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+Be5756b62f862412704b1850e,string.ToString.to_string,library/alloc/string.mt;library/core/text.mt,source-present-unverified,tests/source/run/i13-string-borrowed-ownership.mt;tests/source/run/i13-text-pattern-search-closures.mt
+B39c1437fb825e7602d2d3dd2,sync.Arc,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bebecad7dce625f0d18b48985,sync.Arc implements AsRef,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Be8ad6b71ef5e89fda002daaf,sync.Arc implements Borrow,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B64fbd04eb379591b2af02a9b,sync.Arc implements Clone,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B901e90c858b7cf63e90e654b,sync.Arc implements Debug,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B098fe540d3486d820d4001bc,sync.Arc implements Default,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt;tests/source/run/i13-owner-default-nonclone-allocator.mt
+Bb3aff641a15c8f35714079b0,sync.Arc implements Deref,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bdaa6b080165169254d2a0a43,sync.Arc implements Display,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B1f5e5c454b52d4584ba3a734,sync.Arc implements Drop,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B87b1a93b3e6d4a7daef10c9d,sync.Arc implements Eq,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B0aca6636dc395462816a541c,sync.Arc implements Error,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B1117355342cb719a964c056a,sync.Arc implements From,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B4fbbee07064e97bb2a43bdbc,sync.Arc implements FromItems,library/alloc/arc.mt,missing,tests/source/run/i13-empty-weak.mt
+B2d814000e51ae4129ba2b858,sync.Arc implements Hash,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B185e68da1817dc617e2a3d75,sync.Arc implements Ord,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B62b06f6417c6ddfba1eaa18b,sync.Arc implements PartialEq,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B08ef18bc094deafc407dd69a,sync.Arc implements PartialOrd,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B46420ca09071593b490806c3,sync.Arc implements Reader,library/alloc/arc.mt,missing,tests/source/run/i13-empty-weak.mt
+B7bbd34374f754b464b6adf15,sync.Arc implements Seek,library/alloc/arc.mt,missing,tests/source/run/i13-empty-weak.mt
+B081d0bc5d0e171da857470a6,sync.Arc implements Send,library/alloc/arc.mt;compiler/semantics/interface_solver.cpp,compiler-property-mapping-unverified,tests/source/run/i13-empty-weak.mt
+B4be569c5349807dc2b2e8743,sync.Arc implements Sync,library/alloc/arc.mt;compiler/semantics/interface_solver.cpp,compiler-property-mapping-unverified,tests/source/run/i13-empty-weak.mt
+B4aa342becd39022367a5ca7a,sync.Arc implements TryFrom,library/alloc/arc.mt,missing,tests/source/run/i13-empty-weak.mt
+Bb368cbd27804406c2ed602a9,sync.Arc implements Writer,library/alloc/arc.mt,missing,tests/source/run/i13-empty-weak.mt
+B5de46c62c6607edeb524467f,sync.Arc.as_ptr,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B8887e5a21e93183adb2d7dd0,sync.Arc.assume_init,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bdf3f93310d98f669d3a9f05b,sync.Arc.assume_init-1,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B1af4e4531ed98526fc2c6cef,sync.Arc.decrement_strong_count,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bfabb69478b09c3c1a5d6ad09,sync.Arc.downcast,library/alloc/arc.mt,blocked-compiler-or-owner-api,tests/source/run/i13-empty-weak.mt
+Be657eec434865c723a74f687,sync.Arc.downgrade,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B3a4ed0994667f2d4ab1fe652,sync.Arc.from_raw,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B1d06dd635d757545f331761b,sync.Arc.get_mut,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B445aa15b0c56bc2314eac461,sync.Arc.increment_strong_count,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B346c40628c3b68060030e5e2,sync.Arc.into_inner,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B608567797e3dc5d2b17a05f0,sync.Arc.into_raw,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bbc076ed3ec35df61ea6934c0,sync.Arc.make_mut,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B71bffe4aab964d47cd19dc6b,sync.Arc.new,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B0ea6729ac49dc9464d0ecf39,sync.Arc.new_cyclic,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B09be47fb0f70dd83ca1dacb0,sync.Arc.new_uninit,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bc41d2ff17426bc245413701b,sync.Arc.new_uninit_slice,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bb1d3c7fbcfdc8297ed90832c,sync.Arc.new_zeroed,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bb98719d1853027cdadae43dd,sync.Arc.new_zeroed_slice,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B420f20c891c8b71443298670,sync.Arc.pin,library/alloc/arc.mt,blocked-compiler-or-owner-api,tests/source/run/i13-empty-weak.mt
+Bee7ad5022e3355e2614d1719,sync.Arc.ptr_eq,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Ba72b5b695e668846cd04a0ee,sync.Arc.strong_count,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B9e7c7d7e835a85d09211332f,sync.Arc.try_unwrap,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bf36bacbf28cf4ba4afab0704,sync.Arc.unwrap_or_clone,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B38cbbd68656da93a6e1fdccb,sync.Arc.weak_count,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B4b21d83c80d1f57f13a0e99a,sync.Weak,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B51496eef239b686940ffa92c,sync.Weak implements Clone,library/alloc/arc.mt;library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B57ea6e9414fd8ce955a7eb89,sync.Weak implements Debug,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B605dda9c281ae876b70cce3a,sync.Weak implements Default,library/alloc/arc.mt;library/alloc/rc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Be162822f73c812da06cd771b,sync.Weak implements Drop,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B7ab533050f1e2bbeed33bdc5,sync.Weak implements Send,library/alloc/arc.mt;compiler/semantics/interface_solver.cpp,compiler-property-mapping-unverified,tests/source/run/i13-empty-weak.mt
+Be098963cf6116a4394d1fbdc,sync.Weak implements Sync,library/alloc/arc.mt;compiler/semantics/interface_solver.cpp,compiler-property-mapping-unverified,tests/source/run/i13-empty-weak.mt
+Bc823bbae7d0b63be96949ebc,sync.Weak.as_ptr,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bca79afca4bc17030b0be7a7b,sync.Weak.from_raw,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B16b13b231bd1fe2760de6cd3,sync.Weak.into_raw,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bd31751f9b3c0c8a06284ff88,sync.Weak.new,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bd68ed2db4f091d658e340dc3,sync.Weak.ptr_eq,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bc62da3bbb7e242bafa61e11c,sync.Weak.strong_count,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+Bc8e5dde2b4445972a1cb1f1f,sync.Weak.upgrade,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt
+B1846d3fb37bf1ff17ed8c0e2,sync.Weak.weak_count,library/alloc/arc.mt,source-present-unverified,tests/source/run/i13-empty-weak.mt

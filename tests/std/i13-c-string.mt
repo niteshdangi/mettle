@@ -69,6 +69,10 @@ fn main(): i32 {
     var stored = checked.into_bytes()
     if stored.len() != 1usize || stored[0] != 99u8 { return 20 }
 
+    let leaked = std.ffi.os_string_from_bytes([0xffu8, 120u8]).leak()
+    if leaked.as_bytes().len() != 2usize || leaked.as_bytes()[0] != 0xffu8 ||
+       leaked.as_bytes()[1] != 120u8 { return 22 }
+
     var terminated_box = vec.new<u8>()
     terminated_box.push(100u8)
     terminated_box.push(0u8)

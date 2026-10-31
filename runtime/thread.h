@@ -56,6 +56,9 @@ std::int32_t mettle_rt_rwlock_try_read(void *lock);
 std::int32_t mettle_rt_rwlock_write(void *lock);
 std::int32_t mettle_rt_rwlock_try_write(void *lock);
 std::int32_t mettle_rt_rwlock_unlock(void *lock);
+// Atomically turns the caller's exclusive hold into a shared hold; returns 0,
+// or nonzero when the lock is not held exclusively.
+std::int32_t mettle_rt_rwlock_downgrade(void *lock);
 
 // Thread-local storage keys; the destructor runs at thread exit for each
 // thread whose slot is non-null. Values are destroyed in reverse order of

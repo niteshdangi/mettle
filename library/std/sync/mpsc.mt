@@ -5,6 +5,8 @@ import package.alloc.arc.Arc
 import package.alloc.vec.List
 import package.alloc.vec_deque.Deque
 import package.core.iter.Iterator
+import package.core.clone.Clone
+import package.core.fmt
 
 extern "C" {
     unsafe fn mettle_rt_select_epoch(): u64;
@@ -12,6 +14,9 @@ extern "C" {
     unsafe fn mettle_rt_select_notify(): Unit;
 }
 
+// The queue mutex serializes queue ownership and rendezvous handoff. `senders`
+// makes last-sender shutdown visible; `open` publishes receiver destruction;
+// `waiting_receivers` admits a zero-capacity send only to a waiting receiver.
 type Shared<T> {
     queue: mutex.Mutex<Deque<T>>
     ready: condvar.Condvar
@@ -33,6 +38,82 @@ pub type SendTimeoutError<T> {
     pub disconnected: bool
 }
 pub copy type EmptySelect {}
+
+extend<T> SendError<T> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.write_str("SendError { .. }") }
+}
+extend<T> SendError<T> implements fmt.Display {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("sending on a closed channel")
+    }
+}
+extend<T> SendError<T> implements core.error.Error {}
+
+extend RecvError implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.write_str("RecvError") }
+}
+extend RecvError implements fmt.Display {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("receiving on a closed channel")
+    }
+}
+extend RecvError implements core.error.Error {}
+
+extend TryRecvError implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str(if self.disconnected { "Disconnected" } else { "Empty" })
+    }
+}
+extend TryRecvError implements fmt.Display {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str(
+            if self.disconnected { "receiving on a closed channel" } else { "receiving on an empty channel" }
+        )
+    }
+}
+extend TryRecvError implements core.error.Error {}
+
+extend<T> TrySendError<T> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str(if self.disconnected { "Disconnected(..)" } else { "Full(..)" })
+    }
+}
+extend<T> TrySendError<T> implements fmt.Display {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str(
+            if self.disconnected { "sending on a closed channel" } else { "sending on a full channel" }
+        )
+    }
+}
+extend<T> TrySendError<T> implements core.error.Error {}
+
+extend<T> SendTimeoutError<T> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str(if self.disconnected { "Disconnected(..)" } else { "Timeout(..)" })
+    }
+}
+extend<T> SendTimeoutError<T> implements fmt.Display {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str(
+            if self.disconnected { "sending on a closed channel" } else { "timed out waiting on channel" }
+        )
+    }
+}
+extend<T> SendTimeoutError<T> implements core.error.Error {}
+
+extend RecvTimeoutError implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str(if self.disconnected { "Disconnected" } else { "Timeout" })
+    }
+}
+extend RecvTimeoutError implements fmt.Display {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str(
+            if self.disconnected { "channel is empty and sending half is closed" } else { "timed out waiting on channel" }
+        )
+    }
+}
+extend RecvTimeoutError implements core.error.Error {}
 
 // Sender for an unbounded FIFO channel.
 pub type Sender<T> {
@@ -129,6 +210,12 @@ extend<T> Sender<T> {
         let _previous = self.chan.get().senders.fetch_add(1usize, core.sync.atomic.Ordering.Relaxed)
         Sender(self.chan.retain())
     }
+}
+extend<T> Sender<T> implements Clone {
+    fn clone(): Sender<T> { self.duplicate() }
+}
+extend<T> Sender<T> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.write_str("Sender { .. }") }
 }
 
 extend<T> SyncSender<T> {
@@ -245,6 +332,16 @@ extend<T> SyncSender<T> {
         SyncSender(self.chan.retain())
     }
 }
+extend<T> SyncSender<T> implements Clone {
+    fn clone(): SyncSender<T> { self.duplicate() }
+}
+extend<T> SyncSender<T> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.write_str("SyncSender { .. }") }
+}
+
+extend<T> Receiver<T> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.write_str("Receiver { .. }") }
+}
 
 extend<T> Receiver<T> {
     pub fn recv(): T throws RecvError {
@@ -326,7 +423,7 @@ extend<T> Receiver<T> {
     pub fn try_iter<region r>(
         receiver self: read Receiver<T> from r
     ): TryIter<region r, T> {
-        TryIter(read self, false)
+        TryIter(read self)
     }
 
     pub take fn into_iter(): IntoIter<T> { IntoIter(self) }
@@ -348,19 +445,14 @@ extend<region r, T> Iter<region r, T> implements Iterator {
 // Stops when no value is immediately available.
 pub type TryIter<region r, T> {
     channel: read Receiver<T> from r
-    finished: bool
 }
 extend<region r, T> TryIter<region r, T> implements Iterator {
     type Item = T
     mut fn next(): T? {
-        if self.finished { return none }
         let value = capture self.channel.try_recv()
         match take value {
             success(item) => present(item),
-            failure(error) => {
-                self.finished = true
-                none
-            }
+            failure(error) => none
         }
     }
 }

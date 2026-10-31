@@ -1430,6 +1430,14 @@ Unverified changes with existing fixtures, including qualified macro
 imports/reexports, dependency-object reuse, expanded debugger checks and async
 borrowed scopes, still require execution and applicable review.
 
+The `libs` library continuation and its open source-freeze/qualification tasks
+are tracked in [i13-library.md](i13-library.md#libs-continuation-ledger-2026-10-31).
+Its collection, iterator, owner, comparison, time and synchronization additions
+are implemented in source only; no native build or execution was possible on
+the Windows editing host. Regeneration retains 3,966 families, 3,964 missing
+and 2 not-applicable. This continuation does not close I13 or its source freeze.
+A second subagent batch (see i13-library.md) added further source and fixtures across slice, iterator, text, owner, option/float, sync and hosted io; all unrun, and the counts are unchanged.
+
 Moved into I14 by owner decision (2026-10-31): I09 compile-time and
 retained-byte measurement with front-end dependency separation (performance.md
 5.1.1), I10 benchmarks P08 and P09, and I11 benchmark P10 with its async

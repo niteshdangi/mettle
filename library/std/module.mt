@@ -14,3 +14,4 @@ pub module sync
 pub module task
 pub module thread
 pub module macros
+pub module debug

@@ -1,9 +1,12 @@
-import package.core.iter.{Iterator, BidirectionalIterator}
+import package.core.iter.{Iterator, BidirectionalIterator, OwnedIterable, FromItems, ExtendItems}
+import package.core.convert.{From, TryFrom}
+import package.core.from_str.FromStr
 import super.alloc.{Allocator, Global, AllocError, panic_precondition}
 import package.core.clone.Clone
+import package.core.borrow.{AsRef, Borrow, ToOwned}
 import package.core.default.Default
 import package.core.fmt
-import package.core.ops.{Deref, IndexRange}
+import package.core.ops.{Deref, DerefMut, IndexRange, IndexRangeMut, Add, AddAssign}
 import package.core.hash.{Hash, Hasher}
 import package.core.borrow.KeyView
 import super.vec.{List, slice_ptr}
@@ -31,6 +34,11 @@ pub interface ToString {
 }
 extend Text implements ToString {
     fn to_string(): String { from_text(self) }
+}
+
+extend Text implements ToOwned {
+    type Owned = String
+    fn to_owned(): String { from_text(self) }
 }
 
 pub type StringDrain<region r, A: Allocator> {
@@ -655,6 +663,14 @@ extend<A: Allocator> String<A> {
             index += 1usize
         }
     }
+    // Safety: `start <= end <= len` and both are scalar boundaries.
+    pub unsafe fn get_unchecked(start: usize, end: usize): read Text from self {
+        unsafe { self.as_text().get_unchecked(start, end) }
+    }
+    // Safety: as `get_unchecked`; the bytes stay well-formed while the view is live.
+    pub mut unsafe fn get_unchecked_mut(start: usize, end: usize): mut Text from self {
+        unsafe { self.as_mut_str().get_unchecked_mut(start, end) }
+    }
     pub fn floor_char_boundary(index: usize): usize {
         self.as_text().floor_char_boundary(index)
     }
@@ -718,8 +734,44 @@ extend<A: Allocator> String<A> implements Ord {
 extend<A: Allocator> String<A> implements KeyView<Text> {
     fn key_view(): read Text from self { self.as_text() }
 }
+extend<A: Allocator> String<A> implements AsRef<Text> {
+    fn as_ref(): read Text from self { self.as_text() }
+}
+extend<A: Allocator> String<A> implements Borrow<Text> {
+    fn borrow(): read Text from self { self.as_text() }
+}
 extend<A: Allocator> String<A> implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit { self.as_text().hash(mut state) }
+}
+
+extend<A: Allocator> String<A> implements AddAssign<Text> {
+    mut fn add_assign(rhs: read Text): Unit { self.push_str(rhs) }
+}
+extend String implements Add<Text> {
+    type Output = String
+    fn add(rhs: read Text): String { concat(self.as_text(), rhs) }
+}
+extend<A: Allocator> String<A> implements ExtendItems<char> {
+    mut fn extend<I: OwnedIterable<Item = char>>(items: take I): Unit {
+        var source = items.into_iter()
+        while true {
+            match take source.next() { present(c) => { self.push(c) }, none => { break } }
+        }
+    }
+}
+extend String implements FromItems<char> {
+    static fn from_iter<I: OwnedIterable<Item = char>>(items: take I): String {
+        var out = new()
+        out.extend(items)
+        out
+    }
+}
+extend String implements From<char> {
+    static fn `from`(value: take char): String {
+        var out = new()
+        out.push(value)
+        out
+    }
 }
 
 // Appends formatted output to the string; allocation failure aborts like push.
@@ -734,6 +786,10 @@ extend<A: Allocator> String<A> implements fmt.Write {
 extend<A: Allocator> String<A> implements Deref {
     type Target = Text
     fn deref(): read Text from self { self.as_text() }
+}
+extend<A: Allocator> String<A> implements DerefMut {
+    type Target = Text
+    mut fn deref_mut(): mut Text from self { self.as_mut_str() }
 }
 extend<A: Allocator> String<A> implements IndexRange {
     type Output = Text
@@ -780,18 +836,11 @@ fn replace_text(text: read Text, pattern: read Text, replacement: read Text, lim
 
     var rest = read text
     while remaining > 0usize {
-        match rest.find(pattern) {
-            present(at) => {
-                match rest.get(0usize, at) {
-                    present(prefix) => { result.push_str(prefix) },
-                    none => { panic_precondition() }
-                }
+        match rest.split_once(pattern) {
+            present(parts) => {
+                result.push_str(parts.0)
                 result.push_str(replacement)
-                let start = at + pattern.len()
-                rest = match rest.get(start, rest.len()) {
-                    present(suffix) => suffix,
-                    none => { panic_precondition() }
-                }
+                rest = parts.1
                 remaining -= 1usize
             },
             none => { break }
@@ -854,5 +903,37 @@ extend Text {
             }
         }
         result
+    }
+}
+
+extend<A: Allocator> String<A> implements IndexRangeMut {
+    type Output = Text
+    mut fn index_range_mut(start: usize, end: usize): mut Text from self {
+        self.as_mut_str().index_range_mut(start, end)
+    }
+}
+
+// Infallible: any text is a valid string.
+extend String implements FromStr {
+    type Err = Never
+    static fn from_str(text: read Text): String throws Never { from_text(text) }
+}
+
+// Validates the bytes; failure hands the buffer back in the error.
+extend<A: Allocator> String<A> implements TryFrom<List<u8, A>> {
+    type Error = FromUtf8Error<A>
+    static fn try_from(value: take List<u8, A>): String<A> throws FromUtf8Error<A> {
+        try from_utf8(take value)
+    }
+}
+
+extend<region r, A: Allocator> StringDrain<region r, A> implements AsRef<Text> {
+    fn as_ref(): read Text from self { self.as_str() }
+}
+extend<region r, A: Allocator> StringDrain<region r, A> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        var fields = try f.debug_struct("StringDrain")
+        try fields.field("remaining", self.as_str())
+        try fields.finish()
     }
 }

@@ -1,5 +1,8 @@
 import package.core.panic.panic
 import package.core.default.Default
+import package.core.convert.From
+import package.core.ops.{Deref, DerefMut}
+import package.core.fmt
 extern "C" {
     unsafe fn mettle_rt_mutex_new(): ptr<mut u8>;
     unsafe fn mettle_rt_mutex_free(mutex: ptr<mut u8>): Unit;
@@ -18,7 +21,38 @@ extend<G> PoisonError<G> {
     pub take fn into_inner(): G { self.guard }
 }
 
+extend<G> PoisonError<G> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.write_str("PoisonError { .. }") }
+}
+extend<G> PoisonError<G> implements fmt.Display {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("poisoned lock: another task failed inside")
+    }
+}
+extend<G> PoisonError<G> implements core.error.Error {}
+
 pub enum TryLockError<G> { WouldBlock; Poisoned(G) }
+extend<G> TryLockError<G> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        match self {
+            TryLockError.WouldBlock => { try f.write_str("WouldBlock") },
+            TryLockError.Poisoned(_) => { try f.write_str("Poisoned(..)") }
+        }
+    }
+}
+extend<G> TryLockError<G> implements fmt.Display {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        match self {
+            TryLockError.WouldBlock => {
+                try f.write_str("try_lock failed because the operation would block")
+            },
+            TryLockError.Poisoned(_) => {
+                try f.write_str("poisoned lock: another task failed inside")
+            }
+        }
+    }
+}
+extend<G> TryLockError<G> implements core.error.Error {}
 
 // Mutual exclusion around `value`. Only one guard exists at a time, so `T`
 // needs to be Transferable (the lock moves it between threads) but not
@@ -56,6 +90,25 @@ pub fn new<T>(value: take T): Mutex<T> {
 extend<T: Default> Mutex<T> implements Default {
     static fn default(): Mutex<T> { new(T.(Default).default()) }
 }
+extend<T> Mutex<T> implements From<T> {
+    static fn `from`(value: take T): Mutex<T> { new(value) }
+}
+extend<T: fmt.Debug> Mutex<T> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        // Formatting must not wait for a lock held by the current thread.
+        let acquired = capture self.try_lock()
+        var fields = try f.debug_struct("Mutex")
+        match take acquired {
+            success(guard) => { try fields.field("data", guard.get()) },
+            failure(error) => match take error {
+                TryLockError.Poisoned(guard) => { try fields.field("data", guard.get()) },
+                TryLockError.WouldBlock => { try fields.field("data", "<locked>") }
+            }
+        }
+        try fields.field("poisoned", self.is_poisoned())
+        try fields.finish()
+    }
+}
 
 extend<T> Mutex<T> {
     // Blocks until the lock is held. Relocking on the owning thread is
@@ -78,7 +131,12 @@ extend<T> Mutex<T> {
         guard
     }
     pub fn is_poisoned(): bool { self.poisoned.load(core.sync.atomic.Ordering.Acquire) }
-    pub mut fn get_mut(): mut T from self { unsafe { mut *self.value.get() } }
+    pub mut fn get_mut(): mut T from self throws PoisonError<mut T from self> {
+        let poisoned = self.poisoned.load(core.sync.atomic.Ordering.Acquire)
+        let value = unsafe { mut *self.value.get() }
+        if poisoned { throw PoisonError(value) }
+        value
+    }
     pub fn clear_poison(): Unit {
         self.poisoned.store(false, core.sync.atomic.Ordering.Release)
     }
@@ -96,4 +154,22 @@ extend<T> Mutex<T> {
 extend<T, region r> MutexGuard<T, region r> {
     pub fn get(): read T from self { unsafe { read *self.lock.value.get() } }
     pub mut fn get_mut(): mut T from self { unsafe { mut *self.lock.value.get() } }
+}
+extend<T, region r> MutexGuard<T, region r> implements Deref {
+    type Target = T
+    fn deref(): read T from self { self.get() }
+}
+extend<T, region r> MutexGuard<T, region r> implements DerefMut {
+    type Target = T
+    mut fn deref_mut(): mut T from self { self.get_mut() }
+}
+extend<T: fmt.Debug, region r> MutexGuard<T, region r> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try T.(fmt.Debug).fmt(self.get(), mut f)
+    }
+}
+extend<T: fmt.Display, region r> MutexGuard<T, region r> implements fmt.Display {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try T.(fmt.Display).fmt(self.get(), mut f)
+    }
 }

@@ -3,6 +3,8 @@ import package.core.panic.panic
 import package.core.default.Default
 import package.core.clone.Clone
 import package.core.cmp.{Eq, PartialEq}
+import package.core.convert.From
+import package.core.fmt.{Debug, Formatter, Error}
 
 extern "C" {
     unsafe fn mettle_rt_thread_yield(): Unit;
@@ -33,6 +35,9 @@ pub type OnceLock<T> {
         }
     }
 }
+// State 1 reserves initialization; Release state 2 publishes the initialized
+// value to Acquire readers. Only the exclusive owner can reset/drop storage.
+// The payload bounds also make cross-thread access safe for these marker impls.
 unsafe extend<T: Transferable> OnceLock<T> implements Transferable {}
 unsafe extend<T: Transferable + Shareable> OnceLock<T> implements Shareable {}
 
@@ -44,6 +49,23 @@ pub fn new<T>(): OnceLock<T> {
 }
 extend<T> OnceLock<T> implements Default {
     static fn default(): OnceLock<T> { new<T>() }
+}
+extend<T> OnceLock<T> implements From<T> {
+    static fn `from`(value: take T): OnceLock<T> {
+        let cell = new<T>()
+        let inserted = capture cell.set(value)
+        match take inserted {
+            success(_) => cell,
+            failure(_) => { core.intrinsics.abort() }
+        }
+    }
+}
+extend<T: Debug> OnceLock<T> implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        var fields = try f.debug_struct("OnceLock")
+        try fields.field("value", self.get())
+        try fields.finish()
+    }
 }
 extend<T: Clone> OnceLock<T> implements Clone {
     fn clone(): OnceLock<T> {
@@ -115,7 +137,7 @@ extend<T> OnceLock<T> {
         }
     }
 
-    pub fn get_or_init<F: fn(): T>(initializer: take F): read T from self {
+    pub fn get_or_init<F: take fn(): T>(initializer: take F): read T from self {
         while true {
             let state = self.state.load(core.sync.atomic.Ordering.Acquire)
             if state == 2u32 {

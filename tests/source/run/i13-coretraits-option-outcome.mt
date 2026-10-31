@@ -5,6 +5,54 @@ fn main(): i32 {
     if true.then_some(7).unwrap() != 7 { return 1 }
     if false.then_some(7).is_present() { return 2 }
 
+    var option_value = present(21i32)
+    var option_iter = option_value.iter()
+    if option_iter.len() != 1usize { return 21 }
+    match take option_iter.next_back() {
+        present(value) => { if *value != 21 { return 22 } },
+        none => { return 22 }
+    }
+    if option_iter.len() != 0usize { return 23 }
+    {
+        var option_iter_mut = option_value.iter_mut()
+        match take option_iter_mut.next() {
+            present(value) => { *value = 24 },
+            none => { return 24 }
+        }
+    }
+    if option_value.unwrap() != 24 { return 25 }
+    var inserted = present(26i32)
+    {
+        let target = inserted.insert(27i32)
+        *target = 28
+    }
+    if inserted.unwrap() != 28 { return 29 }
+    match take present(30i32).zip(present(31i32)) {
+        present((left, right)) => { if left != 30 || right != 31 { return 32 } },
+        none => { return 32 }
+    }
+    let missing_zip: i32? = none
+    if present(33i32).zip(missing_zip).is_present() { return 34 }
+
+    var outcome_value: (i32 throws i32) = success(35i32)
+    var outcome_iter = outcome_value.iter()
+    if outcome_iter.len() != 1usize { return 36 }
+    match take outcome_iter.next_back() {
+        present(value) => { if *value != 35 { return 37 } },
+        none => { return 37 }
+    }
+    if outcome_iter.len() != 0usize { return 38 }
+    {
+        var outcome_iter_mut = outcome_value.iter_mut()
+        match take outcome_iter_mut.next() {
+            present(value) => { *value = 39 },
+            none => { return 39 }
+        }
+    }
+    if outcome_value.unwrap() != 39 { return 40 }
+    let failed_iter_value: (i32 throws i32) = failure(41i32)
+    if failed_iter_value.iter().len() != 0usize { return 42 }
+
     match present(3i32).xor(none) {
         present(value) => { if value != 3 { return 3 } },
         none => { return 3 }
