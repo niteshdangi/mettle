@@ -63,10 +63,38 @@ int Checker::aggregate(Node &n, bool reachable) {
   }
   if (n.kind == Kind::Range) {
     if (!n.name.empty()) {
-      error("feature", n.span,
-            "open-ended range values are not implemented yet; a range with a "
-            "missing bound is only valid as an index");
-      return inference.fresh();
+      std::string target;
+      if (n.name == "from")
+        target = "core::iter::range_from";
+      else if (n.name == "to")
+        target = n.text == "..=" ? "core::iter::range_to_inclusive"
+                                  : "core::iter::range_to";
+      else if (n.name == "full")
+        target = "core::iter::range_full";
+      if (target.empty()) {
+        error("feature", n.span,
+              "open-ended range values require the core.iter range types");
+        return inference.fresh();
+      }
+      auto found = names.find(callableName(target, current->owner, n.span));
+      if (found == names.end()) {
+        error("feature", n.span,
+              "open-ended range values require the core.iter range types");
+        return inference.fresh();
+      }
+      auto callee = std::make_unique<Node>();
+      callee->kind = Kind::Name;
+      callee->span = n.span;
+      callee->text = std::move(target);
+      std::vector<NodeOwner> children;
+      children.push_back(std::move(callee));
+      for (auto &child : n.children)
+        children.push_back(std::move(child));
+      n.children = std::move(children);
+      n.kind = Kind::Call;
+      n.text.clear();
+      n.name.clear();
+      return call(n, reachable);
     }
     if (!loopRanges.contains(&n)) {
       // Outside a `for` source the range is the library `core.iter` value so

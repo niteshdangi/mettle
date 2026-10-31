@@ -3,6 +3,7 @@ import super.cmp.Ord
 import super.cmp.Ordering
 import super.cmp.PartialEq
 import super.cmp.PartialOrd
+import super.char
 import super.iter.Iterator
 
 // Unsized, validated UTF-8 view; the view metadata is the byte count. Only
@@ -142,10 +143,6 @@ extend<region r> Lines<region r> implements Iterator {
     }
 }
 
-fn is_ascii_space(byte: u8): bool {
-    byte == 0x20u8 || (byte >= 0x09u8 && byte <= 0x0du8)
-}
-
 pub type Bytes<region r> { bytes: read [u8] from r; position: usize }
 extend<region r> Bytes<region r> implements Iterator {
     type Item = u8
@@ -218,23 +215,46 @@ extend Text {
         }
         true
     }
-    // ASCII whitespace: space, \t, \n, \v (0x0b), \f (0x0c), \r.
     pub fn trim_start(): read Text from self {
         var i = 0usize
-        while i < self.bytes.len() && is_ascii_space(self.bytes[i]) { i += 1usize }
+        while i < self.bytes.len() {
+            let width = scalar_width(self.bytes, i)
+            if !scalar_at(self.bytes, i, width).is_whitespace() { break }
+            i += width
+        }
         match self.get(i, self.bytes.len()) { present(part) => part, none => read self }
     }
     pub fn trim_end(): read Text from self {
-        var j = self.bytes.len()
-        while j > 0usize && is_ascii_space(self.bytes[j - 1usize]) { j -= 1usize }
-        match self.get(0usize, j) { present(part) => part, none => read self }
+        var end = self.bytes.len()
+        while end > 0usize {
+            var start = end - 1usize
+            while start > 0usize && !self.is_char_boundary(start) {
+                start -= 1usize
+            }
+            let width = end - start
+            if !scalar_at(self.bytes, start, width).is_whitespace() { break }
+            end = start
+        }
+        match self.get(0usize, end) { present(part) => part, none => read self }
     }
     pub fn trim(): read Text from self {
         var i = 0usize
-        while i < self.bytes.len() && is_ascii_space(self.bytes[i]) { i += 1usize }
-        var j = self.bytes.len()
-        while j > i && is_ascii_space(self.bytes[j - 1usize]) { j -= 1usize }
-        match self.get(i, j) { present(part) => part, none => read self }
+        while i < self.bytes.len() {
+            let width = scalar_width(self.bytes, i)
+            if !scalar_at(self.bytes, i, width).is_whitespace() { break }
+            i += width
+        }
+        var end = self.bytes.len()
+        while end > i {
+            var start = end - 1usize
+            while start > i && !self.is_char_boundary(start) {
+                start -= 1usize
+            }
+            let width = end - start
+            if !scalar_at(self.bytes, start, width).is_whitespace() { break }
+            end = start
+        }
+        match self.get(i, end) { present(part) => part, none => read self }
     }
     // Splits at the first `separator` into the text before and after it.
     pub fn split_once(separator: read Text): (read Text from self, read Text from self)? {
