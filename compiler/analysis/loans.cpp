@@ -3,6 +3,7 @@
 #include "support/limits.h"
 #include <algorithm>
 #include <iterator>
+#include <map>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
@@ -111,7 +112,7 @@ void check(const ir::Function &function, const ir::Program &program,
       pendingOut[b] = std::move(pending);
     }
   } while (changed);
-  std::vector<std::vector<Origins>> availableAfter(count), activeBefore(count);
+  std::vector<std::vector<Origins>> activeBefore(count);
   std::vector<std::vector<Origins>> pendingBefore(count);
   for (std::size_t b = 0; b < count; ++b) {
     auto available = availableIn[b], active = activeIn[b],
@@ -120,7 +121,6 @@ void check(const ir::Function &function, const ir::Program &program,
       activeBefore[b].push_back(active);
       pendingBefore[b].push_back(pending);
       join(available, info.points[b][i].defines);
-      availableAfter[b].push_back(available);
       const auto &instruction = function.blocks[b].instructions[i];
       if (instruction.op == ir::Op::ReserveMut)
         for (auto id : info.points[b][i].defines) {
@@ -137,15 +137,45 @@ void check(const ir::Function &function, const ir::Program &program,
           }
     }
   }
-  auto before = [&](Origins live, std::size_t b, std::size_t i) {
-    Origins filtered;
-    std::set_intersection(
-        live.begin(), live.end(), availableAfter[b][i].begin(),
-        availableAfter[b][i].end(), std::inserter(filtered, filtered.end()));
+  std::vector<std::map<int, std::size_t>> definitionCounts(count);
+  for (std::size_t b = 0; b < count; ++b)
+    for (const auto &point : info.points[b])
+      for (auto id : point.defines)
+        ++definitionCounts[b][id];
+  // Rebuild point availability backward from the fixed-point block output,
+  // instead of copying a full loan set into a snapshot for every instruction.
+  auto rewindAvailability = [&](Origins &available,
+                                std::map<int, std::size_t> &remaining,
+                                std::size_t b, std::size_t i) {
+    for (auto id : info.points[b][i].defines) {
+      auto found = remaining.find(id);
+      if (found != remaining.end() && --found->second == 0 &&
+          !availableIn[b].contains(id))
+        available.erase(id);
+    }
+  };
+  auto retainAvailable = [](Origins &live, const Origins &available) {
+    auto loan = live.begin();
+    auto candidate = available.begin();
+    while (loan != live.end() && candidate != available.end()) {
+      if (*loan < *candidate)
+        loan = live.erase(loan);
+      else if (*candidate < *loan)
+        ++candidate;
+      else {
+        ++loan;
+        ++candidate;
+      }
+    }
+    live.erase(loan, live.end());
+  };
+  auto before = [&](Origins live, const Origins &available, std::size_t b,
+                    std::size_t i) {
+    retainAvailable(live, available);
     for (auto id : info.points[b][i].defines)
-      filtered.erase(id);
-    join(filtered, info.points[b][i].uses);
-    return ancestors(filtered, info.loans);
+      live.erase(id);
+    join(live, info.points[b][i].uses);
+    return ancestors(live, info.loans);
   };
   std::vector<Origins> inputs(count), outputs(count);
   do {
@@ -157,8 +187,11 @@ void check(const ir::Function &function, const ir::Program &program,
       for (auto next : successors[b])
         join(live, inputs[next]);
       outputs[b] = ancestors(live, info.loans);
+      Origins available = availableOut[b];
+      auto remaining = definitionCounts[b];
       for (std::size_t i = info.points[b].size(); i-- > 0;) {
-        live = before(std::move(live), b, i);
+        live = before(std::move(live), available, b, i);
+        rewindAvailability(available, remaining, b, i);
         if (live.size() > limits::activeLoans) {
           diagnostics.error("limit", function.blocks[b].instructions[i].span,
                             "active loan limit exceeded");
@@ -191,6 +224,8 @@ void check(const ir::Function &function, const ir::Program &program,
                             "declared input sources");
       }
     auto live = outputs[b];
+    Origins available = availableOut[b];
+    auto remaining = definitionCounts[b];
     for (std::size_t i = info.points[b].size(); i-- > 0;) {
       const auto &instruction = function.blocks[b].instructions[i];
       const auto &point = info.points[b][i];
@@ -209,9 +244,9 @@ void check(const ir::Function &function, const ir::Program &program,
                                   "every incoming path");
           }
       Origins current;
-      std::set_intersection(
-          live.begin(), live.end(), availableAfter[b][i].begin(),
-          availableAfter[b][i].end(), std::inserter(current, current.end()));
+      for (auto id : live)
+        if (available.contains(id))
+          current.insert(id);
       bool activation = instruction.op == ir::Op::Activate;
       bool reservation = instruction.op == ir::Op::ReserveMut;
       bool read = instruction.op == ir::Op::Load ||
@@ -369,7 +404,8 @@ void check(const ir::Function &function, const ir::Program &program,
             "ownership", instruction.span,
             std::string("access or storage lifetime conflicts with a live ") +
                 (exclusiveConflict ? "exclusive" : "read") + " loan");
-      live = before(std::move(live), b, i);
+      live = before(std::move(live), available, b, i);
+      rewindAvailability(available, remaining, b, i);
     }
   }
 }
