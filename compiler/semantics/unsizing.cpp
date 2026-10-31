@@ -8,8 +8,15 @@ bool Checker::ownerUnsizeCoercion(Node &expression, Type source, Type target,
   const auto &from = checked.types->product(source);
   const auto &to = checked.types->product(target);
   if (from.genericOrigin == Type::Unknown ||
-      from.genericOrigin != to.genericOrigin ||
-      checked.types->product(from.genericOrigin).name != "alloc::boxed::Box" ||
+      from.genericOrigin != to.genericOrigin)
+    return false;
+  const auto &owner = checked.types->product(from.genericOrigin);
+  bool supportsOwnerUnsize =
+      owner.name == "alloc::boxed::Box" ||
+      owner.name == "alloc::arc::Arc" ||
+      owner.name == "alloc::arc::Weak" ||
+      owner.name == "alloc::rc::Rc" || owner.name == "alloc::rc::Weak";
+  if (!supportsOwnerUnsize ||
       from.genericArguments.size() < 2 ||
       from.genericArguments.size() != to.genericArguments.size() ||
       from.fields.empty() || from.fields.size() != to.fields.size())

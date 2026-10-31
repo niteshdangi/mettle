@@ -471,14 +471,19 @@ bool function(const Function &f, const Program &program,
             program.types->isProduct(n.operands[0].type)) {
           const auto &source = program.types->product(n.operands[0].type);
           const auto &target = program.types->product(result);
-          auto isBox = [&](Type type) {
+          auto isOwner = [&](Type type) {
             if (!program.types->isProduct(type))
               return false;
             auto origin = program.types->product(type).genericOrigin;
-            return origin != Type::Unknown &&
-                   program.types->product(origin).name == "alloc::boxed::Box";
+            if (origin == Type::Unknown)
+              return false;
+            auto name = program.types->product(origin).name;
+            return name == "alloc::boxed::Box" ||
+                   name == "alloc::arc::Arc" ||
+                   name == "alloc::arc::Weak" ||
+                   name == "alloc::rc::Rc" || name == "alloc::rc::Weak";
           };
-          bool compatible = isBox(n.operands[0].type) && isBox(result) &&
+          bool compatible = isOwner(n.operands[0].type) && isOwner(result) &&
                             source.genericOrigin == target.genericOrigin &&
                             source.genericArguments.size() >= 2 &&
                             source.genericArguments.size() ==

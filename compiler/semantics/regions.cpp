@@ -28,11 +28,6 @@ Type Checker::annotation(const TypeSyntax &syntax, Span span,
     auto payload = annotation(*syntax.nested, span, owner);
     if (payload == Type::Unknown)
       return Type::Unknown;
-    if (!checked.types->isSized(payload) &&
-        syntax.ownerKind != OwnerKind::Heap) {
-      error("feature", span, "unsized owner payloads are not implemented yet");
-      return Type::Unknown;
-    }
     TypeSyntax nominal;
     switch (syntax.ownerKind) {
     case OwnerKind::Heap:

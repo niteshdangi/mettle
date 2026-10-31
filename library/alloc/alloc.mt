@@ -53,6 +53,31 @@ pub fn layout_array<T>(count: usize): Layout throws LayoutError {
     }
 }
 
+fn padded_size(size: usize, align: usize): usize throws LayoutError {
+    let remainder = size & (align - 1usize)
+    if remainder == 0usize { return size }
+    match size.checked_add(align - remainder) {
+        present(padded) => padded,
+        none => throw LayoutError(0usize, align)
+    }
+}
+
+// Places `suffix` after `prefix`, returning the combined allocation layout
+// and the aligned byte offset of the suffix.
+pub fn extend_layout(prefix: Layout, suffix: Layout): (Layout, usize) throws LayoutError {
+    let offset = try padded_size(prefix.size, suffix.align)
+    let end = match offset.checked_add(suffix.size) {
+        present(size) => size,
+        none => throw LayoutError(
+            0usize,
+            if prefix.align > suffix.align { prefix.align } else { suffix.align }
+        )
+    }
+    let alignment = if prefix.align > suffix.align { prefix.align } else { suffix.align }
+    let size = try padded_size(end, alignment)
+    (try layout_from_size_align(size, alignment), offset)
+}
+
 extend Layout {
     pub fn size(): usize { self.size }
     pub fn align(): usize { self.align }
