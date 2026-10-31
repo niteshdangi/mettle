@@ -13,6 +13,25 @@ type ArcHeader {
     allocation: Layout
 }
 
+// Raw handles are ownership tokens carrying both the payload and count header.
+// Reconstruct each token exactly once with the matching from_raw function.
+pub type RawArc<T: unsized, A: Allocator = Global> {
+    p: ptr<mut T>
+    h: ptr<mut ArcHeader>
+    a: A
+}
+pub type RawWeak<T: unsized, A: Allocator = Global> {
+    p: ptr<mut T>
+    h: ptr<mut ArcHeader>
+    a: A
+}
+extend<T: unsized, A: Allocator> RawArc<T, A> {
+    pub fn as_ptr(): ptr<mut T> { self.p }
+}
+extend<T: unsized, A: Allocator> RawWeak<T, A> {
+    pub fn as_ptr(): ptr<mut T> { self.p }
+}
+
 fn allocation_layout<T>(): (Layout, usize) throws AllocError {
     let result = capture extend_layout(layout_of<ArcHeader>(), layout_of<T>())
     match take result {
@@ -92,6 +111,44 @@ pub fn new_in<T, A: Allocator>(value: take T, allocator: take A): Arc<T, A> {
 pub fn new<T>(value: take T): Arc<T> { new_in(value, Global()) }
 pub fn try_new<T>(value: take T): Arc<T> throws AllocError { try try_new_in(value, Global()) }
 
+pub fn try_new_uninit_in<T, A: Allocator>(
+    allocator: take A
+): Arc<core.mem.MaybeUninit<T>, A> throws AllocError {
+    try_new_in(core.mem.MaybeUninit<T>.uninit(), allocator)
+}
+pub fn new_uninit_in<T, A: Allocator>(
+    allocator: take A
+): Arc<core.mem.MaybeUninit<T>, A> {
+    let result = capture try_new_uninit_in<T, A>(allocator)
+    match take result {
+        success(owner) => owner,
+        failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
+    }
+}
+pub fn try_new_uninit<T>(): Arc<core.mem.MaybeUninit<T>> throws AllocError {
+    try try_new_uninit_in<T, Global>(Global())
+}
+pub fn new_uninit<T>(): Arc<core.mem.MaybeUninit<T>> { new_uninit_in<T, Global>(Global()) }
+
+pub fn try_new_zeroed_in<T, A: Allocator>(
+    allocator: take A
+): Arc<core.mem.MaybeUninit<T>, A> throws AllocError {
+    try_new_in(core.mem.MaybeUninit<T>.zeroed(), allocator)
+}
+pub fn new_zeroed_in<T, A: Allocator>(
+    allocator: take A
+): Arc<core.mem.MaybeUninit<T>, A> {
+    let result = capture try_new_zeroed_in<T, A>(allocator)
+    match take result {
+        success(owner) => owner,
+        failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
+    }
+}
+pub fn try_new_zeroed<T>(): Arc<core.mem.MaybeUninit<T>> throws AllocError {
+    try try_new_zeroed_in<T, Global>(Global())
+}
+pub fn new_zeroed<T>(): Arc<core.mem.MaybeUninit<T>> { new_zeroed_in<T, Global>(Global()) }
+
 // Copies only from a validated Text view, preserving Text's UTF-8 invariant.
 pub fn try_copy_text_in<A: Allocator>(value: read Text, allocator: take A): Arc<Text, A> throws AllocError {
     var a = allocator
@@ -143,6 +200,52 @@ unsafe fn increment(count: ptr<mut core.sync.atomic.AtomicUsize>) {
     if previous > 0x7fffffffffffffffusize { core.intrinsics.abort() }
 }
 
+pub fn try_new_cyclic_in<T, A: Allocator + Clone, F: take fn(read Weak<T, A>): T>(
+    allocator: take A,
+    make: take F
+): Arc<T, A> throws AllocError {
+    var a = allocator
+    let weak_allocator = a.clone()
+    let (layout, offset) = try allocation_layout<T>()
+    let raw = try a.allocate(layout)
+    let h = raw.cast<ArcHeader>()
+    let p = unsafe { raw.add(offset) }.cast<T>()
+    // Keep upgrades disabled until the payload is initialized; the guard
+    // releases the implicit weak count if the constructor unwinds.
+    unsafe {
+        core.ptr.write(h, ArcHeader(
+            core.sync.atomic.AtomicUsize.new(0usize),
+            core.sync.atomic.AtomicUsize.new(2usize),
+            layout
+        ))
+    }
+    let weak_handle = Weak(p, h, weak_allocator)
+    let _guard = WeakRelease(h, core.ptr.from_mut(a))
+    let value = make(read weak_handle)
+    unsafe {
+        core.ptr.write(p, value)
+        (*h).strong.store(1usize, core.sync.atomic.Ordering.Release)
+    }
+    core.mem.forget(take _guard)
+    Arc(p, h, a)
+}
+pub fn new_cyclic_in<T, A: Allocator + Clone, F: take fn(read Weak<T, A>): T>(
+    allocator: take A,
+    make: take F
+): Arc<T, A> {
+    let result = capture try_new_cyclic_in<T, A, F>(allocator, make)
+    match take result {
+        success(owner) => owner,
+        failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
+    }
+}
+pub fn try_new_cyclic<T, F: take fn(read Weak<T>): T>(make: take F): Arc<T> throws AllocError {
+    try try_new_cyclic_in<T, Global, F>(Global(), make)
+}
+pub fn new_cyclic<T, F: take fn(read Weak<T>): T>(make: take F): Arc<T> {
+    new_cyclic_in<T, Global, F>(Global(), make)
+}
+
 extend<T: unsized, A: Allocator + Clone> Arc<T, A> {
     // Another strong owner of the same payload; the payload is not cloned.
     pub fn retain(): Arc<T, A> {
@@ -158,6 +261,13 @@ extend<T: unsized, A: Allocator + Clone> Arc<T, A> {
 }
 extend<T: unsized, A: Allocator + Clone> Arc<T, A> implements Clone {
     fn clone(): Arc<T, A> { self.retain() }
+}
+
+extend<T, A: Allocator> Arc<core.mem.MaybeUninit<T>, A> {
+    // Safety: the caller initialized the payload before taking ownership as T.
+    pub take unsafe fn assume_init(): Arc<T, A> {
+        unsafe { core.mem.transmute<Arc<T, A>>(take self) }
+    }
 }
 
 extend<T: unsized, A: Allocator> Arc<T, A> {
@@ -211,6 +321,39 @@ extend<T, A: Allocator> Arc<T, A> {
             failure(rc) => none
         }
     }
+    pub take fn unwrap_or_clone(): T where T: Clone {
+        let result = capture self.try_unwrap()
+        match take result {
+            success(value) => value,
+            failure(owner) => owner.get().clone()
+        }
+    }
+}
+
+extend<T: unsized, A: Allocator> Arc<T, A> {
+    pub take fn into_raw(): RawArc<T, A> {
+        unsafe {
+            let p = self.p
+            let h = self.h
+            let a = core.ptr.`read`(core.ptr.from_ref(self.a))
+            core.mem.forget(take self)
+            RawArc(p, h, a)
+        }
+    }
+}
+pub unsafe fn from_raw<T: unsized, A: Allocator>(raw: take RawArc<T, A>): Arc<T, A> {
+    Arc(raw.p, raw.h, raw.a)
+}
+// Creates a second raw ownership token; consume both tokens exactly once.
+pub unsafe fn increment_strong_count<T: unsized, A: Allocator + Clone>(
+    raw: read RawArc<T, A>
+): RawArc<T, A> {
+    let allocator = raw.a.clone()
+    unsafe { increment(core.ptr.from_mut((*raw.h).strong)) }
+    RawArc(raw.p, raw.h, allocator)
+}
+pub unsafe fn decrement_strong_count<T: unsized, A: Allocator>(raw: take RawArc<T, A>): Unit {
+    let _owner = unsafe { from_raw(raw) }
 }
 
 extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
@@ -237,6 +380,18 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
         unsafe { increment(core.ptr.from_mut((*self.h).wk)) }
         Weak(self.p, self.h, allocator)
     }
+    pub take fn into_raw(): RawWeak<T, A> {
+        unsafe {
+            let p = self.p
+            let h = self.h
+            let a = core.ptr.`read`(core.ptr.from_ref(self.a))
+            core.mem.forget(take self)
+            RawWeak(p, h, a)
+        }
+    }
+}
+pub unsafe fn weak_from_raw<T: unsized, A: Allocator>(raw: take RawWeak<T, A>): Weak<T, A> {
+    Weak(raw.p, raw.h, raw.a)
 }
 extend<T: unsized, A: Allocator> Arc<T, A> implements Deref {
     type Target = T
@@ -257,4 +412,17 @@ extend<T: unsized, A: Allocator> Weak<T, A> {
         }
     }
     pub fn ptr_eq(other: read Weak<T, A>): bool { self.h == other.h }
+}
+
+extend<T: Clone, A: Allocator + Clone> Arc<T, A> {
+    pub mut fn make_mut(): mut T from self {
+        let unique = unsafe {
+            (*self.h).wk.load(core.sync.atomic.Ordering.Acquire) == 1usize &&
+            (*self.h).strong.load(core.sync.atomic.Ordering.Acquire) == 1usize
+        }
+        if unique { return unsafe { mut *self.p } }
+        let replacement = new_in(self.get().clone(), self.a.clone())
+        let _old = unsafe { core.ptr.replace(core.ptr.from_mut(self), replacement) }
+        unsafe { mut *self.p }
+    }
 }

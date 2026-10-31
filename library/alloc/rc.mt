@@ -13,6 +13,25 @@ type RcHeader {
     allocation: Layout
 }
 
+// Raw handles are ownership tokens carrying both the payload and count header.
+// Reconstruct each token exactly once with the matching from_raw function.
+pub type RawRc<T: unsized, A: Allocator = Global> {
+    p: ptr<mut T>
+    h: ptr<mut RcHeader>
+    a: A
+}
+pub type RawWeak<T: unsized, A: Allocator = Global> {
+    p: ptr<mut T>
+    h: ptr<mut RcHeader>
+    a: A
+}
+extend<T: unsized, A: Allocator> RawRc<T, A> {
+    pub fn as_ptr(): ptr<mut T> { self.p }
+}
+extend<T: unsized, A: Allocator> RawWeak<T, A> {
+    pub fn as_ptr(): ptr<mut T> { self.p }
+}
+
 fn allocation_layout<T>(): (Layout, usize) throws AllocError {
     let result = capture extend_layout(layout_of<RcHeader>(), layout_of<T>())
     match take result {
@@ -85,6 +104,40 @@ pub fn new_in<T, A: Allocator>(value: take T, allocator: take A): Rc<T, A> {
 pub fn new<T>(value: take T): Rc<T> { new_in(value, Global()) }
 pub fn try_new<T>(value: take T): Rc<T> throws AllocError { try try_new_in(value, Global()) }
 
+pub fn try_new_uninit_in<T, A: Allocator>(
+    allocator: take A
+): Rc<core.mem.MaybeUninit<T>, A> throws AllocError {
+    try_new_in(core.mem.MaybeUninit<T>.uninit(), allocator)
+}
+pub fn new_uninit_in<T, A: Allocator>(allocator: take A): Rc<core.mem.MaybeUninit<T>, A> {
+    let result = capture try_new_uninit_in<T, A>(allocator)
+    match take result {
+        success(owner) => owner,
+        failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
+    }
+}
+pub fn try_new_uninit<T>(): Rc<core.mem.MaybeUninit<T>> throws AllocError {
+    try try_new_uninit_in<T, Global>(Global())
+}
+pub fn new_uninit<T>(): Rc<core.mem.MaybeUninit<T>> { new_uninit_in<T, Global>(Global()) }
+
+pub fn try_new_zeroed_in<T, A: Allocator>(
+    allocator: take A
+): Rc<core.mem.MaybeUninit<T>, A> throws AllocError {
+    try_new_in(core.mem.MaybeUninit<T>.zeroed(), allocator)
+}
+pub fn new_zeroed_in<T, A: Allocator>(allocator: take A): Rc<core.mem.MaybeUninit<T>, A> {
+    let result = capture try_new_zeroed_in<T, A>(allocator)
+    match take result {
+        success(owner) => owner,
+        failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
+    }
+}
+pub fn try_new_zeroed<T>(): Rc<core.mem.MaybeUninit<T>> throws AllocError {
+    try try_new_zeroed_in<T, Global>(Global())
+}
+pub fn new_zeroed<T>(): Rc<core.mem.MaybeUninit<T>> { new_zeroed_in<T, Global>(Global()) }
+
 // Copies only from a validated Text view, preserving Text's UTF-8 invariant.
 pub fn try_copy_text_in<A: Allocator>(value: read Text, allocator: take A): Rc<Text, A> throws AllocError {
     var a = allocator
@@ -125,19 +178,68 @@ fn bump(count: usize): usize {
     count + 1usize
 }
 
+pub fn try_new_cyclic_in<T, A: Allocator + Clone, F: take fn(read Weak<T, A>): T>(
+    allocator: take A,
+    make: take F
+): Rc<T, A> throws AllocError {
+    var a = allocator
+    let weak_allocator = a.clone()
+    let (layout, offset) = try allocation_layout<T>()
+    let raw = try a.allocate(layout)
+    let h = raw.cast<RcHeader>()
+    let p = unsafe { raw.add(offset) }.cast<T>()
+    // Keep upgrades disabled until the payload is initialized; the guard
+    // releases the implicit weak count if the constructor unwinds.
+    unsafe { core.ptr.write(h, RcHeader(0usize, 2usize, layout)) }
+    let weak_handle = Weak(p, h, weak_allocator)
+    let _guard = WeakRelease(h, core.ptr.from_mut(a))
+    let value = make(read weak_handle)
+    unsafe {
+        core.ptr.write(p, value)
+        (*h).strong = 1usize
+    }
+    core.mem.forget(take _guard)
+    Rc(p, h, a)
+}
+pub fn new_cyclic_in<T, A: Allocator + Clone, F: take fn(read Weak<T, A>): T>(
+    allocator: take A,
+    make: take F
+): Rc<T, A> {
+    let result = capture try_new_cyclic_in<T, A, F>(allocator, make)
+    match take result {
+        success(owner) => owner,
+        failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
+    }
+}
+pub fn try_new_cyclic<T, F: take fn(read Weak<T>): T>(make: take F): Rc<T> throws AllocError {
+    try try_new_cyclic_in<T, Global, F>(Global(), make)
+}
+pub fn new_cyclic<T, F: take fn(read Weak<T>): T>(make: take F): Rc<T> {
+    new_cyclic_in<T, Global, F>(Global(), make)
+}
+
 extend<T: unsized, A: Allocator + Clone> Rc<T, A> {
     // Another strong owner of the same payload; the payload is not cloned.
     pub fn retain(): Rc<T, A> {
+        let allocator = self.a.clone()
         unsafe { (*self.h).strong = bump((*self.h).strong) }
-        Rc(self.p, self.h, self.a.clone())
+        Rc(self.p, self.h, allocator)
     }
     pub fn downgrade(): Weak<T, A> {
+        let allocator = self.a.clone()
         unsafe { (*self.h).wk = bump((*self.h).wk) }
-        Weak(self.p, self.h, self.a.clone())
+        Weak(self.p, self.h, allocator)
     }
 }
 extend<T: unsized, A: Allocator + Clone> Rc<T, A> implements Clone {
     fn clone(): Rc<T, A> { self.retain() }
+}
+
+extend<T, A: Allocator> Rc<core.mem.MaybeUninit<T>, A> {
+    // Safety: the caller initialized the payload before taking ownership as T.
+    pub take unsafe fn assume_init(): Rc<T, A> {
+        unsafe { core.mem.transmute<Rc<T, A>>(take self) }
+    }
 }
 
 extend<T: unsized, A: Allocator> Rc<T, A> {
@@ -177,6 +279,39 @@ extend<T, A: Allocator> Rc<T, A> {
             failure(rc) => none
         }
     }
+    pub take fn unwrap_or_clone(): T where T: Clone {
+        let result = capture self.try_unwrap()
+        match take result {
+            success(value) => value,
+            failure(owner) => owner.get().clone()
+        }
+    }
+}
+
+extend<T: unsized, A: Allocator> Rc<T, A> {
+    pub take fn into_raw(): RawRc<T, A> {
+        unsafe {
+            let p = self.p
+            let h = self.h
+            let a = core.ptr.`read`(core.ptr.from_ref(self.a))
+            core.mem.forget(take self)
+            RawRc(p, h, a)
+        }
+    }
+}
+pub unsafe fn from_raw<T: unsized, A: Allocator>(raw: take RawRc<T, A>): Rc<T, A> {
+    Rc(raw.p, raw.h, raw.a)
+}
+// Creates a second raw ownership token; consume both tokens exactly once.
+pub unsafe fn increment_strong_count<T: unsized, A: Allocator + Clone>(
+    raw: read RawRc<T, A>
+): RawRc<T, A> {
+    let allocator = raw.a.clone()
+    unsafe { (*raw.h).strong = bump((*raw.h).strong) }
+    RawRc(raw.p, raw.h, allocator)
+}
+pub unsafe fn decrement_strong_count<T: unsized, A: Allocator>(raw: take RawRc<T, A>): Unit {
+    let _owner = unsafe { from_raw(raw) }
 }
 
 extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
@@ -189,9 +324,22 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
         }
     }
     pub fn retain(): Weak<T, A> {
+        let allocator = self.a.clone()
         unsafe { (*self.h).wk = bump((*self.h).wk) }
-        Weak(self.p, self.h, self.a.clone())
+        Weak(self.p, self.h, allocator)
     }
+    pub take fn into_raw(): RawWeak<T, A> {
+        unsafe {
+            let p = self.p
+            let h = self.h
+            let a = core.ptr.`read`(core.ptr.from_ref(self.a))
+            core.mem.forget(take self)
+            RawWeak(p, h, a)
+        }
+    }
+}
+pub unsafe fn weak_from_raw<T: unsized, A: Allocator>(raw: take RawWeak<T, A>): Weak<T, A> {
+    Weak(raw.p, raw.h, raw.a)
 }
 extend<T: unsized, A: Allocator> Weak<T, A> {
     pub fn strong_count(): usize { unsafe { (*self.h).strong } }
@@ -205,6 +353,15 @@ extend<T: unsized, A: Allocator> Weak<T, A> {
         }
     }
     pub fn ptr_eq(other: read Weak<T, A>): bool { self.h == other.h }
+}
+
+extend<T: Clone, A: Allocator + Clone> Rc<T, A> {
+    pub mut fn make_mut(): mut T from self {
+        if self.is_unique() { return unsafe { mut *self.p } }
+        let replacement = new_in(self.get().clone(), self.a.clone())
+        let _old = unsafe { core.ptr.replace(core.ptr.from_mut(self), replacement) }
+        unsafe { mut *self.p }
+    }
 }
 
 

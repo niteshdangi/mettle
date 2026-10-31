@@ -139,6 +139,15 @@ unsafe fn predecessor<K, V>(node: ptr<mut Node<K, V>>, idx: usize): (ptr<mut Nod
     }
     (n, i - 1usize)
 }
+unsafe fn position_at_rank<K, V>(root: ptr<mut Node<K, V>>, rank: usize): (ptr<mut Node<K, V>>, usize) {
+    var at = first_pos(root)
+    var i = 0usize
+    while i < rank {
+        at = successor(at.0, at.1)
+        i += 1usize
+    }
+    at
+}
 
 // Index of the first entry in `n` not below `key` and whether it equals `key`.
 unsafe fn search_node<K, V, Q: Ord + unsized>(n: ptr<mut Node<K, V>>, key: read Q): (usize, bool) where K: KeyView<Q> {
@@ -407,6 +416,16 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
             none => none
         }
     }
+    pub fn get_key_value<Q: Ord + unsized>(key: read Q): (read K from self, read V from self)? where K: KeyView<Q> {
+        let hit = unsafe { find_slot(self.root, key) }
+        match hit {
+            present(at) => {
+                let entry = unsafe { node_entry(at.0, at.1) }
+                present((read (*entry).key, read (*entry).value))
+            },
+            none => none
+        }
+    }
     pub mut fn get_mut<Q: Ord + unsized>(key: read Q): (mut V from self)? where K: KeyView<Q> {
         let hit = unsafe { find_slot(self.root, key) }
         match hit {
@@ -423,6 +442,28 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
         if self.root == null_node<K, V>() { return none }
         let at = unsafe { last_pos(self.root) }
         present(unsafe { read (*node_entry(at.0, at.1)).key })
+    }
+    pub fn first_key_value(): (read K from self, read V from self)? {
+        if self.root == null_node<K, V>() { return none }
+        let at = unsafe { first_pos(self.root) }
+        let entry = unsafe { node_entry(at.0, at.1) }
+        present((read (*entry).key, read (*entry).value))
+    }
+    pub fn last_key_value(): (read K from self, read V from self)? {
+        if self.root == null_node<K, V>() { return none }
+        let at = unsafe { last_pos(self.root) }
+        let entry = unsafe { node_entry(at.0, at.1) }
+        present((read (*entry).key, read (*entry).value))
+    }
+    pub mut fn first_entry(): OccupiedEntry<region self, K, V, A>? {
+        if self.root == null_node<K, V>() { return none }
+        let at = unsafe { first_pos(self.root) }
+        present(OccupiedEntry(mut self, at.0, at.1))
+    }
+    pub mut fn last_entry(): OccupiedEntry<region self, K, V, A>? {
+        if self.root == null_node<K, V>() { return none }
+        let at = unsafe { last_pos(self.root) }
+        present(OccupiedEntry(mut self, at.0, at.1))
     }
     pub mut fn pop_first(): (K, V)? {
         if self.root == null_node<K, V>() { return none }
@@ -456,11 +497,30 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
         }
         RangeMut(mut self, start.0, start.1, stop.0, stop.1)
     }
+    pub mut fn extract_if<F: fn(read K, mut V): bool>(
+        predicate: take F
+    ): MapExtractIf<region self, K, V, A, F> {
+        MapExtractIf(mut self, predicate, 0usize)
+    }
+    pub mut fn split_off(key: read K): SortedMap<K, V, A> where A: Clone {
+        var upper = new_in<K, V, A>(self.a.clone())
+        while true {
+            match self.last_key() {
+                present(last) => { if last.cmp(key).is_lt() { break } },
+                none => { break }
+            }
+            match take self.pop_last() {
+                present(entry) => { let _old = upper.insert(entry.0, entry.1) },
+                none => { break }
+            }
+        }
+        upper
+    }
 
     // Inserts or replaces; a replaced value is returned (the stored key is
     // kept and the new key dropped). Full nodes are split on the way down, so
     // on allocation failure the tree stays valid and the pair is dropped.
-    mut fn try_insert_with_slot(key: take K, value: take V): (V?, mut V from self) throws AllocError {
+    mut fn try_insert_with_slot(key: take K, value: take V): (V?, ptr<mut Node<K, V>>, usize) throws AllocError {
         let a = core.ptr.from_mut(self.a)
         unsafe {
             if self.root == null_node<K, V>() {
@@ -487,7 +547,7 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
                 if found.1 {
                     let slot = core.ptr.from_mut((*node_entry(node, pos)).value)
                     let old = core.ptr.replace(slot, value)
-                    return (present(old), mut (*node_entry(node, pos)).value)
+                    return (present(old), node, pos)
                 }
                 if (*node).leaf {
                     let len = (*node).len
@@ -495,8 +555,7 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
                     core.ptr.write(node_entry(node, pos), Bucket(key, value))
                     (*node).len = len + 1usize
                     self.len += 1usize
-                    let stored = mut (*node_entry(node, pos)).value
-                    return (none, stored)
+                    return (none, node, pos)
                 }
                 var next = node_child(node, pos)
                 if (*next).len == max_entries() {
@@ -507,7 +566,7 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
                     if order.is_eq() {
                         let slot = core.ptr.from_mut((*middle).value)
                         let old = core.ptr.replace(slot, value)
-                        return (present(old), mut (*middle).value)
+                        return (present(old), node, pos)
                     }
                     if order.is_gt() { pos += 1usize }
                     next = node_child(node, pos)
@@ -529,11 +588,17 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
         }
     }
     pub mut fn remove<Q: Ord + unsized>(key: read Q): V? where K: KeyView<Q> {
+        match take self.remove_entry(key) {
+            present(entry) => present(entry.1),
+            none => none
+        }
+    }
+    pub mut fn remove_entry<Q: Ord + unsized>(key: read Q): (K, V)? where K: KeyView<Q> {
         let hit = unsafe { find_slot(self.root, key) }
         match hit {
             present(at) => {
                 let removed = unsafe { self.take_entry(at.0, at.1) }
-                present(removed.value)
+                present((removed.key, removed.value))
             },
             none => none
         }
@@ -544,7 +609,6 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
 // Occupied node positions remain stable while that loan prevents map mutation.
 pub type OccupiedEntry<region r, K, V, A: Allocator = Global> {
     map: mut SortedMap<K, V, A> from r
-    key: K
     node: ptr<mut Node<K, V>>
     index: usize
 }
@@ -560,7 +624,7 @@ pub enum Entry<region r, K, V, A: Allocator = Global> {
 extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
     pub mut fn entry(key: take K): Entry<region self, K, V, A> {
         match unsafe { find_slot(self.root, key) } {
-            present(at) => Entry.Occupied(OccupiedEntry(mut self, key, at.0, at.1)),
+            present(at) => Entry.Occupied(OccupiedEntry(mut self, at.0, at.1)),
             none => Entry.Vacant(VacantEntry(mut self, key))
         }
     }
@@ -586,10 +650,7 @@ extend<region r, K: Ord, V, A: Allocator> OccupiedEntry<region r, K, V, A> {
         unsafe { mut (*node_entry(self.node, self.index)).value }
     }
     pub take fn remove(): V {
-        match take self.map.remove(read self.key) {
-            present(value) => value,
-            none => package.core.panic.unreachable()
-        }
+        unsafe { self.map.take_entry(self.node, self.index).value }
     }
 }
 
@@ -598,7 +659,7 @@ extend<region r, K: Ord, V, A: Allocator> VacantEntry<region r, K, V, A> {
     pub take fn insert(value: take V): mut V from r {
         let outcome = capture self.map.try_insert_with_slot(self.key, value)
         match take outcome {
-            success(result) => result.1,
+            success(result) => unsafe { mut (*node_entry(result.1, result.2)).value },
             failure(_) => handle_alloc_error(layout_of<Node<K, V>>())
         }
     }
@@ -615,6 +676,27 @@ extend<region r, K: Ord, V, A: Allocator> Entry<region r, K, V, A> {
         match take self {
             Entry.Occupied(entry) => entry.into_mut(),
             Entry.Vacant(entry) => entry.insert(make())
+        }
+    }
+    pub take fn or_insert_with_key<F: take fn(read K): V>(make: take F): mut V from r {
+        match take self {
+            Entry.Occupied(entry) => entry.into_mut(),
+            Entry.Vacant(entry) => entry.insert(make(read entry.key))
+        }
+    }
+    pub take fn insert_entry(value: take V): OccupiedEntry<region r, K, V, A> {
+        match take self {
+            Entry.Occupied(entry) => {
+                let _old = entry.insert(value)
+                entry
+            },
+            Entry.Vacant(entry) => {
+                let outcome = capture entry.map.try_insert_with_slot(entry.key, value)
+                match take outcome {
+                    success(result) => OccupiedEntry(mut entry.map, result.1, result.2),
+                    failure(_) => handle_alloc_error(layout_of<Node<K, V>>())
+                }
+            }
         }
     }
     pub take fn and_modify<F: take fn(mut V): Unit>(modify: take F): Entry<region r, K, V, A> {
@@ -664,7 +746,103 @@ extend<K: Ord, A: Allocator> SortedSet<K, A> {
             none => none
         }
     }
+    pub mut fn split_off(key: read K): SortedSet<K, A> where A: Clone {
+        SortedSet(self.map.split_off(key))
+    }
+    pub mut fn extract_if<F: fn(read K): bool>(
+        predicate: take F
+    ): SetExtractIf<region self, K, A, F> {
+        SetExtractIf(mut self, predicate, 0usize)
+    }
     pub fn range(from: read K, to: read K): KeyRange<region self, K, Unit, A> { self.map.range(from, to) }
+}
+
+pub type SortedSetAlgebra<region r, K, A: Allocator> {
+    left: read SortedSet<K, A> from r
+    right: read SortedSet<K, A> from r
+    left_iter: EntryIter<region r, K, Unit, A>
+    right_iter: EntryIter<region r, K, Unit, A>
+    mode: u8
+    side: u8
+}
+extend<region r, K: Ord, A: Allocator> SortedSetAlgebra<region r, K, A> implements Iterator {
+    type Item = read K from r
+    mut fn next(): (read K from r)? {
+        while self.side < 2u8 {
+            if self.mode == 1u8 && self.side == 1u8 { return none }
+            if self.side == 0u8 {
+                match self.left_iter.next() {
+                    present(entry) => {
+                        let in_right = self.right.contains(entry.key)
+                        let include = match self.mode {
+                            0u8 => true,
+                            1u8 => in_right,
+                            2u8 => !in_right,
+                            _ => !in_right
+                        }
+                        if include { return present(read entry.key) }
+                    },
+                    none => { self.side = 1u8 }
+                }
+            } else {
+                match self.right_iter.next() {
+                    present(entry) => {
+                        let in_left = self.left.contains(entry.key)
+                        if (self.mode == 0u8 || self.mode == 3u8) && !in_left {
+                            return present(read entry.key)
+                        }
+                    },
+                    none => { return none }
+                }
+            }
+        }
+        none
+    }
+}
+
+extend<K: Ord, A: Allocator> SortedSet<K, A> {
+    pub fn `union`(other: read SortedSet<K, A> from self): SortedSetAlgebra<region self, K, A> {
+        SortedSetAlgebra(read self, other, self.iter(), other.iter(), 0u8, 0u8)
+    }
+    pub fn intersection(other: read SortedSet<K, A> from self): SortedSetAlgebra<region self, K, A> {
+        SortedSetAlgebra(read self, other, self.iter(), other.iter(), 1u8, 0u8)
+    }
+    pub fn difference(other: read SortedSet<K, A> from self): SortedSetAlgebra<region self, K, A> {
+        SortedSetAlgebra(read self, other, self.iter(), other.iter(), 2u8, 0u8)
+    }
+    pub fn symmetric_difference(other: read SortedSet<K, A> from self): SortedSetAlgebra<region self, K, A> {
+        SortedSetAlgebra(read self, other, self.iter(), other.iter(), 3u8, 0u8)
+    }
+    pub fn is_subset(other: read SortedSet<K, A>): bool {
+        var iter = self.iter()
+        while true {
+            match iter.next() {
+                present(entry) => { if !other.contains(entry.key) { return false } },
+                none => { return true }
+            }
+        }
+        true
+    }
+    pub fn is_superset(other: read SortedSet<K, A>): bool {
+        var iter = other.iter()
+        while true {
+            match iter.next() {
+                present(entry) => { if !self.contains(entry.key) { return false } },
+                none => { return true }
+            }
+        }
+        true
+    }
+    pub fn is_disjoint(other: read SortedSet<K, A>): bool {
+        var iter = self.iter()
+        while true {
+            match iter.next() {
+                present(entry) => { if other.contains(entry.key) { return false } },
+                none => { return true }
+            }
+        }
+        true
+    }
 }
 
 // Borrowed in-order iteration over the entries. `front` and `back` are the
@@ -747,6 +925,52 @@ extend<region r, K, V, A: Allocator> KeyRange<region r, K, V, A> implements Iter
     }
 }
 
+pub type MapExtractIf<region r, K, V, A: Allocator, F> {
+    map: mut SortedMap<K, V, A> from r
+    predicate: F
+    index: usize
+}
+// Recompute the node position from rank after each extraction because
+// rebalancing can invalidate every cached node position.
+extend<region r, K: Ord, V, A: Allocator, F: fn(read K, mut V): bool>
+    MapExtractIf<region r, K, V, A, F> implements Iterator {
+    type Item = (K, V)
+    mut fn next(): (K, V)? {
+        while self.index < self.map.len {
+            let at = unsafe { position_at_rank(self.map.root, self.index) }
+            let entry = unsafe { node_entry(at.0, at.1) }
+            if self.predicate(unsafe { read (*entry).key }, unsafe { mut (*entry).value }) {
+                let removed = unsafe { self.map.take_entry(at.0, at.1) }
+                return present((removed.key, removed.value))
+            }
+            self.index += 1usize
+        }
+        none
+    }
+}
+
+pub type SetExtractIf<region r, K, A: Allocator, F> {
+    set: mut SortedSet<K, A> from r
+    predicate: F
+    index: usize
+}
+extend<region r, K: Ord, A: Allocator, F: fn(read K): bool>
+    SetExtractIf<region r, K, A, F> implements Iterator {
+    type Item = K
+    mut fn next(): K? {
+        while self.index < self.set.map.len {
+            let at = unsafe { position_at_rank(self.set.map.root, self.index) }
+            let entry = unsafe { node_entry(at.0, at.1) }
+            if self.predicate(unsafe { read (*entry).key }) {
+                let removed = unsafe { self.set.map.take_entry(at.0, at.1) }
+                return present(removed.key)
+            }
+            self.index += 1usize
+        }
+        none
+    }
+}
+
 // Iteration is in ascending key order.
 extend<K, V, A: Allocator> SortedMap<K, V, A> implements Iterable {
     type Item = Bucket<K, V>
@@ -820,6 +1044,30 @@ extend<K, V, A: Allocator> MapIntoIter<K, V, A> implements Iterator {
             self.idx = after.1
         }
         present(unsafe { core.ptr.`read`(node_entry(n, i)) })
+    }
+}
+extend<K, V, A: Allocator> SortedMap<K, V, A> {
+    pub take fn into_keys(): IntoKeys<K, V, A> { IntoKeys(self.into_iter()) }
+    pub take fn into_values(): IntoValues<K, V, A> { IntoValues(self.into_iter()) }
+}
+pub type IntoKeys<K, V, A: Allocator> { inner: MapIntoIter<K, V, A> }
+extend<K, V, A: Allocator> IntoKeys<K, V, A> implements Iterator {
+    type Item = K
+    mut fn next(): K? {
+        match take self.inner.next() {
+            present(entry) => present(entry.key),
+            none => none
+        }
+    }
+}
+pub type IntoValues<K, V, A: Allocator> { inner: MapIntoIter<K, V, A> }
+extend<K, V, A: Allocator> IntoValues<K, V, A> implements Iterator {
+    type Item = V
+    mut fn next(): V? {
+        match take self.inner.next() {
+            present(entry) => present(entry.value),
+            none => none
+        }
     }
 }
 extend<K, V, A: Allocator> MapIntoIter<K, V, A> {
