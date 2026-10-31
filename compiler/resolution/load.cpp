@@ -50,6 +50,13 @@ public:
         break;
       mountPackage(package);
     }
+    if (diagnostics.empty()) {
+      for (const auto &package : library.packages)
+        for (const auto &[name, module] : package.dependencies)
+          packageImport(package.module, name, module);
+      for (const auto &[name, module] : library.packageDependencies)
+        packageImport({}, name, module);
+    }
     if (diagnostics.empty() && !library.directory.empty())
       mountLibraries();
     if (!diagnostics.empty())
@@ -302,22 +309,43 @@ private:
                               package.source + "'");
       return;
     }
+    auto root = package.module.empty() ? package.name : package.module;
     for (const auto &declaration : result.modules)
-      if (declaration.item.scope.empty() && declaration.name == package.name) {
+      if (declaration.item.scope.empty() && declaration.name == root) {
         diagnostics.error("name", declaration.span,
-                          "module '" + package.name +
-                              "' collides with the dependency package of the "
-                              "same name");
+                          "module '" + root +
+                              "' collides with a dependency package instance");
         return;
       }
     Module::ModuleDeclaration declaration;
-    declaration.name = package.name;
+    declaration.name = root;
     declaration.item.visibility.publicItem = true;
     result.modules.push_back(std::move(declaration));
     auto directory = fs::path(source->path).parent_path();
     currentPackage = &package;
-    read(std::move(*source), {package.name}, std::move(directory), 1);
+    read(std::move(*source), {root}, std::move(directory), 1);
     currentPackage = nullptr;
+  }
+
+  void packageImport(const std::string &scope,
+                     const std::string &name,
+                     const std::string &module) {
+    for (const auto &declaration : result.modules)
+      if (declaration.item.scope ==
+              (scope.empty() ? std::vector<std::string>{}
+                             : std::vector<std::string>{scope}) &&
+          declaration.name == name) {
+        diagnostics.error("name", declaration.span,
+                          "module '" + name +
+                              "' collides with a dependency package alias");
+        return;
+      }
+    Module::Import imported;
+    imported.path = {module};
+    imported.alias = name;
+    imported.item.scope = scope.empty() ? std::vector<std::string>{}
+                                        : std::vector<std::string>{scope};
+    result.imports.push_back(std::move(imported));
   }
 
   void mountLibraries() {
@@ -391,7 +419,10 @@ private:
   const expansion::Configuration &configuration() {
     if (!currentPackage && currentRoot.empty())
       return library.configuration;
-    auto key = currentPackage ? currentPackage->name : std::string{};
+    auto key = currentPackage
+                   ? (currentPackage->module.empty() ? currentPackage->name
+                                                     : currentPackage->module)
+                   : std::string{};
     auto found = configurations.find(key);
     if (found != configurations.end())
       return found->second;

@@ -6,17 +6,17 @@
 namespace mettle::packages {
 namespace {
 struct Edge {
-  std::shared_ptr<const Manifest> from;
+  std::string from;
+  std::shared_ptr<const Manifest> manifest;
   const DependencySpec *spec = nullptr;
   std::vector<std::string> features;
-  bool defaults = true;
-  // Adds features to an already requested dependency without a requirement.
-  bool featureOnly = false;
+  bool defaults = true, featureOnly = false, host = false;
 };
 
 struct Chosen {
   Candidate candidate;
-  std::set<std::string> features, dependencies;
+  std::map<std::pair<std::string, bool>, std::string> dependencies;
+  std::set<std::string> features;
   bool defaults = false, expanded = false;
 };
 
@@ -35,6 +35,14 @@ std::string describe(const Manifest &manifest) {
   return manifest.name + ' ' + toString(manifest.version);
 }
 
+bool matches(const Candidate &candidate, const DependencySpec &spec) {
+  if (candidate.manifest->name != spec.name ||
+      (spec.requirement &&
+       !spec.requirement->matches(candidate.manifest->version)))
+    return false;
+  return true;
+}
+
 class Solver {
 public:
   Solver(const Problem &request, const Universe &universe,
@@ -44,11 +52,11 @@ public:
   std::optional<Resolution> run() {
     State state;
     const auto &root = request.root;
-    auto &chosen = state.chosen[root.manifest->name];
-    chosen.candidate = root;
-    Edge start{root.manifest, nullptr, request.features,
-               request.defaultFeatures, false};
-    enable(state, root.manifest->name, start);
+    auto rootId = identity(root);
+    state.chosen.emplace(rootId, Chosen{root});
+    Edge start{rootId, root.manifest, nullptr, request.features,
+               request.defaultFeatures, false, false};
+    enable(state, rootId, start);
     if (!fatal && search(std::move(state)))
       return build();
     if (!fatal) {
@@ -89,24 +97,30 @@ private:
     return true;
   }
 
-  void activate(State &state, Chosen &chosen, const std::string &name) {
-    if (!chosen.dependencies.insert(name).second)
-      return;
-    const auto *spec = chosen.candidate.manifest->dependency(name);
-    state.queue.push_back({chosen.candidate.manifest, spec, spec->features,
-                           spec->defaultFeatures, false});
+  void activate(State &state, const std::string &from,
+                const std::shared_ptr<const Manifest> &manifest,
+                const DependencySpec &spec, bool host) {
+    state.queue.push_back({from, manifest, &spec, spec.features,
+                           spec.defaultFeatures, false, host});
   }
 
-  // Applies `edge`'s feature request to the package it selected.
-  void enable(State &state, const std::string &name, const Edge &edge) {
-    auto &chosen = state.chosen.at(name);
+  void enable(State &state, const std::string &id, const Edge &edge) {
+    auto &chosen = state.chosen.at(id);
     const auto &manifest = *chosen.candidate.manifest;
     Span where = edge.spec ? edge.spec->span : manifest.nameSpan;
     if (!chosen.expanded) {
       chosen.expanded = true;
       for (const auto &dependency : manifest.dependencies)
         if (!dependency.optional)
-          activate(state, chosen, dependency.name);
+          activate(state, id, chosen.candidate.manifest, dependency,
+                   chosen.candidate.host);
+      for (const auto &dependency : manifest.buildDependencies)
+        if (!dependency.optional)
+          activate(state, id, chosen.candidate.manifest, dependency, true);
+      if (!manifest.macros.empty())
+        for (const auto &dependency : manifest.dependencies)
+          if (!dependency.optional)
+            activate(state, id, chosen.candidate.manifest, dependency, true);
     }
     std::vector<std::string> pending = edge.features;
     if (edge.defaults && !chosen.defaults) {
@@ -121,20 +135,48 @@ private:
       if (const auto *declared = manifest.feature(feature)) {
         for (const auto &item : declared->items) {
           if (item.rfind("dep:", 0) == 0)
-            activate(state, chosen, item.substr(4));
+            if (const auto *dependency =
+                    manifest.dependency(item.substr(4))) {
+              activate(state, id, chosen.candidate.manifest, *dependency,
+                       chosen.candidate.host);
+              if (!manifest.macros.empty() && !chosen.candidate.host)
+                activate(state, id, chosen.candidate.manifest, *dependency,
+                         true);
+            } else
+              failFatal(where, "feature '" + feature +
+                                   "' refers to a missing dependency");
           else if (auto slash = item.find('/'); slash != std::string::npos) {
             auto dependency = item.substr(0, slash);
-            activate(state, chosen, dependency);
-            state.queue.push_back({chosen.candidate.manifest,
-                                   manifest.dependency(dependency),
-                                   {item.substr(slash + 1)},
-                                   false,
-                                   true});
+            const auto *spec = manifest.dependency(dependency);
+            if (!spec) {
+              failFatal(where, "feature '" + feature +
+                                   "' refers to a missing dependency");
+              return;
+            }
+            activate(state, id, chosen.candidate.manifest, *spec,
+                     chosen.candidate.host);
+            state.queue.push_back(
+                {id, chosen.candidate.manifest, spec,
+                 {item.substr(slash + 1)}, false, true,
+                 chosen.candidate.host});
+            if (!manifest.macros.empty() && !chosen.candidate.host) {
+              activate(state, id, chosen.candidate.manifest, *spec, true);
+              state.queue.push_back({id, chosen.candidate.manifest, spec,
+                                     {item.substr(slash + 1)}, false, true,
+                                     true});
+            }
           } else
             pending.push_back(item);
         }
       } else if (implicitFeature(manifest, feature)) {
-        activate(state, chosen, feature);
+        if (const auto *dependency = manifest.dependency(feature)) {
+          activate(state, id, chosen.candidate.manifest, *dependency,
+                   chosen.candidate.host);
+          if (!manifest.macros.empty() && !chosen.candidate.host)
+            activate(state, id, chosen.candidate.manifest, *dependency, true);
+        } else
+          failFatal(where, "implicit feature '" + feature +
+                               "' refers to a missing dependency");
       } else {
         failFatal(where, "package '" + manifest.name + "' has no feature '" +
                              feature + "'");
@@ -144,35 +186,57 @@ private:
   }
 
   static std::string constraintsText(const State &state,
-                                     const std::string &name) {
+                                     const std::string &id) {
     std::string text;
-    for (const auto &constraint : state.constraints.at(name))
+    auto found = state.constraints.find(id);
+    if (found == state.constraints.end())
+      return text;
+    for (const auto &constraint : found->second)
       text += (text.empty() ? "" : ", ") + std::string("'") +
               constraint.requirement.text + "' (required by '" +
               constraint.requirer + "')";
     return text;
   }
 
-  // Candidates for the first edge naming a package, best first.
   std::vector<Candidate> candidates(const Edge &edge) {
     const auto &spec = *edge.spec;
     if (spec.path) {
-      auto found = universe.path(*edge.from, spec);
+      auto found = universe.path(*edge.manifest, spec);
       if (!found) {
         fatal = true;
         return {};
       }
-      if (spec.requirement &&
-          !spec.requirement->matches(found->manifest->version)) {
-        failFatal(spec.span, "path dependency '" + spec.name + "' is version " +
+      if (!matches(*found, spec)) {
+        failFatal(spec.span, "path dependency '" + spec.name +
+                                 "' is version " +
                                  toString(found->manifest->version) +
                                  ", which does not satisfy '" +
                                  spec.requirement->text + "'");
         return {};
       }
+      found->host = edge.host;
+      return {std::move(*found)};
+    }
+    if (spec.git) {
+      auto found = universe.git(*edge.manifest, spec);
+      if (!found) {
+        fatal = true;
+        return {};
+      }
+      if (!matches(*found, spec)) {
+        failFatal(spec.span, "git dependency '" + spec.name +
+                                 "' is version " +
+                                 toString(found->manifest->version) +
+                                 ", which does not satisfy '" +
+                                 spec.requirement->text + "'");
+        return {};
+      }
+      found->host = edge.host;
       return {std::move(*found)};
     }
     auto all = universe.registry(spec.name);
+    for (auto &candidate : all)
+      candidate.host = edge.host;
     std::sort(all.begin(), all.end(),
               [](const Candidate &a, const Candidate &b) {
                 return compare(a.manifest->version, b.manifest->version) > 0;
@@ -184,7 +248,11 @@ private:
       versions.push_back(toString(candidate.manifest->version));
       bool pinned =
           preferred != request.preferred.end() &&
-          compare(preferred->second, candidate.manifest->version) == 0;
+          std::any_of(preferred->second.begin(), preferred->second.end(),
+                      [&](const Version &version) {
+                        return compare(version, candidate.manifest->version) ==
+                               0;
+                      });
       if (!spec.requirement->matches(candidate.manifest->version) ||
           (candidate.yanked && !pinned))
         continue;
@@ -197,12 +265,13 @@ private:
       std::string message;
       if (all.empty())
         message = "package '" + spec.name + "' (required '" +
-                  spec.requirement->text + "' by '" + describe(*edge.from) +
-                  "') was not found: " + universe.absence(spec.name);
+                  spec.requirement->text + "' by '" +
+                  describe(*edge.manifest) + "') was not found: " +
+                  universe.absence(spec.name);
       else {
         message = "no available version of '" + spec.name + "' satisfies '" +
                   spec.requirement->text + "' (required by '" +
-                  describe(*edge.from) + "'); available:";
+                  describe(*edge.manifest) + "'); available:";
         for (const auto &version : versions)
           message += ' ' + version;
       }
@@ -211,66 +280,81 @@ private:
     return usable;
   }
 
-  // Returns false when this branch cannot satisfy the edge.
-  bool apply(State &state, const Edge &edge) {
-    const auto &spec = *edge.spec;
-    auto &chosen = state.chosen.at(spec.name);
-    auto who = describe(*edge.from);
+  bool apply(State &state, const std::string &target, const Edge &edge) {
+    auto &chosen = state.chosen.at(target);
     if (!edge.featureOnly) {
-      if (spec.path && chosen.candidate.kind == SourceKind::Registry) {
-        note(spec.span, "package '" + spec.name +
-                            "' is required both from a path (by '" + who +
-                            "') and from a registry");
-        return false;
-      }
-      if (spec.path && chosen.candidate.kind == SourceKind::Path) {
-        auto other = universe.path(*edge.from, spec);
-        if (!other) {
-          fatal = true;
-          return false;
-        }
-        if (other->location != chosen.candidate.location) {
-          note(spec.span, "package '" + spec.name +
-                              "' is required from two different paths: '" +
-                              chosen.candidate.location + "' and '" +
-                              other->location + "' (by '" + who + "')");
+      if (edge.spec->requirement) {
+        state.constraints[target].push_back(
+            {describe(*edge.manifest), *edge.spec->requirement});
+        if (!edge.spec->requirement->matches(
+                chosen.candidate.manifest->version)) {
+          note(edge.spec->span,
+               "no version of '" + edge.spec->name +
+                   "' satisfies all requirements: " +
+                   constraintsText(state, target));
           return false;
         }
       }
-      if (spec.requirement) {
-        state.constraints[spec.name].push_back({who, *spec.requirement});
-        if (!spec.requirement->matches(chosen.candidate.manifest->version)) {
-          note(spec.span, "no version of '" + spec.name +
-                              "' satisfies all requirements: " +
-                              constraintsText(state, spec.name));
-          return false;
-        }
-      }
+      state.chosen.at(edge.from).dependencies[{edge.spec->name, edge.host}] =
+          target;
     }
-    enable(state, spec.name, edge);
+    enable(state, target, edge);
     return !fatal;
   }
 
   void choose(State &state, const Edge &edge, Candidate candidate) {
-    const auto &spec = *edge.spec;
-    if (spec.requirement)
-      state.constraints[spec.name].push_back(
-          {describe(*edge.from), *spec.requirement});
-    auto &chosen = state.chosen[spec.name];
+    auto id = identity(candidate);
+    Chosen chosen;
     chosen.candidate = std::move(candidate);
-    enable(state, spec.name, edge);
+    state.chosen.emplace(id, std::move(chosen));
+    if (edge.spec->requirement)
+      state.constraints[id].push_back(
+          {describe(*edge.manifest), *edge.spec->requirement});
+    state.chosen.at(edge.from).dependencies[{edge.spec->name, edge.host}] = id;
+    enable(state, id, edge);
   }
 
   bool search(State state) {
     while (!state.queue.empty() && !fatal) {
       auto edge = std::move(state.queue.front());
       state.queue.pop_front();
-      if (state.chosen.contains(edge.spec->name)) {
-        if (!apply(state, edge))
+      if (edge.featureOnly) {
+        const auto &owner = state.chosen.at(edge.from);
+        auto dependency =
+            owner.dependencies.find({edge.spec->name, edge.host});
+        if (dependency == owner.dependencies.end()) {
+          failFatal(edge.spec->span,
+                    "feature dependency '" + edge.spec->name +
+                        "' was not resolved");
+          return false;
+        }
+        if (!apply(state, dependency->second, edge))
           return false;
         continue;
       }
+
       auto options = candidates(edge);
+      if (options.empty())
+        return false;
+      std::vector<Candidate> fresh;
+      bool reused = false;
+      for (auto &option : options) {
+        auto found = state.chosen.find(identity(option));
+        if (found != state.chosen.end()) {
+          if (!edge.spec->requirement ||
+              edge.spec->requirement->matches(
+                  found->second.candidate.manifest->version)) {
+            if (!apply(state, found->first, edge))
+              return false;
+            reused = true;
+            break;
+          }
+        } else
+          fresh.push_back(std::move(option));
+      }
+      if (reused)
+        continue;
+      options = std::move(fresh);
       if (options.empty())
         return false;
       if (options.size() == 1) {
@@ -297,62 +381,111 @@ private:
 
   std::optional<Resolution> build() {
     Resolution resolution;
-    auto convert = [&](const Chosen &chosen) {
+    auto convert = [&](const std::string &id, const Chosen &chosen) {
       ResolvedPackage package;
       package.candidate = chosen.candidate;
+      package.identity = id;
       package.features.assign(chosen.features.begin(), chosen.features.end());
-      package.dependencies.assign(chosen.dependencies.begin(),
-                                  chosen.dependencies.end());
+      for (const auto &[key, dependency] : chosen.dependencies)
+        package.dependencies.emplace_back(key.first, dependency);
       return package;
     };
-    const auto &rootName = request.root.manifest->name;
-    resolution.packages.push_back(convert(solution.at(rootName)));
-    for (const auto &[name, chosen] : solution)
-      if (name != rootName)
-        resolution.packages.push_back(convert(chosen));
+    auto rootId = identity(request.root);
+    resolution.packages.push_back(convert(rootId, solution.at(rootId)));
+    for (const auto &[id, chosen] : solution)
+      if (id != rootId)
+        resolution.packages.push_back(convert(id, chosen));
     if (!acyclic(resolution))
       return std::nullopt;
     return resolution;
   }
 
   bool acyclic(const Resolution &resolution) {
-    std::map<std::string, const ResolvedPackage *> byName;
+    std::map<std::string, const ResolvedPackage *> byId;
     for (const auto &package : resolution.packages)
-      byName[package.name()] = &package;
+      byId[package.identity] = &package;
     std::set<std::string> done;
-    std::vector<std::string> path;
+    std::vector<const ResolvedPackage *> path;
     bool ok = true;
     std::function<void(const ResolvedPackage &)> visit =
         [&](const ResolvedPackage &package) {
-          path.push_back(package.name());
-          for (const auto &name : package.dependencies) {
-            auto onPath = std::find(path.begin(), path.end(), name);
+          path.push_back(&package);
+          for (const auto &[name, dependency] : package.dependencies) {
+            (void)name;
+            auto onPath = std::find_if(
+                path.begin(), path.end(), [&](const ResolvedPackage *entry) {
+                  return entry->identity == dependency;
+                });
             if (onPath != path.end()) {
               std::string text;
               for (auto at = onPath; at != path.end(); ++at)
-                text += *at + " -> ";
-              const auto *spec = package.candidate.manifest->dependency(name);
-              diagnostics.error("package", spec->span,
-                                "dependency cycle: " + text + name +
+                text += describe(*(*at)->candidate.manifest) + " -> ";
+              auto dependencyName = byId.at(dependency)->name();
+              const auto *spec =
+                  package.candidate.manifest->dependency(dependencyName);
+              if (!spec)
+                for (const auto &candidate :
+                     package.candidate.manifest->buildDependencies)
+                  if (candidate.name == dependencyName) {
+                    spec = &candidate;
+                    break;
+                  }
+              diagnostics.error("package",
+                                spec ? spec->span
+                                     : package.candidate.manifest->nameSpan,
+                                "dependency cycle: " +
+                                    text +
+                                    describe(*byId.at(dependency)
+                                                  ->candidate.manifest) +
                                     "; cyclic package compilation is not "
                                     "supported");
               ok = false;
               return;
             }
-            if (done.insert(name).second) {
-              visit(*byName.at(name));
+            if (done.insert(dependency).second) {
+              visit(*byId.at(dependency));
               if (!ok)
                 return;
             }
           }
           path.pop_back();
         };
-    done.insert(resolution.packages.front().name());
+    auto root = resolution.packages.front().identity;
+    done.insert(root);
     visit(resolution.packages.front());
     return ok;
   }
 };
 } // namespace
+
+std::string identity(const Candidate &candidate) {
+  const auto &manifest = *candidate.manifest;
+  std::string source;
+  switch (candidate.kind) {
+  case SourceKind::Root:
+    source = "root";
+    break;
+  case SourceKind::Path:
+    source = candidate.sourceIdentity.empty()
+                 ? "path:" + candidate.location
+                 : candidate.sourceIdentity;
+    break;
+  case SourceKind::Registry:
+    source = candidate.sourceIdentity.empty()
+                 ? "registry:" + candidate.registry + ':' +
+                       candidate.manifest->name + '@' +
+                       toString(candidate.manifest->version)
+                 : candidate.sourceIdentity;
+    break;
+  case SourceKind::Git:
+    source = candidate.sourceIdentity.empty()
+                 ? "git:" + candidate.git + '#' + candidate.commit
+                 : candidate.sourceIdentity;
+    break;
+  }
+  return manifest.name + '@' + toString(manifest.version) + '|' + source +
+         (candidate.host ? "|host" : "|target");
+}
 
 std::optional<Resolution> resolve(const Problem &request,
                                   const Universe &universe,

@@ -142,6 +142,7 @@ BuildInputs::key(const Options &options,
   add(options.cc);
   add(options.sysroot);
   add(options.freestanding ? "freestanding" : "hosted");
+  add(options.packageContext ? "package-context" : "ordinary-context");
   add("harness:" + options.harness);
   for (const auto &sanitizer : options.sanitizers)
     add("sanitize:" + sanitizer);
@@ -153,9 +154,14 @@ BuildInputs::key(const Options &options,
     add("feature:" + feature);
   for (const auto &mount : mounts) {
     add("mount:" + mount.name + "=" + mount.source);
+    add("mount-module:" + mount.module);
     for (const auto &feature : mount.features)
       add("mount-feature:" + mount.name + ":" + feature);
+    for (const auto &[name, module] : mount.dependencies)
+      add("mount-dependency:" + mount.module + ":" + name + "=" + module);
   }
+  for (const auto &[name, module] : options.packageDependencies)
+    add("package-dependency:" + name + "=" + module);
   for (const auto &[path, state] : inputs)
     add(path + "=" + state);
   return hash.finish();

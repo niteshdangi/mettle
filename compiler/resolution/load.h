@@ -9,6 +9,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace mettle::resolution {
@@ -30,11 +31,17 @@ struct Library {
   // module `name` before library references are scanned, and is treated as
   // user code (it may name the library roots and the prelude).
   struct Package {
+    // Package display name and its library source.
     std::string name, source;
+    // Unique package-instance module root and its direct dependency aliases.
+    std::string module;
+    std::vector<std::pair<std::string, std::string>> dependencies;
     // Features the package resolution enabled for this package.
     std::set<std::string> features;
   };
   std::vector<Package> packages;
+  // Dependency aliases visible from the selected root package.
+  std::vector<std::pair<std::string, std::string>> packageDependencies;
   // Target facts and the root source's features that `@cfg` predicates test;
   // a dependency package tests its own features, the standard libraries none.
   expansion::Configuration configuration{};

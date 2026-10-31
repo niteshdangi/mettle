@@ -9,6 +9,7 @@
 #include "expansion/macros.h"
 #include "lint/lint.h"
 #include "packages/plan.h"
+#include "packages/sha256.h"
 #include "pipeline/compile.h"
 #include "resolution/load.h"
 #include "semantics/checked.h"
@@ -17,9 +18,12 @@
 #include "syntax/parser.h"
 #include "types/target.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Program.h"
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <iterator>
 #include <map>
@@ -33,6 +37,157 @@ bool packageInput(const Options &options) {
   std::error_code error;
   return std::filesystem::is_directory(options.input, error) ||
          std::filesystem::path(options.input).filename() == "Mettle.toml";
+}
+
+std::filesystem::path packageSourceStore(const Options &options) {
+  namespace fs = std::filesystem;
+  fs::path root;
+  const char *environment = std::getenv("METTLE_CACHE_DIR");
+  if (!options.cacheDir.empty())
+    root = options.cacheDir;
+  else if (environment && *environment)
+    root = environment;
+  else if (const char *xdg = std::getenv("XDG_CACHE_HOME"); xdg && *xdg)
+    root = fs::path(xdg) / "mettle";
+  else if (const char *home = std::getenv("HOME"); home && *home)
+    root = fs::path(home) / ".cache" / "mettle";
+  return root / "sources" / "git";
+}
+
+bool runGit(const std::vector<std::string> &arguments,
+            const std::optional<std::string> &stdoutPath,
+            std::string &problem) {
+  std::vector<llvm::StringRef> refs;
+  refs.reserve(arguments.size());
+  for (const auto &argument : arguments)
+    refs.emplace_back(argument);
+  std::optional<llvm::StringRef> redirects[3] = {
+      std::nullopt,
+      stdoutPath ? std::optional<llvm::StringRef>(*stdoutPath) : std::nullopt,
+      std::nullopt};
+  std::string message;
+  bool notLaunched = false;
+  int status = llvm::sys::ExecuteAndWait("git", refs, std::nullopt, redirects,
+                                         0, 0, &message, &notLaunched);
+  if (!notLaunched && status == 0)
+    return true;
+  problem = notLaunched ? "cannot start git: " + message
+                        : "git exited with status " + std::to_string(status);
+  return false;
+}
+
+std::optional<std::string> gitOutput(
+    const std::vector<std::string> &arguments,
+    const std::filesystem::path &store, std::string &problem,
+    bool allowEmpty = false) {
+  auto output = store / ("mettle-git-output-" +
+                         std::to_string(std::hash<std::string>{}(
+                             arguments.back())) +
+                         ".txt");
+  if (!runGit(arguments, output.generic_string(), problem))
+    return std::nullopt;
+  std::ifstream stream(output, std::ios::binary);
+  std::string text((std::istreambuf_iterator<char>(stream)),
+                   std::istreambuf_iterator<char>());
+  std::error_code ignored;
+  std::filesystem::remove(output, ignored);
+  while (!text.empty() && (text.back() == '\n' || text.back() == '\r'))
+    text.pop_back();
+  if (text.empty() && !allowEmpty) {
+    problem = "git returned an empty revision";
+    return std::nullopt;
+  }
+  return text;
+}
+
+std::optional<packages::GitCheckout>
+checkoutGit(const Options &options, const std::string &url,
+            const std::string &selector, const std::string &lockedCommit,
+            bool offline, std::string &problem) {
+  namespace fs = std::filesystem;
+  packages::Sha256 hash;
+  hash.update(url);
+  auto key = hash.finish();
+  auto root = packageSourceStore(options);
+  auto mirror = root / "mirrors" / key;
+  std::error_code error;
+  fs::create_directories(mirror.parent_path(), error);
+  if (error) {
+    problem = "cannot create package source store: " + error.message();
+    return std::nullopt;
+  }
+  if (!fs::exists(mirror)) {
+    if (offline) {
+      problem = "offline mode has no cached repository";
+      return std::nullopt;
+    }
+    if (!runGit({"git", "clone", "--mirror", "--", url,
+                 mirror.generic_string()},
+                std::nullopt, problem))
+      return std::nullopt;
+  } else if (!offline &&
+             !runGit({"git", "--git-dir=" + mirror.generic_string(), "fetch",
+                      "--tags", "origin"},
+                     std::nullopt, problem))
+    return std::nullopt;
+
+  std::string expression;
+  if (offline && !lockedCommit.empty())
+    expression = lockedCommit + "^{commit}";
+  else if (selector.rfind("rev=", 0) == 0)
+    expression = selector.substr(4) + "^{commit}";
+  else if (selector.rfind("tag=", 0) == 0)
+    expression = "refs/tags/" + selector.substr(4) + "^{commit}";
+  else if (selector.rfind("branch=", 0) == 0)
+    expression = "refs/heads/" + selector.substr(7) + "^{commit}";
+  else
+    expression = "HEAD^{commit}";
+  auto commit = gitOutput(
+      {"git", "--git-dir=" + mirror.generic_string(), "rev-parse", "--verify",
+       "--end-of-options", expression},
+      root, problem);
+  if (!commit)
+    return std::nullopt;
+
+  auto checkout = root / "checkouts" / key / *commit;
+  if (!fs::exists(checkout)) {
+    fs::create_directories(checkout.parent_path(), error);
+    if (error) {
+      problem = "cannot create git checkout directory: " + error.message();
+      return std::nullopt;
+    }
+    if (!runGit({"git", "clone", "--shared", "--no-checkout", "--",
+                 mirror.generic_string(), checkout.generic_string()},
+                std::nullopt, problem) ||
+        !runGit({"git", "-C", checkout.generic_string(), "checkout", "--detach",
+                 *commit},
+                std::nullopt, problem))
+      return std::nullopt;
+  }
+  auto head = gitOutput(
+      {"git", "-C", checkout.generic_string(), "rev-parse", "--verify",
+       "HEAD^{commit}"},
+      root, problem);
+  if (!head || *head != *commit) {
+    if (head)
+      problem = "cached checkout does not match commit " + *commit;
+    return std::nullopt;
+  }
+  auto status = gitOutput(
+      {"git", "-C", checkout.generic_string(), "status", "--porcelain",
+       "--untracked-files=all"},
+      root, problem, true);
+  if (!status || !status->empty()) {
+    if (status && !status->empty())
+      problem = "cached checkout contains modified or untracked files";
+    return std::nullopt;
+  }
+  auto canonical = fs::canonical(checkout, error);
+  if (error) {
+    problem = "cannot identify git checkout: " + error.message();
+    return std::nullopt;
+  }
+  return packages::GitCheckout{canonical.generic_string(), *commit};
 }
 
 // `mettle clean`: empties the build cache and, given a package, that
@@ -324,9 +479,18 @@ int build(const Options &requested,
   std::optional<packages::Store> store;
   std::string input = options.input;
   std::vector<resolution::Library::Package> dependencies;
+  std::vector<std::pair<std::string, std::string>> packageDependencies;
   std::vector<packages::Macro> macros;
-  std::set<std::string> rootFeatures(options.features.begin(),
-                                     options.features.end());
+  std::vector<packages::Mount> hostPackages;
+  std::set<std::string> rootFeatures =
+      options.packageContext
+          ? options.injectedFeatures
+          : std::set<std::string>(options.features.begin(),
+                                  options.features.end());
+  if (options.packageContext) {
+    dependencies = options.injectedPackages;
+    packageDependencies = options.packageDependencies;
+  }
   if (packageInput(options)) {
     if (options.command != "build" && options.command != "check" &&
         options.command != "lint") {
@@ -335,16 +499,30 @@ int build(const Options &requested,
       return 2;
     }
     Diagnostics planning;
-    auto outcome = packages::plan({options.input, options.bin, options.features,
-                                   options.defaultFeatures, options.locked,
-                                   options.offline, options.registries},
-                                  planning);
+    packages::Request packageRequest;
+    packageRequest.input = options.input;
+    packageRequest.target = options.bin;
+    packageRequest.features = options.features;
+    packageRequest.defaultFeatures = options.defaultFeatures;
+    packageRequest.locked = options.locked;
+    packageRequest.offline = options.offline;
+    packageRequest.registries = options.registries;
+    packageRequest.gitCheckout =
+        [&options](const std::string &url, const std::string &selector,
+                   const std::string &lockedCommit, bool offline,
+                   std::string &problem) {
+          return checkoutGit(options, url, selector, lockedCommit, offline,
+                             problem);
+        };
+    auto outcome = packages::plan(packageRequest, planning);
     if (!outcome.plan) {
       planning.print(outcome.fallback, std::cerr);
       return 1;
     }
     input = outcome.plan->root;
     macros = outcome.plan->macros;
+    packageDependencies = outcome.plan->dependencies;
+    hostPackages = outcome.plan->hostMounts;
     ScriptResults generated;
     if (!outcome.plan->scripts.empty()) {
       store = openStore(options);
@@ -355,15 +533,21 @@ int build(const Options &requested,
     for (const auto &mount : outcome.plan->mounts) {
       std::set<std::string> features(mount.features.begin(),
                                      mount.features.end());
-      for (const auto &extra : generated.features[mount.package])
+      for (const auto &extra : generated.features[mount.identity])
         features.insert(extra);
-      dependencies.push_back({mount.name, mount.source, std::move(features)});
+      resolution::Library::Package dependency;
+      dependency.name = mount.name;
+      dependency.source = mount.source;
+      dependency.module = mount.module;
+      dependency.dependencies = mount.dependencies;
+      dependency.features = std::move(features);
+      dependencies.push_back(std::move(dependency));
     }
     for (auto &module : generated.modules)
       dependencies.push_back(std::move(module));
     rootFeatures = {outcome.plan->features.begin(),
                     outcome.plan->features.end()};
-    for (const auto &extra : generated.features[outcome.plan->package])
+    for (const auto &extra : generated.features[outcome.plan->rootIdentity])
       rootFeatures.insert(extra);
     options.extraLibraries = std::move(generated.libraries);
   } else if (options.packageOptions) {
@@ -411,8 +595,8 @@ int build(const Options &requested,
   if (!macros.empty()) {
     if (!store)
       store = openStore(options);
-    procedural.emplace(options, std::move(macros), store ? &*store : nullptr,
-                       inputs);
+    procedural.emplace(options, std::move(macros), std::move(hostPackages),
+                       store ? &*store : nullptr, inputs);
     if (!procedural->prepare())
       return 1;
   }
@@ -459,8 +643,13 @@ int build(const Options &requested,
   configuration.targetFeatures = facts.baseline;
   configuration.features = std::move(rootFeatures);
   auto mounts = dependencies;
-  resolution::Library library{options.libraryDirectory, options.freestanding,
-                              std::move(dependencies), configuration};
+  resolution::Library library;
+  library.directory = options.libraryDirectory;
+  library.freestanding = options.freestanding;
+  library.packages = std::move(dependencies);
+  options.packageDependencies = packageDependencies;
+  library.packageDependencies = std::move(packageDependencies);
+  library.configuration = configuration;
   if (options.harness == "test")
     library.harness = resolution::Library::Harness::Test;
   else if (options.harness == "bench")

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "resolution/load.h"
 #include <cstdint>
 #include <optional>
 #include <set>
@@ -30,6 +31,11 @@ struct Options {
   bool packageOptions = false;
   std::set<std::string> sanitizers;
   std::string sanitizerError;
+  // Internal package context for host build programs and procedural macros.
+  bool packageContext = false;
+  std::set<std::string> injectedFeatures;
+  std::vector<resolution::Library::Package> injectedPackages;
+  std::vector<std::pair<std::string, std::string>> packageDependencies;
   // Build cache (see docs/performance.md section 5.1.1). An empty directory
   // selects METTLE_CACHE_DIR, then the user cache directory.
   std::string cacheDir;

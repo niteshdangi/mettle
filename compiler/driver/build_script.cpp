@@ -217,12 +217,7 @@ private:
   }
 
   std::set<std::string> featuresOf(const packages::BuildScript &script) const {
-    if (script.root)
-      return {plan.features.begin(), plan.features.end()};
-    for (const auto &mount : plan.mounts)
-      if (mount.package == script.package)
-        return {mount.features.begin(), mount.features.end()};
-    return {};
+    return {script.features.begin(), script.features.end()};
   }
 
   bool apply(const packages::BuildScript &script, const Declared &declared,
@@ -239,10 +234,14 @@ private:
       if (!taken.insert(name).second)
         return fail(script,
                     "module '" + name + "' collides with another root module");
-      results.modules.push_back({name, source.generic_string(), features});
+      resolution::Library::Package module;
+      module.name = name;
+      module.source = source.generic_string();
+      module.features = features;
+      results.modules.push_back(std::move(module));
     }
-    results.features[script.package].insert(declared.features.begin(),
-                                            declared.features.end());
+    results.features[script.identity].insert(declared.features.begin(),
+                                             declared.features.end());
     for (const auto &library : declared.libraries)
       if (std::find(results.libraries.begin(), results.libraries.end(),
                     library) == results.libraries.end())
@@ -273,6 +272,19 @@ private:
     host.cacheMaxAgeDays = options.cacheMaxAgeDays;
     host.noCache = options.noCache;
     host.explain = options.explain;
+    host.packageContext = true;
+    host.injectedFeatures = featuresOf(script);
+    host.packageDependencies = script.dependencies;
+    for (const auto &mount : plan.hostMounts) {
+      resolution::Library::Package dependency;
+      dependency.name = mount.name;
+      dependency.source = mount.source;
+      dependency.module = mount.module;
+      dependency.dependencies = mount.dependencies;
+      dependency.features =
+          std::set<std::string>(mount.features.begin(), mount.features.end());
+      host.injectedPackages.push_back(std::move(dependency));
+    }
     if (driver::run(host) != 0)
       return fail(script, "compiling the script failed");
 

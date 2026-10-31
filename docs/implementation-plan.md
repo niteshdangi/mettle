@@ -972,11 +972,17 @@ must fail verification; untracked host inputs must trigger conservative reruns;
 incremental and clean builds must agree. Host Mettle extensions can use the
 services delivered in I08, avoiding an undeclared compiler-bootstrap dependency.
 
-I09 T001 status: manifest parsing, SemVer solving over path and local-registry
-sources, `Mettle.lock` with checksums, features, `--locked/--offline/--frozen`
-and `mettle check|build` on a package directory are implemented and covered by
-`tests/packages.py`. Open: git/remote registries, coexisting versions (flat
-module namespace) and feature/host/target separation.
+I09 T001 additions (package-instance identities, coexisting incompatible
+versions, Git commit sources, host/target feature contexts and
+`[build-dependencies]`) are implemented, unverified (not yet built). Package
+instances receive unique internal module roots and symbol identities; Git
+sources use the system `git` CLI and are locked by commit and source checksum.
+The host graph is separate from target dependencies and features. Remote HTTP
+registries remain open: the package specification does not define a registry
+protocol. Existing manifest parsing, SemVer solving over path and local
+registry sources, checksums, feature selection, `--locked/--offline/--frozen`
+and `mettle check|build` on package directories remain covered by
+`tests/packages.py`; the new cases have not been run.
 
 I09 T002/T003 status: implemented and verified on macOS arm64 (Release and Debug).
 `[build] script` programs run on the host with declared `mettle:` outputs
@@ -985,12 +991,15 @@ contract, otherwise rerun conservatively (`compiler/driver/build_script.cpp`);
 `mettle build` reuses executables/objects through a content-addressed,
 deduplicated, byte/age-bounded store keyed by token-level source inputs and
 build options (`compiler/packages/store.cpp`, `compiler/driver/cache.cpp`),
-with `mettle clean`. Tests: the `incremental_reuse`, `edit_invalidation`,
+with `mettle clean`. `[build-dependencies]` and host dependency compilation
+were added as implemented, unverified (not yet built); the multi-package
+extension demonstration remains open. Tests: `incremental_reuse`,
+`edit_invalidation`,
 `cache_dedup_and_bound`, `cache_corruption_and_clean`, `build_script` and
 `build_script_untracked_inputs` cases of `tests/packages.py`. Open: reuse is
 whole-program, not per-query (parse/name/type/ownership/instantiation
-dependency separation); no live-build leases; build-dependencies, the I09
-multi-package extension demonstration, retained-byte/compile-time
+dependency separation); no live-build leases; the I09 multi-package extension
+demonstration, retained-byte/compile-time
 measurement (performance.md 5.1.1) and Linux evidence.
 
 I10 can progress alongside I08/I09 after I07. The initial I10 surface is
