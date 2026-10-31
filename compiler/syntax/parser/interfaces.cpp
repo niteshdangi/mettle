@@ -142,6 +142,7 @@ Module::Interface Parser::interfaceDeclaration() {
       if (method.asynchronous) {
         method.asyncDefaultOutputInferred =
             method.body.get() && method.asyncOutput.empty();
+        method.asyncDefaultFutureInferred = method.body.get() != nullptr;
         Module::Associated future;
         future.name =
             "$async_future_" + method.name.substr(method.name.rfind('.') + 1);
@@ -170,10 +171,8 @@ Module::Interface Parser::interfaceDeclaration() {
           futureBound.arguments.push_back(std::move(binding));
         }
         future.bounds.push_back(std::move(futureBound));
-        if (method.asyncDefaultOutputInferred)
+        if (method.asyncDefaultFutureInferred)
           method.asyncDefaultBodyResult = method.annotation;
-        if (method.body.get() && !method.asyncDefaultOutputInferred)
-          future.value = method.annotation;
 
         method.asyncFuture = future.name;
         method.annotation =
