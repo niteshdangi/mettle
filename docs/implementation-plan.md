@@ -1104,6 +1104,13 @@ its independent soundness/race review and sanitizer qualification. A library
 local shorter than the scope (the `Within<region s>` bound on a method of a
 region-parameterized type was not enforced). Borrowed
 heap-erased futures require region-carrying erasure.
+Compiler erasure admits the pinned `Future.poll` receiver when `Output` is
+fixed in `any Future<Output = T>`; the witness dispatches polling to the concrete
+implementation (`tests/std/erased_future_dispatch.mt`). Owned heap storage
+remains the explicit `alloc.future.Erased<T>` wrapper. `Box<any Future<Output =
+T>>` is still unsupported: the general unsized-owner mapping is an I07 gap.
+Erased async-interface dispatch remains unsupported until an explicit
+future-storage contract exists (`async-interface-erased-dispatch.mt`).
 P10 has only a backlog entry, not a specified benchmark source; an async
 network service, measurement protocol and equivalent comparator remain open.
 
@@ -1175,7 +1182,8 @@ Revision: uncommitted lane changes on `c81bc6d`; scope as stated per row.
 | Requirement | State and owning files | Remaining work and required fixtures |
 | --- | --- | --- |
 | Preserve async source; type future and await | Implemented and verified on macOS arm64, including arrow async closures and `try await`: `syntax/parser/closures.cpp`, `syntax/parser/async.cpp`, `semantics/sums.cpp`, `semantics/regions.cpp`, `lowering/sums.cpp`. | `async-arrow-closure.mt`, `async-try-await.mt`. |
-| Async interface futures and dispatch | Implemented and verified on macOS arm64: bodyless async methods publish region- and output-constrained associated future families; implementations bind concrete opaque coroutine futures; concrete and generic-bound calls use the family. Erased async dispatch reports an explicit future-storage-contract diagnostic. | `async-interface-method.mt` and `async-interface-erased-dispatch.mt` pass; async default bodies with inferred results and explicit erased-future storage remain open. |
+| Async interface futures and dispatch | Bodyless async methods publish region- and output-constrained associated future families; implementations bind concrete opaque coroutine futures; concrete and generic-bound calls use the family. Erased async dispatch remains feature-diagnosed because there is no explicit future-storage contract. | `async-interface-method.mt` and `async-interface-erased-dispatch.mt`; async default bodies with inferred results and explicit erased-future storage remain open. |
+| Erased Future polling and storage | Pinned poll dispatch through `any Future<Output = T>` and the `alloc.future.Erased<T>` static heap wrapper are implemented; compiler dispatch change is unverified (not yet built). The wrapper owns a stable concrete payload and uses typed poll/release callbacks. | Build/run `tests/std/erased_future_dispatch.mt`; general `Box<any Future<Output = T>>` remains blocked on I07 unsized-owner support and a compiler-owned dynamic drop contract. |
 | Ownership-checked suspension CFG | Implemented: `ir/ir.h` `Exit::Suspend`, `ir/verify.cpp`, successor updates in `analysis/*`, `ir/dominance.cpp`, `instances/arrays.cpp`, `lowering/scalar.cpp`. | None known; borrow-across-await is covered by `async-await-anywhere.mt`. |
 | Inline pinned state and poll | Implemented: `types` coroutine aggregate and layout resolver, `instances/specialize.cpp`, backend frame/dispatch. Transferable/Shareable/Static in `semantics/interface_solver.cpp` with the interior from `semantics/captures.cpp`. | Liveness-precise interior (optional precision gain). |
 | Control flow | Implemented: ordinary CFG of the closure body. | None known. |

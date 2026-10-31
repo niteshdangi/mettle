@@ -552,6 +552,14 @@ persistent cleanup frame through `TypeStore::coroutineLayout`; layout checks
 before the backend skip coroutine-dependent types (`types::coroutineDependent`).
 The interface plan below is the contract this implementation meets, except
 where the inventory lists open items.
+Compiler erasure also admits pinned `Future.poll` dispatch through
+`any Future<Output = T>` when the associated output is fixed; this addition is
+implemented, unverified (not yet built). It is borrowed interface dispatch, not
+an owning erased value. `alloc.future.Erased<T>` remains the explicit heap owner
+for `Static` futures, using typed poll/release callbacks. `Box<any Future>` and
+erased async-interface returns remain unsupported: the former needs the
+unimplemented unsized-owner/drop path, and the latter needs an explicit
+future-storage contract in the source interface.
 
 The shared interfaces must be implemented together, not enabled one at a time
 for source programs:
