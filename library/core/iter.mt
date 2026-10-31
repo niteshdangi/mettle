@@ -137,8 +137,11 @@ pub interface Iterator: Sized {
     take fn skip(n: usize): Skipped<Self> { Skipped(self, n) }
     take fn take_while<F: fn(read Self.Item): bool>(test: take F): TakenWhile<Self, F> { TakenWhile(self, test, false) }
     take fn skip_while<F: fn(read Self.Item): bool>(test: take F): SkippedWhile<Self, F> { SkippedWhile(self, test, false) }
-    // `step` must be nonzero; the first item is always produced.
-    take fn step_by(step: usize): Stepped<Self> { Stepped(self, step, true) }
+    // The first item is produced before every subsequent `step`th item.
+    take fn step_by(step: usize): Stepped<Self> {
+        if step == 0usize { super.panic.panic("step_by step must be nonzero") }
+        Stepped(self, step, true)
+    }
     take fn peekable(): Peekable<Self> { Peekable(self, none, false) }
     take fn inspect<F: fn(read Self.Item): Unit>(f: take F): Inspected<Self, F> { Inspected(self, f) }
     take fn fuse(): Fused<Self> { Fused(self, false) }
