@@ -58,6 +58,9 @@ struct Library {
 struct SourceModule {
   Source source;
   std::vector<std::string> path;
+  // Empty for the root and native library sources; otherwise the resolved
+  // package-instance module identity that owns this source.
+  std::string packageIdentity;
 };
 std::optional<Module> load(Source root, const SourceProvider &provider,
                            Diagnostics &diagnostics,

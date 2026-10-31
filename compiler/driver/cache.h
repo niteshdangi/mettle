@@ -40,9 +40,19 @@ public:
   std::string key(const Options &options,
                   const std::vector<resolution::Library::Package> &mounts,
                   const std::set<std::string> &rootFeatures) const;
+  // A package object key excludes root sources but includes exact package and
+  // library source bytes plus the package's resolved dependency object keys.
+  std::optional<std::string> packageObjectKey(
+      const std::string &identity, const std::vector<std::string> &sources,
+      const std::vector<std::pair<std::string, std::string>> &dependencies,
+      const std::set<std::string> &features, const Options &options) const;
+  bool packageObjectsSafe() const { return packageInputsSafe; }
 
 private:
   std::string libraryPrefix;
   std::map<std::string, std::string> inputs;
+  std::map<std::string, std::string> sourceDigests;
+  std::set<std::string> absentPaths;
+  bool packageInputsSafe = true;
 };
 } // namespace mettle::driver

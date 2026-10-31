@@ -660,8 +660,16 @@ int build(const Options &requested,
     library.harness = resolution::Library::Harness::Bench;
   if (procedural)
     library.procedures = &procedural->procedures();
-  auto tree =
-      resolution::load(source, provider, diagnostics, library, sourceModules);
+  std::vector<resolution::SourceModule> loadedSources;
+  auto tree = resolution::load(source, provider, diagnostics, library,
+                               sourceModules, &loadedSources);
+  pipeline::PackageOwners packageOwners;
+  std::map<std::string, std::vector<std::string>> packageSources;
+  for (const auto &loaded : loadedSources)
+    if (!loaded.packageIdentity.empty()) {
+      packageOwners[loaded.source.id] = loaded.packageIdentity;
+      packageSources[loaded.packageIdentity].push_back(loaded.source.path);
+    }
   if (tree && discovered) {
     *discovered = tree->tests;
   }
@@ -712,10 +720,10 @@ int build(const Options &requested,
       findings = lint::run(checked, configuration);
     };
   }
-  auto program = tree
-                     ? pipeline::compile(std::move(*tree), diagnostics,
-                                         !options.freestanding, facts, observer)
-                     : std::nullopt;
+  auto program = tree ? pipeline::compile(std::move(*tree), diagnostics,
+                                          !options.freestanding, facts,
+                                          observer, packageOwners)
+                      : std::nullopt;
   if (!program) {
     diagnostics.print(source, std::cerr);
     return 1;
@@ -727,7 +735,122 @@ int build(const Options &requested,
                : 1;
   if (options.command == "check")
     return 0;
-  int status = emit(options, source, *program, diagnostics);
+  std::vector<PackageObject> packageObjects;
+  const auto &irProgram = program->program();
+  bool splitPackages =
+      options.command == "build" && options.emit == "executable" &&
+      options.profile == "debug" && !options.debugInfo &&
+      options.sanitizers.empty() && options.harness.empty() &&
+      !options.freestanding && !options.packageContext &&
+      irProgram.globalAssembly.empty() && inputs.packageObjectsSafe() &&
+      irProgram.functionPackages.size() == irProgram.functions.size() &&
+      irProgram.staticPackages.size() == irProgram.statics.size();
+  std::map<std::string, const resolution::Library::Package *> packagesById;
+  if (splitPackages)
+    for (const auto &mount : mounts) {
+      auto identity = mount.module.empty() ? mount.name : mount.module;
+      if (identity.empty() || !packagesById.emplace(identity, &mount).second ||
+          !packageSources.contains(identity) ||
+          packageSources[identity].empty())
+        splitPackages = false;
+    }
+  if (splitPackages) {
+    for (const auto &owner : irProgram.functionPackages)
+      if (!owner.empty() && !packagesById.contains(owner))
+        splitPackages = false;
+    for (const auto &owner : irProgram.staticPackages)
+      if (!owner.empty() && !packagesById.contains(owner))
+        splitPackages = false;
+  }
+  auto unstableRootReference = [&](int index) {
+    if (index < 0 ||
+        static_cast<std::size_t>(index) >= irProgram.functions.size())
+      return true;
+    auto functionIndex = static_cast<std::size_t>(index);
+    if (!irProgram.functionPackages[functionIndex].empty())
+      return false;
+    const auto &function = irProgram.functions[functionIndex];
+    return function.name.starts_with("<") ||
+           (!function.externalName.empty() &&
+            function.name.find(".<") != std::string::npos);
+  };
+  if (splitPackages) {
+    for (std::size_t i = 0; i < irProgram.functions.size(); ++i) {
+      if (irProgram.functionPackages[i].empty())
+        continue;
+      for (const auto &block : irProgram.functions[i].blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.callee >= 0 &&
+              unstableRootReference(instruction.callee)) {
+            splitPackages = false;
+            break;
+          }
+          if (instruction.assembly)
+            for (const auto &operand : instruction.assembly->operands)
+              if (operand.mode == AssemblyMode::Sym &&
+                  operand.symbolKind == AssemblyOperand::SymbolKind::Function &&
+                  unstableRootReference(operand.symbol))
+                splitPackages = false;
+        }
+    }
+    std::function<bool(const StaticConstant &)> unstableConstant =
+        [&](const StaticConstant &constant) {
+          if (constant.kind == StaticConstant::Kind::Function &&
+              unstableRootReference(constant.symbol))
+            return true;
+          return std::any_of(constant.fields.begin(), constant.fields.end(),
+                             unstableConstant);
+        };
+    for (std::size_t i = 0; i < irProgram.statics.size(); ++i)
+      if (!irProgram.staticPackages[i].empty() &&
+          irProgram.statics[i].initializer &&
+          unstableConstant(*irProgram.statics[i].initializer))
+        splitPackages = false;
+  }
+  if (splitPackages) {
+    std::map<std::string, std::string> objectKeys;
+    std::map<std::string, unsigned char> visitState;
+    std::vector<std::string> order;
+    std::function<bool(const std::string &)> visit =
+        [&](const std::string &identity) {
+          if (visitState[identity] == 2)
+            return true;
+          if (visitState[identity] == 1)
+            return false;
+          visitState[identity] = 1;
+          const auto *mount = packagesById.at(identity);
+          std::vector<std::pair<std::string, std::string>> dependencyKeys;
+          for (const auto &[alias, dependency] : mount->dependencies) {
+            if (!packagesById.contains(dependency) || !visit(dependency))
+              return false;
+            dependencyKeys.emplace_back(alias, objectKeys.at(dependency));
+          }
+          auto key =
+              inputs.packageObjectKey(identity, packageSources.at(identity),
+                                      dependencyKeys, mount->features, options);
+          if (!key)
+            return false;
+          objectKeys.emplace(identity, *key);
+          visitState[identity] = 2;
+          order.push_back(identity);
+          return true;
+        };
+    for (const auto &[identity, mount] : packagesById) {
+      (void)mount;
+      if (!visit(identity)) {
+        splitPackages = false;
+        break;
+      }
+    }
+    if (splitPackages)
+      for (const auto &identity : order)
+        packageObjects.push_back({identity, packagesById.at(identity)->source,
+                                  objectKeys.at(identity)});
+  }
+  if (!splitPackages)
+    packageObjects.clear();
+  int status = emit(options, source, *program, diagnostics, packageObjects,
+                    store ? &*store : nullptr);
   if (status == 0 && cacheKey && store) {
     bool stored =
         store->put(*cacheKey, options.output, options.emit == "executable");

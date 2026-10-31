@@ -314,6 +314,46 @@ def incremental_reuse():
     assert clean.read_bytes() == bytes_built
 
 
+def object_cache_integrity():
+    app = packages("path-dependency/app")
+    first, _ = explained(app)
+    assert "package object cache stored" in first, first
+    no_op, _ = explained(app)
+    assert "cache hit" in no_op, no_op
+
+    edit(app / "src/main.mt", "- 42", "- 41")
+    root_edit, built = explained(app)
+    assert "cache miss" in last_cache_event(root_edit), root_edit
+    dependency_hit = next(
+        line for line in root_edit.splitlines()
+        if "package object cache hit" in line and "mathlib" in line)
+    key_prefix = dependency_hit.rsplit(" ", 1)[-1]
+    clean = evidence / "clean" / "out.bin"
+    clean.parent.mkdir(exist_ok=True)
+    invoke(["build", app, "-o", clean, "--no-cache"])
+    assert built.read_bytes() == clean.read_bytes()
+    assert exit_code(built) == exit_code(clean)
+
+    # Damage that dependency object's blob. A second root-only edit misses the
+    # whole-program entry but must verify and regenerate the dependency object.
+    entry = next(path for path in cache_files("entries")
+                 if path.name.startswith("pkg-" + key_prefix))
+    blob_hash = entry.read_text().split()[1]
+    blob = next(path for path in cache_files("blobs")
+                if path.name == blob_hash)
+    blob.chmod(0o644)
+    blob.write_bytes(b"corrupted dependency object")
+    edit(app / "src/main.mt", "- 41", "- 40")
+    rebuilt, built = explained(app)
+    assert "package object cache entry corrupt, rebuilding" in rebuilt, rebuilt
+    assert "package object cache stored" in rebuilt, rebuilt
+    clean_again = evidence / "clean-again" / "out.bin"
+    clean_again.parent.mkdir(exist_ok=True)
+    invoke(["build", app, "-o", clean_again, "--no-cache"])
+    assert built.read_bytes() == clean_again.read_bytes()
+    assert exit_code(built) == exit_code(clean_again)
+
+
 def sanitizer_cache_key():
     app = packages("incremental/app")
     plain, _ = explained(app)
@@ -1040,7 +1080,7 @@ def debugger_workflow():
 
     source = evidence / "debuggee.mt"
     source.write_text(
-        "import alloc.collections.List\n"
+        "import alloc.vec\nimport alloc.vec.List\n"
         "import core.future.{Context, Poll, noop_waker}\n"
         "import std.task\n"
         "interface DebugReadable { fn read_value(): i32; }\n"
@@ -1059,7 +1099,7 @@ def debugger_workflow():
         "    result\n"
         "}\n"
         "fn main(): i32 {\n"
-        "    var items = List<i32>.new()\n"
+        "    var items = vec.new<i32>()\n"
         "    items.push(7)\n"
         "    let backing: [i32; 2] = [3; 2]\n"
         "    let slice: read [i32] = read backing\n"
@@ -1084,7 +1124,7 @@ def debugger_workflow():
         "    }\n"
         "}\n")
     output = evidence / "debugger-workflow"
-    invoke(["build", source, "-o", output, "-g"])
+    invoke(["build", source, "-o", output, "-g", "--profile", "debug"])
 
     lines = source.read_text().splitlines()
     main_line = next(i for i, line in enumerate(lines, 1)
@@ -1451,6 +1491,7 @@ CASES = [path_dependency, missing_lock_locked, lock_corruption,
          registry_resolution, version_conflict, backtracking, offline, features,
          coexisting_versions, git_source, host_target_separation,
          manifest_diagnostics, package_options_need_package, incremental_reuse,
+         object_cache_integrity,
          sanitizer_cache_key, edit_invalidation, cache_dedup_and_bound,
          cache_corruption_and_clean,
          build_script, build_script_untracked_inputs,

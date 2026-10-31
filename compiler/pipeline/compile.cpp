@@ -75,7 +75,8 @@ public:
   }
   static std::optional<ir::VerifiedProgram>
   run(Module tree, Diagnostics &diagnostics, bool requireEntry = true,
-      TargetFacts target = {}, const CheckedObserver &observe = {}) {
+      TargetFacts target = {}, const CheckedObserver &observe = {},
+      const PackageOwners &packageOwners = {}) {
     if (!diagnostics.empty())
       return std::nullopt;
     auto resolved = resolution::resolve(tree, diagnostics);
@@ -122,8 +123,29 @@ public:
                                 const ir::Function &function, Span span) {
       return proveUnpin(*types, subject, runtime, function, span);
     };
+    program.functionPackages.resize(program.functions.size());
+    for (std::size_t i = 0;
+         i < checked->syntax().functions.size() &&
+         i < program.functionPackages.size();
+         ++i) {
+      auto source = checked->syntax().functions[i].span.source;
+      if (auto owner = packageOwners.find(source);
+          owner != packageOwners.end())
+        program.functionPackages[i] = owner->second;
+    }
+    program.staticPackages.resize(program.statics.size());
+    for (std::size_t i = 0;
+         i < checked->syntax().statics.size() &&
+         i < program.staticPackages.size();
+         ++i) {
+      auto source = checked->syntax().statics[i].span.source;
+      if (auto owner = packageOwners.find(source);
+          owner != packageOwners.end())
+        program.staticPackages[i] = owner->second;
+    }
     lowering::opaqueAdapters(program, *types, checked->interfaceDatabase(),
                              diagnostics);
+    program.functionPackages.resize(program.functions.size());
     // Declaration-only normalization of a type is fixed per function.
     std::map<std::pair<const ir::Function *, Type>, Type> declared;
     auto normalize = [&](Type type, std::span<const TypeBinding> bindings,
@@ -327,8 +349,9 @@ std::optional<ir::VerifiedProgram> compile(const std::vector<Source> &sources,
 }
 std::optional<ir::VerifiedProgram>
 compile(Module module, Diagnostics &diagnostics, bool requireEntry,
-        TargetFacts target, const CheckedObserver &observe) {
+        TargetFacts target, const CheckedObserver &observe,
+        const PackageOwners &packageOwners) {
   return Compiler::run(std::move(module), diagnostics, requireEntry,
-                       std::move(target), observe);
+                       std::move(target), observe, packageOwners);
 }
 } // namespace mettle::pipeline

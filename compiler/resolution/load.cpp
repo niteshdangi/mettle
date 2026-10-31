@@ -587,9 +587,13 @@ private:
       location.rootSource = source;
     macroModules[prefix] = std::move(location);
     if (rootPackageSource && sourceModules)
-      sourceModules->push_back({source, prefix});
+      sourceModules->push_back({source, prefix, {}});
     if (allSources && (rootPackageSource || currentPackage))
-      allSources->push_back({source, prefix});
+      allSources->push_back({source, prefix,
+                             currentPackage ? (currentPackage->module.empty()
+                                                   ? currentPackage->name
+                                                   : currentPackage->module)
+                                            : std::string{}});
     if (!currentRoot.empty())
       owner[source.id] = currentRoot;
     // Declarative macros expand on the token level, before parsing.

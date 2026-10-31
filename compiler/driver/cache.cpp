@@ -113,14 +113,17 @@ void BuildInputs::record(const Source &source) {
       source.path.compare(0, libraryPrefix.size(), libraryPrefix) == 0;
   inputs[source.path] =
       library ? "text:" + digest(source.text) : tokenDigest(source);
+  sourceDigests[source.path] = digest(source.text);
 }
 
 void BuildInputs::absent(const std::string &path) {
   inputs.emplace(path, "absent");
+  absentPaths.insert(path);
 }
 
 void BuildInputs::generated(const std::string &name, const std::string &text) {
   inputs["generated:" + name] = "text:" + digest(text);
+  packageInputsSafe = false;
 }
 
 std::string
@@ -165,5 +168,55 @@ BuildInputs::key(const Options &options,
   for (const auto &[path, state] : inputs)
     add(path + "=" + state);
   return hash.finish();
+}
+
+std::optional<std::string> BuildInputs::packageObjectKey(
+    const std::string &identity, const std::vector<std::string> &sources,
+    const std::vector<std::pair<std::string, std::string>> &dependencies,
+    const std::set<std::string> &features, const Options &options) const {
+  if (!packageInputsSafe || identity.empty() || sources.empty())
+    return std::nullopt;
+  packages::Sha256 hash;
+  auto add = [&](const std::string &field) {
+    hash.update(field);
+    hash.update(std::string_view("\0", 1));
+  };
+  add("mettle-package-object-key-1");
+  add(identity);
+  add(compilerIdentity());
+  add(options.target);
+  add(options.profile);
+  add(options.checks.value_or(options.profile != "release") ? "checks"
+                                                            : "wrap");
+  add(options.freestanding ? "freestanding" : "hosted");
+  add(options.cc);
+  add(options.sysroot);
+  add(options.packageContext ? "package-context" : "ordinary-context");
+  add(options.harness);
+  add(options.debugInfo ? "debug-info" : "no-debug-info");
+  for (const auto &library : options.extraLibraries)
+    add("link:" + library);
+  for (const auto &sanitizer : options.sanitizers)
+    add("sanitize:" + sanitizer);
+  for (const auto &feature : features)
+    add("feature:" + feature);
+  std::set<std::string> uniqueSources(sources.begin(), sources.end());
+  for (const auto &path : uniqueSources) {
+    auto digest = sourceDigests.find(path);
+    if (digest == sourceDigests.end())
+      return std::nullopt;
+    add("source:" + path + "=" + digest->second);
+  }
+  for (const auto &[path, digest] : sourceDigests)
+    if (!libraryPrefix.empty() &&
+        path.compare(0, libraryPrefix.size(), libraryPrefix) == 0)
+      add("library:" + path + "=" + digest);
+  // A probed-absent file appearing could change any package's resolution, so
+  // every probe participates in every package key.
+  for (const auto &path : absentPaths)
+    add("absent:" + path);
+  for (const auto &[alias, dependency] : dependencies)
+    add("dependency:" + alias + "=" + dependency);
+  return "pkg-" + hash.finish();
 }
 } // namespace mettle::driver

@@ -26,6 +26,7 @@ public:
     result.types = types;
     result.requireEntry = source.requireEntry;
     result.statics = source.statics;
+    result.staticPackages = source.staticPackages;
     result.libraries = source.libraries;
     result.target = source.target;
   }
@@ -145,12 +146,14 @@ private:
     auto id = static_cast<int>(result.functions.size());
     callableAdapters.emplace(key, id);
     result.functions.emplace_back();
+    result.functionPackages.emplace_back();
     int callee;
     if (types->isFunctionPointer(receiver)) {
       auto [entry, inserted] = callableContracts.emplace(receiver, -1);
       if (inserted) {
         entry->second = static_cast<int>(result.functions.size());
         result.functions.push_back(callableContract(receiver, *types));
+        result.functionPackages.emplace_back();
       }
       callee = entry->second;
     } else
@@ -237,8 +240,13 @@ private:
       bindings.push_back({declaration.genericParameters[i], arguments[i]});
     }
     auto id = static_cast<int>(result.functions.size());
+    const bool genericInstance = !arguments.empty();
     instances.emplace(std::move(key), id);
     result.functions.emplace_back();
+    result.functionPackages.push_back(
+        genericInstance || index >= source.functionPackages.size()
+            ? std::string{}
+            : source.functionPackages[index]);
     auto function = declaration;
     function.genericParameters.clear();
     if (!arguments.empty()) {

@@ -179,22 +179,44 @@ enabled features, mounts, link libraries, and every source the load step read.
 User sources count by token stream (comments, spacing and blank lines do not
 matter; sound while no source position reaches the output, so debug info or
 panic locations must add positions to the key), library sources by content,
-and probed-but-absent paths as absent. A
-hit copies the stored artifact and skips checking, lowering, code generation and
-linking; any miss does the full build, which is the same code path as a clean
-build, so incremental and clean results agree byte for byte (the driver links
-inside a private directory with fixed object and output names, so no
-temporary name reaches the executable). CTest builds use a cache in the build
-tree, never the user's. Reuse remains whole-program: an edit
-to any loaded source (including a dependency package or generated file)
-recompiles; unloaded files, comments and layout do not. Finer
-per-module parse and per-dependency-package analysis/object reuse remain open.
-Builds hold an RAII lease for the active whole-program key while compiling,
-materializing or publishing; age/byte pruning preserves leased entries, and
-`clean` refuses to remove a store with live leases. Lease behavior is
-implemented, unverified (not yet built). Storage design:
-performance.md section 5.1.1. Flags: `--cache-dir DIR`,
-`--no-cache`, `--cache-limit-kib N`, `--cache-max-age-days N`, `--explain`;
+and probed-but-absent paths as absent. A whole-build hit copies the stored
+artifact and skips checking, lowering, code generation and linking; a miss runs
+the same whole-build path as a clean build. CTest builds use a cache in the
+build tree, never the user's. Whole-build reuse remains available for
+executables and objects without `-g`.
+
+Eligible `mettle build` debug executable builds additionally cache one object
+per resolved dependency package. The loader records package-instance ownership
+and carries it through IR specialization. Non-generic, owner-unambiguous
+package functions and statics go in their package object; generic instances,
+synthesized helpers and owner-ambiguous items stay in the root object, as does
+the executable entry wrapper. Cross-object references are emitted as external
+declarations with stable package-instance symbols. Release builds,
+`--emit object`, debug-info/sanitizer/harness/freestanding/package-context
+builds, and builds with global assembly or uncertain/generated inputs use the
+single-object fallback.
+
+Each package key includes its instance identity, exact source checksums,
+resolved dependency object keys, compiler identity, target, profile, features
+and codegen-affecting options. The source set is deliberately conservative:
+all loaded library source digests participate. Cached objects are checksum
+verified; corruption causes a rebuild. A package-object hit skips that
+dependency's LLVM lowering and object emission, but parsing, expansion,
+checking and specialization still run for the whole program. Package objects
+are staged and hashed without the store lock, then batch-published and pruned
+under one lock per build, not one lease/lock per package. A concurrent eviction
+can therefore turn a lookup into a safe miss, but cannot change build output.
+The whole-build key retains its existing live lease; `clean` refuses to remove
+a store with live leases.
+
+`object_cache_integrity` was updated to check dependency-object reuse after a
+root-only edit, compare incremental and clean executable outputs, and corrupt a
+cached dependency object to require checksum-triggered regeneration. This
+implementation and test are unverified (no builds or tests have been run).
+No performance benefit is claimed before measurement. `--no-cache` disables
+both whole-build and package-object caches. Storage design: performance.md
+section 5.1.1. Flags: `--cache-dir DIR`, `--no-cache`,
+`--cache-limit-kib N`, `--cache-max-age-days N`, `--explain`;
 `METTLE_CACHE_DIR`; `mettle clean [PACKAGE] [--dry-run]`.
 
 ## 1. Manifest and identity

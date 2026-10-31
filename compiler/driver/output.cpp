@@ -81,7 +81,9 @@ int ioFailure(const std::string &action, const std::error_code &error) {
 }
 } // namespace
 int emit(const Options &options, const Source &source,
-         const ir::VerifiedProgram &program, const Diagnostics &diagnostics) {
+         const ir::VerifiedProgram &program, const Diagnostics &diagnostics,
+         const std::vector<PackageObject> &packageObjects,
+         packages::Store *store) {
   std::error_code fileError;
   auto inputPath = std::filesystem::weakly_canonical(source.path, fileError);
   if (!fileError && inputPath == std::filesystem::weakly_canonical(
@@ -180,11 +182,13 @@ int emit(const Options &options, const Source &source,
         diagnostics.registeredSources(),
         std::filesystem::path(source.path).parent_path().string(),
         [&diagnostics](Span span) { return diagnostics.debugSpan(span); }};
+    const bool splitPackages = !packageObjects.empty();
     auto module = mettle::backend::lower(
         program, context, checked, options.target, options.freestanding,
         options.debugInfo && options.emit != "ir" ? &debugRequest : nullptr,
         options.sanitizers.contains("address"),
-        options.sanitizers.contains("thread"));
+        options.sanitizers.contains("thread"),
+        {splitPackages, {}});
     module->setSourceFileName(source.path);
     module->setTargetTriple(
         llvm::Triple(llvm::Triple::normalize(options.target)));
@@ -213,6 +217,7 @@ int emit(const Options &options, const Source &source,
     } else {
       TemporaryDirectory work;
       std::string objectPath = output.path.str().str(), linked;
+      std::filesystem::path directory;
       if (options.emit == "executable") {
         std::error_code absoluteError;
         const auto beside =
@@ -220,10 +225,71 @@ int emit(const Options &options, const Source &source,
         if (auto error = work.create(beside + ".mettle-link"))
           return ioFailure(
               "cannot create link directory beside " + options.output, error);
-        const auto directory = std::filesystem::path(work.path.str().str());
+        directory = std::filesystem::path(work.path.str().str());
         objectPath = (directory / "main.o").string();
         linked = (directory / std::filesystem::path(options.output).filename())
                      .string();
+      }
+      std::vector<std::string> packagePaths;
+      std::vector<packages::Store::Artifact> packageArtifacts;
+      std::vector<const PackageObject *> packagesToStore;
+      for (std::size_t i = 0; i < packageObjects.size(); ++i) {
+        const auto &package = packageObjects[i];
+        auto packagePath =
+            (directory / ("package-" + std::to_string(i) + ".o")).string();
+        bool reused = false;
+        if (store) {
+          auto found = store->materialize(package.key, packagePath);
+          if (found == packages::Store::Lookup::Hit) {
+            reused = true;
+            if (options.explain)
+              std::cerr << "mettle: package object cache hit "
+                        << package.identity << " "
+                        << package.key.substr(4, 12) << '\n';
+          } else if (options.explain) {
+            std::cerr << "mettle: package object cache "
+                      << (found == packages::Store::Lookup::Corrupt
+                              ? "entry corrupt, rebuilding "
+                              : "miss ")
+                      << package.identity << " "
+                      << package.key.substr(4, 12) << '\n';
+          }
+        } else if (options.explain) {
+          std::cerr << "mettle: package object cache miss " << package.identity
+                    << " (disabled)\n";
+        }
+        if (!reused) {
+          auto dependency = mettle::backend::lower(
+              program, context, checked, options.target, options.freestanding,
+              nullptr, false, false, {true, package.identity});
+          dependency->setSourceFileName(package.source);
+          dependency->setTargetTriple(
+              llvm::Triple(llvm::Triple::normalize(options.target)));
+          if (llvm::verifyModule(*dependency, &llvm::errs())) {
+            std::cerr << "mettle: error[internal]: invalid generated package "
+                         "LLVM module for "
+                      << package.identity << '\n';
+            return 1;
+          }
+          if (auto error = mettle::backend::emitObject(
+                  *dependency, options.target, packagePath, false)) {
+            std::cerr << "mettle: error[backend]: "
+                      << llvm::toString(std::move(error)) << '\n';
+            return 1;
+          }
+          if (backendDiagnostics.failed) {
+            std::cerr << "mettle: error[assembly]: target assembly/code "
+                         "generation rejected package '"
+                      << package.identity << "':\n"
+                      << backendDiagnostics.text;
+            return 1;
+          }
+          if (store) {
+            packageArtifacts.push_back({package.key, packagePath, false});
+            packagesToStore.push_back(&package);
+          }
+        }
+        packagePaths.push_back(std::move(packagePath));
       }
       if (auto error = mettle::backend::emitObject(
               *module, options.target, objectPath, release,
@@ -240,10 +306,14 @@ int emit(const Options &options, const Source &source,
         return 1;
       }
       if (options.emit == "executable") {
-        std::vector<std::string> arguments{
-            linker,     "--target=" + options.target,
-            objectPath, runtimePath(options),
-            "-o",       linked};
+        std::vector<std::string> arguments{linker,
+                                           "--target=" + options.target};
+        arguments.insert(arguments.end(), packagePaths.begin(),
+                         packagePaths.end());
+        arguments.push_back(objectPath);
+        arguments.push_back(runtimePath(options));
+        arguments.push_back("-o");
+        arguments.push_back(linked);
         if (!options.sysroot.empty())
           arguments.push_back("--sysroot=" + options.sysroot);
         for (const auto &library : program.program().libraries)
@@ -303,6 +373,15 @@ int emit(const Options &options, const Source &source,
         }
         if (auto error = llvm::sys::fs::rename(linked, output.path))
           return ioFailure("cannot move linked output", error);
+      }
+      if (store && !packageArtifacts.empty()) {
+        bool stored = store->putMany(packageArtifacts);
+        if (options.explain)
+          for (const auto *package : packagesToStore)
+            std::cerr << "mettle: package object cache "
+                      << (stored ? "stored " : "could not store ")
+                      << package->identity << " " << package->key.substr(4, 12)
+                      << '\n';
       }
     }
   }

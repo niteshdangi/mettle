@@ -178,11 +178,30 @@ The user build cache is built to retain less than Cargo's `target/` directory:
 
 Accounting uses logical file sizes; allocated bytes are at least as large, so
 the gate comparison must use allocated bytes per the definition above.
-Live-build leases are implemented, unverified (not yet built): the driver holds
-a lease for its active build key, pruning preserves leased entries, and `clean`
-refuses a store with live leases. Per-module/per-package incremental data and
-any measured claim remain open; no retained-byte or compile-time advantage over
-Cargo is asserted until the qualified-runner measurement exists.
+Live-build leases and dependency-object reuse are implemented, unverified (no
+builds or tests have been run for this change). The driver holds a lease for
+its active whole-build key, pruning preserves leased entries, and `clean`
+refuses a store with live leases.
+
+For eligible debug executable builds, the loader and IR preserve package
+ownership through specialization. Each dependency object contains only
+non-generic, owner-unambiguous package functions/statics; generic instances,
+synthesized helpers, ambiguous ownership and the executable wrapper remain in
+the root object. Cross-object references are external and use stable
+package-instance symbols. Release and non-executable builds, debug-info,
+sanitizer, harness, freestanding or package-context builds, global assembly
+and uncertain/generated inputs use the single-object path. Package keys
+include exact source checksums, resolved dependency object keys, compiler
+identity, target, profile, features and codegen options. Package artifacts are
+staged and hashed outside the store lock, then batch-published and pruned
+under one store lock per build; lookup does not hold a per-package lease, so
+concurrent pruning can only cause a safe cache miss. Corrupt blobs fail
+checksum verification and are rebuilt. The new `object_cache_integrity` case
+covers dependency-object reuse after a root-only edit, clean/incremental output
+equivalence and corruption recovery, but remains unrun. Parsing and later
+front-end phases still run for the whole program. No retained-byte or
+compile-time advantage over Cargo is asserted until the qualified-runner
+measurement exists.
 
 ### 5.2. Compiler-work regression guard
 

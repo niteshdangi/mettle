@@ -313,6 +313,104 @@ bool Store::put(const std::string &key, const fs::path &file, bool executable) {
                                            (executable ? " x\n" : " -\n"));
 }
 
+bool Store::putMany(const std::vector<Artifact> &artifacts) {
+  if (artifacts.empty())
+    return true;
+  if (!prepare())
+    return false;
+
+  struct Prepared {
+    const Artifact *artifact;
+    std::string blob;
+    std::uint64_t size;
+    fs::path temporary;
+  };
+  std::vector<Prepared> prepared;
+  prepared.reserve(artifacts.size());
+  auto discardTemporaries = [&] {
+    for (const auto &item : prepared) {
+      std::error_code ignored;
+      fs::remove(item.temporary, ignored);
+    }
+  };
+
+  for (const auto &artifact : artifacts) {
+    if (artifact.key.size() < 2) {
+      discardTemporaries();
+      return false;
+    }
+    std::uint64_t size = 0;
+    auto blob = hashFile(artifact.file, size);
+    if (!blob) {
+      discardTemporaries();
+      return false;
+    }
+    auto temporary = scratch();
+    std::error_code error;
+    fs::copy_file(artifact.file, temporary,
+                  fs::copy_options::overwrite_existing, error);
+    if (error) {
+      fs::remove(temporary, error);
+      discardTemporaries();
+      return false;
+    }
+    fs::permissions(temporary,
+                    fs::perms::owner_read | fs::perms::group_read |
+                        fs::perms::others_read,
+                    fs::perm_options::replace, error);
+    if (error) {
+      fs::remove(temporary, error);
+      discardTemporaries();
+      return false;
+    }
+    prepared.push_back({&artifact, std::move(*blob), size,
+                        std::move(temporary)});
+  }
+
+  StoreLock lock(directory);
+  if (!lock) {
+    discardTemporaries();
+    return false;
+  }
+  for (const auto &item : prepared) {
+    std::error_code error;
+    auto blob = blobPath(item.blob);
+    auto exists = fs::exists(blob, error);
+    if (error) {
+      discardTemporaries();
+      return false;
+    }
+    if (exists) {
+      fs::remove(item.temporary, error);
+      if (error) {
+        discardTemporaries();
+        return false;
+      }
+    } else {
+      fs::create_directories(blob.parent_path(), error);
+      if (!error)
+        fs::rename(item.temporary, blob, error);
+      if (error) {
+        discardTemporaries();
+        return false;
+      }
+    }
+    if (!publishLocked(entryPath(item.artifact->key),
+                       "file " + item.blob + " " +
+                           std::to_string(item.size) +
+                           (item.artifact->executable ? " x\n" : " -\n"))) {
+      discardTemporaries();
+      return false;
+    }
+  }
+  discardTemporaries();
+  std::set<std::string> keep;
+  for (const auto &artifact : artifacts)
+    keep.insert(artifact.key);
+  pruneLocked(keep);
+  return true;
+}
+
 Store::Lookup Store::materialize(const std::string &key,
                                  const fs::path &destination) {
   if (key.size() < 2)
@@ -405,16 +503,25 @@ std::vector<Store::Record> Store::records() const {
 }
 
 std::vector<std::string> Store::prune(const std::string &keep) {
-  std::vector<std::string> notes;
   if (!prepare())
-    return notes;
+    return {};
   StoreLock lock(directory);
   if (!lock)
-    return notes;
+    return {};
+  std::set<std::string> retained;
+  if (!keep.empty())
+    retained.insert(keep);
+  return pruneLocked(retained);
+}
+
+std::vector<std::string>
+Store::pruneLocked(const std::set<std::string> &keep) {
+  std::vector<std::string> notes;
   // The caller's own output is already published, so its lease only protects
   // the entry from other builds' pruning, not from this budget.
   auto leased = liveLeaseKeys(directory);
-  leased.erase(keep);
+  for (const auto &key : keep)
+    leased.erase(key);
   std::error_code error;
   auto now = fs::file_time_type::clock::now();
   // Scratch files left by a crashed build.
@@ -475,8 +582,8 @@ std::vector<std::string> Store::prune(const std::string &keep) {
   }
   std::stable_sort(live.begin(), live.end(),
                    [&](const Record &a, const Record &b) {
-                     if ((a.key == keep) != (b.key == keep))
-                       return b.key == keep;
+                     if (keep.contains(a.key) != keep.contains(b.key))
+                       return keep.contains(b.key);
                      return a.used < b.used;
                    });
   std::size_t next = 0;

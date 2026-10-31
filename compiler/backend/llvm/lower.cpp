@@ -27,8 +27,7 @@ std::optional<Type> pinnedViewPayload(const TypeStore &types, Type type) {
       types.product(type).components.empty())
     return std::nullopt;
   auto view = types.product(type).components.front();
-  if (!types.isView(view) ||
-      types.view(view).mode != ParameterMode::Mut)
+  if (!types.isView(view) || types.view(view).mode != ParameterMode::Mut)
     return std::nullopt;
   return types.view(view).payload;
 }
@@ -59,8 +58,8 @@ public:
   Lowerer(const ir::Program &program, llvm::LLVMContext &context,
           llvm::StringRef target, bool freestanding,
           const DebugInfoRequest *debug, bool sanitizeAddress,
-          bool sanitizeThread)
-      : program(program), context(context),
+          bool sanitizeThread, CodegenPartition partition)
+      : program(program), context(context), partition(std::move(partition)),
         module(std::make_unique<llvm::Module>("mettle", context)),
         builder(context),
         lowering{program, context, *module, builder, functions, {}},
@@ -121,23 +120,32 @@ public:
     return result;
   }
   std::unique_ptr<llvm::Module> build() {
-    for (const auto &storage : program.statics) {
+    for (std::size_t i = 0; i < program.statics.size(); ++i) {
+      const auto &storage = program.statics[i];
       auto name = storage.externalName.empty() ? "mettle.static." + storage.name
                                                : storage.externalName;
       auto *global = module->getNamedGlobal(name);
+      const bool owns = ownsStatic(i);
       const StaticConstant *initializer =
-          storage.initializer ? &*storage.initializer : nullptr;
+          owns && storage.initializer ? &*storage.initializer : nullptr;
       if (!initializer && !storage.externalName.empty())
-        for (const auto &other : program.statics)
-          if (other.externalName == storage.externalName && other.initializer)
-            initializer = &*other.initializer;
+        for (std::size_t other = 0; other < program.statics.size(); ++other)
+          if (program.statics[other].externalName == storage.externalName &&
+              program.statics[other].initializer &&
+              (!partition.split || ownsStatic(other)))
+            initializer = &*program.statics[other].initializer;
       if (!global)
         global = new llvm::GlobalVariable(
             *module, staticType(storage.type, initializer),
             !storage.mutableBinding && !interiorMutable(storage.type),
-            storage.externalName.empty() ? llvm::GlobalValue::InternalLinkage
-                                         : llvm::GlobalValue::ExternalLinkage,
+            storage.externalName.empty() && !partition.split
+                ? llvm::GlobalValue::InternalLinkage
+                : llvm::GlobalValue::ExternalLinkage,
             nullptr, name);
+      if (partition.split && storage.externalName.empty()) {
+        global->setVisibility(llvm::GlobalValue::HiddenVisibility);
+        global->setDSOLocal(true);
+      }
       global->setAlignment(llvm::Align(lowering.alignment(storage.type)));
       lowering.statics.push_back(global);
     }
@@ -182,19 +190,26 @@ public:
         }
         function = llvm::Function::Create(
             signature,
-            f.blocks.empty() ? llvm::GlobalValue::ExternalLinkage
-                             : llvm::GlobalValue::InternalLinkage,
+            f.blocks.empty() || (partition.split && !ownsFunction(index))
+                ? llvm::GlobalValue::ExternalLinkage
+                : llvm::GlobalValue::InternalLinkage,
             "mettle.abi." + f.name, *module);
       } else
         function =
             f.externalName.empty()
                 ? llvm::Function::Create(
-                      signature, llvm::GlobalValue::InternalLinkage,
+                      signature,
+                      partition.split ? llvm::GlobalValue::ExternalLinkage
+                                      : llvm::GlobalValue::InternalLinkage,
                       "mettle." + displayPath(f.name), *module)
                 : llvm::cast<llvm::Function>(
                       module->getOrInsertFunction(f.externalName, signature)
                           .getCallee());
       function->setUWTableKind(llvm::UWTableKind::Default);
+      if (partition.split && f.externalName.empty()) {
+        function->setVisibility(llvm::GlobalValue::HiddenVisibility);
+        function->setDSOLocal(true);
+      }
       targetAttributes(*function, program.target, f.targetFeatures);
       if (!f.blocks.empty())
         applyInlineHint(*function, f.inlineHint);
@@ -217,7 +232,7 @@ public:
       functions.push_back(function);
     }
     for (std::size_t i = 0; i < program.statics.size(); ++i)
-      if (program.statics[i].initializer)
+      if (ownsStatic(i) && program.statics[i].initializer)
         lowering.statics[i]->setInitializer(
             staticConstant(*program.statics[i].initializer));
     std::vector<llvm::Function *> symbols;
@@ -233,7 +248,7 @@ public:
       module->appendModuleInlineAsm(
           globalAssembly(lowering, assembly, resolveSymbol));
     for (std::size_t i = 0; i < functions.size(); ++i)
-      if (program.functions[i].nakedAssembly) {
+      if (ownsFunction(i) && program.functions[i].nakedAssembly) {
         const auto &assembly = *program.functions[i].nakedAssembly;
         auto text = globalAssembly(lowering, assembly, resolveSymbol);
         for (std::size_t dollar = 0;
@@ -250,20 +265,24 @@ public:
         builder.CreateUnreachable();
       }
     for (std::size_t i = 0; i < functions.size(); ++i)
-      if (!program.functions[i].blocks.empty())
+      if (ownsFunction(i) && !program.functions[i].blocks.empty())
         function(program.functions[i], functions[i]);
     if (debugInfo)
       debugInfo->clear(builder);
     for (std::size_t i = 0; i < functions.size(); ++i)
-      if (externals[i] && !program.functions[i].blocks.empty() &&
+      if (externals[i] && ownsFunction(i) &&
+          !program.functions[i].blocks.empty() &&
           !program.functions[i].nakedAssembly)
         abi.exportBody(*externals[i], *functions[i], *signatures[i]);
     if (lowering.freestanding)
       return std::move(module);
     for (std::size_t i = 0; i < functions.size(); ++i)
-      if (program.functions[i].name == "main" &&
+      if ((!partition.split || partition.packageIdentity.empty()) &&
+          program.functions[i].name == "main" &&
           program.functions[i].externalName == "main")
         return std::move(module);
+    if (partition.split && !partition.packageIdentity.empty())
+      return std::move(module);
     auto *entry = llvm::Function::Create(
         llvm::FunctionType::get(builder.getInt32Ty(), false),
         llvm::GlobalValue::ExternalLinkage, "main", *module);
@@ -299,6 +318,7 @@ private:
   const ir::Program &program;
   llvm::LLVMContext &context;
   bool sanitizeAddress = false, sanitizeThread = false;
+  CodegenPartition partition;
   std::unique_ptr<llvm::Module> module;
   llvm::IRBuilder<> builder;
   std::vector<llvm::Function *> functions;
@@ -315,6 +335,20 @@ private:
   std::map<Type, int> coroutineStates;
   std::map<int, std::unique_ptr<CleanupFrame>> coroutineFrames;
   std::set<int> buildingFrames;
+
+  bool ownsFunction(std::size_t index) const {
+    if (!partition.split)
+      return true;
+    return index < program.functionPackages.size() &&
+           program.functionPackages[index] == partition.packageIdentity;
+  }
+
+  bool ownsStatic(std::size_t index) const {
+    if (!partition.split)
+      return true;
+    return index < program.staticPackages.size() &&
+           program.staticPackages[index] == partition.packageIdentity;
+  }
 
   // Frames are built on first use, so a state embedding another state's
   // future lays out the inner frame first.
@@ -555,27 +589,23 @@ private:
   llvm::Value *call(const ir::Instruction &instruction, llvm::Value *target,
                     llvm::ArrayRef<llvm::Value *> arguments,
                     const std::set<std::string> &callerFeatures) {
-    if (instruction.op == ir::Op::IndirectCall &&
-        instruction.erasedDispatch) {
-      const auto &signature =
-          program.types->callable(instruction.indirectType);
+    if (instruction.op == ir::Op::IndirectCall && instruction.erasedDispatch) {
+      const auto &signature = program.types->callable(instruction.indirectType);
       std::vector<llvm::Type *> parameters;
       for (const auto &parameter : signature.parameters)
-        parameters.push_back(
-            parameter.mode == ParameterMode::Read ||
-                    parameter.mode == ParameterMode::Mut
-                ? builder.getPtrTy()
-                : type(parameter.type));
+        parameters.push_back(parameter.mode == ParameterMode::Read ||
+                                     parameter.mode == ParameterMode::Mut
+                                 ? builder.getPtrTy()
+                                 : type(parameter.type));
       if (lowering.indirect(signature.abiResult))
         parameters.push_back(builder.getPtrTy());
-      auto *callType = llvm::FunctionType::get(
-          resultType(signature.abiResult), parameters, signature.variadic);
+      auto *callType = llvm::FunctionType::get(resultType(signature.abiResult),
+                                               parameters, signature.variadic);
       std::vector<llvm::Value *> actual(arguments.begin(), arguments.end());
       llvm::Value *returned = nullptr;
       if (lowering.indirect(signature.abiResult)) {
-        returned = resultDestination
-                       ? resultDestination
-                       : lowering.temporary(signature.abiResult);
+        returned = resultDestination ? resultDestination
+                                     : lowering.temporary(signature.abiResult);
         actual.push_back(returned);
       }
       auto *value = builder.CreateCall(callType, target, actual);
@@ -689,20 +719,18 @@ private:
     const auto &implementation = program.functions[instruction.callee];
     std::vector<llvm::Type *> parameters;
     for (const auto &parameter : contract.parameters)
-      parameters.push_back(
-          parameter.mode == ParameterMode::Read ||
-                  parameter.mode == ParameterMode::Mut
-              ? builder.getPtrTy()
-              : type(parameter.type));
+      parameters.push_back(parameter.mode == ParameterMode::Read ||
+                                   parameter.mode == ParameterMode::Mut
+                               ? builder.getPtrTy()
+                               : type(parameter.type));
     bool indirectResult = lowering.indirect(contract.abiResult);
     if (indirectResult)
       parameters.push_back(builder.getPtrTy());
-    auto *signature = llvm::FunctionType::get(
-        resultType(contract.abiResult), parameters, contract.variadic);
+    auto *signature = llvm::FunctionType::get(resultType(contract.abiResult),
+                                              parameters, contract.variadic);
     auto *thunk = llvm::Function::Create(
         signature, llvm::GlobalValue::InternalLinkage,
-        "mettle.pinned-witness." +
-            std::to_string(pinnedWitnessThunks.size()),
+        "mettle.pinned-witness." + std::to_string(pinnedWitnessThunks.size()),
         *module);
     thunk->setUWTableKind(llvm::UWTableKind::Default);
     targetAttributes(*thunk, program.target, implementation.targetFeatures);
@@ -711,8 +739,7 @@ private:
     auto saved = builder.saveIP();
     builder.SetInsertPoint(llvm::BasicBlock::Create(context, "entry", thunk));
     auto receiverType = contract.parameters.front().type;
-    auto *view =
-        lowering.extract(thunk->getArg(0), receiverType, 0);
+    auto *view = lowering.extract(thunk->getArg(0), receiverType, 0);
     auto *data = builder.CreateExtractValue(view, 0);
     auto concreteReceiver = implementation.locals[0].type;
     auto *pinned = lowering.construct(concreteReceiver, {data});
@@ -722,9 +749,9 @@ private:
     if (indirectResult)
       arguments.push_back(
           thunk->getArg(static_cast<unsigned>(contract.parameters.size())));
-    auto *result = builder.CreateCall(
-        functions[instruction.callee]->getFunctionType(),
-        functions[instruction.callee], arguments);
+    auto *result =
+        builder.CreateCall(functions[instruction.callee]->getFunctionType(),
+                           functions[instruction.callee], arguments);
     if (contract.abiResult == Type::Never)
       builder.CreateUnreachable();
     else if (indirectResult)
@@ -2586,12 +2613,13 @@ std::unique_ptr<llvm::Module> lower(const ir::VerifiedProgram &program,
                                     llvm::LLVMContext &context, bool checked,
                                     llvm::StringRef target, bool freestanding,
                                     const DebugInfoRequest *debug,
-                                    bool sanitizeAddress, bool sanitizeThread) {
+                                    bool sanitizeAddress, bool sanitizeThread,
+                                    CodegenPartition partition) {
   auto selected = program.program().target.triple.empty()
                       ? target
                       : llvm::StringRef(program.program().target.triple);
   Lowerer lowerer(program.program(), context, selected, freestanding, debug,
-                  sanitizeAddress, sanitizeThread);
+                  sanitizeAddress, sanitizeThread, std::move(partition));
   lowerer.checked = checked;
   return lowerer.run();
 }

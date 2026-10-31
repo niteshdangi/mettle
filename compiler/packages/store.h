@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,12 @@ struct StoreUsage {
 
 class Store {
 public:
+  struct Artifact {
+    std::string key;
+    std::filesystem::path file;
+    bool executable = false;
+  };
+
   class Lease {
   public:
     Lease() = default;
@@ -69,6 +76,9 @@ public:
   // Stores the bytes of `file` under `key`; identical bytes share one blob.
   bool put(const std::string &key, const std::filesystem::path &file,
            bool executable);
+  // Stores multiple files after hashing and staging them outside the store
+  // lock, then publishes all entry metadata under one lock.
+  bool putMany(const std::vector<Artifact> &artifacts);
   std::optional<std::string> text(const std::string &key);
   bool putText(const std::string &key, const std::string &text);
 
@@ -95,6 +105,7 @@ private:
   bool publish(const std::filesystem::path &path, const std::string &content);
   bool publishLocked(const std::filesystem::path &path,
                      const std::string &content);
+  std::vector<std::string> pruneLocked(const std::set<std::string> &keep);
   std::vector<Record> records() const;
   std::filesystem::path directory;
   StoreLimits bounds;

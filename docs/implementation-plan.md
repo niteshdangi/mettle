@@ -1018,20 +1018,38 @@ I09 cache lease work and the multi-package extension demonstration are
 implemented, unverified (not yet built). A build holds an RAII lease on its
 whole-program key through materialization, publication and pruning;
 `compiler/packages/store.cpp` excludes leased entries from age/byte eviction
-and refuses `clean` while a lease is live. The new
+and refuses `clean` while a lease is live. The
 `tests/packages/multi-package-extension` fixture combines a generated module,
-a procedural extension dependency and a regular dependency. The cache remains
-whole-program: per-module parse reuse and per-dependency-package analysis/object
-reuse are not implemented, so editing the root still recompiles the combined
-program. Tests: `incremental_reuse`,
-`edit_invalidation`,
-`cache_dedup_and_bound`, `cache_corruption_and_clean`, `build_script` and
-`build_script_untracked_inputs` cases of `tests/packages.py` remain prior
-verified evidence for the original cache. The new demonstration is registered
-in `tests/packages.py`; neither it nor the lease changes have been run. Open:
-parse/name/type/ownership/instantiation dependency separation,
+a procedural extension dependency and a regular dependency. Existing
+whole-build cache behavior remains covered by `incremental_reuse`,
+`edit_invalidation`, `cache_dedup_and_bound`, `cache_corruption_and_clean`,
+`build_script` and `build_script_untracked_inputs` in `tests/packages.py`.
+Open: parsed-AST/name/type/ownership/instantiation dependency separation,
 retained-byte/compile-time measurement (performance.md 5.1.1) and Linux
 evidence.
+
+Dependency-object reuse is implemented but unverified (no builds or tests have
+been run for this change). For eligible debug executable builds, the loader's
+package-instance identity is carried into IR ownership side tables; ordinary
+unambiguous package functions/statics are emitted to one object per dependency.
+Generic instances, synthesized helpers and owner-ambiguous items stay in the
+root object, which also owns the executable entry wrapper. Split mode is
+disabled when inputs or codegen conditions are uncertain (including generated
+inputs, global assembly, debug info, sanitizers, harness, freestanding and
+package-context builds); release and non-executable outputs retain the
+single-object path. Cross-object references use external declarations and
+stable package-instance symbols. Package keys include exact source digests,
+resolved dependency object keys, compiler identity, target, profile, features
+and codegen-affecting options. The cache verifies each stored blob by checksum
+before reuse and regenerates corrupt objects. Package objects are staged and
+hashed outside the store lock, then batch-published under one lock for the
+build; unlike the whole-program entry, package entries use no per-object
+leases, so concurrent eviction can at worst cause a safe cache miss.
+`object_cache_integrity` now covers a root-only edit reusing a dependency
+object, clean/incremental executable equivalence, and corruption recovery; it
+is implemented but unverified. Front-end analysis and specialization still
+run for the whole program on a root edit; only dependency object codegen is
+reused. No performance benefit is claimed before measurement.
 
 I10 can progress alongside I08/I09 after I07. The initial I10 surface is
 implemented (see S018-S023) with `library.std`, `runtime.thread` and scalar
