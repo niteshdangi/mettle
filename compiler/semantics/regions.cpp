@@ -1493,6 +1493,8 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
     auto callable = expression(*node.children[0]);
     while (types.isView(callable))
       callable = types.view(callable).payload;
+    if (types.isParameter(callable) && types.isCallable(callable))
+      callable = callableBound(callable, current->context, node.span);
     if (!types.isCallable(callable))
       return facts(node).type;
     auto descriptor = types.callable(callable);
@@ -1541,6 +1543,13 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
     }
     for (const auto &edge : argumentLifetimes)
       require(edge.longer, replace(edge.shorter, bindings), node.span);
+    for (const auto &requirement : descriptor.regionRequirements) {
+      auto longer =
+          replace(replace(requirement.longer, substitution), bindings);
+      auto shorter =
+          replace(replace(requirement.shorter, substitution), bindings);
+      require(longer, shorter, node.span);
+    }
     for (std::size_t i = 0;
          i < arguments.size() && i < descriptor.parameters.size(); ++i) {
       auto actual = arguments[i];
