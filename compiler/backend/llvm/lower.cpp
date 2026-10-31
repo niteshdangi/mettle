@@ -2020,7 +2020,13 @@ private:
           break;
         }
         case ir::Op::WitnessMethod: {
-          auto *handle = builder.CreateLoad(type(n.operands[0].type), get(0));
+          auto handleType = n.operands[0].type;
+          // `Pin` is a transparent wrapper; its first field is the view.
+          if (program.types->isProduct(handleType) &&
+              program.types->product(handleType).kind == AggregateKind::Pin &&
+              !program.types->product(handleType).components.empty())
+            handleType = program.types->product(handleType).components.front();
+          auto *handle = builder.CreateLoad(type(handleType), get(0));
           auto *table = builder.CreateExtractValue(handle, 2);
           auto *slot = builder.CreateGEP(builder.getPtrTy(), table,
                                          builder.getInt32(n.number + 2));

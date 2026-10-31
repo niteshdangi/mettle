@@ -103,14 +103,13 @@ void Checker::finalizeErasure() {
           signatures.back().result = Type::Unknown;
           continue;
         }
-        bool valid =
-            source.receiver != "static" &&
-            (source.receiver == "read" || source.receiver == "mut" ||
-             source.receiver.empty());
+        bool valid = source.receiver != "static" &&
+                     (source.receiver == "read" || source.receiver == "mut" ||
+                      source.receiver.empty());
         if (definition.name == "core::future::Future" &&
             method.name == "poll" && source.receiver == "take" &&
-            !signature.parameters.empty()) {
-          const auto receiver = signature.parameters.front().type;
+            !method.signature.parameters.empty()) {
+          const auto receiver = method.signature.parameters.front().type;
           if (checked.types->isProduct(receiver)) {
             const auto &pin = checked.types->product(receiver);
             valid |= pin.kind == AggregateKind::Pin &&
@@ -118,8 +117,11 @@ void Checker::finalizeErasure() {
                      checked.types->isView(pin.components.front()) &&
                      checked.types->view(pin.components.front()).mode ==
                          ParameterMode::Mut &&
-                     checked.types->view(pin.components.front()).payload ==
-                         definition.self;
+                     (checked.types->view(pin.components.front()).payload ==
+                          definition.self ||
+                      (!function.genericParameters.empty() &&
+                       checked.types->view(pin.components.front()).payload ==
+                           function.genericParameters.front()));
           }
         }
         valid &=

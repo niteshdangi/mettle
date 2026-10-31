@@ -10,10 +10,18 @@ bool witnessSlots(ir::Instruction &instruction, const TypeStore &types,
     return false;
   };
   if (instruction.op == ir::Op::WitnessMethod) {
-    if (instruction.operands.empty() ||
-        !types.isErased(instruction.operands[0].type))
+    if (instruction.operands.empty())
       return fail();
-    const auto &descriptor = types.erased(instruction.operands[0].type);
+    auto receiver = instruction.operands[0].type;
+    // A pinned receiver (`Future.poll`) wraps the erased view in `Pin`.
+    if (types.isProduct(receiver) &&
+        types.product(receiver).kind == AggregateKind::Pin &&
+        !types.product(receiver).components.empty() &&
+        types.isView(types.product(receiver).components.front()))
+      receiver = types.view(types.product(receiver).components.front()).payload;
+    if (!types.isErased(receiver))
+      return fail();
+    const auto &descriptor = types.erased(receiver);
     if (!types.isErased(instruction.interfaceType))
       return fail();
     const auto &wanted = types.erased(instruction.interfaceType);

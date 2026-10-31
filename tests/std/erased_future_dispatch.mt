@@ -26,8 +26,8 @@ extend YieldOnce implements Future {
 fn poll_erased(
     future: mut any Future<Output = i32>, cx: mut Context
 ): bool {
-    var pinned = unsafe { core.pin.Pin.new_unchecked(mut future) }
-    match take pinned.poll(mut cx) {
+    var handle = unsafe { core.pin.Pin.new_unchecked(mut future) }
+    match take handle.poll(mut cx) {
         Poll.Ready(_) => true,
         Poll.Pending => false
     }
