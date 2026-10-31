@@ -140,9 +140,6 @@ Module::Interface Parser::interfaceDeclaration() {
       method.name = result.name + "." + method.name;
       method.item.visibility = std::move(visible);
       if (method.asynchronous) {
-        if (method.body.get() && method.asyncOutput.empty())
-          feature("async interface default methods require an explicit "
-                  "result type");
         Module::Associated future;
         future.name =
             "$async_future_" + method.name.substr(method.name.rfind('.') + 1);

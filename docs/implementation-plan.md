@@ -1161,8 +1161,15 @@ programs, Debug and Release profiles (a throwaway harness, not a repository
 gate). The CPS combinators (`Lazy`, `Then`, `Defer`, `Either`, `Repeat`)
 and their feature-fail fixtures are removed.
 
-Open: recursive async is rejected only by the generic Sized diagnostic. Async
-interface default bodies with inferred results remain feature-diagnosed.
+The recursive async future-cycle diagnostic and inferred async interface
+default futures are implemented, unverified (not yet built). Recursive call
+cycles are diagnosed in the type phase at a call span and name the participating
+functions. Async default bodies infer their output and publish that future as
+the default associated family unless an implementation overrides it. The
+fixtures are `async-recursive-future-{direct,mutual}.mt` and
+`async-interface-default-{inferred,overridden,awaits-method}.mt`. The existing
+feature-fail fixture was not present in this worktree. Explicit erased-future
+storage and erased async-interface dispatch remain unsupported.
 Coroutine-state DWARF metadata (a `state` discriminator with per-state
 variants) and its LLDB summary are implemented and verified by `debug_info`
 on macOS arm64; the LLDB summary has not been re-run interactively.
@@ -1182,8 +1189,9 @@ Revision: uncommitted lane changes on `c81bc6d`; scope as stated per row.
 | Requirement | State and owning files | Remaining work and required fixtures |
 | --- | --- | --- |
 | Preserve async source; type future and await | Implemented and verified on macOS arm64, including arrow async closures and `try await`: `syntax/parser/closures.cpp`, `syntax/parser/async.cpp`, `semantics/sums.cpp`, `semantics/regions.cpp`, `lowering/sums.cpp`. | `async-arrow-closure.mt`, `async-try-await.mt`. |
-| Async interface futures and dispatch | Bodyless async methods publish region- and output-constrained associated future families; implementations bind concrete opaque coroutine futures; concrete and generic-bound calls use the family. Erased async dispatch remains feature-diagnosed because there is no explicit future-storage contract. | `async-interface-method.mt` and `async-interface-erased-dispatch.mt`; async default bodies with inferred results and explicit erased-future storage remain open. |
+| Async interface futures and dispatch | Bodyless async methods publish region- and output-constrained associated future families; implementations bind concrete opaque coroutine futures; concrete and generic-bound calls use the family. The prior behavior is verified on macOS arm64. Async defaults now infer their output and use the default associated future when not overridden, implemented, unverified (not yet built). | Existing: `async-interface-method.mt`, `async-interface-erased-dispatch.mt`. New, unverified: `async-interface-default-inferred.mt`, `async-interface-default-overridden.mt`, `async-interface-default-awaits-method.mt`. Explicit erased-future storage and erased async-interface dispatch remain unsupported. |
 | Erased Future polling and storage | Pinned poll dispatch through `any Future<Output = T>` and the `alloc.future.Erased<T>` static heap wrapper are implemented; compiler dispatch change is unverified (not yet built). The wrapper owns a stable concrete payload and uses typed poll/release callbacks. | Build/run `tests/std/erased_future_dispatch.mt`; general `Box<any Future<Output = T>>` remains blocked on I07 unsized-owner support and a compiler-owned dynamic drop contract. |
+| Recursive async future cycles | Implemented, unverified (not yet built): `semantics/check.cpp` diagnoses direct and mutual recursive async call cycles in the type phase at the recursive call span and names the cycle. | `async-recursive-future-direct.mt` and `async-recursive-future-mutual.mt`; build and run the negative fixtures. |
 | Ownership-checked suspension CFG | Implemented: `ir/ir.h` `Exit::Suspend`, `ir/verify.cpp`, successor updates in `analysis/*`, `ir/dominance.cpp`, `instances/arrays.cpp`, `lowering/scalar.cpp`. | None known; borrow-across-await is covered by `async-await-anywhere.mt`. |
 | Inline pinned state and poll | Implemented: `types` coroutine aggregate and layout resolver, `instances/specialize.cpp`, backend frame/dispatch. Transferable/Shareable/Static in `semantics/interface_solver.cpp` with the interior from `semantics/captures.cpp`. | Liveness-precise interior (optional precision gain). |
 | Control flow | Implemented: ordinary CFG of the closure body. | None known. |
