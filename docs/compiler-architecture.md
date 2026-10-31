@@ -27,7 +27,7 @@ for them.
 | `syntax` | Tokens, keyword/operator metadata, lexer, parsed AST and parser/recovery | Resolved bindings, inferred types, CFG slots, LLVM |
 | `expansion` | Attribute validation, `@cfg` target/feature predicate evaluation (inactive items are parsed but dropped before resolution), `@derive` generation of ordinary `extend` declarations as separately registered generated sources with span provenance back to the attribute and offending field/variant; test/benchmark collection and harness synthesis (`harness.cpp`: in a test build, the selected package's `@test`/`@bench` functions are recorded with qualified module paths, the root `main` is dropped and Mettle source for a selector-dispatching `main` is generated and loaded beside the root; each test then runs in its own process); declarative macro expansion (`macros.cpp`, token-level, before parsing; the generated source maps every token to its template/argument origin and the invocation) and the procedural-macro protocol (`procedural.{h,cpp}`: versioned request/response encoding and parsing; `macros.cpp` calls an injected host callback, re-lexes its text output and attributes the tokens to the invocation, and never starts a process itself) | Name resolution, type checking, LLVM |
 | `documentation` | `mettle doc` and doctests, verified on macOS arm64: documentation extraction from the lexer's comment tokens (`///` item docs, `//!` module docs, declaration headers as written, visibility filtering, `document.cpp`), reduced markdown blocks (`markdown.cpp`), fenced-example classification and generated `@test` functions (`doctest.cpp`) and deterministic dependency-free HTML (`html.cpp`). Resolved-reference rendering accepts canonical identities from the driver; the static search index remains deterministic. The new reference rendering is implemented, unverified (not yet built). | Performing name resolution, type checking, filesystem I/O, process execution, LLVM |
-| `resolution` | Compilation-local module identities, item/import scopes, package alias mounting, visibility and canonical declaration names; source-provider-driven module assembly | Inference, backend types or filesystem I/O |
+| `resolution` | Compilation-local module identities, item/import scopes, package alias mounting, visibility and canonical declaration names; source-provider-driven module assembly and an optional injected lexed-token cache | Inference, backend types or filesystem I/O |
 | `packages` | Manifest/lock TOML, SemVer requirements, dependency solving with features over path, local-registry and Git sources, checksums, the package build plan (mounts, build scripts and `[macros]` programs handed to the driver) and the content-addressed build store (`store`) | Source parsing, semantics, network access or artifact publication |
 | `types` | Compiler-owned language type identities/operations, target facts and target-layout results | Parsed AST, LLVM types/target machines, toolchain state |
 | `consteval` | Pure target-aware compile-time interpreter over syntax: scalar/aggregate values at the selected target's integer widths, `const fn` calls, control flow, step/depth budgets (`error[limit]`); names and diagnostics come from a host interface | Name resolution, checker state, LLVM, host-width arithmetic |
@@ -56,6 +56,13 @@ byte spans, including trivia. A parsed node owns only syntactic information:
 kind, children, spelling, annotations, separators and provenance. Type variables,
 resolved locals/callees, normalized values and flow facts do not belong in AST
 nodes.
+
+The driver may inject a bounded-store cache for lexed module tokens during
+ordinary builds. Its identity includes compiler identity, token content and the
+exact source bytes so cached offsets remain valid; source IDs are rebound to the
+current compilation. A cache miss or invalid record falls back to lexing. The
+parser still builds a fresh AST, and no resolved or checked facts cross source
+revisions.
 
 Semantic checking produces a move-only checked module that owns the parsed
 module plus resolved facts. Facts are indexed by stable node addresses within

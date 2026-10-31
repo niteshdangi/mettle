@@ -644,6 +644,11 @@ int build(const Options &requested,
   configuration.targetFeatures = facts.baseline;
   configuration.features = std::move(rootFeatures);
   auto mounts = dependencies;
+  bool cacheLexedModules =
+      options.command == "build" && !options.debugInfo &&
+      (options.emit == "executable" || options.emit == "object");
+  if (cacheLexedModules && !store)
+    store = openStore(options);
   resolution::Library library;
   library.directory = options.libraryDirectory;
   library.freestanding = options.freestanding;
@@ -657,6 +662,11 @@ int build(const Options &requested,
     library.harness = resolution::Library::Harness::Bench;
   if (procedural)
     library.procedures = &procedural->procedures();
+  if (cacheLexedModules && store)
+    library.lexedTokens = [&store, &options](const Source &input,
+                                             Diagnostics &sink) {
+      return cachedTokens(*store, input, sink, options.explain);
+    };
   auto tree =
       resolution::load(source, provider, diagnostics, library, sourceModules);
   if (tree && discovered) {

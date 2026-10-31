@@ -10,8 +10,9 @@
 namespace mettle::packages {
 // The user-level build cache: a content-addressed, deduplicated, bounded
 // store. Artifacts are blobs named by their SHA-256, shared by every entry
-// (and every project) that produced the same bytes. An entry maps a build key
-// to a blob or to a small text record. Layout under the root:
+// (and every project) that produced the same bytes. An entry maps a cache key
+// to a blob or text record; some text records (such as serialized module
+// tokens) may be larger than ordinary metadata. Layout under the root:
 //   VERSION            marks a directory as a store (required before `clear`)
 //   entries/AA/KEY     one small file per key; its mtime is the last use
 //   blobs/AA/SHA       immutable, read-only artifact bytes

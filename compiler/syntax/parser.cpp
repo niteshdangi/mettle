@@ -98,9 +98,14 @@ void Parser::run(Module &module, std::vector<std::string> scope, bool nested) {
 
 namespace mettle {
 Module parseDeclarations(const Source &source, Diagnostics &diagnostics) {
+  return parseDeclarations(source, tokenize(source, diagnostics), diagnostics);
+}
+
+Module parseDeclarations(const Source &source, std::vector<Token> tokens,
+                         Diagnostics &diagnostics) {
   Diagnostics::SourceContext context(diagnostics, source);
   Module module;
-  module.tokens = tokenize(source, diagnostics);
+  module.tokens = std::move(tokens);
   if (diagnostics.empty()) {
     parsing::Parser parser(module.tokens, diagnostics);
     parser.run(module);
@@ -111,6 +116,13 @@ Module parseDeclarations(const Source &source, Diagnostics &diagnostics) {
 
 Module parse(const Source &source, Diagnostics &diagnostics) {
   auto module = parseDeclarations(source, diagnostics);
+  completeDeclarations(module);
+  return module;
+}
+
+Module parse(const Source &source, std::vector<Token> tokens,
+             Diagnostics &diagnostics) {
+  auto module = parseDeclarations(source, std::move(tokens), diagnostics);
   completeDeclarations(module);
   return module;
 }

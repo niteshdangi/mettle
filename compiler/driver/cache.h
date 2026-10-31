@@ -1,9 +1,11 @@
 #pragma once
 
 #include "driver/options.h"
+#include "diagnostics/diagnostics.h"
 #include "packages/store.h"
 #include "resolution/load.h"
 #include "source/source.h"
+#include "syntax/token.h"
 #include <map>
 #include <optional>
 #include <set>
@@ -19,6 +21,11 @@ std::optional<packages::Store> openStore(const Options &options);
 // the size and modification time of both files. Any rebuilt compiler or
 // runtime changes every key.
 std::string compilerIdentity();
+
+// Lexed-token cache for module sources. The source-text identity is retained
+// alongside the token-content identity because token spans feed diagnostics.
+std::vector<Token> cachedTokens(packages::Store &store, const Source &source,
+                               Diagnostics &diagnostics, bool explain);
 
 // Every input a build's output depends on, gathered while the sources load.
 // User sources count by their token stream, so edits to comments and layout
