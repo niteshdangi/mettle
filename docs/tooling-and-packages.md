@@ -175,7 +175,15 @@ temporary name reaches the executable). CTest builds use a cache in the build
 tree, never the user's. Reuse remains whole-program: an edit
 to any loaded source (including a dependency package or generated file)
 recompiles; unloaded files, comments and layout do not. Finer
-per-module parse and per-dependency-package analysis/object reuse remain open.
+per-dependency-package analysis/object reuse remains open. Executable and object
+builds without `-g` also cache each loaded module's serialized lexed tokens.
+These entries are keyed by compiler identity, token content and exact source
+bytes (the latter preserves token offsets); source IDs are rebound on lookup.
+Editing only the root can reuse an unchanged dependency module's lexed tokens,
+but parsing, expansion, checking, lowering, code generation and linking still
+run for a whole-program cache miss. An edit to the dependency source invalidates
+its token entry. A token record that cannot fit within the configured cache
+budget is not stored. `--no-cache` disables both cache layers.
 Builds hold an RAII lease for the active whole-program key while compiling,
 materializing or publishing; age/byte pruning preserves leased entries, and
 `clean` refuses to remove a store with live leases. Lease behavior is

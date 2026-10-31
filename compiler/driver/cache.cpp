@@ -2,11 +2,16 @@
 #include "diagnostics/diagnostics.h"
 #include "packages/sha256.h"
 #include "syntax/lexer.h"
+#include "support/limits.h"
 #include "llvm/Support/FileSystem.h"
+#include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <iostream>
+#include <string_view>
+#include <utility>
 
 namespace mettle::driver {
 namespace {
@@ -29,6 +34,146 @@ std::string digest(const std::string &text) {
   packages::Sha256 hash;
   hash.update(text);
   return hash.finish();
+}
+
+std::string taggedKey(const std::string &tag,
+                      const std::vector<std::string> &fields) {
+  packages::Sha256 hash;
+  auto add = [&](const std::string &field) {
+    hash.update(field);
+    hash.update(std::string_view("\0", 1));
+  };
+  add(tag);
+  for (const auto &field : fields)
+    add(field);
+  return hash.finish();
+}
+
+std::string tokenCacheKey(const std::string &key) { return "lex-" + key; }
+
+std::string tokenStreamDigest(const std::vector<Token> &tokens) {
+  packages::Sha256 hash;
+  for (const auto &token : tokens) {
+    auto kind = std::to_string(static_cast<unsigned>(token.kind));
+    auto size = std::to_string(token.text.size());
+    hash.update(kind);
+    hash.update(":");
+    hash.update(size);
+    hash.update(":");
+    hash.update(token.text);
+    hash.update(std::string_view("\0", 1));
+  }
+  return hash.finish();
+}
+
+std::string tokenRecordDigest(const std::vector<Token> &tokens) {
+  packages::Sha256 hash;
+  for (const auto &token : tokens) {
+    auto begin = std::to_string(token.span.begin);
+    auto end = std::to_string(token.span.end);
+    hash.update(begin);
+    hash.update(":");
+    hash.update(end);
+    hash.update(":");
+    hash.update(std::to_string(static_cast<unsigned>(token.kind)));
+    hash.update(":");
+    hash.update(std::to_string(token.text.size()));
+    hash.update(":");
+    hash.update(token.text);
+    hash.update(std::string_view("\0", 1));
+  }
+  return hash.finish();
+}
+
+std::string serializeTokens(const std::vector<Token> &tokens,
+                            const std::string &tokenHash,
+                            const std::string &recordHash) {
+  std::string result =
+      "mettle-lexed-tokens-1\n" + tokenHash + "\n" + recordHash + "\n";
+  for (const auto &token : tokens) {
+    result += std::to_string(static_cast<unsigned>(token.kind)) + " " +
+              std::to_string(token.span.begin) + " " +
+              std::to_string(token.span.end) + " " +
+              std::to_string(token.text.size()) + "\n";
+    result += token.text;
+    result.push_back('\n');
+  }
+  return result;
+}
+
+bool readNumber(std::string_view line, std::size_t &position,
+                std::size_t &value, char delimiter) {
+  auto end = line.find(delimiter, position);
+  if (end == std::string_view::npos)
+    return false;
+  auto parsed = std::from_chars(line.data() + position, line.data() + end,
+                                value);
+  if (parsed.ec != std::errc{} || parsed.ptr != line.data() + end)
+    return false;
+  position = end + 1;
+  return true;
+}
+
+bool readFinalNumber(std::string_view line, std::size_t &position,
+                     std::size_t &value) {
+  auto parsed = std::from_chars(line.data() + position,
+                                line.data() + line.size(), value);
+  if (parsed.ec != std::errc{} || parsed.ptr != line.data() + line.size())
+    return false;
+  position = line.size();
+  return true;
+}
+
+std::optional<std::vector<Token>>
+deserializeTokens(const std::string &record, const Source &source,
+                  const std::string &expectedTokenHash,
+                  const std::string &expectedRecordHash) {
+  static constexpr std::string_view header = "mettle-lexed-tokens-1\n";
+  if (record.compare(0, header.size(), header) != 0)
+    return std::nullopt;
+  auto tokenHashEnd = record.find('\n', header.size());
+  auto recordHashEnd =
+      tokenHashEnd == std::string::npos
+          ? std::string::npos
+          : record.find('\n', tokenHashEnd + 1);
+  if (tokenHashEnd == std::string::npos ||
+      recordHashEnd == std::string::npos ||
+      record.substr(header.size(), tokenHashEnd - header.size()) !=
+          expectedTokenHash ||
+      record.substr(tokenHashEnd + 1,
+                    recordHashEnd - tokenHashEnd - 1) != expectedRecordHash)
+    return std::nullopt;
+
+  std::vector<Token> tokens;
+  auto position = recordHashEnd + 1;
+  while (position < record.size()) {
+    auto lineEnd = record.find('\n', position);
+    if (lineEnd == std::string::npos)
+      return std::nullopt;
+    std::string_view line(record.data() + position, lineEnd - position);
+    std::size_t field = 0, kind = 0, begin = 0, end = 0, size = 0;
+    if (!readNumber(line, field, kind, ' ') ||
+        !readNumber(line, field, begin, ' ') ||
+        !readNumber(line, field, end, ' ') ||
+        !readFinalNumber(line, field, size) || field != line.size() ||
+        kind > static_cast<std::size_t>(TokenKind::FormatClose) ||
+        begin > end || end > source.text.size() ||
+        size > record.size() - lineEnd - 1 ||
+        tokens.size() >= limits::tokens)
+      return std::nullopt;
+    position = lineEnd + 1;
+    Token token{static_cast<TokenKind>(kind), {begin, end, source.id},
+                record.substr(position, size)};
+    position += size;
+    if (position >= record.size() || record[position++] != '\n')
+      return std::nullopt;
+    tokens.push_back(std::move(token));
+  }
+  if (tokens.empty() || tokens.back().kind != TokenKind::End ||
+      tokenStreamDigest(tokens) != expectedTokenHash ||
+      tokenRecordDigest(tokens) != expectedRecordHash)
+    return std::nullopt;
+  return tokens;
 }
 
 // Hash of the lexical content of a source: comments, spaces and runs of
@@ -96,6 +241,70 @@ std::string compilerIdentity() {
                     reinterpret_cast<std::intptr_t>(&compilerIdentity)));
   text += "\n" + fileStamp(self) + "\n" + fileStamp(METTLE_RUNTIME_PATH);
   return text;
+}
+
+std::vector<Token> cachedTokens(packages::Store &store, const Source &source,
+                                Diagnostics &diagnostics, bool explain) {
+  auto compiler = compilerIdentity();
+  auto rawHash = digest(source.text);
+  auto index = tokenCacheKey(
+      taggedKey("mettle-lexed-module-index-1", {compiler, source.path}));
+  if (auto entry = store.text(index)) {
+    static constexpr std::string_view header = "mettle-lexed-index-1\n";
+    if (entry->compare(0, header.size(), header) == 0) {
+      auto rawEnd = entry->find('\n', header.size());
+      auto tokenEnd = rawEnd == std::string::npos
+                          ? std::string::npos
+                          : entry->find('\n', rawEnd + 1);
+      auto recordEnd = tokenEnd == std::string::npos
+                           ? std::string::npos
+                           : entry->find('\n', tokenEnd + 1);
+      if (rawEnd != std::string::npos && tokenEnd != std::string::npos &&
+          recordEnd != std::string::npos &&
+          entry->substr(header.size(), rawEnd - header.size()) == rawHash) {
+        auto tokenHash = entry->substr(rawEnd + 1, tokenEnd - rawEnd - 1);
+        auto recordHash =
+            entry->substr(tokenEnd + 1, recordEnd - tokenEnd - 1);
+        auto artifact = tokenCacheKey(taggedKey(
+            "mettle-lexed-module-1",
+            {compiler, rawHash, tokenHash, recordHash}));
+        if (auto record = store.text(artifact))
+          if (auto tokens = deserializeTokens(*record, source, tokenHash,
+                                              recordHash)) {
+            if (explain)
+              std::cerr << "mettle: module cache hit " << source.path << '\n';
+            return std::move(*tokens);
+          }
+      }
+    }
+  }
+
+  auto tokens = tokenize(source, diagnostics);
+  if (diagnostics.empty()) {
+    auto tokenHash = tokenStreamDigest(tokens);
+    auto recordHash = tokenRecordDigest(tokens);
+    auto artifact = tokenCacheKey(taggedKey(
+        "mettle-lexed-module-1", {compiler, rawHash, tokenHash, recordHash}));
+    auto budget = store.limits().bytes;
+    if (source.text.size() <= budget &&
+        tokens.size() <= (budget - source.text.size()) / 100) {
+      auto record = serializeTokens(tokens, tokenHash, recordHash);
+      auto indexRecord = "mettle-lexed-index-1\n" + rawHash + "\n" +
+                         tokenHash + "\n" + recordHash + "\n";
+      if (record.size() <= budget &&
+          indexRecord.size() <= budget - record.size()) {
+        store.putText(artifact, record);
+        store.prune(artifact);
+        store.putText(index, indexRecord);
+        store.prune(artifact);
+      }
+    }
+  }
+  if (explain)
+    std::cerr << "mettle: module cache "
+              << (diagnostics.empty() ? "miss " : "unavailable ")
+              << source.path << '\n';
+  return tokens;
 }
 
 BuildInputs::BuildInputs(const std::string &libraryDirectory) {

@@ -999,22 +999,27 @@ build options (`compiler/packages/store.cpp`, `compiler/driver/cache.cpp`),
 with `mettle clean`. `[build-dependencies]` and host dependency compilation
 are verified by the same suite.
 
-I09 cache lease work and the multi-package extension demonstration are
-implemented, unverified (not yet built). A build holds an RAII lease on its
-whole-program key through materialization, publication and pruning;
-`compiler/packages/store.cpp` excludes leased entries from age/byte eviction
-and refuses `clean` while a lease is live. The new
+I09 cache lease work, the per-module lexed-token cache and the multi-package
+extension demonstration are implemented, unverified (not yet built). A build
+holds an RAII lease on its whole-program key through materialization,
+publication and pruning; `compiler/packages/store.cpp` excludes leased entries
+from age/byte eviction and refuses `clean` while a lease is live. The driver
+stores validated token records keyed by compiler identity, token content and
+exact source bytes; unchanged dependency modules can reuse lexing after a root
+edit, while parsing and all later compiler phases still rerun. The new
 `tests/packages/multi-package-extension` fixture combines a generated module,
 a procedural extension dependency and a regular dependency. The cache remains
-whole-program: per-module parse reuse and per-dependency-package analysis/object
-reuse are not implemented, so editing the root still recompiles the combined
-program. Tests: `incremental_reuse`,
+whole-program for compiled artifacts: per-dependency-package
+analysis/object reuse and reuse of parsed ASTs are not implemented, so editing
+the root still recompiles the combined program. Tests: `incremental_reuse`,
 `edit_invalidation`,
-`cache_dedup_and_bound`, `cache_corruption_and_clean`, `build_script` and
+`module_token_cache_reuse`, `cache_dedup_and_bound`,
+`cache_corruption_and_clean`, `build_script` and
 `build_script_untracked_inputs` cases of `tests/packages.py` remain prior
-verified evidence for the original cache. The new demonstration is registered
-in `tests/packages.py`; neither it nor the lease changes have been run. Open:
-parse/name/type/ownership/instantiation dependency separation,
+verified evidence for the original cache; the new token-cache case and
+multi-package demonstration are registered but not run. The lease changes
+remain unbuilt. Open: parsed-AST/name/type/ownership/instantiation dependency
+separation,
 retained-byte/compile-time measurement (performance.md 5.1.1) and Linux
 evidence.
 
