@@ -582,8 +582,11 @@ extend Executor {
     pub fn pending(): usize { self.hub.get().live.load(core.sync.atomic.Ordering.Acquire) }
 
     // Runs until every spawned future has completed, blocking while tasks wait
-    // for a wake.
+    // for a wake. Re-entering this executor from one of its task polls panics.
     pub fn run(): Unit {
+        if self.hub.get().polling.load(core.sync.atomic.Ordering.Acquire) {
+            panic("cannot run an active executor from one of its tasks")
+        }
         var finished = false
         while !finished {
             match take next_task(self.hub.get(), true) {
@@ -595,7 +598,11 @@ extend Executor {
 
     // Polls every task that is currently ready, including tasks woken while
     // running, without blocking. Returns the number of polls performed.
+    // Re-entering this executor from one of its task polls panics.
     pub fn run_until_stalled(): usize {
+        if self.hub.get().polling.load(core.sync.atomic.Ordering.Acquire) {
+            panic("cannot run an active executor from one of its tasks")
+        }
         var polls = 0usize
         var finished = false
         while !finished {
