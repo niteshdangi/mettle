@@ -1409,13 +1409,12 @@ I13 status for the macOS ARM64 inventory lane: the 107-row capability
 acceptance inventory is implemented, unverified (not yet built); it is a
 documentation-only source/fixture review at `0eea2fa`, with no new compiler or
 library implementation, test fixture, build, or test run. The inventory records
-66 evidenced, 1 implemented-without-evidence, 39 partial and 1 missing
-capability. It does not claim I13 operation closure: the pinned baseline has
+67 evidenced, 39 partial and 1 missing capability (A009, deferred to I17 by
+owner decision 2026-10-31). It does not claim I13 operation closure: the pinned baseline has
 106,125 canonical contracts, of which the V1 subset is about 2,900 folded
 operation families and 1,760 trait/type pairs, and no receipt yet proves
 macOS ARM64 declaration typechecking and per-operation execution/probes for
-that subset. Concrete open work includes the A009 optional
-Rust bridge decision/implementation, unsupported unsized heap owners and
+that subset. Concrete open work includes unsupported unsized heap owners and
 erased async-interface dispatch (S003/L053), the macOS per-item target/cfg
 audit (S031), and the remaining stable operation, supporting-protocol,
 reexport, deprecated-operation and Darwin ABI/debug/unwind/TLS/atomic probes
@@ -1770,7 +1769,8 @@ L056 (procedural macros): implemented and verified on macOS arm64 (tests `proced
 | I10 | S005, S018-S023 |
 | I11 | L052-L053, S030 |
 | I12 | L060, T004-T007 |
-| I13 | S031, A009 |
+| I13 | S031 |
+| I17 | A009 |
 
 Each milestone's evidence bundle records source/toolchain revisions, target/
 profile, exact commands, fixture and operation IDs, expected versus actual
