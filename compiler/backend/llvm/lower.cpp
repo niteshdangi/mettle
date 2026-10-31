@@ -2340,10 +2340,14 @@ private:
           frame.store(n, get(0));
           if (n.op == ir::Op::Store && debugInfo && n.place.root >= 0 &&
               n.place.fields.empty() &&
-              static_cast<std::size_t>(n.place.root) < source.locals.size())
-            debugInfo->restore(builder, static_cast<std::size_t>(n.place.root),
-                               n.span, n.scope,
-                               frame.localStorage(n.place.root));
+              static_cast<std::size_t>(n.place.root) < source.locals.size()) {
+            const auto index = static_cast<std::size_t>(n.place.root);
+            const auto &local = source.locals[index];
+            debugInfo->restore(builder, index, n.span, n.scope,
+                               frame.localStorage(n.place.root),
+                               index < source.parameters ||
+                                   local.storage == StorageDuration::Static);
+          }
           if (n.op == ir::Op::StorageWrite)
             frame.consume(n.operands[0]);
           break;
