@@ -59,8 +59,7 @@ pub type ExtractIf<region r, K, V, A: Allocator, F> {
     predicate: F
     index: usize
 }
-extend<region r, K: Hash + PartialEq, V, A: Allocator, F: fn(read K, mut V): bool>
-    ExtractIf<region r, K, V, A, F> implements Iterator {
+extend<region r, K: Hash + PartialEq, V, A: Allocator, F: fn(read K, mut V): bool> ExtractIf<region r, K, V, A, F> implements Iterator {
     type Item = (K, V)
     mut fn next(): (K, V)? {
         while self.index < self.map.entries.len() {
@@ -546,8 +545,7 @@ pub type SetExtractIf<region r, K, A: Allocator, F> {
     predicate: F
     index: usize
 }
-extend<region r, K: Hash + PartialEq, A: Allocator, F: fn(read K): bool>
-    SetExtractIf<region r, K, A, F> implements Iterator {
+extend<region r, K: Hash + PartialEq, A: Allocator, F: fn(read K): bool> SetExtractIf<region r, K, A, F> implements Iterator {
     type Item = K
     mut fn next(): K? {
         while self.index < self.set.map.entries.len() {

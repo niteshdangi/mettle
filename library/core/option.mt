@@ -116,11 +116,11 @@ extend<T> T? {
             present(value) => if keep(read value) { present(value) } else { none },
             none => none
         }
-        pub take fn inspect(f: fn(read T): Unit): T? {
-            match take self {
-                present(value) => { f(read value); present(value) },
-                none => none
-            }
+    }
+    pub take fn inspect(f: fn(read T): Unit): T? {
+        match take self {
+            present(value) => { f(read value); present(value) },
+            none => none
         }
     }
     pub take fn ok_or<E>(error: take E): (T throws E) {
@@ -154,7 +154,7 @@ extend<T: Deref> T? {
     }
 }
 
-extend<T: DerefMut> T? {
+extend<T: Deref + DerefMut> T? {
     pub mut fn as_deref_mut(): (mut T.(Deref).Target from self)? {
         match mut self { present(value) => present(value.deref_mut()), none => none }
     }

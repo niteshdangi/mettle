@@ -932,8 +932,7 @@ pub type MapExtractIf<region r, K, V, A: Allocator, F> {
 }
 // Recompute the node position from rank after each extraction because
 // rebalancing can invalidate every cached node position.
-extend<region r, K: Ord, V, A: Allocator, F: fn(read K, mut V): bool>
-    MapExtractIf<region r, K, V, A, F> implements Iterator {
+extend<region r, K: Ord, V, A: Allocator, F: fn(read K, mut V): bool> MapExtractIf<region r, K, V, A, F> implements Iterator {
     type Item = (K, V)
     mut fn next(): (K, V)? {
         while self.index < self.map.len {
@@ -954,8 +953,7 @@ pub type SetExtractIf<region r, K, A: Allocator, F> {
     predicate: F
     index: usize
 }
-extend<region r, K: Ord, A: Allocator, F: fn(read K): bool>
-    SetExtractIf<region r, K, A, F> implements Iterator {
+extend<region r, K: Ord, A: Allocator, F: fn(read K): bool> SetExtractIf<region r, K, A, F> implements Iterator {
     type Item = K
     mut fn next(): K? {
         while self.index < self.set.map.len {

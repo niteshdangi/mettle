@@ -28,15 +28,13 @@ extend<T, E> (T throws E) {
             failure(error) => failure(mut error)
         }
     }
-    pub fn as_deref(): ((read T.(Deref).Target from self) throws (read E from self))
-        where T: Deref {
+    pub fn as_deref(): ((read T.(Deref).Target from self) throws (read E from self)) where T: Deref {
         match self {
             success(value) => success(value.deref()),
             failure(error) => failure(read error)
         }
     }
-    pub mut fn as_deref_mut(): ((mut T.(Deref).Target from self) throws (mut E from self))
-        where T: DerefMut {
+    pub mut fn as_deref_mut(): ((mut T.(Deref).Target from self) throws (mut E from self)) where T: Deref + DerefMut {
         match mut self {
             success(value) => success(value.deref_mut()),
             failure(error) => failure(mut error)

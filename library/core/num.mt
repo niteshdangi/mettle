@@ -17,62 +17,62 @@ pub copy type Wrapping<T: Copy> { pub value: T }
 
 extend Wrapping<u8> {
     pub fn reverse_bits(): Wrapping<u8> {
-        Wrapping { value: self.value.reverse_bits() }
+        Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<u16> {
     pub fn reverse_bits(): Wrapping<u16> {
-        Wrapping { value: self.value.reverse_bits() }
+        Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<u32> {
     pub fn reverse_bits(): Wrapping<u32> {
-        Wrapping { value: self.value.reverse_bits() }
+        Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<u64> {
     pub fn reverse_bits(): Wrapping<u64> {
-        Wrapping { value: self.value.reverse_bits() }
+        Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<u128> {
     pub fn reverse_bits(): Wrapping<u128> {
-        Wrapping { value: self.value.reverse_bits() }
+        Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<usize> {
     pub fn reverse_bits(): Wrapping<usize> {
-        Wrapping { value: self.value.reverse_bits() }
+        Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<i8> {
     pub fn reverse_bits(): Wrapping<i8> {
-        Wrapping { value: self.value.reverse_bits() }
+        Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<i16> {
     pub fn reverse_bits(): Wrapping<i16> {
-        Wrapping { value: self.value.reverse_bits() }
+        Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<i32> {
     pub fn reverse_bits(): Wrapping<i32> {
-        Wrapping { value: self.value.reverse_bits() }
+        Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<i64> {
     pub fn reverse_bits(): Wrapping<i64> {
-        Wrapping { value: self.value.reverse_bits() }
+        Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<i128> {
     pub fn reverse_bits(): Wrapping<i128> {
-        Wrapping { value: self.value.reverse_bits() }
+        Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<isize> {
     pub fn reverse_bits(): Wrapping<isize> {
-        Wrapping { value: self.value.reverse_bits() }
+        Wrapping(self.value.reverse_bits())
     }
 }
 

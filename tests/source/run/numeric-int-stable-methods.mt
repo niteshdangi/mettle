@@ -197,9 +197,9 @@ fn check_unsigned(): bool {
 }
 
 fn check_shifts_and_wrapping(): bool {
-    let mut letter = 0x41u8
+    var letter = 0x41u8
     letter.make_ascii_lowercase()
-    let mut lowerLetter = 0x61u8
+    var lowerLetter = 0x61u8
     lowerLetter.make_ascii_uppercase()
     let shifted = unsafe { 1u8.unchecked_shl(3u32) }
     1u8.unbounded_shl(8u32) == 0u8 &&
@@ -207,21 +207,21 @@ fn check_shifts_and_wrapping(): bool {
         shifted == 8u8 &&
         letter == 0x61u8 &&
         lowerLetter == 0x41u8 &&
-        Wrapping { value: 1u8 }.reverse_bits().value == 128u8 &&
-        Wrapping { value: 1u16 }.reverse_bits().value == 32768u16 &&
-        Wrapping { value: 1u32 }.reverse_bits().value == 2147483648u32 &&
-        Wrapping { value: 1u64 }.reverse_bits().value ==
+        Wrapping(1u8).reverse_bits().value == 128u8 &&
+        Wrapping(1u16).reverse_bits().value == 32768u16 &&
+        Wrapping(1u32).reverse_bits().value == 2147483648u32 &&
+        Wrapping(1u64).reverse_bits().value ==
             9223372036854775808u64 &&
-        Wrapping { value: 1u128 }.reverse_bits().value ==
+        Wrapping(1u128).reverse_bits().value ==
             170141183460469231731687303715884105728u128 &&
-        Wrapping { value: 1usize }.reverse_bits().value ==
+        Wrapping(1usize).reverse_bits().value ==
             9223372036854775808usize &&
-        Wrapping { value: 1i8 }.reverse_bits().value == -128i8 &&
-        Wrapping { value: 1i16 }.reverse_bits().value == -32768i16 &&
-        Wrapping { value: 1i32 }.reverse_bits().value == i32.MIN &&
-        Wrapping { value: 1i64 }.reverse_bits().value == i64.MIN &&
-        Wrapping { value: 1i128 }.reverse_bits().value == i128.MIN &&
-        Wrapping { value: 1isize }.reverse_bits().value == isize.MIN
+        Wrapping(1i8).reverse_bits().value == -128i8 &&
+        Wrapping(1i16).reverse_bits().value == -32768i16 &&
+        Wrapping(1i32).reverse_bits().value == i32.MIN &&
+        Wrapping(1i64).reverse_bits().value == i64.MIN &&
+        Wrapping(1i128).reverse_bits().value == i128.MIN &&
+        Wrapping(1isize).reverse_bits().value == isize.MIN
 }
 
 fn check_usize(): bool {

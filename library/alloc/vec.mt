@@ -358,11 +358,11 @@ extend<T, A: Allocator> List<T, A> {
         Splice(mut self, removed.into_iter(), source, start)
     }
 
-    pub mut fn spare_capacity_mut(): mut [package.core.mem.MaybeUninit<T>] from self {
+    pub mut fn spare_capacity_mut(): mut [core.mem.MaybeUninit<T>] from self {
         let start = unsafe { self.ptr.add(self.len) }
         unsafe {
             mut *slice_ptr_mut(
-                start.cast<package.core.mem.MaybeUninit<T>>(),
+                start.cast<core.mem.MaybeUninit<T>>(),
                 self.cap - self.len
             )
         }

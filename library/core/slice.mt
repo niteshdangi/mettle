@@ -1,5 +1,6 @@
 import super.cmp.{PartialEq, Ord, Ordering}
 import super.iter.{Iterator, BidirectionalIterator, Iterable, MutableIterable}
+import super.clone.Clone
 
 copy type Raw { data: ptr<read u8>; len: usize }
 
@@ -127,8 +128,8 @@ extend<T> [T] {
     }
 }
 
-extend<T, const N: usize> [T] {
-    pub fn first_chunk(): (read [T; N] from self)? {
+extend<T> [T] {
+    pub fn first_chunk<const N: usize>(): (read [T; N] from self)? {
         if N > self.len() { return none }
         let raw = unsafe {
             core.mem.transmute<RawParts<T>>(core.ptr.from_ref(self))
@@ -137,7 +138,7 @@ extend<T, const N: usize> [T] {
         present(unsafe { read *raw.data.cast<[T; N]>() })
     }
 
-    pub fn last_chunk(): (read [T; N] from self)? {
+    pub fn last_chunk<const N: usize>(): (read [T; N] from self)? {
         if N > self.len() { return none }
         let raw = unsafe {
             core.mem.transmute<RawParts<T>>(core.ptr.from_ref(self))
@@ -146,7 +147,7 @@ extend<T, const N: usize> [T] {
         present(unsafe { read *raw.data.add(self.len() - N).cast<[T; N]>() })
     }
 
-    pub fn split_first_chunk(): ((read [T; N] from self), (read [T] from self))? {
+    pub fn split_first_chunk<const N: usize>(): ((read [T; N] from self), (read [T] from self))? {
         if N > self.len() { return none }
         let raw = unsafe {
             core.mem.transmute<RawParts<T>>(core.ptr.from_ref(self))
@@ -157,7 +158,7 @@ extend<T, const N: usize> [T] {
         present((first, rest))
     }
 
-    pub fn split_last_chunk(): ((read [T] from self), (read [T; N] from self))? {
+    pub fn split_last_chunk<const N: usize>(): ((read [T] from self), (read [T; N] from self))? {
         if N > self.len() { return none }
         let start = self.len() - N
         let raw = unsafe {
@@ -920,22 +921,22 @@ extend<T> [T] {
     }
 }
 
-extend<T, const N: usize> [T] {
-    pub mut fn first_chunk_mut(): (mut [T; N] from self)? {
+extend<T> [T] {
+    pub mut fn first_chunk_mut<const N: usize>(): (mut [T; N] from self)? {
         if N > self.len() { return none }
         let base = mutable_data_pointer(mut self)
         // Safety: the checked array is in-bounds and the receiver is exclusive.
         present(unsafe { mut *base.cast<[T; N]>() })
     }
 
-    pub mut fn last_chunk_mut(): (mut [T; N] from self)? {
+    pub mut fn last_chunk_mut<const N: usize>(): (mut [T; N] from self)? {
         if N > self.len() { return none }
         let base = mutable_data_pointer(mut self)
         // Safety: the checked suffix is in-bounds and the receiver is exclusive.
         present(unsafe { mut *base.add(self.len() - N).cast<[T; N]>() })
     }
 
-    pub mut fn split_first_chunk_mut(): ((mut [T; N] from self), (mut [T] from self))? {
+    pub mut fn split_first_chunk_mut<const N: usize>(): ((mut [T; N] from self), (mut [T] from self))? {
         if N > self.len() { return none }
         let n = self.len()
         let base = mutable_data_pointer(mut self)
@@ -947,7 +948,7 @@ extend<T, const N: usize> [T] {
         present((unsafe { mut *first }, unsafe { mut *rest }))
     }
 
-    pub mut fn split_last_chunk_mut(): ((mut [T] from self), (mut [T; N] from self))? {
+    pub mut fn split_last_chunk_mut<const N: usize>(): ((mut [T] from self), (mut [T; N] from self))? {
         if N > self.len() { return none }
         let n = self.len()
         let start = n - N
@@ -1390,8 +1391,8 @@ extend<T, const N: usize> [T; N] {
     pub fn each_ref<region r>(
         receiver self: read Self from r
     ): [read T from r; N] from r {
-        var result = package.core.mem.MaybeUninit<[read T from r; N]>.uninit()
-        let slots = core.ptr.from_mut(result).cast<package.core.mem.MaybeUninit<read T from r>>()
+        var result = core.mem.MaybeUninit<[read T from r; N]>.uninit()
+        let slots = core.ptr.from_mut(result).cast<core.mem.MaybeUninit<read T from r>>()
         let base = core.ptr.from_ref(self).cast<T>()
         var i = 0usize
         // Safety: every slot and every source element is in bounds.
@@ -1406,8 +1407,8 @@ extend<T, const N: usize> [T; N] {
     pub fn each_mut<region r>(
         receiver self: mut Self from r
     ): [mut T from r; N] from r {
-        var result = package.core.mem.MaybeUninit<[mut T from r; N]>.uninit()
-        let slots = core.ptr.from_mut(result).cast<package.core.mem.MaybeUninit<mut T from r>>()
+        var result = core.mem.MaybeUninit<[mut T from r; N]>.uninit()
+        let slots = core.ptr.from_mut(result).cast<core.mem.MaybeUninit<mut T from r>>()
         let base = core.ptr.from_mut(self).cast<T>()
         var i = 0usize
         // Safety: every slot and source element is in bounds; distinct indices

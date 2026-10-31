@@ -257,12 +257,10 @@ pub interface Iterator: Sized {
     take fn flatten(): Flatten<Self.Item, Self> where Self.Item: Iterator {
         Flatten(self, none)
     }
-    take fn cloned<region r, T: Clone>(): Cloned<region r, T, Self>
-        where Self.Item = read T from r {
+    take fn cloned<region r, T: Clone>(): Cloned<region r, T, Self> where Self.Item = read T from r {
         Cloned(self, Phantom<T>())
     }
-    take fn copied<region r, T: Copy>(): Copied<region r, T, Self>
-        where Self.Item = read T from r {
+    take fn copied<region r, T: Copy>(): Copied<region r, T, Self> where Self.Item = read T from r {
         Copied(self, Phantom<T>())
     }
     take fn scan<B, S, F: mut fn(mut S, take Self.Item): B?>(
@@ -529,7 +527,7 @@ pub type Flatten<U: Iterator, O: Iterator<Item = U>> {
 }
 
 pub type Cloned<region r, T, I> { iter: I; result: Phantom<T> }
-extend<region r, T: Clone, I: Iterator<Item = read T from r>> Cloned<r, T, I> implements Iterator {
+extend<region r, T: Clone, I: Iterator<Item = read T from r>> Cloned<region r, T, I> implements Iterator {
     type Item = T
     mut fn next(): T? {
         match take self.iter.next() {
@@ -540,7 +538,7 @@ extend<region r, T: Clone, I: Iterator<Item = read T from r>> Cloned<r, T, I> im
 }
 
 pub type Copied<region r, T, I> { iter: I; result: Phantom<T> }
-extend<region r, T: Copy, I: Iterator<Item = read T from r>> Copied<r, T, I> implements Iterator {
+extend<region r, T: Copy, I: Iterator<Item = read T from r>> Copied<region r, T, I> implements Iterator {
     type Item = T
     mut fn next(): T? {
         match take self.iter.next() {
@@ -588,8 +586,7 @@ extend<U: Iterator, O: Iterator<Item = U>> Flatten<U, O> implements Iterator {
         none
     }
 }
-extend<U: Iterator + BidirectionalIterator, O: Iterator<Item = U> + BidirectionalIterator>
-    Flatten<U, O> implements BidirectionalIterator {
+extend<U: Iterator + BidirectionalIterator, O: Iterator<Item = U> + BidirectionalIterator> Flatten<U, O> implements BidirectionalIterator {
     mut fn next_back(): U.Item? {
         while true {
             match mut self.back {

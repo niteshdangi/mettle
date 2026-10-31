@@ -7,17 +7,17 @@ fn main(): i32 {
     if unsafe { *slice.get_unchecked(2usize) } != 3 { return 20 }
     let pointer_range: core.iter.Range<ptr<read i32>> = slice.as_ptr_range()
     let _ = pointer_range
-    let first_chunk = slice.first_chunk<i32, 2usize>()
+    let first_chunk = slice.first_chunk<2usize>()
     match first_chunk {
         present(chunk) => { if chunk[0usize] != 1 || chunk[1usize] != 2 { return 77 } },
         none => { return 77 }
     }
-    let last_chunk = slice.last_chunk<i32, 2usize>()
+    let last_chunk = slice.last_chunk<2usize>()
     match last_chunk {
         present(chunk) => { if chunk[0usize] != 4 || chunk[1usize] != 5 { return 78 } },
         none => { return 78 }
     }
-    let first_parts = slice.split_first_chunk<i32, 2usize>()
+    let first_parts = slice.split_first_chunk<2usize>()
     match first_parts {
         present(parts) => {
             if parts.0[1usize] != 2 || parts.1.len() != 3usize || parts.1[0usize] != 3 {
@@ -26,7 +26,7 @@ fn main(): i32 {
         },
         none => { return 79 }
     }
-    let last_parts = slice.split_last_chunk<i32, 2usize>()
+    let last_parts = slice.split_last_chunk<2usize>()
     match last_parts {
         present(parts) => {
             if parts.0.len() != 3usize || parts.0[2usize] != 3 || parts.1[0usize] != 4 {
@@ -115,22 +115,22 @@ fn main(): i32 {
     {
         let mutable = mut values
         unsafe { *mutable.get_unchecked_mut(0usize) = 1 }
-        let chunk = mutable.first_chunk_mut<i32, 2usize>()
+        let chunk = mutable.first_chunk_mut<2usize>()
         match take chunk {
             present(values) => { values[0usize] = 1 },
             none => { return 81 }
         }
-        let parts = mutable.split_first_chunk_mut<i32, 2usize>()
+        let parts = mutable.split_first_chunk_mut<2usize>()
         match take parts {
             present(values) => { values.0[1usize] = 2; values.1[0usize] = 3 },
             none => { return 82 }
         }
-        let last = mutable.last_chunk_mut<i32, 2usize>()
+        let last = mutable.last_chunk_mut<2usize>()
         match take last {
             present(values) => { values[1usize] = 5 },
             none => { return 83 }
         }
-        let tail = mutable.split_last_chunk_mut<i32, 2usize>()
+        let tail = mutable.split_last_chunk_mut<2usize>()
         match take tail {
             present(values) => { values.0[0usize] = 1; values.1[0usize] = 4 },
             none => { return 84 }
@@ -212,7 +212,7 @@ fn main(): i32 {
     if empty_slice.split_first().is_present() || empty_slice.windows(1usize).next().is_present() {
         return 18
     }
-    let empty_chunk = empty_slice.first_chunk<i32, 1usize>()
+    let empty_chunk = empty_slice.first_chunk<1usize>()
     if empty_chunk.is_present() { return 85 }
     var singleton = [42]
     let one: read [i32] = read singleton

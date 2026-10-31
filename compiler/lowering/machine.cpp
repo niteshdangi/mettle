@@ -95,7 +95,6 @@ Builder::Value Builder::machineExpression(const Node &node) {
       if (!live())
         return {};
       location = materialize(value, node.span, temporaryScope);
-      location.fields.push_back(Projection::dereference());
     } else if (facts.machineOperation != "ptr.drop_in_place") {
       location = place(*node.children[0]->children[0]);
       if (!live())

@@ -1601,8 +1601,8 @@ private:
     if (operation.starts_with("numeric.")) {
       auto method = operation.substr(8);
       auto receiverType = instruction.operands[0].type;
-      bool mutatingAscii = method == "make_ascii_lowercase" ||
-                           method == "make_ascii_uppercase";
+      bool mutatingAscii =
+          method == "make_ascii_lowercase" || method == "make_ascii_uppercase";
       auto self = program.types->isView(receiverType)
                       ? program.types->view(receiverType).payload
                       : receiverType;
@@ -1632,20 +1632,17 @@ private:
         bool littleEndian = method.ends_with("le_bytes");
         unsigned width = isInteger(fromBytes ? argument : self)
                              ? integerWidth(fromBytes ? argument : self)
-                             : (fromBytes ? argument : self) == Type::F32
-                                   ? 32
-                                   : 64;
+                         : (fromBytes ? argument : self) == Type::F32 ? 32
+                                                                      : 64;
         auto rawType = builder.getIntNTy(width);
         auto *storage =
             lowering.temporary(fromBytes ? instruction.operands[0].type : self);
         if (fromBytes) {
           builder.CreateStore(arguments[0], storage);
-          auto *bits = builder.CreateLoad(rawType, storage);
-          bool swap = littleEndian
-                          ? !module->getDataLayout().isLittleEndian()
-                      : bigEndian
-                          ? module->getDataLayout().isLittleEndian()
-                          : false;
+          llvm::Value *bits = builder.CreateLoad(rawType, storage);
+          bool swap = littleEndian ? !module->getDataLayout().isLittleEndian()
+                      : bigEndian  ? module->getDataLayout().isLittleEndian()
+                                   : false;
           if (swap && width > 8)
             bits = invoke(llvm::Intrinsic::bswap, {bits});
           return isFloating(argument)
@@ -1653,11 +1650,9 @@ private:
                      : bits;
         }
         auto *bits = isFloating(self) ? builder.CreateBitCast(a, rawType) : a;
-        bool swap = littleEndian
-                        ? !module->getDataLayout().isLittleEndian()
-                    : bigEndian
-                        ? module->getDataLayout().isLittleEndian()
-                        : false;
+        bool swap = littleEndian ? !module->getDataLayout().isLittleEndian()
+                    : bigEndian  ? module->getDataLayout().isLittleEndian()
+                                 : false;
         if (swap && width > 8)
           bits = invoke(llvm::Intrinsic::bswap, {bits});
         builder.CreateStore(bits, storage);
@@ -1694,8 +1689,8 @@ private:
           std::vector<llvm::Type *> parameters;
           for (auto *value : values)
             parameters.push_back(value->getType());
-          auto *signature = llvm::FunctionType::get(
-              type(self), parameters, false);
+          auto *signature =
+              llvm::FunctionType::get(type(self), parameters, false);
           auto function = module->getOrInsertFunction(name, signature);
           return builder.CreateCall(function, values);
         };
@@ -1755,14 +1750,13 @@ private:
               builder.CreateFSub(a, invoke(llvm::Intrinsic::trunc, {a}));
           auto *zero = builder.CreateFCmpOEQ(
               fraction, llvm::ConstantFP::get(type(self), 0.0));
-          auto *signedZero = invoke(
-              llvm::Intrinsic::copysign,
-              {llvm::ConstantFP::get(type(self), 0.0), a});
+          auto *signedZero =
+              invoke(llvm::Intrinsic::copysign,
+                     {llvm::ConstantFP::get(type(self), 0.0), a});
           return builder.CreateSelect(zero, signedZero, fraction);
         }
         if (method == "recip")
-          return builder.CreateFDiv(
-              llvm::ConstantFP::get(type(self), 1.0), a);
+          return builder.CreateFDiv(llvm::ConstantFP::get(type(self), 1.0), a);
         if (method == "signum") {
           auto *nan = builder.CreateFCmpUNO(a, a);
           auto *one = llvm::ConstantFP::get(type(self), 1.0);
@@ -1772,14 +1766,13 @@ private:
         if (method == "to_degrees" || method == "to_radians") {
           constexpr double pi = 3.14159265358979323846264338327950288;
           auto factor = method == "to_degrees" ? 180.0 / pi : pi / 180.0;
-          return builder.CreateFMul(
-              a, llvm::ConstantFP::get(type(self), factor));
+          return builder.CreateFMul(a,
+                                    llvm::ConstantFP::get(type(self), factor));
         }
         if (method == "div_euclid" || method == "rem_euclid") {
           auto *remainder = builder.CreateFRem(a, b);
           auto *zero = llvm::ConstantFP::get(type(self), 0.0);
-          auto *negative =
-              builder.CreateFCmpOLT(remainder, zero);
+          auto *negative = builder.CreateFCmpOLT(remainder, zero);
           auto *magnitude = invoke(llvm::Intrinsic::fabs, {b});
           auto *adjusted = builder.CreateFAdd(remainder, magnitude);
           remainder = builder.CreateSelect(negative, adjusted, remainder);
@@ -1795,55 +1788,45 @@ private:
           unsigned bitWidth = self == Type::F32 ? 32 : 64;
           auto *aBits = builder.CreateBitCast(a, builder.getIntNTy(bitWidth));
           auto *bBits = builder.CreateBitCast(b, builder.getIntNTy(bitWidth));
-          auto signMask =
-              std::uint64_t{1} << (bitWidth - 1);
+          auto signMask = std::uint64_t{1} << (bitWidth - 1);
           auto *aNegative = builder.CreateICmpNE(
-              builder.CreateAnd(aBits, llvm::ConstantInt::get(aBits->getType(),
-                                                               signMask)),
+              builder.CreateAnd(
+                  aBits, llvm::ConstantInt::get(aBits->getType(), signMask)),
               llvm::ConstantInt::get(aBits->getType(), 0));
           auto *bNegative = builder.CreateICmpNE(
-              builder.CreateAnd(bBits, llvm::ConstantInt::get(bBits->getType(),
-                                                               signMask)),
+              builder.CreateAnd(
+                  bBits, llvm::ConstantInt::get(bBits->getType(), signMask)),
               llvm::ConstantInt::get(bBits->getType(), 0));
           auto *sameSign = builder.CreateICmpEQ(aNegative, bNegative);
           auto *same = builder.CreateFAdd(
               a, builder.CreateFDiv(builder.CreateFSub(b, a),
                                     llvm::ConstantFP::get(type(self), 2.0)));
           auto *opposite = builder.CreateFDiv(
-              builder.CreateFAdd(a, b),
-              llvm::ConstantFP::get(type(self), 2.0));
+              builder.CreateFAdd(a, b), llvm::ConstantFP::get(type(self), 2.0));
           auto *finite = builder.CreateSelect(sameSign, same, opposite);
-          auto *infinity =
-              llvm::ConstantFP::getInfinity(type(self));
-          auto *aInfinite =
-              builder.CreateFCmpOEQ(invoke(llvm::Intrinsic::fabs, {a}),
-                                    infinity);
-          auto *bInfinite =
-              builder.CreateFCmpOEQ(invoke(llvm::Intrinsic::fabs, {b}),
-                                    infinity);
+          auto *infinity = llvm::ConstantFP::getInfinity(type(self));
+          auto *aInfinite = builder.CreateFCmpOEQ(
+              invoke(llvm::Intrinsic::fabs, {a}), infinity);
+          auto *bInfinite = builder.CreateFCmpOEQ(
+              invoke(llvm::Intrinsic::fabs, {b}), infinity);
           auto *bothInfinite = builder.CreateAnd(aInfinite, bInfinite);
           auto *oppositeInfinities =
-              builder.CreateAnd(bothInfinite,
-                                builder.CreateNot(sameSign));
+              builder.CreateAnd(bothInfinite, builder.CreateNot(sameSign));
           auto *infiniteResult = builder.CreateSelect(
               aInfinite,
-              builder.CreateSelect(oppositeInfinities,
-                                   builder.CreateFAdd(a, b), a),
+              builder.CreateSelect(oppositeInfinities, builder.CreateFAdd(a, b),
+                                   a),
               b);
           auto *hasInfinity = builder.CreateOr(aInfinite, bInfinite);
-          auto *result = builder.CreateSelect(hasInfinity, infiniteResult,
-                                              finite);
+          auto *result =
+              builder.CreateSelect(hasInfinity, infiniteResult, finite);
           auto *bothZero = builder.CreateAnd(
-              builder.CreateFCmpOEQ(a, builder.getFloatingPointZero()),
-              builder.CreateFCmpOEQ(b, builder.getFloatingPointZero()));
-          auto *floatType = llvm::cast<llvm::FloatType>(type(self));
-          auto *negativeZero = llvm::ConstantFP::get(
-              type(self),
-              llvm::APFloat::getZero(floatType->getFltSemantics(), true));
-          auto *zeroResult =
-              builder.CreateSelect(builder.CreateAnd(aNegative, bNegative),
-                                   negativeZero,
-                                   llvm::ConstantFP::get(type(self), 0.0));
+              builder.CreateFCmpOEQ(a, llvm::ConstantFP::get(type(self), 0.0)),
+              builder.CreateFCmpOEQ(b, llvm::ConstantFP::get(type(self), 0.0)));
+          auto *negativeZero = llvm::ConstantFP::getNegativeZero(type(self));
+          auto *zeroResult = builder.CreateSelect(
+              builder.CreateAnd(aNegative, bNegative), negativeZero,
+              llvm::ConstantFP::get(type(self), 0.0));
           result = builder.CreateSelect(bothZero, zeroResult, result);
           auto *nan = builder.CreateOr(builder.CreateFCmpUNO(a, a),
                                        builder.CreateFCmpUNO(b, b));
@@ -1858,13 +1841,12 @@ private:
               builder.CreateFCmpUNO(b, b),
               builder.CreateOr(
                   builder.CreateFCmpUNO(arguments[2], arguments[2]),
-                               builder.CreateFCmpOGT(b, arguments[2])));
+                  builder.CreateFCmpOGT(b, arguments[2])));
           panicIf(invalid);
           auto *lower = invoke(llvm::Intrinsic::maxnum, {a, b});
-          auto *clamped = invoke(llvm::Intrinsic::minnum,
-                                 {lower, arguments[2]});
-          return builder.CreateSelect(builder.CreateFCmpUNO(a, a), a,
-                                      clamped);
+          auto *clamped =
+              invoke(llvm::Intrinsic::minnum, {lower, arguments[2]});
+          return builder.CreateSelect(builder.CreateFCmpUNO(a, a), a, clamped);
         }
         if (method == "next_up" || method == "next_down") {
           unsigned bitWidth = self == Type::F32 ? 32 : 64;
@@ -1878,18 +1860,16 @@ private:
                                   : std::uint64_t{0x7ff0000000000000};
           auto *negative = builder.CreateICmpNE(
               builder.CreateAnd(bits, constant(signMask)), constant(0));
-          auto *zero = builder.CreateFCmpOEQ(
-              a, llvm::ConstantFP::get(type(self), 0.0));
+          auto *zero =
+              builder.CreateFCmpOEQ(a, llvm::ConstantFP::get(type(self), 0.0));
           auto *special = builder.CreateICmpEQ(
               builder.CreateAnd(bits, constant(exponentMask)),
               constant(exponentMask));
           auto *nan = builder.CreateFCmpUNO(a, a);
           bool up = method == "next_up";
-          auto *unchanged =
-              builder.CreateOr(
-                  nan, builder.CreateAnd(
-                           special, up ? builder.CreateNot(negative)
-                                       : negative));
+          auto *unchanged = builder.CreateOr(
+              nan, builder.CreateAnd(special, up ? builder.CreateNot(negative)
+                                                 : negative));
           auto *increment = up ? negative : builder.CreateNot(negative);
           auto *nextBits = builder.CreateSelect(
               increment, builder.CreateSub(bits, constant(1)),
@@ -1961,22 +1941,20 @@ private:
                       {a, a, count});
       }
       if (self == Type::U8 &&
-          (method.starts_with("is_ascii") ||
-           method.starts_with("to_ascii") ||
+          (method.starts_with("is_ascii") || method.starts_with("to_ascii") ||
            method.starts_with("make_ascii") ||
            method == "eq_ignore_ascii_case")) {
         auto lower = [&](llvm::Value *value) {
-          auto *upper = builder.CreateAnd(
-              builder.CreateICmpUGE(value, integer(0x41)),
-              builder.CreateICmpULE(value, integer(0x5a)));
-          return builder.CreateSelect(upper,
-                                      builder.CreateAdd(value, integer(0x20)),
-                                      value);
+          auto *upper =
+              builder.CreateAnd(builder.CreateICmpUGE(value, integer(0x41)),
+                                builder.CreateICmpULE(value, integer(0x5a)));
+          return builder.CreateSelect(
+              upper, builder.CreateAdd(value, integer(0x20)), value);
         };
         auto upper = [&](llvm::Value *value) {
-          auto *lowercase = builder.CreateAnd(
-              builder.CreateICmpUGE(value, integer(0x61)),
-              builder.CreateICmpULE(value, integer(0x7a)));
+          auto *lowercase =
+              builder.CreateAnd(builder.CreateICmpUGE(value, integer(0x61)),
+                                builder.CreateICmpULE(value, integer(0x7a)));
           return builder.CreateSelect(
               lowercase, builder.CreateSub(value, integer(0x20)), value);
         };
@@ -2000,9 +1978,9 @@ private:
                               builder.CreateICmpULE(a, integer(0x5a))),
             builder.CreateAnd(builder.CreateICmpUGE(a, integer(0x61)),
                               builder.CreateICmpULE(a, integer(0x7a))));
-        auto *digit = builder.CreateAnd(
-            builder.CreateICmpUGE(a, integer(0x30)),
-            builder.CreateICmpULE(a, integer(0x39)));
+        auto *digit =
+            builder.CreateAnd(builder.CreateICmpUGE(a, integer(0x30)),
+                              builder.CreateICmpULE(a, integer(0x39)));
         if (method == "is_ascii_alphabetic")
           return alpha;
         if (method == "is_ascii_alphanumeric")
@@ -2013,9 +1991,8 @@ private:
         if (method == "is_ascii_digit")
           return digit;
         if (method == "is_ascii_graphic")
-          return builder.CreateAnd(
-              builder.CreateICmpUGE(a, integer(0x21)),
-              builder.CreateICmpULE(a, integer(0x7e)));
+          return builder.CreateAnd(builder.CreateICmpUGE(a, integer(0x21)),
+                                   builder.CreateICmpULE(a, integer(0x7e)));
         if (method == "is_ascii_hexdigit")
           return builder.CreateOr(
               digit,
@@ -2025,42 +2002,36 @@ private:
                   builder.CreateAnd(builder.CreateICmpUGE(a, integer(0x61)),
                                     builder.CreateICmpULE(a, integer(0x66)))));
         if (method == "is_ascii_lowercase")
-          return builder.CreateAnd(
-              builder.CreateICmpUGE(a, integer(0x61)),
-              builder.CreateICmpULE(a, integer(0x7a)));
+          return builder.CreateAnd(builder.CreateICmpUGE(a, integer(0x61)),
+                                   builder.CreateICmpULE(a, integer(0x7a)));
         if (method == "is_ascii_punctuation")
           return builder.CreateAnd(
               builder.CreateAnd(builder.CreateICmpUGE(a, integer(0x21)),
                                 builder.CreateICmpULE(a, integer(0x7e))),
               builder.CreateNot(builder.CreateOr(alpha, digit)));
         if (method == "is_ascii_uppercase")
-          return builder.CreateAnd(
-              builder.CreateICmpUGE(a, integer(0x41)),
-              builder.CreateICmpULE(a, integer(0x5a)));
+          return builder.CreateAnd(builder.CreateICmpUGE(a, integer(0x41)),
+                                   builder.CreateICmpULE(a, integer(0x5a)));
         return builder.CreateOr(
             builder.CreateAnd(builder.CreateICmpUGE(a, integer(0x09)),
                               builder.CreateICmpULE(a, integer(0x0d))),
             builder.CreateICmpEQ(a, integer(0x20)));
       }
       bool sign = isSignedInteger(self);
-      if (method == "ilog" || method == "checked_ilog" ||
-          method == "ilog2" || method == "checked_ilog2" ||
-          method == "ilog10" || method == "checked_ilog10") {
+      if (method == "ilog" || method == "checked_ilog" || method == "ilog2" ||
+          method == "checked_ilog2" || method == "ilog10" ||
+          method == "checked_ilog10") {
         bool optional = method.starts_with("checked_");
-        bool baseArgument = method.ends_with("ilog") ||
-                            method.ends_with("checked_ilog");
+        bool baseArgument =
+            method.ends_with("ilog") || method.ends_with("checked_ilog");
         bool baseTwo = method.ends_with("ilog2");
         bool baseTen = method.ends_with("ilog10");
         auto *valid = sign ? builder.CreateICmpSGT(a, integer(0))
                            : builder.CreateICmpNE(a, integer(0));
-        llvm::Value *base =
-            baseTwo ? integer(2)
-            : baseTen ? integer(10)
-                      : b;
+        llvm::Value *base = baseTwo ? integer(2) : baseTen ? integer(10) : b;
         if (baseArgument) {
-          auto *validBase =
-              sign ? builder.CreateICmpSGT(base, integer(1))
-                   : builder.CreateICmpUGT(base, integer(1));
+          auto *validBase = sign ? builder.CreateICmpSGT(base, integer(1))
+                                 : builder.CreateICmpUGT(base, integer(1));
           valid = builder.CreateAnd(valid, validBase);
         }
         if (!optional)
@@ -2074,9 +2045,9 @@ private:
           result = builder.CreateSub(builder.getInt32(width - 1), leading);
         } else {
           auto *safeValue = builder.CreateSelect(valid, a, integer(1));
-          auto *safeBase =
-              baseArgument ? builder.CreateSelect(valid, base, integer(2))
-                           : integer(10);
+          auto *safeBase = baseArgument
+                               ? builder.CreateSelect(valid, base, integer(2))
+                               : integer(10);
           auto *function = builder.GetInsertBlock()->getParent();
           auto *preheader = builder.GetInsertBlock();
           auto *loop = llvm::BasicBlock::Create(context, "ilog.loop", function);
@@ -2088,9 +2059,8 @@ private:
           auto *count = builder.CreatePHI(builder.getInt32Ty(), 2);
           value->addIncoming(safeValue, preheader);
           count->addIncoming(builder.getInt32(0), preheader);
-          auto *atLeastBase = sign
-                                  ? builder.CreateICmpSGE(value, safeBase)
-                                  : builder.CreateICmpUGE(value, safeBase);
+          auto *atLeastBase = sign ? builder.CreateICmpSGE(value, safeBase)
+                                   : builder.CreateICmpUGE(value, safeBase);
           builder.CreateCondBr(atLeastBase, body, done);
           builder.SetInsertPoint(body);
           auto *nextValue = sign ? builder.CreateSDiv(value, safeBase)
@@ -2113,14 +2083,13 @@ private:
       }
       if (method == "isqrt" || method == "checked_isqrt") {
         bool optional = method == "checked_isqrt";
-        auto *valid = sign ? builder.CreateICmpSGE(a, integer(0))
-                           : builder.getTrue();
+        auto *valid =
+            sign ? builder.CreateICmpSGE(a, integer(0)) : builder.getTrue();
         if (!optional)
           panicIf(builder.CreateNot(valid));
         auto *nonzero = builder.CreateICmpNE(a, integer(0));
-        auto *safeValue =
-            builder.CreateSelect(builder.CreateAnd(valid, nonzero), a,
-                                 integer(1));
+        auto *safeValue = builder.CreateSelect(
+            builder.CreateAnd(valid, nonzero), a, integer(1));
         auto *one = integer(1);
         auto *function = builder.GetInsertBlock()->getParent();
         auto *preheader = builder.GetInsertBlock();
@@ -2134,16 +2103,14 @@ private:
         auto *quotient = sign ? builder.CreateSDiv(safeValue, estimate)
                               : builder.CreateUDiv(safeValue, estimate);
         auto *halves = builder.CreateAdd(builder.CreateLShr(estimate, one),
-                                        builder.CreateLShr(quotient, one));
-        auto *oddBits = builder.CreateAdd(
-            builder.CreateAnd(estimate, one),
-            builder.CreateAnd(quotient, one));
+                                         builder.CreateLShr(quotient, one));
+        auto *oddBits = builder.CreateAdd(builder.CreateAnd(estimate, one),
+                                          builder.CreateAnd(quotient, one));
         auto *next =
             builder.CreateAdd(halves, builder.CreateLShr(oddBits, one));
-        builder.CreateCondBr(
-            sign ? builder.CreateICmpSLT(next, estimate)
-                 : builder.CreateICmpULT(next, estimate),
-            body, done);
+        builder.CreateCondBr(sign ? builder.CreateICmpSLT(next, estimate)
+                                  : builder.CreateICmpULT(next, estimate),
+                             body, done);
         builder.SetInsertPoint(body);
         auto *backedge = builder.GetInsertBlock();
         builder.CreateBr(loop);
@@ -2168,7 +2135,8 @@ private:
                                 : mixedOptional    ? 8
                                 : mixedOverflowing ? 12
                                 : mixedSaturating  ? 11
-                                : mixedWrapping ? 9 : 0);
+                                : mixedWrapping    ? 9
+                                                   : 0);
       bool mixedSigned = mixedMethod.ends_with("_signed");
       bool mixedUnsigned = mixedMethod.ends_with("_unsigned");
       if (mixedSigned || mixedUnsigned) {
@@ -2179,7 +2147,7 @@ private:
         auto *right = mixedSigned ? builder.CreateSExt(b, extendedType)
                                   : builder.CreateZExt(b, extendedType);
         auto *wide = subtract ? builder.CreateSub(left, right)
-                             : builder.CreateAdd(left, right);
+                              : builder.CreateAdd(left, right);
         llvm::Value *overflow = nullptr;
         llvm::Value *bounded = wide;
         if (sign) {
@@ -2206,9 +2174,8 @@ private:
                 below, minimum, builder.CreateSelect(above, maximum, wide));
         }
         auto *value = builder.CreateTrunc(bounded, a->getType());
-        if (mixedStrict ||
-            (!mixedOptional && !mixedOverflowing && !mixedSaturating &&
-             !mixedWrapping && checked))
+        if (mixedStrict || (!mixedOptional && !mixedOverflowing &&
+                            !mixedSaturating && !mixedWrapping && checked))
           panicIf(overflow);
         if (mixedOptional || mixedOverflowing) {
           llvm::Value *aggregate =
@@ -2231,12 +2198,11 @@ private:
           return builder.CreateNeg(a);
         if (unchecked == "shl" || unchecked == "shr") {
           auto *count = builder.CreateZExtOrTrunc(b, a->getType());
-          return unchecked == "shl"
-                     ? builder.CreateShl(a, count)
-                     : sign ? builder.CreateAShr(a, count)
-                            : builder.CreateLShr(a, count);
+          return unchecked == "shl" ? builder.CreateShl(a, count)
+                 : sign             ? builder.CreateAShr(a, count)
+                                    : builder.CreateLShr(a, count);
         }
-        return unchecked == "add" ? builder.CreateAdd(a, b)
+        return unchecked == "add"   ? builder.CreateAdd(a, b)
                : unchecked == "sub" ? builder.CreateSub(a, b)
                                     : builder.CreateMul(a, b);
       }
@@ -2244,15 +2210,12 @@ private:
         auto *tooWide = builder.CreateICmpUGE(b, builder.getInt32(width));
         auto *count = builder.CreateAnd(b, builder.getInt32(width - 1));
         count = builder.CreateZExtOrTrunc(count, a->getType());
-        auto *shifted =
-            method == "unbounded_shl"
-                ? builder.CreateShl(a, count)
-                : sign ? builder.CreateAShr(a, count)
-                       : builder.CreateLShr(a, count);
-        auto *wideResult =
-            method == "unbounded_shr" && sign
-                ? builder.CreateAShr(a, integer(width - 1))
-                : integer(0);
+        auto *shifted = method == "unbounded_shl" ? builder.CreateShl(a, count)
+                        : sign ? builder.CreateAShr(a, count)
+                               : builder.CreateLShr(a, count);
+        auto *wideResult = method == "unbounded_shr" && sign
+                               ? builder.CreateAShr(a, integer(width - 1))
+                               : integer(0);
         return builder.CreateSelect(tooWide, wideResult, shifted);
       }
       if (method == "next_power_of_two" ||
@@ -2261,8 +2224,7 @@ private:
         auto *zero = builder.CreateICmpEQ(a, integer(0));
         auto *decremented = builder.CreateSub(a, integer(1));
         auto *leading = builder.CreateZExtOrTrunc(
-            invoke(llvm::Intrinsic::ctlz,
-                   {decremented, builder.getFalse()}),
+            invoke(llvm::Intrinsic::ctlz, {decremented, builder.getFalse()}),
             builder.getInt32Ty());
         auto *shift = builder.CreateSub(builder.getInt32(width), leading);
         auto *overflow = builder.CreateAnd(
@@ -2270,8 +2232,8 @@ private:
             builder.CreateNot(zero));
         if (!optional && checked)
           panicIf(overflow);
-        auto *safeShift = builder.CreateSelect(
-            overflow, builder.getInt32(width - 1), shift);
+        auto *safeShift =
+            builder.CreateSelect(overflow, builder.getInt32(width - 1), shift);
         auto *count = builder.CreateZExtOrTrunc(safeShift, a->getType());
         auto *power = builder.CreateShl(integer(1), count);
         power = builder.CreateSelect(zero, integer(1), power);
@@ -2281,14 +2243,14 @@ private:
         llvm::Value *aggregate =
             llvm::Constant::getNullValue(type(instruction.result.type));
         aggregate = builder.CreateInsertValue(
-            aggregate, builder.CreateZExt(builder.CreateNot(overflow),
-                                          builder.getInt32Ty()),
+            aggregate,
+            builder.CreateZExt(builder.CreateNot(overflow),
+                               builder.getInt32Ty()),
             0);
         return builder.CreateInsertValue(aggregate, power, 1);
       }
       if (method == "div_ceil" || method == "next_multiple_of" ||
-          method == "checked_next_multiple_of" ||
-          method == "is_multiple_of") {
+          method == "checked_next_multiple_of" || method == "is_multiple_of") {
         auto *zero = builder.CreateICmpEQ(b, integer(0));
         auto *safeDivisor = builder.CreateSelect(zero, integer(1), b);
         auto *quotient = builder.CreateUDiv(a, safeDivisor);
@@ -2306,13 +2268,12 @@ private:
                                 builder.CreateICmpEQ(remainder, integer(0))));
         bool optional = method == "checked_next_multiple_of";
         auto *hasRemainder = builder.CreateICmpNE(remainder, integer(0));
-        auto *increment =
-            builder.CreateSelect(hasRemainder,
-                                 builder.CreateSub(b, remainder), integer(0));
+        auto *increment = builder.CreateSelect(
+            hasRemainder, builder.CreateSub(b, remainder), integer(0));
         auto *sum = invoke(llvm::Intrinsic::uadd_with_overflow, {a, increment});
         auto *rounded = builder.CreateExtractValue(sum, 0);
-        auto *overflow = builder.CreateOr(
-            zero, builder.CreateExtractValue(sum, 1));
+        auto *overflow =
+            builder.CreateOr(zero, builder.CreateExtractValue(sum, 1));
         if (!optional)
           panicIf(overflow);
         if (!optional)
@@ -2320,21 +2281,21 @@ private:
         llvm::Value *aggregate =
             llvm::Constant::getNullValue(type(instruction.result.type));
         aggregate = builder.CreateInsertValue(
-            aggregate, builder.CreateZExt(builder.CreateNot(overflow),
-                                          builder.getInt32Ty()),
+            aggregate,
+            builder.CreateZExt(builder.CreateNot(overflow),
+                               builder.getInt32Ty()),
             0);
         return builder.CreateInsertValue(aggregate, rounded, 1);
       }
       if (method == "midpoint") {
-        auto *wideA =
-            sign ? builder.CreateSExt(a, builder.getIntNTy(width + 1))
-                 : builder.CreateZExt(a, builder.getIntNTy(width + 1));
-        auto *wideB =
-            sign ? builder.CreateSExt(b, builder.getIntNTy(width + 1))
-                 : builder.CreateZExt(b, builder.getIntNTy(width + 1));
+        auto *wideA = sign
+                          ? builder.CreateSExt(a, builder.getIntNTy(width + 1))
+                          : builder.CreateZExt(a, builder.getIntNTy(width + 1));
+        auto *wideB = sign
+                          ? builder.CreateSExt(b, builder.getIntNTy(width + 1))
+                          : builder.CreateZExt(b, builder.getIntNTy(width + 1));
         auto *sum = builder.CreateAdd(wideA, wideB);
-        auto *two = llvm::ConstantInt::get(
-            context, llvm::APInt(width + 1, 2));
+        auto *two = llvm::ConstantInt::get(context, llvm::APInt(width + 1, 2));
         auto *half =
             sign ? builder.CreateSDiv(sum, two) : builder.CreateUDiv(sum, two);
         return builder.CreateTrunc(half, a->getType());
@@ -2343,24 +2304,22 @@ private:
         if (!sign)
           return method == "is_positive" ? builder.CreateICmpNE(a, integer(0))
                                          : builder.getFalse();
-        return method == "is_positive"
-                   ? builder.CreateICmpSGT(a, integer(0))
-                   : builder.CreateICmpSLT(a, integer(0));
+        return method == "is_positive" ? builder.CreateICmpSGT(a, integer(0))
+                                       : builder.CreateICmpSLT(a, integer(0));
       }
       if (method == "signum") {
         auto *nonzero = builder.CreateICmpNE(a, integer(0));
         if (!sign)
           return builder.CreateZExt(nonzero, a->getType());
         auto *negative = builder.CreateICmpSLT(a, integer(0));
-        auto *minusOne = llvm::ConstantInt::get(
-            context, llvm::APInt::getAllOnes(width));
-        return builder.CreateSelect(
-            negative, minusOne, builder.CreateZExt(nonzero, a->getType()));
+        auto *minusOne =
+            llvm::ConstantInt::get(context, llvm::APInt::getAllOnes(width));
+        return builder.CreateSelect(negative, minusOne,
+                                    builder.CreateZExt(nonzero, a->getType()));
       }
       if (method == "is_power_of_two") {
         auto *nonzero = builder.CreateICmpNE(a, integer(0));
-        auto *positive =
-            sign ? builder.CreateICmpSGT(a, integer(0)) : nonzero;
+        auto *positive = sign ? builder.CreateICmpSGT(a, integer(0)) : nonzero;
         auto *previous = builder.CreateSub(a, integer(1));
         return builder.CreateAnd(
             positive,
@@ -2371,8 +2330,8 @@ private:
         return builder.CreateSelect(negative, builder.CreateNeg(a), a);
       }
       if (method == "abs_diff") {
-        auto *less = sign ? builder.CreateICmpSLT(a, b)
-                          : builder.CreateICmpULT(a, b);
+        auto *less =
+            sign ? builder.CreateICmpSLT(a, b) : builder.CreateICmpULT(a, b);
         return builder.CreateSelect(less, builder.CreateSub(b, a),
                                     builder.CreateSub(a, b));
       }
@@ -2392,9 +2351,8 @@ private:
             context, sign ? llvm::APInt::getSignedMaxValue(width)
                           : llvm::APInt::getAllOnes(width));
         auto multiply = [&](llvm::Value *left, llvm::Value *right) {
-          auto intrinsic =
-              sign ? llvm::Intrinsic::smul_with_overflow
-                   : llvm::Intrinsic::umul_with_overflow;
+          auto intrinsic = sign ? llvm::Intrinsic::smul_with_overflow
+                                : llvm::Intrinsic::umul_with_overflow;
           auto *function = llvm::Intrinsic::getOrInsertDeclaration(
               module.get(), intrinsic, {left->getType()});
           auto *pair = builder.CreateCall(function, {left, right});
@@ -2425,26 +2383,24 @@ private:
         auto [product, productOverflow] = multiply(result, factor);
         llvm::Value *selectedProduct = product;
         if (saturating) {
-          auto *negative = sign
-                               ? builder.CreateXor(
-                                     builder.CreateICmpSLT(result, integer(0)),
-                                     builder.CreateICmpSLT(factor, integer(0)))
-                               : builder.getFalse();
-          auto *limit = sign ? builder.CreateSelect(negative, minimum, maximum)
-                             : maximum;
-          selectedProduct = builder.CreateSelect(productOverflow, limit,
-                                                 product);
+          auto *negative =
+              sign
+                  ? builder.CreateXor(builder.CreateICmpSLT(result, integer(0)),
+                                      builder.CreateICmpSLT(factor, integer(0)))
+                  : builder.getFalse();
+          auto *limit =
+              sign ? builder.CreateSelect(negative, minimum, maximum) : maximum;
+          selectedProduct =
+              builder.CreateSelect(productOverflow, limit, product);
         }
-        auto *nextResult =
-            builder.CreateSelect(used, selectedProduct, result);
+        auto *nextResult = builder.CreateSelect(used, selectedProduct, result);
         auto *remaining = builder.CreateLShr(exponent, builder.getInt32(1));
         auto *hasRemaining =
             builder.CreateICmpNE(remaining, builder.getInt32(0));
         auto [square, squareOverflow] = multiply(factor, factor);
         auto *nextFactor =
-            saturating
-                ? builder.CreateSelect(squareOverflow, maximum, square)
-                : square;
+            saturating ? builder.CreateSelect(squareOverflow, maximum, square)
+                       : square;
         auto *nextOverflow = builder.CreateOr(
             overflow,
             builder.CreateOr(builder.CreateAnd(used, productOverflow),
@@ -2486,7 +2442,8 @@ private:
                            : optional    ? 8
                            : overflowing ? 12
                            : saturating  ? 11
-                           : wrapping ? 9 : 0);
+                           : wrapping    ? 9
+                                         : 0);
       llvm::Value *value = nullptr, *overflow = nullptr;
       auto *minimum = llvm::ConstantInt::get(
           context, sign ? llvm::APInt::getSignedMinValue(width)
@@ -2503,10 +2460,9 @@ private:
                                 : builder.CreateLShr(a, count);
         if (strict)
           panicIf(overflow);
-      } else if (method == "div" || method == "rem" ||
-                 method == "div_euclid" || method == "rem_euclid") {
-        bool euclidean =
-            method == "div_euclid" || method == "rem_euclid";
+      } else if (method == "div" || method == "rem" || method == "div_euclid" ||
+                 method == "rem_euclid") {
+        bool euclidean = method == "div_euclid" || method == "rem_euclid";
         bool remainder = method == "rem" || method == "rem_euclid";
         auto *zero = builder.CreateICmpEQ(b, integer(0));
         auto *negativeOne =
@@ -2526,27 +2482,23 @@ private:
         if (euclidean && sign) {
           auto *negativeRemainder =
               builder.CreateICmpSLT(remainderValue, integer(0));
-          auto *positiveDivisor =
-              builder.CreateICmpSGT(divisor, integer(0));
-          auto *adjustedQuotient =
-              builder.CreateSelect(positiveDivisor,
-                                  builder.CreateSub(quotient, integer(1)),
-                                  builder.CreateAdd(quotient, integer(1)));
-          quotient = builder.CreateSelect(negativeRemainder,
-                                          adjustedQuotient, quotient);
-          auto *divisorMagnitude =
-              builder.CreateSelect(positiveDivisor, divisor,
-                                   builder.CreateNeg(divisor));
+          auto *positiveDivisor = builder.CreateICmpSGT(divisor, integer(0));
+          auto *adjustedQuotient = builder.CreateSelect(
+              positiveDivisor, builder.CreateSub(quotient, integer(1)),
+              builder.CreateAdd(quotient, integer(1)));
+          quotient = builder.CreateSelect(negativeRemainder, adjustedQuotient,
+                                          quotient);
+          auto *divisorMagnitude = builder.CreateSelect(
+              positiveDivisor, divisor, builder.CreateNeg(divisor));
           auto *adjustedRemainder =
               builder.CreateAdd(remainderValue, divisorMagnitude);
-          remainderValue = builder.CreateSelect(negativeRemainder,
-                                                adjustedRemainder,
-                                                remainderValue);
+          remainderValue = builder.CreateSelect(
+              negativeRemainder, adjustedRemainder, remainderValue);
         }
         value = remainder ? remainderValue : quotient;
         value = builder.CreateSelect(
-            overflow,
-            remainder ? integer(0) : (saturating ? maximum : minimum), value);
+            overflow, remainder ? integer(0) : (saturating ? maximum : minimum),
+            value);
         overflow = builder.CreateOr(zero, overflow);
         if (strict ||
             (!optional && !overflowing && !saturating && !wrapping && checked))
