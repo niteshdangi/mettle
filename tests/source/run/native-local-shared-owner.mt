@@ -1,3 +1,5 @@
+import core.clone.Clone
+
 fn main(): i32 {
     let first: local shared i32 = local shared 23
     let second = first.clone()
