@@ -6,10 +6,20 @@
 // scoped threads may borrow from the enclosing frame and are always joined
 // before `scope` returns, also when the scope body panics.
 import package.core.panic.panic
+import package.alloc.string.String
+import package.core.text.Text
+import package.core.option
 
 extern "C" {
     unsafe fn mettle_rt_panicking(): i32;
-    unsafe fn mettle_rt_thread_spawn(entry: extern "C" fn(ptr<mut u8>): Unit, argument: ptr<mut u8>, handle: ptr<mut usize>): i32;
+    unsafe fn mettle_rt_thread_spawn_configured(
+        entry: extern "C" fn(ptr<mut u8>): Unit,
+        argument: ptr<mut u8>,
+        handle: ptr<mut usize>,
+        name: ptr<read u8>,
+        name_length: usize,
+        stack_size: usize
+    ): i32;
     unsafe fn mettle_rt_thread_join(handle: usize): i32;
     unsafe fn mettle_rt_thread_detach(handle: usize): i32;
     unsafe fn mettle_rt_thread_current(): usize;
@@ -32,6 +42,51 @@ pub fn yield_now(): Unit { unsafe { mettle_rt_thread_yield() } }
 pub fn sleep_nanos(nanoseconds: u64): Unit { unsafe { mettle_rt_thread_sleep(nanoseconds) } }
 pub fn available_parallelism(): usize { unsafe { mettle_rt_thread_parallelism() as usize } }
 
+pub type Builder {
+    name: String?
+    stack_size: usize
+}
+
+extend Builder {
+    pub static fn new(): Builder { Builder(none, 0usize) }
+
+    pub mut fn name(value: read Text): Unit {
+        self.name = present(package.alloc.string.from_text(value))
+    }
+
+    pub mut fn stack_size(bytes: usize): Unit { self.stack_size = bytes }
+
+    pub take fn spawn<T: Transferable + Static, F: fn(): T + Transferable + Static>(
+        f: take F
+    ): JoinHandle<T> throws SpawnError {
+        let started = match self.name.as_view() {
+            present(name) => unsafe {
+                try start<T, F>(
+                    f,
+                    name.as_bytes().as_ptr(),
+                    name.as_bytes().len(),
+                    self.stack_size
+                )
+            },
+            none => unsafe {
+                try start<T, F>(f, core.ptr.null<u8>(), 0usize, self.stack_size)
+            }
+        }
+        JoinHandle(started.0, started.1)
+    }
+
+    pub take fn spawn_scoped<
+        region s,
+        T: Transferable,
+        F: fn(): T + Transferable + Within<region s>
+    >(
+        scope: read Scope<region s> from s,
+        f: take F
+    ): ScopedJoinHandle<T> throws SpawnError {
+        try scope.try_spawn_configured(read self, f)
+    }
+}
+
 // Non-generic part shared by the spawner and the thread. Two owners (the
 // thread and its handle or scope) release it; the last one frees the generic
 // state through `release`.
@@ -43,6 +98,7 @@ type Header {
     code: i32
     thread: usize
     joined: core.sync.atomic.AtomicBool
+    finished: core.sync.atomic.AtomicBool
 }
 
 // The closure waiting to run; dropped by `release` if it never started.
@@ -99,20 +155,34 @@ extern "C" fn thread_entry(raw: ptr<mut u8>): Unit {
         let run = (*header).run
         let body = core.mem.transmute<extern "C" fn(ptr<mut u8>): Unit>(run)
         (*header).code = mettle_rt_thread_catch((*header).data, body)
+        (*header).finished.store(true, core.sync.atomic.Ordering.Release)
         release(header)
     }
 }
 
 // Allocates the shared state and starts the thread; on failure everything is
 // released again and the closure is dropped.
-unsafe fn start<T, F: fn(): T>(f: take F): (ptr<mut Header>, ptr<mut Slot<T>>) throws SpawnError {
+unsafe fn start<T, F: fn(): T>(
+    f: take F,
+    name: ptr<read u8>,
+    name_length: usize,
+    stack_size: usize
+): (ptr<mut Header>, ptr<mut Slot<T>>) throws SpawnError {
     let slot = package.alloc.boxed.new(Slot<T>(false, core.mem.MaybeUninit<T>.uninit())).into_raw().0
     let packet = package.alloc.boxed.new(Packet<F, T>(core.mem.MaybeUninit.new(f), false, slot)).into_raw().0
     let header = package.alloc.boxed.new(Header(run_packet<T, F>, release_packet<T, F>, packet.cast<u8>(),
                                           core.sync.atomic.AtomicU32.new(2u32), 0,
-                                          0usize, core.sync.atomic.AtomicBool.new(false))).into_raw().0
+                                          0usize, core.sync.atomic.AtomicBool.new(false),
+                                          core.sync.atomic.AtomicBool.new(false))).into_raw().0
     var thread = 0usize
-    let status = mettle_rt_thread_spawn(thread_entry, header.cast<u8>(), core.ptr.from_mut(thread))
+    let status = mettle_rt_thread_spawn_configured(
+        thread_entry,
+        header.cast<u8>(),
+        core.ptr.from_mut(thread),
+        name,
+        name_length,
+        stack_size
+    )
     if status != 0 {
         release(header)
         release(header)
@@ -137,8 +207,7 @@ unsafe extend<T: Transferable> JoinHandle<T> implements Transferable {}
 unsafe extend<T: Transferable> JoinHandle<T> implements Shareable {}
 
 pub fn try_spawn<T: Transferable + Static, F: fn(): T + Transferable + Static>(f: take F): JoinHandle<T> throws SpawnError {
-    let started = unsafe { try start<T, F>(f) }
-    JoinHandle(started.0, started.1)
+    try Builder.new().spawn(f)
 }
 
 pub fn spawn<T: Transferable + Static, F: fn(): T + Transferable + Static>(f: take F): JoinHandle<T> {
@@ -170,6 +239,9 @@ extend<T> JoinHandle<T> {
         }
     }
     pub fn id(): ThreadId { ThreadId(unsafe { (*self.header).thread }) }
+    pub fn is_finished(): bool {
+        unsafe { (*self.header).finished.load(core.sync.atomic.Ordering.Acquire) }
+    }
 }
 
 // Everything a type borrows outlives the region `r`. The compiler enforces it
@@ -238,23 +310,55 @@ extend<T> ScopedJoinHandle<T> {
             match take outcome { success(value) => value, failure(error) => throw error }
         }
     }
+    pub fn is_finished(): bool {
+        unsafe { (*self.header).finished.load(core.sync.atomic.Ordering.Acquire) }
+    }
 }
 
 extend<region s> Scope<region s> {
-    // Starts a thread that may borrow from the enclosing frame.
-    pub fn spawn<T: Transferable, F: fn(): T + Transferable + Within<region s>>(receiver self: read Scope<region s> from s, f: take F): ScopedJoinHandle<T> {
-        let outcome = capture unsafe { try start<T, F>(f) }
-        match take outcome {
-            success(started) => {
-                let header = started.0
-                let slot = started.1
-                unsafe {
-                    // refs: thread, handle and scope list
-                    (*header).refs.fetch_add(1u32, core.sync.atomic.Ordering.Relaxed)
-                    (*self.threads.get()).push(header.cast<Header>())
-                }
-                ScopedJoinHandle(header, slot)
+    fn try_spawn_configured<
+        T: Transferable,
+        F: fn(): T + Transferable + Within<region s>
+    >(
+        receiver self: read Scope<region s> from s,
+        config: read Builder,
+        f: take F
+    ): ScopedJoinHandle<T> throws SpawnError {
+        unsafe { (*self.threads.get()).reserve(1usize) }
+        let started = match config.name.as_view() {
+            present(name) => unsafe {
+                try start<T, F>(
+                    f,
+                    name.as_bytes().as_ptr(),
+                    name.as_bytes().len(),
+                    config.stack_size
+                )
             },
+            none => unsafe {
+                try start<T, F>(f, core.ptr.null<u8>(), 0usize, config.stack_size)
+            }
+        }
+        let header = started.0
+        let slot = started.1
+        unsafe {
+            // refs: thread, handle and scope list
+            (*header).refs.fetch_add(1u32, core.sync.atomic.Ordering.Relaxed)
+            (*self.threads.get()).push(header.cast<Header>())
+        }
+        ScopedJoinHandle(header, slot)
+    }
+
+    // Starts a thread that may borrow from the enclosing frame.
+    pub fn spawn<
+        T: Transferable,
+        F: fn(): T + Transferable + Within<region s>
+    >(
+        receiver self: read Scope<region s> from s,
+        f: take F
+    ): ScopedJoinHandle<T> {
+        let outcome = capture self.try_spawn_configured(Builder.new(), f)
+        match take outcome {
+            success(handle) => handle,
             failure(error) => panic("failed to spawn a thread")
         }
     }

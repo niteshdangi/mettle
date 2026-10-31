@@ -1,4 +1,5 @@
 import std.thread
+import std.sync.barrier
 import alloc.arc
 
 type Tracker {
@@ -22,17 +23,32 @@ fn main(): i32 {
 
   // an unjoined scoped thread is joined at scope exit
   let hits = core.sync.atomic.AtomicUsize.new(0usize)
+  let gate = arc.new(barrier.new(2usize))
+  let child_gate = gate.retain()
   thread.scope(fn(s: read thread.Scope): Unit {
-    let h = s.spawn(fn(): i32 { thread.sleep_nanos(2000000u64); let _old = hits.fetch_add(1usize, core.sync.atomic.Ordering.SeqCst); 0 })
+    let h = s.spawn(fn(): i32 {
+      child_gate.get().wait()
+      let _old = hits.fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
+      0
+    })
+    gate.get().wait()
   })
   if hits.load(core.sync.atomic.Ordering.SeqCst) != 1usize { return 2 }
 
   // the scope joins its threads even when the scope body panics
   let finished = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
   let probe = finished.retain()
+  let panic_gate = arc.new(barrier.new(2usize))
+  let child_panic_gate = panic_gate.retain()
+  let parent_panic_gate = panic_gate.retain()
   let outer = thread.spawn(take fn(): i32 {
     thread.scope(fn(s: read thread.Scope): i32 {
-      let h = s.spawn(fn(): i32 { thread.sleep_nanos(5000000u64); let _old = probe.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst); 0 })
+      let h = s.spawn(fn(): i32 {
+        child_panic_gate.get().wait()
+        let _old = probe.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
+        0
+      })
+      parent_panic_gate.get().wait()
       panic("scope body failed")
     })
   })

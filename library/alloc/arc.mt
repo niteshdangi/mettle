@@ -110,7 +110,13 @@ extend<T, A: Allocator + Clone> Arc<T, A> implements Clone {
 extend<T, A: Allocator> Arc<T, A> {
     pub fn get(): read T from self { unsafe { read *(*self.p).value.as_ptr() } }
     pub fn strong_count(): usize { unsafe { (*self.p).strong.load(core.sync.atomic.Ordering.Acquire) } }
-    pub fn weak_count(): usize { unsafe { (*self.p).wk.load(core.sync.atomic.Ordering.Acquire) - 1usize } }
+    pub fn weak_count(): usize {
+        unsafe {
+            let strong = (*self.p).strong.load(core.sync.atomic.Ordering.Acquire)
+            let weak = (*self.p).wk.load(core.sync.atomic.Ordering.Acquire)
+            if strong == 0usize || weak == 0usize { weak } else { weak - 1usize }
+        }
+    }
     pub fn ptr_eq(other: read Arc<T, A>): bool { self.p == other.p }
     // Exclusive access only while no other strong or weak handle exists. A
     // weak handle can only be created through a strong one, so when this
@@ -174,4 +180,6 @@ extend<T, A: Allocator + Clone> Weak<T, A> {
 }
 extend<T, A: Allocator> Weak<T, A> {
     pub fn strong_count(): usize { unsafe { (*self.p).strong.load(core.sync.atomic.Ordering.Acquire) } }
+    pub fn weak_count(): usize { unsafe { (*self.p).wk.load(core.sync.atomic.Ordering.Acquire) } }
+    pub fn ptr_eq(other: read Weak<T, A>): bool { self.p == other.p }
 }

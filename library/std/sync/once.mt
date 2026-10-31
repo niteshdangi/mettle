@@ -8,6 +8,11 @@ type Arm<region r> {
     }
 }
 
+pub copy type OnceState { pub poisoned: bool }
+extend OnceState {
+    pub fn is_poisoned(): bool { self.poisoned }
+}
+
 extern "C" {
     unsafe fn mettle_rt_panicking(): i32;
     unsafe fn mettle_rt_thread_yield(): Unit;
@@ -36,4 +41,16 @@ extend Once {
             }
         }
     }
+
+    pub fn call_once_force<F: fn(OnceState): Unit>(f: take F): Unit {
+        self.call_once(take fn(): Unit { f(OnceState(false)) })
+    }
+
+    pub fn wait(): Unit {
+        while !self.is_completed() {
+            unsafe { mettle_rt_thread_yield() }
+        }
+    }
+
+    pub fn wait_force(): Unit { self.wait() }
 }

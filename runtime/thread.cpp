@@ -12,6 +12,7 @@
 #include <new>
 #include <pthread.h>
 #include <sched.h>
+#include <string>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -22,12 +23,26 @@ namespace {
 struct Start {
   MettleThreadEntry entry;
   void *argument;
+  std::string name;
 };
 extern "C" void *threadMain(void *raw) {
   auto *start = static_cast<Start *>(raw);
   auto entry = start->entry;
   auto *argument = start->argument;
+  auto name = std::move(start->name);
   delete start;
+#if defined(__APPLE__)
+  // pthread name limits include the terminating NUL byte.
+  if (name.size() > 63)
+    name.resize(63);
+  if (!name.empty())
+    (void)pthread_setname_np(name.c_str());
+#elif defined(__linux__)
+  if (name.size() > 15)
+    name.resize(15);
+  if (!name.empty())
+    (void)pthread_setname_np(pthread_self(), name.c_str());
+#endif
   entry(argument);
   return nullptr;
 }
@@ -198,13 +213,51 @@ void tlsThreadExitAction(void *) { mettle_rt_tls_thread_exit(); }
 extern "C" void mettleRtTlsThreadDestructor(void *raw) { tlsThreadExit(raw); }
 
 extern "C" {
+std::int32_t mettle_rt_thread_spawn_configured(
+    MettleThreadEntry entry, void *argument, std::uintptr_t *handle,
+    const char *name, std::size_t nameLength, std::size_t stackSize);
 std::int32_t mettle_rt_thread_spawn(MettleThreadEntry entry, void *argument,
                                     std::uintptr_t *handle) {
-  auto *start = new (std::nothrow) Start{entry, argument};
+  return mettle_rt_thread_spawn_configured(entry, argument, handle, nullptr, 0,
+                                           0);
+}
+std::int32_t mettle_rt_thread_spawn_configured(
+    MettleThreadEntry entry, void *argument, std::uintptr_t *handle,
+    const char *name, std::size_t nameLength, std::size_t stackSize) {
+  if (!entry || !handle || (!name && nameLength != 0))
+    return EINVAL;
+  Start *start = nullptr;
+  try {
+    start = new (std::nothrow)
+        Start{entry, argument,
+              name && nameLength != 0 ? std::string(name, nameLength)
+                                      : std::string{}};
+  } catch (...) {
+    return ENOMEM;
+  }
   if (!start)
     return ENOMEM;
+  pthread_attr_t attributes{};
+  pthread_attr_t *attributesPointer = nullptr;
+  int status = 0;
+  if (stackSize != 0) {
+    status = pthread_attr_init(&attributes);
+    if (status != 0) {
+      delete start;
+      return status;
+    }
+    status = pthread_attr_setstacksize(&attributes, stackSize);
+    if (status != 0) {
+      pthread_attr_destroy(&attributes);
+      delete start;
+      return status;
+    }
+    attributesPointer = &attributes;
+  }
   pthread_t thread{};
-  int status = pthread_create(&thread, nullptr, threadMain, start);
+  status = pthread_create(&thread, attributesPointer, threadMain, start);
+  if (attributesPointer)
+    pthread_attr_destroy(&attributes);
   if (status != 0) {
     delete start;
     return status;
@@ -260,7 +313,11 @@ std::int32_t mettle_rt_mutex_lock(void *mutex) {
   return pthread_mutex_lock(static_cast<pthread_mutex_t *>(mutex));
 }
 std::int32_t mettle_rt_mutex_try_lock(void *mutex) {
-  return pthread_mutex_trylock(static_cast<pthread_mutex_t *>(mutex));
+  const int status =
+      pthread_mutex_trylock(static_cast<pthread_mutex_t *>(mutex));
+  if (status == EBUSY || status == EAGAIN)
+    return 1;
+  return status == 0 ? 0 : -1;
 }
 std::int32_t mettle_rt_mutex_unlock(void *mutex) {
   return pthread_mutex_unlock(static_cast<pthread_mutex_t *>(mutex));
@@ -285,7 +342,9 @@ std::int32_t mettle_rt_cond_wait_timeout(void *cond, void *mutex,
   int status =
       pthread_cond_timedwait(static_cast<pthread_cond_t *>(cond),
                              static_cast<pthread_mutex_t *>(mutex), &limit);
-  return status == ETIMEDOUT ? 1 : 0;
+  if (status == ETIMEDOUT)
+    return 1;
+  return status == 0 ? 0 : -1;
 }
 std::int32_t mettle_rt_cond_notify_one(void *cond) {
   return pthread_cond_signal(static_cast<pthread_cond_t *>(cond));
@@ -308,13 +367,21 @@ std::int32_t mettle_rt_rwlock_read(void *lock) {
   return pthread_rwlock_rdlock(static_cast<pthread_rwlock_t *>(lock));
 }
 std::int32_t mettle_rt_rwlock_try_read(void *lock) {
-  return pthread_rwlock_tryrdlock(static_cast<pthread_rwlock_t *>(lock));
+  const int status =
+      pthread_rwlock_tryrdlock(static_cast<pthread_rwlock_t *>(lock));
+  if (status == EBUSY || status == EAGAIN)
+    return 1;
+  return status == 0 ? 0 : -1;
 }
 std::int32_t mettle_rt_rwlock_write(void *lock) {
   return pthread_rwlock_wrlock(static_cast<pthread_rwlock_t *>(lock));
 }
 std::int32_t mettle_rt_rwlock_try_write(void *lock) {
-  return pthread_rwlock_trywrlock(static_cast<pthread_rwlock_t *>(lock));
+  const int status =
+      pthread_rwlock_trywrlock(static_cast<pthread_rwlock_t *>(lock));
+  if (status == EBUSY || status == EAGAIN)
+    return 1;
+  return status == 0 ? 0 : -1;
 }
 std::int32_t mettle_rt_rwlock_unlock(void *lock) {
   return pthread_rwlock_unlock(static_cast<pthread_rwlock_t *>(lock));
