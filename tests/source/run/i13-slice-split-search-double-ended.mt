@@ -10,9 +10,7 @@ fn main(): i32 {
         return 1
     }
     if !slice.is_sorted_by_key(fn(x: read i32): i32 { x }) ||
-        !slice.is_sorted_by(fn(a: read i32, b: read i32): Ordering {
-            if a < b { Ordering.Less } else if a > b { Ordering.Greater } else { Ordering.Equal }
-        }) {
+        !slice.is_sorted_by(fn(a: read i32, b: read i32): bool { a <= b }) {
         return 18
     }
     match capture slice.binary_search_by(fn(x: read i32): Ordering {

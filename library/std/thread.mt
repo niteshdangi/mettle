@@ -6,6 +6,10 @@
 // scoped threads may borrow from the enclosing frame and are always joined
 // before `scope` returns, also when the scope body panics.
 import package.core.panic.panic
+import package.core.clone.Clone
+import package.core.cmp.{Eq, PartialEq}
+import package.core.fmt.{Debug, Error, Formatter}
+import package.core.hash.{Hash, Hasher}
 import package.alloc.string.String
 import package.core.text.Text
 import package.core.slice
@@ -42,7 +46,36 @@ pub copy type SpawnError { pub code: i32 }
 
 // Identity of a running thread.
 pub copy type ThreadId { pub raw: usize }
-pub copy type Thread { raw: usize }
+pub type Thread { raw: usize }
+
+extend Thread implements Clone {
+    fn clone(): Thread { Thread(self.raw) }
+}
+extend Thread implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        var debug = try f.debug_tuple("Thread")
+        try debug.field(read self.raw)
+        try debug.finish()
+    }
+}
+
+extend ThreadId implements Clone {
+    fn clone(): ThreadId { ThreadId(self.raw) }
+}
+extend ThreadId implements PartialEq {
+    fn eq(other: read ThreadId): bool { self.raw == other.raw }
+}
+extend ThreadId implements Eq {}
+extend ThreadId implements Hash {
+    fn hash<H: Hasher>(state: mut H): Unit { self.raw.hash(mut state) }
+}
+extend ThreadId implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        var debug = try f.debug_tuple("ThreadId")
+        try debug.field(read self.raw)
+        try debug.finish()
+    }
+}
 
 pub fn current(): ThreadId { ThreadId(unsafe { mettle_rt_thread_current() }) }
 pub fn current_thread(): Thread { Thread(unsafe { mettle_rt_thread_current() }) }
@@ -123,7 +156,11 @@ extend Builder {
                 try start<T, F>(f, core.ptr.null<u8>(), 0usize, self.stack_size)
             }
         }
-        JoinHandle(started.0, started.1)
+        JoinHandle(
+            started.0,
+            started.1,
+            Thread(unsafe { (*started.0).thread })
+        )
     }
 
     pub take fn spawn_scoped<
@@ -247,6 +284,7 @@ unsafe fn start<T, F: fn(): T>(
 pub type JoinHandle<T> {
     header: ptr<mut Header>
     slot: ptr<mut Slot<T>>
+    thread: Thread
     drop {
         unsafe {
             let _detached = mettle_rt_thread_detach((*self.header).thread)
@@ -278,7 +316,7 @@ unsafe fn finish<T>(header: ptr<mut Header>, slot: ptr<mut Slot<T>>): T throws P
 }
 
 extend<T> JoinHandle<T> {
-    pub fn thread(): Thread { Thread(unsafe { (*self.header).thread }) }
+    pub fn thread(): read Thread from self { read self.thread }
     pub fn is_finished(): bool {
         unsafe { (*self.header).finished.load(core.sync.atomic.Ordering.Acquire) }
     }
@@ -297,6 +335,15 @@ extend<T> JoinHandle<T> {
     pub fn id(): ThreadId { ThreadId(unsafe { (*self.header).thread }) }
 }
 
+extend<T> JoinHandle<T> implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        let id = self.thread().id()
+        var debug = try f.debug_struct("JoinHandle")
+        try debug.field("thread", read id)
+        try debug.finish()
+    }
+}
+
 // Everything a type borrows outlives the region `r`. The compiler enforces it
 // where the bound is declared; any type satisfies the interface itself.
 pub interface Within<region r> {}
@@ -312,6 +359,12 @@ pub copy type Brand<region s> { pub unused: u8 }
 pub type Scope<region s> {
     threads: core.cell.UnsafeCell<package.alloc.vec.List<ptr<mut Header>>>
     brand: core.cell.Cell<Brand<region s>>
+}
+
+extend<region s> Scope<region s> implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        try f.write_str("Scope { .. }")
+    }
 }
 
 // Joins every thread of the scope when dropped, so the borrows they hold end
@@ -347,12 +400,15 @@ type ScopeGuard<region r, region s> {
 pub type ScopedJoinHandle<T> {
     header: ptr<mut Header>
     slot: ptr<mut Slot<T>>
+    thread: Thread
     drop { unsafe { release(self.header) } }
 }
 extend<T> ScopedJoinHandle<T> not Transferable
 extend<T> ScopedJoinHandle<T> not Shareable
 
 extend<T> ScopedJoinHandle<T> {
+    pub fn thread(): read Thread from self { read self.thread }
+
     pub take fn join(): T throws Panicked {
         let header = self.header
         let slot = self.slot
@@ -365,6 +421,15 @@ extend<T> ScopedJoinHandle<T> {
     }
     pub fn is_finished(): bool {
         unsafe { (*self.header).finished.load(core.sync.atomic.Ordering.Acquire) }
+    }
+}
+
+extend<T> ScopedJoinHandle<T> implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        let id = self.thread().id()
+        var debug = try f.debug_struct("ScopedJoinHandle")
+        try debug.field("thread", read id)
+        try debug.finish()
     }
 }
 
@@ -398,7 +463,11 @@ extend<region s> Scope<region s> {
             (*header).refs.fetch_add(1u32, core.sync.atomic.Ordering.Relaxed)
             (*self.threads.get()).push(header.cast<Header>())
         }
-        ScopedJoinHandle(header, slot)
+        ScopedJoinHandle(
+            header,
+            slot,
+            Thread(unsafe { (*header).thread })
+        )
     }
 
     // Starts a thread that may borrow from the enclosing frame.

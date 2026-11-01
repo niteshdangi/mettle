@@ -1,18 +1,38 @@
 // Paths over operating-system strings: `Path` is the unsized view and
 // `PathBuf` the owner. Bytes are never reinterpreted, so non-Unicode names
-// round-trip losslessly. Separator is `/`; repeated separators and `.`
-// components are ignored when splitting.
+// round-trip losslessly. Separator is `/`; repeated separators and interior
+// `.` components are ignored, while a leading `.` in a relative path remains.
 import package.alloc.vec
 import package.alloc.vec.List
 import package.alloc.alloc.AllocError
 import package.alloc.string.String
 import package.alloc.string.FromUtf8Error
+import package.core.iter.{BidirectionalIterator, Iterator}
 import package.core.text.Text
 import package.core.slice
 import super.ffi
 import super.ffi.{OsStr, OsString}
 
 pub type Path { bytes: [u8] }
+
+pub copy enum Component<region r> {
+    RootDir,
+    CurDir,
+    ParentDir,
+    Normal(read OsStr from r)
+}
+
+pub type Components<region r> {
+    path: read Path from r
+    front: usize
+    back: usize
+    root_pending: bool
+    leading_cur_dir: bool
+}
+
+pub type Iter<region r> { components: Components<region r> }
+
+pub type Ancestors<region r> { current: read Path from r; finished: bool }
 
 pub fn path(bytes: read [u8]): read Path from bytes {
     let fat = core.ptr.from_ref(bytes)
@@ -49,6 +69,131 @@ fn last_start(bytes: read [u8], end: usize): usize {
     start
 }
 
+fn is_dot(bytes: read [u8], start: usize, end: usize): bool {
+    end - start == 1usize && bytes[start] == 46u8
+}
+
+fn is_dot_dot(bytes: read [u8], start: usize, end: usize): bool {
+    end - start == 2usize && bytes[start] == 46u8 && bytes[start + 1usize] == 46u8
+}
+
+fn has_leading_cur_dir(bytes: read [u8]): bool {
+    bytes.len() > 0usize && bytes[0usize] == 46u8 &&
+        (bytes.len() == 1usize || is_sep(bytes[1usize]))
+}
+
+fn checked_part(bytes: read [u8], start: usize, end: usize): read [u8] {
+    match slice.subslice(bytes, start, end) {
+        present(part) => part,
+        none => { package.core.panic.panic("path component bounds invariant failed") }
+    }
+}
+
+extend<region r> Component<region r> {
+    pub fn as_os_str(receiver self: Component<region r>): read OsStr from r {
+        match self {
+            Component.RootDir => ffi.os_str("/".as_bytes()),
+            Component.CurDir => ffi.os_str(".".as_bytes()),
+            Component.ParentDir => ffi.os_str("..".as_bytes()),
+            Component.Normal(name) => name
+        }
+    }
+}
+
+extend<region r> Component<region r> implements package.core.clone.Clone {
+    fn clone(): Component<region r> {
+        match self {
+            Component.RootDir => Component<region r>.RootDir,
+            Component.CurDir => Component<region r>.CurDir,
+            Component.ParentDir => Component<region r>.ParentDir,
+            Component.Normal(name) => Component.Normal(name)
+        }
+    }
+}
+
+extend<region r> Components<region r> {
+    pub fn as_path(): read Path from r {
+        let bytes = self.path.as_bytes()
+        var start = self.front
+        var end = self.back
+
+        if self.front > 0usize {
+            while start < end && is_sep(bytes[start]) { start += 1usize }
+            var trimming = true
+            while trimming && start < end {
+                var part_end = start
+                while part_end < end && !is_sep(bytes[part_end]) {
+                    part_end += 1usize
+                }
+                if is_dot(bytes, start, part_end) &&
+                    !(self.leading_cur_dir && start == 0usize) {
+                    start = part_end
+                    while start < end && is_sep(bytes[start]) {
+                        start += 1usize
+                    }
+                } else {
+                    trimming = false
+                }
+            }
+        }
+
+        if self.back < bytes.len() {
+            while end > start && is_sep(bytes[end - 1usize]) { end -= 1usize }
+            var trimming = true
+            while trimming && end > start {
+                var part_start = end
+                while part_start > start && !is_sep(bytes[part_start - 1usize]) {
+                    part_start -= 1usize
+                }
+                if is_dot(bytes, part_start, end) &&
+                    !(self.leading_cur_dir && part_start == 0usize) {
+                    end = part_start
+                    while end > start && is_sep(bytes[end - 1usize]) {
+                        end -= 1usize
+                    }
+                } else {
+                    trimming = false
+                }
+            }
+        }
+
+        if self.root_pending && end == 0usize { end = 1usize }
+        path(checked_part(bytes, start, end))
+    }
+}
+
+extend<region r> Components<region r> implements package.core.clone.Clone {
+    fn clone(): Components<region r> {
+        Components(
+            self.path,
+            self.front,
+            self.back,
+            self.root_pending,
+            self.leading_cur_dir
+        )
+    }
+}
+
+extend<region r> Iter<region r> {
+    pub fn as_path(): read Path from r { self.components.as_path() }
+}
+
+extend<region r> Iter<region r> implements package.core.clone.Clone {
+    fn clone(): Iter<region r> {
+        Iter(Components(
+            self.components.path,
+            self.components.front,
+            self.components.back,
+            self.components.root_pending,
+            self.components.leading_cur_dir
+        ))
+    }
+}
+
+extend<region r> Ancestors<region r> implements package.core.clone.Clone {
+    fn clone(): Ancestors<region r> { Ancestors(self.current, self.finished) }
+}
+
 extend Path {
     pub static fn new(bytes: read [u8]): read Path from bytes { path(bytes) }
     pub fn as_bytes(): read [u8] from self { read self.bytes }
@@ -64,6 +209,26 @@ extend Path {
     pub fn to_path_buf(): PathBuf { path_buf_from_bytes(read self.bytes) }
     pub fn into_path_buf(): PathBuf { self.to_path_buf() }
     pub fn display(): String { self.to_string_lossy() }
+    pub fn components<region r>(
+        receiver self: read Path from r
+    ): Components<region r> {
+        let bytes = self.as_bytes()
+        Components(
+            read self,
+            0usize,
+            bytes.len(),
+            self.is_absolute(),
+            has_leading_cur_dir(bytes)
+        )
+    }
+    pub fn iter<region r>(receiver self: read Path from r): Iter<region r> {
+        Iter(self.components())
+    }
+    pub fn ancestors<region r>(
+        receiver self: read Path from r
+    ): Ancestors<region r> {
+        Ancestors(read self, false)
+    }
 
     // Last component; none for `/`, an empty path or one ending in `..`.
     pub fn file_name(): (read OsStr from self)? {
@@ -203,7 +368,120 @@ extend Path {
     }
 }
 
-// Index of the extension dot in a file name; a dot at the start is ignored.
+extend<region r> Components<region r> implements package.core.iter.Iterator {
+    type Item = Component<region r>
+    mut fn next(): Component<region r>? {
+        let bytes = self.path.as_bytes()
+        if self.root_pending {
+            self.root_pending = false
+            while self.front < self.back && is_sep(bytes[self.front]) {
+                self.front += 1usize
+            }
+            return present(Component<region r>.RootDir)
+        }
+
+        while self.front < self.back {
+            while self.front < self.back && is_sep(bytes[self.front]) {
+                self.front += 1usize
+            }
+            if self.front >= self.back { return none }
+            let start = self.front
+            while self.front < self.back && !is_sep(bytes[self.front]) {
+                self.front += 1usize
+            }
+            let end = self.front
+            if is_dot(bytes, start, end) {
+                if self.leading_cur_dir && start == 0usize {
+                    self.leading_cur_dir = false
+                    return present(Component<region r>.CurDir)
+                }
+                continue
+            }
+            if is_dot_dot(bytes, start, end) {
+                return present(Component<region r>.ParentDir)
+            }
+            return present(Component.Normal(ffi.os_str(checked_part(bytes, start, end))))
+        }
+        none
+    }
+}
+
+extend<region r> Components<region r> implements package.core.iter.BidirectionalIterator {
+    mut fn next_back(): Component<region r>? {
+        let bytes = self.path.as_bytes()
+        while true {
+            while self.back > self.front && is_sep(bytes[self.back - 1usize]) {
+                self.back -= 1usize
+            }
+            if self.back <= self.front {
+                if self.root_pending {
+                    self.root_pending = false
+                    self.front = self.back
+                    return present(Component<region r>.RootDir)
+                }
+                if self.leading_cur_dir {
+                    self.leading_cur_dir = false
+                    self.front = self.back
+                    return present(Component<region r>.CurDir)
+                }
+                return none
+            }
+
+            let end = self.back
+            var start = end
+            while start > self.front && !is_sep(bytes[start - 1usize]) {
+                start -= 1usize
+            }
+            self.back = start
+            if is_dot(bytes, start, end) {
+                if self.leading_cur_dir && start == 0usize {
+                    self.leading_cur_dir = false
+                    self.front = self.back
+                    return present(Component<region r>.CurDir)
+                }
+                continue
+            }
+            if is_dot_dot(bytes, start, end) {
+                return present(Component<region r>.ParentDir)
+            }
+            return present(Component.Normal(ffi.os_str(checked_part(bytes, start, end))))
+        }
+        none
+    }
+}
+
+extend<region r> Iter<region r> implements package.core.iter.Iterator {
+    type Item = read OsStr from r
+    mut fn next(): (read OsStr from r)? {
+        match take self.components.next() {
+            present(component) => present(component.as_os_str()),
+            none => none
+        }
+    }
+}
+
+extend<region r> Iter<region r> implements package.core.iter.BidirectionalIterator {
+    mut fn next_back(): (read OsStr from r)? {
+        match take self.components.next_back() {
+            present(component) => present(component.as_os_str()),
+            none => none
+        }
+    }
+}
+
+extend<region r> Ancestors<region r> implements package.core.iter.Iterator {
+    type Item = read Path from r
+    mut fn next(): (read Path from r)? {
+        if self.finished { return none }
+        let current = self.current
+        match self.current.parent() {
+            present(parent) => { self.current = parent },
+            none => { self.finished = true }
+        }
+        present(current)
+    }
+}
+
 fn last_dot(name: read [u8]): usize? {
     var i = name.len()
     while i > 1usize {
@@ -242,6 +520,19 @@ extend PathBuf {
     pub fn is_absolute(): bool { self.as_path().is_absolute() }
     pub fn has_root(): bool { self.as_path().has_root() }
     pub fn is_relative(): bool { self.as_path().is_relative() }
+    pub fn components<region r>(
+        receiver self: read PathBuf from r
+    ): Components<region r> {
+        self.as_path().components()
+    }
+    pub fn iter<region r>(receiver self: read PathBuf from r): Iter<region r> {
+        self.as_path().iter()
+    }
+    pub fn ancestors<region r>(
+        receiver self: read PathBuf from r
+    ): Ancestors<region r> {
+        self.as_path().ancestors()
+    }
     pub fn to_str(): (read Text from self)? { self.as_path().to_str() }
     pub fn to_string_lossy(): String { self.as_path().to_string_lossy() }
     pub fn display(): String { self.as_path().display() }

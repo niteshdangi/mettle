@@ -51,7 +51,9 @@ fn main(): i32 {
     let whitespace = alloc.string.from_text(" one two ")
     var owned_words = whitespace.split_whitespace()
     match owned_words.next() { present(word) => { if word != "one" { return 90 } }, none => { return 90 } }
-    match owned_words.next() { present(word) => { if word != "two" { return 91 } }, none => { return 91 } }
+    match owned_words.next_back() { present(word) => { if word != "two" { return 91 } }, none => { return 91 } }
+    match owned_words.next() { present(_) => { return 92 }, none => {} }
+    match owned_words.next_back() { present(_) => { return 92 }, none => {} }
 
     let utf16_words = [0x61u16, 0xd83du16, 0xde00u16, 0x62u16]
     match capture alloc.string.from_utf16(utf16_words) {

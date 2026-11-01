@@ -1,5 +1,9 @@
 import package.core.panic.panic
+import package.core.convert.From
 import package.core.default.Default
+import package.core.borrow.Borrow
+import package.core.fmt.{Debug, Display, Error, Formatter}
+import package.core.ops.{Deref, DerefMut}
 import super.mutex.{PoisonError, TryLockError}
 
 extern "C" {
@@ -46,6 +50,9 @@ pub fn new<T>(value: take T): RwLock<T> {
     let raw = unsafe { mettle_rt_rwlock_new() }
     if raw == core.ptr.null_mut<u8>() { core.intrinsics.abort() }
     RwLock(raw, core.sync.atomic.AtomicBool.new(false), core.cell.UnsafeCell.new(value))
+}
+extend<T> RwLock<T> implements From<T> {
+    static fn `from`(value: take T): RwLock<T> { new(value) }
 }
 extend<T: Default> RwLock<T> implements Default {
     static fn default(): RwLock<T> { new(T.(Default).default()) }
@@ -101,7 +108,15 @@ extend<T> RwLock<T> {
         guard
     }
     pub fn is_poisoned(): bool { self.poisoned.load(core.sync.atomic.Ordering.Acquire) }
-    pub mut fn get_mut(): mut T from self { unsafe { mut *self.value.get() } }
+    pub fn get_mut<region r>(
+        receiver self: mut RwLock<T> from r
+    ): mut T from r throws PoisonError<mut T from r> {
+        let value = unsafe { mut *self.value.get() }
+        if self.poisoned.load(core.sync.atomic.Ordering.Acquire) {
+            throw PoisonError(value)
+        }
+        value
+    }
     pub fn clear_poison(): Unit {
         self.poisoned.store(false, core.sync.atomic.Ordering.Release)
     }
@@ -119,7 +134,69 @@ extend<T> RwLock<T> {
 extend<T, region r> ReadGuard<T, region r> {
     pub fn get(): read T from self { unsafe { read *self.lock.value.get() } }
 }
+extend<T, region r> ReadGuard<T, region r> implements Borrow<T> {
+    fn borrow(): read T from self { self.get() }
+}
+extend<T, region r> ReadGuard<T, region r> implements Deref {
+    type Target = T
+    fn deref(): read T from self { self.get() }
+}
 extend<T, region r> WriteGuard<T, region r> {
     pub fn get(): read T from self { unsafe { read *self.lock.value.get() } }
     pub mut fn get_mut(): mut T from self { unsafe { mut *self.lock.value.get() } }
+}
+extend<T, region r> WriteGuard<T, region r> implements Borrow<T> {
+    fn borrow(): read T from self { self.get() }
+}
+extend<T, region r> WriteGuard<T, region r> implements Deref {
+    type Target = T
+    fn deref(): read T from self { self.get() }
+}
+extend<T, region r> WriteGuard<T, region r> implements DerefMut {
+    type Target = T
+    mut fn deref_mut(): mut T from self { self.get_mut() }
+}
+
+extend<T: Debug> RwLock<T> implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        // A successful try-read acquires the normal read edge; guard drop
+        // releases it even when formatting propagates a writer error.
+        var poisoned = self.is_poisoned()
+        var debug = try f.debug_struct("RwLock")
+        match take capture self.try_reader() {
+            success(guard) => {
+                poisoned = self.is_poisoned()
+                try debug.field("data", guard.get());
+            },
+            failure(error) => match take error {
+                TryLockError.WouldBlock => { try debug.field("data", "<locked>"); },
+                TryLockError.Poisoned(guard) => {
+                    poisoned = true
+                    try debug.field("data", guard.get());
+                }
+            }
+        }
+        try debug.field("poisoned", read poisoned)
+        try debug.finish()
+    }
+}
+extend<T: Debug, region r> ReadGuard<T, region r> implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        try T.(Debug).fmt(self.get(), mut f)
+    }
+}
+extend<T: Display, region r> ReadGuard<T, region r> implements Display {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        try T.(Display).fmt(self.get(), mut f)
+    }
+}
+extend<T: Debug, region r> WriteGuard<T, region r> implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        try T.(Debug).fmt(self.get(), mut f)
+    }
+}
+extend<T: Display, region r> WriteGuard<T, region r> implements Display {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        try T.(Display).fmt(self.get(), mut f)
+    }
 }

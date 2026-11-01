@@ -5,6 +5,7 @@
 #include "semantics/inference.h"
 #include "semantics/interfaces.h"
 #include "semantics/region_solver.h"
+#include <functional>
 #include <map>
 #include <set>
 #include <span>
@@ -16,10 +17,11 @@ class Checker {
 public:
   Checker(Module module, Diagnostics &diagnostics,
           std::shared_ptr<const resolution::Resolution> symbols,
-          bool requireEntry = true, TargetFacts target = {})
+          bool requireEntry = true, TargetFacts target = {},
+          NumericEvaluator numericEvaluator = nullptr)
       : checked(std::move(module), std::move(symbols)), module(checked.tree),
         diagnostics(diagnostics), inference(diagnostics, *checked.types),
-        requireEntry(requireEntry) {
+        requireEntry(requireEntry), numericEvaluator(numericEvaluator) {
     checked.targetDescription = std::move(target);
     checked.types->setPointerBits(pointerBits());
   }
@@ -54,6 +56,7 @@ private:
   Diagnostics &diagnostics;
   TypeInference inference;
   bool requireEntry = true;
+  NumericEvaluator numericEvaluator = nullptr;
   unsigned unsafeDepth = 0;
   void requireUnsafe(Span span);
   void machineDeclarations();
@@ -95,6 +98,8 @@ private:
   std::optional<Type> machineAnnotation(const TypeSyntax &syntax, Span span,
                                         std::string_view owner);
   std::optional<int> machineValue(const Node &node);
+  std::optional<NumericConstant> machineFloatingValue(Type type,
+                                                      std::string_view member);
   void checkBorrowAlignment();
   std::unordered_map<std::string, std::size_t> names;
   struct ConstructorCandidate {
@@ -199,6 +204,7 @@ private:
                        Span span);
   void popRegionParameters();
   const RegionEnvironment &regionEnvironment() const;
+  void commitRegionEnvironment(RegionEnvironment environment);
   RegionId annotationRegion(const TypeSyntax &syntax, Span span);
   RegionId regionReference(std::string_view name, Span span);
   AnnotationRegions &functionRegions(const Function &function);
@@ -255,6 +261,9 @@ private:
   void seedInterfaceBindings(const Node &node,
                              const GenericEnvironment &environment,
                              std::vector<TypeBinding> &bindings);
+  void seedInterfaceBindings(Type self, Type interfaceType,
+                             const GenericEnvironment &environment,
+                             std::vector<TypeBinding> &bindings);
   GenericEnvironment *genericEnvironment = nullptr;
   // Bounds on arguments that mention no type parameter (including defaults)
   // are proved once every implementation is registered.
@@ -286,7 +295,8 @@ private:
                    GenericEnvironment &environment, Span span);
   bool genericObligations(const GenericEnvironment &environment,
                           std::span<const TypeBinding> bindings, Span span,
-                          std::span<const RegionBinding> regions = {});
+                          std::span<const RegionBinding> regions = {},
+                          const Node *call = nullptr);
   bool interfaceObligation(Type actual, const TypeSyntax &bound, Span span);
   bool interfaceObligation(Type actual, Type interfaceType, Span span);
   Type normalizeGenericType(Type type, std::span<const TypeBinding> bindings,
@@ -368,10 +378,16 @@ private:
   std::optional<int> operatorCall(Node &node, int left, int right = -1,
                                   bool mutableIndex = false);
   void requireMutablePlace(Node &node);
-  std::optional<std::size_t> receiverMethod(Type source, Node &call);
-  std::optional<std::size_t> receiverCandidate(Type self, ParameterMode mode,
-                                               std::string_view name,
-                                               Node &call);
+  std::optional<std::size_t> receiverMethod(Type source, Node &call,
+                                            bool reachable);
+  // Argument types, when available, choose among instantiations of one
+  // interface method (`ExtendItems<A>` and `ExtendItems<B>` on one type).
+  std::optional<std::size_t> receiverCandidate(
+      Type self, ParameterMode mode, std::string_view name, const Node &call,
+      const std::function<const std::vector<Type> *()> &arguments = {});
+  bool argumentsFit(std::size_t function, Type &interfaceType, Type self,
+                    std::span<const Type> arguments, Span span,
+                    RegionEnvironment &candidateRegions);
   std::optional<ReceiverStep> dereferenceStep(Type source, bool exclusive,
                                               Span span);
   bool mutableReceiverPlan(ReceiverPlan &plan, Span span, bool report = true);

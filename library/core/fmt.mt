@@ -241,7 +241,7 @@ extend<region r> Formatter<region r> {
 }
 
 extend<region s, region b> DebugStruct<region s, region b> {
-    pub mut fn field<T: Debug>(name: read Text, value: read T): mut Self from self throws Error {
+    pub mut fn field<T: Debug + unsized>(name: read Text, value: read T): mut Self from self throws Error {
         if self.first && !self.f.alternate() { try self.f.write_str(" ") }
         try self.f.debug_item_start(self.first)
         try self.f.write_str(name)
@@ -258,7 +258,7 @@ extend<region s, region b> DebugStruct<region s, region b> {
 }
 
 extend<region s, region b> DebugTuple<region s, region b> {
-    pub mut fn field<T: Debug>(value: read T): mut Self from self throws Error {
+    pub mut fn field<T: Debug + unsized>(value: read T): mut Self from self throws Error {
         try self.f.debug_item_start(self.first)
         try T.(Debug).fmt(value, mut *self.f)
         try self.f.debug_item_end()

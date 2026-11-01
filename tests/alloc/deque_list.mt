@@ -28,5 +28,13 @@ fn main(): i32 {
     match take l.back_mut() { present(x) => { *x = 190 }, none => { return 16 } }
     match l.get(2usize) { present(x) => { if *x != 160 { return 17 } }, none => { return 18 } }
     match l.back() { present(x) => { if *x != 190 { return 19 } }, none => { return 20 } }
+    var retained_calls = 0
+    d.retain(fn(value: read i32): bool {
+        retained_calls += 1
+        value == 500
+    })
+    if retained_calls != 99 || d.len() != 1usize || d[0usize] != 500 {
+        return 26
+    }
     0
 }

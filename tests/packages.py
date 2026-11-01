@@ -566,6 +566,26 @@ def public_declarative_macro_dependency():
     build_and_run(app)
 
 
+def cyclic_module_macro_definition():
+    app = packages("cyclic-module-macro")
+    (app / "src").mkdir(parents=True)
+    (app / "Mettle.toml").write_text(
+        '[package]\nname = "cyclic-module-macro"\nversion = "0.1.0"\n'
+        'language = "mettle-1"\n\n'
+        '[targets.app]\nkind = "executable"\nsource = "src/main.mt"\n')
+    (app / "src/main.mt").write_text(
+        "module first;\nmodule second;\n"
+        "fn main(): i32 { first.value() - 42 }\n")
+    (app / "src/first.mt").write_text(
+        "import super.second\n"
+        "macro make_value { () => { 42 }; }\n"
+        "pub fn value(): i32 { make_value!() + second.extra() }\n")
+    (app / "src/second.mt").write_text(
+        "import super.first\n"
+        "pub fn extra(): i32 { 0 }\n")
+    build_and_run(app)
+
+
 def multi_package_extension():
     app = packages("multi-package-extension/app")
     text, built = explained(app)
@@ -693,10 +713,14 @@ def fmt_normalizes_layout_only():
     # Files that define declarative macros are checked after expansion.
     macro = evidence / "macro.mt"
     macro.write_text("macro square {\n    ($x:expr)  =>  { $x*$x };\n}\n"
-                     "fn main(): i32 {\n  square!(3)  -  9\n}\n")
+                     "fn main(): i32 {\n  square!(3)  -  9\n}\n"
+                     "fn compare(a: i32, b: i32): bool {\n"
+                     "a>\nb\n}\n")
     invoke(["fmt", macro])
     assert macro.read_text() == ("macro square {\n    ($x:expr) => { $x*$x };\n}\n"
-                                 "fn main(): i32 {\n    square!(3) - 9\n}\n"), \
+                                 "fn main(): i32 {\n    square!(3) - 9\n}\n"
+                                 "fn compare(a: i32, b: i32): bool {\n"
+                                 "    a>\n        b\n}\n"), \
         macro.read_text()
     wide_left = "left_" + "x" * 60
     wide_right = "right_" + "y" * 60
@@ -747,7 +771,7 @@ def fmt_normalizes_layout_only():
         "}\n"
         "fn match_wrap(input: i32) {\n"
         f"    match input {{ {wide_left} => 1,\n"
-        f"            {wide_right} => 2 }}\n"
+        f"        {wide_right} => 2 }}\n"
         "}\n")
     long = evidence / "long-layout.mt"
     long.write_text(before)
@@ -760,6 +784,53 @@ def fmt_normalizes_layout_only():
                if "long_method_name" not in line), formatted
     invoke(["fmt", long, "--check"])
     assert long.read_text() == formatted
+    edges = evidence / "formatter-edges.mt"
+    edges.write_text(
+        "fn compare(left: i32, right: i32): bool {\n"
+        "    left>\n"
+        "right\n"
+        "}\n"
+        "type Item {\n"
+        "    value: Box<core.sync.atomic.AtomicUsize>\n"
+        "    enabled: bool\n"
+        "}\n"
+        "fn selected(): i32 {\n"
+        "    let result = match 1 {\n"
+        "0 => { 0 },\n"
+        "1 => { 1 },\n"
+        "}\n"
+        "    result\n"
+        "}\n"
+        "fn returned(): i32 {\n"
+        "    return match 1 {\n"
+        "0 => 0,\n"
+        "1 => 1,\n"
+        "}\n"
+        "}\n")
+    invoke(["fmt", edges])
+    assert edges.read_text() == (
+        "fn compare(left: i32, right: i32): bool {\n"
+        "    left>\n"
+        "        right\n"
+        "}\n"
+        "type Item {\n"
+        "    value: Box<core.sync.atomic.AtomicUsize>\n"
+        "    enabled: bool\n"
+        "}\n"
+        "fn selected(): i32 {\n"
+        "    let result = match 1 {\n"
+        "        0 => { 0 },\n"
+        "        1 => { 1 },\n"
+        "    }\n"
+        "    result\n"
+        "}\n"
+        "fn returned(): i32 {\n"
+        "    return match 1 {\n"
+        "        0 => 0,\n"
+        "        1 => 1,\n"
+        "    }\n"
+        "}\n"), edges.read_text()
+    invoke(["fmt", edges, "--check"])
 
 
 def lint_reports_semantic_findings():
@@ -1431,6 +1502,24 @@ def language_server():
             and m["params"]["uri"] == clean)["params"]["diagnostics"]
         assert published == [], published
 
+        floating = "file:///workspace/floating-constants.mt"
+        client.open(floating,
+                    "const BITS: u64 = f64.from_bits(0xfff0123456789abcu64).to_bits()\n"
+                    "fn main(): i32 { if BITS == 0xfff0123456789abcu64 { 0 } else { 1 } }\n")
+        published = client.wait(
+            lambda m: m.get("method") == "textDocument/publishDiagnostics"
+            and m["params"]["uri"] == floating)["params"]["diagnostics"]
+        assert published == [], published
+        client.notify("textDocument/didChange", {
+            "textDocument": {"uri": floating, "version": 2},
+            "contentChanges": [{"text":
+                "const VALUE: f32 = f32.from_bits(1u64)\nfn main(): i32 { 0 }\n"}]})
+        published = client.wait(
+            lambda m: m.get("method") == "textDocument/publishDiagnostics"
+            and m["params"]["uri"] == floating)["params"]["diagnostics"]
+        assert any("expected u32, found u64" in item["message"]
+                   for item in published), published
+
         document = {"uri": clean}
         found = client.request("textDocument/definition", {
             "textDocument": document,
@@ -1589,7 +1678,8 @@ def test_json_timeout_and_modules():
     ), doctests
 
 
-CASES = [path_dependency, restricted_dependency_visibility,
+CASES = [cyclic_module_macro_definition,
+         path_dependency, restricted_dependency_visibility,
          missing_lock_locked, lock_corruption,
          registry_resolution, version_conflict, backtracking, offline, features,
          coexisting_versions, git_source, host_target_separation,

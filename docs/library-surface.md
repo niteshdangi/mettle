@@ -507,6 +507,8 @@ spelling-based special cases.
 | Rust baseline name or form | Mettle name or form |
 | --- | --- |
 | `Vec`, `HashMap`, `HashSet` | `List`, `Map`, `Set` from `alloc.collections` |
+| `Cow<'a, [T]>` for `Vec<T>: From` | Slice `Cow<region r, T>` in `alloc.borrow`; conversion clones borrowed items and moves owned Lists |
+| `NonNull<T>` | `core.ptr.NonNull<T>`; compiler-owned raw-pointer operations remain in `core.ptr` |
 | `BTreeMap`, `BTreeSet` | `SortedMap`, `SortedSet` |
 | `IntoIterator`, `IterableMut` | `OwnedIterable`, `MutableIterable` |
 | `DoubleEndedIterator`, `FromIterator`, `Extend` | `BidirectionalIterator`, `FromItems`, `ExtendItems` |

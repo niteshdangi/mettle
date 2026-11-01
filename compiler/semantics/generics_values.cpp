@@ -6,6 +6,12 @@ void Checker::seedInterfaceBindings(const Node &node,
                                     const GenericEnvironment &environment,
                                     std::vector<TypeBinding> &bindings) {
   const auto &dispatch = facts(node);
+  seedInterfaceBindings(dispatch.interfaceSelf, dispatch.interfaceType,
+                        environment, bindings);
+}
+void Checker::seedInterfaceBindings(Type self, Type interfaceType,
+                                    const GenericEnvironment &environment,
+                                    std::vector<TypeBinding> &bindings) {
   auto seed = [&](std::string_view name, Type argument) {
     auto parameter = environment.names.find(std::string(name));
     if (parameter == environment.names.end())
@@ -14,11 +20,11 @@ void Checker::seedInterfaceBindings(const Node &node,
       if (binding.parameter == parameter->second)
         binding.argument = argument;
   };
-  if (dispatch.interfaceSelf != Type::Unknown)
-    seed("Self", dispatch.interfaceSelf);
-  if (!checked.types->isErased(dispatch.interfaceType))
+  if (self != Type::Unknown)
+    seed("Self", self);
+  if (!checked.types->isErased(interfaceType))
     return;
-  const auto &descriptor = checked.types->erased(dispatch.interfaceType);
+  const auto &descriptor = checked.types->erased(interfaceType);
   const auto &syntax = module.interfaces.at(descriptor.declaration);
   std::size_t argument = 0;
   for (const auto &parameter : syntax.genericParameters) {

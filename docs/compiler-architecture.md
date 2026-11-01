@@ -49,6 +49,18 @@ headers expose the minimum boundary; algorithm context and mutable working state
 remain private. Splitting one algorithm across many trivial files is not a goal.
 Neither arbitrary line limits nor the number of directories establish quality.
 
+Floating constant evaluation uses a per-compilation numeric callback, injected
+by the driver through the backend-independent pipeline and checker (including
+LSP compilations). `types` owns its scalar interface and exact binary32/binary64
+IEEE-bit carrier; the carrier is mutually exclusive with decimal text and is
+invalid for integer values. `backend/llvm/numeric` owns target software
+APFloat/APInt folding, without host floating arithmetic or libm. `consteval`
+owns contextual types, stable-const admission, source function frames, byte
+arrays and target endianness; semantics owns method/type/variant resolution and
+typed static materialization. IR verification validates the carrier before LLVM
+lowering. These additions have focused macOS ARM64 native, compiler-sanitizer,
+emitted-ASan and LSP evidence; full I13 qualification remains pending.
+
 ## 2. Syntax and checked representations
 
 Source is immutable for a compilation. Tokens retain exact original text and
@@ -244,6 +256,12 @@ Checking publishes separate call substitutions without rewriting parsed names,
 spans or generic argument spellings. Bounds resolve in the callee declaration's
 namespace but are proved only from the caller's assumptions and coherent
 implementation evidence.
+
+Regional call checking maps explicit method type arguments to the declared
+method parameters, not implicit interface/implementation parameters. Constructor
+arguments retain their owner-parameter ordering. Interface method contract
+checking maps both Self and interface inputs into the implementation method's
+region binders before normalizing associated results.
 
 Implementation applicability combines target/interface identity matching with
 declared type/const equalities before proving its requirements from caller
@@ -453,6 +471,12 @@ checks equal object sizes; target validity and retained provenance remain unsafe
 obligations. No runtime provenance registry or informal `noalias` assumption
 substitutes for those obligations. Copy operands remain usable unless the source
 explicitly transfers them.
+
+The numeric boundary also admits unsafe `f32`/`f64.to_int_unchecked<Int>`.
+Checking and IR verification require a concrete native integer target and unsafe
+permission. The LLVM adapter emits truncating `fptosi`/`fptoui`, not saturating
+casts; the caller establishes finite input and representability of the truncated
+integer value. Alias and result-context inference do not weaken that admission.
 
 Packed storage never grants an unaligned safe view. Before invoking an unaligned
 field's destructor, cleanup moves its bytes to aligned wrapper-frame storage and
@@ -741,13 +765,19 @@ catalog, so no filesystem access is added. A root is mounted on demand, only
 when the loaded program (or an already mounted library) names it by a
 `core.`, `alloc.` or `std.` path: `core.x` mounts core only if `x` is declared or
 re-exported by `library/core/module.mt`, so compiler built-ins such as
-`core.ptr`, `core.mem` and the by-path interfaces needed by tests never pay
-for library loading. Text literals reference `core.text`. Detection is lexical
-and may over-load but never under-loads. Mounted roots are ordinary modules with
+`core.mem` and the by-path interfaces needed by tests never pay for library
+loading. `core.ptr` is the intentional exception: its raw-pointer operations
+remain compiler-owned, while `library/core/ptr.mt` provides the `NonNull` type.
+The loader mounts that source module only for an explicit pointer-module import
+or a `NonNull` path, not for intrinsic pointer operations alone. Text literals
+reference `core.text`. Detection is lexical and may over-load but never
+under-loads. Mounted roots are ordinary modules with
 their own source identities, so diagnostics point into library files and bodies
 are fully checked. A user root module with the same name shadows the library
-(freestanding and test setups define their own `core`); library and built-in
-`core` submodule names must not collide. Layering is enforced structurally:
+(freestanding and test setups define their own `core`); the intentional
+`core.ptr` source augmentation adds `NonNull` without replacing compiler-owned
+pointer operations. Other library and built-in `core` submodule names do not
+collide. Layering is enforced structurally:
 `core` may not name `alloc` or `std`, `alloc` may not name `std`. `std` is
 rejected in `--freestanding` builds; `core` and `alloc` are accepted.
 

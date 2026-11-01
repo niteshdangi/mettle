@@ -1,6 +1,7 @@
 #include "ir/verify.h"
 #include "analysis/initialization.h"
 #include "analysis/liveness.h"
+#include "analysis/origins.h"
 #include "lowering/scalar.h"
 #include "pipeline/compile.h"
 #include "semantics/check.h"
@@ -183,6 +184,47 @@ void valueLivenessCases() {
   require(live.out[2] == std::set<int>{3},
           "back-edge phi operand was not live");
   require(live.out[1] == std::set<int>{1}, "loop result was not live");
+}
+void floatingCarrierCases() {
+  auto program = simple();
+  Instruction instruction;
+  instruction.op = Op::Constant;
+  instruction.result = {1, Type::F32};
+  instruction.numeric = mettle::NumericLiteral{};
+  instruction.numeric->floatingBits = 0x80000000u;
+  program.functions[0].blocks[0].instructions.push_back(instruction);
+  program.functions[0].values = 2;
+  mettle::Diagnostics diagnostics;
+  require(verify(program, diagnostics), "raw binary32 signed zero rejected");
+  auto &constant = program.functions[0].blocks[0].instructions.back();
+  constant.numeric->floatingBits = 0x100000000ull;
+  rejected(program, "instruction");
+  constant.numeric->floatingBits = 0xff812345u;
+  constant.result.type = Type::F64;
+  constant.numeric->floatingBits = 0xfff0123456789abcull;
+  require(verify(program, diagnostics), "raw binary64 signaling NaN rejected");
+  constant.numeric->floating = "nan";
+  rejected(program, "instruction");
+  constant.numeric->floating.clear();
+  constant.numeric->magnitude[0] = 1;
+  rejected(program, "instruction");
+  constant.numeric->magnitude[0] = 0;
+  constant.numeric->negative = true;
+  rejected(program, "instruction");
+  constant.numeric->negative = false;
+  constant.result.type = Type::U64;
+  rejected(program, "instruction");
+
+  program = simple();
+  mettle::StaticConstant initializer;
+  initializer.type = Type::Bool;
+  initializer.scalar.floatingBits = 0;
+  program.statics.push_back(
+      {"bad", "", "", Type::Bool, false, false, {}, initializer});
+  rejected(program, "static initializer");
+  program.statics[0].type = Type::Char;
+  program.statics[0].initializer->type = Type::Char;
+  rejected(program, "static initializer");
 }
 void phaseOwnership() {
   mettle::Source source{"memory.mt", "fn main() { -(2147483648) }\n"};
@@ -452,15 +494,67 @@ void conditionalUnpinProofCases() {
   require(!mettle::pipeline::admit(std::move(program), unproven),
           "conditional Unpin was admitted without its semantic proof context");
 }
+void loopSiblingViewCases() {
+  auto inspect = [](const std::string &body, int linked, int unlinked) {
+    mettle::Diagnostics diagnostics;
+    auto syntax = mettle::parse(
+        {"siblings.mt",
+         "fn split(value: mut [i32; 2]): "
+         "(read i32 from value, mut i32 from value) { "
+         "(read value[0usize], mut value[1usize]) }\n"
+         "fn probe(value: mut [i32; 2]) { " +
+             body +
+             " }\nfn main() { var values = [1, 2]; probe(mut values); 0 }\n"},
+        diagnostics);
+    auto checked = mettle::check(std::move(syntax), diagnostics);
+    require(checked.has_value(), "sibling-view fixture failed type checking");
+    auto program = mettle::lowering::lower(*checked, diagnostics);
+    require(verify(program, diagnostics),
+            "sibling-view fixture has invalid IR");
+    mettle::analysis::EffectSummaries summaries(program.functions.size());
+    bool inspected = false;
+    for (const auto &function : program.functions) {
+      if (function.name != "probe")
+        continue;
+      inspected = true;
+      auto info = mettle::analysis::origins(function, program, summaries);
+      for (const auto &block : function.blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.op != Op::Call ||
+              program.functions[instruction.callee].name != "split")
+            continue;
+          bool siblings = false;
+          for (const auto &[path, sources] :
+               info.values[instruction.result.id]) {
+            (void)path;
+            for (auto source : sources)
+              siblings |= !info.loans.at(source).disjointOutputs.empty();
+          }
+          --(siblings ? linked : unlinked);
+        }
+    }
+    require(inspected && linked == 0 && unlinked == 0,
+            "loop sibling disjointness crossed an invocation boundary");
+  };
+  inspect("var index = 0; while index < 2 { "
+          "let pair = split(mut value); let _ = *pair.0; index += 1 }",
+          1, 0);
+  inspect("var pair = split(mut value); var index = 0; "
+          "while index < 2 { pair = split(mut value); index += 1 }; "
+          "let _ = *pair.0",
+          1, 1);
+}
 } // namespace
 int main() {
   try {
     verifierCases();
+    floatingCarrierCases();
     valueLivenessCases();
     phaseOwnership();
     ownedValueCases();
     variantRefinementCases();
     conditionalUnpinProofCases();
+    loopSiblingViewCases();
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return 1;

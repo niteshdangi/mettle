@@ -96,7 +96,7 @@ int Checker::call(Node &n, bool reachable) {
     fields(false);
     auto type = inference.value(receiver);
     auto before = diagnostics.items.size();
-    auto selected = receiverMethod(type, n);
+    auto selected = receiverMethod(type, n, reachable);
     if (selected) {
       name = checked.functions[*selected].canonicalName;
       facts(n).method = true;

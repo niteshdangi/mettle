@@ -34,6 +34,10 @@ struct ReceiverPlan {
   Type source = Type::Unknown, target = Type::Unknown;
   std::vector<ReceiverStep> steps{};
 };
+struct DeferredInterfaceBound {
+  Type subject = Type::Unknown, interfaceType = Type::Unknown;
+  TypeSyntax syntax{};
+};
 struct NodeFacts {
   Type type = Type::Unknown;
   int slot = -1;
@@ -87,6 +91,8 @@ struct NodeFacts {
   Type callableSource = Type::Unknown;
   Flow flow;
   std::vector<Type> typeArguments{};
+  std::vector<DeferredInterfaceBound> deferredInterfaceBounds{};
+  bool deferredInterfaceBoundsChecked = false;
   std::vector<Type> implementationArguments{};
   Type constantParameter = Type::Unknown;
   Type constantCount = Type::Unknown;

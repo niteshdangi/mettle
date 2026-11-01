@@ -1,4 +1,5 @@
 #include "driver/language_server.h"
+#include "backend/llvm/numeric.h"
 #include "driver/options.h"
 #include "expansion/expand.h"
 #include "lsp/server.h"
@@ -53,7 +54,7 @@ int languageServer(int argc, char **argv) {
         return Source{canonical.generic_string(),
                       std::string(std::istreambuf_iterator<char>(file), {})};
       },
-      facts, METTLE_VERSION};
+      facts, METTLE_VERSION, backend::evaluateNumeric};
   return lsp::serve(std::cin, std::cout, server);
 }
 } // namespace mettle::driver

@@ -2,6 +2,7 @@
 
 #include "resolution/load.h"
 #include "types/target.h"
+#include "types/type.h"
 #include <iosfwd>
 #include <string>
 
@@ -14,6 +15,7 @@ struct Configuration {
   resolution::SourceProvider provider;
   TargetFacts target;
   std::string version;
+  NumericEvaluator numericEvaluator = nullptr;
 };
 
 // Serves the Language Server Protocol (JSON-RPC with Content-Length framing)

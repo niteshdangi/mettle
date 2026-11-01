@@ -15,6 +15,13 @@ pub type String<A: Allocator = Global> {
     v: List<u8, A>
 }
 
+// Produces independently owned UTF-8 using Global and the default Display
+// options. Allocation or formatting failure panics; rendering cost follows
+// Display plus the bytes appended to the result.
+pub interface ToString {
+    fn to_string(): String;
+}
+
 // Invalid input handed back to the caller together with the failing offset.
 pub type FromUtf8Error<A: Allocator = Global> {
     pub bytes: List<u8, A>
@@ -474,7 +481,7 @@ extend<A: Allocator> String<A> {
         if !valid {
             panic_precondition()
         }
-        StringDrain(self.v.drain(start, end))
+        StringDrain(self.v.drain(start..end))
     }
     pub mut fn replace_range(start: usize, end: usize, replacement: read Text): Unit {
         let valid = {
@@ -554,6 +561,20 @@ extend<A: Allocator> String<A> implements fmt.Write {
     }
 }
 
+extend<T: fmt.Display + unsized> T implements ToString {
+    fn to_string(): String {
+        var output = new()
+        {
+            var formatter = fmt.formatter(mut output, fmt.spec())
+            match capture T.(fmt.Display).fmt(self, mut formatter) {
+                success(_) => {},
+                failure(_) => { panic_precondition() }
+            }
+        }
+        output
+    }
+}
+
 // `String` views as `Text`: every `Text` method applies, and `s[a..b]` slices
 // with the same boundary checks.
 extend<A: Allocator> String<A> implements Deref {
@@ -605,7 +626,7 @@ fn replace_text(text: read Text, pattern: read Text, replacement: read Text, lim
 
     var rest = read text
     while remaining > 0usize {
-        match rest.find(pattern) {
+        match rest.find(read pattern) {
             present(at) => {
                 match rest.get(0usize, at) {
                     present(prefix) => { result.push_str(prefix) },
@@ -680,4 +701,8 @@ extend Text {
         }
         result
     }
+}
+
+extend<A: Allocator> List<u8, A> implements package.core.convert.From<String<A>> {
+    static fn `from`(text: take String<A>): List<u8, A> { text.into_bytes() }
 }

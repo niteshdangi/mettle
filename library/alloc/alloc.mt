@@ -83,6 +83,14 @@ pub fn extend_layout(prefix: Layout, suffix: Layout): (Layout, usize) throws Lay
     (try layout_from_size_align(size, alignment), offset)
 }
 
+fn resized_layout(old: Layout, new_size: usize): Layout throws AllocError {
+    let result = capture layout_from_size_align(new_size, old.align)
+    match take result {
+        success(layout) => layout,
+        failure(error) => throw AllocError(error.size, error.align)
+    }
+}
+
 extend Layout {
     pub fn size(): usize { self.size }
     pub fn align(): usize { self.align }
@@ -121,18 +129,20 @@ extend Global implements Allocator {
         if layout.size != 0usize { unsafe { mettle_rt_dealloc(p, layout.size, layout.align) } }
     }
     mut fn grow(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
+        let new_layout = try resized_layout(old, new_size)
         if old.size == 0usize {
-            return try self.allocate(Layout(new_size, old.align))
+            return try self.allocate(new_layout)
         }
         if new_size == 0usize {
             self.deallocate(p, old)
             return dangling(old.align)
         }
-        let q = unsafe { mettle_rt_realloc(p, old.size, old.align, new_size) }
+        let q = unsafe { mettle_rt_realloc(p, old.size, old.align, new_layout.size) }
         if q == core.ptr.null_mut<u8>() { throw AllocError(new_size, old.align) }
         q
     }
     mut fn shrink(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
+        let new_layout = try resized_layout(old, new_size)
         if new_size == 0usize {
             if old.size != 0usize { self.deallocate(p, old) }
             return dangling(old.align)
@@ -140,7 +150,7 @@ extend Global implements Allocator {
         if old.size == 0usize {
             throw AllocError(new_size, old.align)
         }
-        let q = unsafe { mettle_rt_realloc(p, old.size, old.align, new_size) }
+        let q = unsafe { mettle_rt_realloc(p, old.size, old.align, new_layout.size) }
         if q == core.ptr.null_mut<u8>() { throw AllocError(new_size, old.align) }
         q
     }

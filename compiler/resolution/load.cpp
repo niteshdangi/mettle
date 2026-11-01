@@ -262,9 +262,9 @@ private:
     return name == "core" ? 0 : name == "alloc" ? 1 : name == "std" ? 2 : 3;
   }
 
-  // A library root exports the names it declares or re-exports; `core` is
-  // mounted only for those, so `core::ptr` and the other compiler built-ins
-  // never pull the library in.
+  // A library root exports the names it declares or re-exports. Compiler
+  // pointer operations do not mount `core`; `NonNull` is loaded by its
+  // explicit source path.
   const Names &exported(const std::string &root) {
     auto found = declared.find(root);
     if (found != declared.end())
@@ -432,6 +432,19 @@ private:
       if (i + 2 < significant.size() &&
           significant[i + 2]->kind == TokenKind::Word)
         member = significant[i + 2]->text;
+      // Do not load library sources for compiler-owned `core.ptr` intrinsics.
+      if (token.text == "core" && member == "ptr") {
+        bool namesNonNull = i + 4 < significant.size() &&
+                            (significant[i + 3]->text == "." ||
+                             significant[i + 3]->text == "::") &&
+                            significant[i + 4]->text == "NonNull";
+        bool importsPointerModule = false;
+        auto first = i > 3 ? i - 3 : 0;
+        for (auto previous = first; previous < i; ++previous)
+          importsPointerModule |= significant[previous]->text == "import";
+        if (!namesNonNull && !importsPointerModule)
+          continue;
+      }
       found.push_back({token.text, member, from(token), token.span, false});
     }
     return found;

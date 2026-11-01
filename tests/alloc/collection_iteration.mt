@@ -33,11 +33,11 @@ fn main(): i32 {
     var hset = hash_map.set_new<i32>()
     hset.insert(7)
     var c = 0
-    for e in read hset { c += e.key }
+    for key in read hset { c += *key }
     if c != 7 { return 5 }
     var bs = btree.set_new<i32>()
     bs.insert(8)
-    for e in read bs { c += e.key }
+    for key in read bs { c += *key }
     if c != 15 { return 6 }
     0
 }

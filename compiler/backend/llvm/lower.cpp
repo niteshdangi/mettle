@@ -521,6 +521,14 @@ private:
       return llvm::ConstantStruct::get(representation, fields);
     }
     if (isFloating(value.type)) {
+      if (value.scalar.floatingBits) {
+        llvm::APFloat number(value.type == Type::F32
+                                 ? llvm::APFloat::IEEEsingle()
+                                 : llvm::APFloat::IEEEdouble(),
+                             llvm::APInt(value.type == Type::F32 ? 32 : 64,
+                                         *value.scalar.floatingBits));
+        return llvm::ConstantFP::get(context, number);
+      }
       llvm::APFloat number(value.type == Type::F32
                                ? llvm::APFloat::IEEEsingle()
                                : llvm::APFloat::IEEEdouble());
@@ -1612,6 +1620,10 @@ private:
       auto *b = arguments.size() > 1 ? arguments[1] : nullptr;
       if (method == "checked_cast")
         return checkedCast(instruction, a, argument);
+      if (method == "to_int_unchecked")
+        return isSignedInteger(argument)
+                   ? builder.CreateFPToSI(a, type(argument))
+                   : builder.CreateFPToUI(a, type(argument));
       if (method == "to_bits" || method == "from_bits")
         return builder.CreateBitCast(a, type(instruction.result.type));
       if (method == "cast_signed" || method == "cast_unsigned")
@@ -3087,11 +3099,18 @@ private:
               llvm::APFloat number(n.result.type == Type::F32
                                        ? llvm::APFloat::IEEEsingle()
                                        : llvm::APFloat::IEEEdouble());
-              auto status = number.convertFromString(
-                  n.numeric->floating, llvm::APFloat::rmNearestTiesToEven);
-              if (!status)
-                llvm::report_fatal_error(
-                    llvm::Twine(llvm::toString(status.takeError())));
+              if (n.numeric->floatingBits)
+                number = llvm::APFloat(
+                    number.getSemantics(),
+                    llvm::APInt(n.result.type == Type::F32 ? 32 : 64,
+                                *n.numeric->floatingBits));
+              else {
+                auto status = number.convertFromString(
+                    n.numeric->floating, llvm::APFloat::rmNearestTiesToEven);
+                if (!status)
+                  llvm::report_fatal_error(
+                      llvm::Twine(llvm::toString(status.takeError())));
+              }
               result = llvm::ConstantFP::get(context, number);
             } else {
               auto width = integerWidth(n.result.type);
@@ -3192,7 +3211,9 @@ private:
         case ir::Op::ViewRead:
         case ir::Op::ViewMut:
           result = address(n.place);
-          if (program.types->isView(n.result.type) &&
+          // A borrowed view value still denotes its slot, not its payload.
+          if (n.result.access == ir::Access::Owned &&
+              program.types->isView(n.result.type) &&
               program.types->pointerMetadata(
                   program.types->view(n.result.type).payload) !=
                   PointerMetadata::None)

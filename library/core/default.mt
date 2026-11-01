@@ -9,11 +9,13 @@ extend i8 implements Default { static fn default(): i8 { 0i8 } }
 extend i16 implements Default { static fn default(): i16 { 0i16 } }
 extend i32 implements Default { static fn default(): i32 { 0i32 } }
 extend i64 implements Default { static fn default(): i64 { 0i64 } }
+extend i128 implements Default { static fn default(): i128 { 0i128 } }
 extend isize implements Default { static fn default(): isize { 0isize } }
 extend u8 implements Default { static fn default(): u8 { 0u8 } }
 extend u16 implements Default { static fn default(): u16 { 0u16 } }
 extend u32 implements Default { static fn default(): u32 { 0u32 } }
 extend u64 implements Default { static fn default(): u64 { 0u64 } }
+extend u128 implements Default { static fn default(): u128 { 0u128 } }
 extend usize implements Default { static fn default(): usize { 0usize } }
 extend f32 implements Default { static fn default(): f32 { 0.0f32 } }
 extend f64 implements Default { static fn default(): f64 { 0.0f64 } }

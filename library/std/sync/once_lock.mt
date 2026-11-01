@@ -3,6 +3,8 @@ import package.core.panic.panic
 import package.core.default.Default
 import package.core.clone.Clone
 import package.core.cmp.{Eq, PartialEq}
+import package.core.convert.From
+import package.core.fmt.{Debug, Error, Formatter}
 
 extern "C" {
     unsafe fn mettle_rt_thread_yield(): Unit;
@@ -42,6 +44,15 @@ pub fn new<T>(): OnceLock<T> {
         core.cell.UnsafeCell.new(core.mem.MaybeUninit<T>.uninit())
     )
 }
+extend<T> OnceLock<T> implements From<T> {
+    static fn `from`(value: take T): OnceLock<T> {
+        // The initialized state and payload are constructed before the cell escapes.
+        OnceLock(
+            core.sync.atomic.AtomicU32.new(2u32),
+            core.cell.UnsafeCell.new(core.mem.MaybeUninit.new(value))
+        )
+    }
+}
 extend<T> OnceLock<T> implements Default {
     static fn default(): OnceLock<T> { new<T>() }
 }
@@ -75,6 +86,16 @@ extend<T: PartialEq> OnceLock<T> implements PartialEq {
     }
 }
 extend<T: Eq> OnceLock<T> implements Eq {}
+extend<T: Debug> OnceLock<T> implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        try f.write_str("OnceLock(")
+        match self.get() {
+            present(value) => try T.(Debug).fmt(value, mut f),
+            none => try f.write_str("<uninit>")
+        }
+        try f.write_str(")")
+    }
+}
 
 extend<T> OnceLock<T> {
     pub fn get(): (read T from self)? {

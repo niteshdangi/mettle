@@ -15,10 +15,91 @@ public:
               const std::string &message) override {
     checker.error(phase, span, message);
   }
+  Type resolveType(const TypeSyntax &syntax, Span span) override {
+    if (auto builtin = builtinType(syntax.name); builtin != Type::Unknown)
+      return builtin;
+    if (!checker.checked.namespaces().lookup(
+            checker.checked.namespaces().moduleOf(span), syntax.name,
+            resolution::Namespace::Type, span))
+      return Type::Unknown;
+    return checker.annotation(syntax, span);
+  }
+  bool enumeration(Type type) override {
+    if (!checker.typeStore().isSum(type))
+      return false;
+    const auto &record = checker.typeStore().product(type);
+    return std::all_of(
+        record.variants.begin(), record.variants.end(),
+        [](const auto &variant) { return variant.fields.empty(); });
+  }
+  Lookup variant(Type type, std::string_view name, Span) override {
+    Lookup result;
+    if (!enumeration(type))
+      return result;
+    const auto &record = checker.typeStore().product(type);
+    for (std::size_t i = 0; i < record.variants.size(); ++i) {
+      if (record.variants[i].name != name)
+        continue;
+      result.kind = Lookup::Kind::Constant;
+      result.value.kind = Value::Kind::Enum;
+      result.value.type = type;
+      result.value.number.magnitude[0] = i;
+      return result;
+    }
+    return result;
+  }
+  Lookup floatingValue(Type type, std::string_view name, Span) override {
+    Lookup result;
+    if (auto constant = checker.machineFloatingValue(type, name)) {
+      result.kind = Lookup::Kind::Constant;
+      result.value.kind = isFloating(constant->type) ? Value::Kind::Floating
+                                                     : Value::Kind::Integer;
+      result.value.type = constant->type;
+      result.value.number = std::move(constant->literal);
+    }
+    return result;
+  }
+  Lookup method(Type type, const Node &node) override {
+    Lookup result;
+    auto before = checker.diagnostics.items.size();
+    for (auto mode :
+         {ParameterMode::Take, ParameterMode::Read, ParameterMode::Mut}) {
+      auto selected =
+          checker.receiverCandidate(type, mode, node.children[0]->text, node);
+      if (selected) {
+        const auto &function = checker.module.functions[*selected];
+        if (!checker.checked.namespaces().accessible(
+                function.span,
+                checker.checked.namespaces().moduleOf(node.span))) {
+          checker.error("name", node.span, "constant method is not accessible");
+          result.kind = Lookup::Kind::Failed;
+        } else {
+          result.kind = Lookup::Kind::Function;
+          result.function = &function;
+        }
+        return result;
+      }
+      if (checker.diagnostics.items.size() != before) {
+        result.kind = Lookup::Kind::Failed;
+        return result;
+      }
+    }
+    return result;
+  }
   Lookup lookup(const Node &name) override {
     Lookup result;
     if (name.kind != Kind::Name)
       return result;
+    auto separator = name.text.rfind("::");
+    if (separator != std::string::npos) {
+      TypeSyntax syntax;
+      syntax.name = name.text.substr(0, separator);
+      auto type = resolveType(syntax, name.span);
+      if (enumeration(type))
+        return variant(type, name.text.substr(separator + 2), name.span);
+      if (isFloating(type))
+        return floatingValue(type, name.text.substr(separator + 2), name.span);
+    }
     auto failure = [&](const std::string &message) {
       checker.error("constant", name.span, message);
       result.kind = Lookup::Kind::Failed;
@@ -42,9 +123,11 @@ public:
     }
     if (auto primitive = checker.machineValue(name);
         primitive && checker.facts(name).numeric &&
-        isInteger(checker.inference.value(*primitive))) {
+        isNumeric(checker.inference.value(*primitive))) {
       result.kind = Lookup::Kind::Constant;
-      result.value.kind = Value::Kind::Integer;
+      result.value.kind = isFloating(checker.inference.value(*primitive))
+                              ? Value::Kind::Floating
+                              : Value::Kind::Integer;
       result.value.type = checker.inference.value(*primitive);
       result.value.number = *checker.facts(name).numeric;
       return result;
@@ -130,10 +213,21 @@ bool Checker::needsEvaluator(const Node &node) const {
 }
 
 bool Checker::constFunctionCall(const Node &node) {
-  if (node.kind != Kind::Call || node.children.empty() ||
-      node.children[0]->kind != Kind::Name)
+  if (node.kind != Kind::Call || node.children.empty())
+    return false;
+  if (node.children[0]->kind == Kind::Field)
+    return true;
+  if (node.children[0]->kind != Kind::Name)
     return false;
   const auto &callee = *node.children[0];
+  auto separator = callee.text.rfind("::");
+  if (separator != std::string::npos) {
+    TypeSyntax syntax;
+    syntax.name = callee.text.substr(0, separator);
+    ConstantHost host(*this);
+    if (isFloating(host.resolveType(syntax, callee.span)))
+      return true;
+  }
   auto canonical = callableName(callee.text, "", callee.span);
   auto found = names.find(canonical);
   return !canonical.empty() && found != names.end() &&
@@ -144,6 +238,9 @@ Type Checker::evaluatedConstant(const Node &node, Type expected) {
   ConstantHost host(*this);
   evaluation::Options options;
   options.pointerBits = pointerBits();
+  options.littleEndian = checked.targetDescription.littleEndian;
+  options.numericEvaluator = numericEvaluator;
+  options.unsafeContext = unsafeDepth != 0;
   evaluation::Expectation want;
   if (isInteger(expected) || expected == Type::Bool || expected == Type::Char)
     want.scalar = expected;
@@ -167,7 +264,7 @@ Type Checker::evaluatedConstant(const Node &node, Type expected) {
 
 std::optional<evaluation::Shape> Checker::constantShape(Type type) {
   evaluation::Shape shape;
-  if (isInteger(type) || type == Type::Bool || type == Type::Char) {
+  if (isNumeric(type) || type == Type::Bool || type == Type::Char) {
     shape.type = type;
     return shape;
   }
@@ -175,7 +272,14 @@ std::optional<evaluation::Shape> Checker::constantShape(Type type) {
     shape.kind = evaluation::Shape::Kind::Unit;
     return shape;
   }
-  if (!checked.types->isProduct(type) || checked.types->isSum(type))
+  if (checked.types->isSum(type)) {
+    ConstantHost host(*this);
+    if (!host.enumeration(type))
+      return std::nullopt;
+    shape.type = type;
+    return shape;
+  }
+  if (!checked.types->isProduct(type))
     return std::nullopt;
   auto record = checked.types->product(type);
   if (record.kind == AggregateKind::Tuple) {
@@ -204,14 +308,25 @@ std::optional<evaluation::Shape> Checker::constantShape(Type type) {
 std::optional<Value> Checker::constantValueOf(const StaticConstant &constant) {
   Value value;
   if (constant.kind == StaticConstant::Kind::Scalar) {
-    if (!isInteger(constant.type) && constant.type != Type::Bool &&
+    if (!isNumeric(constant.type) && constant.type != Type::Bool &&
         constant.type != Type::Char)
       return std::nullopt;
-    value.kind = constant.type == Type::Bool   ? Value::Kind::Bool
+    value.kind = isFloating(constant.type)     ? Value::Kind::Floating
+                 : constant.type == Type::Bool ? Value::Kind::Bool
                  : constant.type == Type::Char ? Value::Kind::Char
                                                : Value::Kind::Integer;
     value.type = constant.type;
     value.number = constant.scalar;
+    return value;
+  }
+  if (constant.kind == StaticConstant::Kind::Aggregate &&
+      checked.types->isSum(constant.type)) {
+    ConstantHost host(*this);
+    if (!host.enumeration(constant.type) || constant.selection < 0)
+      return std::nullopt;
+    value.kind = Value::Kind::Enum;
+    value.type = constant.type;
+    value.number.magnitude[0] = constant.selection;
     return value;
   }
   if ((constant.kind != StaticConstant::Kind::Aggregate &&
@@ -255,12 +370,34 @@ std::optional<StaticConstant> Checker::staticFromValue(const Value &value,
   };
   switch (value.kind) {
   case Value::Kind::Integer:
+  case Value::Kind::Floating:
   case Value::Kind::Bool:
   case Value::Kind::Char:
     if (value.type != type)
       return mismatch();
     result.scalar = value.number;
     return result;
+  case Value::Kind::Enum: {
+    if (value.type != type || !checked.types->isSum(type))
+      return mismatch();
+    const auto &record = checked.types->product(type);
+    auto selection = value.number.magnitude[0];
+    if (value.number.magnitude[1] || value.number.negative ||
+        selection >= record.variants.size() ||
+        !record.variants[selection].fields.empty())
+      return mismatch();
+    result.kind = StaticConstant::Kind::Aggregate;
+    result.selection = static_cast<int>(selection);
+    if (record.layout.kind != LayoutKind::Transparent) {
+      StaticConstant tag;
+      tag.type = record.layout.tag;
+      tag.scalar = record.layout.discriminants.empty()
+                       ? integerLiteral(static_cast<std::int64_t>(selection))
+                       : record.layout.discriminants[selection];
+      result.fields.push_back(std::move(tag));
+    }
+    return result;
+  }
   case Value::Kind::Tuple:
   case Value::Kind::Array: {
     if (!checked.types->isProduct(type) || checked.types->isSum(type))
@@ -300,6 +437,9 @@ std::optional<StaticConstant> Checker::evaluatedStatic(const Node &node,
   ConstantHost host(*this);
   evaluation::Options options;
   options.pointerBits = pointerBits();
+  options.littleEndian = checked.targetDescription.littleEndian;
+  options.numericEvaluator = numericEvaluator;
+  options.unsafeContext = unsafeDepth != 0;
   evaluation::Expectation want;
   want.shape = &*shape;
   auto result = evaluation::evaluate(host, options, node, want);

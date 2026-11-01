@@ -84,6 +84,11 @@ Solver::match(Type pattern, Type actual, bool symmetric,
       return true;
     if (!visiting.emplace(pattern, actual).second)
       return false;
+    struct MatchScope {
+      std::set<std::pair<Type, Type>> &visiting;
+      std::pair<Type, Type> key;
+      ~MatchScope() { visiting.erase(key); }
+    } scope{visiting, {pattern, actual}};
     if (variable(pattern)) {
       if (types.isConstant(pattern) != types.isConstant(actual) ||
           (types.isConstant(pattern) && types.parameter(pattern).valueType !=
@@ -638,8 +643,10 @@ Solver::implementedInterface(Type subject, Type interfaceType, Span span) {
             valid = false;
             break;
           }
-          auto actualValue = types.substituteRegions(
-              types.substitute(value->second.value, *bindings), regions);
+          auto actualValue = normalize(
+              types.substituteRegions(
+                  types.substitute(value->second.value, *bindings), regions),
+              {}, span);
           if (types.eraseRegions(actualValue) !=
               types.eraseRegions(binding.argument))
             valid = false;
@@ -712,11 +719,15 @@ Solver::implementation(Type self, Type interfaceType, Span span, bool report) {
     if (types.erased(candidate.interfaceType).arguments.size() !=
         wanted.arguments.size())
       continue;
-    const auto provided = types.erased(candidate.interfaceType);
+    auto provided = types.erased(candidate.interfaceType);
+    auto requirements = candidate.regionRequirements;
+    requirements.insert(requirements.end(), provided.regionRequirements.begin(),
+                        provided.regionRequirements.end());
+    provided.regionRequirements.clear();
     auto environment = regionEnvironment;
     std::vector<RegionBinding> regions;
-    if (!matchRegions(provided, wanted, candidate.regions,
-                      candidate.regionRequirements, regions, environment))
+    if (!matchRegions(provided, wanted, candidate.regions, {}, regions,
+                      environment))
       continue;
     auto bindings = match(types.substituteRegions(candidate.target, regions),
                           self, false, &environment);
@@ -730,7 +741,12 @@ Solver::implementation(Type self, Type interfaceType, Span span, bool report) {
     for (std::size_t i = 0; i < provided.arguments.size(); ++i) {
       auto pattern = types.substituteRegions(
           types.substitute(provided.arguments[i], *bindings), regions);
-      auto arguments = match(pattern, wanted.arguments[i], false, &environment);
+      auto argument = wanted.arguments[i];
+      if (revealOpaque) {
+        pattern = types.eraseRegions(pattern);
+        argument = types.eraseRegions(argument);
+      }
+      auto arguments = match(pattern, argument, false, &environment);
       if (!arguments) {
         valid = false;
         break;
@@ -835,6 +851,20 @@ Solver::implementation(Type self, Type interfaceType, Span span, bool report) {
       for (const auto &substitution : environment.substitutions)
         if (binding.argument == substitution.first)
           binding.argument = substitution.second;
+    if (!revealOpaque) {
+      RegionSolver solver(types.regions());
+      for (const auto &requirement : requirements) {
+        auto answer = solver.outlives(
+            types.regions().substitute(requirement.longer, regions),
+            types.regions().substitute(requirement.shorter, regions),
+            environment);
+        regionInconclusive |= answer == RegionAnswer::Inconclusive;
+        valid &= answer == RegionAnswer::Proven;
+      }
+      auto answer = solver.leakCheck(environment);
+      regionInconclusive |= answer == RegionAnswer::Inconclusive;
+      valid &= answer == RegionAnswer::Proven;
+    }
     if (!valid)
       continue;
     if (found) {
@@ -1162,8 +1192,25 @@ Type Solver::normalize(Type type, std::span<const TypeBinding> bindings,
         argument = represented;
       }
       if (changed) {
-        auto instance = types.instantiateProduct(product.genericOrigin,
-                                                 std::move(arguments));
+        auto instance =
+            types.instantiateProduct(product.genericOrigin, arguments);
+        if (product.regionOrigin != Type::Unknown) {
+          if (!normalizing.insert(type).second)
+            return type;
+          struct Scope {
+            std::set<Type> &active;
+            Type type;
+            ~Scope() { active.erase(type); }
+          } scope{normalizing, type};
+          auto fields = product.fields;
+          for (auto &field : fields)
+            field.type = normalize(field.type, {}, span);
+          auto shell =
+              types.regionalShell(instance, product.regionArguments,
+                                  std::move(arguments), product.regionPattern);
+          instance = types.regionalProduct(shell, std::move(fields),
+                                           product.regionArguments, true);
+        }
         return revealOpaque ? normalize(instance, {}, span) : instance;
       }
     }

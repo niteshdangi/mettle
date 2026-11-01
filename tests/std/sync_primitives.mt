@@ -326,14 +326,22 @@ fn main(): i32 {
 
   // Unshared locks expose mutation and extraction without a guard.
   var unique_mutex = mutex.new(40)
-  *unique_mutex.get_mut() = 41
+  let mutable_mutex = capture unique_mutex.get_mut()
+  match take mutable_mutex {
+    success(value) => { *value = 41 },
+    failure(error) => { return 35 }
+  }
   let mutex_value = capture unique_mutex.into_inner()
   match take mutex_value {
     success(value) => { if value != 41 { return 34 } },
     failure(error) => { return 35 }
   }
   var unique_rwlock = rwlock.new(50)
-  *unique_rwlock.get_mut() = 51
+  let mutable_rwlock = capture unique_rwlock.get_mut()
+  match take mutable_rwlock {
+    success(value) => { *value = 51 },
+    failure(error) => { return 37 }
+  }
   let rwlock_value = capture unique_rwlock.into_inner()
   match take rwlock_value {
     success(value) => { if value != 51 { return 36 } },
@@ -348,7 +356,7 @@ fn main(): i32 {
   let waiter = thread.spawn(take fn(): i32 {
     let o = capture s2.get().lock()
     var g = match take o { success(g) => g, failure(e) => e.into_inner() }
-    g = c2.get().wait_while(g, take fn(ready: read bool): bool { !ready })
+    g = c2.get().wait_while(g, fn(ready: mut bool): bool { !ready })
     0
   })
   let o = capture state.get().lock()
@@ -364,7 +372,7 @@ fn main(): i32 {
     failure(error) => error.into_inner()
   }
   let timeout = cv.get().wait_timeout_while(
-    timeout_guard, 0u64, take fn(ready: read bool): bool { !ready }
+    timeout_guard, std.time.from_nanos(0u64), fn(ready: mut bool): bool { !ready }
   )
   if !timeout.1.timed_out() { return 27 }
 

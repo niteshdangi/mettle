@@ -7,8 +7,12 @@ type Item {
     drop { unsafe { *self.drops += 1 } }
 }
 
-fn even_value(item: take Item): i32? {
-    if item.value % 2 == 0 { present(item.value) } else { none }
+fn is_even<region r>(item: read Item from r): bool {
+    item.value % 2 == 0
+}
+
+fn item_value(item: take Item): i32 {
+    item.value
 }
 
 fn main(): i32 {
@@ -20,11 +24,16 @@ fn main(): i32 {
         values.push(Item(core.ptr.from_mut(drops), 3))
         values.push(Item(core.ptr.from_mut(drops), 4))
 
-        var adapted = values.into_iter().filter_map(even_value)
-        var total = 0
-        for item in take adapted { total += item }
-        if total != 6 || drops != 4 { return 1 }
+        {
+            var adapted = values.into_iter().filter(is_even).map(item_value)
+            match take adapted.next() {
+                present(item) => { if item != 2 { return 1 } },
+                none => { return 1 }
+            }
+            if drops != 2 { return 2 }
+        }
+        if drops != 4 { return 3 }
     }
-    if drops != 4 { return 2 }
+    if drops != 4 { return 4 }
     0
 }

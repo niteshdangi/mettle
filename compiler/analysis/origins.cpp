@@ -1327,17 +1327,6 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
             auto &loan = result.loans[id];
             if (types.isView(paths[path].second))
               loan.mode = types.view(paths[path].second).mode;
-            // Static output identities distinguish one invocation, not loop
-            // epochs.
-            if (!cyclic[b])
-              for (std::size_t other = 0; other < created[b][i].size(); ++other)
-                if (other != path && ((types.isView(paths[path].second) &&
-                                       types.view(paths[path].second).mode ==
-                                           ParameterMode::Mut) ||
-                                      (types.isView(paths[other].second) &&
-                                       types.view(paths[other].second).mode ==
-                                           ParameterMode::Mut)))
-                  loan.disjointOutputs.insert(created[b][i][other]);
             value[paths[path].first].insert(id);
             point.defines.insert(id);
           }
@@ -1639,8 +1628,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                 std::set_difference(parents.begin(), parents.end(),
                                     borrow.begin(), borrow.end(),
                                     std::inserter(carried, carried.end()));
-                if (!carried.empty() &&
-                    std::all_of(carried.begin(), carried.end(), [&](auto id) {
+                if (std::all_of(carried.begin(), carried.end(), [&](auto id) {
                       return result.loans.at(id).mode == ParameterMode::Read;
                     }))
                   parents = std::move(carried);
@@ -1823,6 +1811,51 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
       }
     }
   } while (changed);
+  Origins loopPhis;
+  for (std::size_t b = 0; b < function.blocks.size(); ++b)
+    if (cyclic[b])
+      for (const auto &instruction : function.blocks[b].instructions)
+        if (instruction.op == ir::Op::Phi)
+          join(loopPhis, flatten(result.values[instruction.result.id]));
+  loopPhis = ancestors(loopPhis, result.loans);
+  for (std::size_t b = 0; b < function.blocks.size(); ++b) {
+    if (std::none_of(created[b].begin(), created[b].end(),
+                     [](const auto &ids) { return ids.size() > 1; }))
+      continue;
+    Origins carried;
+    if (cyclic[b]) {
+      carried = loopPhis;
+      for (auto predecessor : predecessors[b])
+        for (const auto &[place, sources] : outputs[predecessor]) {
+          (void)place;
+          join(carried, sources);
+        }
+      carried = ancestors(carried, result.loans);
+    }
+    for (std::size_t i = 0; i < function.blocks[b].instructions.size(); ++i) {
+      const auto &instruction = function.blocks[b].instructions[i];
+      if ((instruction.op != ir::Op::Call &&
+           instruction.op != ir::Op::IndirectCall) ||
+          created[b][i].size() < 2)
+        continue;
+      // One static output identity can represent different loop epochs.
+      // Sibling outputs are disjoint only if no output or derived view can
+      // reach this call again through storage or a loop Phi.
+      if (std::any_of(created[b][i].begin(), created[b][i].end(),
+                      [&](int id) { return carried.contains(id); }))
+        continue;
+      auto paths = viewPaths(instruction.result.type, types);
+      for (std::size_t path = 0; path < paths.size(); ++path)
+        for (std::size_t other = 0; other < paths.size(); ++other)
+          if (other != path &&
+              ((types.isView(paths[path].second) &&
+                types.view(paths[path].second).mode == ParameterMode::Mut) ||
+               (types.isView(paths[other].second) &&
+                types.view(paths[other].second).mode == ParameterMode::Mut)))
+            result.loans.at(created[b][i][path])
+                .disjointOutputs.insert(created[b][i][other]);
+    }
+  }
   // A result built from raw-pointer storage carries no tracked targets, yet its
   // declared regions promise it stays within the declared inputs: back it with
   // every place those inputs borrow so later access through them conflicts.

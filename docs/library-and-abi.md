@@ -131,9 +131,63 @@ provides borrowed iteration and `FromItems`/`ExtendItems` (over any
 the matching `core.cmp`, `core.hash`, `core.ops` (`Deref`, `IndexRange`) and
 `core.fmt` interfaces; `String` is a `core.fmt.Write` sink.
 
+`Box<[T; N], A>` supports consuming, borrowed and mutable iteration. Consuming
+iteration yields each initialized `T` by move and keeps the original allocation,
+layout and allocator with the iterator; dropping a partially consumed iterator
+drops only the remaining elements, exactly once, before deallocation. Borrowed
+iteration yields views tied to the corresponding shared or exclusive borrow of
+the box. For `N == 0`, all three iterators yield no elements and never
+dereference an element pointer.
+
 Because take consumes Copy values too, callers that need another independent
 copy must produce it explicitly before a consuming collection call. Do not
 silently weaken take for library conveniences.
+
+Floating `to_int_unchecked<Int>` is unsafe and accepts native integer targets.
+The input must be finite and its integer part, truncated toward zero, must fit
+the target. NaN, infinity and out-of-range inputs violate the precondition; this
+operation does not promise the saturating behavior of ordinary floating casts.
+The target can be explicit, an integer alias or inferred from a result context.
+An abstract target without a concrete native integer identity remains explicitly
+unsupported; no unstable public conversion trait is introduced.
+
+Floating `FromStr` parses decimal text without an allocator or OS dependency,
+rounding directly to the requested binary32/binary64 width, ties to even.
+Invalid grammar returns `ParseFloatError`; valid overflow/underflow produces
+infinity/signed zero. Long discarded mantissa digits retain sticky information.
+Fixed-precision Display/Debug rounds fractional digits ties to even, propagates
+carry and preserves the sign of zero; width, alignment and writer errors remain
+part of the formatter contract. Native float MIN/MAX preserve their type and
+finite bit pattern in static and runtime use. Runtime algebraic wrappers use
+strict operators. The 92 selected stable const-callable records have focused
+binary32/binary64 acceptance through the target software evaluator, not merely
+parsed `const fn` declarations. Bit and endian-byte conversions preserve exact
+NaN payloads and signed zero through const-function frames and static storage.
+Contextual literals round directly to the requested width; numeric casts and
+classification retain their declared result types. Non-const calls and invalid
+clamp bounds are rejected during required initialization. Broader floating
+runtime/supporting-trait operation closure remains separate.
+
+The selected lossless numeric `From` implementations admit bool and the
+selected narrow integer domains for f32/f64, plus f32-to-f64 widening. Boolean
+conversion produces positive zero or one; finite widening and signed zero are
+exact, while cross-width NaN payloads are not promised. The `Into` blanket uses
+these implementations; no general `From`-to-`TryFrom` blanket is introduced.
+Both float widths implement the selected arithmetic and assignment interfaces
+for owned and readonly-view operands using the existing intrinsic IEEE operators.
+
+`alloc.string.ToString` supplies the `Display + unsized` blanket without adding
+allocation to core. It renders default Display options into an independently
+owned Global-allocated String. Allocation and formatting failures panic rather
+than returning partial output; rendering cost includes Display and appending
+the emitted bytes.
+
+Float constant metadata has its declared integer type: DIGITS, MANTISSA_DIGITS
+and RADIX are u32, while exponent bounds are i32. EPSILON and MIN_POSITIVE use
+the owner's binary width; INFINITY, NEG_INFINITY and NAN are associated values,
+not new numeric-token spellings. NAN's payload is unspecified. The compiler's
+checked numeric carrier accepts canonical nonfinite values without permitting
+implicit narrowing or changing source identifier/lexer rules.
 
 Vector growth factor is not a semantic guarantee. Ordered maps guarantee key
 ordering; hash-map iteration order is unspecified and hash policy is visible.

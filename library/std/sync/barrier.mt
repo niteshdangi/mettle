@@ -1,6 +1,8 @@
 import super.mutex
 import super.condvar
 import package.core.panic.panic
+import package.core.clone.Clone
+import package.core.fmt.{Debug, Error, Formatter}
 
 type State {
     count: usize
@@ -8,8 +10,18 @@ type State {
 }
 
 pub copy type BarrierWaitResult { leader: bool }
+extend BarrierWaitResult implements Clone {
+    fn clone(): BarrierWaitResult { BarrierWaitResult(self.leader) }
+}
 extend BarrierWaitResult {
     pub fn is_leader(): bool { self.leader }
+}
+extend BarrierWaitResult implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        var debug = try f.debug_struct("BarrierWaitResult")
+        try debug.field("is_leader", read self.leader)
+        try debug.finish()
+    }
 }
 
 // Blocks `parties` threads until all have arrived; reusable across rounds.
@@ -47,5 +59,10 @@ extend Barrier {
             guard = self.arrived.wait(guard)
         }
         BarrierWaitResult(false)
+    }
+}
+extend Barrier implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        try f.write_str("Barrier { .. }")
     }
 }

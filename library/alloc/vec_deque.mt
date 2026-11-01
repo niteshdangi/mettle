@@ -1,5 +1,6 @@
-import package.core.iter.{Iterator, BidirectionalIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import package.core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, FusedIterator, Bound, RangeBounds, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
 import package.core.clone.Clone
+import package.core.default.Default
 import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import package.core.hash.{Hash, Hasher}
 import package.core.fmt
@@ -15,6 +16,52 @@ unsafe fn slice_ptr<T>(p: ptr<mut T>, n: usize): ptr<read [T]> {
 // Safety: `p` is aligned and valid for exclusive access to `n` elements.
 unsafe fn slice_ptr_mut<T>(p: ptr<mut T>, n: usize): ptr<mut [T]> {
     unsafe { core.mem.transmute<ptr<mut [T]>>(RawSlice(p.cast_const(), n)) }
+}
+
+// Safety invariant: `buf` and `len` remain valid for the deque, and `head`,
+// `cap`, and the allocation do not change while the guard is active. At unwind
+// points `[0, kept)` and `[read_at, total)` own values; the gap contains only
+// rejected values being destroyed or logically moved-from slots. `total` is
+// at most `cap`, so forward compaction cannot overwrite a future source. ZST
+// copies touch no bytes; the restored length controls their drop count.
+type RetainGuard<T> {
+    buf: ptr<mut T>
+    cap: usize
+    head: usize
+    len: ptr<mut usize>
+    total: usize
+    read_at: usize
+    kept: usize
+    active: bool
+    drop {
+        if self.active {
+            var i = self.read_at
+            while i < self.total {
+                let dst_index = self.kept + i - self.read_at
+                if dst_index != i {
+                    let src = unsafe { self.buf.add(self.physical(i)) }
+                    let dst = unsafe { self.buf.add(self.physical(dst_index)) }
+                    unsafe { core.ptr.`copy`(src.cast_const(), dst, 1usize) }
+                }
+                i += 1usize
+            }
+            unsafe {
+                core.ptr.write(self.len, self.kept + self.total - self.read_at)
+            }
+        }
+    }
+}
+
+extend<T> RetainGuard<T> {
+    fn physical(i: usize): usize {
+        let j = self.head + i
+        if j >= self.cap { j - self.cap } else { j }
+    }
+
+    mut fn finish(): Unit {
+        unsafe { core.ptr.write(self.len, self.kept) }
+        self.active = false
+    }
 }
 
 // Growable ring buffer owning its block and allocator.
@@ -35,11 +82,98 @@ pub type Deque<T, A: Allocator = Global> {
     }
 }
 
+// Restores the retained tail even when dropping an unyielded drained value
+// unwinds. The active drain borrow keeps the ring allocation and head stable.
+type DequeDrainFinish<T> {
+    buf: ptr<mut T>
+    cap: usize
+    head: usize
+    head_ptr: ptr<mut usize>
+    len: ptr<mut usize>
+    start: usize
+    front: usize
+    back: usize
+    tail_start: usize
+    tail_len: usize
+    drop {
+        self.drop_remaining()
+        let removed = self.tail_start - self.start
+        if self.start <= self.tail_len {
+            var i = 0usize
+            while i < self.tail_len {
+                let source = self.physical(self.tail_start + i)
+                let destination = self.physical(self.start + i)
+                if source != destination {
+                    // Safety: the drained range is dead; copying the tail
+                    // left in forward order does not overwrite a future source.
+                    unsafe {
+                        core.ptr.`copy`(
+                            self.buf.add(source).cast_const(),
+                            self.buf.add(destination),
+                            1usize
+                        )
+                    }
+                }
+                i += 1usize
+            }
+        } else {
+            // Move the shorter prefix right, from back to front, then advance
+            // head so the unchanged suffix follows it in logical order.
+            var i = self.start
+            while i != 0usize {
+                i -= 1usize
+                let source = self.physical(i)
+                let destination = self.physical(i + removed)
+                if source != destination {
+                    // Safety: reverse order preserves sources during this
+                    // rightward overlapping move; drained slots are unowned.
+                    unsafe {
+                        core.ptr.`copy`(
+                            self.buf.add(source).cast_const(),
+                            self.buf.add(destination),
+                            1usize
+                        )
+                    }
+                }
+            }
+            let next_head = self.head + removed
+            unsafe {
+                core.ptr.write(
+                    self.head_ptr,
+                    if next_head >= self.cap { next_head - self.cap } else { next_head }
+                )
+            }
+        }
+        unsafe { core.ptr.write(self.len, self.start + self.tail_len) }
+    }
+}
+
+extend<T> DequeDrainFinish<T> {
+    fn physical(logical: usize): usize {
+        let index = self.head + logical
+        if index >= self.cap { index - self.cap } else { index }
+    }
+
+    mut fn drop_remaining(): Unit {
+        while self.front < self.back {
+            let index = self.front
+            self.front += 1usize
+            let at = self.physical(index)
+            unsafe { core.ptr.drop_in_place(self.buf.add(at)) }
+        }
+    }
+}
+
 pub fn new_in<T, A: Allocator>(a: take A): Deque<T, A> {
     let cap = if core.mem.size_of<T>() == 0usize { 0x7fffffffffffffffusize } else { 0usize }
     Deque(dangling_for<T>(), cap, 0usize, 0usize, a)
 }
 pub fn new<T>(): Deque<T> { new_in(Global()) }
+pub fn with_capacity<T>(capacity: usize): Deque<T> {
+    var deque = new<T>()
+    deque.reserve_exact(capacity)
+    deque
+}
 
 extend<T, A: Allocator> Deque<T, A> {
     pub fn len(): usize { self.len }
@@ -102,6 +236,15 @@ extend<T, A: Allocator> Deque<T, A> {
     }
     pub mut fn reserve_exact(additional: usize): Unit {
         self.reserve(additional)
+    }
+    pub mut fn append(other: mut Deque<T, A>): Unit {
+        let count = other.len
+        if count == 0usize { return () }
+        // Grow only with this deque's allocator before moving any values.
+        self.reserve(count)
+        while other.len != 0usize {
+            self.push_back(other.pop_front().unwrap())
+        }
     }
     pub mut fn shrink_to_fit(): Unit { self.shrink_to(0usize) }
     pub mut fn shrink_to(min_capacity: usize): Unit {
@@ -171,6 +314,10 @@ extend<T, A: Allocator> Deque<T, A> {
         unsafe { core.ptr.write(self.buf.add(at), value) }
         self.len += 1usize
     }
+    pub mut fn push_back_mut(value: take T): mut T from self {
+        self.push_back(value)
+        self.get_mut(self.len - 1usize).unwrap()
+    }
     pub mut fn push_front(value: take T): Unit {
         match capture self.try_reserve_one() {
             success(_) => {},
@@ -179,6 +326,10 @@ extend<T, A: Allocator> Deque<T, A> {
         self.head = if self.head == 0usize { self.cap - 1usize } else { self.head - 1usize }
         unsafe { core.ptr.write(self.buf.add(self.head), value) }
         self.len += 1usize
+    }
+    pub mut fn push_front_mut(value: take T): mut T from self {
+        self.push_front(value)
+        self.get_mut(0usize).unwrap()
     }
     pub mut fn pop_front(): T? {
         if self.len == 0usize { return none }
@@ -192,12 +343,12 @@ extend<T, A: Allocator> Deque<T, A> {
         self.len -= 1usize
         present(unsafe { core.ptr.`read`(self.buf.add(self.physical(self.len))) })
     }
-    pub mut fn pop_front_if<F: fn(mut T): bool>(test: take F): T? {
+    pub mut fn pop_front_if<F: take fn(mut T): bool>(test: take F): T? {
         if self.len == 0usize { return none }
         let first = self.get_mut(0usize).unwrap()
         if test(first) { self.pop_front() } else { none }
     }
-    pub mut fn pop_back_if<F: fn(mut T): bool>(test: take F): T? {
+    pub mut fn pop_back_if<F: take fn(mut T): bool>(test: take F): T? {
         if self.len == 0usize { return none }
         let last = self.get_mut(self.len - 1usize).unwrap()
         if test(last) { self.pop_back() } else { none }
@@ -209,6 +360,67 @@ extend<T, A: Allocator> Deque<T, A> {
     pub mut fn get_mut(i: usize): (mut T from self)? {
         if i >= self.len { return none }
         present(unsafe { mut *self.buf.add(self.physical(i)) })
+    }
+    pub mut fn swap(i: usize, j: usize): Unit {
+        if i >= self.len || j >= self.len {
+            super.alloc.panic_precondition()
+        }
+        if i != j {
+            unsafe {
+                core.ptr.swap(
+                    self.buf.add(self.physical(i)),
+                    self.buf.add(self.physical(j))
+                )
+            }
+        }
+    }
+    pub fn binary_search_by<F: mut fn(read T): Ordering>(compare: take F): usize throws usize {
+        var comparator = take compare
+        var low = 0usize
+        var high = self.len
+        while low < high {
+            let mid = low + (high - low) / 2usize
+            let order = comparator(self.get(mid).unwrap())
+            if order.is_lt() {
+                low = mid + 1usize
+            } else {
+                if order.is_gt() { high = mid } else { return mid }
+            }
+        }
+        throw low
+    }
+    pub fn binary_search_by_key<K: Ord, F: mut fn(read T): K>(
+        key: read K,
+        project: take F
+    ): usize throws usize {
+        var key_fn = take project
+        var low = 0usize
+        var high = self.len
+        while low < high {
+            let mid = low + (high - low) / 2usize
+            let current = key_fn(self.get(mid).unwrap())
+            let order = current.cmp(key)
+            if order.is_lt() {
+                low = mid + 1usize
+            } else {
+                if order.is_gt() { high = mid } else { return mid }
+            }
+        }
+        throw low
+    }
+    pub fn partition_point<F: mut fn(read T): bool>(before: take F): usize {
+        var predicate = take before
+        var low = 0usize
+        var high = self.len
+        while low < high {
+            let mid = low + (high - low) / 2usize
+            if predicate(self.get(mid).unwrap()) {
+                low = mid + 1usize
+            } else {
+                high = mid
+            }
+        }
+        low
     }
     pub mut fn insert(i: usize, value: take T): Unit {
         if i > self.len { super.alloc.panic_precondition() }
@@ -227,6 +439,10 @@ extend<T, A: Allocator> Deque<T, A> {
         }
         unsafe { core.ptr.write(self.buf.add(self.physical(i)), value) }
         self.len += 1usize
+    }
+    pub mut fn insert_mut(i: usize, value: take T): mut T from self {
+        self.insert(i, value)
+        self.get_mut(i).unwrap()
     }
     pub mut fn remove(i: usize): T {
         if i >= self.len { super.alloc.panic_precondition() }
@@ -338,31 +554,105 @@ extend<T, A: Allocator> Deque<T, A> {
         }
         unsafe { mut *slice_ptr_mut(self.buf, self.len) }
     }
-    pub mut fn retain_mut(keep: fn(mut T): bool): Unit {
+    // The guard compacts the unvisited suffix on unwind. `read_at` excludes a
+    // rejected value before its destructor runs; `kept` counts moved owners.
+    // The ring bounds and head stay fixed for the guard's lifetime, and the
+    // copied-from slots are outside the restored initialized prefix.
+    pub mut fn retain<F: mut fn(read T): bool>(keep: mut F): Unit {
         let n = self.len
-        let _ = self.make_contiguous()
-        let base = unsafe { self.buf.add(self.head) }
-        self.len = 0usize
+        var guard = RetainGuard<T>(
+            self.buf,
+            self.cap,
+            self.head,
+            core.ptr.from_mut(self.len),
+            n,
+            0usize,
+            0usize,
+            true
+        )
         var read_at = 0usize
-        var kept = 0usize
         while read_at < n {
-            let p = unsafe { base.add(read_at) }
-            let alive = keep(unsafe { mut *p })
+            let p = unsafe { self.buf.add(self.physical(read_at)) }
+            let alive = keep(unsafe { read *p })
             read_at += 1usize
+            guard.read_at = read_at
             if alive {
-                if kept != read_at - 1usize {
-                    unsafe { core.ptr.`copy`(p.cast_const(), base.add(kept), 1usize) }
+                if guard.kept != read_at - 1usize {
+                    let dst = unsafe { self.buf.add(self.physical(guard.kept)) }
+                    unsafe { core.ptr.`copy`(p.cast_const(), dst, 1usize) }
                 }
-                kept += 1usize
+                guard.kept += 1usize
             } else {
                 unsafe { core.ptr.drop_in_place(p) }
             }
         }
-        self.len = kept
+        guard.finish()
+    }
+
+    pub mut fn retain_mut<F: mut fn(mut T): bool>(keep: mut F): Unit {
+        let n = self.len
+        var guard = RetainGuard<T>(
+            self.buf,
+            self.cap,
+            self.head,
+            core.ptr.from_mut(self.len),
+            n,
+            0usize,
+            0usize,
+            true
+        )
+        var read_at = 0usize
+        while read_at < n {
+            let p = unsafe { self.buf.add(self.physical(read_at)) }
+            let alive = keep(unsafe { mut *p })
+            read_at += 1usize
+            guard.read_at = read_at
+            if alive {
+                if guard.kept != read_at - 1usize {
+                    let dst = unsafe { self.buf.add(self.physical(guard.kept)) }
+                    unsafe { core.ptr.`copy`(p.cast_const(), dst, 1usize) }
+                }
+                guard.kept += 1usize
+            } else {
+                unsafe { core.ptr.drop_in_place(p) }
+            }
+        }
+        guard.finish()
     }
     pub mut fn range_mut(start: usize, end: usize): DequeRangeMut<region self, T, A> {
         if start > end || end > self.len { super.alloc.panic_precondition() }
         DequeRangeMut(mut self, start, end)
+    }
+    pub fn range(start: usize, end: usize): DequeIter<region self, T, A> {
+        if start > end || end > self.len { super.alloc.panic_precondition() }
+        DequeIter(read self, start, end)
+    }
+    pub mut fn drain<R: RangeBounds<usize>>(range: take R): DequeDrain<region self, T, A> {
+        let start = match R.(RangeBounds<usize>).start_bound(read range) {
+            Bound.Included(value) => *value,
+            Bound.Excluded(value) => match (*value).checked_add(1usize) {
+                present(index) => index,
+                none => super.alloc.panic_precondition()
+            },
+            Bound.Unbounded => 0usize
+        }
+        let end = match R.(RangeBounds<usize>).end_bound(read range) {
+            Bound.Excluded(value) => *value,
+            Bound.Included(value) => match (*value).checked_add(1usize) {
+                present(index) => index,
+                none => super.alloc.panic_precondition()
+            },
+            Bound.Unbounded => self.len
+        }
+        self.drain_bounds(start, end)
+    }
+    // The RangeBounds entry point normalizes its bounds before calling this.
+    // Keeping len at the prefix makes a forgotten drain memory-safe.
+    mut fn drain_bounds(start: usize, end: usize): DequeDrain<region self, T, A> {
+        if start > end || end > self.len { super.alloc.panic_precondition() }
+        let tail_len = self.len - end
+        self.len = start
+        DequeDrain(mut self, start, start, end, end, tail_len)
     }
     pub mut fn split_off(at: usize): Deque<T, A> where A: Clone {
         if at > self.len { super.alloc.panic_precondition() }
@@ -374,13 +664,20 @@ extend<T, A: Allocator> Deque<T, A> {
         }
         other
     }
-    pub mut fn resize_with<F: fn(): T>(n: usize, generate: take F): Unit {
+    pub mut fn resize_with<F: mut fn(): T>(n: usize, generate: take F): Unit {
         if n < self.len {
             while self.len > n { let value = self.pop_back() }
             return ()
         }
         self.reserve(n - self.len)
-        while self.len < n { self.push_back(generate()) }
+        var generator = take generate
+        while self.len < n { self.push_back(generator()) }
+    }
+    pub mut fn truncate(n: usize): Unit {
+        while self.len > n { let value = self.pop_back() }
+    }
+    pub mut fn retain_back(n: usize): Unit {
+        while self.len > n { let value = self.pop_front() }
     }
     pub fn front(): (read T from self)? { self.get(0usize) }
     pub mut fn front_mut(): (mut T from self)? { self.get_mut(0usize) }
@@ -395,6 +692,38 @@ extend<T, A: Allocator> Deque<T, A> {
             let v = self.pop_front()
         }
     }
+}
+
+extend<T: Ord, A: Allocator> Deque<T, A> {
+    pub fn binary_search(value: read T): usize throws usize {
+        try self.binary_search_by(fn(item: read T): Ordering { item.cmp(value) })
+    }
+}
+
+extend<T: PartialEq, A: Allocator> Deque<T, A> {
+    pub fn contains(value: read T): bool {
+        var index = 0usize
+        while index < self.len {
+            if self[index].eq(value) { return true }
+            index += 1usize
+        }
+        false
+    }
+}
+
+extend<T: Clone, A: Allocator> Deque<T, A> {
+    pub mut fn resize(n: usize, value: read T): Unit {
+        if n <= self.len {
+            self.truncate(n)
+            return ()
+        }
+        self.reserve(n - self.len)
+        while self.len < n { self.push_back(value.clone()) }
+    }
+}
+
+extend<T, A: Allocator + Default> Deque<T, A> implements Default {
+    static fn default(): Deque<T, A> { new_in(A.(Default).default()) }
 }
 
 extend<T, A: Allocator> Deque<T, A> implements package.core.ops.Index<usize> {
@@ -419,6 +748,10 @@ pub type DequeRangeMut<region r, T, A: Allocator> {
 }
 extend<region r, T, A: Allocator> DequeRangeMut<region r, T, A> implements Iterator {
     type Item = mut T from r
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.back - self.front
+        (remaining, present(remaining))
+    }
     mut fn next(): (mut T from r)? {
         if self.front == self.back { return none }
         let index = self.front
@@ -433,53 +766,153 @@ extend<region r, T, A: Allocator> DequeRangeMut<region r, T, A> implements Bidir
         self.deque.get_mut(self.back)
     }
 }
+extend<region r, T, A: Allocator> DequeRangeMut<region r, T, A> implements ExactSizeIterator {}
+extend<region r, T, A: Allocator> DequeRangeMut<region r, T, A> implements FusedIterator {}
 
+pub type DequeDrain<region r, T, A: Allocator> {
+    deque: mut Deque<T, A> from r
+    start: usize
+    front: usize
+    back: usize
+    tail_start: usize
+    tail_len: usize
+    drop {
+        var finish = DequeDrainFinish(
+            self.deque.buf,
+            self.deque.cap,
+            self.deque.head,
+            core.ptr.from_mut(self.deque.head),
+            core.ptr.from_mut(self.deque.len),
+            self.start,
+            self.front,
+            self.back,
+            self.tail_start,
+            self.tail_len
+        )
+        finish.drop_remaining()
+    }
+}
+
+extend<region r, T, A: Allocator> DequeDrain<region r, T, A> implements Iterator {
+    type Item = T
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.back - self.front
+        (remaining, present(remaining))
+    }
+    mut fn next(): T? {
+        if self.front == self.back { return none }
+        let index = self.front
+        self.front += 1usize
+        present(unsafe {
+            core.ptr.`read`(self.deque.buf.add(self.deque.physical(index)))
+        })
+    }
+}
+extend<region r, T, A: Allocator> DequeDrain<region r, T, A> implements BidirectionalIterator {
+    mut fn next_back(): T? {
+        if self.front == self.back { return none }
+        self.back -= 1usize
+        present(unsafe {
+            core.ptr.`read`(self.deque.buf.add(self.deque.physical(self.back)))
+        })
+    }
+}
+extend<region r, T, A: Allocator> DequeDrain<region r, T, A> implements ExactSizeIterator {}
+extend<region r, T, A: Allocator> DequeDrain<region r, T, A> implements FusedIterator {}
 
 // Borrowed front-to-back iterator over a ring buffer.
-pub type DequeIter<region r, T, A: Allocator> { deque: read Deque<T, A> from r; index: usize }
+pub type DequeIter<region r, T, A: Allocator> {
+    deque: read Deque<T, A> from r
+    front: usize
+    back: usize
+}
 extend<region r, T, A: Allocator> DequeIter<region r, T, A> implements Iterator {
     type Item = read T from r
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.back - self.front
+        (remaining, present(remaining))
+    }
     mut fn next(): (read T from r)? {
-        if self.index < self.deque.len {
-            let i = self.index
-            self.index += 1usize
+        if self.front < self.back {
+            let i = self.front
+            self.front += 1usize
             present(unsafe { read *self.deque.buf.add(self.deque.physical(i)) })
         } else {
             none
         }
     }
 }
+extend<region r, T, A: Allocator> DequeIter<region r, T, A> implements BidirectionalIterator {
+    mut fn next_back(): (read T from r)? {
+        if self.front == self.back { return none }
+        self.back -= 1usize
+        present(unsafe { read *self.deque.buf.add(self.deque.physical(self.back)) })
+    }
+}
+extend<region r, T, A: Allocator> DequeIter<region r, T, A> implements ExactSizeIterator {}
+extend<region r, T, A: Allocator> DequeIter<region r, T, A> implements FusedIterator {}
 extend<T, A: Allocator> Deque<T, A> implements Iterable {
     type Item = T
     type Iter<region r> = DequeIter<region r, T, A>
-    fn iter<region r>(receiver self: read Self from r): DequeIter<region r, T, A> { DequeIter(read self, 0usize) }
+    fn iter<region r>(receiver self: read Self from r): DequeIter<region r, T, A> {
+        DequeIter(read self, 0usize, self.len)
+    }
 }
 
 // Mutable front-to-back iterator over a ring buffer.
-pub type DequeIterMut<region r, T, A: Allocator> { deque: mut Deque<T, A> from r; index: usize }
+pub type DequeIterMut<region r, T, A: Allocator> {
+    deque: mut Deque<T, A> from r
+    front: usize
+    back: usize
+}
 extend<region r, T, A: Allocator> DequeIterMut<region r, T, A> implements Iterator {
     type Item = mut T from r
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.back - self.front
+        (remaining, present(remaining))
+    }
     mut fn next(): (mut T from r)? {
-        if self.index < self.deque.len {
-            let i = self.index
-            self.index += 1usize
+        if self.front < self.back {
+            let i = self.front
+            self.front += 1usize
             present(unsafe { mut *self.deque.buf.add(self.deque.physical(i)) })
         } else {
             none
         }
     }
 }
+extend<region r, T, A: Allocator> DequeIterMut<region r, T, A> implements BidirectionalIterator {
+    mut fn next_back(): (mut T from r)? {
+        if self.front == self.back { return none }
+        self.back -= 1usize
+        present(unsafe { mut *self.deque.buf.add(self.deque.physical(self.back)) })
+    }
+}
+extend<region r, T, A: Allocator> DequeIterMut<region r, T, A> implements ExactSizeIterator {}
+extend<region r, T, A: Allocator> DequeIterMut<region r, T, A> implements FusedIterator {}
 extend<T, A: Allocator> Deque<T, A> implements MutableIterable {
     type Item = T
     type IterMut<region r> = DequeIterMut<region r, T, A>
-    fn iter_mut<region r>(receiver self: mut Self from r): DequeIterMut<region r, T, A> { DequeIterMut(mut self, 0usize) }
+    fn iter_mut<region r>(receiver self: mut Self from r): DequeIterMut<region r, T, A> {
+        let n = self.len
+        DequeIterMut(mut self, 0usize, n)
+    }
 }
 
 pub type DequeIntoIter<T, A: Allocator = Global> { deque: Deque<T, A> }
 extend<T, A: Allocator> DequeIntoIter<T, A> implements Iterator {
     type Item = T
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.deque.len
+        (remaining, present(remaining))
+    }
     mut fn next(): T? { self.deque.pop_front() }
 }
+extend<T, A: Allocator> DequeIntoIter<T, A> implements BidirectionalIterator {
+    mut fn next_back(): T? { self.deque.pop_back() }
+}
+extend<T, A: Allocator> DequeIntoIter<T, A> implements ExactSizeIterator {}
+extend<T, A: Allocator> DequeIntoIter<T, A> implements FusedIterator {}
 extend<T, A: Allocator> Deque<T, A> implements OwnedIterable {
     type Item = T
     type IntoIter = DequeIntoIter<T, A>
@@ -578,3 +1011,24 @@ extend<T> Deque<T> implements FromItems<T> {
 // Owned storage moves or is shared exactly when its elements and allocator do.
 unsafe extend<T: Transferable, A: Allocator + Transferable> Deque<T, A> implements Transferable {}
 unsafe extend<T: Shareable, A: Allocator + Shareable> Deque<T, A> implements Shareable {}
+
+// The ring is rotated in place to start at slot zero, then its allocation is
+// adopted by the list (same layout, no element copies beyond the rotation).
+extend<T, A: Allocator> super.vec.List<T, A> implements package.core.convert.From<Deque<T, A>> {
+    static fn `from`(source: take Deque<T, A>): super.vec.List<T, A> {
+        var ring = take source
+        ring.make_contiguous()
+        let size = core.mem.size_of<T>()
+        unsafe {
+            if ring.head != 0usize && ring.len != 0usize {
+                core.ptr.`copy`(ring.buf.add(ring.head).cast_const(), ring.buf, ring.len)
+            }
+            let pointer = ring.buf
+            let length = ring.len
+            let capacity = if size == 0usize { 0xffffffffffffffffusize } else { ring.cap }
+            let allocator = core.ptr.`read`(core.ptr.from_ref(ring.a))
+            core.mem.forget(take ring)
+            super.vec.List<T, A>.from_raw_parts_in(pointer, length, capacity, allocator)
+        }
+    }
+}

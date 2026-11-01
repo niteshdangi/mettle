@@ -76,14 +76,15 @@ public:
   static std::optional<ir::VerifiedProgram>
   run(Module tree, Diagnostics &diagnostics, bool requireEntry = true,
       TargetFacts target = {}, const CheckedObserver &observe = {},
-      const PackageOwners &packageOwners = {}) {
+      const PackageOwners &packageOwners = {},
+      NumericEvaluator numericEvaluator = nullptr) {
     if (!diagnostics.empty())
       return std::nullopt;
     auto resolved = resolution::resolve(tree, diagnostics);
     if (!resolved)
       return std::nullopt;
     auto checked = check(std::move(tree), diagnostics, std::move(resolved),
-                         requireEntry, std::move(target));
+                         requireEntry, std::move(target), numericEvaluator);
     if (!checked)
       return std::nullopt;
     if (observe)
@@ -256,8 +257,8 @@ public:
         return true;
       interfaces::Solver solver(store, checked->interfaceDatabase(), errors, {},
                                 {}, true);
-      // Selection is by type identity; a family projection resolves to an
-      // iterator type that still names the caller's regions.
+      // Semantic analysis checks region contracts; concrete implementation
+      // selection is by type identity, not by the caller's region identities.
       auto self = store.eraseRegions(
           solver.normalize(call.interfaceSelf, bindings, call.span));
       auto interface =
@@ -282,12 +283,10 @@ public:
             continue;
           // Erased dispatch tables may hold one interface at several
           // arguments; associated bindings do not select the method.
-          bool valid =
-              !store.isErased(self) ||
-              store
-                      .erased(solver.normalize(adapter.interfaceType,
-                                               *substitutions, call.span))
-                      .arguments == store.erased(interface).arguments;
+          bool valid = !store.isErased(self) ||
+                       store.erased(solver.normalize(adapter.interfaceType,
+                                                     *substitutions, call.span))
+                               .arguments == store.erased(interface).arguments;
           for (std::size_t i = 0; i < methodArguments.size(); ++i) {
             auto pattern = adapter.methodArguments[i];
             if (store.isParameter(pattern))
@@ -357,8 +356,9 @@ std::optional<ir::VerifiedProgram> compile(const std::vector<Source> &sources,
 std::optional<ir::VerifiedProgram>
 compile(Module module, Diagnostics &diagnostics, bool requireEntry,
         TargetFacts target, const CheckedObserver &observe,
-        const PackageOwners &packageOwners) {
+        const PackageOwners &packageOwners, NumericEvaluator numericEvaluator) {
   return Compiler::run(std::move(module), diagnostics, requireEntry,
-                       std::move(target), observe, packageOwners);
+                       std::move(target), observe, packageOwners,
+                       numericEvaluator);
 }
 } // namespace mettle::pipeline

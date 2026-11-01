@@ -254,25 +254,57 @@ extend bool implements Ord {
     }
 }
 
-extend<A: PartialEq, B: PartialEq> (A, B) implements PartialEq {
-    fn eq(other: read (A, B)): bool { self.0 == other.0 && self.1 == other.1 }
-}
-extend<A: Eq, B: Eq> (A, B) implements Eq {}
-extend<A: PartialOrd, B: PartialOrd> (A, B) implements PartialOrd {
-    fn partial_cmp(other: read (A, B)): Ordering? {
-        match self.0.partial_cmp(read other.0) {
-            present(first) => if first.is_eq() { self.1.partial_cmp(read other.1) } else { present(first) },
-            none => none
+// The comma-terminated prefix and semicolon-separated final type make the
+// possibly-unsized tail unambiguous while keeping one implementation pattern.
+macro tuple_comparison {
+    ($($prefix:ident => $prefix_field:literal,)* ; $last:ident => $last_field:literal) => {
+        extend<$($prefix: PartialEq,)* $last: PartialEq + unsized> ($($prefix,)* $last,) implements PartialEq {
+            fn eq(other: read ($($prefix,)* $last,)): bool {
+        $(self.$prefix_field == other.$prefix_field &&)*
+                self.$last_field == other.$last_field
+            }
         }
-    }
-}
-extend<A: Ord, B: Ord> (A, B) implements Ord {
-    fn cmp(other: read (A, B)): Ordering {
-        let first = self.0.cmp(read other.0)
-        if first.is_eq() { self.1.cmp(read other.1) } else { first }
-    }
+
+        extend<$($prefix: Eq,)* $last: Eq + unsized> ($($prefix,)* $last,) implements Eq {}
+
+        extend<$($prefix: PartialOrd,)* $last: PartialOrd + unsized> ($($prefix,)* $last,) implements PartialOrd {
+            fn partial_cmp(other: read ($($prefix,)* $last,)): Ordering? {
+                $(
+                    match self.$prefix_field.partial_cmp(read other.$prefix_field) {
+                        present(order) => if !order.is_eq() { return present(order) },
+                        none => { return none }
+                    };
+                )*
+                self.$last_field.partial_cmp(read other.$last_field)
+            }
+        }
+
+        extend<$($prefix: Ord,)* $last: Ord + unsized> ($($prefix,)* $last,) implements Ord {
+            fn cmp(other: read ($($prefix,)* $last,)): Ordering {
+                $(
+                    match self.$prefix_field.cmp(read other.$prefix_field) {
+                        Ordering.Equal => {},
+                        order => { return order }
+                    };
+                )*
+                self.$last_field.cmp(read other.$last_field)
+            }
+        }
+    };
 }
 
+tuple_comparison!(; A => 0)
+tuple_comparison!(A => 0, ; B => 1)
+tuple_comparison!(A => 0, B => 1, ; C => 2)
+tuple_comparison!(A => 0, B => 1, C => 2, ; D => 3)
+tuple_comparison!(A => 0, B => 1, C => 2, D => 3, ; E => 4)
+tuple_comparison!(A => 0, B => 1, C => 2, D => 3, E => 4, ; F => 5)
+tuple_comparison!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, ; G => 6)
+tuple_comparison!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, ; H => 7)
+tuple_comparison!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, ; I => 8)
+tuple_comparison!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, I => 8, ; J => 9)
+tuple_comparison!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, I => 8, J => 9, ; K => 10)
+tuple_comparison!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, I => 8, J => 9, K => 10, ; L => 11)
 extend<T: PartialEq> [T] implements PartialEq {
     fn eq(other: read [T]): bool {
         if self.len() != other.len() { return false }

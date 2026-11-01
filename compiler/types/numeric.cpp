@@ -51,7 +51,8 @@ Type builtinType(std::string_view name) {
 }
 bool integerLiteralFits(const NumericLiteral &literal, Type type) {
   if ((!isInteger(type) && type != Type::Bool && type != Type::Char) ||
-      !literal.floating.empty() || (literal.negative && !isSignedInteger(type)))
+      !literal.floating.empty() || literal.floatingBits ||
+      (literal.negative && !isSignedInteger(type)))
     return false;
   auto width = integerWidth(type);
   auto low = literal.magnitude[0], high = literal.magnitude[1];
@@ -73,6 +74,10 @@ bool integerLiteralFits(const NumericLiteral &literal, Type type,
   return integerLiteralFits(literal, integerEquivalent(type, pointerBits));
 }
 bool validFloatingLiteral(std::string_view spelling) {
+  // Only compiler-generated constants use these spellings; the lexer does not
+  // recognize them as numeric tokens.
+  if (spelling == "nan" || spelling == "inf" || spelling == "-inf")
+    return true;
   std::size_t position = spelling.starts_with("-") ? 1 : 0;
   auto digits = [&] {
     auto start = position;
@@ -104,5 +109,13 @@ bool scalarCastAllowed(Type source, Type target) {
          ((source == Type::Bool || source == Type::Char) &&
           isInteger(target)) ||
          (source == Type::U8 && target == Type::Char);
+}
+bool validFloatingConstant(const NumericLiteral &literal, Type type) {
+  if (!isFloating(type) || literal.magnitude[0] || literal.magnitude[1])
+    return false;
+  if (literal.floatingBits)
+    return literal.floating.empty() && !literal.negative &&
+           (type == Type::F64 || *literal.floatingBits <= 0xffffffffu);
+  return validFloatingLiteral(literal.floating);
 }
 } // namespace mettle

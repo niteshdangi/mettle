@@ -2,7 +2,7 @@
 import alloc.arc
 import alloc.arc.Arc
 import alloc.binary_heap
-import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import core.cmp.{ Eq, Ord, Ordering, PartialEq, PartialOrd }
 import std.panic.CatchResult
 
 type Item {
@@ -31,7 +31,7 @@ extend Item implements Ord {
 }
 
 fn new_item(value: i32, panic_cmp: take Arc<core.sync.atomic.AtomicUsize>,
-            drops: take Arc<core.sync.atomic.AtomicUsize>): Item {
+    drops: take Arc<core.sync.atomic.AtomicUsize>): Item {
     Item(value, panic_cmp, drops)
 }
 
@@ -78,6 +78,65 @@ fn main(): i32 {
     if !queue.is_empty() { return 7 }
     if drops.get().load(core.sync.atomic.Ordering.SeqCst) != 4usize {
         return 8
+    }
+
+    var retained = binary_heap.new<Item>()
+    retained.push(new_item(10, panic_cmp.retain(), drops.retain()))
+    retained.push(new_item(5, panic_cmp.retain(), drops.retain()))
+    retained.push(new_item(1, panic_cmp.retain(), drops.retain()))
+    let predicate_panic = std.panic.catch_panic(fn(): Unit {
+        retained.retain(fn(value: read Item): bool {
+            if value.value == 5 { panic("heap retain predicate") }
+            false
+        })
+    })
+    match take predicate_panic {
+        CatchResult.Panicked(_) => {},
+        CatchResult.Returned(_) => { return 9 }
+    }
+    if retained.len() != 3usize { return 10 }
+    let retained_expected = [10, 5, 1]
+    var retained_index = 0usize
+    while retained_index < 3usize {
+        let item = match take retained.pop() {
+            present(value) => value,
+            none => { return 11 }
+        }
+        if item.value != retained_expected[retained_index] { return 12 }
+        retained_index += 1usize
+    }
+    if drops.get().load(core.sync.atomic.Ordering.SeqCst) != 7usize {
+        return 13
+    }
+
+    var comparison_retained = binary_heap.new<Item>()
+    comparison_retained.push(new_item(20, panic_cmp.retain(), drops.retain()))
+    comparison_retained.push(new_item(10, panic_cmp.retain(), drops.retain()))
+    comparison_retained.push(new_item(5, panic_cmp.retain(), drops.retain()))
+    let _set = panic_cmp.get().store(1usize, core.sync.atomic.Ordering.SeqCst)
+    let comparison_panic = std.panic.catch_panic(fn(): Unit {
+        comparison_retained.retain(fn(value: read Item): bool {
+            value.value != 5
+        })
+    })
+    match take comparison_panic {
+        CatchResult.Panicked(_) => {},
+        CatchResult.Returned(_) => { return 14 }
+    }
+    if comparison_retained.len() != 3usize { return 15 }
+    let _set = panic_cmp.get().store(0usize, core.sync.atomic.Ordering.SeqCst)
+    let comparison_expected = [20, 10, 5]
+    var comparison_index = 0usize
+    while comparison_index < 3usize {
+        let item = match take comparison_retained.pop() {
+            present(value) => value,
+            none => { return 16 }
+        }
+        if item.value != comparison_expected[comparison_index] { return 17 }
+        comparison_index += 1usize
+    }
+    if drops.get().load(core.sync.atomic.Ordering.SeqCst) != 10usize {
+        return 18
     }
     0
 }

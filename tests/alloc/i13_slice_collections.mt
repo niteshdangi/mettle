@@ -14,7 +14,7 @@ fn main(): i32 {
     if list[0usize] != 2 || list[3usize] != 1 { return 1 }
     list.copy_within(0usize, 2usize, 1usize)
     if list[1usize] != 2 || list[2usize] != 3 { return 2 }
-    list.extend_from_within(0usize, 2usize)
+    list.extend_from_within(0usize..2usize)
     if list.len() != 6usize || list[4usize] != 2 || list[5usize] != 2 { return 3 }
     list.resize_with(8usize, fn(): i32 { 9 })
     if list[6usize] != 9 || list[7usize] != 9 { return 4 }
@@ -45,7 +45,7 @@ fn main(): i32 {
         return 16
     }
     {
-        var extracted = filtered.extract_if(0usize, filtered.len(),
+        var extracted = filtered.extract_if(0usize..filtered.len(),
             fn(value: mut i32): bool { value == 2 })
         match extracted.next() {
             present(value) => { if value != 2 { return 17 } },
@@ -67,7 +67,7 @@ fn main(): i32 {
     replacement.push(8)
     replacement.push(9)
     {
-        var removed = spliced.splice(1usize, 2usize, replacement)
+        var removed = spliced.splice(1usize..2usize, replacement)
         match removed.next() {
             present(value) => { if value != 2 { return 22 } },
             none => { return 22 }
@@ -170,15 +170,17 @@ fn main(): i32 {
     }
     if dedup_drops != 3 { return 87 }
     var retain_drops = 0
+    var retain_visits = 0
     {
         var owned = alloc.vec.new<DropCount>()
         owned.push(DropCount(core.ptr.from_mut(retain_drops), true))
         owned.push(DropCount(core.ptr.from_mut(retain_drops), false))
         owned.push(DropCount(core.ptr.from_mut(retain_drops), false))
-        owned.retain_mut(fn(value: mut DropCount): bool {
-            value.keep
+        owned.retain(fn(value: read DropCount): bool {
+            retain_visits += 1
+            retain_visits == 1
         })
-        if owned.len() != 1usize || retain_drops != 2 { return 88 }
+        if owned.len() != 1usize || retain_drops != 2 || retain_visits != 3 { return 88 }
     }
     if retain_drops != 3 { return 89 }
     var splice_drops = 0
@@ -190,7 +192,7 @@ fn main(): i32 {
         var replacement = alloc.vec.new<DropCount>()
         replacement.push(DropCount(core.ptr.from_mut(splice_drops), false))
         {
-            let _removed = owned.splice(1usize, 2usize, replacement)
+            let _removed = owned.splice(1usize..2usize, replacement)
         }
         if owned.len() != 3usize || splice_drops != 1 { return 92 }
     }

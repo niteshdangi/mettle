@@ -12,7 +12,7 @@ fn main(): i32 {
         i += 1
     }
     {
-        var removed = values.drain(1usize, 5usize)
+        var removed = values.drain(1usize..5usize)
         match removed.next() {
             present(value) => { if value != 1 { return 1 } },
             none => { return 2 }
@@ -36,7 +36,7 @@ fn main(): i32 {
         owned.push(DropCount(counter, 3))
         owned.push(DropCount(counter, 4))
         {
-            var removed = owned.drain(1usize, 4usize)
+            var removed = owned.drain(1usize..4usize)
             match removed.next() {
                 present(value) => { if value.id != 1 { return 6 } },
                 none => { return 7 }

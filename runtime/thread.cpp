@@ -545,7 +545,7 @@ std::int32_t mettle_rt_rwlock_read(void *lock) {
 std::int32_t mettle_rt_rwlock_try_read(void *lock) {
   const int status =
       pthread_rwlock_tryrdlock(static_cast<pthread_rwlock_t *>(lock));
-  if (status == EBUSY || status == EAGAIN)
+  if (status == EBUSY || status == EAGAIN || status == EDEADLK)
     return 1;
   return status == 0 ? 0 : -1;
 }
@@ -555,7 +555,7 @@ std::int32_t mettle_rt_rwlock_write(void *lock) {
 std::int32_t mettle_rt_rwlock_try_write(void *lock) {
   const int status =
       pthread_rwlock_trywrlock(static_cast<pthread_rwlock_t *>(lock));
-  if (status == EBUSY || status == EAGAIN)
+  if (status == EBUSY || status == EAGAIN || status == EDEADLK)
     return 1;
   return status == 0 ? 0 : -1;
 }

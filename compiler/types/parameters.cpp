@@ -708,7 +708,8 @@ Type TypeStore::substitute(Type type, std::span<const TypeBinding> bindings) {
     return result;
   }
   if (record.regionOrigin != Type::Unknown) {
-    if (record.regionPattern != Type::Unknown) {
+    if (record.regionPattern != Type::Unknown ||
+        !record.genericArguments.empty()) {
       auto parameters = typeParameters(type);
       bool relevant = std::any_of(
           bindings.begin(), bindings.end(), [&](const auto &binding) {

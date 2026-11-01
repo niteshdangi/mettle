@@ -378,6 +378,8 @@ void Checker::completeGenericBindings(const GenericEnvironment &environment,
       if (auto found = environment.defaults.find(binding.parameter);
           found != environment.defaults.end())
         binding.argument = checked.types->substitute(found->second, bindings);
+  if (environment.equalities.empty())
+    return;
   auto saved = genericEnvironment;
   if (auto caller = functionGenerics.find(current);
       caller != functionGenerics.end())
@@ -622,7 +624,8 @@ Checker::genericArguments(const std::vector<GenericParameter> &parameters,
 bool Checker::genericObligations(const GenericEnvironment &environment,
                                  std::span<const TypeBinding> bindings,
                                  Span span,
-                                 std::span<const RegionBinding> regions) {
+                                 std::span<const RegionBinding> regions,
+                                 const Node *call) {
   bool valid = true;
   auto caller = genericEnvironment;
   for (const auto &binding : bindings) {
@@ -681,13 +684,31 @@ bool Checker::genericObligations(const GenericEnvironment &environment,
           valid &= callableObligation(binding.argument, required, span);
           continue;
         }
-        auto required = checked.types->substitute(
-            interfaceBound(bound, environment.declarationSpan, {},
-                           binding.parameter),
-            bindings);
+        const auto declared = interfaceBound(bound, environment.declarationSpan,
+                                             {}, binding.parameter);
+        auto required = checked.types->substitute(declared, bindings);
         required = checked.types->substituteRegions(required, regions);
         genericEnvironment = caller;
         required = normalizeGenericType(required, {}, span);
+        interfaces::Solver proof(*checked.types, *checked.interfaceData,
+                                 diagnostics, interfaceAssumptions(),
+                                 regionEnvironment());
+        if (proof.prove({binding.argument, required}, span, false)) {
+          if (call && checked.types->containsViews(binding.argument))
+            facts(*call).deferredInterfaceBounds.push_back(
+                {binding.parameter, declared, bound});
+          continue;
+        }
+        if (call && checked.types->containsViews(binding.argument)) {
+          interfaces::Solver shape(*checked.types, *checked.interfaceData,
+                                   diagnostics, interfaceAssumptions(), {},
+                                   true);
+          if (shape.prove({binding.argument, required}, span, false)) {
+            facts(*call).deferredInterfaceBounds.push_back(
+                {binding.parameter, declared, bound});
+            continue;
+          }
+        }
         valid &= interfaceObligation(binding.argument, required, span);
       }
   }
@@ -696,6 +717,11 @@ bool Checker::genericObligations(const GenericEnvironment &environment,
   genericEnvironment = const_cast<GenericEnvironment *>(&environment);
   auto requirements = interfaceAssumptions();
   genericEnvironment = saved;
+  if (std::none_of(requirements.begin(), requirements.end(),
+                   [](const auto &requirement) {
+                     return requirement.property == interfaces::Property::Unpin;
+                   }))
+    return valid;
   interfaces::Solver solver(*checked.types, *checked.interfaceData, diagnostics,
                             interfaceAssumptions(), regionEnvironment());
   if (genericEnvironment)

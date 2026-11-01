@@ -1,3 +1,4 @@
+#include "backend/llvm/numeric.h"
 #include "driver/build_script.h"
 #include "driver/cache.h"
 #include "driver/document.h"
@@ -720,10 +721,11 @@ int build(const Options &requested,
       findings = lint::run(checked, configuration);
     };
   }
-  auto program = tree ? pipeline::compile(std::move(*tree), diagnostics,
-                                          !options.freestanding, facts,
-                                          observer, packageOwners)
-                      : std::nullopt;
+  auto program =
+      tree ? pipeline::compile(std::move(*tree), diagnostics,
+                               !options.freestanding, facts, observer,
+                               packageOwners, backend::evaluateNumeric)
+           : std::nullopt;
   if (!program) {
     diagnostics.print(source, std::cerr);
     return 1;

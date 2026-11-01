@@ -154,6 +154,10 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     else if (isNumeric(builtinType(owner))) {
       argument = builtinType(owner);
       operation = "numeric." + name;
+      if (operation == "numeric.to_int_unchecked") {
+        self = argument;
+        argument = Type::Unknown;
+      }
     } else
       return std::nullopt;
   }
@@ -180,6 +184,15 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
   if (argument == Type::Unknown && expectedTypes.contains(&call) &&
       (operation == "mem.transmute" || operation == "mem.zeroed"))
     argument = expectedTypes.at(&call);
+  if (operation == "numeric.to_int_unchecked") {
+    if (argument == Type::Unknown && expectedTypes.contains(&call))
+      argument = expectedTypes.at(&call);
+    if (checked.types->isParameter(argument)) {
+      error("feature", call.span,
+            "unchecked float conversion requires a concrete integer target");
+      return inference.fresh(argument);
+    }
+  }
   if (storageKind != AggregateKind::Product && argument == Type::Unknown &&
       expectedTypes.contains(&call) &&
       checked.types->isProduct(expectedTypes.at(&call)) &&
@@ -343,8 +356,10 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
                      ? Type::U32
                      : self;
     }
-    if (receiver < 0 && operation.starts_with("numeric.") &&
-        operation != "numeric.from_bits" && isNumeric(argument))
+    if (receiver < 0 && operation == "numeric.to_int_unchecked")
+      expected = self;
+    else if (receiver < 0 && operation.starts_with("numeric.") &&
+             operation != "numeric.from_bits" && isNumeric(argument))
       expected =
           i > 1 &&
                   (operation.ends_with("_shl") || operation.ends_with("_shr") ||

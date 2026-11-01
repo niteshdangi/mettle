@@ -1,8 +1,14 @@
 // Atomically reference-counted shared owner. Counting is atomic; that makes
 // the handles themselves thread-safe, not the payload: an `Arc<T>` crosses or
 // is shared between threads only when `T` is both Transferable and Shareable.
-import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, extend_layout, handle_alloc_error, layout_unchecked}
+import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, layout_array, extend_layout, handle_alloc_error, layout_unchecked}
+import package.core.borrow.{AsRef, Borrow}
+import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import package.core.clone.Clone
+import package.core.convert.From
+import package.core.default.Default
+import package.core.fmt
+import package.core.hash.{Hash, Hasher}
 import package.core.ops.Deref
 import package.core.text.Text
 import super.vec.slice_ptr_mut
@@ -13,8 +19,8 @@ type ArcHeader {
     allocation: Layout
 }
 
-// Raw handles are ownership tokens carrying both the payload and count header.
-// Reconstruct each token exactly once with the matching from_raw function.
+// Non-empty raw handles own one strong or weak count and preserve slice or
+// witness metadata. Empty weak tokens have a null header and own no count.
 pub type RawArc<T: unsized, A: Allocator = Global> {
     p: ptr<mut T>
     h: ptr<mut ArcHeader>
@@ -38,6 +44,20 @@ fn allocation_layout<T>(): (Layout, usize) throws AllocError {
         success(layout) => layout,
         failure(error) => throw AllocError(error.size, error.align)
     }
+}
+
+fn slice_allocation_layout<T>(len: usize): (Layout, usize, Layout) throws AllocError {
+    let payload_result = capture layout_array<core.mem.MaybeUninit<T>>(len)
+    let payload = match take payload_result {
+        success(layout) => layout,
+        failure(error) => throw AllocError(error.size, error.align)
+    }
+    let allocation_result = capture extend_layout(layout_of<ArcHeader>(), payload)
+    let (allocation, offset) = match take allocation_result {
+        success(value) => value,
+        failure(error) => throw AllocError(error.size, error.align)
+    }
+    (allocation, offset, payload)
 }
 
 // The payload pointer carries slice or witness metadata; the separate header
@@ -66,8 +86,10 @@ pub type Weak<T: unsized, A: Allocator = Global> {
     h: ptr<mut ArcHeader>
     a: A
     drop {
-        unsafe {
-            let _guard = WeakRelease(self.h, core.ptr.from_mut(self.a))
+        if self.h != core.ptr.null_mut<ArcHeader>() {
+            unsafe {
+                let _guard = WeakRelease(self.h, core.ptr.from_mut(self.a))
+            }
         }
     }
 }
@@ -111,6 +133,15 @@ pub fn new_in<T, A: Allocator>(value: take T, allocator: take A): Arc<T, A> {
 pub fn new<T>(value: take T): Arc<T> { new_in(value, Global()) }
 pub fn try_new<T>(value: take T): Arc<T> throws AllocError { try try_new_in(value, Global()) }
 
+// An empty Weak has no allocation or count; its null header is the sentinel.
+pub fn new_weak<T>(): Weak<T> {
+    Weak(core.ptr.null_mut<T>(), core.ptr.null_mut<ArcHeader>(), Global())
+}
+
+extend<T> Weak<T> implements package.core.default.Default {
+    static fn default(): Weak<T> { new_weak<T>() }
+}
+
 pub fn try_new_uninit_in<T, A: Allocator>(
     allocator: take A
 ): Arc<core.mem.MaybeUninit<T>, A> throws AllocError {
@@ -148,6 +179,91 @@ pub fn try_new_zeroed<T>(): Arc<core.mem.MaybeUninit<T>> throws AllocError {
     try try_new_zeroed_in<T, Global>(Global())
 }
 pub fn new_zeroed<T>(): Arc<core.mem.MaybeUninit<T>> { new_zeroed_in<T, Global>(Global()) }
+
+fn try_new_slice_in<T, A: Allocator>(
+    len: usize,
+    allocator: take A,
+    zeroed: bool
+): Arc<[core.mem.MaybeUninit<T>], A> throws AllocError {
+    var a = allocator
+    let (layout, offset, payload) = try slice_allocation_layout<T>(len)
+    let raw = try a.allocate(layout)
+    let h = raw.cast<ArcHeader>()
+    let data = unsafe { raw.add(offset) }.cast<core.mem.MaybeUninit<T>>()
+    unsafe {
+        core.ptr.write(h, ArcHeader(
+            core.sync.atomic.AtomicUsize.new(1usize),
+            core.sync.atomic.AtomicUsize.new(1usize),
+            layout
+        ))
+        if zeroed && payload.size() != 0usize {
+            // Only the payload extent is zeroed; the reference-count header
+            // remains initialized, and all payload slots remain MaybeUninit.
+            core.ptr.write_bytes(data.cast<u8>(), 0u8, payload.size())
+        }
+    }
+    Arc(slice_ptr_mut(data, len), h, a)
+}
+
+pub fn try_new_uninit_slice_in<T, A: Allocator>(
+    len: usize,
+    allocator: take A
+): Arc<[core.mem.MaybeUninit<T>], A> throws AllocError {
+    try try_new_slice_in<T, A>(len, allocator, false)
+}
+
+pub fn new_uninit_slice_in<T, A: Allocator>(
+    len: usize,
+    allocator: take A
+): Arc<[core.mem.MaybeUninit<T>], A> {
+    let result = capture try_new_uninit_slice_in<T, A>(len, allocator)
+    match take result {
+        success(owner) => owner,
+        failure(error) => handle_alloc_error(unsafe {
+            layout_unchecked(error.size, error.align)
+        })
+    }
+}
+
+pub fn try_new_uninit_slice<T>(
+    len: usize
+): Arc<[core.mem.MaybeUninit<T>]> throws AllocError {
+    try try_new_uninit_slice_in<T, Global>(len, Global())
+}
+
+pub fn new_uninit_slice<T>(len: usize): Arc<[core.mem.MaybeUninit<T>]> {
+    new_uninit_slice_in<T, Global>(len, Global())
+}
+
+pub fn try_new_zeroed_slice_in<T, A: Allocator>(
+    len: usize,
+    allocator: take A
+): Arc<[core.mem.MaybeUninit<T>], A> throws AllocError {
+    try try_new_slice_in<T, A>(len, allocator, true)
+}
+
+pub fn new_zeroed_slice_in<T, A: Allocator>(
+    len: usize,
+    allocator: take A
+): Arc<[core.mem.MaybeUninit<T>], A> {
+    let result = capture try_new_zeroed_slice_in<T, A>(len, allocator)
+    match take result {
+        success(owner) => owner,
+        failure(error) => handle_alloc_error(unsafe {
+            layout_unchecked(error.size, error.align)
+        })
+    }
+}
+
+pub fn try_new_zeroed_slice<T>(
+    len: usize
+): Arc<[core.mem.MaybeUninit<T>]> throws AllocError {
+    try try_new_zeroed_slice_in<T, Global>(len, Global())
+}
+
+pub fn new_zeroed_slice<T>(len: usize): Arc<[core.mem.MaybeUninit<T>]> {
+    new_zeroed_slice_in<T, Global>(len, Global())
+}
 
 // Copies only from a validated Text view, preserving Text's UTF-8 invariant.
 pub fn try_copy_text_in<A: Allocator>(value: read Text, allocator: take A): Arc<Text, A> throws AllocError {
@@ -271,6 +387,16 @@ extend<T, A: Allocator> Arc<core.mem.MaybeUninit<T>, A> {
     }
 }
 
+extend<T, A: Allocator> Arc<[core.mem.MaybeUninit<T>], A> {
+    // Safety: every element is initialized as T; element layout and length
+    // metadata are unchanged by replacing MaybeUninit<T> with T.
+    pub take unsafe fn assume_init(): Arc<[T], A> {
+        let raw = self.into_raw()
+        let slice = unsafe { core.mem.transmute<ptr<mut [T]>>(raw.p) }
+        unsafe { from_raw(RawArc(slice, raw.h, raw.a)) }
+    }
+}
+
 extend<T: unsized, A: Allocator> Arc<T, A> {
     pub fn get(): read T from self { unsafe { read *self.p } }
     // The pointer is valid while this strong owner remains alive.
@@ -361,6 +487,7 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
     // Succeeds only while a strong owner exists; the count only moves up from
     // a nonzero value, so a block already being destroyed is never revived.
     pub fn upgrade(): Arc<T, A>? {
+        if self.h == core.ptr.null_mut<ArcHeader>() { return none }
         unsafe {
             let b = self.h
             var current = (*b).strong.load(core.sync.atomic.Ordering.Relaxed)
@@ -378,7 +505,9 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
     }
     pub fn retain(): Weak<T, A> {
         let allocator = self.a.clone()
-        unsafe { increment(core.ptr.from_mut((*self.h).wk)) }
+        if self.h != core.ptr.null_mut<ArcHeader>() {
+            unsafe { increment(core.ptr.from_mut((*self.h).wk)) }
+        }
         Weak(self.p, self.h, allocator)
     }
     pub take fn into_raw(): RawWeak<T, A> {
@@ -391,12 +520,51 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
         }
     }
 }
+extend<T: unsized, A: Allocator + Clone> Weak<T, A> implements Clone {
+    fn clone(): Weak<T, A> { self.retain() }
+}
 pub unsafe fn weak_from_raw<T: unsized, A: Allocator>(raw: take RawWeak<T, A>): Weak<T, A> {
+    // The raw token, including an empty null-header token, is reconstructed once.
     Weak(raw.p, raw.h, raw.a)
 }
 extend<T: unsized, A: Allocator> Arc<T, A> implements Deref {
     type Target = T
     fn deref(): read T from self { self.get() }
+}
+extend<T: unsized, A: Allocator> Arc<T, A> implements AsRef<T> {
+    fn as_ref(): read T from self { self.get() }
+}
+extend<T: unsized, A: Allocator> Arc<T, A> implements Borrow<T> {
+    fn borrow(): read T from self { self.get() }
+}
+extend<T> Arc<T> implements From<T> {
+    static fn `from`(value: take T): Arc<T> { new(value) }
+}
+
+extend<T: PartialEq + unsized, A: Allocator> Arc<T, A> implements PartialEq {
+    fn eq(other: read Arc<T, A>): bool { self.get().eq(other.get()) }
+}
+extend<T: Eq + unsized, A: Allocator> Arc<T, A> implements Eq {}
+extend<T: PartialOrd + unsized, A: Allocator> Arc<T, A> implements PartialOrd {
+    fn partial_cmp(other: read Arc<T, A>): Ordering? {
+        self.get().partial_cmp(other.get())
+    }
+}
+extend<T: Ord + unsized, A: Allocator> Arc<T, A> implements Ord {
+    fn cmp(other: read Arc<T, A>): Ordering { self.get().cmp(other.get()) }
+}
+extend<T: Hash + unsized, A: Allocator> Arc<T, A> implements Hash {
+    fn hash<H: Hasher>(state: mut H): Unit { self.get().hash(mut state) }
+}
+extend<T: fmt.Display + unsized, A: Allocator> Arc<T, A> implements fmt.Display {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try T.(fmt.Display).fmt(self.get(), mut f)
+    }
+}
+extend<T: fmt.Debug + unsized, A: Allocator> Arc<T, A> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try T.(fmt.Debug).fmt(self.get(), mut f)
+    }
 }
 
 extend<T: unsized, A: Allocator> Weak<T, A> {
@@ -404,12 +572,16 @@ extend<T: unsized, A: Allocator> Weak<T, A> {
     // payload may already have been destroyed; dereferencing is never valid
     // without first upgrading.
     pub fn as_ptr(): ptr<read T> { self.p.cast_const() }
-    pub fn strong_count(): usize { unsafe { (*self.h).strong.load(core.sync.atomic.Ordering.Acquire) } }
+    pub fn strong_count(): usize {
+        if self.h == core.ptr.null_mut<ArcHeader>() { return 0usize }
+        unsafe { (*self.h).strong.load(core.sync.atomic.Ordering.Acquire) }
+    }
     pub fn weak_count(): usize {
+        if self.h == core.ptr.null_mut<ArcHeader>() { return 0usize }
         unsafe {
             let strong = (*self.h).strong.load(core.sync.atomic.Ordering.Acquire)
             let weak_total = (*self.h).wk.load(core.sync.atomic.Ordering.Acquire)
-            if strong == 0usize || weak_total == 0usize { weak_total } else { weak_total - 1usize }
+            if strong == 0usize || weak_total == 0usize { 0usize } else { weak_total - 1usize }
         }
     }
     pub fn ptr_eq(other: read Weak<T, A>): bool { self.h == other.h }
@@ -426,6 +598,18 @@ extend<T: Clone, A: Allocator + Clone> Arc<T, A> {
         let _old = unsafe { core.ptr.replace(core.ptr.from_mut(self), replacement) }
         unsafe { mut *self.p }
     }
+}
+
+extend<T: Default> Arc<T> implements Default {
+    static fn default(): Arc<T> { new(T.(Default).default()) }
+}
+extend<T> Arc<[T]> implements Default {
+    static fn default(): Arc<[T]> {
+        unsafe { new_zeroed_slice<T>(0usize).assume_init() }
+    }
+}
+extend Arc<Text> implements Default {
+    static fn default(): Arc<Text> { copy_text("") }
 }
 
 // Shared owner whose payload never moves until the last owner destroys it.
@@ -476,3 +660,19 @@ extend<T: unsized, A: Allocator> Pinned<T, A> implements Deref {
 unsafe extend<T: unsized, A: Allocator> Pinned<T, A> implements Unpin {}
 unsafe extend<T: Transferable + Shareable + unsized, A: Allocator + Transferable> Pinned<T, A> implements Transferable {}
 unsafe extend<T: Transferable + Shareable + unsized, A: Allocator + Shareable> Pinned<T, A> implements Shareable {}
+extend<T: Default> Pinned<T> implements Default {
+    static fn default(): Pinned<T> { pin(T.(Default).default()) }
+}
+extend<T> Pinned<[T]> implements Default {
+    static fn default(): Pinned<[T]> {
+        let owner = unsafe { new_zeroed_slice<T>(0usize).assume_init() }
+        let raw = owner.into_raw()
+        Pinned(raw.p, raw.h, raw.a)
+    }
+}
+extend Pinned<Text> implements Default {
+    static fn default(): Pinned<Text> {
+        let raw = copy_text("").into_raw()
+        Pinned(raw.p, raw.h, raw.a)
+    }
+}

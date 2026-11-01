@@ -207,7 +207,9 @@ extend<T> SyncSender<T> {
                 throw SendTimeoutError(value, true, false)
             }
             let remaining = (timeout_nanos as u128 - elapsed) as u64
-            let waited = self.chan.get().space.wait_timeout(guard, remaining)
+            let waited = self.chan.get().space.wait_timeout(
+                guard, time.from_nanos(remaining)
+            )
             guard = waited.0
         }
         guard.get_mut().push_back(value)
@@ -226,7 +228,9 @@ extend<T> SyncSender<T> {
                     }
                 }
                 let remaining = (timeout_nanos as u128 - elapsed) as u64
-                let waited = self.chan.get().space.wait_timeout(guard, remaining)
+                let waited = self.chan.get().space.wait_timeout(
+                    guard, time.from_nanos(remaining)
+                )
                 guard = waited.0
             }
             if !guard.get().is_empty() {
@@ -305,7 +309,9 @@ extend<T> Receiver<T> {
                 waiting = true
             }
             let remaining = (timeout_nanos as u128 - elapsed) as u64
-            let waited = self.chan.get().ready.wait_timeout(guard, remaining)
+            let waited = self.chan.get().ready.wait_timeout(
+                guard, time.from_nanos(remaining)
+            )
             guard = waited.0
             let _previous = self.chan.get().waiting_receivers.fetch_sub(1usize, core.sync.atomic.Ordering.Relaxed)
             waiting = false

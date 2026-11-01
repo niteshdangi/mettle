@@ -32,4 +32,5 @@ machineSignature(const TypeStore &types, std::string_view operation,
 bool machineResultMatches(const TypeStore &types,
                           const MachineSignature &signature, Type result);
 bool machineCastAllowed(const TypeStore &types, Type source, Type target);
+bool constantFloatMethod(std::string_view name);
 } // namespace mettle

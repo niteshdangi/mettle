@@ -439,51 +439,11 @@ RegionAnswer RegionTypeSolver::compare(
 }
 Type RegionTypeSolver::substitute(
     Type type, const std::vector<std::pair<RegionId, RegionId>> &bindings) {
-  std::vector<Type> active;
-  auto region = [&](auto &&self, RegionId value) -> RegionId {
-    for (const auto &binding : bindings)
-      if (binding.first == value)
-        return binding.second;
-    auto record = types.regions().get(value);
-    if (record.kind == RegionKind::Intersection) {
-      for (auto &source : record.sources)
-        source = self(self, source);
-      return types.regions().intersection(std::move(record.sources));
-    }
-    return value;
-  };
-  auto visit = [&](auto &&self, Type nested) -> Type {
-    if (active.size() >= 128 ||
-        std::find(active.begin(), active.end(), nested) != active.end())
-      return nested;
-    active.push_back(nested);
-    auto result = nested;
-    if (types.isView(nested)) {
-      auto view = types.view(nested);
-      result = types.viewType(self(self, view.payload), view.mode,
-                              region(region, view.region));
-    } else if (types.isProduct(nested)) {
-      auto product = types.product(nested);
-      if (product.kind == AggregateKind::Array && !product.components.empty()) {
-        auto element = self(self, product.components[0]);
-        result = product.arrayCount == Type::Unknown
-                     ? types.structural(AggregateKind::Array, {element},
-                                        product.fields.size())
-                     : types.arrayType(element, product.arrayCount);
-        active.pop_back();
-        return result;
-      }
-      for (auto &field : product.fields)
-        field.type = self(self, field.type);
-      for (auto &argument : product.regionArguments)
-        argument = region(region, argument);
-      result = types.regionalProduct(nested, std::move(product.fields),
-                                     std::move(product.regionArguments));
-    }
-    active.pop_back();
-    return result;
-  };
-  return visit(visit, type);
+  std::vector<RegionBinding> substitutions;
+  substitutions.reserve(bindings.size());
+  for (const auto &[parameter, argument] : bindings)
+    substitutions.push_back({parameter, argument});
+  return types.substituteRegions(type, substitutions);
 }
 RegionAnswer RegionTypeSolver::callable(
     Type source, Type target, const RegionEnvironment &environment,

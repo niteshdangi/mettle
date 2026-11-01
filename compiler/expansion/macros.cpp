@@ -723,6 +723,11 @@ public:
         declarations(declarations) {}
 
   std::optional<Source> run(bool definitionsOnly = false) {
+    std::string moduleKey;
+    for (const auto &part : modulePath)
+      moduleKey += (moduleKey.empty() ? "" : "::") + part;
+    // Recursive import indexing must not redefine this source's macros.
+    indexedModules->insert(std::move(moduleKey));
     Diagnostics scratch;
     auto tokens = tokenize(source, scratch);
     if (!scratch.empty())

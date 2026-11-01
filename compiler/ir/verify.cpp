@@ -477,8 +477,7 @@ bool function(const Function &f, const Program &program,
             auto origin = program.types->product(type).genericOrigin;
             if (origin == Type::Unknown)
               return false;
-            return !ownerSpelling(program.types->product(origin).name)
-                        .empty();
+            return !ownerSpelling(program.types->product(origin).name).empty();
           };
           bool compatible = isOwner(n.operands[0].type) && isOwner(result) &&
                             source.genericOrigin == target.genericOrigin &&
@@ -699,7 +698,7 @@ bool function(const Function &f, const Program &program,
         arity(0);
         require(scalar(result));
         if (n.numeric)
-          require(isFloating(result) ? validFloatingLiteral(n.numeric->floating)
+          require(isFloating(result) ? validFloatingConstant(*n.numeric, result)
                                      : integerLiteralFits(*n.numeric, result));
         else
           require(!isFloating(result));
@@ -1369,6 +1368,9 @@ bool verify(const Program &program, Diagnostics &diagnostics,
       [&](const StaticConstant &value, Type expected) {
         if (value.type != expected || !program.types->contains(expected))
           return false;
+        if (value.kind != StaticConstant::Kind::Scalar &&
+            (value.scalar.floatingBits || !value.scalar.floating.empty()))
+          return false;
         if (value.kind == StaticConstant::Kind::Address) {
           if (value.symbol < 0 ||
               static_cast<std::size_t>(value.symbol) >=
@@ -1449,16 +1451,10 @@ bool verify(const Program &program, Diagnostics &diagnostics,
         if (isInteger(expected))
           return integerLiteralFits(value.scalar, expected);
         if (isFloating(expected))
-          return validFloatingLiteral(value.scalar.floating);
-        if (expected == Type::Bool)
-          return !value.scalar.negative && !value.scalar.magnitude[1] &&
-                 value.scalar.magnitude[0] <= 1;
-        if (expected == Type::Char) {
-          auto scalar = value.scalar.magnitude[0];
-          return !value.scalar.negative && !value.scalar.magnitude[1] &&
-                 scalar <= 0x10ffff && !(scalar >= 0xd800 && scalar <= 0xdfff);
-        }
-        return expected == Type::Unit;
+          return validFloatingConstant(value.scalar, expected);
+        if (expected == Type::Bool || expected == Type::Char)
+          return integerLiteralFits(value.scalar, expected);
+        return expected == Type::Unit && value.scalar == NumericLiteral{};
       };
   for (const auto &storage : program.statics) {
     type(storage.type, {});

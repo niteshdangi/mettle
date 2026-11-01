@@ -46,7 +46,9 @@ Builder::Value Builder::machineExpression(const Node &node) {
       facts.machineOperation == "pin.get_mut" ||
       facts.machineOperation == "pin.get_unchecked_mut" ||
       facts.machineOperation.starts_with("pin.project.")) {
-    auto location = place(*node.children[0]->children[0]);
+    const auto &receiver = *node.children[0]->children[0];
+    auto location =
+        place(receiver, false, module.facts(receiver).exclusivePlace);
     if (!live())
       return {};
     for (unsigned i = 0; i < facts.dereferences; ++i)
@@ -96,7 +98,7 @@ Builder::Value Builder::machineExpression(const Node &node) {
         return {};
       location = materialize(value, node.span, temporaryScope);
     } else if (facts.machineOperation != "ptr.drop_in_place") {
-      location = place(*node.children[0]->children[0]);
+      location = place(*node.children[0]->children[0], false, true);
       if (!live())
         return {};
       for (unsigned i = 0; i < facts.dereferences; ++i)
@@ -118,7 +120,7 @@ Builder::Value Builder::machineExpression(const Node &node) {
     return emit(std::move(drop), Type::Unit);
   }
   if (facts.machineOperation == "storage.write") {
-    auto location = place(*node.children[0]->children[0]);
+    auto location = place(*node.children[0]->children[0], false, true);
     if (!live())
       return {};
     for (unsigned i = 0; i < facts.dereferences; ++i)
@@ -143,7 +145,9 @@ Builder::Value Builder::machineExpression(const Node &node) {
       facts.machineOperation == "storage.get_mut" ||
       facts.machineOperation == "storage.assume_init_ref" ||
       facts.machineOperation == "storage.assume_init_mut") {
-    auto location = place(*node.children[0]->children[0]);
+    const auto &receiver = *node.children[0]->children[0];
+    auto location =
+        place(receiver, false, module.facts(receiver).exclusivePlace);
     if (!live())
       return {};
     for (unsigned i = 0; i < facts.dereferences; ++i)

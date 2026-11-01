@@ -160,5 +160,66 @@ fn main(): i32 {
     if drops.get().load(core.sync.atomic.Ordering.SeqCst) != 2usize {
         return 15
     }
+
+    let retain_drops = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
+    var retaining = hash_map.new<i32, DropBomb>()
+    let _old = retaining.insert(1, DropBomb(retain_drops.retain(), false))
+    let _old = retaining.insert(2, DropBomb(retain_drops.retain(), false))
+    let _old = retaining.insert(3, DropBomb(retain_drops.retain(), false))
+    var retain_calls = 0
+    let retain_panic = std.panic.catch_panic(fn(): i32 {
+        retaining.retain(fn(key: read i32, value: mut DropBomb): bool {
+            retain_calls += 1
+            if retain_calls == 1 { false } else { panic("retain callback") }
+        })
+        0
+    })
+    match take retain_panic {
+        CatchResult.Panicked(_) => {},
+        CatchResult.Returned(_) => { return 16 }
+    }
+    if retain_calls != 2 || retaining.len() != 2usize ||
+        retain_drops.get().load(core.sync.atomic.Ordering.SeqCst) != 1usize {
+        return 17
+    }
+    var remaining = 0
+    var key = 1
+    while key <= 3 {
+        if retaining.contains_key(key) { remaining += 1 }
+        key += 1
+    }
+    if remaining != 2 { return 18 }
+    retaining.clear()
+    if retain_drops.get().load(core.sync.atomic.Ordering.SeqCst) != 3usize {
+        return 19
+    }
+
+    let tree_retain_drops = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
+    var retaining_tree = btree.new<i32, DropBomb>()
+    let _old = retaining_tree.insert(1, DropBomb(tree_retain_drops.retain(), false))
+    let _old = retaining_tree.insert(2, DropBomb(tree_retain_drops.retain(), false))
+    let _old = retaining_tree.insert(3, DropBomb(tree_retain_drops.retain(), false))
+    retain_calls = 0
+    let tree_retain_panic = std.panic.catch_panic(fn(): i32 {
+        retaining_tree.retain(fn(key: read i32, value: mut DropBomb): bool {
+            retain_calls += 1
+            if retain_calls == 1 { false } else { panic("retain callback") }
+        })
+        0
+    })
+    match take tree_retain_panic {
+        CatchResult.Panicked(_) => {},
+        CatchResult.Returned(_) => { return 20 }
+    }
+    if retain_calls != 2 || retaining_tree.len() != 2usize ||
+        tree_retain_drops.get().load(core.sync.atomic.Ordering.SeqCst) != 1usize ||
+        retaining_tree.contains_key(1) ||
+        !retaining_tree.contains_key(2) || !retaining_tree.contains_key(3) {
+        return 21
+    }
+    retaining_tree.clear()
+    if tree_retain_drops.get().load(core.sync.atomic.Ordering.SeqCst) != 3usize {
+        return 22
+    }
     0
 }

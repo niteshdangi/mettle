@@ -77,6 +77,7 @@ std::optional<int> Checker::genericCall(
   for (std::size_t i = 1; i < n.children.size(); ++i) {
     auto &argument = *n.children[i];
     auto known = nodeVariables.find(&argument);
+    reusedNodes.erase(&argument);
     if (known == nodeVariables.end() && argument.name.empty() &&
         i - 1 + receiverOffset < signature.size()) {
       if (argument.kind == Kind::Closure) {
@@ -226,7 +227,7 @@ std::optional<int> Checker::genericCall(
           {functionRegions(function).parameters[regionIndex++],
            regionReference(argument.region, argument.span)});
   if (!deferred)
-    genericObligations(environment, bindings, n.span, explicitRegions);
+    genericObligations(environment, bindings, n.span, explicitRegions, &n);
   for (const auto &binding : bindings)
     facts(n).typeArguments.push_back(binding.argument);
   for (auto type : signature)
@@ -246,7 +247,8 @@ std::optional<int> Checker::genericCall(
     if ((modes[target] == ParameterMode::Read ||
          modes[target] == ParameterMode::Mut) &&
         checked.types->isView(actual) &&
-        checked.types->view(actual).payload == expected)
+        checked.types->eraseRegions(checked.types->view(actual).payload) ==
+            expected)
       variable = inference.fresh(expected);
     coerce(*argument, variable, inference.fresh(expected), argument->span);
   }
@@ -451,7 +453,7 @@ void Checker::finishDeferred(Node &n, DeferredCall deferred, Type expected) {
                 "'; supply explicit <...> arguments");
   genericEnvironment = deferred.caller;
   genericObligations(*deferred.environment, bindings, n.span,
-                     deferred.explicitRegions);
+                     deferred.explicitRegions, &n);
   auto &call = facts(n);
   call.typeArguments.clear();
   for (const auto &binding : bindings)

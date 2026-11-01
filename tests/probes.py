@@ -93,6 +93,25 @@ def run_suite(mode, executable, directory):
                 raise AssertionError(f"{owner}: missing floating operations {operations - found}")
         evidence["cases"].append({"file": str(path), "source_sha256": digest(path),
                                   "profile": profile, "llvm_sha256": digest(output)})
+        path = ROOT / "source" / "run" / "i13-numeric-float-to-int-unchecked.mt"
+        output = directory / (path.stem + ".ll")
+        run([executable, "build", str(path), "--emit", "llvm",
+             "--profile", profile, "-o", str(output)])
+        bodies = {}
+        for body in re.findall(r"^define [^\n]*\n.*?^}", output.read_text(), re.M | re.S):
+            symbol = re.search(r'@(?:"([^"]+)"|([^ (]+))\(', body)
+            bodies[symbol[1] or symbol[2]] = body
+        expected = {(operation, width) for operation in ("fptosi", "fptoui")
+                    for width in (8, 16, 32, 64, 128)}
+        for owner, floating in (("every_f32_target", "float"),
+                                ("every_f64_target", "double")):
+            body = bodies["mettle." + owner + ".body"]
+            found = {(operation, int(width)) for operation, width in
+                     re.findall(rf"\b(fptosi|fptoui)\s+{floating}\b[^\n]*\bto i(\d+)\b", body)}
+            if found != expected or "fptosi.sat" in body or "fptoui.sat" in body:
+                raise AssertionError(f"{owner}: missing unchecked conversion or saturating lowering")
+        evidence["cases"].append({"file": str(path), "source_sha256": digest(path),
+                                  "profile": profile, "llvm_sha256": digest(output)})
     def broken_pipe():
         program = source("print-to-closed-pipe",
                          "import std.io;\nfn main(): i32 {\n"

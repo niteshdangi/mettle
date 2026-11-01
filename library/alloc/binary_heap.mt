@@ -1,11 +1,22 @@
 import package.core.iter.{Iterator, OwnedIterable, Iterable, FromItems, ExtendItems}
 import package.core.clone.Clone
+import package.core.default.Default
 import package.core.fmt
 import package.core.slice.SliceIter
 import super.alloc.{Allocator, Global, AllocError, PushError}
 import super.vec.List
-import package.core.cmp.Ord
+import package.core.cmp.{Ord, Ordering}
 import package.core.ops.{Deref, DerefMut}
+
+copy type HeapRetainEntry {
+    index: usize
+    keep: bool
+}
+
+copy type HeapAppendEntry {
+    index: usize
+    visited: bool
+}
 
 // Max-heap on a `List`.
 pub type BinaryHeap<T, A: Allocator = Global> { data: List<T, A> }
@@ -46,6 +57,28 @@ fn sift_down<T: Ord, A: Allocator>(queue: mut BinaryHeap<T, A>): Unit {
     }
 }
 
+fn append_order<T: Ord, A: Allocator>(
+    left: read BinaryHeap<T, A>,
+    right: read BinaryHeap<T, A>,
+    left_len: usize,
+    a: usize,
+    b: usize
+): Ordering {
+    if a < left_len {
+        if b < left_len {
+            left.data[a].cmp(left.data[b])
+        } else {
+            left.data[a].cmp(right.data[b - left_len])
+        }
+    } else {
+        if b < left_len {
+            right.data[a - left_len].cmp(left.data[b])
+        } else {
+            right.data[a - left_len].cmp(right.data[b - left_len])
+        }
+    }
+}
+
 extend<region r, T: Ord, A: Allocator> PeekMut<region r, T, A> implements Deref {
     type Target = T
     fn deref(): read T from self { unsafe { read *self.queue.data.as_ptr() } }
@@ -67,6 +100,10 @@ pub fn try_with_capacity<T>(n: usize): BinaryHeap<T> throws AllocError {
     try try_with_capacity_in<T, Global>(n, Global())
 }
 pub fn with_capacity<T>(n: usize): BinaryHeap<T> { with_capacity_in(n, Global()) }
+
+extend<T: Ord, A: Allocator + Default> BinaryHeap<T, A> implements Default {
+    static fn default(): BinaryHeap<T, A> { new_in(A.(Default).default()) }
+}
 
 extend<T, A: Allocator> BinaryHeap<T, A> {
     pub fn len(): usize { self.data.len() }
@@ -167,10 +204,191 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
         }
         top
     }
+    /// Visits every original item once. Predicate/comparison panic does not move/remove items.
+    /// Uses O(n) time and O(n) Global scratch storage when an item is rejected.
+    pub mut fn retain<F: mut fn(read T): bool>(keep: take F): Unit {
+        var predicate = take keep
+        let n = self.data.len()
+        var entries = super.vec.new<HeapRetainEntry>()
+        var index = 0usize
+        while index < n {
+            let keep_current = predicate(self.data[index])
+            if !keep_current {
+                entries.reserve(n)
+                var previous = 0usize
+                while previous < index {
+                    entries.push(HeapRetainEntry(previous, true))
+                    previous += 1usize
+                }
+                entries.push(HeapRetainEntry(index, false))
+                index += 1usize
+                break
+            }
+            index += 1usize
+        }
+        if entries.is_empty() { return () }
+        while index < n {
+            entries.push(HeapRetainEntry(index, predicate(self.data[index])))
+            index += 1usize
+        }
+
+        var first_rejected = 0usize
+        var end = n
+        while first_rejected < end {
+            if entries[first_rejected].keep {
+                first_rejected += 1usize
+            } else {
+                end -= 1usize
+                entries.swap(first_rejected, end)
+            }
+        }
+
+        let retained = first_rejected
+        var start = retained / 2usize
+        while start > 0usize {
+            start -= 1usize
+            var node = start
+            while true {
+                let left = node * 2usize + 1usize
+                if left >= retained { break }
+                var child = left
+                if left + 1usize < retained &&
+                    self.data[entries[left + 1usize].index].cmp(
+                        self.data[entries[left].index]
+                    ).is_gt() {
+                    child = left + 1usize
+                }
+                if self.data[entries[child].index].cmp(
+                    self.data[entries[node].index]
+                ).is_gt() {
+                    entries.swap(node, child)
+                    node = child
+                } else {
+                    break
+                }
+            }
+        }
+
+        // Convert destination-to-source order into source-to-destination in
+        // place, using the now-unused keep bit to mark completed cycles.
+        index = 0usize
+        while index < n {
+            entries[index].keep = false
+            index += 1usize
+        }
+        index = 0usize
+        while index < n {
+            if entries[index].keep {
+                index += 1usize
+                continue
+            }
+            var current = index
+            var next = entries[current].index
+            while next != index {
+                let following = entries[next].index
+                entries[next].index = current
+                entries[next].keep = true
+                current = next
+                next = following
+            }
+            entries[index].index = current
+            entries[index].keep = true
+            index += 1usize
+        }
+
+        index = 0usize
+        while index < n {
+            while entries[index].index != index {
+                let other = entries[index].index
+                self.data.swap(index, other)
+                entries.swap(index, other)
+            }
+            index += 1usize
+        }
+        self.data.truncate(retained)
+    }
+    pub mut fn append(other: mut BinaryHeap<T, A>): Unit {
+        let left_len = self.data.len()
+        let right_len = other.data.len()
+        if right_len == 0usize { return () }
+        if left_len == 0usize {
+            self.data.append(mut other.data)
+            return ()
+        }
+        let total = match left_len.checked_add(right_len) {
+            present(n) => n,
+            none => super.alloc.panic_precondition()
+        }
+
+        // Keep both heaps unchanged if allocation or Ord panics. The index
+        // heap is the final order, computed before moving either collection.
+        self.data.reserve(right_len)
+        var order = super.vec.new<HeapAppendEntry>()
+        order.reserve(total)
+        var index = 0usize
+        while index < total {
+            order.push(HeapAppendEntry(index, false))
+            index += 1usize
+        }
+
+        var start = total / 2usize
+        while start > 0usize {
+            start -= 1usize
+            var node = start
+            while true {
+                let left = node * 2usize + 1usize
+                if left >= total { break }
+                var child = left
+                if left + 1usize < total &&
+                    append_order(
+                        read self,
+                        read other,
+                        left_len,
+                        order[left + 1usize].index,
+                        order[left].index
+                    ).is_gt() {
+                    child = left + 1usize
+                }
+                if append_order(
+                    read self,
+                    read other,
+                    left_len,
+                    order[child].index,
+                    order[node].index
+                ).is_gt() {
+                    order.swap(node, child)
+                    node = child
+                } else {
+                    break
+                }
+            }
+        }
+
+        self.data.append(mut other.data)
+        // order[destination] names its source slot. Each permutation cycle is
+        // applied with swaps, so this commit phase cannot invoke user code.
+        index = 0usize
+        while index < total {
+            if order[index].visited {
+                index += 1usize
+                continue
+            }
+            var current = index
+            var next = order[current].index
+            while next != index {
+                self.data.swap(current, next)
+                order[current].visited = true
+                current = next
+                next = order[current].index
+            }
+            order[current].visited = true
+            index += 1usize
+        }
+    }
     pub mut fn clear(): Unit { self.data.clear() }
     pub mut fn drain(): super.vec.Drain<region self, T, A> {
         let count = self.data.len()
-        self.data.drain(0usize, count)
+        self.data.drain(0usize..count)
     }
 
     pub take fn into_sorted_vec(): List<T, A> {
@@ -228,4 +446,8 @@ extend<T: Ord> BinaryHeap<T> implements FromItems<T> {
         out.extend(items)
         out
     }
+}
+
+extend<T, A: Allocator> List<T, A> implements package.core.convert.From<BinaryHeap<T, A>> {
+    static fn `from`(source: take BinaryHeap<T, A>): List<T, A> { source.into_vec() }
 }

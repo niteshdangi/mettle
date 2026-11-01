@@ -35,20 +35,28 @@ pub type Map<K, V, A: Allocator = Global> {
 
 pub type MapDrain<region r, K, V, A: Allocator> {
     inner: super.vec.Drain<region r, Bucket<K, V>, A>
+    remaining: usize
 }
 extend<region r, K, V, A: Allocator> MapDrain<region r, K, V, A> implements Iterator {
     type Item = (K, V)
     mut fn next(): (K, V)? {
         match take self.inner.next() {
-            present(entry) => present((entry.key, entry.value)),
+            present(entry) => {
+                self.remaining -= 1usize
+                present((entry.key, entry.value))
+            },
             none => none
         }
     }
+    fn size_hint(): (usize, usize?) { (self.remaining, present(self.remaining)) }
 }
 extend<region r, K, V, A: Allocator> MapDrain<region r, K, V, A> implements BidirectionalIterator {
     mut fn next_back(): (K, V)? {
         match take self.inner.next_back() {
-            present(entry) => present((entry.key, entry.value)),
+            present(entry) => {
+                self.remaining -= 1usize
+                present((entry.key, entry.value))
+            },
             none => none
         }
     }
@@ -59,7 +67,7 @@ pub type ExtractIf<region r, K, V, A: Allocator, F> {
     predicate: F
     index: usize
 }
-extend<region r, K: Hash + PartialEq, V, A: Allocator, F: fn(read K, mut V): bool> ExtractIf<region r, K, V, A, F> implements Iterator {
+extend<region r, K: Hash + PartialEq, V, A: Allocator, F: mut fn(read K, mut V): bool> ExtractIf<region r, K, V, A, F> implements Iterator {
     type Item = (K, V)
     mut fn next(): (K, V)? {
         while self.index < self.map.entries.len() {
@@ -332,10 +340,22 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
         let entries = self.entries.as_mut_ptr()
         (mut (*entries.add(i)).value, mut (*entries.add(j)).value)
     }
-    pub mut fn extract_if<F: fn(read K, mut V): bool>(
+    pub mut fn extract_if<F: mut fn(read K, mut V): bool>(
         predicate: take F
     ): ExtractIf<region self, K, V, A, F> {
         ExtractIf(mut self, predicate, 0usize)
+    }
+    pub mut fn retain<F: mut fn(read K, mut V): bool>(predicate: take F): Unit {
+        var keep = predicate
+        var index = 0usize
+        while index < self.entries.len() {
+            let entry = unsafe { self.entries.as_mut_ptr().add(index) }
+            if keep(unsafe { read (*entry).key }, unsafe { mut (*entry).value }) {
+                index += 1usize
+            } else {
+                let _removed = self.remove_index(index)
+            }
+        }
     }
 
     // Inserts or replaces; a replaced value is returned. On allocation failure
@@ -447,7 +467,7 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
             i += 1usize
         }
         let count = self.entries.len()
-        MapDrain(self.entries.drain(0usize, count))
+        MapDrain(self.entries.drain(0usize..count), count)
     }
 }
 
@@ -515,6 +535,23 @@ extend<K: Hash + PartialEq, A: Allocator> Set<K, A> {
             none => none
         }
     }
+    pub mut fn replace(value: take K): K? {
+        let hash = hash_of(value)
+        match self.map.find_pos(hash, value) {
+            present(pos) => {
+                let index = self.map.slot(pos)
+                let entries = self.map.entries.as_mut_ptr()
+                // The exclusive receiver keeps this live entry stable; equal
+                // keys preserve the hash and probing position.
+                let key_slot = unsafe { core.ptr.from_mut((*entries.add(index)).key) }
+                present(unsafe { core.ptr.replace(key_slot, value) })
+            },
+            none => {
+                let _old = self.map.insert(value, ())
+                none
+            }
+        }
+    }
     pub mut fn clear(): Unit { self.map.clear() }
     pub fn as_entries(): read [Bucket<K, Unit>] from self { self.map.as_entries() }
 }
@@ -530,6 +567,7 @@ extend<region r, K, A: Allocator> SetDrain<region r, K, A> implements Iterator {
             none => none
         }
     }
+    fn size_hint(): (usize, usize?) { self.inner.size_hint() }
 }
 extend<region r, K, A: Allocator> SetDrain<region r, K, A> implements BidirectionalIterator {
     mut fn next_back(): K? {
@@ -545,7 +583,7 @@ pub type SetExtractIf<region r, K, A: Allocator, F> {
     predicate: F
     index: usize
 }
-extend<region r, K: Hash + PartialEq, A: Allocator, F: fn(read K): bool> SetExtractIf<region r, K, A, F> implements Iterator {
+extend<region r, K: Hash + PartialEq, A: Allocator, F: mut fn(read K): bool> SetExtractIf<region r, K, A, F> implements Iterator {
     type Item = K
     mut fn next(): K? {
         while self.index < self.set.map.entries.len() {
@@ -650,25 +688,58 @@ extend<K: Hash + PartialEq, A: Allocator> Set<K, A> {
         true
     }
     pub mut fn drain(): SetDrain<region self, K, A> { SetDrain(self.map.drain()) }
-    pub mut fn extract_if<F: fn(read K): bool>(
+    pub mut fn extract_if<F: mut fn(read K): bool>(
         predicate: take F
     ): SetExtractIf<region self, K, A, F> {
         SetExtractIf(mut self, predicate, 0usize)
     }
+    pub mut fn retain<F: mut fn(read K): bool>(predicate: take F): Unit {
+        var keep = predicate
+        var index = 0usize
+        while index < self.map.entries.len() {
+            let entry = unsafe { self.map.entries.as_mut_ptr().add(index) }
+            if keep(unsafe { read (*entry).key }) {
+                index += 1usize
+            } else {
+                let _removed = self.map.remove_index(index)
+            }
+        }
+    }
 }
 
 
-// Iteration is in insertion order and yields the stored buckets; keys are not
-// mutably iterable because that could break the table's hash invariants.
+// Map iteration is in insertion order and yields the stored buckets. Keys are
+// never exposed mutably because that could break the table's hash invariants.
+pub type Iter<region r, K, V> {
+    inner: SliceIter<region r, Bucket<K, V>>
+    remaining: usize
+}
+extend<region r, K, V> Iter<region r, K, V> implements Iterator {
+    type Item = read Bucket<K, V> from r
+    mut fn next(): (read Bucket<K, V> from r)? {
+        match self.inner.next() {
+            present(entry) => {
+                self.remaining -= 1usize
+                present(entry)
+            },
+            none => none
+        }
+    }
+    fn size_hint(): (usize, usize?) { (self.remaining, present(self.remaining)) }
+}
 extend<K, V, A: Allocator> Map<K, V, A> implements Iterable {
     type Item = Bucket<K, V>
-    type Iter<region r> = SliceIter<region r, Bucket<K, V>>
-    fn iter<region r>(receiver self: read Self from r): SliceIter<region r, Bucket<K, V>> { self.entries.as_slice().iter() }
+    type Iter<region r> = Iter<region r, K, V>
+    fn iter<region r>(receiver self: read Self from r): Iter<region r, K, V> {
+        Iter(self.entries.as_slice().iter(), self.entries.len())
+    }
 }
 extend<K, A: Allocator> Set<K, A> implements Iterable {
-    type Item = Bucket<K, Unit>
-    type Iter<region r> = SliceIter<region r, Bucket<K, Unit>>
-    fn iter<region r>(receiver self: read Self from r): SliceIter<region r, Bucket<K, Unit>> { self.map.entries.as_slice().iter() }
+    type Item = K
+    type Iter<region r> = Keys<region r, K, Unit>
+    fn iter<region r>(receiver self: read Self from r): Keys<region r, K, Unit> {
+        Keys(self.map.entries.as_slice().iter(), self.map.entries.len())
+    }
 }
 
 // Consuming iteration moves out entries without consulting the now-stale
@@ -681,6 +752,10 @@ extend<K, V, A: Allocator> MapIntoIter<K, V, A> implements Iterator {
             present(entry) => present((entry.key, entry.value)),
             none => none
         }
+    }
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.map.entries.len()
+        (remaining, present(remaining))
     }
 }
 extend<K, V, A: Allocator> Map<K, V, A> implements OwnedIterable {
@@ -704,6 +779,7 @@ extend<K, V, A: Allocator> IntoKeys<K, V, A> implements Iterator {
             none => none
         }
     }
+    fn size_hint(): (usize, usize?) { self.inner.size_hint() }
 }
 pub type IntoValues<K, V, A: Allocator> { inner: MapIntoIter<K, V, A> }
 extend<K, V, A: Allocator> IntoValues<K, V, A> implements Iterator {
@@ -714,6 +790,7 @@ extend<K, V, A: Allocator> IntoValues<K, V, A> implements Iterator {
             none => none
         }
     }
+    fn size_hint(): (usize, usize?) { self.inner.size_hint() }
 }
 
 pub type SetIntoIter<K, A: Allocator = Global> { inner: MapIntoIter<K, Unit, A> }
@@ -725,6 +802,7 @@ extend<K, A: Allocator> SetIntoIter<K, A> implements Iterator {
             none => none
         }
     }
+    fn size_hint(): (usize, usize?) { self.inner.size_hint() }
 }
 extend<K, A: Allocator> Set<K, A> implements OwnedIterable {
     type Item = K
@@ -734,7 +812,34 @@ extend<K, A: Allocator> Set<K, A> implements OwnedIterable {
     }
 }
 
-// Mutable iteration visits the values only: mutable keys could break the table's hash invariants.
+// The exclusive map borrow keeps entries dense and stable; advancing the
+// cursor before yielding ensures each mutable value slot is issued only once.
+pub type IterMut<region r, K, V, A: Allocator> {
+    map: mut Map<K, V, A> from r
+    index: usize
+}
+extend<region r, K, V, A: Allocator> IterMut<region r, K, V, A> implements Iterator {
+    type Item = (read K from r, mut V from r)
+    mut fn next(): (read K from r, mut V from r)? {
+        if self.index >= self.map.entries.len() { return none }
+        let i = self.index
+        self.index += 1usize
+        let entry = unsafe { self.map.entries.as_mut_ptr().add(i) }
+        present((unsafe { read (*entry).key }, unsafe { mut (*entry).value }))
+    }
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.map.entries.len() - self.index
+        (remaining, present(remaining))
+    }
+}
+extend<K, V, A: Allocator> Map<K, V, A> {
+    pub mut fn iter_mut(): IterMut<region self, K, V, A> {
+        IterMut(mut self, 0usize)
+    }
+}
+
+// Generic mutable iteration visits values only: mutable keys could break the
+// table's hash invariants.
 pub type ValuesMut<region r, K, V, A: Allocator> { map: mut Map<K, V, A> from r; index: usize }
 extend<region r, K, V, A: Allocator> ValuesMut<region r, K, V, A> implements Iterator {
     type Item = mut V from r
@@ -747,25 +852,53 @@ extend<region r, K, V, A: Allocator> ValuesMut<region r, K, V, A> implements Ite
             none
         }
     }
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.map.entries.len() - self.index
+        (remaining, present(remaining))
+    }
 }
 // Borrowed iterators over the keys or the values only.
-pub type Keys<region r, K, V> { inner: SliceIter<region r, Bucket<K, V>> }
+pub type Keys<region r, K, V> {
+    inner: SliceIter<region r, Bucket<K, V>>
+    remaining: usize
+}
 extend<region r, K, V> Keys<region r, K, V> implements Iterator {
     type Item = read K from r
     mut fn next(): (read K from r)? {
-        match self.inner.next() { present(e) => present(read e.key), none => none }
+        match self.inner.next() {
+            present(e) => {
+                self.remaining -= 1usize
+                present(read e.key)
+            },
+            none => none
+        }
     }
+    fn size_hint(): (usize, usize?) { (self.remaining, present(self.remaining)) }
 }
-pub type Values<region r, K, V> { inner: SliceIter<region r, Bucket<K, V>> }
+pub type Values<region r, K, V> {
+    inner: SliceIter<region r, Bucket<K, V>>
+    remaining: usize
+}
 extend<region r, K, V> Values<region r, K, V> implements Iterator {
     type Item = read V from r
     mut fn next(): (read V from r)? {
-        match self.inner.next() { present(e) => present(read e.value), none => none }
+        match self.inner.next() {
+            present(e) => {
+                self.remaining -= 1usize
+                present(read e.value)
+            },
+            none => none
+        }
     }
+    fn size_hint(): (usize, usize?) { (self.remaining, present(self.remaining)) }
 }
 extend<K, V, A: Allocator> Map<K, V, A> {
-    pub fn keys(): Keys<region self, K, V> { Keys(self.entries.as_slice().iter()) }
-    pub fn values(): Values<region self, K, V> { Values(self.entries.as_slice().iter()) }
+    pub fn keys(): Keys<region self, K, V> {
+        Keys(self.entries.as_slice().iter(), self.entries.len())
+    }
+    pub fn values(): Values<region self, K, V> {
+        Values(self.entries.as_slice().iter(), self.entries.len())
+    }
 }
 extend<K, V, A: Allocator> Map<K, V, A> implements MutableIterable {
     type Item = V

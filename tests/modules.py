@@ -92,6 +92,15 @@ def main(executable, directory, only=None):
         # Native `core` library behavior: each program returns 0 when every check holds.
         for program in sorted((Path(__file__).parent / "library").glob("*.mt")):
             case("library-core-" + program.stem.replace("_", "-"), {"main.mt": program.read_text()})
+        case("library-builtin-pointer-does-not-load-core", {
+            "lib/core/module.mt": "pub module ptr;\n"
+                                 "pub fn broken(): i32 { missing() }\n",
+            "main.mt": "fn main(): i32 {\n"
+                       "    let pointer = core.ptr.null_mut<i32>()\n"
+                       "    0\n"
+                       "}\n"},
+             options=["--library-dir", str(
+                 directory / "library-builtin-pointer-does-not-load-core" / "lib")])
         absent = case("library-core-unwrap-none-aborts", {
             "main.mt": "import core.option;\nfn nothing(): i32? { none }\n"
                        "fn main(): i32 { nothing().unwrap() }\n"}, build_only=True)

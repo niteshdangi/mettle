@@ -2,6 +2,7 @@
 #include "diagnostics/diagnostics.h"
 #include "support/path.h"
 #include "syntax/lexer.h"
+#include "types/machine.h"
 #include <algorithm>
 #include <deque>
 #include <exception>
@@ -77,6 +78,11 @@ std::string describe(const Value &value) {
   switch (value.kind) {
   case Value::Kind::Integer:
     return value.type == Type::Unknown ? "integer" : displayType(value.type);
+  case Value::Kind::Floating:
+    return value.type == Type::Unknown ? "floating point"
+                                       : displayType(value.type);
+  case Value::Kind::Enum:
+    return displayType(value.type);
   case Value::Kind::Bool:
     return "bool";
   case Value::Kind::Char:
@@ -174,6 +180,7 @@ public:
       : host(host), options(options) {
     if (!this->options.pointerBits)
       this->options.pointerBits = 64;
+    unsafeDepth = options.unsafeContext ? 1 : 0;
   }
 
   Result run(const Node &node, const Expectation &expected) {
@@ -220,6 +227,7 @@ private:
   Options options;
   std::deque<Frame> frames;
   std::size_t steps = 0;
+  unsigned unsafeDepth = 0;
   bool failed = false, symbolic = false, reported = false;
   std::optional<Fault> fault;
   Signal signal = Signal::None;
@@ -247,6 +255,140 @@ private:
   }
   Frame &frame() { return frames.back(); }
 
+  Opt numericOperation(std::string_view operation, Type owner,
+                       std::span<const Value> values, Span span) {
+    if (!options.numericEvaluator)
+      return unsupported(span, "floating evaluation without a numeric adapter");
+    std::vector<NumericConstant> arguments;
+    for (const auto &value : values)
+      arguments.push_back(
+          {integerEquivalent(value.type, options.pointerBits), value.number});
+    auto result = options.numericEvaluator(operation, owner, arguments);
+    if (!result)
+      return unsupported(span, "this numeric operation");
+    Value value;
+    value.type = result->type;
+    value.number = std::move(result->literal);
+    if (isFloating(value.type)) {
+      if (!validFloatingConstant(value.number, value.type))
+        return fail("internal", span, "invalid evaluated floating value");
+      value.kind = Value::Kind::Floating;
+    } else if (value.type == Type::Bool) {
+      if (!integerLiteralFits(value.number, Type::Bool))
+        return fail("internal", span, "invalid evaluated boolean value");
+      value.kind = Value::Kind::Bool;
+    } else if (isInteger(value.type)) {
+      if (!integerLiteralFits(value.number, value.type, options.pointerBits))
+        return fail("internal", span, "invalid evaluated integer value");
+      value.kind = Value::Kind::Integer;
+    } else
+      return fail("internal", span, "invalid numeric evaluation result type");
+    return value;
+  }
+  Opt numericOperation(std::string_view operation, Type owner,
+                       std::initializer_list<Value> values, Span span) {
+    return numericOperation(operation, owner,
+                            std::span(values.begin(), values.size()), span);
+  }
+  bool realizeFloating(Value &value, Type type, Span span) {
+    if (!isFloating(type) ||
+        (value.type != Type::Unknown && value.type != type)) {
+      fail("type", span, "mismatched floating types in constant expression");
+      return false;
+    }
+    value.type = type;
+    if (value.number.floatingBits)
+      return validFloatingConstant(value.number, type);
+    auto result = numericOperation("literal", type, {value}, span);
+    if (!result)
+      return false;
+    value = std::move(*result);
+    return true;
+  }
+
+  Type namedType(const Node &node) {
+    if (node.kind != Kind::Name)
+      return Type::Unknown;
+    for (const auto &local : frame().locals)
+      if (local.name == node.text)
+        return Type::Unknown;
+    TypeSyntax syntax;
+    syntax.name = node.text;
+    return host.resolveType(syntax, node.span);
+  }
+
+  Opt primitiveCall(const Node &node, Type owner, std::string_view name,
+                    const std::optional<Value> &receiver) {
+    bool constructor = name == "from_bits" || name == "from_be_bytes" ||
+                       name == "from_le_bytes" || name == "from_ne_bytes";
+    if (constructor == receiver.has_value())
+      return fail("type", node.span,
+                  "float constructor and receiver call forms do not match");
+    bool bytes = name.ends_with("_bytes");
+    std::size_t count = constructor                            ? 1
+                        : name == "mul_add" || name == "clamp" ? 2
+                        : name == "copysign" || name == "min" ||
+                                name == "max" || name == "midpoint"
+                            ? 1
+                            : 0;
+    if (node.children.size() != count + 1)
+      return fail("type", node.span, "wrong number of float method arguments");
+    std::vector<Value> arguments;
+    if (receiver)
+      arguments.push_back(*receiver);
+    auto bitsType = owner == Type::F32 ? Type::U32 : Type::U64;
+    auto byteCount = owner == Type::F32 ? 4u : 8u;
+    Shape argumentShape = scalarShape(constructor ? bitsType : owner);
+    if (constructor && bytes) {
+      argumentShape.kind = Shape::Kind::Array;
+      argumentShape.count = byteCount;
+      argumentShape.elements.push_back(scalarShape(Type::U8));
+    }
+    for (std::size_t i = 1; i < node.children.size(); ++i) {
+      auto value = eval(*node.children[i], &argumentShape);
+      if (!value || !coerce(*value, argumentShape, node.children[i]->span))
+        return std::nullopt;
+      arguments.push_back(std::move(*value));
+    }
+    if (name == "clamp") {
+      auto ordered = numericOperation("<=", owner, {arguments[1], arguments[2]},
+                                      node.span);
+      if (!ordered)
+        return std::nullopt;
+      if (!truth(*ordered))
+        return fail("constant", node.span,
+                    "clamp bounds require non-NaN min <= max");
+    }
+    bool little = name == "from_le_bytes" || name == "to_le_bytes" ||
+                  (name.ends_with("ne_bytes") && options.littleEndian);
+    if (constructor && bytes) {
+      NumericLiteral bits;
+      for (unsigned i = 0; i < byteCount; ++i) {
+        auto shift = (little ? i : byteCount - 1 - i) * 8;
+        bits.magnitude[0] |= arguments[0].elements[i].number.magnitude[0]
+                             << shift;
+      }
+      return numericOperation("from_bits", owner,
+                              {integerValue(bitsType, bits)}, node.span);
+    }
+    if (!constructor && bytes) {
+      auto bits = numericOperation("to_bits", owner, arguments, node.span);
+      if (!bits)
+        return std::nullopt;
+      Value array;
+      array.kind = Value::Kind::Array;
+      array.type = Type::Unknown;
+      for (unsigned i = 0; i < byteCount; ++i) {
+        auto shift = (little ? i : byteCount - 1 - i) * 8;
+        array.elements.push_back(integerValue(
+            Type::U8,
+            integerLiteral((bits->number.magnitude[0] >> shift) & 0xff)));
+      }
+      return array;
+    }
+    return numericOperation(name, owner, arguments, node.span);
+  }
+
   // Type structure of a declared type.
   std::optional<Shape> shape(const TypeSyntax &type, Span span) {
     if (!type.view.empty() || !type.regions.empty() || type.nested ||
@@ -256,14 +398,15 @@ private:
     }
     switch (type.form) {
     case TypeForm::Named: {
-      auto builtin = builtinType(type.name);
+      auto builtin = host.resolveType(type, span);
       if (builtin == Type::Unit) {
         Shape result;
         result.kind = Shape::Kind::Unit;
         return result;
       }
       if (builtin == Type::Unknown || builtin == Type::Never ||
-          isFloating(builtin)) {
+          (!isNumeric(builtin) && builtin != Type::Bool &&
+           builtin != Type::Char && !host.enumeration(builtin))) {
         unsupported(span, "type '" + displayPath(type.name) + "'");
         return std::nullopt;
       }
@@ -340,6 +483,10 @@ private:
       } else if (want.type == Type::Char) {
         if (value.kind == Value::Kind::Char)
           return true;
+      } else if (isFloating(want.type) && value.kind == Value::Kind::Floating) {
+        return realizeFloating(value, want.type, span);
+      } else if (value.kind == Value::Kind::Enum && value.type == want.type) {
+        return true;
       } else if (value.kind == Value::Kind::Integer) {
         if (value.type == want.type)
           return true;
@@ -386,6 +533,9 @@ private:
   }
   // Remaining unsuffixed integers are i32, as in checked code.
   bool defaultTypes(Value &value, Span span) {
+    if (value.kind == Value::Kind::Floating)
+      return realizeFloating(
+          value, value.type == Type::Unknown ? Type::F64 : value.type, span);
     if (value.kind == Value::Kind::Integer && value.type == Type::Unknown)
       return coerce(value, scalarShape(Type::I32), span);
     for (auto &element : value.elements)
@@ -398,6 +548,17 @@ private:
       fail("type", span,
            "mismatched operand types " + describe(left) + " and " +
                describe(right));
+      return false;
+    }
+    if (left.kind == Value::Kind::Floating) {
+      auto type = left.type != Type::Unknown    ? left.type
+                  : right.type != Type::Unknown ? right.type
+                                                : Type::F64;
+      return coerce(left, scalarShape(type), span) &&
+             coerce(right, scalarShape(type), span);
+    }
+    if (left.kind == Value::Kind::Enum && left.type != right.type) {
+      fail("type", span, "mismatched enum types in constant expression");
       return false;
     }
     if (left.kind != Value::Kind::Integer)
@@ -442,6 +603,14 @@ private:
     }
     if (!unify(left, right, span))
       return std::nullopt;
+    if (left.kind == Value::Kind::Floating)
+      return numericOperation(op, left.type, {left, right}, span);
+    if (left.kind == Value::Kind::Enum) {
+      if (op != "==" && op != "!=")
+        return unsupported(span, "this enum operator");
+      bool equal = left.number == right.number;
+      return boolValue(op == "==" ? equal : !equal);
+    }
     if (left.kind == Value::Kind::Bool) {
       bool a = truth(left), b = truth(right);
       if (op == "==")
@@ -476,6 +645,18 @@ private:
     if (target->kind != Shape::Kind::Scalar)
       return fail("type", node.span, "casts apply to scalar types only");
     auto to = target->type;
+    if (isNumeric(to) &&
+        (value.kind == Value::Kind::Floating ||
+         (value.kind == Value::Kind::Integer && isFloating(to)))) {
+      if (!defaultTypes(value, node.span))
+        return std::nullopt;
+      auto result =
+          numericOperation("cast", integerEquivalent(to, options.pointerBits),
+                           {value}, node.span);
+      if (result)
+        result->type = to;
+      return result;
+    }
     if (value.kind == Value::Kind::Integer && isInteger(to))
       return integerValue(to,
                           castInteger(value.number, to, options.pointerBits));
@@ -703,8 +884,35 @@ private:
   }
 
   Opt literal(const Node &node, bool negative, const Shape *want) {
-    if (node.kind == Kind::Floating)
-      return unsupported(node.span, "a floating-point value");
+    if (node.kind == Kind::Floating) {
+      Value value;
+      value.kind = Value::Kind::Floating;
+      value.type = Type::Unknown;
+      auto spelling = node.text;
+      for (auto type : {Type::F32, Type::F64}) {
+        auto suffix = typeName(type);
+        if (spelling.ends_with(suffix)) {
+          spelling.resize(spelling.size() - suffix.size());
+          value.type = type;
+          break;
+        }
+      }
+      spelling.erase(std::remove(spelling.begin(), spelling.end(), '_'),
+                     spelling.end());
+      if (negative)
+        spelling.insert(spelling.begin(), '-');
+      value.number.floating = std::move(spelling);
+      value.number.negative = negative;
+      if (!validFloatingLiteral(value.number.floating))
+        return fail("lex", node.span, "malformed floating literal");
+      auto type = value.type;
+      if (type == Type::Unknown && want && want->kind == Shape::Kind::Scalar &&
+          isFloating(want->type))
+        type = want->type;
+      if (type != Type::Unknown && !realizeFloating(value, type, node.span))
+        return std::nullopt;
+      return value;
+    }
     auto parsed = parseInteger(node.text, negative);
     if (!parsed)
       return fail("lex", node.span, "malformed integer literal");
@@ -962,9 +1170,44 @@ private:
 
   Opt call(const Node &node, const Shape *) {
     const Node &callee = *node.children[0];
-    if (callee.kind != Kind::Name || !callee.genericArguments.empty())
+    if (!callee.genericArguments.empty() ||
+        !callee.ownerGenericArguments.empty() || callee.flag)
       return unsupported(callee.span, "this call");
-    auto found = host.lookup(callee);
+    Lookup found;
+    std::optional<Value> receiver;
+    Type owner = Type::Unknown;
+    std::string method;
+    if (callee.kind == Kind::Field) {
+      method = callee.text;
+      owner = namedType(*callee.children[0]);
+      if (!isFloating(owner)) {
+        receiver = eval(*callee.children[0], nullptr);
+        if (!receiver || !defaultTypes(*receiver, callee.span))
+          return std::nullopt;
+        if (receiver->kind != Value::Kind::Floating)
+          return unsupported(callee.span, "this constant receiver");
+        owner = receiver->type;
+        found = host.method(owner, node);
+      }
+    } else if (callee.kind == Kind::Name) {
+      auto separator = callee.text.rfind("::");
+      if (separator != std::string::npos) {
+        TypeSyntax syntax;
+        syntax.name = callee.text.substr(0, separator);
+        owner = host.resolveType(syntax, callee.span);
+        method = callee.text.substr(separator + 2);
+      }
+      if (!isFloating(owner))
+        found = host.lookup(callee);
+    } else
+      return unsupported(callee.span, "this call");
+    if (isFloating(owner) && found.kind == Lookup::Kind::Missing) {
+      if (!constantFloatMethod(method))
+        return fail("constant", callee.span,
+                    "call to non-const or unavailable float method '" + method +
+                        "'");
+      return primitiveCall(node, owner, method, receiver);
+    }
     if (found.kind == Lookup::Kind::Symbolic) {
       symbolic = true;
       failed = true;
@@ -979,12 +1222,15 @@ private:
                   "unknown function '" + displayPath(callee.text) +
                       "' in a constant expression");
     const Function &function = *found.function;
+    if (function.unsafeFunction && !unsafeDepth)
+      return fail("unsafe", node.span,
+                  "operation requires an unsafe block or unsafe function");
     if (!function.constFunction)
       return fail("constant", node.span,
                   "call to non-const function '" + displayPath(callee.text) +
                       "' in a constant expression");
     if (!function.genericParameters.empty() || function.constructor ||
-        !function.owner.empty() || function.variadic ||
+        (!function.owner.empty() && !receiver) || function.variadic ||
         function.explicitReceiver || !function.body.get() ||
         function.destructor || !function.error.empty() ||
         function.foreignDeclaration)
@@ -1018,7 +1264,13 @@ private:
       result = std::move(*resultShape);
     }
     std::vector<Opt> arguments(function.parameters.size());
-    std::size_t position = 0;
+    std::size_t position = receiver ? 1 : 0;
+    if (receiver) {
+      if (arguments.empty() ||
+          !coerce(*receiver, *parameterShapes[0], node.span))
+        return std::nullopt;
+      arguments[0] = std::move(*receiver);
+    }
     for (std::size_t i = 1; i < node.children.size(); ++i) {
       const Node &argument = *node.children[i];
       std::size_t slot = position;
@@ -1049,12 +1301,15 @@ private:
                     "missing argument '" + function.parameters[i].name +
                         "' in call to '" + displayPath(callee.text) + "'");
     frames.emplace_back();
+    auto callerUnsafeDepth = unsafeDepth;
+    unsafeDepth = function.unsafeFunction ? 1 : 0;
     frame().inFunction = true;
     frame().result = result;
     for (std::size_t i = 0; i < arguments.size(); ++i)
       frame().locals.push_back(
           {function.parameters[i].name, std::move(*arguments[i]), false});
     auto value = eval(*function.body, &result);
+    unsafeDepth = callerUnsafeDepth;
     if (!value && !failed && signal == Signal::Return) {
       value = std::move(signalValue);
       signal = Signal::None;
@@ -1089,8 +1344,13 @@ private:
     case Kind::Unit:
       return unitValue();
     case Kind::Group:
-    case Kind::Unsafe:
       return eval(*node.children[0], want);
+    case Kind::Unsafe: {
+      ++unsafeDepth;
+      auto value = eval(*node.children[0], want);
+      --unsafeDepth;
+      return value;
+    }
     case Kind::Name: {
       auto &locals = frame().locals;
       for (auto it = locals.rbegin(); it != locals.rend(); ++it)
@@ -1128,7 +1388,8 @@ private:
       }
     }
     case Kind::Unary: {
-      if (node.text == "-" && node.children[0]->kind == Kind::Integer)
+      if (node.text == "-" && (node.children[0]->kind == Kind::Integer ||
+                               node.children[0]->kind == Kind::Floating))
         return literal(*node.children[0], true, want);
       if (node.text != "-" && node.text != "!")
         return unsupported(node.span, "operator '" + node.text + "'");
@@ -1137,6 +1398,11 @@ private:
         return std::nullopt;
       if (node.text == "!" && operand->kind == Value::Kind::Bool)
         return boolValue(!truth(*operand));
+      if (node.text == "-" && operand->kind == Value::Kind::Floating) {
+        if (!defaultTypes(*operand, node.span))
+          return std::nullopt;
+        return numericOperation("neg", operand->type, {*operand}, node.span);
+      }
       if (operand->kind != Value::Kind::Integer)
         return fail("type", node.span,
                     "operator '" + node.text + "' does not apply to " +
@@ -1282,6 +1548,27 @@ private:
     case Kind::Array:
       return array(node, want);
     case Kind::Field: {
+      auto type = namedType(*node.children[0]);
+      if (host.enumeration(type)) {
+        auto found = host.variant(type, node.text, node.span);
+        if (found.kind == Lookup::Kind::Constant)
+          return std::move(found.value);
+        if (found.kind == Lookup::Kind::Failed) {
+          failed = reported = true;
+          return std::nullopt;
+        }
+        return fail("name", node.span, "unknown constant enum variant");
+      }
+      if (isFloating(type)) {
+        auto found = host.floatingValue(type, node.text, node.span);
+        if (found.kind == Lookup::Kind::Constant)
+          return std::move(found.value);
+        if (found.kind == Lookup::Kind::Failed) {
+          failed = reported = true;
+          return std::nullopt;
+        }
+        return fail("name", node.span, "unknown floating associated constant");
+      }
       auto where = place(node);
       if (failed)
         return std::nullopt;

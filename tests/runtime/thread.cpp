@@ -84,11 +84,13 @@ int main() {
 
   require(mettle_rt_rwlock_read(shared.rwlock) == 0, "read");
   require(mettle_rt_rwlock_try_read(shared.rwlock) == 0, "second reader");
-  require(mettle_rt_rwlock_try_write(shared.rwlock) != 0, "writer excluded");
+  require(mettle_rt_rwlock_try_write(shared.rwlock) == 1, "writer excluded");
   mettle_rt_rwlock_unlock(shared.rwlock);
   mettle_rt_rwlock_unlock(shared.rwlock);
   require(mettle_rt_rwlock_write(shared.rwlock) == 0, "write");
-  require(mettle_rt_rwlock_try_read(shared.rwlock) != 0, "reader excluded");
+  require(mettle_rt_rwlock_try_read(shared.rwlock) == 1, "reader excluded");
+  require(mettle_rt_rwlock_try_write(shared.rwlock) == 1,
+          "recursive writer excluded");
   mettle_rt_rwlock_unlock(shared.rwlock);
 
   auto key = mettle_rt_tls_key_new(destroy_slot);

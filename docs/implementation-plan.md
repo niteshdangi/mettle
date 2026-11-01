@@ -1026,6 +1026,27 @@ initial POSIX hosted profile.
 
 **L054 status (const evaluation): implemented and verified on macOS ARM64.** The `compiler/consteval` evaluator and `const fn` are wired into constants, array lengths, constant generic arguments and statics. Evidence: `tests/source/{run,fail}/const-eval-*.mt` (Debug and Release, including the recursion-depth limit, which evaluates on a dedicated large stack) and `compiler.consteval-target` (`tests/consteval/target_width.cpp`); the driver admits no 32-bit target, so target-width evidence is that checker-level unit test. Gap addressed, verified on macOS arm64: a mutable unsuffixed integer local in a `const fn` (`var i = 0`) stays open instead of being fixed to `i32`; assignment of a typed value or a use against a scalar expectation fixes its type (`tests/source/run/const-eval-open-integer-local.mt`). An immutable `let` or a copy into another binding still defaults to `i32`.
 
+The I13 L005 follow-up extends this evaluator with target-software floating
+operations, exact IEEE-bit values, byte arrays, payload-free enum results and
+source const receiver frames. All 92 selected stable const-callable float
+records (80 forms) have focused native/compiler-ASan/UBSan/emitted-ASan
+acceptance, including bit payloads, contextual rounding and typed/precondition
+rejection. Driver and LSP compilations inject the LLVM adapter through an
+LLVM-free callback; constant evaluation itself never uses host floating
+arithmetic. Inherent-extension `const fn` parsing preserves associated
+constants. Decimal parsing, precision formatting and all 28 selected float
+constant values retain their scoped evidence recorded in `i13-library.md`.
+This does not close L005's runtime/supporting-trait inventory or I13; L005
+remains partial.
+
+The subsequent 79-record supporting-trait batch implements thirteen lossless
+numeric conversions, sixty-four actual owned/readonly-view operator forms and
+the two float ToString records through the allocator-layer Display blanket.
+Native, compiler-ASan/UBSan and emitted-ASan focused receipts retain their exact
+scope in `i13-float-traits-current-inputs.json`; the reconciled 301-record
+inventory preserves frozen metadata. Collision-safe/unsized Any, default
+comparison RHS-Self and full operation/profile coverage still block L005.
+
 I09 completes required constant evaluation, hygienic declarative macros, host
 procedural extensions, attribute/derive/cfg phases and versioned token APIs.
 Implement manifest resolution, exact locks, feature/host/target separation,
@@ -1390,6 +1411,53 @@ macOS profile (owner decision 2026-10-31).
 Moved into I13 by owner decision (2026-10-31): pinned owning handles (S003,
 safe `Pin` of heap/shared owners), previously an I07 item.
 The library half of I13 is defined in [i13-library.md](i13-library.md).
+The S006 library follow-up adds stateful `List.retain`/`retain_mut` and
+panic-safe compaction, with focused Debug/Release execution and hosted
+drop-count recovery cases. Its batch validation is tracked in that work package;
+it does not close S006 or the operation subset. The next integrated batch adds
+S010 deque retention/unwind recovery and S007 backward whitespace/UTF-16
+iteration, ASCII whitespace and buffer-writing char UTF-16, with focused native
+execution evidence. S011 original-contract mutable-view reuse and owned
+filter+map cases now have focused execution evidence after compiler method-region
+rebinding and semantic callable-proof repairs; consolidated compiler validation
+is pending and adapter closure remains open. The provisional
+CSV has 13,295 canonical records in 2,442 operation families and 2,309
+implementation families, including 13 focused-evidenced exposures of nine
+operations and five Darwin-inapplicable records; subset/source-cfg reconciliation
+remains open, so these counts do not measure milestone completion.
+Later focused library batches add stateful map/set callbacks, tuple comparison
+and hashing through arity twelve, owner slices/empty weak handles, wrapping value
+traits, byte-preserving path iterators and Duration-based mutable condvar waits
+with poison-aware exclusive lock access. Supporting compiler fixes preserve
+indexed exclusive initialization, inactive enum-variant region refinement and
+carried-view result origins. Focused native, emitted-ASan/TSan and instrumented
+compiler checks are recorded in the work package; no additional full run or
+capability-area closure is claimed. Wrapping arithmetic/bitwise/shift/assignment
+operators now have all-width focused evidence, with representative zero-divisor
+traps. Stateful collection/slice callbacks include transactional heap retention
+and guarded dedup unwind recovery. Their generic proof-elaboration prerequisite
+has focused positive/negative and instrumented compiler evidence; these do not
+close the operation inventory. Native range and exact/fused/reverse iterator
+supporting protocols now have focused profile evidence, including borrowed
+unsized endpoints and strict regional interface-bound rejection. Unsized/erased
+iterator forwarding, pointer exposure, Any
+identity, synchronization prerequisites and operation reconciliation remain open.
+The next focused batch adds independent-input/output Iterator sum/product,
+all-width borrowed Wrapping folds, stored set-key replacement and ownership,
+expired Weak cloning/count observers, further deque/list/heap operations,
+positional filesystem I/O, TCP peek/Incoming/UDP peer access and non-Copy thread
+handle value/debug/borrow contracts. Native, emitted-ASan resource checks and
+emitted-TSan basic/scoped/Arc-race checks pass within the scopes recorded in the
+work package. Borrowed `Chained.next` now passes focused profile and earlier
+instrumented checks; nested Box owned-iteration coherence passes its disjoint
+positive and genuine-overlap negative. Subsequent regional normalization changes
+have six focused positive cases and three exact safety negatives under the
+current instrumented compiler, with algorithms/boundaries and targeted static
+analysis passing. Six collection/resource cases pass emitted ASan in both
+profiles, including destructor-panic restoration and invalid-input nonmutation.
+None of these supporting repairs closes S011's full operation inventory or
+source-freeze prerequisites. All eighteen areas remain partial;
+the operation CSV has not been credited from name matches.
 
 I13 closes the V1 operation subset defined in `docs/library-surface.md`
 section 6.1 with compiled native declarations and per-operation semantic

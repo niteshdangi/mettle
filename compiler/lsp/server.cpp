@@ -527,7 +527,8 @@ private:
                         displayPath(types->name(result)));
                 }
               }
-            });
+            },
+            {}, config.numericEvaluator);
       }
     } catch (const std::exception &error) {
       diagnostics.error("internal", {}, error.what());

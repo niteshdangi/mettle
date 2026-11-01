@@ -20,6 +20,14 @@ pub interface Borrow<T: unsized> {
     fn borrow(): read T from self;
 }
 
+pub interface AsMut<T: unsized> {
+    mut fn as_mut(): mut T from self;
+}
+
+pub interface BorrowMut<T: unsized>: Borrow<T> {
+    mut fn borrow_mut(): mut T from self;
+}
+
 pub interface ToOwned {
     type Owned: Borrow<Self>;
     fn to_owned(): Self.Owned;
@@ -34,6 +42,14 @@ extend<T: unsized> T implements AsRef<T> {
 
 extend<T: unsized> T implements Borrow<T> {
     fn borrow(): read T from self { read self }
+}
+
+extend<T: unsized> T implements AsMut<T> {
+    mut fn as_mut(): mut T from self { mut self }
+}
+
+extend<T: unsized> T implements BorrowMut<T> {
+    mut fn borrow_mut(): mut T from self { mut self }
 }
 
 extend<T: Clone> T implements ToOwned {

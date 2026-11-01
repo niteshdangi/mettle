@@ -16,6 +16,8 @@ import super.time.SystemTime
 extern "C" {
     unsafe fn fsync(fd: i32): i32;
     unsafe fn ftruncate(fd: i32, length: i64): i32;
+    unsafe fn pread(fd: i32, buffer: ptr<mut u8>, count: usize, offset: i64): isize;
+    unsafe fn pwrite(fd: i32, buffer: ptr<read u8>, count: usize, offset: i64): isize;
     unsafe fn dup(fd: i32): i32;
     unsafe fn fchmod(fd: i32, mode: u32): i32;
     unsafe fn link(old: ptr<read u8>, new: ptr<read u8>): i32;
@@ -165,6 +167,10 @@ extend OpenOptions {
         if on { self.flags = self.flags | flag } else { self.flags = self.flags & (-1 - flag) }
     }
     pub fn open(input: read PathInput): File throws Error {
+        let access_modes = sys.open_read() | sys.open_write() | sys.open_append()
+        if (self.flags & access_modes) == 0 {
+            throw io.from_kind(ErrorKind.InvalidInput)
+        }
         let c = try ffi.cstring(input.as_path().as_bytes())
         let fd = unsafe { sys.mettle_rt_open(c.as_ptr(), self.flags, self.mode) }
         if fd < 0 { throw io.last_os_error() }
@@ -222,7 +228,13 @@ extend File {
         var whence = 0
         var offset = 0i64
         match pos {
-            SeekFrom.Start(n) => { whence = 0; offset = n as i64 },
+            SeekFrom.Start(n) => {
+                if n > 9223372036854775807u64 {
+                    throw io.from_kind(ErrorKind.InvalidInput)
+                }
+                whence = 0
+                offset = n as i64
+            },
             SeekFrom.Current(n) => { whence = 1; offset = n },
             SeekFrom.End(n) => { whence = 2; offset = n }
         }
@@ -240,6 +252,9 @@ extend File {
         if unsafe { fchmod(self.fd, permissions.mode()) } != 0 { throw io.last_os_error() }
     }
     pub fn set_len(length: u64): Unit throws Error {
+        if length > 9223372036854775807u64 {
+            throw io.from_kind(ErrorKind.InvalidInput)
+        }
         if unsafe { ftruncate(self.fd, length as i64) } != 0 { throw io.last_os_error() }
     }
 }
@@ -251,6 +266,43 @@ extend File implements Reader {
 extend File implements Writer {
     mut fn write_some(buf: read [u8]): usize throws Error { try io.write_fd(self.fd, buf) }
     mut fn flush(): Unit throws Error {}
+}
+
+// POSIX positional I/O; calls do not change the file's shared cursor.
+pub interface FileExt {
+    fn read_at(buf: mut [u8], offset: u64): usize throws Error;
+    fn write_at(buf: read [u8], offset: u64): usize throws Error;
+}
+
+fn checked_file_offset(offset: u64): i64 throws Error {
+    if offset > 9223372036854775807u64 {
+        throw io.from_kind(ErrorKind.InvalidInput)
+    }
+    offset as i64
+}
+
+extend File implements FileExt {
+    fn read_at(buf: mut [u8], offset: u64): usize throws Error {
+        let native_offset = try checked_file_offset(offset)
+        while true {
+            let count = unsafe { pread(self.fd, sys.data_mut(buf), buf.len(), native_offset) }
+            if count >= 0isize { return count as usize }
+            let error = io.last_os_error()
+            if !error.kind().is(ErrorKind.Interrupted) { throw error }
+        }
+        0usize
+    }
+
+    fn write_at(buf: read [u8], offset: u64): usize throws Error {
+        let native_offset = try checked_file_offset(offset)
+        while true {
+            let count = unsafe { pwrite(self.fd, package.core.slice.data(buf), buf.len(), native_offset) }
+            if count >= 0isize { return count as usize }
+            let error = io.last_os_error()
+            if !error.kind().is(ErrorKind.Interrupted) { throw error }
+        }
+        0usize
+    }
 }
 
 // The whole file.
@@ -432,6 +484,7 @@ extend ReadDir {
     // EOF or a read error permanently ends this listing.
     pub mut fn next_entry(): DirEntry? throws Error {
         if self.finished { return none }
+        unsafe { sys.mettle_rt_set_errno(0) }
         let name = unsafe { sys.mettle_rt_readdir(self.handle) }
         if name == core.ptr.null<u8>() {
             let code = sys.errno()

@@ -7,6 +7,11 @@ import package.alloc.vec.List
 import package.alloc.alloc.AllocError
 import package.alloc.string.String
 import package.alloc.string.FromUtf8Error
+import package.core.convert.Into
+import package.core.clone.Clone
+import package.core.default.Default
+import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import package.core.hash.{Hash, Hasher}
 import package.core.text.Text
 import package.core.slice
 import super.io
@@ -226,6 +231,267 @@ extend OsString {
     pub fn same(other: read OsString): bool { bytes_equal(self.v.as_slice(), other.as_bytes()) }
 }
 
+pub copy enum FromBytesWithNulError {
+    InteriorNul { position: usize },
+    NotNulTerminated
+}
+
+pub copy type FromBytesUntilNulError {}
+
+pub type NulError {
+    bytes: List<u8>
+    position: usize
+}
+
+copy enum NulErrorKind { InteriorNul, NotTerminated }
+
+extend NulError {
+    pub fn nul_position(): usize { self.position }
+    pub take fn into_vec(): List<u8> { self.bytes }
+}
+
+pub type FromVecWithNulError {
+    bytes: List<u8>
+    kind: NulErrorKind
+}
+
+extend FromVecWithNulError {
+    pub fn as_bytes(): read [u8] from self { self.bytes.as_slice() }
+    pub take fn into_bytes(): List<u8> { self.bytes }
+}
+
+pub type IntoStringError { value: CString }
+
+extend IntoStringError {
+    pub fn as_c_str<region r>(
+        receiver self: read IntoStringError from r
+    ): CStr<region r> { self.value.as_c_str() }
+    pub take fn into_cstring(): CString { self.value }
+}
+
+// A borrowed, validated NUL-terminated byte string. Construction is restricted
+// to the validating constructors below; the terminator is part of `bytes`.
+pub type CStr<region r> { bytes: read [u8] from r }
+
+// Owned C strings always contain one final NUL and no earlier NUL.
+pub type CString { v: List<u8> }
+
+fn clone_bytes(bytes: read [u8]): List<u8> {
+    var duplicate = vec.with_capacity<u8>(bytes.len())
+    duplicate.extend_from_slice(bytes)
+    duplicate
+}
+
+fn c_str_from_bytes_with_nul<region r>(
+    bytes: read [u8] from r
+): CStr<region r> throws FromBytesWithNulError {
+    if bytes.is_empty() {
+        throw FromBytesWithNulError.NotNulTerminated
+    }
+    let terminator = bytes.len() - 1usize
+    var i = 0usize
+    while i < terminator {
+        if bytes[i] == 0u8 {
+            throw FromBytesWithNulError.InteriorNul(i)
+        }
+        i += 1usize
+    }
+    if bytes[terminator] != 0u8 {
+        throw FromBytesWithNulError.NotNulTerminated
+    }
+    CStr(read bytes)
+}
+
+fn c_str_from_bytes_until_nul<region r>(
+    bytes: read [u8] from r
+): CStr<region r> throws FromBytesUntilNulError {
+    var i = 0usize
+    while i < bytes.len() && bytes[i] != 0u8 { i += 1usize }
+    if i == bytes.len() { throw FromBytesUntilNulError() }
+    match slice.subslice(bytes, 0usize, i + 1usize) {
+        present(terminated) => CStr(terminated),
+        none => throw FromBytesUntilNulError()
+    }
+}
+
+extend<region r> CStr<region r> {
+    pub static fn from_bytes_with_nul<region s>(
+        bytes: read [u8] from s
+    ): CStr<region s> throws FromBytesWithNulError {
+        try c_str_from_bytes_with_nul(bytes)
+    }
+
+    pub static fn from_bytes_until_nul<region s>(
+        bytes: read [u8] from s
+    ): CStr<region s> throws FromBytesUntilNulError {
+        try c_str_from_bytes_until_nul(bytes)
+    }
+
+    pub fn as_ptr(): ptr<read i8> { self.bytes.as_ptr().cast<i8>() }
+    pub fn count_bytes(): usize { self.bytes.len() - 1usize }
+    pub fn is_empty(): bool { self.bytes.len() == 1usize }
+    pub fn to_bytes_with_nul(): read [u8] from r { self.bytes }
+    pub fn to_bytes(): read [u8] from r {
+        match slice.subslice(self.bytes, 0usize, self.bytes.len() - 1usize) {
+            present(bytes) => bytes,
+            none => package.core.panic.panic("invalid C string")
+        }
+    }
+    pub fn to_str(): (read Text from r)? {
+        package.core.text.from_utf8(self.to_bytes())
+    }
+    pub fn to_string_lossy(): String { lossy(self.to_bytes()) }
+    pub fn to_owned(): CString { CString(clone_bytes(self.bytes)) }
+}
+
+fn c_string_new(bytes: take List<u8>): CString throws NulError {
+    var owned = bytes
+    var i = 0usize
+    while i < owned.len() {
+        if owned[i] == 0u8 { throw NulError(owned, i) }
+        i += 1usize
+    }
+    owned.push(0u8)
+    CString(owned)
+}
+
+fn c_string_from_vec_with_nul(
+    bytes: take List<u8>
+): CString throws FromVecWithNulError {
+    if bytes.is_empty() {
+        throw FromVecWithNulError(bytes, NulErrorKind.NotTerminated)
+    }
+    let terminator = bytes.len() - 1usize
+    var i = 0usize
+    while i < terminator {
+        if bytes[i] == 0u8 {
+            throw FromVecWithNulError(bytes, NulErrorKind.InteriorNul)
+        }
+        i += 1usize
+    }
+    if bytes[terminator] != 0u8 {
+        throw FromVecWithNulError(bytes, NulErrorKind.NotTerminated)
+    }
+    CString(bytes)
+}
+
+fn new_c_string(): CString {
+    var bytes = vec.new<u8>()
+    bytes.push(0u8)
+    CString(bytes)
+}
+
+extend CString {
+    pub static fn new<T: Into<List<u8>>>(bytes: take T): CString throws NulError {
+        try c_string_new(bytes.into())
+    }
+
+    pub static fn from_vec_with_nul(
+        bytes: take List<u8>
+    ): CString throws FromVecWithNulError {
+        try c_string_from_vec_with_nul(bytes)
+    }
+
+    pub fn as_c_str<region r>(
+        receiver self: read CString from r
+    ): CStr<region r> { CStr(self.v.as_slice()) }
+    pub fn as_ptr(): ptr<read i8> { self.v.as_ptr().cast<i8>() }
+    pub fn count_bytes(): usize { self.v.len() - 1usize }
+    pub fn is_empty(): bool { self.v.len() == 1usize }
+    pub fn as_bytes_with_nul(): read [u8] from self { self.v.as_slice() }
+    pub fn as_bytes(): read [u8] from self {
+        match slice.subslice(self.v.as_slice(), 0usize, self.v.len() - 1usize) {
+            present(bytes) => bytes,
+            none => package.core.panic.panic("invalid C string")
+        }
+    }
+    pub fn to_str(): (read Text from self)? {
+        package.core.text.from_utf8(self.as_bytes())
+    }
+    pub fn to_string_lossy(): String { lossy(self.as_bytes()) }
+    pub take fn into_bytes_with_nul(): List<u8> { self.v }
+    pub take fn into_bytes(): List<u8> {
+        var bytes = self.v
+        match bytes.pop() {
+            present(terminator) => {
+                if terminator != 0u8 { package.core.panic.panic("invalid C string") }
+                bytes
+            },
+            none => package.core.panic.panic("invalid C string")
+        }
+    }
+    pub take fn into_string(): String throws IntoStringError {
+        match self.as_c_str().to_str() {
+            present(text) => package.alloc.string.from_text(text),
+            none => throw IntoStringError(self)
+        }
+    }
+}
+
+extend CString implements Default {
+    static fn default(): CString { new_c_string() }
+}
+
+extend CString implements Clone {
+    fn clone(): CString { CString(clone_bytes(self.v.as_slice())) }
+}
+
+extend<region r, region s> CStr<region r> implements PartialEq<CStr<region s>> {
+    fn eq(other: read CStr<region s>): bool {
+        bytes_equal(self.to_bytes(), other.to_bytes())
+    }
+}
+
+extend<region r> CStr<region r> implements Eq {}
+
+extend<region r, region s> CStr<region r> implements PartialOrd<CStr<region s>> {
+    fn partial_cmp(other: read CStr<region s>): Ordering? {
+        present(self.to_bytes().cmp(other.to_bytes()))
+    }
+}
+
+extend<region r> CStr<region r> implements Ord {
+    fn cmp(other: read CStr<region r>): Ordering {
+        self.to_bytes().cmp(other.to_bytes())
+    }
+}
+
+extend<region r> CString implements PartialEq<CStr<region r>> {
+    fn eq(other: read CStr<region r>): bool {
+        bytes_equal(self.as_bytes(), other.to_bytes())
+    }
+}
+
+extend<region r> CStr<region r> implements PartialEq<CString> {
+    fn eq(other: read CString): bool {
+        bytes_equal(self.to_bytes(), other.as_bytes())
+    }
+}
+
+extend CString implements PartialEq {
+    fn eq(other: read CString): bool { bytes_equal(self.as_bytes(), other.as_bytes()) }
+}
+
+extend CString implements Eq {}
+
+extend CString implements PartialOrd {
+    fn partial_cmp(other: read CString): Ordering? {
+        present(self.as_bytes().cmp(other.as_bytes()))
+    }
+}
+
+extend CString implements Ord {
+    fn cmp(other: read CString): Ordering { self.as_bytes().cmp(other.as_bytes()) }
+}
+
+extend<region r> CStr<region r> implements Hash {
+    fn hash<H: Hasher>(state: mut H): Unit { self.to_bytes().hash(mut state) }
+}
+
+extend CString implements Hash {
+    fn hash<H: Hasher>(state: mut H): Unit { self.as_bytes().hash(mut state) }
+}
+
 // A NUL-terminated copy of `bytes` for passing to C.
 pub fn cstring(bytes: read [u8]): List<u8> throws io.Error {
     var out = vec.with_capacity<u8>(bytes.len() + 1usize)
@@ -237,4 +503,8 @@ pub fn cstring(bytes: read [u8]): List<u8> throws io.Error {
     out.extend_from_slice(bytes)
     out.push(0u8)
     out
+}
+
+extend List<u8> implements package.core.convert.From<CString> {
+    static fn `from`(value: take CString): List<u8> { value.into_bytes() }
 }

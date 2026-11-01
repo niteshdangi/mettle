@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <initializer_list>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 namespace mettle {
@@ -17,8 +18,152 @@ struct Piece {
   std::string text;
   bool spaced;
   std::string gap;
+  std::size_t offset;
 };
 using Line = std::vector<Piece>;
+
+struct LayoutHints {
+  std::unordered_set<std::size_t> binaryAngles, matchBraces;
+  bool complete = false;
+};
+
+LayoutHints layoutHints(const Source &source,
+                        const std::vector<Token> &tokens) {
+  Diagnostics scratch;
+  auto tree = parse(source, scratch);
+  LayoutHints hints;
+  hints.complete = scratch.empty();
+  auto mark = [&](std::size_t begin, std::size_t end, std::string_view text,
+                  auto &positions) {
+    auto token = std::lower_bound(tokens.begin(), tokens.end(), begin,
+                                  [](const Token &token, std::size_t position) {
+                                    return token.span.begin < position;
+                                  });
+    for (; token != tokens.end() && token->span.begin < end; ++token)
+      if (token->kind == TokenKind::Symbol && token->text == text) {
+        positions.insert(token->span.begin);
+        break;
+      }
+  };
+  std::function<void(const Node &)> node;
+  std::function<void(const TypeSyntax &)> type;
+  auto arguments = [&](const std::vector<GenericArgument> &arguments) {
+    for (const auto &argument : arguments) {
+      if (argument.type)
+        type(*argument.type);
+      if (argument.value)
+        node(*argument.value);
+    }
+  };
+  type = [&](const TypeSyntax &syntax) {
+    if (syntax.nested)
+      type(*syntax.nested);
+    for (const auto &element : syntax.elements)
+      type(element);
+    arguments(syntax.arguments);
+    if (syntax.countExpression)
+      node(*syntax.countExpression);
+    if (syntax.callable) {
+      for (const auto &parameter : syntax.callable->parameters)
+        type(parameter.annotation);
+      type(syntax.callable->result);
+      type(syntax.callable->error);
+    }
+  };
+  node = [&](const Node &value) {
+    if (value.kind == Kind::Binary && value.children.size() == 2 &&
+        (value.text == "<" || value.text == ">" || value.text == ">>"))
+      mark(value.children[0]->span.end, value.children[1]->span.begin,
+           value.text, hints.binaryAngles);
+    if (value.kind == Kind::Match && !value.children.empty())
+      mark(value.children[0]->span.end, value.span.end, "{", hints.matchBraces);
+    type(value.annotation);
+    type(value.error);
+    for (const auto &parameter : value.parameters)
+      type(parameter.annotation);
+    arguments(value.genericArguments);
+    arguments(value.ownerGenericArguments);
+    for (const auto &child : value.children)
+      node(*child);
+  };
+  auto parameters = [&](const std::vector<Parameter> &parameters) {
+    for (const auto &parameter : parameters) {
+      type(parameter.annotation);
+      if (parameter.defaultValue.get())
+        node(*parameter.defaultValue);
+    }
+  };
+  auto generics = [&](const auto &owner) {
+    for (const auto &parameter : owner.genericParameters) {
+      type(parameter.annotation);
+      type(parameter.defaultType);
+      if (parameter.defaultValue)
+        node(*parameter.defaultValue);
+      for (const auto &bound : parameter.bounds)
+        type(bound);
+    }
+    for (const auto &constraint : owner.constraints) {
+      type(constraint.subject);
+      for (const auto &bound : constraint.bounds)
+        type(bound);
+      if (constraint.equality)
+        type(*constraint.equality);
+    }
+  };
+  auto associated = [&](const auto &owner) {
+    for (const auto &item : owner.associated) {
+      type(item.annotation);
+      type(item.value);
+      generics(item);
+      for (const auto &bound : item.bounds)
+        type(bound);
+      if (item.constantValue)
+        node(*item.constantValue);
+    }
+  };
+  for (const auto &function : tree.functions) {
+    parameters(function.parameters);
+    type(function.annotation);
+    type(function.error);
+    generics(function);
+    if (function.body.get())
+      node(*function.body);
+  }
+  for (const auto &item : tree.statics) {
+    type(item.annotation);
+    if (item.initializer.get())
+      node(*item.initializer);
+  }
+  for (const auto &product : tree.products) {
+    parameters(product.fields);
+    for (const auto &variant : product.variants) {
+      parameters(variant.fields);
+      if (variant.discriminant)
+        node(*variant.discriminant);
+    }
+    generics(product);
+    associated(product);
+    for (const auto &bound : product.interfaces)
+      type(bound);
+  }
+  for (const auto &alias : tree.aliases) {
+    type(alias.target);
+    generics(alias);
+  }
+  for (const auto &implementation : tree.implementations) {
+    type(implementation.target);
+    type(implementation.interface);
+    generics(implementation);
+    associated(implementation);
+  }
+  for (const auto &interface : tree.interfaces) {
+    generics(interface);
+    associated(interface);
+    for (const auto &bound : interface.superinterfaces)
+      type(bound);
+  }
+  return hints;
+}
 
 std::string tokenText(const Source &source, const Token &token) {
   auto text =
@@ -48,8 +193,8 @@ std::vector<Line> split(const Source &source,
       spaced = false;
       gap.clear();
     } else {
-      lines.back().push_back(
-          {token.kind, tokenText(source, token), spaced, gap});
+      lines.back().push_back({token.kind, tokenText(source, token), spaced, gap,
+                              token.span.begin});
       spaced = false;
       gap.clear();
     }
@@ -149,15 +294,20 @@ std::string gapBefore(const Piece &previous, const Piece &current,
 
 // Whether `first` continues the statement of the preceding line: a member
 // access starting the line or an operator ending the previous one.
-bool continued(const Line &previous, const Piece &first) {
+bool continued(const Line &previous, const Piece &first, bool matchBody,
+               const LayoutHints &hints) {
   if (oneOf(first, {".", "?."}))
     return true;
   for (auto piece = previous.rbegin(); piece != previous.rend(); ++piece) {
     if (piece->kind == TokenKind::Comment)
       continue;
-    return binaryPrecedence(piece->text) > 0 ||
+    bool angle = oneOf(*piece, {"<", ">", ">>"});
+    return (binaryPrecedence(piece->text) > 0 &&
+            (!angle || !hints.complete ||
+             hints.binaryAngles.contains(piece->offset))) ||
            oneOf(*piece, {"=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
-                          "<<=", ">>=", "=>", "->", ","});
+                          "<<=", ">>=", "=>", "->"}) ||
+           (symbol(*piece, ",") && !matchBody);
   }
   return false;
 }
@@ -189,8 +339,9 @@ bool binaryBoundary(const std::vector<Token> &tokens, std::size_t index) {
 std::string layout(const Source &source, const std::vector<Token> &tokens) {
   struct Open {
     std::size_t indent, line;
-    bool brace, macro, items;
+    bool brace, macro, items, matchBody;
   };
+  auto hints = layoutHints(source, tokens);
   auto lines = split(source, tokens);
   std::vector<Open> stack;
   std::string out;
@@ -217,7 +368,8 @@ std::string layout(const Source &source, const std::vector<Token> &tokens) {
     else {
       indent = stack.empty() ? 0 : stack.back().indent + 1;
       if (n && !lines[n - 1].empty() && (stack.empty() || stack.back().brace) &&
-          continued(lines[n - 1], first))
+          continued(lines[n - 1], first,
+                    !stack.empty() && stack.back().matchBody, hints))
         ++indent;
     }
     out.append(indent * indentWidth, ' ');
@@ -252,7 +404,9 @@ std::string layout(const Source &source, const std::vector<Token> &tokens) {
                      line[k - 1].kind == TokenKind::Word;
         macros += macro;
         bool items = piece.text == "{" && leadingKeyword(line) == "module";
-        stack.push_back({entry, n, piece.text == "{", macro, items});
+        bool matchBody =
+            piece.text == "{" && hints.matchBraces.contains(piece.offset);
+        stack.push_back({entry, n, piece.text == "{", macro, items, matchBody});
       } else if (oneOf(piece, {")", "]", "}"}) && !stack.empty()) {
         macros -= stack.back().macro;
         stack.pop_back();

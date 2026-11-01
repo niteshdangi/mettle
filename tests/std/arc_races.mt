@@ -50,7 +50,7 @@ fn main(): i32 {
   if !observer.ptr_eq(duplicate) || observer.weak_count() != 2usize { return 4 }
   discard(take owner)
   discard(take retained)
-  if observer.strong_count() != 0usize || observer.weak_count() != 2usize { return 5 }
+  if observer.strong_count() != 0usize || observer.weak_count() != 0usize { return 5 }
   match observer.upgrade() { present(_) => { return 6 }, none => {} }
 
   let drops = arc.new(core.sync.atomic.AtomicUsize.new(0usize))

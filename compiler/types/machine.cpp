@@ -6,6 +6,43 @@
 #include <set>
 
 namespace mettle {
+bool constantFloatMethod(std::string_view name) {
+  constexpr std::string_view names[]{"abs",
+                                     "ceil",
+                                     "clamp",
+                                     "copysign",
+                                     "floor",
+                                     "fract",
+                                     "from_be_bytes",
+                                     "from_bits",
+                                     "from_le_bytes",
+                                     "from_ne_bytes",
+                                     "is_finite",
+                                     "is_infinite",
+                                     "is_nan",
+                                     "is_normal",
+                                     "is_sign_negative",
+                                     "is_sign_positive",
+                                     "is_subnormal",
+                                     "max",
+                                     "midpoint",
+                                     "min",
+                                     "mul_add",
+                                     "next_down",
+                                     "next_up",
+                                     "recip",
+                                     "round",
+                                     "round_ties_even",
+                                     "signum",
+                                     "to_be_bytes",
+                                     "to_bits",
+                                     "to_degrees",
+                                     "to_le_bytes",
+                                     "to_ne_bytes",
+                                     "to_radians",
+                                     "trunc"};
+  return std::find(std::begin(names), std::end(names), name) != std::end(names);
+}
 bool containsVarArgs(const TypeStore &types, Type type) {
   std::set<Type> visited;
   std::function<bool(Type)> visit = [&](Type current) {
@@ -554,7 +591,7 @@ machineSignature(const TypeStore &types, std::string_view operation,
   if (operation == "size_of" || operation == "align_of" ||
       operation == "needs_drop" || operation == "type_id") {
     if (!operands.empty() || !types.contains(argument) ||
-        !types.isSized(argument))
+        (operation != "type_id" && !types.isSized(argument)))
       return std::nullopt;
     return signature(operation == "needs_drop" ? Type::Bool
                      : operation == "type_id"  ? Type::U64
@@ -616,6 +653,10 @@ machineSignature(const TypeStore &types, std::string_view operation,
     if (method == "checked_cast")
       return operands.size() == 1 && isInteger(argument)
                  ? signature(argument, Shape::Optional)
+                 : std::nullopt;
+    if (method == "to_int_unchecked")
+      return operands.size() == 1 && isFloating(self) && isInteger(argument)
+                 ? signature(argument, Shape::Value, true)
                  : std::nullopt;
     bool toBytes = method == "to_be_bytes" || method == "to_le_bytes" ||
                    method == "to_ne_bytes";

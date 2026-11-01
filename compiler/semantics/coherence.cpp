@@ -210,6 +210,13 @@ bool Solver::constraints(const Implementation &implementation,
       continue;
     }
     const auto &declaration = types.parameter(parameter);
+    // Substituting an array length or field type cannot make a fixed
+    // non-callable outer shape callable.
+    if (potential && declaration.callableConstraint != Type::Unknown &&
+        !types.isCallable(actual) && !types.isParameter(actual) &&
+        !types.isProjection(actual) && !types.isOpaque(actual) &&
+        !types.isErased(actual))
+      return false;
     if (!potential || !types.isSymbolic(actual)) {
       if ((declaration.copyRequested && !types.isCopy(actual)) ||
           (declaration.sized && !types.isSized(actual)))
@@ -352,9 +359,30 @@ Solver::applicable(const Implementation &implementation, Type self, Span span,
 
 bool Solver::someImplementationCouldApply(Type subject, Type interfaceType) {
   auto declaration = types.erased(interfaceType).declaration;
-  for (auto position : candidatesFor(declaration))
-    if (match(database.implementations[position].target, subject, true))
+  auto key = std::pair(subject, interfaceType);
+  // Recursive requirements cannot establish that two implementations are
+  // disjoint.
+  if (!active.insert(key).second)
+    return true;
+  struct PotentialScope {
+    std::set<std::pair<Type, Type>> &active;
+    std::pair<Type, Type> key;
+    ~PotentialScope() { active.erase(key); }
+  } scope{active, key};
+  if (active.size() >= limits::typeDepth) {
+    if (!limitReported) {
+      diagnostics.error("limit", database.definitions[declaration].span,
+                        "interface coherence nesting limit exceeded");
+      limitReported = true;
+    }
+    return true;
+  }
+  for (auto position : candidatesFor(declaration)) {
+    const auto &candidate = database.implementations[position];
+    auto bindings = match(candidate.target, subject, true);
+    if (bindings && constraints(candidate, *bindings, candidate.span, {}, true))
       return true;
+  }
   return false;
 }
 

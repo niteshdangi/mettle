@@ -332,7 +332,7 @@ Module::Implementation Parser::implementationDeclaration() {
   while (!is("}") && peek().kind != TokenKind::End) {
     auto metadata = attributes();
     auto visible = visibility();
-    if (is("type") || is("const")) {
+    if (is("type") || (is("const") && peek(1).text != "fn")) {
       if (!metadata.empty())
         feature("attributes on associated items are not implemented");
       auto associated = associatedDeclaration();

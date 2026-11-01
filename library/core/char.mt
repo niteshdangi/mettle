@@ -19,17 +19,6 @@ pub fn from_digit(value: u32, radix: u32): char? {
     from_u32(scalar)
 }
 
-pub type CharUtf16 { first: u16; second: u16; length: usize; position: usize }
-extend CharUtf16 implements Iterator {
-    type Item = u16
-    mut fn next(): u16? {
-        if self.position >= self.length { return none }
-        let value = if self.position == 0usize { self.first } else { self.second }
-        self.position += 1usize
-        present(value)
-    }
-}
-
 pub type Escape { values: [char; 10]; length: usize; position: usize }
 extend Escape implements Iterator {
     type Item = char
@@ -117,6 +106,11 @@ extend char {
         value >= 0x21u32 && value <= 0x7eu32
     }
 
+    pub fn is_ascii_whitespace(): bool {
+        let value = self as u32
+        value >= 0x09u32 && value <= 0x0du32 || value == 0x20u32
+    }
+
     pub fn is_ascii_hexdigit(): bool {
         let value = self as u32
         value >= 0x30u32 && value <= 0x39u32 ||
@@ -174,19 +168,21 @@ extend char {
         if (self as u32) < 0x10000u32 { 1usize } else { 2usize }
     }
 
-    pub fn encode_utf16(): CharUtf16 {
+    pub fn encode_utf16(buffer: mut [u16]): mut [u16] from buffer {
+        let length = self.len_utf16()
+        if buffer.len() < length {
+            super.panic.panic("UTF-16 buffer is too small")
+        }
         let value = self as u32
-        if value < 0x10000u32 {
-            CharUtf16(value as u16, 0u16, 1usize, 0usize)
+        if length == 1usize {
+            buffer[0usize] = value as u16
         } else {
             let scalar = value - 0x10000u32
-            CharUtf16(
-                (0xd800u32 + (scalar >> 10u32)) as u16,
-                (0xdc00u32 + (scalar & 0x3ffu32)) as u16,
-                2usize,
-                0usize
-            )
+            buffer[0usize] = (0xd800u32 + (scalar >> 10u32)) as u16
+            buffer[1usize] = (0xdc00u32 + (scalar & 0x3ffu32)) as u16
         }
+        let (encoded, _) = buffer.split_at_mut(length)
+        encoded
     }
 
     pub fn to_ascii_lowercase(): char {

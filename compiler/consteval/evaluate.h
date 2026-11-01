@@ -16,7 +16,7 @@ namespace mettle::evaluation {
 // A compile-time value. Integers carry 128-bit magnitudes; `type` is Unknown
 // for an unsuffixed literal that has not met a typed operand yet.
 struct Value {
-  enum class Kind { Integer, Bool, Char, Unit, Tuple, Array };
+  enum class Kind { Integer, Floating, Enum, Bool, Char, Unit, Tuple, Array };
   Kind kind = Kind::Unit;
   Type type = Type::Unit;
   NumericLiteral number{};
@@ -42,11 +42,21 @@ public:
   virtual void report(const std::string &phase, Span span,
                       const std::string &message) = 0;
   virtual Lookup lookup(const Node &name) = 0;
+  virtual Type resolveType(const TypeSyntax &type, Span) {
+    return builtinType(type.name);
+  }
+  virtual bool enumeration(Type) { return false; }
+  virtual Lookup variant(Type, std::string_view, Span) { return {}; }
+  virtual Lookup floatingValue(Type, std::string_view, Span) { return {}; }
+  virtual Lookup method(Type, const Node &) { return {}; }
 };
 
 struct Options {
   // 16, 32 or 64; 0 selects 64. Selects usize/isize widths.
   unsigned pointerBits = 64;
+  bool littleEndian = true;
+  NumericEvaluator numericEvaluator = nullptr;
+  bool unsafeContext = false;
   std::size_t stepBudget = limits::constEvalSteps;
   unsigned callDepth = limits::constEvalDepth;
 };

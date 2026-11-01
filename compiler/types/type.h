@@ -67,8 +67,17 @@ struct NumericLiteral {
   std::array<std::uint64_t, 2> magnitude{};
   std::string floating{};
   bool negative = false;
+  // Exact IEEE bits preserve signed zero and NaN payloads without a text
+  // round-trip. Mutually exclusive with floating text and integer magnitude.
+  std::optional<std::uint64_t> floatingBits{};
   bool operator==(const NumericLiteral &) const = default;
 };
+struct NumericConstant {
+  Type type = Type::Unknown;
+  NumericLiteral literal{};
+};
+using NumericEvaluator = std::optional<NumericConstant> (*)(
+    std::string_view, Type, std::span<const NumericConstant>);
 struct StaticConstant {
   // Repeat is one element constant repeated over a compact array.
   enum class Kind { Scalar, Aggregate, Address, Function, Text, Repeat };
@@ -101,6 +110,7 @@ NumericLiteral evaluateIntegerConstant(std::string_view operation, Type type,
                                        const NumericLiteral &right,
                                        unsigned pointerBits);
 bool validFloatingLiteral(std::string_view spelling);
+bool validFloatingConstant(const NumericLiteral &literal, Type type);
 bool scalarCastAllowed(Type source, Type target);
 struct FloatingPolicy {
   bool reassociate = false, contract = false, noNaNs = false;

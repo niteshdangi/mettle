@@ -14,14 +14,16 @@ fn main(): i32 {
         present(word) => { if word != "a\u{e9}" { return 1 } },
         none => { return 1 }
     }
+    match words.next_back() {
+        present(word) => { if word != "c" { return 3 } },
+        none => { return 3 }
+    }
     match words.next() {
         present(word) => { if word != "b" { return 2 } },
         none => { return 2 }
     }
-    match words.next() {
-        present(word) => { if word != "c" { return 3 } },
-        none => { return 3 }
-    }
+    match words.next_back() { present(_) => { return 4 }, none => {} }
+    match words.next() { present(_) => { return 4 }, none => {} }
     match words.next() { present(_) => { return 4 }, none => {} }
 
     var ascii_words = " \tleft\u{2003}right \n".split_ascii_whitespace()
@@ -29,7 +31,11 @@ fn main(): i32 {
         present(word) => { if word != "left\u{2003}right" { return 5 } },
         none => { return 5 }
     }
+    match ascii_words.next_back() { present(_) => { return 6 }, none => {} }
     match ascii_words.next() { present(_) => { return 6 }, none => {} }
+    var whitespace_only = "\u{2003} \t".split_whitespace()
+    match whitespace_only.next_back() { present(_) => { return 141 }, none => {} }
+    match whitespace_only.next() { present(_) => { return 141 }, none => {} }
 
     var limited = "a,b,c".splitn(2usize, ",")
     match limited.next() {
@@ -143,6 +149,10 @@ fn main(): i32 {
     if !'z'.is_ascii_alphanumeric() || !'7'.is_ascii_digit() ||
         !'~'.is_ascii_graphic() || !'a'.is_ascii_lowercase() ||
         !'Z'.is_ascii_uppercase() || !' '.is_ascii() || !' '.is_whitespace() { return 139 }
+    if !' '.is_ascii_whitespace() || !'\t'.is_ascii_whitespace() ||
+        !'\r'.is_ascii_whitespace() || '\u{2003}'.is_ascii_whitespace() {
+        return 150
+    }
     if !'\u{7f}'.is_control() { return 140 }
     match 'Z'.to_digit(36u32) {
         present(value) => { if value != 35u32 { return 26 } },
@@ -155,9 +165,23 @@ fn main(): i32 {
     if 'é'.len_utf8() != 2usize || 'é'.len_utf16() != 1usize ||
         '🦀'.len_utf8() != 4usize || '🦀'.len_utf16() != 2usize { return 28 }
     if !'7'.is_digit(8u32) || '9'.is_digit(8u32) { return 125 }
-    var char_utf16 = '🦀'.encode_utf16()
-    match char_utf16.next() { present(unit) => { if unit != 0xd83eu16 { return 51 } }, none => { return 51 } }
-    match char_utf16.next() { present(unit) => { if unit != 0xdd80u16 { return 52 } }, none => { return 52 } }
+    var char_utf16_buffer = [0u16; 3]
+    {
+        let encoded_char = '🦀'.encode_utf16(mut char_utf16_buffer)
+        if encoded_char.len() != 2usize || encoded_char[0usize] != 0xd83eu16 ||
+            encoded_char[1usize] != 0xdd80u16 { return 51 }
+        encoded_char[0usize] = 0xd83du16
+    }
+    if char_utf16_buffer[0usize] != 0xd83du16 ||
+        char_utf16_buffer[2usize] != 0u16 { return 52 }
+    var bmp_utf16_buffer = [0xffffu16; 2]
+    {
+        let encoded_bmp = 'A'.encode_utf16(mut bmp_utf16_buffer)
+        if encoded_bmp.len() != 1usize || encoded_bmp[0usize] != 0x41u16 {
+            return 153
+        }
+    }
+    if bmp_utf16_buffer[1usize] != 0xffffu16 { return 154 }
     if '🦀'.to_ascii_lowercase() != '🦀' || 'z'.to_ascii_uppercase() != 'Z' ||
         !'A'.eq_ignore_ascii_case('a') { return 53 }
     var mutable_char = 'A'
@@ -193,8 +217,21 @@ fn main(): i32 {
     match default_escape.next() { present(c) => { if c != '\\' { return 127 } }, none => { return 127 } }
     var utf16 = "a🦀".encode_utf16()
     match utf16.next() { present(unit) => { if unit != 0x61u16 { return 59 } }, none => { return 59 } }
-    match utf16.next() { present(unit) => { if unit != 0xd83eu16 { return 60 } }, none => { return 60 } }
-    match utf16.next() { present(unit) => { if unit != 0xdd80u16 { return 61 } }, none => { return 61 } }
+    match utf16.next_back() { present(unit) => { if unit != 0xdd80u16 { return 60 } }, none => { return 60 } }
+    match utf16.next_back() { present(unit) => { if unit != 0xd83eu16 { return 61 } }, none => { return 61 } }
+    match utf16.next() { present(_) => { return 61 }, none => {} }
+    var utf16_pair = "🦀".encode_utf16()
+    match utf16_pair.next() { present(unit) => { if unit != 0xd83eu16 { return 142 } }, none => { return 142 } }
+    match utf16_pair.next_back() { present(unit) => { if unit != 0xdd80u16 { return 143 } }, none => { return 143 } }
+    match utf16_pair.next_back() { present(_) => { return 144 }, none => {} }
+    match utf16_pair.next() { present(_) => { return 144 }, none => {} }
+    var utf16_edges = "🦀🦀".encode_utf16()
+    match utf16_edges.next() { present(unit) => { if unit != 0xd83eu16 { return 145 } }, none => { return 145 } }
+    match utf16_edges.next_back() { present(unit) => { if unit != 0xdd80u16 { return 146 } }, none => { return 146 } }
+    match utf16_edges.next() { present(unit) => { if unit != 0xdd80u16 { return 147 } }, none => { return 147 } }
+    match utf16_edges.next_back() { present(unit) => { if unit != 0xd83eu16 { return 148 } }, none => { return 148 } }
+    match utf16_edges.next() { present(_) => { return 149 }, none => {} }
+    match utf16_edges.next_back() { present(_) => { return 149 }, none => {} }
     let words_source = string.from_text("alpha beta")
     var string_words = words_source.split_whitespace()
     match string_words.next() { present(word) => { if word != "alpha" { return 128 } }, none => { return 128 } }

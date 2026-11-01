@@ -394,6 +394,11 @@ Type TypeStore::regionalProduct(Type origin, std::vector<TypeField> fields,
       record.kind == AggregateKind::Ref || record.kind == AggregateKind::RefMut)
     return structural(record.kind,
                       {fields.at(cellPayloadField(record.kind)).type});
+  if (record.kind == AggregateKind::Tuple) {
+    record.components.clear();
+    for (const auto &field : fields)
+      record.components.push_back(field.type);
+  }
   while (product(origin).regionOrigin != Type::Unknown)
     origin = product(origin).regionOrigin;
   syncLookup();

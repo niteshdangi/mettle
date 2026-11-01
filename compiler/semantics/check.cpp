@@ -726,14 +726,32 @@ std::optional<CheckedModule> Checker::run() {
       }
     }
     auto resultParameters = checked.types->typeParameters(facts(f).abiResult);
+    std::map<Type, std::set<Type>> associatedCarriers;
+    for (const auto &[subject, bound] : facts(f).interfaceBounds) {
+      if (!checked.types->isErased(bound))
+        continue;
+      auto subjects = checked.types->typeParameters(subject);
+      for (const auto &binding : checked.types->erased(bound).associated)
+        for (auto parameter : checked.types->typeParameters(binding.argument))
+          for (auto carrier : subjects)
+            if (checked.types->isParameter(carrier))
+              associatedCarriers[parameter].insert(carrier);
+    }
+    // Associated results carry views through their implementing input, too.
+    std::set<Type> carriers(resultParameters.begin(), resultParameters.end());
+    for (std::size_t p = 0; p < resultParameters.size(); ++p)
+      if (auto found = associatedCarriers.find(resultParameters[p]);
+          found != associatedCarriers.end())
+        for (auto carrier : found->second)
+          if (carriers.insert(carrier).second)
+            resultParameters.push_back(carrier);
     for (std::size_t p = 0;
          p < f.parameters.size() && p < facts(f).locals.size(); ++p) {
       auto parameters = checked.types->typeParameters(facts(f).locals[p].type);
       bool transported = false;
       for (auto parameter : parameters)
         if (checked.types->isParameter(parameter) &&
-            std::find(resultParameters.begin(), resultParameters.end(),
-                      parameter) != resultParameters.end())
+            carriers.contains(parameter))
           transported = true;
       if (transported)
         facts(f).genericResultSources.push_back(p);
@@ -819,22 +837,23 @@ std::optional<CheckedModule> Checker::run() {
   return std::move(checked);
 }
 std::optional<CheckedModule> check(Module module, Diagnostics &diagnostics,
-                                   bool requireEntry, TargetFacts target) {
+                                   bool requireEntry, TargetFacts target,
+                                   NumericEvaluator numericEvaluator) {
   if (!diagnostics.empty())
     return std::nullopt;
   auto symbols = resolution::resolve(module, diagnostics);
   return check(std::move(module), diagnostics, std::move(symbols), requireEntry,
-               std::move(target));
+               std::move(target), numericEvaluator);
 }
 std::optional<CheckedModule>
 check(Module module, Diagnostics &diagnostics,
       std::shared_ptr<const resolution::Resolution> symbols, bool requireEntry,
-      TargetFacts target) {
+      TargetFacts target, NumericEvaluator numericEvaluator) {
   if (!diagnostics.empty() || !symbols)
     return std::nullopt;
   try {
     return Checker(std::move(module), diagnostics, std::move(symbols),
-                   requireEntry, std::move(target))
+                   requireEntry, std::move(target), numericEvaluator)
         .run();
   } catch (const std::length_error &failure) {
     diagnostics.error("limit", {}, failure.what());

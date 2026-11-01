@@ -26,5 +26,6 @@ compile(const std::vector<Source> &sources, Diagnostics &diagnostics,
 std::optional<ir::VerifiedProgram>
 compile(Module module, Diagnostics &diagnostics, bool requireEntry = true,
         TargetFacts target = {}, const CheckedObserver &observe = {},
-        const PackageOwners &packageOwners = {});
+        const PackageOwners &packageOwners = {},
+        NumericEvaluator numericEvaluator = nullptr);
 } // namespace mettle::pipeline

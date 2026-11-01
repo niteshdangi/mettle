@@ -1,6 +1,7 @@
 #include "semantics/checker.h"
 #include "types/target.h"
 #include <algorithm>
+#include <array>
 
 namespace mettle {
 std::optional<Type> Checker::machineAnnotation(const TypeSyntax &syntax,
@@ -149,6 +150,13 @@ std::optional<int> Checker::machineValue(const Node &node) {
     }
   }
   auto type = builtinType(owner);
+  if (isFloating(type)) {
+    auto value = machineFloatingValue(type, member);
+    if (!value)
+      return std::nullopt;
+    facts(node).numeric = std::move(value->literal);
+    return inference.fresh(value->type);
+  }
   if (!isInteger(type) || (member != "MIN" && member != "MAX"))
     return std::nullopt;
   NumericLiteral literal;
@@ -170,5 +178,55 @@ std::optional<int> Checker::machineValue(const Node &node) {
   }
   facts(node).numeric = literal;
   return inference.fresh(type);
+}
+std::optional<NumericConstant>
+Checker::machineFloatingValue(Type type, std::string_view member) {
+  if (isFloating(type)) {
+    NumericLiteral literal;
+    Type valueType = type;
+    if (member == "MIN" || member == "MAX") {
+      literal.negative = member == "MIN";
+      literal.floating = type == Type::F32 ? "3.4028234663852886e38"
+                                           : "1.7976931348623157e308";
+      if (literal.negative)
+        literal.floating.insert(literal.floating.begin(), '-');
+    } else if (member == "EPSILON") {
+      literal.floating =
+          type == Type::F32 ? "1.1920928955078125e-7" : "2.220446049250313e-16";
+    } else if (member == "MIN_POSITIVE") {
+      literal.floating = type == Type::F32 ? "1.1754943508222875e-38"
+                                           : "2.2250738585072014e-308";
+    } else if (member == "NAN") {
+      literal.floating = "nan";
+    } else if (member == "INFINITY" || member == "NEG_INFINITY") {
+      literal.negative = member == "NEG_INFINITY";
+      literal.floating = literal.negative ? "-inf" : "inf";
+    } else {
+      struct Metadata {
+        std::string_view name;
+        Type type;
+        std::int32_t f32Value;
+        std::int32_t f64Value;
+      };
+      constexpr std::array values{
+          Metadata{"DIGITS", Type::U32, 6, 15},
+          Metadata{"MANTISSA_DIGITS", Type::U32, 24, 53},
+          Metadata{"RADIX", Type::U32, 2, 2},
+          Metadata{"MIN_EXP", Type::I32, -125, -1021},
+          Metadata{"MAX_EXP", Type::I32, 128, 1024},
+          Metadata{"MIN_10_EXP", Type::I32, -37, -307},
+          Metadata{"MAX_10_EXP", Type::I32, 38, 308}};
+      auto found =
+          std::find_if(values.begin(), values.end(),
+                       [&](const auto &value) { return value.name == member; });
+      if (found == values.end())
+        return std::nullopt;
+      valueType = found->type;
+      literal =
+          integerLiteral(type == Type::F32 ? found->f32Value : found->f64Value);
+    }
+    return NumericConstant{valueType, std::move(literal)};
+  }
+  return std::nullopt;
 }
 } // namespace mettle

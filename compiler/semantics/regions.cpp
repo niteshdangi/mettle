@@ -240,6 +240,19 @@ const RegionEnvironment &Checker::regionEnvironment() const {
       return found->second.environment;
   return emptyRegionEnvironment;
 }
+void Checker::commitRegionEnvironment(RegionEnvironment environment) {
+  if (!annotationRegionScopes.empty()) {
+    annotationRegionScopes.back().environment = std::move(environment);
+    return;
+  }
+  if (current)
+    if (auto found = functionRegionScopes.find(current);
+        found != functionRegionScopes.end()) {
+      found->second.environment = std::move(environment);
+      return;
+    }
+  emptyRegionEnvironment = std::move(environment);
+}
 RegionId Checker::annotationRegion(const TypeSyntax &syntax, Span span) {
   if (annotationRegionScopes.empty())
     return RegionId::Unspecified;
@@ -450,7 +463,8 @@ public:
       const std::unordered_map<const TypeSyntax *, Type> &annotations,
       std::vector<RegionSeed> seeds,
       std::function<Type(Type, std::span<const TypeBinding>, std::size_t, Span,
-                         const RegionEnvironment &)>
+                         const RegionEnvironment &,
+                         const std::function<Type(Type, Span)> &)>
           normalizeContract,
       std::function<Type(Type, Type, std::size_t, Span,
                          const RegionEnvironment &)>
@@ -486,7 +500,8 @@ private:
   const std::unordered_map<const TypeSyntax *, Type> &annotations;
   std::vector<RegionSeed> seeds;
   std::function<Type(Type, std::span<const TypeBinding>, std::size_t, Span,
-                     const RegionEnvironment &)>
+                     const RegionEnvironment &,
+                     const std::function<Type(Type, Span)> &)>
       normalizeContract;
   std::function<Type(Type, Type, std::size_t, Span, const RegionEnvironment &)>
       eraseContract;
@@ -518,6 +533,7 @@ private:
   };
   std::map<NominalKey, NominalRegion> nominalRegions;
   std::map<Type, Type> nominalPatterns;
+  std::map<Type, Type> callableContracts;
   const NodeFacts &facts(const Node &node) const { return nodes.at(&node); }
   Type originalType(const Node &node) const {
     if (facts(node).opaqueSource != Type::Unknown)
@@ -573,6 +589,9 @@ private:
   std::vector<RegionId> contained(Type type) const;
   void withinFlows(std::size_t index);
   Type signatureType(std::size_t index);
+  Type normalize(Type type, std::span<const TypeBinding> bindings,
+                 std::size_t function, Span span,
+                 const RegionEnvironment &environment);
   Type callableBound(Type type, RegionContext &context, Span span);
   void withinBounds(const std::vector<GenericParameter> &parameters,
                     const std::vector<GenericConstraint> &constraints,
@@ -828,12 +847,12 @@ Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
     }
     // `pinned heap T` keeps the owner syntax (and possibly its sources) one
     // level down.
-    const TypeSyntax *owner =
-        syntax.form == TypeForm::Owner ? &syntax
-        : syntax.form == TypeForm::Pinned && !syntax.elements.empty() &&
-                syntax.elements[0].form == TypeForm::Owner
-            ? &syntax.elements[0]
-            : nullptr;
+    const TypeSyntax *owner = syntax.form == TypeForm::Owner ? &syntax
+                              : syntax.form == TypeForm::Pinned &&
+                                      !syntax.elements.empty() &&
+                                      syntax.elements[0].form == TypeForm::Owner
+                                  ? &syntax.elements[0]
+                                  : nullptr;
     std::size_t argumentIndex = 0, typeIndex = 0;
     std::vector<Type> typeArguments;
     auto parameters = types.product(origin).genericParameters;
@@ -869,8 +888,7 @@ Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
                               erasedPayload ? bound : fallback, stored);
           if (erasedPayload && types.isErased(argument))
             argument = types.erasedBound(argument, bound);
-        }
-        else
+        } else
           argument = inferred(argument, store.inference(context.scope));
         nested.types[parameter.name] = argument;
         typeArguments.push_back(argument);
@@ -1242,8 +1260,12 @@ Type RegionPass::merge(Type left, Type right, Span span) {
     if (a.fields.size() == b.fields.size()) {
       for (std::size_t i = 0; i < a.fields.size(); ++i)
         a.fields[i].type = merge(a.fields[i].type, b.fields[i].type, span);
-      auto origin = a.regionOrigin == Type::Unknown ? left : a.regionOrigin;
-      return types.regionalProduct(origin, std::move(a.fields), {});
+      auto regions = a.regionArguments;
+      if (regions.size() == b.regionArguments.size())
+        for (std::size_t i = 0; i < regions.size(); ++i)
+          regions[i] = store.intersection({regions[i], b.regionArguments[i]});
+      return types.regionalProduct(left, std::move(a.fields),
+                                   std::move(regions));
     }
   }
   return left;
@@ -1360,8 +1382,8 @@ Type RegionPass::receiver(Type actual, RegionId &location,
                    inferredParameters, fixedParameters, span);
     auto descriptor = types.substitute(
         replace(signatureType(callee), substitution), typesBound);
-    descriptor = normalizeContract(descriptor, {}, currentFunction, span,
-                                   current->context.environment);
+    descriptor = normalize(descriptor, {}, currentFunction, span,
+                           current->context.environment);
     const auto call = types.callable(descriptor);
     auto formal = call.parameters[0].type;
     infer(actual, formal, bindings);
@@ -1974,14 +1996,34 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
         {functions[callee].genericParameters[i], facts(node).typeArguments[i]});
   std::set<Type> inferredParameters;
   std::set<Type> fixedParameters;
+  std::vector<const GenericParameter *> explicitParameters;
+  for (std::size_t i = declaration.implicitGenericParameters;
+       i < declaration.genericParameters.size(); ++i)
+    if (declaration.genericParameters[i].kind != GenericParameterKind::Region)
+      explicitParameters.push_back(&declaration.genericParameters[i]);
   std::size_t explicitIndex = 0;
   if (!operatorIndex && !node.children.empty())
     for (const auto &argument : node.children[0]->genericArguments) {
       if (!argument.region.empty())
         continue;
-      if (explicitIndex >= typeBindings.size())
-        break;
-      auto &binding = typeBindings[explicitIndex++];
+      auto found = typeBindings.end();
+      if (declaration.constructor) {
+        if (explicitIndex >= typeBindings.size())
+          break;
+        found = typeBindings.begin() + explicitIndex++;
+      } else {
+        if (explicitIndex >= explicitParameters.size())
+          break;
+        const auto &parameter = *explicitParameters[explicitIndex++];
+        found = std::find_if(typeBindings.begin(), typeBindings.end(),
+                             [&](const TypeBinding &binding) {
+                               return types.name(binding.parameter) ==
+                                      parameter.name;
+                             });
+      }
+      if (found == typeBindings.end())
+        continue;
+      auto &binding = *found;
       if (argument.type) {
         binding.argument =
             decorate(binding.argument, *argument.type, current->context,
@@ -2017,15 +2059,38 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
     inferArguments(formals[parameter], actual, typeBindings, inferredParameters,
                    fixedParameters, node.span);
   }
+  for (const auto &bound : facts(node).deferredInterfaceBounds) {
+    auto subject = types.substitute(bound.subject, typeBindings);
+    auto required = types.substitute(bound.interfaceType, typeBindings);
+    if (!types.isErased(required) || types.erased(required).associated.empty())
+      continue;
+    std::vector<interfaces::Obligation> assumptions;
+    for (const auto &[type, interface] : currentFacts->interfaceBounds)
+      assumptions.push_back({type, interface});
+    interfaces::Solver proof(types, interfaceData, diagnostics,
+                             std::move(assumptions),
+                             current->context.environment);
+    proof.setEqualities(currentFacts->genericEqualities);
+    auto implemented = proof.implementedInterface(subject, required, node.span);
+    if (!implemented)
+      continue;
+    const auto patterns = types.erased(bound.interfaceType).associated;
+    const auto actuals = types.erased(*implemented).associated;
+    for (const auto &pattern : patterns)
+      for (const auto &actual : actuals)
+        if (pattern.parameter == actual.parameter)
+          inferArguments(pattern.argument, actual.argument, typeBindings,
+                         inferredParameters, fixedParameters, node.span);
+  }
   for (auto &formal : formals)
     formal = types.substitute(formal, typeBindings);
   result = types.substitute(result, typeBindings);
   {
     auto descriptor = types.callable(types.substitute(
         replace(signatureType(callee), substitution), typeBindings));
-    auto normalized = types.callable(normalizeContract(
-        types.callableType(std::move(descriptor)), {}, currentFunction,
-        node.span, current->context.environment));
+    auto normalized = types.callable(
+        normalize(types.callableType(std::move(descriptor)), {},
+                  currentFunction, node.span, current->context.environment));
     for (std::size_t i = 0;
          i < formals.size() && i < normalized.parameters.size(); ++i)
       formals[i] = normalized.parameters[i].type;
@@ -2097,9 +2162,9 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
           types.substitute(decorate(equality.argument, *constraint.equality,
                                     declarationContext, node.span),
                            typeBindings);
-      auto normalized = types.callable(normalizeContract(
-          types.callableType(std::move(probe)), {}, currentFunction, node.span,
-          current->context.environment));
+      auto normalized = types.callable(
+          normalize(types.callableType(std::move(probe)), {}, currentFunction,
+                    node.span, current->context.environment));
       infer(normalized.parameters[0].type, normalized.result, bindings);
     }
   }
@@ -2157,6 +2222,26 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
   }
   withinBounds(declaration.genericParameters, declaration.constraints,
                typeBindings, declarationContext, bindings, node.span);
+  for (const auto &bound : facts(node).deferredInterfaceBounds) {
+    auto subject =
+        replace(types.substitute(bound.subject, typeBindings), bindings);
+    auto required = decorate(bound.interfaceType, bound.syntax,
+                             declarationContext, node.span);
+    required = replace(types.substitute(required, typeBindings), bindings);
+    std::vector<interfaces::Obligation> assumptions;
+    for (const auto &[type, interface] : currentFacts->interfaceBounds)
+      assumptions.push_back({type, interface});
+    interfaces::Solver proof(types, interfaceData, diagnostics,
+                             std::move(assumptions),
+                             current->context.environment);
+    proof.setEqualities(currentFacts->genericEqualities);
+    if (!proof.prove({subject, required}, node.span, false))
+      error(node.span,
+            "interface bound does not hold after region inference: " +
+                displayType(types, subject) + " requires " +
+                displayType(types, required));
+  }
+  nodes.at(&node).deferredInterfaceBoundsChecked = true;
   if (receiverCall && !formals.empty()) {
     auto actual = *methodReceiver;
     while (!facts(node).receiverPlan && types.isView(actual) &&
@@ -2722,6 +2807,18 @@ Type RegionPass::expression(const Node &node) {
   }
   if (facts(node).unsizedSource != Type::Unknown)
     type = unsized(type, facts(node).rebuiltType);
+  if ((node.kind == Kind::Name || node.kind == Kind::Field) &&
+      facts(node).variant >= 0 && types.isProduct(type)) {
+    auto record = types.product(type);
+    auto variant = static_cast<std::size_t>(facts(node).variant);
+    if (variant < record.variants.size() &&
+        record.variants[variant].fields.empty()) {
+      for (auto &field : record.fields)
+        if (field.name != "<tag>")
+          field.type = Type::Never;
+      type = types.regionalProduct(type, std::move(record.fields), {});
+    }
+  }
   if (facts(node).reborrowSource != Type::Unknown && types.isView(type)) {
     auto source = types.view(type);
     type = types.viewType(source.payload, ParameterMode::Read, source.region);
@@ -2736,8 +2833,8 @@ Type RegionPass::expression(const Node &node) {
         !types.product(target).genericArguments.empty()) {
       auto sourcePayload = types.product(type).genericArguments.front();
       auto targetPayload = types.product(target).genericArguments.front();
-      auto tail = types.erasedTail(types.eraseRegions(sourcePayload),
-                                   targetPayload);
+      auto tail =
+          types.erasedTail(types.eraseRegions(sourcePayload), targetPayload);
       if (types.isErased(targetPayload) && tail &&
           tail->second == targetPayload) {
         // The erased payload is bounded by every borrow it hides; the
@@ -2889,22 +2986,25 @@ void RegionPass::resultSources(std::size_t index) {
         }
       }
     }
-    for (auto p : carried)
-      if (!borrowed.contains(p) && !named.contains(p))
-        facts.resultContents.push_back(p);
   } else if (signatures[index].strict || namesRegion(syntax.annotation)) {
     auto required = contained(signatures[index].result);
     auto errorRegions = contained(signatures[index].error);
     required.insert(required.end(), errorRegions.begin(), errorRegions.end());
     for (auto region : required)
       for (auto p : eligible) {
-        auto candidates = contained(signatures[index].parameters[p]);
-        candidates.push_back(signatures[index].backing[p]);
-        for (auto candidate : candidates)
+        for (auto candidate : contained(signatures[index].parameters[p]))
           if (solver.outlives(candidate, region,
                               signatures[index].context.environment) ==
-              RegionAnswer::Proven)
+              RegionAnswer::Proven) {
             add(p);
+            carried.insert(p);
+          }
+        if (solver.outlives(signatures[index].backing[p], region,
+                            signatures[index].context.environment) ==
+            RegionAnswer::Proven) {
+          add(p);
+          borrowed.insert(p);
+        }
       }
     if (facts.resultSources.empty() &&
         std::any_of(required.begin(), required.end(),
@@ -2920,6 +3020,9 @@ void RegionPass::resultSources(std::size_t index) {
   else
     diagnostics.error("ownership", syntax.span,
                       "borrowed result has no eligible input source");
+  for (auto p : carried)
+    if (!borrowed.contains(p) && !named.contains(p))
+      facts.resultContents.push_back(p);
 }
 std::vector<RegionId> RegionPass::contained(Type type) const {
   std::vector<RegionId> result;
@@ -2941,8 +3044,7 @@ std::vector<RegionId> RegionPass::contained(Type type) const {
         if (std::find(result.begin(), result.end(), region) == result.end())
           result.push_back(region);
       if (record.bound != RegionId::Unspecified &&
-          std::find(result.begin(), result.end(), record.bound) ==
-              result.end())
+          std::find(result.begin(), result.end(), record.bound) == result.end())
         result.push_back(record.bound);
       for (auto argument : record.arguments)
         self(self, argument);
@@ -3014,6 +3116,7 @@ void RegionPass::wellformed(Type type, Span span, bool indirect, bool tail,
         "unsized aggregate tails require metadata-bearing layout lowering");
   for (std::size_t i = 0; i < record.fields.size(); ++i) {
     auto allowedTail = (record.kind == AggregateKind::Product ||
+                        record.kind == AggregateKind::Tuple ||
                         record.kind == AggregateKind::Cell ||
                         record.kind == AggregateKind::RefCell) &&
                        i + 1 == record.fields.size();
@@ -3301,10 +3404,10 @@ void RegionPass::callableArguments(
         continue;
       }
       if (current) {
-        actual = normalizeContract(actual, {}, currentFunction, span,
-                                   caller.environment);
-        expected = normalizeContract(expected, {}, currentFunction, span,
-                                     caller.environment);
+        actual =
+            normalize(actual, {}, currentFunction, span, caller.environment);
+        expected =
+            normalize(expected, {}, currentFunction, span, caller.environment);
       }
       infer(actual, expected, bindings);
       auto answer = relations.coerce(actual, replace(expected, bindings),
@@ -3318,6 +3421,19 @@ void RegionPass::callableArguments(
               answer == RegionAnswer::Inconclusive);
     }
   }
+}
+Type RegionPass::normalize(Type type, std::span<const TypeBinding> bindings,
+                           std::size_t function, Span span,
+                           const RegionEnvironment &environment) {
+  return normalizeContract(type, bindings, function, span, environment,
+                           [&](Type parameter, Span location) {
+                             if (auto found = callableContracts.find(parameter);
+                                 found != callableContracts.end())
+                               return found->second;
+                             auto context = signatures[function].context;
+                             context.environment = environment;
+                             return callableBound(parameter, context, location);
+                           });
 }
 Type RegionPass::callableBound(Type type, RegionContext &context, Span span) {
   if (auto found = closureDescriptors.find(type.index());
@@ -3419,6 +3535,23 @@ void RegionPass::run() {
         context.types[parameter.name] = identity;
         context.arguments[identity] = identity;
       }
+    for (const auto &parameter : syntax.genericParameters) {
+      if (parameter.kind != GenericParameterKind::Type)
+        continue;
+      auto identity = context.types.at(parameter.name);
+      auto remember = [&](const TypeSyntax &bound) {
+        if (bound.form == TypeForm::Callable)
+          callableContracts[identity] =
+              decorate(types.parameter(identity).callableConstraint, bound,
+                       context, syntax.span);
+      };
+      for (const auto &bound : parameter.bounds)
+        remember(bound);
+      for (const auto &constraint : syntax.constraints)
+        if (constraint.subject.name == parameter.name)
+          for (const auto &bound : constraint.bounds)
+            remember(bound);
+    }
     rule.target = decorate(rule.target, syntax.target, context, syntax.span);
     // Associated values naming a region-parameterized type carry their region
     // arguments, so projections substitute family regions into them.
@@ -3720,6 +3853,11 @@ void RegionPass::run() {
         !module.functions[i].constructor)
       require(result, bodyResult, module.functions[i].body->span);
   }
+  for (const auto &[node, facts] : nodes)
+    if (!facts.deferredInterfaceBounds.empty() &&
+        !facts.deferredInterfaceBoundsChecked)
+      diagnostics.error("internal", node->span,
+                        "deferred interface bound was not region-checked");
   for (const auto &contract : contracts) {
     if (contract.implementation >= signatures.size() ||
         contract.declaration >= signatures.size()) {
@@ -3794,11 +3932,25 @@ void RegionPass::run() {
               arguments[argument++]);
         }
       requiredType = replace(requiredType, regions);
+      std::size_t typeArgument = 1;
+      for (const auto &supplied : syntax.interface.arguments) {
+        if (!supplied.region.empty())
+          continue;
+        if (supplied.type &&
+            typeArgument <
+                functions[contract.declaration].genericParameters.size())
+          for (auto &binding : bindings)
+            if (binding.parameter ==
+                functions[contract.declaration].genericParameters[typeArgument])
+              binding.argument = decorate(binding.argument, *supplied.type,
+                                          current->context, supplied.span);
+        ++typeArgument;
+      }
     }
-    require(normalizeContract(providedType, {}, contract.implementation,
-                              contract.span, current->context.environment),
-            normalizeContract(requiredType, bindings, contract.implementation,
-                              contract.span, current->context.environment),
+    require(normalize(providedType, {}, contract.implementation, contract.span,
+                      current->context.environment),
+            normalize(requiredType, bindings, contract.implementation,
+                      contract.span, current->context.environment),
             contract.span, true);
   }
 }
@@ -3869,11 +4021,19 @@ void Checker::checkRegions() {
       semanticRegionAnnotations, std::move(seeds),
       [&](Type signature, std::span<const TypeBinding> bindings,
           std::size_t implementation, Span span,
-          const RegionEnvironment &environment) {
+          const RegionEnvironment &environment,
+          const std::function<Type(Type, Span)> &callableContract) {
         auto *saved = current;
         auto *savedEnvironment = genericEnvironment;
         current = &module.functions[implementation];
         genericBindings(*current);
+        const auto annotationDepth = annotationRegionScopes.size();
+        annotationRegionScopes.push_back(functionRegions(*current));
+        struct AnnotationScope {
+          std::vector<AnnotationRegions> &scopes;
+          std::size_t depth;
+          ~AnnotationScope() { scopes.resize(depth); }
+        } annotationScope{annotationRegionScopes, annotationDepth};
         std::vector<TypeBinding> substitutions(bindings.begin(),
                                                bindings.end());
         // The implementation's own requirements keep their declared regions;
@@ -3942,6 +4102,27 @@ void Checker::checkRegions() {
         interfaces::Solver solver(*checked.types, *checked.interfaceData,
                                   diagnostics, std::move(assumptions),
                                   std::move(regions));
+        solver.setCallableProof([&](Type parameter, Type actual,
+                                    const std::vector<TypeBinding> &arguments,
+                                    std::span<const RegionBinding> bindings,
+                                    Span location) {
+          auto expected = checked.types->substituteRegions(
+              checked.types->substitute(callableContract(parameter, location),
+                                        arguments),
+              bindings);
+          expected = solver.normalize(expected, {}, location);
+          actual = solver.normalize(callableContract(actual, location), {},
+                                    location);
+          // Erased ABI/capability compatibility does not replace region proof.
+          if (!checked.types->satisfiesCallable(
+                  checked.types->eraseRegions(actual),
+                  checked.types->eraseRegions(expected)))
+            return false;
+          RegionSolver regions(checked.types->regions());
+          RegionTypeSolver contracts(*checked.types, regions);
+          return contracts.coerce(actual, expected, environment) ==
+                 RegionAnswer::Proven;
+        });
         for (auto &parameter : descriptor.parameters)
           parameter.type = solver.normalize(parameter.type, {}, span);
         descriptor.result = solver.normalize(descriptor.result, {}, span);

@@ -210,12 +210,31 @@ extend<T: Hash> [T] implements Hash {
         }
     }
 }
-extend<A: Hash, B: Hash> (A, B) implements Hash {
-    fn hash<H: Hasher>(state: mut H): Unit {
-        self.0.hash(mut state)
-        self.1.hash(mut state)
-    }
+// The final element may be unsized; the prefix list is comma-terminated so
+// the final type remains distinct even for one-element tuples.
+macro tuple_hash {
+    ($($prefix:ident => $prefix_field:literal,)* ; $last:ident => $last_field:literal) => {
+        extend<$($prefix: Hash,)* $last: Hash + unsized> ($($prefix,)* $last,) implements Hash {
+            fn hash<State: Hasher>(state: mut State): Unit {
+                $(self.$prefix_field.hash(mut state);)*
+                self.$last_field.hash(mut state)
+            }
+        }
+    };
 }
+
+tuple_hash!(; A => 0)
+tuple_hash!(A => 0, ; B => 1)
+tuple_hash!(A => 0, B => 1, ; C => 2)
+tuple_hash!(A => 0, B => 1, C => 2, ; D => 3)
+tuple_hash!(A => 0, B => 1, C => 2, D => 3, ; E => 4)
+tuple_hash!(A => 0, B => 1, C => 2, D => 3, E => 4, ; F => 5)
+tuple_hash!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, ; G => 6)
+tuple_hash!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, ; H => 7)
+tuple_hash!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, ; I => 8)
+tuple_hash!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, I => 8, ; J => 9)
+tuple_hash!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, I => 8, J => 9, ; K => 10)
+tuple_hash!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, I => 8, J => 9, K => 10, ; L => 11)
 extend<T: Hash> T? implements Hash {
     fn hash<H: Hasher>(state: mut H): Unit {
         match self {

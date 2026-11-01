@@ -1,11 +1,20 @@
+import package.core.borrow.{AsMut, AsRef, Borrow, BorrowMut}
 import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import package.core.convert.From
+import package.core.error.Error
 import package.core.fmt
 import package.core.hash.{Hash, Hasher}
+import package.core.iter.{BidirectionalIterator, ExactSizeIterator, FusedIterator}
+import package.core.iter.{FromItems, Iterable, Iterator, MutableIterable, OwnedIterable}
 import package.core.ops.{Deref, DerefMut}
 import package.core.future.{Future, Context, Poll}
-import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, layout_of_val, free_block, handle_alloc_error}
+import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, layout_of_val, layout_array, layout_unchecked, free_block, handle_alloc_error}
 import package.core.clone.Clone
-import package.core.slice.drop_values
+import package.core.default.Default
+import package.core.slice.{SliceIter, SliceIterMut, drop_values}
+import package.core.text.Text
+import super.vec.slice_ptr_mut
+import super.vec.slice_ptr
 
 // Unique owner of one heap value, tied to the allocator that produced it.
 pub type Box<T: unsized, A: Allocator = super.alloc.Global> {
@@ -14,6 +23,24 @@ pub type Box<T: unsized, A: Allocator = super.alloc.Global> {
     drop {
         let _free = unsafe { free_block(self.p.cast<u8>(), layout_of_val(self.get()), core.ptr.from_mut(self.a)) }
         unsafe { core.ptr.drop_in_place(self.p) }
+    }
+}
+
+// Owns the exact Box<[T]> allocation. Values in [front, back) remain
+// initialized and iterator-owned; moved-out elements are outside that range.
+pub type BoxSliceIntoIter<T, A: Allocator = Global> {
+    p: ptr<mut T>
+    front: usize
+    back: usize
+    layout: Layout
+    a: A
+    drop {
+        let _free = unsafe { free_block(self.p.cast<u8>(), self.layout, core.ptr.from_mut(self.a)) }
+        if self.front < self.back {
+            // The guard advances before each destructor, so unwinding cannot
+            // revisit an element; `_free` releases the allocation afterward.
+            unsafe { drop_values(self.p.add(self.front), self.back - self.front) }
+        }
     }
 }
 
@@ -34,6 +61,209 @@ pub fn new_in<T, A: Allocator>(value: take T, allocator: take A): Box<T, A> {
 
 pub fn try_new<T>(value: take T): Box<T> throws AllocError { try try_new_in(value, Global()) }
 pub fn new<T>(value: take T): Box<T> { new_in(value, Global()) }
+
+fn uninit_slice_layout<T>(len: usize): Layout throws AllocError {
+    let result = capture layout_array<core.mem.MaybeUninit<T>>(len)
+    match take result {
+        success(layout) => layout,
+        failure(error) => throw AllocError(error.size, error.align)
+    }
+}
+
+fn try_new_slice_in<T, A: Allocator>(
+    len: usize,
+    allocator: take A,
+    zeroed: bool
+): Box<[core.mem.MaybeUninit<T>], A> throws AllocError {
+    var a = allocator
+    let layout = try uninit_slice_layout<T>(len)
+    let raw = try a.allocate(layout)
+    if zeroed && layout.size() != 0usize {
+        // `raw` is writable for exactly `layout.size()` bytes; MaybeUninit
+        // accepts every bit pattern, and no element is exposed as initialized.
+        unsafe { core.ptr.write_bytes(raw, 0u8, layout.size()) }
+    }
+    let slice = slice_ptr_mut(raw.cast<core.mem.MaybeUninit<T>>(), len)
+    Box(slice, a)
+}
+
+pub fn try_new_uninit_slice_in<T, A: Allocator>(
+    len: usize,
+    allocator: take A
+): Box<[core.mem.MaybeUninit<T>], A> throws AllocError {
+    try try_new_slice_in<T, A>(len, allocator, false)
+}
+
+pub fn new_uninit_slice_in<T, A: Allocator>(
+    len: usize,
+    allocator: take A
+): Box<[core.mem.MaybeUninit<T>], A> {
+    let result = capture try_new_uninit_slice_in<T, A>(len, allocator)
+    match take result {
+        success(owner) => owner,
+        failure(error) => handle_alloc_error(unsafe {
+            layout_unchecked(error.size, error.align)
+        })
+    }
+}
+
+pub fn try_new_uninit_slice<T>(
+    len: usize
+): Box<[core.mem.MaybeUninit<T>]> throws AllocError {
+    try try_new_uninit_slice_in<T, Global>(len, Global())
+}
+
+pub fn new_uninit_slice<T>(len: usize): Box<[core.mem.MaybeUninit<T>]> {
+    new_uninit_slice_in<T, Global>(len, Global())
+}
+
+pub fn try_new_zeroed_slice_in<T, A: Allocator>(
+    len: usize,
+    allocator: take A
+): Box<[core.mem.MaybeUninit<T>], A> throws AllocError {
+    try try_new_slice_in<T, A>(len, allocator, true)
+}
+
+pub fn new_zeroed_slice_in<T, A: Allocator>(
+    len: usize,
+    allocator: take A
+): Box<[core.mem.MaybeUninit<T>], A> {
+    let result = capture try_new_zeroed_slice_in<T, A>(len, allocator)
+    match take result {
+        success(owner) => owner,
+        failure(error) => handle_alloc_error(unsafe {
+            layout_unchecked(error.size, error.align)
+        })
+    }
+}
+
+pub fn try_new_zeroed_slice<T>(
+    len: usize
+): Box<[core.mem.MaybeUninit<T>]> throws AllocError {
+    try try_new_zeroed_slice_in<T, Global>(len, Global())
+}
+
+pub fn new_zeroed_slice<T>(len: usize): Box<[core.mem.MaybeUninit<T>]> {
+    new_zeroed_slice_in<T, Global>(len, Global())
+}
+
+// Copies a validated Text into an exact-sized Box-owned UTF-8 allocation.
+pub fn try_copy_text_in<A: Allocator>(
+    value: read Text,
+    allocator: take A
+): Box<Text, A> throws AllocError {
+    var a = allocator
+    let bytes = value.as_bytes()
+    let layout = layout_of_val(bytes)
+    let raw = try a.allocate(layout)
+    let data = raw.cast<u8>()
+    // Text is validated and the allocation covers its complete byte extent.
+    unsafe {
+        core.ptr.copy(package.core.slice.data(bytes), data, bytes.len())
+    }
+    let slice = slice_ptr_mut(data, bytes.len())
+    // The slice metadata is the byte length required by Text's representation.
+    let text = unsafe { core.mem.transmute<ptr<mut Text>>(slice) }
+    Box(text, a)
+}
+
+pub fn copy_text_in<A: Allocator>(
+    value: read Text,
+    allocator: take A
+): Box<Text, A> {
+    let outcome = capture try_copy_text_in(value, allocator)
+    match take outcome {
+        success(owner) => owner,
+        failure(_) => handle_alloc_error(layout_of_val(value))
+    }
+}
+
+pub fn try_copy_text(value: read Text): Box<Text> throws AllocError {
+    try try_copy_text_in(value, Global())
+}
+pub fn copy_text(value: read Text): Box<Text> {
+    copy_text_in(value, Global())
+}
+
+// Moves a String's validated bytes and allocator into an unsized Text owner.
+pub fn from_string<A: Allocator>(
+    value: take super.string.String<A>
+): Box<Text, A> {
+    let bytes = value.into_bytes().into_boxed_slice()
+    let raw = bytes.into_raw()
+    // String guarantees UTF-8 validity; the slice length and initialized byte
+    // extent are preserved by the pointer cast.
+    let text = unsafe { core.mem.transmute<ptr<mut Text>>(raw.0) }
+    unsafe { from_raw_in(text, raw.1) }
+}
+
+fn text_from_chars<I: OwnedIterable<Item = char>>(items: take I): Box<Text> {
+    var output = super.string.new()
+    var source = items.into_iter()
+    while true {
+        match take source.next() {
+            present(value) => { output.push(value) },
+            none => { break }
+        }
+    }
+    from_string(output)
+}
+
+fn text_from_borrowed_chars<region r, I: OwnedIterable<Item = read char from r>>(
+    items: take I
+): Box<Text> {
+    var output = super.string.new()
+    var source = items.into_iter()
+    while true {
+        match take source.next() {
+            present(value) => { output.push(*value) },
+            none => { break }
+        }
+    }
+    from_string(output)
+}
+
+fn text_from_parts<region r, I: OwnedIterable<Item = read Text from r>>(
+    items: take I
+): Box<Text> {
+    var output = super.string.new()
+    var source = items.into_iter()
+    while true {
+        match take source.next() {
+            present(part) => { output.push_str(part) },
+            none => { break }
+        }
+    }
+    from_string(output)
+}
+
+fn text_from_strings<I: OwnedIterable<Item = super.string.String>>(
+    items: take I
+): Box<Text> {
+    var output = super.string.new()
+    var source = items.into_iter()
+    while true {
+        match take source.next() {
+            present(part) => { output.push_str(part.as_text()) },
+            none => { break }
+        }
+    }
+    from_string(output)
+}
+
+fn text_from_boxes<A: Allocator, I: OwnedIterable<Item = Box<Text, A>>>(
+    items: take I
+): Box<Text> {
+    var output = super.string.new()
+    var source = items.into_iter()
+    while true {
+        match take source.next() {
+            present(part) => { output.push_str(part.get()) },
+            none => { break }
+        }
+    }
+    from_string(output)
+}
 
 pub fn try_new_uninit_in<T, A: Allocator>(
     allocator: take A
@@ -74,6 +304,9 @@ extend<T: unsized, A: Allocator> Box<T, A> {
     pub mut fn get_mut(): mut T from self { unsafe { mut *self.p } }
     pub fn allocator(): read A from self { read self.a }
     pub fn as_ptr(): ptr<mut T> { self.p }
+    // The pointer is usable only under the caller's ordinary raw-pointer
+    // obligations.
+    pub mut fn as_mut_ptr(): ptr<mut T> { self.p }
     // Ownership conversion: the caller becomes responsible for the block and
     // must rebuild it with `from_raw_in` using a compatible allocator.
     pub take fn into_raw(): (ptr<mut T>, A) {
@@ -93,10 +326,28 @@ extend<T: unsized, A: Allocator> Box<T, A> {
 }
 
 extend<T, A: Allocator> Box<core.mem.MaybeUninit<T>, A> {
+    pub take fn write(value: take T): Box<T, A> {
+        // The uninitialized box owns the exact T layout; initialize it once
+        // before transferring the same allocation and allocator as Box<T>.
+        unsafe { core.ptr.write(self.p.cast<T>(), value) }
+        let raw = self.into_raw()
+        unsafe { from_raw_in(raw.0.cast<T>(), raw.1) }
+    }
+
     // Safety: the caller initialized the payload before taking ownership as T.
     pub take unsafe fn assume_init(): Box<T, A> {
         let raw = self.into_raw()
         unsafe { from_raw_in(raw.0.cast<T>(), raw.1) }
+    }
+}
+
+extend<T, A: Allocator> Box<[core.mem.MaybeUninit<T>], A> {
+    // Safety: every element is initialized as T; element layout and length
+    // metadata are unchanged by replacing MaybeUninit<T> with T.
+    pub take unsafe fn assume_init(): Box<[T], A> {
+        let raw = self.into_raw()
+        let slice = unsafe { core.mem.transmute<ptr<mut [T]>>(raw.0) }
+        unsafe { from_raw_in(slice, raw.1) }
     }
 }
 
@@ -125,12 +376,195 @@ extend<T: unsized, A: Allocator> Box<T, A> implements Deref {
     type Target = T
     fn deref(): read T from self { self.get() }
 }
+extend<T: unsized, A: Allocator> Box<T, A> implements AsRef<T> {
+    fn as_ref(): read T from self { self.get() }
+}
+extend<T: unsized, A: Allocator> Box<T, A> implements Borrow<T> {
+    fn borrow(): read T from self { self.get() }
+}
+extend<T: unsized, A: Allocator> Box<T, A> implements AsMut<T> {
+    mut fn as_mut(): mut T from self { self.get_mut() }
+}
+extend<T: unsized, A: Allocator> Box<T, A> implements BorrowMut<T> {
+    mut fn borrow_mut(): mut T from self { self.get_mut() }
+}
 extend<T: unsized, A: Allocator> Box<T, A> implements DerefMut {
     type Target = T
     mut fn deref_mut(): mut T from self { self.get_mut() }
 }
+extend<T: Hasher + unsized, A: Allocator> Box<T, A> implements Hasher {
+    mut fn write(bytes: read [u8]): Unit {
+        T.(Hasher).write(self.get_mut(), bytes)
+    }
+    fn finish(): u64 { T.(Hasher).finish(self.get()) }
+}
+extend<E: Error> Box<E> implements Error {
+    fn source<region r>(
+        receiver self: read Self from r
+    ): (read any Error from r)? {
+        E.(Error).source(self.get())
+    }
+}
+extend<I: Iterator + unsized, A: Allocator> Box<I, A> implements Iterator {
+    type Item = I.(Iterator).Item
+    fn size_hint(): (usize, usize?) {
+        I.(Iterator).size_hint(self.get())
+    }
+    mut fn next(): I.(Iterator).Item? {
+        I.(Iterator).next(self.get_mut())
+    }
+}
+extend<I: BidirectionalIterator + unsized, A: Allocator> Box<I, A> implements BidirectionalIterator {
+    mut fn next_back(): I.(Iterator).Item? {
+        I.(BidirectionalIterator).next_back(self.get_mut())
+    }
+}
+extend<I: ExactSizeIterator + unsized, A: Allocator> Box<I, A> implements ExactSizeIterator {
+    fn len(): usize { I.(ExactSizeIterator).len(self.get()) }
+}
+extend<I: FusedIterator + unsized, A: Allocator> Box<I, A> implements FusedIterator {}
+
+extend<T, A: Allocator> BoxSliceIntoIter<T, A> implements Iterator {
+    type Item = T
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.back - self.front
+        (remaining, present(remaining))
+    }
+    mut fn next(): T? {
+        if self.front == self.back { return none }
+        let index = self.front
+        self.front += 1usize
+        present(unsafe { core.ptr.`read`(self.p.add(index)) })
+    }
+}
+extend<T, A: Allocator> BoxSliceIntoIter<T, A> implements BidirectionalIterator {
+    mut fn next_back(): T? {
+        if self.front == self.back { return none }
+        self.back -= 1usize
+        present(unsafe { core.ptr.`read`(self.p.add(self.back)) })
+    }
+}
+extend<T, A: Allocator> BoxSliceIntoIter<T, A> implements ExactSizeIterator {}
+extend<T, A: Allocator> BoxSliceIntoIter<T, A> implements FusedIterator {}
+
+extend<T, A: Allocator> Box<[T], A> implements OwnedIterable {
+    type Item = T
+    type IntoIter = BoxSliceIntoIter<T, A>
+    fn into_iter(receiver self: take Self): BoxSliceIntoIter<T, A> {
+        let len = self.get().len()
+        let layout = layout_of_val(self.get())
+        let raw = self.into_raw()
+        BoxSliceIntoIter(raw.0.cast<T>(), 0usize, len, layout, raw.1)
+    }
+}
+extend<T, A: Allocator> Box<[T], A> implements Iterable {
+    type Item = T
+    type Iter<region r> = SliceIter<region r, T>
+    fn iter<region r>(
+        receiver self: read Self from r
+    ): SliceIter<region r, T> {
+        self.get().iter()
+    }
+}
+extend<T, A: Allocator> Box<[T], A> implements MutableIterable {
+    type Item = T
+    type IterMut<region r> = SliceIterMut<region r, T>
+    fn iter_mut<region r>(
+        receiver self: mut Self from r
+    ): SliceIterMut<region r, T> {
+        self.get_mut().iter_mut()
+    }
+}
+extend<T, const N: usize, A: Allocator> Box<[T; N], A> implements OwnedIterable {
+    type Item = T
+    type IntoIter = BoxSliceIntoIter<T, A>
+    fn into_iter(receiver self: take Self): BoxSliceIntoIter<T, A> {
+        let layout = layout_of_val(self.get())
+        let raw = self.into_raw()
+        // The array allocation contains exactly N contiguous initialized T
+        // values; the iterator retains its exact layout and allocator.
+        BoxSliceIntoIter(raw.0.cast<T>(), 0usize, N, layout, raw.1)
+    }
+}
+extend<T, const N: usize, A: Allocator> Box<[T; N], A> implements Iterable {
+    type Item = T
+    type Iter<region r> = SliceIter<region r, T>
+    fn iter<region r>(
+        receiver self: read Self from r
+    ): SliceIter<region r, T> {
+        // SAFETY: self owns an initialized array of exactly N contiguous T
+        // values, and the returned view is bounded by the receiver region.
+        let slice = unsafe { read *slice_ptr(self.p.cast<T>(), N) }
+        slice.iter()
+    }
+}
+extend<T, const N: usize, A: Allocator> Box<[T; N], A> implements MutableIterable {
+    type Item = T
+    type IterMut<region r> = SliceIterMut<region r, T>
+    fn iter_mut<region r>(
+        receiver self: mut Self from r
+    ): SliceIterMut<region r, T> {
+        // SAFETY: the exclusive receiver owns an initialized array of exactly
+        // N contiguous T values for the returned mutable-view region.
+        let slice = unsafe { mut *slice_ptr_mut(self.p.cast<T>(), N) }
+        slice.iter_mut()
+    }
+}
+extend<T> Box<[T]> implements FromItems<T> {
+    static fn from_iter<I: OwnedIterable<Item = T>>(items: take I): Box<[T]> {
+        let values = super.vec.List<T>.(FromItems<T>).from_iter(items)
+        values.into_boxed_slice()
+    }
+}
+extend Box<Text> implements FromItems<char> {
+    static fn from_iter<I: OwnedIterable<Item = char>>(items: take I): Box<Text> {
+        text_from_chars(items)
+    }
+}
+extend<region r> Box<Text> implements FromItems<read char from r> {
+    static fn from_iter<I: OwnedIterable<Item = read char from r>>(
+        items: take I
+    ): Box<Text> {
+        text_from_borrowed_chars(items)
+    }
+}
+extend<region r> Box<Text> implements FromItems<read Text from r> {
+    static fn from_iter<I: OwnedIterable<Item = read Text from r>>(
+        items: take I
+    ): Box<Text> {
+        text_from_parts(items)
+    }
+}
+extend Box<Text> implements FromItems<super.string.String> {
+    static fn from_iter<I: OwnedIterable<Item = super.string.String>>(
+        items: take I
+    ): Box<Text> {
+        text_from_strings(items)
+    }
+}
+extend<A: Allocator> Box<Text> implements FromItems<Box<Text, A>> {
+    static fn from_iter<I: OwnedIterable<Item = Box<Text, A>>>(
+        items: take I
+    ): Box<Text> {
+        text_from_boxes<A>(items)
+    }
+}
 extend<T: Clone, A: Allocator + Clone> Box<T, A> implements Clone {
     fn clone(): Box<T, A> { new_in(self.get().clone(), self.a.clone()) }
+}
+extend<T> Box<T> implements From<T> {
+    static fn `from`(value: take T): Box<T> { new(value) }
+}
+extend<T: Default> Box<T> implements Default {
+    static fn default(): Box<T> { new(T.(Default).default()) }
+}
+extend<T> Box<[T]> implements Default {
+    static fn default(): Box<[T]> {
+        unsafe { new_zeroed_slice<T>(0usize).assume_init() }
+    }
+}
+extend Box<Text> implements Default {
+    static fn default(): Box<Text> { copy_text("") }
 }
 extend<T: PartialEq, A: Allocator> Box<T, A> implements PartialEq {
     fn eq(other: read Box<T, A>): bool { self.get().eq(other.get()) }
@@ -215,7 +649,8 @@ extend<T: unsized + Future, A: Allocator> Pinned<T, A> implements Future {
     type Output = T.(Future).Output
     fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<T.(Future).Output> {
         let owner: mut Pinned<T, A> = unsafe { self.get_unchecked_mut() }
-        owner.as_mut().poll(mut cx)
+        // Project the pinned owner, not the blanket AsMut on its view handle.
+        T.(Future).poll((*owner).as_mut(), mut cx)
     }
 }
 extend<T: fmt.Debug, A: Allocator> Pinned<T, A> implements fmt.Debug {
@@ -225,3 +660,16 @@ extend<T: fmt.Debug, A: Allocator> Pinned<T, A> implements fmt.Debug {
 unsafe extend<T: unsized, A: Allocator> Pinned<T, A> implements Unpin {}
 unsafe extend<T: Transferable, A: Allocator + Transferable> Pinned<T, A> implements Transferable {}
 unsafe extend<T: Shareable, A: Allocator + Shareable> Pinned<T, A> implements Shareable {}
+extend<T: Default> Pinned<T> implements Default {
+    static fn default(): Pinned<T> { pin(T.(Default).default()) }
+}
+extend<T> Pinned<[T]> implements Default {
+    static fn default(): Pinned<[T]> {
+        let owner = unsafe { new_zeroed_slice<T>(0usize).assume_init() }
+        let raw = owner.into_raw()
+        Pinned(raw.0, raw.1)
+    }
+}
+extend Pinned<Text> implements Default {
+    static fn default(): Pinned<Text> { copy_text("").into_pinned() }
+}

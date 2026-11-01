@@ -122,11 +122,15 @@ Type TypeStore::substituteRegions(Type type,
                 : structural(record.kind, std::move(record.components),
                              static_cast<std::uint32_t>(record.fields.size()));
       } else {
-        if (record.regionPattern != Type::Unknown) {
+        bool argumentsChanged = false;
+        for (auto &argument : record.genericArguments) {
+          auto substituted = visit(argument, substitutions);
+          argumentsChanged |= substituted != argument;
+          argument = substituted;
+        }
+        if (record.regionPattern != Type::Unknown || argumentsChanged) {
           for (auto &argument : record.regionArguments)
             argument = regionStore.substitute(argument, substitutions);
-          for (auto &argument : record.genericArguments)
-            argument = visit(argument, substitutions);
           result = regionalShell(nested, record.regionArguments,
                                  record.genericArguments, record.regionPattern);
           products.emplace(std::move(key), result);

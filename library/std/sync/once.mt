@@ -2,6 +2,8 @@
 // initializer completes successfully.
 import package.core.panic.panic
 import package.core.default.Default
+import package.core.clone.Clone
+import package.core.fmt.{Debug, Error, Formatter}
 
 type Arm<region r> {
     state: read core.sync.atomic.AtomicU32 from r
@@ -12,8 +14,18 @@ type Arm<region r> {
 }
 
 pub copy type OnceState { pub poisoned: bool }
+extend OnceState implements Clone {
+    fn clone(): OnceState { OnceState(self.poisoned) }
+}
 extend OnceState {
     pub fn is_poisoned(): bool { self.poisoned }
+}
+extend OnceState implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        var debug = try f.debug_struct("OnceState")
+        try debug.field("poisoned", read self.poisoned)
+        try debug.finish()
+    }
 }
 
 extern "C" {
@@ -86,5 +98,10 @@ extend Once {
             if state == 2u32 || state == 3u32 { return }
             unsafe { mettle_rt_thread_yield() }
         }
+    }
+}
+extend Once implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        try f.write_str("Once { .. }")
     }
 }

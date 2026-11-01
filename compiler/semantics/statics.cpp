@@ -313,6 +313,8 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
   }
   if (constFunctionCall(node))
     return evaluatedStatic(node, type);
+  if (isFloating(type) && needsEvaluator(node))
+    return evaluatedStatic(node, type);
   if (node.kind == Kind::Character &&
       type == (node.flag ? Type::U8 : Type::Char)) {
     auto value = characterLiteral(node.text, node.flag, diagnostics, node.span);

@@ -98,10 +98,10 @@ fn main(): i32 {
         core.char.from_digit(1u32, 1u32).is_present() {
         return 45
     }
-    var utf16 = '\u{1f600}'.encode_utf16()
-    match utf16.next() { present(unit) => { if unit != 0xd83du16 { return 37 } }, none => { return 37 } }
-    match utf16.next() { present(unit) => { if unit != 0xde00u16 { return 37 } }, none => { return 37 } }
-    match utf16.next() { present(_) => { return 37 }, none => {} }
+    var units = [0u16; 2]
+    let utf16 = '\u{1f600}'.encode_utf16(mut units[0usize..2usize])
+    if utf16.len() != 2usize || utf16[0usize] != 0xd83du16 ||
+        utf16[1usize] != 0xde00u16 { return 37 }
     var lower = 'A'
     lower.make_ascii_lowercase()
     if lower != 'a' { return 38 }

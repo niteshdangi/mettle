@@ -659,8 +659,10 @@ void Checker::checkInterfaceContracts() {
       const auto &declaration = module.functions[required.function];
       const auto &provided = module.functions[binding.function];
       genericEnvironment = &functionGenerics.at(&provided);
+      const auto &regionScope = functionRegions(provided);
       interfaces::Solver solver(*checked.types, *checked.interfaceData,
-                                diagnostics, interfaceAssumptions());
+                                diagnostics, interfaceAssumptions(),
+                                regionScope.environment);
       const auto &expected = checked.functions[required.function];
       const auto &actual = checked.functions[binding.function];
       std::vector<TypeBinding> substitutions;
@@ -670,16 +672,34 @@ void Checker::checkInterfaceContracts() {
            ++p)
         ownerBindings.push_back(
             {implementation.parameters[p], actual.genericParameters[p]});
+      std::vector<RegionBinding> ownerRegions;
+      std::size_t region = 0;
+      if (provided.implementation >= 0)
+        for (const auto &parameter :
+             module.implementations[provided.implementation].genericParameters)
+          if (parameter.kind == GenericParameterKind::Region &&
+              region < implementation.regions.size()) {
+            if (auto found = regionScope.names.find(parameter.name);
+                found != regionScope.names.end())
+              ownerRegions.push_back(
+                  {implementation.regions[region], found->second});
+            ++region;
+          }
       if (!expected.genericParameters.empty())
-        substitutions.push_back(
-            {expected.genericParameters[0],
-             checked.types->substitute(implementation.target, ownerBindings)});
+        substitutions.push_back({expected.genericParameters[0],
+                                 checked.types->substituteRegions(
+                                     checked.types->substitute(
+                                         implementation.target, ownerBindings),
+                                     ownerRegions)});
       for (std::size_t p = 0; p < descriptor.arguments.size() &&
                               p + 1 < expected.genericParameters.size();
            ++p)
-        substitutions.push_back({expected.genericParameters[p + 1],
-                                 checked.types->substitute(
-                                     descriptor.arguments[p], ownerBindings)});
+        substitutions.push_back(
+            {expected.genericParameters[p + 1],
+             checked.types->substituteRegions(
+                 checked.types->substitute(descriptor.arguments[p],
+                                           ownerBindings),
+                 ownerRegions)});
       auto ownExpected =
           expected.genericParameters.size() >= required.implicitParameters
               ? expected.genericParameters.size() - required.implicitParameters

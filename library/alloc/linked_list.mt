@@ -1,5 +1,6 @@
-import package.core.iter.{Iterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import package.core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, FusedIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
 import package.core.clone.Clone
+import package.core.default.Default
 import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import package.core.hash.{Hash, Hasher}
 import package.core.fmt
@@ -29,6 +30,10 @@ pub fn new_in<T, A: Allocator>(a: take A): LinkedList<T, A> {
     LinkedList(core.ptr.null_mut<Node<T>>(), core.ptr.null_mut<Node<T>>(), 0usize, a)
 }
 pub fn new<T>(): LinkedList<T> { new_in(Global()) }
+
+extend<T, A: Allocator + Default> LinkedList<T, A> implements Default {
+    static fn default(): LinkedList<T, A> { new_in(A.(Default).default()) }
+}
 
 extend<T, A: Allocator> LinkedList<T, A> {
     pub fn len(): usize { self.len }
@@ -71,6 +76,10 @@ extend<T, A: Allocator> LinkedList<T, A> {
         self.tail = n
         self.len += 1usize
     }
+    pub mut fn push_back_mut(value: take T): mut T from self {
+        self.push_back(value)
+        unsafe { mut (*self.tail).value }
+    }
     pub mut fn push_front(value: take T): Unit {
         let n = match capture self.alloc_node(value, core.ptr.null_mut<Node<T>>(), self.head) {
             success(n) => n,
@@ -79,6 +88,10 @@ extend<T, A: Allocator> LinkedList<T, A> {
         if self.head == core.ptr.null_mut<Node<T>>() { self.tail = n } else { unsafe { (*self.head).prev = n } }
         self.head = n
         self.len += 1usize
+    }
+    pub mut fn push_front_mut(value: take T): mut T from self {
+        self.push_front(value)
+        unsafe { mut (*self.head).value }
     }
     pub mut fn pop_front(): T? {
         if self.len == 0usize { return none }
@@ -142,50 +155,207 @@ extend<T, A: Allocator> LinkedList<T, A> {
             let v = self.pop_front()
         }
     }
+
+    pub mut fn extract_if<F: mut fn(mut T): bool>(
+        test: take F
+    ): LinkedListExtractIf<region self, T, A, F> {
+        let first = self.head
+        let remaining = self.len
+        LinkedListExtractIf(
+            mut self,
+            first,
+            core.ptr.null_mut<Node<T>>(),
+            remaining,
+            test
+        )
+    }
 }
 
-// Borrowed front-to-back iterator; `node` is null once the list is exhausted.
-pub type ListIter<region r, T, A: Allocator> { list: read LinkedList<T, A> from r; node: ptr<mut Node<T>> }
+extend<T: PartialEq, A: Allocator> LinkedList<T, A> {
+    pub fn contains(value: read T): bool {
+        var node = self.head
+        let null = core.ptr.null_mut<Node<T>>()
+        while node != null {
+            if unsafe { read (*node).value }.eq(value) { return true }
+            node = unsafe { (*node).next }
+        }
+        false
+    }
+}
+
+extend<T, A: Allocator + Clone> LinkedList<T, A> {
+    // Rebuild nodes with the cloned allocator instead of transferring blocks
+    // whose compatibility with that clone is not part of Allocator's contract.
+    pub mut fn split_off(at: usize): LinkedList<T, A> {
+        if at > self.len { super.alloc.panic_precondition() }
+        var other = new_in<T, A>(self.a.clone())
+        while self.len > at {
+            other.push_front(self.pop_back().unwrap())
+        }
+        other
+    }
+}
+
+// Global lists can splice nodes directly; custom allocators need an explicit
+// compatibility contract before their independently owned node blocks can mix.
+extend<T> LinkedList<T> {
+    pub mut fn append(other: mut LinkedList<T>): Unit {
+        let total = match self.len.checked_add(other.len) {
+            present(n) => n,
+            none => super.alloc.panic_precondition()
+        }
+        if other.len == 0usize { return () }
+        let null = core.ptr.null_mut<Node<T>>()
+        if self.tail == null {
+            self.head = other.head
+        } else {
+            unsafe {
+                (*self.tail).next = other.head
+                (*other.head).prev = self.tail
+            }
+        }
+        self.tail = other.tail
+        self.len = total
+        other.head = null
+        other.tail = null
+        other.len = 0usize
+    }
+}
+
+pub type LinkedListExtractIf<region r, T, A: Allocator, F> {
+    list: mut LinkedList<T, A> from r
+    current: ptr<mut Node<T>>
+    previous: ptr<mut Node<T>>
+    remaining: usize
+    test: F
+}
+extend<region r, T, A: Allocator, F: mut fn(mut T): bool> LinkedListExtractIf<region r, T, A, F> implements Iterator {
+    type Item = T
+    fn size_hint(): (usize, usize?) { (0usize, present(self.remaining)) }
+    mut fn next(): T? {
+        let null = core.ptr.null_mut<Node<T>>()
+        while self.current != null {
+            let current = self.current
+            let next = unsafe { (*current).next }
+            let remove = self.test(unsafe { mut (*current).value })
+            self.remaining -= 1usize
+            if remove {
+                if self.previous == null {
+                    self.list.head = next
+                } else {
+                    unsafe { (*self.previous).next = next }
+                }
+                if next == null {
+                    self.list.tail = self.previous
+                } else {
+                    unsafe { (*next).prev = self.previous }
+                }
+                self.list.len -= 1usize
+                self.current = next
+
+                let node = unsafe { core.ptr.`read`(current.cast_const()) }
+                unsafe { self.list.a.deallocate(current.cast<u8>(), layout_of<Node<T>>()) }
+                return present(node.value)
+            }
+            self.previous = current
+            self.current = next
+        }
+        none
+    }
+}
+extend<region r, T, A: Allocator, F: mut fn(mut T): bool> LinkedListExtractIf<region r, T, A, F> implements FusedIterator {}
+
+// Borrowed iterators keep both ends and the remaining node count.
+pub type ListIter<region r, T, A: Allocator> {
+    list: read LinkedList<T, A> from r
+    front: ptr<mut Node<T>>
+    back: ptr<mut Node<T>>
+    remaining: usize
+}
 extend<region r, T, A: Allocator> ListIter<region r, T, A> implements Iterator {
     type Item = read T from r
+    fn size_hint(): (usize, usize?) { (self.remaining, present(self.remaining)) }
     mut fn next(): (read T from r)? {
-        if self.node == core.ptr.null_mut<Node<T>>() { return none }
-        let n = self.node
-        self.node = unsafe { (*n).next }
+        if self.remaining == 0usize { return none }
+        let n = self.front
+        self.front = unsafe { (*n).next }
+        self.remaining -= 1usize
         present(unsafe { read (*n).value })
     }
 }
+extend<region r, T, A: Allocator> ListIter<region r, T, A> implements BidirectionalIterator {
+    mut fn next_back(): (read T from r)? {
+        if self.remaining == 0usize { return none }
+        let n = self.back
+        self.back = unsafe { (*n).prev }
+        self.remaining -= 1usize
+        present(unsafe { read (*n).value })
+    }
+}
+extend<region r, T, A: Allocator> ListIter<region r, T, A> implements ExactSizeIterator {}
+extend<region r, T, A: Allocator> ListIter<region r, T, A> implements FusedIterator {}
 extend<T, A: Allocator> LinkedList<T, A> implements Iterable {
     type Item = T
     type Iter<region r> = ListIter<region r, T, A>
-    fn iter<region r>(receiver self: read Self from r): ListIter<region r, T, A> { ListIter(read self, self.head) }
+    fn iter<region r>(receiver self: read Self from r): ListIter<region r, T, A> {
+        ListIter(read self, self.head, self.tail, self.len)
+    }
 }
 
-// Mutable front-to-back iterator; `node` is null once the list is exhausted.
-pub type ListIterMut<region r, T, A: Allocator> { list: mut LinkedList<T, A> from r; node: ptr<mut Node<T>> }
+// The remaining count prevents mixed-end traversal from yielding a node twice.
+pub type ListIterMut<region r, T, A: Allocator> {
+    list: mut LinkedList<T, A> from r
+    front: ptr<mut Node<T>>
+    back: ptr<mut Node<T>>
+    remaining: usize
+}
 extend<region r, T, A: Allocator> ListIterMut<region r, T, A> implements Iterator {
     type Item = mut T from r
+    fn size_hint(): (usize, usize?) { (self.remaining, present(self.remaining)) }
     mut fn next(): (mut T from r)? {
-        if self.node == core.ptr.null_mut<Node<T>>() { return none }
-        let n = self.node
-        self.node = unsafe { (*n).next }
+        if self.remaining == 0usize { return none }
+        let n = self.front
+        self.front = unsafe { (*n).next }
+        self.remaining -= 1usize
         present(unsafe { mut (*n).value })
     }
 }
+extend<region r, T, A: Allocator> ListIterMut<region r, T, A> implements BidirectionalIterator {
+    mut fn next_back(): (mut T from r)? {
+        if self.remaining == 0usize { return none }
+        let n = self.back
+        self.back = unsafe { (*n).prev }
+        self.remaining -= 1usize
+        present(unsafe { mut (*n).value })
+    }
+}
+extend<region r, T, A: Allocator> ListIterMut<region r, T, A> implements ExactSizeIterator {}
+extend<region r, T, A: Allocator> ListIterMut<region r, T, A> implements FusedIterator {}
 extend<T, A: Allocator> LinkedList<T, A> implements MutableIterable {
     type Item = T
     type IterMut<region r> = ListIterMut<region r, T, A>
     fn iter_mut<region r>(receiver self: mut Self from r): ListIterMut<region r, T, A> {
-        let first = self.head
-        ListIterMut(mut self, first)
+        let front = self.head
+        let back = self.tail
+        let remaining = self.len
+        ListIterMut(mut self, front, back, remaining)
     }
 }
 
 pub type LinkedListIntoIter<T, A: Allocator = Global> { list: LinkedList<T, A> }
 extend<T, A: Allocator> LinkedListIntoIter<T, A> implements Iterator {
     type Item = T
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.list.len
+        (remaining, present(remaining))
+    }
     mut fn next(): T? { self.list.pop_front() }
 }
+extend<T, A: Allocator> LinkedListIntoIter<T, A> implements BidirectionalIterator {
+    mut fn next_back(): T? { self.list.pop_back() }
+}
+extend<T, A: Allocator> LinkedListIntoIter<T, A> implements ExactSizeIterator {}
+extend<T, A: Allocator> LinkedListIntoIter<T, A> implements FusedIterator {}
 extend<T, A: Allocator> LinkedList<T, A> implements OwnedIterable {
     type Item = T
     type IntoIter = LinkedListIntoIter<T, A>

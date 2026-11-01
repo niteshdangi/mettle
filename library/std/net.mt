@@ -13,6 +13,7 @@ import super.time.Duration
 
 extern "C" {
     unsafe fn dup(fd: i32): i32;
+    unsafe fn recv(fd: i32, buffer: ptr<mut u8>, count: usize, flags: i32): isize;
 }
 
 pub copy type Ipv4Addr { bits: u32 }
@@ -492,6 +493,12 @@ extend Ipv6Addr {
     pub static fn parse(text: read Text): Ipv6Addr throws Error { try parse_ipv6(text) }
 }
 
+extend Ipv4Addr {
+    pub static fn parse(text: read Text): Ipv4Addr throws Error {
+        try parse_ipv4(text)
+    }
+}
+
 pub fn parse_ip_addr(text: read Text): IpAddr throws Error {
     match text.find_byte(58u8) {
         present(_) => {
@@ -502,6 +509,12 @@ pub fn parse_ip_addr(text: read Text): IpAddr throws Error {
             let value = try parse_ipv4(text)
             IpAddr.V4(value)
         }
+    }
+}
+
+extend IpAddr {
+    pub static fn parse(text: read Text): IpAddr throws Error {
+        try parse_ip_addr(text)
     }
 }
 
@@ -565,6 +578,28 @@ pub fn parse_socket_addr(text: read Text): SocketAddr throws Error {
 
 extend SocketAddr {
     pub static fn parse(text: read Text): SocketAddr throws Error { try parse_socket_addr(text) }
+}
+
+extend SocketAddrV4 {
+    pub static fn parse(text: read Text): SocketAddrV4 throws Error {
+        let address = try parse_socket_addr(text)
+        match address.ip {
+            IpAddr.V4(ip) => SocketAddrV4(ip, address.port),
+            IpAddr.V6(_) => throw invalid_address()
+        }
+    }
+}
+
+extend SocketAddrV6 {
+    pub static fn parse(text: read Text): SocketAddrV6 throws Error {
+        let address = try parse_socket_addr(text)
+        match address.ip {
+            IpAddr.V4(_) => throw invalid_address(),
+            IpAddr.V6(ip) => {
+                SocketAddrV6(ip, address.port, address.flowinfo, address.scope_id)
+            }
+        }
+    }
 }
 
 fn write_hex16(value: u16, f: mut Formatter): Unit throws package.core.fmt.Error {
@@ -850,6 +885,8 @@ pub type TcpListener {
     drop { if self.fd >= 0 { let closed = unsafe { sys.close(self.fd) } } }
 }
 
+pub type Incoming<region r> { listener: read TcpListener from r }
+
 // Nonblocking counterparts used by async methods. A pending operation keeps
 // only its readiness registration; dropping its future removes that token.
 pub type AsyncTcpStream {
@@ -934,6 +971,12 @@ pub fn async_tcp_listen(addr: SocketAddr): AsyncTcpListener throws Error {
 }
 
 extend TcpListener {
+    pub fn incoming<region r>(
+        receiver self: read TcpListener from r
+    ): Incoming<region r> {
+        Incoming(read self)
+    }
+
     pub fn take_error(): Error? throws Error { try take_socket_error(self.fd) }
     pub fn try_clone(): TcpListener throws Error {
         let cloned = unsafe { dup(self.fd) }
@@ -970,8 +1013,23 @@ extend TcpListener {
                 core.ptr.from_mut(flowinfo), core.ptr.from_mut(scope_id)
             )
         }
-        if fd < 0 { throw net_error() }
+        if fd < 0 {
+            if self.accept_millis < 0 { throw io.last_os_error() }
+            throw net_error()
+        }
         (TcpStream(fd), decode_socket_addr(family, bytes, port, flowinfo, scope_id))
+    }
+}
+
+extend<region r> Incoming<region r> implements package.core.iter.Iterator {
+    type Item = (TcpStream throws Error);
+
+    mut fn next(): (TcpStream throws Error)? {
+        let accepted = capture (*self.listener).accept()
+        match take accepted {
+            success((stream, _)) => present(success(stream)),
+            failure(error) => present(failure(error))
+        }
     }
 }
 
@@ -1020,6 +1078,16 @@ extend TcpStream {
     }
     pub fn local_addr(): SocketAddr throws Error { try local_of(self.fd, 0) }
     pub fn peer_addr(): SocketAddr throws Error { try local_of(self.fd, 1) }
+    pub fn peek(buf: mut [u8]): usize throws Error {
+        if buf.len() == 0usize { return 0usize }
+        while true {
+            let count = unsafe { recv(self.fd, sys.data_mut(buf), buf.len(), 2) }
+            if count >= 0isize { return count as usize }
+            let error = net_error()
+            if !error.kind().is(ErrorKind.Interrupted) { throw error }
+        }
+        0usize
+    }
     pub fn try_clone(): TcpStream throws Error {
         let cloned = unsafe { dup(self.fd) }
         if cloned < 0 { throw io.last_os_error() }
@@ -1141,6 +1209,7 @@ extend AsyncTcpStream {
 
 extend UdpSocket {
     pub fn local_addr(): SocketAddr throws Error { try local_of(self.fd, 0) }
+    pub fn peer_addr(): SocketAddr throws Error { try local_of(self.fd, 1) }
     pub fn take_error(): Error? throws Error { try take_socket_error(self.fd) }
     pub fn try_clone(): UdpSocket throws Error {
         let cloned = unsafe { dup(self.fd) }

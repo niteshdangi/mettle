@@ -1,6 +1,7 @@
 import super.mutex.MutexGuard
 import package.core.panic.panic
 import package.core.default.Default
+import package.core.fmt.{Debug, Error, Formatter}
 import package.std.time
 
 extern "C" {
@@ -29,6 +30,11 @@ pub fn new(): Condvar {
 extend Condvar implements Default {
     static fn default(): Condvar { new() }
 }
+extend Condvar implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        try f.write_str("Condvar { .. }")
+    }
+}
 
 // Whether a timed wait ended by its deadline.
 pub copy type TimedOut { expired: bool }
@@ -42,37 +48,61 @@ extend Condvar {
         if status != 0 { panic("condition wait failed") }
         guard
     }
-    pub fn wait_timeout<T, region r>(guard: take MutexGuard<T, region r>, nanoseconds: u64): (MutexGuard<T, region r>, TimedOut) {
-        let status = unsafe { mettle_rt_cond_wait_timeout(self.raw, guard.lock.raw, nanoseconds) }
-        if status < 0 { panic("timed condition wait failed") }
-        (guard, TimedOut(status == 1))
+    pub fn wait_timeout<T, region r>(
+        guard: take MutexGuard<T, region r>,
+        duration: time.Duration
+    ): (MutexGuard<T, region r>, TimedOut) {
+        let started = time.now()
+        let timeout = duration.as_nanos()
+        while true {
+            let elapsed = time.now().duration_since(started).as_nanos()
+            let remaining = if elapsed >= timeout { 0u128 } else { timeout - elapsed }
+            let chunk = if remaining > 18446744073709551615u128 {
+                18446744073709551615u64
+            } else {
+                remaining as u64
+            }
+            let status = unsafe {
+                mettle_rt_cond_wait_timeout(self.raw, guard.lock.raw, chunk)
+            }
+            if status < 0 { panic("timed condition wait failed") }
+            if status == 0 { return (guard, TimedOut(false)) }
+            let elapsed = time.now().duration_since(started).as_nanos()
+            if elapsed >= timeout { return (guard, TimedOut(true)) }
+        }
     }
-    pub fn wait_while<T, region r, F: fn(read T): bool>(
+    pub fn wait_while<T, region r, F: mut fn(mut T): bool>(
         guard: take MutexGuard<T, region r>,
         predicate: take F
     ): MutexGuard<T, region r> {
         var current = guard
-        while predicate(current.get()) {
+        var test = predicate
+        while test(current.get_mut()) {
             current = self.wait(current)
         }
         current
     }
-    pub fn wait_timeout_while<T, region r, F: fn(read T): bool>(
+    pub fn wait_timeout_while<T, region r, F: mut fn(mut T): bool>(
         guard: take MutexGuard<T, region r>,
-        nanoseconds: u64,
+        duration: time.Duration,
         predicate: take F
     ): (MutexGuard<T, region r>, TimedOut) {
         let start = time.now()
         var current = guard
-        while predicate(current.get()) {
-            let elapsed = time.now().duration_since(start).as_nanos()
-            if elapsed >= nanoseconds as u128 {
+        var test = predicate
+        var first_wait = true
+        while test(current.get_mut()) {
+            let elapsed = time.now().duration_since(start)
+            if !first_wait && !elapsed.lt(duration) {
                 return (current, TimedOut(true))
             }
-            let remaining = nanoseconds - elapsed as u64
+            let remaining = match duration.checked_sub(elapsed) {
+                present(value) => value,
+                none => time.from_nanos(0u64)
+            }
             let waited = self.wait_timeout(current, remaining)
             current = waited.0
-            if waited.1.timed_out() { return (current, waited.1) }
+            first_wait = false
         }
         (current, TimedOut(false))
     }
@@ -80,8 +110,7 @@ extend Condvar {
         guard: take MutexGuard<T, region r>,
         milliseconds: u64
     ): (MutexGuard<T, region r>, TimedOut) {
-        let nanos = milliseconds.saturating_mul(1000000u64)
-        self.wait_timeout(guard, nanos)
+        self.wait_timeout(guard, time.from_millis(milliseconds))
     }
     pub fn notify_one(): Unit {
         if unsafe { mettle_rt_cond_notify_one(self.raw) } != 0 {

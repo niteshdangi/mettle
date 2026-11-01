@@ -152,9 +152,10 @@
       "name": "backend_llvm", "directory": "backend/llvm", "kind": "STATIC",
       "dependencies": ["ir", "cleanup", "types", "source", "support"],
       "llvm": true,
-      "public_headers": ["backend/llvm/lower.h", "backend/llvm/object.h"],
+      "public_headers": ["backend/llvm/lower.h", "backend/llvm/object.h", "backend/llvm/numeric.h"],
       "files": ["backend/llvm/lower.h", "backend/llvm/lower.cpp", "backend/llvm/abi.h", "backend/llvm/abi.cpp",
         "backend/llvm/object.h", "backend/llvm/object.cpp",
+        "backend/llvm/numeric.h", "backend/llvm/numeric.cpp",
         "backend/llvm/cleanup.h", "backend/llvm/cleanup.cpp", "backend/llvm/debug.h", "backend/llvm/debug.cpp",
         "backend/llvm/target.h", "backend/llvm/target.cpp"]
     },

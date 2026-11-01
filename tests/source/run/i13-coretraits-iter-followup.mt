@@ -18,7 +18,7 @@ fn checked_item(item: take i32): Unit throws i32 {
 fn main(): i32 {
     var remaining = iter.range(1, 5)
     {
-        var borrowed = remaining.by_ref()
+        var borrowed = remaining.by_ref().take_n(2usize)
         match take borrowed.next() {
             present(value) => { if value != 1 { return 1 } },
             none => { return 1 }
@@ -28,7 +28,11 @@ fn main(): i32 {
             none => { return 1 }
         }
     }
-    if remaining.count() != 2usize { return 2 }
+    match take remaining.next() {
+        present(value) => { if value != 3 { return 2 } },
+        none => { return 2 }
+    }
+    if remaining.count() != 1usize { return 2 }
 
     let values = [1i32, 2i32, 3i32]
     if values.iter().copied().fold(0, fn(sum: take i32, value: take i32): i32 {
