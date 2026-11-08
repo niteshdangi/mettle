@@ -40,7 +40,7 @@ fn check_f64(): bool {
         close(3.0f64.hypot(4.0f64), 5.0f64) &&
         sine == 0.0f64 && cosine == 1.0f64 &&
         (-1.25f64).fract() == -0.25f64 &&
-        negativeZero.fract().is_sign_negative() &&
+        negativeZero.fract().is_sign_positive() &&
         4.0f64.recip() == 0.25f64 &&
         (-2.0f64).signum() == -1.0f64 &&
         close(3.141592653589793f64.to_degrees(), 180.0f64) &&
@@ -67,8 +67,12 @@ fn check_f64(): bool {
         subnormal.classify() == FpCategory.Subnormal &&
         !subnormal.is_normal() &&
         negativeZero.midpoint(negativeZero).is_sign_negative() &&
-        0.0f64.min(negativeZero).is_sign_negative() &&
-        0.0f64.max(negativeZero).to_bits() == 0u64 &&
+        // Equal operands (+0.0 and -0.0) may return either one (Rust's
+        // minNum/maxNum contract; x86-64 and ARM64 differ), so check the value.
+        0.0f64.min(negativeZero) == 0.0f64 &&
+        0.0f64.max(negativeZero) == 0.0f64 &&
+        (-1.0f64).min(negativeZero) == -1.0f64 &&
+        1.0f64.max(negativeZero) == 1.0f64 &&
         negativeZero.next_up().to_bits() == 1u64 &&
         0.0f64.next_down().to_bits() == 0x8000000000000001u64 &&
         1.0f64.classify() == FpCategory.Normal &&
@@ -128,7 +132,7 @@ fn check_f32(): bool {
         close(180.0f32.to_radians() as f64, 3.1415927f64) &&
         sine == 0.0f32 && cosine == 1.0f32 &&
         (-1.25f32).fract() == -0.25f32 &&
-        negativeZero.fract().is_sign_negative() &&
+        negativeZero.fract().is_sign_positive() &&
         4.0f32.recip() == 0.25f32 &&
         (-2.0f32).signum() == -1.0f32 &&
         (-7.0f32).div_euclid(3.0f32) == -3.0f32 &&

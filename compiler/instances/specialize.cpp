@@ -398,6 +398,22 @@ private:
         function.name += types->name(arguments[i]);
       }
       function.name += ">";
+      // Display names omit callable binders, result sources and region
+      // relations, so distinct function-pointer arguments can print alike.
+      // Their instances carry a hash of the structural identity, which is a
+      // pure function of the arguments and so agrees across packages.
+      if (std::any_of(arguments.begin(), arguments.end(), [&](Type argument) {
+            return containsFunctionPointer(*types, argument);
+          })) {
+        std::uint64_t identity = 0xcbf29ce484222325ull;
+        for (auto argument : arguments)
+          for (unsigned char byte : typeIdentity(*types, argument) + "|")
+            identity = (identity ^ byte) * 0x100000001b3ull;
+        static constexpr char digits[] = "0123456789abcdef";
+        function.name += "#";
+        for (int shift = 60; shift >= 0; shift -= 4)
+          function.name += digits[(identity >> shift) & 0xf];
+      }
       // A generic indirect contract is declared by external name; each
       // instance has its own signature, so it needs its own symbol.
       if (function.indirectContract)

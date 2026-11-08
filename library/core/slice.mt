@@ -1143,6 +1143,12 @@ pub type SliceChunks<region r, T> {
 }
 extend<region r, T> SliceChunks<region r, T> implements Iterator {
     type Item = read [T] from r
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.back - self.front
+        let full = remaining / self.size
+        let count = if remaining % self.size == 0usize { full } else { full + 1usize }
+        (count, present(count))
+    }
     mut fn next(): (read [T] from r)? {
         if self.front == self.back { return none }
         let start = self.front
@@ -1171,6 +1177,10 @@ pub type SliceWindows<region r, T> {
 }
 extend<region r, T> SliceWindows<region r, T> implements Iterator {
     type Item = read [T] from r
+    fn size_hint(): (usize, usize?) {
+        let count = self.back - self.front
+        (count, present(count))
+    }
     mut fn next(): (read [T] from r)? {
         if self.front == self.back { return none }
         let start = self.front
@@ -1178,6 +1188,15 @@ extend<region r, T> SliceWindows<region r, T> implements Iterator {
         present(unsafe { sub<T>(self.items, start, start + self.size) })
     }
 }
+extend<region r, T> SliceWindows<region r, T> implements BidirectionalIterator {
+    mut fn next_back(): (read [T] from r)? {
+        if self.front == self.back { return none }
+        self.back -= 1usize
+        present(unsafe { sub<T>(self.items, self.back, self.back + self.size) })
+    }
+}
+extend<region r, T> SliceChunks<region r, T> implements super.iter.ExactSizeIterator {}
+extend<region r, T> SliceWindows<region r, T> implements super.iter.ExactSizeIterator {}
 
 pub type SliceChunksMut<region r, T> {
     items: mut [T] from r
@@ -1283,6 +1302,9 @@ extend<T> [T] {
     }
     pub fn rsplitn<F: mut fn(read T): bool>(count: usize, test: take F): SliceSplit<region self, T, F> {
         SliceSplit(read self, test, 0usize, self.len(), count, true, false, false, false)
+    }
+    pub fn rsplit<F: mut fn(read T): bool>(test: take F): super.iter.Reversed<SliceSplit<region self, T, F>> {
+        self.split(test).rev()
     }
     pub fn split_inclusive<F: mut fn(read T): bool>(
         test: take F

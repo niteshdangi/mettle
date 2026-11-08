@@ -1383,9 +1383,19 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                 }
             for (auto projection : rebased(relativePlace.fields)) {
               auto priorType = type;
+              // A summary path whose projection types did not resolve (an
+              // instance over a local opaque type) is retyped structurally;
+              // where the structure does not admit the field the type is
+              // unknown, which only costs precision.
+              bool fieldFits =
+                  projection.kind == Projection::Kind::Field &&
+                  types.isProduct(type) &&
+                  static_cast<std::size_t>(projection.index) <
+                      types.product(type).fields.size();
               type = projection.type != Type::Unknown ? projection.type
                      : projection.kind == Projection::Kind::Field
-                         ? types.product(type).fields.at(projection.index).type
+                         ? (fieldFits ? types.product(type).fields[projection.index].type
+                                      : Type::Unknown)
                      : projection.kind == Projection::Kind::Slice
                          ? projection.type
                      : projection.kind == Projection::Kind::Opaque ? priorType

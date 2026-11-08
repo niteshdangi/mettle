@@ -1,12 +1,53 @@
 # I13 library work package
 
-Repo: /Users/niteshkumar/Projects/mettle-lang, main at `93df8a1` plus uncommitted
-I13 work. I01-I12 are
-closed for the macOS ARM64 host and Darwin ARM64 target only. All non-library
+Repo: the owner's checkout (Windows `D:\mettle`; build under WSL2 or an
+Ubuntu 24.04 environment), main at `fd4f46a`. I01-I12 are
+closed for the macOS ARM64 host and Darwin ARM64 target only. From 2026-11-08
+the gated profile is `linux-x64` (implementation-plan section 8.0); Linux
+requalification LNX precedes further area closure. All non-library
 I13 rows are closed. What remains is library work: the 18 `P` rows in
 docs/capability-coverage.md (L003 L005 L009 S005-S014 S019-S021 S024 S025).
 
 ## Handoff (start here in a new session)
+
+**Linux session (2026-11-08), gated on `linux-x64`.** Collision-safe Any
+identity is implemented: `typeIdentity` (compiler/types/identity.cpp) encodes
+types injectively and independently of the compilation (canonical nominal
+paths; callable binder size, result sources and region relations; `static`
+kept, bound regions by binder position, free regions erased). `type_id` is the
+address of a link-once hidden byte named by that identity, so equal types merge
+across packages and partitions and distinct identities are distinct symbols;
+no hash is involved. Generic instances whose arguments contain a function
+pointer append a hash of the identity to their symbol name, because display
+names omit binders and collided ("duplicate CFG function"). Evidence:
+`i13-any-callable-source-identity`, `i13-any-type-identity-structure`,
+`i13-any-static-identity`, `erased-read-argument-erases-referent` (both
+profiles) and the cross-package `type_id_survives_public_reexport`, `debug_info`,
+`incremental_reuse` and `debugger_workflow` package cases.
+
+Option and Result operation batch: `core.option` gains `insert`, `zip`,
+`as_slice`, `as_mut_slice`, `iter` and `iter_mut`; `core.outcome` gains `or`,
+`iter` and `iter_mut`. The iterators reuse the slice iterators, so they are
+exact-size, fused and double-ended. `i13-option-operations.mt` and
+`i13-outcome-operations.mt` plus six absence/presence panic cases pass in both
+profiles, and the operations tests pass emitted ASan in both profiles. The
+ledger credits 62 Option and 52 Result records (`v1-operations.csv`).
+Open in these families:
+- `Option::as_pin_ref`/`as_pin_mut` (4 records): compiler blocker. A
+  `receiver self: take pinned read T? from r` returning
+  `(pinned read T from r)?` fails region solving ("inconclusive"), whether it
+  goes through `get_ref` (which reborrows the pin handle) or
+  `into_inner_unchecked`.
+- `Result::copied`/`cloned` (4 records): contract question. Rust's shape is
+  `Result<&T, E> -> Result<T, E>`; the library's is
+  `((read T) throws (read E)) -> (T throws E)`, which the existing
+  `i13-coretraits-option-outcome-followup` asserts. Reconciling needs an owner
+  decision, not a silent change.
+- Found while scanning neighbouring families: `core.mem.take`,
+  `ManuallyDrop::{new,into_inner,take,drop}` evidence, `core.array.from_fn`
+  and the `Ord::{min,max,clamp}` methods (the library has only free
+  functions). `mem` is a compiler-owned module, so a library `mem` needs a
+  loader change like the one `core.ptr` has.
 The previous attempt (`origin/libs`, 23.6k lines) was never compiled against
 main and was discarded. Its useful compiler fixes are in `02d2cd0`. Do not
 merge or cherry-pick from it; write each lane fresh against current main.
@@ -17,7 +58,7 @@ compiler/** and runtime C++, runs ctest, and merges lanes. Lane agents
 do not build, check, execute tests or commit. The orchestrator can check their
 library directory with its own binary:
 
-    M=/Users/niteshkumar/Projects/mettle-lang/build/macos-arm64/Release/mettle
+    M=$PWD/build/linux-x86_64/Release/mettle
     $M check --library-dir $PWD/library FILE.mt
     $M build --library-dir $PWD/library FILE.mt -o /tmp/x && /tmp/x
 
@@ -203,7 +244,8 @@ Every operation in the V1 subset (docs/library-surface.md section 6.1, roughly
    it has them. Integer, float and atomic families must be checked at every
    width, but each family is still one row.
 
-Gate only on macOS ARM64/Darwin; Linux and Windows are excluded by the owner.
+Gate only on `linux-x64` (Linux x86-64 host and target; owner decision
+2026-11-08). macOS ARM64 is no longer gated and Windows remains excluded.
 Record an operation that does not apply to this target as not-applicable,
 never as passed.
 
@@ -525,6 +567,12 @@ fold. The session preserves that reproduction and a source-freeze prerequisite;
 direct borrowed-slice fold evidence does not establish chained-view coverage.
 
 ## Known gaps to fix first
+Linux profile (2026-11-08): finish LNX first (implementation-plan section 8.0,
+"LNX status"). Collision-safe Any identity is fixed and the Linux Release CTest
+passes 22/22. Re-evaluate every Darwin-inapplicable record for Linux before
+crediting an area. The open items found in the Option/Result batch are listed
+in the handoff section.
+
 Closure trim patterns and owned Text construction are integrated with focused
 evidence; they are no longer missing declarations. Remaining prerequisites
 include borrowed chained-item propagation, exact-size/fused and unsized iterator
@@ -585,15 +633,15 @@ These are orchestrator commands. Lane agents use only the `--library-dir`
 commands in the handoff section. Run from the repository root.
 
 - **Build:**
-  `.tools/macos-arm64/cmake/CMake.app/Contents/bin/cmake --build build/macos-arm64/Release --parallel 10`
+  `.tools/linux-x86_64/cmake/bin/cmake --build build/linux-x86_64/Release`
+  (configure once with the command in README "Linux host build")
 - **Source suites:**
-  `python3 tests/source.py run build/macos-arm64/Release/mettle /tmp/libout`
+  `python3 tests/source.py run build/linux-x86_64/Release/mettle /tmp/libout`
   and the same command with `fail` instead of `run`.
 - **Std programs:**
-  `python3 tests/std.py build/macos-arm64/Release/mettle /tmp/stdout tests/std`
+  `python3 tests/std.py build/linux-x86_64/Release/mettle /tmp/stdout tests/std`
 - **Full suite:**
-  `.tools/macos-arm64/cmake/CMake.app/Contents/bin/ctest --test-dir build/macos-arm64/Release -j6`
-  (about 7 minutes)
+  `.tools/linux-x86_64/cmake/bin/ctest --test-dir build/linux-x86_64/Release -j2`
 - **Sanitizers:** for memory or unsafe changes, compile the program with
   `--sanitize address`. For threads and sync, use `--sanitize thread`.
   `--sanitize undefined` is rejected by design.

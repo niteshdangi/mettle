@@ -130,11 +130,10 @@ extern "C" void *threadMain(void *raw) {
     name.resize(63);
   if (!name.empty())
     (void)pthread_setname_np(name.c_str());
-#elif defined(__linux__)
-  if (name.size() > 15)
-    name.resize(15);
-  if (!name.empty())
-    (void)pthread_setname_np(pthread_self(), name.c_str());
+#else
+  // Linux: the spawner names the thread before spawn returns (see
+  // mettle_rt_thread_spawn_configured), so a name read cannot race this start.
+  (void)name;
 #endif
   entry(argument);
   return nullptr;
@@ -378,6 +377,16 @@ std::int32_t mettle_rt_thread_spawn_configured(
     destroyParkingState(parking);
     return status;
   }
+#if defined(__linux__)
+  // Name the thread here rather than from the thread itself: Thread.name reads
+  // the OS name, and an unnamed Linux thread reports the process name until
+  // its own start ran. Linux names are limited to 15 bytes plus the NUL.
+  if (nameLength != 0) {
+    char truncated[16]{};
+    std::memcpy(truncated, name, nameLength < 15 ? nameLength : 15);
+    (void)pthread_setname_np(thread, truncated);
+  }
+#endif
   const auto token = threadToken(thread);
   parkingRegistry.emplace_back(token, parking);
   if (pthread_mutex_lock(&parking->mutex) != 0)

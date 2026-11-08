@@ -319,7 +319,9 @@ def incremental_reuse():
     assert "cache hit" in second, second
     assert reused.read_bytes() == bytes_built
     assert os.access(reused, os.X_OK) and exit_code(reused) == 0
-    assert not os.access(cache_files("blobs")[0], os.W_OK), "shared blob is writable"
+    # Check the mode bits: os.access reports root as able to write any file.
+    blob_mode = cache_files("blobs")[0].stat().st_mode
+    assert not blob_mode & 0o222, "shared blob is writable"
     # An incremental result equals a clean build without any cache.
     # The linker embeds the output's file name, so compare like names.
     clean = evidence / "clean" / "out.bin"
@@ -1078,7 +1080,15 @@ def debug_info():
     assert plain[0].read_bytes() == plain[1].read_bytes()
     assert debug[0].read_bytes() == debug[1].read_bytes()
     assert plain[0].read_bytes() != debug[0].read_bytes()
-    assert b"debuggee.mt" not in plain[0].read_bytes()
+    # Without -g no DWARF or source path may appear. ELF objects still carry
+    # the standard STT_FILE symbol naming the source's basename; Mach-O has none.
+    plain_bytes = plain[0].read_bytes()
+    assert str(source.parent).encode() not in plain_bytes, "source path in plain object"
+    plain_info = subprocess.run([str(dwarfdump), "--debug-info", str(plain[0])],
+                                text=True, capture_output=True, check=True).stdout
+    assert "DW_TAG_compile_unit" not in plain_info, plain_info
+    if not plain_bytes.startswith(b"\x7fELF"):
+        assert b"debuggee.mt" not in plain_bytes, "source name in plain object"
     subprocess.run([str(dwarfdump), "--verify", str(debug[0])],
                    text=True, capture_output=True, check=True)
     info = subprocess.run([str(dwarfdump), "--debug-info", str(debug[0])],

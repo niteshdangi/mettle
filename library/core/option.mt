@@ -146,7 +146,46 @@ extend<T> T? {
     pub mut fn replace(value: take T): T? {
         unsafe { core.ptr.replace(core.ptr.from_mut(self), present(value)) }
     }
+    // Installs `value`, dropping any previous payload, and returns a view of it.
+    pub mut fn insert(value: take T): mut T from self {
+        let _ = self.replace(value)
+        match mut self {
+            present(current) => mut current,
+            none => super.panic.panic("insert failed to install a value")
+        }
+    }
+    pub take fn zip<U>(other: take U?): (T, U)? {
+        match take self {
+            present(left) => match take other {
+                present(right) => present((left, right)),
+                none => none
+            },
+            none => none
+        }
+    }
+
+    // A one-element view of a present payload, or an empty view. The empty
+    // view's address is the optional itself, which is non-null and aligned for
+    // `T`; no element is read through it.
+    pub fn as_slice(): read [T] from self {
+        match self {
+            present(value) => unsafe { super.slice.from_raw_parts(core.ptr.from_ref(value), 1usize) },
+            none => unsafe { super.slice.from_raw_parts(core.ptr.from_ref(self).cast<T>(), 0usize) }
+        }
+    }
+    pub mut fn as_mut_slice(): mut [T] from self {
+        let empty = core.ptr.from_mut(self).cast<T>()
+        match mut self {
+            present(value) => unsafe { super.slice.from_raw_parts_mut(core.ptr.from_mut(value), 1usize) },
+            none => unsafe { super.slice.from_raw_parts_mut(empty, 0usize) }
+        }
+    }
+    // Iterators over the zero or one payload: exact-size, fused and
+    // double-ended, like slice iteration.
+    pub fn iter(): super.slice.SliceIter<region self, T> { self.as_slice().iter() }
+    pub mut fn iter_mut(): super.slice.SliceIterMut<region self, T> { self.as_mut_slice().iter_mut() }
 }
+
 
 extend<T: Deref> T? {
     pub fn as_deref(): (read T.(Deref).Target from self)? {

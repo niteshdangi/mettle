@@ -791,6 +791,32 @@ machineSignature(const TypeStore &types, std::string_view operation,
       return operands.size() == 1 && !isSignedInteger(self)
                  ? signature(Type::Bool)
                  : std::nullopt;
+    if (method == "bit_width")
+      return operands.size() == 1 && !isSignedInteger(self)
+                 ? signature(Type::U32)
+                 : std::nullopt;
+    if (method == "highest_one" || method == "lowest_one")
+      return operands.size() == 1 ? signature(Type::U32, Shape::Optional)
+                                  : std::nullopt;
+    if (method == "isolate_highest_one" || method == "isolate_lowest_one")
+      return operands.size() == 1 ? signature(self) : std::nullopt;
+    if (method == "carrying_add" || method == "borrowing_sub")
+      return operands.size() == 3 && !isSignedInteger(self) &&
+                     operands[1] == self && operands[2] == Type::Bool
+                 ? signature(self, Shape::Overflow)
+                 : std::nullopt;
+    if (method == "carrying_mul" || method == "carrying_mul_add")
+      return operands.size() == (method == "carrying_mul" ? 3u : 4u) &&
+                     !isSignedInteger(self) &&
+                     std::all_of(operands.begin(), operands.end(),
+                                 [&](Type type) { return type == self; })
+                 ? signature(self, Shape::Pair)
+                 : std::nullopt;
+    if (method == "checked_signed_diff")
+      return operands.size() == 2 && !isSignedInteger(self) &&
+                     operands[1] == self
+                 ? signature(signedType(), Shape::Optional)
+                 : std::nullopt;
     if (method == "ilog2" || method == "ilog10" || method == "checked_ilog2" ||
         method == "checked_ilog10")
       return operands.size() == 1
@@ -909,7 +935,7 @@ machineSignature(const TypeStore &types, std::string_view operation,
       method.remove_prefix(11);
     else if (!strict && !method.ends_with("_signed") &&
              !method.ends_with("_unsigned") && method != "div_euclid" &&
-             method != "rem_euclid")
+             method != "rem_euclid" && method != "abs")
       return std::nullopt;
     bool mixedSigned = method.ends_with("_signed");
     bool mixedUnsigned = method.ends_with("_unsigned");
@@ -1101,11 +1127,13 @@ bool machineResultMatches(const TypeStore &types,
   if (!types.isProduct(result))
     return false;
   const auto &record = types.product(result);
-  return signature.shape == Shape::Optional
-             ? record.kind == AggregateKind::Optional &&
-                   record.components == std::vector<Type>{signature.value}
-             : record.kind == AggregateKind::Tuple &&
-                   record.components ==
-                       std::vector<Type>{signature.value, Type::Bool};
+  if (signature.shape == Shape::Optional)
+    return record.kind == AggregateKind::Optional &&
+           record.components == std::vector<Type>{signature.value};
+  return record.kind == AggregateKind::Tuple &&
+         record.components ==
+             std::vector<Type>{signature.value, signature.shape == Shape::Pair
+                                                    ? signature.value
+                                                    : Type::Bool};
 }
 } // namespace mettle

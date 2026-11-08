@@ -1,0 +1,9 @@
+# Keep LF in every checkout, including Windows (core.autocrlf would otherwise
+# rewrite the whole tree to CRLF).
+* text=auto eol=lf
+# Pinned upstream baseline tables are stored byte-for-byte with CRLF.
+docs/baseline/associated-items.csv -text
+docs/baseline/implementations.csv -text
+docs/baseline/public-items.csv -text
+docs/baseline/redirects.csv -text
+*.gz -text

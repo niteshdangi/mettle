@@ -327,8 +327,9 @@ fn has_cased_after(text: read Text, byte_index: usize): bool {
     }
 }
 
+// Tab, line feed, form feed, carriage return and space: not vertical tab.
 fn is_ascii_whitespace(byte: u8): bool {
-    (byte >= 0x09u8 && byte <= 0x0du8) || byte == 0x20u8
+    byte == 0x09u8 || byte == 0x0au8 || byte == 0x0cu8 || byte == 0x0du8 || byte == 0x20u8
 }
 
 pub type LowercaseChars<region r> {
@@ -1230,6 +1231,22 @@ extend Text {
                     },
                     none => none
                 }
+            },
+            none => none
+        }
+    }
+    // Splits at byte `mid`; panics unless `mid` is a scalar boundary within the text.
+    pub fn split_at(mid: usize): (read Text from self, read Text from self) {
+        match self.split_at_checked(mid) {
+            present(parts) => parts,
+            none => { super.panic.panic("failed to slice string") }
+        }
+    }
+    pub fn split_at_checked(mid: usize): (read Text from self, read Text from self)? {
+        match self.get(0usize, mid) {
+            present(head) => match self.get(mid, self.len()) {
+                present(tail) => present((head, tail)),
+                none => none
             },
             none => none
         }

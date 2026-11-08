@@ -1,5 +1,11 @@
 # Compiler implementation plan
 
+Gated profile change (owner decision, 2026-11-08): the macOS ARM64 machine is
+no longer available, so I13-I14 now gate on the Linux x86-64 host and target
+(`linux-x64`). The closures below keep their stated macOS scope and do not
+transfer; section 8.0 defines the Linux requalification (LNX) that precedes
+further I13 closure.
+
 Status: I06 is closed for the native macOS ARM64 compiler host and Darwin
 target after the `c485aa1` re-review findings were repaired and requalified on
 frozen commit `ff1daa3`. By owner decision (2026-10-31), Linux and Windows
@@ -257,6 +263,105 @@ Dependencies are completion gates; a component's preparatory work may start once
 its own contracts/inputs exist, without marking the enclosing milestone complete.
 The experience track of section 8.7 runs alongside these milestones and is
 delivered by its own gates.
+
+### 8.0. Linux x86-64 profile transition (2026-11-08)
+
+Owner decision (2026-11-08): with the macOS ARM64 machine unavailable, the
+remaining V1 milestones gate on `linux-x64` from reference-profiles.md: a
+Linux x86-64 compiler host producing x86_64-unknown-linux-gnu executables on
+Ubuntu 24.04 (glibc 2.39). The owner's working environment is WSL2 on Windows;
+an Ubuntu 24.04 container with the same pins is equivalent for build and
+functional evidence. Windows x64 (MSVC ABI, PE/COFF, CodeView/PDB) stays
+ungated; selecting it later is a scope expansion needing an owner decision.
+
+Consequences:
+
+- I01-I12 stay closed for their recorded macOS ARM64 scope. That evidence does
+  not transfer, so their behavior is reopened for the Linux profile through
+  LNX below. I01-I06 already have Linux x86-64 target execution receipts, but
+  with a macOS host; a Linux-hosted compiler build was never qualified.
+- LNX, Linux host requalification, precedes any further I13 area closure:
+  1. Bootstrap the pinned `linux-x86_64` CMake/Ninja/LLVM 22.1.3 artifacts.
+     The upstream LLVM Linux release links `zstd::libzstd_static`, so the host
+     needs a static zstd: Ubuntu's `libzstd-dev` (already a README
+     prerequisite). Where the package archive is unreachable, a static zstd
+     built from the checksum-verified upstream 1.5.7 release and passed with
+     `CMAKE_PREFIX_PATH` is equivalent; it is a host build prerequisite of the
+     pinned LLVM artifact, not a compiler or library dependency.
+  2. Build Debug and Release, then run CTest, `tests/source.py` run/fail,
+     `tests/std.py` and the package cases on Linux.
+  3. Classify each failure as a Darwin-only assumption in tests or tools, a
+     genuine Linux runtime/ABI defect, or an inapplicable record. Fix the first
+     two under the normal gates; never relabel a failure as inapplicable.
+  4. Re-run the I07-I12 decisive checks on Linux, including emitted ASan/TSan
+     cases and the LLDB `debugger_workflow`, and record per-item Linux status
+     beside the macOS status in sections 8.3-8.5.
+- I13: the S031 per-item target/cfg audit and every `not applicable` record
+  are re-evaluated for Linux. Records marked Darwin-inapplicable are no longer
+  excluded automatically, and Linux-only std services (for example epoll and
+  `/proc`-backed queries, where selected) become applicable.
+- I14 qualifies `linux-x64`. Correctness, sanitizer and reproducibility checks
+  may run under WSL2 or the container. Runtime, compile-time and storage gates
+  need a qualified runner; virtualized WSL2/container timings count only as
+  pilot evidence until that runner is recorded.
+
+LNX status is tracked in the LNX status subsection below.
+
+#### LNX status
+
+Partial (2026-11-08). Base `fd4f46a` plus the uncommitted LNX change set;
+Ubuntu 24.04 x86-64 container (glibc 2.39, 2 vCPU, 7 GB); Release
+configuration only. WSL2 on the owner's machine has not been run yet.
+
+- Step 1 done: pinned `linux-x86_64` CMake/Ninja/LLVM 22.1.3 installed by
+  `tools/bootstrap.py` with checksum verification. Static zstd came from the
+  checksum-verified upstream 1.5.7 release because the package archive was
+  unreachable in that environment.
+- First Linux-hosted compile/link repairs:
+  - `runtime/sys.cpp`: `std::uint64_t` is `unsigned long` on Linux, so the
+    timer clamp names its type explicitly.
+  - `compiler/packages/toml.h`: the recursive `Value`'s special members are
+    defaulted after the class, because libstdc++ needs complete element types.
+  - `tests/ir/verify.cpp`: braced arguments name `mettle::Source`, because
+    libstdc++'s vector iterator constructor made `compile({...})` ambiguous.
+  - `CMakeLists.txt`: the driver and LLVM adapter compile with `-fno-rtti` when
+    the pinned LLVM is built without RTTI, which the Linux release is.
+- Linux runtime defect fixed: `Thread.name` raced with the child's start. An
+  unnamed Linux thread reports the process name until it names itself; the
+  spawner now names it before spawn returns. Regression
+  `tests/std/thread_name_visible_at_spawn.mt` fails 5/5 runs on the old
+  runtime and passes 5/5 after the fix; it and `threads_basic` are clean under
+  emitted TSan. Known gap: Linux limits OS thread names to 15 bytes, so longer
+  Builder names come back truncated (Rust returns the full name).
+- Test corrections, none weakening the property under test:
+  - `packages.py incremental_reuse` checks blob mode bits, because
+    `os.access` reports root as able to write.
+  - `debug_info` still requires no DWARF and no source path without `-g`, but
+    accepts ELF's standard STT_FILE basename symbol.
+  - The five x86_64-only `source.fail` fixtures ran for the first time and now
+    expect the positions/messages the compiler reports (each points at the
+    offending token).
+  - `numeric-float-stable-methods` no longer asserts which zero `min`/`max`
+    return for equal +0.0/-0.0 operands. That choice is unspecified under the
+    Rust baseline and differs between x86-64 and ARM64.
+  - `i13-text-whitespace-splits-boundaries` and `i13_ffi_cstrings` follow the
+    current library contracts: range-based `extract_if`/`splice`,
+    `is_present`, empty-product patterns, and `to_bytes` excluding the NUL.
+- Step 2 results, serial CTest with the corrected tree: 21/22 pass. The only
+  failure is `source.run` 1/548, `i13-any-callable-source-identity`, the known
+  `Any` identity blocker (i13-library.md handoff). Outside CTest, the
+  `library.alloc` (46) and `library.std` (86) programs pass with two build
+  workers. The `debugger_workflow` LLDB case and emitted ASan/TSan probes pass.
+  Earlier parallel runs were OOM-killed: `alloc.py`/`std.py` start four
+  ~1.6 GB compiles each. That is an environment limit, not a code defect.
+- Update (same day): the Debug configuration also builds on the Linux host.
+  With collision-safe Any identity in place (i13-library.md handoff), the
+  serial Release CTest passes 22/22, including `source.run` 549/549, and
+  outside CTest the `library.alloc` (46) and `library.std` (86) programs pass.
+- Remaining: `tools/build.py` clean-rebuild reproducibility; the compiler
+  ASan/UBSan (`--sanitizers`) build; clang-tidy; a Debug-compiler CTest pass;
+  per-item I07-I12 Linux status in sections 8.3-8.5 (step 4); and a repeat on
+  WSL2.
 
 ### 8.1. Foundation and first executable: I01-I02
 
@@ -1464,9 +1569,10 @@ section 6.1 with compiled native declarations and per-operation semantic
 evidence, including its supporting protocols, reexports and target cfg branches
 missing from rendered docs. By owner decision, every other stable inventory
 record, including deprecated stable APIs, moves to I17 and is not a V1 gate.
-For this lane, gate only the macOS ARM64 compiler-host/Darwin ARM64 target
-profile. Linux and Windows are excluded from gates by the owner and remain not
-qualified. Other target references (Android, WASI, non-hosted Wasm and
+Gate only the `linux-x64` profile (Linux x86-64 compiler host and
+x86_64-unknown-linux-gnu target; owner decision 2026-11-08, section 8.0). The
+earlier macOS ARM64/Darwin lane gate is superseded; Windows remains excluded
+from gates and not qualified. Other target references (Android, WASI, non-hosted Wasm and
 freestanding) are likewise not qualified by this lane. Verify applicable native
 C ABI, debug/unwind/TLS/atomic behavior and optional Rust adapters on the
 selected profile. Cross-compiling an artifact is not a substitute for

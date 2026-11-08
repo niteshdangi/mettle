@@ -402,9 +402,9 @@ fn main(): i32 {
     extracted_source.push(2)
     extracted_source.push(3)
     {
+        let extracted_end = extracted_source.len()
         var extracted = extracted_source.extract_if(
-            0usize,
-            extracted_source.len(),
+            0usize..extracted_end,
             fn(value: mut i32): bool { value % 2 == 1 }
         )
         match extracted.next() { present(value) => { if value != 1 { return 94 } }, none => { return 94 } }
@@ -428,7 +428,7 @@ fn main(): i32 {
         replacement.push(8)
         replacement.push(9)
         {
-            var splice = splice_source.splice(1usize, 2usize, replacement)
+            var splice = splice_source.splice(1usize..2usize, replacement)
         match splice.next() { present(value) => { if value != 2 { return 96 } }, none => { return 96 } }
     }
     if splice_source.len() != 4usize || splice_source[1usize] != 8 ||

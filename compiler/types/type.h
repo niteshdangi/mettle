@@ -486,6 +486,12 @@ std::string_view typeName(Type type);
 // owner whose first field is the payload pointer, so `Owner<T, ...>` unsizes
 // to `Owner<U, ...>` by rebuilding that pointer; empty for other types.
 std::string_view ownerSpelling(std::string_view nominal);
+// Injective, compilation-independent encoding of a type's identity: nominal
+// types by canonical path, bound regions by binder position, `static` kept and
+// other regions erased. Display names are not identities (they omit regions).
+std::string typeIdentity(const TypeStore &types, Type type);
+// Whether a function-pointer type occurs in the type's structure.
+bool containsFunctionPointer(const TypeStore &types, Type type);
 std::string displayType(Type type);
 std::string displayType(const TypeStore &types, Type type,
                         std::span<const Type> namesInMessage = {});

@@ -9,6 +9,7 @@ import package.core.hash.{Hash, hash_one}
 import super.vec.List
 import package.core.cmp.PartialEq
 import package.core.borrow.KeyView
+import package.core.ops.{BitAnd, BitOr, BitXor, Sub}
 
 fn empty(): usize { 0xffffffffffffffffusize }
 
@@ -909,6 +910,10 @@ extend<K, V, A: Allocator> Map<K, V, A> {
     pub mut fn values_mut(): ValuesMut<region self, K, V, A> { ValuesMut(mut self, 0usize) }
 }
 
+extend<K: Hash + PartialEq, V, A: Allocator + Default> Map<K, V, A> implements Default {
+    static fn default(): Map<K, V, A> { new_in(A.(Default).default()) }
+}
+
 extend<K: Hash + PartialEq + Clone, V: Clone, A: Allocator + Clone> Map<K, V, A> implements Clone {
     fn clone(): Map<K, V, A> {
         var out = new_in<K, V, A>(self.entries.allocator().clone())
@@ -975,6 +980,73 @@ extend<K: Hash + PartialEq, V> Map<K, V> implements FromItems<(K, V)> {
 
 extend<K: Hash + PartialEq + Clone, A: Allocator + Clone> Set<K, A> implements Clone {
     fn clone(): Set<K, A> { set_from_map(self.map.clone()) }
+}
+extend<K: Hash + PartialEq, A: Allocator + Default> Set<K, A> implements Default {
+    static fn default(): Set<K, A> { set_from_map(new_in<K, Unit, A>(A.(Default).default())) }
+}
+
+// The operators build new sets from clones of the operands' elements, as the
+// `&a | &b` forms of the baseline do.
+extend<K: Hash + PartialEq + Clone, A: Allocator + Clone> Set<K, A> implements BitOr<Set<K, A>> {
+    type Output = Set<K, A>
+    fn bitor(rhs: read Set<K, A>): Set<K, A> {
+        var out = self.clone()
+        var i = 0usize
+        while i < rhs.map.entries.len() {
+            out.insert(rhs.map.entries[i].key.clone())
+            i += 1usize
+        }
+        out
+    }
+}
+extend<K: Hash + PartialEq + Clone, A: Allocator + Clone> Set<K, A> implements BitAnd<Set<K, A>> {
+    type Output = Set<K, A>
+    fn bitand(rhs: read Set<K, A>): Set<K, A> {
+        var out = set_from_map(new_in<K, Unit, A>(self.map.allocator().clone()))
+        var i = 0usize
+        while i < self.map.entries.len() {
+            if rhs.contains(self.map.entries[i].key) {
+                let _ = out.insert(self.map.entries[i].key.clone())
+            }
+            i += 1usize
+        }
+        out
+    }
+}
+extend<K: Hash + PartialEq + Clone, A: Allocator + Clone> Set<K, A> implements Sub<Set<K, A>> {
+    type Output = Set<K, A>
+    fn sub(rhs: read Set<K, A>): Set<K, A> {
+        var out = set_from_map(new_in<K, Unit, A>(self.map.allocator().clone()))
+        var i = 0usize
+        while i < self.map.entries.len() {
+            if !rhs.contains(self.map.entries[i].key) {
+                let _ = out.insert(self.map.entries[i].key.clone())
+            }
+            i += 1usize
+        }
+        out
+    }
+}
+extend<K: Hash + PartialEq + Clone, A: Allocator + Clone> Set<K, A> implements BitXor<Set<K, A>> {
+    type Output = Set<K, A>
+    fn bitxor(rhs: read Set<K, A>): Set<K, A> {
+        var out = set_from_map(new_in<K, Unit, A>(self.map.allocator().clone()))
+        var i = 0usize
+        while i < self.map.entries.len() {
+            if !rhs.contains(self.map.entries[i].key) {
+                let _ = out.insert(self.map.entries[i].key.clone())
+            }
+            i += 1usize
+        }
+        i = 0usize
+        while i < rhs.map.entries.len() {
+            if !self.contains(rhs.map.entries[i].key) {
+                let _ = out.insert(rhs.map.entries[i].key.clone())
+            }
+            i += 1usize
+        }
+        out
+    }
 }
 // Equal when both hold the same elements, in any order.
 extend<K: Hash + PartialEq, A: Allocator> Set<K, A> implements PartialEq {

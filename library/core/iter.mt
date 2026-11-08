@@ -8,6 +8,7 @@ import super.cmp.PartialOrd
 import super.option
 import super.cmp.Ordering
 import super.clone.Clone
+import super.default.Default
 
 pub interface Iterator: Sized {
     type Item;
@@ -323,6 +324,175 @@ pub interface Iterator: Sized {
         let original = self.clone()
         Cycled(original, self, false, false)
     }
+    take fn max(): Self.Item? where Self.Item: Ord {
+        var source = self
+        var best = source.next()
+        while true {
+            match take source.next() {
+                present(item) => match take best {
+                    present(current) => { best = present(super.cmp.max(current, item)) },
+                    none => { best = present(item) }
+                },
+                none => { break }
+            }
+        }
+        best
+    }
+    take fn min(): Self.Item? where Self.Item: Ord {
+        var source = self
+        var best = source.next()
+        while true {
+            match take source.next() {
+                present(item) => match take best {
+                    present(current) => { best = present(super.cmp.min(current, item)) },
+                    none => { best = present(item) }
+                },
+                none => { break }
+            }
+        }
+        best
+    }
+    // Lexicographic comparison of two sequences; the shorter one orders first.
+    take fn cmp<O: OwnedIterable<Item = Self.Item>>(other: take O): Ordering where Self.Item: Ord {
+        var left = self
+        var right = O.(OwnedIterable).into_iter(other)
+        while true {
+            match take left.next() {
+                present(a) => match take right.next() {
+                    present(b) => {
+                        let order = a.cmp(read b)
+                        if !order.is_eq() { return order }
+                    },
+                    none => { return Ordering.Greater }
+                },
+                none => {
+                    if right.next().is_present() { return Ordering.Less }
+                    return Ordering.Equal
+                }
+            }
+        }
+        Ordering.Equal
+    }
+    // Returns none as soon as an incomparable pair is met.
+    take fn partial_cmp<O: OwnedIterable<Item = Self.Item>>(other: take O): Ordering? where Self.Item: PartialOrd {
+        var left = self
+        var right = O.(OwnedIterable).into_iter(other)
+        while true {
+            match take left.next() {
+                present(a) => match take right.next() {
+                    present(b) => match a.partial_cmp(read b) {
+                        present(order) => { if !order.is_eq() { return present(order) } },
+                        none => { return none }
+                    },
+                    none => { return present(Ordering.Greater) }
+                },
+                none => {
+                    if right.next().is_present() { return present(Ordering.Less) }
+                    return present(Ordering.Equal)
+                }
+            }
+        }
+        present(Ordering.Equal)
+    }
+    take fn eq<O: OwnedIterable<Item = Self.Item>>(other: take O): bool where Self.Item: PartialEq {
+        var left = self
+        var right = O.(OwnedIterable).into_iter(other)
+        while true {
+            match take left.next() {
+                present(a) => match take right.next() {
+                    present(b) => { if !a.eq(read b) { return false } },
+                    none => { return false }
+                },
+                none => { return !right.next().is_present() }
+            }
+        }
+        true
+    }
+    take fn ne<O: OwnedIterable<Item = Self.Item>>(other: take O): bool where Self.Item: PartialEq {
+        !self.eq(other)
+    }
+    take fn lt<O: OwnedIterable<Item = Self.Item>>(other: take O): bool where Self.Item: PartialOrd {
+        match self.partial_cmp(other) { present(order) => order.is_lt(), none => false }
+    }
+    take fn le<O: OwnedIterable<Item = Self.Item>>(other: take O): bool where Self.Item: PartialOrd {
+        match self.partial_cmp(other) { present(order) => order.is_le(), none => false }
+    }
+    take fn gt<O: OwnedIterable<Item = Self.Item>>(other: take O): bool where Self.Item: PartialOrd {
+        match self.partial_cmp(other) { present(order) => order.is_gt(), none => false }
+    }
+    take fn ge<O: OwnedIterable<Item = Self.Item>>(other: take O): bool where Self.Item: PartialOrd {
+        match self.partial_cmp(other) { present(order) => order.is_ge(), none => false }
+    }
+    take fn is_sorted(): bool where Self.Item: PartialOrd {
+        var source = self
+        var previous = source.next()
+        while true {
+            match take source.next() {
+                present(item) => {
+                    match take previous {
+                        present(last) => { if !last.le(read item) { return false } },
+                        none => {}
+                    }
+                    previous = present(item)
+                },
+                none => { break }
+            }
+        }
+        true
+    }
+    take fn is_sorted_by<F: mut fn(read Self.Item, read Self.Item): bool>(compare: take F): bool {
+        var comparator = compare
+        var source = self
+        var previous = source.next()
+        while true {
+            match take source.next() {
+                present(item) => {
+                    match take previous {
+                        present(last) => { if !comparator(read last, read item) { return false } },
+                        none => {}
+                    }
+                    previous = present(item)
+                },
+                none => { break }
+            }
+        }
+        true
+    }
+    take fn is_sorted_by_key<K: PartialOrd, F: mut fn(read Self.Item): K>(key: take F): bool {
+        var key_of = key
+        var source = self
+        var previous: K? = none
+        while true {
+            match take source.next() {
+                present(item) => {
+                    let item_key = key_of(read item)
+                    match take previous {
+                        present(last) => { if !last.le(read item_key) { return false } },
+                        none => {}
+                    }
+                    previous = present(item_key)
+                },
+                none => { break }
+            }
+        }
+        true
+    }
+    // Splits the items into two collections by `test`, keeping their order.
+    take fn partition<B: Default + ExtendItems<Self.Item>, F: mut fn(read Self.Item): bool>(test: take F): (B, B) {
+        var predicate = test
+        var source = self
+        var yes = B.(Default).default()
+        var no = B.(Default).default()
+        while true {
+            match take source.next() {
+                present(item) => {
+                    if predicate(read item) { yes.extend(once(item)) } else { no.extend(once(item)) }
+                },
+                none => { break }
+            }
+        }
+        (yes, no)
+    }
     take fn collect<C: FromItems<Self.Item>>(): C { C.(FromItems<Self.Item>).from_iter(self) }
 }
 
@@ -407,6 +577,22 @@ pub interface BidirectionalIterator: Iterator {
             }
         }
         accumulator
+    }
+    mut fn try_rfold<B, E, F: mut fn(take B, take Self.(Iterator).Item): B throws E>(
+        start: take B,
+        f: mut F
+    ): (B throws E) {
+        var accumulator = start
+        while true {
+            match take self.next_back() {
+                present(item) => match take capture f(take accumulator, item) {
+                    success(value) => { accumulator = value },
+                    failure(error) => { return failure(error) }
+                },
+                none => { break }
+            }
+        }
+        success(accumulator)
     }
     take fn rev(): Reversed<Self> { Reversed(self) }
 }
@@ -1139,6 +1325,42 @@ extend<I: Iterator> Peekable<I> {
             none => none
         }
     }
+    // Consumes the next item when `f` maps it to a value; on failure the
+    // returned item is kept as the next item.
+    pub mut fn next_if_map<R, F: take fn(take I.Item): R throws I.Item>(f: take F): R? {
+        var callable = f
+        let item = match take self.next() {
+            present(item) => item,
+            none => { return none }
+        }
+        match take capture callable(item) {
+            success(value) => present(value),
+            failure(rest) => {
+                self.slot = present(present(rest))
+                self.filled = true
+                none
+            }
+        }
+    }
+    // Consumes the next item when `f` yields a value for a mutable view of it.
+    pub mut fn next_if_map_mut<R, F: take fn(mut I.Item): R?>(f: take F): R? {
+        var callable = f
+        if !self.filled {
+            self.slot = present(self.iter.next())
+            self.filled = true
+        }
+        let found = match mut self.slot {
+            present(held) => match mut held {
+                present(item) => callable(mut item),
+                none => none
+            },
+            none => none
+        }
+        match take found {
+            present(value) => { self.next(); present(value) },
+            none => none
+        }
+    }
 }
 extend<I: Iterator> Peekable<I> implements Iterator {
     type Item = I.Item
@@ -1843,4 +2065,62 @@ extend f64 implements Sum {
 extend f64 implements Product {
     static fn one(): f64 { 1.0f64 }
     fn times(other: take f64): f64 { self * other }
+}
+
+// Value traits of the adapters that hold no closure: they clone and default by
+// their fields. Adapters holding a closure stay without these impls.
+extend<I: Iterator + Clone> Enumerated<I> implements Clone {
+    fn clone(): Enumerated<I> { Enumerated(self.iter.clone(), self.index) }
+}
+extend<I: Iterator + Clone> Limited<I> implements Clone {
+    fn clone(): Limited<I> { Limited(self.iter.clone(), self.remaining) }
+}
+extend<I: Iterator + Clone> Skipped<I> implements Clone {
+    fn clone(): Skipped<I> { Skipped(self.iter.clone(), self.pending) }
+}
+extend<I: Iterator + Clone> Stepped<I> implements Clone {
+    fn clone(): Stepped<I> { Stepped(self.iter.clone(), self.step, self.first) }
+}
+extend<I: Iterator + Clone> Fused<I> implements Clone {
+    fn clone(): Fused<I> { Fused(self.iter.clone(), self.done) }
+}
+extend<I: Iterator + Clone> Reversed<I> implements Clone {
+    fn clone(): Reversed<I> { Reversed(self.iter.clone()) }
+}
+extend<A: Iterator + Clone, B: Iterator + Clone> Zipped<A, B> implements Clone {
+    fn clone(): Zipped<A, B> { Zipped(self.first.clone(), self.second.clone()) }
+}
+extend<A: Iterator + Clone, B: Iterator + Clone> Chained<A, B> implements Clone {
+    fn clone(): Chained<A, B> {
+        let second = match self.second {
+            present(rest) => present(rest.clone()),
+            none => none
+        }
+        Chained(self.first.clone(), second, self.first_live)
+    }
+}
+
+extend<I: Iterator + Default> Enumerated<I> implements Default {
+    static fn default(): Enumerated<I> { Enumerated(I.(Default).default(), 0usize) }
+}
+extend<I: Iterator + Default> Limited<I> implements Default {
+    static fn default(): Limited<I> { Limited(I.(Default).default(), 0usize) }
+}
+extend<I: Iterator + Default> Skipped<I> implements Default {
+    static fn default(): Skipped<I> { Skipped(I.(Default).default(), 0usize) }
+}
+extend<I: Iterator + Default> Fused<I> implements Default {
+    static fn default(): Fused<I> { Fused(I.(Default).default(), false) }
+}
+extend<I: Iterator + Default> Reversed<I> implements Default {
+    static fn default(): Reversed<I> { Reversed(I.(Default).default()) }
+}
+extend<I: Iterator + Default> Peekable<I> implements Default {
+    static fn default(): Peekable<I> { Peekable(I.(Default).default(), none, false) }
+}
+extend<A: Iterator + Default, B: Iterator + Default> Zipped<A, B> implements Default {
+    static fn default(): Zipped<A, B> { Zipped(A.(Default).default(), B.(Default).default()) }
+}
+extend<T, A: Iterator<Item = T> + Default, B: Iterator<Item = T> + Default> Chained<A, B> implements Default {
+    static fn default(): Chained<A, B> { Chained(A.(Default).default(), present(B.(Default).default()), true) }
 }

@@ -20,8 +20,8 @@ the [C++ compiler scope](docs/implementation-plan.md#8-delivery-milestones).
 Run from the project root with the selected local toolchain installed:
 
 ```sh
-cmake --build build/macos-arm64/Debug
-ctest --test-dir build/macos-arm64/Debug --output-on-failure
+cmake --build build/linux-x86_64/Debug
+ctest --test-dir build/linux-x86_64/Debug --output-on-failure
 ```
 
 Configuring and building runs `tools/check_modules.py` (component ownership,
@@ -49,9 +49,10 @@ startup failure. The instrumented corpus and both detector probes pass; see the
 [compatibility decision](docs/code-quality.md#5-unsafe-memory-and-concurrency).
 Do not silently substitute runtimes or disable instrumentation.
 
-Use the corresponding `linux-x86_64` paths on a qualified Linux compiler host.
-The current qualified compiler host is macOS ARM64; Linux target execution
-does not establish Linux compiler-host qualification.
+The gated compiler host is Linux x86-64 from 2026-11-08 (owner decision;
+implementation-plan section 8.0). Earlier closures were qualified on a macOS
+ARM64 host; their evidence does not establish Linux compiler-host
+qualification until LNX completes.
 
 Cross-target/backend changes also require the existing Linux source runner:
 

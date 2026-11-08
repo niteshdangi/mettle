@@ -245,30 +245,33 @@ void phaseOwnership() {
   require(compiled.has_value(), "in-memory compiler pipeline failed");
   mettle::Diagnostics divergence;
   auto nonreturning = mettle::pipeline::compile(
-      {"divergence.mt", "fn stop(): Never { loop {} }\n"
-                        "fn inferred() { true && stop() }\n"
-                        "fn annotated(): i32 { let _ = true && stop(); 42 }\n"
-                        "fn main() { 0 }\n"},
+      mettle::Source{"divergence.mt",
+                     "fn stop(): Never { loop {} }\n"
+                     "fn inferred() { true && stop() }\n"
+                     "fn annotated(): i32 { let _ = true && stop(); 42 }\n"
+                     "fn main() { 0 }\n"},
       divergence);
   require(nonreturning.has_value(),
           "unreachable short-circuit merge became an invalid return");
   mettle::Diagnostics invalid;
-  require(!mettle::pipeline::compile({"broken.mt", "fn main() { missing }\n"},
-                                     invalid),
+  require(!mettle::pipeline::compile(
+              mettle::Source{"broken.mt", "fn main() { missing }\n"}, invalid),
           "pipeline published invalid source");
   require(invalid.items[0].phase == "name", "pipeline changed rejection phase");
   for (std::string bytes :
        {std::string("\xc0\x80", 2), std::string("\xed\xa0\x80", 3),
         std::string("\xf4\x90\x80\x80", 4), std::string("\xe2\x82", 2)}) {
     mettle::Diagnostics encoding;
-    require(!mettle::pipeline::compile({"encoding.mt", bytes}, encoding),
+    require(!mettle::pipeline::compile(mettle::Source{"encoding.mt", bytes},
+                                       encoding),
             "in-memory pipeline accepted malformed UTF-8");
     require(encoding.items[0].phase == "lex",
             "encoding rejected outside the source boundary");
   }
   mettle::Diagnostics products;
   auto constructed = mettle::pipeline::compile(
-      {"product.mt", "copy type Point { x: i32 }\nfn main() { Point(42).x }\n"},
+      mettle::Source{"product.mt",
+                     "copy type Point { x: i32 }\nfn main() { Point(42).x }\n"},
       products);
   require(constructed.has_value(), "product compilation failed");
   auto malformed = constructed->program();
@@ -306,15 +309,16 @@ void phaseOwnership() {
 void ownedValueCases() {
   mettle::Diagnostics diagnostics;
   auto compiled = mettle::pipeline::compile(
-      {"owners.mt",
-       "type Guard<region r> { counter: mut i32 from r; "
-       "drop { *self.counter += 1 } }\n"
-       "fn route(value: take Guard, flag: bool): Guard from value { "
-       "if flag { value } else { value } }\n"
-       "fn consume(value: take Guard) {}\n"
-       "fn main() { var counter = 0; "
-       "{ let owned = route(Guard(mut counter), true) }; "
-       "if counter == 1 { 0 } else { 1 } }\n"},
+      mettle::Source{
+          "owners.mt",
+          "type Guard<region r> { counter: mut i32 from r; "
+          "drop { *self.counter += 1 } }\n"
+          "fn route(value: take Guard, flag: bool): Guard from value { "
+          "if flag { value } else { value } }\n"
+          "fn consume(value: take Guard) {}\n"
+          "fn main() { var counter = 0; "
+          "{ let owned = route(Guard(mut counter), true) }; "
+          "if counter == 1 { 0 } else { 1 } }\n"},
       diagnostics);
   require(compiled.has_value(), "valid branch ownership rejected");
   auto rejectedOwner = [](Program program, const char *expected) {
@@ -425,11 +429,12 @@ void ownedValueCases() {
 void variantRefinementCases() {
   mettle::Diagnostics diagnostics;
   auto compiled = mettle::pipeline::compile(
-      {"variants.mt",
-       "copy enum Value { Empty; Held(i32) }\n"
-       "fn unpack(value: Value) { match value { Value.Empty => 0, "
-       "Value.Held(payload) => payload } }\n"
-       "fn main() { unpack(Value.Held(42)) }\n"},
+      mettle::Source{
+          "variants.mt",
+          "copy enum Value { Empty; Held(i32) }\n"
+          "fn unpack(value: Value) { match value { Value.Empty => 0, "
+          "Value.Held(payload) => payload } }\n"
+          "fn main() { unpack(Value.Held(42)) }\n"},
       diagnostics);
   require(compiled.has_value(), "valid tagged pattern CFG rejected");
   auto malformed = compiled->program();
@@ -468,14 +473,15 @@ void variantRefinementCases() {
 void conditionalUnpinProofCases() {
   mettle::Diagnostics diagnostics;
   auto compiled = mettle::pipeline::compile(
-      {"unpin.mt",
-       "interface Ready {}\n"
-       "extend i32 implements Ready {}\n"
-       "type Wrapper<T> { value: T; marker: core.marker.PhantomPinned }\n"
-       "unsafe extend<T: Ready> Wrapper<T> implements Unpin {}\n"
-       "fn main() { var handle = core.pin.pin("
-       "Wrapper(42,core.marker.PhantomPinned)); "
-       "let value = handle.get_mut(); 0 }\n"},
+      mettle::Source{
+          "unpin.mt",
+          "interface Ready {}\n"
+          "extend i32 implements Ready {}\n"
+          "type Wrapper<T> { value: T; marker: core.marker.PhantomPinned }\n"
+          "unsafe extend<T: Ready> Wrapper<T> implements Unpin {}\n"
+          "fn main() { var handle = core.pin.pin("
+          "Wrapper(42,core.marker.PhantomPinned)); "
+          "let value = handle.get_mut(); 0 }\n"},
       diagnostics);
   require(compiled.has_value(), "validated conditional Unpin rejected");
   auto program = compiled->program();

@@ -341,6 +341,42 @@ extend<T: Ord> [T] implements Ord {
         self.len().cmp(other.len())
     }
 }
+// Arrays compare element-wise in index order, like their slices.
+extend<T: PartialEq, const N: usize> [T; N] implements PartialEq {
+    fn eq(other: read [T; N]): bool {
+        var i = 0usize
+        while i < N {
+            if self[i] != other[i] { return false }
+            i += 1usize
+        }
+        true
+    }
+}
+extend<T: Eq, const N: usize> [T; N] implements Eq {}
+extend<T: PartialOrd, const N: usize> [T; N] implements PartialOrd {
+    fn partial_cmp(other: read [T; N]): Ordering? {
+        var i = 0usize
+        while i < N {
+            match self[i].partial_cmp(read other[i]) {
+                present(order) => if !order.is_eq() { return present(order) },
+                none => { return none }
+            }
+            i += 1usize
+        }
+        present(Ordering.Equal)
+    }
+}
+extend<T: Ord, const N: usize> [T; N] implements Ord {
+    fn cmp(other: read [T; N]): Ordering {
+        var i = 0usize
+        while i < N {
+            let order = self[i].cmp(read other[i])
+            if !order.is_eq() { return order }
+            i += 1usize
+        }
+        Ordering.Equal
+    }
+}
 
 extend<T: PartialEq> T? implements PartialEq {
     fn eq(other: read T?): bool {

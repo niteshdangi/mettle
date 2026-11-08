@@ -157,10 +157,15 @@ std::optional<int> Checker::machineValue(const Node &node) {
     facts(node).numeric = std::move(value->literal);
     return inference.fresh(value->type);
   }
-  if (!isInteger(type) || (member != "MIN" && member != "MAX"))
+  if (!isInteger(type) ||
+      (member != "MIN" && member != "MAX" && member != "BITS"))
     return std::nullopt;
   NumericLiteral literal;
   auto width = integerWidth(type, pointerBits());
+  if (member == "BITS") {
+    facts(node).numeric = integerLiteral(width);
+    return inference.fresh(Type::U32);
+  }
   auto bits =
       member == "MAX" ? width - (isSignedInteger(type) ? 1 : 0) : width - 1;
   if (member == "MIN") {

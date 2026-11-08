@@ -1,8 +1,12 @@
 // Synchronous POSIX TCP and UDP sockets, IPv4/IPv6 addresses, and DNS lookup.
 import package.core.outcome
+import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import package.core.convert.From
 import package.core.fmt.{Debug, Display, Formatter, Write}
+import package.core.hash.{Hash, Hasher}
+import package.core.ops.{BitAnd, BitAndAssign, BitOr, BitOrAssign, Not}
 import package.core.slice
-import package.core.text.Text
+import package.core.text.{FromStr, Text}
 import package.alloc.vec
 import package.alloc.vec.List
 import super.io
@@ -1294,4 +1298,172 @@ pub fn resolve(host: read Text, port: u16): List<SocketAddr> throws Error {
         index += 1usize
     }
     addresses
+}
+
+// Value traits. Ordering follows the address bytes; IPv4 sorts before IPv6 and
+// socket addresses order by address, then port, flow label and scope.
+
+extend Ipv4Addr implements PartialEq {
+    fn eq(other: read Ipv4Addr): bool { self.bits == other.bits }
+}
+extend Ipv4Addr implements Eq {}
+extend Ipv4Addr implements PartialOrd {
+    fn partial_cmp(other: read Ipv4Addr): Ordering? { present(self.cmp(other)) }
+}
+extend Ipv4Addr implements Ord {
+    fn cmp(other: read Ipv4Addr): Ordering { self.bits.cmp(other.bits) }
+}
+extend Ipv4Addr implements Hash {
+    fn hash<H: Hasher>(state: mut H): Unit { self.bits.hash(mut state) }
+}
+extend Ipv4Addr implements Not {
+    type Output = Ipv4Addr
+    fn not(): Ipv4Addr { Ipv4Addr(!self.bits) }
+}
+extend Ipv4Addr implements BitAnd<Ipv4Addr> {
+    type Output = Ipv4Addr
+    fn bitand(rhs: read Ipv4Addr): Ipv4Addr { Ipv4Addr(self.bits & rhs.bits) }
+}
+extend Ipv4Addr implements BitOr<Ipv4Addr> {
+    type Output = Ipv4Addr
+    fn bitor(rhs: read Ipv4Addr): Ipv4Addr { Ipv4Addr(self.bits | rhs.bits) }
+}
+extend Ipv4Addr implements BitAndAssign<Ipv4Addr> {
+    mut fn bitand_assign(rhs: read Ipv4Addr): Unit { self.bits = self.bits & rhs.bits }
+}
+extend Ipv4Addr implements BitOrAssign<Ipv4Addr> {
+    mut fn bitor_assign(rhs: read Ipv4Addr): Unit { self.bits = self.bits | rhs.bits }
+}
+extend Ipv4Addr implements FromStr {
+    type Error = io.Error
+    static fn from_str(input: read Text): Ipv4Addr throws io.Error { try parse_ipv4(input) }
+}
+extend Ipv4Addr implements From<u32> {
+    static fn `from`(value: take u32): Ipv4Addr { Ipv4Addr(value) }
+}
+extend Ipv4Addr implements From<[u8; 4]> {
+    static fn `from`(value: take [u8; 4]): Ipv4Addr { Ipv4Addr.from_octets(value) }
+}
+
+extend Ipv6Addr implements PartialEq {
+    fn eq(other: read Ipv6Addr): bool { self.to_bits() == other.to_bits() }
+}
+extend Ipv6Addr implements Eq {}
+extend Ipv6Addr implements PartialOrd {
+    fn partial_cmp(other: read Ipv6Addr): Ordering? { present(self.cmp(other)) }
+}
+extend Ipv6Addr implements Ord {
+    fn cmp(other: read Ipv6Addr): Ordering { self.to_bits().cmp(other.to_bits()) }
+}
+extend Ipv6Addr implements Hash {
+    fn hash<H: Hasher>(state: mut H): Unit { self.to_bits().hash(mut state) }
+}
+extend Ipv6Addr implements Not {
+    type Output = Ipv6Addr
+    fn not(): Ipv6Addr { Ipv6Addr.from_bits(!self.to_bits()) }
+}
+extend Ipv6Addr implements BitAnd<Ipv6Addr> {
+    type Output = Ipv6Addr
+    fn bitand(rhs: read Ipv6Addr): Ipv6Addr { Ipv6Addr.from_bits(self.to_bits() & rhs.to_bits()) }
+}
+extend Ipv6Addr implements BitOr<Ipv6Addr> {
+    type Output = Ipv6Addr
+    fn bitor(rhs: read Ipv6Addr): Ipv6Addr { Ipv6Addr.from_bits(self.to_bits() | rhs.to_bits()) }
+}
+extend Ipv6Addr implements BitAndAssign<Ipv6Addr> {
+    mut fn bitand_assign(rhs: read Ipv6Addr): Unit {
+        self.bytes = Ipv6Addr.from_bits(self.to_bits() & rhs.to_bits()).bytes
+    }
+}
+extend Ipv6Addr implements BitOrAssign<Ipv6Addr> {
+    mut fn bitor_assign(rhs: read Ipv6Addr): Unit {
+        self.bytes = Ipv6Addr.from_bits(self.to_bits() | rhs.to_bits()).bytes
+    }
+}
+extend Ipv6Addr implements FromStr {
+    type Error = io.Error
+    static fn from_str(input: read Text): Ipv6Addr throws io.Error { try parse_ipv6(input) }
+}
+extend Ipv6Addr implements From<u128> {
+    static fn `from`(value: take u128): Ipv6Addr { Ipv6Addr.from_bits(value) }
+}
+extend Ipv6Addr implements From<[u8; 16]> {
+    static fn `from`(value: take [u8; 16]): Ipv6Addr { Ipv6Addr.from_octets(value) }
+}
+extend Ipv6Addr implements From<[u16; 8]> {
+    static fn `from`(value: take [u16; 8]): Ipv6Addr { Ipv6Addr.from_segments(value) }
+}
+
+extend IpAddr implements PartialEq {
+    fn eq(other: read IpAddr): bool { self.same(other) }
+}
+extend IpAddr implements Eq {}
+extend IpAddr implements PartialOrd {
+    fn partial_cmp(other: read IpAddr): Ordering? { present(self.cmp(other)) }
+}
+extend IpAddr implements Ord {
+    fn cmp(other: read IpAddr): Ordering {
+        match self {
+            IpAddr.V4(a) => match other {
+                IpAddr.V4(b) => a.cmp(b),
+                IpAddr.V6(_) => Ordering.Less
+            },
+            IpAddr.V6(a) => match other {
+                IpAddr.V4(_) => Ordering.Greater,
+                IpAddr.V6(b) => a.cmp(b)
+            }
+        }
+    }
+}
+extend IpAddr implements Hash {
+    fn hash<H: Hasher>(state: mut H): Unit {
+        match self {
+            IpAddr.V4(ip) => {
+                state.write_u8(4u8)
+                ip.hash(mut state)
+            },
+            IpAddr.V6(ip) => {
+                state.write_u8(6u8)
+                ip.hash(mut state)
+            }
+        }
+    }
+}
+extend IpAddr implements FromStr {
+    type Error = io.Error
+    static fn from_str(input: read Text): IpAddr throws io.Error { try parse_ip_addr(input) }
+}
+extend IpAddr implements From<Ipv4Addr> {
+    static fn `from`(value: take Ipv4Addr): IpAddr { IpAddr.V4(value) }
+}
+extend IpAddr implements From<Ipv6Addr> {
+    static fn `from`(value: take Ipv6Addr): IpAddr { IpAddr.V6(value) }
+}
+
+extend SocketAddr implements PartialEq {
+    fn eq(other: read SocketAddr): bool { self.same(other) }
+}
+extend SocketAddr implements Eq {}
+extend SocketAddr implements PartialOrd {
+    fn partial_cmp(other: read SocketAddr): Ordering? { present(self.cmp(other)) }
+}
+extend SocketAddr implements Ord {
+    fn cmp(other: read SocketAddr): Ordering {
+        let by_ip = self.ip.cmp(other.ip)
+        let by_port = by_ip.then(self.port.cmp(other.port))
+        let by_flow = by_port.then(self.flowinfo.cmp(other.flowinfo))
+        by_flow.then(self.scope_id.cmp(other.scope_id))
+    }
+}
+extend SocketAddr implements Hash {
+    fn hash<H: Hasher>(state: mut H): Unit {
+        self.ip.hash(mut state)
+        self.port.hash(mut state)
+        self.flowinfo.hash(mut state)
+        self.scope_id.hash(mut state)
+    }
+}
+extend SocketAddr implements FromStr {
+    type Error = io.Error
+    static fn from_str(input: read Text): SocketAddr throws io.Error { try parse_socket_addr(input) }
 }

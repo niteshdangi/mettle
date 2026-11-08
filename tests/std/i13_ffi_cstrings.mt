@@ -17,7 +17,7 @@ fn main(): i32 {
     let borrowed = value.as_c_str()
     if !std.ffi.bytes_equal(borrowed.to_bytes(), payload) { return 5 }
     if !std.ffi.bytes_equal(borrowed.to_bytes_with_nul(), terminated) { return 6 }
-    if borrowed.to_str().is_some() { return 7 }
+    if borrowed.to_str().is_present() { return 7 }
     let duplicate = value.clone()
     if !duplicate.eq(borrowed) || !borrowed.eq(duplicate) { return 38 }
     if !duplicate.cmp(value).is_eq() { return 39 }
@@ -65,11 +65,12 @@ fn main(): i32 {
         success(view) => view,
         failure(_) => { return 16 }
     }
-    if !std.ffi.bytes_equal(prefix_view.to_bytes(), prefix) { return 16 }
+    if !std.ffi.bytes_equal(prefix_view.to_bytes_with_nul(), prefix) { return 16 }
+    let prefix_payload = prefix_view.to_bytes()
+    if prefix_payload.len() != 1usize || prefix_payload[0usize] != 255u8 { return 41 }
     match take capture CStr.from_bytes_until_nul(tail) {
         success(_) => { return 17 },
-        failure(FromBytesUntilNulError()) => {},
-        failure(_) => { return 18 }
+        failure(FromBytesUntilNulError {}) => {}
     }
 
     let invalid_owned: [u8; 3] = [65u8, 0u8, 66u8]

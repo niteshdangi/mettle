@@ -160,8 +160,6 @@ evaluateNumeric(std::string_view operation, Type owner,
       auto integral = a;
       integral.roundToIntegral(llvm::APFloat::rmTowardZero);
       a.subtract(integral, nearest);
-      if (a.isZero())
-        a.copySign(values[0]);
     } else if (operation == "recip") {
       auto one = integerFloat(owner, 1);
       one.divide(a, nearest);
@@ -230,27 +228,42 @@ evaluateNumeric(std::string_view operation, Type owner,
           a = b;
       }
     } else if (operation == "midpoint") {
-      if (a.isNaN() || b.isNaN())
-        a.add(b, nearest);
-      else if (a.isInfinity() || b.isInfinity()) {
-        if (a.isInfinity() && b.isInfinity() &&
-            a.isNegative() != b.isNegative())
-          a.add(b, nearest);
-        else if (b.isInfinity())
-          a = b;
-      } else if (a.isZero() && b.isZero()) {
-        a = llvm::APFloat::getZero(semantics(owner),
-                                   a.isNegative() && b.isNegative());
+      // Matches the runtime lowering: binary32 sums and halves in binary64;
+      // binary64 halves first only where the sum could overflow.
+      if (owner == Type::F32) {
+        bool loses = false;
+        auto wideB = b;
+        a.convert(llvm::APFloat::IEEEdouble(), nearest, &loses);
+        wideB.convert(llvm::APFloat::IEEEdouble(), nearest, &loses);
+        a.add(wideB, nearest);
+        a.divide(integerFloat(Type::F64, 2), nearest);
+        a.convert(semantics(owner), nearest, &loses);
       } else {
         auto two = integerFloat(owner, 2);
-        if (a.isNegative() == b.isNegative()) {
-          auto difference = b;
-          difference.subtract(a, nearest);
-          difference.divide(two, nearest);
-          a.add(difference, nearest);
-        } else {
+        auto low = llvm::APFloat::getSmallestNormalized(semantics(owner));
+        low.multiply(two, nearest);
+        auto high = llvm::APFloat::getLargest(semantics(owner));
+        high.divide(two, nearest);
+        auto absA = llvm::abs(a), absB = llvm::abs(b);
+        auto halfA = a, halfB = b;
+        halfA.divide(two, nearest);
+        halfB.divide(two, nearest);
+        auto atMost = [](const llvm::APFloat &x, const llvm::APFloat &limit) {
+          auto order = x.compare(limit);
+          return order == llvm::APFloat::cmpLessThan ||
+                 order == llvm::APFloat::cmpEqual;
+        };
+        if (atMost(absA, high) && atMost(absB, high)) {
           a.add(b, nearest);
           a.divide(two, nearest);
+        } else if (absA.compare(low) == llvm::APFloat::cmpLessThan) {
+          a.add(halfB, nearest);
+        } else if (absB.compare(low) == llvm::APFloat::cmpLessThan) {
+          a = halfA;
+          a.add(b, nearest);
+        } else {
+          a = halfA;
+          a.add(halfB, nearest);
         }
       }
     } else

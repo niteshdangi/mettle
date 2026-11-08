@@ -393,7 +393,7 @@ std::chrono::nanoseconds timerInterval(std::uint64_t seconds,
       static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
   if (seconds > maxNanos / 1000000000ULL)
     return std::chrono::nanoseconds::max();
-  const auto total = seconds * 1000000000ULL + nanos;
+  const std::uint64_t total = seconds * 1000000000ULL + nanos;
   return std::chrono::nanoseconds(
       static_cast<std::int64_t>(std::min(total, maxNanos)));
 }

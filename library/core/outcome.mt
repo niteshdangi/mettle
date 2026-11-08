@@ -132,6 +132,29 @@ extend<T, E> (T throws E) {
     pub take fn or_else<F>(f: fn(take E): (T throws F)): (T throws F) {
         match take self { success(value) => success(value), failure(error) => f(error) }
     }
+    pub take fn or<F>(other: take (T throws F)): (T throws F) {
+        match take self { success(value) => success(value), failure(error) => other }
+    }
+
+    // Iterators over the zero or one success payload: exact-size, fused and
+    // double-ended, like slice iteration. A failure yields an empty view whose
+    // address is the outcome itself, which is non-null and aligned for `T`; no
+    // element is read through it.
+    pub fn iter(): super.slice.SliceIter<region self, T> {
+        let view: read [T] from self = match self {
+            success(value) => unsafe { super.slice.from_raw_parts(core.ptr.from_ref(value), 1usize) },
+            failure(error) => unsafe { super.slice.from_raw_parts(core.ptr.from_ref(self).cast<T>(), 0usize) }
+        }
+        view.iter()
+    }
+    pub mut fn iter_mut(): super.slice.SliceIterMut<region self, T> {
+        let empty = core.ptr.from_mut(self).cast<T>()
+        let view: mut [T] from self = match mut self {
+            success(value) => unsafe { super.slice.from_raw_parts_mut(core.ptr.from_mut(value), 1usize) },
+            failure(error) => unsafe { super.slice.from_raw_parts_mut(empty, 0usize) }
+        }
+        view.iter_mut()
+    }
 }
 
 extend<region r, T: Clone, E: Clone> ((read T from r) throws (read E from r)) {

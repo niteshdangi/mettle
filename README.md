@@ -7,8 +7,9 @@ compilation and less build-cache storage (decisions D16-D17).
 
 Status: correctness repairs are in progress after the `c485aa1` re-review.
 Historical green gates missed confirmed crashes, soundness/ABI defects and
-validation gaps; they are not current completion approval. The recorded scope is
-macOS ARM64 compiler-host / Linux x86-64 target execution. The compiler checks and builds
+validation gaps; they are not current completion approval. The recorded I01-I12 scope is
+macOS ARM64 compiler-host / Linux x86-64 target execution; from 2026-11-08 the
+gated profile is a Linux x86-64 host and target (implementation-plan section 8.0). The compiler checks and builds
 Mettle programs with functions, result inference and control
 flow. I03 includes concrete products, projected initialization and
 moves, stored/returned views, receiver borrowing and native destructor/unwind
@@ -63,8 +64,8 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [compiler/library standard](docs/code-quality.md) before changing the implementation.
 
 ```sh
-cmake --build build/macos-arm64/Debug
-ctest --test-dir build/macos-arm64/Debug --output-on-failure
+cmake --build build/linux-x86_64/Debug
+ctest --test-dir build/linux-x86_64/Debug --output-on-failure
 ```
 
 The build runs the module check; warnings are errors. Format C++ with the
@@ -75,8 +76,10 @@ target execution/reproducibility gates.
 
 ## Building the compiler
 
-From this directory, using Python 3.9+ and curl. The native macOS ARM64 build is
-validated; full Ubuntu x86-64 compiler-host linking remains unverified.
+From this directory, using Python 3.9+ and curl. The gated host is Linux
+x86-64 (Ubuntu 24.04, natively or under WSL2 on Windows); its requalification
+status is tracked as LNX in implementation-plan section 8.0. The earlier native
+macOS ARM64 build was validated but is no longer gated.
 macOS also needs the Command Line Tools SDK and zstd development library.
 Ubuntu needs `build-essential`, `zlib1g-dev`, `libzstd-dev` and `libxml2-dev`;
 the optional VM provisions these automatically:
@@ -86,6 +89,23 @@ python3 tools/bootstrap.py
 python3 tools/build.py --configuration Debug
 python3 tools/build.py --configuration Release
 ```
+
+### Linux host build
+
+For an incremental build without `build.py`'s clean-rebuild check (WSL2:
+clone inside the Linux filesystem, not under `/mnt/c` or `/mnt/d`, for speed):
+
+```sh
+P=$PWD/.tools/linux-x86_64
+$P/cmake/bin/cmake -S . -B build/linux-x86_64/Release -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=$P/llvm/bin/clang \
+  -DCMAKE_CXX_COMPILER=$P/llvm/bin/clang++ -DCMAKE_MAKE_PROGRAM=$P/ninja/ninja \
+  -DLLVM_DIR=$P/llvm/lib/cmake/llvm -DBUILD_TESTING=ON
+$P/cmake/bin/cmake --build build/linux-x86_64/Release
+```
+
+Without `libzstd-dev`, add `-DCMAKE_PREFIX_PATH=<prefix>` naming a static zstd
+built from the checksum-verified upstream release.
 
 The bootstrap installs checksum-pinned tools into ignored `.tools/`, without
 replacing system compilers. The build script configures CMake/Ninja, performs a clean build, runs CTest,

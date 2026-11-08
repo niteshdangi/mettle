@@ -9,6 +9,8 @@ struct MachineSignature {
     Value,
     Optional,
     Overflow,
+    // (value, value): the low and high words of a widening multiply.
+    Pair,
     PointerRead,
     PointerMut,
     ViewRead,

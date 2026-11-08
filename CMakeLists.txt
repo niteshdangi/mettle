@@ -155,6 +155,12 @@ foreach(index RANGE ${METTLE_MODULE_LAST})
 endforeach()
 target_include_directories(mettle_backend_llvm SYSTEM PUBLIC ${LLVM_INCLUDE_DIRS})
 target_link_libraries(mettle_backend_llvm PUBLIC ${METTLE_LLVM_LIBRARIES})
+# The pinned Linux LLVM release is built without RTTI; its integration
+# boundary (driver and LLVM adapter) must match it to link LLVM vtables.
+if(NOT LLVM_ENABLE_RTTI)
+  target_compile_options(mettle_backend_llvm PRIVATE -fno-rtti)
+  target_compile_options(mettle PRIVATE -fno-rtti)
+endif()
 if(APPLE)
   target_compile_definitions(mettle_backend_llvm PRIVATE
     METTLE_DARWIN_DEPLOYMENT_TARGET="${METTLE_MACOS_DEPLOYMENT_TARGET}")

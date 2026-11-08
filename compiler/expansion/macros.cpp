@@ -1848,12 +1848,30 @@ private:
         auto end = patternEnd(out, close, begin, out.size(), word == "for");
         bindPattern(out, begin, end, binders, shorthand);
       } else if (word == "fn") {
-        auto open = symbol(out[i + 1], "(") ? i + 1
-                    : i + 2 < out.size() &&
-                            out[i + 1].kind == TokenKind::Word &&
-                            symbol(out[i + 2], "(")
-                        ? i + 2
-                        : none;
+        // The parameter list follows an optional (possibly backticked) name
+        // and optional generic parameters.
+        auto open = none;
+        if (symbol(out[i + 1], "("))
+          open = i + 1;
+        else if (out[i + 1].kind == TokenKind::Word ||
+                 out[i + 1].kind == TokenKind::QuotedWord) {
+          auto next = i + 2;
+          if (next < out.size() && symbol(out[next], "<")) {
+            std::size_t depth = 0;
+            for (; next < out.size(); ++next) {
+              if (symbol(out[next], "<"))
+                ++depth;
+              else if (symbol(out[next], ">") && --depth == 0)
+                break;
+              else if (symbol(out[next], ">>") &&
+                       (depth -= std::min<std::size_t>(depth, 2)) == 0)
+                break;
+            }
+            ++next;
+          }
+          if (next < out.size() && symbol(out[next], "("))
+            open = next;
+        }
         if (open != none) {
           if (close[open] != none)
             bindParameters(out, close, open, close[open], binders, shorthand);

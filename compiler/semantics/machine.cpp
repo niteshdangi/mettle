@@ -337,6 +337,10 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
         return Type::Usize;
       };
       expected = numericMethod == "powi" ? Type::I32
+                 : (numericMethod == "carrying_add" ||
+                    numericMethod == "borrowing_sub") &&
+                         i == 2
+                     ? Type::Bool
                  : numericMethod.ends_with("add_signed") ||
                          numericMethod.ends_with("sub_signed")
                      ? signedType()
@@ -574,6 +578,8 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
   else if (signature->shape == Shape::Overflow)
     result =
         checked.types->structural(AggregateKind::Tuple, {result, Type::Bool});
+  else if (signature->shape == Shape::Pair)
+    result = checked.types->structural(AggregateKind::Tuple, {result, result});
   else if (signature->shape == Shape::Outcome)
     result =
         checked.types->structural(AggregateKind::Outcome, {result, result});

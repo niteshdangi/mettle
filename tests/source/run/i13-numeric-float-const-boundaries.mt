@@ -38,7 +38,7 @@ fn main(): i32 {
        CAST_NEGATIVE != 0u32 || WIDTH_CAST != 1.5f32 {
         return 3
     }
-    if FRACT_ZERO != 0x8000000000000000u64 ||
+    if FRACT_ZERO != 0x0u64 ||
        NAN_CATEGORY != FpCategory.Nan || ZERO_CATEGORY != FpCategory.Zero ||
        NAN_EQUAL || !NAN_UNEQUAL || !NAN_MIDPOINT.is_nan() ||
        !INF_MIDPOINT.is_nan() || ARITHMETIC != 3.75f32 {

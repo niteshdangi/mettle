@@ -1529,3 +1529,68 @@ extend<K: Ord> SortedSet<K> implements FromItems<K> {
 // Owned storage moves or is shared exactly when its elements and allocator do.
 unsafe extend<K: Transferable, V: Transferable, A: Allocator + Transferable> SortedMap<K, V, A> implements Transferable {}
 unsafe extend<K: Shareable, V: Shareable, A: Allocator + Shareable> SortedMap<K, V, A> implements Shareable {}
+
+extend<K: Ord, V, A: Allocator + Default> SortedMap<K, V, A> implements Default {
+    static fn default(): SortedMap<K, V, A> { new_in(A.(Default).default()) }
+}
+
+extend<K: Ord, A: Allocator + Default> SortedSet<K, A> implements Default {
+    static fn default(): SortedSet<K, A> { set_new_in(A.(Default).default()) }
+}
+
+extend<K: Ord, A: Allocator> SortedSet<K, A> {
+    // Moves every element of `other` into `self`; `other` is left empty.
+    pub mut fn append(other: mut SortedSet<K, A>): Unit {
+        while true {
+            match take other.pop_first() {
+                present(key) => { let _ = self.insert(key) },
+                none => { break }
+            }
+        }
+    }
+    pub mut fn clear(): Unit { self.map.clear() }
+}
+
+// The operators build new sets from clones of the operands' elements, as the
+// `&a | &b` forms of the baseline do.
+extend<K: Ord + Clone, A: Allocator + Clone> SortedSet<K, A> implements package.core.ops.BitOr<SortedSet<K, A>> {
+    type Output = SortedSet<K, A>
+    fn bitor(rhs: read SortedSet<K, A>): SortedSet<K, A> {
+        var out = self.clone()
+        for key in rhs.iter() { let _ = out.insert(key.clone()) }
+        out
+    }
+}
+extend<K: Ord + Clone, A: Allocator + Clone> SortedSet<K, A> implements package.core.ops.BitAnd<SortedSet<K, A>> {
+    type Output = SortedSet<K, A>
+    fn bitand(rhs: read SortedSet<K, A>): SortedSet<K, A> {
+        var out = set_new_in<K, A>(self.map.a.clone())
+        for key in self.iter() {
+            if rhs.contains(key) { let _ = out.insert(key.clone()) }
+        }
+        out
+    }
+}
+extend<K: Ord + Clone, A: Allocator + Clone> SortedSet<K, A> implements package.core.ops.Sub<SortedSet<K, A>> {
+    type Output = SortedSet<K, A>
+    fn sub(rhs: read SortedSet<K, A>): SortedSet<K, A> {
+        var out = set_new_in<K, A>(self.map.a.clone())
+        for key in self.iter() {
+            if !rhs.contains(key) { let _ = out.insert(key.clone()) }
+        }
+        out
+    }
+}
+extend<K: Ord + Clone, A: Allocator + Clone> SortedSet<K, A> implements package.core.ops.BitXor<SortedSet<K, A>> {
+    type Output = SortedSet<K, A>
+    fn bitxor(rhs: read SortedSet<K, A>): SortedSet<K, A> {
+        var out = set_new_in<K, A>(self.map.a.clone())
+        for key in self.iter() {
+            if !rhs.contains(key) { let _ = out.insert(key.clone()) }
+        }
+        for key in rhs.iter() {
+            if !self.contains(key) { let _ = out.insert(key.clone()) }
+        }
+        out
+    }
+}

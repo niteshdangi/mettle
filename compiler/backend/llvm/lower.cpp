@@ -1465,12 +1465,23 @@ private:
     if (operation == "needs_drop")
       return builder.getInt1(program.types->needsDrop(argument));
     if (operation == "type_id") {
-      // FNV-1a over the canonical type name: equal types share one identity in
-      // every package of a program.
-      std::uint64_t identity = 0xcbf29ce484222325ull;
-      for (unsigned char byte : program.types->name(argument))
-        identity = (identity ^ byte) * 0x100000001b3ull;
-      return builder.getInt64(identity);
+      // Exact identity: one link-once byte per structural identity (not the
+      // display name, which omits regions), named by that identity. Equal
+      // types in every package and partition resolve to one definition;
+      // distinct identities are distinct symbols and are never merged (no
+      // unnamed_addr), so identities cannot collide.
+      const auto symbol =
+          "mettle.type_id." + typeIdentity(*program.types, argument);
+      auto *global = module->getNamedGlobal(symbol);
+      if (!global) {
+        global = new llvm::GlobalVariable(*module, builder.getInt8Ty(), true,
+                                          llvm::GlobalValue::LinkOnceODRLinkage,
+                                          builder.getInt8(0), symbol);
+        global->setVisibility(llvm::GlobalValue::HiddenVisibility);
+        if (!module->getTargetTriple().isOSBinFormatMachO())
+          global->setComdat(module->getOrInsertComdat(symbol));
+      }
+      return builder.CreatePtrToInt(global, builder.getInt64Ty());
     }
     if (operation == "mem.forget")
       return unit();
@@ -1650,8 +1661,13 @@ private:
         auto *storage =
             lowering.temporary(fromBytes ? instruction.operands[0].type : self);
         if (fromBytes) {
-          builder.CreateStore(arguments[0], storage);
-          llvm::Value *bits = builder.CreateLoad(rawType, storage);
+          // The temporary has the byte array's alignment, which is below the
+          // integer's ABI alignment for 16-byte integers.
+          llvm::Align bytesAlign(
+              lowering.alignment(instruction.operands[0].type));
+          builder.CreateAlignedStore(arguments[0], storage, bytesAlign);
+          llvm::Value *bits =
+              builder.CreateAlignedLoad(rawType, storage, bytesAlign);
           bool swap = littleEndian ? !module->getDataLayout().isLittleEndian()
                       : bigEndian  ? module->getDataLayout().isLittleEndian()
                                    : false;
@@ -1763,16 +1779,10 @@ private:
           return external("cbrt", arguments);
         if (method == "hypot")
           return external("hypot", arguments);
-        if (method == "fract") {
-          auto *fraction =
-              builder.CreateFSub(a, invoke(llvm::Intrinsic::trunc, {a}));
-          auto *zero = builder.CreateFCmpOEQ(
-              fraction, llvm::ConstantFP::get(type(self), 0.0));
-          auto *signedZero =
-              invoke(llvm::Intrinsic::copysign,
-                     {llvm::ConstantFP::get(type(self), 0.0), a});
-          return builder.CreateSelect(zero, signedZero, fraction);
-        }
+        // self - self.trunc(): an integral input yields +0.0, also when
+        // negative.
+        if (method == "fract")
+          return builder.CreateFSub(a, invoke(llvm::Intrinsic::trunc, {a}));
         if (method == "recip")
           return builder.CreateFDiv(llvm::ConstantFP::get(type(self), 1.0), a);
         if (method == "signum") {
@@ -1803,52 +1813,37 @@ private:
           return builder.CreateFDiv(builder.CreateFSub(a, remainder), b);
         }
         if (method == "midpoint") {
-          unsigned bitWidth = self == Type::F32 ? 32 : 64;
-          auto *aBits = builder.CreateBitCast(a, builder.getIntNTy(bitWidth));
-          auto *bBits = builder.CreateBitCast(b, builder.getIntNTy(bitWidth));
-          auto signMask = std::uint64_t{1} << (bitWidth - 1);
-          auto *aNegative = builder.CreateICmpNE(
-              builder.CreateAnd(
-                  aBits, llvm::ConstantInt::get(aBits->getType(), signMask)),
-              llvm::ConstantInt::get(aBits->getType(), 0));
-          auto *bNegative = builder.CreateICmpNE(
-              builder.CreateAnd(
-                  bBits, llvm::ConstantInt::get(bBits->getType(), signMask)),
-              llvm::ConstantInt::get(bBits->getType(), 0));
-          auto *sameSign = builder.CreateICmpEQ(aNegative, bNegative);
-          auto *same = builder.CreateFAdd(
-              a, builder.CreateFDiv(builder.CreateFSub(b, a),
-                                    llvm::ConstantFP::get(type(self), 2.0)));
-          auto *opposite = builder.CreateFDiv(
-              builder.CreateFAdd(a, b), llvm::ConstantFP::get(type(self), 2.0));
-          auto *finite = builder.CreateSelect(sameSign, same, opposite);
-          auto *infinity = llvm::ConstantFP::getInfinity(type(self));
-          auto *aInfinite = builder.CreateFCmpOEQ(
-              invoke(llvm::Intrinsic::fabs, {a}), infinity);
-          auto *bInfinite = builder.CreateFCmpOEQ(
-              invoke(llvm::Intrinsic::fabs, {b}), infinity);
-          auto *bothInfinite = builder.CreateAnd(aInfinite, bInfinite);
-          auto *oppositeInfinities =
-              builder.CreateAnd(bothInfinite, builder.CreateNot(sameSign));
-          auto *infiniteResult = builder.CreateSelect(
-              aInfinite,
-              builder.CreateSelect(oppositeInfinities, builder.CreateFAdd(a, b),
-                                   a),
-              b);
-          auto *hasInfinity = builder.CreateOr(aInfinite, bInfinite);
-          auto *result =
-              builder.CreateSelect(hasInfinity, infiniteResult, finite);
-          auto *bothZero = builder.CreateAnd(
-              builder.CreateFCmpOEQ(a, llvm::ConstantFP::get(type(self), 0.0)),
-              builder.CreateFCmpOEQ(b, llvm::ConstantFP::get(type(self), 0.0)));
-          auto *negativeZero = llvm::ConstantFP::getNegativeZero(type(self));
-          auto *zeroResult = builder.CreateSelect(
-              builder.CreateAnd(aNegative, bNegative), negativeZero,
-              llvm::ConstantFP::get(type(self), 0.0));
-          result = builder.CreateSelect(bothZero, zeroResult, result);
-          auto *nan = builder.CreateOr(builder.CreateFCmpUNO(a, a),
-                                       builder.CreateFCmpUNO(b, b));
-          return builder.CreateSelect(nan, builder.CreateFAdd(a, b), result);
+          auto two = [](llvm::Type *t) {
+            return llvm::ConstantFP::get(t, 2.0);
+          };
+          if (self == Type::F32) {
+            // binary32: the exact sum fits binary64, so one final rounding.
+            auto *wide = builder.getDoubleTy();
+            auto *sum = builder.CreateFAdd(builder.CreateFPExt(a, wide),
+                                           builder.CreateFPExt(b, wide));
+            return builder.CreateFPTrunc(builder.CreateFDiv(sum, two(wide)),
+                                         type(self));
+          }
+          // binary64: halve before adding only where the sum could overflow,
+          // and never halve an operand that would underflow.
+          auto *low = llvm::ConstantFP::get(type(self), 2.0 * 0x1p-1022);
+          auto *high =
+              llvm::ConstantFP::get(type(self), 0x1.fffffffffffffp+1023 / 2.0);
+          auto *absA = invoke(llvm::Intrinsic::fabs, {a});
+          auto *absB = invoke(llvm::Intrinsic::fabs, {b});
+          auto *halfA = builder.CreateFDiv(a, two(type(self)));
+          auto *halfB = builder.CreateFDiv(b, two(type(self)));
+          auto *small = builder.CreateAnd(builder.CreateFCmpOLE(absA, high),
+                                          builder.CreateFCmpOLE(absB, high));
+          auto *result = builder.CreateFAdd(halfA, halfB);
+          result = builder.CreateSelect(builder.CreateFCmpOLT(absB, low),
+                                        builder.CreateFAdd(halfA, b), result);
+          result = builder.CreateSelect(builder.CreateFCmpOLT(absA, low),
+                                        builder.CreateFAdd(a, halfB), result);
+          return builder.CreateSelect(
+              small,
+              builder.CreateFDiv(builder.CreateFAdd(a, b), two(type(self))),
+              result);
         }
         if (method == "min" || method == "max")
           return invoke(method == "min" ? llvm::Intrinsic::minnum
@@ -1861,10 +1856,11 @@ private:
                   builder.CreateFCmpUNO(arguments[2], arguments[2]),
                   builder.CreateFCmpOGT(b, arguments[2])));
           panicIf(invalid);
-          auto *lower = invoke(llvm::Intrinsic::maxnum, {a, b});
-          auto *clamped =
-              invoke(llvm::Intrinsic::minnum, {lower, arguments[2]});
-          return builder.CreateSelect(builder.CreateFCmpUNO(a, a), a, clamped);
+          // Comparison-based like the constant evaluator: NaN and signed
+          // zeros inside the range pass through unchanged.
+          auto *lower = builder.CreateSelect(builder.CreateFCmpOLT(a, b), b, a);
+          return builder.CreateSelect(
+              builder.CreateFCmpOGT(lower, arguments[2]), arguments[2], lower);
         }
         if (method == "next_up" || method == "next_down") {
           unsigned bitWidth = self == Type::F32 ? 32 : 64;
@@ -1990,7 +1986,7 @@ private:
         if (method == "eq_ignore_ascii_case")
           return builder.CreateICmpEQ(lower(a), lower(b));
         if (method == "is_ascii")
-          return builder.getTrue();
+          return builder.CreateICmpULT(a, integer(0x80));
         auto *alpha = builder.CreateOr(
             builder.CreateAnd(builder.CreateICmpUGE(a, integer(0x41)),
                               builder.CreateICmpULE(a, integer(0x5a))),
@@ -2030,9 +2026,13 @@ private:
         if (method == "is_ascii_uppercase")
           return builder.CreateAnd(builder.CreateICmpUGE(a, integer(0x41)),
                                    builder.CreateICmpULE(a, integer(0x5a)));
+        // Tab, line feed, form feed, carriage return and space; vertical tab
+        // (0x0b) is not ASCII whitespace.
         return builder.CreateOr(
-            builder.CreateAnd(builder.CreateICmpUGE(a, integer(0x09)),
-                              builder.CreateICmpULE(a, integer(0x0d))),
+            builder.CreateAnd(
+                builder.CreateAnd(builder.CreateICmpUGE(a, integer(0x09)),
+                                  builder.CreateICmpULE(a, integer(0x0d))),
+                builder.CreateICmpNE(a, integer(0x0b))),
             builder.CreateICmpEQ(a, integer(0x20)));
       }
       bool sign = isSignedInteger(self);
@@ -2142,6 +2142,80 @@ private:
         aggregate = builder.CreateInsertValue(
             aggregate, builder.CreateZExt(valid, builder.getInt32Ty()), 0);
         return builder.CreateInsertValue(aggregate, result, 1);
+      }
+      auto present = [&](llvm::Value *valid, llvm::Value *result) {
+        llvm::Value *aggregate =
+            llvm::Constant::getNullValue(type(instruction.result.type));
+        aggregate = builder.CreateInsertValue(
+            aggregate, builder.CreateZExt(valid, builder.getInt32Ty()), 0);
+        return builder.CreateInsertValue(aggregate, result, 1);
+      };
+      if (method == "bit_width" || method == "highest_one" ||
+          method == "lowest_one" || method == "isolate_highest_one") {
+        auto *nonzero = builder.CreateICmpNE(a, integer(0));
+        bool lowest = method == "lowest_one";
+        // Zero yields the defined count `width` and is masked below.
+        auto *count =
+            invoke(lowest ? llvm::Intrinsic::cttz : llvm::Intrinsic::ctlz,
+                   {a, builder.getFalse()});
+        if (method == "isolate_highest_one") {
+          auto *top = llvm::ConstantInt::get(
+              context, llvm::APInt::getSignedMinValue(width));
+          auto *shift = builder.CreateSelect(nonzero, count, integer(0));
+          return builder.CreateSelect(nonzero, builder.CreateLShr(top, shift),
+                                      integer(0));
+        }
+        auto *count32 = builder.CreateZExtOrTrunc(count, builder.getInt32Ty());
+        if (method == "bit_width")
+          return builder.CreateSub(builder.getInt32(width), count32);
+        return present(
+            nonzero,
+            lowest ? count32
+                   : builder.CreateSub(builder.getInt32(width - 1), count32));
+      }
+      if (method == "isolate_lowest_one")
+        return builder.CreateAnd(a, builder.CreateNeg(a));
+      if (method == "carrying_add" || method == "borrowing_sub") {
+        auto intrinsic = method == "carrying_add"
+                             ? llvm::Intrinsic::uadd_with_overflow
+                             : llvm::Intrinsic::usub_with_overflow;
+        auto *first = invoke(intrinsic, {a, b});
+        auto *second =
+            invoke(intrinsic, {builder.CreateExtractValue(first, 0),
+                               builder.CreateZExt(arguments[2], a->getType())});
+        return lowering.construct(
+            instruction.result.type,
+            {builder.CreateExtractValue(second, 0),
+             builder.CreateOr(builder.CreateExtractValue(first, 1),
+                              builder.CreateExtractValue(second, 1))});
+      }
+      if (method == "carrying_mul" || method == "carrying_mul_add") {
+        // self * rhs + carry (+ add) never exceeds the double-width range.
+        auto *wide = builder.getIntNTy(width * 2);
+        auto *full = builder.CreateMul(builder.CreateZExt(a, wide),
+                                       builder.CreateZExt(b, wide));
+        for (std::size_t i = 2; i < arguments.size(); ++i)
+          full =
+              builder.CreateAdd(full, builder.CreateZExt(arguments[i], wide));
+        return lowering.construct(
+            instruction.result.type,
+            {builder.CreateTrunc(full, a->getType()),
+             builder.CreateTrunc(builder.CreateLShr(full, width),
+                                 a->getType())});
+      }
+      if (method == "checked_signed_diff") {
+        // The exact difference fits in width + 1 signed bits.
+        auto *wide = builder.getIntNTy(width + 1);
+        auto *difference = builder.CreateSub(builder.CreateZExt(a, wide),
+                                             builder.CreateZExt(b, wide));
+        auto *low = llvm::ConstantInt::get(
+            wide, llvm::APInt::getSignedMinValue(width).sext(width + 1));
+        auto *high = llvm::ConstantInt::get(
+            wide, llvm::APInt::getSignedMaxValue(width).sext(width + 1));
+        auto *valid =
+            builder.CreateAnd(builder.CreateICmpSGE(difference, low),
+                              builder.CreateICmpSLE(difference, high));
+        return present(valid, builder.CreateTrunc(difference, a->getType()));
       }
       bool mixedStrict = method.starts_with("strict_");
       bool mixedOptional = method.starts_with("checked_");

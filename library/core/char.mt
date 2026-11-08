@@ -9,6 +9,11 @@ pub fn from_u32(value: u32): char? {
     present(unsafe { core.mem.transmute<char>(value) })
 }
 
+// Safety: `value` must be a Unicode scalar value (not a surrogate, at most U+10FFFF).
+pub unsafe fn from_u32_unchecked(value: u32): char {
+    unsafe { core.mem.transmute<char>(value) }
+}
+
 pub fn from_digit(value: u32, radix: u32): char? {
     if radix < 2u32 || radix > 36u32 || value >= radix { return none }
     let scalar = if value < 10u32 {
@@ -74,8 +79,18 @@ fn short_escape(value: char): Escape? {
         else if scalar == 0x0du32 { 'r' }
         else if scalar == 0x5cu32 { '\\' }
         else if scalar == 0x27u32 { '\'' }
+        else if scalar == 0x22u32 { '"' }
         else { return none }
     present(Escape(['\\', escaped, '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0'], 2usize, 0usize))
+}
+
+// Associated constants of the primitive char type (Unicode 16.0.0 tables).
+extend char {
+    pub const MAX: char = '\u{10ffff}'
+    pub const MIN: char = '\0'
+    pub const REPLACEMENT_CHARACTER: char = '\u{fffd}'
+    pub const MAX_LEN_UTF8: usize = 4usize
+    pub const MAX_LEN_UTF16: usize = 2usize
 }
 
 extend char {
@@ -107,8 +122,10 @@ extend char {
     }
 
     pub fn is_ascii_whitespace(): bool {
+        // Tab, line feed, form feed, carriage return and space: not vertical tab.
         let value = self as u32
-        value >= 0x09u32 && value <= 0x0du32 || value == 0x20u32
+        value == 0x09u32 || value == 0x0au32 || value == 0x0cu32 || value == 0x0du32 ||
+            value == 0x20u32
     }
 
     pub fn is_ascii_hexdigit(): bool {
@@ -166,6 +183,33 @@ extend char {
 
     pub fn len_utf16(): usize {
         if (self as u32) < 0x10000u32 { 1usize } else { 2usize }
+    }
+
+    // Writes the UTF-8 encoding into the front of `buffer` and returns that view.
+    pub fn encode_utf8(buffer: mut [u8]): mut super.text.Text from buffer {
+        let length = self.len_utf8()
+        if buffer.len() < length {
+            super.panic.panic("UTF-8 buffer is too small")
+        }
+        let value = self as u32
+        if length == 1usize {
+            buffer[0usize] = value as u8
+        } else if length == 2usize {
+            buffer[0usize] = (0xc0u32 | (value >> 6u32)) as u8
+            buffer[1usize] = (0x80u32 | (value & 0x3fu32)) as u8
+        } else if length == 3usize {
+            buffer[0usize] = (0xe0u32 | (value >> 12u32)) as u8
+            buffer[1usize] = (0x80u32 | ((value >> 6u32) & 0x3fu32)) as u8
+            buffer[2usize] = (0x80u32 | (value & 0x3fu32)) as u8
+        } else {
+            buffer[0usize] = (0xf0u32 | (value >> 18u32)) as u8
+            buffer[1usize] = (0x80u32 | ((value >> 12u32) & 0x3fu32)) as u8
+            buffer[2usize] = (0x80u32 | ((value >> 6u32) & 0x3fu32)) as u8
+            buffer[3usize] = (0x80u32 | (value & 0x3fu32)) as u8
+        }
+        let (encoded, _) = buffer.split_at_mut(length)
+        // Safety: the bytes written above are the well-formed UTF-8 of one scalar.
+        unsafe { super.text.from_utf8_unchecked_mut(encoded) }
     }
 
     pub fn encode_utf16(buffer: mut [u16]): mut [u16] from buffer {

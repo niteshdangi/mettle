@@ -5,6 +5,8 @@ import package.alloc.arc.Arc
 import package.alloc.vec.List
 import package.alloc.vec_deque.Deque
 import package.core.iter.Iterator
+import package.core.clone.Clone
+import package.core.fmt.{Debug, Error, Formatter}
 
 extern "C" {
     unsafe fn mettle_rt_select_epoch(): u64;
@@ -415,6 +417,23 @@ extend<T> Receiver<T> implements Iterator {
             failure(error) => none
         }
     }
+}
+
+// Cloning a sender adds another producer, exactly like `duplicate`.
+extend<T> Sender<T> implements Clone {
+    fn clone(): Sender<T> { self.duplicate() }
+}
+extend<T> SyncSender<T> implements Clone {
+    fn clone(): SyncSender<T> { self.duplicate() }
+}
+extend<T> Sender<T> implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error { try f.write_str("Sender { .. }") }
+}
+extend<T> SyncSender<T> implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error { try f.write_str("SyncSender { .. }") }
+}
+extend<T> Receiver<T> implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error { try f.write_str("Receiver { .. }") }
 }
 
 // Borrows a homogeneous receiver set; selecting does not consume its message.

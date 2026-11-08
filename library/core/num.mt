@@ -4,6 +4,7 @@
 
 import super.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import super.clone.Clone
+import super.convert.{From, TryFrom}
 import super.default.Default
 import super.error.{Error as CoreError}
 import super.fmt.{Binary, Debug, Display, Error, Formatter, LowerHex, Octal, UpperHex}
@@ -2909,3 +2910,230 @@ extend u128 implements FromText {
             340282366920938463463374607431768211455u128, 0u128)
     }
 }
+
+// Primitive operator implementations, so integers and bool satisfy the
+// operator interfaces in generic code. Each expands to the operator itself;
+// overflow and shift-count behavior is the operator's. Views of the operands
+// (`read i32`) implement the same interfaces as the values.
+macro integer_binary_trait {
+    ($type:ident, $trait:ident, $method:ident, $operator:tt) => {
+        extend $type implements $trait<$type> {
+            type Output = $type
+            fn $method(rhs: read $type): $type { self $operator rhs }
+        }
+        extend<region lhs_region> read $type from lhs_region implements $trait<$type> {
+            type Output = $type
+            fn $method(rhs: read $type): $type { *self $operator rhs }
+        }
+        extend<region rhs_region> $type implements $trait<read $type from rhs_region> {
+            type Output = $type
+            fn $method(rhs: read (read $type from rhs_region)): $type { self $operator *rhs }
+        }
+        extend<region lhs_region, region rhs_region> read $type from lhs_region implements $trait<read $type from rhs_region> {
+            type Output = $type
+            fn $method(rhs: read (read $type from rhs_region)): $type { *self $operator *rhs }
+        }
+    };
+}
+
+macro integer_assignment_trait {
+    ($type:ident, $trait:ident, $method:ident, $operator:tt) => {
+        extend $type implements $trait<$type> {
+            mut fn $method(rhs: read $type): Unit { self = self $operator rhs }
+        }
+        extend<region rhs_region> $type implements $trait<read $type from rhs_region> {
+            mut fn $method(rhs: read (read $type from rhs_region)): Unit { self = self $operator *rhs }
+        }
+    };
+}
+
+macro integer_unary_trait {
+    ($type:ident, $trait:ident, $method:ident, $operator:tt) => {
+        extend $type implements $trait {
+            type Output = $type
+            fn $method(): $type { $operator self }
+        }
+        extend<region receiver_region> read $type from receiver_region implements $trait {
+            type Output = $type
+            fn $method(): $type { $operator (*self) }
+        }
+    };
+}
+
+// A shift count of any integer type (or a view of one), converted for the
+// native u32-count shift. The low seven bits are kept, so release masking is
+// unchanged; a count that is negative or does not fit u32 gets bit 31 set, so
+// it stays out of range for every width and the debug check still fires.
+interface ShiftCount { fn shift_count(): u32; }
+
+macro integer_shift_count {
+    ($($type:ident),*) => {
+        $(
+            extend $type implements ShiftCount {
+                fn shift_count(): u32 {
+                    let low = self as u32
+                    if self >= 0 && (self as u128) <= 4294967295u128 { low } else { low | 0x80000000u32 }
+                }
+            }
+            extend<region count_region> read $type from count_region implements ShiftCount {
+                fn shift_count(): u32 { (*self).shift_count() }
+            }
+        )*
+    };
+}
+
+integer_shift_count!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize)
+
+// Shifts accept any integer count type, like the shift operators.
+macro integer_shift_traits {
+    ($type:ident) => {
+        extend<C: ShiftCount> $type implements Shl<C> {
+            type Output = $type
+            fn shl(rhs: read C): $type { self << rhs.shift_count() }
+        }
+        extend<region lhs_region, C: ShiftCount> read $type from lhs_region implements Shl<C> {
+            type Output = $type
+            fn shl(rhs: read C): $type { *self << rhs.shift_count() }
+        }
+        extend<C: ShiftCount> $type implements Shr<C> {
+            type Output = $type
+            fn shr(rhs: read C): $type { self >> rhs.shift_count() }
+        }
+        extend<region lhs_region, C: ShiftCount> read $type from lhs_region implements Shr<C> {
+            type Output = $type
+            fn shr(rhs: read C): $type { *self >> rhs.shift_count() }
+        }
+        extend<C: ShiftCount> $type implements ShlAssign<C> {
+            mut fn shl_assign(rhs: read C): Unit { self = self << rhs.shift_count() }
+        }
+        extend<C: ShiftCount> $type implements ShrAssign<C> {
+            mut fn shr_assign(rhs: read C): Unit { self = self >> rhs.shift_count() }
+        }
+    };
+}
+
+macro integer_operator_traits {
+    ($($type:ident),*) => {
+        $(
+            integer_binary_trait!($type, Add, add, +)
+            integer_binary_trait!($type, Sub, sub, -)
+            integer_binary_trait!($type, Mul, mul, *)
+            integer_binary_trait!($type, Div, div, /)
+            integer_binary_trait!($type, Rem, rem, %)
+            integer_binary_trait!($type, BitAnd, bitand, &)
+            integer_binary_trait!($type, BitOr, bitor, |)
+            integer_binary_trait!($type, BitXor, bitxor, ^)
+            integer_assignment_trait!($type, AddAssign, add_assign, +)
+            integer_assignment_trait!($type, SubAssign, sub_assign, -)
+            integer_assignment_trait!($type, MulAssign, mul_assign, *)
+            integer_assignment_trait!($type, DivAssign, div_assign, /)
+            integer_assignment_trait!($type, RemAssign, rem_assign, %)
+            integer_assignment_trait!($type, BitAndAssign, bitand_assign, &)
+            integer_assignment_trait!($type, BitOrAssign, bitor_assign, |)
+            integer_assignment_trait!($type, BitXorAssign, bitxor_assign, ^)
+            integer_unary_trait!($type, Not, not, !)
+            integer_shift_traits!($type)
+        )*
+    };
+}
+
+integer_operator_traits!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize)
+integer_unary_trait!(i8, Neg, neg, -)
+integer_unary_trait!(i16, Neg, neg, -)
+integer_unary_trait!(i32, Neg, neg, -)
+integer_unary_trait!(i64, Neg, neg, -)
+integer_unary_trait!(i128, Neg, neg, -)
+integer_unary_trait!(isize, Neg, neg, -)
+integer_binary_trait!(bool, BitAnd, bitand, &)
+integer_binary_trait!(bool, BitOr, bitor, |)
+integer_binary_trait!(bool, BitXor, bitxor, ^)
+integer_assignment_trait!(bool, BitAndAssign, bitand_assign, &)
+integer_assignment_trait!(bool, BitOrAssign, bitor_assign, |)
+integer_assignment_trait!(bool, BitXorAssign, bitxor_assign, ^)
+integer_unary_trait!(bool, Not, not, !)
+
+// The failure of a checked integer conversion whose value is out of range.
+pub copy type TryFromIntError { }
+
+extend TryFromIntError implements PartialEq {
+    fn eq(other: read TryFromIntError): bool { true }
+}
+extend TryFromIntError implements Eq {}
+extend TryFromIntError implements Clone {
+    fn clone(): TryFromIntError { self }
+}
+extend TryFromIntError implements Hash {
+    fn hash<H: Hasher>(state: mut H): Unit { }
+}
+extend TryFromIntError implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        try f.write_str("TryFromIntError(())")
+    }
+}
+extend TryFromIntError implements Display {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        try f.write_str("out of range integral type conversion attempted")
+    }
+}
+extend TryFromIntError implements CoreError {}
+
+// Lossless integer widenings (and bool as 0 or 1), with their never-failing
+// TryFrom (see core.convert).
+macro integer_from {
+    ($target:ident; $($source:ident),*) => {
+        $(
+            extend $target implements From<$source> {
+                static fn `from`(value: take $source): $target { value as $target }
+            }
+            extend $target implements TryFrom<$source> {
+                type Error = Never
+                static fn try_from(value: take $source): ($target throws Never) {
+                    success(value as $target)
+                }
+            }
+        )*
+    };
+}
+
+integer_from!(u16; u8, bool)
+integer_from!(u32; u8, u16, bool)
+integer_from!(u64; u8, u16, u32, bool)
+integer_from!(u128; u8, u16, u32, u64, bool)
+integer_from!(usize; u8, u16, bool)
+integer_from!(i16; u8, i8, bool)
+integer_from!(i32; u8, u16, i8, i16, bool)
+integer_from!(i64; u8, u16, u32, i8, i16, i32, bool)
+integer_from!(i128; u8, u16, u32, u64, i8, i16, i32, i64, bool)
+integer_from!(isize; u8, i8, i16, bool)
+integer_from!(u8; bool)
+integer_from!(i8; bool)
+
+// Every other integer pair converts only when the value fits.
+macro integer_try_from {
+    ($target:ident; $($source:ident),*) => {
+        $(
+            extend $target implements TryFrom<$source> {
+                type Error = TryFromIntError
+                static fn try_from(value: take $source): ($target throws TryFromIntError) {
+                    match value.checked_cast<$target>() {
+                        present(converted) => success(converted),
+                        none => failure(TryFromIntError())
+                    }
+                }
+            }
+        )*
+    };
+}
+
+integer_try_from!(u8; u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize)
+integer_try_from!(u16; u32, u64, u128, usize, i8, i16, i32, i64, i128, isize)
+integer_try_from!(u32; u64, u128, usize, i8, i16, i32, i64, i128, isize)
+integer_try_from!(u64; u128, usize, i8, i16, i32, i64, i128, isize)
+integer_try_from!(u128; usize, i8, i16, i32, i64, i128, isize)
+integer_try_from!(usize; u32, u64, u128, i8, i16, i32, i64, i128, isize)
+integer_try_from!(i8; u8, u16, u32, u64, u128, usize, i16, i32, i64, i128, isize)
+integer_try_from!(i16; u16, u32, u64, u128, usize, i32, i64, i128, isize)
+integer_try_from!(i32; u32, u64, u128, usize, i64, i128, isize)
+integer_try_from!(i64; u64, u128, usize, i128, isize)
+integer_try_from!(i128; u128, usize, isize)
+integer_try_from!(isize; u16, u32, u64, u128, usize, i32, i64, i128)

@@ -266,6 +266,11 @@ pub fn from_utf8_lossy(bytes: read [u8]): String {
     result
 }
 
+// Lossy conversion that takes the byte buffer; same replacement rules as from_utf8_lossy.
+pub fn from_utf8_lossy_owned(bytes: take List<u8>): String {
+    from_utf8_lossy(bytes.as_slice())
+}
+
 pub fn from_utf16(units: read [u16]): String throws FromUtf16Error {
     var result = new()
     var index = 0usize
@@ -525,6 +530,31 @@ extend<A: Allocator> String<A> {
         }
     }
     pub mut fn clear(): Unit { self.v.clear() }
+
+    // Keeps the scalars for which `keep` returns true, compacting in place.
+    pub mut fn retain<F: mut fn(char): bool>(keep: mut F): Unit {
+        var read_at = 0usize
+        var write_at = 0usize
+        while read_at < self.v.len() {
+            let rest = match self.as_text().get(read_at, self.v.len()) {
+                present(part) => part,
+                none => { panic_precondition() }
+            }
+            let c = first_char(rest)
+            let width = c.len_utf8()
+            if keep(c) {
+                var offset = 0usize
+                while offset < width {
+                    let byte = self.v.as_slice()[read_at + offset]
+                    self.v.as_mut_slice()[write_at + offset] = byte
+                    offset += 1usize
+                }
+                write_at += width
+            }
+            read_at += width
+        }
+        self.v.truncate(write_at)
+    }
 }
 
 extend<A: Allocator + Clone> String<A> implements Clone {
