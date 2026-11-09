@@ -47,8 +47,8 @@ fn filled(n: i32): List<i32> {
 }
 
 fn extend_borrowed<region r>(
-    target: mut List<i32>,
-    source: read List<i32> from r
+    mut target: List<i32>,
+    read source: List<i32> from r
 ) {
     target.extend(source.iter())
 }
@@ -131,35 +131,35 @@ fn main(): i32 {
     dd.dedup()
     if dd.len() != 4usize || dd[3usize] != 1 { return 30 }
     var dk = filled(6)
-    dk.dedup_by_key(fn(x: mut i32): i32 { x / 2 })
+    dk.dedup_by_key(fn(mut x: i32): i32 { x / 2 })
     if dk.len() != 3usize || dk[1usize] != 2 { return 31 }
     var db = filled(6)
-    db.dedup_by(fn(x: mut i32, y: mut i32): bool { x - y == 1 })
+    db.dedup_by(fn(mut x: i32, mut y: i32): bool { x - y == 1 })
     if db.len() != 3usize { return 32 }
 
     var s = vec.new<i32>()
     for x in [3, 1, 2] { s.push(x) }
     s.sort()
     if s[0usize] != 1 || s[2usize] != 3 { return 33 }
-    s.sort_by(fn(p: read i32, q: read i32): core.cmp.Ordering { q.cmp(p) })
+    s.sort_by(fn(read p: i32, read q: i32): core.cmp.Ordering { q.cmp(p) })
     if s[0usize] != 3 { return 34 }
-    s.sort_by_key(fn(p: read i32): i32 { p })
+    s.sort_by_key(fn(read p: i32): i32 { p })
     if s[0usize] != 1 { return 35 }
-    s.sort_by_cached_key(fn(p: read i32): i32 { -p })
+    s.sort_by_cached_key(fn(read p: i32): i32 { -p })
     if s[0usize] != 3 { return 36 }
 
     var p = vec.new<i32>()
     p.push(1)
     p.push(2)
-    if p.pop_if(fn(x: mut i32): bool { x == 1 }).is_present() { return 37 }
-    if p.pop_if(fn(x: mut i32): bool { x == 2 }).unwrap() != 2 { return 38 }
+    if p.pop_if(fn(mut x: i32): bool { x == 1 }).is_present() { return 37 }
+    if p.pop_if(fn(mut x: i32): bool { x == 2 }).unwrap() != 2 { return 38 }
     *p.get_mut(0usize).unwrap() = 9
     if *p.get(0usize).unwrap() != 9 || p.get(1usize).is_present() { return 39 }
 
     var e = filled(6)
     var gone = vec.new<i32>()
     {
-        var it = e.extract_if(0usize..6usize, fn(x: mut i32): bool { x % 2 == 0 })
+        var it = e.extract_if(0usize..6usize, fn(mut x: i32): bool { x % 2 == 0 })
         while true { match take it.next() { present(x) => { gone.push(x) }, none => { break } } }
     }
     if e.len() != 3usize || gone.len() != 3usize || e[0usize] != 1 { return 40 }

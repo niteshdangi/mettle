@@ -10,7 +10,7 @@ type Tracker {
 fn main(): i32 {
   // scoped threads borrow locals and finish before the scope returns
   let data = 21
-  let total = thread.scope(fn(s: read thread.Scope): i32 {
+  let total = thread.scope(fn(read s: thread.Scope): i32 {
     let a = s.spawn(fn(): i32 { data + 1 })
     let b = s.spawn(fn(): i32 { data * 2 })
     let x = capture a.join()
@@ -25,7 +25,7 @@ fn main(): i32 {
   let hits = core.sync.atomic.AtomicUsize.new(0usize)
   let gate = arc.new(barrier.new(2usize))
   let child_gate = gate.retain()
-  thread.scope(fn(s: read thread.Scope): Unit {
+  thread.scope(fn(read s: thread.Scope): Unit {
     let h = s.spawn(fn(): i32 {
       child_gate.get().wait()
       let _old = hits.fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
@@ -42,7 +42,7 @@ fn main(): i32 {
   let child_panic_gate = panic_gate.retain()
   let parent_panic_gate = panic_gate.retain()
   let outer = thread.spawn(take fn(): i32 {
-    thread.scope(fn(s: read thread.Scope): i32 {
+    thread.scope(fn(read s: thread.Scope): i32 {
       let h = s.spawn(fn(): i32 {
         child_panic_gate.get().wait()
         let _old = probe.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)

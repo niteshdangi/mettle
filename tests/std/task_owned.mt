@@ -14,7 +14,7 @@ type Probe {
 unsafe extend Probe implements Transferable {}
 extend Probe implements Future {
     type Output = i32
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<i32> {
         let me = unsafe { self.get_unchecked_mut() }
         me.polls += 1
         if me.polls == 1 {
@@ -38,12 +38,12 @@ type Dormant {
 unsafe extend Dormant implements Transferable {}
 extend Dormant implements Future {
     type Output = Unit
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Unit> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Unit> {
         Poll.Pending
     }
 }
 
-fn hammer(waker: take Waker): Unit {
+fn hammer(take waker: Waker): Unit {
     var i = 0
     while i < 1000 {
         waker.wake_by_ref()

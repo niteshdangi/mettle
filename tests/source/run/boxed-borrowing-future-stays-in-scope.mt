@@ -1,8 +1,8 @@
 import core.future.{Future, Poll, Context, noop_waker}
 
-async fn read_value(value: read i32): i32 { value + 1 }
+async fn read_value(read value: i32): i32 { value + 1 }
 
-fn drive<F: Future>(future: take F): F.Output {
+fn drive<F: Future>(take future: F): F.Output {
     let waker = noop_waker()
     var slot = core.pin.pin(future)
     loop {

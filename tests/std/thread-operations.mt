@@ -52,7 +52,7 @@ fn run(): i32 throws Error {
 
     // Scoped threads borrow locals and finish before `scope` returns.
     let base = 20
-    let total = thread.scope(fn(s: read thread.Scope): i32 {
+    let total = thread.scope(fn(read s: thread.Scope): i32 {
         let left = s.spawn(fn(): i32 { base + 1 })
         let right = s.spawn(fn(): i32 { base + 2 })
         let a = capture left.join()

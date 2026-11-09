@@ -1,5 +1,5 @@
 // expect-error: ownership 8:5 moved
-fn consume(value: take i32): Unit {
+fn consume(take value: i32): Unit {
 }
 
 fn main(): i32 {

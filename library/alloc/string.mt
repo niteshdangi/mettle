@@ -89,20 +89,20 @@ extend<region r, A: Allocator> StringDrain<region r, A> implements Bidirectional
 }
 
 // Callers must provide well-formed UTF-8 bytes.
-fn from_valid_bytes<A: Allocator>(bytes: take List<u8, A>): String<A> {
+fn from_valid_bytes<A: Allocator>(take bytes: List<u8, A>): String<A> {
     let result: String<A>
     result.v = take bytes
     result
 }
 
-pub fn new_in<A: Allocator>(a: take A): String<A> {
+pub fn new_in<A: Allocator>(take a: A): String<A> {
     from_valid_bytes(super.vec.new_in<u8, A>(take a))
 }
 pub fn new(): String { new_in(Global()) }
-pub fn try_with_capacity_in<A: Allocator>(n: usize, a: take A): String<A> throws AllocError {
+pub fn try_with_capacity_in<A: Allocator>(n: usize, take a: A): String<A> throws AllocError {
     from_valid_bytes(try super.vec.try_with_capacity_in<u8, A>(n, take a))
 }
-pub fn with_capacity_in<A: Allocator>(n: usize, a: take A): String<A> {
+pub fn with_capacity_in<A: Allocator>(n: usize, take a: A): String<A> {
     from_valid_bytes(super.vec.with_capacity_in<u8, A>(n, take a))
 }
 pub fn try_with_capacity(n: usize): String throws AllocError {
@@ -111,19 +111,19 @@ pub fn try_with_capacity(n: usize): String throws AllocError {
 pub fn with_capacity(n: usize): String {
     from_valid_bytes(super.vec.with_capacity<u8>(n))
 }
-pub fn from_text(t: read Text): String {
+pub fn from_text(read t: Text): String {
     var s = new()
     s.push_str(t)
     s
 }
-pub fn from_text_in<A: Allocator>(t: read Text, a: take A): String<A> {
+pub fn from_text_in<A: Allocator>(read t: Text, take a: A): String<A> {
     var s = new_in(a)
     s.push_str(t)
     s
 }
 
 // Validates `bytes`; on failure the buffer comes back in the error.
-pub fn from_utf8<A: Allocator>(bytes: take List<u8, A>): String<A> throws FromUtf8Error<A> {
+pub fn from_utf8<A: Allocator>(take bytes: List<u8, A>): String<A> throws FromUtf8Error<A> {
     let ok = match package.core.text.from_utf8(bytes.as_slice()) {
         present(_) => true,
         none => false
@@ -136,21 +136,21 @@ pub fn from_utf8<A: Allocator>(bytes: take List<u8, A>): String<A> throws FromUt
 }
 
 extend String {
-    pub init(text: read Text) {
+    pub init(read text: Text) {
         self.v = super.vec.new<u8>()
         self.push_str(text)
     }
 }
 
 extend<A: Allocator> String<A> {
-    pub init(text: read Text, allocator: take A) {
+    pub init(read text: Text, take allocator: A) {
         self.v = super.vec.new_in<u8, A>(take allocator)
         self.push_str(text)
     }
 }
 
 // Length of the longest well-formed prefix.
-fn valid_prefix(bytes: read [u8]): usize {
+fn valid_prefix(read bytes: [u8]): usize {
     var end = bytes.len()
     while end > 0usize {
         let ok = match package.core.slice.subslice(bytes, 0usize, end) {
@@ -163,7 +163,7 @@ fn valid_prefix(bytes: read [u8]): usize {
     0usize
 }
 
-fn encode_utf8(c: char, out: mut [u8; 4]): usize {
+fn encode_utf8(c: char, mut out: [u8; 4]): usize {
     let v = c as u32
     if v < 0x80u32 {
         out[0usize] = v as u8
@@ -187,7 +187,7 @@ fn encode_utf8(c: char, out: mut [u8; 4]): usize {
     4usize
 }
 
-fn valid_utf8_width(bytes: read [u8], start: usize): usize {
+fn valid_utf8_width(read bytes: [u8], start: usize): usize {
     let first = bytes[start]
     if first < 0x80u8 { return 1usize }
     if first >= 0xc2u8 && first <= 0xdfu8 {
@@ -219,7 +219,7 @@ fn valid_utf8_width(bytes: read [u8], start: usize): usize {
     0usize
 }
 
-fn invalid_utf8_width(bytes: read [u8], start: usize): usize {
+fn invalid_utf8_width(read bytes: [u8], start: usize): usize {
     let first = bytes[start]
     let expected = if first >= 0xc2u8 && first <= 0xdfu8 { 2usize }
         else if first >= 0xe0u8 && first <= 0xefu8 { 3usize }
@@ -239,7 +239,7 @@ fn invalid_utf8_width(bytes: read [u8], start: usize): usize {
     consumed
 }
 
-pub fn from_utf8_lossy(bytes: read [u8]): String {
+pub fn from_utf8_lossy(read bytes: [u8]): String {
     var result = new()
     var index = 0usize
     while index < bytes.len() {
@@ -267,11 +267,11 @@ pub fn from_utf8_lossy(bytes: read [u8]): String {
 }
 
 // Lossy conversion that takes the byte buffer; same replacement rules as from_utf8_lossy.
-pub fn from_utf8_lossy_owned(bytes: take List<u8>): String {
+pub fn from_utf8_lossy_owned(take bytes: List<u8>): String {
     from_utf8_lossy(bytes.as_slice())
 }
 
-pub fn from_utf16(units: read [u16]): String throws FromUtf16Error {
+pub fn from_utf16(read units: [u16]): String throws FromUtf16Error {
     var result = new()
     var index = 0usize
     while index < units.len() {
@@ -300,7 +300,7 @@ pub fn from_utf16(units: read [u16]): String throws FromUtf16Error {
     result
 }
 
-pub fn from_utf16_lossy(units: read [u16]): String {
+pub fn from_utf16_lossy(read units: [u16]): String {
     var result = new()
     var index = 0usize
     while index < units.len() {
@@ -334,7 +334,7 @@ pub fn from_utf16_lossy(units: read [u16]): String {
     result
 }
 
-fn first_char(t: read Text): char {
+fn first_char(read t: Text): char {
     var it = t.chars()
     match it.next() { present(c) => c, none => panic_precondition() }
 }
@@ -386,7 +386,7 @@ extend<A: Allocator> String<A> {
         }
     }
 
-    pub mut fn try_push_str(t: read Text): Unit throws AllocError {
+    pub mut fn try_push_str(read t: Text): Unit throws AllocError {
         let bytes = t.as_bytes()
         try self.v.try_reserve(bytes.len())
         var i = 0usize
@@ -396,7 +396,7 @@ extend<A: Allocator> String<A> {
             i += 1usize
         }
     }
-    pub mut fn push_str(t: read Text): Unit {
+    pub mut fn push_str(read t: Text): Unit {
         let bytes = t.as_bytes()
         self.v.reserve(bytes.len())
         var i = 0usize
@@ -428,7 +428,7 @@ extend<A: Allocator> String<A> {
             i += 1usize
         }
     }
-    pub mut fn insert_str(index: usize, t: read Text): Unit {
+    pub mut fn insert_str(index: usize, read t: Text): Unit {
         if !self.as_text().is_char_boundary(index) { panic_precondition() }
         let bytes = t.as_bytes()
         var i = 0usize
@@ -488,7 +488,7 @@ extend<A: Allocator> String<A> {
         }
         StringDrain(self.v.drain(start..end))
     }
-    pub mut fn replace_range(start: usize, end: usize, replacement: read Text): Unit {
+    pub mut fn replace_range(start: usize, end: usize, read replacement: Text): Unit {
         let valid = {
             let text = self.as_text()
             start <= end && end <= text.len() &&
@@ -532,7 +532,7 @@ extend<A: Allocator> String<A> {
     pub mut fn clear(): Unit { self.v.clear() }
 
     // Keeps the scalars for which `keep` returns true, compacting in place.
-    pub mut fn retain<F: mut fn(char): bool>(keep: mut F): Unit {
+    pub mut fn retain<F: mut fn(char): bool>(mut keep: F): Unit {
         var read_at = 0usize
         var write_at = 0usize
         while read_at < self.v.len() {
@@ -565,15 +565,15 @@ extend<A: Allocator + Default> String<A> implements Default {
 }
 
 extend<A: Allocator> String<A> implements PartialEq {
-    fn eq(other: read String<A>): bool { self.as_text() == other.as_text() }
+    fn eq(read other: String<A>): bool { self.as_text() == other.as_text() }
 }
 extend<A: Allocator> String<A> implements Eq {}
 
 extend<A: Allocator> String<A> implements PartialOrd {
-    fn partial_cmp(other: read String<A>): Ordering? { self.as_text().partial_cmp(other.as_text()) }
+    fn partial_cmp(read other: String<A>): Ordering? { self.as_text().partial_cmp(other.as_text()) }
 }
 extend<A: Allocator> String<A> implements Ord {
-    fn cmp(other: read String<A>): Ordering { self.as_text().cmp(other.as_text()) }
+    fn cmp(read other: String<A>): Ordering { self.as_text().cmp(other.as_text()) }
 }
 
 // A String key can be searched by its Text; String hashes as Text does.
@@ -581,12 +581,12 @@ extend<A: Allocator> String<A> implements KeyView<Text> {
     fn key_view(): read Text from self { self.as_text() }
 }
 extend<A: Allocator> String<A> implements Hash {
-    fn hash<H: Hasher>(state: mut H): Unit { self.as_text().hash(mut state) }
+    fn hash<H: Hasher>(mut state: H): Unit { self.as_text().hash(mut state) }
 }
 
 // Appends formatted output to the string; allocation failure aborts like push.
 extend<A: Allocator> String<A> implements fmt.Write {
-    mut fn write_str(s: read Text): Unit throws fmt.Error {
+    mut fn write_str(read s: Text): Unit throws fmt.Error {
         self.push_str(s)
     }
 }
@@ -616,21 +616,21 @@ extend<A: Allocator> String<A> implements IndexRange {
     fn index_range(start: usize, end: usize): read Text from self { self.as_text().index_range(start, end) }
 }
 extend<A: Allocator> String<A> implements fmt.Display {
-    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.pad(self.as_text()) }
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.pad(self.as_text()) }
 }
 extend<A: Allocator> String<A> implements fmt.Debug {
-    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try Text.(fmt.Debug).fmt(self.as_text(), mut f) }
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try Text.(fmt.Debug).fmt(self.as_text(), mut f) }
 }
 
 // Concatenation: a new string holding `a` followed by `b`.
-pub fn concat(a: read Text, b: read Text): String {
+pub fn concat(read a: Text, read b: Text): String {
     var s = with_capacity(a.len() + b.len())
     s.push_str(a)
     s.push_str(b)
     s
 }
 
-fn replace_text(text: read Text, pattern: read Text, replacement: read Text, limit: usize): String {
+fn replace_text(read text: Text, read pattern: Text, read replacement: Text, limit: usize): String {
     var result = new()
     var remaining = limit
     if pattern.is_empty() {
@@ -700,11 +700,11 @@ extend Text {
         result
     }
 
-    pub fn replace(pattern: read Text, replacement: read Text): String {
+    pub fn replace(read pattern: Text, read replacement: Text): String {
         replace_text(read self, pattern, replacement, 0xffffffffffffffffusize)
     }
 
-    pub fn replacen(pattern: read Text, replacement: read Text, count: usize): String {
+    pub fn replacen(read pattern: Text, read replacement: Text, count: usize): String {
         replace_text(read self, pattern, replacement, count)
     }
 
@@ -734,5 +734,5 @@ extend Text {
 }
 
 extend<A: Allocator> List<u8, A> implements package.core.convert.From<String<A>> {
-    static fn from(text: take String<A>): List<u8, A> { text.into_bytes() }
+    static fn from(take text: String<A>): List<u8, A> { text.into_bytes() }
 }

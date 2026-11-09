@@ -1,7 +1,7 @@
 
 module core { pub module iter {
   pub interface Iterator { type Item; mut fn next(): Self.Item?; }
-  pub interface Iterable { type Iter<region r>; fn iter<region r>(receiver self: read Self from r): Self.Iter<region r>; }
+  pub interface Iterable { type Iter<region r>; fn iter<region r>(receiver read self: Self from r): Self.Iter<region r>; }
 } }
 import core.iter.Iterator
 import core.iter.Iterable
@@ -17,7 +17,7 @@ extend<region r> BagIter<region r> implements Iterator {
 }
 extend Bag implements Iterable {
     type Iter<region r> = BagIter<region r>
-    fn iter<region r>(receiver self: read Self from r): BagIter<region r> { BagIter(read self, 0) }
+    fn iter<region r>(receiver read self: Self from r): BagIter<region r> { BagIter(read self, 0) }
 }
 fn main(): i32 {
     let bag = Bag(3, 4)

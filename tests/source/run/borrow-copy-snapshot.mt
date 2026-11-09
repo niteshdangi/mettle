@@ -1,5 +1,5 @@
 
-fn change(value: mut i32) { value = 100; 1 }
+fn change(mut value: i32) { value = 100; 1 }
 fn combine(first: i32, second: i32) { first + second }
 fn main() {
     var value = 41

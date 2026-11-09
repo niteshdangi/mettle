@@ -46,6 +46,21 @@ including a later Copy instantiation. Implied Copy constraints count as
 declaration-known Copy. Generic specialization does not alter ownership
 permissions. Explicit read overrides Copy; explicit take requires ownership,
 not Copy; explicit mut requires exclusive access.
+Named declarations and closure parameters put these modifiers before the
+binding. Explicit receivers use `receiver take self: Type` (or read/mut).
+Unnamed callable slots keep their existing `[mode] type` form; their identity
+and adaptation rules do not change. `format` remains its separately specified
+parameter kind, with its own read access.
+
+Native stored outcomes are `Outcome<T, E>`; `throws E` is a callable effect.
+The spelling changes neither success/failure alternatives, Copy/drop behavior,
+region dependencies, propagation, capture, nor native layout.
+
+Comma-separated if/while conditions short-circuit left to right. Conditional
+bindings read-match their inputs and are in scope only in subsequent clauses
+and the successful body. Their source temporaries and views live through that
+scope and are cleaned up on every failure, branch exit and loop iteration.
+The else branch resolves names in the enclosing scope, not the failed chain.
 
 An owned result requires an owned value or a permitted duplication. Returning
 a read view as owned non-copy T is invalid. No automatic deep copy, retain,
@@ -355,7 +370,7 @@ and `..` are `core.iter.RangeFrom`, `RangeTo`, `RangeToInclusive` and
 
 The compiler recognizes the interfaces by canonical path, like `core.ops.*`:
 `core.iter.Iterator` (`type Item; mut fn next(): Self.Item?`),
-`core.iter.OwnedIterable` (`fn into_iter(receiver self: take Self)`),
+`core.iter.OwnedIterable` (`fn into_iter(receiver take self: Self)`),
 `core.iter.Iterable` (`fn iter()`) and `core.iter.MutableIterable`
 (`mut fn iter_mut()`), none with parameters. `for x in take v` or an rvalue uses
 Iterator directly, else OwnedIterable; `for x in v` uses Iterable; `for x in mut v`
@@ -368,7 +383,7 @@ original body. Ownership, region, capture and lowering passes consume the
 elaboration, so cleanup and loans follow ordinary scope rules.
 The iterator type of `Iterable`/`MutableIterable` is a region family, for example
 `type Iter<region r> = ListIter<T, region r>` with
-`fn iter<region r>(receiver self: read Self from r): Self.Iter<region r>`; the loop
+`fn iter<region r>(receiver read self: Self from r): Self.Iter<region r>`; the loop
 borrows the collection for the iterator's region, so mutating it inside the loop
 or holding an item past a mutation is rejected. A family may bound itself with its
 own region, `type Iter<region r>: Iterator<Item = read Self.Item from r>`; each
@@ -399,7 +414,7 @@ Spelling: language-grammar §13 (decisions D18-D22).
 Resolve a qualified head once, lexically, nearest scope first. Locals and
 parameters may shadow imports and prelude entries. A parameter's own type
 annotation is checked before the parameter enters scope, so
-`fn open(path: read path.Path)` is legal; afterwards the nearest binding wins and
+`fn open(read path: path.Path)` is legal; afterwards the nearest binding wins and
 `path.name` in the body is value access. Namespace or type access through the
 hidden import is diagnosed at that use, naming the shadowing declaration and
 suggesting an alias such as `import std.path as p`. Never retry another

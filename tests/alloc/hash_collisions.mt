@@ -4,8 +4,8 @@ import package.core.cmp.PartialEq
 
 // Every key hashes to the same value, so all lookups walk one probe chain.
 copy type Same { id: i32 }
-extend Same implements Hash { fn hash<H: Hasher>(state: mut H): Unit { state.write_u64(7u64) } }
-extend Same implements PartialEq { fn eq(other: read Same): bool { self.id == other.id } }
+extend Same implements Hash { fn hash<H: Hasher>(mut state: H): Unit { state.write_u64(7u64) } }
+extend Same implements PartialEq { fn eq(read other: Same): bool { self.id == other.id } }
 
 fn main(): i32 {
     var m = alloc.hash_map.new<Same, i32>()

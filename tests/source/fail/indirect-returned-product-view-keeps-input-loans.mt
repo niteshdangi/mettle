@@ -2,7 +2,7 @@
 
 copy type Pair { first: i32; second: i32 }
 copy type Reader<region r> { value: read Pair from r }
-fn expose(reader: read Reader): read Pair from reader { reader.value }
+fn expose(read reader: Reader): read Pair from reader { reader.value }
 fn main(): i32 {
     var pair = Pair(20,22)
     let reader = Reader(read pair)

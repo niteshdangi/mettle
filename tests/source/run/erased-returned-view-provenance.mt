@@ -5,7 +5,7 @@ type Holder { value: Pair }
 extend Holder implements Reader {
     fn pair(): read Pair from self { read self.value }
 }
-fn total(holder: read any Reader): i32 {
+fn total(read holder: any Reader): i32 {
     let value = holder.pair()
     value.first + value.second
 }

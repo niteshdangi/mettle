@@ -14,7 +14,7 @@ type Child<region r> {
 }
 extend<region r> Child<region r> implements Future {
     type Output = i32
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<i32> {
         let me = unsafe { self.get_unchecked_mut() }
         if me.pending {
             unsafe { *me.saved = present(cx.waker().clone()) }
@@ -32,12 +32,12 @@ type Parent<region r> {
 }
 extend<region r> Parent<region r> implements Future {
     type Output = Unit
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Unit> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Unit> {
         let me = unsafe { self.get_unchecked_mut() }
         let value = me.value
         let drops = me.drops
         let saved = me.saved
-        task.scope(fn(s: read task.Scope): Unit {
+        task.scope(fn(read s: task.Scope): Unit {
             let child = s.spawn(Child(value, drops, saved, true))
             core.mem.forget(take child)
         })
@@ -52,7 +52,7 @@ type SelfCancel<region r> {
 }
 extend<region r> SelfCancel<region r> implements Future {
     type Output = Unit
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Unit> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Unit> {
         let me = unsafe { self.get_unchecked_mut() }
         {
             var guard = me.holder.get().borrow_mut()
@@ -67,7 +67,7 @@ fn main(): i32 {
     let drops = core.sync.atomic.AtomicUsize.new(0usize)
     var saved: Waker? = none
     let saved_ptr = core.ptr.from_mut(saved)
-    let result = task.scope(fn(s: read task.Scope): i32 {
+    let result = task.scope(fn(read s: task.Scope): i32 {
         let child = s.spawn(Child(read value, read drops, saved_ptr, false))
         match take capture child.join() {
             success(v) => v,
@@ -76,7 +76,7 @@ fn main(): i32 {
     })
     if result != 42 || drops.load(core.sync.atomic.Ordering.SeqCst) != 1usize { return 1 }
 
-    task.scope(fn(s: read task.Scope): Unit {
+    task.scope(fn(read s: task.Scope): Unit {
         let forgotten = s.spawn(Child(read value, read drops, saved_ptr, true))
         core.mem.forget(take forgotten)
     })
@@ -94,7 +94,7 @@ fn main(): i32 {
         let borrowed_local = 8
         var no_waker: Waker? = none
         let ptr = core.ptr.from_mut(no_waker)
-        task.scope(fn(s: read task.Scope): Unit {
+        task.scope(fn(read s: task.Scope): Unit {
             let forgotten = s.spawn(Child(read borrowed_local, probe.get(), ptr, true))
             core.mem.forget(take forgotten)
             panic("scope parent panic")
@@ -133,7 +133,7 @@ fn main(): i32 {
     // until the poll returns instead of recursively locking its future.
     let cell: core.cell.RefCell<task.JoinHandle<Unit>?> = core.cell.RefCell.new(none)
     let holder = rc.new(cell)
-    task.scope(fn(s: read task.Scope): Unit {
+    task.scope(fn(read s: task.Scope): Unit {
         let child = s.spawn(SelfCancel(holder.retain(), read drops))
         var guard = holder.get().borrow_mut()
         *guard.get_mut() = present(child)

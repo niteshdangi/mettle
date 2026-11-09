@@ -10,7 +10,7 @@ extend<region r> Cursor<region r> {
     }
 }
 
-fn bad(c: mut Bag): (mut i32 from c)? {
+fn bad(mut c: Bag): (mut i32 from c)? {
     var own = Bag(1, 2)
     var it = Cursor(mut own, 0)
     it.next()

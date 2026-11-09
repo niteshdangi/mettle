@@ -195,7 +195,7 @@ extend Duration {
 }
 
 extend Duration implements PartialEq {
-    fn eq(other: read Duration): bool { self.same(other) }
+    fn eq(read other: Duration): bool { self.same(other) }
 }
 
 extend Duration implements Eq {}
@@ -205,7 +205,7 @@ extend Duration implements Default {
 }
 
 extend Duration implements Hash {
-    fn hash<H: Hasher>(state: mut H): Unit {
+    fn hash<H: Hasher>(mut state: H): Unit {
         self.secs.hash(mut state)
         self.nanos.hash(mut state)
     }
@@ -213,12 +213,12 @@ extend Duration implements Hash {
 
 extend Duration implements Add<Duration> {
     type Output = Duration
-    fn add(rhs: read Duration): Duration { add_durations(self, rhs) }
+    fn add(read rhs: Duration): Duration { add_durations(self, rhs) }
 }
 
 extend Duration implements Sub<Duration> {
     type Output = Duration
-    fn sub(rhs: read Duration): Duration { sub_durations(self, rhs) }
+    fn sub(read rhs: Duration): Duration { sub_durations(self, rhs) }
 }
 
 fn mul_durations(a: Duration, rhs: u32): Duration {
@@ -237,16 +237,16 @@ fn div_durations(a: Duration, rhs: u32): Duration {
 
 extend Duration implements Mul<u32> {
     type Output = Duration
-    fn mul(rhs: read u32): Duration { mul_durations(self, rhs) }
+    fn mul(read rhs: u32): Duration { mul_durations(self, rhs) }
 }
 
 extend Duration implements Div<u32> {
     type Output = Duration
-    fn div(rhs: read u32): Duration { div_durations(self, rhs) }
+    fn div(read rhs: u32): Duration { div_durations(self, rhs) }
 }
 
 extend Duration implements AddAssign<Duration> {
-    mut fn add_assign(rhs: read Duration): Unit {
+    mut fn add_assign(read rhs: Duration): Unit {
         let sum = add_durations(self, rhs)
         self.secs = sum.secs
         self.nanos = sum.nanos
@@ -254,7 +254,7 @@ extend Duration implements AddAssign<Duration> {
 }
 
 extend Duration implements SubAssign<Duration> {
-    mut fn sub_assign(rhs: read Duration): Unit {
+    mut fn sub_assign(read rhs: Duration): Unit {
         let difference = sub_durations(self, rhs)
         self.secs = difference.secs
         self.nanos = difference.nanos
@@ -262,7 +262,7 @@ extend Duration implements SubAssign<Duration> {
 }
 
 extend Duration implements MulAssign<u32> {
-    mut fn mul_assign(rhs: read u32): Unit {
+    mut fn mul_assign(read rhs: u32): Unit {
         let product = mul_durations(self, rhs)
         self.secs = product.secs
         self.nanos = product.nanos
@@ -270,7 +270,7 @@ extend Duration implements MulAssign<u32> {
 }
 
 extend Duration implements DivAssign<u32> {
-    mut fn div_assign(rhs: read u32): Unit {
+    mut fn div_assign(read rhs: u32): Unit {
         let quotient = div_durations(self, rhs)
         self.secs = quotient.secs
         self.nanos = quotient.nanos
@@ -288,38 +288,38 @@ extend Instant {
 }
 
 extend Instant implements PartialEq {
-    fn eq(other: read Instant): bool { self.since_start.same(other.since_start) }
+    fn eq(read other: Instant): bool { self.since_start.same(other.since_start) }
 }
 
 extend Instant implements Eq {}
 
 extend Instant implements Hash {
-    fn hash<H: Hasher>(state: mut H): Unit { self.since_start.hash(mut state) }
+    fn hash<H: Hasher>(mut state: H): Unit { self.since_start.hash(mut state) }
 }
 
 extend Instant implements Add<Duration> {
     type Output = Instant
-    fn add(rhs: read Duration): Instant { Instant(add_durations(self.since_start, rhs)) }
+    fn add(read rhs: Duration): Instant { Instant(add_durations(self.since_start, rhs)) }
 }
 
 extend Instant implements Sub<Duration> {
     type Output = Instant
-    fn sub(rhs: read Duration): Instant { Instant(sub_durations(self.since_start, rhs)) }
+    fn sub(read rhs: Duration): Instant { Instant(sub_durations(self.since_start, rhs)) }
 }
 
 extend Instant implements Sub<Instant> {
     type Output = Duration
-    fn sub(rhs: read Instant): Duration { self.duration_since(rhs) }
+    fn sub(read rhs: Instant): Duration { self.duration_since(rhs) }
 }
 
 extend Instant implements AddAssign<Duration> {
-    mut fn add_assign(rhs: read Duration): Unit {
+    mut fn add_assign(read rhs: Duration): Unit {
         self.since_start = add_durations(self.since_start, rhs)
     }
 }
 
 extend Instant implements SubAssign<Duration> {
-    mut fn sub_assign(rhs: read Duration): Unit {
+    mut fn sub_assign(read rhs: Duration): Unit {
         self.since_start = sub_durations(self.since_start, rhs)
     }
 }
@@ -336,13 +336,13 @@ extend SystemTime {
 }
 
 extend SystemTime implements PartialEq {
-    fn eq(other: read SystemTime): bool { self.secs == other.secs && self.nanos == other.nanos }
+    fn eq(read other: SystemTime): bool { self.secs == other.secs && self.nanos == other.nanos }
 }
 
 extend SystemTime implements Eq {}
 
 extend SystemTime implements Hash {
-    fn hash<H: Hasher>(state: mut H): Unit {
+    fn hash<H: Hasher>(mut state: H): Unit {
         self.secs.hash(mut state)
         self.nanos.hash(mut state)
     }
@@ -350,7 +350,7 @@ extend SystemTime implements Hash {
 
 extend SystemTime implements Add<Duration> {
     type Output = SystemTime
-    fn add(rhs: read Duration): SystemTime {
+    fn add(read rhs: Duration): SystemTime {
         match self.checked_add(rhs) {
             present(t) => t,
             none => package.core.panic.panic("overflow when adding duration to system time")
@@ -360,7 +360,7 @@ extend SystemTime implements Add<Duration> {
 
 extend SystemTime implements Sub<Duration> {
     type Output = SystemTime
-    fn sub(rhs: read Duration): SystemTime {
+    fn sub(read rhs: Duration): SystemTime {
         match self.checked_sub(rhs) {
             present(t) => t,
             none => package.core.panic.panic("overflow when subtracting duration from system time")
@@ -371,24 +371,24 @@ extend SystemTime implements Sub<Duration> {
 // Durations and instants order by length; system times by position on the
 // wall clock (seconds, then nanoseconds).
 extend Duration implements PartialOrd {
-    fn partial_cmp(other: read Duration): Ordering? { present(self.cmp(other)) }
+    fn partial_cmp(read other: Duration): Ordering? { present(self.cmp(other)) }
 }
 extend Duration implements Ord {
-    fn cmp(other: read Duration): Ordering {
+    fn cmp(read other: Duration): Ordering {
         if self.before(other) { Ordering.Less } else if other.before(self) { Ordering.Greater } else { Ordering.Equal }
     }
 }
 extend Instant implements PartialOrd {
-    fn partial_cmp(other: read Instant): Ordering? { present(self.cmp(other)) }
+    fn partial_cmp(read other: Instant): Ordering? { present(self.cmp(other)) }
 }
 extend Instant implements Ord {
-    fn cmp(other: read Instant): Ordering { self.since_start.cmp(read other.since_start) }
+    fn cmp(read other: Instant): Ordering { self.since_start.cmp(read other.since_start) }
 }
 extend SystemTime implements PartialOrd {
-    fn partial_cmp(other: read SystemTime): Ordering? { present(self.cmp(other)) }
+    fn partial_cmp(read other: SystemTime): Ordering? { present(self.cmp(other)) }
 }
 extend SystemTime implements Ord {
-    fn cmp(other: read SystemTime): Ordering {
+    fn cmp(read other: SystemTime): Ordering {
         if self.secs != other.secs { self.secs.cmp(read other.secs) } else { self.nanos.cmp(read other.nanos) }
     }
 }

@@ -1,13 +1,13 @@
 
-fn apply<F: fn(i32): i32>(operation: read F, value: i32): i32 {
+fn apply<F: fn(i32): i32>(read operation: F, value: i32): i32 {
     operation(value)
 }
-fn change<F: mut fn(i32): i32>(operation: mut F, value: i32): i32 {
+fn change<F: mut fn(i32): i32>(mut operation: F, value: i32): i32 {
     operation(value)
 }
-fn once<F: take fn(): i32>(operation: take F): i32 { operation() }
-fn identity<T>(value: take T): T { value }
-fn make<T>(value: take T) { take fn(): T { take value } }
+fn once<F: take fn(): i32>(take operation: F): i32 { operation() }
+fn identity<T>(take value: T): T { value }
+fn make<T>(take value: T) { take fn(): T { take value } }
 type Item { value: i32 }
 fn main(): i32 {
     let value = 20

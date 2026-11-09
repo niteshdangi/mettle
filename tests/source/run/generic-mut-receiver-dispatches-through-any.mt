@@ -5,13 +5,13 @@ extend N implements Bump {
     mut fn bump(by: i32): i32 { self.v += by; self.v }
     fn get(): i32 { self.v }
 }
-fn twice<T: unsized + Bump>(x: mut T): i32 { x.bump(1); x.bump(2) }
-async fn read_value(v: read i32): i32 { v + 1 }
-async fn outer<region r>(v: read i32 from r): i32 {
+fn twice<T: unsized + Bump>(mut x: T): i32 { x.bump(1); x.bump(2) }
+async fn read_value(read v: i32): i32 { v + 1 }
+async fn outer<region r>(read v: i32 from r): i32 {
     let f: pinned heap any Future<Output = i32> from r = pinned heap read_value(v)
     await f
 }
-fn drive<F: Future>(future: take F): F.Output {
+fn drive<F: Future>(take future: F): F.Output {
     let waker = noop_waker()
     var slot = core.pin.pin(future)
     loop {

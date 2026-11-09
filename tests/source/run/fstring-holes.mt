@@ -5,15 +5,15 @@
 import core.fmt.Message
 import core.fmt.buffer_writer
 
-fn emit(message: format Message, buffer: mut [u8]): usize {
+fn emit(message: format Message, mut buffer: [u8]): usize {
     var out = buffer_writer(mut buffer)
     let ignored = capture message.write_to(mut out)
     out.len()
 }
-fn log(message: format Message, buffer: mut [u8]): usize { emit(message, mut buffer) }
-fn relay(message: format Message, buffer: mut [u8]): usize { log(message, mut buffer) }
+fn log(message: format Message, mut buffer: [u8]): usize { emit(message, mut buffer) }
+fn relay(message: format Message, mut buffer: [u8]): usize { log(message, mut buffer) }
 
-fn same(buffer: read [u8], length: usize, expected: read Text): bool {
+fn same(read buffer: [u8], length: usize, read expected: Text): bool {
     let want = expected.as_bytes()
     if length != want.len() { return false }
     var i = 0usize
@@ -23,7 +23,7 @@ fn same(buffer: read [u8], length: usize, expected: read Text): bool {
     }
     true
 }
-fn next(counter: mut i32): i32 {
+fn next(mut counter: i32): i32 {
     counter += 1
     counter
 }

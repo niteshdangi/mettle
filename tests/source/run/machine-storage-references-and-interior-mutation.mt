@@ -1,5 +1,5 @@
 
-fn expose(value: read core.mem.MaybeUninit<i32>): read i32 from value {
+fn expose(read value: core.mem.MaybeUninit<i32>): read i32 from value {
     unsafe { value.assume_init_ref() }
 }
 fn main() {

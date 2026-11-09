@@ -1,5 +1,5 @@
 
-fn access<T: Unpin>(value: mut pinned mut T): mut T from value {
+fn access<T: Unpin>(mut value: pinned mut T): mut T from value {
     value.get_mut()
 }
 fn main() {

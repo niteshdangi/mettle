@@ -1,0 +1,6 @@
+name: "versions-app"
+version: "0.1.0"
+dependencies {
+    alpha: "../alpha-1"
+    bridge: "../bridge"
+}

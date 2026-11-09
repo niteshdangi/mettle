@@ -2,9 +2,9 @@
 
 type Holder<T> { item: T? }
 extend<T> Holder<T> {
-    mut fn put(value: take T) { self.item = present(value) }
+    mut fn put(take value: T) { self.item = present(value) }
 }
-fn fill<region a>(h: mut Holder<read i32 from a>) {
+fn fill<region a>(mut h: Holder<read i32 from a>) {
     let loc = 5
     h.put(read loc)
 }

@@ -9,7 +9,7 @@ fn main(): i32 {
         present(first) => { if first != 4 { return 1 } },
         none => { return 2 }
     }
-    let sum = values.iter().cloned().fold(0, fn(total: take i32, value: take i32): i32 {
+    let sum = values.iter().cloned().fold(0, fn(take total: i32, take value: i32): i32 {
         total + value
     })
     if sum != 10 { return 3 }

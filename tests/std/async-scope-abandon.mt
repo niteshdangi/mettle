@@ -12,7 +12,7 @@ type Pending<region r> {
 
 extend<region r> Pending<region r> implements Future {
     type Output = Unit
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Unit> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Unit> {
         let me = unsafe { self.get_unchecked_mut() }
         let _old = me.polls.fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
         unsafe { *me.saved = present(cx.waker().clone()) }

@@ -12,19 +12,19 @@ type DropValue {
     drop { unsafe { *self.drops += 1 } }
 }
 
-fn as_ref_value<T: AsRef<Value>>(owner: read T): i32 {
+fn as_ref_value<T: AsRef<Value>>(read owner: T): i32 {
     owner.as_ref().number
 }
 
-fn borrow_value<T: Borrow<Value>>(owner: read T): i32 {
+fn borrow_value<T: Borrow<Value>>(read owner: T): i32 {
     owner.borrow().number
 }
 
-fn as_ref_text<T: AsRef<Text>>(owner: read T): usize {
+fn as_ref_text<T: AsRef<Text>>(read owner: T): usize {
     owner.as_ref().len()
 }
 
-fn borrow_text<T: Borrow<Text>>(owner: read T): usize {
+fn borrow_text<T: Borrow<Text>>(read owner: T): usize {
     owner.borrow().len()
 }
 

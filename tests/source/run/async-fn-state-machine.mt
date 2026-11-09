@@ -3,7 +3,7 @@ import core.future.{Future, Poll, Context, noop_waker}
 type Count { left: i32 }
 extend Count implements Future {
     type Output = i32
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<i32> {
         let me = unsafe { self.get_unchecked_mut() }
         if me.left == 0 { Poll.Ready(42) } else {
             me.left = me.left - 1
@@ -30,7 +30,7 @@ async fn nested(): i32 {
 }
 
 // Returns the output and the number of Pending polls.
-fn drive<F: Future<Output = i32>>(future: take F): (i32, i32) {
+fn drive<F: Future<Output = i32>>(take future: F): (i32, i32) {
     let waker = noop_waker()
     var slot = core.pin.pin(future)
     var spins = 0

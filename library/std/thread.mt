@@ -52,7 +52,7 @@ extend Thread implements Clone {
     fn clone(): Thread { Thread(self.raw, self.name.clone()) }
 }
 extend Thread implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         var debug = try f.debug_tuple("Thread")
         try debug.field(read self.raw)
         try debug.finish()
@@ -63,14 +63,14 @@ extend ThreadId implements Clone {
     fn clone(): ThreadId { ThreadId(self.raw) }
 }
 extend ThreadId implements PartialEq {
-    fn eq(other: read ThreadId): bool { self.raw == other.raw }
+    fn eq(read other: ThreadId): bool { self.raw == other.raw }
 }
 extend ThreadId implements Eq {}
 extend ThreadId implements Hash {
-    fn hash<H: Hasher>(state: mut H): Unit { self.raw.hash(mut state) }
+    fn hash<H: Hasher>(mut state: H): Unit { self.raw.hash(mut state) }
 }
 extend ThreadId implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         var debug = try f.debug_tuple("ThreadId")
         try debug.field(read self.raw)
         try debug.finish()
@@ -139,14 +139,14 @@ pub type Builder {
 extend Builder {
     pub static fn new(): Builder { Builder(none, 0usize) }
 
-    pub mut fn name(value: read Text): Unit {
+    pub mut fn name(read value: Text): Unit {
         self.name = present(package.alloc.string.from_text(value))
     }
 
     pub mut fn stack_size(bytes: usize): Unit { self.stack_size = bytes }
 
     pub take fn spawn<T: Transferable + Static, F: fn(): T + Transferable + Static>(
-        f: take F
+        take f: F
     ): JoinHandle<T> throws SpawnError {
         let started = match self.name.as_view() {
             present(name) => unsafe {
@@ -173,8 +173,8 @@ extend Builder {
         T: Transferable,
         F: fn(): T + Transferable + Within<region s>
     >(
-        scope: read Scope<region s> from s,
-        f: take F
+        read scope: Scope<region s> from s,
+        take f: F
     ): ScopedJoinHandle<T> throws SpawnError {
         try scope.try_spawn_configured(read self, f)
     }
@@ -256,7 +256,7 @@ extern "C" fn thread_entry(raw: ptr<mut u8>): Unit {
 // Allocates the shared state and starts the thread; on failure everything is
 // released again and the closure is dropped.
 unsafe fn start<T, F: fn(): T>(
-    f: take F,
+    take f: F,
     name: ptr<read u8>,
     name_length: usize,
     stack_size: usize
@@ -300,11 +300,11 @@ pub type JoinHandle<T> {
 unsafe extend<T: Transferable> JoinHandle<T> implements Transferable {}
 unsafe extend<T: Transferable> JoinHandle<T> implements Shareable {}
 
-pub fn try_spawn<T: Transferable + Static, F: fn(): T + Transferable + Static>(f: take F): JoinHandle<T> throws SpawnError {
+pub fn try_spawn<T: Transferable + Static, F: fn(): T + Transferable + Static>(take f: F): JoinHandle<T> throws SpawnError {
     try Builder.new().spawn(f)
 }
 
-pub fn spawn<T: Transferable + Static, F: fn(): T + Transferable + Static>(f: take F): JoinHandle<T> {
+pub fn spawn<T: Transferable + Static, F: fn(): T + Transferable + Static>(take f: F): JoinHandle<T> {
     let outcome = capture try_spawn<T, F>(f)
     match take outcome {
         success(handle) => handle,
@@ -341,7 +341,7 @@ extend<T> JoinHandle<T> {
 }
 
 extend<T> JoinHandle<T> implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         let id = self.thread().id()
         var debug = try f.debug_struct("JoinHandle")
         try debug.field("thread", read id)
@@ -367,7 +367,7 @@ pub type Scope<region s> {
 }
 
 extend<region s> Scope<region s> implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         try f.write_str("Scope { .. }")
     }
 }
@@ -430,7 +430,7 @@ extend<T> ScopedJoinHandle<T> {
 }
 
 extend<T> ScopedJoinHandle<T> implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         let id = self.thread().id()
         var debug = try f.debug_struct("ScopedJoinHandle")
         try debug.field("thread", read id)
@@ -443,9 +443,9 @@ extend<region s> Scope<region s> {
         T: Transferable,
         F: fn(): T + Transferable + Within<region s>
     >(
-        receiver self: read Scope<region s> from s,
-        config: read Builder,
-        f: take F
+        receiver read self: Scope<region s> from s,
+        read config: Builder,
+        take f: F
     ): ScopedJoinHandle<T> throws SpawnError {
         unsafe { (*self.threads.get()).reserve(1usize) }
         let started = match config.name.as_view() {
@@ -480,8 +480,8 @@ extend<region s> Scope<region s> {
         T: Transferable,
         F: fn(): T + Transferable + Within<region s>
     >(
-        receiver self: read Scope<region s> from s,
-        f: take F
+        receiver read self: Scope<region s> from s,
+        take f: F
     ): ScopedJoinHandle<T> {
         let outcome = capture self.try_spawn_configured(Builder.new(), f)
         match take outcome {
@@ -491,7 +491,7 @@ extend<region s> Scope<region s> {
     }
 }
 
-pub fn scope<R, F: for<region s> fn(read Scope<region s>): R>(f: take F): R {
+pub fn scope<R, F: for<region s> fn(read Scope<region s>): R>(take f: F): R {
     let state = Scope(core.cell.UnsafeCell.new(package.alloc.vec.new<ptr<mut Header>>()), core.cell.Cell.new(Brand(0u8)))
     let guard = ScopeGuard(read state, false)
     f(read state)

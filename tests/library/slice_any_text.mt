@@ -33,12 +33,12 @@ extend<region r> Pairs<region r> implements Iterator {
     }
 }
 
-fn first_item<T>(items: read [T]): (read T from items)? {
+fn first_item<T>(read items: [T]): (read T from items)? {
     var it = items.iter()
     it.next()
 }
 
-fn count<I: Iterator>(it: take I): usize {
+fn count<I: Iterator>(take it: I): usize {
     var n = 0usize
     var i = it
     while true { match i.next() { present(x) => { n += 1usize }, none => { break } } }

@@ -9,7 +9,7 @@ extend<region r> Cursor<region r> {
     }
 }
 
-fn first_mut(c: mut Bag): (mut i32 from c)? {
+fn first_mut(mut c: Bag): (mut i32 from c)? {
     var it = Cursor(mut c, 0)
     it.next()
 }

@@ -12,7 +12,7 @@ import alloc.rc
 import core.fmt
 import core.fmt.Debug
 
-fn render<T: Debug>(value: read T, pretty: bool): String {
+fn render<T: Debug>(read value: T, pretty: bool): String {
     var out = alloc.string.new()
     var options = fmt.spec()
     options.alternate = pretty
@@ -22,7 +22,7 @@ fn render<T: Debug>(value: read T, pretty: bool): String {
     }
     out
 }
-fn is(value: read String, expected: read Text): bool { value.as_text() == expected }
+fn is(read value: String, read expected: Text): bool { value.as_text() == expected }
 
 fn main(): i32 {
     var v = vec.new<i32>()
@@ -72,8 +72,8 @@ fn main(): i32 {
     let some: i32? = present(3)
     let nothing: i32? = none
     if !is(render(some, false), "present(3)") || !is(render(nothing, false), "none") { return 18 }
-    let good: i32 throws i32 = success(4)
-    let bad: i32 throws i32 = failure(5)
+    let good: Outcome<i32, i32> = success(4)
+    let bad: Outcome<i32, i32> = failure(5)
     if !is(render(good, false), "success(4)") || !is(render(bad, false), "failure(5)") { return 19 }
     if !is(render((7,), false), "(7,)") || !is(render((1, true, 'x'), false), "(1, true, 'x')") { return 20 }
     if !is(render((1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), false), "(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)") { return 21 }

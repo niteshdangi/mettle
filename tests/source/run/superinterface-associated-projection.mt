@@ -26,11 +26,11 @@ extend<I: Sized, F: fn(read I.Item): i32> Mapped<I, F> {
     }
     fn left(): usize { self.inner.remaining() }
 }
-fn first<I: Sized>(source: mut I): I.Item? { source.next() }
+fn first<I: Sized>(mut source: I): I.Item? { source.next() }
 fn main(): i32 {
     var counter = Count(0, 3)
     match first(mut counter) { present(1) => {}, _ => { return 1 } }
-    var mapped = Mapped(counter, fn(value: read i32): i32 { value * 10 })
+    var mapped = Mapped(counter, fn(read value: i32): i32 { value * 10 })
     if mapped.left() != 2usize { return 2 }
     if mapped.total() != 50 { return 3 }
     0

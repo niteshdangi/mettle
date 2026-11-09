@@ -9,7 +9,7 @@ import core.convert.{From, Into, TryFrom, TryInto}
 type Meters { value: i64 }
 type Feet { value: i64 }
 extend Meters implements From<Feet> {
-    static fn from(feet: take Feet): Meters { Meters(feet.value * 3) }
+    static fn from(take feet: Feet): Meters { Meters(feet.value * 3) }
 }
 
 fn length(m: Meters): i64 { m.value }
@@ -21,9 +21,9 @@ fn main(): i32 {
     if length(Feet(5).into()) != 15 { return 2 }
     let d: u64 = 7u32.into()
     if d != 7u64 || wide(9u16.into()) != 9u64 { return 3 }
-    let narrowed: (u8 throws TryFromIntError) = (-1i32).try_into()
+    let narrowed: (Outcome<u8, TryFromIntError>) = (-1i32).try_into()
     match narrowed { success(_) => { return 4 }, failure(_) => {} }
-    let fits: (u8 throws TryFromIntError) = 200i32.try_into()
+    let fits: (Outcome<u8, TryFromIntError>) = 200i32.try_into()
     match fits { success(value) => if value != 200u8 { return 5 }, failure(_) => { return 6 } }
     0
 }

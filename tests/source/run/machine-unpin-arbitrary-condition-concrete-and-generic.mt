@@ -3,11 +3,11 @@ interface Ready {}
 extend i32 implements Ready {}
 type Wrapper<T> { value: T; marker: core.marker.PhantomPinned }
 unsafe extend<T: Ready> Wrapper<T> implements Unpin {}
-fn access<T: Ready>(value: mut Wrapper<T>): mut Wrapper<T> from value {
+fn access<T: Ready>(mut value: Wrapper<T>): mut Wrapper<T> from value {
     var handle = core.pin.Pin.new(mut value)
     handle.into_inner()
 }
-fn require_unpin<T: Unpin>(value: read T) {}
+fn require_unpin<T: Unpin>(read value: T) {}
 fn main() {
     var value = Wrapper(40,core.marker.PhantomPinned)
     access(value).value += 2

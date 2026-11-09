@@ -5,12 +5,12 @@ import core.num
 import core.convert.{From, Into, TryFrom}
 import core.panic.panic
 
-fn widen<A, B: From<A>>(a: take A): B { B.(From<A>).from(a) }
-fn widen_into<A: Into<B>, B>(a: take A): B { A.(Into<B>).into(a) }
+fn widen<A, B: From<A>>(take a: A): B { B.(From<A>).from(a) }
+fn widen_into<A: Into<B>, B>(take a: A): B { A.(Into<B>).into(a) }
 fn missing<T: Copy>(value: T?): bool {
     match value { none => true, present(_) => false }
 }
-fn narrow<A, B: TryFrom<A>>(a: take A): B? {
+fn narrow<A, B: TryFrom<A>>(take a: A): B? {
     match take B.(TryFrom<A>).try_from(a) { success(value) => present(value), failure(_) => none }
 }
 

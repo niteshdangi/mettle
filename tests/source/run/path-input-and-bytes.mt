@@ -2,7 +2,7 @@
 // [u8].bytes() yields Copy bytes.
 import std.path
 import std.path.PathInput
-fn total(p: read PathInput): usize { p.as_path().as_bytes().len() }
+fn total(read p: PathInput): usize { p.as_path().as_bytes().len() }
 fn main(): i32 {
     let buf = path.path_buf_from_text("a/b")
     let os = std.ffi.os_string_from_text("abcd")

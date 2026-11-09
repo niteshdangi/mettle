@@ -10,7 +10,7 @@ type SelfRef<region r> {
 
 extend<region r> SelfRef<region r> implements Future {
     type Output = Unit
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Unit> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Unit> {
         let me = unsafe { self.get_unchecked_mut() }
         if me.saved == core.ptr.null_mut<i32>() {
             me.saved = core.ptr.from_mut(me.value)

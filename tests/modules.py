@@ -21,7 +21,7 @@ TARGET_FILES = {
         "math/detail/values.mt": "pub fn answer() { 42 }\n"},
 }
 
-RAW_PARTS_PROGRAM = 'fn tail<region r>(v: read [u8] from r): read [u8] from r {\n    let p = core.slice.data(v)\n    unsafe { core.slice.from_raw_parts(p.add(1usize), v.len() - 1usize) }\n}\nfn main(): i32 {\n    var a: [u8; 4] = [1u8, 2u8, 3u8, 4u8]\n    let all: read [u8] = read a\n    let t = tail(all)\n    if t.len() != 3usize || t[0] != 2u8 { return 1 }\n    let p = core.ptr.from_mut(a).cast<u8>()\n    let m: mut [u8] = unsafe { core.slice.from_raw_parts_mut(p, 2usize) }\n    m[1] = 9u8\n    if a[1] != 9u8 { return 2 }\n    0\n}\n'
+RAW_PARTS_PROGRAM = 'fn tail<region r>(read v: [u8] from r): read [u8] from r {\n    let p = core.slice.data(v)\n    unsafe { core.slice.from_raw_parts(p.add(1usize), v.len() - 1usize) }\n}\nfn main(): i32 {\n    var a: [u8; 4] = [1u8, 2u8, 3u8, 4u8]\n    let all: read [u8] = read a\n    let t = tail(all)\n    if t.len() != 3usize || t[0] != 2u8 { return 1 }\n    let p = core.ptr.from_mut(a).cast<u8>()\n    let m: mut [u8] = unsafe { core.slice.from_raw_parts_mut(p, 2usize) }\n    m[1] = 9u8\n    if a[1] != 9u8 { return 2 }\n    0\n}\n'
 TEXT_SLICE_PROGRAM = """fn main(): i32 {
     let a = "h\\u{e9}llo"
     let b: read core.text.Text = read a[1..3]
@@ -40,7 +40,7 @@ fn main(): i32 {
     0
 }
 """
-TEXT_PROGRAM = 'import core.iter.Iterator;\nfn code(text: read core.text.Text): usize {\n    var chars = text.chars()\n    var count = 0usize\n    while true {\n        match chars.next() {\n            present(c) => { count += 1usize },\n            none => { break }\n        }\n    }\n    count\n}\nfn valid(bytes: read [u8]): bool {\n    match core.text.from_utf8(bytes) { present(t) => true, none => false }\n}\nfn two(a: u8, b: u8): bool { let v = [a, b]\n    valid(read v) }\nfn three(a: u8, b: u8, c: u8): bool { let v = [a, b, c]\n    valid(read v) }\nfn four(a: u8, b: u8, c: u8, d: u8): bool { let v = [a, b, c, d]\n    valid(read v) }\nfn main(): i32 {\n    let a = "h\\u{e9}llo\\n"\n    if a.len() != 7usize || code(a) != 6usize { return 1 }\n    if !(a == "h\\u{e9}llo\\n") || a != "h\\u{e9}llo\\n" || a == "hello\\n" { return 2 }\n    if !"".is_empty() || "a\\u{1F600}\\x41\\t\\\\\\"".len() != 9usize { return 3 }\n    if a.as_bytes()[1usize] != 0xc3u8 { return 4 }\n    match a.get(0usize, 2usize) { present(t) => { return 5 }, none => {} }\n    match a.get(0usize, 3usize) { present(t) => { if !(t == "h\\u{e9}") { return 6 } }, none => { return 7 } }\n    if !a.is_char_boundary(3usize) || a.is_char_boundary(2usize) { return 8 }\n    if !a.starts_with("h\\u{e9}l") || a.starts_with("hel") { return 9 }\n    match a.find_byte(0x6cu8) { present(i) => { if i != 3usize { return 10 } }, none => { return 11 } }\n    if two(0xc0u8, 0x80u8) || !two(0xc2u8, 0xa9u8) || two(0xe2u8, 0x82u8) { return 12 }\n    if two(0x80u8, 0x41u8) || two(0xffu8, 0x41u8) { return 13 }\n    if three(0xe0u8, 0x80u8, 0x80u8) || three(0xedu8, 0xa0u8, 0x80u8) { return 14 }\n    if !three(0xe2u8, 0x82u8, 0xacu8) || three(0xe2u8, 0x82u8, 0x41u8) { return 15 }\n    if four(0xf4u8, 0x90u8, 0x80u8, 0x80u8) || four(0xf0u8, 0x80u8, 0x80u8, 0x80u8) { return 16 }\n    if !four(0xf0u8, 0x9fu8, 0x98u8, 0x80u8) { return 17 }\n    0\n}\n'
+TEXT_PROGRAM = 'import core.iter.Iterator;\nfn code(read text: core.text.Text): usize {\n    var chars = text.chars()\n    var count = 0usize\n    while true {\n        match chars.next() {\n            present(c) => { count += 1usize },\n            none => { break }\n        }\n    }\n    count\n}\nfn valid(read bytes: [u8]): bool {\n    match core.text.from_utf8(bytes) { present(t) => true, none => false }\n}\nfn two(a: u8, b: u8): bool { let v = [a, b]\n    valid(read v) }\nfn three(a: u8, b: u8, c: u8): bool { let v = [a, b, c]\n    valid(read v) }\nfn four(a: u8, b: u8, c: u8, d: u8): bool { let v = [a, b, c, d]\n    valid(read v) }\nfn main(): i32 {\n    let a = "h\\u{e9}llo\\n"\n    if a.len() != 7usize || code(a) != 6usize { return 1 }\n    if !(a == "h\\u{e9}llo\\n") || a != "h\\u{e9}llo\\n" || a == "hello\\n" { return 2 }\n    if !"".is_empty() || "a\\u{1F600}\\x41\\t\\\\\\"".len() != 9usize { return 3 }\n    if a.as_bytes()[1usize] != 0xc3u8 { return 4 }\n    match a.get(0usize, 2usize) { present(t) => { return 5 }, none => {} }\n    match a.get(0usize, 3usize) { present(t) => { if !(t == "h\\u{e9}") { return 6 } }, none => { return 7 } }\n    if !a.is_char_boundary(3usize) || a.is_char_boundary(2usize) { return 8 }\n    if !a.starts_with("h\\u{e9}l") || a.starts_with("hel") { return 9 }\n    match a.find_byte(0x6cu8) { present(i) => { if i != 3usize { return 10 } }, none => { return 11 } }\n    if two(0xc0u8, 0x80u8) || !two(0xc2u8, 0xa9u8) || two(0xe2u8, 0x82u8) { return 12 }\n    if two(0x80u8, 0x41u8) || two(0xffu8, 0x41u8) { return 13 }\n    if three(0xe0u8, 0x80u8, 0x80u8) || three(0xedu8, 0xa0u8, 0x80u8) { return 14 }\n    if !three(0xe2u8, 0x82u8, 0xacu8) || three(0xe2u8, 0x82u8, 0x41u8) { return 15 }\n    if four(0xf4u8, 0x90u8, 0x80u8, 0x80u8) || four(0xf0u8, 0x80u8, 0x80u8, 0x80u8) { return 16 }\n    if !four(0xf0u8, 0x9fu8, 0x98u8, 0x80u8) { return 17 }\n    0\n}\n'
 
 
 def run(arguments, expected=0):
@@ -109,8 +109,8 @@ def main(executable, directory, only=None):
             raise AssertionError("unwrap of an absent value must abort")
         case("library-prelude-names-need-no-import", {
             "main.mt": "fn order(a: i32, b: i32): Ordering { a.cmp(b) }\n"
-                       "fn size(t: read Text): usize { t.len() }\n"
-                       "module inner { pub fn text_len(t: read Text): usize { t.len() } }\n"
+                       "fn size(read t: Text): usize { t.len() }\n"
+                       "module inner { pub fn text_len(read t: Text): usize { t.len() } }\n"
                        "fn main(): i32 {\n"
                        "    assert(size(\"abc\") == 3usize && inner.text_len(\"hi\") == 2usize, \"lengths\")\n"
                        "    match order(1, 2) { Ordering.Less => 0, _ => 1 }\n}\n"})
@@ -118,11 +118,11 @@ def main(executable, directory, only=None):
             "main.mt": "type Ordering { rank: i32 }\n"
                        "import core.text.Text as Words;\n"
                        "fn assert(flag: bool, rank: i32): i32 { if flag { rank } else { 1 } }\n"
-                       "fn size(t: read Words): usize { t.len() }\n"
+                       "fn size(read t: Words): usize { t.len() }\n"
                        "fn main(): i32 { let order = Ordering(assert(true, 0)); order.rank + (size(\"\") as i32) }\n"})
         case("library-prelude-absent-when-core-is-user-defined", {
             "main.mt": "module core { pub fn answer(): i32 { 42 } }\n"
-                       "fn size(t: read Text): i32 { 0 }\nfn main(): i32 { core.answer() - 42 }\n"},
+                       "fn size(read t: Text): i32 { 0 }\nfn main(): i32 { core.answer() - 42 }\n"},
              "name", "unresolved or inaccessible type 'Text'", (2, 9))
         panicked = case("library-panic-reports-message-and-exits-101", {
             "main.mt": "fn nothing(): i32? { none }\n"
@@ -200,7 +200,7 @@ def main(executable, directory, only=None):
                    "pub fn sum() { self.x + self.y }\n}\n"
                    "pub alias Position = Point;\n}\n"
                    "import geometry.Position as P;\n"
-                   "fn inspect(value: read P) { value.sum() }\n"
+                   "fn inspect(read value: P) { value.sum() }\n"
                    "fn main() { let value = P.make(20, 22); inspect(value) - 42 }\n"})
     case("distinct-nominal-module-identities", {
         "main.mt": "module a { pub copy type Record { pub x: i32 }\n"
@@ -337,7 +337,7 @@ def main(executable, directory, only=None):
     case("library-text-static-and-raw-literals", {"main.mt": TEXT_STATIC_PROGRAM})
     case("library-slice-from-raw-parts", {"main.mt": RAW_PARTS_PROGRAM})
     case("library-subslice-keeps-source-region", {
-        "main.mt": "fn pick<region a, region b>(v: read [u8] from a, w: read [u8] from b): read [u8] from a {\n    read w[0..1]\n}\nfn main(): i32 { 0 }\n"},
+        "main.mt": "fn pick<region a, region b>(read v: [u8] from a, read w: [u8] from b): read [u8] from a {\n    read w[0..1]\n}\nfn main(): i32 { 0 }\n"},
          "region", "view region or invariant payload does not satisfy its declared relationship", (1, 89))
     library = {"lib/core/module.mt": "pub module text;\npub fn answer(): i32 { 42 }\n",
                "lib/core/text.mt": "pub type Text { bytes: [u8] }\n",

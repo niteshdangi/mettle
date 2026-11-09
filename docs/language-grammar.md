@@ -42,6 +42,15 @@ enclosing module respectively.
 
 ## 2. Paths, imports and generics
 
+Dependency aliases are available by their declared names from every module,
+independent of local/registry/Git source selection. Explicit local bindings shadow
+them; `package` can explicitly anchor lookup at the current package root.
+An import can discover an undeclared source module through `name.mt` or
+`name/main.mt`; finding both is an ambiguity error. Intermediate directories
+need no handwritten aggregator. Package entry selection is owned by
+tooling-and-packages.md; its default is `src/main.mt` for both dependency APIs
+and executable entry checking.
+
 ```ebnf
 path          = path_head, { ".", IDENT } ;
 path_head     = IDENT | "self" | "super" | "package" ;
@@ -63,7 +72,7 @@ bound         = [ "for", "<", region_list, ">" ], path, [ generic_args ]
 generic_args  = "<", generic_arg, { ",", generic_arg }, [ "," ], ">" ;
 generic_arg   = type | "region", region_reference
               | "const", "{", expression, "}"
-              | "type", IDENT, "=", type
+              | [ "type" ], IDENT, "=", type
               | "const", IDENT, "=", const_expression ;
 region_reference = IDENT | "static" ;
 where_clause  = "where", constraint, { ",", constraint } ;
@@ -105,18 +114,20 @@ arguments.
 ## 3. Type expressions
 
 ```ebnf
-type          = simple_type, [ "throws", type ] ;
-simple_type   = owned_type | borrowed_type | postfix_type ;
+type          = simple_type ;
+simple_type   = ( owned_type | borrowed_type | postfix_type ),
+                [ "from", sources ] ;
 owned_type    = ( "heap" | "shared" | "local", "shared"
                | "weak" | "local", "weak" | "pinned" ), simple_type ;
-borrowed_type = ( "read" | "mut" ), postfix_type, [ "from", sources ] ;
+borrowed_type = ( "read" | "mut" ), postfix_type ;
 postfix_type  = type_atom, { "?" } ;
 type_atom     = path, [ generic_args ]
+              | "Outcome", "<", type, ",", type, ">"
               | "(", type, ")"
               | "(", type, ",", type_list, ")"
               | "[", type, [ ";", const_expression ], "]"
-              | "any", bounds, [ "from", sources ]
-              | "some", bounds, [ "from", sources ]
+              | "any", bounds
+              | "some", bounds
               | "ptr", "<", ( "read" | "mut" ), type, ">"
               | projection_type | callable_type | "_" ;
 projection_type = projection_subject, ".", "(", bound, ")", ".", IDENT,
@@ -146,13 +157,25 @@ Fields storing views must carry a named region or a defined static source.
 Named sources in function results may name parameters/receiver; stored-field
 sources name declared regions, not out-of-scope variable names.
 
+The `from` suffix also describes dependencies of lifetime-bearing named values,
+not only views and erased/opaque types. For example,
+`core.cell.RefMut<T> from r` is an owned guard bounded by `r`, not a borrow of
+the guard. The suffix follows optional suffixes and any read/mut qualifier;
+parentheses place optionality outside a source-annotated type, as in
+`(core.cell.RefMut<T> from r)?`. Source annotations preserve the type's existing
+loan obligations; they do not create ownership, retention or access authority.
+
 Bare interface parameter types denote independently generic concrete inputs.
 A bare interface parameter accessed through `read` or `mut` (or with no mode)
 only borrows its argument, so its implicit parameter is not required to be
 Sized and unsized implementors such as `Text` or slices are accepted; `take`
 keeps the Sized requirement.
 `any Interface` is erased dispatch; `some Interface` is an opaque concrete return.
-Associated bindings, including types and constants, use where constraints.
+Associated types and constants may be bound in generic arguments or constrained
+by a where clause. In generic arguments, `Item = T` is shorthand for
+`type Item = T`; both bind the same associated type, not an additional positional
+type argument. Thus `Future<Output = T>` and `Future<type Output = T>` are
+equivalent.
 `Self` is the enclosing type/implementation. The predeclared `Never` has no values;
 it is a type name, not a keyword. Lowercase `never` is not a built-in type alias.
 The predeclared `Unit` names the unit type; `()` is its value and is not accepted
@@ -166,11 +189,46 @@ and `take fn` bounds require exclusive and consuming invocation respectively.
 Satisfying such a bound does not coerce a capturing closure to a function pointer.
 
 An explicit function result parses as `: simple_type`, followed independently by
-optional `throws Error`. Returning an outcome as an ordinary value requires
-parentheses: `: (Config throws Error)`. This distinguishes effect from payload
-without relying on type-name lookup to parse. Omitting the result annotation
+optional `throws Error`. Stored success/failure values use the native type
+constructor `Outcome<T, E>`, with exactly two positional type arguments; this
+preserves the existing outcome representation and success/failure states.
+`throws` declares a callable effect, not a stored-value type operator.
+`fn load(): Outcome<Config, Error>` returns an ordinary value, whereas
+`fn load(): Config throws Error` declares a failure callers must handle.
+Omitting the result annotation
 does not omit or infer an error effect: `fn load() throws Error { ... }` infers
 only the success type. `throws` remains an explicit contract.
+
+### 3.1. Reading composed types
+
+These type examples describe stored values or function results; parameter access
+modes separately determine whether an argument is borrowed or consumed.
+`r` is a declared region, `T` is a payload type, and `Config`/`Error` are example
+application types.
+
+| Type | Ownership and lifetime |
+| --- | --- |
+| `String` | Owns its UTF-8 storage and releases it on drop. |
+| `read Text from r` | Borrows UTF-8 content for reading, with backing storage valid for `r`. |
+| `mut [u8] from r` | Borrows bytes exclusively for `r`, allowing mutation through the view. |
+| `read T? from r` | Borrows an optional slot; the view exists even when the slot contains `none`. |
+| `(read T from r)?` | Contains either `none` or a read view whose backing storage is valid for `r`. |
+| `core.cell.RefMut<T> from r` | Owns an exclusive runtime borrow guard bounded by `r`; dropping the guard releases the borrow, not the cell's payload. |
+
+| Signature head | Result and failure |
+| --- | --- |
+| `fn load(): Config throws Error` | Returns `Config` on success; callers must handle, propagate with `try`, or `capture` a typed failure. |
+| `fn load(): Outcome<Config, Error>` | Returns a stored success/failure outcome; the call itself has no declared throwing effect. |
+
+When a result is an unparenthesized callable type, `throws` binds to the
+innermost callable whose result precedes it. Parentheses delimit that callable
+before an outer function's effect:
+
+| Signature head | Meaning |
+| --- | --- |
+| `fn make(): fn(): i32 throws Error` | `make` is nonthrowing; the returned callable throws |
+| `fn make(): (fn(): i32 throws Error)` | The same contract, with explicit grouping |
+| `fn make(): (fn(): i32) throws Error` | `make` throws; the returned callable is nonthrowing |
 
 ## 4. Types, methods and implementations
 
@@ -223,7 +281,7 @@ retain ordinary expression parsing.
 
 Implicit receiver conventions remain: read `fn`, exclusive `mut fn`, consuming
 `take fn`, and no receiver for `static fn`. Advanced receivers use a first
-parameter `receiver self: <mode/type>` and cannot also select an implicit
+parameter `receiver <mode> self: Type` and cannot also select an implicit
 receiver modifier. This makes ownership of heap/pinned receivers explicit.
 
 Generated construction uses fields in declaration order when the type has no
@@ -309,6 +367,25 @@ loop. Value-producing `loop` joins its break value types; while/for remain unit.
 `let pattern = expression else { ... }` requires the else block to diverge.
 `if let pattern = expression { ... }` and its while equivalent use conditional
 bindings with explicit branch lifetimes.
+Both headers accept a comma-separated condition list:
+
+```ebnf
+conditions    = condition, { ",", condition } ;
+condition     = [ "let", pattern, "=" ], expression ;
+```
+
+Each ordinary condition must be bool. Evaluate clauses once, left to right,
+stopping at the first false condition or nonmatching pattern. A binding is
+visible only in later clauses and the successful body, never in its own
+initializer, `else`, or after the conditional. A comma permits a following
+newline; a trailing comma is not a condition. Commas inside calls, tuples and
+generic arguments remain part of those expressions.
+
+Condition temporaries and pattern views remain alive through later clauses and
+the successful body. Release them before evaluating `else` or leaving a failed
+header. A while loop releases them on every iteration, including continue and
+break. Pattern bindings retain the existing read-match access and loan rules;
+the condition list does not implicitly consume payloads.
 
 Closure syntax is
 `[async] [take] fn(parameters) [: Result] [throws Error] (block | => expression)`.
@@ -345,9 +422,9 @@ spelling alone does not determine metaprogramming semantics.
 
 ## 8. Ambiguity resolutions
 
-- Function result effect versus stored outcome: parentheses distinguish them.
-- Parameter mode versus a stored reference value: parentheses isolate the
-  reference payload, e.g. `x: take (read T from r)`.
+- Callable effects use `throws`; stored values use `Outcome<T, E>`.
+- A named parameter's access mode precedes its binding; `:` starts the payload
+  type, as in `take x: read T from r`. Unnamed callable slots retain `[mode] type`.
 - Generic call versus comparison: the syntax-only follower rule of section
   13.3 decides.
 - Type construction versus condition block: construction uses parentheses.
@@ -379,8 +456,8 @@ negative_property = "extend", [ generics ], type, "not", path,
                     [ where_clause ], [ ";" ] ;
 generics      = "<", generic, { ",", generic }, [ "," ], ">" ;
 parameters    = parameter, { ",", parameter }, [ "," ] ;
-parameter     = pattern, ":", [ mode ], type, [ "=", expression ]
-              | "receiver", "self", ":", [ mode ], type ;
+parameter     = [ mode ], pattern, ":", type, [ "=", expression ]
+              | "receiver", [ mode ], "self", ":", type ;
 parameter_types = [ parameter_type, { ",", parameter_type },
                     [ ",", "..." ], [ "," ] ] ;
 parameter_type = [ mode ], type ;
@@ -453,8 +530,9 @@ Negative property declarations are restricted to the native structurally derived
 properties. They do not add unrestricted negative user-interface implementations.
 Unsafe interfaces require unsafe implementations with documented invariants.
 An alias introduces no new nominal type, layout, Copy opt-in or orphan-rule
-ownership. Associated bindings in interface arguments use `type Item = T` or
-`const N = value`. Region static denotes program-lifetime backing, not a local
+ownership. Associated bindings in interface arguments use `Item = T`
+(equivalently `type Item = T`) or `const N = value`.
+Region static denotes program-lifetime backing, not a local
 storage extension. Erased/opaque environment regions are distinct from the
 region of a view of that value; parentheses distinguish the two levels.
 
@@ -509,7 +587,7 @@ closure       = [ "async" ], [ "take" ], "fn", "(", [ closure_parameters ], ")",
                 [ result_annotation ], [ "throws", type ],
                 ( block | "=>", expression ) ;
 closure_parameters = closure_parameter, { ",", closure_parameter }, [ "," ] ;
-closure_parameter = pattern, [ ":", [ mode ], type ] ;
+closure_parameter = [ mode ], pattern, [ ":", type ] ;
 macro_invocation = path, "!", DELIMITED_TOKEN_TREE ;
 ```
 
@@ -662,6 +740,8 @@ read as a comparison. `FormatHoleClose` also counts as a follower.
 target_closure = [ "async" ], [ "take" ], "fn", "(", [ closure_parameters ], ")",
                  [ result_annotation ], [ "throws", type ],
                  ( block | "=>", expression ) ;
+closure_parameters = closure_parameter, { ",", closure_parameter }, [ "," ] ;
+closure_parameter = [ mode ], pattern, [ ":", type ] ;
 ```
 
 `fn(x) => x * 2` and `fn(x) { ... }` share parameter/result inference, effects
@@ -672,6 +752,8 @@ body's own delimiter depth ends it without being consumed; commas nested in
 calls, tuples or match blocks do not. So `apply(fn(x) => x + 1, other)` passes
 two arguments, `apply(fn(x) => pair(x, 1), other)` keeps `pair`'s comma inside
 the call, and `p => fn(x) => x + 1, q => ...` ends the first arm at its comma.
+Explicit closure access precedes the binding, for example
+`fn(mut value: Item) { ... }`; omitting a type retains contextual inference.
 
 Call arguments are core-grammar's `call_argument`: positional arguments precede
 named ones, and a label names the declared parameter without adding a namespace

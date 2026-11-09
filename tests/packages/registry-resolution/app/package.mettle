@@ -1,0 +1,8 @@
+name: "registry-app"
+version: "0.1.0"
+registry {
+    path: "../../registry"
+}
+dependencies {
+    shapes: "^1"
+}

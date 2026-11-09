@@ -14,7 +14,7 @@ fn main(): i32 {
         present(_) => { return 2 }
     }
     {
-        var extracted = map.extract_if(fn(key: read i32, value: mut i32): bool {
+        var extracted = map.extract_if(fn(read key: i32, mut value: i32): bool {
             value += 5
             key == 2
         })
@@ -34,7 +34,7 @@ fn main(): i32 {
     let _hs1 = hash_set.insert(1)
     let _hs2 = hash_set.insert(2)
     {
-        var hash_extract = hash_set.extract_if(fn(key: read i32): bool { key == 2 })
+        var hash_extract = hash_set.extract_if(fn(read key: i32): bool { key == 2 })
         match hash_extract.next() {
             present(key) => { if key != 2 { return 29 } },
             none => { return 30 }
@@ -68,7 +68,7 @@ fn main(): i32 {
         }
     }
     {
-        var tree_extracted = tree.extract_if(fn(key: read i32, value: mut i32): bool {
+        var tree_extracted = tree.extract_if(fn(read key: i32, mut value: i32): bool {
             value += 2
             key == 2
         })
@@ -104,7 +104,7 @@ fn main(): i32 {
     var set_upper = set.split_off(2)
     if set.len() != 1 || set_upper.len() != 2 { return 20 }
     {
-        var set_extract = set_upper.extract_if(fn(key: read i32): bool { key == 2 })
+        var set_extract = set_upper.extract_if(fn(read key: i32): bool { key == 2 })
         match set_extract.next() {
             present(key) => { if key != 2 { return 21 } },
             none => { return 22 }

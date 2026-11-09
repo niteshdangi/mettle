@@ -2618,7 +2618,7 @@ static UPPERCASE_MAP: [u32; 7760] = [
     0x1e920u32, 0x0000u32, 0x0000u32, 0x1e943u32, 0x0001u32, 0x1e921u32, 0x0000u32, 0x0000u32,
 ]
 
-fn contains(ranges: read [u32], scalar: u32): bool {
+fn contains(read ranges: [u32], scalar: u32): bool {
     var low = 0usize
     var high = ranges.len() / 2usize
     while low < high {
@@ -2664,7 +2664,7 @@ pub(super) fn is_numeric(scalar: u32): bool {
     contains(read NUMERIC_RANGES, scalar)
 }
 
-fn find_mapping(table: read [u32], scalar: u32): [u32; 4] {
+fn find_mapping(read table: [u32], scalar: u32): [u32; 4] {
     var low = 0usize
     var high = table.len() / 5usize
     while low < high {

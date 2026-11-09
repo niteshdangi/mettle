@@ -9,7 +9,7 @@ fn duplicate<T: Copy>(value: T): T {
     value
 }
 
-fn identity<T>(value: take T): T {
+fn identity<T>(take value: T): T {
     value
 }
 

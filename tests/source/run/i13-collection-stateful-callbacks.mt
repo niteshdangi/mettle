@@ -17,16 +17,16 @@ type HeapValue {
 }
 
 extend HeapValue implements PartialEq {
-    fn eq(other: read HeapValue): bool { self.key == other.key }
+    fn eq(read other: HeapValue): bool { self.key == other.key }
 }
 extend HeapValue implements Eq {}
 extend HeapValue implements PartialOrd {
-    fn partial_cmp(other: read HeapValue): Ordering? {
+    fn partial_cmp(read other: HeapValue): Ordering? {
         present(self.key.cmp(other.key))
     }
 }
 extend HeapValue implements Ord {
-    fn cmp(other: read HeapValue): Ordering { self.key.cmp(other.key) }
+    fn cmp(read other: HeapValue): Ordering { self.key.cmp(other.key) }
 }
 
 fn main(): i32 {
@@ -35,7 +35,7 @@ fn main(): i32 {
         zero_sized.push(ZeroDrop())
         zero_sized.push(ZeroDrop())
         zero_sized.push(ZeroDrop())
-        zero_sized.dedup_by(fn(current: mut ZeroDrop, previous: mut ZeroDrop): bool {
+        zero_sized.dedup_by(fn(mut current: ZeroDrop, mut previous: ZeroDrop): bool {
             true
         })
         assert(zero_sized.len() == 1usize, "zero-sized dedup length")
@@ -50,7 +50,7 @@ fn main(): i32 {
     values.push(2)
     values.push(3)
     var comparisons = 0
-    values.dedup_by(fn(current: mut i32, previous: mut i32): bool {
+    values.dedup_by(fn(mut current: i32, mut previous: i32): bool {
         comparisons += 1
         current == previous
     })
@@ -58,7 +58,7 @@ fn main(): i32 {
     assert(values.len() == 3usize && values[0usize] == 1 &&
         values[1usize] == 2 && values[2usize] == 3, "dedup keeps first item")
     var key_calls = 0
-    values.dedup_by_key(fn(value: mut i32): i32 {
+    values.dedup_by_key(fn(mut value: i32): i32 {
         key_calls += 1
         value
     })
@@ -73,7 +73,7 @@ fn main(): i32 {
     assert(generated == 2 && values[3usize] == 11 &&
         values[4usize] == 12, "resize generator state")
     var pop_calls = 0
-    match values.pop_if(fn(value: mut i32): bool {
+    match values.pop_if(fn(mut value: i32): bool {
         pop_calls += 1
         value == 12
     }) {
@@ -91,7 +91,7 @@ fn main(): i32 {
     {
         var extracted = extraction_source.extract_if(
             0usize..extraction_source.len(),
-            fn(value: mut i32): bool {
+            fn(mut value: i32): bool {
                 extraction_calls += 1
                 value % 2 == 0
             }
@@ -111,7 +111,7 @@ fn main(): i32 {
     deque.push_back(2)
     deque.push_back(4)
     var searches = 0
-    match capture deque.binary_search_by(fn(value: read i32): Ordering {
+    match capture deque.binary_search_by(fn(read value: i32): Ordering {
         searches += 1
         value.cmp(2)
     }) {
@@ -121,7 +121,7 @@ fn main(): i32 {
     assert(searches > 0, "deque search invokes stateful comparator")
     searches = 0
     let deque_key = 4
-    match capture deque.binary_search_by_key(read deque_key, fn(value: read i32): i32 {
+    match capture deque.binary_search_by_key(read deque_key, fn(read value: i32): i32 {
         searches += 1
         value
     }) {
@@ -134,14 +134,14 @@ fn main(): i32 {
         failure(_) => { return 6 }
     }
     searches = 0
-    assert(deque.partition_point(fn(value: read i32): bool {
+    assert(deque.partition_point(fn(read value: i32): bool {
         searches += 1
         value < 3
     }) == 3usize, "deque partition point")
     assert(searches == 2, "deque partition predicate state")
 
     var pop_calls = 0
-    match deque.pop_front_if(fn(value: mut i32): bool {
+    match deque.pop_front_if(fn(mut value: i32): bool {
         pop_calls += 1
         value == 1
     }) {
@@ -157,7 +157,7 @@ fn main(): i32 {
     assert(deque_generated == 2 && deque[3usize] == 11 &&
         deque[4usize] == 12, "deque generator state")
     pop_calls = 0
-    match deque.pop_back_if(fn(value: mut i32): bool {
+    match deque.pop_back_if(fn(mut value: i32): bool {
         pop_calls += 1
         value == 12
     }) {
@@ -174,7 +174,7 @@ fn main(): i32 {
     linked.push_back(5)
     var visits = 0
     {
-        var extracted = linked.extract_if(fn(value: mut i32): bool {
+        var extracted = linked.extract_if(fn(mut value: i32): bool {
             visits += 1
             value % 2 == 0
         })
@@ -185,7 +185,7 @@ fn main(): i32 {
     }
     assert(visits == 2, "linked extraction stops at first yielded item")
     assert(linked.len() == 4usize, "dropping extraction keeps unvisited nodes")
-    var remaining = linked.extract_if(fn(value: mut i32): bool {
+    var remaining = linked.extract_if(fn(mut value: i32): bool {
         visits += 1
         value == 4
     })
@@ -208,7 +208,7 @@ fn main(): i32 {
         queue.push(HeapValue(5, counter))
         queue.push(HeapValue(6, counter))
         var heap_visits = 0
-        queue.retain(fn(value: read HeapValue): bool {
+        queue.retain(fn(read value: HeapValue): bool {
             heap_visits += 1
             value.key % 2 == 0
         })
@@ -239,7 +239,7 @@ fn main(): i32 {
         queue.push(HeapValue(80, counter))
         queue.push(HeapValue(85, counter))
         var visits = [0usize; 7usize]
-        queue.retain(fn(value: read HeapValue): bool {
+        queue.retain(fn(read value: HeapValue): bool {
             if value.key == 100 { visits[0usize] += 1usize }
             else if value.key == 5 { visits[1usize] += 1usize }
             else if value.key == 90 { visits[2usize] += 1usize }

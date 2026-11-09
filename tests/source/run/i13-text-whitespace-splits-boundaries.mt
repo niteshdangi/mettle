@@ -299,26 +299,26 @@ fn main(): i32 {
         match take reverse_exact_mut.next() { present(part) => { part[1] = 9 }, none => { return 111 } }
     }
     if reverse_exact_mut_source[4] != 9 { return 112 }
-    var even_split = slice_values.split(fn(value: read i32): bool { value == 3 })
+    var even_split = slice_values.split(fn(read value: i32): bool { value == 3 })
     match even_split.next() { present(part) => { if part.len() != 2usize { return 81 } }, none => { return 81 } }
     match even_split.next() { present(part) => { if part[0] != 4 { return 82 } }, none => { return 82 } }
-    var inclusive_split = slice_values.split_inclusive(fn(value: read i32): bool { value == 3 })
+    var inclusive_split = slice_values.split_inclusive(fn(read value: i32): bool { value == 3 })
     match inclusive_split.next() { present(part) => { if part.len() != 3usize { return 83 } }, none => { return 83 } }
-    var reverse_split = slice_values.rsplitn(2usize, fn(value: read i32): bool { value == 3 })
+    var reverse_split = slice_values.rsplitn(2usize, fn(read value: i32): bool { value == 3 })
     match reverse_split.next() { present(part) => { if part[0] != 4 { return 84 } }, none => { return 84 } }
-    var limited_split = slice_values.splitn(2usize, fn(value: read i32): bool { value == 3 })
+    var limited_split = slice_values.splitn(2usize, fn(read value: i32): bool { value == 3 })
     match limited_split.next() { present(part) => { if part.len() != 2usize { return 113 } }, none => { return 113 } }
     match limited_split.next() { present(part) => { if part.len() != 2usize { return 114 } }, none => { return 114 } }
     var mutable_split_source = [1, 0, 2, 3]
     {
-        var mutable_split = mutable_split_source.split_mut(fn(value: read i32): bool { value == 0 })
+        var mutable_split = mutable_split_source.split_mut(fn(read value: i32): bool { value == 0 })
         match take mutable_split.next() { present(part) => { part[0] = 8 }, none => { return 115 } }
     }
     if mutable_split_source[0] != 8 { return 116 }
     var mutable_inclusive_source = [1, 0, 2]
     {
         var mutable_inclusive = mutable_inclusive_source.split_inclusive_mut(
-            fn(value: read i32): bool { value == 0 }
+            fn(read value: i32): bool { value == 0 }
         )
         match take mutable_inclusive.next() {
             present(part) => { if part.len() != 2usize { return 117 }; part[0] = 9 },
@@ -328,14 +328,14 @@ fn main(): i32 {
     if mutable_inclusive_source[0] != 9 { return 118 }
     let grouped_values = [1, 1, 2, 2, 3]
     var groups = grouped_values.chunk_by(
-        fn(left: read i32, right: read i32): bool { left == right }
+        fn(read left: i32, read right: i32): bool { left == right }
     )
     match groups.next() { present(part) => { if part.len() != 2usize { return 85 } }, none => { return 85 } }
     match groups.next_back() { present(part) => { if part[0] != 3 { return 136 } }, none => { return 136 } }
     var mutable_groups_source = [1, 1, 2, 2]
     {
         var mutable_groups = mutable_groups_source.chunk_by_mut(
-            fn(left: read i32, right: read i32): bool { left == right }
+            fn(read left: i32, read right: i32): bool { left == right }
         )
         match take mutable_groups.next() {
             present(part) => { if part.len() != 2usize { return 119 }; part[0] = 7 },
@@ -357,17 +357,17 @@ fn main(): i32 {
     var selected_by_key = [14, 22, 31, 43]
     let key_parts = selected_by_key.select_nth_unstable_by_key(
         1usize,
-        fn(value: read i32): i32 { value % 10 }
+        fn(read value: i32): i32 { value % 10 }
     )
     if *key_parts.1 % 10 != 2 { return 87 }
     var selected_by_compare = [4, 1, 3, 2]
     let compare_parts = selected_by_compare.select_nth_unstable_by(
         1usize,
-        fn(left: read i32, right: read i32): Ordering { left.cmp(right) }
+        fn(read left: i32, read right: i32): Ordering { left.cmp(right) }
     )
     if *compare_parts.1 != 2 { return 121 }
     var sorted_by_cached_key = [21, 12, 31, 22]
-    sorted_by_cached_key.sort_by_cached_key(fn(value: read i32): i32 { value % 10 })
+    sorted_by_cached_key.sort_by_cached_key(fn(read value: i32): i32 { value % 10 })
     if sorted_by_cached_key[0] != 21 || sorted_by_cached_key[1] != 31 ||
         sorted_by_cached_key[2] != 12 || sorted_by_cached_key[3] != 22 { return 88 }
     let array = [4, 5, 6]
@@ -382,12 +382,12 @@ fn main(): i32 {
     list.push(1)
     list.push(1)
     list.push(2)
-    list.dedup_by(fn(current: mut i32, previous: mut i32): bool { current == previous })
+    list.dedup_by(fn(mut current: i32, mut previous: i32): bool { current == previous })
     if list.len() != 2usize { return 91 }
-    list.dedup_by_key(fn(value: mut i32): i32 { value })
-    list.retain_mut(fn(value: mut i32): bool { value += 1; true })
+    list.dedup_by_key(fn(mut value: i32): i32 { value })
+    list.retain_mut(fn(mut value: i32): bool { value += 1; true })
     if list[0] != 2 || list[1] != 3 { return 92 }
-    match list.pop_if(fn(value: mut i32): bool { value == 3 }) {
+    match list.pop_if(fn(mut value: i32): bool { value == 3 }) {
         present(value) => { if value != 3 { return 93 } },
         none => { return 93 }
     }
@@ -395,7 +395,7 @@ fn main(): i32 {
     keyed_list.push(11)
     keyed_list.push(12)
     keyed_list.push(23)
-    keyed_list.dedup_by_key(fn(value: mut i32): i32 { value / 10 })
+    keyed_list.dedup_by_key(fn(mut value: i32): i32 { value / 10 })
     if keyed_list.len() != 2usize || keyed_list[1] != 23 { return 106 }
     var extracted_source = vec.new<i32>()
     extracted_source.push(1)
@@ -405,7 +405,7 @@ fn main(): i32 {
         let extracted_end = extracted_source.len()
         var extracted = extracted_source.extract_if(
             0usize..extracted_end,
-            fn(value: mut i32): bool { value % 2 == 1 }
+            fn(mut value: i32): bool { value % 2 == 1 }
         )
         match extracted.next() { present(value) => { if value != 1 { return 94 } }, none => { return 94 } }
     }
@@ -448,13 +448,13 @@ fn main(): i32 {
         var range = deque.range_mut(1usize, 3usize)
         match take range.next() { present(value) => { *value += 2 }, none => { return 100 } }
     }
-    deque.retain_mut(fn(value: mut i32): bool { value != 3 })
+    deque.retain_mut(fn(mut value: i32): bool { value != 3 })
     if deque.len() != 2usize || deque[1] != 4 { return 101 }
-    match deque.pop_front_if(fn(value: mut i32): bool { value == 1 }) {
+    match deque.pop_front_if(fn(mut value: i32): bool { value == 1 }) {
         present(value) => { if value != 1 { return 102 } },
         none => { return 102 }
     }
-    match deque.pop_back_if(fn(value: mut i32): bool { value == 4 }) {
+    match deque.pop_back_if(fn(mut value: i32): bool { value == 4 }) {
         present(value) => { if value != 4 { return 103 } },
         none => { return 103 }
     }

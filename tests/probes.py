@@ -37,10 +37,10 @@ def run_suite(mode, executable, directory):
                 "status": "in_progress", "mode": mode, "compiler_sha256": digest(executable),
                 "host": platform.platform(), "commands": [], "cases": []}
 
-    def run(arguments, expected=0, timeout=30, env=None):
+    def run(arguments, expected=0, timeout=30, env=None, input_text=None):
         begin = time.perf_counter()
         result = subprocess.run(arguments, text=True, capture_output=True,
-                                timeout=timeout, env=env)
+                                timeout=timeout, env=env, input=input_text)
         evidence["commands"].append({"command": list(map(str, arguments)),
                                     "exit_status": result.returncode,
                                     "elapsed_seconds": time.perf_counter() - begin,
@@ -228,6 +228,63 @@ def run_suite(mode, executable, directory):
         elif mode == "sanitizers":
             sanitizer_probes()
         elif mode == "syntax":
+            for name in ("syntax-composition-values", "syntax-composition-conditions",
+                         "syntax-composition-cleanup"):
+                formatted = source(name, (ROOT / "source" / "run" / (name + ".mt")).read_text())
+                run([executable, "fmt", str(formatted)])
+                run([executable, "fmt", str(formatted), "--check"])
+                run([executable, "check", str(formatted)])
+            text = ("fn get(read input: i32): i32 { input }\n"
+                    "fn main(): i32 {\n"
+                    "    let value = 9\n"
+                    "    if let present(value) = present(value),\n"
+                    "       value > 0 { value } else { value }\n"
+                    "    value\n"
+                    "}\n")
+            document = source("condition-binding-navigation", text)
+            uri = document.resolve().as_uri()
+            lines = text.splitlines()
+            requests = [
+                {"id": 1, "method": "initialize", "params": {}},
+                {"method": "initialized", "params": {}},
+                {"method": "textDocument/didOpen", "params": {"textDocument": {
+                    "uri": uri, "languageId": "mettle", "version": 1, "text": text}}},
+            ]
+            positions = [(0, lines[0].rindex("input")),
+                         (3, lines[3].rindex("value")),
+                         (4, lines[4].index("value")),
+                         (4, lines[4].index("value", lines[4].index("{"))),
+                         (4, lines[4].rindex("value")),
+                         (5, lines[5].index("value"))]
+            for identity, (line, character) in enumerate(positions, 2):
+                requests.append({"id": identity, "method": "textDocument/definition",
+                                 "params": {"textDocument": {"uri": uri},
+                                            "position": {"line": line, "character": character}}})
+            requests.extend([
+                {"id": 8, "method": "textDocument/hover", "params": {
+                    "textDocument": {"uri": uri},
+                    "position": {"line": 0, "character": lines[0].index("input")}}},
+                {"id": 9, "method": "shutdown"},
+                {"method": "exit"},
+            ])
+            wire = ""
+            for request in requests:
+                body = json.dumps({"jsonrpc": "2.0", **request})
+                wire += f"Content-Length: {len(body.encode())}\r\n\r\n{body}"
+            response = run([executable, "lsp"], input_text=wire).stdout
+            messages = [json.loads(response[match.end():match.end() + int(match[1])])
+                        for match in re.finditer(r"Content-Length: (\d+)\r?\n\r?\n", response)]
+            replies = {message["id"]: message for message in messages if "id" in message}
+            for identity, expected in enumerate(
+                    [(0, lines[0].index("input")), (2, lines[2].index("value")),
+                     (3, lines[3].index("value")), (3, lines[3].index("value")),
+                     (2, lines[2].index("value")), (2, lines[2].index("value"))], 2):
+                definitions = replies[identity]["result"]
+                if len(definitions) != 1 or definitions[0]["range"]["start"] != {
+                        "line": expected[0], "character": expected[1]}:
+                    raise AssertionError(f"Conditional binding resolved outside its scope: {identity}: {definitions}")
+            if "read input: i32" not in replies[8]["result"]["contents"]["value"]:
+                raise AssertionError("Parameter hover lost its prefix access mode")
             pure = source("no-cleanup-trampoline",
                           "fn add(a:i32,b:i32):i32 {a+b}\nfn main(){add(20,22)-42}\n")
             pure_ir = directory / "no-cleanup-trampoline.ll"

@@ -1,6 +1,6 @@
 import std.task
 
-async fn borrowed(value: read i32): i32 {
+async fn borrowed(read value: i32): i32 {
     await task.yield_now();
     value
 }

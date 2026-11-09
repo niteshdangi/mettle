@@ -16,7 +16,7 @@ type Counted {
 
 fn default_value<T: Default>(): T { T.(Default).default() }
 
-fn same(deque: read vec_deque.Deque<i32>, expected: read [i32]): bool {
+fn same(read deque: vec_deque.Deque<i32>, read expected: [i32]): bool {
     if deque.len() != expected.len() { return false }
     var i = 0usize
     while i < expected.len() {
@@ -81,13 +81,13 @@ fn main(): i32 {
         present(value) => { if value != 41 { return 22 } },
         none => { return 23 }
     }
-    match d.pop_front_if(fn(value: mut i32): bool { value == 10 }) {
+    match d.pop_front_if(fn(mut value: i32): bool { value == 10 }) {
         present(value) => { if value != 10 { return 24 } },
         none => { return 25 }
     }
-    if d.pop_front_if(fn(value: mut i32): bool { value == 99 }).is_present() { return 26 }
-    if d.pop_back_if(fn(value: mut i32): bool { value == 99 }).is_present() { return 27 }
-    match d.pop_back_if(fn(value: mut i32): bool { value == 30 }) {
+    if d.pop_front_if(fn(mut value: i32): bool { value == 99 }).is_present() { return 26 }
+    if d.pop_back_if(fn(mut value: i32): bool { value == 99 }).is_present() { return 27 }
+    match d.pop_back_if(fn(mut value: i32): bool { value == 30 }) {
         present(value) => { if value != 30 { return 28 } },
         none => { return 29 }
     }
@@ -137,15 +137,15 @@ fn main(): i32 {
         success(_) => { return 52 },
         failure(index) => { if index != 2usize { return 53 } }
     }
-    match capture ordered.binary_search_by(fn(value: read i32): Ordering { value.cmp(7) }) {
+    match capture ordered.binary_search_by(fn(read value: i32): Ordering { value.cmp(7) }) {
         success(index) => { if index != 3usize { return 54 } },
         failure(_) => { return 55 }
     }
-    match capture ordered.binary_search_by_key(9, fn(value: read i32): i32 { value + 4 }) {
+    match capture ordered.binary_search_by_key(9, fn(read value: i32): i32 { value + 4 }) {
         success(index) => { if index != 2usize { return 56 } },
         failure(_) => { return 57 }
     }
-    if ordered.partition_point(fn(value: read i32): bool { value < 6 }) != 3usize { return 58 }
+    if ordered.partition_point(fn(read value: i32): bool { value < 6 }) != 3usize { return 58 }
     if !ordered.contains(3) || ordered.contains(4) { return 59 }
 
     // Ranges, drains and iterators.
@@ -241,12 +241,12 @@ fn main(): i32 {
         i += 1
     }
     var seen = 0
-    kept.retain(fn(value: read i32): bool {
+    kept.retain(fn(read value: i32): bool {
         seen += 1
         value % 2 == 0
     })
     if seen != 6 || !same(kept, [0, 2, 4]) { return 90 }
-    kept.retain_mut(fn(value: mut i32): bool {
+    kept.retain_mut(fn(mut value: i32): bool {
         value += 1
         value != 3
     })

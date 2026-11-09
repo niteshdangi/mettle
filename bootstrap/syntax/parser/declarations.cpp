@@ -1,0 +1,334 @@
+#include "syntax/lexer.h"
+#include "syntax/parser/detail.h"
+#include <algorithm>
+
+namespace mettle::parsing {
+Module::Product Parser::product() {
+  Module::Product result;
+  result.span = peek().span;
+  result.copyRequested = take("copy");
+  result.unionType = take("union");
+  if (!result.unionType)
+    expect("type");
+  result.name = name().text;
+  result.genericParameters = genericParameters(&result.regions);
+  if (takeContinuation("implements"))
+    do {
+      result.interfaces.push_back(boundType());
+    } while (take("+"));
+  result.constraints = genericConstraints();
+  newlines();
+  expect("{");
+  separators();
+  while (!is("}") && peek().kind != TokenKind::End) {
+    auto metadata = attributes();
+    auto memberVisibility = visibility();
+    if (!result.interfaces.empty() && (is("type") || is("const"))) {
+      auto associated = associatedDeclaration();
+      associated.visibility = std::move(memberVisibility);
+      result.associated.push_back(std::move(associated));
+      separators();
+      continue;
+    }
+    if (is("fn") || is("unsafe") || is("async") || is("mut") || is("take") ||
+        is("static") || is("drop") || is("init")) {
+      if (result.unionType)
+        fail("union declarations contain fields only");
+      Function method;
+      std::string mode = "read";
+      if (take("drop")) {
+        if (result.hasDestructor)
+          fail("a type may declare only one destructor");
+        result.hasDestructor = true;
+        method.name = "drop";
+        method.annotation.name = "Unit";
+        method.span = tokens[position - 1].span;
+        newlines();
+        method.body = block();
+        method.destructor = true;
+        mode = "mut";
+      } else {
+        pendingUnsafe = take("unsafe");
+        pendingAsync = take("async");
+        if (take("mut"))
+          mode = "mut";
+        else if (take("take"))
+          mode = "take";
+        else if (take("static"))
+          mode = "static";
+        method = function();
+      }
+      method.owner = result.name;
+      method.item.visibility = std::move(memberVisibility);
+      method.item.attributes = std::move(metadata);
+      method.receiver = mode;
+      if (method.explicitReceiver) {
+        if (mode != "read" || method.constructor)
+          fail("explicit receiver cannot combine with a receiver modifier",
+               "signature");
+        method.receiver = method.parameters.front().mode.empty()
+                              ? "read"
+                              : method.parameters.front().mode;
+      }
+      method.name = result.name + "." + method.name;
+      if (method.constructor) {
+        if (mode != "read")
+          fail("custom constructors cannot select a receiver modifier");
+        method.annotation.name = result.name;
+        method.annotation.regions = result.regions;
+        method.receiver = "static";
+      } else if (mode != "static" && !method.explicitReceiver)
+        method.parameters.insert(
+            method.parameters.begin(),
+            {"self", TypeSyntax{result.name, "", {}, result.regions},
+             method.span, mode});
+      for (const auto &parameter : result.genericParameters)
+        if (parameter.kind != GenericParameterKind::Region) {
+          GenericArgument argument;
+          auto syntax = std::make_shared<TypeSyntax>();
+          syntax->name = parameter.name;
+          argument.type = std::move(syntax);
+          if (method.constructor)
+            method.annotation.arguments.push_back(argument);
+          else if (mode != "static" && !method.explicitReceiver)
+            method.parameters.front().annotation.arguments.push_back(argument);
+        }
+      result.methods.push_back(std::move(method));
+      separators();
+      continue;
+    }
+    auto field = name();
+    expect(":");
+    result.fields.push_back({field.text, type(), field.span});
+    result.fields.back().visibility = std::move(memberVisibility);
+    result.fields.back().attributes = std::move(metadata);
+    if (result.unionType && take(",")) {
+      separators();
+      continue;
+    }
+    if (peek().kind != TokenKind::Newline && !is(";") && !is("}"))
+      fail("expected a newline or ';' between fields");
+    separators();
+  }
+  result.span.end = expect("}").span.end;
+  bool structuralPin = std::any_of(
+      result.fields.begin(), result.fields.end(), [](const auto &field) {
+        return std::any_of(
+            field.attributes.begin(), field.attributes.end(),
+            [](const auto &attribute) { return attribute.name == "pinned"; });
+      });
+  if (structuralPin)
+    for (auto &method : result.methods)
+      if (method.destructor) {
+        TypeSyntax reference;
+        reference.view = "mut";
+        reference.nested = std::make_shared<const TypeSyntax>(
+            std::move(method.parameters.front().annotation));
+        TypeSyntax pinned;
+        pinned.form = TypeForm::Pinned;
+        pinned.elements.push_back(std::move(reference));
+        method.parameters.front().annotation = std::move(pinned);
+      }
+  return result;
+}
+Function Parser::function(bool allowDeclaration, bool inferAsyncResult) {
+  Function result;
+  result.unsafeFunction = take("unsafe") || pendingUnsafe;
+  pendingUnsafe = false;
+  result.constFunction = take("const");
+  bool asyncFunction = take("async") || pendingAsync;
+  pendingAsync = false;
+  if (result.constFunction && asyncFunction)
+    feature("a function cannot be both const and async");
+  result.constructor = is("init");
+  if (result.constructor) {
+    result.span = expect("init").span;
+    result.name = "init";
+  } else {
+    result.span = expect("fn").span;
+    result.name = name().text;
+  }
+  result.genericParameters = genericParameters(&result.regions);
+  expect("(");
+  ++parens;
+  if (!is(")")) {
+    do {
+      if (is(")"))
+        break;
+      if (take("...")) {
+        if (result.parameters.empty())
+          fail("a variadic function requires a named fixed parameter");
+        result.variadic = true;
+        break;
+      }
+      bool receiver = is("receiver") &&
+                      (peek(1).text == "self" ||
+                       ((peek(1).text == "read" || peek(1).text == "mut" ||
+                         peek(1).text == "take") &&
+                        peek(2).text == "self"));
+      if (receiver)
+        ++position;
+      std::string mode;
+      if (is("take") || is("read") || is("mut"))
+        mode = tokens[position++].text;
+      auto parameter = pattern();
+      if (receiver) {
+        if (!result.parameters.empty() ||
+            parameter.kind != PatternKind::Binding || parameter.text != "self")
+          fail("explicit receiver must be first and bind self", "signature");
+        result.explicitReceiver = true;
+      }
+      bool named = parameter.kind == PatternKind::Binding;
+      auto parameterName =
+          named
+              ? parameter.text
+              : "<parameter." + std::to_string(result.parameters.size()) + ">";
+      expect(":");
+      if (take("...")) {
+        if (result.parameters.empty() || !named)
+          fail("a variadic cursor requires a named fixed parameter");
+        result.variadic = true;
+        result.variadicCursor = std::move(parameterName);
+        result.variadicSpan = parameter.span;
+        break;
+      }
+      // `format` is contextual: it is a modifier only before a type name.
+      const bool format =
+          is("format") && (peek(1).kind == TokenKind::Word ||
+                           peek(1).kind == TokenKind::QuotedWord);
+      if (format) {
+        if (!mode.empty())
+          fail("format parameters select their own read access", "signature");
+        ++position;
+        mode = "read";
+      }
+      result.parameters.push_back(
+          {std::move(parameterName), type(), parameter.span, mode});
+      result.parameters.back().format = format;
+      if (!named)
+        result.parameters.back().pattern = std::move(parameter);
+      if (take("="))
+        result.parameters.back().defaultValue = expr();
+    } while (take(","));
+  }
+  expect(")");
+  --parens;
+  if (!result.constructor && take(":"))
+    result.annotation = type(false);
+  if (is("->")) {
+    ++position;
+    fail("function results use ': Type', not '->'");
+  }
+  if (take("throws"))
+    result.error = type();
+  result.asynchronous = asyncFunction;
+  if (asyncFunction) {
+    result.asyncOutput = result.annotation;
+    result.asyncError = result.error;
+  }
+  result.constraints = genericConstraints();
+  if (allowDeclaration &&
+      (is(";") || peek().kind == TokenKind::Newline || is("}"))) {
+    auto saved = position;
+    newlines();
+    if (!is("{") && !is("=>")) {
+      position = saved;
+      if (result.annotation.empty())
+        fail("interface method declarations require an explicit result type",
+             "signature");
+      result.span.end = tokens[position - 1].span.end;
+      take(";");
+      return result;
+    }
+  }
+  newlines();
+  if (asyncFunction && result.constructor)
+    fail("a constructor cannot be async", "signature");
+  auto savedAsync = inAsyncBody;
+  inAsyncBody = asyncFunction;
+  struct Restore {
+    bool &flag;
+    bool saved;
+    ~Restore() { flag = saved; }
+  } restore{inAsyncBody, savedAsync};
+  if (take("=>")) {
+    if (result.constructor)
+      fail("constructors require a block body");
+    newlines();
+    auto expression = expr();
+    auto body = node(Kind::Block, expression->span);
+    body->children.push_back(std::move(expression));
+    finish(*body);
+    result.body = NodeOwner(std::move(body));
+  } else {
+    result.body = block();
+  }
+  result.span.end = result.body->span.end;
+  if (asyncFunction)
+    lowerAsync(result, inferAsyncResult && result.asyncOutput.empty());
+  return result;
+}
+std::unique_ptr<Node> Parser::block() {
+  StateGuard guard(*this);
+  if (++nesting > limits::parserNesting)
+    fail("block nesting limit exceeded", "limit");
+  auto start = expect("{").span;
+  auto savedParens = parens;
+  parens = 0;
+  loopHeadParens.reset();
+  auto result = node(Kind::Block, start);
+  separators();
+  while (!is("}") && peek().kind != TokenKind::End) {
+    auto before = position;
+    auto savedNesting = nesting;
+    auto savedExpressionLevel = genericExpressionLevel;
+    try {
+      auto statement = stmt();
+      bool separated = false;
+      while (peek().kind == TokenKind::Newline || is(";")) {
+        statement->semicolon |= is(";");
+        separated = true;
+        ++position;
+      }
+      if (!separated && !is("}"))
+        fail("expected a newline or ';' between statements");
+      result->children.push_back(std::move(statement));
+    } catch (ParseFailure &) {
+      parens = 0;
+      nesting = savedNesting;
+      genericExpressionLevel = savedExpressionLevel;
+      if (position == before && peek().kind != TokenKind::End && !is("}"))
+        ++position;
+      // Resume after the statement that failed, not inside its open braces.
+      std::size_t open = 0;
+      auto brace = [&](std::size_t index, std::string_view text) {
+        return tokens[index].kind == TokenKind::Symbol &&
+               tokens[index].text == text;
+      };
+      for (auto index = before; index < position; ++index)
+        if (brace(index, "{"))
+          ++open;
+        else if (brace(index, "}") && open)
+          --open;
+      while (peek().kind != TokenKind::End) {
+        if (brace(position, "{"))
+          ++open;
+        else if (brace(position, "}")) {
+          if (!open)
+            break;
+          --open;
+        } else if (!open &&
+                   (tokens[position].kind == TokenKind::Newline || is(";")))
+          break;
+        ++position;
+      }
+      separators();
+    }
+  }
+  result->span.end = expect("}").span.end;
+  parens = savedParens;
+  --nesting;
+  finish(*result);
+  return result;
+}
+} // namespace mettle::parsing

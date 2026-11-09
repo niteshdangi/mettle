@@ -1,61 +1,61 @@
 import core.future.{Future, Poll, Context, noop_waker}
 
 interface ExplicitDefaultValue {
-    async fn value<region r>(receiver self: read Self from r): i32 { 42 }
+    async fn value<region r>(receiver read self: Self from r): i32 { 42 }
 }
 
 type ExplicitNumber { value: i32 }
 extend ExplicitNumber implements ExplicitDefaultValue {
-    async fn value<region r>(receiver self: read Self from r): i32 {
+    async fn value<region r>(receiver read self: Self from r): i32 {
         self.value
     }
 }
 
 interface InferredDefaultValue {
-    async fn value<region r>(receiver self: read Self from r) { 42 }
+    async fn value<region r>(receiver read self: Self from r) { 42 }
 }
 
 type InferredNumber {}
 extend InferredNumber implements InferredDefaultValue {}
 
 interface OverriddenDefaultValue {
-    async fn value<region r>(receiver self: read Self from r) { 42 }
+    async fn value<region r>(receiver read self: Self from r) { 42 }
 }
 
 type OverriddenNumber { value: i32 }
 extend OverriddenNumber implements OverriddenDefaultValue {
-    async fn value<region r>(receiver self: read Self from r): i32 {
+    async fn value<region r>(receiver read self: Self from r): i32 {
         self.value
     }
 }
 
 interface Sized2 {
-    fn base<region r>(receiver self: read Self from r): i32
-    async fn doubled<region r>(receiver self: read Self from r) {
+    fn base<region r>(receiver read self: Self from r): i32
+    async fn doubled<region r>(receiver read self: Self from r) {
         self.base() * 2
     }
 }
 
 type CapturedNumber { value: i32 }
 extend CapturedNumber implements Sized2 {
-    fn base<region r>(receiver self: read Self from r): i32 { self.value }
+    fn base<region r>(receiver read self: Self from r): i32 { self.value }
 }
 
 interface AsyncValue {
-    async fn value<region r>(receiver self: read Self from r): i32
-    async fn doubled<region r>(receiver self: read Self from r) {
+    async fn value<region r>(receiver read self: Self from r): i32
+    async fn doubled<region r>(receiver read self: Self from r) {
         (await self.value()) * 2
     }
 }
 
 type AwaitedNumber { value: i32 }
 extend AwaitedNumber implements AsyncValue {
-    async fn value<region r>(receiver self: read Self from r): i32 {
+    async fn value<region r>(receiver read self: Self from r): i32 {
         self.value
     }
 }
 
-fn drive<F: Future<Output = i32>>(future: take F): i32 {
+fn drive<F: Future<Output = i32>>(take future: F): i32 {
     let waker = noop_waker()
     var slot = core.pin.pin(future)
     loop {

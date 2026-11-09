@@ -32,12 +32,12 @@ fn main(): i32 {
     filtered.push(2)
     filtered.push(2)
     filtered.push(3)
-    filtered.dedup_by(fn(current: mut i32, previous: mut i32): bool {
+    filtered.dedup_by(fn(mut current: i32, mut previous: i32): bool {
         current == previous
     })
     if filtered.len() != 3usize || filtered[1usize] != 2 { return 15 }
-    filtered.dedup_by_key(fn(value: mut i32): i32 { value })
-    filtered.retain_mut(fn(value: mut i32): bool {
+    filtered.dedup_by_key(fn(mut value: i32): i32 { value })
+    filtered.retain_mut(fn(mut value: i32): bool {
         value += 1
         value % 2 == 0
     })
@@ -46,7 +46,7 @@ fn main(): i32 {
     }
     {
         var extracted = filtered.extract_if(0usize..filtered.len(),
-            fn(value: mut i32): bool { value == 2 })
+            fn(mut value: i32): bool { value == 2 })
         match extracted.next() {
             present(value) => { if value != 2 { return 17 } },
             none => { return 17 }
@@ -54,11 +54,11 @@ fn main(): i32 {
         match extracted.next() { none => {}, present(_) => { return 18 } }
     }
     if filtered.len() != 1usize || filtered[0usize] != 4 { return 19 }
-    match filtered.pop_if(fn(value: mut i32): bool { value == 4 }) {
+    match filtered.pop_if(fn(mut value: i32): bool { value == 4 }) {
         present(value) => { if value != 4 { return 20 } },
         none => { return 20 }
     }
-    if filtered.pop_if(fn(value: mut i32): bool { value == 0 }).is_present() { return 21 }
+    if filtered.pop_if(fn(mut value: i32): bool { value == 0 }).is_present() { return 21 }
     var spliced = alloc.vec.new<i32>()
     spliced.push(1)
     spliced.push(2)
@@ -140,7 +140,7 @@ fn main(): i32 {
         }
     }
     if deque[1usize] != 13 || deque[2usize] != 12 { return 28 }
-    deque.retain_mut(fn(value: mut i32): bool { value != 12 })
+    deque.retain_mut(fn(mut value: i32): bool { value != 12 })
     if deque.len() != 2usize || deque[0usize] != 4 || deque[1usize] != 13 { return 29 }
     {
         let contiguous = deque.make_contiguous()
@@ -148,11 +148,11 @@ fn main(): i32 {
     }
     deque.shrink_to(1usize)
     if deque.capacity() < deque.len() { return 31 }
-    match deque.pop_front_if(fn(value: mut i32): bool { value == 4 }) {
+    match deque.pop_front_if(fn(mut value: i32): bool { value == 4 }) {
         present(value) => { if value != 4 { return 32 } },
         none => { return 32 }
     }
-    match deque.pop_back_if(fn(value: mut i32): bool { value == 13 }) {
+    match deque.pop_back_if(fn(mut value: i32): bool { value == 13 }) {
         present(value) => { if value != 13 { return 33 } },
         none => { return 33 }
     }
@@ -163,7 +163,7 @@ fn main(): i32 {
         owned.push(DropCount(core.ptr.from_mut(dedup_drops), false))
         owned.push(DropCount(core.ptr.from_mut(dedup_drops), false))
         owned.push(DropCount(core.ptr.from_mut(dedup_drops), false))
-        owned.dedup_by(fn(current: mut DropCount, previous: mut DropCount): bool {
+        owned.dedup_by(fn(mut current: DropCount, mut previous: DropCount): bool {
             true
         })
         if owned.len() != 1usize || dedup_drops != 2 { return 86 }
@@ -176,7 +176,7 @@ fn main(): i32 {
         owned.push(DropCount(core.ptr.from_mut(retain_drops), true))
         owned.push(DropCount(core.ptr.from_mut(retain_drops), false))
         owned.push(DropCount(core.ptr.from_mut(retain_drops), false))
-        owned.retain(fn(value: read DropCount): bool {
+        owned.retain(fn(read value: DropCount): bool {
             retain_visits += 1
             retain_visits == 1
         })

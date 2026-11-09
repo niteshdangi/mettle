@@ -4,7 +4,7 @@ import super.fmt.Debug
 import super.fmt.Display
 
 pub interface Error: Debug + Display {
-    fn source<region r>(receiver self: read Self from r): (read any Error from r)? {
+    fn source<region r>(receiver read self: Self from r): (read any Error from r)? {
         none
     }
 }

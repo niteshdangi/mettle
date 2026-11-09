@@ -10,7 +10,7 @@ fn accept_nonnegative(value: i32): i32 throws ParseError {
 }
 
 fn main(): i32 {
-    let result: i32 throws ParseError = capture accept_nonnegative(-1)
+    let result: Outcome<i32, ParseError> = capture accept_nonnegative(-1)
     match take result {
         success(_) => 1,
         failure(ParseError.Negative) => 0

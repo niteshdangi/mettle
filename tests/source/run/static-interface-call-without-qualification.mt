@@ -11,7 +11,7 @@ import core.default.Default
 type Meters { value: i64 }
 type Feet { value: i64 }
 extend Meters implements From<Feet> {
-    static fn from(feet: take Feet): Meters { Meters(feet.value * 3) }
+    static fn from(take feet: Feet): Meters { Meters(feet.value * 3) }
 }
 type Boxed<T> { item: T }
 extend Boxed<i32> implements Default {

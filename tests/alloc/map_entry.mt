@@ -12,7 +12,7 @@ fn main(): i32 {
         if *value != 12 { return 1 }
     }
     {
-        let value = map.entry(4).and_modify(take fn(value: mut i32): Unit {
+        let value = map.entry(4).and_modify(take fn(mut value: i32): Unit {
             value += 3
         }).or_insert_with(take fn(): i32 {
             unsafe { *counter += 100 }

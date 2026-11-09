@@ -15,7 +15,7 @@ extend Factory implements BuildHasher {
 
 type Bytes { data: i32 }
 extend Bytes implements Hash {
-    fn hash<H: Hasher>(state: mut H): Unit { state.write_i32(self.data) }
+    fn hash<H: Hasher>(mut state: H): Unit { state.write_i32(self.data) }
 }
 
 fn checks_cmp(): i32 {

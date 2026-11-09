@@ -1,5 +1,5 @@
 
-fn total(values: read [i32]): i32 {
+fn total(read values: [i32]): i32 {
     var result = 0
     for value in values { result += value }
     result

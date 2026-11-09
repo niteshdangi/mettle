@@ -14,7 +14,7 @@ import std.path
 import std.process
 import std.time.{duration, now, unix_epoch}
 
-fn shown<T: ToString>(value: read T): alloc.string.String { value.to_string() }
+fn shown<T: ToString>(read value: T): alloc.string.String { value.to_string() }
 fn owned_ok<T: ToOwned>() {}
 fn string_ok<T: ToString>() {}
 

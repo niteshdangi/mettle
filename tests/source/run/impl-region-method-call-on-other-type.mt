@@ -6,8 +6,8 @@ pub interface Within<region r> {}
 extend<region r, F> F implements Within<region r> {}
 type Hub<region s> { counter: read Counter from s; total: i32 }
 extend<region s> Hub<region s> {
-    fn peek(receiver self: read Hub<region s> from s): i32 { self.counter.n + self.total }
-    fn run<F: fn(): i32 + Within<region s>>(receiver self: read Hub<region s> from s, f: take F): i32 {
+    fn peek(receiver read self: Hub<region s> from s): i32 { self.counter.n + self.total }
+    fn run<F: fn(): i32 + Within<region s>>(receiver read self: Hub<region s> from s, take f: F): i32 {
         let fresh = Counter(1)
         let a = self.peek()
         a + fresh.n + f()

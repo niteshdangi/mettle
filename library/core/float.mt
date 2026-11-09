@@ -20,14 +20,14 @@ import super.text.{FromStr, Text, from_utf8_unchecked}
 pub copy enum FpCategory { Nan, Infinite, Zero, Subnormal, Normal }
 
 extend FpCategory implements PartialEq {
-    fn eq(other: read FpCategory): bool { (self as u8) == (other as u8) }
+    fn eq(read other: FpCategory): bool { (self as u8) == (other as u8) }
 }
 extend FpCategory implements Eq {}
 extend FpCategory implements Clone {
     fn clone(): FpCategory { self }
 }
 extend FpCategory implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         match self {
             FpCategory.Nan => try f.write_str("Nan"),
             FpCategory.Infinite => try f.write_str("Infinite"),
@@ -40,14 +40,14 @@ extend FpCategory implements Debug {
 
 copy enum FloatErrorKind { Empty, Invalid }
 extend FloatErrorKind implements PartialEq {
-    fn eq(other: read FloatErrorKind): bool { (self as u8) == (other as u8) }
+    fn eq(read other: FloatErrorKind): bool { (self as u8) == (other as u8) }
 }
 extend FloatErrorKind implements Eq {}
 extend FloatErrorKind implements Clone {
     fn clone(): FloatErrorKind { self }
 }
 extend FloatErrorKind implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         match self {
             FloatErrorKind.Empty => try f.write_str("Empty"),
             FloatErrorKind.Invalid => try f.write_str("Invalid")
@@ -57,21 +57,21 @@ extend FloatErrorKind implements Debug {
 
 pub type ParseFloatError { kind: FloatErrorKind }
 extend ParseFloatError implements PartialEq {
-    fn eq(other: read ParseFloatError): bool { self.kind == other.kind }
+    fn eq(read other: ParseFloatError): bool { self.kind == other.kind }
 }
 extend ParseFloatError implements Eq {}
 extend ParseFloatError implements Clone {
     fn clone(): ParseFloatError { ParseFloatError(self.kind.clone()) }
 }
 extend ParseFloatError implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         var debug = try f.debug_struct("ParseFloatError")
         try debug.field("kind", read self.kind)
         try debug.finish()
     }
 }
 extend ParseFloatError implements Display {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         match self.kind {
             FloatErrorKind.Empty => try f.write_str("cannot parse float from empty string"),
             FloatErrorKind.Invalid => try f.write_str("invalid float literal")
@@ -100,7 +100,7 @@ fn big_from(value: u64): Big {
     big
 }
 
-fn big_copy(source: read Big): Big {
+fn big_copy(read source: Big): Big {
     var big = Big([0u32; 256], source.len)
     var i = 0usize
     while i < source.len {
@@ -111,7 +111,7 @@ fn big_copy(source: read Big): Big {
 }
 
 // -1, 0 or 1 as `left` is less than, equal to or greater than `right`.
-fn big_compare(left: read Big, right: read Big): i32 {
+fn big_compare(read left: Big, read right: Big): i32 {
     if left.len < right.len { return -1 }
     if left.len > right.len { return 1 }
     var i = left.len
@@ -124,7 +124,7 @@ fn big_compare(left: read Big, right: read Big): i32 {
 }
 
 // Compares `value + extra` with `limit` without changing either operand.
-fn big_sum_compare(value: read Big, extra: read Big, limit: read Big): i32 {
+fn big_sum_compare(read value: Big, read extra: Big, read limit: Big): i32 {
     var sum = big_copy(value)
     sum.add(extra)
     big_compare(read sum, limit)
@@ -184,7 +184,7 @@ extend Big {
         }
     }
 
-    mut fn add(other: read Big): Unit {
+    mut fn add(read other: Big): Unit {
         var count = if self.len > other.len { self.len } else { other.len }
         var carry = 0u64
         var i = 0usize
@@ -230,7 +230,7 @@ extend Big {
     }
 
     // Requires `self >= other`.
-    mut fn sub(other: read Big): Unit {
+    mut fn sub(read other: Big): Unit {
         var borrow = 0i64
         var i = 0usize
         while i < self.len {
@@ -248,7 +248,7 @@ extend Big {
     }
 }
 
-fn big_bit_length(value: read Big): i32 {
+fn big_bit_length(read value: Big): i32 {
     if value.len == 0usize { return 0i32 }
     let top_index = value.len - 1usize
     var top = value.limbs[top_index]
@@ -260,7 +260,7 @@ fn big_bit_length(value: read Big): i32 {
     bits
 }
 
-fn big_ratio_exponent(numerator: read Big, denominator: read Big): i32 {
+fn big_ratio_exponent(read numerator: Big, read denominator: Big): i32 {
     var exponent = big_bit_length(numerator) - big_bit_length(denominator)
     if exponent >= 0i32 {
         var scaled = big_copy(read denominator)
@@ -276,7 +276,7 @@ fn big_ratio_exponent(numerator: read Big, denominator: read Big): i32 {
 
 // Leaves the remainder in `numerator`; the quotient is bounded by the
 // destination significand width at each call site.
-fn big_div_u64(numerator: mut Big, denominator: read Big): u64 {
+fn big_div_u64(mut numerator: Big, read denominator: Big): u64 {
     var shift = big_bit_length(read numerator) - big_bit_length(denominator)
     var quotient = 0u64
     while shift >= 0i32 {
@@ -293,8 +293,8 @@ fn big_div_u64(numerator: mut Big, denominator: read Big): u64 {
 }
 
 fn big_round_ratio(
-    numerator: read Big,
-    denominator: read Big,
+    read numerator: Big,
+    read denominator: Big,
     binary_shift: i32,
     sticky: bool
 ): u64 {
@@ -328,14 +328,14 @@ fn ascii_lower(byte: u8): u8 {
     if byte >= 0x41u8 && byte <= 0x5au8 { byte + 0x20u8 } else { byte }
 }
 
-fn keyword_at(bytes: read [u8], start: usize, first: u8, second: u8, third: u8): bool {
+fn keyword_at(read bytes: [u8], start: usize, first: u8, second: u8, third: u8): bool {
     bytes.len() - start == 3usize &&
     ascii_lower(bytes[start]) == first &&
     ascii_lower(bytes[start + 1usize]) == second &&
     ascii_lower(bytes[start + 2usize]) == third
 }
 
-fn float_inf_at(bytes: read [u8], start: usize): bool {
+fn float_inf_at(read bytes: [u8], start: usize): bool {
     let remaining = bytes.len() - start
     if remaining == 3usize {
         return ascii_lower(bytes[start]) == 0x69u8 &&
@@ -354,7 +354,7 @@ fn float_inf_at(bytes: read [u8], start: usize): bool {
 }
 
 fn parse_ieee(
-    input: read Text,
+    read input: Text,
     fraction_bits: u32,
     exponent_bits: u32,
     exponent_bias: i32
@@ -510,14 +510,14 @@ fn parse_ieee(
 
 extend f32 implements FromStr {
     type Error = ParseFloatError
-    static fn from_str(input: read Text): f32 throws ParseFloatError {
+    static fn from_str(read input: Text): f32 throws ParseFloatError {
         f32.from_bits(try parse_ieee(input, 23u32, 8u32, 127i32) as u32)
     }
 }
 
 extend f64 implements FromStr {
     type Error = ParseFloatError
-    static fn from_str(input: read Text): f64 throws ParseFloatError {
+    static fn from_str(read input: Text): f64 throws ParseFloatError {
         f64.from_bits(try parse_ieee(input, 52u32, 11u32, 1023i32))
     }
 }
@@ -525,7 +525,7 @@ extend f64 implements FromStr {
 // Writes the shortest digits of `mantissa * 2^exponent` (> 0) into `digits` and
 // returns their count and the decimal exponent `k`: value = 0.d1d2... * 10^k.
 // `unequal` marks a lower neighbour that is closer than the upper one.
-fn shortest_digits(mantissa: u64, exponent: i32, unequal: bool, digits: mut [u8]): (usize, i32) {
+fn shortest_digits(mantissa: u64, exponent: i32, unequal: bool, mut digits: [u8]): (usize, i32) {
     var r = big_from(mantissa)
     var s = big_from(1u64)
     var plus = big_from(1u64)
@@ -609,7 +609,7 @@ fn shortest_digits(mantissa: u64, exponent: i32, unequal: bool, digits: mut [u8]
 }
 
 // Formats a value given by its sign, stored fraction and biased exponent field.
-fn fmt_float(f: mut Formatter, negative: bool, fraction: u64, biased: u64, fraction_bits: u64, exponent_bias: i32, special: u64, keep_point: bool): Unit throws Error {
+fn fmt_float(mut f: Formatter, negative: bool, fraction: u64, biased: u64, fraction_bits: u64, exponent_bias: i32, special: u64, keep_point: bool): Unit throws Error {
     if biased == special {
         if fraction != 0u64 { return try f.pad_integral(true, "", "NaN") }
         return try f.pad_integral(!negative, "", "inf")
@@ -682,7 +682,7 @@ fn fmt_float(f: mut Formatter, negative: bool, fraction: u64, biased: u64, fract
     try f.pad_integral(!negative, "", text)
 }
 
-fn fmt_padding(f: mut Formatter, fill: char, count: usize): Unit throws Error {
+fn fmt_padding(mut f: Formatter, fill: char, count: usize): Unit throws Error {
     var i = 0usize
     while i < count {
         try f.write_char(fill)
@@ -691,7 +691,7 @@ fn fmt_padding(f: mut Formatter, fill: char, count: usize): Unit throws Error {
 }
 
 fn fmt_float_precision(
-    f: mut Formatter,
+    mut f: Formatter,
     negative: bool,
     mantissa: u64,
     exponent: i32,
@@ -868,27 +868,27 @@ fn fmt_float_precision(
     }
 }
 
-fn fmt_f64(f: mut Formatter, value: f64, keep_point: bool): Unit throws Error {
+fn fmt_f64(mut f: Formatter, value: f64, keep_point: bool): Unit throws Error {
     let bits = unsafe { core.mem.transmute<u64>(value) }
     try fmt_float(mut f, (bits >> 63u64) != 0u64, bits & 0xfffffffffffffu64, (bits >> 52u64) & 0x7ffu64, 52u64, 1023, 0x7ffu64, keep_point)
 }
 
-fn fmt_f32(f: mut Formatter, value: f32, keep_point: bool): Unit throws Error {
+fn fmt_f32(mut f: Formatter, value: f32, keep_point: bool): Unit throws Error {
     let bits = unsafe { core.mem.transmute<u32>(value) }
     try fmt_float(mut f, (bits >> 31u32) != 0u32, (bits & 0x7fffffu32) as u64, ((bits >> 23u32) & 0xffu32) as u64, 23u64, 127, 0xffu64, keep_point)
 }
 
 extend f64 implements Display {
-    fn fmt(f: mut Formatter): Unit throws Error { try fmt_f64(mut f, self, false) }
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_f64(mut f, self, false) }
 }
 extend f64 implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error { try fmt_f64(mut f, self, true) }
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_f64(mut f, self, true) }
 }
 extend f32 implements Display {
-    fn fmt(f: mut Formatter): Unit throws Error { try fmt_f32(mut f, self, false) }
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_f32(mut f, self, false) }
 }
 extend f32 implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error { try fmt_f32(mut f, self, true) }
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_f32(mut f, self, true) }
 }
 // Map IEEE bit patterns to integer keys in total-order sequence.
 extend f64 {
@@ -972,69 +972,69 @@ extend f64 {
 }
 
 extend f32 implements From<bool> {
-    static fn from(value: take bool): f32 {
+    static fn from(take value: bool): f32 {
         if value { 1.0f32 } else { 0.0f32 }
     }
 }
 extend f32 implements From<i8> {
-    static fn from(value: take i8): f32 { value as f32 }
+    static fn from(take value: i8): f32 { value as f32 }
 }
 extend f32 implements From<i16> {
-    static fn from(value: take i16): f32 { value as f32 }
+    static fn from(take value: i16): f32 { value as f32 }
 }
 extend f32 implements From<u8> {
-    static fn from(value: take u8): f32 { value as f32 }
+    static fn from(take value: u8): f32 { value as f32 }
 }
 extend f32 implements From<u16> {
-    static fn from(value: take u16): f32 { value as f32 }
+    static fn from(take value: u16): f32 { value as f32 }
 }
 
 extend f64 implements From<bool> {
-    static fn from(value: take bool): f64 {
+    static fn from(take value: bool): f64 {
         if value { 1.0f64 } else { 0.0f64 }
     }
 }
 extend f64 implements From<i8> {
-    static fn from(value: take i8): f64 { value as f64 }
+    static fn from(take value: i8): f64 { value as f64 }
 }
 extend f64 implements From<i16> {
-    static fn from(value: take i16): f64 { value as f64 }
+    static fn from(take value: i16): f64 { value as f64 }
 }
 extend f64 implements From<i32> {
-    static fn from(value: take i32): f64 { value as f64 }
+    static fn from(take value: i32): f64 { value as f64 }
 }
 extend f64 implements From<u8> {
-    static fn from(value: take u8): f64 { value as f64 }
+    static fn from(take value: u8): f64 { value as f64 }
 }
 extend f64 implements From<u16> {
-    static fn from(value: take u16): f64 { value as f64 }
+    static fn from(take value: u16): f64 { value as f64 }
 }
 extend f64 implements From<u32> {
-    static fn from(value: take u32): f64 { value as f64 }
+    static fn from(take value: u32): f64 { value as f64 }
 }
 extend f64 implements From<f32> {
-    static fn from(value: take f32): f64 { value as f64 }
+    static fn from(take value: f32): f64 { value as f64 }
 }
 
 macro float_binary_trait {
     ($type:ident, $trait:ident, $method:ident, $operator:tt) => {
         extend $type implements $trait<$type> {
             type Output = $type
-            fn $method(rhs: read $type): $type { self $operator rhs }
+            fn $method(read rhs: $type): $type { self $operator rhs }
         }
         extend<region lhs_region> read $type from lhs_region implements $trait<$type> {
             type Output = $type
-            fn $method(rhs: read $type): $type { *self $operator rhs }
+            fn $method(read rhs: $type): $type { *self $operator rhs }
         }
         extend<region rhs_region> $type implements $trait<read $type from rhs_region> {
             type Output = $type
-            fn $method(rhs: read (read $type from rhs_region)): $type {
+            fn $method(read rhs: read $type from rhs_region): $type {
                 self $operator *rhs
             }
         }
         extend<region lhs_region, region rhs_region> read $type from lhs_region implements $trait<read $type from rhs_region> {
             type Output = $type
-            fn $method(rhs: read (read $type from rhs_region)): $type {
+            fn $method(read rhs: read $type from rhs_region): $type {
                 *self $operator *rhs
             }
         }
@@ -1044,12 +1044,12 @@ macro float_binary_trait {
 macro float_assignment_trait {
     ($type:ident, $trait:ident, $method:ident, $operator:tt) => {
         extend $type implements $trait<$type> {
-            mut fn $method(rhs: read $type): Unit {
+            mut fn $method(read rhs: $type): Unit {
                 self = self $operator rhs
             }
         }
         extend<region rhs_region> $type implements $trait<read $type from rhs_region> {
-            mut fn $method(rhs: read (read $type from rhs_region)): Unit {
+            mut fn $method(read rhs: read $type from rhs_region): Unit {
                 self = self $operator *rhs
             }
         }

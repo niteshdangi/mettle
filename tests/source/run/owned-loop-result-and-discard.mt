@@ -1,6 +1,6 @@
 
 type Guard<region r> { value: mut i32 from r; drop { *self.value += 1 } }
-fn choose(value: mut i32, flag: bool): Guard {
+fn choose(mut value: i32, flag: bool): Guard {
     loop {
         if flag { break Guard(mut value) }
         break Guard(mut value)

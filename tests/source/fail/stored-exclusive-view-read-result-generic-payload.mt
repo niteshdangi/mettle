@@ -12,7 +12,7 @@ type List<T> { ptr: ptr<mut T>; len: usize; cap: usize
     } }
 }
 extend<T> List<T> {
-    mut fn push(v: take T): Unit {
+    mut fn push(take v: T): Unit {
         if self.len == self.cap {
             let nc = if self.cap == 0usize { 4usize } else { self.cap * 2usize }
             let np = unsafe { realloc(self.ptr.cast<u8>(), nc * core.mem.size_of<T>()) }

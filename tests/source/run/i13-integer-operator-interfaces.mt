@@ -20,16 +20,16 @@ fn shl<A: Shl<B>, B>(a: A, b: B): A.Output { a.shl(b) }
 fn shr<A: Shr<B>, B>(a: A, b: B): A.Output { a.shr(b) }
 fn not<A: Not>(a: A): A.Output { a.not() }
 fn neg<A: Neg>(a: A): A.Output { a.neg() }
-fn add_assign<A: AddAssign<B>, B>(a: take A, b: B): A { var x = a; x.add_assign(b); x }
-fn sub_assign<A: SubAssign<B>, B>(a: take A, b: B): A { var x = a; x.sub_assign(b); x }
-fn mul_assign<A: MulAssign<B>, B>(a: take A, b: B): A { var x = a; x.mul_assign(b); x }
-fn div_assign<A: DivAssign<B>, B>(a: take A, b: B): A { var x = a; x.div_assign(b); x }
-fn rem_assign<A: RemAssign<B>, B>(a: take A, b: B): A { var x = a; x.rem_assign(b); x }
-fn and_assign<A: BitAndAssign<B>, B>(a: take A, b: B): A { var x = a; x.bitand_assign(b); x }
-fn or_assign<A: BitOrAssign<B>, B>(a: take A, b: B): A { var x = a; x.bitor_assign(b); x }
-fn xor_assign<A: BitXorAssign<B>, B>(a: take A, b: B): A { var x = a; x.bitxor_assign(b); x }
-fn shl_assign<A: ShlAssign<B>, B>(a: take A, b: B): A { var x = a; x.shl_assign(b); x }
-fn shr_assign<A: ShrAssign<B>, B>(a: take A, b: B): A { var x = a; x.shr_assign(b); x }
+fn add_assign<A: AddAssign<B>, B>(take a: A, b: B): A { var x = a; x.add_assign(b); x }
+fn sub_assign<A: SubAssign<B>, B>(take a: A, b: B): A { var x = a; x.sub_assign(b); x }
+fn mul_assign<A: MulAssign<B>, B>(take a: A, b: B): A { var x = a; x.mul_assign(b); x }
+fn div_assign<A: DivAssign<B>, B>(take a: A, b: B): A { var x = a; x.div_assign(b); x }
+fn rem_assign<A: RemAssign<B>, B>(take a: A, b: B): A { var x = a; x.rem_assign(b); x }
+fn and_assign<A: BitAndAssign<B>, B>(take a: A, b: B): A { var x = a; x.bitand_assign(b); x }
+fn or_assign<A: BitOrAssign<B>, B>(take a: A, b: B): A { var x = a; x.bitor_assign(b); x }
+fn xor_assign<A: BitXorAssign<B>, B>(take a: A, b: B): A { var x = a; x.bitxor_assign(b); x }
+fn shl_assign<A: ShlAssign<B>, B>(take a: A, b: B): A { var x = a; x.shl_assign(b); x }
+fn shr_assign<A: ShrAssign<B>, B>(take a: A, b: B): A { var x = a; x.shr_assign(b); x }
 
 fn group0() {
     if !(add((-10i8), 7i8) == (-3i8)) { panic("add #1") }

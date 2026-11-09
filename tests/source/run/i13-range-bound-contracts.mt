@@ -13,11 +13,11 @@ extend NoEndpoints implements Endpoints<i32> {
     fn first(): Endpoint<read i32 from self> { Endpoint.Unbounded }
 }
 
-fn lower<T: unsized, R: RangeBounds<T>>(range: read R): Bound<read T from range> {
+fn lower<T: unsized, R: RangeBounds<T>>(read range: R): Bound<read T from range> {
     range.start_bound()
 }
 
-fn text_contains<R: RangeBounds<Text>>(range: read R, value: read Text): bool {
+fn text_contains<R: RangeBounds<Text>>(read range: R, read value: Text): bool {
     range.contains(read value)
 }
 
@@ -54,7 +54,7 @@ fn main(): i32 {
         Bound.Included(value) => assert(*value == 4, "bound borrowed payload"),
         _ => { return 3 }
     }
-    match take bound.clone().map(fn(value: take i32): i32 { value + 1 }) {
+    match take bound.clone().map(fn(take value: i32): i32 { value + 1 }) {
         Bound.Included(value) => assert(value == 5, "bound map preserves inclusion"),
         _ => { return 4 }
     }

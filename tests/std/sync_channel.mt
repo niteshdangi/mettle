@@ -2,7 +2,7 @@ import std.thread
 import std.sync.mpsc
 import alloc.arc
 
-fn discard<T>(value: take T): Unit {}
+fn discard<T>(take value: T): Unit {}
 
 fn main(): i32 {
   // a full bounded queue blocks the sender until the receiver makes room

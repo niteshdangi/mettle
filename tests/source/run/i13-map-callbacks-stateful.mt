@@ -26,7 +26,7 @@ fn main(): i32 {
 
         var calls = 0
         var key_sum = 0
-        map.retain(fn(key: read i32, value: mut Counted): bool {
+        map.retain(fn(read key: i32, mut value: Counted): bool {
             calls += 1
             key_sum += key
             value.value += key
@@ -55,7 +55,7 @@ fn main(): i32 {
     var started = 0
     let started_ptr = core.ptr.from_mut(started)
     {
-        var extracted = map.extract_if(fn(key: read i32, value: mut i32): bool {
+        var extracted = map.extract_if(fn(read key: i32, mut value: i32): bool {
             calls += 1
             unsafe { *started_ptr += 1 }
             key_sum += key
@@ -81,7 +81,7 @@ fn main(): i32 {
     let _g = set.insert(4)
     calls = 0
     key_sum = 0
-    set.retain(fn(key: read i32): bool {
+    set.retain(fn(read key: i32): bool {
         calls += 1
         key_sum += key
         key % 2 == 0
@@ -97,7 +97,7 @@ fn main(): i32 {
     var extracted_key = 0
     unsafe { *started_ptr = 0 }
     {
-        var extracted = set_extract.extract_if(fn(key: read i32): bool {
+        var extracted = set_extract.extract_if(fn(read key: i32): bool {
             calls += 1
             unsafe { *started_ptr += 1 }
             calls == 2
@@ -126,7 +126,7 @@ fn main(): i32 {
     }
     {
         let consumed = Token(20, counter)
-        let value = entries.entry(2).or_insert_with_key(take fn(key: read i32): i32 {
+        let value = entries.entry(2).or_insert_with_key(take fn(read key: i32): i32 {
             unsafe { *call_counter += 1 }
             let owned = take consumed
             key + owned.value
@@ -135,7 +135,7 @@ fn main(): i32 {
     }
     {
         let consumed = Token(5, counter)
-        let modified = entries.entry(1).and_modify(take fn(value: mut i32): Unit {
+        let modified = entries.entry(1).and_modify(take fn(mut value: i32): Unit {
             unsafe { *call_counter += 1 }
             let owned = take consumed
             value += owned.value

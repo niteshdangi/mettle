@@ -11,14 +11,14 @@ type Counted {
     drop { unsafe { *self.drops += 1usize } }
 }
 
-fn render<T: Debug>(value: read T, buffer: mut [u8]): usize throws Error {
+fn render<T: Debug>(read value: T, mut buffer: [u8]): usize throws Error {
     var out = buffer_writer(mut buffer)
     var f = formatter(mut out, spec())
     try value.fmt(mut f)
     out.len()
 }
 
-fn require_eq<T: Eq>(value: read T): bool { true }
+fn require_eq<T: Eq>(read value: T): bool { true }
 
 fn run(): i32 throws Error {
     var buffer = [0u8; 64]

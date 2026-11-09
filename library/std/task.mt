@@ -28,7 +28,7 @@ extern "C" {
 // A task handle that can be woken from any thread. `me` is the Arc the waker
 // owns, so the implementation can re-queue itself.
 pub interface Wake: Sized {
-    fn wake(me: read Arc<Self>): Unit;
+    fn wake(read me: Arc<Self>): Unit;
 }
 
 fn waker_table<W: Wake + Transferable + Shareable>(): RawWakerVTable {
@@ -60,7 +60,7 @@ fn waker_release<W: Wake + Transferable + Shareable>(data: ptr<mut u8>): Unit {
 }
 
 // A waker owning one reference to `handle`'s payload.
-pub fn waker_from_arc<W: Wake + Transferable + Shareable>(handle: read Arc<W>): Waker {
+pub fn waker_from_arc<W: Wake + Transferable + Shareable>(read handle: Arc<W>): Waker {
     let dup = boxed.new(handle.retain())
     let parts = dup.into_raw()
     unsafe { package.core.future.waker_from_raw(RawWaker(parts.0.cast<u8>(), waker_table<W>())) }
@@ -81,7 +81,7 @@ fn new_signal(): Signal {
 }
 
 extend Signal implements Wake {
-    fn wake(me: read Arc<Signal>): Unit {
+    fn wake(read me: Arc<Signal>): Unit {
         let locked = capture self.set.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
         *guard.get_mut() = true
@@ -112,7 +112,7 @@ unsafe extend Signal implements Shareable {}
 
 // Polls `future` on the calling thread, parking between wake-ups, until it is
 // ready. The future is pinned in this frame and dropped before returning.
-pub fn block_on<F: Future>(future: take F): F.Output {
+pub fn block_on<F: Future>(take future: F): F.Output {
     let signal = arc.new(new_signal())
     let waker = executor_waker(
         WakeTarget.Signal(signal.retain()), signal.get().reactor
@@ -136,7 +136,7 @@ pub type YieldNow { yielded: bool }
 pub fn yield_now(): YieldNow { YieldNow(false) }
 extend YieldNow implements Future {
     type Output = Unit
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Unit> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Unit> {
         let me = unsafe { self.get_unchecked_mut() }
         if me.yielded { Poll.Ready(()) } else {
             me.yielded = true
@@ -163,7 +163,7 @@ pub type IoWait {
 
 extend IoWait implements Future {
     type Output = i32
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<i32> {
         // These fields are address-independent; the pinned value is only
         // mutated in place and is never moved by this projection.
         let me = unsafe { self.get_unchecked_mut() }
@@ -237,7 +237,7 @@ pub type Sleep {
 
 extend Sleep implements Future {
     type Output = Unit
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Unit> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Unit> {
         // Sleep has no self-references; its pinned state is only mutated.
         let me = unsafe { self.get_unchecked_mut() }
         let now = super.time.now()
@@ -318,7 +318,7 @@ fn poll_erased<T, F: Future<Output = T>>(data: ptr<mut u8>, waker_slot: ptr<mut 
     // The caller owns the Waker for the whole call.
     unsafe { poll_packet<T, F>(data, read *waker_slot.cast<Waker>()) }
 }
-fn poll_packet<T, F: Future<Output = T>>(data: ptr<mut u8>, waker: read Waker): bool {
+fn poll_packet<T, F: Future<Output = T>>(data: ptr<mut u8>, read waker: Waker): bool {
     var cx = Context.from_waker(waker)
     let packet = data.cast<Packet<F, T>>()
     let polled = unsafe { core.pin.Pin.new_unchecked(mut (*packet).future).poll(mut cx) }
@@ -366,7 +366,7 @@ fn dispose_call(raw: ptr<mut u8>): Unit {
 
 // Task poll and destruction panics are isolated at the same runtime boundary
 // as thread bodies. A second panic while handling the first is fatal.
-fn dispose(future: take ErasedFuture, code: i32, cancelled: bool): Unit {
+fn dispose(take future: ErasedFuture, code: i32, cancelled: bool): Unit {
     var owner = future
     let report = owner.report.take_value().unwrap()
     var call = DisposeCall(present(owner))
@@ -381,7 +381,7 @@ fn dispose(future: take ErasedFuture, code: i32, cancelled: bool): Unit {
 
 // The queue holds raw Box<Arc<Task>> pointers: the Task -> Shared -> queue ->
 // Task type cycle is otherwise beyond region inference.
-fn leak_task(task: take Arc<Task>): ptr<mut u8> { boxed.new(task).into_raw().0.cast<u8>() }
+fn leak_task(take task: Arc<Task>): ptr<mut u8> { boxed.new(task).into_raw().0.cast<u8>() }
 fn reclaim_task(raw: ptr<mut u8>): Arc<Task> {
     unsafe { boxed.from_raw_in(raw.cast<Arc<Task>>(), Global()).into_inner() }
 }
@@ -418,7 +418,7 @@ unsafe extend ExecutorWake implements Transferable {}
 unsafe extend ExecutorWake implements Shareable {}
 
 extend ExecutorWake implements Wake {
-    fn wake(me: read Arc<ExecutorWake>): Unit {
+    fn wake(read me: Arc<ExecutorWake>): Unit {
         match self.target {
             WakeTarget.Task(task) => task.get().wake(read task),
             WakeTarget.Signal(signal) => signal.get().wake(read signal)
@@ -426,12 +426,12 @@ extend ExecutorWake implements Wake {
     }
 }
 
-fn executor_waker(target: take WakeTarget, reactor: ptr<mut u8>): Waker {
+fn executor_waker(take target: WakeTarget, reactor: ptr<mut u8>): Waker {
     let handle = arc.new(ExecutorWake(target, reactor))
     waker_from_arc(read handle)
 }
 
-fn reactor_from_waker(waker: read Waker): ptr<mut u8>? {
+fn reactor_from_waker(read waker: Waker): ptr<mut u8>? {
     if waker.uses_vtable(waker_table<ScopeWake>()) {
         let raw = waker.clone().into_raw()
         let parent = unsafe {
@@ -469,7 +469,7 @@ unsafe extend Task implements Transferable {}
 unsafe extend Task implements Shareable {}
 
 extend Task implements Wake {
-    fn wake(me: read Arc<Task>): Unit {
+    fn wake(read me: Arc<Task>): Unit {
         let hub = self.hub.get()
         let locked = capture hub.queue.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
@@ -541,13 +541,13 @@ pub fn executor(): Executor {
              core.cell.UnsafeCell.new(package.alloc.vec.new<ptr<mut u8>>()))
 }
 
-fn erase<T, F: Future<Output = T>>(future: take F, result: take Arc<ResultSlot<T>>): ErasedFuture {
+fn erase<T, F: Future<Output = T>>(take future: F, take result: Arc<ResultSlot<T>>): ErasedFuture {
     let report = boxed.new(result.retain()).into_raw()
     let storage = boxed.new(Packet(future, result)).into_raw()
     ErasedFuture(storage.0.cast<u8>(), poll_erased<T, F>, release_erased<T, F>,
                  present(ErasedReport(report.0.cast<u8>(), fail_erased<T>, release_report<T>)))
 }
-fn new_task(erased: take ErasedFuture, hub: take Arc<Shared>): Arc<Task> {
+fn new_task(take erased: ErasedFuture, take hub: Arc<Shared>): Arc<Task> {
     arc.new(Task(mutex.new(present(erased)), core.sync.atomic.AtomicBool.new(false),
                   core.sync.atomic.AtomicBool.new(true),
                   core.sync.atomic.AtomicBool.new(false),
@@ -574,7 +574,7 @@ extend Executor {
 
     // Private callers must require either Transferable + Static or Within
     // bounds, and must retain the registration until destruction completes.
-    fn spawn_inner<T, F: Future<Output = T>>(future: take F): JoinHandle<T> {
+    fn spawn_inner<T, F: Future<Output = T>>(take future: F): JoinHandle<T> {
         let registrations = unsafe { (*self.tasks.get()).len() }
         if registrations > 64usize && registrations / 2usize >= self.pending() {
             self.reap_finished()
@@ -594,7 +594,7 @@ extend Executor {
     }
 
     // Owned tasks and their results must be safe to retain independently.
-    pub fn spawn<T: Transferable + Static, F: Future<Output = T> + Transferable + Static>(future: take F): JoinHandle<T> {
+    pub fn spawn<T: Transferable + Static, F: Future<Output = T> + Transferable + Static>(take future: F): JoinHandle<T> {
         self.spawn_inner(future)
     }
 
@@ -637,7 +637,7 @@ extend Executor {
     }
 }
 
-fn next_task(hub: read Shared, block: bool): Arc<Task>? {
+fn next_task(read hub: Shared, block: bool): Arc<Task>? {
     loop {
         var next: ptr<mut u8>? = none
         var closed = false
@@ -663,7 +663,7 @@ fn next_task(hub: read Shared, block: bool): Arc<Task>? {
 
 // Lock order is future then queue. Wake takes only queue; the queue lock
 // serializes close/completion against enqueue. Drop payloads after unlocking.
-fn finish_task(task: read Arc<Task>): Unit {
+fn finish_task(read task: Arc<Task>): Unit {
     let hub = task.get().hub.get()
     let locked = capture hub.queue.lock()
     var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
@@ -673,7 +673,7 @@ fn finish_task(task: read Arc<Task>): Unit {
     unsafe { sys.mettle_rt_reactor_wake(hub.reactor) }
 }
 
-fn cancel(task: read Arc<Task>): Unit {
+fn cancel(read task: Arc<Task>): Unit {
     // A task can drop its own local handle during poll. Its payload cannot be
     // destroyed until that exclusive poll has returned.
     if task.get().polling.load(core.sync.atomic.Ordering.Acquire) {
@@ -704,7 +704,7 @@ fn cancel(task: read Arc<Task>): Unit {
     }
 }
 
-fn poll_task(task: take Arc<Task>): bool {
+fn poll_task(take task: Arc<Task>): bool {
     task.get().queued.store(false, core.sync.atomic.Ordering.Release)
     var waker = executor_waker(
         WakeTarget.Task(task.retain()), task.get().hub.get().reactor
@@ -795,12 +795,12 @@ extend<region s> Scope<region s> not Transferable
 extend<region s> Scope<region s> not Shareable
 
 extend<region s> Scope<region s> {
-    pub fn spawn<T: Within<region s>, F: Future<Output = T> + Within<region s>>(receiver self: read Scope<region s> from s, future: take F): JoinHandle<T> {
+    pub fn spawn<T: Within<region s>, F: Future<Output = T> + Within<region s>>(receiver read self: Scope<region s> from s, take future: F): JoinHandle<T> {
         self.executor.spawn_inner(future)
     }
 }
 
-pub fn scope<R, F: for<region s> fn(read Scope<region s>): R>(f: take F): R {
+pub fn scope<R, F: for<region s> fn(read Scope<region s>): R>(take f: F): R {
     let state = Scope(executor(), core.cell.Cell.new(Brand(0u8)))
     let result = f(read state)
     let _polls = state.executor.run_until_stalled()
@@ -826,7 +826,7 @@ extend ScopeWake {
         }
     }
 
-    fn set_parent(waker: read Waker): Unit {
+    fn set_parent(read waker: Waker): Unit {
         let locked = capture self.parent.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
         *guard.get_mut() = present(waker.clone())
@@ -840,7 +840,7 @@ extend ScopeWake {
 }
 
 extend ScopeWake implements Wake {
-    fn wake(me: read Arc<ScopeWake>): Unit {
+    fn wake(read me: Arc<ScopeWake>): Unit {
         self.ready.store(true, core.sync.atomic.Ordering.Release)
         // Never invoke an arbitrary parent waker while holding the mutex: it
         // can wake recursively or arrange a poll on another thread.
@@ -897,7 +897,7 @@ fn release_scoped<T, F>(data: ptr<mut u8>): Unit {
 }
 
 fn erase_scoped<region s, T: Within<region s>, F: Future<Output = T> + Within<region s>>(
-    future: take F, result: take Arc<ResultSlot<T>>
+    take future: F, take result: Arc<ResultSlot<T>>
 ): ScopedFuture<region s> {
     let storage = boxed.new(ScopedPacket(future, result)).into_raw()
     ScopedFuture(storage.0.cast<u8>(), poll_scoped<T, F>, release_scoped<T, F>,
@@ -979,7 +979,7 @@ pub type AsyncScope<region s, T> {
 extend<region s, T> AsyncScope<region s, T> not Transferable
 extend<region s, T> AsyncScope<region s, T> not Shareable
 
-pub fn async_scope<region s, T>(anchor: read T from s): AsyncScope<region s, T> {
+pub fn async_scope<region s, T>(read anchor: T from s): AsyncScope<region s, T> {
     let brand: core.cell.Cell<Brand<region s>> = core.cell.Cell.new(Brand(0u8))
     AsyncScope(read anchor, package.alloc.vec_deque.new<ScopedFuture<region s>>(),
                arc.new(ScopeWake(core.sync.atomic.AtomicBool.new(true), mutex.new(none))),
@@ -991,7 +991,7 @@ extend<region s, T> AsyncScope<region s, T> {
         Output: Within<region s>,
         F: Future<Output = Output> + Within<region s>
     >(
-        future: take F
+        take future: F
     ): AsyncJoinHandle<region s, Output> {
         if self.completed { panic("cannot spawn on a closed async scope") }
         let result = arc.new(ResultSlot(mutex.new(ResultState<Output>(none, 0u8, 0))))
@@ -1002,7 +1002,7 @@ extend<region s, T> AsyncScope<region s, T> {
 
 extend<region s, T> AsyncScope<region s, T> implements Future {
     type Output = Unit
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Unit> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Unit> {
         // No child is ever scheduled independently. Each child allocation is
         // pinned until destruction and polled serially in this parent call.
         // Thus return or unwind joins every poll; an uncooperative child may

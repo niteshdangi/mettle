@@ -2,7 +2,7 @@
 
 copy type Pair { first: i32; second: i32 }
 extern "C" {
-    unsafe fn forward(value: read Pair): read Pair from value;
+    unsafe fn forward(read value: Pair): read Pair from value;
 }
 fn main() {
     var value = Pair(20,22)

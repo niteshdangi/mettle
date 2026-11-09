@@ -225,14 +225,8 @@ overflow-checks = false
 incremental = false
 """
 
-METTLE_TOML = """[package]
-name = "scale-gen"
-version = "0.1.0"
-language = "mettle-1"
-
-[targets.app]
-kind = "executable"
-source = "src/main.mt"
+METTLE_MANIFEST = """name: "scale-gen"
+version: "0.1.0"
 """
 
 
@@ -269,7 +263,7 @@ def module_generic(index, functions):
         mettle.append(f"fn seed(): i32 {{ 12345 }} // {MARKER}\n")
         rust.append(f"fn seed() -> i32 {{ 12345 }} // {MARKER}\n")
     mettle.append("interface Step { fn apply(value: i32): i32; }\n"
-                  "fn drive<S: Step>(step: read S, value: i32): i32 "
+                  "fn drive<S: Step>(read step: S, value: i32): i32 "
                   "{ step.apply(step.apply(value)) }\n")
     rust.append("trait Step { fn apply(&self, value: i32) -> i32; }\n"
                 "fn drive<S: Step>(step: &S, value: i32) -> i32 "
@@ -293,7 +287,7 @@ def module_generic(index, functions):
 def generate_scale(destination, modules, functions, generic):
     """N modules x M functions for both languages; returns the two trees."""
     mettle_tree, rust_tree = destination / "mettle", destination / "rust"
-    write(mettle_tree / "Mettle.toml", METTLE_TOML)
+    write(mettle_tree / "package.mettle", METTLE_MANIFEST)
     write(rust_tree / "Cargo.toml", CARGO_TOML)
     main_m = [f"module m{i};\n" for i in range(modules)]
     main_r = [f"mod m{i};\n" for i in range(modules)]

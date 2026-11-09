@@ -22,7 +22,7 @@ extend Wrapper implements core.ops.DerefMut {
         mut self.inner
     }
 }
-fn increment(value: mut Inner) { value.increment() }
+fn increment(mut value: Inner) { value.increment() }
 fn main() {
     var wrapper = Wrapper(Inner(39),0)
     wrapper.increment()

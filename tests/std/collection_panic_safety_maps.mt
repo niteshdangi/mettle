@@ -15,7 +15,7 @@ type Key {
 }
 
 extend Key implements PartialEq {
-    fn eq(other: read Key): bool {
+    fn eq(read other: Key): bool {
         if self.panic_eq.get().load(core.sync.atomic.Ordering.SeqCst) != 0usize {
             panic("key equality")
         }
@@ -24,10 +24,10 @@ extend Key implements PartialEq {
 }
 extend Key implements Eq {}
 extend Key implements PartialOrd {
-    fn partial_cmp(other: read Key): Ordering? { present(self.cmp(other)) }
+    fn partial_cmp(read other: Key): Ordering? { present(self.cmp(other)) }
 }
 extend Key implements Ord {
-    fn cmp(other: read Key): Ordering {
+    fn cmp(read other: Key): Ordering {
         if self.panic_cmp.get().load(core.sync.atomic.Ordering.SeqCst) != 0usize {
             panic("key comparison")
         }
@@ -35,7 +35,7 @@ extend Key implements Ord {
     }
 }
 extend Key implements Hash {
-    fn hash<H: Hasher>(state: mut H): Unit {
+    fn hash<H: Hasher>(mut state: H): Unit {
         if self.panic_hash.get().load(core.sync.atomic.Ordering.SeqCst) != 0usize {
             panic("key hash")
         }
@@ -43,9 +43,9 @@ extend Key implements Hash {
     }
 }
 
-fn make_key(value: i32, panic_hash: take Arc<core.sync.atomic.AtomicUsize>,
-            panic_eq: take Arc<core.sync.atomic.AtomicUsize>,
-            panic_cmp: take Arc<core.sync.atomic.AtomicUsize>): Key {
+fn make_key(value: i32, take panic_hash: Arc<core.sync.atomic.AtomicUsize>,
+            take panic_eq: Arc<core.sync.atomic.AtomicUsize>,
+            take panic_cmp: Arc<core.sync.atomic.AtomicUsize>): Key {
     Key(value, panic_hash, panic_eq, panic_cmp)
 }
 
@@ -96,7 +96,7 @@ fn main(): i32 {
     let modified = std.panic.catch_panic(fn(): i32 {
         let entry = map.entry(make_key(1, panic_hash.retain(), panic_eq.retain(),
                                        panic_cmp.retain()))
-        let _updated = entry.and_modify(take fn(value: mut i32): Unit {
+        let _updated = entry.and_modify(take fn(mut value: i32): Unit {
             value += 2
             panic("entry callback")
         })
@@ -168,7 +168,7 @@ fn main(): i32 {
     let _old = retaining.insert(3, DropBomb(retain_drops.retain(), false))
     var retain_calls = 0
     let retain_panic = std.panic.catch_panic(fn(): i32 {
-        retaining.retain(fn(key: read i32, value: mut DropBomb): bool {
+        retaining.retain(fn(read key: i32, mut value: DropBomb): bool {
             retain_calls += 1
             if retain_calls == 1 { false } else { panic("retain callback") }
         })
@@ -201,7 +201,7 @@ fn main(): i32 {
     let _old = retaining_tree.insert(3, DropBomb(tree_retain_drops.retain(), false))
     retain_calls = 0
     let tree_retain_panic = std.panic.catch_panic(fn(): i32 {
-        retaining_tree.retain(fn(key: read i32, value: mut DropBomb): bool {
+        retaining_tree.retain(fn(read key: i32, mut value: DropBomb): bool {
             retain_calls += 1
             if retain_calls == 1 { false } else { panic("retain callback") }
         })

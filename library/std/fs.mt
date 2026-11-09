@@ -86,11 +86,11 @@ fn file_type_from(code: i64): FileType {
     if code == 0i64 { FileType.File } else if code == 1i64 { FileType.Directory } else if code == 2i64 { FileType.Symlink } else { FileType.Other }
 }
 
-fn metadata_from(info: read [i64; 5]): Metadata {
+fn metadata_from(read info: [i64; 5]): Metadata {
     Metadata(info[0usize] as u64, file_type_from(info[1usize]), info[2usize] as u32, info[3usize], info[4usize] as u32)
 }
 
-fn stat_path(p: read Path, follow: i32): Metadata throws Error {
+fn stat_path(read p: Path, follow: i32): Metadata throws Error {
     let c = try ffi.cstring(p.as_bytes())
     var info = [0i64; 5]
     let r = unsafe { sys.mettle_rt_stat(c.as_ptr(), -1, follow, core.ptr.from_mut(info).cast<i64>()) }
@@ -99,15 +99,15 @@ fn stat_path(p: read Path, follow: i32): Metadata throws Error {
 }
 
 // Follows symbolic links.
-pub fn metadata(input: read PathInput): Metadata throws Error { try stat_path(input.as_path(), 1) }
-pub fn symlink_metadata(input: read PathInput): Metadata throws Error { try stat_path(input.as_path(), 0) }
+pub fn metadata(read input: PathInput): Metadata throws Error { try stat_path(input.as_path(), 1) }
+pub fn symlink_metadata(read input: PathInput): Metadata throws Error { try stat_path(input.as_path(), 0) }
 
-pub fn exists(input: read PathInput): bool {
+pub fn exists(read input: PathInput): bool {
     let r = capture metadata(input)
     r.is_success()
 }
 
-pub fn try_exists(input: read PathInput): bool throws Error {
+pub fn try_exists(read input: PathInput): bool throws Error {
     let result = capture metadata(input)
     match take result {
         success(_) => true,
@@ -117,7 +117,7 @@ pub fn try_exists(input: read PathInput): bool throws Error {
     }
 }
 
-pub fn canonicalize(input: read PathInput): PathBuf throws Error {
+pub fn canonicalize(read input: PathInput): PathBuf throws Error {
     let c = try ffi.cstring(input.as_path().as_bytes())
     let resolved = unsafe { realpath(c.as_ptr(), core.ptr.null_mut<u8>()) }
     if resolved == core.ptr.null_mut<u8>() { throw io.last_os_error() }
@@ -126,7 +126,7 @@ pub fn canonicalize(input: read PathInput): PathBuf throws Error {
     super.path.path_buf_from_bytes(bytes.as_slice())
 }
 
-pub fn read_link(input: read PathInput): OsString throws Error {
+pub fn read_link(read input: PathInput): OsString throws Error {
     let c = try ffi.cstring(input.as_path().as_bytes())
     var capacity = 256usize
     var result = vec.with_capacity<u8>(capacity)
@@ -167,7 +167,7 @@ extend OpenOptions {
     mut fn set(flag: i32, on: bool): Unit {
         if on { self.flags = self.flags | flag } else { self.flags = self.flags & (-1 - flag) }
     }
-    pub fn open(input: read PathInput): File throws Error {
+    pub fn open(read input: PathInput): File throws Error {
         let access_modes = sys.open_read() | sys.open_write() | sys.open_append()
         if (self.flags & access_modes) == 0 {
             throw io.from_kind(ErrorKind.InvalidInput)
@@ -187,7 +187,7 @@ extend DirBuilder {
     pub static fn new(): DirBuilder { dir_builder() }
     pub mut fn recursive(on: bool): Unit { self.recursive = on }
     pub mut fn mode(bits: u32): Unit { self.mode = bits }
-    pub fn create(input: read PathInput): Unit throws Error {
+    pub fn create(read input: PathInput): Unit throws Error {
         if self.recursive {
             try create_dirs(input.as_path(), self.mode)
         } else {
@@ -197,14 +197,14 @@ extend DirBuilder {
     }
 }
 
-pub fn open(input: read PathInput): File throws Error {
+pub fn open(read input: PathInput): File throws Error {
     var o = open_options()
     o.set_read(true)
     try o.open(input)
 }
 
 // Creates or truncates for writing.
-pub fn create(input: read PathInput): File throws Error {
+pub fn create(read input: PathInput): File throws Error {
     var o = open_options()
     o.set_write(true)
     o.set_create(true)
@@ -261,18 +261,18 @@ extend File {
 }
 
 extend File implements Reader {
-    mut fn read_some(buf: mut [u8]): usize throws Error { try io.read_fd(self.fd, buf) }
+    mut fn read_some(mut buf: [u8]): usize throws Error { try io.read_fd(self.fd, buf) }
 }
 
 extend File implements Writer {
-    mut fn write_some(buf: read [u8]): usize throws Error { try io.write_fd(self.fd, buf) }
+    mut fn write_some(read buf: [u8]): usize throws Error { try io.write_fd(self.fd, buf) }
     mut fn flush(): Unit throws Error {}
 }
 
 // POSIX positional I/O; calls do not change the file's shared cursor.
 pub interface FileExt {
-    fn read_at(buf: mut [u8], offset: u64): usize throws Error;
-    fn write_at(buf: read [u8], offset: u64): usize throws Error;
+    fn read_at(mut buf: [u8], offset: u64): usize throws Error;
+    fn write_at(read buf: [u8], offset: u64): usize throws Error;
 }
 
 fn checked_file_offset(offset: u64): i64 throws Error {
@@ -283,7 +283,7 @@ fn checked_file_offset(offset: u64): i64 throws Error {
 }
 
 extend File implements FileExt {
-    fn read_at(buf: mut [u8], offset: u64): usize throws Error {
+    fn read_at(mut buf: [u8], offset: u64): usize throws Error {
         let native_offset = try checked_file_offset(offset)
         while true {
             let count = unsafe { pread(self.fd, sys.data_mut(buf), buf.len(), native_offset) }
@@ -294,7 +294,7 @@ extend File implements FileExt {
         0usize
     }
 
-    fn write_at(buf: read [u8], offset: u64): usize throws Error {
+    fn write_at(read buf: [u8], offset: u64): usize throws Error {
         let native_offset = try checked_file_offset(offset)
         while true {
             let count = unsafe { pwrite(self.fd, package.core.slice.data(buf), buf.len(), native_offset) }
@@ -307,17 +307,17 @@ extend File implements FileExt {
 }
 
 // The whole file.
-pub fn read_bytes(input: read PathInput): List<u8> throws Error {
+pub fn read_bytes(read input: PathInput): List<u8> throws Error {
     var f = try open(input)
     var out = vec.new<u8>()
     let n = try f.read_to_end(out)
     out
 }
 
-pub fn `read`(input: read PathInput): List<u8> throws Error { try read_bytes(input) }
+pub fn `read`(read input: PathInput): List<u8> throws Error { try read_bytes(input) }
 
 // The whole file as text; ill-formed UTF-8 fails with `InvalidData`.
-pub fn read_to_string(input: read PathInput): String throws Error {
+pub fn read_to_string(read input: PathInput): String throws Error {
     let bytes = try read_bytes(input)
     let decoded = capture package.alloc.string.from_utf8(bytes)
     match take decoded {
@@ -327,12 +327,12 @@ pub fn read_to_string(input: read PathInput): String throws Error {
 }
 
 // Replaces the file's contents.
-pub fn write(input: read PathInput, bytes: read [u8]): Unit throws Error {
+pub fn write(read input: PathInput, read bytes: [u8]): Unit throws Error {
     var f = try create(input)
     try f.write_all(bytes)
 }
 
-pub fn `copy`(from: read PathInput, to: read PathInput): u64 throws Error {
+pub fn `copy`(read from: PathInput, read to: PathInput): u64 throws Error {
     let source_metadata = try metadata(from)
     if try try_exists(to) {
         let from_path = try canonicalize(from)
@@ -357,18 +357,18 @@ pub fn `copy`(from: read PathInput, to: read PathInput): u64 throws Error {
     total
 }
 
-pub fn set_permissions(input: read PathInput, permissions: Permissions): Unit throws Error {
+pub fn set_permissions(read input: PathInput, permissions: Permissions): Unit throws Error {
     let c = try ffi.cstring(input.as_path().as_bytes())
     if unsafe { chmod(c.as_ptr(), permissions.mode()) } != 0 { throw io.last_os_error() }
 }
 
-pub fn hard_link(existing: read PathInput, link_path: read PathInput): Unit throws Error {
+pub fn hard_link(read existing: PathInput, read link_path: PathInput): Unit throws Error {
     let old = try ffi.cstring(existing.as_path().as_bytes())
     let new = try ffi.cstring(link_path.as_path().as_bytes())
     if unsafe { link(old.as_ptr(), new.as_ptr()) } != 0 { throw io.last_os_error() }
 }
 
-pub fn soft_link(target: read PathInput, link_path: read PathInput): Unit throws Error {
+pub fn soft_link(read target: PathInput, read link_path: PathInput): Unit throws Error {
     let target_bytes = try ffi.cstring(target.as_path().as_bytes())
     let link_bytes = try ffi.cstring(link_path.as_path().as_bytes())
     if unsafe { symlink(target_bytes.as_ptr(), link_bytes.as_ptr()) } != 0 {
@@ -376,7 +376,7 @@ pub fn soft_link(target: read PathInput, link_path: read PathInput): Unit throws
     }
 }
 
-fn path_call(p: read Path, which: i32, mode: u32): Unit throws Error {
+fn path_call(read p: Path, which: i32, mode: u32): Unit throws Error {
     let c = try ffi.cstring(p.as_bytes())
     var r = 0
     if which == 0 { r = unsafe { sys.unlink(c.as_ptr()) } }
@@ -385,15 +385,15 @@ fn path_call(p: read Path, which: i32, mode: u32): Unit throws Error {
     if r != 0 { throw io.last_os_error() }
 }
 
-pub fn remove_file(input: read PathInput): Unit throws Error { try path_call(input.as_path(), 0, 0u32) }
-pub fn remove_dir(input: read PathInput): Unit throws Error { try path_call(input.as_path(), 1, 0u32) }
-pub fn create_dir(input: read PathInput): Unit throws Error { try path_call(input.as_path(), 2, 511u32) }
+pub fn remove_file(read input: PathInput): Unit throws Error { try path_call(input.as_path(), 0, 0u32) }
+pub fn remove_dir(read input: PathInput): Unit throws Error { try path_call(input.as_path(), 1, 0u32) }
+pub fn create_dir(read input: PathInput): Unit throws Error { try path_call(input.as_path(), 2, 511u32) }
 
-pub fn remove_dir_all(input: read PathInput): Unit throws Error {
+pub fn remove_dir_all(read input: PathInput): Unit throws Error {
     try remove_tree(input.as_path())
 }
 
-fn remove_tree(p: read Path): Unit throws Error {
+fn remove_tree(read p: Path): Unit throws Error {
     let details = try symlink_metadata(p)
     if !details.is_dir() {
         try remove_file(p)
@@ -418,9 +418,9 @@ fn remove_tree(p: read Path): Unit throws Error {
 }
 
 // Creates the path and any missing parents; an existing directory is not an error.
-pub fn create_dir_all(input: read PathInput): Unit throws Error { try create_dirs(input.as_path(), 511u32) }
+pub fn create_dir_all(read input: PathInput): Unit throws Error { try create_dirs(input.as_path(), 511u32) }
 
-fn create_dirs(p: read Path, mode: u32): Unit throws Error {
+fn create_dirs(read p: Path, mode: u32): Unit throws Error {
     let made = capture path_call(p, 2, mode)
     match take made {
         success(u) => { return },
@@ -443,7 +443,7 @@ fn create_dirs(p: read Path, mode: u32): Unit throws Error {
     }
 }
 
-pub fn rename(old: read PathInput, new: read PathInput): Unit throws Error {
+pub fn rename(read old: PathInput, read new: PathInput): Unit throws Error {
     let a = try ffi.cstring(old.as_path().as_bytes())
     let b = try ffi.cstring(new.as_path().as_bytes())
     if unsafe { sys.rename(a.as_ptr(), b.as_ptr()) } != 0 { throw io.last_os_error() }
@@ -476,7 +476,7 @@ pub type ReadDir {
     }
 }
 
-pub fn read_dir(input: read PathInput): ReadDir throws Error {
+pub fn read_dir(read input: PathInput): ReadDir throws Error {
     let p = input.as_path()
     let c = try ffi.cstring(p.as_bytes())
     let h = unsafe { sys.opendir(c.as_ptr()) }
@@ -503,8 +503,8 @@ extend ReadDir {
 
 // Yields each entry; a read failure is yielded once and ends the iteration.
 extend ReadDir implements package.core.iter.Iterator {
-    type Item = (DirEntry throws Error);
-    mut fn next(): (DirEntry throws Error)? {
+    type Item = (Outcome<DirEntry, Error>);
+    mut fn next(): (Outcome<DirEntry, Error>)? {
         if self.finished { return none }
         let entry = capture self.next_entry()
         match take entry {

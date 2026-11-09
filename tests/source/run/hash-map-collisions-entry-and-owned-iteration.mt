@@ -4,11 +4,11 @@ import core.hash.{Hash, Hasher}
 type CollisionKey { value: i32 }
 
 extend CollisionKey implements PartialEq {
-    fn eq(other: read CollisionKey): bool { self.value == other.value }
+    fn eq(read other: CollisionKey): bool { self.value == other.value }
 }
 
 extend CollisionKey implements Hash {
-    fn hash<H: Hasher>(state: mut H): Unit { state.write_u64(0u64) }
+    fn hash<H: Hasher>(mut state: H): Unit { state.write_u64(0u64) }
 }
 
 fn main(): i32 {

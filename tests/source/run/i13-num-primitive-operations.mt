@@ -22,11 +22,11 @@ extend Units implements Iterator {
 
 fn units(data: [u16; 6], length: usize): Units { Units(data, length, 0usize) }
 
-fn ok_status<E>(result: (Unit throws E)): bool {
+fn ok_status<E>(result: (Outcome<Unit, E>)): bool {
     match result { success(_) => true, failure(_) => false }
 }
 
-fn error_code(result: (Unit throws i32)): i32 {
+fn error_code(result: (Outcome<Unit, i32>)): i32 {
     match result { success(_) => 0, failure(code) => code }
 }
 
@@ -41,7 +41,7 @@ fn bool_operations(): i32 {
     0
 }
 
-fn scalar_or_code(item: (char throws DecodeUtf16Error)?): i32 {
+fn scalar_or_code(item: (Outcome<char, DecodeUtf16Error>)?): i32 {
     match item {
         present(result) => match result {
             success(scalar) => scalar as u32 as i32,

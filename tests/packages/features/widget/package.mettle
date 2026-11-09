@@ -1,0 +1,13 @@
+name: "widget"
+version: "0.2.0"
+features {
+    default: ["basic"]
+    basic: []
+    fancy: ["dep:extra"]
+}
+dependencies {
+    extra {
+        path: "../extra"
+        optional: true
+    }
+}

@@ -11,6 +11,11 @@ tests. These share language contracts and must evolve atomically. Packages
 compiled by Mettle are not C++ compiler components. A separate repository is
 justified by an independently owned/released product, not by folder size.
 
+`bootstrap/` contains the C++ seed/reference compiler. `compiler/` contains the
+Mettle implementation. Compiler packages use `src/main.mt` as their default
+entry, with imports loading supporting modules; no separate library aggregator
+is required. The component table below describes the C++ bootstrap.
+
 The current compiler targets and direct link dependencies live in `CMakeLists.txt`.
 CMake discovers sources within each component directory. Include isolation,
 public-header use and the LLVM boundary are reviewed at source level; target
@@ -27,7 +32,7 @@ for them.
 | `expansion` | Attribute validation, `@cfg` target/feature predicate evaluation (inactive items are parsed but dropped before resolution), `@derive` generation of ordinary `extend` declarations as separately registered generated sources with span provenance back to the attribute and offending field/variant; test/benchmark collection and harness synthesis (`harness.cpp`: in a test build, the selected package's `@test`/`@bench` functions are recorded with qualified module paths, the root `main` is dropped and a synthesized harness entry is loaded beside it; each test then runs in its own process); declarative macro expansion (`macros.cpp`, token-level, before parsing; qualified lookup and explicit/grouped macro imports resolve through an injected loader callback, public imports become macro reexports, and macro declaration syntax facts are retained for resolution; the loader owns source discovery; generated tokens retain definition-site hygiene, template/argument provenance and invocation spans) and the procedural-macro protocol (`procedural.{h,cpp}`: versioned request/response encoding and parsing; `macros.cpp` calls an injected host callback, re-lexes its text output and attributes the tokens to the invocation, and never starts a process itself) | Name resolution, type checking, LLVM |
 | `documentation` | `mettle doc` and doctests: documentation extraction from the lexer's comment tokens (`///` item docs, `//!` module docs, declaration headers as written, visibility filtering, `document.cpp`), reduced markdown blocks (`markdown.cpp`), fenced-example classification and generated `@test` functions (`doctest.cpp`) and deterministic dependency-free HTML (`html.cpp`). Resolved-reference rendering accepts canonical identities from the driver; the static search index remains deterministic. | Performing name resolution, type checking, filesystem I/O, process execution, LLVM |
 | `resolution` | Compilation-local module identities, distinct type/value/module/macro namespaces, item/import scopes, package alias mounting, `pub(path)` visibility boundaries and canonical declaration names; source-provider-driven module assembly | Inference, backend types or filesystem I/O |
-| `packages` | Manifest/lock TOML, SemVer requirements, dependency solving with features over path, local-registry and Git sources, checksums, the package build plan (mounts, build scripts and `[macros]` programs handed to the driver) and the content-addressed build store (`store`) | Source parsing, semantics, network access or artifact publication |
+| `packages` | `.mettle` data parsing, `package.mettle`/`lock.mettle` validation, SemVer requirements, dependency solving with features over path, local-registry and Git sources, checksums, the package build plan (mounts, build scripts and macro programs handed to the driver) and the content-addressed build store (`store`) | Source parsing, semantics, network access or artifact publication |
 | `types` | Compiler-owned language type identities/operations, source-oriented diagnostic type display, target facts and target-layout results | Parsed AST, LLVM types/target machines, toolchain state |
 | `consteval` | Pure target-aware compile-time interpreter over syntax: scalar/aggregate values at the selected target's integer widths, `const fn` calls, control flow, step/depth budgets (`error[limit]`); names and diagnostics come from a host interface | Name resolution, checker state, LLVM, host-width arithmetic |
 | `places` | Function-local storage roots, typed field paths and structural overlap | AST traversal, CFG control flow, mutability/loan policy |
@@ -48,6 +53,17 @@ headers expose the minimum boundary; algorithm context and mutable state stay
 private. Trivial file splits, line limits and directory counts are not quality
 criteria.
 
+Conditional lists are source-owned `ConditionChain` nodes containing `Condition`
+clauses. Checking owns sequential binding scope, bool/pattern requirements and
+region facts; lowering emits existing branches, pattern operations and scope
+exits. It must not duplicate an else body or let failed-chain bindings escape.
+Each header scope owns its temporaries through later clauses and the body;
+failure and loop exits clean up initialized values exactly once. Const evaluation
+uses the same short-circuit and scope rules. `Outcome<T, E>` maps to the existing
+native Outcome type and IR; parameter access remains declaration metadata,
+separate from its payload type. No component target, dependency or runtime ABI
+changes are required.
+
 Floating constant evaluation uses a per-compilation numeric callback, injected
 by the driver through the backend-independent pipeline and checker (including
 LSP compilations). `types` owns its scalar interface and exact binary32/binary64
@@ -58,6 +74,98 @@ owns contextual types, stable-const admission, source function frames, byte
 arrays and target endianness; semantics owns method/type/variant resolution and
 typed static materialization. IR verification validates the carrier before LLVM
 lowering.
+
+### 1.1. Self-hosted compiler: package and incremental compilation contract
+
+The self-hosted compiler uses independently compiled Mettle packages in
+`compiler/`. Modules control source organization and visibility; packages control
+dependency/API boundaries; declaration queries and code-generation batches
+control rebuild work. A package is not an indivisible recompilation unit.
+The C++ component table above describes the bootstrap implementation; it does
+not prescribe one Mettle package per C++ component.
+
+| Package (`mettle-` prefix) | Owns | Direct compiler-package dependencies |
+| --- | --- | --- |
+| `foundation` | Source snapshots, spans, diagnostics, identifier/storage primitives | None |
+| `syntax` | Tokens, lossless parsed syntax and recovery | foundation |
+| `types` | Language types, region identities, target facts and layout contracts | foundation |
+| `ir` | Typed CFG, places, structural verification and serialization model | foundation, types |
+| `frontend` | Expansion, resolution, constants, typing, interface/region solving and checked facts | foundation, syntax, types |
+| `middle` | Lowering, ownership/dataflow, cleanup, instantiation and language optimizations | foundation, syntax, types, ir, frontend |
+| `pipeline` | Revision/query ownership, dependency tracking and verified compilation entry points | foundation, syntax, types, ir, frontend, middle |
+| `packages` | Manifest/lock resolution, build graph and bounded artifact store | foundation |
+| `backend-llvm` | LLVM lowering, optimization, object/debug/unwind emission and physical ABI | foundation, types, ir |
+| `editor` | LSP, documentation and lint presentation through shared compiler results | foundation, syntax, types, frontend, pipeline |
+| `driver` | CLI, source providers, execution, build scheduling, linking and publication | foundation, syntax, types, ir, pipeline, packages, backend-llvm, editor |
+
+These dependencies are acyclic and explicit in package manifests. Library and
+runtime dependencies retain their existing layer rules. Add packages when their
+implementation starts; do not create empty packages. `frontend` retains separate
+resolution/checking/solver modules; `middle` retains separate lowering/analysis/
+cleanup/instance modules. Their APIs use typed IDs and compilation-owned stores,
+not mutable cross-package pointer graphs. CLI/editor share an in-memory pipeline;
+the driver injects filesystem, process, macro-host and numerical services.
+LLVM handles and foreign calls remain inside the backend adapter.
+
+**Independent compilation.** Each package publishes an indexed, versioned binary
+interface and native object batches. Interfaces contain resolved exports, access/
+region/effect contracts, required layout/drop facts, implementation-selection
+metadata, and verified symbolic IR for generics, constants and cross-package
+inlining, including referenced private support definitions. Consumers do not
+reparse or recheck unchanged dependency source. Persist logical definition/type
+identities and remap them into local stores; never serialize pointers or local
+indices as cross-build identities. Validate imported lengths, references, types,
+format/compiler compatibility and content hashes before admitting cached IR.
+No stable public metadata ABI is promised.
+
+**Invalidation.** Separate syntax, declaration/signature, body checking,
+ownership, specialization, optimization, object and link results. Queries record
+the facts actually read, including name-lookup failures, visible implementation
+candidate sets, cfg/features, macro inputs and relevant target facts. Changed
+inputs re-evaluate their dependents; unchanged result fingerprints stop further
+invalidation. A private body edit does not recheck consumers unless they depend
+on that body or its derived facts. Layout, constants, generics and inlining are
+dependencies even when an exported function's spelling/signature is unchanged.
+Content hashes establish equality; timestamps may only accelerate discovery.
+Diagnostic/source-map identities include source revisions even when executable
+code is reusable after a comment edit. Unknown dependencies invalidate
+conservatively; failed or incomplete analyses never become successful artifacts.
+
+**Compilation and optimization.** Check generic bodies once under declared
+contracts, retain symbolic verified IR, then instantiate and reverify concrete
+forms. Canonical instance ownership includes definition, substitutions, target
+and codegen policy; consumers share identical instances. Check mutually dependent
+declarations as strongly connected groups. Schedule independent queries with
+bounded workers and memory, using compact stores and releasing temporary phase
+data. Batch code generation by package with deterministic bounded partitions;
+do not create a file/cache entry per function. Normal builds support independent
+objects in both profiles. Cross-package optimization is explicit and optional;
+its additional dependency edges participate in invalidation. The future native
+backend consumes the same verified concrete IR through the pipeline boundary.
+
+**Storage.** Use one content-addressed, deduplicated store with the existing
+512 MiB default cache budget and configurable limit. Interface/query/object data
+share that budget; do not retain complete compiler heaps, duplicate syntax trees
+or full historical generations. Evict recomputable unused entries and reclaim
+unreferenced blobs; a missing/evicted entry changes work, never behavior. Active
+builds protect their inputs; temporary/live excess is reported and pruned after
+release, rather than claiming an absolute bound on live working storage. Account
+for package sources, outputs, debug data, linker scratch and temporary/cache
+bytes in build-storage measurements even where they are outside the cache cap.
+Clean builds must remain usable without a warm store.
+
+**Bootstrap and acceptance.** The current C++ compiler only reuses eligible
+debug dependency objects after whole-program checking; it cannot yet consume
+these compiled interfaces. It may build the seed compiler from package sources.
+Independent interface loading/query reuse must be implemented in the Mettle
+compiler before its build architecture is declared complete. First validate
+cross-package calls/generics/cleanup and clean-versus-incremental behavior,
+including private/API/implementation-set edits, eviction and corruption; then
+build stage 1 with C++, stage 2 with stage 1 and stage 3 with stage 2, recording
+input identities and comparing behavior and reproducible artifacts. Measure
+clean and edited build time, peak memory, total retained bytes and generated
+program runtime separately under the existing performance protocol. Package
+boundaries or self-compilation alone establish no performance or safety claim.
 
 ## 2. Syntax and checked representations
 

@@ -1,14 +1,14 @@
 enum Choice<region r> { Empty, Value(read i32 from r) }
 
-fn empty<region r>(source: read i32 from r): Choice<region r> {
+fn empty<region r>(read source: i32 from r): Choice<region r> {
     Choice.Empty
 }
 
-fn explicit<region r>(source: read i32 from r): Choice<region r> {
+fn explicit<region r>(read source: i32 from r): Choice<region r> {
     Choice<region r>.Empty
 }
 
-fn optional<region r>(source: read i32 from r): Choice<region r>? {
+fn optional<region r>(read source: i32 from r): Choice<region r>? {
     present(Choice.Empty)
 }
 

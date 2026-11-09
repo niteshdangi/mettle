@@ -48,7 +48,7 @@ pub fn new<T>(): OwnedLocalKey<T> {
 }
 
 extend<T> LocalKey<T> {
-    fn key(receiver self: read LocalKey<T> from static): usize {
+    fn key(receiver read self: LocalKey<T> from static): usize {
         let identity = core.ptr.from_ref(self).cast<u8>()
         let destructor = unsafe { core.mem.transmute<extern "C" fn(ptr<mut u8>): Unit>(drop_value<T>) }
         let key = unsafe { mettle_rt_tls_static_key_new(identity, destructor) }
@@ -56,7 +56,7 @@ extend<T> LocalKey<T> {
         key
     }
 
-    fn value(receiver self: read LocalKey<T> from static): ptr<mut u8> {
+    fn value(receiver read self: LocalKey<T> from static): ptr<mut u8> {
         let key = self.key()
         var raw = unsafe { mettle_rt_tls_get(key) }
         if raw == core.ptr.null_mut<u8>() {
@@ -71,7 +71,7 @@ extend<T> LocalKey<T> {
         raw
     }
 
-    pub fn set(receiver self: read LocalKey<T> from static, value: take T): Unit {
+    pub fn set(receiver read self: LocalKey<T> from static, take value: T): Unit {
         let key = self.key()
         let raw = package.alloc.boxed.new(value).into_raw().0.cast<u8>()
         unsafe {
@@ -84,13 +84,13 @@ extend<T> LocalKey<T> {
         }
     }
 
-    pub fn is_set(receiver self: read LocalKey<T> from static): bool {
+    pub fn is_set(receiver read self: LocalKey<T> from static): bool {
         unsafe { mettle_rt_tls_get(self.key()) != core.ptr.null_mut<u8>() }
     }
 
     pub fn with<R>(
-        receiver self: read LocalKey<T> from static,
-        f: take fn(read T): R
+        receiver read self: LocalKey<T> from static,
+        take f: fn(read T): R
     ): R? {
         let raw = self.value()
         present(unsafe { f(read *raw.cast<T>()) })
@@ -140,7 +140,7 @@ extend<T> OwnedLocalKey<T> {
         raw
     }
 
-    pub fn set(value: take T): Unit {
+    pub fn set(take value: T): Unit {
         let key = self.key()
         let raw = package.alloc.boxed.new(value).into_raw().0.cast<u8>()
         unsafe {
@@ -163,7 +163,7 @@ extend<T> OwnedLocalKey<T> {
         unsafe { mettle_rt_tls_get(state - 1usize) != core.ptr.null_mut<u8>() }
     }
 
-    pub fn with<R>(f: take fn(read T): R): R? {
+    pub fn with<R>(take f: fn(read T): R): R? {
         let raw = self.value(true)
         if raw == core.ptr.null_mut<u8>() { return none }
         present(unsafe { f(read *raw.cast<T>()) })

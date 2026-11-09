@@ -6,11 +6,11 @@ import core.ops.Index
 type Pair { values: [i32; 2] }
 extend Pair implements Index<u8> {
     type Output = i32
-    fn index(index: read u8): read i32 from self { read self.values[index as usize] }
+    fn index(read index: u8): read i32 from self { read self.values[index as usize] }
 }
 extend Pair implements Index<u16> {
     type Output = i32
-    fn index(index: read u16): read i32 from self { read self.values[index as usize] }
+    fn index(read index: u16): read i32 from self { read self.values[index as usize] }
 }
 
 fn main(): i32 {

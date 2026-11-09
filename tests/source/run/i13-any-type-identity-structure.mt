@@ -11,7 +11,7 @@ alias Bound = for<region r> fn(read (read i32 from r)): read i32 from r
 alias Renamed = for<region s> fn(read (read i32 from s)): read i32 from s
 alias Unbound = fn(read (read i32 from static)): read i32 from static
 
-fn type_of<T: Static>(value: read T): TypeId { any.type_id<T>() }
+fn type_of<T: Static>(read value: T): TypeId { any.type_id<T>() }
 
 fn main(): i32 {
     if any.type_id<Bound>() != any.type_id<Renamed>() { return 1 }

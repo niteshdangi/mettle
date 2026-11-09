@@ -12,10 +12,10 @@ extend Tally implements Clone {
     fn clone(): Tally { Tally(self.count + 100) }
 }
 
-fn read_success<region r>(value: read i32 from r): ((read i32 from r) throws String) { success(read value) }
-fn read_failure<region r>(value: read i32 from r): ((read i32 from r) throws String) { failure(string.from_text("lost")) }
-fn mut_success<region r>(value: mut Tally from r): ((mut Tally from r) throws i32) { success(mut value) }
-fn mut_failure<region r>(value: mut Tally from r): ((mut Tally from r) throws i32) { failure(5) }
+fn read_success<region r>(read value: i32 from r): (Outcome<(read i32 from r), String>) { success(read value) }
+fn read_failure<region r>(read value: i32 from r): (Outcome<(read i32 from r), String>) { failure(string.from_text("lost")) }
+fn mut_success<region r>(mut value: Tally from r): (Outcome<(mut Tally from r), i32>) { success(mut value) }
+fn mut_failure<region r>(mut value: Tally from r): (Outcome<(mut Tally from r), i32>) { failure(5) }
 
 fn main(): i32 {
     let base = 7
@@ -37,4 +37,4 @@ fn main(): i32 {
     0
 }
 
-fn mut_success_i32<region r>(value: mut i32 from r): ((mut i32 from r) throws i32) { success(mut value) }
+fn mut_success_i32<region r>(mut value: i32 from r): (Outcome<(mut i32 from r), i32>) { success(mut value) }

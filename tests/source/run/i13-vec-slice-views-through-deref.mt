@@ -8,7 +8,7 @@ fn sample(): List<i32> {
     List<i32>.(From<read [i32; 6]>).from(read arr)
 }
 
-fn found_at(result: (usize throws usize), index: usize): bool {
+fn found_at(result: (Outcome<usize, usize>), index: usize): bool {
     match take result {
         success(i) => i == index,
         failure(_) => false
@@ -80,21 +80,21 @@ fn main(): i32 {
     var s = sample()
     s.sort_unstable()
     if !s.is_sorted() || !found_at(capture s.binary_search(read 4), 4usize) { return 21 }
-    s.sort_unstable_by(fn(a: read i32, b: read i32): Ordering { b.cmp(read a) })
+    s.sort_unstable_by(fn(read a: i32, read b: i32): Ordering { b.cmp(read a) })
     if s[0usize] != 5 { return 22 }
-    s.sort_unstable_by_key(fn(a: read i32): i32 { -a })
+    s.sort_unstable_by_key(fn(read a: i32): i32 { -a })
     if s[0usize] != 5 { return 23 }
-    if !s.is_sorted_by(fn(a: read i32, b: read i32): bool { a >= b }) { return 24 }
-    if !s.is_sorted_by_key(fn(a: read i32): i32 { -a }) { return 25 }
-    if s.partition_point(fn(a: read i32): bool { a > 2 }) != 3usize { return 26 }
+    if !s.is_sorted_by(fn(read a: i32, read b: i32): bool { a >= b }) { return 24 }
+    if !s.is_sorted_by_key(fn(read a: i32): i32 { -a }) { return 25 }
+    if s.partition_point(fn(read a: i32): bool { a > 2 }) != 3usize { return 26 }
     var asc = sample()
     asc.sort_unstable()
-    if !found_at(capture asc.binary_search_by_key(read 5, fn(a: read i32): i32 { a }), 5usize) { return 27 }
-    if !found_at(capture asc.binary_search_by(fn(a: read i32): Ordering { a.cmp(read 4) }), 4usize) { return 28 }
+    if !found_at(capture asc.binary_search_by_key(read 5, fn(read a: i32): i32 { a }), 5usize) { return 27 }
+    if !found_at(capture asc.binary_search_by(fn(read a: i32): Ordering { a.cmp(read 4) }), 4usize) { return 28 }
     var nth = sample()
     nth.select_nth_unstable(2usize)
-    nth.select_nth_unstable_by(0usize, fn(a: read i32, b: read i32): Ordering { a.cmp(read b) })
-    nth.select_nth_unstable_by_key(1usize, fn(a: read i32): i32 { a })
+    nth.select_nth_unstable_by(0usize, fn(read a: i32, read b: i32): Ordering { a.cmp(read b) })
+    nth.select_nth_unstable_by_key(1usize, fn(read a: i32): i32 { a })
     if nth[1usize] != 1 { return 29 }
 
     if !sample().starts_with(read [5, 1]) || !sample().ends_with(read [3, 0]) { return 30 }
@@ -128,31 +128,31 @@ fn main(): i32 {
     if sample().subslice(1usize, 3usize).unwrap().len() != 2usize { return 41 }
 
     var pieces = 0
-    for piece in base.split(fn(a: read i32): bool { a == 4 }) { pieces += 1 }
+    for piece in base.split(fn(read a: i32): bool { a == 4 }) { pieces += 1 }
     if pieces != 2 { return 42 }
     var sp_m = sample()
-    for piece in sp_m.split_mut(fn(a: read i32): bool { a == 4 }) { pieces += 1 }
+    for piece in sp_m.split_mut(fn(read a: i32): bool { a == 4 }) { pieces += 1 }
     if pieces != 4 { return 43 }
     var sp_i = 0
-    for piece in base.splitn(2usize, fn(a: read i32): bool { a == 4 }) { sp_i += 1 }
+    for piece in base.splitn(2usize, fn(read a: i32): bool { a == 4 }) { sp_i += 1 }
     if sp_i != 2 { return 44 }
     var rsp = 0
-    for piece in base.rsplit(fn(a: read i32): bool { a == 4 }) { rsp += 1 }
+    for piece in base.rsplit(fn(read a: i32): bool { a == 4 }) { rsp += 1 }
     if rsp != 2 { return 45 }
     var rspn = 0
-    for piece in base.rsplitn(2usize, fn(a: read i32): bool { a == 4 }) { rspn += 1 }
+    for piece in base.rsplitn(2usize, fn(read a: i32): bool { a == 4 }) { rspn += 1 }
     if rspn != 2 { return 46 }
     var inc = 0
-    for piece in base.split_inclusive(fn(a: read i32): bool { a == 4 }) { inc += 1 }
+    for piece in base.split_inclusive(fn(read a: i32): bool { a == 4 }) { inc += 1 }
     if inc != 2 { return 47 }
     var inc_m = sample()
-    for piece in inc_m.split_inclusive_mut(fn(a: read i32): bool { a == 4 }) { inc += 1 }
+    for piece in inc_m.split_inclusive_mut(fn(read a: i32): bool { a == 4 }) { inc += 1 }
     if inc != 4 { return 48 }
     var runs = 0
-    for run in base.chunk_by(fn(a: read i32, b: read i32): bool { a < b }) { runs += 1 }
+    for run in base.chunk_by(fn(read a: i32, read b: i32): bool { a < b }) { runs += 1 }
     if runs != 4 { return 49 }
     var runs_m = sample()
-    for run in runs_m.chunk_by_mut(fn(a: read i32, b: read i32): bool { a < b }) { runs += 1 }
+    for run in runs_m.chunk_by_mut(fn(read a: i32, read b: i32): bool { a < b }) { runs += 1 }
     if runs != 8 { return 50 }
 
     let fresh = sample()

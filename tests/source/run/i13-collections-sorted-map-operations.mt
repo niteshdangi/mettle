@@ -8,7 +8,7 @@ import core.default.Default
 import core.iter.{ExtendItems, FromItems, OwnedIterable}
 
 // Counts the keys and returns -1 unless they are strictly ascending.
-fn ordered_keys(map: read btree.SortedMap<i32, i32>): i32 {
+fn ordered_keys(read map: btree.SortedMap<i32, i32>): i32 {
     var code = 0
     var previous = -2147483647
     for key in map.keys() {
@@ -19,7 +19,7 @@ fn ordered_keys(map: read btree.SortedMap<i32, i32>): i32 {
     code
 }
 
-fn sum_values(map: read btree.SortedMap<i32, i32>): i32 {
+fn sum_values(read map: btree.SortedMap<i32, i32>): i32 {
     var total = 0
     for value in map.values() { total += *value }
     total
@@ -106,9 +106,9 @@ fn main(): i32 {
     if *counts.get(1).unwrap() != 8 { return 40 }
     let seeded = counts.entry(2).or_insert_with(take fn(): i32 { 20 })
     if *seeded != 20 { return 41 }
-    let keyed = counts.entry(3).or_insert_with_key(take fn(key: read i32): i32 { key * 100 })
+    let keyed = counts.entry(3).or_insert_with_key(take fn(read key: i32): i32 { key * 100 })
     if *keyed != 300 { return 42 }
-    counts.entry(3).and_modify(take fn(value: mut i32): Unit { value += 1 }).or_insert(0)
+    counts.entry(3).and_modify(take fn(mut value: i32): Unit { value += 1 }).or_insert(0)
     if *counts.get(3).unwrap() != 301 { return 43 }
     let defaulted = counts.entry(4).or_default()
     if *defaulted != 0 { return 44 }
@@ -166,11 +166,11 @@ fn main(): i32 {
 
     // Filtering, splitting and iteration.
     var extracted = 0
-    for pair in counts.extract_if(fn(key: read i32, value: mut i32): bool { value > 100 }) {
+    for pair in counts.extract_if(fn(read key: i32, mut value: i32): bool { value > 100 }) {
         extracted += pair.0
     }
     if extracted != 3 || counts.len() != 4usize { return 56 }
-    counts.retain(fn(key: read i32, value: mut i32): bool { key != 4 })
+    counts.retain(fn(read key: i32, mut value: i32): bool { key != 4 })
     if counts.contains_key(4) || counts.len() != 3usize { return 57 }
     var upper = counts.split_off(2)
     if counts.len() != 1usize || upper.len() != 2usize || !upper.contains_key(5) { return 58 }

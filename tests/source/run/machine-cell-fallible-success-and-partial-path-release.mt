@@ -1,5 +1,5 @@
 
-fn choose(cell: read core.cell.RefCell<i32>, condition: bool): i32 {
+fn choose(read cell: core.cell.RefCell<i32>, condition: bool): i32 {
     if condition {
         var guard = cell.borrow_mut()
         *guard.get_mut() += 1

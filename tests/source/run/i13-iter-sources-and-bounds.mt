@@ -9,12 +9,12 @@ import alloc.vec.List
 import core.iter
 import core.iter.{collect, BidirectionalIterator, ExactSizeIterator, FusedIterator, Iterator, OwnedIterable}
 
-fn require_exact<I: ExactSizeIterator>(items: take I): usize {
+fn require_exact<I: ExactSizeIterator>(take items: I): usize {
     var source = items
     source.len()
 }
 
-fn require_fused<I: FusedIterator>(items: take I): usize {
+fn require_fused<I: FusedIterator>(take items: I): usize {
     var source = items
     var seen = 0usize
     while true {
@@ -26,7 +26,7 @@ fn require_fused<I: FusedIterator>(items: take I): usize {
     seen
 }
 
-fn require_double_ended<I: BidirectionalIterator + Iterator<Item = i32>>(items: take I): i32? {
+fn require_double_ended<I: BidirectionalIterator + Iterator<Item = i32>>(take items: I): i32? {
     var source = items
     source.next_back()
 }
@@ -50,12 +50,12 @@ fn checks_sources(): i32 {
     if repeated.take_n(3usize).sum<i32>() != 21 { return 8 }
     var chained_successors = iter.successors(
         present(1),
-        fn(value: read i32): i32? { if value < 4 { present(value + 1) } else { none } }
+        fn(read value: i32): i32? { if value < 4 { present(value + 1) } else { none } }
     )
     if chained_successors.sum<i32>() != 10 { return 9 }
-    var single_successor = iter.successors(present(9), fn(value: read i32): i32? { none })
+    var single_successor = iter.successors(present(9), fn(read value: i32): i32? { none })
     if single_successor.next() != present(9) || single_successor.next().is_present() { return 10 }
-    if iter.successors(none, fn(value: read i32): i32? { none }).next().is_present() { return 11 }
+    if iter.successors(none, fn(read value: i32): i32? { none }).next().is_present() { return 11 }
     0
 }
 
@@ -65,14 +65,14 @@ fn checks_owned_iteration(): i32 {
     if owned.next() != present(4) || owned.next_back() != present(6) { return 20 }
     var from_range = iter.into_iterator(iter.range(0, 3))
     if from_range.sum<i32>() != 3 { return 21 }
-    let pairs: List<(i32, i32)> = collect(iter.range(0, 2).map(fn(x: take i32): (i32, i32) { (x, x * 2) }))
+    let pairs: List<(i32, i32)> = collect(iter.range(0, 2).map(fn(take x: i32): (i32, i32) { (x, x * 2) }))
     if pairs.len() != 2usize || pairs.as_slice()[1usize].1 != 2 { return 22 }
     0
 }
 
 fn checks_exact_and_fused(): i32 {
     if require_exact(iter.range(0, 6)) != 6usize { return 30 }
-    if require_exact(iter.range(0, 6).map(fn(x: take i32): i32 { x + 1 })) != 6usize { return 31 }
+    if require_exact(iter.range(0, 6).map(fn(take x: i32): i32 { x + 1 })) != 6usize { return 31 }
     if require_exact(iter.once(1)) != 1usize { return 32 }
     if require_exact(iter.empty<i32>()) != 0usize { return 33 }
     var ranged = iter.range(3, 5)

@@ -62,7 +62,7 @@ fn signal_name(signal: i32): read Text from static {
 // "exit status: N" for a normal exit, "signal: N (NAME)" (and " (core dumped)")
 // for a signal, matching the reference Unix display.
 extend ExitStatus implements package.core.fmt.Display {
-    fn fmt(f: mut package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
         match self.code() {
             present(code) => {
                 try f.write_str("exit status: ")
@@ -93,7 +93,7 @@ pub type ChildStdin {
 }
 
 extend ChildStdin implements Writer {
-    mut fn write_some(buf: read [u8]): usize throws Error { try io.write_fd(self.fd, buf) }
+    mut fn write_some(read buf: [u8]): usize throws Error { try io.write_fd(self.fd, buf) }
     mut fn flush(): Unit throws Error {}
 }
 
@@ -104,7 +104,7 @@ pub type ChildOutput {
 }
 
 extend ChildOutput implements Reader {
-    mut fn read_some(buf: mut [u8]): usize throws Error { try io.read_fd(self.fd, buf) }
+    mut fn read_some(mut buf: [u8]): usize throws Error { try io.read_fd(self.fd, buf) }
 }
 
 // A running or finished child. Dropping it neither waits for nor kills the
@@ -211,27 +211,27 @@ pub type Command {
     stderr: Stdio
 }
 
-pub fn command(program: read OsStr): Command {
+pub fn command(read program: OsStr): Command {
     Command(program.to_os_string(), vec.new<OsString>(), vec.new<EnvChange>(), false,
             super.path.new_path_buf(), false, Stdio.Inherit, Stdio.Inherit, Stdio.Inherit)
 }
 
-pub fn command_text(program: read Text): Command { command(ffi.os_str_from_text(program)) }
+pub fn command_text(read program: Text): Command { command(ffi.os_str_from_text(program)) }
 
 extend Command {
-    pub mut fn arg(a: read OsStr): Unit { self.args.push(a.to_os_string()) }
-    pub mut fn arg_text(a: read Text): Unit { self.args.push(ffi.os_string_from_text(a)) }
+    pub mut fn arg(read a: OsStr): Unit { self.args.push(a.to_os_string()) }
+    pub mut fn arg_text(read a: Text): Unit { self.args.push(ffi.os_string_from_text(a)) }
     // Sets `name` for the child only.
-    pub mut fn env(name: read OsStr, value: read OsStr): Unit {
+    pub mut fn env(read name: OsStr, read value: OsStr): Unit {
         self.changes.push(EnvChange(name.to_os_string(), value.to_os_string(), false))
     }
     // Removes `name` from the child's environment.
-    pub mut fn env_remove(name: read OsStr): Unit {
+    pub mut fn env_remove(read name: OsStr): Unit {
         self.changes.push(EnvChange(name.to_os_string(), ffi.new_os_string(), true))
     }
     // Starts the child with an empty environment (plus later `env` calls).
     pub mut fn env_clear(): Unit { self.clear_env = true; self.changes.clear() }
-    pub mut fn current_dir(input: read PathInput): Unit {
+    pub mut fn current_dir(read input: PathInput): Unit {
         self.cwd = input.as_path().to_path_buf()
         self.has_cwd = true
     }

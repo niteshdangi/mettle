@@ -30,7 +30,7 @@ fn main(): i32 {
         var checks = 0
         guard = worker_changed.get().wait_while(
             guard,
-            fn(ready: mut bool): bool {
+            fn(mut ready: bool): bool {
                 checks += 1
                 !ready
             }
@@ -78,7 +78,7 @@ fn main(): i32 {
     let waited = changed.get().wait_timeout_while(
         timeout_guard,
         std.time.from_nanos(0u64),
-        fn(ready: mut bool): bool {
+        fn(mut ready: bool): bool {
             timeout_checks += 1
             if timeout_checks == 1 {
                 true

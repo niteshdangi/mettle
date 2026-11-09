@@ -15,7 +15,7 @@ extend<region r> BagIterMut<region r> implements Iterator {
 extend Bag implements MutableIterable {
     type Item = i32
     type IterMut<region r> = BagIterMut<region r>
-    fn iter_mut<region r>(receiver self: mut Self from r): BagIterMut<region r> { BagIterMut(mut self, 0) }
+    fn iter_mut<region r>(receiver mut self: Self from r): BagIterMut<region r> { BagIterMut(mut self, 0) }
 }
 type BagIter<region r> { bag: read Bag from r; at: i32 }
 extend<region r> BagIter<region r> implements Iterator {
@@ -29,21 +29,21 @@ extend<region r> BagIter<region r> implements Iterator {
 extend Bag implements Iterable {
     type Item = i32
     type Iter<region r> = BagIter<region r>
-    fn iter<region r>(receiver self: read Self from r): BagIter<region r> { BagIter(read self, 0) }
+    fn iter<region r>(receiver read self: Self from r): BagIter<region r> { BagIter(read self, 0) }
 }
 
 // Generic code calls iterator methods on the bounded family directly.
-fn first<C: Iterable>(c: read C): (read C.Item from c)? {
+fn first<C: Iterable>(read c: C): (read C.Item from c)? {
     var it = c.iter()
     it.next()
 }
-fn second<C: Iterable>(c: read C): (read C.Item from c)? {
+fn second<C: Iterable>(read c: C): (read C.Item from c)? {
     var it = c.iter()
     let skipped = it.next()
     it.next()
 }
 
-fn first_mut<C: MutableIterable>(c: mut C): (mut C.Item from c)? {
+fn first_mut<C: MutableIterable>(mut c: C): (mut C.Item from c)? {
     var it = c.iter_mut()
     it.next()
 }

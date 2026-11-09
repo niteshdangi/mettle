@@ -12,7 +12,7 @@ import core.hash
 import core.hash.{Hash, Hasher}
 import core.text.{FromStr, Text}
 
-fn debug_is<T: Debug>(value: read T, expected: read Text): bool {
+fn debug_is<T: Debug>(read value: T, read expected: Text): bool {
     var buffer = [0u8; 64]
     var writer = fmt.buffer_writer(mut buffer)
     var formatter = fmt.formatter(mut writer, fmt.spec())
@@ -27,7 +27,7 @@ fn debug_is<T: Debug>(value: read T, expected: read Text): bool {
     }
 }
 
-fn display_is<T: Display>(value: read T, expected: read Text): bool {
+fn display_is<T: Display>(read value: T, read expected: Text): bool {
     var buffer = [0u8; 64]
     var writer = fmt.buffer_writer(mut buffer)
     match capture fmt.write(mut writer, value) {
@@ -41,28 +41,28 @@ fn display_is<T: Display>(value: read T, expected: read Text): bool {
     }
 }
 
-fn parses_to<T: FromStr + PartialEq>(text: read Text, expected: T): bool {
+fn parses_to<T: FromStr + PartialEq>(read text: Text, expected: T): bool {
     match capture T.(FromStr).from_str(text) {
         success(value) => value == expected,
         failure(_) => false
     }
 }
 
-fn rejects<T: FromStr>(text: read Text): bool {
+fn rejects<T: FromStr>(read text: Text): bool {
     match capture T.(FromStr).from_str(text) {
         success(_) => false,
         failure(_) => true
     }
 }
 
-fn hashes_equal<T: Hash>(left: read T, right: read T): bool {
+fn hashes_equal<T: Hash>(read left: T, read right: T): bool {
     hash.hash_one(left) == hash.hash_one(right)
 }
 
-fn reflexive<T: Eq>(value: read T): bool { value == value }
+fn reflexive<T: Eq>(read value: T): bool { value == value }
 
 fn integer_traits<T: Copy + Clone + Default + Eq + Ord + Hash + Debug + Display + FromStr>(
-    zero: T, low: T, high: T, low_text: read Text, high_text: read Text
+    zero: T, low: T, high: T, read low_text: Text, read high_text: Text
 ): i32 {
     let copied = low
     if copied != low { return 1 }
@@ -102,7 +102,7 @@ fn char_traits(): i32 {
 }
 
 fn float_traits<T: Copy + Clone + Default + PartialEq + PartialOrd + Debug + Display + FromStr>(
-    zero: T, value: T, text: read Text
+    zero: T, value: T, read text: Text
 ): i32 {
     let copied = value
     if copied != value || value.clone() != value || T.(Default).default() != zero { return 1 }

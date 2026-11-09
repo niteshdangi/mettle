@@ -2,7 +2,7 @@
 import core.iter
 import core.iter.{ Iterator, BidirectionalIterator }
 
-fn pull<T, I: Iterator<Item = T>>(items: mut I): T? {
+fn pull<T, I: Iterator<Item = T>>(mut items: I): T? {
     items.next()
 }
 

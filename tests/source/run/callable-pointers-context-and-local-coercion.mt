@@ -1,7 +1,7 @@
 
 fn increment(value: i32): i32 { value + 1 }
 fn apply(operation: fn(i32): i32, value: i32): i32 { operation(value) }
-fn change(value: mut i32): Unit { value += 1 }
+fn change(mut value: i32): Unit { value += 1 }
 fn main(): i32 {
     let pointer: fn(i32): i32 = increment
     let contextual: fn(i32): i32 = fn(value) { value + 1 }

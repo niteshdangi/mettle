@@ -4,7 +4,7 @@ import core.any
 import core.any.{Any, TypeId}
 import core.cmp.PartialEq
 
-fn id<T: Any>(value: read T): TypeId { T.(Any).type_id(value) }
+fn id<T: Any>(read value: T): TypeId { T.(Any).type_id(value) }
 
 static NUMBERS: [i32; 4] = [1, 2, 3, 4]
 

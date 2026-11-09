@@ -4,7 +4,7 @@ copy type Counter {
     fn get(extra: i32) { self.value + extra }
     mut fn increment() { self.value += 1 }
 }
-fn mark(log: mut i32) { log += 1; 0 }
+fn mark(mut log: i32) { log += 1; 0 }
 fn main() {
     var log = 0
     let absent: Counter? = none

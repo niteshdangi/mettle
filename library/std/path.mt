@@ -35,15 +35,15 @@ pub type Iter<region r> { components: Components<region r> }
 
 pub type Ancestors<region r> { current: read Path from r; finished: bool }
 
-pub fn path(bytes: read [u8]): read Path from bytes {
+pub fn path(read bytes: [u8]): read Path from bytes {
     let fat = core.ptr.from_ref(bytes)
     let view = unsafe { core.mem.transmute<ptr<read Path>>(fat) }
     unsafe { read *view }
 }
 
-pub fn path_from_text(text: read Text): read Path from text { path(text.as_bytes()) }
+pub fn path_from_text(read text: Text): read Path from text { path(text.as_bytes()) }
 
-pub fn path_from_os_str(s: read OsStr): read Path from s { path(s.as_bytes()) }
+pub fn path_from_os_str(read s: OsStr): read Path from s { path(s.as_bytes()) }
 
 // Anything that views as a native path without allocation or conversion.
 // Hosted path-taking functions accept `read PathInput`, so callers pass a
@@ -57,33 +57,33 @@ fn is_sep(b: u8): bool { b == 47u8 }
 
 // End (exclusive) of `bytes` once trailing separators are removed; a root
 // path keeps its single separator.
-fn trimmed_end(bytes: read [u8]): usize {
+fn trimmed_end(read bytes: [u8]): usize {
     var end = bytes.len()
     while end > 1usize && is_sep(bytes[end - 1usize]) { end -= 1usize }
     end
 }
 
 // Start of the final component of bytes[..end].
-fn last_start(bytes: read [u8], end: usize): usize {
+fn last_start(read bytes: [u8], end: usize): usize {
     var start = end
     while start > 0usize && !is_sep(bytes[start - 1usize]) { start -= 1usize }
     start
 }
 
-fn is_dot(bytes: read [u8], start: usize, end: usize): bool {
+fn is_dot(read bytes: [u8], start: usize, end: usize): bool {
     end - start == 1usize && bytes[start] == 46u8
 }
 
-fn is_dot_dot(bytes: read [u8], start: usize, end: usize): bool {
+fn is_dot_dot(read bytes: [u8], start: usize, end: usize): bool {
     end - start == 2usize && bytes[start] == 46u8 && bytes[start + 1usize] == 46u8
 }
 
-fn has_leading_cur_dir(bytes: read [u8]): bool {
+fn has_leading_cur_dir(read bytes: [u8]): bool {
     bytes.len() > 0usize && bytes[0usize] == 46u8 &&
         (bytes.len() == 1usize || is_sep(bytes[1usize]))
 }
 
-fn checked_part(bytes: read [u8], start: usize, end: usize): read [u8] {
+fn checked_part(read bytes: [u8], start: usize, end: usize): read [u8] {
     match slice.subslice(bytes, start, end) {
         present(part) => part,
         none => { package.core.panic.panic("path component bounds invariant failed") }
@@ -196,7 +196,7 @@ extend<region r> Ancestors<region r> implements package.core.clone.Clone {
 }
 
 extend Path {
-    pub static fn new(bytes: read [u8]): read Path from bytes { path(bytes) }
+    pub static fn new(read bytes: [u8]): read Path from bytes { path(bytes) }
     pub fn as_bytes(): read [u8] from self { read self.bytes }
     pub fn as_os_str(): read OsStr from self { ffi.os_str(read self.bytes) }
     pub mut fn as_mut_os_str(): mut OsStr from self { ffi.os_str_mut(self.bytes) }
@@ -206,12 +206,12 @@ extend Path {
     pub fn is_absolute(): bool { self.bytes.len() > 0usize && is_sep(self.bytes[0usize]) }
     pub fn has_root(): bool { self.is_absolute() }
     pub fn is_relative(): bool { !self.is_absolute() }
-    pub fn same(other: read Path): bool { ffi.bytes_equal(read self.bytes, other.as_bytes()) }
+    pub fn same(read other: Path): bool { ffi.bytes_equal(read self.bytes, other.as_bytes()) }
     pub fn to_path_buf(): PathBuf { path_buf_from_bytes(read self.bytes) }
     pub fn into_path_buf(): PathBuf { self.to_path_buf() }
     pub fn display(): String { self.to_string_lossy() }
     pub fn components<region r>(
-        receiver self: read Path from r
+        receiver read self: Path from r
     ): Components<region r> {
         let bytes = self.as_bytes()
         Components(
@@ -222,11 +222,11 @@ extend Path {
             has_leading_cur_dir(bytes)
         )
     }
-    pub fn iter<region r>(receiver self: read Path from r): Iter<region r> {
+    pub fn iter<region r>(receiver read self: Path from r): Iter<region r> {
         Iter(self.components())
     }
     pub fn ancestors<region r>(
-        receiver self: read Path from r
+        receiver read self: Path from r
     ): Ancestors<region r> {
         Ancestors(read self, false)
     }
@@ -303,13 +303,13 @@ extend Path {
     }
 
     // `other` appended with a separator; an absolute `other` replaces `self`.
-    pub fn join(other: read Path): PathBuf {
+    pub fn join(read other: Path): PathBuf {
         var out = path_buf_from_bytes(read self.bytes)
         out.push(other)
         out
     }
 
-    pub fn starts_with(prefix: read Path): bool {
+    pub fn starts_with(read prefix: Path): bool {
         let a: read [u8] = read self.bytes
         let b = prefix.as_bytes()
         let bend = trimmed_end(b)
@@ -323,7 +323,7 @@ extend Path {
         bend == a.len() || is_sep(a[bend]) || (bend > 0usize && is_sep(b[bend - 1usize]))
     }
 
-    pub fn ends_with(suffix: read Path): bool {
+    pub fn ends_with(read suffix: Path): bool {
         let a: read [u8] = read self.bytes
         let b = suffix.as_bytes()
         let a_end = trimmed_end(a)
@@ -340,7 +340,7 @@ extend Path {
             component_start == offset
     }
 
-    pub fn strip_prefix(prefix: read Path): (read Path from self)? {
+    pub fn strip_prefix(read prefix: Path): (read Path from self)? {
         if !self.starts_with(prefix) { return none }
         let bytes: read [u8] = read self.bytes
         let prefix_len = trimmed_end(prefix.as_bytes())
@@ -350,19 +350,19 @@ extend Path {
         present(path(unsafe { slice.subslice_unchecked(bytes, start, bytes.len()) }))
     }
 
-    pub fn with_file_name(name: read OsStr): PathBuf {
+    pub fn with_file_name(read name: OsStr): PathBuf {
         var result = self.to_path_buf()
         result.set_file_name(name)
         result
     }
 
-    pub fn with_extension(extension: read OsStr): PathBuf {
+    pub fn with_extension(read extension: OsStr): PathBuf {
         var result = self.to_path_buf()
         result.set_extension(extension)
         result
     }
 
-    pub fn with_added_extension(extension: read OsStr): PathBuf {
+    pub fn with_added_extension(read extension: OsStr): PathBuf {
         var result = self.to_path_buf()
         result.add_extension(extension)
         result
@@ -483,7 +483,7 @@ extend<region r> Ancestors<region r> implements package.core.iter.Iterator {
     }
 }
 
-fn last_dot(name: read [u8]): usize? {
+fn last_dot(read name: [u8]): usize? {
     var i = name.len()
     while i > 1usize {
         i -= 1usize
@@ -499,13 +499,13 @@ pub fn path_buf_with_capacity(capacity: usize): PathBuf {
     PathBuf(vec.with_capacity<u8>(capacity))
 }
 
-pub fn path_buf_from_bytes(bytes: read [u8]): PathBuf {
+pub fn path_buf_from_bytes(read bytes: [u8]): PathBuf {
     var v = vec.with_capacity<u8>(bytes.len())
     v.extend_from_slice(bytes)
     PathBuf(v)
 }
 
-pub fn path_buf_from_text(text: read Text): PathBuf { path_buf_from_bytes(text.as_bytes()) }
+pub fn path_buf_from_text(read text: Text): PathBuf { path_buf_from_bytes(text.as_bytes()) }
 
 extend PathBuf {
     pub static fn new(): PathBuf { new_path_buf() }
@@ -522,15 +522,15 @@ extend PathBuf {
     pub fn has_root(): bool { self.as_path().has_root() }
     pub fn is_relative(): bool { self.as_path().is_relative() }
     pub fn components<region r>(
-        receiver self: read PathBuf from r
+        receiver read self: PathBuf from r
     ): Components<region r> {
         self.as_path().components()
     }
-    pub fn iter<region r>(receiver self: read PathBuf from r): Iter<region r> {
+    pub fn iter<region r>(receiver read self: PathBuf from r): Iter<region r> {
         self.as_path().iter()
     }
     pub fn ancestors<region r>(
-        receiver self: read PathBuf from r
+        receiver read self: PathBuf from r
     ): Ancestors<region r> {
         self.as_path().ancestors()
     }
@@ -562,7 +562,7 @@ extend PathBuf {
 
     // Appends a component, adding a separator when needed; an absolute `p`
     // replaces the whole path.
-    pub mut fn push(p: read Path): Unit {
+    pub mut fn push(read p: Path): Unit {
         if p.is_absolute() {
             self.v.clear()
         } else if self.v.len() > 0usize && !is_sep(self.v[self.v.len() - 1usize]) {
@@ -583,7 +583,7 @@ extend PathBuf {
         }
     }
 
-    pub mut fn set_file_name(name: read OsStr): bool {
+    pub mut fn set_file_name(read name: OsStr): bool {
         if self.as_path().file_name().is_none() { return false }
         let parent_len = match self.as_path().parent() {
             present(parent) => present(parent.as_bytes().len()),
@@ -607,7 +607,7 @@ extend PathBuf {
         }
     }
 
-    pub mut fn set_extension(extension: read OsStr): bool {
+    pub mut fn set_extension(read extension: OsStr): bool {
         let bytes = self.v.as_slice()
         let end = trimmed_end(bytes)
         let name_start = last_start(bytes, end)
@@ -628,7 +628,7 @@ extend PathBuf {
         true
     }
 
-    pub mut fn add_extension(extension: read OsStr): Unit {
+    pub mut fn add_extension(read extension: OsStr): Unit {
         let ext = extension.as_bytes()
         if ext.len() > 0usize {
             let end = trimmed_end(self.v.as_slice())
@@ -639,19 +639,19 @@ extend PathBuf {
         }
     }
 
-    pub fn same(other: read PathBuf): bool { ffi.bytes_equal(self.v.as_slice(), other.as_bytes()) }
+    pub fn same(read other: PathBuf): bool { ffi.bytes_equal(self.v.as_slice(), other.as_bytes()) }
     pub fn file_name(): (read OsStr from self)? { self.as_path().file_name() }
     pub fn file_stem(): (read OsStr from self)? { self.as_path().file_stem() }
     pub fn file_prefix(): (read OsStr from self)? { self.as_path().file_prefix() }
     pub fn extension(): (read OsStr from self)? { self.as_path().extension() }
     pub fn parent(): (read Path from self)? { self.as_path().parent() }
-    pub fn join(other: read Path): PathBuf { self.as_path().join(other) }
-    pub fn starts_with(prefix: read Path): bool { self.as_path().starts_with(prefix) }
-    pub fn ends_with(suffix: read Path): bool { self.as_path().ends_with(suffix) }
-    pub fn strip_prefix(prefix: read Path): (read Path from self)? { self.as_path().strip_prefix(prefix) }
-    pub fn with_file_name(name: read OsStr): PathBuf { self.as_path().with_file_name(name) }
-    pub fn with_extension(extension: read OsStr): PathBuf { self.as_path().with_extension(extension) }
-    pub fn with_added_extension(extension: read OsStr): PathBuf { self.as_path().with_added_extension(extension) }
+    pub fn join(read other: Path): PathBuf { self.as_path().join(other) }
+    pub fn starts_with(read prefix: Path): bool { self.as_path().starts_with(prefix) }
+    pub fn ends_with(read suffix: Path): bool { self.as_path().ends_with(suffix) }
+    pub fn strip_prefix(read prefix: Path): (read Path from self)? { self.as_path().strip_prefix(prefix) }
+    pub fn with_file_name(read name: OsStr): PathBuf { self.as_path().with_file_name(name) }
+    pub fn with_extension(read extension: OsStr): PathBuf { self.as_path().with_extension(extension) }
+    pub fn with_added_extension(read extension: OsStr): PathBuf { self.as_path().with_added_extension(extension) }
 }
 
 extend Path implements PathInput {

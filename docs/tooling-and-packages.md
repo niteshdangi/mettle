@@ -36,38 +36,46 @@ The emitted backend does not provide UBSan or cross-target qualification.
 
 ### 1.1. Implemented subset (I09 T001)
 
-`mettle check|build DIR_OR_Mettle.toml` plans the package in the `packages`
+`mettle check|build DIR_OR_package.mettle` plans the package in the `packages`
 component, then compiles the selected executable target with each resolved
 dependency library mounted as a public root module named after the package
-(`-` becomes `_`). Inside a dependency's own submodules, reach other packages
-with `import package.name`.
+(`-` becomes `_`). Dependency aliases resolve from every module using the same
+`import name` spelling for local, registry and Git sources. Explicit local
+bindings take precedence; `package.name` remains an optional root qualifier.
 
-- Manifest: `[package] name/version/language="mettle-1"`, `[targets.NAME]`
-  (`kind`, `source`; defaults `src/main.mt` executable, `src/lib.mt` library),
-  `[dependencies]` (version string/array, or `{path, git, rev|tag|branch,
-  version, optional, default_features}`), `[build-dependencies]` with source,
-  version and explicit features resolved for the host, `[features]`
+- Manifest: root `name`/`version` and optional `entry` (default `"src/main.mt"`).
+  `entry` is a source path or a map of names to source paths; a map must define
+  `main` as its primary entry.
+  The same primary entry exposes a package's public API when used
+  as a dependency and supplies `main` when built as an executable; no separate
+  library-root file is required. Ordinary builds select the primary entry;
+  `--entry NAME` selects a named entry. There is no `targets`/`kind`/`source`
+  target block or per-package `language` selector.
+  `dependencies` accepts version strings/arrays, explicit relative/absolute
+  path strings, or objects with `path, git, rev|tag|branch, version, optional,
+  default_features`. `build-dependencies` resolves sources, versions and
+  explicit features for the host. `features` contains
   (`feature`, `dep:x`, `x/f`; optional dependencies imply a feature),
-  `[registry] path` (root only) and parsed but unused `[dev-dependencies]`.
+  `registry { path: ... }` (root only) and parsed but unused `dev-dependencies`.
   Unknown keys are errors.
 - Versions: section 1 defines requirements and selection. Each exact
   source/version/context has a distinct module root and linked symbol namespace.
-- Local registry: `<registry>/<name>/<version>/Mettle.toml` plus sources; a
+- Local registry: `<registry>/<name>/<version>/package.mettle` plus sources; a
   `YANKED` file yanks a version. Select with `--registry DIR` (repeatable,
-  before the manifest `[registry]`). No remote HTTP registry fetch exists;
+  before the manifest `registry` block). No remote HTTP registry fetch exists;
   `--offline` prevents Git fetching and uses only already-cached commits.
 - Git selectors (`rev`, `tag`, `branch`) use the system `git` CLI, with mirrors
   and detached checkouts in cache `sources/git`. Offline builds require the
   locked commit there. Dirty or mismatched cached checkouts are rejected.
-- `Mettle.lock`: `version = 2` plus `[[package]]` entries (`id`, name,
+- `lock.mettle`: `version: 2` plus a `packages` list of objects (`id`, name,
   version, `source` = `root`/`path+REL`/`registry+REL`/`git+URL#COMMIT`,
   `checksum`, resolved `features`, dependency-instance IDs). Checksum is
   SHA-256 over sorted relative paths,
-  sizes and contents of `*.mt` and `Mettle.toml` (hidden, `target`, `build`
-  skipped). Registry and Git checksum mismatches always fail; other drift is
+  sizes and contents of `*.mt` and `*.mettle`, excluding generated `lock.mettle`
+  files (hidden, `target`, `build` skipped). Registry and Git checksum mismatches always fail; other drift is
   re-locked, or fails under `--locked`/`--frozen`. Missing lock fails under
   `--locked`.
-- Flags: `--bin NAME`, `--features a,b`, `--no-default-features`,
+- Flags: `--entry NAME`, `--features a,b`, `--no-default-features`,
   `--registry DIR`, `--locked`, `--offline`, `--frozen`.
 - Limits: remote HTTP registries are not implemented because no registry
   protocol is specified; no registry/account is created. Host and target
@@ -106,12 +114,15 @@ target/profile/features, declared input hashes/variables and generated-file hash
 Implemented; evidence: `procedural_macro` and `procedural_macro_failure` in
 `tests/packages.py`.
 
-A package declares host-program macros in `Mettle.toml`:
+A package declares host-program macros in `package.mettle`:
 
-```toml
-[macros.make_fn]
-source = "macros/make_fn.mt"   # a Mettle program, relative to the package
-api = 1                        # required extension API major version
+```text
+macros {
+    make_fn {
+        source: "macros/make_fn.mt"
+        api: 1
+    }
+}
 ```
 
 `api` is required; a major version the compiler does not support is a
@@ -130,7 +141,7 @@ identity) to its standard input and reads `mettle:` lines from its standard
 output: `text=` appends generated source, `error=` fails the invocation,
 `rerun-if-changed=`, `rerun-if-env-changed=` and `reproducible` declare the
 input contract. Escaping and the full format are in
-`compiler/expansion/procedural.h`; the library side is `std.macros`
+`bootstrap/expansion/procedural.h`; the library side is `std.macros`
 (`read_invocation`, `emit`, `fail`, `depends_on_file`, `depends_on_env`,
 `reproducible`). The generated text is re-lexed and re-parsed, nested macros in
 it are expanded, and every generated token is attributed to the invocation, so
@@ -197,26 +208,70 @@ section 5.1.1. Flags: `--cache-dir DIR`, `--no-cache`,
 
 ## 1. Manifest and identity
 
-Use Mettle.toml and Mettle.lock as the working manifest/lock names. A package
-declares a lowercase ASCII name, SemVer version, language revision, source roots,
-targets, dependencies and optional named features. Package names use
+Use `package.mettle` and `lock.mettle` as the manifest/lock names. Both use
+Mettle's data format, read by `bootstrap/packages/data.{h,cpp}`. A manifest is
+optional for direct source-file builds. TOML manifests/locks are not accepted.
+A package declares a lowercase ASCII name, SemVer version, entry paths,
+dependencies and optional named features. Package names use
 `[a-z][a-z0-9_-]*`; source identity remains separate from the display name.
 
 Illustrative manifest:
 
-```toml
-[package]
-name = "example"
-version = "0.1.0"
-language = "mettle-1"
+```text
+name: "example"
+version: "0.1.0"
 
-[targets.app]
-kind = "executable"
-source = "src/main.mt"
-
-[dependencies]
-parser = { path = "../parser", features = ["text"], default_features = false }
+dependencies {
+    parser: "../parser"
+    "registry-lib": "1.2"
+}
 ```
+
+For a single custom entry use `entry: "app.mt"`. For multiple programs, use the
+same key as a map:
+
+```text
+entry {
+    main: "src/main.mt"
+    format: "tools/format.mt"
+}
+```
+
+`main` is required in an entry map and supplies both the default executable
+entry and the package's dependency API. `mettle build . -o build/app` selects it;
+`mettle build . --entry format -o build/format` selects the other program.
+Strings and maps are alternative forms of the same key, not simultaneous fields.
+
+The `.mettle` data grammar has `key: value` fields and `key { ... }` object
+blocks. Keys are ASCII identifiers or quoted strings. Root object braces are
+optional; lists use `[ ... ]`, and object values use `{ ... }`. A newline or
+comma separates entries; trailing commas are accepted. Values are strings,
+signed 64-bit decimal integers, decimal fractional/exponent numbers, booleans,
+`none`, lists or objects. Fractional numbers retain their exact spelling until a
+schema consumes them. Comments use `//` and nested `/* ... */`; newlines inside
+block comments also separate entries. Strings use Mettle's ordinary double-quoted
+text escapes, including `\u{hex}` and ASCII `\xHH`. Source must be valid UTF-8;
+duplicate decoded keys, raw string control characters, unknown escapes and
+malformed values are errors with byte spans. Nesting/source/value-count bounds
+use the compiler's existing resource-limit policy. No calls, substitutions,
+includes or environment lookup are evaluated.
+
+A dependency string beginning `./`, `../`, or an absolute path denotes a local
+package. Other strings must be valid version requirements; there is no
+file-existence-based guessing. Additional source/feature options use an object,
+for example `parser { path: "../parser", features: ["text"] }`.
+
+Imports discover supporting modules from `name.mt` or `name/main.mt`, relative
+to the importing module, without a separate file of `pub module` declarations.
+Matching both source forms is an ambiguity error. Intermediate directories can
+group modules without their own entry file. Existing explicit module declarations
+remain available; visibility and public reexports still control the package API.
+
+Locks contain the root followed by packages in deterministic identity order,
+with exact versions, source/commit identities, checksums, features and dependency
+IDs. The lock reader rejects unknown fields, duplicate package identities and
+references to absent identities. `--locked`, `--offline` and `--frozen` retain
+their existing meanings.
 
 Dependency sources are local paths, configured registries, or Git identities.
 Git requirements resolve to an immutable commit in the lock, not a moving tag.
@@ -389,7 +444,7 @@ concurrency; a deterministic seed option is not yet provided.
 
 Evidence: `test_json_timeout_and_modules`. `@test` marks a function in any
 module of the selected package with no
-parameters and result `Unit`, or `Unit throws E` (returning the failure fails
+parameters and result `Unit`, or `Outcome<Unit, E>` (returning the failure fails
 the test). Inline and file modules (`module name`) are included; displayed
 names are fully qualified, such as `network.connect`. `@ignore` /
 `@ignore("reason")` skips a test unless `--include-ignored` (run everything) or
@@ -456,7 +511,7 @@ Evidence: package cases `doc_writes_deterministic_html`,
 
 `///` documents the item that follows it (before or between its attributes) and
 `//!` the enclosing file or inline module. The lexer already keeps comments as
-tokens, so no syntax change is needed; `compiler/documentation` reads them from
+tokens, so no syntax change is needed; `bootstrap/documentation` reads them from
 the token stream. Text is markdown reduced to paragraphs, `#` headings,
 `-`/`*` lists, `` `inline code` `` and fenced blocks.
 

@@ -8,19 +8,19 @@ extend<region r> Borrowed<region r> implements RegionCarrier {
     type Item<region r> = read i32 from r
 }
 
-fn transfer<T: Transferable>(value: take T): Unit {}
-fn observe<T: Shareable>(value: read T): Unit {}
+fn transfer<T: Transferable>(take value: T): Unit {}
+fn observe<T: Shareable>(read value: T): Unit {}
 
 fn carry<region source, region r, T: RegionCarrier>(
-    carrier: read T from source,
-    value: take T.(RegionCarrier).Item<region r>
+    read carrier: T from source,
+    take value: T.(RegionCarrier).Item<region r>
 ): Unit {
     transfer(value)
 }
 
 fn keep_shared<region source, region r, T: RegionCarrier>(
-    carrier: read T from source,
-    value: read T.(RegionCarrier).Item<region r>
+    read carrier: T from source,
+    read value: T.(RegionCarrier).Item<region r>
 ): Unit {
     observe(value)
 }

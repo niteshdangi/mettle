@@ -10,24 +10,24 @@ import core.option
 type LocalError {}
 type OuterError { cause: LocalError }
 extend LocalError implements Debug {
-    fn fmt(f: mut Formatter): Unit throws fmt.Error { try f.write_str("local") }
+    fn fmt(mut f: Formatter): Unit throws fmt.Error { try f.write_str("local") }
 }
 extend LocalError implements Display {
-    fn fmt(f: mut Formatter): Unit throws fmt.Error { try f.write_str("local") }
+    fn fmt(mut f: Formatter): Unit throws fmt.Error { try f.write_str("local") }
 }
 extend LocalError implements Error {}
 extend OuterError implements Debug {
-    fn fmt(f: mut Formatter): Unit throws fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws fmt.Error {
         var builder = try f.debug_struct("OuterError")
         try builder.field("cause", read self.cause)
         try builder.finish()
     }
 }
 extend OuterError implements Display {
-    fn fmt(f: mut Formatter): Unit throws fmt.Error { try f.write_str("outer") }
+    fn fmt(mut f: Formatter): Unit throws fmt.Error { try f.write_str("outer") }
 }
 extend OuterError implements Error {
-    fn source<region r>(receiver self: read OuterError from r): (read any Error from r)? {
+    fn source<region r>(receiver read self: OuterError from r): (read any Error from r)? {
         let cause: read any Error = read self.cause
         present(cause)
     }

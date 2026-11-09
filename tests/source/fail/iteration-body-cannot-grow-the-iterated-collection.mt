@@ -2,8 +2,8 @@
 
 module core { pub module iter {
   pub interface Iterator { type Item; mut fn next(): Self.Item?; }
-  pub interface Iterable { type Item; type Iter<region r>; fn iter<region r>(receiver self: read Self from r): Self.Iter<region r>; }
-  pub interface MutableIterable { type Item; type IterMut<region r>; fn iter_mut<region r>(receiver self: mut Self from r): Self.IterMut<region r>; }
+  pub interface Iterable { type Item; type Iter<region r>; fn iter<region r>(receiver read self: Self from r): Self.Iter<region r>; }
+  pub interface MutableIterable { type Item; type IterMut<region r>; fn iter_mut<region r>(receiver mut self: Self from r): Self.IterMut<region r>; }
 } }
 extern "C" {
     unsafe fn realloc(p: ptr<mut u8>, n: usize): ptr<mut u8>;
@@ -18,7 +18,7 @@ type List<T> { ptr: ptr<mut T>; len: usize; cap: usize
     } }
 }
 extend<T> List<T> {
-    mut fn push(v: take T): Unit {
+    mut fn push(take v: T): Unit {
         if self.len == self.cap {
             let nc = if self.cap == 0usize { 4usize } else { self.cap * 2usize }
             let np = unsafe { realloc(self.ptr.cast<u8>(), nc * core.mem.size_of<T>()) }
@@ -44,7 +44,7 @@ extend<T, region r> VecIter<T, region r> implements Iterator {
 extend<T> List<T> implements Iterable {
     type Item = T
     type Iter<region r> = VecIter<T, region r>
-    fn iter<region r>(receiver self: read Self from r): VecIter<T, region r> { VecIter(read self, 0usize) }
+    fn iter<region r>(receiver read self: Self from r): VecIter<T, region r> { VecIter(read self, 0usize) }
 }
 
 type VecIterMut<T, region r> { v: mut List<T> from r; i: usize }
@@ -61,7 +61,7 @@ extend<T, region r> VecIterMut<T, region r> implements Iterator {
 extend<T> List<T> implements MutableIterable {
     type Item = T
     type IterMut<region r> = VecIterMut<T, region r>
-    fn iter_mut<region r>(receiver self: mut Self from r): VecIterMut<T, region r> { VecIterMut(mut self, 0usize) }
+    fn iter_mut<region r>(receiver mut self: Self from r): VecIterMut<T, region r> { VecIterMut(mut self, 0usize) }
 }
 
 fn main(): i32 {

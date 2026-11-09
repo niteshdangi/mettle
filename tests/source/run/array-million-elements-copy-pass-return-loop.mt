@@ -1,18 +1,18 @@
 
 static TABLE: [u8; 1_000_000] = [5; 1_000_000];
 static ZEROS: [i32; 300_000] = [0; 300_000];
-fn sum(v: read [u8; 1_000_000]): i32 {
+fn sum(read v: [u8; 1_000_000]): i32 {
     var total = 0
     for x in read v { total += x as i32 }
     total
 }
-fn byvalue(v: take [u8; 1_000_000]): i32 {
+fn byvalue(take v: [u8; 1_000_000]): i32 {
     var total = 0
     for x in take v { total += x as i32 }
     total
 }
 fn make(): [u8; 1_000_000] { [3; 1_000_000] }
-fn bump(v: mut [u8; 1_000_000]) { for x in mut v { x += 1 } }
+fn bump(mut v: [u8; 1_000_000]) { for x in mut v { x += 1 } }
 fn main(): i32 {
     var a = make()
     var b = a

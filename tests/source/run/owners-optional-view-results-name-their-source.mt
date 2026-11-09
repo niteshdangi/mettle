@@ -2,13 +2,13 @@
 type Table<K, V> { vs: ptr<mut V>; n: usize; k: Option2<K> }
 type Option2<K> { k: K }
 extend<K, V> Table<K, V> {
-    fn get(k: read K, i: usize): (read V from self)? {
+    fn get(read k: K, i: usize): (read V from self)? {
         if i < self.n { present(unsafe { read *self.vs.add(i) }) } else { none }
     }
-    mut fn get_mut(k: read K, i: usize): (mut V from self)? {
+    mut fn get_mut(read k: K, i: usize): (mut V from self)? {
         if i < self.n { present(unsafe { mut *self.vs.add(i) }) } else { none }
     }
-    fn pair(k: read K): ((read V from self), usize) { (unsafe { read *self.vs }, 1usize) }
+    fn pair(read k: K): ((read V from self), usize) { (unsafe { read *self.vs }, 1usize) }
 }
 fn main() {
     var a = [10, 20]

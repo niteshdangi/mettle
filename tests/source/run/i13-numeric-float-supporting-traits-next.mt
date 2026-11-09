@@ -16,52 +16,52 @@ fn copy_pair<T: Copy>(value: T): (T, T) { (value, value) }
 
 fn require_float_markers<T: Copy + Transferable + Shareable>(value: T) {}
 
-fn erased_type(value: read any Any): TypeId { value.type_id() }
+fn erased_type(read value: any Any): TypeId { value.type_id() }
 
-fn equal_f32(left: read f32, right: read f32): bool {
+fn equal_f32(read left: f32, read right: f32): bool {
     f32.(PartialEq<f32>).eq(left, right)
 }
 
-fn equal_f64(left: read f64, right: read f64): bool {
+fn equal_f64(read left: f64, read right: f64): bool {
     f64.(PartialEq<f64>).eq(left, right)
 }
 
-fn less_f32(left: read f32, right: read f32): bool {
+fn less_f32(read left: f32, read right: f32): bool {
     match f32.(PartialOrd<f32>).partial_cmp(left, right) {
         present(Ordering.Less) => true,
         _ => false
     }
 }
 
-fn less_f64(left: read f64, right: read f64): bool {
+fn less_f64(read left: f64, read right: f64): bool {
     match f64.(PartialOrd<f64>).partial_cmp(left, right) {
         present(Ordering.Less) => true,
         _ => false
     }
 }
 
-fn equal_order_f32(left: read f32, right: read f32): bool {
+fn equal_order_f32(read left: f32, read right: f32): bool {
     match f32.(PartialOrd<f32>).partial_cmp(left, right) {
         present(Ordering.Equal) => true,
         _ => false
     }
 }
 
-fn equal_order_f64(left: read f64, right: read f64): bool {
+fn equal_order_f64(read left: f64, read right: f64): bool {
     match f64.(PartialOrd<f64>).partial_cmp(left, right) {
         present(Ordering.Equal) => true,
         _ => false
     }
 }
 
-fn unordered_f32(left: read f32, right: read f32): bool {
+fn unordered_f32(read left: f32, read right: f32): bool {
     match f32.(PartialOrd<f32>).partial_cmp(left, right) {
         none => true,
         _ => false
     }
 }
 
-fn unordered_f64(left: read f64, right: read f64): bool {
+fn unordered_f64(read left: f64, read right: f64): bool {
     match f64.(PartialOrd<f64>).partial_cmp(left, right) {
         none => true,
         _ => false
@@ -121,10 +121,10 @@ fn main(): i32 {
     let from64 = f64.(From<f64>).from(nan64.clone())
     let into32: f32 = f32.(Into<f32>).into(nan32.clone())
     let into64: f64 = f64.(Into<f64>).into(nan64.clone())
-    let try_from32: (f32 throws Never) = f32.(TryFrom<f32>).try_from(nan32.clone())
-    let try_from64: (f64 throws Never) = f64.(TryFrom<f64>).try_from(nan64.clone())
-    let try_into32: (f32 throws Never) = f32.(TryInto<f32>).try_into(nan32.clone())
-    let try_into64: (f64 throws Never) = f64.(TryInto<f64>).try_into(nan64.clone())
+    let try_from32: (Outcome<f32, Never>) = f32.(TryFrom<f32>).try_from(nan32.clone())
+    let try_from64: (Outcome<f64, Never>) = f64.(TryFrom<f64>).try_from(nan64.clone())
+    let try_into32: (Outcome<f32, Never>) = f32.(TryInto<f32>).try_into(nan32.clone())
+    let try_into64: (Outcome<f64, Never>) = f64.(TryInto<f64>).try_into(nan64.clone())
     if from32.to_bits() != 0x7fc12345u32 ||
        from64.to_bits() != 0x7ff8123456789abcu64 ||
        into32.to_bits() != 0x7fc12345u32 ||

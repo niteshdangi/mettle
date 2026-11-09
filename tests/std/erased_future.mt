@@ -14,7 +14,7 @@ type Stable {
 
 extend Stable implements Future {
     type Output = i32
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<i32> {
         let me = unsafe { self.get_unchecked_mut() }
         let address = core.ptr.from_mut(*me).cast<u8>()
         if me.address == core.ptr.null_mut<u8>() {
@@ -34,7 +34,7 @@ type Panics {
 }
 extend Panics implements Future {
     type Output = Unit
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Unit> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Unit> {
         panic("erased future panic")
     }
 }

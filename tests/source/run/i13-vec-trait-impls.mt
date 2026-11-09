@@ -21,7 +21,7 @@ import core.ops.{Deref, DerefMut}
 import core.text.Text
 import std.io.Writer
 
-fn debug_is<T: Debug>(value: read T, expected: read Text): bool {
+fn debug_is<T: Debug>(read value: T, read expected: Text): bool {
     var buffer = [0u8; 128]
     var writer = fmt.buffer_writer(mut buffer)
     var formatter = fmt.formatter(mut writer, fmt.spec())
@@ -36,7 +36,7 @@ fn debug_is<T: Debug>(value: read T, expected: read Text): bool {
     }
 }
 
-fn as_view<V: AsRef<[i32]>>(value: read V): read [i32] from value { V.(AsRef<[i32]>).as_ref(value) }
+fn as_view<V: AsRef<[i32]>>(read value: V): read [i32] from value { V.(AsRef<[i32]>).as_ref(value) }
 
 fn main(): i32 {
     var v = vec.new<i32>()
@@ -157,4 +157,4 @@ fn main(): i32 {
     0
 }
 
-fn needs_eq<T: Eq>(value: read T): bool { true }
+fn needs_eq<T: Eq>(read value: T): bool { true }

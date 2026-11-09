@@ -4,17 +4,17 @@
 import core.convert.{From, Into, TryFrom}
 import core.float
 
-fn from_value<S, T: From<S>>(value: take S): T {
+fn from_value<S, T: From<S>>(take value: S): T {
     T.(From<S>).from(value)
 }
 
-fn into_value<S, T: From<S>>(value: take S): T {
+fn into_value<S, T: From<S>>(take value: S): T {
     S.(Into<T>).into(value)
 }
 
 fn try_identity<T: TryFrom<T>>(
-    value: take T
-): (T throws T.(TryFrom<T>).Error) {
+    take value: T
+): (Outcome<T, T.(TryFrom<T>).Error>) {
     T.(TryFrom<T>).try_from(value)
 }
 

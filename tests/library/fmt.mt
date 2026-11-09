@@ -4,7 +4,7 @@ import core.fmt.Display
 
 type Pt { x: i32; y: i32 }
 extend Pt implements Display {
-    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
         try f.write_str("(")
         try self.x.fmt(mut f)
         try f.write_str(",")
@@ -15,15 +15,15 @@ extend Pt implements Display {
 
 type Word {}
 extend Word implements Display {
-    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.pad("hello") }
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.pad("hello") }
 }
 
-fn write_text<W: fmt.Write>(sink: mut W, text: read core.text.Text, options: fmt.Spec): Unit throws fmt.Error {
+fn write_text<W: fmt.Write>(mut sink: W, read text: core.text.Text, options: fmt.Spec): Unit throws fmt.Error {
     var f = fmt.formatter(mut sink, options)
     try f.pad(text)
 }
 
-fn check<T: Display>(value: read T, options: fmt.Spec, expect: read core.text.Text): bool {
+fn check<T: Display>(read value: T, options: fmt.Spec, read expect: core.text.Text): bool {
     var storage = [0u8; 64]
     var w = fmt.buffer_writer(mut storage)
     match capture fmt.write_with(mut w, value, options) { success(u) => {}, failure(e) => { return false } }
@@ -31,7 +31,7 @@ fn check<T: Display>(value: read T, options: fmt.Spec, expect: read core.text.Te
     match fmt.written_text(read storage, n) { present(t) => t == expect, none => false }
 }
 
-fn check_lower_hex<T: fmt.LowerHex>(value: read T, options: fmt.Spec, expect: read core.text.Text): bool {
+fn check_lower_hex<T: fmt.LowerHex>(read value: T, options: fmt.Spec, read expect: core.text.Text): bool {
     var storage = [0u8; 64]
     var w = fmt.buffer_writer(mut storage)
     var f = fmt.formatter(mut w, options)
@@ -43,7 +43,7 @@ fn check_lower_hex<T: fmt.LowerHex>(value: read T, options: fmt.Spec, expect: re
     match fmt.written_text(read storage, n) { present(t) => t == expect, none => false }
 }
 
-fn check_debug<T: fmt.Debug>(value: read T, options: fmt.Spec, expect: read core.text.Text): bool {
+fn check_debug<T: fmt.Debug>(read value: T, options: fmt.Spec, read expect: core.text.Text): bool {
     var storage = [0u8; 64]
     var w = fmt.buffer_writer(mut storage)
     var f = fmt.formatter(mut w, options)
@@ -55,7 +55,7 @@ fn check_debug<T: fmt.Debug>(value: read T, options: fmt.Spec, expect: read core
     match fmt.written_text(read storage, n) { present(t) => t == expect, none => false }
 }
 
-fn check_binary<T: fmt.Binary>(value: read T, options: fmt.Spec, expect: read core.text.Text): bool {
+fn check_binary<T: fmt.Binary>(read value: T, options: fmt.Spec, read expect: core.text.Text): bool {
     var storage = [0u8; 64]
     var w = fmt.buffer_writer(mut storage)
     var f = fmt.formatter(mut w, options)
@@ -67,7 +67,7 @@ fn check_binary<T: fmt.Binary>(value: read T, options: fmt.Spec, expect: read co
     match fmt.written_text(read storage, n) { present(t) => t == expect, none => false }
 }
 
-fn check_octal<T: fmt.Octal>(value: read T, options: fmt.Spec, expect: read core.text.Text): bool {
+fn check_octal<T: fmt.Octal>(read value: T, options: fmt.Spec, read expect: core.text.Text): bool {
     var storage = [0u8; 64]
     var w = fmt.buffer_writer(mut storage)
     var f = fmt.formatter(mut w, options)
@@ -79,7 +79,7 @@ fn check_octal<T: fmt.Octal>(value: read T, options: fmt.Spec, expect: read core
     match fmt.written_text(read storage, n) { present(t) => t == expect, none => false }
 }
 
-fn check_upper_hex<T: fmt.UpperHex>(value: read T, options: fmt.Spec, expect: read core.text.Text): bool {
+fn check_upper_hex<T: fmt.UpperHex>(read value: T, options: fmt.Spec, read expect: core.text.Text): bool {
     var storage = [0u8; 64]
     var w = fmt.buffer_writer(mut storage)
     var f = fmt.formatter(mut w, options)

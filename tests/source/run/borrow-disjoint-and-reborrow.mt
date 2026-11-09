@@ -1,9 +1,9 @@
 
 type Counter { value: i32 }
 type Pair { first: Counter; second: Counter }
-fn increment(c: mut Counter) { c.value += 1 }
+fn increment(mut c: Counter) { c.value += 1 }
 fn inspect(c: Counter) { c.value }
-fn both(a: mut Counter, b: mut Counter) {
+fn both(mut a: Counter, mut b: Counter) {
     increment(a)
     increment(b)
     inspect(a) + inspect(b)

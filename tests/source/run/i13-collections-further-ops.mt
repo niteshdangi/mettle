@@ -17,7 +17,7 @@ extend Counted implements Clone {
     fn clone(): Counted { Counted(self.value, self.drops) }
 }
 extend Counted implements PartialEq {
-    fn eq(other: read Counted): bool { self.value == other.value }
+    fn eq(read other: Counted): bool { self.value == other.value }
 }
 extend Counted implements Eq {}
 

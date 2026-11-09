@@ -7,7 +7,7 @@ import core.fmt
 import core.fmt.{ Debug, Display }
 import core.ops.{ Deref, DerefMut }
 
-fn require_debug<T: Debug>(value: read T, prefix: read core.text.Text): Unit {
+fn require_debug<T: Debug>(read value: T, read prefix: core.text.Text): Unit {
     var output = alloc.string.new()
     {
         var formatter = fmt.formatter(mut output, fmt.spec())
@@ -19,7 +19,7 @@ fn require_debug<T: Debug>(value: read T, prefix: read core.text.Text): Unit {
     assert(output.as_text().starts_with(read prefix), "sync Debug output prefix")
 }
 
-fn require_display<T: Display>(value: read T, expected: read core.text.Text): Unit {
+fn require_display<T: Display>(read value: T, read expected: core.text.Text): Unit {
     var output = alloc.string.new()
     {
         var formatter = fmt.formatter(mut output, fmt.spec())
@@ -31,13 +31,13 @@ fn require_display<T: Display>(value: read T, expected: read core.text.Text): Un
     assert(output.as_text() == expected, "sync Display output")
 }
 
-fn require_error<T: CoreError>(value: read T): Unit {}
+fn require_error<T: CoreError>(read value: T): Unit {}
 
-fn from_value<T: From<i32>>(value: take i32): T {
+fn from_value<T: From<i32>>(take value: i32): T {
     T.(From<i32>).from(value)
 }
 
-fn borrowed_value<T: Borrow<i32>>(value: read T): i32 {
+fn borrowed_value<T: Borrow<i32>>(read value: T): i32 {
     *value.borrow()
 }
 

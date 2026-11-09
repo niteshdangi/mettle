@@ -29,26 +29,26 @@ fn make_second(): Marker {
     Marker(thread.current().raw == MAIN_THREAD.load(core.sync.atomic.Ordering.Relaxed), 2u8)
 }
 
-fn write_line(text: read [u8]): Unit {
+fn write_line(read text: [u8]): Unit {
     let _written = capture io.write_fd(1, text)
 }
 
 fn main(): i32 {
     MAIN_THREAD.store(thread.current().raw, core.sync.atomic.Ordering.Relaxed)
-    let first = FIRST.with(take fn(value: read Marker): bool { value.main })
+    let first = FIRST.with(take fn(read value: Marker): bool { value.main })
     match take first {
         present(value) => { if !value { return 1 } },
         none => { return 2 }
     }
-    let second = SECOND.with(take fn(value: read Marker): bool { value.main })
+    let second = SECOND.with(take fn(read value: Marker): bool { value.main })
     match take second {
         present(value) => { if !value { return 3 } },
         none => { return 4 }
     }
 
     let worker = thread.spawn(take fn(): i32 {
-        let worker_first = FIRST.with(take fn(value: read Marker): bool { value.main })
-        let worker_second = SECOND.with(take fn(value: read Marker): bool { value.main })
+        let worker_first = FIRST.with(take fn(read value: Marker): bool { value.main })
+        let worker_second = SECOND.with(take fn(read value: Marker): bool { value.main })
         let first_is_local = match take worker_first {
             present(value) => !value,
             none => false

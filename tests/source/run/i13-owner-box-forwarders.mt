@@ -11,7 +11,7 @@ import core.text.Text
 
 type ByteSum { total: u64 }
 extend ByteSum implements Hasher {
-    mut fn write(bytes: read [u8]): Unit {
+    mut fn write(read bytes: [u8]): Unit {
         var index = 0usize
         while index < bytes.len() {
             self.total += bytes[index] as u64
@@ -24,25 +24,25 @@ extend ByteSum implements Hasher {
 type LocalError {}
 type OuterError { cause: LocalError }
 extend LocalError implements Debug {
-    fn fmt(f: mut Formatter): Unit throws fmt.Error { try f.write_str("local") }
+    fn fmt(mut f: Formatter): Unit throws fmt.Error { try f.write_str("local") }
 }
 extend LocalError implements Display {
-    fn fmt(f: mut Formatter): Unit throws fmt.Error { try f.write_str("local") }
+    fn fmt(mut f: Formatter): Unit throws fmt.Error { try f.write_str("local") }
 }
 extend LocalError implements Error {}
 extend OuterError implements Debug {
-    fn fmt(f: mut Formatter): Unit throws fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws fmt.Error {
         var builder = try f.debug_struct("OuterError")
         try builder.field("cause", read self.cause)
         try builder.finish()
     }
 }
 extend OuterError implements Display {
-    fn fmt(f: mut Formatter): Unit throws fmt.Error { try f.write_str("outer") }
+    fn fmt(mut f: Formatter): Unit throws fmt.Error { try f.write_str("outer") }
 }
 extend OuterError implements Error {
     fn source<region r>(
-        receiver self: read OuterError from r
+        receiver read self: OuterError from r
     ): (read any Error from r)? {
         let cause: read any Error = read self.cause
         present(cause)
@@ -55,7 +55,7 @@ type DropItem {
 }
 
 fn check_boxed_iterator<I: Iterator<Item = i32> + BidirectionalIterator + ExactSizeIterator + FusedIterator + unsized>(
-    items: take boxed.Box<I>
+    take items: boxed.Box<I>
 ): bool {
     var values = items
     if values.len() != 4usize { return false }

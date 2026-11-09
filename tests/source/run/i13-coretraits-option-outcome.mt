@@ -14,44 +14,44 @@ fn main(): i32 {
         present(value) => { if value != 5 { return 5 } },
         none => { return 5 }
     }
-    if !present(6i32).is_some_and(fn(value: take i32): bool { value == 6 }) {
+    if !present(6i32).is_some_and(fn(take value: i32): bool { value == 6 }) {
         return 6
     }
     let absent_for_none_or: i32? = none
-    if !absent_for_none_or.is_none_or(fn(value: take i32): bool { value == 0 }) { return 7 }
+    if !absent_for_none_or.is_none_or(fn(take value: i32): bool { value == 0 }) { return 7 }
     if present(8i32).map_or_else(
         fn(): i32 { 0 },
-        fn(value: take i32): i32 { value }
+        fn(take value: i32): i32 { value }
     ) != 8 {
         return 8
     }
     let absent_for_map: i32? = none
-    if absent_for_map.map_or_default(fn(value: take i32): i32 { value }) != 0 { return 9 }
+    if absent_for_map.map_or_default(fn(take value: i32): i32 { value }) != 0 { return 9 }
     let absent_for_default: i32? = none
     if absent_for_default.unwrap_or_default() != 0 { return 10 }
 
     let (left, right) = present((11i32, 12i32)).unzip()
     if left.unwrap() != 11 || right.unwrap() != 12 { return 11 }
 
-    let failure_value: (i32 throws i32) = failure(13i32)
+    let failure_value: (Outcome<i32, i32>) = failure(13i32)
     if failure_value.map_or_else(
-        fn(error: take i32): i32 { error },
-        fn(value: take i32): i32 { value }
+        fn(take error: i32): i32 { error },
+        fn(take value: i32): i32 { value }
     ) != 13 {
         return 12
     }
-    let failure_value: (i32 throws i32) = failure(14i32)
+    let failure_value: (Outcome<i32, i32>) = failure(14i32)
     if failure_value.unwrap_or_default() != 0 { return 13 }
-    let failure_value: (i32 throws i32) = failure(15i32)
+    let failure_value: (Outcome<i32, i32>) = failure(15i32)
     if failure_value.expect_failure("expected failure") != 15 { return 14 }
 
-    let success_value: (i32 throws i32) = success(16i32)
-    let combined: (i32 throws i32) = success_value.and(failure(17i32))
+    let success_value: (Outcome<i32, i32>) = success(16i32)
+    let combined: (Outcome<i32, i32>) = success_value.and(failure(17i32))
     match combined {
         success(value) => { return 15 },
         failure(error) => { if error != 17 { return 15 } }
     }
-    let option_result: (i32 throws i32)? = present(success(18i32))
+    let option_result: (Outcome<i32, i32>)? = present(success(18i32))
     match take option_result.transpose() {
         success(value) => match value {
             present(item) => { if item != 18 { return 16 } },
@@ -59,23 +59,23 @@ fn main(): i32 {
         },
         failure(error) => { return 16 }
     }
-    let result_option: (i32? throws i32) = success(present(19i32))
+    let result_option: (Outcome<i32?, i32>) = success(present(19i32))
     match take result_option.transpose() {
         present(success(item)) => { if item != 19 { return 17 } },
         present(failure(error)) => { return 17 },
         none => { return 17 }
     }
-    let failed_option: (i32 throws i32)? = present(failure(20i32))
+    let failed_option: (Outcome<i32, i32>)? = present(failure(20i32))
     match take failed_option.transpose() {
         success(value) => { return 18 },
         failure(error) => { if error != 20 { return 18 } }
     }
-    let empty_option: (i32 throws i32)? = none
+    let empty_option: (Outcome<i32, i32>)? = none
     match take empty_option.transpose() {
         success(value) => { if value.is_present() { return 19 } },
         failure(error) => { return 19 }
     }
-    let failed_outcome: (i32? throws i32) = failure(21i32)
+    let failed_outcome: (Outcome<i32?, i32>) = failure(21i32)
     match take failed_outcome.transpose() {
         present(success(value)) => { return 20 },
         present(failure(error)) => { if error != 21 { return 20 } },

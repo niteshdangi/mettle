@@ -6,11 +6,11 @@ fn inspect(counter: Counter): i32 {
     counter.value
 }
 
-fn increment(counter: mut Counter) {
+fn increment(mut counter: Counter) {
     counter.value += 1
 }
 
-fn finish(counter: take Counter): i32 {
+fn finish(take counter: Counter): i32 {
     counter.value
 }
 

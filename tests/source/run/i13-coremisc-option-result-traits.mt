@@ -36,10 +36,10 @@ fn checks_option(): i32 {
 }
 
 fn checks_result(): i32 {
-    let ok: (i32 throws i32) = success(7i32)
-    let bad: (i32 throws i32) = failure(8i32)
-    let ok_again: (i32 throws i32) = success(7i32)
-    let ok_nine: (i32 throws i32) = success(9i32)
+    let ok: (Outcome<i32, i32>) = success(7i32)
+    let bad: (Outcome<i32, i32>) = failure(8i32)
+    let ok_again: (Outcome<i32, i32>) = success(7i32)
+    let ok_nine: (Outcome<i32, i32>) = success(9i32)
     if ok.clone() != ok_again || bad.clone() == ok { return 20 }
     if ok == bad || ok != ok_again { return 21 }
     if !(ok < bad) || bad < ok { return 22 }
@@ -60,9 +60,9 @@ fn checks_conversion_and_iteration(): i32 {
     var total = 0
     let present_value: i32? = present(3i32)
     for value in take present_value { total += value }
-    let success_value: (i32 throws i32) = success(4i32)
+    let success_value: (Outcome<i32, i32>) = success(4i32)
     for value in take success_value { total += value }
-    let failure_value: (i32 throws i32) = failure(9i32)
+    let failure_value: (Outcome<i32, i32>) = failure(9i32)
     for value in take failure_value { total += value }
     let absent: i32? = none
     for value in take absent { total += value }
@@ -70,7 +70,7 @@ fn checks_conversion_and_iteration(): i32 {
     0
 }
 
-fn from_value<T: From<i32>>(value: take i32): T { T.(From<i32>).from(value) }
+fn from_value<T: From<i32>>(take value: i32): T { T.(From<i32>).from(value) }
 
 fn main(): i32 {
     let option_status = checks_option()

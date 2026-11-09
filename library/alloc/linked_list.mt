@@ -26,7 +26,7 @@ pub type LinkedList<T, A: Allocator = Global> {
     }
 }
 
-pub fn new_in<T, A: Allocator>(a: take A): LinkedList<T, A> {
+pub fn new_in<T, A: Allocator>(take a: A): LinkedList<T, A> {
     LinkedList(core.ptr.null_mut<Node<T>>(), core.ptr.null_mut<Node<T>>(), 0usize, a)
 }
 pub fn new<T>(): LinkedList<T> { new_in(Global()) }
@@ -39,13 +39,13 @@ extend<T, A: Allocator> LinkedList<T, A> {
     pub fn len(): usize { self.len }
     pub fn is_empty(): bool { self.len == 0usize }
 
-    mut fn alloc_node(value: take T, prev: ptr<mut Node<T>>, next: ptr<mut Node<T>>): ptr<mut Node<T>> throws AllocError {
+    mut fn alloc_node(take value: T, prev: ptr<mut Node<T>>, next: ptr<mut Node<T>>): ptr<mut Node<T>> throws AllocError {
         let raw = try self.a.allocate(layout_of<Node<T>>())
         let n = raw.cast<Node<T>>()
         unsafe { core.ptr.write(n, Node(value, prev, next)) }
         n
     }
-    pub mut fn try_push_back(value: take T): Unit throws PushError<T> {
+    pub mut fn try_push_back(take value: T): Unit throws PushError<T> {
         let raw = match capture self.a.allocate(layout_of<Node<T>>()) {
             success(p) => p,
             failure(error) => { throw PushError(value, error) }
@@ -56,7 +56,7 @@ extend<T, A: Allocator> LinkedList<T, A> {
         self.tail = n
         self.len += 1usize
     }
-    pub mut fn try_push_front(value: take T): Unit throws PushError<T> {
+    pub mut fn try_push_front(take value: T): Unit throws PushError<T> {
         let raw = match capture self.a.allocate(layout_of<Node<T>>()) {
             success(p) => p,
             failure(error) => { throw PushError(value, error) }
@@ -67,7 +67,7 @@ extend<T, A: Allocator> LinkedList<T, A> {
         self.head = n
         self.len += 1usize
     }
-    pub mut fn push_back(value: take T): Unit {
+    pub mut fn push_back(take value: T): Unit {
         let n = match capture self.alloc_node(value, self.tail, core.ptr.null_mut<Node<T>>()) {
             success(n) => n,
             failure(_) => handle_alloc_error(layout_of<Node<T>>())
@@ -76,11 +76,11 @@ extend<T, A: Allocator> LinkedList<T, A> {
         self.tail = n
         self.len += 1usize
     }
-    pub mut fn push_back_mut(value: take T): mut T from self {
+    pub mut fn push_back_mut(take value: T): mut T from self {
         self.push_back(value)
         unsafe { mut (*self.tail).value }
     }
-    pub mut fn push_front(value: take T): Unit {
+    pub mut fn push_front(take value: T): Unit {
         let n = match capture self.alloc_node(value, core.ptr.null_mut<Node<T>>(), self.head) {
             success(n) => n,
             failure(_) => handle_alloc_error(layout_of<Node<T>>())
@@ -89,7 +89,7 @@ extend<T, A: Allocator> LinkedList<T, A> {
         self.head = n
         self.len += 1usize
     }
-    pub mut fn push_front_mut(value: take T): mut T from self {
+    pub mut fn push_front_mut(take value: T): mut T from self {
         self.push_front(value)
         unsafe { mut (*self.head).value }
     }
@@ -157,7 +157,7 @@ extend<T, A: Allocator> LinkedList<T, A> {
     }
 
     pub mut fn extract_if<F: mut fn(mut T): bool>(
-        test: take F
+        take test: F
     ): LinkedListExtractIf<region self, T, A, F> {
         let first = self.head
         let remaining = self.len
@@ -172,7 +172,7 @@ extend<T, A: Allocator> LinkedList<T, A> {
 }
 
 extend<T: PartialEq, A: Allocator> LinkedList<T, A> {
-    pub fn contains(value: read T): bool {
+    pub fn contains(read value: T): bool {
         var node = self.head
         let null = core.ptr.null_mut<Node<T>>()
         while node != null {
@@ -199,7 +199,7 @@ extend<T, A: Allocator + Clone> LinkedList<T, A> {
 // Global lists can splice nodes directly; custom allocators need an explicit
 // compatibility contract before their independently owned node blocks can mix.
 extend<T> LinkedList<T> {
-    pub mut fn append(other: mut LinkedList<T>): Unit {
+    pub mut fn append(mut other: LinkedList<T>): Unit {
         let total = match self.len.checked_add(other.len) {
             present(n) => n,
             none => super.alloc.panic_precondition()
@@ -297,7 +297,7 @@ extend<region r, T, A: Allocator> ListIter<region r, T, A> implements FusedItera
 extend<T, A: Allocator> LinkedList<T, A> implements Iterable {
     type Item = T
     type Iter<region r> = ListIter<region r, T, A>
-    fn iter<region r>(receiver self: read Self from r): ListIter<region r, T, A> {
+    fn iter<region r>(receiver read self: Self from r): ListIter<region r, T, A> {
         ListIter(read self, self.head, self.tail, self.len)
     }
 }
@@ -334,7 +334,7 @@ extend<region r, T, A: Allocator> ListIterMut<region r, T, A> implements FusedIt
 extend<T, A: Allocator> LinkedList<T, A> implements MutableIterable {
     type Item = T
     type IterMut<region r> = ListIterMut<region r, T, A>
-    fn iter_mut<region r>(receiver self: mut Self from r): ListIterMut<region r, T, A> {
+    fn iter_mut<region r>(receiver mut self: Self from r): ListIterMut<region r, T, A> {
         let front = self.head
         let back = self.tail
         let remaining = self.len
@@ -359,7 +359,7 @@ extend<T, A: Allocator> LinkedListIntoIter<T, A> implements FusedIterator {}
 extend<T, A: Allocator> LinkedList<T, A> implements OwnedIterable {
     type Item = T
     type IntoIter = LinkedListIntoIter<T, A>
-    fn into_iter(receiver self: take Self): LinkedListIntoIter<T, A> {
+    fn into_iter(receiver take self: Self): LinkedListIntoIter<T, A> {
         LinkedListIntoIter(take self)
     }
 }
@@ -376,7 +376,7 @@ extend<T: Clone, A: Allocator + Clone> LinkedList<T, A> implements Clone {
     }
 }
 extend<T: PartialEq, A: Allocator> LinkedList<T, A> implements PartialEq {
-    fn eq(other: read LinkedList<T, A>): bool {
+    fn eq(read other: LinkedList<T, A>): bool {
         if self.len != other.len { return false }
         var p = self.head
         var q = other.head
@@ -390,7 +390,7 @@ extend<T: PartialEq, A: Allocator> LinkedList<T, A> implements PartialEq {
 }
 extend<T: Eq, A: Allocator> LinkedList<T, A> implements Eq {}
 extend<T: PartialOrd, A: Allocator> LinkedList<T, A> implements PartialOrd {
-    fn partial_cmp(other: read LinkedList<T, A>): Ordering? {
+    fn partial_cmp(read other: LinkedList<T, A>): Ordering? {
         var p = self.head
         var q = other.head
         while p != core.ptr.null_mut<Node<T>>() && q != core.ptr.null_mut<Node<T>>() {
@@ -405,7 +405,7 @@ extend<T: PartialOrd, A: Allocator> LinkedList<T, A> implements PartialOrd {
     }
 }
 extend<T: Ord, A: Allocator> LinkedList<T, A> implements Ord {
-    fn cmp(other: read LinkedList<T, A>): Ordering {
+    fn cmp(read other: LinkedList<T, A>): Ordering {
         var p = self.head
         var q = other.head
         while p != core.ptr.null_mut<Node<T>>() && q != core.ptr.null_mut<Node<T>>() {
@@ -418,7 +418,7 @@ extend<T: Ord, A: Allocator> LinkedList<T, A> implements Ord {
     }
 }
 extend<T: Hash, A: Allocator> LinkedList<T, A> implements Hash {
-    fn hash<H: Hasher>(state: mut H): Unit {
+    fn hash<H: Hasher>(mut state: H): Unit {
         state.write_usize(self.len)
         var p = self.head
         while p != core.ptr.null_mut<Node<T>>() {
@@ -428,7 +428,7 @@ extend<T: Hash, A: Allocator> LinkedList<T, A> implements Hash {
     }
 }
 extend<T: fmt.Debug, A: Allocator> LinkedList<T, A> implements fmt.Debug {
-    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
         try f.debug_open("[")
         var p = self.head
         var first = true
@@ -443,7 +443,7 @@ extend<T: fmt.Debug, A: Allocator> LinkedList<T, A> implements fmt.Debug {
     }
 }
 extend<T, A: Allocator> LinkedList<T, A> implements ExtendItems<T> {
-    mut fn extend<I: OwnedIterable<Item = T>>(items: take I): Unit {
+    mut fn extend<I: OwnedIterable<Item = T>>(take items: I): Unit {
         var source = items.into_iter()
         while true {
             match take source.next() { present(item) => { self.push_back(item) }, none => { break } }
@@ -451,7 +451,7 @@ extend<T, A: Allocator> LinkedList<T, A> implements ExtendItems<T> {
     }
 }
 extend<T> LinkedList<T> implements FromItems<T> {
-    static fn from_iter<I: OwnedIterable<Item = T>>(items: take I): LinkedList<T> {
+    static fn from_iter<I: OwnedIterable<Item = T>>(take items: I): LinkedList<T> {
         var out = new<T>()
         out.extend(items)
         out

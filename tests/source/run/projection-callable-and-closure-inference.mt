@@ -17,7 +17,7 @@ extend<B, I: Iterator, F: fn(I.(Iterator).Item): B> Mapped<I, F> implements Iter
         match self.iter.next() { present(x) => present(self.f(x)), none => none }
     }
 }
-fn map<B, I: Iterator, F: fn(I.(Iterator).Item): B>(it: take I, f: take F): Mapped<I, F> { Mapped(it, f) }
+fn map<B, I: Iterator, F: fn(I.(Iterator).Item): B>(take it: I, take f: F): Mapped<I, F> { Mapped(it, f) }
 type Take<I> { iter: I; n: usize }
 extend<T, I: Iterator<Item = T>> Take<I> implements Iterator {
     type Item = T
@@ -27,8 +27,8 @@ extend<T, I: Iterator<Item = T>> Take<I> implements Iterator {
         self.iter.next()
     }
 }
-fn wrap<I: Iterator>(it: take I, w: take Box<I.(Iterator).Item>): Box<I.(Iterator).Item> { w }
-fn apply<B, F: fn(i32): B>(f: take F): B { f(1) }
+fn wrap<I: Iterator>(take it: I, take w: Box<I.(Iterator).Item>): Box<I.(Iterator).Item> { w }
+fn apply<B, F: fn(i32): B>(take f: F): B { f(1) }
 fn apply_ptr<B>(f: fn(i32): B, x: i32): B { f(x) }
 fn plus(x: i32): i32 { x + 1 }
 fn main(): i32 {

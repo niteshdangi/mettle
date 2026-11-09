@@ -1,4 +1,4 @@
-fn consume(value: take i32): Unit {
+fn consume(take value: i32): Unit {
 }
 
 fn main(): i32 {

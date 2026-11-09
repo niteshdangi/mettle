@@ -3,7 +3,7 @@ type Counter { log: ptr<mut i32>; n: i32; drop { unsafe { *self.log = *self.log 
 type YieldOnce { value: i32; yielded: bool }
 extend YieldOnce implements Future {
     type Output = i32
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<i32> {
         let me = unsafe { self.get_unchecked_mut() }
         if me.yielded { Poll.Ready(me.value) } else {
             me.yielded = true
@@ -16,7 +16,7 @@ async fn outer(): i32 {
     let f = alloc.boxed.pin(seven())
     await f
 }
-fn drive<F: Future>(future: take F): F.Output {
+fn drive<F: Future>(take future: F): F.Output {
     let waker = noop_waker()
     var slot = core.pin.pin(future)
     loop {

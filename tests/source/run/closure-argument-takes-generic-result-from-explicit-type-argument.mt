@@ -1,5 +1,5 @@
 
-fn apply<B>(f: take fn(i32): B): B { f(1) }
+fn apply<B>(take f: fn(i32): B): B { f(1) }
 type Holder<P> { p: P }
 fn main(): i32 {
     let a = apply<i32>(fn(x: i32): i32 { x + 41 })

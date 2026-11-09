@@ -1,5 +1,5 @@
 
-fn fallback(value: mut i32) { value += 1; 42 }
+fn fallback(mut value: i32) { value += 1; 42 }
 fn main() {
     var calls = 0
     let first: i32? = present(42)

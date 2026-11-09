@@ -1,10 +1,10 @@
 import core.option
 import core.outcome
-fn dbl(x: take i32): i32 { x * 2 }
-fn bigger(x: read i32): bool { x > 5 }
-fn half(x: take i32): (i32 throws i32) { if x % 2 == 0 { success(x / 2) } else { failure(x) } }
+fn dbl(take x: i32): i32 { x * 2 }
+fn bigger(read x: i32): bool { x > 5 }
+fn half(take x: i32): (Outcome<i32, i32>) { if x % 2 == 0 { success(x / 2) } else { failure(x) } }
 fn zero(): i32 { 0 }
-fn neg(e: take i32): i32 { -e }
+fn neg(take e: i32): i32 { -e }
 fn s(v: i32): i32? { present(v) }
 fn z(): i32? { none }
 fn main(): i32 {
@@ -22,7 +22,7 @@ fn main(): i32 {
     let old = a.replace(9)
     if old.is_present() || a.expect("x") != 9 { return 9 }
     match z().ok_or(7) { success(v) => { return 10 }, failure(e) => { if e != 7 { return 11 } } }
-    let r: (i32 throws i32) = success(8)
+    let r: (Outcome<i32, i32>) = success(8)
     if r.map(dbl).unwrap() != 16 { return 12 }
     if half(7).is_success() || half(7).err().unwrap() != 7 { return 14 }
     if half(8).and_then(half).unwrap() != 2 { return 15 }

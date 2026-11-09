@@ -12,7 +12,7 @@ type List<T> { ptr: ptr<mut T>; len: usize; cap: usize
     } }
 }
 extend<T> List<T> {
-    mut fn push(v: take T): Unit {
+    mut fn push(take v: T): Unit {
         if self.len == self.cap {
             let nc = if self.cap == 0usize { 4usize } else { self.cap * 2usize }
             let np = unsafe { realloc(self.ptr.cast<u8>(), nc * core.mem.size_of<T>()) }
@@ -29,7 +29,7 @@ extend<region r> Cursor<region r> {
     fn peek(): read i32 from r { unsafe { read *self.v.ptr } }
     mut fn grow(x: i32): Unit { self.v.push(x) }
 }
-fn grab<region r>(c: mut Cursor<region r>): read i32 from r { c.peek() }
+fn grab<region r>(mut c: Cursor<region r>): read i32 from r { c.peek() }
 fn main(): i32 {
     var v = new_vec<i32>()
     v.push(1)

@@ -9,11 +9,11 @@ type Counted {
     drop { unsafe { *self.drops += 1usize } }
 }
 
-fn exact_len<I: ExactSizeIterator>(items: read I): usize {
+fn exact_len<I: ExactSizeIterator>(read items: I): usize {
     I.(ExactSizeIterator).len(items)
 }
 
-fn require_fused<I: FusedIterator>(items: take I): Unit {
+fn require_fused<I: FusedIterator>(take items: I): Unit {
     let _ = items
 }
 
@@ -173,7 +173,7 @@ fn main(): i32 {
         return 43
     }
     {
-        var items = list.extract_if(fn(value: mut i32): bool {
+        var items = list.extract_if(fn(mut value: i32): bool {
             value == 20
         })
         if items.size_hint() != (0usize, present(3usize)) { return 44 }
@@ -260,7 +260,7 @@ fn main(): i32 {
     filtered.push(2)
     filtered.push(3)
     {
-        var items = filtered.extract_if(core.iter.range_full(), fn(value: mut i32): bool {
+        var items = filtered.extract_if(core.iter.range_full(), fn(mut value: i32): bool {
             value % 2 == 0
         })
         if items.size_hint() != (0usize, present(3usize)) { return 60 }

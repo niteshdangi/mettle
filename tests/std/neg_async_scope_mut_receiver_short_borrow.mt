@@ -5,7 +5,7 @@ import std.thread.{Brand, Within}
 type Child<region r> { value: read i32 from r }
 extend<region r> Child<region r> implements Future {
     type Output = i32
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<i32> {
         let me = unsafe { self.get_unchecked_mut() }
         Poll.Ready(*me.value)
     }
@@ -18,7 +18,7 @@ type Registry<region s> {
     brand: core.cell.Cell<Brand<region s>>
 }
 extend<region s> Registry<region s> {
-    mut fn register<F: Future<Output = i32> + Within<region s>>(future: take F): Unit {}
+    mut fn register<F: Future<Output = i32> + Within<region s>>(take future: F): Unit {}
     fn value(): i32 { *self.anchor }
 }
 

@@ -28,7 +28,7 @@ fn checks_size_and_boundaries(): i32 {
     0
 }
 
-fn text_is(value: (read Text)?, expected: read Text): bool {
+fn text_is(value: (read Text)?, read expected: Text): bool {
     match value {
         present(found) => found == expected,
         none => false

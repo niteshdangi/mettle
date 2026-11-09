@@ -1,0 +1,9 @@
+name: "resolution-app"
+version: "0.1.0"
+registry {
+    path: "../../registry"
+}
+dependencies {
+    left: "../left"
+    right: "../right"
+}

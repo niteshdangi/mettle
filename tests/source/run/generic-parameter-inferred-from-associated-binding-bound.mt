@@ -8,7 +8,7 @@ extend Counter implements Iterator {
         if self.n < self.max { let v = self.n; self.n += 1; present(v) } else { none }
     }
 }
-fn sum<T, I: Iterator<Item = T>>(it: take I, first: take T): T {
+fn sum<T, I: Iterator<Item = T>>(take it: I, take first: T): T {
     var iter = it
     var acc = first
     while true { match take iter.next() { present(x) => { acc = x }, none => { break } } }

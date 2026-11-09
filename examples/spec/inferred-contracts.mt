@@ -21,7 +21,7 @@ pub fn accept_nonnegative(value: i32) throws ParseError {
     value
 }
 
-fn stored(value: i32): (i32 throws ParseError) {
+fn stored(value: i32): (Outcome<i32, ParseError>) {
     capture accept_nonnegative(value)
 }
 

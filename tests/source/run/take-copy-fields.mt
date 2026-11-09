@@ -1,6 +1,6 @@
 
 copy type Pair { x: i32; y: i32 }
-fn consume(value: take i32) { value }
+fn consume(take value: i32) { value }
 fn main() {
     var p = Pair(20, 22)
     let x = take p.x

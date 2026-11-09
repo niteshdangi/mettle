@@ -1,0 +1,5 @@
+name: "proc-app"
+version: "0.1.0"
+dependencies {
+    genfn: "../genfn"
+}

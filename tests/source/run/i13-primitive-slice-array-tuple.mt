@@ -6,7 +6,7 @@ import core.hash.{Fnv1a, Hash, Hasher, fnv1a}
 import core.iter.ExactSizeIterator
 import alloc.vec
 
-fn digest<T: Hash>(value: read T): u64 {
+fn digest<T: Hash>(read value: T): u64 {
     var h = fnv1a()
     value.hash(mut h)
     h.finish()

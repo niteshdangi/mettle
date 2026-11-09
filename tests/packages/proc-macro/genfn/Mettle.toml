@@ -1,8 +1,0 @@
-[package]
-name = "genfn"
-version = "0.1.0"
-language = "mettle-1"
-
-[macros.make_fn]
-source = "macros/make_fn.mt"
-api = 1

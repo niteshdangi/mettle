@@ -6,11 +6,11 @@ extend<T> [T] implements Weigh { fn weight(): usize { self.len() } }
 type Counter { n: usize }
 extend Counter implements Weigh { fn weight(): usize { self.n } }
 
-fn by_read(item: read Weigh): usize { item.weight() }
+fn by_read(read item: Weigh): usize { item.weight() }
 fn by_default(item: Weigh): usize { item.weight() }
-fn by_take(item: take Weigh): usize { item.weight() }
-fn of_slice(items: read [u8]): usize { by_read(items) }
-fn twice(a: read Weigh, b: read Weigh): usize { a.weight() + b.weight() }
+fn by_take(take item: Weigh): usize { item.weight() }
+fn of_slice(read items: [u8]): usize { by_read(items) }
+fn twice(read a: Weigh, read b: Weigh): usize { a.weight() + b.weight() }
 
 fn main(): i32 {
     let words = [1u8, 2u8, 3u8]

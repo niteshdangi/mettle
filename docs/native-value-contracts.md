@@ -10,7 +10,7 @@ their implementation, constant evaluation or target execution. The
 ## 1. Values, access and effects
 
 `T?` contains either `present(value: T)` or `none`.
-`(T throws E)` contains either `success(value: T)` or `failure(error: E)`.
+`(Outcome<T, E>)` contains either `success(value: T)` or `failure(error: E)`.
 Only the active alternative owns initialized payload storage. Constructing,
 matching and moving these values adds no allocation, reference counting,
 payload cloning or stack-trace capture. Payload destruction follows the normal
@@ -156,7 +156,7 @@ pair and `(none, none)` otherwise. No payload cloning occurs.
 `flatten()` on `(T?)?` returns the inner optional when the outer is present
 and `none` otherwise.
 
-`transpose()` on `(T throws E)?` maps:
+`transpose()` on `(Outcome<T, E>)?` maps:
 
 - `none` to `success(none)`;
 - `present(success(value))` to `success(present(value))`;
@@ -175,7 +175,7 @@ without invoking the callback. Normal callback cleanup and panic rules apply.
 
 ## 5. Stored-outcome queries and projections
 
-These queries read `(T throws E)`:
+These queries read `(Outcome<T, E>)`:
 
 | Operation | Result |
 | --- | --- |
@@ -196,7 +196,7 @@ remain tied to the receiver; dereferencing runs only on success.
 
 ## 6. Stored-outcome extraction
 
-These operations consume `(T throws E)`:
+These operations consume `(Outcome<T, E>)`:
 
 | Operation | Success branch | Failure branch |
 | --- | --- | --- |
@@ -253,9 +253,9 @@ For outcomes whose success payload is a read or exclusive view of T,
 `T: Clone` clones it. A failure transfers E unchanged; it does not clone or
 copy E. The backing owner of a successful view is not consumed.
 
-`flatten()` on `((T throws E) throws E)` returns the inner outcome on outer
+`flatten()` on `(Outcome<(Outcome<T, E>), E>)` returns the inner outcome on outer
 success and the outer error on outer failure.
-`transpose()` on `(T? throws E)` maps:
+`transpose()` on `(Outcome<T?, E>)` maps:
 
 - `success(none)` to `none`;
 - `success(present(value))` to `present(success(value))`;

@@ -1,5 +1,5 @@
 
-fn identity(value: read i32): read i32 from value { read value }
+fn identity(read value: i32): read i32 from value { read value }
 fn main() {
     var value = 40
     let view = identity(value)

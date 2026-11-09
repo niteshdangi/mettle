@@ -690,7 +690,7 @@ Refreeze tool/ledger and continue on installed Ubuntu 26.04 WSL with actual
 identities (no distro/libc mandate). Repair qualification does not close the
 larger language inventory.
 
-**L054 status (const evaluation): implemented and verified on macOS ARM64.** The `compiler/consteval` evaluator and `const fn` are wired into constants, array lengths, constant generic arguments and statics. Evidence: `tests/source/{run,fail}/const-eval-*.mt` (Debug and Release, including the recursion-depth limit, which evaluates on a dedicated large stack) and `compiler.consteval-target` (`tests/consteval/target_width.cpp`); the driver admits no 32-bit target, so target-width evidence is that checker-level unit test. Gap addressed, verified on macOS arm64: a mutable unsuffixed integer local in a `const fn` (`var i = 0`) stays open instead of being fixed to `i32`; assignment of a typed value or a use against a scalar expectation fixes its type (`tests/source/run/const-eval-open-integer-local.mt`). An immutable `let` or a copy into another binding still defaults to `i32`.
+**L054 status (const evaluation): implemented and verified on macOS ARM64.** The `bootstrap/consteval` evaluator and `const fn` are wired into constants, array lengths, constant generic arguments and statics. Evidence: `tests/source/{run,fail}/const-eval-*.mt` (Debug and Release, including the recursion-depth limit, which evaluates on a dedicated large stack) and `compiler.consteval-target` (`tests/consteval/target_width.cpp`); the driver admits no 32-bit target, so target-width evidence is that checker-level unit test. Gap addressed, verified on macOS arm64: a mutable unsuffixed integer local in a `const fn` (`var i = 0`) stays open instead of being fixed to `i32`; assignment of a typed value or a use against a scalar expectation fixes its type (`tests/source/run/const-eval-open-integer-local.mt`). An immutable `let` or a copy into another binding still defaults to `i32`.
 
 I13 L005 extends const evaluation through an LLVM-free driver/LSP callback with
 exact target-software IEEE bits, byte arrays, enums and source const receivers.
@@ -726,17 +726,17 @@ and `mettle check|build` on package directories remain covered by
 I09 T002/T003 baseline: implemented and verified on macOS arm64 (Release and Debug).
 `[build] script` programs run on the host with declared `mettle:` outputs
 (generated modules, features, link libraries) and a `reproducible` input
-contract, otherwise rerun conservatively (`compiler/driver/build_script.cpp`);
+contract, otherwise rerun conservatively (`bootstrap/driver/build_script.cpp`);
 `mettle build` reuses executables/objects through a content-addressed,
 deduplicated, byte/age-bounded store keyed by token-level source inputs and
-build options (`compiler/packages/store.cpp`, `compiler/driver/cache.cpp`),
+build options (`bootstrap/packages/store.cpp`, `bootstrap/driver/cache.cpp`),
 with `mettle clean`. `[build-dependencies]` and host dependency compilation
 are verified by the same suite.
 
 I09 cache lease work and the multi-package extension demonstration are
 implemented and verified on macOS arm64 Release (`multi_package_extension`). A build holds an RAII lease on its
 whole-program key through materialization, publication and pruning;
-`compiler/packages/store.cpp` excludes leased entries from age/byte eviction
+`bootstrap/packages/store.cpp` excludes leased entries from age/byte eviction
 and refuses `clean` while a lease is live. The
 `tests/packages/multi-package-extension` fixture combines a generated module,
 a procedural extension dependency and a regular dependency. Existing
@@ -899,10 +899,10 @@ Current library implementation, blockers and exact focused receipts are owned by
 [i13-library.md](i13-library.md#handoff-start-here-in-a-new-session); the
 [capability inventory](capability-coverage.md#i13-macos-arm64-acceptance-inventory)
 retains row/fixture ownership. All eighteen library areas remain partial.
-Latest 2026-11-09 operation ledger: **8,988 evidenced, 399 declared,
-3,903 missing, 5 not applicable** (13,295 total, grouped into 2,442 operation
+Latest 2026-11-09 operation ledger: **10,444 evidenced, 35 declared,
+2,811 missing, 5 not applicable** (13,295 total, grouped into 2,442 operation
 and 2,309 implementation families; subset/source-cfg reconciliation pending).
-Unzip has focused Linux native/emitted-ASan debug/release evidence; 384
+Unzip has focused Linux native/emitted-ASan debug/release evidence; 20
 conversion blanket exposures and fifteen callable-adapter Clone/ToOwned rows
 are declared, not per-type/profile passes. Peekable associated-buffer projection
 is unresolved. Minimal NonNull, borrowed chaining, bounds/exact/fused protocols
@@ -962,6 +962,21 @@ record staged builds and exercise the resulting compiler on itself and the
 full capability/target corpus. Add the applicable P12 compiler workload.
 Self-hosting alone proves neither correctness nor improved runtime.
 
+I15 preparation started 2026-11-09. The
+[self-hosted architecture](compiler-architecture.md#11-self-hosted-compiler-package-and-incremental-compilation-contract)
+owns package boundaries, compiled interfaces, query invalidation and storage.
+Preparatory work does not close I13/I14 or qualify I15.
+
+| Obligation | Current state and evidence | Owning implementation / remaining acceptance |
+| --- | --- | --- |
+| Package/API and rebuild contracts | Specified; no runtime evidence | Architecture section 1.1; manifests enforce implemented package edges |
+| Foundation, syntax and driver seed | Partial, unverified draft | `compiler/{foundation,syntax,driver}`; complete lexer/diagnostic parity fixtures and focused Linux execution |
+| Compiled dependency interfaces and query engine | Missing | Future `pipeline`, `ir`, `packages`; consumers must skip unchanged dependency parsing/checking; validate metadata and invalidation edges |
+| Checked frontend and verified middle end | Missing | Future `frontend`, `types`, `ir`, `middle`; preserve full language/ownership contracts and existing corpus |
+| Backend, build and editor integration | Missing | Future backend/pipeline/packages/editor/driver implementations; replace C++ responsibilities through defined interfaces |
+| Bounded storage and compiler/runtime performance | Unverified for self-hosting | Existing store is bootstrap code; qualify self-hosted eviction/corruption/concurrency and clean/edited workloads under performance.md, including P12 |
+| Source freeze and staged bootstrap | Not ready; depends on all implementation, fixtures and owning documentation | Stage 1/2/3 identities, repeatability and complete capability/target gates; retain C++ reference |
+
 I16 replaces LLVM's production backend responsibilities behind the compiler IR
 boundary: instruction selection/legalization, registers, machine optimization,
 object/debug/unwind emission and each accepted target's ABI integration.
@@ -1004,14 +1019,14 @@ claim.
 
 **Existing facilities (not missing work).** The track builds on landed code:
 iterator interfaces, adapters and `collect` in `library/core/iter.mt`; the
-lowest-priority library prelude in `compiler/resolution/load.cpp`
+lowest-priority library prelude in `bootstrap/resolution/load.cpp`
 (`preludeNames()`); panic/assert and the runtime hook in `library/core/panic.mt`;
 text splitting, lines and byte/scalar iteration in `library/core/text.mt`; sink
 formatting in `library/core/fmt.mt`; allocator-aware collections and owned text
 in `library/alloc/{vec,hash_map,string}.mt`; hosted I/O and threads in
 `library/std/{io,module,thread}.mt` with synchronization in `library/std/sync/`;
-named call arguments in `compiler/syntax/parser/expressions.cpp` and
-`compiler/semantics/calls.cpp`, with their rejection fixtures (`duplicate-label`,
+named call arguments in `bootstrap/syntax/parser/expressions.cpp` and
+`bootstrap/semantics/calls.cpp`, with their rejection fixtures (`duplicate-label`,
 `unknown-label`, `positional-after-label`); and the workloads
 `tests/std/cli_wordcount.mt` and `tests/alloc/ini_parser.mt`. The gaps are source
 ergonomics, API composition, precise new contracts and their verification.
@@ -1025,6 +1040,7 @@ ergonomics, API composition, precise new contracts and their verification.
 | R3 | Expression-bodied `fn`, diagnostics, formatter/editor completion | Named/method/default `=>` bodies pass source/formatter regressions. `match-move-*-without-take` negatives cover actionable ownership diagnostics, including region-generic callees. LSP completion/signature/references/hover/pattern navigation and readable notes/help have the macOS evidence in I12 above; remaining editor precision gaps are in tooling-and-packages section 5. |
 | Qualification | Frozen-input quality, target, safety and performance checks, including performance.md sections 5.1-5.2. D17 comparison harness (`tools/bench_compare.py`, `benchmarks/`, performance.md section 5.3): implemented; its `.mt` workloads type-check, but the harness has not been run and no result is claimed | After R1-R3 |
 | WP-S | Storage audit work package of tooling-and-packages.md section 7.1; operational, no dependency on an artifact store | Open |
+| D32-D34 syntax composition | Prefix named-parameter access, native `Outcome<T, E>` values and comma-separated if/while conditions; preserve I04/I05 ownership/effect contracts and I06 L004 short-circuit behavior | Implemented, qualification pending. Linux x86-64 pinned Debug build and focused debug/release execution cover access modes, stored outcomes, short-circuiting, cleanup and generic branch inference; scope/escaping-view/feature negatives and formatter/LSP probes pass. Parser migration receipts preserve 601 originally valid fragment trees; macro templates and region-explicit Rc/Arc view conversions are separately migrated. This is not milestone or full-library qualification. |
 
 **R1 follow-up.** Constructor selection/overlap/applicability and fixtures have
 the verification recorded in the table; the earlier source-only constructor
@@ -1086,13 +1102,16 @@ four Text/String ownership cases of library-surface section 9. Test fixtures:
 
 Compile/execute both exhibits with the matched edge/error/ownership cases;
 a documentation check alone is not equivalence evidence.
+The readable fixture revisions below still need current-library type checking
+and runtime comparison; their source updates do not close this acceptance gate.
 
 **Exhibit 1: byte-streaming word count.** The before program is the fixture
-`tests/std/cli_wordcount.mt`. The after program uses the current syntax and
+[cli_wordcount.mt](../tests/std/cli_wordcount.mt). The after program is
+[cli_wordcount_lines.mt](../tests/std/cli_wordcount_lines.mt), using the current syntax and
 keeps the input/report arguments,
 raw path support, byte count, space/LF/tab separators, final unterminated line,
-report/stdout bytes and exit codes; error-message output still deliberately
-ignores its own failure, now visibly. Streaming formatting changes write
+report/stdout bytes and exit codes; error-message output retains `eprint`'s
+panic-on-write-failure policy. Streaming formatting changes write
 granularity, not an atomic-write contract, so injected-failure tests check error
 identity and allowed partial output. Memory stays proportional to the longest line.
 
@@ -1100,9 +1119,10 @@ identity and allowed partial output. Memory stays proportional to the longest li
 import std.env
 import std.fs
 import std.io
-import std.path
+import std.path.PathInput
+import alloc.vec.List
 
-fn words_in(line: read [u8]): usize {
+fn words_in(read line: [u8]): usize {
     var words: usize = 0
     var inside = false
     for byte in line.bytes() {
@@ -1113,8 +1133,8 @@ fn words_in(line: read [u8]): usize {
     words
 }
 
-fn count(input: read path.PathInput, report: read path.PathInput): Unit throws io.Error {
-    var reader = io.BufferedReader(try fs.open(input))
+fn count(read input: PathInput, read report: PathInput): Unit throws io.Error {
+    var reader = io.buf_reader(try fs.open(input))
     var buffer = List<u8>()
     var lines: usize = 0
     var words: usize = 0
@@ -1125,7 +1145,7 @@ fn count(input: read path.PathInput, report: read path.PathInput): Unit throws i
         words += words_in(line)
     }
     {
-        var out = io.BufferedWriter(try fs.create(report))
+        var out = io.buf_writer(try fs.create(report))
         try out.write_line(f"lines={lines}")
         try out.write_line(f"words={words}")
         try out.write_line(f"bytes={bytes}")
@@ -1139,17 +1159,15 @@ fn count(input: read path.PathInput, report: read path.PathInput): Unit throws i
 fn main(): i32 {
     let args = env.args()
     if args.len() != 3 {
-        var err = io.stderr()
-        let _ = capture err.write_line(f"usage: wordcount INPUT REPORT")
+        io.eprint("usage: wordcount INPUT REPORT\n")
         return 2
     }
     let result = capture count(args[1], args[2])
     match take result {
         success(_) => 0,
         failure(error) => {
-            var err = io.stderr()
             let message = error.message()
-            let _ = capture err.write_line(f"wordcount: {message}")
+            io.eprint(f"wordcount: {message}\n")
             1
         }
     }
@@ -1161,11 +1179,12 @@ interface objects. The std-owned writer types find std's Writer methods under
 the owning-package rule (semantic-rules section 13.2), with no Writer import.
 The byte-oriented input is intentional: a UTF-8 reader would reject previously
 valid inputs, and keeping line terminators leaves the byte count unchanged. The
-before fixture and byte-for-byte output comparison are POSIX-profile evidence;
-Windows output needs its own PathInput tests.
+required byte-for-byte comparison must be rerun for the updated fixture;
+POSIX evidence does not cover Windows output, which needs its own PathInput tests.
 
 **Exhibit 2: digit-list configuration parser.** The before program is the
-fixture `tests/alloc/ini_parser.mt`. The after program, still without std, keeps
+fixture [ini_parser.mt](../tests/alloc/ini_parser.mt). The after program is
+[ini_parser_readable.mt](../tests/alloc/ini_parser_readable.mt), still without std, and keeps
 empty-line and empty-comma-field skipping, first-`=` splitting, digit-only
 nonnegative input, repeated-key accumulation, empty lists, partial updates before
 failure and all return codes. CR is not trimmed (use `split("\n")`, not a line
@@ -1174,7 +1193,7 @@ arithmetic is retained rather than substituting the existing signed, checked
 numeric parser, which would change accepted inputs.
 
 ```text
-fn parse_number(text: read Text): i64? {
+fn parse_number(read text: Text): i64? {
     if text.is_empty() { return none }
     var value = 0i64
     for byte in text.bytes() {
@@ -1184,7 +1203,7 @@ fn parse_number(text: read Text): i64? {
     present(value)
 }
 
-fn parse_list(text: read Text, out: mut List<i64>): bool {
+fn parse_list(read text: Text, mut out: List<i64>): bool {
     for part in text.split(",") {
         if part.is_empty() { continue }
         let present(value) = parse_number(part) else { return false }
@@ -1193,7 +1212,7 @@ fn parse_list(text: read Text, out: mut List<i64>): bool {
     true
 }
 
-fn parse(input: read Text, map: mut Map<String, List<i64>>): bool {
+fn parse(read input: Text, mut map: Map<String, List<i64>>): bool {
     for line in input.split("\n") {
         if line.is_empty() { continue }
         let present((key, rest)) = line.split_once("=") else { return false }
@@ -1203,7 +1222,7 @@ fn parse(input: read Text, map: mut Map<String, List<i64>>): bool {
     true
 }
 
-fn sum(values: read List<i64>): i64 {
+fn sum(read values: List<i64>): i64 {
     var total = 0i64
     for value in values { total += *value }
     total

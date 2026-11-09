@@ -20,7 +20,7 @@ members of otherwise retained types. A stable parent does not admit an
 experimental child.
 
 Signatures below use `read`, `mut` and `take` for access and ownership;
-`X throws E` denotes the stored outcome as well as the declared failure of a
+`Outcome<X, E>` denotes the stored outcome as well as the declared failure of a
 throwing entry point, according to its calling form. An omitted method receiver
 is read-only. Builder setters have an exclusive receiver and return an exclusive
 view of that same builder, never a second owner. `PathInput` parameters are

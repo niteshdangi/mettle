@@ -17,7 +17,7 @@ extern "C" {
 // A lock released while its holder was unwinding; the guard is still usable.
 pub type PoisonError<G> { pub guard: G }
 extend<G> PoisonError<G> {
-    pub static fn new(guard: take G): PoisonError<G> { PoisonError(guard) }
+    pub static fn new(take guard: G): PoisonError<G> { PoisonError(guard) }
     pub fn get_ref(): read G from self { read self.guard }
     pub mut fn get_mut(): mut G from self { mut self.guard }
     pub take fn into_inner(): G { self.guard }
@@ -26,12 +26,12 @@ extend<G> PoisonError<G> {
 pub enum TryLockError<G> { WouldBlock; Poisoned(G) }
 
 extend<G> PoisonError<G> implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         try f.write_str("PoisonError { .. }")
     }
 }
 extend<G> PoisonError<G> implements Display {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         try f.write_str("poisoned lock: another task failed inside")
     }
 }
@@ -40,7 +40,7 @@ extend<G> PoisonError<G> implements Borrow<G> {
 }
 extend<G> PoisonError<G> implements CoreError {}
 extend<G> TryLockError<G> implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         match self {
             TryLockError.WouldBlock => try f.write_str("WouldBlock"),
             TryLockError.Poisoned(_) => try f.write_str("Poisoned(..)")
@@ -48,7 +48,7 @@ extend<G> TryLockError<G> implements Debug {
     }
 }
 extend<G> TryLockError<G> implements Display {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         match self {
             TryLockError.WouldBlock => try f.write_str("try_lock failed because the operation would block"),
             TryLockError.Poisoned(_) => try f.write_str("poisoned lock: another task failed inside")
@@ -83,13 +83,13 @@ pub type MutexGuard<T, region r> {
 extend<T, region r> MutexGuard<T, region r> not Transferable
 unsafe extend<T: Shareable, region r> MutexGuard<T, region r> implements Shareable {}
 
-pub fn new<T>(value: take T): Mutex<T> {
+pub fn new<T>(take value: T): Mutex<T> {
     let raw = unsafe { mettle_rt_mutex_new() }
     if raw == core.ptr.null_mut<u8>() { core.intrinsics.abort() }
     Mutex(raw, core.sync.atomic.AtomicBool.new(false), core.cell.UnsafeCell.new(value))
 }
 extend<T> Mutex<T> implements From<T> {
-    static fn from(value: take T): Mutex<T> { new(value) }
+    static fn from(take value: T): Mutex<T> { new(value) }
 }
 extend<T: Default> Mutex<T> implements Default {
     static fn default(): Mutex<T> { new(T.(Default).default()) }
@@ -117,7 +117,7 @@ extend<T> Mutex<T> {
     }
     pub fn is_poisoned(): bool { self.poisoned.load(core.sync.atomic.Ordering.Acquire) }
     pub fn get_mut<region r>(
-        receiver self: mut Mutex<T> from r
+        receiver mut self: Mutex<T> from r
     ): mut T from r throws PoisonError<mut T from r> {
         let value = unsafe { mut *self.value.get() }
         if self.poisoned.load(core.sync.atomic.Ordering.Acquire) {
@@ -156,7 +156,7 @@ extend<T, region r> MutexGuard<T, region r> implements DerefMut {
 }
 
 extend<T: Debug> Mutex<T> implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         // A successful try-lock publishes the protected value; guard drop
         // releases it even when formatting propagates a writer error.
         var poisoned = self.is_poisoned()
@@ -179,12 +179,12 @@ extend<T: Debug> Mutex<T> implements Debug {
     }
 }
 extend<T: Debug, region r> MutexGuard<T, region r> implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         try T.(Debug).fmt(self.get(), mut f)
     }
 }
 extend<T: Display, region r> MutexGuard<T, region r> implements Display {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         try T.(Display).fmt(self.get(), mut f)
     }
 }

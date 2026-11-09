@@ -4,16 +4,16 @@
 // even when another generated function binds the same name.
 import core.clone.Clone
 
-interface Make<T>: Sized { static fn `from`(value: take T): Self; }
+interface Make<T>: Sized { static fn `from`(take value: T): Self; }
 
 macro generated {
     ($target:ident; $($source:ident),*) => {
         $(
             extend $target implements Make<$source> {
-                static fn `from`(value: take $source): $target { value as $target }
+                static fn `from`(take value: $source): $target { value as $target }
             }
         )*
-        fn twice<T: Clone>(value: read T): (T, T) { (value.clone(), value.clone()) }
+        fn twice<T: Clone>(read value: T): (T, T) { (value.clone(), value.clone()) }
         fn plain(value: $target): $target { value }
     };
 }

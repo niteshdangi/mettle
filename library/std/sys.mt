@@ -98,7 +98,7 @@ pub unsafe fn bytes_from_c(p: ptr<read u8>): List<u8> {
 copy type RawMut { data: ptr<mut u8>; len: usize }
 
 // Base address of a mutable byte slice.
-pub fn data_mut(bytes: mut [u8]): ptr<mut u8> {
+pub fn data_mut(mut bytes: [u8]): ptr<mut u8> {
     let fat = core.ptr.from_mut(bytes)
     let raw = unsafe { core.mem.transmute<RawMut>(fat) }
     raw.data

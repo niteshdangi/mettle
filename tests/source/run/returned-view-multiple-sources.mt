@@ -1,5 +1,5 @@
 
-fn choose(first: read i32, second: read i32, flag: bool): read i32 from (first, second) {
+fn choose(read first: i32, read second: i32, flag: bool): read i32 from (first, second) {
     if flag { read first } else { read second }
 }
 fn main() {

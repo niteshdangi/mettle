@@ -11,7 +11,7 @@ type Ready {
 unsafe extend Ready implements Transferable {}
 extend Ready implements Future {
     type Output = i32
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<i32> {
         let me = unsafe { self.get_unchecked_mut() }
         unsafe { *me.saved = present(cx.waker().clone()) }
         Poll.Ready(42)

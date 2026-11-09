@@ -1,4 +1,4 @@
-fn without_local_pattern(text: read Text): read Text from text {
+fn without_local_pattern(read text: Text): read Text from text {
     let pattern = alloc.string.from_text("..")
     text.trim_matches(pattern.as_text())
 }

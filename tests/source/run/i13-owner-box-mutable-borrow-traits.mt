@@ -7,11 +7,11 @@ type Payload {
     drop { unsafe { *self.drops += 1 } }
 }
 
-fn set_through_as_mut<T: AsMut<Payload>>(owner: mut T, value: i32): Unit {
+fn set_through_as_mut<T: AsMut<Payload>>(mut owner: T, value: i32): Unit {
     owner.as_mut().value = value
 }
 
-fn add_through_borrow_mut<T: BorrowMut<Payload>>(owner: mut T, value: i32): Unit {
+fn add_through_borrow_mut<T: BorrowMut<Payload>>(mut owner: T, value: i32): Unit {
     owner.borrow_mut().value += value
 }
 

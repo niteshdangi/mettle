@@ -20,7 +20,7 @@ extend<region r, I: Stream> mut I from r implements Stream {
     mut fn next(): I.Item? { I.(Stream).next(mut *self) }
 }
 
-fn first<I: Stream>(source: take I): I.Item? {
+fn first<I: Stream>(take source: I): I.Item? {
     var iterator = source
     iterator.next()
 }

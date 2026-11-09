@@ -8,17 +8,17 @@ import core.fmt.{Align, Display, Error, Formatter, Spec, Write}
 
 type Tally { bytes: usize }
 extend Tally implements Write {
-    mut fn write_str(text: read Text): Unit throws Error { self.bytes += text.len() }
+    mut fn write_str(read text: Text): Unit throws Error { self.bytes += text.len() }
 }
 
 type Wide { value: u8 }
 extend Wide implements Display {
-    fn fmt(f: mut Formatter): Unit throws Error { try f.pad_integral(true, "0x", "ff") }
+    fn fmt(mut f: Formatter): Unit throws Error { try f.pad_integral(true, "0x", "ff") }
 }
 
 type Probe { a: i32; b: i32 }
 extend Probe implements Display {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         if f.alternate() { try f.write_str("alt:") }
         var s = try f.debug_struct("Probe")
         try s.field("a", self.a)
@@ -31,7 +31,7 @@ extend Probe implements Display {
 
 type Shape { a: i32; b: i32 }
 extend Shape implements Display {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         var l = try f.debug_list()
         try l.entry(self.a)
         try l.entry(self.b)
@@ -41,7 +41,7 @@ extend Shape implements Display {
 
 type Pair { a: i32; b: i32 }
 extend Pair implements Display {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         var t = try f.debug_tuple("Pair")
         try t.field(self.a)
         try t.field(self.b)
@@ -51,7 +51,7 @@ extend Pair implements Display {
 
 type Table { k: i32 }
 extend Table implements Display {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         var m = try f.debug_map()
         try m.entry(self.k, self.k)
         try m.finish()
@@ -62,7 +62,7 @@ fn opts(fill: char, align: Align, width: usize?, precision: usize?, plus: bool, 
     Spec(fill, align, width, precision, plus, false, alt, zero)
 }
 
-fn show_text(value: read Text, options: Spec): String { show(String(value), options) }
+fn show_text(read value: Text, options: Spec): String { show(String(value), options) }
 
 fn show_int(value: i32, options: Spec): String {
     var out = String("")
@@ -73,7 +73,7 @@ fn show_int(value: i32, options: Spec): String {
     out
 }
 
-fn show<T: Display>(value: read T, options: Spec): String {
+fn show<T: Display>(read value: T, options: Spec): String {
     var out = String("")
     match capture fmt.write_with(mut out, value, options) {
         success(_) => {},
@@ -82,7 +82,7 @@ fn show<T: Display>(value: read T, options: Spec): String {
     out
 }
 
-fn is_text(actual: String, expected: read Text): bool { actual.as_text() == expected }
+fn is_text(actual: String, read expected: Text): bool { actual.as_text() == expected }
 
 fn checks_padding(): i32 {
     let right = show_text("ab", opts(' ', Align.Right, present(5usize), none, false, false, false))

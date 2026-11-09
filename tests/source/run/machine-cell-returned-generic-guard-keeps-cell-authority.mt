@@ -1,8 +1,8 @@
 
-fn borrow<T>(cell: read core.cell.RefCell<T>): core.cell.Ref<T> from cell {
+fn borrow<T>(read cell: core.cell.RefCell<T>): core.cell.Ref<T> from cell {
     cell.borrow()
 }
-fn borrow_mut<T>(cell: read core.cell.RefCell<T>): core.cell.RefMut<T> from cell {
+fn borrow_mut<T>(read cell: core.cell.RefCell<T>): core.cell.RefMut<T> from cell {
     cell.borrow_mut()
 }
 fn main() {

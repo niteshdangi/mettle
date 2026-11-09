@@ -1,27 +1,27 @@
 import core.future.{Future, Poll, Context, noop_waker}
 
 interface AsyncCounter {
-    async fn fetch<region r>(receiver self: read Self from r): i32 throws i32
+    async fn fetch<region r>(receiver read self: Self from r): i32 throws i32
 }
 
 type Counter { value: i32 }
 
 extend Counter implements AsyncCounter {
-    async fn fetch<region r>(receiver self: read Self from r): i32 throws i32 {
+    async fn fetch<region r>(receiver read self: Self from r): i32 throws i32 {
         if self.value < 0 { throw self.value }
         self.value
     }
 }
 
-async fn read_generic<region r, T: AsyncCounter>(value: read T from r): i32 throws i32 {
+async fn read_generic<region r, T: AsyncCounter>(read value: T from r): i32 throws i32 {
     try await value.fetch()
 }
 
-async fn read_concrete<region r>(value: read Counter from r): i32 throws i32 {
+async fn read_concrete<region r>(read value: Counter from r): i32 throws i32 {
     try await value.fetch()
 }
 
-fn drive<F: Future<Output = (i32 throws i32)>>(future: take F): (i32 throws i32) {
+fn drive<F: Future<Output = (Outcome<i32, i32>)>>(take future: F): (Outcome<i32, i32>) {
     let waker = noop_waker()
     var slot = core.pin.pin(future)
     loop {
@@ -33,7 +33,7 @@ fn drive<F: Future<Output = (i32 throws i32)>>(future: take F): (i32 throws i32)
     }
 }
 
-fn succeeded(result: (i32 throws i32), expected: i32): bool {
+fn succeeded(result: (Outcome<i32, i32>), expected: i32): bool {
     match take result {
         success(value) => value == expected,
         failure(_) => false

@@ -2,9 +2,9 @@
 // variant, not by the variant it had when it was stored.
 type Guard { p: ptr<mut i32>; drop { unsafe { *self.p = *self.p + 1 } } }
 type Holder { inner: Guard? }
-fn fill(slot: mut Guard?, p: ptr<mut i32>) { slot = present(Guard(p)) }
-fn fill_field(holder: mut Holder, p: ptr<mut i32>) { holder.inner = present(Guard(p)) }
-fn clear(slot: mut Guard?) { slot = none }
+fn fill(mut slot: Guard?, p: ptr<mut i32>) { slot = present(Guard(p)) }
+fn fill_field(mut holder: Holder, p: ptr<mut i32>) { holder.inner = present(Guard(p)) }
+fn clear(mut slot: Guard?) { slot = none }
 
 fn main(): i32 {
     var filled = 0

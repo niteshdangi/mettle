@@ -10,7 +10,7 @@ extend<region r> Cursor<region r> {
     }
 }
 
-fn bad(c: mut Bag): Unit {
+fn bad(mut c: Bag): Unit {
     var it = Cursor(mut c, 0)
     let x = it.next()
     c.a = 5

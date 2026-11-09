@@ -8,7 +8,7 @@ type Counted {
 
 extend Counted implements Future {
     type Output = i32
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<i32> {
         let me = unsafe { self.get_unchecked_mut() }
         me.polls = me.polls + 1
         if me.polls < 3 {
@@ -20,7 +20,7 @@ extend Counted implements Future {
     }
 }
 
-fn drive(owner: mut heap any Future<Output = i32>): i32 {
+fn drive(mut owner: heap any Future<Output = i32>): i32 {
     let waker = core.future.noop_waker()
     loop {
         var cx = Context.from_waker(read waker)

@@ -12,7 +12,7 @@ import alloc.string.ToString
 import core.fmt
 import core.fmt.Debug
 
-fn debug_is<T: Debug>(value: read T, expected: read core.text.Text): bool {
+fn debug_is<T: Debug>(read value: T, read expected: core.text.Text): bool {
     var buffer = [0u8; 64]
     var writer = fmt.buffer_writer(mut buffer)
     var formatter = fmt.formatter(mut writer, fmt.spec())

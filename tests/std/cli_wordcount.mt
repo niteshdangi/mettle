@@ -20,7 +20,7 @@ fn decimal(v: usize): List<u8> {
     out
 }
 
-fn words_in(line: read [u8]): usize {
+fn words_in(read line: [u8]): usize {
     var words = 0usize
     var inside = false
     var i = 0usize
@@ -34,13 +34,13 @@ fn words_in(line: read [u8]): usize {
     words
 }
 
-fn field(out: mut List<u8>, name: read Text, value: usize): Unit {
+fn field(mut out: List<u8>, read name: Text, value: usize): Unit {
     out.extend_from_slice(name.as_bytes())
     out.extend_from_slice(decimal(value).as_slice())
     out.push(10u8)
 }
 
-fn count(input: read path.Path, report: read path.Path): i32 throws Error {
+fn count(read input: path.Path, read report: path.Path): i32 throws Error {
     let file = try std.fs.open(input)
     var reader = std.io.buf_reader(file)
     var lines = 0usize

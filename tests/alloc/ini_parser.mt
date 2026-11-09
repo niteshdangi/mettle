@@ -5,7 +5,7 @@ import alloc.string.String
 import alloc.vec.List
 import package.core.text.Text
 
-fn parse_number(t: read Text): i64? {
+fn parse_number(read t: Text): i64? {
     let bytes = t.as_bytes()
     if bytes.len() == 0usize { return none }
     var value = 0i64
@@ -20,7 +20,7 @@ fn parse_number(t: read Text): i64? {
 }
 
 // Adds every comma-separated number in `list` to `out`; false on malformed input.
-fn parse_list(list: read Text, out: mut List<i64>): bool {
+fn parse_list(read list: Text, mut out: List<i64>): bool {
     var start = 0usize
     var i = 0usize
     let bytes = list.as_bytes()
@@ -42,7 +42,7 @@ fn parse_list(list: read Text, out: mut List<i64>): bool {
     true
 }
 
-fn parse(input: read Text, map: mut Map<String, List<i64>>): bool {
+fn parse(read input: Text, mut map: Map<String, List<i64>>): bool {
     var line_start = 0usize
     var i = 0usize
     let bytes = input.as_bytes()
@@ -63,7 +63,7 @@ fn parse(input: read Text, map: mut Map<String, List<i64>>): bool {
     true
 }
 
-fn sum(v: read List<i64>): i64 {
+fn sum(read v: List<i64>): i64 {
     var total = 0i64
     var i = 0usize
     while i < v.len() {

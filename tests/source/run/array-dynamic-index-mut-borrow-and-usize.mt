@@ -1,5 +1,5 @@
 
-fn bump(value: mut i32) { value = value + 1 }
+fn bump(mut value: i32) { value = value + 1 }
 fn main(): i32 {
     var values = [10, 20, 30]
     var index = 2usize

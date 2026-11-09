@@ -164,7 +164,7 @@ extend<T> DequeDrainFinish<T> {
     }
 }
 
-pub fn new_in<T, A: Allocator>(a: take A): Deque<T, A> {
+pub fn new_in<T, A: Allocator>(take a: A): Deque<T, A> {
     let cap = if core.mem.size_of<T>() == 0usize { 0x7fffffffffffffffusize } else { 0usize }
     Deque(dangling_for<T>(), cap, 0usize, 0usize, a)
 }
@@ -237,7 +237,7 @@ extend<T, A: Allocator> Deque<T, A> {
     pub mut fn reserve_exact(additional: usize): Unit {
         self.reserve(additional)
     }
-    pub mut fn append(other: mut Deque<T, A>): Unit {
+    pub mut fn append(mut other: Deque<T, A>): Unit {
         let count = other.len
         if count == 0usize { return () }
         // Grow only with this deque's allocator before moving any values.
@@ -287,7 +287,7 @@ extend<T, A: Allocator> Deque<T, A> {
         self.cap = target
         self.head = 0usize
     }
-    pub mut fn try_push_back(value: take T): Unit throws PushError<T> {
+    pub mut fn try_push_back(take value: T): Unit throws PushError<T> {
         match capture self.try_reserve_one() {
             success(_) => {},
             failure(error) => { throw PushError(value, error) }
@@ -296,7 +296,7 @@ extend<T, A: Allocator> Deque<T, A> {
         unsafe { core.ptr.write(self.buf.add(at), value) }
         self.len += 1usize
     }
-    pub mut fn try_push_front(value: take T): Unit throws PushError<T> {
+    pub mut fn try_push_front(take value: T): Unit throws PushError<T> {
         match capture self.try_reserve_one() {
             success(_) => {},
             failure(error) => { throw PushError(value, error) }
@@ -305,7 +305,7 @@ extend<T, A: Allocator> Deque<T, A> {
         unsafe { core.ptr.write(self.buf.add(self.head), value) }
         self.len += 1usize
     }
-    pub mut fn push_back(value: take T): Unit {
+    pub mut fn push_back(take value: T): Unit {
         match capture self.try_reserve_one() {
             success(_) => {},
             failure(_) => handle_alloc_error(layout_of<T>())
@@ -314,11 +314,11 @@ extend<T, A: Allocator> Deque<T, A> {
         unsafe { core.ptr.write(self.buf.add(at), value) }
         self.len += 1usize
     }
-    pub mut fn push_back_mut(value: take T): mut T from self {
+    pub mut fn push_back_mut(take value: T): mut T from self {
         self.push_back(value)
         self.get_mut(self.len - 1usize).unwrap()
     }
-    pub mut fn push_front(value: take T): Unit {
+    pub mut fn push_front(take value: T): Unit {
         match capture self.try_reserve_one() {
             success(_) => {},
             failure(_) => handle_alloc_error(layout_of<T>())
@@ -327,7 +327,7 @@ extend<T, A: Allocator> Deque<T, A> {
         unsafe { core.ptr.write(self.buf.add(self.head), value) }
         self.len += 1usize
     }
-    pub mut fn push_front_mut(value: take T): mut T from self {
+    pub mut fn push_front_mut(take value: T): mut T from self {
         self.push_front(value)
         self.get_mut(0usize).unwrap()
     }
@@ -343,12 +343,12 @@ extend<T, A: Allocator> Deque<T, A> {
         self.len -= 1usize
         present(unsafe { core.ptr.`read`(self.buf.add(self.physical(self.len))) })
     }
-    pub mut fn pop_front_if<F: take fn(mut T): bool>(test: take F): T? {
+    pub mut fn pop_front_if<F: take fn(mut T): bool>(take test: F): T? {
         if self.len == 0usize { return none }
         let first = self.get_mut(0usize).unwrap()
         if test(first) { self.pop_front() } else { none }
     }
-    pub mut fn pop_back_if<F: take fn(mut T): bool>(test: take F): T? {
+    pub mut fn pop_back_if<F: take fn(mut T): bool>(take test: F): T? {
         if self.len == 0usize { return none }
         let last = self.get_mut(self.len - 1usize).unwrap()
         if test(last) { self.pop_back() } else { none }
@@ -374,7 +374,7 @@ extend<T, A: Allocator> Deque<T, A> {
             }
         }
     }
-    pub fn binary_search_by<F: mut fn(read T): Ordering>(compare: take F): usize throws usize {
+    pub fn binary_search_by<F: mut fn(read T): Ordering>(take compare: F): usize throws usize {
         var comparator = take compare
         var low = 0usize
         var high = self.len
@@ -390,8 +390,8 @@ extend<T, A: Allocator> Deque<T, A> {
         throw low
     }
     pub fn binary_search_by_key<K: Ord, F: mut fn(read T): K>(
-        key: read K,
-        project: take F
+        read key: K,
+        take project: F
     ): usize throws usize {
         var key_fn = take project
         var low = 0usize
@@ -408,7 +408,7 @@ extend<T, A: Allocator> Deque<T, A> {
         }
         throw low
     }
-    pub fn partition_point<F: mut fn(read T): bool>(before: take F): usize {
+    pub fn partition_point<F: mut fn(read T): bool>(take before: F): usize {
         var predicate = take before
         var low = 0usize
         var high = self.len
@@ -422,7 +422,7 @@ extend<T, A: Allocator> Deque<T, A> {
         }
         low
     }
-    pub mut fn insert(i: usize, value: take T): Unit {
+    pub mut fn insert(i: usize, take value: T): Unit {
         if i > self.len { super.alloc.panic_precondition() }
         if i == 0usize { self.push_front(value); return () }
         if i == self.len { self.push_back(value); return () }
@@ -440,7 +440,7 @@ extend<T, A: Allocator> Deque<T, A> {
         unsafe { core.ptr.write(self.buf.add(self.physical(i)), value) }
         self.len += 1usize
     }
-    pub mut fn insert_mut(i: usize, value: take T): mut T from self {
+    pub mut fn insert_mut(i: usize, take value: T): mut T from self {
         self.insert(i, value)
         self.get_mut(i).unwrap()
     }
@@ -558,7 +558,7 @@ extend<T, A: Allocator> Deque<T, A> {
     // rejected value before its destructor runs; `kept` counts moved owners.
     // The ring bounds and head stay fixed for the guard's lifetime, and the
     // copied-from slots are outside the restored initialized prefix.
-    pub mut fn retain<F: mut fn(read T): bool>(keep: mut F): Unit {
+    pub mut fn retain<F: mut fn(read T): bool>(mut keep: F): Unit {
         let n = self.len
         var guard = RetainGuard<T>(
             self.buf,
@@ -589,7 +589,7 @@ extend<T, A: Allocator> Deque<T, A> {
         guard.finish()
     }
 
-    pub mut fn retain_mut<F: mut fn(mut T): bool>(keep: mut F): Unit {
+    pub mut fn retain_mut<F: mut fn(mut T): bool>(mut keep: F): Unit {
         let n = self.len
         var guard = RetainGuard<T>(
             self.buf,
@@ -627,7 +627,7 @@ extend<T, A: Allocator> Deque<T, A> {
         if start > end || end > self.len { super.alloc.panic_precondition() }
         DequeIter(read self, start, end)
     }
-    pub mut fn drain<R: RangeBounds<usize>>(range: take R): DequeDrain<region self, T, A> {
+    pub mut fn drain<R: RangeBounds<usize>>(take range: R): DequeDrain<region self, T, A> {
         let start = match R.(RangeBounds<usize>).start_bound(read range) {
             Bound.Included(value) => *value,
             Bound.Excluded(value) => match (*value).checked_add(1usize) {
@@ -664,7 +664,7 @@ extend<T, A: Allocator> Deque<T, A> {
         }
         other
     }
-    pub mut fn resize_with<F: mut fn(): T>(n: usize, generate: take F): Unit {
+    pub mut fn resize_with<F: mut fn(): T>(n: usize, take generate: F): Unit {
         if n < self.len {
             while self.len > n { let value = self.pop_back() }
             return ()
@@ -695,13 +695,13 @@ extend<T, A: Allocator> Deque<T, A> {
 }
 
 extend<T: Ord, A: Allocator> Deque<T, A> {
-    pub fn binary_search(value: read T): usize throws usize {
-        try self.binary_search_by(fn(item: read T): Ordering { item.cmp(value) })
+    pub fn binary_search(read value: T): usize throws usize {
+        try self.binary_search_by(fn(read item: T): Ordering { item.cmp(value) })
     }
 }
 
 extend<T: PartialEq, A: Allocator> Deque<T, A> {
-    pub fn contains(value: read T): bool {
+    pub fn contains(read value: T): bool {
         var index = 0usize
         while index < self.len {
             if self[index].eq(value) { return true }
@@ -712,7 +712,7 @@ extend<T: PartialEq, A: Allocator> Deque<T, A> {
 }
 
 extend<T: Clone, A: Allocator> Deque<T, A> {
-    pub mut fn resize(n: usize, value: read T): Unit {
+    pub mut fn resize(n: usize, read value: T): Unit {
         if n <= self.len {
             self.truncate(n)
             return ()
@@ -728,14 +728,14 @@ extend<T, A: Allocator + Default> Deque<T, A> implements Default {
 
 extend<T, A: Allocator> Deque<T, A> implements package.core.ops.Index<usize> {
     type Output = T
-    fn index(i: read usize): read T from self {
+    fn index(read i: usize): read T from self {
         if i >= self.len { super.alloc.panic_precondition() }
         unsafe { read *self.buf.add(self.physical(i)) }
     }
 }
 extend<T, A: Allocator> Deque<T, A> implements package.core.ops.IndexMut<usize> {
     type Output = T
-    mut fn index_mut(i: read usize): mut T from self {
+    mut fn index_mut(read i: usize): mut T from self {
         if i >= self.len { super.alloc.panic_precondition() }
         unsafe { mut *self.buf.add(self.physical(i)) }
     }
@@ -854,7 +854,7 @@ extend<region r, T, A: Allocator> DequeIter<region r, T, A> implements FusedIter
 extend<T, A: Allocator> Deque<T, A> implements Iterable {
     type Item = T
     type Iter<region r> = DequeIter<region r, T, A>
-    fn iter<region r>(receiver self: read Self from r): DequeIter<region r, T, A> {
+    fn iter<region r>(receiver read self: Self from r): DequeIter<region r, T, A> {
         DequeIter(read self, 0usize, self.len)
     }
 }
@@ -893,7 +893,7 @@ extend<region r, T, A: Allocator> DequeIterMut<region r, T, A> implements FusedI
 extend<T, A: Allocator> Deque<T, A> implements MutableIterable {
     type Item = T
     type IterMut<region r> = DequeIterMut<region r, T, A>
-    fn iter_mut<region r>(receiver self: mut Self from r): DequeIterMut<region r, T, A> {
+    fn iter_mut<region r>(receiver mut self: Self from r): DequeIterMut<region r, T, A> {
         let n = self.len
         DequeIterMut(mut self, 0usize, n)
     }
@@ -916,7 +916,7 @@ extend<T, A: Allocator> DequeIntoIter<T, A> implements FusedIterator {}
 extend<T, A: Allocator> Deque<T, A> implements OwnedIterable {
     type Item = T
     type IntoIter = DequeIntoIter<T, A>
-    fn into_iter(receiver self: take Self): DequeIntoIter<T, A> {
+    fn into_iter(receiver take self: Self): DequeIntoIter<T, A> {
         DequeIntoIter(take self)
     }
 }
@@ -933,7 +933,7 @@ extend<T: Clone, A: Allocator + Clone> Deque<T, A> implements Clone {
     }
 }
 extend<T: PartialEq, A: Allocator> Deque<T, A> implements PartialEq {
-    fn eq(other: read Deque<T, A>): bool {
+    fn eq(read other: Deque<T, A>): bool {
         if self.len != other.len { return false }
         var i = 0usize
         while i < self.len {
@@ -945,7 +945,7 @@ extend<T: PartialEq, A: Allocator> Deque<T, A> implements PartialEq {
 }
 extend<T: Eq, A: Allocator> Deque<T, A> implements Eq {}
 extend<T: PartialOrd, A: Allocator> Deque<T, A> implements PartialOrd {
-    fn partial_cmp(other: read Deque<T, A>): Ordering? {
+    fn partial_cmp(read other: Deque<T, A>): Ordering? {
         var i = 0usize
         while i < self.len && i < other.len {
             match self[i].partial_cmp(other[i]) {
@@ -958,7 +958,7 @@ extend<T: PartialOrd, A: Allocator> Deque<T, A> implements PartialOrd {
     }
 }
 extend<T: Ord, A: Allocator> Deque<T, A> implements Ord {
-    fn cmp(other: read Deque<T, A>): Ordering {
+    fn cmp(read other: Deque<T, A>): Ordering {
         var i = 0usize
         while i < self.len && i < other.len {
             let o = self[i].cmp(other[i])
@@ -970,7 +970,7 @@ extend<T: Ord, A: Allocator> Deque<T, A> implements Ord {
 }
 // Hashes like the slice of the same elements, front to back.
 extend<T: Hash, A: Allocator> Deque<T, A> implements Hash {
-    fn hash<H: Hasher>(state: mut H): Unit {
+    fn hash<H: Hasher>(mut state: H): Unit {
         state.write_usize(self.len)
         var i = 0usize
         while i < self.len {
@@ -980,7 +980,7 @@ extend<T: Hash, A: Allocator> Deque<T, A> implements Hash {
     }
 }
 extend<T: fmt.Debug, A: Allocator> Deque<T, A> implements fmt.Debug {
-    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
         try f.debug_open("[")
         var i = 0usize
         while i < self.len {
@@ -993,7 +993,7 @@ extend<T: fmt.Debug, A: Allocator> Deque<T, A> implements fmt.Debug {
     }
 }
 extend<T, A: Allocator> Deque<T, A> implements ExtendItems<T> {
-    mut fn extend<I: OwnedIterable<Item = T>>(items: take I): Unit {
+    mut fn extend<I: OwnedIterable<Item = T>>(take items: I): Unit {
         var source = items.into_iter()
         while true {
             match take source.next() { present(item) => { self.push_back(item) }, none => { break } }
@@ -1001,7 +1001,7 @@ extend<T, A: Allocator> Deque<T, A> implements ExtendItems<T> {
     }
 }
 extend<T> Deque<T> implements FromItems<T> {
-    static fn from_iter<I: OwnedIterable<Item = T>>(items: take I): Deque<T> {
+    static fn from_iter<I: OwnedIterable<Item = T>>(take items: I): Deque<T> {
         var out = new<T>()
         out.extend(items)
         out
@@ -1015,7 +1015,7 @@ unsafe extend<T: Shareable, A: Allocator + Shareable> Deque<T, A> implements Sha
 // The ring is rotated in place to start at slot zero, then its allocation is
 // adopted by the list (same layout, no element copies beyond the rotation).
 extend<T, A: Allocator> super.vec.List<T, A> implements package.core.convert.From<Deque<T, A>> {
-    static fn from(source: take Deque<T, A>): super.vec.List<T, A> {
+    static fn from(take source: Deque<T, A>): super.vec.List<T, A> {
         var ring = take source
         ring.make_contiguous()
         let size = core.mem.size_of<T>()

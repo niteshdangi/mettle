@@ -8,7 +8,7 @@ import core.iter.{ExtendItems, FromItems, OwnedIterable}
 
 fn default_value<T: Default>(): T { T.(Default).default() }
 
-fn render<T: Debug>(value: read T, buffer: mut [u8]): usize throws Error {
+fn render<T: Debug>(read value: T, mut buffer: [u8]): usize throws Error {
     var out = buffer_writer(mut buffer)
     var f = formatter(mut out, spec())
     try value.fmt(mut f)
@@ -78,13 +78,13 @@ fn run(): i32 throws Error {
     set.insert(3)
     set.insert(4)
     var visits = 0
-    set.retain(fn(value: read i32): bool {
+    set.retain(fn(read value: i32): bool {
         visits += 1
         value % 2 == 0
     })
     if visits != 4 || set.len() != 2usize || !set.contains(2) || !set.contains(4) { return 23 }
     var extracted = 0
-    for value in set.extract_if(fn(value: read i32): bool { value == 2 }) {
+    for value in set.extract_if(fn(read value: i32): bool { value == 2 }) {
         extracted += value
     }
     if extracted != 2 || set.len() != 1usize { return 24 }

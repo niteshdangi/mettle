@@ -23,7 +23,7 @@ type Node {
     value: i32
 }
 
-fn drops_of(counter: read rc.Rc<core.sync.atomic.AtomicUsize>): usize {
+fn drops_of(read counter: rc.Rc<core.sync.atomic.AtomicUsize>): usize {
     counter.get().load(core.sync.atomic.Ordering.SeqCst)
 }
 
@@ -218,7 +218,7 @@ fn checks_uninit_and_slices(): i32 {
 // Cyclic construction hands the constructor a weak handle that is empty
 // until the payload is installed; the finished payload points back.
 fn checks_cyclic_and_pin(): i32 {
-    let child = rc.new_cyclic(fn(me: read rc.Weak<Node>): Node {
+    let child = rc.new_cyclic(fn(read me: rc.Weak<Node>): Node {
         if me.upgrade().is_present() { panic("upgrade before payload init") }
         Node(me.clone(), 2)
     })

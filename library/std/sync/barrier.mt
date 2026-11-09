@@ -17,7 +17,7 @@ extend BarrierWaitResult {
     pub fn is_leader(): bool { self.leader }
 }
 extend BarrierWaitResult implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         var debug = try f.debug_struct("BarrierWaitResult")
         try debug.field("is_leader", read self.leader)
         try debug.finish()
@@ -62,7 +62,7 @@ extend Barrier {
     }
 }
 extend Barrier implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         try f.write_str("Barrier { .. }")
     }
 }

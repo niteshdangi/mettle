@@ -6,7 +6,7 @@ import std.task
 type Panics {}
 extend Panics implements Future {
     type Output = Unit
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Unit> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Unit> {
         panic("async scope child panic")
     }
 }
@@ -19,7 +19,7 @@ type PendingDrop<region r> {
 }
 extend<region r> PendingDrop<region r> implements Future {
     type Output = Unit
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Unit> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Unit> {
         Poll.Pending
     }
 }

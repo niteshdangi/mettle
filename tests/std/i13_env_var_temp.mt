@@ -7,7 +7,7 @@ import std.io.Error
 import std.path.path_from_text
 import core.text.Text
 
-fn is_text(value: read Text, want: read Text): bool { value == want }
+fn is_text(read value: Text, read want: Text): bool { value == want }
 
 fn run(): i32 throws Error {
     let name = ffi.os_str_from_text("MT_I13_VAR_TEXT")

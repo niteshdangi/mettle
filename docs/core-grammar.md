@@ -123,7 +123,7 @@ generics      = "<", generic_param, { ",", generic_param }, [ "," ], ">" ;
 generic_param = IDENT, [ ":", capability, { "+", capability } ] ;
 capability    = IDENT ;
 parameters    = parameter, { ",", parameter }, [ "," ] ;
-parameter     = IDENT, ":", [ mode ], type_ref ;
+parameter     = [ mode ], IDENT, ":", type_ref ;
 mode          = "read" | "mut" | "take" ;
 product       = [ "copy" ], "type", IDENT, [ generics ], "{",
                 { SEP }, [ fields ], "}" ;
@@ -146,6 +146,9 @@ a value contributes `Unit`; incompatible types or unresolved inference require
 a diagnostic, not an implicit conversion or a guessed result.
 `core-semantics.md` section 8 defines recursion, divergence and contract limits.
 Parameter types remain explicit. `->` is not a Mettle result delimiter.
+An explicit parameter access mode precedes the binding, as in
+`fn update(mut item: Item)`. The type after `:` describes the value itself;
+`take view: read Item from r` consumes a stored read view, not its referent.
 
 Method syntax remains the blueprint's `fn`, `mut fn`, `take fn`, and `static fn`
 inside types, but is outside this first product declaration rule. Fields and

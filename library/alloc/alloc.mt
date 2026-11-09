@@ -42,7 +42,7 @@ pub fn layout_of<T>(): Layout {
 
 // Safety: `value` is a valid unsized object whose metadata describes its
 // complete layout.
-pub fn layout_of_val<T: unsized>(value: read T): Layout {
+pub fn layout_of_val<T: unsized>(read value: T): Layout {
     let size = core.mem.size_of_val<T>(value)
     let align = core.mem.align_of_val<T>(value)
     unsafe { layout_unchecked(size, align) }

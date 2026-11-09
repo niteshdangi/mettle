@@ -5,7 +5,7 @@ import std.io.Writer
 import std.time.from_millis
 import core.future.{Context, Future, Poll}
 
-async fn echo(listener: take AsyncTcpListener, count: i32): i32 {
+async fn echo(take listener: AsyncTcpListener, count: i32): i32 {
     var served = 0
     while served < count {
         let accepted = await listener.accept()
@@ -59,7 +59,7 @@ type AcceptTimeout<F> {
 
 extend<F: Future> AcceptTimeout<F> implements Future {
     type Output = bool
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<bool> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<bool> {
         // The parent stays pinned, so neither polled field is moved afterward.
         let me = unsafe { self.get_unchecked_mut() }
         let operation = unsafe {
@@ -79,7 +79,7 @@ extend<F: Future> AcceptTimeout<F> implements Future {
     }
 }
 
-fn accept_timeout<F: Future>(operation: take F, duration: std.time.Duration): AcceptTimeout<F> {
+fn accept_timeout<F: Future>(take operation: F, duration: std.time.Duration): AcceptTimeout<F> {
     AcceptTimeout(operation, task.sleep(duration))
 }
 

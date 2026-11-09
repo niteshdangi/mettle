@@ -1,7 +1,0 @@
-[package]
-name = "shapes"
-version = "1.2.0"
-language = "mettle-1"
-
-[dependencies]
-util = "^1.1"

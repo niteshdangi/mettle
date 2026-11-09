@@ -111,7 +111,7 @@ fn main(): i32 {
         none => { return 23 }
     }
     {
-        let value = map.entry(10).or_insert_with_key(take fn(key: read i32): i32 { key * 2 })
+        let value = map.entry(10).or_insert_with_key(take fn(read key: i32): i32 { key * 2 })
         if *value != 20 { return 50 }
     }
     map.shrink_to(2usize)
@@ -190,7 +190,7 @@ fn main(): i32 {
         none => { return 40 }
     }
     {
-        let value = sorted_map.entry(5).or_insert_with_key(take fn(key: read i32): i32 { key * 2 })
+        let value = sorted_map.entry(5).or_insert_with_key(take fn(read key: i32): i32 { key * 2 })
         if *value != 10 { return 51 }
     }
     match sorted_map.remove_entry(2) {

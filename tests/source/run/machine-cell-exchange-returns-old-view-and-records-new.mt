@@ -1,6 +1,6 @@
 
-fn exchange<region a>(cell: read core.cell.Cell<read i32 from a>,
-                      value: read i32 from a): read i32 from cell {
+fn exchange<region a>(read cell: core.cell.Cell<read i32 from a>,
+                      read value: i32 from a): read i32 from cell {
     cell.replace(read value)
 }
 fn main() {

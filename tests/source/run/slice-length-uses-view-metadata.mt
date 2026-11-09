@@ -1,7 +1,7 @@
 
-fn length<T>(values: read [T]): usize { values.len() }
-fn identity(values: read [i32]): read [i32] from values { read values }
-fn counted(values: read [i32], count: mut i32): read [i32] from values {
+fn length<T>(read values: [T]): usize { values.len() }
+fn identity(read values: [i32]): read [i32] from values { read values }
+fn counted(read values: [i32], mut count: i32): read [i32] from values {
     count += 1
     read values
 }

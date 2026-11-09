@@ -232,24 +232,24 @@ fn main(): i32 {
     if array[0usize] != 7 || array[2usize] != 9 { return 27 }
     let split_values = [1, 0, 2, 0, 3]
     let split_slice: read [i32] = read split_values
-    var split = split_slice.split(fn(value: read i32): bool { value == 0 })
+    var split = split_slice.split(fn(read value: i32): bool { value == 0 })
     match split.next() { present(part) => { if part.len() != 1usize || part[0usize] != 1 { return 51 } }, none => { return 51 } }
     match split.next_back() { present(part) => { if part[0usize] != 3 { return 52 } }, none => { return 52 } }
     match split.next() { present(part) => { if part[0usize] != 2 { return 53 } }, none => { return 53 } }
     match split.next() { present(_) => { return 54 }, none => {} }
-    var split_limit = split_slice.splitn(2usize, fn(value: read i32): bool { value == 0 })
+    var split_limit = split_slice.splitn(2usize, fn(read value: i32): bool { value == 0 })
     match split_limit.next() { present(part) => { if part[0usize] != 1 { return 55 } }, none => { return 55 } }
     match split_limit.next() {
         present(part) => { if part.len() != 3usize || part[0usize] != 2 { return 56 } },
         none => { return 56 }
     }
-    var reverse_limit = split_slice.rsplitn(2usize, fn(value: read i32): bool { value == 0 })
+    var reverse_limit = split_slice.rsplitn(2usize, fn(read value: i32): bool { value == 0 })
     match reverse_limit.next() { present(part) => { if part[0usize] != 3 { return 57 } }, none => { return 57 } }
     match reverse_limit.next() {
         present(part) => { if part.len() != 3usize || part[0usize] != 1 { return 58 } },
         none => { return 58 }
     }
-    var inclusive = split_slice.split_inclusive(fn(value: read i32): bool { value == 0 })
+    var inclusive = split_slice.split_inclusive(fn(read value: i32): bool { value == 0 })
     match inclusive.next() {
         present(part) => { if part.len() != 2usize || part[1usize] != 0 { return 59 } },
         none => { return 59 }
@@ -263,21 +263,21 @@ fn main(): i32 {
     var grouped = [1, 1, 2, 3, 3]
     {
         let grouped_slice: read [i32] = read grouped
-        var groups = grouped_slice.chunk_by(fn(a: read i32, b: read i32): bool { a == b })
+        var groups = grouped_slice.chunk_by(fn(read a: i32, read b: i32): bool { a == b })
         match groups.next() { present(part) => { if part.len() != 2usize { return 63 } }, none => { return 63 } }
         match groups.next_back() { present(part) => { if part.len() != 2usize { return 64 } }, none => { return 64 } }
         match groups.next() { present(part) => { if part[0usize] != 2 { return 65 } }, none => { return 65 } }
     }
     var grouped_mut = mut grouped
     {
-        var groups = grouped_mut.chunk_by_mut(fn(a: read i32, b: read i32): bool { a == b })
+        var groups = grouped_mut.chunk_by_mut(fn(read a: i32, read b: i32): bool { a == b })
         match take groups.next() { present(part) => { part[0usize] = 9 }, none => { return 66 } }
     }
     if grouped[0usize] != 9 { return 67 }
     var split_mut_values = [1, 0, 2]
     {
         let mutable = mut split_mut_values
-        var parts = mutable.split_mut(fn(value: read i32): bool { value == 0 })
+        var parts = mutable.split_mut(fn(read value: i32): bool { value == 0 })
         match take parts.next() {
             present(part) => { part[0usize] = 7 },
             none => { return 68 }
@@ -287,7 +287,7 @@ fn main(): i32 {
     var inclusive_mut_values = [1, 0, 2]
     {
         let mutable = mut inclusive_mut_values
-        var parts = mutable.split_inclusive_mut(fn(value: read i32): bool { value == 0 })
+        var parts = mutable.split_inclusive_mut(fn(read value: i32): bool { value == 0 })
         match take parts.next() {
             present(part) => { part[0usize] = 8; part[1usize] = 9 },
             none => { return 70 }
@@ -308,7 +308,7 @@ fn main(): i32 {
         let mutable = mut keyed
         let parts = take mutable.select_nth_unstable_by(
             1usize,
-            fn(a: read i32, b: read i32): Ordering { a.cmp(b) }
+            fn(read a: i32, read b: i32): Ordering { a.cmp(b) }
         )
         if *parts.1 != 2 { return 74 }
     }
@@ -317,7 +317,7 @@ fn main(): i32 {
         let mutable = mut projected
         let parts = take mutable.select_nth_unstable_by_key(
             3usize,
-            fn(value: read i32): i32 { value }
+            fn(read value: i32): i32 { value }
         )
         if *parts.1 != 5 { return 75 }
     }

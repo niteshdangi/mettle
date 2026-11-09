@@ -2,8 +2,8 @@
 // flags: --sanitize address
 
 type Slot<region r> { value: read i32 from r }
-fn assign<region r>(cell: read core.cell.RefCell<Slot<region r>>,
-                     value: read i32 from r) {
+fn assign<region r>(read cell: core.cell.RefCell<Slot<region r>>,
+                     read value: i32 from r) {
     var guard = cell.borrow_mut()
     guard.get_mut().value = read value
 }

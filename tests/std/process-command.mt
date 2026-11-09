@@ -5,7 +5,7 @@ import std.process.{Stdio}
 import std.ffi
 import std.path.path_from_text
 
-fn sh(script: read Text): std.process.Command {
+fn sh(read script: Text): std.process.Command {
     var c = std.process.command_text("/bin/sh")
     c.arg(ffi.os_str_from_text("-c"))
     c.arg(ffi.os_str_from_text(script))

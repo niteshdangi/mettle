@@ -1,8 +1,8 @@
-fn replace<T>(slot: mut T, value: take T): Unit {
+fn replace<T>(mut slot: T, take value: T): Unit {
     slot = value
 }
 
-fn forward<T>(value: take T, replacement: take T): T {
+fn forward<T>(take value: T, take replacement: T): T {
     var slot = value
     replace(mut slot, replacement)
     slot

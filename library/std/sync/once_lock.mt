@@ -45,7 +45,7 @@ pub fn new<T>(): OnceLock<T> {
     )
 }
 extend<T> OnceLock<T> implements From<T> {
-    static fn from(value: take T): OnceLock<T> {
+    static fn from(take value: T): OnceLock<T> {
         // The initialized state and payload are constructed before the cell escapes.
         OnceLock(
             core.sync.atomic.AtomicU32.new(2u32),
@@ -72,7 +72,7 @@ extend<T: Clone> OnceLock<T> implements Clone {
     }
 }
 extend<T: PartialEq> OnceLock<T> implements PartialEq {
-    fn eq(other: read OnceLock<T>): bool {
+    fn eq(read other: OnceLock<T>): bool {
         match self.get() {
             present(left) => match other.get() {
                 present(right) => left == right,
@@ -87,7 +87,7 @@ extend<T: PartialEq> OnceLock<T> implements PartialEq {
 }
 extend<T: Eq> OnceLock<T> implements Eq {}
 extend<T: Debug> OnceLock<T> implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         try f.write_str("OnceLock(")
         match self.get() {
             present(value) => try T.(Debug).fmt(value, mut f),
@@ -114,7 +114,7 @@ extend<T> OnceLock<T> {
         }
     }
 
-    pub fn set(value: take T): Unit throws SetError<T> {
+    pub fn set(take value: T): Unit throws SetError<T> {
         while true {
             let state = self.state.load(core.sync.atomic.Ordering.Acquire)
             if state == 2u32 { throw SetError(value) }
@@ -136,7 +136,7 @@ extend<T> OnceLock<T> {
         }
     }
 
-    pub fn get_or_init<F: fn(): T>(initializer: take F): read T from self {
+    pub fn get_or_init<F: fn(): T>(take initializer: F): read T from self {
         while true {
             let state = self.state.load(core.sync.atomic.Ordering.Acquire)
             if state == 2u32 {

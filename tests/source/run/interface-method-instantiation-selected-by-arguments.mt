@@ -6,14 +6,14 @@ import core.iter.{ ExtendItems, OwnedIterable, Iterator }
 type Bag { total: i32 }
 
 extend Bag implements ExtendItems<i32> {
-    mut fn extend<I: OwnedIterable<Item = i32>>(items: take I): Unit {
+    mut fn extend<I: OwnedIterable<Item = i32>>(take items: I): Unit {
         var source = items.into_iter()
         while let present(item) = source.next() { self.total += item }
     }
 }
 
 extend Bag implements ExtendItems<bool> {
-    mut fn extend<I: OwnedIterable<Item = bool>>(items: take I): Unit {
+    mut fn extend<I: OwnedIterable<Item = bool>>(take items: I): Unit {
         var source = items.into_iter()
         while let present(item) = source.next() {
             if item { self.total += 100 }
@@ -22,15 +22,15 @@ extend Bag implements ExtendItems<bool> {
 }
 
 interface Accept<T> {
-    mut fn accept(value: take T): Unit;
+    mut fn accept(take value: T): Unit;
 }
 
 extend Bag implements Accept<i32> {
-    mut fn accept(value: take i32): Unit { self.total += value }
+    mut fn accept(take value: i32): Unit { self.total += value }
 }
 
 extend Bag implements Accept<bool> {
-    mut fn accept(value: take bool): Unit { if value { self.total += 1000 } }
+    mut fn accept(take value: bool): Unit { if value { self.total += 1000 } }
 }
 
 fn main(): i32 {

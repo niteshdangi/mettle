@@ -29,7 +29,7 @@ fn main(): i32 {
     match l.get(2usize) { present(x) => { if *x != 160 { return 17 } }, none => { return 18 } }
     match l.back() { present(x) => { if *x != 190 { return 19 } }, none => { return 20 } }
     var retained_calls = 0
-    d.retain(fn(value: read i32): bool {
+    d.retain(fn(read value: i32): bool {
         retained_calls += 1
         value == 500
     })

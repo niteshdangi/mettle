@@ -17,7 +17,7 @@ extend Choice<Owned> {
 
 type Callback<T> {
     operation: fn(i32): T
-    init(operation: take fn(i32): T) { self.operation = take operation }
+    init(take operation: fn(i32): T) { self.operation = take operation }
 }
 
 fn main(): i32 {

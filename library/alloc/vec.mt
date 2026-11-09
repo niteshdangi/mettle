@@ -15,7 +15,7 @@ import package.core.ptr.NonNull
 copy type RawSlice<T> { data: ptr<read T>; len: usize }
 
 fn normalize_range<R: RangeBounds<usize>>(
-    range: take R,
+    take range: R,
     len: usize
 ): (usize, usize) {
     let start = match R.(RangeBounds<usize>).start_bound(read range) {
@@ -85,17 +85,17 @@ pub type List<T, A: Allocator = Global> {
     }
 }
 
-pub fn new_in<T, A: Allocator>(a: take A): List<T, A> {
+pub fn new_in<T, A: Allocator>(take a: A): List<T, A> {
     List<T, A>(allocator: take a)
 }
 pub fn new<T>(): List<T> { new_in(Global()) }
 
-pub fn try_with_capacity_in<T, A: Allocator>(n: usize, a: take A): List<T, A> throws AllocError {
+pub fn try_with_capacity_in<T, A: Allocator>(n: usize, take a: A): List<T, A> throws AllocError {
     var v = new_in<T, A>(a)
     try v.try_reserve_exact(n)
     v
 }
-pub fn with_capacity_in<T, A: Allocator>(n: usize, a: take A): List<T, A> {
+pub fn with_capacity_in<T, A: Allocator>(n: usize, take a: A): List<T, A> {
     var v = new_in<T, A>(a)
     v.reserve_exact(n)
     v
@@ -112,7 +112,7 @@ extend<T> List<T> {
 }
 
 extend<T, A: Allocator> List<T, A> {
-    pub init(allocator: take A) {
+    pub init(take allocator: A) {
         self.ptr = dangling_for<T>()
         self.len = 0usize
         self.cap = if core.mem.size_of<T>() == 0usize { 0xffffffffffffffffusize } else { 0usize }
@@ -199,7 +199,7 @@ extend<T, A: Allocator> List<T, A> {
     }
 
     // On allocation failure the error retains the value and the vector is unchanged.
-    pub mut fn try_push(value: take T): Unit throws super.alloc.PushError<T> {
+    pub mut fn try_push(take value: T): Unit throws super.alloc.PushError<T> {
         match capture self.try_reserve(1usize) {
             success(_) => {},
             failure(error) => { throw super.alloc.PushError(value, error) }
@@ -207,12 +207,12 @@ extend<T, A: Allocator> List<T, A> {
         unsafe { core.ptr.write(self.ptr.add(self.len), value) }
         self.len += 1usize
     }
-    pub mut fn push(value: take T): Unit {
+    pub mut fn push(take value: T): Unit {
         if self.len == self.cap { self.reserve(1usize) }
         unsafe { core.ptr.write(self.ptr.add(self.len), value) }
         self.len += 1usize
     }
-    pub mut fn push_mut(value: take T): mut T from self {
+    pub mut fn push_mut(take value: T): mut T from self {
         self.push(value)
         self.get_mut(self.len - 1usize).unwrap()
     }
@@ -221,7 +221,7 @@ extend<T, A: Allocator> List<T, A> {
         self.len -= 1usize
         present(unsafe { core.ptr.`read`(self.ptr.add(self.len)) })
     }
-    pub mut fn insert(index: usize, value: take T): Unit {
+    pub mut fn insert(index: usize, take value: T): Unit {
         if index > self.len { panic_precondition() }
         if self.len == self.cap { self.reserve(1usize) }
         unsafe {
@@ -231,7 +231,7 @@ extend<T, A: Allocator> List<T, A> {
         }
         self.len += 1usize
     }
-    pub mut fn insert_mut(index: usize, value: take T): mut T from self {
+    pub mut fn insert_mut(index: usize, take value: T): mut T from self {
         self.insert(index, value)
         self.get_mut(index).unwrap()
     }
@@ -266,7 +266,7 @@ extend<T, A: Allocator> List<T, A> {
     pub mut fn clear(): Unit { self.truncate(0usize) }
 
     pub mut fn drain<R: RangeBounds<usize>>(
-        range: take R
+        take range: R
     ): Drain<region self, T, A> {
         let (start, end) = normalize_range(take range, self.len)
         self.drain_bounds(start, end)
@@ -299,7 +299,7 @@ extend<T, A: Allocator> List<T, A> {
     }
 
     // Moves all elements of `other` to the end; `other` is left empty.
-    pub mut fn append(other: mut List<T, A>): Unit {
+    pub mut fn append(mut other: List<T, A>): Unit {
         self.reserve(other.len)
         unsafe {
             core.ptr.`copy`(other.ptr.cast_const(), self.ptr.add(self.len), other.len)
@@ -326,7 +326,7 @@ extend<T, A: Allocator> List<T, A> {
 
     // Both retain variants visit once in order, without allocating. The guard
     // restores kept and unvisited elements if a predicate or destructor panics.
-    pub mut fn retain<F: mut fn(read T): bool>(keep: take F): Unit {
+    pub mut fn retain<F: mut fn(read T): bool>(take keep: F): Unit {
         var predicate = take keep
         let n = self.len
         self.len = 0usize
@@ -347,7 +347,7 @@ extend<T, A: Allocator> List<T, A> {
         }
     }
 
-    pub mut fn retain_mut<F: mut fn(mut T): bool>(keep: take F): Unit {
+    pub mut fn retain_mut<F: mut fn(mut T): bool>(take keep: F): Unit {
         var predicate = take keep
         let n = self.len
         self.len = 0usize
@@ -368,23 +368,23 @@ extend<T, A: Allocator> List<T, A> {
         }
     }
 
-    pub mut fn pop_if<F: take fn(mut T): bool>(test: take F): T? {
+    pub mut fn pop_if<F: take fn(mut T): bool>(take test: F): T? {
         if self.len == 0usize { return none }
         let last = unsafe { self.ptr.add(self.len - 1usize) }
         if test(unsafe { mut *last }) { self.pop() } else { none }
     }
 
     pub mut fn extract_if<R: RangeBounds<usize>, F: mut fn(mut T): bool>(
-        range: take R,
-        test: take F
+        take range: R,
+        take test: F
     ): ExtractIf<region self, T, A, F> {
         let (start, end) = normalize_range(take range, self.len)
         ExtractIf(mut self, start, end - start, test)
     }
 
     pub mut fn splice<R: RangeBounds<usize>, I: OwnedIterable<Item = T>>(
-        range: take R,
-        replacement: take I
+        take range: R,
+        take replacement: I
     ): Splice<region self, T, A, I.(OwnedIterable).IntoIter> where A: Clone {
         let (start, end) = normalize_range(take range, self.len)
         var removed = new_in<T, A>(self.a.clone())
@@ -580,7 +580,7 @@ extend<region r, T, A: Allocator> Drain<region r, T, A> implements AsRef<[T]> {
     fn as_ref(): read [T] from self { self.as_slice() }
 }
 extend<region r, T: fmt.Debug, A: Allocator> Drain<region r, T, A> implements fmt.Debug {
-    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
         try f.write_str("Drain(")
         try fmt.debug_slice(self.as_slice(), mut f)
         try f.write_str(")")
@@ -588,7 +588,7 @@ extend<region r, T: fmt.Debug, A: Allocator> Drain<region r, T, A> implements fm
 }
 
 extend<T: Clone, A: Allocator> List<T, A> {
-    pub mut fn extend_from_slice(items: read [T]): Unit {
+    pub mut fn extend_from_slice(read items: [T]): Unit {
         self.reserve(items.len())
         var i = 0usize
         while i < items.len() {
@@ -596,7 +596,7 @@ extend<T: Clone, A: Allocator> List<T, A> {
             i += 1usize
         }
     }
-    pub mut fn extend_from_within<R: RangeBounds<usize>>(range: take R): Unit {
+    pub mut fn extend_from_within<R: RangeBounds<usize>>(take range: R): Unit {
         let old_len = self.len
         let (start, end) = normalize_range(take range, old_len)
         let count = end - start
@@ -608,12 +608,12 @@ extend<T: Clone, A: Allocator> List<T, A> {
             i += 1usize
         }
     }
-    pub mut fn resize(n: usize, value: read T): Unit {
+    pub mut fn resize(n: usize, read value: T): Unit {
         if n <= self.len { self.truncate(n); return () }
         self.reserve(n - self.len)
         while self.len < n { self.push(value.clone()) }
     }
-    pub mut fn resize_with<F: mut fn(): T>(n: usize, generate: take F): Unit {
+    pub mut fn resize_with<F: mut fn(): T>(n: usize, take generate: F): Unit {
         if n <= self.len { self.truncate(n); return () }
         self.reserve(n - self.len)
         var generator = take generate
@@ -643,7 +643,7 @@ extend<T: Clone> [T] {
 }
 
 extend<T: PartialEq, A: Allocator> List<T, A> {
-    pub fn contains(x: read T): bool {
+    pub fn contains(read x: T): bool {
         var i = 0usize
         while i < self.len {
             if unsafe { read *self.ptr.add(i) } == x { return true }
@@ -679,7 +679,7 @@ extend<V> [V] {
         for part in read self { result.extend_from_slice(part.borrow()) }
         result
     }
-    pub fn join<T: Clone>(sep: read [T]): List<T> where V: Borrow<[T]> {
+    pub fn join<T: Clone>(read sep: [T]): List<T> where V: Borrow<[T]> {
         var result = with_capacity<T>(0usize)
         var first = true
         for part in read self {
@@ -708,7 +708,7 @@ pub fn to_ascii_lowercase(): List<u8> {
 }
 
 extend<T, A: Allocator> List<T, A> {
-    pub mut fn dedup_by<F: mut fn(mut T, mut T): bool>(same: take F): Unit {
+    pub mut fn dedup_by<F: mut fn(mut T, mut T): bool>(take same: F): Unit {
         if self.len < 2usize { return () }
         var predicate = take same
         let n = self.len
@@ -737,7 +737,7 @@ extend<T, A: Allocator> List<T, A> {
         }
     }
 
-    pub mut fn dedup_by_key<K: PartialEq, F: mut fn(mut T): K>(key: take F): Unit {
+    pub mut fn dedup_by_key<K: PartialEq, F: mut fn(mut T): K>(take key: F): Unit {
         if self.len < 2usize { return () }
         var project = take key
         let n = self.len
@@ -771,7 +771,7 @@ extend<T, A: Allocator> List<T, A> {
 
 // Sort indices first, then apply their permutation with swaps. Comparisons
 // never observe a moved-from slot, even if they panic.
-pub fn stable_sort_by<T, F: mut fn(read T, read T): Ordering>(items: mut [T], compare: take F): Unit {
+pub fn stable_sort_by<T, F: mut fn(read T, read T): Ordering>(mut items: [T], take compare: F): Unit {
     let n = items.len()
     if n < 2usize { return () }
     var comparator = take compare
@@ -838,17 +838,17 @@ pub fn stable_sort_by<T, F: mut fn(read T, read T): Ordering>(items: mut [T], co
 
 extend<T: Ord, A: Allocator> List<T, A> {
     pub mut fn sort(): Unit {
-        stable_sort_by(self.as_mut_slice(), fn(a: read T, b: read T): Ordering { a.cmp(b) })
+        stable_sort_by(self.as_mut_slice(), fn(read a: T, read b: T): Ordering { a.cmp(b) })
     }
 }
 
 extend<T, A: Allocator> List<T, A> {
-    pub mut fn sort_by<F: mut fn(read T, read T): Ordering>(compare: take F): Unit {
+    pub mut fn sort_by<F: mut fn(read T, read T): Ordering>(take compare: F): Unit {
         stable_sort_by(self.as_mut_slice(), take compare)
     }
-    pub mut fn sort_by_key<K: Ord, F: mut fn(read T): K>(key: take F): Unit {
+    pub mut fn sort_by_key<K: Ord, F: mut fn(read T): K>(take key: F): Unit {
         var project = take key
-        self.sort_by(fn(a: read T, b: read T): Ordering {
+        self.sort_by(fn(read a: T, read b: T): Ordering {
             let left = project(a)
             let right = project(b)
             left.cmp(read right)
@@ -858,17 +858,17 @@ extend<T, A: Allocator> List<T, A> {
 
 extend<T: Ord> [T] {
     pub mut fn sort(): Unit {
-        stable_sort_by(mut self, fn(a: read T, b: read T): Ordering { a.cmp(b) })
+        stable_sort_by(mut self, fn(read a: T, read b: T): Ordering { a.cmp(b) })
     }
 }
 
 extend<T> [T] {
-    pub mut fn sort_by<F: mut fn(read T, read T): Ordering>(compare: take F): Unit {
+    pub mut fn sort_by<F: mut fn(read T, read T): Ordering>(take compare: F): Unit {
         stable_sort_by(mut self, take compare)
     }
-    pub mut fn sort_by_key<K: Ord, F: mut fn(read T): K>(key: take F): Unit {
+    pub mut fn sort_by_key<K: Ord, F: mut fn(read T): K>(take key: F): Unit {
         var project = take key
-        self.sort_by(fn(a: read T, b: read T): Ordering {
+        self.sort_by(fn(read a: T, read b: T): Ordering {
             let left = project(a)
             let right = project(b)
             left.cmp(read right)
@@ -877,7 +877,7 @@ extend<T> [T] {
 }
 
 extend<T> [T] {
-    pub mut fn sort_by_cached_key<K: Ord, F: mut fn(read T): K>(key: take F): Unit {
+    pub mut fn sort_by_cached_key<K: Ord, F: mut fn(read T): K>(take key: F): Unit {
         let n = self.len()
         if n < 2usize { return () }
         var project = take key
@@ -887,7 +887,7 @@ extend<T> [T] {
             order.push((project(read self[i]), i))
             i += 1usize
         }
-        order.sort_by(fn(a: read (K, usize), b: read (K, usize)): Ordering {
+        order.sort_by(fn(read a: (K, usize), read b: (K, usize)): Ordering {
             a.0.cmp(read b.0)
         })
         var destination = with_capacity<usize>(n)
@@ -976,7 +976,7 @@ extend<T, A: Allocator> List<T, A> {
         pointer: ptr<mut T>,
         length: usize,
         capacity: usize,
-        allocator: take A
+        take allocator: A
     ): List<T, A> {
         var list = new_in<T, A>(take allocator)
         list.ptr = pointer
@@ -1000,7 +1000,7 @@ extend<T, A: Allocator> List<T, A> {
         pointer: NonNull<T>,
         length: usize,
         capacity: usize,
-        allocator: take A
+        take allocator: A
     ): List<T, A> {
         List<T, A>.from_raw_parts_in(
             pointer.as_ptr(),
@@ -1052,14 +1052,14 @@ extend<T: Clone, A: Allocator + Clone> List<T, A> implements Clone {
 
 extend<T, A: Allocator> List<T, A> implements package.core.ops.Index<usize> {
     type Output = T
-    fn index(i: read usize): read T from self {
+    fn index(read i: usize): read T from self {
         if i >= self.len { panic_precondition() }
         unsafe { read *self.ptr.add(i) }
     }
 }
 extend<T, A: Allocator> List<T, A> implements package.core.ops.IndexMut<usize> {
     type Output = T
-    mut fn index_mut(i: read usize): mut T from self {
+    mut fn index_mut(read i: usize): mut T from self {
         if i >= self.len { panic_precondition() }
         unsafe { mut *self.ptr.add(i) }
     }
@@ -1105,7 +1105,7 @@ extend<T, A: Allocator> List<T, A> implements BorrowMut<[T]> {
 
 // The boxed slice's allocation becomes the list's buffer; nothing is copied.
 extend<T, A: Allocator> List<T, A> implements From<super.boxed.Box<[T], A>> {
-    static fn from(items: take super.boxed.Box<[T], A>): List<T, A> {
+    static fn from(take items: super.boxed.Box<[T], A>): List<T, A> {
         let length = items.get().len()
         let raw = items.into_raw()
         var list = new_in<T, A>(take raw.1)
@@ -1118,7 +1118,7 @@ extend<T, A: Allocator> List<T, A> implements From<super.boxed.Box<[T], A>> {
 
 // Moves the array's elements into a new exact-capacity list.
 extend<T, const N: usize> List<T> implements From<[T; N]> {
-    static fn from(items: take [T; N]): List<T> {
+    static fn from(take items: [T; N]): List<T> {
         var list = with_capacity<T>(N)
         unsafe {
             core.ptr.`copy`(core.ptr.from_ref(items).cast<T>(), list.ptr, N)
@@ -1130,23 +1130,23 @@ extend<T, const N: usize> List<T> implements From<[T; N]> {
 }
 
 extend<region r, T: Clone> List<T> implements From<read [T] from r> {
-    static fn from(items: take read [T] from r): List<T> { items.to_vec() }
+    static fn from(take items: read [T] from r): List<T> { items.to_vec() }
 }
 extend<region r, T: Clone> List<T> implements From<mut [T] from r> {
-    static fn from(items: take mut [T] from r): List<T> { items.to_vec() }
+    static fn from(take items: mut [T] from r): List<T> { items.to_vec() }
 }
 extend<region r, T: Clone, const N: usize> List<T> implements From<read [T; N] from r> {
-    static fn from(items: take read [T; N] from r): List<T> { items.to_vec() }
+    static fn from(take items: read [T; N] from r): List<T> { items.to_vec() }
 }
 extend<region r, T: Clone, const N: usize> List<T> implements From<mut [T; N] from r> {
-    static fn from(items: take mut [T; N] from r): List<T> { items.to_vec() }
+    static fn from(take items: mut [T; N] from r): List<T> { items.to_vec() }
 }
 extend<region r> List<u8> implements From<read Text from r> {
-    static fn from(text: take read Text from r): List<u8> { text.as_bytes().to_vec() }
+    static fn from(take text: read Text from r): List<u8> { text.as_bytes().to_vec() }
 }
 
 extend<T: PartialEq<U>, U, A: Allocator> List<T, A> implements PartialEq<[U]> {
-    fn eq(other: read [U]): bool {
+    fn eq(read other: [U]): bool {
         if self.len != other.len() { return false }
         var i = 0usize
         while i < self.len {
@@ -1158,7 +1158,7 @@ extend<T: PartialEq<U>, U, A: Allocator> List<T, A> implements PartialEq<[U]> {
 }
 
 extend<T: PartialEq<U>, U, const N: usize, A: Allocator> List<T, A> implements PartialEq<[U; N]> {
-    fn eq(other: read [U; N]): bool {
+    fn eq(read other: [U; N]): bool {
         if self.len != N { return false }
         var i = 0usize
         while i < N {
@@ -1170,7 +1170,7 @@ extend<T: PartialEq<U>, U, const N: usize, A: Allocator> List<T, A> implements P
 }
 
 extend<T: PartialEq<U>, U, A1: Allocator, A2: Allocator> List<T, A1> implements PartialEq<List<U, A2>> {
-    fn eq(other: read List<U, A2>): bool {
+    fn eq(read other: List<U, A2>): bool {
         if self.len != other.len { return false }
         var i = 0usize
         while i < self.len {
@@ -1182,14 +1182,14 @@ extend<T: PartialEq<U>, U, A1: Allocator, A2: Allocator> List<T, A1> implements 
 }
 extend<T: Eq, A: Allocator> List<T, A> implements Eq {}
 extend<T: PartialOrd, A1: Allocator, A2: Allocator> List<T, A1> implements PartialOrd<List<T, A2>> {
-    fn partial_cmp(other: read List<T, A2>): Ordering? { self.as_slice().partial_cmp(other.as_slice()) }
+    fn partial_cmp(read other: List<T, A2>): Ordering? { self.as_slice().partial_cmp(other.as_slice()) }
 }
 extend<T: Ord, A: Allocator> List<T, A> implements Ord {
-    fn cmp(other: read List<T, A>): Ordering { self.as_slice().cmp(other.as_slice()) }
+    fn cmp(read other: List<T, A>): Ordering { self.as_slice().cmp(other.as_slice()) }
 }
 // Hashes exactly like the slice view, so `List<T>` and `[T]` agree.
 extend<T: Hash, A: Allocator> List<T, A> implements Hash {
-    fn hash<H: Hasher>(state: mut H): Unit { self.as_slice().hash(mut state) }
+    fn hash<H: Hasher>(mut state: H): Unit { self.as_slice().hash(mut state) }
 }
 // By-value iterator; remaining elements and the buffer are released on drop.
 pub type IntoIter<T, A: Allocator = Global> {
@@ -1211,7 +1211,7 @@ pub type IntoIter<T, A: Allocator = Global> {
 extend<T, A: Allocator> List<T, A> implements OwnedIterable {
     type Item = T
     type IntoIter = IntoIter<T, A>
-    fn into_iter(receiver self: take Self): IntoIter<T, A> {
+    fn into_iter(receiver take self: Self): IntoIter<T, A> {
         unsafe {
             let buf = self.ptr
             let cap = self.cap
@@ -1299,7 +1299,7 @@ extend<T: Clone, A: Allocator + Clone> IntoIter<T, A> implements Clone {
     }
 }
 extend<T: fmt.Debug, A: Allocator> IntoIter<T, A> implements fmt.Debug {
-    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
         try f.write_str("IntoIter(")
         try fmt.debug_slice(self.as_slice(), mut f)
         try f.write_str(")")
@@ -1314,16 +1314,16 @@ extend<T, A: Allocator + Default> IntoIter<T, A> implements Default {
 extend<T, A: Allocator> List<T, A> implements Iterable {
     type Item = T
     type Iter<region r> = SliceIter<region r, T>
-    fn iter<region r>(receiver self: read Self from r): SliceIter<region r, T> { self.as_slice().iter() }
+    fn iter<region r>(receiver read self: Self from r): SliceIter<region r, T> { self.as_slice().iter() }
 }
 extend<T, A: Allocator> List<T, A> implements MutableIterable {
     type Item = T
     type IterMut<region r> = SliceIterMut<region r, T>
-    fn iter_mut<region r>(receiver self: mut Self from r): SliceIterMut<region r, T> { self.as_mut_slice().iter_mut() }
+    fn iter_mut<region r>(receiver mut self: Self from r): SliceIterMut<region r, T> { self.as_mut_slice().iter_mut() }
 }
 
 extend<T, A: Allocator> List<T, A> implements ExtendItems<T> {
-    mut fn extend<I: OwnedIterable<Item = T>>(items: take I): Unit {
+    mut fn extend<I: OwnedIterable<Item = T>>(take items: I): Unit {
         var source = items.into_iter()
         while true {
             match take source.next() { present(item) => { self.push(item) }, none => { break } }
@@ -1331,7 +1331,7 @@ extend<T, A: Allocator> List<T, A> implements ExtendItems<T> {
     }
 }
 extend<region r, T: Copy, A: Allocator> List<T, A> implements ExtendItems<read T from r> {
-    mut fn extend<I: OwnedIterable<Item = read T from r>>(items: take I): Unit {
+    mut fn extend<I: OwnedIterable<Item = read T from r>>(take items: I): Unit {
         var source = items.into_iter()
         while true {
             match take source.next() {
@@ -1342,7 +1342,7 @@ extend<region r, T: Copy, A: Allocator> List<T, A> implements ExtendItems<read T
     }
 }
 extend<T> List<T> implements FromItems<T> {
-    static fn from_iter<I: OwnedIterable<Item = T>>(items: take I): List<T> {
+    static fn from_iter<I: OwnedIterable<Item = T>>(take items: I): List<T> {
         var out = new<T>()
         out.extend(items)
         out
@@ -1350,7 +1350,7 @@ extend<T> List<T> implements FromItems<T> {
 }
 
 extend<T: fmt.Debug, A: Allocator> List<T, A> implements fmt.Debug {
-    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
         try fmt.debug_slice(self.as_slice(), mut f)
     }
 }

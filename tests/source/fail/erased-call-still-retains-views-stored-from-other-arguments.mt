@@ -1,10 +1,10 @@
 // expect-error: ownership 12:5 live read loan
 
 type Hold<region r> { x: read i32 from r }
-interface Put { fn put<region r>(h: mut Hold<region r>, v: read i32 from r): Unit; }
+interface Put { fn put<region r>(mut h: Hold<region r>, read v: i32 from r): Unit; }
 type A {}
-extend A implements Put { fn put<region r>(h: mut Hold<region r>, v: read i32 from r): Unit { h.x = read v } }
-fn run<P: Put>(p: read P): i32 {
+extend A implements Put { fn put<region r>(mut h: Hold<region r>, read v: i32 from r): Unit { h.x = read v } }
+fn run<P: Put>(read p: P): i32 {
     var a = 1
     var h = Hold(read a)
     var b = 2

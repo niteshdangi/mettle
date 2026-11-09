@@ -5,7 +5,7 @@ import core.num
 import core.num.NumBuffer
 import core.text.Text
 
-fn is(text: read Text, expected: read Text): bool { text == expected }
+fn is(read text: Text, read expected: Text): bool { text == expected }
 
 fn main(): i32 {
     var buffer = NumBuffer<i8>.new()

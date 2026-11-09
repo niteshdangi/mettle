@@ -1,8 +1,8 @@
 
 type P { a: i32; b: i64 }
 type H<T> { v: T }
-fn exchange(dest: mut i32, v: i32): i32 { core.mem.replace(dest, v) }
-fn keep(slot: mut H<read i32>, v: take H<read i32>): H<read i32> from (slot, v) {
+fn exchange(mut dest: i32, v: i32): i32 { core.mem.replace(dest, v) }
+fn keep(mut slot: H<read i32>, take v: H<read i32>): H<read i32> from (slot, v) {
     core.mem.replace(slot, v)
 }
 fn die(): Never { core.intrinsics.abort() }

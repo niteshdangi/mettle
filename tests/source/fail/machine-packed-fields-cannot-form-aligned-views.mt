@@ -3,5 +3,5 @@
 @layout(C)
 @packed(1)
 copy type Packed { tag: u8; value: i32 }
-fn inspect(value: read i32): i32 { value }
+fn inspect(read value: i32): i32 { value }
 fn main() { let value=Packed(0u8,42); inspect(value.value) }

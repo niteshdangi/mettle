@@ -10,19 +10,19 @@ import super.text.{FromStr, Text}
 // The failure of a `char` conversion from an integer that is not a scalar value.
 pub copy type CharTryFromError { }
 extend CharTryFromError implements PartialEq {
-    fn eq(other: read CharTryFromError): bool { true }
+    fn eq(read other: CharTryFromError): bool { true }
 }
 extend CharTryFromError implements Eq {}
 extend CharTryFromError implements Clone {
     fn clone(): CharTryFromError { self }
 }
 extend CharTryFromError implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         try f.write_str("CharTryFromError(())")
     }
 }
 extend CharTryFromError implements Display {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         try f.write_str("converted integer out of range for `char`")
     }
 }
@@ -31,19 +31,19 @@ extend CharTryFromError implements CoreError {}
 // The failure of a conversion from a `char` whose code point does not fit the target.
 pub copy type TryFromCharError { }
 extend TryFromCharError implements PartialEq {
-    fn eq(other: read TryFromCharError): bool { true }
+    fn eq(read other: TryFromCharError): bool { true }
 }
 extend TryFromCharError implements Eq {}
 extend TryFromCharError implements Clone {
     fn clone(): TryFromCharError { self }
 }
 extend TryFromCharError implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         try f.write_str("TryFromCharError(())")
     }
 }
 extend TryFromCharError implements Display {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         try f.write_str("unicode code point out of range")
     }
 }
@@ -52,14 +52,14 @@ extend TryFromCharError implements CoreError {}
 pub copy enum CharErrorKind { EmptyString, TooManyChars }
 pub copy type ParseCharError { pub kind: CharErrorKind }
 extend ParseCharError implements PartialEq {
-    fn eq(other: read ParseCharError): bool { (self.kind as u8) == (other.kind as u8) }
+    fn eq(read other: ParseCharError): bool { (self.kind as u8) == (other.kind as u8) }
 }
 extend ParseCharError implements Eq {}
 extend ParseCharError implements Clone {
     fn clone(): ParseCharError { self }
 }
 extend ParseCharError implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         match self.kind {
             CharErrorKind.EmptyString => try f.write_str("ParseCharError { kind: EmptyString }"),
             CharErrorKind.TooManyChars => try f.write_str("ParseCharError { kind: TooManyChars }")
@@ -67,7 +67,7 @@ extend ParseCharError implements Debug {
     }
 }
 extend ParseCharError implements Display {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         match self.kind {
             CharErrorKind.EmptyString => try f.write_str("cannot parse char from empty string"),
             CharErrorKind.TooManyChars => try f.write_str("too many characters in string")
@@ -78,7 +78,7 @@ extend ParseCharError implements CoreError {}
 
 extend char implements FromStr {
     type Error = ParseCharError
-    static fn from_str(input: read Text): char throws ParseCharError {
+    static fn from_str(read input: Text): char throws ParseCharError {
         var scalars = input.chars()
         let first = match scalars.next() {
             present(value) => value,
@@ -91,7 +91,7 @@ extend char implements FromStr {
 
 extend char implements TryFrom<u32> {
     type Error = CharTryFromError
-    static fn try_from(value: take u32): (char throws CharTryFromError) {
+    static fn try_from(take value: u32): (Outcome<char, CharTryFromError>) {
         match from_u32(value) {
             present(scalar) => success(scalar),
             none => failure(CharTryFromError())
@@ -100,19 +100,19 @@ extend char implements TryFrom<u32> {
 }
 
 extend char implements From<u8> {
-    static fn from(value: take u8): char {
+    static fn from(take value: u8): char {
         unsafe { from_u32_unchecked(value as u32) }
     }
 }
 
 extend u32 implements From<char> {
-    static fn from(value: take char): u32 { value as u32 }
+    static fn from(take value: char): u32 { value as u32 }
 }
 extend u64 implements From<char> {
-    static fn from(value: take char): u64 { value as u64 }
+    static fn from(take value: char): u64 { value as u64 }
 }
 extend u128 implements From<char> {
-    static fn from(value: take char): u128 { value as u128 }
+    static fn from(take value: char): u128 { value as u128 }
 }
 
 macro char_try_from {
@@ -120,7 +120,7 @@ macro char_try_from {
         $(
             extend $target implements TryFrom<char> {
                 type Error = TryFromCharError
-                static fn try_from(value: take char): ($target throws TryFromCharError) {
+                static fn try_from(take value: char): Outcome<$target, TryFromCharError> {
                     match (value as u32).checked_cast<$target>() {
                         present(converted) => success(converted),
                         none => failure(TryFromCharError())
@@ -318,7 +318,7 @@ extend char {
     }
 
     // Writes the UTF-8 encoding into the front of `buffer` and returns that view.
-    pub fn encode_utf8(buffer: mut [u8]): mut super.text.Text from buffer {
+    pub fn encode_utf8(mut buffer: [u8]): mut super.text.Text from buffer {
         let length = self.len_utf8()
         if buffer.len() < length {
             super.panic.panic("UTF-8 buffer is too small")
@@ -344,7 +344,7 @@ extend char {
         unsafe { super.text.from_utf8_unchecked_mut(encoded) }
     }
 
-    pub fn encode_utf16(buffer: mut [u16]): mut [u16] from buffer {
+    pub fn encode_utf16(mut buffer: [u16]): mut [u16] from buffer {
         let length = self.len_utf16()
         if buffer.len() < length {
             super.panic.panic("UTF-16 buffer is too small")
@@ -526,21 +526,21 @@ fn case_mapping(source: char, mapping: [u32; 4]): CaseMapping {
 // The failure of decoding an unpaired UTF-16 surrogate.
 pub copy type DecodeUtf16Error { code: u16 }
 extend DecodeUtf16Error implements PartialEq {
-    fn eq(other: read DecodeUtf16Error): bool { self.code == other.code }
+    fn eq(read other: DecodeUtf16Error): bool { self.code == other.code }
 }
 extend DecodeUtf16Error implements Eq {}
 extend DecodeUtf16Error implements Clone {
     fn clone(): DecodeUtf16Error { self }
 }
 extend DecodeUtf16Error implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         var debug = try f.debug_struct("DecodeUtf16Error")
         try debug.field("code", read self.code)
         try debug.finish()
     }
 }
 extend DecodeUtf16Error implements Display {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         try f.write_str("unpaired surrogate found: ")
         try fmt_radix(mut f, self.code as u64, false, 16u64, false, "")
     }
@@ -553,13 +553,13 @@ extend DecodeUtf16Error {
 
 pub type DecodeUtf16<I> { iter: I; buffered: u16? }
 
-pub fn decode_utf16<I: OwnedIterable<Item = u16>>(items: take I): DecodeUtf16<I.(OwnedIterable).IntoIter> {
+pub fn decode_utf16<I: OwnedIterable<Item = u16>>(take items: I): DecodeUtf16<I.(OwnedIterable).IntoIter> {
     DecodeUtf16(I.(OwnedIterable).into_iter(items), none)
 }
 
 extend<I: Iterator<Item = u16>> DecodeUtf16<I> implements Iterator {
-    type Item = (char throws DecodeUtf16Error)
-    mut fn next(): (char throws DecodeUtf16Error)? {
+    type Item = (Outcome<char, DecodeUtf16Error>)
+    mut fn next(): (Outcome<char, DecodeUtf16Error>)? {
         let pending = self.buffered
         self.buffered = none
         let unit = match pending {

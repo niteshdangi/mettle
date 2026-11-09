@@ -73,13 +73,13 @@ fn dedup_unwind(callback_panic: bool): Unit {
     var visits = 0usize
     let result = std.panic.catch_panic(fn(): Unit {
         if callback_panic {
-            values.dedup_by(fn(current: mut DedupBomb, previous: mut DedupBomb): bool {
+            values.dedup_by(fn(mut current: DedupBomb, mut previous: DedupBomb): bool {
                 visits += 1usize
                 if current.id == 3 { panic("dedup predicate") }
                 current.id == previous.id
             })
         } else {
-            values.dedup_by(fn(current: mut DedupBomb, previous: mut DedupBomb): bool {
+            values.dedup_by(fn(mut current: DedupBomb, mut previous: DedupBomb): bool {
                 visits += 1usize
                 current.id == previous.id
             })
@@ -128,14 +128,14 @@ fn retain_unwind(mutable_predicate: bool, panic_on_drop: bool): Unit {
     var visits = 0
     let result = std.panic.catch_panic(fn(): Unit {
         if mutable_predicate {
-            values.retain_mut(fn(value: mut RetainBomb): bool {
+            values.retain_mut(fn(mut value: RetainBomb): bool {
                 visits += 1
                 value.id += 10
                 if value.id == 15 { panic("retain_mut callback") }
                 value.id % 2 == 0
             })
         } else {
-            values.retain(fn(value: read RetainBomb): bool {
+            values.retain(fn(read value: RetainBomb): bool {
                 visits += 1
                 if value.id == 5 { panic("retain callback after removal") }
                 value.id % 2 == 0
@@ -201,7 +201,7 @@ fn main(): i32 {
     numbers.push(2)
     numbers.push(3)
     let retained = std.panic.catch_panic(fn(): i32 {
-        numbers.retain(fn(value: read i32): bool {
+        numbers.retain(fn(read value: i32): bool {
             if value == 2 { panic("retain callback") }
             true
         })
@@ -219,7 +219,7 @@ fn main(): i32 {
         none => { return 8 }
     }
     let first = std.panic.catch_panic(fn(): Unit {
-        numbers.retain_mut(fn(value: mut i32): bool {
+        numbers.retain_mut(fn(mut value: i32): bool {
             value += 10
             panic("retain_mut first callback")
             true
@@ -237,7 +237,7 @@ fn main(): i32 {
     stable.push(1)
     stable.push(2)
     let sorted = std.panic.catch_panic(fn(): i32 {
-        stable.sort_by(fn(a: read i32, b: read i32): Ordering {
+        stable.sort_by(fn(read a: i32, read b: i32): Ordering {
             panic("stable comparison")
             Ordering.Equal
         })
@@ -258,7 +258,7 @@ fn main(): i32 {
     var raw = [3, 1, 2]
     let unstable = std.panic.catch_panic(fn(): i32 {
         let slice = mut raw[0usize..3usize]
-        slice.sort_unstable_by(fn(a: read i32, b: read i32): Ordering {
+        slice.sort_unstable_by(fn(read a: i32, read b: i32): Ordering {
             panic("unstable comparison")
             Ordering.Equal
         })

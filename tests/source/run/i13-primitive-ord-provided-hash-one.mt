@@ -12,7 +12,7 @@ extend FnvFactory implements BuildHasher {
     fn build_hasher(): Fnv1a { fnv1a() }
 }
 
-fn debug_is<T: Debug>(value: read T, expected: read Text): bool {
+fn debug_is<T: Debug>(read value: T, read expected: Text): bool {
     var storage = [0u8; 200]
     var writer = fmt.buffer_writer(mut storage)
     var formatter = fmt.formatter(mut writer, fmt.spec())

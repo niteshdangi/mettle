@@ -1,0 +1,12 @@
+name: "feature-app"
+version: "0.1.0"
+features {
+    default: []
+    fancy: ["widget/fancy"]
+}
+dependencies {
+    widget {
+        path: "../widget"
+        default_features: false
+    }
+}

@@ -1,0 +1,652 @@
+#include "packages/plan.h"
+#include "packages/data.h"
+#include "packages/lock.h"
+#include "packages/manifest.h"
+#include "packages/sha256.h"
+#include "packages/solver.h"
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <map>
+#include <set>
+#include <sstream>
+
+namespace mettle::packages {
+namespace {
+namespace fs = std::filesystem;
+
+std::optional<std::string> readFile(const fs::path &path) {
+  std::ifstream stream(path, std::ios::binary);
+  if (!stream)
+    return std::nullopt;
+  std::ostringstream text;
+  text << stream.rdbuf();
+  return text.str();
+}
+
+// Package inputs exclude generated locks, hidden directories and build output.
+std::string checksum(const fs::path &directory) {
+  std::vector<std::pair<std::string, fs::path>> files;
+  for (fs::recursive_directory_iterator it(directory), end; it != end; ++it) {
+    const auto name = it->path().filename().string();
+    if (it->is_directory()) {
+      if (name.rfind('.', 0) == 0 || name == "target" || name == "build")
+        it.disable_recursion_pending();
+      continue;
+    }
+    if (it->is_regular_file() &&
+        (it->path().extension() == ".mt" ||
+         (it->path().extension() == ".mettle" && name != "lock.mettle")))
+      files.emplace_back(
+          it->path().lexically_relative(directory).generic_string(),
+          it->path());
+  }
+  std::sort(files.begin(), files.end());
+  Sha256 hash;
+  for (const auto &[relative, path] : files) {
+    auto text = readFile(path).value_or("");
+    hash.update(relative);
+    hash.update(std::string_view("\0", 1));
+    hash.update(std::to_string(text.size()));
+    hash.update(std::string_view("\0", 1));
+    hash.update(text);
+  }
+  return "sha256:" + hash.finish();
+}
+
+std::string moduleRoot(const ResolvedPackage &package) {
+  Sha256 hash;
+  hash.update(package.identity);
+  auto version = toString(package.candidate.manifest->version);
+  std::replace_if(
+      version.begin(), version.end(),
+      [](char c) {
+        return !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                 (c >= '0' && c <= '9') || c == '_');
+      },
+      '_');
+  return "mettle_pkg_" + moduleName(package.candidate.manifest->name) + "_" +
+         version + "_" + hash.finish();
+}
+
+class Planner {
+public:
+  Planner(const Request &request, Diagnostics &diagnostics)
+      : request(request), diagnostics(diagnostics) {}
+
+  Outcome run() {
+    Outcome outcome;
+    std::error_code error;
+    fs::path input(request.input);
+    if (fs::is_directory(input, error))
+      rootDirectory = fs::canonical(input, error);
+    else if (input.filename() == "package.mettle")
+      rootDirectory = fs::canonical(
+          input.parent_path().empty() ? fs::path(".") : input.parent_path(),
+          error);
+    else {
+      outcome.fallback = {request.input, "", 0};
+      diagnostics.error(
+          "io", {},
+          "'" + request.input +
+              "' is neither a package directory nor a package.mettle");
+      return outcome;
+    }
+    outcome.fallback = {(rootDirectory / "package.mettle").generic_string(), "",
+                        0};
+    if (error) {
+      diagnostics.error("io", {}, "cannot open package: " + error.message());
+      return outcome;
+    }
+    auto root = loadManifest(rootDirectory, {});
+    if (!sources.empty())
+      outcome.fallback.text = sources.front().text;
+    if (root)
+      outcome.plan = build(root);
+    return outcome;
+  }
+
+private:
+  const Request &request;
+  Diagnostics &diagnostics;
+  fs::path rootDirectory;
+  SourceId nextId = 0;
+  std::vector<Source> sources;
+  std::map<std::string, std::shared_ptr<const Manifest>> loaded;
+  std::vector<fs::path> registries;
+
+  bool failed() const { return !diagnostics.empty(); }
+
+  std::string display(const fs::path &path) const {
+    auto relative = path.lexically_relative(rootDirectory).generic_string();
+    return relative.empty() ? "." : relative;
+  }
+
+  std::shared_ptr<const Manifest> loadManifest(const fs::path &directory,
+                                               std::optional<Span> at) {
+    auto key = directory.generic_string();
+    if (auto found = loaded.find(key); found != loaded.end())
+      return found->second;
+    auto &slot = loaded[key];
+    auto path = directory / "package.mettle";
+    auto text = readFile(path);
+    if (!text) {
+      diagnostics.error("io", at.value_or(Span{}),
+                        "cannot read " + path.generic_string());
+      return slot;
+    }
+    sources.push_back({path.generic_string(), std::move(*text), nextId++});
+    const auto &source = sources.back();
+    auto tree = data::parse(source, diagnostics, "manifest");
+    if (!tree)
+      return slot;
+    auto manifest =
+        parseManifest(*tree, source, directory.generic_string(), diagnostics);
+    if (manifest)
+      slot = std::make_shared<const Manifest>(std::move(*manifest));
+    return slot;
+  }
+
+  std::optional<Candidate> loadPath(const Manifest &from,
+                                    const DependencySpec &spec) {
+    std::error_code error;
+    auto directory =
+        fs::weakly_canonical(fs::path(from.directory) / *spec.path, error);
+    if (error || !fs::is_directory(directory)) {
+      diagnostics.error("package", spec.span,
+                        "path dependency '" + spec.name + "' does not exist: " +
+                            (fs::path(from.directory) / *spec.path)
+                                .lexically_normal()
+                                .generic_string());
+      return std::nullopt;
+    }
+    auto manifest = loadManifest(directory, spec.span);
+    if (!manifest)
+      return std::nullopt;
+    if (manifest->name != spec.name) {
+      diagnostics.error("package", spec.span,
+                        "dependency '" + spec.name + "' at '" + *spec.path +
+                            "' is the package '" + manifest->name + "'");
+      return std::nullopt;
+    }
+    Candidate candidate;
+    candidate.manifest = std::move(manifest);
+    candidate.kind = SourceKind::Path;
+    candidate.location = directory.generic_string();
+    candidate.sourceIdentity =
+        "path+" + directory.lexically_relative(rootDirectory).generic_string();
+    return candidate;
+  }
+
+  std::optional<Candidate> loadGit(const Manifest &from,
+                                   const DependencySpec &spec,
+                                   const Lock *recorded) {
+    (void)from;
+    if (!request.gitCheckout) {
+      diagnostics.error("feature", spec.span,
+                        "git dependencies require the system git provider");
+      return std::nullopt;
+    }
+    std::string selector = "HEAD";
+    if (spec.rev)
+      selector = "rev=" + *spec.rev;
+    else if (spec.tag)
+      selector = "tag=" + *spec.tag;
+    else if (spec.branch)
+      selector = "branch=" + *spec.branch;
+    std::string lockedCommit;
+    if (recorded)
+      for (const auto &entry : recorded->packages)
+        if (entry.name == spec.name &&
+            entry.source.rfind("git+" + *spec.git + "#", 0) == 0) {
+          lockedCommit =
+              entry.source.substr(std::string("git+" + *spec.git + "#").size());
+          break;
+        }
+    std::string problem;
+    auto checkout = request.gitCheckout(*spec.git, selector, lockedCommit,
+                                        request.offline, problem);
+    if (!checkout) {
+      diagnostics.error("package", spec.span,
+                        "cannot resolve git dependency '" + spec.name +
+                            "' from '" + *spec.git + "': " + problem);
+      return std::nullopt;
+    }
+    auto directory = fs::canonical(checkout->directory);
+    auto manifest = loadManifest(directory, spec.span);
+    if (!manifest)
+      return std::nullopt;
+    if (manifest->name != spec.name) {
+      diagnostics.error("package", spec.span,
+                        "git dependency '" + spec.name + "' at '" + *spec.git +
+                            "' is the package '" + manifest->name + "'");
+      return std::nullopt;
+    }
+    Candidate candidate;
+    candidate.manifest = std::move(manifest);
+    candidate.kind = SourceKind::Git;
+    candidate.location = directory.generic_string();
+    candidate.git = *spec.git;
+    candidate.commit = checkout->commit;
+    candidate.sourceIdentity = "git+" + candidate.git + "#" + candidate.commit;
+    return candidate;
+  }
+
+  std::vector<Candidate> registryCandidates(const std::string &name) {
+    std::vector<Candidate> found;
+    for (const auto &registry : registries) {
+      std::error_code error;
+      std::vector<fs::path> versions;
+      for (fs::directory_iterator it(registry / name, error), end;
+           !error && it != end; it.increment(error))
+        if (it->is_directory())
+          versions.push_back(it->path());
+      std::sort(versions.begin(), versions.end());
+      for (const auto &directory : versions) {
+        auto version = parseVersion(directory.filename().string());
+        if (!version)
+          continue;
+        if (std::any_of(found.begin(), found.end(), [&](const Candidate &c) {
+              return compare(c.manifest->version, *version) == 0;
+            }))
+          continue;
+        auto manifest = loadManifest(directory, {});
+        if (!manifest)
+          continue;
+        if (manifest->name != name ||
+            compare(manifest->version, *version) != 0) {
+          diagnostics.error("package", manifest->nameSpan,
+                            "registry entry '" + display(directory) +
+                                "' contains package '" + manifest->name + "' " +
+                                toString(manifest->version));
+          continue;
+        }
+        Candidate candidate;
+        candidate.manifest = std::move(manifest);
+        candidate.kind = SourceKind::Registry;
+        candidate.location = directory.generic_string();
+        candidate.registry = display(registry);
+        candidate.sourceIdentity = "registry+" + candidate.registry;
+        candidate.yanked = fs::exists(directory / "YANKED");
+        found.push_back(std::move(candidate));
+      }
+    }
+    return found;
+  }
+
+  std::string absence() const {
+    std::string text;
+    if (registries.empty())
+      text = "no registry is configured (use registry { path: ... } in "
+             "package.mettle "
+             "or --registry DIR)";
+    else {
+      text = "not present in the local registries";
+      for (const auto &registry : registries)
+        text += " '" + display(registry) + "'";
+    }
+    return text +
+           (request.offline
+                ? "; offline mode never fetches packages"
+                : "; fetching from remote registries is not implemented");
+  }
+
+  static std::string sourceOf(const Candidate &candidate,
+                              const fs::path &root) {
+    switch (candidate.kind) {
+    case SourceKind::Root:
+      return "root";
+    case SourceKind::Path:
+      return "path+" + fs::path(candidate.location)
+                           .lexically_relative(root)
+                           .generic_string();
+    case SourceKind::Registry:
+      return "registry+" + candidate.registry;
+    case SourceKind::Git:
+      return "git+" + candidate.git + "#" + candidate.commit;
+    }
+    return {};
+  }
+
+  Lock lockOf(const Resolution &resolution) const {
+    Lock lock;
+    for (const auto &package : resolution.packages) {
+      LockedPackage entry;
+      entry.name = package.name();
+      entry.version = toString(package.candidate.manifest->version);
+      entry.id = package.identity;
+      entry.source = sourceOf(package.candidate, rootDirectory);
+      if (package.candidate.kind != SourceKind::Root)
+        entry.checksum = checksum(package.candidate.location);
+      entry.features = package.features;
+      for (const auto &[name, id] : package.dependencies) {
+        (void)name;
+        entry.dependencies.push_back(id);
+      }
+      lock.packages.push_back(std::move(entry));
+    }
+    return lock;
+  }
+
+  bool validate(const Resolution &resolution) {
+    for (const auto &package : resolution.packages) {
+      const auto &manifest = *package.candidate.manifest;
+      if (package.candidate.kind == SourceKind::Root)
+        continue;
+      const auto *library = manifest.library();
+      if (!library && !manifest.macros.empty())
+        continue;
+      if (!library) {
+        diagnostics.error("package", manifest.nameSpan,
+                          "package '" + manifest.name +
+                              "' is a dependency but has no library target");
+        continue;
+      }
+      if (!fs::is_regular_file(fs::path(manifest.directory) / library->source))
+        diagnostics.error("package", library->span,
+                          "library source '" + library->source +
+                              "' does not exist");
+    }
+    return !failed();
+  }
+
+  std::optional<Plan> build(const std::shared_ptr<const Manifest> &root) {
+    const Target *executable = nullptr;
+    bool primary = std::any_of(
+        root->targets.begin(), root->targets.end(), [&](const Target &target) {
+          return target.kind == "executable" && target.name == "main";
+        });
+    for (const auto &target : root->targets)
+      if (target.kind == "executable" &&
+          (request.target.empty() ? (!primary || target.name == "main")
+                                  : target.name == request.target)) {
+        if (executable) {
+          diagnostics.error("package", target.span,
+                            "several executable targets; select one with "
+                            "--entry NAME");
+          return std::nullopt;
+        }
+        executable = &target;
+      }
+    if (!executable) {
+      diagnostics.error(
+          "package", root->nameSpan,
+          request.target.empty()
+              ? "package '" + root->name +
+                    "' has no executable target; library-only packages cannot "
+                    "be built on their own yet"
+              : "package '" + root->name + "' has no executable target '" +
+                    request.target + "'");
+      return std::nullopt;
+    }
+    auto rootSource = fs::path(root->directory) / executable->source;
+    if (!fs::is_regular_file(rootSource)) {
+      diagnostics.error("package", executable->span,
+                        "target source '" + executable->source +
+                            "' does not exist");
+      return std::nullopt;
+    }
+
+    for (const auto &path : request.registries)
+      registries.push_back(fs::weakly_canonical(path));
+    if (root->registry)
+      registries.push_back(
+          fs::weakly_canonical(rootDirectory / *root->registry));
+
+    auto lockPath = rootDirectory / "lock.mettle";
+    std::optional<Lock> recorded;
+    SourceId lockSource = 0;
+    if (auto text = readFile(lockPath)) {
+      lockSource = nextId;
+      sources.push_back(
+          {lockPath.generic_string(), std::move(*text), nextId++});
+      auto tree = data::parse(sources.back(), diagnostics, "lock");
+      if (!tree)
+        return std::nullopt;
+      recorded = parseLock(*tree, sources.back(), diagnostics);
+      if (!recorded)
+        return std::nullopt;
+    } else if (request.locked) {
+      diagnostics.error("lock", {},
+                        "lock.mettle is missing and --locked forbids "
+                        "creating it");
+      return std::nullopt;
+    }
+
+    Universe universe;
+    universe.path = [&](const Manifest &from, const DependencySpec &spec) {
+      return loadPath(from, spec);
+    };
+    universe.git = [&](const Manifest &from, const DependencySpec &spec) {
+      return loadGit(from, spec, recorded ? &*recorded : nullptr);
+    };
+    universe.registry = [&](const std::string &name) {
+      return registryCandidates(name);
+    };
+    universe.absence = [&](const std::string &) { return absence(); };
+    Problem solving;
+    solving.root.manifest = root;
+    solving.root.kind = SourceKind::Root;
+    solving.root.location = root->directory;
+    solving.features = request.features;
+    solving.defaultFeatures = request.defaultFeatures;
+    if (recorded)
+      for (const auto &package : recorded->packages)
+        if (auto version = parseVersion(package.version))
+          solving.preferred[package.name].push_back(*version);
+    auto resolution = resolve(solving, universe, diagnostics);
+    if (!resolution || failed() || !validate(*resolution))
+      return std::nullopt;
+
+    auto fresh = lockOf(*resolution);
+    // Where the lock records `id`, else the start of the lock.
+    auto at = [&](const std::string &id) {
+      Span span{0, 0, lockSource};
+      if (recorded)
+        if (const auto *entry = recorded->find(id))
+          span = entry->span;
+      return span;
+    };
+    if (recorded)
+      for (const auto &now : fresh.packages) {
+        const auto *then = recorded->find(now.id);
+        if (then &&
+            (now.source.rfind("registry+", 0) == 0 ||
+             now.source.rfind("git+", 0) == 0) &&
+            then->source == now.source && then->version == now.version &&
+            then->checksum != now.checksum) {
+          diagnostics.error(
+              "lock", at(now.id),
+              "checksum mismatch for immutable package '" + now.name + "' " +
+                  now.version + ": the lock records " + then->checksum +
+                  " but its sources hash to " + now.checksum +
+                  "; either the package or lock.mettle was altered");
+          return std::nullopt;
+        }
+      }
+    auto text = serialize(fresh);
+    if (!recorded || serialize(*recorded) != text) {
+      if (request.locked) {
+        std::string why;
+        Span span{0, 0, lockSource};
+        for (const auto &note : differences(*recorded, fresh))
+          why += "; " + note;
+        for (const auto &package : fresh.packages) {
+          const auto *then = recorded->find(package.id);
+          if (!then || !equivalent(*then, package)) {
+            span = at(package.id);
+            break;
+          }
+        }
+        diagnostics.error("lock", span,
+                          "lock.mettle needs updating but --locked forbids "
+                          "changing it" +
+                              why);
+        return std::nullopt;
+      }
+      if (!write(lockPath, text))
+        return std::nullopt;
+    }
+
+    Plan plan;
+    plan.package = root->name;
+    plan.version = toString(root->version);
+    std::error_code error;
+    plan.root = fs::canonical(rootSource, error).generic_string();
+    std::map<std::string, std::string> modules;
+    for (const auto &package : resolution->packages)
+      if (package.candidate.kind != SourceKind::Root &&
+          package.candidate.manifest->library())
+        modules.emplace(package.identity, moduleRoot(package));
+    for (const auto &package : resolution->packages) {
+      const auto &manifest = *package.candidate.manifest;
+      if (manifest.buildScript) {
+        auto script = fs::path(manifest.directory) / *manifest.buildScript;
+        if (!fs::is_regular_file(script)) {
+          diagnostics.error("package", manifest.buildScriptSpan,
+                            "build script '" + *manifest.buildScript +
+                                "' does not exist");
+          return std::nullopt;
+        }
+        BuildScript buildScript;
+        buildScript.package = manifest.name;
+        buildScript.version = toString(manifest.version);
+        buildScript.identity = package.identity;
+        buildScript.directory = manifest.directory;
+        buildScript.source = fs::canonical(script, error).generic_string();
+        buildScript.features = package.features;
+        buildScript.root = package.candidate.kind == SourceKind::Root;
+        for (const auto &[name, dependency] : package.dependencies)
+          if (modules.contains(dependency) &&
+              std::find_if(resolution->packages.begin(),
+                           resolution->packages.end(),
+                           [&](const ResolvedPackage &candidate) {
+                             return candidate.identity == dependency &&
+                                    candidate.candidate.host;
+                           }) != resolution->packages.end())
+            buildScript.dependencies.emplace_back(moduleName(name),
+                                                  modules.at(dependency));
+        plan.scripts.push_back(std::move(buildScript));
+      }
+      if (!package.candidate.host) {
+        for (const auto &macro : manifest.macros) {
+          auto program = fs::path(manifest.directory) / macro.source;
+          if (!fs::is_regular_file(program)) {
+            diagnostics.error("package", macro.span,
+                              "macro source '" + macro.source +
+                                  "' does not exist");
+            return std::nullopt;
+          }
+          for (const auto &known : plan.macros)
+            if (known.name == macro.name) {
+              diagnostics.error("package", macro.span,
+                                "macro '" + macro.name +
+                                    "' is declared by both '" + known.package +
+                                    "' and '" + manifest.name + "'");
+              return std::nullopt;
+            }
+          Macro plannedMacro;
+          plannedMacro.name = macro.name;
+          plannedMacro.package = manifest.name;
+          plannedMacro.version = toString(manifest.version);
+          plannedMacro.directory = manifest.directory;
+          plannedMacro.source = fs::canonical(program, error).generic_string();
+          plannedMacro.features = package.features;
+          for (const auto &[name, dependency] : package.dependencies)
+            if (modules.contains(dependency) &&
+                std::find_if(resolution->packages.begin(),
+                             resolution->packages.end(),
+                             [&](const ResolvedPackage &candidate) {
+                               return candidate.identity == dependency &&
+                                      candidate.candidate.host;
+                             }) != resolution->packages.end())
+              plannedMacro.dependencies.emplace_back(moduleName(name),
+                                                     modules.at(dependency));
+          plan.macros.push_back(std::move(plannedMacro));
+        }
+      }
+      if (package.candidate.kind == SourceKind::Root) {
+        plan.features = package.features;
+        plan.rootIdentity = package.identity;
+        for (const auto &[name, dependency] : package.dependencies) {
+          auto child = std::find_if(resolution->packages.begin(),
+                                    resolution->packages.end(),
+                                    [&](const ResolvedPackage &candidate) {
+                                      return candidate.identity == dependency;
+                                    });
+          if (child != resolution->packages.end() &&
+              modules.contains(dependency)) {
+            if (child->candidate.host)
+              plan.hostDependencies.emplace_back(moduleName(name),
+                                                 modules.at(dependency));
+            else
+              plan.dependencies.emplace_back(moduleName(name),
+                                             modules.at(dependency));
+          }
+        }
+        continue;
+      }
+      if (!manifest.library())
+        continue;
+      Mount mount;
+      mount.name = moduleName(manifest.name);
+      mount.source =
+          fs::canonical(
+              fs::path(manifest.directory) / manifest.library()->source, error)
+              .generic_string();
+      mount.module = modules.at(package.identity);
+      mount.package = manifest.name;
+      mount.version = toString(manifest.version);
+      mount.identity = package.identity;
+      mount.features = package.features;
+      for (const auto &[name, dependency] : package.dependencies) {
+        auto child = std::find_if(resolution->packages.begin(),
+                                  resolution->packages.end(),
+                                  [&](const ResolvedPackage &candidate) {
+                                    return candidate.identity == dependency;
+                                  });
+        if (child != resolution->packages.end() &&
+            child->candidate.host == package.candidate.host &&
+            modules.contains(dependency))
+          mount.dependencies.emplace_back(moduleName(name),
+                                          modules.at(dependency));
+      }
+      if (package.candidate.host)
+        plan.hostMounts.push_back(std::move(mount));
+      else
+        plan.mounts.push_back(std::move(mount));
+    }
+    Sha256 hash;
+    hash.update(text);
+    hash.update("\ntarget=" + executable->name);
+    plan.fingerprint = "sha256:" + hash.finish();
+    return plan;
+  }
+
+  bool write(const fs::path &path, const std::string &text) {
+    auto temporary = path;
+    temporary += ".tmp";
+    {
+      std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+      out << text;
+      if (!out) {
+        diagnostics.error("io", {},
+                          "cannot write " + temporary.generic_string());
+        return false;
+      }
+    }
+    std::error_code error;
+    fs::rename(temporary, path, error);
+    if (error)
+      diagnostics.error("io", {},
+                        "cannot update " + path.generic_string() + ": " +
+                            error.message());
+    return !error;
+  }
+};
+} // namespace
+
+Outcome plan(const Request &request, Diagnostics &diagnostics) {
+  return Planner(request, diagnostics).run();
+}
+} // namespace mettle::packages

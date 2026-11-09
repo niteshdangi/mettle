@@ -14,17 +14,17 @@ fn mul<A: Mul<B>, B>(a: A, b: B): A.Output { a.mul(b) }
 fn div<A: Div<B>, B>(a: A, b: B): A.Output { a.div(b) }
 fn rem<A: Rem<B>, B>(a: A, b: B): A.Output { a.rem(b) }
 fn neg<A: Neg>(a: A): A.Output { a.neg() }
-fn add_assign<A: AddAssign<B>, B>(a: take A, b: B): A { var x = a; x.add_assign(b); x }
-fn sub_assign<A: SubAssign<B>, B>(a: take A, b: B): A { var x = a; x.sub_assign(b); x }
-fn mul_assign<A: MulAssign<B>, B>(a: take A, b: B): A { var x = a; x.mul_assign(b); x }
-fn div_assign<A: DivAssign<B>, B>(a: take A, b: B): A { var x = a; x.div_assign(b); x }
-fn rem_assign<A: RemAssign<B>, B>(a: take A, b: B): A { var x = a; x.rem_assign(b); x }
+fn add_assign<A: AddAssign<B>, B>(take a: A, b: B): A { var x = a; x.add_assign(b); x }
+fn sub_assign<A: SubAssign<B>, B>(take a: A, b: B): A { var x = a; x.sub_assign(b); x }
+fn mul_assign<A: MulAssign<B>, B>(take a: A, b: B): A { var x = a; x.mul_assign(b); x }
+fn div_assign<A: DivAssign<B>, B>(take a: A, b: B): A { var x = a; x.div_assign(b); x }
+fn rem_assign<A: RemAssign<B>, B>(take a: A, b: B): A { var x = a; x.rem_assign(b); x }
 
-fn yields<T: Copy + PartialEq, E>(result: (T throws E), expected: T): bool {
+fn yields<T: Copy + PartialEq, E>(result: (Outcome<T, E>), expected: T): bool {
     match result { success(value) => value == expected, failure(_) => false }
 }
 
-fn is_err<T: Copy, E>(result: (T throws E)): bool {
+fn is_err<T: Copy, E>(result: (Outcome<T, E>)): bool {
     match result { success(_) => false, failure(_) => true }
 }
 

@@ -31,7 +31,7 @@ pub interface BorrowMut<T: unsized>: Borrow<T> {
 pub interface ToOwned {
     type Owned: Borrow<Self>;
     fn to_owned(): Self.Owned;
-    fn clone_into(owned: mut Self.Owned): Unit where Self.Owned: Clone {
+    fn clone_into(mut owned: Self.Owned): Unit where Self.Owned: Clone {
         owned = self.to_owned()
     }
 }

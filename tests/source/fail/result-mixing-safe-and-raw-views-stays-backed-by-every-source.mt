@@ -1,6 +1,6 @@
 // expect-error: ownership 12:5 live exclusive loan
 
-fn pick(c: mut i32, d: mut i32, p: ptr<mut i32>, flag: bool): mut i32 from (c, d) {
+fn pick(mut c: i32, mut d: i32, p: ptr<mut i32>, flag: bool): mut i32 from (c, d) {
     let r = if flag { mut c } else { unsafe { mut *p } }
     r
 }

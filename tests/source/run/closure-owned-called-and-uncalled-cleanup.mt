@@ -3,8 +3,8 @@ type Guard<region r> {
     log: mut i32 from r
     drop { *self.log += 1 }
 }
-fn inspect(guard: read Guard): Unit { let _ = read guard }
-fn consume(guard: take Guard): Unit { let _ = read guard }
+fn inspect(read guard: Guard): Unit { let _ = read guard }
+fn consume(take guard: Guard): Unit { let _ = read guard }
 fn main(): i32 {
     var repeated_log = 0
     var once_log = 0

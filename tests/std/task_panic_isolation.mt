@@ -9,7 +9,7 @@ type Panics {
 }
 extend Panics implements Future {
     type Output = i32
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<i32> {
         panic("task poll panic")
     }
 }
@@ -17,13 +17,13 @@ extend Panics implements Future {
 type DropPanics { drop { panic("task destructor panic") } }
 extend DropPanics implements Future {
     type Output = i32
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> { Poll.Ready(5) }
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<i32> { Poll.Ready(5) }
 }
 
 type Ready {}
 extend Ready implements Future {
     type Output = i32
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> { Poll.Ready(42) }
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<i32> { Poll.Ready(42) }
 }
 
 fn main(): i32 {

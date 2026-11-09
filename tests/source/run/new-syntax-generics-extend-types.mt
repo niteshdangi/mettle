@@ -2,7 +2,7 @@
 type List<T> { a: T; n: usize }
 enum Opt<T> { Some(T), Nothing }
 fn nothing<T>(): Opt<T> { Opt.Nothing }
-fn id<T>(x: take T): T { x }
+fn id<T>(take x: T): T { x }
 type Slot<K> { v: K? }
 extend<K> Slot<K> {
     static fn empty(): Slot<K> { Slot(none) }

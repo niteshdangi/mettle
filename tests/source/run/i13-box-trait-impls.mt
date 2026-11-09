@@ -22,22 +22,22 @@ type Oops {
     code: i32
 }
 extend Oops implements Debug {
-    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.write_str("oops") }
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str("oops") }
 }
 extend Oops implements Display {
-    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.write_str("oops") }
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str("oops") }
 }
 extend Oops implements Error {}
 
-fn assert_error<E: Error>(value: read E): bool { true }
+fn assert_error<E: Error>(read value: E): bool { true }
 
-fn as_view<V: AsRef<[i32]>>(value: read V): read [i32] from value { V.(AsRef<[i32]>).as_ref(value) }
+fn as_view<V: AsRef<[i32]>>(read value: V): read [i32] from value { V.(AsRef<[i32]>).as_ref(value) }
 
-fn from_cow<region r>(value: take Cow<region r, i32>): Box<[i32]> {
+fn from_cow<region r>(take value: Cow<region r, i32>): Box<[i32]> {
     Box<[i32]>.(From<Cow<region r, i32>>).from(value)
 }
 
-fn debug_is<T: Debug>(value: read T, expected: read Text): bool {
+fn debug_is<T: Debug>(read value: T, read expected: Text): bool {
     var buffer = [0u8; 128]
     var writer = fmt.buffer_writer(mut buffer)
     var formatter = fmt.formatter(mut writer, fmt.spec())
@@ -52,7 +52,7 @@ fn debug_is<T: Debug>(value: read T, expected: read Text): bool {
     }
 }
 
-fn display_is<T: Display>(value: read T, expected: read Text): bool {
+fn display_is<T: Display>(read value: T, read expected: Text): bool {
     var buffer = [0u8; 128]
     var writer = fmt.buffer_writer(mut buffer)
     var formatter = fmt.formatter(mut writer, fmt.spec())
@@ -156,7 +156,7 @@ fn main(): i32 {
 
 
 
-fn drive<F: Future>(future: take F): F.Output {
+fn drive<F: Future>(take future: F): F.Output {
     let waker = noop_waker()
     var slot = core.pin.pin(future)
     loop {
@@ -174,5 +174,5 @@ type AddOne {
 unsafe extend AddOne implements Unpin {}
 extend AddOne implements Future {
     type Output = i32
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> { Poll.Ready(unsafe { self.get_unchecked_mut() }.value + 1) }
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<i32> { Poll.Ready(unsafe { self.get_unchecked_mut() }.value + 1) }
 }

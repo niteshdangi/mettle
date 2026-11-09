@@ -4,7 +4,7 @@ import super.cmp.Ordering
 
 pub interface Clone: Sized {
     fn clone(): Self;
-    mut fn clone_from(source: read Self): Unit { self = source.clone() }
+    mut fn clone_from(read source: Self): Unit { self = source.clone() }
 }
 
 extend i8 implements Clone { fn clone(): i8 { self } }
@@ -47,8 +47,8 @@ tuple_clone!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, I =
 tuple_clone!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, I => 8, J => 9, K => 10)
 tuple_clone!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, I => 8, J => 9, K => 10, L => 11)
 
-extend<T: Clone, E: Clone> (T throws E) implements Clone {
-    fn clone(): (T throws E) {
+extend<T: Clone, E: Clone> (Outcome<T, E>) implements Clone {
+    fn clone(): (Outcome<T, E>) {
         match self {
             success(value) => success(value.clone()),
             failure(error) => failure(error.clone())

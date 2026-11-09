@@ -5,10 +5,10 @@
 import core.iter.Iterator
 import std.ffi.{OsStr, OsString, os_str_from_text, os_string_from_text, os_string_from_bytes}
 
-fn str_is(s: read OsStr, want: read Text): bool {
+fn str_is(read s: OsStr, read want: Text): bool {
     match s.to_str() { present(t) => t == want, none => false }
 }
-fn string_is(s: read OsString, want: read Text): bool {
+fn string_is(read s: OsString, read want: Text): bool {
     match s.to_str() { present(t) => t == want, none => false }
 }
 

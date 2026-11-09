@@ -8,7 +8,7 @@ import core.default.Default
 import core.iter.{ExtendItems, FromItems, OwnedIterable}
 import core.ops.DerefMut
 
-fn heap_values(queue: read binary_heap.BinaryHeap<i32>): i32 {
+fn heap_values(read queue: binary_heap.BinaryHeap<i32>): i32 {
     var sum = 0
     for value in queue.iter() { sum += *value }
     sum
@@ -114,7 +114,7 @@ fn main(): i32 {
         i += 1
     }
     var visits = 0
-    retained.retain(fn(value: read i32): bool {
+    retained.retain(fn(read value: i32): bool {
         visits += 1
         value % 2 == 0
     })

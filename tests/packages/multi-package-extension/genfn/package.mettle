@@ -1,0 +1,8 @@
+name: "genfn"
+version: "0.1.0"
+macros {
+    make_fn {
+        source: "macros/make_fn.mt"
+        api: 1
+    }
+}

@@ -2,7 +2,7 @@
 interface StaticRange {}
 type RefRange<T> { value: T }
 extend<region r> RefRange<read [i32] from r> implements StaticRange where region r: static {}
-fn require<R: StaticRange>(value: read R) {}
+fn require<R: StaticRange>(read value: R) {}
 fn main(): i32 {
     let values = [1, 2]
     let view: read [i32] = read values

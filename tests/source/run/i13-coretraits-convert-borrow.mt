@@ -13,13 +13,13 @@ type Wrapped { value: i32 }
 enum ConversionError { Negative }
 
 extend Wrapped implements From<i32> {
-    static fn from(value: take i32): Wrapped { Wrapped(value) }
+    static fn from(take value: i32): Wrapped { Wrapped(value) }
 }
 
 type Positive { value: i32 }
 extend Positive implements TryFrom<i32> {
     type Error = ConversionError
-    static fn try_from(value: take i32): (Positive throws ConversionError) {
+    static fn try_from(take value: i32): (Outcome<Positive, ConversionError>) {
         if value < 0 { failure(ConversionError.Negative) }
         else { success(Positive(value)) }
     }
@@ -36,23 +36,23 @@ fn main(): i32 {
     if wrapped.value != 17 { return 1 }
     let via_into: Wrapped = i32.(Into<Wrapped>).into(18i32)
     if via_into.value != 18 { return 2 }
-    let via_try_from: (Positive throws ConversionError) =
+    let via_try_from: (Outcome<Positive, ConversionError>) =
         Positive.(TryFrom<i32>).try_from(19)
     match via_try_from {
         success(value) => { if value.value != 19 { return 3 } },
         failure(_) => { return 3 }
     }
-    let via_try_into: (Positive throws ConversionError) =
+    let via_try_into: (Outcome<Positive, ConversionError>) =
         i32.(TryInto<Positive>).try_into(20i32)
     match via_try_into {
         success(value) => { if value.value != 20 { return 4 } },
         failure(_) => { return 4 }
     }
-    let lossless: (Wrapped throws Never) = Wrapped.(TryFrom<i32>).try_from(22)
+    let lossless: (Outcome<Wrapped, Never>) = Wrapped.(TryFrom<i32>).try_from(22)
     match lossless {
         success(value) => { if value.value != 22 { return 9 } },
     }
-    let lossless_into: (Wrapped throws Never) = i32.(TryInto<Wrapped>).try_into(23i32)
+    let lossless_into: (Outcome<Wrapped, Never>) = i32.(TryInto<Wrapped>).try_into(23i32)
     match lossless_into {
         success(value) => { if value.value != 23 { return 10 } },
     }

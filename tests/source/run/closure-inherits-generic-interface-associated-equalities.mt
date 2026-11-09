@@ -1,12 +1,12 @@
 
 interface Add<Rhs> {
     type Output;
-    fn add(rhs: read Rhs): Self.Output;
+    fn add(read rhs: Rhs): Self.Output;
 }
 type Number { value: i32 }
 extend Number implements Add<Number> {
     type Output = Number
-    fn add(rhs: read Number): Number { Number(self.value + rhs.value) }
+    fn add(read rhs: Number): Number { Number(self.value + rhs.value) }
 }
 fn sum<T: Add<T, Output=T>>(left: T, right: T): T {
     let outer = fn(): T {

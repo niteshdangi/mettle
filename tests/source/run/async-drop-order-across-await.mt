@@ -7,7 +7,7 @@ import core.future.{Future, Poll, Context, noop_waker}
 type YieldOnce { yielded: bool }
 extend YieldOnce implements Future {
     type Output = Unit
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Unit> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Unit> {
         let me = unsafe { self.get_unchecked_mut() }
         if me.yielded { Poll.Ready(()) } else {
             me.yielded = true
@@ -35,7 +35,7 @@ async fn ordered(log: ptr<mut i32>): Unit {
     let fourth = Guard(log, 4)
 }
 
-fn poll_times<F: Future>(future: take F, times: i32): Unit {
+fn poll_times<F: Future>(take future: F, times: i32): Unit {
     let waker = noop_waker()
     var slot = core.pin.pin(future)
     var left = times

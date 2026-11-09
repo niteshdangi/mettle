@@ -3,7 +3,7 @@ import alloc.vec
 import alloc.vec.List
 import core.cmp.{Ord, Ordering}
 
-fn set_pair<region r>(pair: take [mut i32 from r; 2] from r) {
+fn set_pair<region r>(take pair: [mut i32 from r; 2] from r) {
     *pair[0usize] = 11
     *pair[1usize] = 31
 }
@@ -19,11 +19,11 @@ fn main(): i32 {
 
     var s = [3i32, 1i32, 2i32]
     let m: mut [i32] = mut s
-    m.sort_by(fn(a: read i32, b: read i32): Ordering { b.cmp(read a) })
+    m.sort_by(fn(read a: i32, read b: i32): Ordering { b.cmp(read a) })
     if m[0usize] != 3 || m[2usize] != 1 { return 4 }
-    m.sort_by_key(fn(x: read i32): i32 { x })
+    m.sort_by_key(fn(read x: i32): i32 { x })
     if m[0usize] != 1 || m[2usize] != 3 { return 5 }
-    m.sort_by_cached_key(fn(x: read i32): i32 { -x })
+    m.sort_by_cached_key(fn(read x: i32): i32 { -x })
     if m[0usize] != 3 || m[2usize] != 1 { return 6 }
 
     let parts = m.split_at_mut(1usize)

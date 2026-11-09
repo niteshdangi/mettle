@@ -2,9 +2,9 @@
 
 type V<T> { p: ptr<mut T>; n: usize }
 extend<T> V<T> {
-    mut fn push(value: take T) { unsafe { core.ptr.write(self.p.add(self.n), value) }; self.n = self.n + 1usize }
+    mut fn push(take value: T) { unsafe { core.ptr.write(self.p.add(self.n), value) }; self.n = self.n + 1usize }
 }
-fn leak(v: mut V<read i32>) {
+fn leak(mut v: V<read i32>) {
     let y = 2
     v.push(read y)
 }

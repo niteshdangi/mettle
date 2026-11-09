@@ -43,7 +43,7 @@ review obligations; CMake dependencies alone do not prove include isolation.
   and later generic specialization.
 - Recovered/incomplete trees are inspectable data, not runnable programs.
   Compiler resource limits are explicit diagnostics, not silent truncation, and
-  follow one policy (`compiler/support/limits.h`): depth limits (parser,
+  follow one policy (`bootstrap/support/limits.h`): depth limits (parser,
   syntax, type nesting) protect the native stack and stay small and fixed;
   count limits (functions, products, locals, CFG blocks, witness slots, source
   and token bytes) are set at 2^22..2^30 so only pathological input reaches

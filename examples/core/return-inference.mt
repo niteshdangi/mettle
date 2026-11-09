@@ -21,7 +21,7 @@ fn recursive_count(value: i32) {
     }
 }
 
-fn identity<T>(value: take T) {
+fn identity<T>(take value: T) {
     value
 }
 

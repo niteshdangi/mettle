@@ -8,7 +8,7 @@ import core.num.Wrapping
 import core.text.Text
 
 fn value_contract<T: Copy + Ord + Hash + Clone>(
-    left: read T, equal: read T, later: read T
+    read left: T, read equal: T, read later: T
 ): bool {
     left == equal &&
     left.cmp(read later) == Ordering.Less &&
@@ -16,11 +16,11 @@ fn value_contract<T: Copy + Ord + Hash + Clone>(
     hash.hash_one(left) == hash.hash_one(equal)
 }
 
-fn clone_contract<T: Copy + Clone + PartialEq>(value: read T): bool {
+fn clone_contract<T: Copy + Clone + PartialEq>(read value: T): bool {
     value.clone() == value
 }
 
-fn rendered<T: Display>(value: read T, expected: read Text): bool {
+fn rendered<T: Display>(read value: T, read expected: Text): bool {
     var buffer = [0u8; 64]
     var writer = fmt.buffer_writer(mut buffer)
     match capture fmt.write(mut writer, value) {
@@ -34,7 +34,7 @@ fn rendered<T: Display>(value: read T, expected: read Text): bool {
     }
 }
 
-fn debugged<T: Debug>(value: read T, expected: read Text): bool {
+fn debugged<T: Debug>(read value: T, read expected: Text): bool {
     var buffer = [0u8; 64]
     var writer = fmt.buffer_writer(mut buffer)
     var formatter = fmt.formatter(mut writer, fmt.spec())
@@ -49,7 +49,7 @@ fn debugged<T: Debug>(value: read T, expected: read Text): bool {
     }
 }
 
-fn binary<T: Binary>(value: read T, expected: read Text): bool {
+fn binary<T: Binary>(read value: T, read expected: Text): bool {
     var buffer = [0u8; 64]
     var writer = fmt.buffer_writer(mut buffer)
     var formatter = fmt.formatter(mut writer, fmt.spec())
@@ -64,7 +64,7 @@ fn binary<T: Binary>(value: read T, expected: read Text): bool {
     }
 }
 
-fn octal<T: Octal>(value: read T, expected: read Text): bool {
+fn octal<T: Octal>(read value: T, read expected: Text): bool {
     var buffer = [0u8; 64]
     var writer = fmt.buffer_writer(mut buffer)
     var formatter = fmt.formatter(mut writer, fmt.spec())
@@ -79,7 +79,7 @@ fn octal<T: Octal>(value: read T, expected: read Text): bool {
     }
 }
 
-fn lower_hex<T: LowerHex>(value: read T, expected: read Text): bool {
+fn lower_hex<T: LowerHex>(read value: T, read expected: Text): bool {
     var buffer = [0u8; 64]
     var writer = fmt.buffer_writer(mut buffer)
     var formatter = fmt.formatter(mut writer, fmt.spec())
@@ -94,7 +94,7 @@ fn lower_hex<T: LowerHex>(value: read T, expected: read Text): bool {
     }
 }
 
-fn upper_hex<T: UpperHex>(value: read T, expected: read Text): bool {
+fn upper_hex<T: UpperHex>(read value: T, read expected: Text): bool {
     var buffer = [0u8; 64]
     var writer = fmt.buffer_writer(mut buffer)
     var formatter = fmt.formatter(mut writer, fmt.spec())
@@ -110,7 +110,7 @@ fn upper_hex<T: UpperHex>(value: read T, expected: read Text): bool {
 }
 
 fn formatting_contract<T: Display + Debug + Binary + Octal + LowerHex + UpperHex>(
-    value: read T
+    read value: T
 ): bool {
     rendered(value, "15") &&
     debugged(value, "15") &&

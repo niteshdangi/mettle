@@ -7,17 +7,17 @@ import core.hash.{ Hash, Hasher }
 copy type TaggedKey { id: i32; tag: i32 }
 
 extend TaggedKey implements PartialEq {
-    fn eq(other: read TaggedKey): bool { self.id == other.id }
+    fn eq(read other: TaggedKey): bool { self.id == other.id }
 }
 extend TaggedKey implements Eq {}
 extend TaggedKey implements PartialOrd {
-    fn partial_cmp(other: read TaggedKey): Ordering? { present(self.cmp(other)) }
+    fn partial_cmp(read other: TaggedKey): Ordering? { present(self.cmp(other)) }
 }
 extend TaggedKey implements Ord {
-    fn cmp(other: read TaggedKey): Ordering { self.id.cmp(other.id) }
+    fn cmp(read other: TaggedKey): Ordering { self.id.cmp(other.id) }
 }
 extend TaggedKey implements Hash {
-    fn hash<H: Hasher>(state: mut H): Unit { state.write_u32(self.id as u32) }
+    fn hash<H: Hasher>(mut state: H): Unit { state.write_u32(self.id as u32) }
 }
 
 // The single-threaded counter outlives every key, including query keys.
@@ -27,17 +27,17 @@ type TrackedKey {
     drop { unsafe { *self.drops += 1 } }
 }
 extend TrackedKey implements PartialEq {
-    fn eq(other: read TrackedKey): bool { self.key == other.key }
+    fn eq(read other: TrackedKey): bool { self.key == other.key }
 }
 extend TrackedKey implements Eq {}
 extend TrackedKey implements PartialOrd {
-    fn partial_cmp(other: read TrackedKey): Ordering? { present(self.cmp(other)) }
+    fn partial_cmp(read other: TrackedKey): Ordering? { present(self.cmp(other)) }
 }
 extend TrackedKey implements Ord {
-    fn cmp(other: read TrackedKey): Ordering { self.key.cmp(other.key) }
+    fn cmp(read other: TrackedKey): Ordering { self.key.cmp(other.key) }
 }
 extend TrackedKey implements Hash {
-    fn hash<H: Hasher>(state: mut H): Unit { self.key.hash(mut state) }
+    fn hash<H: Hasher>(mut state: H): Unit { self.key.hash(mut state) }
 }
 
 fn noncopy_keys(): Unit {

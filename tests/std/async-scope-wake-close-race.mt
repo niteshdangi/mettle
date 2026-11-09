@@ -11,7 +11,7 @@ type ParentWake {
 }
 
 extend ParentWake implements task.Wake {
-    fn wake(me: read Arc<ParentWake>): Unit {
+    fn wake(read me: Arc<ParentWake>): Unit {
         let _entered = me.get().entered.get().wait()
         let _release = me.get().release.get().wait()
     }
@@ -27,7 +27,7 @@ type Pending<region r> {
 
 extend<region r> Pending<region r> implements Future {
     type Output = Unit
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Unit> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Unit> {
         let me = unsafe { self.get_unchecked_mut() }
         unsafe { *me.saved = present(cx.waker().clone()) }
         Poll.Pending

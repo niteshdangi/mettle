@@ -5,7 +5,7 @@ import super.cmp.{Eq, PartialEq}
 pub copy type TypeId { value: u64 }
 
 extend TypeId implements PartialEq {
-    fn eq(other: read TypeId): bool { self.value == other.value }
+    fn eq(read other: TypeId): bool { self.value == other.value }
 }
 extend TypeId implements Eq {}
 
@@ -20,16 +20,16 @@ extend<T: Static + unsized> T implements Any {
 }
 
 // Compares `T` with the dynamic type of `value`: the type it was erased from.
-pub fn is<T: Static>(value: read any Any): bool { value.type_id() == type_id<T>() }
+pub fn is<T: Static>(read value: any Any): bool { value.type_id() == type_id<T>() }
 
 // Reinterprets `value` as a `T` when its dynamic type is `T`.
-pub fn downcast_ref<T: Static>(value: read any Any): (read T from value)? {
+pub fn downcast_ref<T: Static>(read value: any Any): (read T from value)? {
     if !is<T>(value) { return none }
     let same = core.ptr.from_ref(value).cast<T>()
     present(unsafe { read *same })
 }
 
-pub fn downcast_mut<T: Static>(value: mut any Any): (mut T from value)? {
+pub fn downcast_mut<T: Static>(mut value: any Any): (mut T from value)? {
     if !is<T>(read value) { return none }
     let same = core.ptr.from_mut(value).cast<T>()
     present(unsafe { mut *same })

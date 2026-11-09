@@ -5,7 +5,7 @@ import std.path.path
 import std.path.path_from_text
 import std.ffi
 
-fn on_disk(p: read std.path.Path, raw: read [u8]): i32 throws Error {
+fn on_disk(read p: std.path.Path, read raw: [u8]): i32 throws Error {
     if !std.fs.exists(p) { return 3 }
     let text = try std.fs.read_to_string(p)
     if text.len() != 7usize { return 4 }

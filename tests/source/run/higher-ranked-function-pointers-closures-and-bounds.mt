@@ -1,9 +1,9 @@
 
 fn apply<F: for<region r> fn(read i32 from r): read i32 from r>(
-    operation: read F, value: read i32): read i32 from value {
+    read operation: F, read value: i32): read i32 from value {
     operation(value)
 }
-fn identity<region r>(value: read i32 from r): read i32 from r { read value }
+fn identity<region r>(read value: i32 from r): read i32 from r { read value }
 fn main(): i32 {
     let pointer: for<region a> fn(read i32 from a): read i32 from a = identity
     let closure: for<region b> fn(read i32 from b): read i32 from b =

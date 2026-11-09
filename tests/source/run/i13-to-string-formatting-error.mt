@@ -8,7 +8,7 @@ import core.fmt.Write
 type BrokenDisplay {}
 
 extend BrokenDisplay implements fmt.Display {
-    fn fmt(formatter: mut fmt.Formatter): Unit throws fmt.Error {
+    fn fmt(mut formatter: fmt.Formatter): Unit throws fmt.Error {
         try formatter.write_str("partial output")
         throw fmt.Error()
     }

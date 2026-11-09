@@ -20,27 +20,27 @@ import super.io.ErrorKind
 pub type OsStr { bytes: [u8] }
 
 // Any byte sequence is a valid OS string.
-pub fn os_str(bytes: read [u8]): read OsStr from bytes {
+pub fn os_str(read bytes: [u8]): read OsStr from bytes {
     let fat = core.ptr.from_ref(bytes)
     let view = unsafe { core.mem.transmute<ptr<read OsStr>>(fat) }
     unsafe { read *view }
 }
 
-pub fn os_str_mut(bytes: mut [u8]): mut OsStr from bytes {
+pub fn os_str_mut(mut bytes: [u8]): mut OsStr from bytes {
     let fat = core.ptr.from_mut(bytes)
     let view = unsafe { core.mem.transmute<ptr<mut OsStr>>(fat) }
     unsafe { mut *view }
 }
 
-pub fn os_str_from_text(text: read Text): read OsStr from text { os_str(text.as_bytes()) }
-pub fn os_str_from_encoded_bytes_unchecked(bytes: read [u8]): read OsStr from bytes {
+pub fn os_str_from_text(read text: Text): read OsStr from text { os_str(text.as_bytes()) }
+pub fn os_str_from_encoded_bytes_unchecked(read bytes: [u8]): read OsStr from bytes {
     os_str(bytes)
 }
 
-fn push_replacement(out: mut String): Unit { out.push('\u{fffd}') }
+fn push_replacement(mut out: String): Unit { out.push('\u{fffd}') }
 
 // Decodes `bytes`, replacing each ill-formed byte with U+FFFD.
-pub fn lossy(bytes: read [u8]): String {
+pub fn lossy(read bytes: [u8]): String {
     var out = package.alloc.string.with_capacity(bytes.len())
     var i = 0usize
     while i < bytes.len() {
@@ -58,8 +58,8 @@ pub fn lossy(bytes: read [u8]): String {
 }
 
 extend OsStr {
-    pub static fn new(bytes: read [u8]): read OsStr from bytes { os_str(bytes) }
-    pub static fn from_encoded_bytes_unchecked(bytes: read [u8]): read OsStr from bytes {
+    pub static fn new(read bytes: [u8]): read OsStr from bytes { os_str(bytes) }
+    pub static fn from_encoded_bytes_unchecked(read bytes: [u8]): read OsStr from bytes {
         os_str_from_encoded_bytes_unchecked(bytes)
     }
     pub fn as_bytes(): read [u8] from self { read self.bytes }
@@ -80,8 +80,8 @@ extend OsStr {
     pub fn display(): String { self.to_string_lossy() }
     pub fn to_os_string(): OsString { os_string_from_bytes(read self.bytes) }
     pub fn into_os_string(): OsString { self.to_os_string() }
-    pub fn same(other: read OsStr): bool { bytes_equal(read self.bytes, other.as_bytes()) }
-    pub fn eq_ignore_ascii_case(other: read OsStr): bool {
+    pub fn same(read other: OsStr): bool { bytes_equal(read self.bytes, other.as_bytes()) }
+    pub fn eq_ignore_ascii_case(read other: OsStr): bool {
         let right = other.as_bytes()
         if self.bytes.len() != right.len() { return false }
         var i = 0usize
@@ -129,7 +129,7 @@ fn ascii_upper(value: u8): u8 {
     if value >= 97u8 && value <= 122u8 { value - 32u8 } else { value }
 }
 
-pub fn bytes_equal(a: read [u8], b: read [u8]): bool {
+pub fn bytes_equal(read a: [u8], read b: [u8]): bool {
     if a.len() != b.len() { return false }
     var i = 0usize
     while i < a.len() {
@@ -145,24 +145,24 @@ pub fn new_os_string(): OsString { OsString(vec.new<u8>()) }
 pub fn os_string_with_capacity(capacity: usize): OsString {
     OsString(vec.with_capacity<u8>(capacity))
 }
-pub fn os_string_from_encoded_bytes_unchecked(bytes: take List<u8>): OsString {
+pub fn os_string_from_encoded_bytes_unchecked(take bytes: List<u8>): OsString {
     OsString(bytes)
 }
 
-pub fn os_string_from_bytes(bytes: read [u8]): OsString {
+pub fn os_string_from_bytes(read bytes: [u8]): OsString {
     var v = vec.with_capacity<u8>(bytes.len())
     v.extend_from_slice(bytes)
     OsString(v)
 }
 
-pub fn os_string_from_text(text: read Text): OsString { os_string_from_bytes(text.as_bytes()) }
+pub fn os_string_from_text(read text: Text): OsString { os_string_from_bytes(text.as_bytes()) }
 
-pub fn os_string_from_vec(bytes: take List<u8>): OsString { OsString(bytes) }
+pub fn os_string_from_vec(take bytes: List<u8>): OsString { OsString(bytes) }
 
 extend OsString {
     pub static fn new(): OsString { new_os_string() }
     pub static fn with_capacity(capacity: usize): OsString { os_string_with_capacity(capacity) }
-    pub static fn from_encoded_bytes_unchecked(bytes: take List<u8>): OsString {
+    pub static fn from_encoded_bytes_unchecked(take bytes: List<u8>): OsString {
         os_string_from_encoded_bytes_unchecked(bytes)
     }
     pub fn as_os_str(): read OsStr from self { os_str(self.v.as_slice()) }
@@ -177,11 +177,11 @@ extend OsString {
     pub fn to_str(): (read Text from self)? { self.as_os_str().to_str() }
     pub fn to_string_lossy(): String { self.as_os_str().to_string_lossy() }
     pub fn to_os_string(): OsString { os_string_from_bytes(self.as_bytes()) }
-    pub fn eq_ignore_ascii_case(other: read OsString): bool {
+    pub fn eq_ignore_ascii_case(read other: OsString): bool {
         self.as_os_str().eq_ignore_ascii_case(other.as_os_str())
     }
-    pub mut fn push_bytes(bytes: read [u8]): Unit { self.v.extend_from_slice(bytes) }
-    pub mut fn push(s: read OsStr): Unit { self.v.extend_from_slice(s.as_bytes()) }
+    pub mut fn push_bytes(read bytes: [u8]): Unit { self.v.extend_from_slice(bytes) }
+    pub mut fn push(read s: OsStr): Unit { self.v.extend_from_slice(s.as_bytes()) }
     pub mut fn clear(): Unit { self.v.clear() }
     pub mut fn reserve(extra: usize): Unit { self.v.reserve(extra) }
     pub mut fn reserve_exact(extra: usize): Unit { self.v.reserve_exact(extra) }
@@ -228,7 +228,7 @@ extend OsString {
     pub take fn into_string(): String throws FromUtf8Error {
         try package.alloc.string.from_utf8(self.v)
     }
-    pub fn same(other: read OsString): bool { bytes_equal(self.v.as_slice(), other.as_bytes()) }
+    pub fn same(read other: OsString): bool { bytes_equal(self.v.as_slice(), other.as_bytes()) }
 }
 
 pub copy enum FromBytesWithNulError {
@@ -264,7 +264,7 @@ pub type IntoStringError { value: CString }
 
 extend IntoStringError {
     pub fn as_c_str<region r>(
-        receiver self: read IntoStringError from r
+        receiver read self: IntoStringError from r
     ): CStr<region r> { self.value.as_c_str() }
     pub take fn into_cstring(): CString { self.value }
 }
@@ -276,14 +276,14 @@ pub type CStr<region r> { bytes: read [u8] from r }
 // Owned C strings always contain one final NUL and no earlier NUL.
 pub type CString { v: List<u8> }
 
-fn clone_bytes(bytes: read [u8]): List<u8> {
+fn clone_bytes(read bytes: [u8]): List<u8> {
     var duplicate = vec.with_capacity<u8>(bytes.len())
     duplicate.extend_from_slice(bytes)
     duplicate
 }
 
 fn c_str_from_bytes_with_nul<region r>(
-    bytes: read [u8] from r
+    read bytes: [u8] from r
 ): CStr<region r> throws FromBytesWithNulError {
     if bytes.is_empty() {
         throw FromBytesWithNulError.NotNulTerminated
@@ -303,7 +303,7 @@ fn c_str_from_bytes_with_nul<region r>(
 }
 
 fn c_str_from_bytes_until_nul<region r>(
-    bytes: read [u8] from r
+    read bytes: [u8] from r
 ): CStr<region r> throws FromBytesUntilNulError {
     var i = 0usize
     while i < bytes.len() && bytes[i] != 0u8 { i += 1usize }
@@ -316,13 +316,13 @@ fn c_str_from_bytes_until_nul<region r>(
 
 extend<region r> CStr<region r> {
     pub static fn from_bytes_with_nul<region s>(
-        bytes: read [u8] from s
+        read bytes: [u8] from s
     ): CStr<region s> throws FromBytesWithNulError {
         try c_str_from_bytes_with_nul(bytes)
     }
 
     pub static fn from_bytes_until_nul<region s>(
-        bytes: read [u8] from s
+        read bytes: [u8] from s
     ): CStr<region s> throws FromBytesUntilNulError {
         try c_str_from_bytes_until_nul(bytes)
     }
@@ -344,7 +344,7 @@ extend<region r> CStr<region r> {
     pub fn to_owned(): CString { CString(clone_bytes(self.bytes)) }
 }
 
-fn c_string_new(bytes: take List<u8>): CString throws NulError {
+fn c_string_new(take bytes: List<u8>): CString throws NulError {
     var owned = bytes
     var i = 0usize
     while i < owned.len() {
@@ -356,7 +356,7 @@ fn c_string_new(bytes: take List<u8>): CString throws NulError {
 }
 
 fn c_string_from_vec_with_nul(
-    bytes: take List<u8>
+    take bytes: List<u8>
 ): CString throws FromVecWithNulError {
     if bytes.is_empty() {
         throw FromVecWithNulError(bytes, NulErrorKind.NotTerminated)
@@ -382,18 +382,18 @@ fn new_c_string(): CString {
 }
 
 extend CString {
-    pub static fn new<T: Into<List<u8>>>(bytes: take T): CString throws NulError {
+    pub static fn new<T: Into<List<u8>>>(take bytes: T): CString throws NulError {
         try c_string_new(bytes.into())
     }
 
     pub static fn from_vec_with_nul(
-        bytes: take List<u8>
+        take bytes: List<u8>
     ): CString throws FromVecWithNulError {
         try c_string_from_vec_with_nul(bytes)
     }
 
     pub fn as_c_str<region r>(
-        receiver self: read CString from r
+        receiver read self: CString from r
     ): CStr<region r> { CStr(self.v.as_slice()) }
     pub fn as_ptr(): ptr<read i8> { self.v.as_ptr().cast<i8>() }
     pub fn count_bytes(): usize { self.v.len() - 1usize }
@@ -437,7 +437,7 @@ extend CString implements Clone {
 }
 
 extend<region r, region s> CStr<region r> implements PartialEq<CStr<region s>> {
-    fn eq(other: read CStr<region s>): bool {
+    fn eq(read other: CStr<region s>): bool {
         bytes_equal(self.to_bytes(), other.to_bytes())
     }
 }
@@ -445,55 +445,55 @@ extend<region r, region s> CStr<region r> implements PartialEq<CStr<region s>> {
 extend<region r> CStr<region r> implements Eq {}
 
 extend<region r, region s> CStr<region r> implements PartialOrd<CStr<region s>> {
-    fn partial_cmp(other: read CStr<region s>): Ordering? {
+    fn partial_cmp(read other: CStr<region s>): Ordering? {
         present(self.to_bytes().cmp(other.to_bytes()))
     }
 }
 
 extend<region r> CStr<region r> implements Ord {
-    fn cmp(other: read CStr<region r>): Ordering {
+    fn cmp(read other: CStr<region r>): Ordering {
         self.to_bytes().cmp(other.to_bytes())
     }
 }
 
 extend<region r> CString implements PartialEq<CStr<region r>> {
-    fn eq(other: read CStr<region r>): bool {
+    fn eq(read other: CStr<region r>): bool {
         bytes_equal(self.as_bytes(), other.to_bytes())
     }
 }
 
 extend<region r> CStr<region r> implements PartialEq<CString> {
-    fn eq(other: read CString): bool {
+    fn eq(read other: CString): bool {
         bytes_equal(self.to_bytes(), other.as_bytes())
     }
 }
 
 extend CString implements PartialEq {
-    fn eq(other: read CString): bool { bytes_equal(self.as_bytes(), other.as_bytes()) }
+    fn eq(read other: CString): bool { bytes_equal(self.as_bytes(), other.as_bytes()) }
 }
 
 extend CString implements Eq {}
 
 extend CString implements PartialOrd {
-    fn partial_cmp(other: read CString): Ordering? {
+    fn partial_cmp(read other: CString): Ordering? {
         present(self.as_bytes().cmp(other.as_bytes()))
     }
 }
 
 extend CString implements Ord {
-    fn cmp(other: read CString): Ordering { self.as_bytes().cmp(other.as_bytes()) }
+    fn cmp(read other: CString): Ordering { self.as_bytes().cmp(other.as_bytes()) }
 }
 
 extend<region r> CStr<region r> implements Hash {
-    fn hash<H: Hasher>(state: mut H): Unit { self.to_bytes().hash(mut state) }
+    fn hash<H: Hasher>(mut state: H): Unit { self.to_bytes().hash(mut state) }
 }
 
 extend CString implements Hash {
-    fn hash<H: Hasher>(state: mut H): Unit { self.as_bytes().hash(mut state) }
+    fn hash<H: Hasher>(mut state: H): Unit { self.as_bytes().hash(mut state) }
 }
 
 // A NUL-terminated copy of `bytes` for passing to C.
-pub fn cstring(bytes: read [u8]): List<u8> throws io.Error {
+pub fn cstring(read bytes: [u8]): List<u8> throws io.Error {
     var out = vec.with_capacity<u8>(bytes.len() + 1usize)
     var i = 0usize
     while i < bytes.len() {
@@ -506,7 +506,7 @@ pub fn cstring(bytes: read [u8]): List<u8> throws io.Error {
 }
 
 extend List<u8> implements package.core.convert.From<CString> {
-    static fn from(value: take CString): List<u8> { value.into_bytes() }
+    static fn from(take value: CString): List<u8> { value.into_bytes() }
 }
 
 // Value types duplicate by copy; owners clone their buffers.

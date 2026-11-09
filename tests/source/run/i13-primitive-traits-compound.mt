@@ -8,7 +8,7 @@ import core.fmt
 import core.fmt.{Debug, Display, Spec}
 import core.text.Text
 
-fn debug_is<T: Debug + unsized>(value: read T, expected: read Text): bool {
+fn debug_is<T: Debug + unsized>(read value: T, read expected: Text): bool {
     var storage = [0u8; 200]
     var writer = fmt.buffer_writer(mut storage)
     var formatter = fmt.formatter(mut writer, fmt.spec())
@@ -23,7 +23,7 @@ fn debug_is<T: Debug + unsized>(value: read T, expected: read Text): bool {
     }
 }
 
-fn display_is<T: Display + unsized>(value: read T, expected: read Text): bool {
+fn display_is<T: Display + unsized>(read value: T, read expected: Text): bool {
     var storage = [0u8; 200]
     var writer = fmt.buffer_writer(mut storage)
     var formatter = fmt.formatter(mut writer, fmt.spec())
@@ -38,18 +38,18 @@ fn display_is<T: Display + unsized>(value: read T, expected: read Text): bool {
     }
 }
 
-fn digest<T: Hash + unsized>(value: read T): u64 {
+fn digest<T: Hash + unsized>(read value: T): u64 {
     var h = fnv1a()
     value.hash(mut h)
     h.finish()
 }
 
-fn is_eq<T: Eq + unsized>(a: read T, b: read T): bool { a == b }
-fn order<T: Ord + unsized>(a: read T, b: read T): Ordering { a.cmp(read b) }
-fn partial<T: PartialOrd + unsized>(a: read T, b: read T): Ordering? { a.partial_cmp(read b) }
+fn is_eq<T: Eq + unsized>(read a: T, read b: T): bool { a == b }
+fn order<T: Ord + unsized>(read a: T, read b: T): Ordering { a.cmp(read b) }
+fn partial<T: PartialOrd + unsized>(read a: T, read b: T): Ordering? { a.partial_cmp(read b) }
 fn make<T: Default>(): T { T.(Default).default() }
-fn view_len<T: AsRef<[i32]>>(value: read T): usize { value.as_ref().len() }
-fn set_first<T: AsMut<[i32]>>(value: mut T) {
+fn view_len<T: AsRef<[i32]>>(read value: T): usize { value.as_ref().len() }
+fn set_first<T: AsMut<[i32]>>(mut value: T) {
     let slots: mut [i32] = value.as_mut()
     slots[0usize] = 9
 }

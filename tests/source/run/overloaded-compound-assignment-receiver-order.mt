@@ -2,19 +2,19 @@
 module core {
     pub module ops {
         pub interface AddAssign<Rhs> {
-            mut fn add_assign(rhs: read Rhs): Unit;
+            mut fn add_assign(read rhs: Rhs): Unit;
         }
     }
 }
 type Number { value: i32 }
 extend Number implements core.ops.AddAssign<Number> {
-    mut fn add_assign(rhs: read Number): Unit { self.value += rhs.value }
+    mut fn add_assign(read rhs: Number): Unit { self.value += rhs.value }
 }
-fn select(values: mut [Number;1], trace: mut i32): mut Number from values {
+fn select(mut values: [Number;1], mut trace: i32): mut Number from values {
     trace = trace * 10 + 1
     mut values[0]
 }
-fn argument(trace: mut i32): Number {
+fn argument(mut trace: i32): Number {
     trace = trace * 10 + 2
     Number(2)
 }

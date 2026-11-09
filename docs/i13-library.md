@@ -9,10 +9,55 @@ areas remain partial: L003, L005, L009, S005-S014, S019-S021, S024-S025.
 
 ## Handoff (start here in a new session)
 
-Latest operation ledger (2026-11-09): **8,988 evidenced, 399 declared,
-3,903 missing, 5 not applicable** of 13,295 records. Declared means implemented
+Latest operation ledger (2026-11-09): **10,444 evidenced, 35 declared,
+2,811 missing, 5 not applicable** of 13,295 records. Declared means implemented
 but not behaviorally verified per type/profile. Subset/source-cfg reconciliation
 and Linux applicability review remain open; no area is closed by these batches.
+The 35 declared records comprise 20 conversion-blanket exposures and fifteen
+callable-adapter Clone/ToOwned records.
+
+### Source-only backlog reconciliation (2026-11-09)
+
+All **2,846 remaining canonical IDs** match the existing source worklist.
+The 2,811 missing records comprise **1,405 interface implementation relations,
+1,009 method/interface-method exposures and 397 other declaration records**,
+not 2,811 independent missing functions. They have 1,803 case-sensitive family
+keys; neither records nor family keys measure coding effort.
+
+The first source-location pass partitions every remaining record as follows.
+Candidates are not compiled declarations or verified contract equivalents;
+no CSV status or evidence was upgraded.
+
+| Review queue | Records | Required follow-up |
+| --- | ---: | --- |
+| Existing native declaration candidates | 837 | Check signatures, substitutions, views, const support and behavior; includes seven native free-function candidates. |
+| Shared blanket candidates | 107 | Check each type's bounds and source/target shape, reusing the existing implementation where applicable. |
+| Inherited slice/text exposures | 100 | Reconcile 67 shared operation names and receiver forwarding, not duplicate methods on each exposing owner. |
+| Compiler-owned APIs or derived properties | 648 | Review exact built-in operation/property support and const behavior before adding library code. |
+| No same-owner source candidate found | 955 | Review 605 interface relations and 350 methods for renamed, forwarded or blanket equivalents before declaring code absent. |
+| Other contract/declaration-shape review | 164 | Reconcile associated items, variants, fields, macros, free functions and unmatched type shapes. |
+| Already declared, awaiting evidence | 35 | Supply the exact per-type/profile acceptance evidence. |
+
+Concrete findings and implementation order:
+- `NonNull` has 82 missing method exposures for 41 distinct method names with
+  no declaration in `library/core/ptr.mt`; the existing `new`, `new_unchecked`,
+  `as_ptr` and Clone must not be reimplemented. Reuse compiler-owned pointer
+  primitives while preserving unsafe and const contracts.
+- Missing ledger rows already have source candidates such as
+  `UdpSocket.connect`, `File.sync_all`, slice `as_array`, List's declaration and
+  the Iterator interface. `UdpSocket.bind`, `Duration.new` and five String
+  constructors have native free-function candidates; matching names alone do
+  not establish equivalent errors, overflow, const or ownership behavior.
+- Vec's slice-derived and String's text-derived exposures must be handled with
+  the shared slice/text implementation and forwarding, not owner-specific copies.
+- Prioritize the documented Peekable associated-buffer, Option pinned-view,
+  Static/unsized Any, tuple associated-constant and atomic RwLock downgrade
+  gaps before their dependent acceptance batches.
+
+This is a complete first-pass partition, not completed semantic reconciliation.
+The 955 no-candidate records remain review work, not a confirmed missing-code
+count. Source cfg/Linux applicability and focused compile/run evidence remain
+open; this pass ran no compiler, build, sanitizer or qualification checks.
 
 The [native optional/outcome specification](native-value-contracts.md) now owns
 its explicitly assigned operation contracts. Its
@@ -29,7 +74,10 @@ and [collection findings](native-collection-contracts.md#12-exact-coverage-and-r
 record existing implementation gaps; D30/D31 resolve the default hash policy
 and general borrowed-or-owned identity without upgrading implementation receipts.
 
-| 2026-11-09 batch | Implementation and focused Linux evidence | Remaining obligation |
+The following batch receipts record status at the time of each batch; current
+operation statuses are maintained in [the ledger](baseline/v1-operations.csv).
+
+| 2026-11-09 batch | Implementation and focused Linux evidence | Remaining obligation at batch time |
 | --- | --- | --- |
 | Shared unzip | One `Iterator.unzip` over `Default + ExtendItems`, independent of collections in core. `i13-iter-consumers` passes native/emitted-ASan debug/release: empty input, heterogeneous ordered output, non-Copy movement/drops. Only unzip credited. | Destination-specific allocation/destructor-panic contracts. Declaration checking needs `Self: Iterator<Item = (A, B)>`, explicit `Self.(Iterator).next` and explicit output arguments; equality-only `Self.Item` and result-tuple inference remain unsupported. |
 | Conversion blanket | Coherence matches target **and interface arguments** before requirements. Disjoint-destination regression fails old/passes repaired compiler; genuine overlap and unconstrained downstream cases reject. One `TryFrom<U> for T where U: Into<T>` covers direct user Into; TryInto delegates. Ten directly tested rows evidenced; 192 TryFrom + 192 TryInto exposures declared. | Per-type/profile evidence for all 384 exposures; emitted owner-conversion ASan compile hit unchanged 60 s bound and remains unverified. |
@@ -150,7 +198,7 @@ qualify later compiler edits. All eighteen areas remain partial.
   `i13-float-traits-current-inputs.json`. Complete 301-record runtime/profile
   closure, unsized/Static Any and default comparison RHS-Self remain open.
 
-Collision-safe Any identity (2026-11-08): `compiler/types/identity.cpp` encodes
+Collision-safe Any identity (2026-11-08): `bootstrap/types/identity.cpp` encodes
 canonical nominal paths, callable binder size/result sources/relations, static
 and bound-region positions while erasing free regions. `type_id` is the address
 of an identity-named link-once hidden byte, not a hash. Function-pointer generic
@@ -186,7 +234,7 @@ Every operation in the V1 subset (docs/library-surface.md section 6.1, roughly
 2,900 operation families plus 1,760 trait/type pairs) has both of these:
 1. **A compiled native declaration** in library/{core,alloc,std}, using Mettle
    names from section 9 (List/Map/Set/SortedMap, OwnedIterable,
-   BidirectionalIterator, Reader/Writer, `T?`, `(T throws E)`, ...).
+   BidirectionalIterator, Reader/Writer, `T?`, `(Outcome<T, E>)`, ...).
 2. **Behavioral evidence:** a passing test that calls the operation and checks
    its result, including its panic/failure, boundary and drop-count cases where
    it has them. Integer, float and atomic families must be checked at every

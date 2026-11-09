@@ -49,7 +49,7 @@ fn main(): i32 {
         none => { return 11 }
     }
     let cyclic_rc = alloc.rc.new_cyclic<RcCycle>(
-        take fn(w: read alloc.rc.Weak<RcCycle>): RcCycle { RcCycle(w.retain()) }
+        take fn(read w: alloc.rc.Weak<RcCycle>): RcCycle { RcCycle(w.retain()) }
     )
     match cyclic_rc.get().link.upgrade() {
         present(owner) => { if !owner.ptr_eq(cyclic_rc) { return 12 } },
@@ -87,7 +87,7 @@ fn main(): i32 {
         none => { return 20 }
     }
     let cyclic_arc = alloc.arc.new_cyclic<ArcCycle>(
-        take fn(w: read alloc.arc.Weak<ArcCycle>): ArcCycle { ArcCycle(w.retain()) }
+        take fn(read w: alloc.arc.Weak<ArcCycle>): ArcCycle { ArcCycle(w.retain()) }
     )
     match cyclic_arc.get().link.upgrade() {
         present(owner) => { if !owner.ptr_eq(cyclic_arc) { return 21 } },

@@ -1,6 +1,6 @@
 
 type Counter { value: i32 }
-fn finish(counter: take Counter) { counter.value }
+fn finish(take counter: Counter) { counter.value }
 fn main() {
     var first = Counter(40)
     let second = first

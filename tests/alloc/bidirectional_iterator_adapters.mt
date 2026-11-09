@@ -12,7 +12,7 @@ fn four_values(): List<i32> {
 }
 
 fn main(): i32 {
-    var mapped = four_values().into_iter().map(fn(value: take i32): i32 { value * 10 })
+    var mapped = four_values().into_iter().map(fn(take value: i32): i32 { value * 10 })
     match mapped.next_back() {
         present(value) => { if value != 40 { return 1 } },
         none => { return 2 }
@@ -22,7 +22,7 @@ fn main(): i32 {
         none => { return 4 }
     }
 
-    var filtered = four_values().into_iter().filter(fn(value: read i32): bool {
+    var filtered = four_values().into_iter().filter(fn(read value: i32): bool {
         value % 2 == 0
     })
     match filtered.next_back() {

@@ -5,7 +5,7 @@ import std.io.{Error, ErrorKind, Reader, Writer, from_kind, from_raw_os_error, w
 
 copy type Blocked { unused: u8 }
 extend Blocked implements Writer {
-    mut fn write_some(buf: read [u8]): usize throws Error { 0usize }
+    mut fn write_some(read buf: [u8]): usize throws Error { 0usize }
     mut fn flush(): Unit throws Error {}
 }
 

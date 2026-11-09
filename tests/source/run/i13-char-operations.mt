@@ -22,7 +22,7 @@ fn char_is(value: char?, expected: char): bool {
     }
 }
 
-fn escape_text(text: take Escape): string.String {
+fn escape_text(take text: Escape): string.String {
     var out = string.new()
     var pending = text
     while true {

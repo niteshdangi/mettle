@@ -158,4 +158,4 @@ fn main(): i32 {
     0
 }
 
-fn discard<T>(value: take T): Unit {}
+fn discard<T>(take value: T): Unit {}

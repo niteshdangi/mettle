@@ -5,7 +5,7 @@ import core.fmt.{Debug, Display}
 import core.text.Text
 import core.text.FromStr
 
-fn debug_is<T: Debug>(value: read T, expected: read Text): bool {
+fn debug_is<T: Debug>(read value: T, read expected: Text): bool {
     var buffer = [0u8; 64]
     var writer = fmt.buffer_writer(mut buffer)
     var formatter = fmt.formatter(mut writer, fmt.spec())
@@ -20,7 +20,7 @@ fn debug_is<T: Debug>(value: read T, expected: read Text): bool {
     }
 }
 
-fn display_is<T: Display>(value: read T, expected: read Text): bool {
+fn display_is<T: Display>(read value: T, read expected: Text): bool {
     var buffer = [0u8; 64]
     var writer = fmt.buffer_writer(mut buffer)
     match capture fmt.write(mut writer, value) {
@@ -34,21 +34,21 @@ fn display_is<T: Display>(value: read T, expected: read Text): bool {
     }
 }
 
-fn rejects(text: read core.text.Text): bool {
+fn rejects(read text: core.text.Text): bool {
     match capture f64.(FromStr).from_str(text) {
         success(_) => false,
         failure(_) => true
     }
 }
 
-fn f32_bits_are(text: read Text, expected: u32): bool {
+fn f32_bits_are(read text: Text, expected: u32): bool {
     match capture f32.(FromStr).from_str(text) {
         success(value) => value.to_bits() == expected,
         failure(_) => false
     }
 }
 
-fn f64_bits_are(text: read Text, expected: u64): bool {
+fn f64_bits_are(read text: Text, expected: u64): bool {
     match capture f64.(FromStr).from_str(text) {
         success(value) => value.to_bits() == expected,
         failure(_) => false

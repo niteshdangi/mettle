@@ -8,14 +8,14 @@ import core.text.{FromStr, Text}
 import std.io.{Error, ErrorKind}
 import std.net.{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr}
 
-fn render<T: Display>(value: read T, buffer: mut [u8]): usize throws core.fmt.Error {
+fn render<T: Display>(read value: T, mut buffer: [u8]): usize throws core.fmt.Error {
     var writer = buffer_writer(mut buffer)
     var output = formatter(mut writer, spec())
     try value.fmt(mut output)
     writer.len()
 }
 
-fn equals<T: Display>(value: read T, expected: read Text, buffer: mut [u8]): bool {
+fn equals<T: Display>(read value: T, read expected: Text, mut buffer: [u8]): bool {
     let length = match take capture render(read value, mut buffer) {
         success(length) => length,
         failure(error) => { return false }

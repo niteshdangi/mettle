@@ -9,7 +9,7 @@ copy type First { value: i32 }
 copy type Second { value: i32 }
 alias FirstAlias = First
 
-fn identity<T: Any + unsized>(value: read T): TypeId {
+fn identity<T: Any + unsized>(read value: T): TypeId {
     T.(Any).type_id(value)
 }
 

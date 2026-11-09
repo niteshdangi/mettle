@@ -68,9 +68,9 @@ def main():
             for path in sorted(
                 [ROOT / "CMakeLists.txt", ROOT / "docs/toolchain-pins.json",
                  ROOT / ".clang-format", ROOT / ".clang-tidy", ROOT / ".editorconfig"] +
-                [path for directory in ("compiler", "runtime", "library", "tests", "tools", "examples")
+                [path for directory in ("bootstrap", "compiler", "runtime", "library", "tests", "tools", "examples")
                  for path in (ROOT / directory).rglob("*")
-                 if path.is_file() and path.suffix in CPP_SUFFIXES | {".py", ".json", ".yaml", ".mt"}])
+                 if path.is_file() and path.suffix in CPP_SUFFIXES | {".py", ".json", ".yaml", ".mt", ".mettle"}])
         },
         "steps": [],
         "first_build_mode": "clean build, compared byte-for-byte with a second clean build",
@@ -105,7 +105,7 @@ def main():
     def planned_commands():
         for command in commands:
             if command[0] == str(ctest) and arguments.quality:
-                owned = [ROOT / name for name in ("compiler", "runtime", "tests")]
+                owned = [ROOT / name for name in ("bootstrap", "compiler", "runtime", "tests")]
                 sources = sorted(path for root in owned for path in root.rglob("*")
                                  if path.is_file() and path.suffix in CPP_SUFFIXES)
                 yield [str(binaries["llvm"] / "clang-format"), "--dry-run", "--Werror",

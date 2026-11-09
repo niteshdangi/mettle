@@ -5,7 +5,7 @@ type Writer<region source, region storage> {
     value: mut Reader<region source> from storage
 }
 fn expose<region source, region storage>(
-    writer: mut Writer<region source,region storage>): mut Reader<region source> from writer {
+    mut writer: Writer<region source,region storage>): mut Reader<region source> from writer {
     mut *writer.value
 }
 fn main(): i32 {

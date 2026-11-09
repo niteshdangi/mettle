@@ -4,11 +4,11 @@
 // Freestanding execution has no unwind runtime and aborts (trap).
 import super.text.Text
 
-pub fn panic(message: read Text): Never {
+pub fn panic(read message: Text): Never {
     core.intrinsics.panic_message(message.as_bytes())
 }
 
-pub fn assert(condition: bool, message: read Text) {
+pub fn assert(condition: bool, read message: Text) {
     if !condition { panic(message) }
 }
 

@@ -6,14 +6,14 @@ import core.iter.{BidirectionalIterator, Iterator}
 import std.ffi.os_str_from_text
 import std.path.{Component, Path, PathBuf, path, path_from_text, path_buf_from_text}
 
-fn normal_is(c: Component, want: read Text): bool {
+fn normal_is(c: Component, read want: Text): bool {
     match c {
         Component.Normal(name) => match name.to_str() { present(t) => t == want, none => false },
         _ => false
     }
 }
 
-fn component_count(p: read Path): usize {
+fn component_count(read p: Path): usize {
     var n = 0usize
     var it = p.components()
     while true {

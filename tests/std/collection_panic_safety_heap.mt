@@ -15,14 +15,14 @@ type Item {
 }
 
 extend Item implements PartialEq {
-    fn eq(other: read Item): bool { self.value == other.value }
+    fn eq(read other: Item): bool { self.value == other.value }
 }
 extend Item implements Eq {}
 extend Item implements PartialOrd {
-    fn partial_cmp(other: read Item): Ordering? { present(self.cmp(other)) }
+    fn partial_cmp(read other: Item): Ordering? { present(self.cmp(other)) }
 }
 extend Item implements Ord {
-    fn cmp(other: read Item): Ordering {
+    fn cmp(read other: Item): Ordering {
         if self.panic_cmp.get().load(core.sync.atomic.Ordering.SeqCst) != 0usize {
             panic("heap comparison")
         }
@@ -30,8 +30,8 @@ extend Item implements Ord {
     }
 }
 
-fn new_item(value: i32, panic_cmp: take Arc<core.sync.atomic.AtomicUsize>,
-    drops: take Arc<core.sync.atomic.AtomicUsize>): Item {
+fn new_item(value: i32, take panic_cmp: Arc<core.sync.atomic.AtomicUsize>,
+    take drops: Arc<core.sync.atomic.AtomicUsize>): Item {
     Item(value, panic_cmp, drops)
 }
 
@@ -85,7 +85,7 @@ fn main(): i32 {
     retained.push(new_item(5, panic_cmp.retain(), drops.retain()))
     retained.push(new_item(1, panic_cmp.retain(), drops.retain()))
     let predicate_panic = std.panic.catch_panic(fn(): Unit {
-        retained.retain(fn(value: read Item): bool {
+        retained.retain(fn(read value: Item): bool {
             if value.value == 5 { panic("heap retain predicate") }
             false
         })
@@ -115,7 +115,7 @@ fn main(): i32 {
     comparison_retained.push(new_item(5, panic_cmp.retain(), drops.retain()))
     let _set = panic_cmp.get().store(1usize, core.sync.atomic.Ordering.SeqCst)
     let comparison_panic = std.panic.catch_panic(fn(): Unit {
-        comparison_retained.retain(fn(value: read Item): bool {
+        comparison_retained.retain(fn(read value: Item): bool {
             value.value != 5
         })
     })

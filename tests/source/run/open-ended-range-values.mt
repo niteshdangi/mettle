@@ -1,6 +1,6 @@
 import core.iter.Iterator
 
-fn total<I: Iterator<Item = i32>>(items: take I): i32 {
+fn total<I: Iterator<Item = i32>>(take items: I): i32 {
     var source = items
     var sum = 0
     while true {

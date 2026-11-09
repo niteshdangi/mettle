@@ -8,7 +8,7 @@ type ReentrantRun {
 
 extend ReentrantRun implements Future {
     type Output = Unit
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Unit> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Unit> {
         let me = unsafe { self.get_unchecked_mut() }
         cx.waker().wake_by_ref()
         if me.blocking {

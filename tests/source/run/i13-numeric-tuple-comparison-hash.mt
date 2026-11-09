@@ -5,7 +5,7 @@ import core.hash.{Hash, Hasher}
 // Records the byte stream so tuple Hash field order is observable.
 type RecordingHasher { bytes: [u8; 8]; length: usize }
 extend RecordingHasher implements Hasher {
-    mut fn write(bytes: read [u8]): Unit {
+    mut fn write(read bytes: [u8]): Unit {
         var index = 0usize
         while index < bytes.len() && self.length < 8usize {
             self.bytes[self.length] = bytes[index]
@@ -18,7 +18,7 @@ extend RecordingHasher implements Hasher {
 }
 
 fn ordered_and_hashed<T: Ord + Hash>(
-    left: read T, equal: read T, later: read T
+    read left: T, read equal: T, read later: T
 ): bool {
     if left != equal || left.cmp(read later) != Ordering.Less { return false }
     match left.partial_cmp(read later) {

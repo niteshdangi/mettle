@@ -10,7 +10,7 @@ import core.num.IntErrorKind
 import core.num.ParseIntError
 import core.text.Text
 
-fn debug_is<T: Debug>(value: read T, expected: read Text): bool {
+fn debug_is<T: Debug>(read value: T, read expected: Text): bool {
     var buffer = [0u8; 64]
     var writer = fmt.buffer_writer(mut buffer)
     var formatter = fmt.formatter(mut writer, fmt.spec())
@@ -25,7 +25,7 @@ fn debug_is<T: Debug>(value: read T, expected: read Text): bool {
     }
 }
 
-fn display_is<T: Display>(value: read T, expected: read Text): bool {
+fn display_is<T: Display>(read value: T, read expected: Text): bool {
     var buffer = [0u8; 64]
     var writer = fmt.buffer_writer(mut buffer)
     match capture fmt.write(mut writer, value) {
@@ -39,7 +39,7 @@ fn display_is<T: Display>(value: read T, expected: read Text): bool {
     }
 }
 
-fn has_no_error_source<T: CoreError>(value: read T): bool {
+fn has_no_error_source<T: CoreError>(read value: T): bool {
     value.source().is_none()
 }
 

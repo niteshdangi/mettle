@@ -97,12 +97,12 @@ endif()
 find_package(Python3 3.9 REQUIRED COMPONENTS Interpreter)
 function(mettle_component name kind directory)
   file(GLOB_RECURSE files CONFIGURE_DEPENDS
-       "${PROJECT_SOURCE_DIR}/compiler/${directory}/*.c"
-       "${PROJECT_SOURCE_DIR}/compiler/${directory}/*.cc"
-       "${PROJECT_SOURCE_DIR}/compiler/${directory}/*.cpp"
-       "${PROJECT_SOURCE_DIR}/compiler/${directory}/*.cxx"
-       "${PROJECT_SOURCE_DIR}/compiler/${directory}/*.h"
-       "${PROJECT_SOURCE_DIR}/compiler/${directory}/*.hpp")
+       "${PROJECT_SOURCE_DIR}/bootstrap/${directory}/*.c"
+       "${PROJECT_SOURCE_DIR}/bootstrap/${directory}/*.cc"
+       "${PROJECT_SOURCE_DIR}/bootstrap/${directory}/*.cpp"
+       "${PROJECT_SOURCE_DIR}/bootstrap/${directory}/*.cxx"
+       "${PROJECT_SOURCE_DIR}/bootstrap/${directory}/*.h"
+       "${PROJECT_SOURCE_DIR}/bootstrap/${directory}/*.hpp")
   if(kind STREQUAL "EXECUTABLE")
     add_executable(mettle ${files})
     set(target mettle)
@@ -111,9 +111,9 @@ function(mettle_component name kind directory)
     set(target mettle_${name})
   endif()
   if(kind STREQUAL "INTERFACE")
-    target_include_directories(${target} INTERFACE "${PROJECT_SOURCE_DIR}/compiler")
+    target_include_directories(${target} INTERFACE "${PROJECT_SOURCE_DIR}/bootstrap")
   else()
-    target_include_directories(${target} PUBLIC "${PROJECT_SOURCE_DIR}/compiler")
+    target_include_directories(${target} PUBLIC "${PROJECT_SOURCE_DIR}/bootstrap")
     target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
   endif()
 endfunction()

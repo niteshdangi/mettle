@@ -13,7 +13,7 @@ import core.hash
 import core.ops.{BitOr, Div, Rem, DivAssign, RemAssign, Neg}
 import core.text.{FromStr, Text}
 
-fn debug_is<T: Debug>(value: read T, expected: read Text): bool {
+fn debug_is<T: Debug>(read value: T, read expected: Text): bool {
     var buffer = [0u8; 16]
     var writer = fmt.buffer_writer(mut buffer)
     var formatter = fmt.formatter(mut writer, fmt.spec())
@@ -32,8 +32,8 @@ fn bit_or<A: BitOr<B>, B>(a: A, b: B): A.Output { a.bitor(b) }
 fn divide<A: Div<B>, B>(a: A, b: B): A.Output { a.div(b) }
 fn remainder<A: Rem<B>, B>(a: A, b: B): A.Output { a.rem(b) }
 fn negate<A: Neg>(a: A): A.Output { a.neg() }
-fn divide_assign<A: DivAssign<B>, B>(a: take A, b: B): A { var x = a; x.div_assign(b); x }
-fn remainder_assign<A: RemAssign<B>, B>(a: take A, b: B): A { var x = a; x.rem_assign(b); x }
+fn divide_assign<A: DivAssign<B>, B>(take a: A, b: B): A { var x = a; x.div_assign(b); x }
+fn remainder_assign<A: RemAssign<B>, B>(take a: A, b: B): A { var x = a; x.rem_assign(b); x }
 
 fn construction_and_bits(): i32 {
     if NonZero<u8>.new(0u8).is_present() || NonZero<u8>.new(5u8).unwrap().get() != 5u8 { return 1 }

@@ -14,13 +14,13 @@ import core.fmt.buffer_writer
 import alloc.string.ToString
 import std.net
 
-fn emit(message: format Message, buffer: mut [u8]): usize {
+fn emit(message: format Message, mut buffer: [u8]): usize {
     var out = buffer_writer(mut buffer)
     let ignored = capture message.write_to(mut out)
     out.len()
 }
 
-fn same(buffer: read [u8], length: usize, expected: read Text): bool {
+fn same(read buffer: [u8], length: usize, read expected: Text): bool {
     let want = expected.as_bytes()
     if length != want.len() { return false }
     var i = 0usize
@@ -32,7 +32,7 @@ fn same(buffer: read [u8], length: usize, expected: read Text): bool {
 }
 
 // True when `text` holds exactly the characters the format message renders.
-fn text_is_render(text: read Text, message: format Message): bool {
+fn text_is_render(read text: Text, message: format Message): bool {
     var buffer = [0u8; 64]
     let n = emit(message, mut buffer)
     same(read buffer, n, text)

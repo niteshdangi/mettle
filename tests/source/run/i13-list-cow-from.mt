@@ -2,7 +2,7 @@ import alloc.borrow.Cow
 import alloc.vec.List
 import core.convert.From
 
-fn copy_borrowed<region r>(items: read [i32] from r): i32 {
+fn copy_borrowed<region r>(read items: [i32] from r): i32 {
     let cow: Cow<region r, i32> = Cow.Borrowed(read items)
     if !cow.is_borrowed() || cow.as_ref().len() != 3usize { return 5 }
     var list = List<i32>.(From<Cow<region r, i32>>).from(cow)
@@ -12,7 +12,7 @@ fn copy_borrowed<region r>(items: read [i32] from r): i32 {
     0
 }
 
-fn move_owned<region r>(anchor: read i32 from r): i32 {
+fn move_owned<region r>(read anchor: i32 from r): i32 {
     let _ = anchor
     var items = alloc.vec.new<i32>()
     items.push(12)

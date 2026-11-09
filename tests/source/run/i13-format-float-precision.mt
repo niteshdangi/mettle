@@ -5,9 +5,9 @@ import core.fmt.{Debug, Display, Spec}
 import core.text.Text
 
 fn display_is<T: Display>(
-    value: read T,
+    read value: T,
     options: Spec,
-    expected: read Text
+    read expected: Text
 ): bool {
     var storage = [0u8; 400]
     var writer = fmt.buffer_writer(mut storage)
@@ -23,9 +23,9 @@ fn display_is<T: Display>(
 }
 
 fn debug_is<T: Debug>(
-    value: read T,
+    read value: T,
     options: Spec,
-    expected: read Text
+    read expected: Text
 ): bool {
     var storage = [0u8; 400]
     var writer = fmt.buffer_writer(mut storage)

@@ -7,12 +7,12 @@ import std.path.path_from_text
 
 fn has(v: i32?): bool { match v { present(x) => true, none => false } }
 
-fn feed(s: take ChildStdin, data: read [u8]): Unit throws Error {
+fn feed(take s: ChildStdin, read data: [u8]): Unit throws Error {
     var w = s
     try w.write_all(data)
 }
 
-fn sh(script: read Text): std.process.Command {
+fn sh(read script: Text): std.process.Command {
     var c = std.process.command_text("/bin/sh")
     c.arg_text("-c")
     c.arg_text(script)

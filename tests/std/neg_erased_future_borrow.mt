@@ -5,7 +5,7 @@ import core.future.{Context, Future, Poll}
 type Borrowed<region r> { value: read i32 from r }
 extend<region r> Borrowed<region r> implements Future {
     type Output = i32
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<i32> {
         let me = unsafe { self.get_unchecked_mut() }
         Poll.Ready(*me.value)
     }

@@ -5,17 +5,17 @@ import core.future.{Future, Poll, Context, noop_waker}
 // Unsized slice parameters are always captured as views.
 
 type Counter { value: i32 }
-fn sync_plain(c: read Counter): i32 { c.value }
-async fn plain(c: read Counter): i32 { c.value }
-async fn forward(value: read Counter): i32 { await plain(value) + sync_plain(value) }
-async fn total(bytes: read [u8]): usize { bytes.len() + bytes[0usize] as usize }
-async fn fill(bytes: mut [u8]): Unit { bytes[0usize] = 7u8 }
-fn closure_view(value: read Counter): i32 {
+fn sync_plain(read c: Counter): i32 { c.value }
+async fn plain(read c: Counter): i32 { c.value }
+async fn forward(read value: Counter): i32 { await plain(value) + sync_plain(value) }
+async fn total(read bytes: [u8]): usize { bytes.len() + bytes[0usize] as usize }
+async fn fill(mut bytes: [u8]): Unit { bytes[0usize] = 7u8 }
+fn closure_view(read value: Counter): i32 {
     let f = take fn(): i32 { sync_plain(value) }
     f()
 }
 
-fn drive<F: Future>(future: take F): F.Output {
+fn drive<F: Future>(take future: F): F.Output {
     let waker = noop_waker()
     var slot = core.pin.pin(future)
     loop {

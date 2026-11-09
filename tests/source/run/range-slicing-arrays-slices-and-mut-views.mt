@@ -1,5 +1,5 @@
 
-fn total(v: read [i32]): i32 { var t = 0; for x in v { t += x }; t }
+fn total(read v: [i32]): i32 { var t = 0; for x in v { t += x }; t }
 fn main(): i32 {
     var a: [i32; 5] = [1, 2, 3, 4, 5]
     let s: read [i32] = read a[1..4]

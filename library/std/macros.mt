@@ -54,7 +54,7 @@ fn read_request(): String throws Error {
     }
 }
 
-fn unescape(text: read Text): String throws Error {
+fn unescape(read text: Text): String throws Error {
     let bytes = text.as_bytes()
     var out = vec.with_capacity<u8>(bytes.len())
     var i = 0usize
@@ -76,7 +76,7 @@ fn unescape(text: read Text): String throws Error {
     }
 }
 
-fn escape(text: read Text): List<u8> {
+fn escape(read text: Text): List<u8> {
     let bytes = text.as_bytes()
     var out = vec.with_capacity<u8>(bytes.len())
     var i = 0usize
@@ -132,7 +132,7 @@ pub fn read_invocation(): Invocation throws Error {
     Invocation(name, tokens)
 }
 
-fn put(key: read Text, value: read Text): Unit throws Error {
+fn put(read key: Text, read value: Text): Unit throws Error {
     var out = io.stdout()
     let body = escape(value)
     try out.write_all("mettle:".as_bytes())
@@ -143,17 +143,17 @@ fn put(key: read Text, value: read Text): Unit throws Error {
 }
 
 // Appends `text` to the generated source exactly (include the line breaks).
-pub fn emit(text: read Text): Unit throws Error { try put("text", text) }
+pub fn emit(read text: Text): Unit throws Error { try put("text", text) }
 
 // Fails the invocation; the compiler reports `message` at the invocation.
-pub fn fail(message: read Text): Unit throws Error { try put("error", message) }
+pub fn fail(read message: Text): Unit throws Error { try put("error", message) }
 
 // Declares a file or directory (relative to the macro's package directory)
 // that the output depends on.
-pub fn depends_on_file(path: read Text): Unit throws Error { try put("rerun-if-changed", path) }
+pub fn depends_on_file(read path: Text): Unit throws Error { try put("rerun-if-changed", path) }
 
 // Declares an environment variable that the output depends on.
-pub fn depends_on_env(name: read Text): Unit throws Error { try put("rerun-if-env-changed", name) }
+pub fn depends_on_env(read name: Text): Unit throws Error { try put("rerun-if-env-changed", name) }
 
 // Promises that the output is a function of the arguments and the declared
 // inputs, which lets the compiler reuse it. Without this the macro reruns on

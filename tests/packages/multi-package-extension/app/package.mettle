@@ -1,0 +1,9 @@
+name: "extension-app"
+version: "0.1.0"
+dependencies {
+    genfn: "../genfn"
+    mathlib: "../mathlib"
+}
+build {
+    script: "build.mt"
+}

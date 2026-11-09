@@ -102,7 +102,7 @@ type WeakRelease<A: Allocator> {
     }
 }
 
-pub fn try_new_in<T, A: Allocator>(value: take T, allocator: take A): Rc<T, A> throws AllocError {
+pub fn try_new_in<T, A: Allocator>(take value: T, take allocator: A): Rc<T, A> throws AllocError {
     var a = allocator
     let (layout, offset) = try allocation_layout<T>()
     let raw = try a.allocate(layout)
@@ -114,15 +114,15 @@ pub fn try_new_in<T, A: Allocator>(value: take T, allocator: take A): Rc<T, A> t
     }
     Rc(p, b, a)
 }
-pub fn new_in<T, A: Allocator>(value: take T, allocator: take A): Rc<T, A> {
+pub fn new_in<T, A: Allocator>(take value: T, take allocator: A): Rc<T, A> {
     let outcome = capture try_new_in(value, allocator)
     match take outcome {
         success(r) => r,
         failure(e) => handle_alloc_error(unsafe { layout_unchecked(e.size, e.align) })
     }
 }
-pub fn new<T>(value: take T): Rc<T> { new_in(value, Global()) }
-pub fn try_new<T>(value: take T): Rc<T> throws AllocError { try try_new_in(value, Global()) }
+pub fn new<T>(take value: T): Rc<T> { new_in(value, Global()) }
+pub fn try_new<T>(take value: T): Rc<T> throws AllocError { try try_new_in(value, Global()) }
 
 // An empty Weak has no allocation or count; its null header is the sentinel.
 pub fn new_weak<T>(): Weak<T> {
@@ -134,11 +134,11 @@ extend<T> Weak<T> implements package.core.default.Default {
 }
 
 pub fn try_new_uninit_in<T, A: Allocator>(
-    allocator: take A
+    take allocator: A
 ): Rc<core.mem.MaybeUninit<T>, A> throws AllocError {
     try try_new_in(core.mem.MaybeUninit<T>.uninit(), allocator)
 }
-pub fn new_uninit_in<T, A: Allocator>(allocator: take A): Rc<core.mem.MaybeUninit<T>, A> {
+pub fn new_uninit_in<T, A: Allocator>(take allocator: A): Rc<core.mem.MaybeUninit<T>, A> {
     let result = capture try_new_uninit_in<T, A>(allocator)
     match take result {
         success(owner) => owner,
@@ -151,11 +151,11 @@ pub fn try_new_uninit<T>(): Rc<core.mem.MaybeUninit<T>> throws AllocError {
 pub fn new_uninit<T>(): Rc<core.mem.MaybeUninit<T>> { new_uninit_in<T, Global>(Global()) }
 
 pub fn try_new_zeroed_in<T, A: Allocator>(
-    allocator: take A
+    take allocator: A
 ): Rc<core.mem.MaybeUninit<T>, A> throws AllocError {
     try try_new_in(core.mem.MaybeUninit<T>.zeroed(), allocator)
 }
-pub fn new_zeroed_in<T, A: Allocator>(allocator: take A): Rc<core.mem.MaybeUninit<T>, A> {
+pub fn new_zeroed_in<T, A: Allocator>(take allocator: A): Rc<core.mem.MaybeUninit<T>, A> {
     let result = capture try_new_zeroed_in<T, A>(allocator)
     match take result {
         success(owner) => owner,
@@ -169,7 +169,7 @@ pub fn new_zeroed<T>(): Rc<core.mem.MaybeUninit<T>> { new_zeroed_in<T, Global>(G
 
 fn try_new_slice_in<T, A: Allocator>(
     len: usize,
-    allocator: take A,
+    take allocator: A,
     zeroed: bool
 ): Rc<[core.mem.MaybeUninit<T>], A> throws AllocError {
     var a = allocator
@@ -190,14 +190,14 @@ fn try_new_slice_in<T, A: Allocator>(
 
 pub fn try_new_uninit_slice_in<T, A: Allocator>(
     len: usize,
-    allocator: take A
+    take allocator: A
 ): Rc<[core.mem.MaybeUninit<T>], A> throws AllocError {
     try try_new_slice_in<T, A>(len, allocator, false)
 }
 
 pub fn new_uninit_slice_in<T, A: Allocator>(
     len: usize,
-    allocator: take A
+    take allocator: A
 ): Rc<[core.mem.MaybeUninit<T>], A> {
     let result = capture try_new_uninit_slice_in<T, A>(len, allocator)
     match take result {
@@ -220,14 +220,14 @@ pub fn new_uninit_slice<T>(len: usize): Rc<[core.mem.MaybeUninit<T>]> {
 
 pub fn try_new_zeroed_slice_in<T, A: Allocator>(
     len: usize,
-    allocator: take A
+    take allocator: A
 ): Rc<[core.mem.MaybeUninit<T>], A> throws AllocError {
     try try_new_slice_in<T, A>(len, allocator, true)
 }
 
 pub fn new_zeroed_slice_in<T, A: Allocator>(
     len: usize,
-    allocator: take A
+    take allocator: A
 ): Rc<[core.mem.MaybeUninit<T>], A> {
     let result = capture try_new_zeroed_slice_in<T, A>(len, allocator)
     match take result {
@@ -249,7 +249,7 @@ pub fn new_zeroed_slice<T>(len: usize): Rc<[core.mem.MaybeUninit<T>]> {
 }
 
 // Copies only from a validated Text view, preserving Text's UTF-8 invariant.
-pub fn try_copy_text_in<A: Allocator>(value: read Text, allocator: take A): Rc<Text, A> throws AllocError {
+pub fn try_copy_text_in<A: Allocator>(read value: Text, take allocator: A): Rc<Text, A> throws AllocError {
     var a = allocator
     let bytes = value.as_bytes()
     let result = capture extend_layout(layout_of<RcHeader>(), super.alloc.layout_of_val(bytes))
@@ -269,7 +269,7 @@ pub fn try_copy_text_in<A: Allocator>(value: read Text, allocator: take A): Rc<T
     Rc(text, h, a)
 }
 
-pub fn copy_text_in<A: Allocator>(value: read Text, allocator: take A): Rc<Text, A> {
+pub fn copy_text_in<A: Allocator>(read value: Text, take allocator: A): Rc<Text, A> {
     let outcome = capture try_copy_text_in(value, allocator)
     match take outcome {
         success(owner) => owner,
@@ -277,10 +277,10 @@ pub fn copy_text_in<A: Allocator>(value: read Text, allocator: take A): Rc<Text,
     }
 }
 
-pub fn try_copy_text(value: read Text): Rc<Text> throws AllocError {
+pub fn try_copy_text(read value: Text): Rc<Text> throws AllocError {
     try try_copy_text_in(value, Global())
 }
-pub fn copy_text(value: read Text): Rc<Text> { copy_text_in(value, Global()) }
+pub fn copy_text(read value: Text): Rc<Text> { copy_text_in(value, Global()) }
 
 fn bump(count: usize): usize {
     // Overflow would let a count wrap to zero and free a live payload.
@@ -289,8 +289,8 @@ fn bump(count: usize): usize {
 }
 
 pub fn try_new_cyclic_in<T, A: Allocator + Clone, F: take fn(read Weak<T, A>): T>(
-    allocator: take A,
-    make: take F
+    take allocator: A,
+    take make: F
 ): Rc<T, A> throws AllocError {
     var a = allocator
     let weak_allocator = a.clone()
@@ -312,8 +312,8 @@ pub fn try_new_cyclic_in<T, A: Allocator + Clone, F: take fn(read Weak<T, A>): T
     Rc(p, h, a)
 }
 pub fn new_cyclic_in<T, A: Allocator + Clone, F: take fn(read Weak<T, A>): T>(
-    allocator: take A,
-    make: take F
+    take allocator: A,
+    take make: F
 ): Rc<T, A> {
     let result = capture try_new_cyclic_in<T, A, F>(allocator, make)
     match take result {
@@ -321,10 +321,10 @@ pub fn new_cyclic_in<T, A: Allocator + Clone, F: take fn(read Weak<T, A>): T>(
         failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
     }
 }
-pub fn try_new_cyclic<T, F: take fn(read Weak<T>): T>(make: take F): Rc<T> throws AllocError {
+pub fn try_new_cyclic<T, F: take fn(read Weak<T>): T>(take make: F): Rc<T> throws AllocError {
     try try_new_cyclic_in<T, Global, F>(Global(), make)
 }
-pub fn new_cyclic<T, F: take fn(read Weak<T>): T>(make: take F): Rc<T> {
+pub fn new_cyclic<T, F: take fn(read Weak<T>): T>(take make: F): Rc<T> {
     new_cyclic_in<T, Global, F>(Global(), make)
 }
 
@@ -369,7 +369,7 @@ extend<T: unsized, A: Allocator> Rc<T, A> {
     pub fn as_ptr(): ptr<read T> { self.p.cast_const() }
     pub fn strong_count(): usize { unsafe { (*self.h).strong } }
     pub fn weak_count(): usize { unsafe { (*self.h).wk - 1usize } }
-    pub fn ptr_eq(other: read Rc<T, A>): bool { self.h == other.h }
+    pub fn ptr_eq(read other: Rc<T, A>): bool { self.h == other.h }
     pub fn is_unique(): bool { unsafe { (*self.h).strong == 1usize && (*self.h).wk == 1usize } }
     // Exclusive access only while no other strong or weak handle exists.
     pub mut fn get_mut(): (mut T from self)? {
@@ -422,18 +422,18 @@ extend<T: unsized, A: Allocator> Rc<T, A> {
         }
     }
 }
-pub unsafe fn from_raw<T: unsized, A: Allocator>(raw: take RawRc<T, A>): Rc<T, A> {
+pub unsafe fn from_raw<T: unsized, A: Allocator>(take raw: RawRc<T, A>): Rc<T, A> {
     Rc(raw.p, raw.h, raw.a)
 }
 // Creates a second raw ownership token; consume both tokens exactly once.
 pub unsafe fn increment_strong_count<T: unsized, A: Allocator + Clone>(
-    raw: read RawRc<T, A>
+    read raw: RawRc<T, A>
 ): RawRc<T, A> {
     let allocator = raw.a.clone()
     unsafe { (*raw.h).strong = bump((*raw.h).strong) }
     RawRc(raw.p, raw.h, allocator)
 }
-pub unsafe fn decrement_strong_count<T: unsized, A: Allocator>(raw: take RawRc<T, A>): Unit {
+pub unsafe fn decrement_strong_count<T: unsized, A: Allocator>(take raw: RawRc<T, A>): Unit {
     let _owner = unsafe { from_raw(raw) }
 }
 
@@ -467,7 +467,7 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
 extend<T: unsized, A: Allocator + Clone> Weak<T, A> implements Clone {
     fn clone(): Weak<T, A> { self.retain() }
 }
-pub unsafe fn weak_from_raw<T: unsized, A: Allocator>(raw: take RawWeak<T, A>): Weak<T, A> {
+pub unsafe fn weak_from_raw<T: unsized, A: Allocator>(take raw: RawWeak<T, A>): Weak<T, A> {
     // The raw token, including an empty null-header token, is reconstructed once.
     Weak(raw.p, raw.h, raw.a)
 }
@@ -489,7 +489,7 @@ extend<T: unsized, A: Allocator> Weak<T, A> {
             }
         }
     }
-    pub fn ptr_eq(other: read Weak<T, A>): bool { self.h == other.h }
+    pub fn ptr_eq(read other: Weak<T, A>): bool { self.h == other.h }
 }
 
 extend<T: Clone, A: Allocator + Clone> Rc<T, A> {
@@ -514,7 +514,7 @@ extend Rc<Text> implements Default {
 }
 
 extend<T, A: Allocator> Rc<[T], A> implements From<super.vec.List<T, A>> {
-    static fn from(values: take super.vec.List<T, A>): Rc<[T], A> {
+    static fn from(take values: super.vec.List<T, A>): Rc<[T], A> {
         let source = values.into_boxed_slice()
         let length = source.get().len()
         let source_layout = super.alloc.layout_of_val(source.get())
@@ -582,26 +582,26 @@ extend<T: unsized, A: Allocator> Rc<T, A> implements Borrow<T> {
     fn borrow(): read T from self { self.get() }
 }
 extend<T> Rc<T> implements From<T> {
-    static fn from(value: take T): Rc<T> { new(value) }
+    static fn from(take value: T): Rc<T> { new(value) }
 }
 extend<T: PartialEq + unsized, A: Allocator> Rc<T, A> implements PartialEq {
-    fn eq(other: read Rc<T, A>): bool { self.get().eq(other.get()) }
+    fn eq(read other: Rc<T, A>): bool { self.get().eq(other.get()) }
 }
 extend<T: Eq + unsized, A: Allocator> Rc<T, A> implements Eq {}
 extend<T: PartialOrd + unsized, A: Allocator> Rc<T, A> implements PartialOrd {
-    fn partial_cmp(other: read Rc<T, A>): Ordering? { self.get().partial_cmp(other.get()) }
+    fn partial_cmp(read other: Rc<T, A>): Ordering? { self.get().partial_cmp(other.get()) }
 }
 extend<T: Ord + unsized, A: Allocator> Rc<T, A> implements Ord {
-    fn cmp(other: read Rc<T, A>): Ordering { self.get().cmp(other.get()) }
+    fn cmp(read other: Rc<T, A>): Ordering { self.get().cmp(other.get()) }
 }
 extend<T: Hash + unsized, A: Allocator> Rc<T, A> implements Hash {
-    fn hash<H: Hasher>(state: mut H): Unit { self.get().hash(mut state) }
+    fn hash<H: Hasher>(mut state: H): Unit { self.get().hash(mut state) }
 }
 extend<T: fmt.Display + unsized, A: Allocator> Rc<T, A> implements fmt.Display {
-    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try T.(fmt.Display).fmt(self.get(), mut f) }
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try T.(fmt.Display).fmt(self.get(), mut f) }
 }
 extend<T: fmt.Debug + unsized, A: Allocator> Rc<T, A> implements fmt.Debug {
-    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try T.(fmt.Debug).fmt(self.get(), mut f) }
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try T.(fmt.Debug).fmt(self.get(), mut f) }
 }
 
 // Shared owner whose payload never moves until the last owner destroys it.
@@ -624,7 +624,7 @@ pub type Pinned<T: unsized, A: Allocator = Global> {
     }
 }
 
-pub fn pin<T>(value: take T): Pinned<T> {
+pub fn pin<T>(take value: T): Pinned<T> {
     let raw = new(value).into_raw()
     Pinned(raw.p, raw.h, raw.a)
 }
@@ -632,7 +632,7 @@ pub fn pin<T>(value: take T): Pinned<T> {
 extend<T: unsized, A: Allocator> Pinned<T, A> {
     pub fn as_ref(): pinned read T from self { unsafe { core.pin.Pin.new_unchecked(read *self.p) } }
     pub fn get_ref(): read T from self { unsafe { read *self.p } }
-    pub fn ptr_eq(other: read Pinned<T, A>): bool { self.h == other.h }
+    pub fn ptr_eq(read other: Pinned<T, A>): bool { self.h == other.h }
 }
 extend<T: unsized, A: Allocator + Clone> Pinned<T, A> {
     // Another pinned owner of the same payload.
@@ -668,19 +668,19 @@ extend Pinned<Text> implements Default {
 }
 
 extend<T: unsized, A: Allocator> Weak<T, A> implements fmt.Debug {
-    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.write_str("(Weak)") }
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str("(Weak)") }
 }
-extend Rc<Text> implements From<read Text> {
-    static fn from(value: read Text): Rc<Text> { copy_text(value) }
+extend<region r> Rc<Text> implements From<read Text from r> {
+    static fn from(take value: read Text from r): Rc<Text> { copy_text(value) }
 }
 extend Rc<Text> implements From<super.string.String> {
-    static fn from(value: take super.string.String): Rc<Text> { copy_text(value.as_text()) }
+    static fn from(take value: super.string.String): Rc<Text> { copy_text(value.as_text()) }
 }
 extend<T> Rc<T> implements From<super.boxed.Box<T>> {
-    static fn from(value: take super.boxed.Box<T>): Rc<T> { new(value.into_inner()) }
+    static fn from(take value: super.boxed.Box<T>): Rc<T> { new(value.into_inner()) }
 }
-extend<T: Clone> Rc<[T]> implements From<read [T]> {
-    static fn from(values: read [T]): Rc<[T]> {
+extend<region r, T: Clone> Rc<[T]> implements From<read [T] from r> {
+    static fn from(take values: read [T] from r): Rc<[T]> {
         var copies = super.vec.with_capacity<T>(values.len())
         var index = 0usize
         while index < values.len() {
@@ -691,7 +691,7 @@ extend<T: Clone> Rc<[T]> implements From<read [T]> {
     }
 }
 extend<T> Rc<[T]> implements FromItems<T> {
-    static fn from_iter<I: OwnedIterable<Item = T>>(items: take I): Rc<[T]> {
+    static fn from_iter<I: OwnedIterable<Item = T>>(take items: I): Rc<[T]> {
         let values = super.vec.List<T>.(FromItems<T>).from_iter(items)
         Rc<[T]>.from(values)
     }

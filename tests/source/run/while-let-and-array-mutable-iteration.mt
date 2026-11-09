@@ -1,5 +1,5 @@
 
-fn next(index: mut i32): i32? {
+fn next(mut index: i32): i32? {
     index += 1
     if index <= 3 { present(index) } else { none }
 }

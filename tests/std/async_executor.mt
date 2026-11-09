@@ -9,7 +9,7 @@ import core.future.{Future, Poll, Context}
 type Count { left: i32 }
 extend Count implements Future {
     type Output = i32
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<i32> {
         let me = unsafe { self.get_unchecked_mut() }
         if me.left == 0 { Poll.Ready(5) } else {
             me.left = me.left - 1
@@ -32,7 +32,7 @@ async fn sum(a: i32): i32 {
     let y = await task.yield_now()
     a + x
 }
-async fn record(log: take Arc<mutex.Mutex<i32>>, v: i32) {
+async fn record(take log: Arc<mutex.Mutex<i32>>, v: i32) {
     await task.yield_now();
     let locked = capture log.get().lock()
     var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }

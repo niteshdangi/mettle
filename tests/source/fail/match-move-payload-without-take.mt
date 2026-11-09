@@ -3,7 +3,7 @@
 // expect-help: write `match take <expr>` to consume the payload
 type Owned { value: i32 }
 enum Value { Held(Owned) }
-fn extract(value: take Value): Owned {
+fn extract(take value: Value): Owned {
     match value { Value.Held(item) => item }
 }
 fn main() { 0 }

@@ -17,29 +17,29 @@ extend Wrapper implements AsMut<i32> {
 
 type Leaf {}
 extend Leaf implements Debug {
-    fn fmt(f: mut Formatter): Unit throws FmtError { try f.write_str("leaf") }
+    fn fmt(mut f: Formatter): Unit throws FmtError { try f.write_str("leaf") }
 }
 extend Leaf implements Display {
-    fn fmt(f: mut Formatter): Unit throws FmtError { try f.write_str("leaf") }
+    fn fmt(mut f: Formatter): Unit throws FmtError { try f.write_str("leaf") }
 }
 extend Leaf implements Error {}
 
 type Branch { cause: Leaf }
 extend Branch implements Debug {
-    fn fmt(f: mut Formatter): Unit throws FmtError { try f.write_str("branch") }
+    fn fmt(mut f: Formatter): Unit throws FmtError { try f.write_str("branch") }
 }
 extend Branch implements Display {
-    fn fmt(f: mut Formatter): Unit throws FmtError { try f.write_str("branch") }
+    fn fmt(mut f: Formatter): Unit throws FmtError { try f.write_str("branch") }
 }
 extend Branch implements Error {
-    fn source<region r>(receiver self: read Branch from r): (read any Error from r)? {
+    fn source<region r>(receiver read self: Branch from r): (read any Error from r)? {
         let cause: read any Error = read self.cause
         present(cause)
     }
 }
 
-fn read_through<T: AsRef<i32>>(value: read T): i32 { *value.as_ref() }
-fn write_through<T: AsMut<i32>>(target: mut T, value: i32): Unit { *target.as_mut() = value }
+fn read_through<T: AsRef<i32>>(read value: T): i32 { *value.as_ref() }
+fn write_through<T: AsMut<i32>>(mut target: T, value: i32): Unit { *target.as_mut() = value }
 
 fn checks_convert(): i32 {
     var wrapper = Wrapper(5)

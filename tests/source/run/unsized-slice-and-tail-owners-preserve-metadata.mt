@@ -1,6 +1,6 @@
 // flags: --sanitize address
 type Tail<T: unsized> { tag: i32; data: T }
-fn sum(xs: read [i32]): i32 {
+fn sum(read xs: [i32]): i32 {
     var t = 0
     for x in xs { t = t + x }
     t

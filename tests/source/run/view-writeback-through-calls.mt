@@ -1,7 +1,7 @@
 
 copy type Reader<region r> { value: read i32 from r }
-fn set(reader: mut Reader, source: read i32) { reader.value = read source }
-fn forward(reader: mut Reader, source: read i32) { set(reader, source) }
+fn set(mut reader: Reader, read source: i32) { reader.value = read source }
+fn forward(mut reader: Reader, read source: i32) { set(reader, source) }
 fn main() {
     let first = 40
     let second = 42

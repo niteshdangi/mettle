@@ -5,13 +5,13 @@
 import core.fmt.{Message, Display, Debug, Formatter, Write, Error}
 import core.fmt.{buffer_writer, formatter, spec}
 
-fn emit(message: format Message, buffer: mut [u8]): usize {
+fn emit(message: format Message, mut buffer: [u8]): usize {
     var out = buffer_writer(mut buffer)
     let ignored = capture message.write_to(mut out)
     out.len()
 }
 
-fn same(buffer: read [u8], length: usize, expected: read Text): bool {
+fn same(read buffer: [u8], length: usize, read expected: Text): bool {
     let want = expected.as_bytes()
     if length != want.len() { return false }
     var i = 0usize
@@ -24,7 +24,7 @@ fn same(buffer: read [u8], length: usize, expected: read Text): bool {
 
 type Meters { value: i32 }
 extend Meters implements Display {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         try f.write_str("m=")
         try i32.(Display).fmt(self.value, mut f)
     }

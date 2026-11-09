@@ -43,27 +43,27 @@ fn checks_ordering(): i32 {
 
 fn checks_sortedness(): i32 {
     if !iter.range(0, 5).is_sorted() { return 30 }
-    if iter.range(0, 4).map(fn(x: take i32): i32 { 3 - x }).is_sorted() { return 31 }
-    if !iter.range(0, 4).is_sorted_by(fn(a: read i32, b: read i32): bool { a <= b }) { return 32 }
-    if iter.range(0, 4).is_sorted_by(fn(a: read i32, b: read i32): bool { a >= b }) { return 33 }
-    if !iter.range(0, 4).map(fn(x: take i32): i32 { 3 - x }).is_sorted_by_key(fn(x: read i32): i32 { -x }) { return 34 }
-    if iter.range(0, 4).is_sorted_by_key(fn(x: read i32): i32 { -x }) { return 35 }
+    if iter.range(0, 4).map(fn(take x: i32): i32 { 3 - x }).is_sorted() { return 31 }
+    if !iter.range(0, 4).is_sorted_by(fn(read a: i32, read b: i32): bool { a <= b }) { return 32 }
+    if iter.range(0, 4).is_sorted_by(fn(read a: i32, read b: i32): bool { a >= b }) { return 33 }
+    if !iter.range(0, 4).map(fn(take x: i32): i32 { 3 - x }).is_sorted_by_key(fn(read x: i32): i32 { -x }) { return 34 }
+    if iter.range(0, 4).is_sorted_by_key(fn(read x: i32): i32 { -x }) { return 35 }
     if !iter.empty<i32>().is_sorted() { return 36 }
     0
 }
 
 fn checks_partition(): i32 {
-    let parts: (List<i32>, List<i32>) = iter.range(0, 7).partition(fn(x: read i32): bool { x % 2 == 0 })
+    let parts: (List<i32>, List<i32>) = iter.range(0, 7).partition(fn(read x: i32): bool { x % 2 == 0 })
     if parts.0.len() != 4usize || parts.0.as_slice()[3usize] != 6 { return 40 }
     if parts.1.len() != 3usize || parts.1.as_slice()[0usize] != 1 { return 41 }
-    let none_matched: (List<i32>, List<i32>) = iter.range(0, 3).partition(fn(x: read i32): bool { x > 9 })
+    let none_matched: (List<i32>, List<i32>) = iter.range(0, 3).partition(fn(read x: i32): bool { x > 9 })
     if none_matched.0.len() != 0usize || none_matched.1.len() != 3usize { return 42 }
     0
 }
 
 fn checks_peekable_conditionals(): i32 {
     var peeked = iter.range(1, 6).peekable()
-    match peeked.next_if_map(fn(x: take i32): i32 throws i32 {
+    match peeked.next_if_map(fn(take x: i32): i32 throws i32 {
         if x == 1 { throw x }
         x * 10
     }) {
@@ -74,14 +74,14 @@ fn checks_peekable_conditionals(): i32 {
         present(value) => { if value != 1 { return 51 } },
         none => { return 51 }
     }
-    match peeked.next_if_map(fn(x: take i32): i32 throws i32 {
+    match peeked.next_if_map(fn(take x: i32): i32 throws i32 {
         if x == 9 { throw x }
         x * 10
     }) {
         present(value) => { if value != 20 { return 52 } },
         none => { return 52 }
     }
-    match peeked.next_if_map(fn(x: take i32): i32 throws i32 {
+    match peeked.next_if_map(fn(take x: i32): i32 throws i32 {
         if x == 3 { throw x }
         x * 10
     }) {
@@ -94,7 +94,7 @@ fn checks_peekable_conditionals(): i32 {
     }
 
     var inspected = iter.range(1, 5).peekable()
-    match inspected.next_if(fn(x: read i32): bool { x == 1 }) {
+    match inspected.next_if(fn(read x: i32): bool { x == 1 }) {
         present(value) => { if value != 1 { return 58 } },
         none => { return 58 }
     }
@@ -110,13 +110,13 @@ fn checks_peekable_conditionals(): i32 {
     if inspected.next() != present(3) { return 62 }
 
     var mapped = iter.range(3, 6).peekable()
-    match mapped.next_if_map_mut(fn(x: mut i32): i32? {
+    match mapped.next_if_map_mut(fn(mut x: i32): i32? {
         if x == 3 { present(x * 2) } else { none }
     }) {
         present(value) => { if value != 6 { return 55 } },
         none => { return 55 }
     }
-    match mapped.next_if_map_mut(fn(x: mut i32): i32? {
+    match mapped.next_if_map_mut(fn(mut x: i32): i32? {
         if x == 99 { present(x) } else { none }
     }) {
         present(_) => { return 56 },

@@ -110,7 +110,7 @@ type WeakRelease<A: Allocator> {
     }
 }
 
-pub fn try_new_in<T, A: Allocator>(value: take T, allocator: take A): Arc<T, A> throws AllocError {
+pub fn try_new_in<T, A: Allocator>(take value: T, take allocator: A): Arc<T, A> throws AllocError {
     var a = allocator
     let (layout, offset) = try allocation_layout<T>()
     let raw = try a.allocate(layout)
@@ -124,15 +124,15 @@ pub fn try_new_in<T, A: Allocator>(value: take T, allocator: take A): Arc<T, A> 
     }
     Arc(p, b, a)
 }
-pub fn new_in<T, A: Allocator>(value: take T, allocator: take A): Arc<T, A> {
+pub fn new_in<T, A: Allocator>(take value: T, take allocator: A): Arc<T, A> {
     let outcome = capture try_new_in(value, allocator)
     match take outcome {
         success(r) => r,
         failure(e) => handle_alloc_error(unsafe { layout_unchecked(e.size, e.align) })
     }
 }
-pub fn new<T>(value: take T): Arc<T> { new_in(value, Global()) }
-pub fn try_new<T>(value: take T): Arc<T> throws AllocError { try try_new_in(value, Global()) }
+pub fn new<T>(take value: T): Arc<T> { new_in(value, Global()) }
+pub fn try_new<T>(take value: T): Arc<T> throws AllocError { try try_new_in(value, Global()) }
 
 // An empty Weak has no allocation or count; its null header is the sentinel.
 pub fn new_weak<T>(): Weak<T> {
@@ -144,12 +144,12 @@ extend<T> Weak<T> implements package.core.default.Default {
 }
 
 pub fn try_new_uninit_in<T, A: Allocator>(
-    allocator: take A
+    take allocator: A
 ): Arc<core.mem.MaybeUninit<T>, A> throws AllocError {
     try try_new_in(core.mem.MaybeUninit<T>.uninit(), allocator)
 }
 pub fn new_uninit_in<T, A: Allocator>(
-    allocator: take A
+    take allocator: A
 ): Arc<core.mem.MaybeUninit<T>, A> {
     let result = capture try_new_uninit_in<T, A>(allocator)
     match take result {
@@ -163,12 +163,12 @@ pub fn try_new_uninit<T>(): Arc<core.mem.MaybeUninit<T>> throws AllocError {
 pub fn new_uninit<T>(): Arc<core.mem.MaybeUninit<T>> { new_uninit_in<T, Global>(Global()) }
 
 pub fn try_new_zeroed_in<T, A: Allocator>(
-    allocator: take A
+    take allocator: A
 ): Arc<core.mem.MaybeUninit<T>, A> throws AllocError {
     try try_new_in(core.mem.MaybeUninit<T>.zeroed(), allocator)
 }
 pub fn new_zeroed_in<T, A: Allocator>(
-    allocator: take A
+    take allocator: A
 ): Arc<core.mem.MaybeUninit<T>, A> {
     let result = capture try_new_zeroed_in<T, A>(allocator)
     match take result {
@@ -183,7 +183,7 @@ pub fn new_zeroed<T>(): Arc<core.mem.MaybeUninit<T>> { new_zeroed_in<T, Global>(
 
 fn try_new_slice_in<T, A: Allocator>(
     len: usize,
-    allocator: take A,
+    take allocator: A,
     zeroed: bool
 ): Arc<[core.mem.MaybeUninit<T>], A> throws AllocError {
     var a = allocator
@@ -208,14 +208,14 @@ fn try_new_slice_in<T, A: Allocator>(
 
 pub fn try_new_uninit_slice_in<T, A: Allocator>(
     len: usize,
-    allocator: take A
+    take allocator: A
 ): Arc<[core.mem.MaybeUninit<T>], A> throws AllocError {
     try try_new_slice_in<T, A>(len, allocator, false)
 }
 
 pub fn new_uninit_slice_in<T, A: Allocator>(
     len: usize,
-    allocator: take A
+    take allocator: A
 ): Arc<[core.mem.MaybeUninit<T>], A> {
     let result = capture try_new_uninit_slice_in<T, A>(len, allocator)
     match take result {
@@ -238,14 +238,14 @@ pub fn new_uninit_slice<T>(len: usize): Arc<[core.mem.MaybeUninit<T>]> {
 
 pub fn try_new_zeroed_slice_in<T, A: Allocator>(
     len: usize,
-    allocator: take A
+    take allocator: A
 ): Arc<[core.mem.MaybeUninit<T>], A> throws AllocError {
     try try_new_slice_in<T, A>(len, allocator, true)
 }
 
 pub fn new_zeroed_slice_in<T, A: Allocator>(
     len: usize,
-    allocator: take A
+    take allocator: A
 ): Arc<[core.mem.MaybeUninit<T>], A> {
     let result = capture try_new_zeroed_slice_in<T, A>(len, allocator)
     match take result {
@@ -267,7 +267,7 @@ pub fn new_zeroed_slice<T>(len: usize): Arc<[core.mem.MaybeUninit<T>]> {
 }
 
 // Copies only from a validated Text view, preserving Text's UTF-8 invariant.
-pub fn try_copy_text_in<A: Allocator>(value: read Text, allocator: take A): Arc<Text, A> throws AllocError {
+pub fn try_copy_text_in<A: Allocator>(read value: Text, take allocator: A): Arc<Text, A> throws AllocError {
     var a = allocator
     let bytes = value.as_bytes()
     let result = capture extend_layout(layout_of<ArcHeader>(), super.alloc.layout_of_val(bytes))
@@ -289,7 +289,7 @@ pub fn try_copy_text_in<A: Allocator>(value: read Text, allocator: take A): Arc<
     Arc(text, h, a)
 }
 
-pub fn copy_text_in<A: Allocator>(value: read Text, allocator: take A): Arc<Text, A> {
+pub fn copy_text_in<A: Allocator>(read value: Text, take allocator: A): Arc<Text, A> {
     let outcome = capture try_copy_text_in(value, allocator)
     match take outcome {
         success(owner) => owner,
@@ -297,10 +297,10 @@ pub fn copy_text_in<A: Allocator>(value: read Text, allocator: take A): Arc<Text
     }
 }
 
-pub fn try_copy_text(value: read Text): Arc<Text> throws AllocError {
+pub fn try_copy_text(read value: Text): Arc<Text> throws AllocError {
     try try_copy_text_in(value, Global())
 }
-pub fn copy_text(value: read Text): Arc<Text> { copy_text_in(value, Global()) }
+pub fn copy_text(read value: Text): Arc<Text> { copy_text_in(value, Global()) }
 
 // Transfer and sharing of the handles require the payload to be both
 // Transferable and Shareable (the last owner may drop it on any thread, and
@@ -318,8 +318,8 @@ unsafe fn increment(count: ptr<mut core.sync.atomic.AtomicUsize>) {
 }
 
 pub fn try_new_cyclic_in<T, A: Allocator + Clone, F: take fn(read Weak<T, A>): T>(
-    allocator: take A,
-    make: take F
+    take allocator: A,
+    take make: F
 ): Arc<T, A> throws AllocError {
     var a = allocator
     let weak_allocator = a.clone()
@@ -347,8 +347,8 @@ pub fn try_new_cyclic_in<T, A: Allocator + Clone, F: take fn(read Weak<T, A>): T
     Arc(p, h, a)
 }
 pub fn new_cyclic_in<T, A: Allocator + Clone, F: take fn(read Weak<T, A>): T>(
-    allocator: take A,
-    make: take F
+    take allocator: A,
+    take make: F
 ): Arc<T, A> {
     let result = capture try_new_cyclic_in<T, A, F>(allocator, make)
     match take result {
@@ -356,10 +356,10 @@ pub fn new_cyclic_in<T, A: Allocator + Clone, F: take fn(read Weak<T, A>): T>(
         failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
     }
 }
-pub fn try_new_cyclic<T, F: take fn(read Weak<T>): T>(make: take F): Arc<T> throws AllocError {
+pub fn try_new_cyclic<T, F: take fn(read Weak<T>): T>(take make: F): Arc<T> throws AllocError {
     try try_new_cyclic_in<T, Global, F>(Global(), make)
 }
-pub fn new_cyclic<T, F: take fn(read Weak<T>): T>(make: take F): Arc<T> {
+pub fn new_cyclic<T, F: take fn(read Weak<T>): T>(take make: F): Arc<T> {
     new_cyclic_in<T, Global, F>(Global(), make)
 }
 
@@ -410,7 +410,7 @@ extend<T: unsized, A: Allocator> Arc<T, A> {
             if strong == 0usize || weak_total == 0usize { weak_total } else { weak_total - 1usize }
         }
     }
-    pub fn ptr_eq(other: read Arc<T, A>): bool { self.h == other.h }
+    pub fn ptr_eq(read other: Arc<T, A>): bool { self.h == other.h }
     // Exclusive access only while no other strong or weak handle exists. A
     // weak handle can only be created through a strong one, so when this
     // handle is the sole owner nothing can race with the check.
@@ -469,18 +469,18 @@ extend<T: unsized, A: Allocator> Arc<T, A> {
         }
     }
 }
-pub unsafe fn from_raw<T: unsized, A: Allocator>(raw: take RawArc<T, A>): Arc<T, A> {
+pub unsafe fn from_raw<T: unsized, A: Allocator>(take raw: RawArc<T, A>): Arc<T, A> {
     Arc(raw.p, raw.h, raw.a)
 }
 // Creates a second raw ownership token; consume both tokens exactly once.
 pub unsafe fn increment_strong_count<T: unsized, A: Allocator + Clone>(
-    raw: read RawArc<T, A>
+    read raw: RawArc<T, A>
 ): RawArc<T, A> {
     let allocator = raw.a.clone()
     unsafe { increment(core.ptr.from_mut((*raw.h).strong)) }
     RawArc(raw.p, raw.h, allocator)
 }
-pub unsafe fn decrement_strong_count<T: unsized, A: Allocator>(raw: take RawArc<T, A>): Unit {
+pub unsafe fn decrement_strong_count<T: unsized, A: Allocator>(take raw: RawArc<T, A>): Unit {
     let _owner = unsafe { from_raw(raw) }
 }
 
@@ -524,7 +524,7 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
 extend<T: unsized, A: Allocator + Clone> Weak<T, A> implements Clone {
     fn clone(): Weak<T, A> { self.retain() }
 }
-pub unsafe fn weak_from_raw<T: unsized, A: Allocator>(raw: take RawWeak<T, A>): Weak<T, A> {
+pub unsafe fn weak_from_raw<T: unsized, A: Allocator>(take raw: RawWeak<T, A>): Weak<T, A> {
     // The raw token, including an empty null-header token, is reconstructed once.
     Weak(raw.p, raw.h, raw.a)
 }
@@ -539,31 +539,31 @@ extend<T: unsized, A: Allocator> Arc<T, A> implements Borrow<T> {
     fn borrow(): read T from self { self.get() }
 }
 extend<T> Arc<T> implements From<T> {
-    static fn from(value: take T): Arc<T> { new(value) }
+    static fn from(take value: T): Arc<T> { new(value) }
 }
 
 extend<T: PartialEq + unsized, A: Allocator> Arc<T, A> implements PartialEq {
-    fn eq(other: read Arc<T, A>): bool { self.get().eq(other.get()) }
+    fn eq(read other: Arc<T, A>): bool { self.get().eq(other.get()) }
 }
 extend<T: Eq + unsized, A: Allocator> Arc<T, A> implements Eq {}
 extend<T: PartialOrd + unsized, A: Allocator> Arc<T, A> implements PartialOrd {
-    fn partial_cmp(other: read Arc<T, A>): Ordering? {
+    fn partial_cmp(read other: Arc<T, A>): Ordering? {
         self.get().partial_cmp(other.get())
     }
 }
 extend<T: Ord + unsized, A: Allocator> Arc<T, A> implements Ord {
-    fn cmp(other: read Arc<T, A>): Ordering { self.get().cmp(other.get()) }
+    fn cmp(read other: Arc<T, A>): Ordering { self.get().cmp(other.get()) }
 }
 extend<T: Hash + unsized, A: Allocator> Arc<T, A> implements Hash {
-    fn hash<H: Hasher>(state: mut H): Unit { self.get().hash(mut state) }
+    fn hash<H: Hasher>(mut state: H): Unit { self.get().hash(mut state) }
 }
 extend<T: fmt.Display + unsized, A: Allocator> Arc<T, A> implements fmt.Display {
-    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
         try T.(fmt.Display).fmt(self.get(), mut f)
     }
 }
 extend<T: fmt.Debug + unsized, A: Allocator> Arc<T, A> implements fmt.Debug {
-    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
         try T.(fmt.Debug).fmt(self.get(), mut f)
     }
 }
@@ -585,7 +585,7 @@ extend<T: unsized, A: Allocator> Weak<T, A> {
             if strong == 0usize || weak_total == 0usize { 0usize } else { weak_total - 1usize }
         }
     }
-    pub fn ptr_eq(other: read Weak<T, A>): bool { self.h == other.h }
+    pub fn ptr_eq(read other: Weak<T, A>): bool { self.h == other.h }
 }
 
 extend<T: Clone, A: Allocator + Clone> Arc<T, A> {
@@ -633,7 +633,7 @@ pub type Pinned<T: unsized, A: Allocator = Global> {
     }
 }
 
-pub fn pin<T>(value: take T): Pinned<T> {
+pub fn pin<T>(take value: T): Pinned<T> {
     let raw = new(value).into_raw()
     Pinned(raw.p, raw.h, raw.a)
 }
@@ -641,7 +641,7 @@ pub fn pin<T>(value: take T): Pinned<T> {
 extend<T: unsized, A: Allocator> Pinned<T, A> {
     pub fn as_ref(): pinned read T from self { unsafe { core.pin.Pin.new_unchecked(read *self.p) } }
     pub fn get_ref(): read T from self { unsafe { read *self.p } }
-    pub fn ptr_eq(other: read Pinned<T, A>): bool { self.h == other.h }
+    pub fn ptr_eq(read other: Pinned<T, A>): bool { self.h == other.h }
 }
 extend<T: unsized, A: Allocator + Clone> Pinned<T, A> {
     // Another pinned owner of the same payload.
@@ -679,19 +679,19 @@ extend Pinned<Text> implements Default {
 }
 
 extend<T: unsized, A: Allocator> Weak<T, A> implements fmt.Debug {
-    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.write_str("(Weak)") }
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str("(Weak)") }
 }
-extend Arc<Text> implements From<read Text> {
-    static fn from(value: read Text): Arc<Text> { copy_text(value) }
+extend<region r> Arc<Text> implements From<read Text from r> {
+    static fn from(take value: read Text from r): Arc<Text> { copy_text(value) }
 }
 extend Arc<Text> implements From<super.string.String> {
-    static fn from(value: take super.string.String): Arc<Text> { copy_text(value.as_text()) }
+    static fn from(take value: super.string.String): Arc<Text> { copy_text(value.as_text()) }
 }
 extend<T> Arc<T> implements From<super.boxed.Box<T>> {
-    static fn from(value: take super.boxed.Box<T>): Arc<T> { new(value.into_inner()) }
+    static fn from(take value: super.boxed.Box<T>): Arc<T> { new(value.into_inner()) }
 }
-extend<T: Clone> Arc<[T]> implements From<read [T]> {
-    static fn from(values: read [T]): Arc<[T]> {
+extend<region r, T: Clone> Arc<[T]> implements From<read [T] from r> {
+    static fn from(take values: read [T] from r): Arc<[T]> {
         var copies = super.vec.with_capacity<T>(values.len())
         var index = 0usize
         while index < values.len() {
@@ -702,13 +702,13 @@ extend<T: Clone> Arc<[T]> implements From<read [T]> {
     }
 }
 extend<T> Arc<[T]> implements FromItems<T> {
-    static fn from_iter<I: OwnedIterable<Item = T>>(items: take I): Arc<[T]> {
+    static fn from_iter<I: OwnedIterable<Item = T>>(take items: I): Arc<[T]> {
         let values = super.vec.List<T>.(FromItems<T>).from_iter(items)
         Arc<[T]>.from(values)
     }
 }
 extend<T> Arc<[T]> implements From<super.vec.List<T>> {
-    static fn from(values: take super.vec.List<T>): Arc<[T]> {
+    static fn from(take values: super.vec.List<T>): Arc<[T]> {
         var source = values
         let length = source.len()
         var owner = new_uninit_slice<T>(length)

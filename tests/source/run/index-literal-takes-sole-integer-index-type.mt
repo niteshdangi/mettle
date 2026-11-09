@@ -9,7 +9,7 @@ import core.ops.{Index, IndexMut}
 type Grid { cells: [i32; 4] }
 extend Grid implements Index<i32> {
     type Output = i32
-    fn index(index: read i32): read i32 from self { read self.cells[index as usize] }
+    fn index(read index: i32): read i32 from self { read self.cells[index as usize] }
 }
 
 fn main(): i32 {

@@ -1,5 +1,5 @@
 
-fn identity<T>(value: take T): T { take value }
+fn identity<T>(take value: T): T { take value }
 fn enabled<const VALUE: bool = true>(): bool { VALUE }
 fn byte<const VALUE: u8 = 42>(): u8 { VALUE }
 fn main(): i32 {

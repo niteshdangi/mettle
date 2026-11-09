@@ -1,12 +1,12 @@
 
-interface Add<Rhs = Self> { fn add(rhs: read Rhs): i32; }
-interface Pair<A = i32, B = A> { fn combine(value: read B): i32; }
+interface Add<Rhs = Self> { fn add(read rhs: Rhs): i32; }
+interface Pair<A = i32, B = A> { fn combine(read value: B): i32; }
 type Number { value: i32 }
 extend Number implements Add {
-    fn add(rhs: read Number): i32 { self.value + rhs.value }
+    fn add(read rhs: Number): i32 { self.value + rhs.value }
 }
 extend Number implements Pair {
-    fn combine(value: read i32): i32 { self.value + value }
+    fn combine(read value: i32): i32 { self.value + value }
 }
 fn add<T: Add>(left: T, right: T): i32 { left.add(right) }
 fn call<A: Pair>(value: A): i32 { value.combine(21) }

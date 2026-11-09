@@ -1,6 +1,6 @@
 // expect-error: ownership 4:19 may have been moved
 
-fn twice<F: take fn(): i32>(operation: take F): i32 {
+fn twice<F: take fn(): i32>(take operation: F): i32 {
     operation() + operation()
 }
 fn answer(): i32 { 42 }

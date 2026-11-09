@@ -1036,7 +1036,7 @@ extern "C" {
         tagged_alignment:usize,transparent_size:usize,
         transparent_alignment:usize):i32;
     unsafe fn mettle_c_darwin_layout_union(
-        value:take DarwinLayoutUnion):DarwinLayoutUnion;
+        take value:DarwinLayoutUnion):DarwinLayoutUnion;
     unsafe fn mettle_c_darwin_layout_tagged(
         value:DarwinLayoutTagged):DarwinLayoutTagged;
     unsafe fn mettle_c_darwin_layout_transparent(
@@ -1549,8 +1549,8 @@ union Bits { integer: i64; real: f64 }
 @layout(C)
 union Doubles { first: f64; second: f64 }
 extern "C" {
-    unsafe fn mettle_c_union(value: take Bits): Bits;
-    unsafe fn mettle_c_double_union(value: take Doubles, increment: f64): Doubles;
+    unsafe fn mettle_c_union(take value: Bits): Bits;
+    unsafe fn mettle_c_double_union(take value: Doubles, increment: f64): Doubles;
 }
 fn main() {
     let integer = unsafe { mettle_c_union(Bits(integer: 41i64)) }

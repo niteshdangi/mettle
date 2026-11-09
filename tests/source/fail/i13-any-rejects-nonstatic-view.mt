@@ -4,7 +4,7 @@
 import core.any
 import core.any.TypeId
 
-fn view_id<region r>(view: read i32 from r): TypeId { any.type_id<read i32 from r>() }
+fn view_id<region r>(read view: i32 from r): TypeId { any.type_id<read i32 from r>() }
 
 fn main(): i32 {
     let number = 7

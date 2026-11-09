@@ -1,7 +1,7 @@
 import std.io.{Error, Writer}
 import std.net.TcpStream
 
-fn write_later(stream: read TcpStream): bool {
+fn write_later(read stream: TcpStream): bool {
     var writer = match take capture stream.try_clone() {
         success(value) => value,
         failure(_) => { return false }

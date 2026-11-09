@@ -212,15 +212,15 @@ fn main(): i32 {
     sync_ok<i32?>()
     owned_ok<i32?>()
 
-    // core.outcome.Result ((T throws E)): Any Borrow From Into Send Sync ToOwned
-    any_ok<(i32 throws i32)>()
-    borrow_ok<(i32 throws i32)>()
-    from_ok<(i32 throws i32)>()
-    tryfrom_ok<(i32 throws i32)>()
-    tryinto_ok<(i32 throws i32)>()
-    into_ok<(i32 throws i32)>()
-    send_ok<(i32 throws i32)>()
-    sync_ok<(i32 throws i32)>()
+    // core.outcome.Result (Outcome<T, E>): Any Borrow From Into Send Sync ToOwned
+    any_ok<(Outcome<i32, i32>)>()
+    borrow_ok<(Outcome<i32, i32>)>()
+    from_ok<(Outcome<i32, i32>)>()
+    tryfrom_ok<(Outcome<i32, i32>)>()
+    tryinto_ok<(Outcome<i32, i32>)>()
+    into_ok<(Outcome<i32, i32>)>()
+    send_ok<(Outcome<i32, i32>)>()
+    sync_ok<(Outcome<i32, i32>)>()
 
     // primitive::array ([T; N]): Any Borrow From Into Send Sync ToOwned
     any_ok<[i32; 3]>()

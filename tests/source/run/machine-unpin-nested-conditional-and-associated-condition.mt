@@ -5,7 +5,7 @@ extend Source implements Family { type Item = i32; }
 type Wrapper<T> { value: T; marker: core.marker.PhantomPinned }
 unsafe extend<T: Family<Item=i32>> Wrapper<T> implements Unpin {}
 type Outer<T> { nested: Wrapper<T> }
-fn access<T: Family<Item=i32>>(value: mut Outer<T>): mut Outer<T> from value {
+fn access<T: Family<Item=i32>>(mut value: Outer<T>): mut Outer<T> from value {
     var handle = core.pin.Pin.new(mut value)
     handle.into_inner()
 }

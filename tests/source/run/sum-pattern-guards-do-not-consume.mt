@@ -1,7 +1,7 @@
 
 type Owned { value: i32 }
 enum Result { Value(Owned); Empty }
-fn extract(value: take Result) {
+fn extract(take value: Result) {
     match take value {
         Result.Value(item) if item.value < 0 => 1,
         Result.Value(item) => item.value,

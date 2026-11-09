@@ -25,7 +25,7 @@ pub type PeekMut<region r, T: Ord, A: Allocator> {
     drop { sift_down(mut *self.queue) }
 }
 
-fn sift_down<T: Ord, A: Allocator>(queue: mut BinaryHeap<T, A>): Unit {
+fn sift_down<T: Ord, A: Allocator>(mut queue: BinaryHeap<T, A>): Unit {
     let n = queue.data.len()
     if n < 2usize { return () }
     // Compare first so a panicking comparison does not leave a partial sift.
@@ -58,8 +58,8 @@ fn sift_down<T: Ord, A: Allocator>(queue: mut BinaryHeap<T, A>): Unit {
 }
 
 fn append_order<T: Ord, A: Allocator>(
-    left: read BinaryHeap<T, A>,
-    right: read BinaryHeap<T, A>,
+    read left: BinaryHeap<T, A>,
+    read right: BinaryHeap<T, A>,
     left_len: usize,
     a: usize,
     b: usize
@@ -88,12 +88,12 @@ extend<region r, T: Ord, A: Allocator> PeekMut<region r, T, A> implements DerefM
     mut fn deref_mut(): mut T from self { unsafe { mut *self.queue.data.as_mut_ptr() } }
 }
 
-pub fn new_in<T, A: Allocator>(a: take A): BinaryHeap<T, A> { BinaryHeap(super.vec.new_in<T, A>(a)) }
+pub fn new_in<T, A: Allocator>(take a: A): BinaryHeap<T, A> { BinaryHeap(super.vec.new_in<T, A>(a)) }
 pub fn new<T>(): BinaryHeap<T> { new_in(Global()) }
-pub fn try_with_capacity_in<T, A: Allocator>(n: usize, a: take A): BinaryHeap<T, A> throws AllocError {
+pub fn try_with_capacity_in<T, A: Allocator>(n: usize, take a: A): BinaryHeap<T, A> throws AllocError {
     BinaryHeap(try super.vec.try_with_capacity_in<T, A>(n, take a))
 }
-pub fn with_capacity_in<T, A: Allocator>(n: usize, a: take A): BinaryHeap<T, A> {
+pub fn with_capacity_in<T, A: Allocator>(n: usize, take a: A): BinaryHeap<T, A> {
     BinaryHeap(super.vec.with_capacity_in<T, A>(n, take a))
 }
 pub fn try_with_capacity<T>(n: usize): BinaryHeap<T> throws AllocError {
@@ -138,7 +138,7 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
 
     // Compare the full path before changing the heap. If Ord panics, the
     // caller has not yet inserted the value and the existing heap is intact.
-    mut fn push_reserved(value: take T): Unit {
+    mut fn push_reserved(take value: T): Unit {
         let last = self.data.len()
         var destination = last
         while destination > 0usize {
@@ -157,14 +157,14 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
             i = parent
         }
     }
-    pub mut fn try_push(value: take T): Unit throws PushError<T> {
+    pub mut fn try_push(take value: T): Unit throws PushError<T> {
         match capture self.data.try_reserve(1usize) {
             success(_) => {},
             failure(error) => { throw PushError(value, error) }
         }
         self.push_reserved(value)
     }
-    pub mut fn push(value: take T): Unit {
+    pub mut fn push(take value: T): Unit {
         self.data.reserve(1usize)
         self.push_reserved(value)
     }
@@ -206,7 +206,7 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
     }
     /// Visits every original item once. Predicate/comparison panic does not move/remove items.
     /// Uses O(n) time and O(n) Global scratch storage when an item is rejected.
-    pub mut fn retain<F: mut fn(read T): bool>(keep: take F): Unit {
+    pub mut fn retain<F: mut fn(read T): bool>(take keep: F): Unit {
         var predicate = take keep
         let n = self.data.len()
         var entries = super.vec.new<HeapRetainEntry>()
@@ -307,7 +307,7 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
         }
         self.data.truncate(retained)
     }
-    pub mut fn append(other: mut BinaryHeap<T, A>): Unit {
+    pub mut fn append(mut other: BinaryHeap<T, A>): Unit {
         let left_len = self.data.len()
         let right_len = other.data.len()
         if right_len == 0usize { return () }
@@ -412,13 +412,13 @@ extend<T, A: Allocator> BinaryHeap<T, A> {
 extend<T, A: Allocator> BinaryHeap<T, A> implements Iterable {
     type Item = T
     type Iter<region r> = SliceIter<region r, T>
-    fn iter<region r>(receiver self: read Self from r): SliceIter<region r, T> { self.data.as_slice().iter() }
+    fn iter<region r>(receiver read self: Self from r): SliceIter<region r, T> { self.data.as_slice().iter() }
 }
 
 extend<T, A: Allocator> BinaryHeap<T, A> implements OwnedIterable {
     type Item = T
     type IntoIter = super.vec.IntoIter<T, A>
-    fn into_iter(receiver self: take Self): super.vec.IntoIter<T, A> {
+    fn into_iter(receiver take self: Self): super.vec.IntoIter<T, A> {
         self.into_vec().into_iter()
     }
 }
@@ -428,12 +428,12 @@ extend<T: Clone, A: Allocator + Clone> BinaryHeap<T, A> implements Clone {
 }
 // Elements appear in heap (storage) order.
 extend<T: fmt.Debug, A: Allocator> BinaryHeap<T, A> implements fmt.Debug {
-    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
         try fmt.debug_slice(self.data.as_slice(), mut f)
     }
 }
 extend<T: Ord, A: Allocator> BinaryHeap<T, A> implements ExtendItems<T> {
-    mut fn extend<I: OwnedIterable<Item = T>>(items: take I): Unit {
+    mut fn extend<I: OwnedIterable<Item = T>>(take items: I): Unit {
         var source = items.into_iter()
         while true {
             match take source.next() { present(item) => { self.push(item) }, none => { break } }
@@ -441,7 +441,7 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> implements ExtendItems<T> {
     }
 }
 extend<T: Ord> BinaryHeap<T> implements FromItems<T> {
-    static fn from_iter<I: OwnedIterable<Item = T>>(items: take I): BinaryHeap<T> {
+    static fn from_iter<I: OwnedIterable<Item = T>>(take items: I): BinaryHeap<T> {
         var out = new<T>()
         out.extend(items)
         out
@@ -449,5 +449,5 @@ extend<T: Ord> BinaryHeap<T> implements FromItems<T> {
 }
 
 extend<T, A: Allocator> List<T, A> implements package.core.convert.From<BinaryHeap<T, A>> {
-    static fn from(source: take BinaryHeap<T, A>): List<T, A> { source.into_vec() }
+    static fn from(take source: BinaryHeap<T, A>): List<T, A> { source.into_vec() }
 }

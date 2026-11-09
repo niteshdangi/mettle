@@ -11,7 +11,7 @@ enum Token { Eof, Num(i32), Pair { left: i32, right: i32 } }
 @derive(Debug, Clone)
 type Boxed<T> { inner: T }
 
-fn render<T: Debug>(value: read T, buffer: mut [u8]): usize throws Error {
+fn render<T: Debug>(read value: T, mut buffer: [u8]): usize throws Error {
     var out = buffer_writer(mut buffer)
     var f = formatter(mut out, spec())
     try value.fmt(mut f)

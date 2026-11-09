@@ -6,11 +6,11 @@ import core.iter
 import core.iter.{ Product, Sum }
 import core.num.Wrapping
 
-fn sum_two<T: Sum>(first: take T, second: take T): T {
+fn sum_two<T: Sum>(take first: T, take second: T): T {
     iter.sum(iter.chain(iter.once(first), iter.once(second)))
 }
 
-fn product_two<T: Product>(first: take T, second: take T): T {
+fn product_two<T: Product>(take first: T, take second: T): T {
     iter.product(iter.chain(iter.once(first), iter.once(second)))
 }
 

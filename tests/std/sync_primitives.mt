@@ -9,9 +9,9 @@ type Flag {
   data: core.sync.atomic.AtomicUsize
 }
 
-fn discard<T>(value: take T): Unit {}
+fn discard<T>(take value: T): Unit {}
 
-fn join_ok(h: take thread.JoinHandle<i32>): bool {
+fn join_ok(take h: thread.JoinHandle<i32>): bool {
   let r = capture h.join()
   match take r { success(v) => true, failure(e) => false }
 }
@@ -356,7 +356,7 @@ fn main(): i32 {
   let waiter = thread.spawn(take fn(): i32 {
     let o = capture s2.get().lock()
     var g = match take o { success(g) => g, failure(e) => e.into_inner() }
-    g = c2.get().wait_while(g, fn(ready: mut bool): bool { !ready })
+    g = c2.get().wait_while(g, fn(mut ready: bool): bool { !ready })
     0
   })
   let o = capture state.get().lock()
@@ -372,7 +372,7 @@ fn main(): i32 {
     failure(error) => error.into_inner()
   }
   let timeout = cv.get().wait_timeout_while(
-    timeout_guard, std.time.from_nanos(0u64), fn(ready: mut bool): bool { !ready }
+    timeout_guard, std.time.from_nanos(0u64), fn(mut ready: bool): bool { !ready }
   )
   if !timeout.1.timed_out() { return 27 }
 
@@ -383,11 +383,11 @@ fn main(): i32 {
   let other = thread.spawn(take fn(): i32 {
     if k2.get().is_set() { return 1 }
     k2.get().set(2)
-    let seen = k2.get().with(take fn(v: read i32): i32 { v })
+    let seen = k2.get().with(take fn(read v: i32): i32 { v })
     match take seen { present(v) => { if v == 2 { 0 } else { 1 } }, none => 1 }
   })
   if !join_ok(other) { return 17 }
-  let mine = key.get().with(take fn(v: read i32): i32 { v })
+  let mine = key.get().with(take fn(read v: i32): i32 { v })
   match take mine { present(v) => { if v != 1 { return 18 } }, none => { return 19 } }
   0
 }

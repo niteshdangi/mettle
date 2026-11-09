@@ -1,7 +1,7 @@
 
 type Wrapper<T> { value: T; marker: core.marker.PhantomPinned }
 unsafe extend<T: Copy> Wrapper<T> implements Unpin {}
-fn access<T>(value: mut Wrapper<T>): mut Wrapper<T> from value where Wrapper<T>: Unpin {
+fn access<T>(mut value: Wrapper<T>): mut Wrapper<T> from value where Wrapper<T>: Unpin {
     var handle = core.pin.Pin.new(mut value)
     handle.into_inner()
 }

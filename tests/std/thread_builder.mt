@@ -27,7 +27,7 @@ fn main(): i32 {
     let borrowed = 23
     let scoped_gate = arc.new(barrier.new(2usize))
     let scoped_worker_gate = scoped_gate.retain()
-    let scoped = thread.scope(fn(scope: read thread.Scope): i32 {
+    let scoped = thread.scope(fn(read scope: thread.Scope): i32 {
         var scoped_config = thread.Builder.new()
         scoped_config.name("scoped worker")
         scoped_config.stack_size(1048576usize)

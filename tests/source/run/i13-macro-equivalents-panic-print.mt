@@ -7,7 +7,7 @@ import core.panic.unreachable
 import std.io
 import std.panic.{catch_panic, CatchResult}
 
-fn panic_message(outcome: take CatchResult<i32>, length: usize): i32 {
+fn panic_message(take outcome: CatchResult<i32>, length: usize): i32 {
     match take outcome {
         CatchResult.Panicked(info) => {
             if info.code() != 101 { return 1 }

@@ -4,25 +4,25 @@ import std.ffi.os_str_from_text
 import std.io.{Error, ErrorKind}
 import std.path.{Path, PathBuf, path_from_text, path_buf_from_text}
 
-fn text_is(p: read Path, want: read Text): bool {
+fn text_is(read p: Path, read want: Text): bool {
     match p.to_str() { present(t) => t == want, none => false }
 }
-fn file_name_is(p: read Path, want: read Text): bool {
+fn file_name_is(read p: Path, read want: Text): bool {
     match p.file_name() { present(n) => match n.to_str() { present(t) => t == want, none => false }, none => false }
 }
-fn stem_is(p: read Path, want: read Text): bool {
+fn stem_is(read p: Path, read want: Text): bool {
     match p.file_stem() { present(n) => match n.to_str() { present(t) => t == want, none => false }, none => false }
 }
-fn prefix_is(p: read Path, want: read Text): bool {
+fn prefix_is(read p: Path, read want: Text): bool {
     match p.file_prefix() { present(n) => match n.to_str() { present(t) => t == want, none => false }, none => false }
 }
-fn extension_is(p: read Path, want: read Text): bool {
+fn extension_is(read p: Path, read want: Text): bool {
     match p.extension() { present(x) => match x.to_str() { present(t) => t == want, none => false }, none => false }
 }
-fn parent_is(p: read Path, want: read Text): bool {
+fn parent_is(read p: Path, read want: Text): bool {
     match p.parent() { present(q) => q.same(path_from_text(want)), none => false }
 }
-fn buf_text_is(p: read PathBuf, want: read Text): bool {
+fn buf_text_is(read p: PathBuf, read want: Text): bool {
     match p.to_str() { present(t) => t == want, none => false }
 }
 

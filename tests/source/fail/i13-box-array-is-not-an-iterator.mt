@@ -5,7 +5,7 @@
 import alloc.boxed
 import core.iter.Iterator
 
-fn require_iterator<I: Iterator>(value: take I): Unit {}
+fn require_iterator<I: Iterator>(take value: I): Unit {}
 
 fn main(): i32 {
     require_iterator(boxed.new([1i32, 2i32]))

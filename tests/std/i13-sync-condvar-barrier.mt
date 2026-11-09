@@ -32,7 +32,7 @@ fn checks_condvar_handoff(): i32 {
                     guard = worker_signal.get().wait(guard)
                 }
             } else {
-                guard = worker_signal.get().wait_while(guard, fn(ready: mut bool): bool { !ready })
+                guard = worker_signal.get().wait_while(guard, fn(mut ready: bool): bool { !ready })
             }
             if *guard.get() { 0 } else { 1 }
         }))
@@ -76,7 +76,7 @@ fn checks_condvar_handoff(): i32 {
     let ready_result = capture ready_lock.lock()
     let ready_guard = match take ready_result { success(g) => g, failure(e) => e.into_inner() }
     let immediate = signal.get().wait_timeout_while(ready_guard, time.from_nanos(60000000000u64),
-        fn(ready: mut bool): bool { !ready })
+        fn(mut ready: bool): bool { !ready })
     if immediate.1.timed_out() { return 12 }
     core.mem.drop(immediate.0)
 
@@ -85,7 +85,7 @@ fn checks_condvar_handoff(): i32 {
     let stuck = capture stuck_lock.lock()
     let stuck_guard = match take stuck { success(g) => g, failure(e) => e.into_inner() }
     let stuck_wait = signal.get().wait_timeout_while(stuck_guard, time.from_nanos(0u64),
-        fn(ready: mut bool): bool { !ready })
+        fn(mut ready: bool): bool { !ready })
     if !stuck_wait.1.timed_out() { return 13 }
     core.mem.drop(stuck_wait.0)
 

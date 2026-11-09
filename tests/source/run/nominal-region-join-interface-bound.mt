@@ -8,11 +8,11 @@ extend<region r> View<region r> implements ReadValue {
     fn value(): i32 { *self.item }
 }
 
-fn inspect<T: ReadValue>(value: read T): i32 { value.value() }
+fn inspect<T: ReadValue>(read value: T): i32 { value.value() }
 
 fn choose<region a, region b>(
-    first: read i32 from a,
-    second: read i32 from b,
+    read first: i32 from a,
+    read second: i32 from b,
     flag: bool
 ): i32 {
     let joined = if flag { View(read first) } else { View(read second) }

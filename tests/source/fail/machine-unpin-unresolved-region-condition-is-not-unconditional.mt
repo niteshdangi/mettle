@@ -3,7 +3,7 @@
 interface Ready<region r> {}
 type Wrapper<T> { value: T; marker: core.marker.PhantomPinned }
 unsafe extend<T: Ready<region static>> Wrapper<T> implements Unpin {}
-fn wrong<region r, T: Ready<region r>>(value: mut Wrapper<T>) {
+fn wrong<region r, T: Ready<region r>>(mut value: Wrapper<T>) {
     let handle = core.pin.Pin.new(mut value)
 }
 fn main() { 0 }

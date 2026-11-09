@@ -2,13 +2,13 @@ import core.future.{Future, Poll, Context, noop_waker}
 
 interface Source {
     async(heap) fn total(n: i32): i32
-    async(heap) mut fn bump(by: read i32): i32
+    async(heap) mut fn bump(read by: i32): i32
 }
 
 type Fixed { base: i32 }
 extend Fixed implements Source {
     async fn total(n: i32): i32 { self.base + n }
-    async mut fn bump(by: read i32): i32 {
+    async mut fn bump(read by: i32): i32 {
         self.base = self.base + by
         self.base
     }
@@ -17,13 +17,13 @@ extend Fixed implements Source {
 type Twice { v: i32 }
 extend Twice implements Source {
     async fn total(n: i32): i32 { self.v * 2 + n }
-    async mut fn bump(by: read i32): i32 {
+    async mut fn bump(read by: i32): i32 {
         self.v = self.v + by * 2
         self.v
     }
 }
 
-fn drive<F: Future<Output = i32>>(future: take F): i32 {
+fn drive<F: Future<Output = i32>>(take future: F): i32 {
     let waker = noop_waker()
     var slot = core.pin.pin(future)
     loop {
@@ -35,7 +35,7 @@ fn drive<F: Future<Output = i32>>(future: take F): i32 {
     }
 }
 
-async fn use_it(s: read any Source): i32 { await s.total(1) }
+async fn use_it(read s: any Source): i32 { await s.total(1) }
 
 fn main(): i32 {
     var f = Fixed(10)

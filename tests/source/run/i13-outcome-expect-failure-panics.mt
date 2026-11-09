@@ -3,6 +3,6 @@
 import core.outcome
 
 fn main(): i32 {
-    let failed: (i32 throws i32) = failure(1)
+    let failed: (Outcome<i32, i32>) = failure(1)
     failed.expect("success required")
 }

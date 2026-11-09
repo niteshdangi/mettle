@@ -5,7 +5,7 @@ import alloc.vec.List
 // Reads at most `step` bytes per call.
 type Dribble { data: List<u8>; pos: usize; step: usize; calls: usize }
 extend Dribble implements Reader {
-    mut fn read_some(buf: mut [u8]): usize throws Error {
+    mut fn read_some(mut buf: [u8]): usize throws Error {
         self.calls += 1usize
         var n = buf.len()
         if n > self.step { n = self.step }
@@ -20,7 +20,7 @@ extend Dribble implements Reader {
 // Accepts at most `step` bytes per call.
 type Trickle { out: List<u8>; step: usize; calls: usize }
 extend Trickle implements Writer {
-    mut fn write_some(buf: read [u8]): usize throws Error {
+    mut fn write_some(read buf: [u8]): usize throws Error {
         self.calls += 1usize
         var n = buf.len()
         if n > self.step { n = self.step }
@@ -33,7 +33,7 @@ extend Trickle implements Writer {
 // A sink that stops accepting bytes.
 type Full {}
 extend Full implements Writer {
-    mut fn write_some(buf: read [u8]): usize throws Error { 0usize }
+    mut fn write_some(read buf: [u8]): usize throws Error { 0usize }
     mut fn flush(): Unit throws Error {}
 }
 

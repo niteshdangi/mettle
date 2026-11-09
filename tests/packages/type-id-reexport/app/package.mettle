@@ -1,0 +1,6 @@
+name: "type-id-app"
+version: "0.1.0"
+dependencies {
+    origin: "../origin"
+    relay: "../relay"
+}

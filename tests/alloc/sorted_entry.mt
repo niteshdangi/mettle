@@ -20,7 +20,7 @@ fn exercise(counter: ptr<mut i32>, call_counter: ptr<mut i32>): i32 {
         if value.id != 2 { return 2 }
     }
     {
-        let value = map.entry(4 + 0).and_modify(take fn(value: mut Counted): Unit {
+        let value = map.entry(4 + 0).and_modify(take fn(mut value: Counted): Unit {
             value.id += 40
         }).or_insert_with(take fn(): Counted {
             unsafe { *call_counter += 100 }

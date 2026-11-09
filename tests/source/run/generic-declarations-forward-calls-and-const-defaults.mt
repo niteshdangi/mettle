@@ -1,6 +1,6 @@
 
 type Owned { value: i32 }
-fn identity<T>(value: take T): T { take value }
+fn identity<T>(take value: T): T { take value }
 fn count<T: Copy>(value: T, remaining: i32): T {
     if remaining == 0 { value } else { count(value,remaining - 1) }
 }

@@ -15,7 +15,7 @@ fn check_full(range: core.iter.RangeFull): i32 {
     0
 }
 
-fn total<I: Iterator<Item = i32>>(it: take I): i32 {
+fn total<I: Iterator<Item = i32>>(take it: I): i32 {
     var items = it
     var sum = 0
     while true {
@@ -86,7 +86,7 @@ fn main(): i32 {
     let full: core.iter.RangeFull = ..
     if check_full(full) != 0 { return 15 }
 
-    let doubled = (0..5).map(fn(x: take i32): i32 { x * 2 })
+    let doubled = (0..5).map(fn(take x: i32): i32 { x * 2 })
     if total(doubled) != 20 { return 1 }
     var count = 0
     let r = 2..6
@@ -114,14 +114,14 @@ fn main(): i32 {
     ascending.sort_unstable()
     if !data.is_sorted() { return 8 }
     let descending = mut data
-    descending.sort_unstable_by(fn(a: read i32, b: read i32): Ordering { b.cmp(a) })
+    descending.sort_unstable_by(fn(read a: i32, read b: i32): Ordering { b.cmp(a) })
     k = 1usize
     while k < 300usize {
         if data[k - 1usize] < data[k] { return 9 }
         k += 1usize
     }
     let by_digit = mut data
-    by_digit.sort_unstable_by_key(fn(v: read i32): i32 { v % 10 })
+    by_digit.sort_unstable_by_key(fn(read v: i32): i32 { v % 10 })
     k = 1usize
     while k < 300usize {
         if data[k - 1usize] % 10 > data[k] % 10 { return 10 }

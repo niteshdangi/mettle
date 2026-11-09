@@ -100,7 +100,7 @@ fn main(): i32 {
     var more = vec.new<i32>()
     more.extend(dup)
     if more.len() != 5usize { return 27 }
-    let squares: List<i32> = range(0, 4).map(fn(x: take i32): i32 { x * x }).collect()
+    let squares: List<i32> = range(0, 4).map(fn(take x: i32): i32 { x * x }).collect()
     if squares.len() != 4usize || squares[3usize] != 9 { return 28 }
     var m = hash_map.new<i32, i32>()
     m.insert(1, 10); m.insert(2, 20)

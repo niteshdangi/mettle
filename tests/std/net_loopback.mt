@@ -59,7 +59,7 @@ fn tcp_part(): i32 throws Error {
 
 // Sends `data` from one end and reads it all on the other, interleaved so the
 // socket buffers never fill.
-fn pump(from: mut TcpStream, to: mut TcpStream, data: read [u8]): i32 throws Error {
+fn pump(mut from: TcpStream, mut to: TcpStream, read data: [u8]): i32 throws Error {
     var sent = 0usize
     var received = 0usize
     var chunk = [0u8; 4096]

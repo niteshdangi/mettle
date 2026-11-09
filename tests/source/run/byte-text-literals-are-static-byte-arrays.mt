@@ -1,5 +1,5 @@
 
-fn sum(v: read [u8]): i32 { var t = 0; for x in v { t += x as i32 }; t }
+fn sum(read v: [u8]): i32 { var t = 0; for x in v { t += x as i32 }; t }
 fn main(): i32 {
     let a: read [u8; 3] from static = b"abc"
     let r: read [u8] = br"x\y"

@@ -2,7 +2,7 @@
 import core.iter
 import core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, FusedIterator, Iterable}
 
-fn exhausted_fused<I: FusedIterator>(items: mut I): bool {
+fn exhausted_fused<I: FusedIterator>(mut items: I): bool {
     items.next().is_none() && items.next().is_none()
 }
 

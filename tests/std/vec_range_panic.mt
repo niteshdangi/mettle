@@ -23,7 +23,7 @@ fn main(): i32 {
 
     let out_of_bounds = std.panic.catch_panic(fn(): i32 {
         let _items = values.extract_if(1usize..4usize,
-            fn(value: mut i32): bool { value == 20 })
+            fn(mut value: i32): bool { value == 20 })
         0
     })
     match take out_of_bounds {

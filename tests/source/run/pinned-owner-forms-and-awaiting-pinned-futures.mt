@@ -5,7 +5,7 @@ async fn outer(): i32 {
     let f: pinned heap any Future<Output = i32> = pinned heap seven()
     await f
 }
-fn drive<F: Future>(future: take F): F.Output {
+fn drive<F: Future>(take future: F): F.Output {
     let waker = noop_waker()
     var slot = core.pin.pin(future)
     loop {

@@ -8,13 +8,13 @@ import core.hash.Hasher
 import core.text.Text
 import core.option
 
-fn slice_hash(items: read [i32]): u64 {
+fn slice_hash(read items: [i32]): u64 {
     var h = hash.fnv1a()
     items.hash(mut h)
     h.finish()
 }
 
-fn pair_hash(first: read Text, second: read Text): u64 {
+fn pair_hash(read first: Text, read second: Text): u64 {
     var h = hash.fnv1a()
     first.hash(mut h)
     second.hash(mut h)

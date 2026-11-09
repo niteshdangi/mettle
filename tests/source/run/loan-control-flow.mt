@@ -1,5 +1,5 @@
 
-fn combine(value: read i32, extra: i32) { value + extra }
+fn combine(read value: i32, extra: i32) { value + extra }
 fn choose(flag: bool) {
     var value = 40
     combine(value, if flag { return 42 } else { 2 })

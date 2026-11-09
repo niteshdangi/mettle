@@ -1,7 +1,7 @@
 // expect-error: ownership 12:5 live read loan
 
 copy type Reader<region r> { value: read i32 from r }
-fn set(reader: mut Reader, source: read i32, flag: bool) {
+fn set(mut reader: Reader, read source: i32, flag: bool) {
     if flag { reader.value = read source }
 }
 fn main() {

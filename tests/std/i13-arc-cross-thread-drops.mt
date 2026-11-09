@@ -14,7 +14,7 @@ type Tracked {
     }
 }
 
-fn discard<T>(value: take T): Unit {}
+fn discard<T>(take value: T): Unit {}
 
 fn main(): i32 {
     let drops = arc.new(core.sync.atomic.AtomicUsize.new(0usize))

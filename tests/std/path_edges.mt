@@ -2,17 +2,17 @@
 import std.path.path_from_text
 import std.path.Path
 
-fn name_is(p: read Path, want: read Text): bool {
+fn name_is(read p: Path, read want: Text): bool {
     match p.file_name() { present(n) => { match n.to_str() { present(t) => t == want, none => false } }, none => false }
 }
-fn has_no_name(p: read Path): bool { match p.file_name() { present(n) => false, none => true } }
-fn parent_is(p: read Path, want: read Text): bool {
+fn has_no_name(read p: Path): bool { match p.file_name() { present(n) => false, none => true } }
+fn parent_is(read p: Path, read want: Text): bool {
     match p.parent() { present(q) => q.same(path_from_text(want)), none => false }
 }
-fn ext_is(p: read Path, want: read Text): bool {
+fn ext_is(read p: Path, read want: Text): bool {
     match p.extension() { present(x) => { match x.to_str() { present(t) => t == want, none => false } }, none => false }
 }
-fn has_no_ext(p: read Path): bool { match p.extension() { present(x) => false, none => true } }
+fn has_no_ext(read p: Path): bool { match p.extension() { present(x) => false, none => true } }
 
 fn main(): i32 {
     if !name_is(path_from_text("/a/b.txt"), "b.txt") { return 1 }

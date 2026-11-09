@@ -14,7 +14,7 @@ fn main(): i32 {
     let capacity = values.capacity()
     let pointer = values.as_ptr()
     var visits = 0
-    values.retain(fn(value: read i32): bool {
+    values.retain(fn(read value: i32): bool {
         visits += 1
         assert(value == visits, "retain visits elements in order")
         visits % 2 == 0
@@ -25,7 +25,7 @@ fn main(): i32 {
     assert(values.capacity() == capacity && values.as_ptr() == pointer, "retain keeps allocation")
 
     visits = 0
-    values.retain_mut(fn(value: mut i32): bool {
+    values.retain_mut(fn(mut value: i32): bool {
         visits += 1
         value += visits
         visits != 2
@@ -35,18 +35,18 @@ fn main(): i32 {
     assert(values[0usize] == 3 && values[1usize] == 9, "retain_mut preserves mutations and order")
 
     visits = 0
-    values.retain(fn(value: read i32): bool {
+    values.retain(fn(read value: i32): bool {
         visits += 1
         true
     })
     assert(visits == 2 && values.len() == 2usize, "retain all")
-    values.retain_mut(fn(value: mut i32): bool { false })
+    values.retain_mut(fn(mut value: i32): bool { false })
     assert(values.is_empty(), "retain none")
-    values.retain(fn(value: read i32): bool {
+    values.retain(fn(read value: i32): bool {
         visits += 1
         true
     })
-    values.retain_mut(fn(value: mut i32): bool {
+    values.retain_mut(fn(mut value: i32): bool {
         visits += 1
         true
     })
@@ -57,12 +57,12 @@ fn main(): i32 {
     units.push(())
     units.push(())
     visits = 0
-    units.retain(fn(value: read Unit): bool {
+    units.retain(fn(read value: Unit): bool {
         visits += 1
         visits == 2
     })
     assert(visits == 3 && units.len() == 1usize, "retain zero-sized elements")
-    units.retain_mut(fn(value: mut Unit): bool { false })
+    units.retain_mut(fn(mut value: Unit): bool { false })
     assert(units.is_empty(), "retain_mut zero-sized elements")
     {
         var owned_units = alloc.vec.new<Empty>()
@@ -70,13 +70,13 @@ fn main(): i32 {
         owned_units.push(Empty())
         owned_units.push(Empty())
         visits = 0
-        owned_units.retain(fn(value: read Empty): bool {
+        owned_units.retain(fn(read value: Empty): bool {
             visits += 1
             visits == 2
         })
         assert(visits == 3 && owned_units.len() == 1usize, "retain zero-sized owners")
         unsafe { assert(DROPS == 2usize, "removed zero-sized owners dropped once") }
-        owned_units.retain_mut(fn(value: mut Empty): bool { false })
+        owned_units.retain_mut(fn(mut value: Empty): bool { false })
         unsafe { assert(DROPS == 3usize, "retain_mut zero-sized owner dropped once") }
     }
     unsafe { assert(DROPS == 3usize, "zero-sized owners not double-dropped") }

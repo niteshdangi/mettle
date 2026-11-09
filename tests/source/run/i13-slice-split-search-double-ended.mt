@@ -6,21 +6,21 @@ fn main(): i32 {
     var values = [1, 2, 2, 3, 5]
     let slice = read values
 
-    if slice.partition_point(fn(x: read i32): bool { x < 3 }) != 3usize {
+    if slice.partition_point(fn(read x: i32): bool { x < 3 }) != 3usize {
         return 1
     }
-    if !slice.is_sorted_by_key(fn(x: read i32): i32 { x }) ||
-        !slice.is_sorted_by(fn(a: read i32, b: read i32): bool { a <= b }) {
+    if !slice.is_sorted_by_key(fn(read x: i32): i32 { x }) ||
+        !slice.is_sorted_by(fn(read a: i32, read b: i32): bool { a <= b }) {
         return 18
     }
-    match capture slice.binary_search_by(fn(x: read i32): Ordering {
+    match capture slice.binary_search_by(fn(read x: i32): Ordering {
         if x < 2 { Ordering.Less } else if x > 2 { Ordering.Greater } else { Ordering.Equal }
     }) {
         success(index) => { if index < 1usize || index > 2usize { return 2 } },
         failure(_) => { return 2 }
     }
     let key = 3
-    match capture slice.binary_search_by_key(read key, fn(x: read i32): i32 { x }) {
+    match capture slice.binary_search_by_key(read key, fn(read x: i32): i32 { x }) {
         success(index) => { if index != 3usize { return 3 } },
         failure(_) => { return 3 }
     }

@@ -105,7 +105,7 @@ pub fn sync_channel<T>(bound: usize): (SyncSender<T>, Receiver<T>) {
 }
 
 extend<T> Sender<T> {
-    pub fn send(value: take T): Unit throws SendError<T> {
+    pub fn send(take value: T): Unit throws SendError<T> {
         let locked = capture self.chan.get().queue.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
         if !self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) {
@@ -116,7 +116,7 @@ extend<T> Sender<T> {
         unsafe { mettle_rt_select_notify() }
     }
 
-    pub fn try_send(value: take T): Unit throws TrySendError<T> {
+    pub fn try_send(take value: T): Unit throws TrySendError<T> {
         let locked = capture self.chan.get().queue.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
         if !self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) {
@@ -134,7 +134,7 @@ extend<T> Sender<T> {
 }
 
 extend<T> SyncSender<T> {
-    pub fn send(value: take T): Unit throws SendError<T> {
+    pub fn send(take value: T): Unit throws SendError<T> {
         let locked = capture self.chan.get().queue.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
         let rendezvous = self.chan.get().bound == 0usize
@@ -168,7 +168,7 @@ extend<T> SyncSender<T> {
         }
     }
 
-    pub fn try_send(value: take T): Unit throws TrySendError<T> {
+    pub fn try_send(take value: T): Unit throws TrySendError<T> {
         let locked = capture self.chan.get().queue.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
         if !self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) {
@@ -189,7 +189,7 @@ extend<T> SyncSender<T> {
     }
 
     // Blocks for at most `timeout_nanos`, returning the value if not accepted.
-    pub fn send_timeout(value: take T, timeout_nanos: u64): Unit throws SendTimeoutError<T> {
+    pub fn send_timeout(take value: T, timeout_nanos: u64): Unit throws SendTimeoutError<T> {
         let locked = capture self.chan.get().queue.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
         let rendezvous = self.chan.get().bound == 0usize
@@ -326,13 +326,13 @@ extend<T> Receiver<T> {
     }
 
     pub fn iter<region r>(
-        receiver self: read Receiver<T> from r
+        receiver read self: Receiver<T> from r
     ): Iter<region r, T> {
         Iter(read self)
     }
 
     pub fn try_iter<region r>(
-        receiver self: read Receiver<T> from r
+        receiver read self: Receiver<T> from r
     ): TryIter<region r, T> {
         TryIter(read self, false)
     }
@@ -386,7 +386,7 @@ extend<T> IntoIter<T> implements Iterator {
     }
 }
 
-fn channel_ready<T>(chan: read Shared<T>): bool {
+fn channel_ready<T>(read chan: Shared<T>): bool {
     let locked = capture chan.queue.lock()
     let guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
     !guard.get().is_empty() ||
@@ -394,14 +394,14 @@ fn channel_ready<T>(chan: read Shared<T>): bool {
         !chan.open.load(core.sync.atomic.Ordering.Acquire)
 }
 
-fn register_select_waiter<T>(chan: read Shared<T>): Unit {
+fn register_select_waiter<T>(read chan: Shared<T>): Unit {
     let locked = capture chan.queue.lock()
     let _guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
     let _previous = chan.waiting_receivers.fetch_add(1usize, core.sync.atomic.Ordering.Relaxed)
     chan.space.notify_one()
 }
 
-fn unregister_select_waiter<T>(chan: read Shared<T>): Unit {
+fn unregister_select_waiter<T>(read chan: Shared<T>): Unit {
     let locked = capture chan.queue.lock()
     let _guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
     let _previous = chan.waiting_receivers.fetch_sub(1usize, core.sync.atomic.Ordering.Relaxed)
@@ -427,13 +427,13 @@ extend<T> SyncSender<T> implements Clone {
     fn clone(): SyncSender<T> { self.duplicate() }
 }
 extend<T> Sender<T> implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error { try f.write_str("Sender { .. }") }
+    fn fmt(mut f: Formatter): Unit throws Error { try f.write_str("Sender { .. }") }
 }
 extend<T> SyncSender<T> implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error { try f.write_str("SyncSender { .. }") }
+    fn fmt(mut f: Formatter): Unit throws Error { try f.write_str("SyncSender { .. }") }
 }
 extend<T> Receiver<T> implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error { try f.write_str("Receiver { .. }") }
+    fn fmt(mut f: Formatter): Unit throws Error { try f.write_str("Receiver { .. }") }
 }
 
 // Borrows a homogeneous receiver set; selecting does not consume its message.
@@ -442,14 +442,14 @@ pub type Select<region r, T> {
     cursor: usize
 }
 
-pub fn select<T, region r>(source: read Receiver<T> from r): Select<region r, T> {
+pub fn select<T, region r>(read source: Receiver<T> from r): Select<region r, T> {
     var selected = Select(package.alloc.vec.new<read Receiver<T> from r>(), 0usize)
     let _first = selected.add(source)
     selected
 }
 
 extend<region r, T> Select<region r, T> {
-    pub mut fn add(source: read Receiver<T> from r): usize {
+    pub mut fn add(read source: Receiver<T> from r): usize {
         let index = self.receivers.len()
         self.receivers.push(read source)
         index

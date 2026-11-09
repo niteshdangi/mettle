@@ -7,10 +7,10 @@ unsafe extend<T: Transferable> Handle<T> implements Transferable {}
 unsafe extend<T: Shareable> Handle<T> implements Shareable {}
 type Holder<T> { value: T }
 type Cellular { c: core.cell.Cell<i32> }
-fn send<T: Transferable>(value: take T): Unit {}
-fn share<T: Shareable>(value: read T): Unit {}
-fn owned<T: Transferable + Static>(value: take T): Unit {}
-fn forward<T: Transferable>(value: take T): Unit { send(value) }
+fn send<T: Transferable>(take value: T): Unit {}
+fn share<T: Shareable>(read value: T): Unit {}
+fn owned<T: Transferable + Static>(take value: T): Unit {}
+fn forward<T: Transferable>(take value: T): Unit { send(value) }
 fn main(): i32 {
     send(Plain(1, true))
     send(Holder(Plain(1, true)))

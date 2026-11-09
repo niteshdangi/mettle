@@ -4,7 +4,7 @@ import core.iter.Iterator
 import core.default.Default
 import core.text.{Text, from_utf8}
 
-fn count_parts(parts: take Iterator): usize {
+fn count_parts(take parts: Iterator): usize {
     var n = 0usize
     for _ in parts { n += 1usize }
     n

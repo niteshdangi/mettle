@@ -10,7 +10,7 @@ extend Fold implements Step { fn apply(value: i32): i32 { value % self.modulus +
 
 fn seed(): i32 { 12345 } // bench-edit-point
 
-fn drive<S: Step>(step: read S, rounds: i32, start: i32): i32 {
+fn drive<S: Step>(read step: S, rounds: i32, start: i32): i32 {
     var value = start
     var index = 0
     while index < rounds {

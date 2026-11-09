@@ -3,7 +3,7 @@
 // when inherent associated constants exist.
 type W<T> { v: T }
 type H<T> { f: fn(i32): W<T> }
-fn call<T>(h: read H<T>): W<T> { (h.f)(1) }
+fn call<T>(read h: H<T>): W<T> { (h.f)(1) }
 fn gi(x: i32): W<i32> { W(x) }
 fn gb(x: i32): W<bool> { W(x == 1) }
 type Limits { }

@@ -17,14 +17,14 @@ type Retained {
 
 // Heap insertion needs an ordering; only the id participates.
 extend Retained implements core.cmp.PartialEq {
-    fn eq(other: read Retained): bool { self.id == other.id }
+    fn eq(read other: Retained): bool { self.id == other.id }
 }
 extend Retained implements core.cmp.Eq {}
 extend Retained implements core.cmp.PartialOrd {
-    fn partial_cmp(other: read Retained): core.cmp.Ordering? { present(self.id.cmp(read other.id)) }
+    fn partial_cmp(read other: Retained): core.cmp.Ordering? { present(self.id.cmp(read other.id)) }
 }
 extend Retained implements core.cmp.Ord {
-    fn cmp(other: read Retained): core.cmp.Ordering { self.id.cmp(read other.id) }
+    fn cmp(read other: Retained): core.cmp.Ordering { self.id.cmp(read other.id) }
 }
 
 extend Limited implements package.core.clone.Clone {
@@ -147,7 +147,7 @@ fn main(): i32 {
         failure(_) => {}
     }
     match capture alloc.rc.try_new_cyclic_in<i32, Limited>(
-        b.clone(), take fn(w: read alloc.rc.Weak<i32, Limited>): i32 { 1 }
+        b.clone(), take fn(read w: alloc.rc.Weak<i32, Limited>): i32 { 1 }
     ) {
         success(_) => { return 37 },
         failure(_) => {}
@@ -161,7 +161,7 @@ fn main(): i32 {
         failure(_) => {}
     }
     match capture alloc.arc.try_new_cyclic_in<i32, Limited>(
-        b.clone(), take fn(w: read alloc.arc.Weak<i32, Limited>): i32 { 1 }
+        b.clone(), take fn(read w: alloc.arc.Weak<i32, Limited>): i32 { 1 }
     ) {
         success(_) => { return 40 },
         failure(_) => {}

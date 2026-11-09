@@ -1,6 +1,6 @@
 
 type Guard<region r> { counter: mut i32 from r; drop { *self.counter += 1 } }
-fn route(value: take Guard, flag: bool): Guard from value {
+fn route(take value: Guard, flag: bool): Guard from value {
     if flag { value } else { value }
 }
 fn main() {

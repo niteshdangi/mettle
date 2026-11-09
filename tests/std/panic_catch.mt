@@ -20,7 +20,7 @@ type Replacement {
     }
 }
 
-fn overwrite(value: mut Replacement): Unit {
+fn overwrite(mut value: Replacement): Unit {
     let drops = value.drops.retain()
     value = Replacement(drops, 42, false)
 }

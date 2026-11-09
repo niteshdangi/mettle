@@ -24,7 +24,7 @@ fn spawn(count: i32): vec.List<Particle> {
     particles
 }
 
-fn step(particles: mut vec.List<Particle>) {
+fn step(mut particles: vec.List<Particle>) {
     var index = 0usize
     while index < particles.len() {
         let p = particles[index]

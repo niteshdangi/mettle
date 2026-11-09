@@ -11,7 +11,7 @@ import super.ops.DerefMut
 extend bool {
     // The value is evaluated before this method is called, whether or not it
     // is retained.
-    pub fn then_some<T>(value: take T): T? {
+    pub fn then_some<T>(take value: T): T? {
         if self { present(value) } else { none }
     }
 }
@@ -30,14 +30,14 @@ extend<T> T? {
     pub mut fn as_mut(): (mut T from self)? {
         match mut self { present(value) => present(mut value), none => none }
     }
-    pub mut fn get_or_insert(value: take T): mut T from self {
+    pub mut fn get_or_insert(take value: T): mut T from self {
         if self.is_none() { let _ = self.replace(value) }
         match mut self {
             present(current) => mut current,
             none => super.panic.panic("get_or_insert failed to install a value")
         }
     }
-    pub mut fn get_or_insert_with(make: take fn(): T): mut T from self {
+    pub mut fn get_or_insert_with(take make: fn(): T): mut T from self {
         if self.is_none() { let _ = self.replace(make()) }
         match mut self {
             present(current) => mut current,
@@ -55,11 +55,11 @@ extend<T> T? {
     pub take fn unwrap(): T {
         match take self { present(value) => value, none => super.panic.panic("called `unwrap` on an absent value") }
     }
-    pub take fn expect(message: read Text): T {
+    pub take fn expect(read message: Text): T {
         match take self { present(value) => value, none => super.panic.panic(message) }
     }
-    pub unsafe fn unwrap_unchecked(receiver self: take T?): T { self.unwrap() }
-    pub take fn unwrap_or(fallback: take T): T {
+    pub unsafe fn unwrap_unchecked(receiver take self: T?): T { self.unwrap() }
+    pub take fn unwrap_or(take fallback: T): T {
         match take self { present(value) => value, none => fallback }
     }
     pub take fn unwrap_or_else(fallback: fn(): T): T {
@@ -69,7 +69,7 @@ extend<T> T? {
     pub take fn map<U>(f: fn(take T): U): U? {
         match take self { present(value) => present(f(value)), none => none }
     }
-    pub take fn map_or<U>(fallback: take U, f: fn(take T): U): U {
+    pub take fn map_or<U>(take fallback: U, f: fn(take T): U): U {
         match take self { present(value) => f(value), none => fallback }
     }
     pub take fn map_or_else<U>(fallback: fn(): U, f: fn(take T): U): U {
@@ -93,10 +93,10 @@ extend<T> T? {
     pub take fn and_then<U>(f: fn(take T): U?): U? {
         match take self { present(value) => f(value), none => none }
     }
-    pub take fn and<U>(other: take U?): U? {
+    pub take fn and<U>(take other: U?): U? {
         match take self { present(_) => other, none => none }
     }
-    pub take fn xor(other: take T?): T? {
+    pub take fn xor(take other: T?): T? {
         match take self {
             present(value) => match take other {
                 present(_) => none,
@@ -108,7 +108,7 @@ extend<T> T? {
     pub take fn or_else(f: fn(): T?): T? {
         match take self { present(value) => present(value), none => f() }
     }
-    pub take fn or(other: take T?): T? {
+    pub take fn or(take other: T?): T? {
         match take self { present(value) => present(value), none => other }
     }
     pub take fn filter(keep: fn(read T): bool): T? {
@@ -123,10 +123,10 @@ extend<T> T? {
             none => none
         }
     }
-    pub take fn ok_or<E>(error: take E): (T throws E) {
+    pub take fn ok_or<E>(take error: E): (Outcome<T, E>) {
         match take self { present(value) => success(value), none => failure(error) }
     }
-    pub take fn ok_or_else<E>(error: fn(): E): (T throws E) {
+    pub take fn ok_or_else<E>(error: fn(): E): (Outcome<T, E>) {
         match take self { present(value) => success(value), none => failure(error()) }
     }
 
@@ -135,7 +135,7 @@ extend<T> T? {
         unsafe { core.ptr.replace(core.ptr.from_mut(self), none) }
     }
     pub mut fn take_value(): T? { self.`take`() }
-    pub mut fn take_if(test: take fn(mut T): bool): T? {
+    pub mut fn take_if(take test: fn(mut T): bool): T? {
         let should_take = match mut self {
             present(value) => test(mut value),
             none => false
@@ -143,18 +143,18 @@ extend<T> T? {
         if should_take { self.`take`() } else { none }
     }
     // Installs `value`, returning the previous contents.
-    pub mut fn replace(value: take T): T? {
+    pub mut fn replace(take value: T): T? {
         unsafe { core.ptr.replace(core.ptr.from_mut(self), present(value)) }
     }
     // Installs `value`, dropping any previous payload, and returns a view of it.
-    pub mut fn insert(value: take T): mut T from self {
+    pub mut fn insert(take value: T): mut T from self {
         let _ = self.replace(value)
         match mut self {
             present(current) => mut current,
             none => super.panic.panic("insert failed to install a value")
         }
     }
-    pub take fn zip<U>(other: take U?): (T, U)? {
+    pub take fn zip<U>(take other: U?): (T, U)? {
         match take self {
             present(left) => match take other {
                 present(right) => present((left, right)),
@@ -217,8 +217,8 @@ extend<T> (T?)? {
     }
 }
 
-extend<T, E> (T throws E)? {
-    pub take fn transpose(): (T? throws E) {
+extend<T, E> (Outcome<T, E>)? {
+    pub take fn transpose(): (Outcome<T?, E>) {
         match take self {
             present(result) => match take result {
                 success(value) => success(present(value)),

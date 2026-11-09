@@ -6,7 +6,7 @@ type Writer<region a, region b> {
     source: read i32 from b
     drop { self.target.value = self.source }
 }
-fn release(writer: take Writer) {}
+fn release(take writer: Writer) {}
 fn main() {
     let first = 42
     var reader = Reader(read first)

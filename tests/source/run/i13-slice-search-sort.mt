@@ -27,26 +27,26 @@ fn main(): i32 {
         success(index) => { if index > 2usize { return 5 } },
         failure(_) => { return 5 }
     }
-    match capture d.binary_search_by(fn(x: read i32): Ordering { x.cmp(4) }) {
+    match capture d.binary_search_by(fn(read x: i32): Ordering { x.cmp(4) }) {
         success(index) => { if index != 3usize { return 6 } },
         failure(_) => { return 6 }
     }
     let key = 10
-    match capture s.binary_search_by_key(read key, fn(x: read i32): i32 { x }) {
+    match capture s.binary_search_by_key(read key, fn(read x: i32): i32 { x }) {
         success(_) => { return 7 },
         failure(index) => { if index != 5usize { return 7 } }
     }
 
     // partition_point and the is_sorted family.
-    if s.partition_point(fn(x: read i32): bool { x < 6 }) != 3usize { return 8 }
-    if s.partition_point(fn(x: read i32): bool { x < 0 }) != 0usize { return 9 }
-    if !s.is_sorted() || !s.is_sorted_by(fn(a: read i32, b: read i32): bool { a <= b }) {
+    if s.partition_point(fn(read x: i32): bool { x < 6 }) != 3usize { return 8 }
+    if s.partition_point(fn(read x: i32): bool { x < 0 }) != 0usize { return 9 }
+    if !s.is_sorted() || !s.is_sorted_by(fn(read a: i32, read b: i32): bool { a <= b }) {
         return 10
     }
-    if !s.is_sorted_by_key(fn(x: read i32): i32 { x }) { return 11 }
+    if !s.is_sorted_by_key(fn(read x: i32): i32 { x }) { return 11 }
     let unsorted = [3, 1, 2]
     let u: read [i32] = read unsorted
-    if u.is_sorted() || u.is_sorted_by(fn(a: read i32, b: read i32): bool { a <= b }) { return 12 }
+    if u.is_sorted() || u.is_sorted_by(fn(read a: i32, read b: i32): bool { a <= b }) { return 12 }
 
     // Sorting in place, with every comparator flavour.
     var values = [5, 1, 4, 2, 3]
@@ -57,12 +57,12 @@ fn main(): i32 {
     if values[0usize] != 1 || values[4usize] != 5 { return 13 }
     {
         let m = mut values
-        m.sort_unstable_by(fn(a: read i32, b: read i32): Ordering { b.cmp(a) })
+        m.sort_unstable_by(fn(read a: i32, read b: i32): Ordering { b.cmp(a) })
     }
     if values[0usize] != 5 || values[4usize] != 1 { return 14 }
     {
         let m = mut values
-        m.sort_unstable_by_key(fn(x: read i32): i32 { x })
+        m.sort_unstable_by_key(fn(read x: i32): i32 { x })
     }
     if values[0usize] != 1 || values[2usize] != 3 { return 15 }
 
@@ -78,7 +78,7 @@ fn main(): i32 {
         let m = mut keyed
         let parts = take m.select_nth_unstable_by_key(
             0usize,
-            fn(value: read i32): i32 { value }
+            fn(read value: i32): i32 { value }
         )
         if *parts.1 != 1 || parts.0.len() != 0usize || parts.2.len() != 4usize { return 17 }
     }
@@ -87,7 +87,7 @@ fn main(): i32 {
         let m = mut ranked
         let parts = take m.select_nth_unstable_by(
             4usize,
-            fn(a: read i32, b: read i32): Ordering { a.cmp(b) }
+            fn(read a: i32, read b: i32): Ordering { a.cmp(b) }
         )
         if *parts.1 != 9 || parts.0.len() != 4usize { return 18 }
     }
@@ -142,7 +142,7 @@ fn main(): i32 {
     // rsplit yields the same pieces as split, from the back.
     let commas = [1, 0, 2, 0, 3]
     let cs: read [i32] = read commas
-    var from_back = cs.rsplit(fn(x: read i32): bool { x == 0 })
+    var from_back = cs.rsplit(fn(read x: i32): bool { x == 0 })
     match take from_back.next() {
         present(piece) => { if piece.len() != 1usize || piece[0usize] != 3 { return 32 } },
         none => { return 32 }

@@ -21,7 +21,7 @@ extend OnceState {
     pub fn is_poisoned(): bool { self.poisoned }
 }
 extend OnceState implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         var debug = try f.debug_struct("OnceState")
         try debug.field("poisoned", read self.poisoned)
         try debug.finish()
@@ -46,7 +46,7 @@ extend Once implements Default {
 
 extend Once {
     pub fn is_completed(): bool { self.state.load(core.sync.atomic.Ordering.Acquire) == 2u32 }
-    fn call_with<F: fn(bool): Unit>(f: take F, force: bool): Unit {
+    fn call_with<F: fn(bool): Unit>(take f: F, force: bool): Unit {
         var done = false
         while !done {
             let state = self.state.load(core.sync.atomic.Ordering.Acquire)
@@ -72,14 +72,14 @@ extend Once {
         }
     }
 
-    pub fn call_once<F: fn(): Unit>(f: take F): Unit {
+    pub fn call_once<F: fn(): Unit>(take f: F): Unit {
         self.call_with(take fn(poisoned: bool): Unit {
             if poisoned { panic("once initializer panicked") }
             f()
         }, false)
     }
 
-    pub fn call_once_force<F: fn(OnceState): Unit>(f: take F): Unit {
+    pub fn call_once_force<F: fn(OnceState): Unit>(take f: F): Unit {
         self.call_with(take fn(poisoned: bool): Unit { f(OnceState(poisoned)) }, true)
     }
 
@@ -101,7 +101,7 @@ extend Once {
     }
 }
 extend Once implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         try f.write_str("Once { .. }")
     }
 }

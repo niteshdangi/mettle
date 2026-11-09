@@ -291,7 +291,7 @@ child's ID. Configuration is owned by the builder and does not immediately
 change the parent.
 
 unsafe `pre_exec(take callback)` stores a Transferable + Shareable + Static
-mutating callback returning `Unit throws io.Error`. It runs in registration
+mutating callback returning `Outcome<Unit, io.Error>`. It runs in registration
 order in the child after launch setup and before exec; the first failure stops
 later callbacks and launch. The parent receives the declared launch error,
 including its raw code. Effects already made in the child are not rolled back.

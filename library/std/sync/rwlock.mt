@@ -46,13 +46,13 @@ pub type WriteGuard<T, region r> {
 extend<T, region r> ReadGuard<T, region r> not Transferable
 extend<T, region r> WriteGuard<T, region r> not Transferable
 
-pub fn new<T>(value: take T): RwLock<T> {
+pub fn new<T>(take value: T): RwLock<T> {
     let raw = unsafe { mettle_rt_rwlock_new() }
     if raw == core.ptr.null_mut<u8>() { core.intrinsics.abort() }
     RwLock(raw, core.sync.atomic.AtomicBool.new(false), core.cell.UnsafeCell.new(value))
 }
 extend<T> RwLock<T> implements From<T> {
-    static fn from(value: take T): RwLock<T> { new(value) }
+    static fn from(take value: T): RwLock<T> { new(value) }
 }
 extend<T: Default> RwLock<T> implements Default {
     static fn default(): RwLock<T> { new(T.(Default).default()) }
@@ -109,7 +109,7 @@ extend<T> RwLock<T> {
     }
     pub fn is_poisoned(): bool { self.poisoned.load(core.sync.atomic.Ordering.Acquire) }
     pub fn get_mut<region r>(
-        receiver self: mut RwLock<T> from r
+        receiver mut self: RwLock<T> from r
     ): mut T from r throws PoisonError<mut T from r> {
         let value = unsafe { mut *self.value.get() }
         if self.poisoned.load(core.sync.atomic.Ordering.Acquire) {
@@ -158,7 +158,7 @@ extend<T, region r> WriteGuard<T, region r> implements DerefMut {
 }
 
 extend<T: Debug> RwLock<T> implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         // A successful try-read acquires the normal read edge; guard drop
         // releases it even when formatting propagates a writer error.
         var poisoned = self.is_poisoned()
@@ -181,22 +181,22 @@ extend<T: Debug> RwLock<T> implements Debug {
     }
 }
 extend<T: Debug, region r> ReadGuard<T, region r> implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         try T.(Debug).fmt(self.get(), mut f)
     }
 }
 extend<T: Display, region r> ReadGuard<T, region r> implements Display {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         try T.(Display).fmt(self.get(), mut f)
     }
 }
 extend<T: Debug, region r> WriteGuard<T, region r> implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         try T.(Debug).fmt(self.get(), mut f)
     }
 }
 extend<T: Display, region r> WriteGuard<T, region r> implements Display {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         try T.(Display).fmt(self.get(), mut f)
     }
 }

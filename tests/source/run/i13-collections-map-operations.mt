@@ -7,7 +7,7 @@ import core.clone.Clone
 import core.default.Default
 import core.iter.{ExtendItems, FromItems, OwnedIterable}
 
-fn sum_values(map: read hash_map.Map<i32, i32>): i32 {
+fn sum_values(read map: hash_map.Map<i32, i32>): i32 {
     var total = 0
     for value in map.values() { total += *value }
     total
@@ -79,9 +79,9 @@ fn main(): i32 {
     if *kept != 41 { return 32 }
     let lazy = map.entry(5).or_insert_with(take fn(): i32 { 50 })
     if *lazy != 50 { return 33 }
-    let keyed = map.entry(6).or_insert_with_key(take fn(key: read i32): i32 { key * 10 })
+    let keyed = map.entry(6).or_insert_with_key(take fn(read key: i32): i32 { key * 10 })
     if *keyed != 60 { return 34 }
-    map.entry(6).and_modify(take fn(value: mut i32): Unit { value += 1 }).or_insert(0)
+    map.entry(6).and_modify(take fn(mut value: i32): Unit { value += 1 }).or_insert(0)
     if *map.get(6).unwrap() != 61 { return 35 }
     let defaults = map.entry(7).or_default()
     if *defaults != 0 { return 36 }
@@ -135,10 +135,10 @@ fn main(): i32 {
     var seen_pairs = 0
     for pair in map.iter() { seen_pairs += 1 }
     if seen_pairs != 5 { return 62 }
-    map.retain(fn(key: read i32, value: mut i32): bool { key != 4 })
+    map.retain(fn(read key: i32, mut value: i32): bool { key != 4 })
     if map.contains_key(4) || map.len() != 4usize { return 63 }
     var extracted = 0
-    for pair in map.extract_if(fn(key: read i32, value: mut i32): bool { value > 30 }) {
+    for pair in map.extract_if(fn(read key: i32, mut value: i32): bool { value > 30 }) {
         extracted += pair.0
     }
     if extracted != 10 || map.len() != 2usize { return 64 }

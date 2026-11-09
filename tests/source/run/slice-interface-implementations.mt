@@ -2,19 +2,19 @@ import alloc.vec.List
 
 interface FirstElement {
     type Item;
-    fn head(receiver self: read Self): Self.Item;
+    fn head(receiver read self: Self): Self.Item;
 }
 
 extend<T: Copy> [T] implements FirstElement {
     type Item = T
-    fn head(receiver self: read Self): T { self[0] }
+    fn head(receiver read self: Self): T { self[0] }
 }
 
-fn first<C: FirstElement + unsized>(values: read C): C.(FirstElement).Item {
+fn first<C: FirstElement + unsized>(read values: C): C.(FirstElement).Item {
     values.head()
 }
 
-fn projected(values: read [i32]): [i32].(FirstElement).Item {
+fn projected(read values: [i32]): [i32].(FirstElement).Item {
     values.head()
 }
 

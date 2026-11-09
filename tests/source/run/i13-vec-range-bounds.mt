@@ -72,7 +72,7 @@ fn main(): i32 {
     extracted.push(2)
     extracted.push(3)
     {
-        var items = extracted.extract_if(core.iter.range_full(), fn(value: mut i32): bool {
+        var items = extracted.extract_if(core.iter.range_full(), fn(mut value: i32): bool {
             value == 2
         })
         match take items.next() {

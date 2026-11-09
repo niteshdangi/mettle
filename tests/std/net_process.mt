@@ -42,14 +42,14 @@ fn decimal(v: u32): List<u8> {
     out
 }
 
-fn parse(text: read [u8]): u16 {
+fn parse(read text: [u8]): u16 {
     var v = 0u32
     var i = 0usize
     while i < text.len() { v = v * 10u32 + (text[i] - 48u8) as u32; i += 1usize }
     v as u16
 }
 
-fn client(port_text: read ffi.OsStr): i32 throws Error {
+fn client(read port_text: ffi.OsStr): i32 throws Error {
     let addr = std.net.socket_addr(std.net.localhost(), parse(port_text.as_bytes()))
     var s = try std.net.tcp_connect(addr)
     try s.set_read_timeout(present(from_millis(20000u64)))

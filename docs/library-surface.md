@@ -531,7 +531,7 @@ spelling-based special cases.
 | Interface implementation blocks | `extend<T> X implements I` |
 | Out-of-line inherent implementation blocks | `extend<T> X`; ordinary methods prefer the type body |
 | Hosted `Read`, `Write`, `BufReader`, `BufWriter` | `Reader`, `Writer`, `BufferedReader`, `BufferedWriter` |
-| Named optional/result wrappers | None introduced: use `T?` and `(T throws E)` |
+| Named optional/result wrappers | None introduced: use `T?` and `(Outcome<T, E>)` |
 
 The hosted I/O names refer to `std.io`; `core.fmt.Write` retains its name.
 Under D31, slice Cow is an alias of `BorrowedOrOwned<region r,[T]>`.
@@ -663,8 +663,8 @@ hole-loan region tracking and cost measurements remain open.
 Std buffered readers provide:
 
 ```text
-mut fn read_line_into(buf: mut String): (read Text from buf)? throws io.Error
-mut fn read_bytes_line_into(buf: mut List<u8>): (read [u8] from buf)? throws io.Error
+mut fn read_line_into(mut buf: String): (read Text from buf)? throws io.Error
+mut fn read_bytes_line_into(mut buf: List<u8>): (read [u8] from buf)? throws io.Error
 ```
 
 Both clear `buf` before reading, retain LF/CRLF bytes, return `none` only when no

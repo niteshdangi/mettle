@@ -8,12 +8,12 @@ type PartialKey {
 }
 
 extend PartialKey implements PartialEq {
-    fn eq(other: read PartialKey): bool {
+    fn eq(read other: PartialKey): bool {
         self.value == other.value && self.incomparable == other.incomparable
     }
 }
 extend PartialKey implements PartialOrd {
-    fn partial_cmp(other: read PartialKey): Ordering? {
+    fn partial_cmp(read other: PartialKey): Ordering? {
         if self.incomparable || other.incomparable {
             none
         } else {
@@ -26,7 +26,7 @@ fn main(): i32 {
     var values = [1, 2, 2, 3, 5, 8]
     let slice = read values
     var calls = 0
-    match capture slice.binary_search_by(fn(value: read i32): Ordering {
+    match capture slice.binary_search_by(fn(read value: i32): Ordering {
         calls += 1
         value.cmp(5)
     }) {
@@ -37,7 +37,7 @@ fn main(): i32 {
 
     calls = 0
     let search_key = 3
-    match capture slice.binary_search_by_key(read search_key, fn(value: read i32): i32 {
+    match capture slice.binary_search_by_key(read search_key, fn(read value: i32): i32 {
         calls += 1
         value
     }) {
@@ -47,33 +47,33 @@ fn main(): i32 {
     assert(calls > 0, "slice projection state")
 
     calls = 0
-    assert(slice.partition_point(fn(value: read i32): bool {
+    assert(slice.partition_point(fn(read value: i32): bool {
         calls += 1
         value < 3
     }) == 3usize, "stateful partition point")
     assert(calls == 3, "partition predicate call count")
 
     calls = 0
-    assert(slice.is_sorted_by(fn(left: read i32, right: read i32): bool {
+    assert(slice.is_sorted_by(fn(read left: i32, read right: i32): bool {
         calls += 1
         left <= right
     }), "is_sorted_by uses a non-strict predicate")
     assert(calls == 5, "sorted comparator called for adjacent pairs")
     calls = 0
-    assert(!slice.is_sorted_by(fn(left: read i32, right: read i32): bool {
+    assert(!slice.is_sorted_by(fn(read left: i32, read right: i32): bool {
         calls += 1
         left < right
     }), "strict predicate rejects duplicate neighbors")
     assert(calls == 2, "sorted check stops at first false pair")
 
     calls = 0
-    assert(slice.is_sorted_by_key(fn(value: read i32): i32 {
+    assert(slice.is_sorted_by_key(fn(read value: i32): i32 {
         calls += 1
         value
     }), "stateful sorted key")
     assert(calls == 10, "key projection runs for each adjacent pair")
     calls = 0
-    assert(!slice.is_sorted_by_key(fn(value: read i32): PartialKey {
+    assert(!slice.is_sorted_by_key(fn(read value: i32): PartialKey {
         calls += 1
         PartialKey(value, value == 2)
     }), "incomparable keys are not sorted")
@@ -83,7 +83,7 @@ fn main(): i32 {
     calls = 0
     {
         let mutable = mut unstable
-        mutable.sort_unstable_by(fn(left: read i32, right: read i32): Ordering {
+        mutable.sort_unstable_by(fn(read left: i32, read right: i32): Ordering {
             calls += 1
             left.cmp(right)
         })
@@ -95,7 +95,7 @@ fn main(): i32 {
     calls = 0
     {
         let mutable = mut unstable_keys
-        mutable.sort_unstable_by_key(fn(value: read i32): i32 {
+        mutable.sort_unstable_by_key(fn(read value: i32): i32 {
             calls += 1
             value
         })
@@ -109,7 +109,7 @@ fn main(): i32 {
         let mutable = mut selected
         let parts = take mutable.select_nth_unstable_by(
             2usize,
-            fn(left: read i32, right: read i32): Ordering {
+            fn(read left: i32, read right: i32): Ordering {
                 calls += 1
                 left.cmp(right)
             }
@@ -125,7 +125,7 @@ fn main(): i32 {
         let mutable = mut selected_keys
         let parts = take mutable.select_nth_unstable_by_key(
             3usize,
-            fn(value: read i32): i32 {
+            fn(read value: i32): i32 {
                 calls += 1
                 value
             }
@@ -139,7 +139,7 @@ fn main(): i32 {
     stable.push(1)
     stable.push(2)
     calls = 0
-    stable.sort_by(fn(left: read i32, right: read i32): Ordering {
+    stable.sort_by(fn(read left: i32, read right: i32): Ordering {
         calls += 1
         left.cmp(right)
     })
@@ -151,7 +151,7 @@ fn main(): i32 {
     cached.push(1)
     cached.push(2)
     calls = 0
-    cached.sort_by_cached_key(fn(value: read i32): i32 {
+    cached.sort_by_cached_key(fn(read value: i32): i32 {
         calls += 1
         value
     })
@@ -162,7 +162,7 @@ fn main(): i32 {
     stable_keys.push(1)
     stable_keys.push(2)
     calls = 0
-    stable_keys.sort_by_key(fn(value: read i32): i32 {
+    stable_keys.sort_by_key(fn(read value: i32): i32 {
         calls += 1
         value
     })
@@ -171,7 +171,7 @@ fn main(): i32 {
 
     calls = 0
     {
-        var pieces = slice.split(fn(value: read i32): bool {
+        var pieces = slice.split(fn(read value: i32): bool {
             calls += 1
             value == 2
         })
@@ -190,7 +190,7 @@ fn main(): i32 {
 
     calls = 0
     {
-        var chunks = slice.chunk_by(fn(left: read i32, right: read i32): bool {
+        var chunks = slice.chunk_by(fn(read left: i32, read right: i32): bool {
             calls += 1
             left == right
         })
@@ -209,7 +209,7 @@ fn main(): i32 {
 
     calls = 0
     {
-        var limited = slice.splitn(2usize, fn(value: read i32): bool {
+        var limited = slice.splitn(2usize, fn(read value: i32): bool {
             calls += 1
             value == 2
         })
@@ -229,7 +229,7 @@ fn main(): i32 {
 
     calls = 0
     {
-        var reversed = slice.rsplitn(2usize, fn(value: read i32): bool {
+        var reversed = slice.rsplitn(2usize, fn(read value: i32): bool {
             calls += 1
             value == 2
         })
@@ -248,7 +248,7 @@ fn main(): i32 {
 
     calls = 0
     {
-        var inclusive = slice.split_inclusive(fn(value: read i32): bool {
+        var inclusive = slice.split_inclusive(fn(read value: i32): bool {
             calls += 1
             value == 2
         })
@@ -264,7 +264,7 @@ fn main(): i32 {
     calls = 0
     {
         let mutable = mut split_values
-        var pieces = mutable.split_mut(fn(value: read i32): bool {
+        var pieces = mutable.split_mut(fn(read value: i32): bool {
             calls += 1
             value == 0
         })
@@ -280,7 +280,7 @@ fn main(): i32 {
     calls = 0
     {
         let mutable = mut inclusive_values
-        var pieces = mutable.split_inclusive_mut(fn(value: read i32): bool {
+        var pieces = mutable.split_inclusive_mut(fn(read value: i32): bool {
             calls += 1
             value == 0
         })
@@ -297,7 +297,7 @@ fn main(): i32 {
     {
         let mutable = mut chunk_values
         var chunks = mutable.chunk_by_mut(
-            fn(left: read i32, right: read i32): bool {
+            fn(read left: i32, read right: i32): bool {
                 calls += 1
                 left == right
             }

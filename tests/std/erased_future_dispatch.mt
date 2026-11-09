@@ -11,7 +11,7 @@ type YieldOnce {
 
 extend YieldOnce implements Future {
     type Output = i32
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<i32> {
         let me = unsafe { self.get_unchecked_mut() }
         if me.yielded {
             Poll.Ready(me.value)
@@ -24,7 +24,7 @@ extend YieldOnce implements Future {
 }
 
 fn poll_erased(
-    future: mut any Future<Output = i32>, cx: mut Context
+    mut future: any Future<Output = i32>, mut cx: Context
 ): bool {
     var handle = unsafe { core.pin.Pin.new_unchecked(mut future) }
     match take handle.poll(mut cx) {

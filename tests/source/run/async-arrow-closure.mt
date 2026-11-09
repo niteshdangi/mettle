@@ -1,6 +1,6 @@
 import core.future.{Future, Poll, Context, noop_waker}
 
-fn drive<F: Future<Output = i32>>(future: take F): i32 {
+fn drive<F: Future<Output = i32>>(take future: F): i32 {
     let waker = noop_waker()
     var slot = core.pin.pin(future)
     loop {

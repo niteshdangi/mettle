@@ -38,7 +38,7 @@ extend Walker implements core.iter.Iterator {
     }
 }
 fn walk(tag: i32, count: i32): Walker { Walker(Guard(tag), 0, count) }
-fn test(value: read Guard, answer: bool): bool { answer }
+fn test(read value: Guard, answer: bool): bool { answer }
 fn statements(): Unit {
     let held = Guard(101)
     Guard(102)
@@ -193,7 +193,7 @@ fn explode(): Guard {
         break Guard(903)
     }
 }
-fn consume(first: take Guard, second: take Guard): Unit {
+fn consume(take first: Guard, take second: Guard): Unit {
     Guard(904);
 }
 fn arguments(): Unit {

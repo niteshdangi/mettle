@@ -8,8 +8,8 @@ import core.ops.{ Neg, Not, Rem, RemAssign, Shl, ShlAssign }
 import core.ops.{ Shr, ShrAssign, Sub, SubAssign }
 
 fn add_read_operands<T: Copy>(
-    left: read Wrapping<T>,
-    right: read Wrapping<T>
+    read left: Wrapping<T>,
+    read right: Wrapping<T>
 ): Wrapping<T>
 where Wrapping<T>: Add<Wrapping<T>, Output = Wrapping<T>>
 {

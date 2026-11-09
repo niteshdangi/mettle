@@ -6,8 +6,8 @@ extend<region r> Borrowed<region r> implements Carrier {
     type Item<region r> = read i32 from r
 }
 
-fn transfer<T: Transferable>(value: take T): Unit {}
-fn carry<T: Carrier, region r>(value: take T.(Carrier).Item<region r>) {
+fn transfer<T: Transferable>(take value: T): Unit {}
+fn carry<T: Carrier, region r>(take value: T.(Carrier).Item<region r>) {
     transfer(value)
 }
 

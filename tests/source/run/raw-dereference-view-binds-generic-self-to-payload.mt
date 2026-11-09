@@ -1,6 +1,6 @@
 
-interface Less { fn less(other: read Self): bool; }
-extend i32 implements Less { fn less(other: read i32): bool { self < other } }
+interface Less { fn less(read other: Self): bool; }
+extend i32 implements Less { fn less(read other: i32): bool { self < other } }
 unsafe fn ordered<T: Less>(p: ptr<mut T>, q: ptr<mut T>): bool {
     unsafe { read *p }.less(unsafe { read *q })
 }

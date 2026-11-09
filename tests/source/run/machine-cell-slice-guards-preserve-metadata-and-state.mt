@@ -1,5 +1,5 @@
 
-fn total(cell: read core.cell.RefCell<[i32]>): i32 {
+fn total(read cell: core.cell.RefCell<[i32]>): i32 {
     let guard = cell.borrow()
     var total = 0
     for value in guard.get_ref() { total += value }

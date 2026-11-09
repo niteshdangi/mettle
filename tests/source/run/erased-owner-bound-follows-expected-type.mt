@@ -7,7 +7,7 @@ extend<region r> Held<region r> implements Show {
 fn total<region r>(shown: heap any Show from r): i32 { shown.value() }
 
 // The result owns no borrow; each erased owner is bounded by its own site.
-fn both<region r>(value: read i32 from r): i32 {
+fn both<region r>(read value: i32 from r): i32 {
     let kept: heap any Show from r = heap Held(read value)
     kept.value() + total(heap Held(read value))
 }

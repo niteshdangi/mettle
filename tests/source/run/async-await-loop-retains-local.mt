@@ -3,7 +3,7 @@ import core.future.{Future, Poll, Context, noop_waker}
 type YieldOnce { yielded: bool }
 extend YieldOnce implements Future {
     type Output = i32
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<i32> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<i32> {
         let me = unsafe { self.get_unchecked_mut() }
         if me.yielded {
             Poll.Ready(1)
@@ -31,7 +31,7 @@ async fn count(counter: ptr<mut i32>): i32 {
     index
 }
 
-fn drive<F: Future<Output = i32>>(future: take F): i32 {
+fn drive<F: Future<Output = i32>>(take future: F): i32 {
     let waker = noop_waker()
     var slot = core.pin.pin(future)
     loop {
@@ -43,7 +43,7 @@ fn drive<F: Future<Output = i32>>(future: take F): i32 {
     }
 }
 
-fn abandon<F: Future<Output = i32>>(future: take F): Unit {
+fn abandon<F: Future<Output = i32>>(take future: F): Unit {
     let waker = noop_waker()
     var slot = core.pin.pin(future)
     var cx = Context.from_waker(read waker)

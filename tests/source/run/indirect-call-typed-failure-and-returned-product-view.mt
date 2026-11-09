@@ -1,7 +1,7 @@
 
 copy type Pair { first: i32; second: i32 }
 copy type Reader<region r> { value: read Pair from r }
-fn expose(reader: read Reader): read Pair from reader { reader.value }
+fn expose(read reader: Reader): read Pair from reader { reader.value }
 fn checked(value: i32): i32 throws i32 {
     if value < 0 { throw 7 }
     value

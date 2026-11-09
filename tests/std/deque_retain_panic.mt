@@ -30,7 +30,7 @@ fn main(): i32 {
     }
     callback_deque.push_back(Item(5, callback_drops.retain(), false))
     let callback = std.panic.catch_panic(fn(): i32 {
-        callback_deque.retain(fn(value: read Item): bool {
+        callback_deque.retain(fn(read value: Item): bool {
             if value.id == 3 { panic("deque retain predicate") }
             value.id != 2
         })
@@ -64,7 +64,7 @@ fn main(): i32 {
     }
     destructor_deque.push_back(Item(9, destructor_drops.retain(), false))
     let destructor = std.panic.catch_panic(fn(): i32 {
-        destructor_deque.retain(fn(value: read Item): bool {
+        destructor_deque.retain(fn(read value: Item): bool {
             value.id != 6
         })
         0

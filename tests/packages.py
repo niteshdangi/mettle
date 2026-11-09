@@ -97,18 +97,18 @@ def packages(name):
 
 
 def lock_of(directory):
-    return (directory / "Mettle.lock").read_text()
+    return (directory / "lock.mettle").read_text()
 
 
 def path_dependency():
     app = packages("path-dependency/app")
     build_and_run(app)
     lock = lock_of(app)
-    assert 'name = "units"' in lock and "sha256:" in lock, lock
+    assert 'name: "units"' in lock and "sha256:" in lock, lock
     build_and_run(app, "--locked")
     assert lock_of(app) == lock, "an unchanged build rewrote the lock"
     invoke(["check", app, "--frozen"])
-    edit(packages("path-dependency/units/src/lib.mt"), "21", "21 + 0")
+    edit(packages("path-dependency/units/src/main.mt"), "21", "21 + 0")
     invoke(["build", app, "--locked", "-o", evidence / "x"], 1,
            ["--locked", "units"])
     invoke(["check", app])
@@ -118,7 +118,7 @@ def path_dependency():
 
 def restricted_dependency_visibility():
     app = packages("path-dependency/app")
-    library = packages("path-dependency/units/src/lib.mt")
+    library = packages("path-dependency/units/src/main.mt")
     library.write_text("pub(package) fn secret(): i32 { 21 }\n"
                        "pub fn base(): i32 { secret() }\n")
     build_and_run(app)
@@ -130,68 +130,120 @@ def restricted_dependency_visibility():
     assert re.search(r"main\.mt:1:1", text), text
 
 
+def nested_dependency_imports():
+    app = packages("path-dependency/app")
+    library = packages("path-dependency/mathlib/src")
+    (app / "src/main.mt").write_text("import client.answer\nfn main(): i32 { answer() - 42 }\n")
+    (app / "src/client.mt").write_text("import mathlib.answer as library_answer\npub fn answer(): i32 { library_answer() }\n")
+    (library / "main.mt").write_text("pub import nested.value as answer\n")
+    units = packages("path-dependency/units/src/main.mt")
+    units.write_text(units.read_text() + "\npub macro number { () => { 21 }; }\n")
+    (library / "nested.mt").write_text(
+        "import units.base\nimport units.number\n"
+        "pub fn value(): i32 { base() + units.base() + number!() - 21 }\n")
+    build_and_run(app)
+    (library / "nested.mt").write_text(
+        "module units { pub fn base(): i32 { 100 } }\n"
+        "pub fn value(): i32 { units.base() - package.units.base() - 37 }\n")
+    build_and_run(app)
+    app = packages("registry-resolution/app")
+    shapes = packages("registry/shapes/1.2.0/src")
+    (shapes / "main.mt").write_text("pub import nested.corners\n")
+    (shapes / "nested.mt").write_text(
+        "import util.value\npub fn corners(): i32 { value() }\n")
+    build_and_run(app)
+
+
+def configured_entry():
+    app = packages("path-dependency/app")
+    manifest = app / "package.mettle"
+    manifest.write_text('name: "path-app"\nversion: "0.1.0"\nentry: "app.mt"\n'
+                        'dependencies { mathlib: "../mathlib" }\n')
+    (app / "app.mt").write_text((app / "src/main.mt").read_text())
+    build_and_run(app)
+    (app / "inspect.mt").write_text("fn main(): i32 { 42 }\n")
+    original = manifest.read_text()
+    manifest.write_text(original.replace('entry: "app.mt"',
+        'entry { main: "app.mt", inspect: "inspect.mt" }'))
+    build_and_run(app)
+    output = evidence / "inspect"
+    invoke(["build", app, "--entry", "inspect", "-o", output])
+    assert exit_code(output) == 42
+    for field in ('targets {}', 'entries {}', 'language: "mettle-1"'):
+        manifest.write_text(original + field + '\n')
+        invoke(["check", app], 1, "unknown key")
+    for value in ('{ kind: "executable", source: "inspect.mt" }', 'none', '""'):
+        manifest.write_text(original.replace('entry: "app.mt"',
+            f'entry {{ main: "app.mt", inspect: {value} }}'))
+        invoke(["check", app], 1, "error[package]")
+    manifest.write_text(original.replace('entry: "app.mt"', 'entry: ""'))
+    invoke(["check", app], 1, "nonempty path")
+    manifest.write_text(original.replace('entry: "app.mt"', 'entry { inspect: "inspect.mt" }'))
+    invoke(["check", app], 1, "an entry map must define 'main'")
+
+
 def missing_lock_locked():
     app = packages("path-dependency/app")
-    invoke(["check", app, "--locked"], 1, "Mettle.lock")
-    assert not (app / "Mettle.lock").exists()
+    invoke(["check", app, "--locked"], 1, "lock.mettle")
+    assert not (app / "lock.mettle").exists()
 
 
 def lock_corruption():
     app = packages("path-dependency/app")
     invoke(["check", app])
     lock = lock_of(app)
-    (app / "Mettle.lock").write_text(lock + "[[package\n")
-    invoke(["check", app], 1, "Mettle.lock")
-    (app / "Mettle.lock").write_text(lock)
-    edit(app / "Mettle.lock", 'version = 2\n', 'version = 99\n')
-    invoke(["check", app], 1, "Mettle.lock")
+    (app / "lock.mettle").write_text(lock + "broken {\n")
+    invoke(["check", app], 1, "lock.mettle")
+    (app / "lock.mettle").write_text(lock)
+    edit(app / "lock.mettle", 'version: 2\n', 'version: 99\n')
+    invoke(["check", app], 1, "lock.mettle")
 
 
 def registry_resolution():
     app = packages("registry-resolution/app")
     build_and_run(app)
     lock = lock_of(app)
-    assert 'version = "1.2.0"' in lock and 'version = "1.3.0"' in lock, lock
+    assert 'version: "1.2.0"' in lock and 'version: "1.3.0"' in lock, lock
     assert "1.4.0" not in lock, "a yanked version was selected"
     # A new release does not move a locked package.
     new = packages("registry/util/1.3.5")
     shutil.copytree(packages("registry/util/1.3.0"), new)
-    edit(new / "Mettle.toml", "1.3.0", "1.3.5")
-    edit(new / "src/lib.mt", "13", "99")
+    edit(new / "package.mettle", "1.3.0", "1.3.5")
+    edit(new / "src/main.mt", "13", "99")
     build_and_run(app, "--locked")
     assert lock_of(app) == lock
     # Tampering with a locked registry package is always rejected.
-    edit(packages("registry/util/1.3.0/src/lib.mt"), "13", "13 + 0")
+    edit(packages("registry/util/1.3.0/src/main.mt"), "13", "13 + 0")
     invoke(["check", app], 1, "checksum mismatch")
     invoke(["check", app, "--locked"], 1, "checksum mismatch")
 
 
 def version_conflict():
     app = packages("resolution/app")
-    edit(packages("resolution/right/Mettle.toml"), "=1.0.0", "^2")
+    edit(packages("resolution/right/package.mettle"), "=1.0.0", "^2")
     invoke(["check", app], 0)
     lock = lock_of(app)
-    assert 'name = "util"\nversion = "1.3.0"' in lock, lock
-    assert 'name = "util"\nversion = "2.0.0"' in lock, lock
-    edit(packages("resolution/right/Mettle.toml"), "^2", "=1.0.0")
-    (app / "Mettle.lock").unlink()
+    assert 'name: "util"\n        version: "1.3.0"' in lock, lock
+    assert 'name: "util"\n        version: "2.0.0"' in lock, lock
+    edit(packages("resolution/right/package.mettle"), "^2", "=1.0.0")
+    (app / "lock.mettle").unlink()
 
 
 def backtracking():
     app = packages("resolution/app")
     build_and_run(app)
     lock = lock_of(app)
-    assert 'name = "util"\nversion = "1.0.0"' in lock, lock
+    assert 'name: "util"\n        version: "1.0.0"' in lock, lock
 
 
 def offline():
     app = packages("registry-resolution/app")
-    edit(app / "Mettle.toml", '[registry]\npath = "../../registry"\n\n', "")
+    edit(app / "package.mettle", 'registry {\n    path: "../../registry"\n}\n', "")
     invoke(["check", app], 1, "no registry is configured")
     invoke(["check", app, "--offline"], 1, "no registry is configured")
     invoke(["check", app, "--offline", "--registry", evidence / "registry"], 0)
     app = packages("registry-resolution/app")
-    edit(app / "Mettle.toml", 'shapes = "^1"', 'shapes = "^1"\nmissing = "^1"')
+    edit(app / "package.mettle", 'shapes: "^1"', 'shapes: "^1"\nmissing: "^1"')
     invoke(["check", app, "--offline", "--registry", evidence / "registry"], 1,
            ["missing", "offline mode never fetches"])
 
@@ -201,9 +253,9 @@ def features():
     # Root and dependency `@cfg` test their own resolved feature sets.
     build_and_run(app)
     build_and_run(app, "--features", "fancy")
-    assert 'name = "extra"' in lock_of(app)
+    assert 'name: "extra"' in lock_of(app)
     invoke(["check", app, "--features", "nope"], 1, "no feature 'nope'")
-    edit(app / "Mettle.toml", "default = []", 'default = ["fancy"]')
+    edit(app / "package.mettle", "default: []", 'default: ["fancy"]')
     build_and_run(app)
     build_and_run(app, "--no-default-features")
     main = app / "src/main.mt"
@@ -222,8 +274,8 @@ def coexisting_versions():
         f"{app}: program exited {result.returncode}")
     assert result.stdout == "alpha-1\nalpha-2\n", result.stdout
     lock = lock_of(app)
-    assert 'name = "alpha"\nversion = "1.0.0"' in lock, lock
-    assert 'name = "alpha"\nversion = "2.0.0"' in lock, lock
+    assert 'name: "alpha"\n        version: "1.0.0"' in lock, lock
+    assert 'name: "alpha"\n        version: "2.0.0"' in lock, lock
 
 
 def git_source():
@@ -233,10 +285,9 @@ def git_source():
     app.mkdir(parents=True)
     (repository / "src").mkdir()
     (app / "src").mkdir()
-    (repository / "Mettle.toml").write_text(
-        '[package]\nname = "gitlib"\nversion = "0.1.0"\n'
-        'language = "mettle-1"\n')
-    (repository / "src/lib.mt").write_text("pub fn value(): i32 { 7 }\n")
+    (repository / "package.mettle").write_text(
+        'name: "gitlib"\nversion: "0.1.0"\n')
+    (repository / "src/main.mt").write_text("pub fn value(): i32 { 7 }\n")
     (app / "src/main.mt").write_text(
         "fn main(): i32 { gitlib.value() - 7 }\n")
     subprocess.run(["git", "init", repository], check=True,
@@ -248,23 +299,24 @@ def git_source():
     subprocess.run(["git", "-C", repository, "config", "user.email",
                     "packages-test@example.invalid"], check=True,
                    capture_output=True)
-    subprocess.run(["git", "-C", repository, "add", "Mettle.toml",
-                    "src/lib.mt"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", repository, "add", "package.mettle",
+                    "src/main.mt"], check=True, capture_output=True)
     subprocess.run(["git", "-C", repository, "commit", "-m", "first"],
                    check=True, capture_output=True)
     first = subprocess.run(
         ["git", "-C", repository, "rev-parse", "HEAD"], check=True,
         capture_output=True, text=True).stdout.strip()
-    (app / "Mettle.toml").write_text(
-        '[package]\nname = "git-app"\nversion = "0.1.0"\n'
-        'language = "mettle-1"\n\n[dependencies]\n'
-        f'gitlib = {{ git = "{repository.as_uri()}", branch = "main" }}\n')
+    (app / "package.mettle").write_text(
+        'name: "git-app"\nversion: "0.1.0"\n'
+        'dependencies {\n'
+        f'    gitlib {{ git: "{repository.as_uri()}", branch: "main" }}\n'
+        '}\n')
     build_and_run(app)
     lock = lock_of(app)
     assert first in lock and "sha256:" in lock, lock
     invoke(["check", app, "--offline", "--locked"])
-    edit(repository / "src/lib.mt", "{ 7 }", "{ 8 }")
-    subprocess.run(["git", "-C", repository, "add", "src/lib.mt"],
+    edit(repository / "src/main.mt", "{ 7 }", "{ 8 }")
+    subprocess.run(["git", "-C", repository, "add", "src/main.mt"],
                    check=True, capture_output=True)
     subprocess.run(["git", "-C", repository, "commit", "-m", "second"],
                    check=True, capture_output=True)
@@ -277,36 +329,99 @@ def host_target_separation():
     app = packages("host-target-separation/app")
     build_and_run(app)
     lock = lock_of(app)
-    assert ('name = "helper"' in lock and '"host"' in lock and
+    assert ('name: "helper"' in lock and '"host"' in lock and
             '"target"' in lock), lock
 
 
 def manifest_diagnostics():
     app = packages("path-dependency/app")
-    manifest = app / "Mettle.toml"
+    manifest = app / "package.mettle"
     original = manifest.read_text()
-    manifest.write_text(original.replace("[package]\n", "[package\n", 1))
-    invoke(["check", app], 1, "Mettle.toml:1")
-    manifest.write_text(original.replace('name = "path-app"',
-                                         'name = "path-app"\nbogus = 1'))
+    manifest.write_text(original.replace("name:", "name =", 1))
+    invoke(["check", app], 1, "package.mettle:1")
+    manifest.write_text(original.replace('name: "path-app"',
+                                         'name: "path-app"\nbogus: 1'))
     invoke(["check", app], 1, "bogus")
     manifest.write_text(original.replace(
-        'mathlib = { path = "../mathlib" }',
-        'mathlib = { git = "https://example.invalid/x.git" }'))
+        'mathlib: "../mathlib"',
+        'mathlib { git: "https://example.invalid/x.git" }'))
     invoke(["check", app], 1, "git")
     manifest.write_text(original.replace(
-        'mathlib = { path = "../mathlib" }',
-        'mathlib = { path = "../mathlib", version = "^1.q" }'))
+        'mathlib: "../mathlib"',
+        'mathlib { path: "../mathlib", version: "^1.q" }'))
     invoke(["check", app], 1, "version")
     manifest.write_text(original.replace('"../mathlib"', '"../nowhere"'))
     invoke(["check", app], 1, "nowhere")
     manifest.write_text(original)
     # A dependency cycle names the path.
-    edit(packages("path-dependency/units/Mettle.toml"),
-         'language = "mettle-1"\n',
-         'language = "mettle-1"\n\n[dependencies]\n'
-         'mathlib = { path = "../mathlib" }\n')
+    units = packages("path-dependency/units/package.mettle")
+    units.write_text(units.read_text() + 'dependencies { mathlib: "../mathlib" }\n')
     invoke(["check", app], 1, "mathlib 0.3.1 -> units 0.1.4 -> mathlib 0.3.1")
+
+
+def data_format():
+    app = packages("path-dependency/app")
+    manifest = app / "package.mettle"
+    original = manifest.read_text()
+    manifest.write_text('/* outer /* nested */ comment */\r\n{\r\n' +
+                        original.replace('"path-app"', '"path\\u{2d}app"')
+                        .replace('"../mathlib"', '"..\\x2fmathlib"') +
+                        ', // trailing comma\n}\n')
+    invoke(["check", manifest])
+    manifest.write_text(original)
+    invoke(["check", app])
+    cases = [
+        ('name: "a"\nname: "b"\n', "duplicate key 'name'"),
+        ('name: "a" version: "0.1.0"\n', "between entries"),
+        ('name: "a"\nversion: ["0.1.0"\n', "unterminated list"),
+        ('name: "a"\ndependencies {\n', "unterminated object"),
+        ('name: "\\u{d800}"\n', "invalid Unicode scalar"),
+        ('name: "\\u{110000}"\n', "invalid Unicode scalar"),
+        ('name: "\\x80"\n', "text byte escape"),
+        ('name: "\\q"\n', "invalid string escape"),
+        ('name: "unterminated\n', "unescaped control character"),
+        ('name: "a"\n/* unterminated', "unterminated block comment"),
+        ('name: 1.\n', "digits after decimal point"),
+        ('name: 1e+\n', "exponent digits"),
+        ('name: 01\n', "invalid decimal number"),
+        ('name: 9223372036854775808\n', "integer out of range"),
+        ('name: ${ENV}\n', "expected a data value"),
+        ('[package]\nname = "a"\n', "expected a data value"),
+        ('description: ' + '[' * 130 + 'none' + ']' * 130, "nesting limit"),
+    ]
+    for text, message in cases:
+        manifest.write_text(text)
+        result = invoke(["check", app], 1, ["error[manifest]", message])
+        assert re.search(r"package\.mettle:\d+:\d+: error\[manifest\]", result), result
+    for value in ("none", "true", "1.5e-2", "-9223372036854775808"):
+        manifest.write_text(f'name: {value}\nversion: "0.1.0"\n')
+        invoke(["check", app], 1, ["error[package]", "'name' must be a string"])
+    manifest.write_bytes(b'name: "\xff"\n')
+    invoke(["check", app], 1, ["error[manifest]", "not valid UTF-8"])
+    manifest.write_text(original.replace('mathlib: "../mathlib"', 'mathlib: "mathlib"'))
+    invoke(["check", app], 1, "invalid version requirement")
+
+
+def lock_structure():
+    app = packages("path-dependency/app")
+    invoke(["check", app])
+    path = app / "lock.mettle"
+    original = path.read_text()
+    assert "packages: [" in original
+    cases = [
+        ('version: 2\npackages: [none]\n', "lock package must be an object"),
+        ('version: 2\npackages: []\nbogus: true\n', "unknown lock key"),
+        ('version: 2\npackages: none\n', "must be a list of objects"),
+        ('version: 2\n', "must be a list of objects"),
+        (original.replace('packages: [', 'packages: [\n{ id: "bad", name: "bad", version: "0.1.0", source: "root", dependencies: ["absent"] },', 1),
+         "unknown locked dependency"),
+    ]
+    for text, message in cases:
+        path.write_text(text)
+        invoke(["check", app], 1, ["error[lock]", message])
+    path.write_text(original)
+    invoke(["check", app, "--locked"])
+    assert path.read_text() == original
 
 
 def incremental_reuse():
@@ -409,7 +524,7 @@ def edit_invalidation():
     assert "cache miss" in text, text
     text, _ = explained(path_app, "--locked")
     assert "cache hit" in text, text
-    edit(packages("path-dependency/units/src/lib.mt"), "21", "20 + 1")
+    edit(packages("path-dependency/units/src/main.mt"), "21", "20 + 1")
     text, built = explained(path_app)
     assert "cache miss" in text, text
     assert exit_code(built) == 0
@@ -598,7 +713,7 @@ def procedural_macro_failure():
               contains=["error[macro]", "procedural macro 'make_fn!': make_fn! "
                         "expects the name of the function"])
     # An unsupported API major version is rejected before any program runs.
-    edit(packages("proc-macro/genfn/Mettle.toml"), "api = 1", "api = 2")
+    edit(packages("proc-macro/genfn/package.mettle"), "api: 1", "api: 2")
     explained(app, expected=1,
               contains="unsupported macro API major version 2")
 
@@ -608,18 +723,15 @@ def public_declarative_macro_dependency():
     dependency = packages("declarative-macro/units")
     (app / "src").mkdir(parents=True)
     (dependency / "src").mkdir(parents=True)
-    (app / "Mettle.toml").write_text(
-        '[package]\nname = "macro-app"\nversion = "0.1.0"\n'
-        'language = "mettle-1"\n\n'
-        '[targets.app]\nkind = "executable"\nsource = "src/main.mt"\n\n'
-        '[dependencies]\nunits = { path = "../units" }\n')
-    (dependency / "Mettle.toml").write_text(
-        '[package]\nname = "units"\nversion = "0.1.0"\n'
-        'language = "mettle-1"\n')
+    (app / "package.mettle").write_text(
+        'name: "macro-app"\nversion: "0.1.0"\n'
+        'dependencies { units: "../units" }\n')
+    (dependency / "package.mettle").write_text(
+        'name: "units"\nversion: "0.1.0"\n')
     (app / "src/main.mt").write_text(
         "import package.units.value\n"
         "fn main(): i32 { value!() - 42 }\n")
-    (dependency / "src/lib.mt").write_text(
+    (dependency / "src/main.mt").write_text(
         "module macros {\n"
         "    pub macro value {\n"
         "        () => { 42 };\n"
@@ -632,10 +744,8 @@ def public_declarative_macro_dependency():
 def cyclic_module_macro_definition():
     app = packages("cyclic-module-macro")
     (app / "src").mkdir(parents=True)
-    (app / "Mettle.toml").write_text(
-        '[package]\nname = "cyclic-module-macro"\nversion = "0.1.0"\n'
-        'language = "mettle-1"\n\n'
-        '[targets.app]\nkind = "executable"\nsource = "src/main.mt"\n')
+    (app / "package.mettle").write_text(
+        'name: "cyclic-module-macro"\nversion: "0.1.0"\n')
     (app / "src/main.mt").write_text(
         "module first;\nmodule second;\n"
         "fn main(): i32 { first.value() - 42 }\n")
@@ -673,7 +783,7 @@ def multi_package_extension():
     assert exit_code(built) == 1
 
     edit(main, "answer() - 40", "answer() - 41")
-    edit(packages("multi-package-extension/mathlib/src/lib.mt"),
+    edit(packages("multi-package-extension/mathlib/src/main.mt"),
          "{ 7 }", "{ 8 }")
     text, built = explained(app)
     assert "cache miss" in last_cache_event(text), text
@@ -1085,7 +1195,7 @@ def debug_info():
         "    let doubled: i32 = twice!(base)\n"
         "    doubled + 1\n"
         "}\n"
-        "fn first(values: read [i32]): i32 { values[0] }\n"
+        "fn first(read values: [i32]): i32 { values[0] }\n"
         "async fn debug_inner(): i32 { 3 }\n"
         "async fn debug_coroutine(): i32 {\n"
         "    let saved: i32 = 4\n"
@@ -1413,7 +1523,7 @@ def doc_resolves_dependency_links_and_warns():
         "/// Links: [mathlib.twice.double], `mathlib.answer`, and "
         "a missing [missing.item].\n" +
         source.read_text())
-    mathlib_source = app.parent / "mathlib/src/lib.mt"
+    mathlib_source = app.parent / "mathlib/src/main.mt"
     mathlib_text = mathlib_source.read_text()
     assert "pub fn answer" in mathlib_text
     # Cross-package links need a public path to the target.
@@ -1750,11 +1860,13 @@ def test_json_timeout_and_modules():
 
 
 CASES = [cyclic_module_macro_definition,
-         path_dependency, restricted_dependency_visibility,
+         path_dependency, restricted_dependency_visibility, nested_dependency_imports,
+         configured_entry,
          missing_lock_locked, lock_corruption,
          registry_resolution, version_conflict, backtracking, offline, features,
          coexisting_versions, git_source, host_target_separation,
-         manifest_diagnostics, package_options_need_package, incremental_reuse,
+         manifest_diagnostics, data_format, lock_structure,
+         package_options_need_package, incremental_reuse,
          object_cache_integrity,
          sanitizer_cache_key, edit_invalidation, cache_dedup_and_bound,
          cache_corruption_and_clean, cache_clean_failure, cache_clean_preserves_sources,

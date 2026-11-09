@@ -46,7 +46,7 @@ pub fn vars(): List<EnvVar> {
 }
 
 // The value of `name`, or none when unset (or the name is not representable).
-pub fn var_os(name: read OsStr): OsString? {
+pub fn var_os(read name: OsStr): OsString? {
     let c = capture ffi.cstring(name.as_bytes())
     match take c {
         success(cname) => {
@@ -61,7 +61,7 @@ pub fn var_os(name: read OsStr): OsString? {
 pub enum VarError { NotPresent, NotUnicode(OsString) }
 
 // The value of `name` as text. Fails with `NotPresent` when unset.
-pub fn `var`(name: read OsStr): String throws VarError {
+pub fn `var`(read name: OsStr): String throws VarError {
     match take var_os(name) {
         present(value) => {
             let valid = match package.core.text.from_utf8(value.as_bytes()) {
@@ -87,14 +87,14 @@ pub fn temp_dir(): PathBuf {
 }
 
 // Fails with `InvalidInput` for an empty name or one containing `=` or NUL.
-pub fn set_var(name: read OsStr, value: read OsStr): Unit throws io.Error {
+pub fn set_var(read name: OsStr, read value: OsStr): Unit throws io.Error {
     if name.is_empty() { throw io.from_kind(io.ErrorKind.InvalidInput) }
     let cname = try ffi.cstring(name.as_bytes())
     let cvalue = try ffi.cstring(value.as_bytes())
     if unsafe { sys.setenv(cname.as_ptr(), cvalue.as_ptr(), 1) } != 0 { throw io.last_os_error() }
 }
 
-pub fn remove_var(name: read OsStr): Unit throws io.Error {
+pub fn remove_var(read name: OsStr): Unit throws io.Error {
     if name.is_empty() { throw io.from_kind(io.ErrorKind.InvalidInput) }
     let cname = try ffi.cstring(name.as_bytes())
     if unsafe { sys.unsetenv(cname.as_ptr()) } != 0 { throw io.last_os_error() }
@@ -119,7 +119,7 @@ pub fn current_dir(): PathBuf throws io.Error {
     super.path.new_path_buf()
 }
 
-pub fn set_current_dir(input: read PathInput): Unit throws io.Error {
+pub fn set_current_dir(read input: PathInput): Unit throws io.Error {
     let c = try ffi.cstring(input.as_path().as_bytes())
     if unsafe { sys.chdir(c.as_ptr()) } != 0 { throw io.last_os_error() }
 }

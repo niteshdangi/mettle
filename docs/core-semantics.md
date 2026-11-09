@@ -74,6 +74,10 @@ No clone or retain may be inserted to make the rejected examples compile.
 
 Parameter mode selection is defined in
 [semantic-rules.md §2](semantic-rules.md#2-value-formation-and-parameter-modes).
+Named parameters put explicit access before the binding (`read value: T`,
+`mut value: T`, `take value: T`), independently of borrowed types after `:`.
+Thus `take view: read T from r` transfers the view value while retaining its
+original backing-storage lifetime and access restrictions.
 Copyable values can avoid indirection; borrowing can avoid large byte copies.
 Neither establishes the fastest ABI.
 

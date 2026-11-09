@@ -10,7 +10,7 @@ fn main(): i32 {
     values.push(30)
     values.insert(1usize, 15)
     if values.remove(2usize) != 20 { return 2 }
-    values.retain(fn(value: read i32): bool { value >= 15 })
+    values.retain(fn(read value: i32): bool { value >= 15 })
     values.truncate(2usize)
 
     var suffix = vec.new<i32>()

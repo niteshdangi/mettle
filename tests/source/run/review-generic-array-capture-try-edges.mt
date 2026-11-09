@@ -3,7 +3,7 @@ fn checked(value:i32):i32 throws i32 {
     if value > 5 { throw value }
     value
 }
-fn scan<const N:i32>(values:read [i32;N]):i32 {
+fn scan<const N:i32>(read values:[i32;N]):i32 {
     let outcome = capture {
         var total = 0
         for value in values { total += try checked(value) }

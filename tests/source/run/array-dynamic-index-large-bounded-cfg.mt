@@ -1,6 +1,6 @@
 
-fn get(v: read [i32;3000], i: i32): i32 { v[i] }
-fn put(v: mut [i32;3000], i: i32, x: i32) { v[i] = x }
+fn get(read v: [i32;3000], i: i32): i32 { v[i] }
+fn put(mut v: [i32;3000], i: i32, x: i32) { v[i] = x }
 fn main(): i32 {
     var values = [0; 3000]
     var i = 0

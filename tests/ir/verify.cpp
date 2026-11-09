@@ -313,9 +313,9 @@ void ownedValueCases() {
           "owners.mt",
           "type Guard<region r> { counter: mut i32 from r; "
           "drop { *self.counter += 1 } }\n"
-          "fn route(value: take Guard, flag: bool): Guard from value { "
+          "fn route(take value: Guard, flag: bool): Guard from value { "
           "if flag { value } else { value } }\n"
-          "fn consume(value: take Guard) {}\n"
+          "fn consume(take value: Guard) {}\n"
           "fn main() { var counter = 0; "
           "{ let owned = route(Guard(mut counter), true) }; "
           "if counter == 1 { 0 } else { 1 } }\n"},
@@ -505,10 +505,10 @@ void loopSiblingViewCases() {
     mettle::Diagnostics diagnostics;
     auto syntax = mettle::parse(
         {"siblings.mt",
-         "fn split(value: mut [i32; 2]): "
+         "fn split(mut value: [i32; 2]): "
          "(read i32 from value, mut i32 from value) { "
          "(read value[0usize], mut value[1usize]) }\n"
-         "fn probe(value: mut [i32; 2]) { " +
+         "fn probe(mut value: [i32; 2]) { " +
              body +
              " }\nfn main() { var values = [1, 2]; probe(mut values); 0 }\n"},
         diagnostics);

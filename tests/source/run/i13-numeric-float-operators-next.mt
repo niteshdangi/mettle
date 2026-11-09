@@ -41,31 +41,31 @@ where L: Neg
     L.(Neg).neg(value)
 }
 
-fn trait_add_assign<L, R: Copy>(value: mut L, rhs: R): Unit
+fn trait_add_assign<L, R: Copy>(mut value: L, rhs: R): Unit
 where L: AddAssign<R>
 {
     L.(AddAssign<R>).add_assign(mut value, rhs)
 }
 
-fn trait_sub_assign<L, R: Copy>(value: mut L, rhs: R): Unit
+fn trait_sub_assign<L, R: Copy>(mut value: L, rhs: R): Unit
 where L: SubAssign<R>
 {
     L.(SubAssign<R>).sub_assign(mut value, rhs)
 }
 
-fn trait_mul_assign<L, R: Copy>(value: mut L, rhs: R): Unit
+fn trait_mul_assign<L, R: Copy>(mut value: L, rhs: R): Unit
 where L: MulAssign<R>
 {
     L.(MulAssign<R>).mul_assign(mut value, rhs)
 }
 
-fn trait_div_assign<L, R: Copy>(value: mut L, rhs: R): Unit
+fn trait_div_assign<L, R: Copy>(mut value: L, rhs: R): Unit
 where L: DivAssign<R>
 {
     L.(DivAssign<R>).div_assign(mut value, rhs)
 }
 
-fn trait_rem_assign<L, R: Copy>(value: mut L, rhs: R): Unit
+fn trait_rem_assign<L, R: Copy>(mut value: L, rhs: R): Unit
 where L: RemAssign<R>
 {
     L.(RemAssign<R>).rem_assign(mut value, rhs)

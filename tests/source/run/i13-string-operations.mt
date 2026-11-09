@@ -13,7 +13,7 @@ import core.fmt.Write
 import core.cmp.Ordering
 import core.fmt
 
-fn text_is(value: (read Text)?, expected: read Text): bool {
+fn text_is(value: (read Text)?, read expected: Text): bool {
     match value {
         present(found) => found == expected,
         none => false

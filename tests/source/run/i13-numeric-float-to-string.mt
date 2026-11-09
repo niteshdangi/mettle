@@ -5,7 +5,7 @@ import alloc.string.{String, ToString}
 import core.float
 import core.text.Text
 
-fn rendered_is<T: ToString + unsized>(value: read T, expected: read Text): bool {
+fn rendered_is<T: ToString + unsized>(read value: T, read expected: Text): bool {
     let output = T.(ToString).to_string(value)
     output.as_text() == expected
 }

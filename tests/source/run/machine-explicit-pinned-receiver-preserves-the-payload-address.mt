@@ -1,7 +1,7 @@
 
 type Payload<T: Copy> {
     value: T; marker: core.marker.PhantomPinned
-    fn inspect(receiver self: take pinned mut Self): T {
+    fn inspect(receiver take self: pinned mut Self): T {
         self.get_ref().value
     }
 }

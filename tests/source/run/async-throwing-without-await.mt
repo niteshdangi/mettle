@@ -6,9 +6,9 @@ async fn compute(value: i32): i32 throws i32 {
     value + 1
 }
 
-async fn outcome_value(): (i32 throws i32) { failure(9) }
+async fn outcome_value(): (Outcome<i32, i32>) { failure(9) }
 
-fn drive<F: Future<Output = (i32 throws i32)>>(future: take F): (i32 throws i32) {
+fn drive<F: Future<Output = (Outcome<i32, i32>)>>(take future: F): (Outcome<i32, i32>) {
     let waker = noop_waker()
     var slot = core.pin.pin(future)
     loop {

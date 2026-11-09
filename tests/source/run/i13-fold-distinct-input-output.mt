@@ -6,12 +6,12 @@ type Total { value: i32 }
 
 extend<region r> Total implements Sum<read i32 from r> {
     static fn zero(): Total { Total(0) }
-    fn plus(other: take read i32 from r): Total { Total(self.value + *other) }
+    fn plus(take other: read i32 from r): Total { Total(self.value + *other) }
 }
 
 extend<region r> Total implements Product<read i32 from r> {
     static fn one(): Total { Total(1) }
-    fn times(other: take read i32 from r): Total { Total(self.value * *other) }
+    fn times(take other: read i32 from r): Total { Total(self.value * *other) }
 }
 
 fn main(): i32 {

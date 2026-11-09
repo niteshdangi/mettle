@@ -46,6 +46,9 @@ Implementation/verification: [implementation-plan.md §8.7](implementation-plan.
 | D29 | `path.PathInput` and std `write_path` accept and display native paths without lossy conversion; a bare-interface `read`/`mut` parameter permits unsized implementors | [library-surface.md §12](library-surface.md#12-borrowed-keys-and-path-input), [language-grammar.md §3](language-grammar.md#3-type-expressions) |
 | D30 | Owner-selected deterministic `alloc` Map default; no hidden OS entropy dependency or default collision-attack-resistance promise. Untrusted-key applications explicitly select a randomized builder | [native collection contracts §8.3](native-collection-contracts.md#83-hash-map) |
 | D31 | General borrowed-or-owned values use `BorrowedOrOwned<region r,B>`; existing slice `Cow<region r,T>` remains an alias, not a second implementation | [native collection contracts](native-collection-contracts.md) |
+| D32 | Named parameter access precedes the binding (`mut item: Item`, `take view: read Item from r`), including closure and explicit-receiver declarations. Passing permissions and unnamed callable slots are unchanged. Owner accepted 2026-11-09 | [semantic-rules.md §2](semantic-rules.md#2-value-formation-and-parameter-modes) |
+| D33 | `Outcome<T, E>` names native stored success/failure values; `throws E` is reserved for callable effects. No representation, cleanup, region or propagation change. Owner accepted 2026-11-09 | [language-grammar.md §3](language-grammar.md#3-type-expressions) |
+| D34 | If/while headers accept comma-separated boolean conditions and `let pattern = expression` clauses, evaluated once left-to-right with short-circuiting. Bindings exist only in later clauses and the successful body. Owner accepted 2026-11-09 | [language-grammar.md §6](language-grammar.md#6-expressions-errors-and-control-flow) |
 
 ## Routine selections made under delegation
 

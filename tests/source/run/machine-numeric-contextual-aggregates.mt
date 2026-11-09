@@ -1,5 +1,5 @@
 
-fn answer(values:read [u128;2], pair:(i8,f32)): i32 {
+fn answer(read values:[u128;2], pair:(i8,f32)): i32 {
     if values[0] == 18446744073709551616u128 &&
        values[1] == 18446744073709551616u128 &&
        pair.0 == -128i8 && pair.1.to_bits() == 0x3f800001u32 { 42 } else { 1 }

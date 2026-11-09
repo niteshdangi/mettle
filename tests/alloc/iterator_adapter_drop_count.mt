@@ -7,11 +7,11 @@ type Item {
     drop { unsafe { *self.drops += 1 } }
 }
 
-fn is_even<region r>(item: read Item from r): bool {
+fn is_even<region r>(read item: Item from r): bool {
     item.value % 2 == 0
 }
 
-fn item_value(item: take Item): i32 {
+fn item_value(take item: Item): i32 {
     item.value
 }
 

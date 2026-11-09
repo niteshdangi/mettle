@@ -268,7 +268,7 @@ section 5.2 instruction counters are not collected here.
 
 ### 5.4. Loan-analysis compile-time work
 
-Implemented, unmeasured and unverified: `compiler/analysis/loans.cpp`
+Implemented, unmeasured and unverified: `bootstrap/analysis/loans.cpp`
 reconstructs availability backward from fixed-point block output and filters live
 sets in place instead of retaining per-instruction `availableAfter` snapshots.
 Ownership results must be unchanged; no build/regression/timing receipt exists

@@ -4,7 +4,7 @@ import core.fmt.Debug
 import core.fmt
 import core.hash.hash_one
 
-fn require_debug<T: Debug>(value: read T, prefix: read core.text.Text): Unit {
+fn require_debug<T: Debug>(read value: T, read prefix: core.text.Text): Unit {
     var output = alloc.string.new()
     {
         var formatter = fmt.formatter(mut output, fmt.spec())
@@ -37,7 +37,7 @@ fn main(): i32 {
         failure(error) => { return 4 }
     }
 
-    let scoped = thread.scope(fn(scope: read thread.Scope): i32 {
+    let scoped = thread.scope(fn(read scope: thread.Scope): i32 {
         require_debug(scope, "Scope")
         let child = scope.spawn(fn(): usize {
             thread.current().raw

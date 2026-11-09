@@ -1,6 +1,6 @@
 import alloc.vec
 
-fn indexed<region r>(source: read i32 from r): read i32 from r {
+fn indexed<region r>(read source: i32 from r): read i32 from r {
     var xs = vec.new<read i32 from r>()
     xs.push(read source)
     xs[0usize]

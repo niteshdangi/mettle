@@ -1,10 +1,10 @@
 
 copy type Ref<region r> { value: read i32 from r }
 fn shorten<region a, region b>(
-    value: take Ref<region a>
+    take value: Ref<region a>
 ): Ref<region b> where region a: b { take value }
 fn reborrow<region a, region b>(
-    value: take (mut i32 from a)
+    take value: (mut i32 from a)
 ): mut i32 from b where region a: b { take value }
 fn main() {
     var value = 1

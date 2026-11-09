@@ -31,7 +31,7 @@ extend Condvar implements Default {
     static fn default(): Condvar { new() }
 }
 extend Condvar implements Debug {
-    fn fmt(f: mut Formatter): Unit throws Error {
+    fn fmt(mut f: Formatter): Unit throws Error {
         try f.write_str("Condvar { .. }")
     }
 }
@@ -43,13 +43,13 @@ extend TimedOut {
 }
 
 extend Condvar {
-    pub fn wait<T, region r>(guard: take MutexGuard<T, region r>): MutexGuard<T, region r> {
+    pub fn wait<T, region r>(take guard: MutexGuard<T, region r>): MutexGuard<T, region r> {
         let status = unsafe { mettle_rt_cond_wait(self.raw, guard.lock.raw) }
         if status != 0 { panic("condition wait failed") }
         guard
     }
     pub fn wait_timeout<T, region r>(
-        guard: take MutexGuard<T, region r>,
+        take guard: MutexGuard<T, region r>,
         duration: time.Duration
     ): (MutexGuard<T, region r>, TimedOut) {
         let started = time.now()
@@ -72,8 +72,8 @@ extend Condvar {
         }
     }
     pub fn wait_while<T, region r, F: mut fn(mut T): bool>(
-        guard: take MutexGuard<T, region r>,
-        predicate: take F
+        take guard: MutexGuard<T, region r>,
+        take predicate: F
     ): MutexGuard<T, region r> {
         var current = guard
         var test = predicate
@@ -83,9 +83,9 @@ extend Condvar {
         current
     }
     pub fn wait_timeout_while<T, region r, F: mut fn(mut T): bool>(
-        guard: take MutexGuard<T, region r>,
+        take guard: MutexGuard<T, region r>,
         duration: time.Duration,
-        predicate: take F
+        take predicate: F
     ): (MutexGuard<T, region r>, TimedOut) {
         let start = time.now()
         var current = guard
@@ -107,7 +107,7 @@ extend Condvar {
         (current, TimedOut(false))
     }
     pub fn wait_timeout_ms<T, region r>(
-        guard: take MutexGuard<T, region r>,
+        take guard: MutexGuard<T, region r>,
         milliseconds: u64
     ): (MutexGuard<T, region r>, TimedOut) {
         self.wait_timeout(guard, time.from_millis(milliseconds))

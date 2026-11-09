@@ -1,6 +1,6 @@
 
 fn observe(value: (mut i32)) { *value }
-fn observe_read(value: read (read i32)) { *value }
+fn observe_read(read value: (read i32)) { *value }
 fn main() {
     var value = 42
     {

@@ -7,7 +7,7 @@ extend [i32] implements Total {
         result
     }
 }
-fn erase(values: read [i32]): read any Total from values { read values }
+fn erase(read values: [i32]): read any Total from values { read values }
 fn main() {
     let values = [20,22]
     let slice: read [i32] = read values

@@ -2,7 +2,7 @@
 alias OwnedGuard = Guard
 type Guard<region r> {
     counter: mut i32 from r
-    static fn make(counter: mut i32): Guard { Guard(mut counter) }
+    static fn make(mut counter: i32): Guard { Guard(mut counter) }
     drop { *self.counter += 1 }
 }
 fn main() {

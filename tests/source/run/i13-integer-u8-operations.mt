@@ -9,11 +9,11 @@ fn missing<T: Copy>(value: T?): bool {
     match value { none => true, present(_) => false }
 }
 
-fn parsed<T: Copy>(result: (T throws ParseIntError)): T? {
+fn parsed<T: Copy>(result: (Outcome<T, ParseIntError>)): T? {
     match result { success(value) => present(value), failure(_) => none }
 }
 
-fn kind<T: Copy>(result: (T throws ParseIntError)): IntErrorKind? {
+fn kind<T: Copy>(result: (Outcome<T, ParseIntError>)): IntErrorKind? {
     match result { success(_) => none, failure(error) => present(error.kind) }
 }
 

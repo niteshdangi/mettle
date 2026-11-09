@@ -25,9 +25,9 @@ fn main(): i32 {
     let wide = (1i8, 2i16, 3i32, 4i64, 5u8, 6u16, 7u32, 8u64, true, 'x', 9i128, Counted(10))
     let wider = wide.clone()
     if wider.0 != 1i8 || wider.8 != true || wider.9 != 'x' || wider.11.value != 11 { return 3 }
-    let good: (Counted throws Counted) = success(Counted(4))
+    let good: (Outcome<Counted, Counted>) = success(Counted(4))
     match good.clone() { success(c) => if c.value != 5 { return 4 }, failure(_) => { return 5 } }
-    let bad: (Counted throws Counted) = failure(Counted(8))
+    let bad: (Outcome<Counted, Counted>) = failure(Counted(8))
     match bad.clone() { success(_) => { return 6 }, failure(c) => if c.value != 9 { return 7 } }
     let reversed = Reverse(Counted(20))
     if reversed.clone().value.value != 21 { return 8 }
@@ -37,7 +37,7 @@ fn main(): i32 {
         none => { return 10 }
     }
     owned_ok<(i32, bool, char)>()
-    owned_ok<(i32 throws bool)>()
+    owned_ok<(Outcome<i32, bool>)>()
     owned_ok<Reverse<i32>>()
     owned_ok<NonNull<i32>>()
     0

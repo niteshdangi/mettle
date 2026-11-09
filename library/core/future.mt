@@ -15,8 +15,8 @@ extend<T> Poll<T> {
     pub fn is_pending(): bool { match self { Poll.Ready(value) => false, Poll.Pending => true } }
 }
 
-extend<T, E> Poll<(T throws E)> {
-    pub take fn map_ok<U>(f: fn(take T): U): Poll<(U throws E)> {
+extend<T, E> Poll<(Outcome<T, E>)> {
+    pub take fn map_ok<U>(f: fn(take T): U): Poll<(Outcome<U, E>)> {
         match take self {
             Poll.Ready(result) => Poll.Ready(match take result {
                 success(value) => success(f(value)),
@@ -25,7 +25,7 @@ extend<T, E> Poll<(T throws E)> {
             Poll.Pending => Poll.Pending
         }
     }
-    pub take fn map_err<F>(f: fn(take E): F): Poll<(T throws F)> {
+    pub take fn map_err<F>(f: fn(take E): F): Poll<(Outcome<T, F>)> {
         match take self {
             Poll.Ready(result) => Poll.Ready(match take result {
                 success(value) => success(value),
@@ -38,7 +38,7 @@ extend<T, E> Poll<(T throws E)> {
 
 pub interface Future {
     type Output;
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Self.Output>;
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Self.Output>;
 }
 
 // Table of the four waker operations over an executor-owned data pointer.
@@ -74,7 +74,7 @@ extend Waker {
         (raw.vtable.wake)(raw.data)
     }
     pub fn wake_by_ref(): Unit { (self.raw.vtable.wake_by_ref)(self.raw.data) }
-    pub fn will_wake(other: read Waker): bool {
+    pub fn will_wake(read other: Waker): bool {
         self.raw.data == other.raw.data
     }
     // Identifies wakers built from one vtable by its callback addresses.
@@ -119,7 +119,7 @@ pub type Context<region c> {
 }
 
 extend<region c> Context<region c> {
-    pub static fn from_waker(waker: read Waker from c): Context<region c> { Context(read waker) }
+    pub static fn from_waker(read waker: Waker from c): Context<region c> { Context(read waker) }
     pub fn waker(): read Waker from self { read *self.waker }
 }
 
@@ -134,17 +134,17 @@ pub type Coroutine<T, C> {
     marker: core.marker.PhantomPinned
 }
 
-pub fn coroutine<T, C: take fn(): T>(body: take C): Coroutine<T, C> {
+pub fn coroutine<T, C: take fn(): T>(take body: C): Coroutine<T, C> {
     Coroutine(unsafe { core.intrinsics.coroutine_start<core.future.CoroutineState<T, C>>(body) }, core.marker.PhantomPinned)
 }
 
-pub fn throwing_coroutine<T, E, C: take fn(): T throws E>(body: take C): Coroutine<(T throws E), C> {
-    Coroutine(unsafe { core.intrinsics.coroutine_start<core.future.CoroutineState<(T throws E), C>>(body) }, core.marker.PhantomPinned)
+pub fn throwing_coroutine<T, E, C: take fn(): T throws E>(take body: C): Coroutine<(Outcome<T, E>), C> {
+    Coroutine(unsafe { core.intrinsics.coroutine_start<core.future.CoroutineState<(Outcome<T, E>), C>>(body) }, core.marker.PhantomPinned)
 }
 
 extend<T, C> Coroutine<T, C> implements Future {
     type Output = T
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<T> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<T> {
         let me = unsafe { self.get_unchecked_mut() }
         let context = core.ptr.from_mut(mut cx).cast<u8>()
         match take unsafe { core.intrinsics.coroutine_resume(mut me.state, context) } {
@@ -157,7 +157,7 @@ extend<T, C> Coroutine<T, C> implements Future {
 // One poll of an awaited future from inside an async body. `future` is a local
 // of the suspended body, so it never moves once polled; `cx` is the context of
 // the poll that resumed the body.
-pub fn poll_await<F: Future>(future: mut F, cx: ptr<mut u8>): F.Output? {
+pub fn poll_await<F: Future>(mut future: F, cx: ptr<mut u8>): F.Output? {
     let context = unsafe { mut *cx.cast<Context>() }
     match take unsafe { core.pin.Pin.new_unchecked(mut future).poll(context) } {
         Poll.Ready(value) => present(value),

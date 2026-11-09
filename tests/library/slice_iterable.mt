@@ -1,7 +1,7 @@
 import alloc.vec.List
 import core.iter.{Iterator, Iterable, MutableIterable}
 
-fn sum<C: Iterable<Item = i32> + unsized>(items: read C): i32 {
+fn sum<C: Iterable<Item = i32> + unsized>(read items: C): i32 {
     var total = 0
     for item in items { total += *item }
     total

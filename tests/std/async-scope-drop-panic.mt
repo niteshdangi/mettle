@@ -8,7 +8,7 @@ type PanicsOnDrop {
 
 extend PanicsOnDrop implements Future {
     type Output = Unit
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Unit> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Unit> {
         Poll.Pending
     }
 }
@@ -22,7 +22,7 @@ type CountedPending<region r> {
 
 extend<region r> CountedPending<region r> implements Future {
     type Output = Unit
-    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<Unit> {
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Unit> {
         Poll.Pending
     }
 }

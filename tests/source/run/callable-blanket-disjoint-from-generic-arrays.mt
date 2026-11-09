@@ -14,7 +14,7 @@ extend<F: fn(i32): bool> F implements Category {
     fn category(): usize { 3usize }
 }
 
-fn classify<T: Category>(value: read T): usize {
+fn classify<T: Category>(read value: T): usize {
     value.category()
 }
 

@@ -1,7 +1,0 @@
-[package]
-name = "mathlib"
-version = "0.3.1"
-language = "mettle-1"
-
-[dependencies]
-units = { path = "../units", version = "^0.1" }

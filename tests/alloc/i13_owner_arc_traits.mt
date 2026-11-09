@@ -7,7 +7,7 @@ import core.fmt.{ Debug, Display }
 import core.hash
 import core.hash.{ Hash, Hasher }
 
-fn render_display<T: Display>(value: read T): String {
+fn render_display<T: Display>(read value: T): String {
     var output = alloc.string.new()
     {
         var formatter = fmt.formatter(mut output, fmt.spec())
@@ -19,7 +19,7 @@ fn render_display<T: Display>(value: read T): String {
     output
 }
 
-fn render_debug<T: Debug>(value: read T): String {
+fn render_debug<T: Debug>(read value: T): String {
     var output = alloc.string.new()
     {
         var formatter = fmt.formatter(mut output, fmt.spec())

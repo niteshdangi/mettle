@@ -1,7 +1,0 @@
-[package]
-name = "right"
-version = "0.1.0"
-language = "mettle-1"
-
-[dependencies]
-util = "=1.0.0"

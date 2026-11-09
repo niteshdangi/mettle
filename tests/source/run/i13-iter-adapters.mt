@@ -9,25 +9,25 @@ import core.iter
 import core.iter.{collect, BidirectionalIterator, ExtendItems, Iterator, OwnedIterable}
 
 fn checks_mapping(): i32 {
-    if iter.range(1, 4).map(fn(x: take i32): i32 { x * 2 }).sum<i32>() != 12 { return 1 }
-    var mapped = iter.range(1, 4).map(fn(x: take i32): i32 { x * 2 })
+    if iter.range(1, 4).map(fn(take x: i32): i32 { x * 2 }).sum<i32>() != 12 { return 1 }
+    var mapped = iter.range(1, 4).map(fn(take x: i32): i32 { x * 2 })
     if mapped.next_back() != present(6) || mapped.next() != present(2) { return 2 }
-    if iter.range(0, 5).filter_map(fn(x: take i32): i32? {
+    if iter.range(0, 5).filter_map(fn(take x: i32): i32? {
         if x % 2 == 1 { present(x * 10) } else { none }
     }).sum<i32>() != 40 { return 3 }
-    if iter.range(0, 10).map_while(fn(x: take i32): i32? {
+    if iter.range(0, 10).map_while(fn(take x: i32): i32? {
         if x < 3 { present(x) } else { none }
     }).count() != 3usize { return 4 }
-    if iter.range(0, 6).filter(fn(x: read i32): bool { x % 2 == 0 }).count() != 3usize { return 5 }
-    var filtered = iter.range(0, 6).filter(fn(x: read i32): bool { x % 2 == 0 })
+    if iter.range(0, 6).filter(fn(read x: i32): bool { x % 2 == 0 }).count() != 3usize { return 5 }
+    var filtered = iter.range(0, 6).filter(fn(read x: i32): bool { x % 2 == 0 })
     if filtered.next_back() != present(4) || filtered.next() != present(0) { return 6 }
     0
 }
 
 fn checks_nesting(): i32 {
-    if iter.range(1, 4).flat_map(fn(x: take i32): iter.Range<i32> { iter.range(0, x) }).count() != 6usize { return 10 }
-    if iter.range(1, 3).map(fn(x: take i32): iter.Range<i32> { iter.range(0, x) }).flatten().sum<i32>() != 1 { return 11 }
-    var flat = iter.range(1, 4).flat_map(fn(x: take i32): iter.Range<i32> { iter.range(0, x) })
+    if iter.range(1, 4).flat_map(fn(take x: i32): iter.Range<i32> { iter.range(0, x) }).count() != 6usize { return 10 }
+    if iter.range(1, 3).map(fn(take x: i32): iter.Range<i32> { iter.range(0, x) }).flatten().sum<i32>() != 1 { return 11 }
+    var flat = iter.range(1, 4).flat_map(fn(take x: i32): iter.Range<i32> { iter.range(0, x) })
     if flat.next_back() != present(2) || flat.next() != present(0) { return 12 }
     0
 }
@@ -63,8 +63,8 @@ fn checks_reversal_and_slicing(): i32 {
     if reversed.next() != present(3) || reversed.next_back() != present(0) { return 30 }
     if iter.range(0, 10).take_n(3usize).sum<i32>() != 3 { return 31 }
     if iter.range(0, 10).skip(7usize).sum<i32>() != 24 { return 32 }
-    if iter.range(0, 10).take_while(fn(x: read i32): bool { x < 4 }).count() != 4usize { return 33 }
-    if iter.range(0, 10).skip_while(fn(x: read i32): bool { x < 7 }).count() != 3usize { return 34 }
+    if iter.range(0, 10).take_while(fn(read x: i32): bool { x < 4 }).count() != 4usize { return 33 }
+    if iter.range(0, 10).skip_while(fn(read x: i32): bool { x < 7 }).count() != 3usize { return 34 }
     if iter.range(0, 10).step_by(3usize).count() != 4usize { return 35 }
     var stepped = iter.range(0, 10).step_by(3usize)
     if stepped.next() != present(0) || stepped.next() != present(3) { return 36 }
@@ -75,7 +75,7 @@ fn checks_reversal_and_slicing(): i32 {
 
 fn checks_observation(): i32 {
     var observed = 0
-    let total = iter.range(1, 5).inspect(fn(x: read i32): Unit { observed = observed + x }).count()
+    let total = iter.range(1, 5).inspect(fn(read x: i32): Unit { observed = observed + x }).count()
     if total != 4usize || observed != 10 { return 40 }
     var peeked = iter.range(4, 6).peekable()
     match peeked.peek() {
@@ -86,17 +86,17 @@ fn checks_observation(): i32 {
     var fused = iter.range(0, 2).fuse()
     if fused.next() != present(0) || fused.next() != present(1) { return 43 }
     if fused.next().is_present() || fused.next().is_present() { return 44 }
-    var scanned = iter.range(1, 5).scan(0, fn(state: mut i32, x: take i32): i32? {
+    var scanned = iter.range(1, 5).scan(0, fn(mut state: i32, take x: i32): i32? {
         state = state + x
         present(state)
     })
     if scanned.count() != 4usize { return 45 }
-    var running = iter.range(1, 5).scan(0, fn(state: mut i32, x: take i32): i32? {
+    var running = iter.range(1, 5).scan(0, fn(mut state: i32, take x: i32): i32? {
         state = state + x
         present(state)
     })
     if running.last() != present(10) { return 46 }
-    var stopped = iter.range(1, 9).scan(0, fn(state: mut i32, x: take i32): i32? {
+    var stopped = iter.range(1, 9).scan(0, fn(mut state: i32, take x: i32): i32? {
         state = state + x
         if state > 5 { none } else { present(state) }
     })
@@ -117,8 +117,8 @@ fn checks_borrowed_items(): i32 {
 }
 
 fn checks_size_hints(): i32 {
-    if iter.range(0, 5).map(fn(x: take i32): i32 { x }).size_hint() != (5usize, present(5usize)) { return 60 }
-    if iter.range(0, 5).filter(fn(x: read i32): bool { x > 0 }).size_hint() != (0usize, present(5usize)) { return 61 }
+    if iter.range(0, 5).map(fn(take x: i32): i32 { x }).size_hint() != (5usize, present(5usize)) { return 60 }
+    if iter.range(0, 5).filter(fn(read x: i32): bool { x > 0 }).size_hint() != (0usize, present(5usize)) { return 61 }
     if iter.range(0, 10).take_n(3usize).size_hint() != (3usize, present(3usize)) { return 62 }
     if iter.range(0, 10).skip(7usize).size_hint() != (3usize, present(3usize)) { return 63 }
     if iter.range(0, 10).step_by(3usize).size_hint() != (4usize, present(4usize)) { return 64 }
@@ -127,9 +127,9 @@ fn checks_size_hints(): i32 {
     if iter.range(5, 8).enumerate().size_hint() != (3usize, present(3usize)) { return 67 }
     if iter.range(0, 4).rev().size_hint() != (4usize, present(4usize)) { return 68 }
     if iter.range(0, 4).fuse().size_hint() != (4usize, present(4usize)) { return 69 }
-    if iter.range(0, 4).inspect(fn(x: read i32): Unit {}).size_hint() != (4usize, present(4usize)) { return 70 }
+    if iter.range(0, 4).inspect(fn(read x: i32): Unit {}).size_hint() != (4usize, present(4usize)) { return 70 }
     if iter.range(0, 4).peekable().size_hint() != (4usize, present(4usize)) { return 71 }
-    if iter.range(0, 4).take_while(fn(x: read i32): bool { x < 9 }).size_hint().1 != present(4usize) { return 72 }
+    if iter.range(0, 4).take_while(fn(read x: i32): bool { x < 9 }).size_hint().1 != present(4usize) { return 72 }
     0
 }
 

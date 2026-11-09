@@ -2,7 +2,7 @@ import core.num
 import core.num.IntErrorKind
 import core.option
 
-fn kind<T: num.FromText>(text: read core.text.Text): IntErrorKind? {
+fn kind<T: num.FromText>(read text: core.text.Text): IntErrorKind? {
     match capture num.parse<T>(text) { success(v) => none, failure(e) => present(e.kind) }
 }
 fn main(): i32 {

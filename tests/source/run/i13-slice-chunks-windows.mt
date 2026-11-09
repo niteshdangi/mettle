@@ -2,7 +2,7 @@
 import core.iter.BidirectionalIterator
 import core.iter.{ ExactSizeIterator, Iterator }
 
-fn sum_read(part: read [i32]): i32 {
+fn sum_read(read part: [i32]): i32 {
     var total = 0
     var i = 0usize
     while i < part.len() { total += part[i]; i += 1usize }
@@ -106,7 +106,7 @@ fn main(): i32 {
         // chunk_by splits at every change of predicate result.
         var runs = [1, 1, 2, 3, 3, 3]
         let run_slice: read [i32] = read runs
-        var groups = run_slice.chunk_by(fn(a: read i32, b: read i32): bool { a == b })
+        var groups = run_slice.chunk_by(fn(read a: i32, read b: i32): bool { a == b })
         var group_count = 0usize
         while true {
             match take groups.next() {

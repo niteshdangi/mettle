@@ -72,7 +72,7 @@ fn run_catch<T, F: take fn(): T>(raw: ptr<mut u8>): Unit {
 
 // Runs one closure on the current thread. Its ordinary local cleanup completes
 // before the panic payload is returned; the payload message borrows its owner.
-pub fn catch_panic<T, F: take fn(): T>(operation: take F): CatchResult<T> {
+pub fn catch_panic<T, F: take fn(): T>(take operation: F): CatchResult<T> {
     var context = CatchContext<T, F>(
         core.mem.MaybeUninit.new(operation),
         core.mem.MaybeUninit<T>.uninit()

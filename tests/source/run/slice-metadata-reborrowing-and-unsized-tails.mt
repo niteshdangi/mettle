@@ -1,14 +1,14 @@
 
 type Tail<T: unsized> { header: i32; values: T }
-fn total(values: read [i32]): i32 {
+fn total(read values: [i32]): i32 {
     var result = 0
     for value in values { result += value }
     result
 }
-fn increment(values: mut [i32]) {
+fn increment(mut values: [i32]) {
     for value in mut values { value += 1 }
 }
-fn tail_total(value: read Tail<[i32]>): i32 { value.header + total(value.values) }
+fn tail_total(read value: Tail<[i32]>): i32 { value.header + total(value.values) }
 fn main() {
     var values = [20,20]
     let exclusive: mut [i32] = mut values

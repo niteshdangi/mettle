@@ -73,13 +73,13 @@ fn checks_transformations(): i32 {
     if some(4).map_or_else(fn(): i32 { 8 }, fn(value: i32): i32 { value * 2 }) != 8 { return 55 }
     if nothing().map_or_default(fn(value: i32): i32 { value + 1 }) != 0 { return 56 }
     if some(4).map_or_default(fn(value: i32): i32 { value + 1 }) != 5 { return 57 }
-    if some(4).filter(fn(value: read i32): bool { value > 3 }) != present(4) { return 58 }
-    if some(2).filter(fn(value: read i32): bool { value > 3 }).is_present() { return 59 }
-    let inspected = some(6).inspect(fn(value: read i32): Unit {
+    if some(4).filter(fn(read value: i32): bool { value > 3 }) != present(4) { return 58 }
+    if some(2).filter(fn(read value: i32): bool { value > 3 }).is_present() { return 59 }
+    let inspected = some(6).inspect(fn(read value: i32): Unit {
         if value != 6 { core.panic.panic("inspect saw the wrong payload") }
     })
     if inspected != present(6) { return 60 }
-    if nothing().inspect(fn(value: read i32): Unit { core.panic.panic("inspect ran on none") }).is_present() { return 64 }
+    if nothing().inspect(fn(read value: i32): Unit { core.panic.panic("inspect ran on none") }).is_present() { return 64 }
     let nested: (i32?)? = present(present(3))
     if nested.flatten() != present(3) { return 61 }
     let outer_none: (i32?)? = none
@@ -119,12 +119,12 @@ fn checks_outcomes(): i32 {
     match some(3).ok_or(false) { success(value) => { if value != 3 { return 90 } }, failure(_) => { return 91 } }
     match nothing().ok_or(false) { success(_) => { return 92 }, failure(error) => { if error { return 93 } } }
     match nothing().ok_or_else(fn(): i32 { 9 }) { success(_) => { return 94 }, failure(error) => { if error != 9 { return 95 } } }
-    let transposed_source: (i32 throws bool)? = present(success(4))
+    let transposed_source: (Outcome<i32, bool>)? = present(success(4))
     match transposed_source.transpose() {
         success(inner) => { if inner != present(4) { return 96 } },
         failure(_) => { return 97 }
     }
-    let absent_outcome: (i32 throws bool)? = none
+    let absent_outcome: (Outcome<i32, bool>)? = none
     match absent_outcome.transpose() {
         success(inner) => { if inner.is_present() { return 98 } },
         failure(_) => { return 99 }
@@ -147,8 +147,8 @@ fn checks_in_place(): i32 {
     var taken: i32? = present(3)
     if taken.`take`() != present(3) || taken.is_present() { return 115 }
     var conditional: i32? = present(4)
-    if conditional.take_if(fn(value: mut i32): bool { value == 5 }).is_present() { return 116 }
-    if conditional.take_if(fn(value: mut i32): bool { value == 4 }) != present(4) { return 117 }
+    if conditional.take_if(fn(mut value: i32): bool { value == 5 }).is_present() { return 116 }
+    if conditional.take_if(fn(mut value: i32): bool { value == 4 }) != present(4) { return 117 }
     if conditional.is_present() { return 118 }
     var replaced: i32? = present(1)
     if replaced.replace(2) != present(1) || replaced != present(2) { return 119 }

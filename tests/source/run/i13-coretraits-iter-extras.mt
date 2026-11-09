@@ -3,23 +3,23 @@ import core.iter
 import core.iter.BidirectionalIterator
 import core.iter.Iterator
 
-fn less_than_three(value: read i32): bool { value < 3 }
+fn less_than_three(read value: i32): bool { value < 3 }
 
 fn main(): i32 {
     if iter.repeat(3i32).take_n(4usize).fold(
         0,
-        fn(total: take i32, value: take i32): i32 { total + value }
+        fn(take total: i32, take value: i32): i32 { total + value }
     ) != 12 {
         return 1
     }
 
     var successors = iter.successors(
         present(1i32),
-        fn(value: read i32): i32? {
+        fn(read value: i32): i32? {
             if value < 4 { present(value + 1) } else { none }
         }
     )
-    if successors.fold(0, fn(total: take i32, value: take i32): i32 {
+    if successors.fold(0, fn(take total: i32, take value: i32): i32 {
         total + value
     }) != 10 {
         return 2
@@ -47,11 +47,11 @@ fn main(): i32 {
     let inclusive = iter.range_inclusive(2, 4)
     if inclusive.end != 4 { return 8 }
     var flattened = iter.range(1, 4).map(
-        fn(value: take i32): iter.Range<i32> { iter.range(0, value) }
+        fn(take value: i32): iter.Range<i32> { iter.range(0, value) }
     ).flatten()
     if flattened.count() != 6usize { return 9 }
     var mixed = iter.range(1, 4).map(
-        fn(value: take i32): iter.Range<i32> { iter.range(0, value) }
+        fn(take value: i32): iter.Range<i32> { iter.range(0, value) }
     ).flatten()
     match take mixed.next() {
         present(value) => { if value != 0 { return 10 } },
@@ -69,23 +69,23 @@ fn main(): i32 {
         present(value) => { if value != 1 { return 13 } },
         none => { return 13 }
     }
-    match iter.range(1, 5).min_by(fn(a: read i32, b: read i32): Ordering {
+    match iter.range(1, 5).min_by(fn(read a: i32, read b: i32): Ordering {
         if a < b { Ordering.Less } else if a == b { Ordering.Equal } else { Ordering.Greater }
     }) {
         present(value) => { if value != 1 { return 14 } },
         none => { return 14 }
     }
-    match iter.range(1, 5).max_by(fn(a: read i32, b: read i32): Ordering {
+    match iter.range(1, 5).max_by(fn(read a: i32, read b: i32): Ordering {
         if a < b { Ordering.Less } else if a == b { Ordering.Equal } else { Ordering.Greater }
     }) {
         present(value) => { if value != 4 { return 15 } },
         none => { return 15 }
     }
-    match iter.range(1, 5).min_by_key(fn(value: read i32): i32 { -value }) {
+    match iter.range(1, 5).min_by_key(fn(read value: i32): i32 { -value }) {
         present(value) => { if value != 4 { return 16 } },
         none => { return 16 }
     }
-    match iter.range(1, 5).max_by_key(fn(value: read i32): i32 { -value }) {
+    match iter.range(1, 5).max_by_key(fn(read value: i32): i32 { -value }) {
         present(value) => { if value != 1 { return 17 } },
         none => { return 17 }
     }

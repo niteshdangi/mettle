@@ -7,7 +7,7 @@ import std.thread
 import std.sync.mpsc
 import core.clone.Clone
 
-fn discard<T>(value: take T): Unit {}
+fn discard<T>(take value: T): Unit {}
 
 // Disconnection follows the last sender; a dropped rendezvous_worker refuses sends.
 fn checks_channel_basics(): i32 {

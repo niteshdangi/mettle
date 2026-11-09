@@ -8,11 +8,11 @@ type UnitDrop {
     drop { unsafe { ZST_DROPS += 1usize } }
 }
 
-fn exact_len<I: ExactSizeIterator>(items: read I): usize {
+fn exact_len<I: ExactSizeIterator>(read items: I): usize {
     I.(ExactSizeIterator).len(items)
 }
 
-fn require_fused<I: FusedIterator>(items: take I): Unit {
+fn require_fused<I: FusedIterator>(take items: I): Unit {
     let _ = items
 }
 
