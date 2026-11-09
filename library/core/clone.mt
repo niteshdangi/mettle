@@ -25,8 +25,35 @@ extend bool implements Clone { fn clone(): bool { self } }
 extend char implements Clone { fn clone(): char { self } }
 extend Unit implements Clone { fn clone(): Unit { self } }
 extend Ordering implements Clone { fn clone(): Ordering { self } }
-extend<A: Clone, B: Clone> (A, B) implements Clone {
-    fn clone(): (A, B) { (self.0.clone(), self.1.clone()) }
+// Tuples clone field by field, at every arity up to twelve.
+macro tuple_clone {
+    ($($name:ident => $field:literal),*) => {
+        extend<$($name: Clone),*> ($($name,)*) implements Clone {
+            fn clone(): ($($name,)*) { ($(self.$field.clone(),)*) }
+        }
+    };
+}
+
+tuple_clone!(A => 0)
+tuple_clone!(A => 0, B => 1)
+tuple_clone!(A => 0, B => 1, C => 2)
+tuple_clone!(A => 0, B => 1, C => 2, D => 3)
+tuple_clone!(A => 0, B => 1, C => 2, D => 3, E => 4)
+tuple_clone!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5)
+tuple_clone!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6)
+tuple_clone!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7)
+tuple_clone!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, I => 8)
+tuple_clone!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, I => 8, J => 9)
+tuple_clone!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, I => 8, J => 9, K => 10)
+tuple_clone!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, I => 8, J => 9, K => 10, L => 11)
+
+extend<T: Clone, E: Clone> (T throws E) implements Clone {
+    fn clone(): (T throws E) {
+        match self {
+            success(value) => success(value.clone()),
+            failure(error) => failure(error.clone())
+        }
+    }
 }
 extend<T: Clone> T? implements Clone {
     fn clone(): T? {

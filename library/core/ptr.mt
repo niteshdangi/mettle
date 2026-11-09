@@ -15,3 +15,7 @@ extend<T: unsized> NonNull<T> {
 
     pub fn as_ptr(): ptr<mut T> { self.pointer }
 }
+
+extend<T: unsized> NonNull<T> implements super.clone.Clone {
+    fn clone(): NonNull<T> { self }
+}

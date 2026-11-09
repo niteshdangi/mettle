@@ -64,6 +64,9 @@ pub fn clamp<T: Ord>(value: take T, low: take T, high: take T): T {
 pub type Reverse<T> { pub value: T }
 extend<T: PartialEq> Reverse<T> implements PartialEq { fn eq(other: read Reverse<T>): bool { other.value == self.value } }
 extend<T: Eq> Reverse<T> implements Eq {}
+extend<T: super.clone.Clone> Reverse<T> implements super.clone.Clone {
+    fn clone(): Reverse<T> { Reverse(self.value.clone()) }
+}
 extend<T: PartialOrd> Reverse<T> implements PartialOrd {
     fn partial_cmp(other: read Reverse<T>): Ordering? { other.value.partial_cmp(read self.value) }
 }

@@ -10,6 +10,44 @@ docs/capability-coverage.md (L003 L005 L009 S005-S014 S019-S021 S024 S025).
 
 ## Handoff (start here in a new session)
 
+**Linux session (2026-11-09).** The operation ledger records 7,962 of 13,295
+rows evidenced (5,328 missing, 5 not applicable). Added since 2026-11-08:
+generated all-width integer and f32/f64 operation programs; the integer surface
+(BITS, unprefixed abs, carrying/borrowing arithmetic, bit queries,
+checked_signed_diff); integer and bool operator interfaces with any integer
+shift count; integer From/TryFrom and TryFromIntError; array comparisons;
+Result copied/cloned in the reference shape; time ordering; Clone for std value
+types, tuples (1-12), outcomes, Reverse and NonNull; Display for io::Error,
+ErrorKind and ExitStatus; blanket and auto-property evidence for 147 types; and
+the six library lanes. Compiler fixes: 128-bit from_bytes alignment, u8
+is_ascii, vertical tab as ASCII whitespace, float fract/midpoint/clamp, macro
+hygiene for quoted/generic function parameters, and borrow-origin analysis on
+unresolved summary projection types. Syntax: unqualified interface calls
+(`u64.from(x)`), `.into()`/`.try_into()` from the expected type, unsuffixed
+index literals, and `from` without backticks.
+
+Open, with evidence:
+- Comparing products without importing `core.cmp` needs `core` loaded; loading
+  all of `core` costs ~7 s per build (963 import-free tests), so it needs
+  lazy per-module loading that keeps implementations coherent.
+- `Static` cannot be decided during type checking for view-bearing types:
+  regions are erased there, so `read T from static` and `Holder<region static>`
+  fail `Static`/`Any`. Keeping `static` in erased types breaks type equality;
+  the check needs deferral to the region phase. Blocks Any for ~35 iterator,
+  guard and drain types.
+- Rust's `TryFrom<U> for T where U: Into<T>` blanket needs coherence to rule
+  out pairs whose Into is never implemented (384 rows).
+- Clone for arrays (element-wise construction), cells, ManuallyDrop and the
+  collection/slice/text iterators; Send/Sync for vec::IntoIter and the sorted
+  map/set iterators; ReadDir, Scope and ScopedJoinHandle are declared not
+  Transferable/Shareable where the reference derives both.
+- Lane blockers: Iterator::unzip, inline throwing closures in try_for_each,
+  borrowed chain in a helper, tuple associated constants
+  (char::UNICODE_VERSION), RwLockWriteGuard::downgrade (runtime).
+- Suite concurrency: each source test build uses ~2 GB; at the CTest default of
+  16 jobs a 23 GB WSL runs out of memory, and i13-text-whitespace-splits-
+  boundaries (~45 s alone) exceeds 60 s under load.
+
 **Linux session (2026-11-08), gated on `linux-x64`.** Collision-safe Any
 identity is implemented: `typeIdentity` (compiler/types/identity.cpp) encodes
 types injectively and independently of the compilation (canonical nominal
