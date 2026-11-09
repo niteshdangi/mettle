@@ -10,6 +10,7 @@ struct CodegenPartition {
   bool split = false;
   // Empty selects the root unit; other identities select a dependency unit.
   std::string packageIdentity;
+  bool emitEntry = true;
 };
 
 std::unique_ptr<llvm::Module>

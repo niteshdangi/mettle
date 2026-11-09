@@ -57,6 +57,8 @@ struct Options {
   // documents items that are not `pub`.
   bool docOnly = false, documentPrivate = false;
   std::string harness;
+  bool library = false, emitExplicit = false;
+  std::vector<std::string> emits;
   // `mettle lint`: (level, rule) from `--allow|--warn|--deny RULE`, in order;
   // the rule `warnings` selects every rule not named otherwise.
   std::vector<std::pair<std::string, std::string>> lintLevels;

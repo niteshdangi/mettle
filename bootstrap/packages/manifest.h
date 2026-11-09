@@ -27,6 +27,7 @@ struct DependencySpec {
 struct Target {
   std::string name, kind, source;
   Span span;
+  std::vector<std::string> emits;
 };
 
 // A procedural macro: a Mettle host program, relative to the package
@@ -48,9 +49,10 @@ struct Feature {
 struct Manifest {
   std::string name;
   Version version;
+  std::optional<Version> mettleVersion;
+  Span mettleVersionSpan;
   std::vector<Target> targets;
-  // Only `dependencies` take part in builds; `dev-dependencies` are parsed and
-  // validated but belong to a separate (test) context.
+  // Development dependencies participate only in root test/benchmark builds.
   std::vector<DependencySpec> dependencies, buildDependencies, devDependencies;
   std::vector<Feature> features;
   // Local registry directory declared by the root package, if any.
@@ -68,7 +70,6 @@ struct Manifest {
 
   const DependencySpec *dependency(const std::string &name) const;
   const Feature *feature(const std::string &name) const;
-  // The library target, or the executable named `name` (empty: the only one).
   const Target *library() const;
 };
 

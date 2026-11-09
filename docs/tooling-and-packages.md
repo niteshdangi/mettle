@@ -37,26 +37,27 @@ The emitted backend does not provide UBSan or cross-target qualification.
 ### 1.1. Implemented subset (I09 T001)
 
 `mettle check|build DIR_OR_package.mettle` plans the package in the `packages`
-component, then compiles the selected executable target with each resolved
+component, then compiles the selected entry with each resolved
 dependency library mounted as a public root module named after the package
 (`-` becomes `_`). Dependency aliases resolve from every module using the same
 `import name` spelling for local, registry and Git sources. Explicit local
 bindings take precedence; `package.name` remains an optional root qualifier.
 
-- Manifest: root `name`/`version` and optional `entry` (default `"src/main.mt"`).
-  `entry` is a source path or a map of names to source paths; a map must define
-  `main` as its primary entry.
-  The same primary entry exposes a package's public API when used
-  as a dependency and supplies `main` when built as an executable; no separate
-  library-root file is required. Ordinary builds select the primary entry;
-  `--entry NAME` selects a named entry. There is no `targets`/`kind`/`source`
-  target block or per-package `language` selector.
+- Manifest: root `name`/`version`, optional `mettle-version` (minimum compiler
+  SemVer), `kind` (`"executable"` by default or `"library"`), `emit` and `entry`
+  (default `"src/main.mt"`). An entry map must define `main`; its values are
+  executable path strings or objects with `kind`, `path`, `emit`. Root `kind`
+  and `emit` cannot accompany an entry map. At most one entry is a library;
+  dependencies import its public API. No separate library-root file is required.
+  Ordinary builds select `main`; `--entry NAME` selects another entry. There
+  is no `targets` block or per-package `language` selector.
   `dependencies` accepts version strings/arrays, explicit relative/absolute
   path strings, or objects with `path, git, rev|tag|branch, version, optional,
-  default_features`. `build-dependencies` resolves sources, versions and
+  features, default_features`. `build-dependencies` resolves sources, versions and
   explicit features for the host. `features` contains
   (`feature`, `dep:x`, `x/f`; optional dependencies imply a feature),
-  `registry { path: ... }` (root only) and parsed but unused `dev-dependencies`.
+  `registry { path: ... }` (root only). Root `dev-dependencies` activate for
+  test/benchmark builds, never ordinary builds; they cannot be optional.
   Unknown keys are errors.
 - Versions: section 1 defines requirements and selection. Each exact
   source/version/context has a distinct module root and linked symbol namespace.
@@ -74,7 +75,8 @@ bindings take precedence; `package.name` remains an optional root qualifier.
   sizes and contents of `*.mt` and `*.mettle`, excluding generated `lock.mettle`
   files (hidden, `target`, `build` skipped). Registry and Git checksum mismatches always fail; other drift is
   re-locked, or fails under `--locked`/`--frozen`. Missing lock fails under
-  `--locked`.
+  `--locked`. The lock records the active feature/development context; changing
+  that graph can require an unlocked update before a frozen build.
 - Flags: `--entry NAME`, `--features a,b`, `--no-default-features`,
   `--registry DIR`, `--locked`, `--offline`, `--frozen`.
 - Limits: remote HTTP registries are not implemented because no registry
@@ -83,13 +85,14 @@ bindings take precedence; `package.name` remains an optional root qualifier.
   exposed only while compiling host build programs and procedural macros;
   package build-script output directories still need isolation when the same
   package is selected in both contexts. Optional build-dependencies are
-  rejected. Library-only roots cannot be built.
+  rejected. Compiled Mettle interface output (`emit: "package"`) requires the
+  self-hosted compiler and reports `error[feature]`; source libraries work today.
   Evidence: `tests/packages.py` cases `coexisting_versions`, `git_source`,
   `host_target_separation` (Release); T002/T003 passed Debug and Release.
 
 ### Build scripts (T002)
 
-`[build] script = "build.mt"` names a Mettle program (compiled for the host
+`build { script: "build.mt" }` names a Mettle program (compiled for the host
 with the hosted `std`, cached like any other program) that runs with the
 package directory as its working directory before consumers compile. Its
 environment adds `METTLE_OUT_DIR` (`target/mettle/out` in the package),
@@ -237,13 +240,51 @@ entry {
 }
 ```
 
-`main` is required in an entry map and supplies both the default executable
-entry and the package's dependency API. `mettle build . -o build/app` selects it;
+`main` is required in an entry map and selects the default entry.
+`mettle build . -o build/app` selects it;
 `mettle build . --entry format -o build/format` selects the other program.
 Strings and maps are alternative forms of the same key, not simultaneous fields.
 
+A source library needs only `kind: "library"`; its entry still defaults to
+`src/main.mt`. For a library and a utility in one package:
+
+```text
+name: "geometry"
+version: "1.2.0"
+mettle-version: "0.0.0"
+entry {
+    main {
+        kind: "library"
+        path: "src/main.mt"
+        emit: ["static", "shared"]
+    }
+    inspect: "tools/inspect.mt"
+}
+```
+
+`kind` selects library versus executable semantics, independently of source
+path or whether a function is named `main`. Libraries do not require or emit a
+hosted entry wrapper. `pub` controls Mettle API visibility; native callable
+exports use the language's explicit ABI/export declarations.
+`emit` chooses artifacts: libraries default to `"static"`, executables to
+`"executable"`; both also accept `"object"`, `"llvm"`, `"ir"`. Libraries may
+request `"shared"` or `"package"` (the latter is a recognized, unsupported
+self-hosting capability). `--emit FORMAT` overrides the manifest for one build.
+One format writes exactly `-o OUTPUT`. Multiple formats treat OUTPUT as a prefix:
+`.a`, `.so` (Darwin `.dylib`), `.o`, `.ll`, `.ir`, or no suffix for an executable.
+Every format is staged before publication; a failed emission preserves existing
+outputs. Static libraries include the hosted runtime unless freestanding;
+native consumers use a compatible C++ linker and matching sanitizer runtime when
+instrumented. Shared output requires the installed runtime's target.
+
+`mettle-version` is an optional minimum compiler version, not an edition or the
+package's own version. The planner checks the root and every selected dependency
+before compilation and diagnoses an unavailable compiler version at that field.
+Omitting it imposes no additional minimum.
+
 The `.mettle` data grammar has `key: value` fields and `key { ... }` object
-blocks. Keys are ASCII identifiers or quoted strings. Root object braces are
+blocks. Bare keys begin with an ASCII letter or `_`, followed by ASCII letters,
+digits, `_` or `-`; quoted keys allow arbitrary text. Root object braces are
 optional; lists use `[ ... ]`, and object values use `{ ... }`. A newline or
 comma separates entries; trailing commas are accepted. Values are strings,
 signed 64-bit decimal integers, decimal fractional/exponent numbers, booleans,
@@ -312,8 +353,8 @@ depend on those future product decisions.
 
 ## 2. Compilation and build execution
 
-Build records distinguish host and target triples, compiler source/build ID,
-language revision, dependency identities, cfg/features, optimization, overflow/
+Build records distinguish host and target triples, compiler source/build ID and
+version, package compiler requirements, dependency identities, cfg/features, optimization, overflow/
 panic/float policy, allocator/runtime selection, linker/sysroot and environment
 inputs. Generated sources retain generator provenance and content hashes.
 

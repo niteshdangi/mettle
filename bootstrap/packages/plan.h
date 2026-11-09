@@ -19,6 +19,7 @@ struct Request {
   std::string target;
   std::vector<std::string> features;
   bool defaultFeatures = true;
+  bool includeDev = false;
   // `--locked`: the lock may not change; `--offline`: nothing is fetched.
   bool locked = false, offline = false;
   // Extra local registry directories, searched before the manifest's.
@@ -68,8 +69,10 @@ struct Macro {
 struct Plan {
   std::string package, version;
   std::string rootIdentity;
-  // Source file of the selected executable target.
+  // Source file of the selected entry.
   std::string root;
+  std::string kind;
+  std::vector<std::string> emits;
   std::vector<Mount> mounts;
   std::vector<Mount> hostMounts;
   // Build scripts of the root and its dependencies, in resolution order.

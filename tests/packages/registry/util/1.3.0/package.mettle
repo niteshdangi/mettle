@@ -1,2 +1,3 @@
 name: "util"
 version: "1.3.0"
+kind: "library"

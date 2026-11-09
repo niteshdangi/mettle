@@ -274,7 +274,7 @@ public:
           !program.functions[i].blocks.empty() &&
           !program.functions[i].nakedAssembly)
         abi.exportBody(*externals[i], *functions[i], *signatures[i]);
-    if (lowering.freestanding)
+    if (lowering.freestanding || !partition.emitEntry)
       return std::move(module);
     for (std::size_t i = 0; i < functions.size(); ++i)
       if ((!partition.split || partition.packageIdentity.empty()) &&

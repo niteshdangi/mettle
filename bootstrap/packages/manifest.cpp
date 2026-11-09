@@ -244,9 +244,10 @@ std::optional<Manifest> parseManifest(const data::Value &root,
     return std::nullopt;
   }
   reader.known(root, "package.mettle",
-               {"name", "version", "description", "entry", "dependencies",
-                "dev-dependencies", "build-dependencies", "features",
-                "registry", "build", "macros"});
+               {"name", "version", "mettle-version", "description", "kind",
+                "emit", "entry", "dependencies", "dev-dependencies",
+                "build-dependencies", "features", "registry", "build",
+                "macros"});
   const auto *package = &root;
   auto require = [&](const char *key) -> const data::Value * {
     const auto *value = package->find(key);
@@ -276,33 +277,95 @@ std::optional<Manifest> parseManifest(const data::Value &root,
         reader.error(version->span, "invalid SemVer version '" + *text + "'");
     }
   }
-  const auto *entry = root.find("entry");
-  auto addEntry = [&](const std::string &name, const std::string &path,
-                      Span span) {
+  if (const auto *required = root.find("mettle-version")) {
+    manifest.mettleVersionSpan = required->span;
+    if (const auto *text = reader.string(*required, "'mettle-version'")) {
+      manifest.mettleVersion = parseVersion(*text);
+      if (!manifest.mettleVersion)
+        reader.error(required->span,
+                     "'mettle-version' must be a minimum compiler version in "
+                     "MAJOR.MINOR.PATCH form");
+    }
+  }
+  auto addEntry = [&](const std::string &name, const data::Value *value,
+                      bool primary) {
     if (!validPackageName(name)) {
-      reader.error(span, "invalid entry name '" + name + "'");
+      reader.error(value ? value->key : root.span,
+                   "invalid entry name '" + name + "'");
       return;
     }
+    const auto *fields = value && value->kind == Kind::Object ? value : &root;
+    if (fields != &root)
+      reader.known(*fields, "an entry", {"kind", "path", "emit"});
+    if (fields != &root && !primary && !fields->find("path"))
+      reader.error(fields->span, "a named entry requires 'path'");
+    Span span = value ? value->span : root.span;
+    std::string kind = "executable", path = "src/main.mt";
+    if (const auto *item = fields->find("kind"))
+      if (const auto *text = reader.string(*item, "'kind'"))
+        kind = *text;
+    if (kind != "library" && kind != "executable") {
+      reader.error(span, "entry kind must be 'library' or 'executable'");
+      return;
+    }
+    const auto *file = fields != &root ? fields->find("path") : value;
+    if (file)
+      if (const auto *text = reader.string(*file, "an entry path"))
+        path = *text;
     if (path.empty() || path.find('\0') != std::string::npos) {
       reader.error(span, "an entry must be a nonempty path without NUL bytes");
       return;
     }
-    manifest.targets.push_back({name, "executable", path, span});
-    if (name == "main")
-      manifest.targets.push_back({name, "library", path, span});
+    std::vector<std::string> emits;
+    if (const auto *requested = fields->find("emit")) {
+      auto one = [&](const data::Value &item) {
+        if (const auto *text = reader.string(item, "an emit format")) {
+          bool valid = kind == "library"
+                           ? (*text == "static" || *text == "shared" ||
+                              *text == "package" || *text == "object" ||
+                              *text == "llvm" || *text == "ir")
+                           : (*text == "executable" || *text == "object" ||
+                              *text == "llvm" || *text == "ir");
+          if (!valid)
+            reader.error(item.span, "emit format '" + *text +
+                                        "' is incompatible with '" + kind +
+                                        "'");
+          else if (std::find(emits.begin(), emits.end(), *text) != emits.end())
+            reader.error(item.span, "duplicate emit format '" + *text + "'");
+          else
+            emits.push_back(*text);
+        }
+      };
+      if (requested->kind == Kind::Array) {
+        for (const auto &item : requested->array)
+          one(item);
+        if (requested->array.empty())
+          reader.error(requested->span, "'emit' must not be empty");
+      } else
+        one(*requested);
+    } else
+      emits.push_back(kind == "library" ? "static" : "executable");
+    manifest.targets.push_back({name, kind, path, span, std::move(emits)});
   };
+  const auto *entry = root.find("entry");
   if (entry && entry->kind == Kind::Object) {
+    if (root.find("kind") || root.find("emit"))
+      reader.error(entry->span,
+                   "an entry map declares 'kind' and 'emit' per entry");
     if (!entry->find("main"))
       reader.error(entry->span, "an entry map must define 'main'");
     for (const auto &[name, value] : entry->object)
-      if (const auto *path = reader.string(value, "an entry path"))
-        addEntry(name, *path, value.key);
+      addEntry(name, &value, name == "main");
   } else if (entry) {
-    if (const auto *path = reader.string(*entry, "'entry'"))
-      addEntry("main", *path, entry->span);
-  } else if (std::filesystem::exists(std::filesystem::path(directory) /
+    addEntry("main", entry, true);
+  } else if (root.find("kind") || root.find("emit") ||
+             std::filesystem::exists(std::filesystem::path(directory) /
                                      "src/main.mt"))
-    addEntry("main", "src/main.mt", package->span);
+    addEntry("main", nullptr, true);
+  if (std::count_if(
+          manifest.targets.begin(), manifest.targets.end(),
+          [](const Target &target) { return target.kind == "library"; }) > 1)
+    reader.error(root.span, "a package has at most one library entry");
   if (const auto *table = root.find("dependencies"))
     reader.dependencies(*table, "dependencies", manifest.dependencies);
   if (const auto *table = root.find("build-dependencies"))
@@ -314,6 +377,10 @@ std::optional<Manifest> parseManifest(const data::Value &root,
                    "optional build-dependencies are not supported");
   if (const auto *table = root.find("dev-dependencies"))
     reader.dependencies(*table, "dev-dependencies", manifest.devDependencies);
+  for (const auto &dependency : manifest.devDependencies)
+    if (dependency.optional)
+      reader.error(dependency.span,
+                   "development dependencies cannot be optional");
   if (const auto *registry = root.find("registry")) {
     if (registry->kind != Kind::Object ||
         !reader.known(*registry, "[registry]", {"path"}))

@@ -200,7 +200,7 @@ private:
     auto begin = pos;
     if (!identifierStart(peek()))
       fail(pos, "expected an identifier or quoted key");
-    while (identifierPart(peek()))
+    while (identifierPart(peek()) || peek() == '-')
       ++pos;
     return text.substr(begin, pos - begin);
   }

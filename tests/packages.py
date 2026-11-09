@@ -169,7 +169,7 @@ def configured_entry():
     output = evidence / "inspect"
     invoke(["build", app, "--entry", "inspect", "-o", output])
     assert exit_code(output) == 42
-    for field in ('targets {}', 'entries {}', 'language: "mettle-1"'):
+    for field in ('targets {}', 'entries {}', 'language: "0.0.0"'):
         manifest.write_text(original + field + '\n')
         invoke(["check", app], 1, "unknown key")
     for value in ('{ kind: "executable", source: "inspect.mt" }', 'none', '""'):
@@ -180,6 +180,104 @@ def configured_entry():
     invoke(["check", app], 1, "nonempty path")
     manifest.write_text(original.replace('entry: "app.mt"', 'entry { inspect: "inspect.mt" }'))
     invoke(["check", app], 1, "an entry map must define 'main'")
+
+
+def mettle_version():
+    app = packages("path-dependency/app")
+    manifest = app / "package.mettle"
+    original = manifest.read_text()
+    current = re.search(r"\b(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)", invoke(["--version"])).group(1)
+    manifest.write_text(original + f'mettle-version: "{current}"\n')
+    invoke(["check", app])
+    for value in ('"1"', '"mettle-1"', '"^1.0.0"', '1', 'none'):
+        manifest.write_text(original + f'mettle-version: {value}\n')
+        invoke(["check", app], 1, ["error[package]", "mettle-version"])
+    future = str(int(current.split('.')[0]) + 1) + ".0.0"
+    manifest.write_text(original + f'mettle-version: "{future}"\n')
+    text = invoke(["check", app], 1, ["error[feature]", f"requires Mettle {future}"])
+    assert re.search(r"package\.mettle:\d+:\d+: error\[feature\]", text), text
+    manifest.write_text(original)
+    dependency = packages("path-dependency/units/package.mettle")
+    dependency.write_text(dependency.read_text() + f'mettle-version: "{future}"\n')
+    invoke(["check", app], 1, ["error[feature]", "package 'units'"])
+
+
+def library_entries():
+    app = packages("path-dependency/app")
+    manifest = app / "package.mettle"
+    original = 'name: "native-library"\nversion: "1.0.0"\nkind: "library"\n'
+    manifest.write_text(original)
+    (app / "src/main.mt").write_text('@export_name("mettle_answer")\nextern "C" fn answer(value: i32): i32 { value + 2 }\n')
+    invoke(["check", app])
+    cxx = os.environ.get("CXX") or shutil.which("clang++")
+    assert cxx, "the pinned Clang C++ linker must be on PATH or CXX"
+    caller = evidence / "caller.cpp"
+    caller.write_text('extern "C" int mettle_answer(int);\nint main() { return mettle_answer(40) - 42; }\n')
+    shared_suffix = ".dylib" if sys.platform == "darwin" else ".so"
+    for profile in ("debug", "release"):
+        prefix = evidence / ("native-" + profile)
+        manifest.write_text(original + 'emit: ["static", "shared", "llvm"]\n')
+        invoke(["build", app, "-o", prefix, "--profile", profile])
+        for suffix in (".a", shared_suffix):
+            executable = evidence / ("caller-" + profile + suffix)
+            result = subprocess.run([cxx, "-fuse-ld=lld", str(caller), str(prefix) + suffix,
+                                     "-Wl,-rpath," + str(prefix.parent), "-pthread", "-o", str(executable)], capture_output=True, text=True, timeout=60)
+            assert result.returncode == 0, result.stderr
+            assert exit_code(executable) == 0
+        assert 'define i32 @main(' not in Path(str(prefix) + ".ll").read_text()
+    invoke(["run", app], 1, "a library entry cannot emit an executable")
+    invoke(["build", app, "--emit", "executable", "-o", evidence / "bad"], 1,
+           "a library entry cannot emit an executable")
+    invoke(["build", app, "--emit", "package", "-o", evidence / "bad"], 1,
+           "error[feature]")
+    manifest.write_text(original + 'emit: "package"\n')
+    invoke(["check", app])
+    manifest.write_text(original)
+    freestanding = evidence / "freestanding.a"
+    invoke(["build", app, "-o", freestanding, "--freestanding", "--cc", "missing-mettle-linker"])
+    result = subprocess.run([cxx, "-fuse-ld=lld", str(caller), str(freestanding), "-o", str(evidence / "freestanding")],
+                            capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert exit_code(evidence / "freestanding") == 0
+    prefix = evidence / "preserved"
+    Path(str(prefix) + ".ll").write_text("existing output")
+    manifest.write_text(original + 'emit: ["llvm", "shared"]\n')
+    invoke(["build", app, "--cc", "missing-mettle-linker", "-o", prefix], 1, "error[link]")
+    assert Path(str(prefix) + ".ll").read_text() == "existing output"
+    manifest.write_text('name: "native-library"\nversion: "1.0.0"\nentry {\n'
+                        'main { kind: "library", path: "src/main.mt" }\n'
+                        'inspect: "inspect.mt"\n}\n')
+    (app / "inspect.mt").write_text("fn main(): i32 { 42 }\n")
+    output = evidence / "inspect"
+    invoke(["build", app, "--entry", "inspect", "-o", output])
+    assert exit_code(output) == 42
+    invoke(["build", app, "--entry", "inspect", "--emit", "static", "-o", output], 1,
+           "library emission requires a library entry")
+    for field in ('kind: "library"', 'emit: "object"'):
+        manifest.write_text(manifest.read_text() + field + '\n')
+        invoke(["check", app], 1, "declares 'kind' and 'emit' per entry")
+        manifest.write_text(manifest.read_text().rsplit(field, 1)[0])
+    for field in ('emit: []', 'emit: ["static", "static"]', 'emit: "executable"', 'kind: "bad"'):
+        manifest.write_text('name: "native-library"\nversion: "1.0.0"\n' +
+                            ('kind: "library"\n' if not field.startswith('kind:') else '') + field + '\n')
+        invoke(["check", app], 1, "error[package]")
+
+
+def development_dependencies():
+    app = packages("path-dependency/app")
+    manifest = app / "package.mettle"
+    original = manifest.read_text()
+    manifest.write_text(original + 'dev-dependencies { extra: "../../features/extra" }\n')
+    (app / "src/main.mt").write_text('fn main(): i32 { 0 }\n')
+    current = re.search(r"\b(\d+)\.\d+\.\d+", invoke(["--version"]))
+    future = str(int(current.group(1)) + 1) + ".0.0"
+    extra = packages("features/extra/package.mettle")
+    extra.write_text(extra.read_text() + f'mettle-version: "{future}"\n')
+    invoke(["check", app])
+    for command in ("test", "bench"):
+        invoke([command, app], 1, ["error[feature]", f"package 'extra' requires Mettle {future}"])
+    (app / "src/main.mt").write_text('import extra.value\nfn main(): i32 { value() }\n')
+    invoke(["check", app], 1, "error[name]")
 
 
 def missing_lock_locked():
@@ -286,7 +384,7 @@ def git_source():
     (repository / "src").mkdir()
     (app / "src").mkdir()
     (repository / "package.mettle").write_text(
-        'name: "gitlib"\nversion: "0.1.0"\n')
+        'name: "gitlib"\nversion: "0.1.0"\nkind: "library"\n')
     (repository / "src/main.mt").write_text("pub fn value(): i32 { 7 }\n")
     (app / "src/main.mt").write_text(
         "fn main(): i32 { gitlib.value() - 7 }\n")
@@ -372,6 +470,7 @@ def data_format():
     invoke(["check", app])
     cases = [
         ('name: "a"\nname: "b"\n', "duplicate key 'name'"),
+        ('mettle-version: "0.0.0"\n"mettle-version": "1.0.0"\n', "duplicate key 'mettle-version'"),
         ('name: "a" version: "0.1.0"\n', "between entries"),
         ('name: "a"\nversion: ["0.1.0"\n', "unterminated list"),
         ('name: "a"\ndependencies {\n', "unterminated object"),
@@ -727,7 +826,7 @@ def public_declarative_macro_dependency():
         'name: "macro-app"\nversion: "0.1.0"\n'
         'dependencies { units: "../units" }\n')
     (dependency / "package.mettle").write_text(
-        'name: "units"\nversion: "0.1.0"\n')
+        'name: "units"\nversion: "0.1.0"\nkind: "library"\n')
     (app / "src/main.mt").write_text(
         "import package.units.value\n"
         "fn main(): i32 { value!() - 42 }\n")
@@ -1861,7 +1960,7 @@ def test_json_timeout_and_modules():
 
 CASES = [cyclic_module_macro_definition,
          path_dependency, restricted_dependency_visibility, nested_dependency_imports,
-         configured_entry,
+         configured_entry, mettle_version, library_entries, development_dependencies,
          missing_lock_locked, lock_corruption,
          registry_resolution, version_conflict, backtracking, offline, features,
          coexisting_versions, git_source, host_target_separation,

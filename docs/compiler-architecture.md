@@ -14,7 +14,12 @@ justified by an independently owned/released product, not by folder size.
 `bootstrap/` contains the C++ seed/reference compiler. `compiler/` contains the
 Mettle implementation. Compiler packages use `src/main.mt` as their default
 entry, with imports loading supporting modules; no separate library aggregator
-is required. The component table below describes the C++ bootstrap.
+is required. `kind: "library"` marks source packages that provide dependency APIs;
+entry maps can pair that library with named executables. The package planner
+owns manifest/version/entry validation; the driver selects requested artifacts
+and publishes outputs; the LLVM adapter suppresses hosted entry wrappers for
+libraries. Runtime archives are position independent for native shared output.
+The component table below describes the C++ bootstrap.
 
 The current compiler targets and direct link dependencies live in `CMakeLists.txt`.
 CMake discovers sources within each component directory. Include isolation,

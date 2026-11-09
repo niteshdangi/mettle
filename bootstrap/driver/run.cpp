@@ -437,6 +437,7 @@ packages::Request packageRequest(const Options &options) {
   packages::Request request;
   request.input = options.input;
   request.target = options.entry;
+  request.includeDev = !options.harness.empty();
   request.features = options.features;
   request.defaultFeatures = options.defaultFeatures;
   request.locked = options.locked;
@@ -525,6 +526,24 @@ int build(const Options &requested,
       return 1;
     }
     input = outcome.plan->root;
+    options.library =
+        outcome.plan->kind == "library" && options.harness.empty();
+    if (!options.emitExplicit && options.harness.empty()) {
+      options.emits = outcome.plan->emits;
+      options.emit = outcome.plan->emits.front();
+    }
+    if (options.library && options.emit == "executable") {
+      std::cerr << "mettle: error[package]: a library entry cannot emit an "
+                   "executable\n";
+      return 1;
+    }
+    if (!options.library &&
+        (options.emit == "static" || options.emit == "shared" ||
+         options.emit == "package")) {
+      std::cerr << "mettle: error[package]: library emission requires a "
+                   "library entry\n";
+      return 1;
+    }
     macros = outcome.plan->macros;
     packageDependencies = outcome.plan->dependencies;
     hostPackages = outcome.plan->hostMounts;
@@ -565,6 +584,30 @@ int build(const Options &requested,
   if (!buffer) {
     std::cerr << "mettle: error[io]: cannot read " << input << ": "
               << buffer.getError().message() << '\n';
+    return 1;
+  }
+  if (!packageInput(options) &&
+      (options.emit == "static" || options.emit == "shared" ||
+       options.emit == "package"))
+    options.library = true;
+  auto requestsEmit = [&](const std::string &format) {
+    return options.emit == format ||
+           std::find(options.emits.begin(), options.emits.end(), format) !=
+               options.emits.end();
+  };
+  if (options.command == "build" && options.freestanding &&
+      (requestsEmit("executable") || requestsEmit("shared"))) {
+    std::cerr << "mettle: error[feature]: freestanding builds emit static, "
+                 "object, LLVM or IR output\n";
+    return 1;
+  }
+  if (options.command == "build" &&
+      (options.emit == "package" ||
+       std::find(options.emits.begin(), options.emits.end(), "package") !=
+           options.emits.end())) {
+    std::cerr
+        << "mettle: error[feature]: compiled Mettle package interfaces require "
+           "the self-hosted compiler; source dependencies remain supported\n";
     return 1;
   }
   std::error_code pathError;
@@ -681,6 +724,7 @@ int build(const Options &requested,
   // `-g` builds are never cached: paths and the Darwin dSYM are outputs that
   // the cache does not store.
   if (tree && options.command == "build" && !options.debugInfo &&
+      options.emits.size() <= 1 &&
       (options.emit == "executable" || options.emit == "object")) {
     if (!store)
       store = openStore(options);
@@ -722,10 +766,11 @@ int build(const Options &requested,
     };
   }
   auto program =
-      tree ? pipeline::compile(std::move(*tree), diagnostics,
-                               !options.freestanding, facts, observer,
-                               packageOwners, backend::evaluateNumeric)
-           : std::nullopt;
+      tree
+          ? pipeline::compile(std::move(*tree), diagnostics,
+                              !options.freestanding && !options.library, facts,
+                              observer, packageOwners, backend::evaluateNumeric)
+          : std::nullopt;
   if (!program) {
     diagnostics.print(source, std::cerr);
     return 1;
@@ -743,11 +788,11 @@ int build(const Options &requested,
   // bodies have no single owning object; such programs use one object.
   bool splitPackages =
       options.command == "build" && options.emit == "executable" &&
-      options.profile == "debug" && !options.debugInfo &&
-      options.sanitizers.empty() && options.harness.empty() &&
-      !options.freestanding && !options.packageContext &&
-      irProgram.globalAssembly.empty() && irProgram.coroutines.empty() &&
-      inputs.packageObjectsSafe() &&
+      options.emits.size() <= 1 && options.profile == "debug" &&
+      !options.debugInfo && options.sanitizers.empty() &&
+      options.harness.empty() && !options.freestanding &&
+      !options.packageContext && irProgram.globalAssembly.empty() &&
+      irProgram.coroutines.empty() && inputs.packageObjectsSafe() &&
       irProgram.functionPackages.size() == irProgram.functions.size() &&
       irProgram.staticPackages.size() == irProgram.statics.size();
   std::map<std::string, const resolution::Library::Package *> packagesById;

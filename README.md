@@ -16,7 +16,8 @@ for current obligations and revision-scoped evidence.
 `bootstrap/` contains the C++ seed/reference compiler; `compiler/` contains the
 Mettle implementation in progress. Packages use optional `package.mettle`
 configuration and generated `lock.mettle`, with `src/main.mt` as the default
-entry for code and public APIs. See the
+entry. Library packages declare `kind: "library"` and expose their public APIs
+from that entry. See the
 [package format](docs/tooling-and-packages.md#1-manifest-and-identity).
 
 ## Building the compiler

@@ -62,6 +62,7 @@ set(METTLE_RUNTIME_SOURCES runtime/panic.cpp runtime/panic.h
   runtime/alloc.cpp runtime/alloc.h runtime/sys.cpp runtime/sys.h
   runtime/thread.cpp runtime/thread.h)
 add_library(mettle_runtime STATIC ${METTLE_RUNTIME_SOURCES})
+set_target_properties(mettle_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(APPLE)
   target_compile_options(mettle_runtime PRIVATE
     "-mmacosx-version-min=${METTLE_MACOS_DEPLOYMENT_TARGET}")
@@ -69,6 +70,7 @@ endif()
 target_compile_options(mettle_runtime PRIVATE -Wall -Wextra -Wpedantic -Werror)
 function(add_mettle_runtime_variant target sanitizer)
   add_library(${target} STATIC ${METTLE_RUNTIME_SOURCES})
+  set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
   if(APPLE)
     target_compile_options(${target} PRIVATE
       "-mmacosx-version-min=${METTLE_MACOS_DEPLOYMENT_TARGET}")
@@ -160,6 +162,7 @@ target_link_libraries(mettle_lsp PUBLIC mettle_syntax mettle_expansion mettle_re
 target_link_libraries(mettle_cleanup PUBLIC mettle_ir mettle_types mettle_places mettle_support)
 target_link_libraries(mettle_backend_llvm PUBLIC mettle_ir mettle_cleanup mettle_types mettle_source mettle_support)
 target_link_libraries(mettle_packages PUBLIC mettle_source mettle_diagnostics mettle_support)
+target_compile_definitions(mettle_packages PRIVATE METTLE_VERSION="${PROJECT_VERSION}")
 target_link_libraries(mettle PUBLIC mettle_source mettle_diagnostics mettle_syntax mettle_expansion mettle_documentation mettle_resolution mettle_packages mettle_ir mettle_types mettle_semantics mettle_lint mettle_pipeline mettle_lsp mettle_backend_llvm mettle_support)
 target_include_directories(mettle_backend_llvm SYSTEM PUBLIC ${LLVM_INCLUDE_DIRS})
 target_link_libraries(mettle_backend_llvm PUBLIC ${METTLE_LLVM_LIBRARIES})

@@ -5,3 +5,4 @@ features {
     host: []
     target: []
 }
+kind: "library"

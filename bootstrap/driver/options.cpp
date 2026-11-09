@@ -32,7 +32,7 @@ void usage() {
          "exits 1 on a denied finding; @allow/@warn/@deny(RULE) on a function "
          "overrides the flags inside it)\n"
          "       mettle build FILE -o OUTPUT [--emit "
-         "executable|object|llvm|ir]\n"
+         "executable|static|shared|object|llvm|ir|package]\n"
          "         [--profile debug|release] [--overflow-checks on|off]\n"
          "         [--target TRIPLE] [--cc CXX] [--sysroot PATH]\n"
          "         [--library-dir PATH] [--features a,b]\n"
@@ -40,7 +40,8 @@ void usage() {
          "(instrument emitted programs)\n"
          "         [-g] (source-level DWARF; on Darwin an executable also gets "
          "OUTPUT.dSYM from dsymutil)\n"
-         "         [--freestanding] (object/LLVM/IR output, aborting panics, "
+         "         [--freestanding] (static/object/LLVM/IR output, aborting "
+         "panics, "
          "no implicit hosted entry)\n"
          "       mettle check|build PACKAGE_DIR|package.mettle [-o OUTPUT]\n"
          "         [--entry NAME] [--features a,b] [--no-default-features]\n"
@@ -179,9 +180,10 @@ std::optional<Options> options(int argc, char **argv) {
         result.lintLevels.emplace_back(arg.substr(2), value);
       } else if (arg == "-o")
         result.output = value;
-      else if (arg == "--emit")
+      else if (arg == "--emit") {
         result.emit = value;
-      else if (arg == "--profile") {
+        result.emitExplicit = true;
+      } else if (arg == "--profile") {
         result.profile = value;
         profileGiven = true;
       } else if (arg == "--target")
@@ -247,8 +249,6 @@ std::optional<Options> options(int argc, char **argv) {
     result.profile = "release";
   if ((result.input.empty() && result.command != "clean") ||
       (result.check && result.command != "fmt") ||
-      (result.freestanding && result.command == "build" &&
-       result.emit == "executable") ||
       (result.command == "build" && result.output.empty()) ||
       ((result.command == "run" || selection) &&
        (!result.output.empty() || result.emit != "executable" ||
@@ -256,7 +256,9 @@ std::optional<Options> options(int argc, char **argv) {
       (result.includeIgnored && result.onlyIgnored) ||
       (result.profile != "debug" && result.profile != "release") ||
       (result.emit != "executable" && result.emit != "object" &&
-       result.emit != "llvm" && result.emit != "ir"))
+       result.emit != "static" && result.emit != "shared" &&
+       result.emit != "package" && result.emit != "llvm" &&
+       result.emit != "ir"))
     return std::nullopt;
   return result;
 }

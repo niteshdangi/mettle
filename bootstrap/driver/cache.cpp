@@ -138,6 +138,7 @@ BuildInputs::key(const Options &options,
   add("mettle-build-key-1");
   add(compilerIdentity());
   add(options.emit);
+  add(options.library ? "library" : "executable");
   add(options.profile);
   add(options.checks.value_or(options.profile != "release") ? "checks"
                                                             : "wrap");

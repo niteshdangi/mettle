@@ -46,6 +46,7 @@ struct Problem {
   Candidate root;
   std::vector<std::string> features;
   bool defaultFeatures = true;
+  bool includeDev = false;
   // Versions pinned by an existing lock; preferred while they still satisfy.
   std::map<std::string, std::vector<Version>> preferred;
 };

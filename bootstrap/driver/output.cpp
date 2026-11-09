@@ -4,6 +4,8 @@
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Object/Archive.h"
+#include "llvm/Object/ArchiveWriter.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
@@ -60,13 +62,16 @@ std::string runtimePath(const Options &options) {
 
 // Reports why the runtime library and native link are unavailable, if so.
 std::optional<std::string> linkUnavailable(const Options &options,
-                                           std::string &compiler) {
+                                           std::string &compiler,
+                                           bool needsLinker = true) {
   const auto runtime = runtimePath(options);
   if (!sameRuntimeTarget(options.target, METTLE_RUNTIME_TARGET))
     return std::string("runtime is built for ") + METTLE_RUNTIME_TARGET +
            "; use --emit object and link with a target runtime";
   if (!llvm::sys::fs::exists(runtime))
     return std::string("runtime library ") + runtime + " is missing";
+  if (!needsLinker)
+    return std::nullopt;
   auto found = llvm::sys::findProgramByName(options.cc);
   if (!found)
     return "cannot find selected C++ linker";
@@ -80,10 +85,11 @@ int ioFailure(const std::string &action, const std::error_code &error) {
   return 1;
 }
 } // namespace
-int emit(const Options &options, const Source &source,
-         const ir::VerifiedProgram &program, const Diagnostics &diagnostics,
-         const std::vector<PackageObject> &packageObjects,
-         packages::Store *store) {
+static int emitOne(const Options &options, const Source &source,
+                   const ir::VerifiedProgram &program,
+                   const Diagnostics &diagnostics,
+                   const std::vector<PackageObject> &packageObjects,
+                   packages::Store *store) {
   std::error_code fileError;
   auto inputPath = std::filesystem::weakly_canonical(source.path, fileError);
   if (!fileError && inputPath == std::filesystem::weakly_canonical(
@@ -92,8 +98,11 @@ int emit(const Options &options, const Source &source,
     return 1;
   }
   std::string linker;
-  if (options.emit == "executable")
-    if (auto reason = linkUnavailable(options, linker)) {
+  const bool nativeLink =
+      options.emit == "executable" || options.emit == "shared";
+  const bool archive = options.emit == "static";
+  if (nativeLink || (archive && !options.freestanding))
+    if (auto reason = linkUnavailable(options, linker, nativeLink)) {
       std::cerr << "mettle: error[link]: " << *reason << '\n';
       return 1;
     }
@@ -187,7 +196,8 @@ int emit(const Options &options, const Source &source,
         program, context, checked, options.target, options.freestanding,
         options.debugInfo && options.emit != "ir" ? &debugRequest : nullptr,
         options.sanitizers.contains("address"),
-        options.sanitizers.contains("thread"), {splitPackages, {}});
+        options.sanitizers.contains("thread"),
+        {splitPackages, {}, !options.library});
     module->setSourceFileName(source.path);
     module->setTargetTriple(
         llvm::Triple(llvm::Triple::normalize(options.target)));
@@ -217,7 +227,7 @@ int emit(const Options &options, const Source &source,
       TemporaryDirectory work;
       std::string objectPath = output.path.str().str(), linked;
       std::filesystem::path directory;
-      if (options.emit == "executable") {
+      if (nativeLink || archive) {
         std::error_code absoluteError;
         const auto beside =
             std::filesystem::absolute(options.output, absoluteError).string();
@@ -304,9 +314,65 @@ int emit(const Options &options, const Source &source,
                   << backendDiagnostics.text;
         return 1;
       }
-      if (options.emit == "executable") {
+      if (archive) {
+        std::vector<llvm::NewArchiveMember> members;
+        auto object = llvm::NewArchiveMember::getFile(objectPath, true);
+        if (!object) {
+          std::cerr << "mettle: error[io]: "
+                    << llvm::toString(object.takeError()) << '\n';
+          return 1;
+        }
+        object->MemberName = "main.o";
+        members.push_back(std::move(*object));
+        std::unique_ptr<llvm::MemoryBuffer> runtimeBuffer;
+        std::unique_ptr<llvm::object::Archive> runtimeArchive;
+        if (!options.freestanding) {
+          auto buffer = llvm::MemoryBuffer::getFile(runtimePath(options));
+          if (!buffer)
+            return ioFailure("cannot read runtime archive", buffer.getError());
+          runtimeBuffer = std::move(*buffer);
+          auto runtime =
+              llvm::object::Archive::create(runtimeBuffer->getMemBufferRef());
+          if (!runtime) {
+            std::cerr << "mettle: error[link]: "
+                      << llvm::toString(runtime.takeError()) << '\n';
+            return 1;
+          }
+          runtimeArchive = std::move(*runtime);
+          llvm::Error error = llvm::Error::success();
+          for (const auto &child : runtimeArchive->children(error)) {
+            auto member = llvm::NewArchiveMember::getOldMember(child, true);
+            if (!member) {
+              llvm::consumeError(std::move(error));
+              std::cerr << "mettle: error[link]: "
+                        << llvm::toString(member.takeError()) << '\n';
+              return 1;
+            }
+            members.push_back(std::move(*member));
+          }
+          if (error) {
+            std::cerr << "mettle: error[link]: "
+                      << llvm::toString(std::move(error)) << '\n';
+            return 1;
+          }
+        }
+        if (auto error = llvm::writeArchive(
+                output.path, members, llvm::SymtabWritingMode::NormalSymtab,
+                llvm::object::Archive::getDefaultKindForTriple(target), true,
+                false)) {
+          std::cerr << "mettle: error[link]: "
+                    << llvm::toString(std::move(error)) << '\n';
+          return 1;
+        }
+      } else if (nativeLink) {
         std::vector<std::string> arguments{linker,
                                            "--target=" + options.target};
+        if (options.emit == "shared")
+          arguments.push_back(target.isOSDarwin() ? "-dynamiclib" : "-shared");
+        if (options.emit == "shared" && target.isOSDarwin())
+          arguments.push_back(
+              "-Wl,-install_name,@rpath/" +
+              std::filesystem::path(options.output).filename().string());
         arguments.insert(arguments.end(), packagePaths.begin(),
                          packagePaths.end());
         arguments.push_back(objectPath);
@@ -390,6 +456,116 @@ int emit(const Options &options, const Source &source,
     return 1;
   }
   output.path.clear();
+  return 0;
+}
+
+int emit(const Options &options, const Source &source,
+         const ir::VerifiedProgram &program, const Diagnostics &diagnostics,
+         const std::vector<PackageObject> &packageObjects,
+         packages::Store *store) {
+  if (options.emits.size() <= 1)
+    return emitOne(options, source, program, diagnostics, packageObjects,
+                   store);
+  namespace fs = std::filesystem;
+  TemporaryDirectory work;
+  if (auto error = work.create(options.output + ".mettle-outputs"))
+    return ioFailure("cannot stage requested outputs", error);
+  const fs::path directory(work.path.str().str());
+  std::error_code directoryError;
+  fs::create_directory(directory / "outputs", directoryError);
+  if (!directoryError)
+    fs::create_directory(directory / "backups", directoryError);
+  if (directoryError)
+    return ioFailure("cannot prepare output staging", directoryError);
+  struct Artifact {
+    fs::path destination, staged, backup;
+    bool existed = false, directory = false;
+  };
+  std::vector<Artifact> artifacts;
+  const llvm::Triple target(options.target);
+  for (const auto &format : options.emits) {
+    const auto suffix = format == "static" ? ".a"
+                        : format == "shared"
+                            ? (target.isOSDarwin() ? ".dylib" : ".so")
+                        : format == "object" ? ".o"
+                        : format == "llvm"   ? ".ll"
+                        : format == "ir"     ? ".ir"
+                                             : "";
+    Artifact artifact;
+    artifact.destination = options.output + suffix;
+    artifact.staged = directory / "outputs" / artifact.destination.filename();
+    artifact.backup =
+        directory / "backups" / ("backup-" + std::to_string(artifacts.size()));
+    std::error_code error;
+    if (fs::equivalent(source.path, artifact.destination, error)) {
+      std::cerr << "mettle: error[io]: output would overwrite the source\n";
+      return 1;
+    }
+    error.clear();
+    artifact.existed = fs::exists(artifact.destination, error);
+    if (error)
+      return ioFailure("cannot inspect output", error);
+    if (artifact.existed) {
+      fs::copy_file(artifact.destination, artifact.backup, error);
+      if (error)
+        return ioFailure("cannot preserve existing output", error);
+    }
+    Options selected = options;
+    selected.emit = format;
+    selected.output = artifact.staged.string();
+    if (int status = emitOne(selected, source, program, diagnostics, {}, store))
+      return status;
+    artifacts.push_back(std::move(artifact));
+    const auto bundle = selected.output + ".dSYM";
+    if (fs::exists(bundle, error)) {
+      Artifact symbols;
+      symbols.staged = bundle;
+      symbols.destination = options.output + suffix + std::string(".dSYM");
+      symbols.backup = directory / "backups" /
+                       ("backup-" + std::to_string(artifacts.size()));
+      symbols.existed = fs::exists(symbols.destination, error);
+      if (error)
+        return ioFailure("cannot inspect debug bundle", error);
+      symbols.directory = true;
+      artifacts.push_back(std::move(symbols));
+    }
+    if (error)
+      return ioFailure("cannot inspect staged debug bundle", error);
+  }
+  for (std::size_t i = 0; i < artifacts.size(); ++i) {
+    const auto &artifact = artifacts[i];
+    std::error_code error;
+    bool savedDirectory = false;
+    if (artifact.directory && artifact.existed) {
+      error = llvm::sys::fs::rename(artifact.destination.string(),
+                                    artifact.backup.string());
+      savedDirectory = !error;
+    }
+    if (!error)
+      error = llvm::sys::fs::rename(artifact.staged.string(),
+                                    artifact.destination.string());
+    if (error) {
+      for (std::size_t j = 0; j <= i; ++j) {
+        std::error_code restore;
+        const auto &previous = artifacts[j];
+        if (j == i && previous.directory && !savedDirectory)
+          continue;
+        if (previous.directory && previous.existed) {
+          fs::remove_all(previous.destination, restore);
+          if (!restore)
+            fs::rename(previous.backup, previous.destination, restore);
+        } else if (previous.existed)
+          fs::copy_file(previous.backup, previous.destination,
+                        fs::copy_options::overwrite_existing, restore);
+        else
+          fs::remove(previous.destination, restore);
+        if (restore)
+          ioFailure("cannot restore " + previous.destination.string(), restore);
+      }
+      return ioFailure("cannot publish " + artifact.destination.string(),
+                       error);
+    }
+  }
   return 0;
 }
 } // namespace mettle::driver

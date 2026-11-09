@@ -183,6 +183,9 @@ int buildInto(const Options &options, const WorkDirectory &work,
               std::vector<resolution::SourceModule> *sourceModules = nullptr) {
   Options selected = options;
   selected.command = "build";
+  selected.emitExplicit = true;
+  selected.emit = "executable";
+  selected.emits.clear();
   program = work.file("mettle-program").string();
   selected.output = program;
   return build(selected, tests, sourceModules);

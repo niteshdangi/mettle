@@ -329,8 +329,20 @@ private:
   }
 
   bool validate(const Resolution &resolution) {
+    const auto compilerVersion = parseVersion(METTLE_VERSION);
+    if (!compilerVersion) {
+      diagnostics.error("internal", {},
+                        "compiler build has an invalid version");
+      return false;
+    }
     for (const auto &package : resolution.packages) {
       const auto &manifest = *package.candidate.manifest;
+      if (manifest.mettleVersion &&
+          compare(*compilerVersion, *manifest.mettleVersion) < 0)
+        diagnostics.error("feature", manifest.mettleVersionSpan,
+                          "package '" + manifest.name + "' requires Mettle " +
+                              toString(*manifest.mettleVersion) +
+                              " or newer; running compiler is " METTLE_VERSION);
       if (package.candidate.kind == SourceKind::Root)
         continue;
       const auto *library = manifest.library();
@@ -353,13 +365,11 @@ private:
   std::optional<Plan> build(const std::shared_ptr<const Manifest> &root) {
     const Target *executable = nullptr;
     bool primary = std::any_of(
-        root->targets.begin(), root->targets.end(), [&](const Target &target) {
-          return target.kind == "executable" && target.name == "main";
-        });
+        root->targets.begin(), root->targets.end(),
+        [&](const Target &target) { return target.name == "main"; });
     for (const auto &target : root->targets)
-      if (target.kind == "executable" &&
-          (request.target.empty() ? (!primary || target.name == "main")
-                                  : target.name == request.target)) {
+      if (request.target.empty() ? (!primary || target.name == "main")
+                                 : target.name == request.target) {
         if (executable) {
           diagnostics.error("package", target.span,
                             "several executable targets; select one with "
@@ -369,14 +379,11 @@ private:
         executable = &target;
       }
     if (!executable) {
-      diagnostics.error(
-          "package", root->nameSpan,
-          request.target.empty()
-              ? "package '" + root->name +
-                    "' has no executable target; library-only packages cannot "
-                    "be built on their own yet"
-              : "package '" + root->name + "' has no executable target '" +
-                    request.target + "'");
+      diagnostics.error("package", root->nameSpan,
+                        request.target.empty()
+                            ? "package '" + root->name + "' has no source entry"
+                            : "package '" + root->name + "' has no entry '" +
+                                  request.target + "'");
       return std::nullopt;
     }
     auto rootSource = fs::path(root->directory) / executable->source;
@@ -430,6 +437,7 @@ private:
     solving.root.location = root->directory;
     solving.features = request.features;
     solving.defaultFeatures = request.defaultFeatures;
+    solving.includeDev = request.includeDev;
     if (recorded)
       for (const auto &package : recorded->packages)
         if (auto version = parseVersion(package.version))
@@ -490,6 +498,8 @@ private:
 
     Plan plan;
     plan.package = root->name;
+    plan.kind = executable->kind;
+    plan.emits = executable->emits;
     plan.version = toString(root->version);
     std::error_code error;
     plan.root = fs::canonical(rootSource, error).generic_string();

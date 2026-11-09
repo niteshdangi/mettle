@@ -124,6 +124,9 @@ private:
       for (const auto &dependency : manifest.buildDependencies)
         if (!dependency.optional)
           activate(state, id, chosen.candidate.manifest, dependency, true);
+      if (request.includeDev && chosen.candidate.kind == SourceKind::Root)
+        for (const auto &dependency : manifest.devDependencies)
+          activate(state, id, chosen.candidate.manifest, dependency, false);
       if (!manifest.macros.empty())
         for (const auto &dependency : manifest.dependencies)
           if (!dependency.optional)
@@ -357,6 +360,17 @@ private:
       }
 
       auto options = candidates(edge);
+      const auto &owner = state.chosen.at(edge.from);
+      if (auto selected = owner.dependencies.find({edge.spec->name, edge.host});
+          selected != owner.dependencies.end()) {
+        std::erase_if(options, [&](const Candidate &candidate) {
+          return identity(candidate) != selected->second;
+        });
+        if (options.empty())
+          note(edge.spec->span,
+               "conflicting requirements for dependency alias '" +
+                   edge.spec->name + "'");
+      }
       if (options.empty())
         return false;
       std::vector<Candidate> fresh;

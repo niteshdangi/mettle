@@ -723,6 +723,20 @@ registry sources, checksums, feature selection, `--locked/--offline/--frozen`
 and `mettle check|build` on package directories remain covered by
 `tests/packages.py`.
 
+Package configuration migration (2026-11-09): implemented `.mettle` manifests
+and locks, explicit library/executable entries, native static/shared and multiple
+outputs, minimum `mettle-version`, supporting-module imports and root
+development dependencies. Library fixtures and compiler package manifests use
+explicit library kinds; the self-hosted implementation is unchanged. Focused
+Linux checks pass for entries, native debug/release C++ callers, freestanding
+archives, output preservation, version diagnostics, development-context
+selection, data/lock parsing, nested imports and resolver features/backtracking/
+conflicts. The current package/runtime components and changed driver/backend
+objects build with pinned tools. Execution uses changed bootstrap objects with
+existing unaffected compiler libraries; this is scoped config/ABI evidence,
+not full-current-source qualification. Compiled package interfaces remain I15
+work, excluded from this migration.
+
 I09 T002/T003 baseline: implemented and verified on macOS arm64 (Release and Debug).
 `[build] script` programs run on the host with declared `mettle:` outputs
 (generated modules, features, link libraries) and a `reproducible` input
