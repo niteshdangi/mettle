@@ -8,16 +8,24 @@ result. Unknown target conditions remain blocked instead of counting as passes.
 import argparse
 import csv
 import gzip
+import hashlib
+import io
 import json
 import re
 from collections import Counter
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
 BASELINE = ROOT / "docs" / "baseline"
 COLUMNS = ("canonical_id", "family", "rust_contract", "mettle_path", "status",
            "evidence_test")
 STATUSES = {"missing", "declared", "evidenced", "not-applicable", "blocked"}
+WORKLIST_COLUMNS = (
+    "canonical_id", "disposition", "milestone", "category", "kind",
+    "rust_contract", "signature", "work_unit", "covered_by", "availability",
+    "exposure_urls", "mettle_path", "recorded_v1_status", "evidence_test",
+)
 TYPE_KINDS = {"primitive", "struct", "enum", "type"}
 MEMBER_KINDS = {"method", "tymethod", "associatedtype", "associatedconstant",
                 "constant", "variant", "structfield"}
@@ -236,10 +244,134 @@ def generate(records, previous):
     return sorted(rows, key=lambda row: (row["family"], row["canonical_id"]))
 
 
+def worklist(records, previous):
+    """Reconcile stable contracts without treating members as separate impls."""
+    index = {record["url"]: record for record in records}
+    groups = {}
+    for record in records:
+        if record["runtime_stability"] == "stable":
+            groups.setdefault(record["canonical_id"], []).append(record)
+    selected = {row["canonical_id"] for row in generate(records, previous)}
+    if set(previous) != selected:
+        raise ValueError("V1 ledger and selector differ; reconcile before reporting")
+    shared = {}
+    for identity, exposures in groups.items():
+        retained = [item for item in exposures if not item["deprecated"]]
+        keys = set()
+        for item in retained:
+            if (item["kind"] != "implementation" or not item["implemented_interface"]
+                    or not item.get("source_file") or not item.get("source")
+                    or not urlsplit(item["source"]).fragment):
+                break
+            interface = index.get(item["implemented_interface"])
+            keys.add((item["source_file"], urlsplit(item["source"]).fragment,
+                      item["signature"], interface["canonical_id"] if interface
+                      else item["implemented_interface"]))
+        else:
+            if len(keys) == 1:
+                shared.setdefault(next(iter(keys)), []).append(identity)
+    work_units = {}
+    for identities in shared.values():
+        representative = min(identities, key=lambda identity: (identity not in selected, identity))
+        work_units.update(dict.fromkeys(identities, representative))
+    rows = []
+    for identity, exposures in sorted(groups.items()):
+        retained = [record for record in exposures if not record["deprecated"]]
+        record = min(retained or exposures, key=lambda item: item["url"])
+        dependencies = set()
+        if not retained:
+            disposition, milestone = "excluded-deprecated", ""
+        elif identity in selected:
+            disposition, milestone = "v1-obligation", "I13/I14"
+        elif record["kind"] == "module":
+            disposition, milestone = "namespace", ""
+        elif all(item["kind"] == "implementation"
+                 and item["implemented_interface"] is None for item in retained):
+            disposition, milestone = "covered-by-owner", ""
+            dependencies = {index[item["parent"]]["canonical_id"] for item in retained}
+        elif all(item["interface_member"] and item["context"]
+                 and index[item["context"]]["implemented_interface"]
+                 for item in retained):
+            disposition, milestone = "covered-by-implementation", ""
+            dependencies = {index[item["context"]]["canonical_id"] for item in retained}
+        else:
+            disposition, milestone = "post-v1-obligation", "I17"
+        if dependencies:
+            for dependency in dependencies:
+                if dependency not in groups or not any(
+                        not item["deprecated"] for item in groups[dependency]):
+                    raise ValueError(f"{identity}: uncovered dependency {dependency}")
+            milestone = "I13/I14" if dependencies <= selected else "I17"
+        paths = [item["rust_path"] for item in retained or exposures]
+        if any("::arch::" in path for path in paths):
+            category = "architecture"
+        elif any("::os::" in path for path in paths):
+            category = "os-extension"
+        elif record["kind"] == "implementation":
+            category = "trait-implementation"
+        else:
+            category = "library"
+        old = previous.get(identity, {})
+        rows.append({
+            "canonical_id": identity, "disposition": disposition,
+            "milestone": milestone, "category": category, "kind": record["kind"],
+            "rust_contract": record["contract"], "signature": record["signature"],
+            "work_unit": work_units.get(identity, identity),
+            "covered_by": json.dumps(sorted(dependencies)),
+            "availability": json.dumps(sorted({
+                condition for item in retained or exposures
+                for condition in item["availability"]})),
+            "exposure_urls": json.dumps(sorted({item["url"] for item in exposures})),
+            "mettle_path": old.get("mettle_path", ""),
+            "recorded_v1_status": old.get("status", ""),
+            "evidence_test": old.get("evidence_test", ""),
+        })
+    return rows
+
+
+def worklist_summary(rows, records, manifest, ledger):
+    obligations = [row for row in rows
+                   if row["disposition"] == "post-v1-obligation"]
+    units = {row["work_unit"] for row in obligations}
+    v1_units = {row["work_unit"] for row in rows
+                if row["disposition"] == "v1-obligation"}
+    return {
+        "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        "v1_ledger_sha256": hashlib.sha256(ledger.read_bytes()).hexdigest(),
+        "policy": {
+            "deprecated": "excluded from required scope; reference retained",
+            "platforms": "all reference profiles; source-cfg applicability unreviewed",
+            "deduplication": "canonical identity; widths/signatures preserved",
+            "work_units": "implementation source file/span, exact signature and trait identity",
+            "implementation_members": "retained under their implementation obligation",
+            "v1_membership": "existing selector, not target qualification",
+        },
+        "stable_exposures": sum(r["runtime_stability"] == "stable" for r in records),
+        "stable_canonical_records": len(rows),
+        "dispositions": dict(sorted(Counter(r["disposition"] for r in rows).items())),
+        "post_v1_by_category": dict(sorted(Counter(
+            r["category"] for r in obligations).items())),
+        "post_v1_by_kind": dict(sorted(Counter(r["kind"] for r in obligations).items())),
+        "post_v1_distinct_work_units": len(units),
+        "post_v1_work_units_also_in_v1": len(units & v1_units),
+        "post_v1_work_units_not_in_v1": len(units - v1_units),
+        "work_unit_boundary": "shared implementation code, not shared type/profile evidence",
+        "post_v1_implementation_status": "unreviewed, not assumed missing",
+        "qualification": "no native declaration, execution or per-profile evidence inferred",
+        "not_in_operation_inventory": [
+            "I15 self-hosting", "I16 independent backend",
+            "A009 Rust bridge capability", "profile bootstrap and qualification",
+            "explicit native/supporting-protocol and experience-track obligations",
+        ],
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=BASELINE / "operations.jsonl.gz")
     parser.add_argument("--output", type=Path, default=BASELINE / "v1-operations.csv")
+    parser.add_argument("--remaining", action="store_true",
+                        help="write the reconciled stable scope, not the V1 CSV")
     args = parser.parse_args()
     with gzip.open(args.manifest, "rt") as stream:
         records = [json.loads(line) for line in stream]
@@ -247,6 +379,21 @@ def main():
     if args.output.exists():
         with args.output.open(newline="") as stream:
             previous = {row["canonical_id"]: row for row in csv.DictReader(stream)}
+    if args.remaining:
+        rows = worklist(records, previous)
+        output = BASELINE / "post-v1-worklist.csv.gz"
+        with output.open("wb") as raw:
+            with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed:
+                with io.TextIOWrapper(compressed, encoding="utf-8", newline="") as stream:
+                    writer = csv.DictWriter(stream, fieldnames=WORKLIST_COLUMNS,
+                                            lineterminator="\n")
+                    writer.writeheader()
+                    writer.writerows(rows)
+        summary = worklist_summary(rows, records, args.manifest, args.output)
+        (BASELINE / "post-v1-summary.json").write_text(
+            json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(json.dumps(summary, indent=2, sort_keys=True))
+        return
     rows = generate(records, previous)
     with args.output.open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=COLUMNS, lineterminator="\n")

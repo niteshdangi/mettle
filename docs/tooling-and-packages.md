@@ -630,10 +630,9 @@ into native Mettle builds.
 
 ## 6. Comparison and evidence
 
-Rust already provides mature package/build/test/editor/debugger workflows.
-These are parity requirements, not Mettle's claimed unique language identity;
-build speed and build-cache size are the exception, being accepted gates
-(performance.md section 5.1).
+The command, package, editor and debugger contracts above are required developer
+workflows. Build speed and retained build-cache storage also have measured
+release gates in performance.md section 5.1.
 Feature resolution, caching and richer debug output affect build cost/artifact
 size; no inherent application-speed improvement follows from their spelling.
 Implementation acceptance needs resolver fixtures, invalidation tests, compiler/

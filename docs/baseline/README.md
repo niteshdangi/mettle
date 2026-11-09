@@ -31,6 +31,35 @@ The first also checks the extracted library source set and its contents against
 the verified archive. The tests cover operation selection and native Unit/Never mapping; the
 validator requires generated data and the specification/facility register.
 
+### Reconciled post-V1 scope
+
+Owner amendment (2026-11-09): exclude deprecated APIs from required scope and
+retain all reference profiles for post-V1 applicability review.
+Preserve this frozen reference inventory unchanged. Generate the derived ledger
+and input-hashed summary with:
+
+```sh
+python3 tools/v1_operations.py --remaining
+python3 -m unittest discover -s docs/baseline -p 'test_v1_operations.py'
+```
+
+`--remaining` reads, but does not rewrite, `v1-operations.csv`; it rejects stale
+V1 membership. Outputs are [post-v1-worklist.csv.gz](post-v1-worklist.csv.gz)
+and [post-v1-summary.json](post-v1-summary.json).
+The gzip CSV is UTF-8 and deterministic. Do not hand-edit derived outputs.
+Update the [worklist explanation](../post-v1-worklist.md) and milestone counts
+when inputs change. The ledger retains every stable canonical ID and exposure
+URL, exact signatures, conditions, owning dependencies and recorded V1 evidence.
+Blank evidence is not a missing-code claim. Reexports share a canonical row;
+implementation members remain attached acceptance obligations.
+
+Source file/span, exact signature and trait identity can group implementation
+code into one work unit without removing its distinct type/exposure contracts.
+No grouping discharges per-type/per-profile tests or proves applicability.
+Deprecated-only identities are explicitly excluded; a non-deprecated exposure
+keeps a shared identity required. Modules and inherent blocks are structural,
+not additional ordinary operations. See the explanation for unresolved work.
+
 **Case-insensitive filesystems:** the archive contains case-distinct Hexagon
 declarations. Ordinary extraction may overwrite one with another. The auditor
 enumerates the archive itself and restores mismatches to a hashed
@@ -69,8 +98,11 @@ and other omitted catalog categories are obtained from archive enumeration.
 conditional-family boundaries. Those rules apply recursively to every matching
 shape; the per-record rule list is a discovery/index aid, not a syntactic
 translation program or a waiver for a shape a regular expression did not flag.
-The contract URL incorporates unchanged operation semantics; native rules
-override only the explicitly selected ownership, syntax and facility differences.
+The [native authority register](../baseline-mapping.md#7-native-operation-authority)
+assigns standalone contracts to migrated operations. Their contract URLs retain
+provenance, not semantic authority. For unassigned operations, the contract URL
+still incorporates the selected semantics until a complete native specification
+replaces it. Native ownership, syntax and facility differences remain explicit.
 
 Runtime stability is one of stable, unstable, language_documentation or
 external_implementation. It incorporates direct source attributes, enclosing

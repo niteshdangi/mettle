@@ -119,5 +119,109 @@ class OperationSelectionTests(unittest.TestCase):
         ]}), "not-applicable")
 
 
+class RemainingWorkTests(unittest.TestCase):
+    def reconcile(self, records):
+        previous = {row["canonical_id"]: row for row in v1.generate(records, {})}
+        return {row["canonical_id"]: row for row in v1.worklist(records, previous)}
+
+    def test_excludes_deprecated_but_preserves_live_alias_contract(self):
+        old = record("core::old", "fn", deprecated=True)
+        alias = record("std::old", "fn", canonical_id=old["canonical_id"])
+        rows = self.reconcile([old])
+        self.assertEqual(rows[old["canonical_id"]]["disposition"], "excluded-deprecated")
+        rows = self.reconcile([old, alias])
+        self.assertEqual(rows[old["canonical_id"]]["disposition"], "post-v1-obligation")
+        self.assertEqual(rows[old["canonical_id"]]["rust_contract"], alias["contract"])
+
+    def test_preserves_platform_contracts_and_distinct_signatures(self):
+        windows = record("std::os::windows::first", "fn",
+                         availability=["Available on Windows only."])
+        second = record("std::os::windows::second", "fn")
+        i32 = record("core::other_i32", "fn")
+        u64 = record("core::other_u64", "fn")
+        rows = self.reconcile([windows, second, i32, u64])
+        self.assertEqual(len(rows), 4)
+        self.assertTrue(all(row["disposition"] == "post-v1-obligation"
+                            for row in rows.values()))
+        self.assertEqual(rows[windows["canonical_id"]]["category"], "os-extension")
+        self.assertIn("Windows", rows[windows["canonical_id"]]["availability"])
+
+    def test_impl_members_remain_traceable_under_one_obligation(self):
+        owner = record("alloc::vec::Vec", "struct")
+        trait = record("core::clone::Clone", "trait")
+        implementation = record(
+            "alloc::vec::Vec::impl-Clone", "implementation", owner["url"],
+            trait["url"], signature="impl<T: Clone> Clone for Vec<T>")
+        member = record("alloc::vec::Vec::clone", "method", owner["url"],
+                        context=implementation["url"],
+                        interface_member="core::clone::Clone::clone")
+        rows = self.reconcile([owner, trait, implementation, member])
+        self.assertEqual(rows[implementation["canonical_id"]]["disposition"],
+                         "v1-obligation")
+        self.assertEqual(rows[member["canonical_id"]]["disposition"],
+                         "covered-by-implementation")
+        self.assertIn(implementation["canonical_id"],
+                      rows[member["canonical_id"]]["covered_by"])
+        self.assertEqual(rows[member["canonical_id"]]["milestone"], "I13/I14")
+        # Scope membership must not invent execution evidence.
+        self.assertEqual(rows[member["canonical_id"]]["recorded_v1_status"], "")
+
+    def test_inherent_blocks_attach_to_owner_but_methods_remain_work(self):
+        owner = record("core::extra::Extra", "struct")
+        block = record("core::extra::Extra::impl", "implementation", owner["url"])
+        method = record("core::extra::Extra::run", "method", owner["url"],
+                        context=block["url"])
+        rows = self.reconcile([owner, block, method])
+        self.assertEqual(rows[block["canonical_id"]]["disposition"], "covered-by-owner")
+        self.assertEqual(rows[method["canonical_id"]]["disposition"], "post-v1-obligation")
+
+    def test_shared_source_groups_code_but_keeps_type_contexts(self):
+        first = record("core::extra::First", "struct")
+        second = record("core::extra::Second", "struct")
+        trait = record("core::extra::Trait", "trait")
+        implementations = [
+            record(owner["rust_path"] + "::impl", "implementation", owner["url"],
+                   trait["url"], signature="impl<T> Trait for T",
+                   source_file="core/src/extra.rs",
+                   source="https://example.invalid/extra.rs.html#10-12")
+            for owner in [first, second]]
+        rows = self.reconcile([first, second, trait] + implementations)
+        a, b = [rows[item["canonical_id"]] for item in implementations]
+        self.assertEqual(a["work_unit"], b["work_unit"])
+        self.assertNotEqual(a["canonical_id"], b["canonical_id"])
+        self.assertEqual(a["disposition"], "post-v1-obligation")
+        self.assertEqual(b["disposition"], "post-v1-obligation")
+        implementations[1]["signature"] = "impl<T: Clone> Trait for T"
+        rows = self.reconcile([first, second, trait] + implementations)
+        self.assertNotEqual(*(rows[item["canonical_id"]]["work_unit"]
+                              for item in implementations))
+        implementations[1]["signature"] = implementations[0]["signature"]
+        implementations[1]["source"] = None
+        rows = self.reconcile([first, second, trait] + implementations)
+        self.assertNotEqual(*(rows[item["canonical_id"]]["work_unit"]
+                              for item in implementations))
+
+    def test_rejects_stale_membership_and_uncovered_members(self):
+        owner = record("alloc::vec::Vec", "struct")
+        with self.assertRaisesRegex(ValueError, "selector differ"):
+            v1.worklist([owner], {})
+        extra = record("core::extra::Extra", "struct", deprecated=True)
+        block = record("core::extra::Extra::impl", "implementation", extra["url"])
+        with self.assertRaisesRegex(ValueError, "uncovered dependency"):
+            self.reconcile([extra, block])
+
+    def test_copies_evidence_without_accepting_invalid_receipts(self):
+        owner = record("alloc::vec::Vec", "struct")
+        previous = {owner["canonical_id"]: {
+            "status": "evidenced", "mettle_path": "alloc.vec.List",
+            "evidence_test": "tests/source/run/example.mt"}}
+        row = v1.worklist([owner], previous)[0]
+        self.assertEqual(row["recorded_v1_status"], "evidenced")
+        self.assertEqual(row["evidence_test"], previous[owner["canonical_id"]]["evidence_test"])
+        previous[owner["canonical_id"]]["evidence_test"] = ""
+        with self.assertRaisesRegex(ValueError, "requires a test"):
+            v1.worklist([owner], previous)
+
+
 if __name__ == "__main__":
     unittest.main()

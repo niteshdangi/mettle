@@ -14,6 +14,21 @@ Latest operation ledger (2026-11-09): **8,988 evidenced, 399 declared,
 but not behaviorally verified per type/profile. Subset/source-cfg reconciliation
 and Linux applicability review remain open; no area is closed by these batches.
 
+The [native optional/outcome specification](native-value-contracts.md) now owns
+its explicitly assigned operation contracts. Its
+[source-review findings](native-value-contracts.md#9-acceptance-and-remaining-surfaces)
+retain callback-capability, exclusive-view duplication, Debug extraction and
+constant-evaluation reconciliation as existing I13 obligations. This
+documentation-only migration does not upgrade the ledger's scoped receipts or
+mark those surfaces verified.
+
+Additional native definitions and exact assignment boundaries are in
+[the authority register](baseline-mapping.md#7-native-operation-authority).
+[Core reconciliation findings](native-core-library-contracts.md#153-observed-reconciliation-work)
+and [collection findings](native-collection-contracts.md#12-exact-coverage-and-remaining-work)
+record existing implementation gaps; D30/D31 resolve the default hash policy
+and general borrowed-or-owned identity without upgrading implementation receipts.
+
 | 2026-11-09 batch | Implementation and focused Linux evidence | Remaining obligation |
 | --- | --- | --- |
 | Shared unzip | One `Iterator.unzip` over `Default + ExtendItems`, independent of collections in core. `i13-iter-consumers` passes native/emitted-ASan debug/release: empty input, heterogeneous ordered output, non-Copy movement/drops. Only unzip credited. | Destination-specific allocation/destructor-panic contracts. Declaration checking needs `Self: Iterator<Item = (A, B)>`, explicit `Self.(Iterator).next` and explicit output arguments; equality-only `Self.Item` and result-tuple inference remain unsupported. |

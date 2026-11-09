@@ -6,15 +6,20 @@ implementation receipts. Evidence: [implementation-plan.md](implementation-plan.
 ## 1. What specifies an operation
 
 Each record in baseline/operations.jsonl.gz specifies a public exposure, associated
-operation, or implementation relation. Its reference declaration, source span,
-receiver/implementation context, runtime/const stability and target conditions
-are part of the requirement. Translation below is recursive over that declaration;
-it is not a request for the native parser to accept Rust source.
+operation, or implementation relation. The catalog retains its reference
+declaration, source span, receiver/implementation context, stability and target
+conditions for scope and migration audit. Assigned operations have native
+signatures and behavior in their owning specifications; unassigned operations
+still require recursive translation of the retained declaration.
 
-For unchanged operations the linked versioned contract supplies semantics,
-complexity, panics, unsafe preconditions and allocation/invalidation guarantees.
+For operations assigned native authority in
+[the mapping register](baseline-mapping.md#7-native-operation-authority),
+the owning native specification supplies semantics, complexity, panics, unsafe
+preconditions and allocation/invalidation guarantees.
+For unmigrated operations the linked versioned contract still supplies those
+requirements; its removal is blocked until a complete native contract replaces it.
 The native mapping supplies the names, types, ownership and calling conventions.
-An unimplemented operation is an implementation failure, not an unspecified API.
+An in-scope unimplemented operation is an implementation failure, not an unspecified API.
 An actual contradiction is a specification defect and reopens the gate.
 
 Source-keyed canonical IDs share definition evidence and implementation context.
@@ -53,7 +58,7 @@ the other IDs identify additional shapes present, not exclusive alternatives.
 | T03 | Box/Arc/Rc/Weak/Pin map to heap/shared/local shared/weak/pinned owners or views. Preserve allocator identity, payload access, weak failure and pin projection rules. Explicit shared-owner Clone maps to retain; it never makes owner handles Copy. |
 | T04 | Option/Result map recursively to optional/stored outcome; source unit maps to native `Unit`, with `()` as its value, and source never maps to native `Never`. Unit/Never and nested alternatives remain distinct. Preserve mapping, transpose, extraction and iteration operations. A throwing convenience wrapper cannot replace the stored-outcome operation. |
 | T05 | Translate a callable's parameter access modes, output, failure and regions; native result annotations use `: Type`, including `: Unit`. Callable types/bodyless declarations keep explicit results; inferred definitions must resolve to the same contract. Fn/FnMut/FnOnce become read/mutate/consume-callable capabilities. By-value non-Copy parameters are explicitly consuming, not silently borrowed under the native default. |
-| T06 | Concrete Rust `impl Trait` parameters become independently inferred generics; opaque returns have declaration identity. Dyn values become explicitly erased interface values with the same associated bindings/regions; no implicit allocation is added. |
+| T06 | Interface-constrained opaque parameters become independently inferred generics; opaque returns have declaration identity. Dynamic interface values become explicitly erased interface values with the same associated bindings/regions; no implicit allocation is added. |
 | T07 | Translate `for<'r>` to `for<region r>` with fresh rigid universes and leak checks. No monomorphization-time ownership privileges. |
 | T08 | Preserve const item/parameter identity and stable const-callability independently from runtime stability. Required evaluation uses target constants and checked arithmetic, not host execution or release wrapping. |
 | T09 | Preserve unsafe-call requirements, pointer mutability/provenance, initialized validity, unions and manual destruction. A safe reference API cannot become an unsafe raw-pointer workaround. |
@@ -62,7 +67,7 @@ the other IDs identify additional shapes present, not exclusive alternatives.
 | T12 | Preserve interface/associated type and const families, iterator item modes, projections and operator implementation relations. Default methods remain callable under their original bounds; unstable extension methods do not become stable because their trait is stable. |
 | T13 | Preserve unsized tails, slices, text, alignment and metadata-bearing views/owners. `?Sized` becomes an unsized native bound, not an erased or heap-allocated type. |
 | T14 | Retain target/feature conditions and instruction semantics. Architecture intrinsics map to native machine operations; they are not made universally callable or silently emulated with weaker performance guarantees. |
-| T15 | Map declarative/procedural macros, derives, compiler attributes and documented keywords by the facility rules below. A reserved Rust keyword is not an implemented-language capability. |
+| T15 | Map declarative/procedural macros, derives, compiler attributes and documented keywords by the facility rules below. A reserved reference keyword is not an implemented-language capability. |
 | T16 | Translate each implementation relation with its implementing type, interface, substitutions and where constraints. Generated auto-property relations remain compiler-derived evidence; they do not create an ordinary user method or permit overlapping implementations. |
 
 Literal by-value Copy inputs may be duplicated explicitly where the native take
@@ -182,9 +187,9 @@ alignment, export/link, cfg, target-feature, derive and diagnostics, plus:
 | @doc(text), documentation comments | Documentation input; no runtime effect |
 | Extension declarations | Versioned token-stream registration for function-like, derive and item-transforming extensions |
 
-Rust allow/warn/deny/forbid/expect controls map to native diagnostic controls.
+Native diagnostic controls provide allow/warn/deny/forbid/expect modes.
 Forbid is an inherited non-overridable deny; expect records an expected diagnostic
-and warns when absent. Diagnostic identifiers are native, not Rust-code aliases.
+and warns when absent. Diagnostic identifiers are native.
 Source export without mangling maps to export_name using the declared identifier.
 
 These attributes have fixed attachment roles: codegen hints on functions;
@@ -195,10 +200,9 @@ functions; allocator/panic providers on their corresponding definitions; startup
 library-layer attributes at package-root configuration.
 Reject duplicates/conflicting singleton choices rather than relying on order.
 
-Rust's named keyword documentation maps to the native grammar or an equivalent
-operation. crate/mod/use/struct/trait/dyn/move/ref are covered by native package/
-module/import/type/interface/any/take/view operations. `become` is reserved
-reference vocabulary, not a stable tail-call capability to implement.
+Package/module/import/type/interface/any/take/view operations are specified by
+the native grammar. Reserved catalog vocabulary does not introduce an additional
+language construct or a tail-call capability.
 Language keyword/attribute documentation records are kept separate from stable
 library APIs in the audit counts.
 
@@ -266,6 +270,11 @@ external name alone does not give a native-layout value a stable C calling ABI.
 
 ### Initial assembly and architecture mechanisms
 
+The [native machine contracts](native-machine-contracts.md) specify common
+instruction access/feature rules and explicitly assigned helper operations.
+The [authority register](baseline-mapping.md#7-native-operation-authority)
+distinguishes those assignments from remaining instruction-contract migration.
+
 The initial mechanisms use compiler-owned Linux x86-64 SSE/SSE2 and Darwin
 ARM64 NEON baselines, never host-native tuning. Full operation/profile
 obligations remain subject to §6.
@@ -330,8 +339,9 @@ Runtime stability and const-callability are independent fields. Source unstable
 attributes override absent rendered badges, including inherited/default trait
 methods. Implementation members inherit their interface member's instability,
 even when their implementation omits its badge/attribute. A stable trait's
-header does not incorporate its experimental children. Deprecated stable
-contracts remain required.
+header does not incorporate its experimental children. Owner amendment (2026-11-09): deprecated APIs, including records inheriting
+deprecation from their context, are excluded from required scope. Keep their
+reference provenance; do not delete or rewrite frozen declarations.
 
 Target applicability is the frozen source declaration plus its enclosing module/
 macro cfg graph, and the displayed availability conditions. Source-constraints
@@ -341,7 +351,8 @@ determine which predicate applies. Actual target support is established later
 by compiling/probing the native implementation under the same conditions.
 
 The public library inventory does not include unrelated third-party types merely
-because rustdoc lists a dependency's implementation of a standard trait.
+because the reference documentation lists a dependency's implementation of a
+standard interface.
 Those records are explicitly retained as external_implementation, not silently
 deleted or incorrectly promised as stable std APIs.
 
@@ -352,12 +363,19 @@ scopes remain required independently of the reference's nightly register.
 ### 6.1. V1 operation subset
 
 By owner decision, V1 (I13/I14) requires only the following subset of the
-stable inventory. Every other applicable stable record — including deprecated
-stable contracts, architecture intrinsics beyond the A006 initial tables, OS
+stable inventory. Every other applicable non-deprecated stable record — including
+architecture intrinsics beyond the A006 initial tables, OS
 extension modules other than the selected Unix ones, and other rare types —
 remains required, but it moves to I17. The capability rows, the
 experience-track programs and the explicitly accepted items of section 6 remain
 V1 obligations regardless of this subset.
+
+Owner amendment (2026-11-09): all selected reference profiles remain required
+for post-V1 applicability/qualification, without expanding the Linux-only V1
+gate. The [reconciled worklist](post-v1-worklist.md) separates independent
+obligations, implementation members, shared declarations and exclusions.
+Its counts are inventory scope, not implementation or target-qualification
+receipts. Source-cfg applicability still requires review on each profile.
 
 A record from the pinned inventory is in the V1 subset when it is stable, not
 deprecated, applicable to the Darwin ARM64 target and not under `arch` or a
@@ -377,7 +395,7 @@ each, but the family must still be evidenced at every width. With this folding
 the subset is about 2,900 operation families plus 1,760 trait/type pairs, out
 of 106,125 canonical contracts.
 
-Selected types (by Rust name; native names follow section 9):
+Selected catalog type identities (native names follow section 9):
 
 - **Scalars and core values:** `Option`, `Result`, the integer and float
   primitives, `bool`, `char`, `str`, slices, arrays, tuples, unit, `Range`,
@@ -482,7 +500,8 @@ For these sealed families, the exact eligible substitutions, associated
 identities and operational preconditions are incorporated from the pinned
 declaration/source contracts, translated recursively by T01-T16. No additional
 public implementation rights arise by naming a helper. Native diagnostics
-describe the failed capability, not a requirement to enable a Rust nightly flag.
+describe the failed capability, not a requirement to enable an external
+experimental feature.
 Inherent implementation headers group operations; an experimental child cannot
 become stable merely because its container type/header is stable.
 
@@ -500,9 +519,10 @@ implementation, not a branded and a compatibility copy. Compiler-recognized
 protocols follow resolved declaration identities, not a second set of
 spelling-based special cases.
 
-| Rust baseline name or form | Mettle name or form |
+| Catalog identity or form | Native name or form |
 | --- | --- |
 | `Vec`, `HashMap`, `HashSet` | `List`, `Map`, `Set` from `alloc.collections` |
+| General `Cow<region r,B>` | `BorrowedOrOwned<region r,B>` in `alloc.borrow`; borrowed payload and associated owned type remain distinct |
 | `Cow<'a, [T]>` for `Vec<T>: From` | Slice `Cow<region r, T>` in `alloc.borrow`; conversion clones borrowed items and moves owned Lists |
 | `NonNull<T>` | `core.ptr.NonNull<T>`; compiler-owned raw-pointer operations remain in `core.ptr` |
 | `BTreeMap`, `BTreeSet` | `SortedMap`, `SortedSet` |
@@ -514,11 +534,14 @@ spelling-based special cases.
 | Named optional/result wrappers | None introduced: use `T?` and `(T throws E)` |
 
 The hosted I/O names refer to `std.io`; `core.fmt.Write` retains its name.
+Under D31, slice Cow is an alias of `BorrowedOrOwned<region r,[T]>`.
+Under D30, the alloc Map default is deterministic; randomized hashing requires
+an explicit builder and must not introduce a hidden OS dependency into alloc.
 
 Iterator adapter types use one consistent past-participle scheme, distinct from
 the collection type `Map`:
 
-| Rust adapter | Mettle type | Rust adapter | Mettle type |
+| Catalog adapter | Native type | Catalog adapter | Native type |
 | --- | --- | --- | --- |
 | `Map` | `Mapped` | `TakeWhile` | `TakenWhile` |
 | `Filter` | `Filtered` | `SkipWhile` | `SkippedWhile` |
@@ -583,7 +606,7 @@ interpolation's shape. Conceptually it views literal pieces and a caller-stack
 array of fields, each carrying a value-context pointer, a checked renderer
 function pointer and formatting options; unsized values use a stack-resident
 view descriptor with their metadata, never a truncated fat pointer. The layout
-is compiler-owned, not a public or Rust ABI promise. This is explicit borrowed
+is compiler-owned, not a public or foreign ABI promise. This is explicit borrowed
 erasure at the format boundary: indirect
 renderer calls, no heap allocation, no Box, and no implicit retention or copy of
 payloads. A fixed borrowed sink adapter keeps the renderer ABI independent of

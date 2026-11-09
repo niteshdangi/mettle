@@ -122,7 +122,7 @@ unless its owning contract and evidence establish it.
 Follow [library contracts](library-and-abi.md), the
 [native operation translation](library-surface.md), and the
 [memory model](memory-and-concurrency.md). Native code must not silently erase
-the frozen operation contract or depend on a Rust implementation/toolchain.
+the selected operation contract or depend on the reference implementation/toolchain.
 
 ## 5. Unsafe, memory and concurrency
 
@@ -188,14 +188,10 @@ shim, or change toolchain pins without an explicit compatibility decision.
 
 ## 6. Diagnostics and behavioral tests
 
-Use established compiler test patterns, not a bespoke test methodology.
-Reference practice is the Rust compiler's
-[testing overview](https://rustc-dev-guide.rust-lang.org/tests/intro.html),
-[compiletest suites](https://rustc-dev-guide.rust-lang.org/tests/compiletest.html)
-and [test-writing guidance](https://rustc-dev-guide.rust-lang.org/tests/best-practices.html).
-Follow the categories and regression discipline, not Rust-specific build tools,
-every upstream suite name or its repository layout. Mettle-specific language
-rules necessarily need Mettle-specific examples.
+Use the existing compiler fixture runners and the test categories below.
+Each regression must exercise an observable native contract, with acceptance,
+rejection or execution expectations appropriate to the changed behavior.
+Do not introduce a bespoke framework or mirror another project's suite layout.
 
 The categories below describe test intent; they do not prescribe new directories,
 frameworks, fixture DSLs or empty suites.

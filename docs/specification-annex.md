@@ -249,7 +249,7 @@ compile-time errors.
 
 Use the frozen baseline's supported per-target register names/classes and
 template-modifier tables as the initial instruction-interface inventory. These
-are target facilities, not a second Rust source language. Record deviations in
+are target facilities. Record deviations in
 the target manifest; do not silently omit a promised stable target operation.
 
 Supported options have explicit contracts: nomem, readonly, preserves_flags,
@@ -267,7 +267,10 @@ and target metadata; ordinary inline assembly cannot unexpectedly unwind.
 ## 6. Versioned baseline incorporation
 
 Frozen instruction/register tables, target C ABI facts and per-operation
-contracts are normative input under [baseline-mapping.md](baseline-mapping.md).
+contracts remain normative input for unmigrated operations under
+[baseline-mapping.md](baseline-mapping.md). Operations assigned to a standalone
+native specification in its section 7 use that specification as authority;
+their frozen records remain audit provenance.
 Conflicts with native rules reopen mapping; incorporation is not qualification.
 
 ## 7. Coherence, erasure and opaque types
@@ -310,16 +313,9 @@ include referenced generic types/consts and regions that the declared return
 contract permits. The checker diagnoses a hidden borrowed dependency that is
 not admitted by that contract.
 
-## 8. Rust comparison and runtime implications
+## 8. Runtime implications
 
 Compare equivalent numeric modes, layout/assembly promises, dispatch and scoped
 task lifetimes under [performance.md](performance.md). Region solving requires
-no runtime region objects. Mettle's deterministic capture destruction order
-differs from Rust's unspecified order.
-
-Primary comparison material:
-- https://doc.rust-lang.org/1.99.1/reference/types/closure.html
-- https://doc.rust-lang.org/1.99.1/reference/items/traits.html
-- https://doc.rust-lang.org/1.99.1/reference/items/implementations.html
-- https://doc.rust-lang.org/1.99.1/reference/inline-assembly.html
-- https://doc.rust-lang.org/1.99.1/reference/expressions/operator-expr.html
+no runtime region objects. Capture destruction follows the deterministic order
+specified in section 3.

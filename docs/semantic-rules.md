@@ -497,11 +497,3 @@ earliest incompatible use in that order and the earlier constraint that fixed
 the type. Matching numeric types, explicit narrowing/signedness conversions and
 declaration-known ownership and error contracts are unchanged. Probe existing
 support first; add solver work only for a demonstrated unresolved case.
-
-## Primary comparison sources
-
-- https://doc.rust-lang.org/1.99.1/reference/expressions/operator-expr.html
-- https://doc.rust-lang.org/1.99.1/reference/expressions.html
-- https://doc.rust-lang.org/1.99.1/reference/destructors.html
-- https://rustc-dev-guide.rust-lang.org/borrow_check/two_phase_borrows.html
-- https://doc.rust-lang.org/nomicon/subtyping.html

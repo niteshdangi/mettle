@@ -11,7 +11,13 @@ suites, emitted ASan owner/collection/async and TSan thread/sync/async cases.
 Owner moves: S003 pinned owners to I13; I09 front-end dependency separation and
 compile/storage measurements, P08/P09/P10 to I14. I13's capability inventory is
 not V1 operation qualification; eighteen library areas remain partial. I14-I17
-are not started. Per-item scope and outstanding work follow.
+implementation/qualification are not started. I17's 2026-11-09 inventory
+reconciliation is recorded in [post-v1-worklist.md](post-v1-worklist.md);
+source-cfg and native-state review remain open. Standalone operation
+specification migration is partial: [native contract assignments](baseline-mapping.md#7-native-operation-authority)
+own their listed operations and retain explicit fallback for unassigned contracts.
+This changes documentation authority, not implementation/qualification status.
+Per-item scope and outstanding work follow.
 
 ## 1. Development phases
 
@@ -52,7 +58,7 @@ Mettle language. Do not silently reinterpret them as scalar operations.
 For M1, use aborting arithmetic panic paths; unwinding and catch are not required
 to establish scalar execution and remain explicit later obligations. Both profile
 overflow modes must behave as specified for the supported integer operations.
-Avoid claiming the complete Rust arithmetic matrix until every operation is
+Avoid claiming the complete arithmetic matrix until every operation is
 covered. Do not allow divide-by-zero or signed division overflow to become LLVM UB.
 
 M1 exit:
@@ -192,7 +198,7 @@ Mettle, not C++.
 | I14 | V1 release qualification | Reproducible installable C++/LLVM toolchain passes safety, capability, target and Rust runtime, compile-time and build-storage gates | I13 |
 | I15 | V1.1 substantive self-hosting | Mettle compiler builds itself through repeatable bootstrap stages and preserves V1 capability/performance gates | I14 |
 | I16 | V1.2 independent production backend | LLVM-free code generation covers every accepted profile/capability and passes Rust/LLVM-path comparisons | I15 |
-| I17 | Complete stable-operation closure | Every applicable stable inventory record outside the V1 subset, including deprecated contracts, architecture intrinsics and OS extensions, has checked declarations and evidence | I14 |
+| I17 | Complete stable-operation closure | Every applicable non-deprecated stable obligation outside the V1 subset, including architecture intrinsics and OS extensions, has checked declarations and evidence across all reference profiles | I14 |
 
 This is fourteen delivery milestones to V1, followed by two architectural
 evolution milestones and I17's post-V1 completion of the operation inventory. I02 is the first useful native compiler, not a reduced V1.
@@ -210,7 +216,9 @@ the installed maintained Linux userland. The owner's working environment is WSL2
 on Windows. Owner amendment (2026-11-09): no Ubuntu release or glibc version is
 mandated; each qualification run records the actual OS, libc, kernel and sysroot
 identities. Windows x64 (MSVC ABI, PE/COFF, CodeView/PDB) stays
-ungated; selecting it later is a scope expansion needing an owner decision.
+ungated for V1; the 2026-11-09 worklist amendment retains all reference profiles
+for post-V1 applicability/qualification. Selecting Windows as a V1 gate would
+still require a separate owner decision.
 
 Consequences:
 
@@ -904,8 +912,9 @@ Static/unsized Any, synchronization and complete operation coverage remain open.
 I13 closes the V1 operation subset defined in `docs/library-surface.md`
 section 6.1 with compiled native declarations and per-operation semantic
 evidence, including its supporting protocols, reexports and target cfg branches
-missing from rendered docs. By owner decision, every other stable inventory
-record, including deprecated stable APIs, moves to I17 and is not a V1 gate.
+missing from rendered docs. Other applicable non-deprecated stable inventory
+obligations move to I17 and are not a V1 gate. The 2026-11-09 owner amendment
+excludes deprecated APIs from required scope while preserving reference records.
 Gate only the `linux-x64` profile (Linux x86-64 compiler host and
 x86_64-unknown-linux-gnu target; owner decision 2026-11-08, section 8.0). The
 earlier macOS ARM64/Darwin lane gate is superseded; Windows remains excluded
@@ -924,8 +933,8 @@ Capability evidence is not per-operation qualification: the baseline has
 and 1,760 trait/type pairs. No receipt closes that subset. Linux qualification of pinned owners,
 erased async-interface dispatch, per-item target/cfg applicability (S031),
 supporting protocols/reexports and selected ABI/debug/unwind/TLS/atomic probes
-remain governed by the capability inventory/work package. Other stable and
-deprecated operations belong to I17, not a silently expanded I13 gate.
+remain governed by the capability inventory/work package. Other applicable
+non-deprecated stable operations belong to I17, not a silently expanded I13 gate.
 
 Moved into I14 by owner decision (2026-10-31): I09 compile-time and
 retained-byte measurement with front-end dependency separation (performance.md
@@ -963,11 +972,23 @@ backend must provide address/undefined-behavior and thread checking equivalent
 to the current ASan/UBSan/TSan qualification, or run the full unsafe/runtime
 corpus under it; losing sanitizer coverage blocks I16.
 
-I17 closes the rest of the pinned stable inventory outside the V1 subset:
-deprecated stable APIs, remaining inherent operations and trait
+I17 closes the applicable non-deprecated pinned stable obligations outside the V1 subset:
+remaining inherent operations and trait
 implementations, architecture intrinsics and OS extension modules, each with
 the same declaration, applicability and per-operation evidence rules as I13.
 It may proceed alongside I15-I16.
+
+Owner worklist amendment (2026-11-09): deprecated APIs are no longer required,
+and all eight [reference profiles](reference-profiles.md) remain in post-V1
+scope. The [reconciled worklist](post-v1-worklist.md) accounts for all 106,125
+stable canonical records: 629 excluded deprecated records, 13,295 V1
+obligations, 41,151 post-V1 contextual obligations, 50,190 attached
+implementation members, 684 attached inherent blocks and 176 namespaces.
+The post-V1 obligations group into 32,355 source-declaration work units;
+4,864 also occur in V1, leaving 27,491 units not represented there.
+Shared code does not discharge type/profile evidence. These are inventory
+counts before source-cfg and implementation-state review, not missing-code
+counts or I17 qualification. A009 and profile/toolchain work remain separate.
 
 ### 8.7. Experience track: readability, compile cost and storage
 

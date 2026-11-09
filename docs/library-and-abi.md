@@ -1,8 +1,17 @@
 # Standard library, package and ABI contracts
 
 Status: selected library/ABI contracts. Per-operation rules and names are owned
-by [library-surface.md](library-surface.md), with unchanged contracts incorporated
-under [baseline-mapping.md](baseline-mapping.md). Profile-scoped implementation
+by [library-surface.md](library-surface.md). Native operation definitions are in
+[value contracts](native-value-contracts.md),
+[core contracts](native-core-library-contracts.md),
+[collection contracts](native-collection-contracts.md),
+[hosted contracts](native-hosted-contracts.md),
+[OS extensions](native-os-contracts.md) and
+[machine contracts](native-machine-contracts.md).
+The [authority register](baseline-mapping.md#7-native-operation-authority)
+identifies their exact assignments;
+unmigrated operations retain the explicit fallback in
+[baseline-mapping.md](baseline-mapping.md). Profile-scoped implementation
 evidence is recorded in [implementation-plan.md](implementation-plan.md);
 the API contract is not a qualification receipt.
 
@@ -183,11 +192,21 @@ Capacity/allocator choices must not change semantic ownership. Drain, entry,
 split, splice and cursor APIs retain their individual contracts under
 library-surface.
 
+Decision D30: the alloc Map default is deterministic and requires no hidden OS
+entropy. It does not promise collision-attack resistance; applications with
+untrusted keys explicitly select a randomized builder. Hash algorithm/output
+and iteration order are not stabilized by that default.
+Decision D31: general borrowed-or-owned values use
+`BorrowedOrOwned<region r,B>`; slice `Cow<region r,T>` remains its
+`BorrowedOrOwned<region r,[T]>` alias, not a parallel implementation.
+
 ## 4. Optional, outcomes and errors
 
-Native syntax replaces wrapper spellings, not operations. Preserve mapping,
-flat-mapping, fallback, borrowed/mutable projections, extraction, transposition,
-collection/short-circuiting, and iterating zero-or-one values.
+The [native value contracts](native-value-contracts.md) specify queries,
+mapping, flat-mapping, fallback, borrowed/mutable projections, extraction,
+transposition and zero-or-one borrowed iteration.
+Collection/short-circuit implementations and other surfaces outside that
+document remain separate obligations; value syntax does not discharge them.
 
 Error propagation does not allocate or capture a stack trace by default.
 Cause/context facilities are explicit and may own storage. A dynamic error
@@ -353,9 +372,7 @@ Borrowed views, concrete iterators, ordinary error results and C-compatible
 calls require no mandatory allocation. Compare equivalent layout, allocator,
 dispatch and failure behavior under [performance.md](performance.md).
 
-Primary baseline:
-- https://doc.rust-lang.org/1.99.1/core/
-- https://doc.rust-lang.org/1.99.1/alloc/
-- https://doc.rust-lang.org/1.99.1/std/
-- https://doc.rust-lang.org/1.99.1/reference/type-layout.html
-- https://doc.rust-lang.org/1.99.1/reference/items/external-blocks.html
+Operation authority is assigned by [the native mapping register](baseline-mapping.md#7-native-operation-authority).
+Unmigrated contracts retain their recorded reference; native layout and C ABI
+requirements are specified in sections 7-8 and the
+[platform contracts](platform-contracts.md).

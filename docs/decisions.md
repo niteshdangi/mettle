@@ -8,7 +8,7 @@
 | D02 | Full agreed Rust baseline capability in V1, not Rust source/ABI compatibility |
 | D03 | C++/LLVM V1; substantive self-hosting V1.1; own production backend V1.2 |
 | D04 | Static borrowing, explicit ownership, native syntax, no compulsory GC/sandbox |
-| D05 | Rust-aligned configurable integer-overflow profile defaults |
+| D05 | Configurable integer-overflow checks: enabled in debug, disabled in release unless overridden; required constants always use checked evaluation |
 | D06 | Shared handles move by default; additional owners require explicit retention |
 | D07 | Known copyable ordinary parameters receive values; non-copy resources borrow |
 | D08 | Generic defaults use declaration-known constraints; unconstrained T borrows |
@@ -44,6 +44,8 @@ Implementation/verification: [implementation-plan.md §8.7](implementation-plan.
 | D27 | Named arguments follow positional ones, labels change neither access nor evaluation order, and call sites omit `mut` for declaration-known mutable parameters (style, not a mode change) | [core-semantics.md §9](core-semantics.md#9-evaluation-order), [language-grammar.md §13.4](language-grammar.md#134-closures-and-call-arguments) |
 | D28 | `KeyView<Q>` lets `Map.get` take borrowed keys such as Text without allocation | [library-surface.md §12](library-surface.md#12-borrowed-keys-and-path-input) |
 | D29 | `path.PathInput` and std `write_path` accept and display native paths without lossy conversion; a bare-interface `read`/`mut` parameter permits unsized implementors | [library-surface.md §12](library-surface.md#12-borrowed-keys-and-path-input), [language-grammar.md §3](language-grammar.md#3-type-expressions) |
+| D30 | Owner-selected deterministic `alloc` Map default; no hidden OS entropy dependency or default collision-attack-resistance promise. Untrusted-key applications explicitly select a randomized builder | [native collection contracts §8.3](native-collection-contracts.md#83-hash-map) |
+| D31 | General borrowed-or-owned values use `BorrowedOrOwned<region r,B>`; existing slice `Cow<region r,T>` remains an alias, not a second implementation | [native collection contracts](native-collection-contracts.md) |
 
 ## Routine selections made under delegation
 
@@ -56,8 +58,10 @@ Implementation/verification: [implementation-plan.md §8.7](implementation-plan.
   and ambiguous borrow-source relationships are not inferred from bodies.
   The result delimiter applies consistently to methods, closures and foreign
   signatures. These refinements supersede the earlier mandatory-arrow grammar.
-- Operand and assignment sequencing preserve the Rust-aligned model, including
-  the initial primitive/overloaded compound-assignment distinction.
+- Operand evaluation is left-to-right; ordinary assignment evaluates the
+  replacement before its destination. Primitive compound assignment uses
+  RHS-before-destination ordering; overloaded compound assignment follows
+  receiver-then-argument evaluation, fixed at declaration checking.
 - `.mt`, `copy type`, `Copy`, and labeled `Type(...)` calls are working grammar
   conventions, not public compatibility promises.
 - I02's first executable slice is Linux x86-64 scalar code, not reduced V1.

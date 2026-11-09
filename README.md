@@ -1,7 +1,7 @@
 # Mettle
 
 An independent systems language implemented in C++20 with LLVM. V1 targets the
-agreed Rust-level capabilities with simpler source structure, runtime parity,
+selected native language and library capabilities with simpler source structure, runtime parity,
 faster compilation and less build-cache storage. These are acceptance goals;
 runtime parity and release-platform qualification are not established.
 

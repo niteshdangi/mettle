@@ -23,9 +23,14 @@ Specification fixtures are in `../examples/core/`.
   undeclared duplication or retention permissions.
 - Shared handles use atomic counts; local shared handles use non-atomic counts.
   Neither silently changes mode.
-- Ordinary integer overflow follows Rust-aligned, configurable profile defaults.
-- Runtime parity is measured against equivalent Rust workloads. Syntax choices,
-  optimizations, and LLVM reuse alone establish no speed result.
+- The debug profile enables integer overflow checks by default; the release
+  profile disables them. `--overflow-checks on|off` overrides that default.
+  Checked arithmetic panics
+  on overflow, while unchecked add/subtract/multiply use the destination width.
+  [The scalar rules](semantic-rules.md#3-scalars-and-arithmetic) define exceptional
+  arithmetic and shifts; required constants use checked evaluation.
+- Performance claims require [the measurement protocol](performance.md).
+  Syntax choices, optimizations and backend reuse alone establish no speed result.
 
 ## 2. Ownership operations
 
@@ -321,12 +326,11 @@ should be visible. This is style guidance, not a change to parameter modes or
 borrow checking.
 
 For ordinary assignment, evaluate the replacement value first, then the
-destination place once, then replace its old value. This preserves the
-Rust-compatible RHS-before-destination rule. Destructuring assignment first
+destination place once, then replace its old value. Destructuring assignment first
 evaluates its RHS, then performs component assignments left to right. It is not
 transactional; interruption may leave earlier component assignments completed.
 
-For compound assignment, retain Rust's declaration-based distinction initially:
+Compound assignment uses a declaration-based distinction:
 known primitive operands evaluate RHS before the destination; overloaded cases
 follow receiver-then-argument call evaluation with the applicable implicit
 receiver reservation rules. Monomorphization must not change that order.
@@ -454,17 +458,9 @@ Owning refinements:
 Validate contract interactions before claiming enforcement; source-level
 read/mut spelling alone does not justify LLVM aliasing promises.
 
-## Sources
+## Contract authority
 
-- Rust standard library, Copy:
-  https://doc.rust-lang.org/std/marker/trait.Copy.html
-- Rust standard library, Arc:
-  https://doc.rust-lang.org/std/sync/struct.Arc.html
-- Rust Reference, call expressions:
-  https://doc.rust-lang.org/reference/expressions/call-expr.html
-- Rust Reference, expressions (places, moves, mutability, evaluation):
-  https://doc.rust-lang.org/reference/expressions.html
-- Rust Reference, operator expressions (assignment and compound assignment):
-  https://doc.rust-lang.org/reference/expressions/operator-expr.html
-- Rust Reference, destructors:
-  https://doc.rust-lang.org/reference/destructors.html
+The native rules in this document and its owning refinements specify copying,
+retention, argument and assignment evaluation, temporary lifetimes and cleanup.
+External language behavior is not a fallback for an unspecified native rule.
+An uncovered interaction is a specification gap requiring an explicit decision.

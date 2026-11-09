@@ -1,0 +1,61 @@
+{
+  "dispositions": {
+    "covered-by-implementation": 50190,
+    "covered-by-owner": 684,
+    "excluded-deprecated": 629,
+    "namespace": 176,
+    "post-v1-obligation": 41151,
+    "v1-obligation": 13295
+  },
+  "manifest_sha256": "fb6bdf95c62f23b3bba8baee134c948e85df8fbccbe04766dfa9ab5bffec26eb",
+  "not_in_operation_inventory": [
+    "I15 self-hosting",
+    "I16 independent backend",
+    "A009 Rust bridge capability",
+    "profile bootstrap and qualification",
+    "explicit native/supporting-protocol and experience-track obligations"
+  ],
+  "policy": {
+    "deduplication": "canonical identity; widths/signatures preserved",
+    "deprecated": "excluded from required scope; reference retained",
+    "implementation_members": "retained under their implementation obligation",
+    "platforms": "all reference profiles; source-cfg applicability unreviewed",
+    "v1_membership": "existing selector, not target qualification",
+    "work_units": "implementation source file/span, exact signature and trait identity"
+  },
+  "post_v1_by_category": {
+    "architecture": 13153,
+    "library": 2633,
+    "os-extension": 780,
+    "trait-implementation": 24585
+  },
+  "post_v1_by_kind": {
+    "associatedconstant": 134,
+    "associatedtype": 5,
+    "attr": 3,
+    "constant": 456,
+    "derive": 9,
+    "enum": 23,
+    "fn": 10583,
+    "implementation": 27043,
+    "macro": 31,
+    "method": 1792,
+    "primitive": 3,
+    "struct": 435,
+    "structfield": 268,
+    "trait": 76,
+    "tymethod": 152,
+    "type": 63,
+    "union": 1,
+    "variant": 74
+  },
+  "post_v1_distinct_work_units": 32355,
+  "post_v1_implementation_status": "unreviewed, not assumed missing",
+  "post_v1_work_units_also_in_v1": 4864,
+  "post_v1_work_units_not_in_v1": 27491,
+  "qualification": "no native declaration, execution or per-profile evidence inferred",
+  "stable_canonical_records": 106125,
+  "stable_exposures": 159995,
+  "v1_ledger_sha256": "f0c111a0c799b6dc0615e6a3075262a2b3cc63f7aec7c919a71264d5e4f3d47b",
+  "work_unit_boundary": "shared implementation code, not shared type/profile evidence"
+}

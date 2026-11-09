@@ -16,7 +16,8 @@ in [implementation-plan.md](implementation-plan.md).
 | WebAssembly non-hosted | wasm32 core/alloc with explicit embedder imports | No accidental OS/runtime dependency |
 | Freestanding | Core without OS or required allocator | Startup, panic handler, linker layout and volatile operations |
 
-These choices refine environments, not support for every Rust target triple.
+These choices select the supported-profile obligations, not every target triple
+recognized by the backend.
 WASI is not a promise of browser DOM APIs or native process/thread facilities.
 Browser embedding and WASI services have separate imports. Unsupported target
 capabilities need explicit diagnostics and profile applicability in the matrix.

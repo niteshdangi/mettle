@@ -271,7 +271,7 @@ inserting a clone, retain, or ownership-mode change.
 Parser recovery may create marked error nodes for editor use, not runnable code.
 Semantic diagnostic identifiers are not frozen yet.
 
-## 8. Rust comparison and performance
+## 8. Runtime implications
 
 Labels and generic modes resolve statically; constructors initialize fields.
 These require no runtime name dictionary, type test, clone or retain.
