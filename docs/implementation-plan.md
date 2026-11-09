@@ -1185,6 +1185,25 @@ Logs, tool markers and source hashes are retained untracked under
 `/home/nites/lanes/review-repairs-3ccd407/build/`. A complete Ubuntu 24.04 LNX
 matrix and retained-memory-bound measurements remain outstanding.
 
+Main qualification request (2026-11-09; executable-source baseline `458096e`):
+the owner requested the remaining full CTest, repository static-analysis,
+clean-build reproducibility, complete compiler ASan/UBSan and Ubuntu 24.04
+checks. The repair implementation and acceptance fixtures above are complete;
+the three subsequent source edits are verified whitespace-only. This is the
+source-freeze gate for this verification batch, not I13 or LNX milestone closure.
+
+| Task | State before consolidated qualification | Acceptance / owning inputs |
+| --- | --- | --- |
+| Repair source, fixtures and owning documentation | Implemented; focused scope verified as above | `compiler`, `runtime`, `library`, `tests`, this ledger; no known repair implementation gap |
+| Ubuntu 24.04 environment and input identity | Preparing isolated rootfs; not yet qualified | Upstream SHA-256-verified Ubuntu base; pinned `tools/toolchain-artifacts.json`; record source/tool/sysroot hashes |
+| Debug quality and full CTest | Pending frozen-input run | `tools/build.py --configuration Debug --quality`; no weakened assertions or timeouts |
+| Release full CTest and clean rebuild | Pending Debug gate | `tools/build.py --configuration Release`; compare artifact bytes |
+| Complete compiler/runtime ASan/UBSan | Pending ordinary qualification | `tools/build.py --configuration Debug --sanitizers`; startup/detector probes and full CTest |
+| Failure recovery and final record | Pending results | Reopen affected source/freeze tasks for any repair; preserve failed receipts; rerun only invalidated checks and commit fixes |
+
+No earlier Ubuntu 26.04 receipt substitutes for these gates. Known gaps in the
+larger language/capability inventory remain outside a claim that these tests pass.
+
 **L054 status (const evaluation): implemented and verified on macOS ARM64.** The `compiler/consteval` evaluator and `const fn` are wired into constants, array lengths, constant generic arguments and statics. Evidence: `tests/source/{run,fail}/const-eval-*.mt` (Debug and Release, including the recursion-depth limit, which evaluates on a dedicated large stack) and `compiler.consteval-target` (`tests/consteval/target_width.cpp`); the driver admits no 32-bit target, so target-width evidence is that checker-level unit test. Gap addressed, verified on macOS arm64: a mutable unsuffixed integer local in a `const fn` (`var i = 0`) stays open instead of being fixed to `i32`; assignment of a typed value or a use against a scalar expectation fixes its type (`tests/source/run/const-eval-open-integer-local.mt`). An immutable `let` or a copy into another binding still defaults to `i32`.
 
 The I13 L005 follow-up extends this evaluator with target-software floating
