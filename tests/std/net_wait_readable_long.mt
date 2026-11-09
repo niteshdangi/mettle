@@ -1,8 +1,11 @@
 import std.io.{Error, Writer}
 import std.net.TcpStream
 
-fn write_later(stream: take TcpStream): bool {
-    var writer = stream
+fn write_later(stream: read TcpStream): bool {
+    var writer = match take capture stream.try_clone() {
+        success(value) => value,
+        failure(_) => { return false }
+    }
     std.time.sleep(std.time.from_millis(20u64))
     (capture writer.write_all("x".as_bytes())).is_success()
 }

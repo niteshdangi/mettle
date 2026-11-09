@@ -1131,8 +1131,9 @@ initial POSIX hosted profile.
 
 Source-review repair batch (2026-11-09; base `d8dbc580`, qualification pending):
 these are correctness repairs to existing obligations, not milestone closure.
-The owner's source-only restriction defers builds, CTest, pinned formatting,
-ASan/UBSan and TSan; all changed behavior needs those checks before qualification.
+The owner authorized execution on 2026-11-09. Focused validation was completed
+in an isolated WSL Ubuntu 26.04 snapshot with the pinned LLVM 22.1.3 tools;
+this is not the specified Ubuntu 24.04 LNX qualification profile.
 
 | Existing obligation | Starting state and owning source | Remaining repair and regression |
 | --- | --- | --- |
@@ -1143,7 +1144,8 @@ ASan/UBSan and TSan; all changed behavior needs those checks before qualificatio
 | I13 time/process/fs/net operations | Partial: overflow, reaping and filesystem/timeout edge cases | Bounds, cached child status, directory type and finite deadline regressions in `tests/std` |
 | Quality workflow and panic fixtures | Partial: `tools/build.py` lacks documented quality mode; alloc traps accept any failure | Restore format/static-analysis gate and require SIGABRT |
 
-All rows now have source repairs and focused fixtures (implemented, unverified).
+All rows now have source repairs and focused fixtures. The focused receipts below
+supersede the initial source-only status; they do not close LNX or a milestone.
 Thread names are owned by cloned library handles; runtime tokens never recycle,
 and live-name/unpark lookups serialize with thread exit. Executor sweeps release
 only finished registrations whose erased payload is already disposed; retained
@@ -1151,10 +1153,32 @@ wakers and handles keep independent Arc owners. Repeated-completion/stale-waker
 fixtures cover those paths, but retained-memory bounds still need qualification.
 The quality option now checks pinned formatting and compilation-database-driven
 clang-tidy before CTest; alloc panic checks also match on the Linux target runner.
-No previous receipt qualifies these repairs. Source freeze awaits execution of
-the new fixtures, pinned formatting, relevant Debug/Release groups and native
-ASan/UBSan plus TSan. Full matrix qualification remains gated on that work and
-the owner's execution restriction being lifted.
+Focused verification of `3ccd407` plus follow-ups: Debug build/module checks,
+five native CTests (`runtime.panic`, `runtime.thread`, `compiler.boundaries`,
+`compiler.consteval-target`, `compiler.modules-memory`), four cache regressions,
+the exact-SIGABRT alloc case, changed-file pinned formatting and clang-tidy pass.
+The native thread regression also passes ASan/UBSan and TSan. Nine std programs
+pass with the new Debug compiler (eight initial passes plus the corrected net rerun).
+Its first version consumed a capture incompatible with `thread.spawn`'s `fn()`
+contract; cloning the socket inside the worker fixes the fixture.
+
+Emitted Release-profile time bounds, long socket wait and retained thread-name
+cases pass. `task_reclamation` passes emitted ASan (including leak detection)
+and TSan; `task_owned` passes emitted TSan. Its two deliberately forgotten handles
+produce the expected metadata leaks under LSan, so it is not a leak-clean probe;
+the dedicated reclamation fixture supplies that check without suppressions.
+These object probes reuse the existing `d8dbc580` Release frontend/backend with
+the repaired libraries and freshly built runtimes: compiler changes through
+`3ccd407` are confined to cache identity and cache cleanup, which are independently
+checked with the new Debug compiler. No clean-build reproducibility or complete
+compiler-sanitizer qualification is claimed.
+
+Full quality remains blocked by existing formatting violations in untouched
+`analysis/origins.cpp`, `lowering/opaque.cpp` and `syntax/parser/expressions.cpp`.
+Logs, tool markers and source hashes are retained untracked under
+`build/review-verification/` in the owner checkout; execution artifacts remain in
+`/home/nites/lanes/review-repairs-3ccd407/build/`. A complete Ubuntu 24.04 LNX
+matrix and retained-memory-bound measurements remain outstanding.
 
 **L054 status (const evaluation): implemented and verified on macOS ARM64.** The `compiler/consteval` evaluator and `const fn` are wired into constants, array lengths, constant generic arguments and statics. Evidence: `tests/source/{run,fail}/const-eval-*.mt` (Debug and Release, including the recursion-depth limit, which evaluates on a dedicated large stack) and `compiler.consteval-target` (`tests/consteval/target_width.cpp`); the driver admits no 32-bit target, so target-width evidence is that checker-level unit test. Gap addressed, verified on macOS arm64: a mutable unsuffixed integer local in a `const fn` (`var i = 0`) stays open instead of being fixed to `i32`; assignment of a typed value or a use against a scalar expectation fixes its type (`tests/source/run/const-eval-open-integer-local.mt`). An immutable `let` or a copy into another binding still defaults to `i32`.
 

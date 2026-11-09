@@ -81,7 +81,8 @@ std::optional<packages::Store> openStore(const Options &options) {
 
 std::string compilerIdentity() {
   // One tool identity per compiler process, shared by nested host builds and
-  // package keys. Hashing the executable again for each dependency is redundant.
+  // package keys. Hashing the executable again for each dependency is
+  // redundant.
   static const std::string identity = [] {
     std::string text = std::string("mettle ") + METTLE_VERSION + " " +
                        METTLE_RUNTIME_TARGET +

@@ -655,11 +655,16 @@ std::optional<StoreUsage> Store::clear(bool dryRun, std::string &error) {
       return std::nullopt;
     }
   }
-  // Do not remove the marker if unrelated contents would prevent removing the
-  // root. In particular, a failed clean must remain recognizable and retryable.
+  // Git source checkouts share this root but are not build artifacts. Preserve
+  // them and the marker; a failed clean must also remain recognizable.
+  bool sourceCheckouts = false;
   for (fs::directory_iterator it(directory, code), end; !code && it != end;
        it.increment(code)) {
     auto name = it->path().filename();
+    if (name == "sources") {
+      sourceCheckouts = true;
+      continue;
+    }
     if (name != "VERSION" && name != "store.lock") {
       error = "cache directory contains unexpected entry: " +
               it->path().generic_string();
@@ -670,6 +675,8 @@ std::optional<StoreUsage> Store::clear(bool dryRun, std::string &error) {
     error = "cannot inspect cache contents: " + code.message();
     return std::nullopt;
   }
+  if (sourceCheckouts)
+    return removed;
   auto restoreMarker = [&] {
     std::ofstream marker(directory / "VERSION", std::ios::trunc);
     marker << "mettle-store 1\n";

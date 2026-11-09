@@ -1,5 +1,5 @@
-#include "../../runtime/sys.h"
 #include "../../runtime/thread.h"
+#include "../../runtime/sys.h"
 
 #include <atomic>
 #include <chrono>
@@ -142,7 +142,8 @@ int main() {
   itimerval stopped{};
   require(setitimer(ITIMER_REAL, &stopped, nullptr) == 0, "stop signals");
   require(sigaction(SIGALRM, &previousAction, nullptr) == 0, "restore signal");
-  require(setitimer(ITIMER_REAL, &previousTimer, nullptr) == 0, "restore timer");
+  require(setitimer(ITIMER_REAL, &previousTimer, nullptr) == 0,
+          "restore timer");
   close(pipeEnds[0]);
   close(pipeEnds[1]);
   require(ready == 0 && elapsed >= std::chrono::milliseconds(20) &&

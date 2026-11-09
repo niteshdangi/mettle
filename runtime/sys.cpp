@@ -675,8 +675,8 @@ extern "C" std::int32_t mettle_rt_poll(std::int32_t fd, std::int32_t write,
                                        std::int32_t timeoutMillis) {
   pollfd request{fd, static_cast<short>(write ? POLLOUT : POLLIN), 0};
   using Clock = std::chrono::steady_clock;
-  const auto until = Clock::now() +
-                     std::chrono::milliseconds(std::max(0, timeoutMillis));
+  const auto until =
+      Clock::now() + std::chrono::milliseconds(std::max(0, timeoutMillis));
   int remaining = timeoutMillis;
   int result;
   do {

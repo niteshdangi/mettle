@@ -14,8 +14,9 @@ using MettleThreadBody = void (*)(void *);
 using MettleTlsDestructor = void (*)(void *);
 
 // Starts a joinable thread running `entry(argument)`. `handle` receives the
-// non-reused runtime identity used by join. Native pthread handles stay private;
-// join/detach consume their registration, while unpark/name require a live thread.
+// non-reused runtime identity used by join. Native pthread handles stay
+// private; join/detach consume their registration, while unpark/name require a
+// live thread.
 std::int32_t mettle_rt_thread_spawn(MettleThreadEntry entry, void *argument,
                                     std::uintptr_t *handle);
 std::int32_t mettle_rt_thread_join(std::uintptr_t handle);

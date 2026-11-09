@@ -490,6 +490,20 @@ def cache_clean_failure():
     assert not cache.exists()
 
 
+def cache_clean_preserves_sources():
+    explained(packages("incremental/app"))
+    cache = evidence / "cache"
+    checkout = cache / "sources" / "git" / "retained"
+    checkout.mkdir(parents=True)
+    source = checkout / "keep.mt"
+    source.write_text("fn retained() {}\n")
+    invoke(["clean"])
+    assert source.read_text() == "fn retained() {}\n"
+    assert (cache / "VERSION").is_file()
+    invoke(["clean"])
+    assert source.is_file()
+
+
 def cache_compiler_content_identity():
     # ELF permits inert trailing bytes, so alter identity without touching code.
     # Preserve path, size and timestamps to exclude metadata-based invalidation.
@@ -1743,7 +1757,8 @@ CASES = [cyclic_module_macro_definition,
          manifest_diagnostics, package_options_need_package, incremental_reuse,
          object_cache_integrity,
          sanitizer_cache_key, edit_invalidation, cache_dedup_and_bound,
-         cache_corruption_and_clean, cache_clean_failure, cache_compiler_content_identity,
+         cache_corruption_and_clean, cache_clean_failure, cache_clean_preserves_sources,
+         cache_compiler_content_identity,
          build_script, build_script_untracked_inputs,
          procedural_macro, procedural_macro_failure,
          public_declarative_macro_dependency,
