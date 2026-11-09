@@ -180,6 +180,19 @@ kind, children, spelling, annotations, separators and provenance. Type variables
 resolved locals/callees, normalized values and flow facts do not belong in AST
 nodes.
 
+The Mettle lexer seed stores token kinds and spans into caller-owned UTF-8
+source bytes, without allocating a text string per token. Literal decoding
+consumes slices of that validated source; the source owner retains the bytes
+while syntax consumers use their spans.
+
+The native parser owns the unchanged token list and contiguous node/child-ID
+arenas. Nodes carry source/token ranges, an optional operator-token index and
+the explicit-semicolon flag; semantic facts remain separate. A reusable child
+stack avoids allocating a vector per node. Recovery rolls back incomplete arena
+entries before adding an error node, preserving later valid syntax. Comment
+newlines are exposed by the cursor without copying or splitting lexer tokens.
+Consumers must reject diagnostics or a missing root before semantic compilation.
+
 Owner type annotations retain an `Owner` syntax form and resolve in semantics to
 the nominal `alloc` library types: `heap T` to `Box<T>`, `shared T` to `Arc<T>`,
 `local shared T` to `Rc<T>`, and the corresponding atomic/local `Weak<T>`
@@ -498,6 +511,8 @@ destinations so self-writeback preserves its original referent.
 Indirect or erased mutable calls conservatively union possible view-storage
 writes. Analysis-only opaque/typed element paths preserve compatible origins
 through unknown aggregate shapes; they are forbidden in executable CFG places.
+Generic payload paths retain enclosing field prefixes and payload field types;
+logical payload fields must not be interpreted as the wrapper's physical fields.
 An imprecise write cannot kill an old origin or establish a definite overwrite.
 Returned generic view values retain the borrowed sources captured by their
 interface arguments, even when the dispatch signature hides their concrete shape.

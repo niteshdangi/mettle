@@ -2,11 +2,15 @@ import mettle_foundation.Span
 
 pub copy enum Kind {
     Word, Integer, Symbol, Space, Comment, Newline, End, Character, Byte,
-    Floating, QuotedWord, Text, PrefixedText, FormatOpen, FormatPiece,
-    FormatHoleOpen, FormatHoleClose, FormatClose
+        Floating, QuotedWord, Text, PrefixedText, FormatOpen, FormatPiece,
+        FormatHoleOpen, FormatHoleClose, FormatClose
 }
 
 pub copy type Token { pub kind: Kind; pub span: Span }
+
+extend Kind {
+    pub fn is(other: Kind): bool { (self as u32) == (other as u32) }
+}
 
 pub fn reference_kind(kind: Kind): u32 {
     match kind {

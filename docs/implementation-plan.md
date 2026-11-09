@@ -987,13 +987,44 @@ Preparatory work does not close I13/I14 or qualify I15.
 
 | Obligation | Current state and evidence | Owning implementation / remaining acceptance |
 | --- | --- | --- |
-| Package/API and rebuild contracts | Specified; no runtime evidence | Architecture section 1.1; manifests enforce implemented package edges |
-| Foundation, syntax and driver seed | Partial, unverified draft | `compiler/{foundation,syntax,driver}`; complete lexer/diagnostic parity fixtures and focused Linux execution |
+| Package/API and rebuild contracts | Source-package edges exercised by the lexer seed; independent compilation remains specified only | Architecture section 1.1; implement compiled interfaces and query reuse |
+| Foundation, syntax and driver seed | Builds and runs on Linux x86-64 in debug/release; 114 token/diagnostic parity cases pass per profile | `compiler/{foundation,syntax,driver}`; `tests/probes.py selfhost-lexer BOOTSTRAP EVIDENCE --seed DRIVER`; complete syntax coverage remains open |
+| Parser core | Partial grammar implemented; 60 focused cases pass in debug/release | `syntax/{tree,parser}` owns unchanged tokens, compact node/child arenas, spans and syntax-only IDs. First acceptance covers functions with named parameter/result types, expressions/statements, precedence, newline/semicolon tails, nested blocks, recovery and depth limits. Extended declarations, types, patterns, generic applications and remaining expression forms still need porting; recognized unported forms report `feature`. No type/IR/ownership interface changes are required. |
 | Compiled dependency interfaces and query engine | Missing | Future `pipeline`, `ir`, `packages`; consumers must skip unchanged dependency parsing/checking; validate metadata and invalidation edges |
 | Checked frontend and verified middle end | Missing | Future `frontend`, `types`, `ir`, `middle`; preserve full language/ownership contracts and existing corpus |
 | Backend, build and editor integration | Missing | Future backend/pipeline/packages/editor/driver implementations; replace C++ responsibilities through defined interfaces |
 | Bounded storage and compiler/runtime performance | Unverified for self-hosting | Existing store is bootstrap code; qualify self-hosted eviction/corruption/concurrency and clean/edited workloads under performance.md, including P12 |
 | Source freeze and staged bootstrap | Not ready; depends on all implementation, fixtures and owning documentation | Stage 1/2/3 identities, repeatability and complete capability/target gates; retain C++ reference |
+
+The 2026-11-09 lexer batch covers token kinds/byte spans, diagnostic phases,
+messages/start locations, complete character-literal diagnostic ranges and the
+diagnostic budget. Its 112 cases include malformed UTF-8/literals, nested
+comments/interpolation, 64 deterministic mixed inputs and all eight compiler
+source files. Build `compiler/driver` with the C++ bootstrap and run the produced
+lexer with a source-file argument. That batch does not qualify parsed syntax,
+decoded text payloads, independent compilation or performance.
+
+The following parser-core batch adds `DRIVER syntax SOURCE` and
+`tests/probes.py selfhost-parser BOOTSTRAP EVIDENCE --seed DRIVER`. Its 60 cases
+compare supported function-body structure, token spans and rejection diagnostics
+with the C++ reference, and check arena reachability, recovery, literal escapes,
+explicit feature diagnostics and resource limits. Debug/release and the
+address-sanitized native driver pass all 60; both ordinary profiles also pass
+the expanded 114-case lexer corpus, including all ten compiler source files.
+Evidence is retained under `/home/nites/lanes/selfhost-86da951/parser-final-{debug,release,asan}`.
+This qualifies the exercised parser subset, not the entire bootstrap compiler
+under sanitizers. Full grammar, semantic checking and self-compilation remain open.
+
+Seed compilation exposed a bootstrap ownership-analysis crash: generic payload
+traversal discarded enclosing field paths and used payload indices against
+wrapper fields. `analysis/origins.cpp` now preserves prefixes and typed field
+metadata. The current analysis component builds; two run cases pass both source
+profiles and three ownership rejection cases pass. Focused ASan/UBSan checks
+instrument that changed translation unit with existing unaffected Release
+objects, not the whole compiler or emitted lexer. Startup and intentional
+detectors pass. The new boxed-view rejection exceeded the ordinary 60-second
+instrumented compile limit, then passed unchanged in 164 seconds with the
+runner's `--timeout-scale 3`; the other focused cases pass at their normal limits.
 
 I16 replaces LLVM's production backend responsibilities behind the compiler IR
 boundary: instruction selection/legalization, registers, machine optimization,

@@ -199,25 +199,27 @@ std::vector<std::pair<ViewPath, Type>> viewPaths(Type type,
     if (owningHandle(current, types) && !aggregate.genericArguments.empty()) {
       auto payload = aggregate.genericArguments.front();
       auto prior = result.size();
-      visit(payload, {});
+      visit(payload, path);
       if (result.size() == prior && types.isErased(payload))
-        result.emplace_back(ViewPath{}, Type::Unknown);
+        result.emplace_back(path, Type::Unknown);
       return;
     }
     const auto &fields = types.product(current).fields;
     const auto prior = result.size();
     for (std::size_t i = 0; i < fields.size(); ++i) {
       auto child = path;
-      child.push_back(Projection::field(static_cast<std::uint32_t>(i)));
+      // Payload fields retain their type even inside opaque generic storage.
+      child.push_back(
+          Projection::element(static_cast<std::uint32_t>(i), fields[i].type));
       visit(fields[i].type, std::move(child));
     }
     if (result.size() == prior && aggregate.genericOrigin != Type::Unknown)
       for (auto argument : aggregate.genericArguments) {
         auto argumentPrior = result.size();
-        visit(argument, {});
+        visit(argument, path);
         if (result.size() == argumentPrior && types.isErased(argument) &&
             types.containsViews(argument))
-          result.emplace_back(ViewPath{}, Type::Unknown);
+          result.emplace_back(path, Type::Unknown);
       }
   };
   visit(type, {});

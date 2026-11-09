@@ -8,6 +8,8 @@
               a quiet exit status 141 when SIGPIPE is ignored
   sanitizers  ASan heap-overflow and TSan data-race checks on emitted Mettle
               programs
+  selfhost-lexer  compare a compiled Mettle lexer (--seed) with bootstrap tokens
+  selfhost-parser  compare the Mettle parser core with bootstrap syntax
 """
 
 import argparse
@@ -29,7 +31,7 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def run_suite(mode, executable, directory):
+def run_suite(mode, executable, directory, seed=None):
     executable = str(Path(executable).resolve())
     directory = Path(directory) / mode
     directory.mkdir(parents=True, exist_ok=True)
@@ -55,6 +57,286 @@ def run_suite(mode, executable, directory):
         path = directory / (name + ".mt")
         path.write_text(text)
         return path
+
+    def selfhost_lexer():
+        import random
+
+        native = str(Path(seed).resolve())
+        evidence["scope"] = "Self-hosted lexer token/diagnostic parity; not parser or compiler qualification"
+        evidence["seed_sha256"] = digest(native)
+        valid = {
+            "empty": b"",
+            "trivia": b" \t\v\f\r\n// cafe\xc3\xa9\r/* outer /* inner */ done */\n",
+            "numbers": b"1..3 1..=3 1.5e+3 2f32 3.25 1e-9 0xff 0o77 0b10 tuple.0.1 tuple. /*x*/ 0.1",
+            "symbols": b"... ..= >>= <<= == != <= >= && || += -= *= /= %= &= |= ^= << >> -> => ?. ?? (){}[],;:+-*/%!=<>&|^.?@$",
+            "text": b'"" "a\\\"b\\\\c" b"hello" r#"a"b"# br##"one\ntwo"## `type`',
+            "format": b'f"plain" f"{{x}} {value}" f"{ { 1 } }" f"{f"{2}"}" f"{r#"}"#}"',
+            "characters": "'a' '\\n' '\\u{10ffff}' '\\u{0}' '\\u{d7ff}' '\\u{e000}' '\u00e9' '\U0001f600' b'a' b'\\xFF' b'\\0'".encode(),
+        }
+        invalid = {
+            "utf8-leading": b"\xff",
+            "utf8-truncated": b"//\n\xf0\x9f",
+            "utf8-overlong": b"\xe0\x80\x80",
+            "utf8-surrogate": b"\xed\xa0\x80",
+            "utf8-range": b"\xf4\x90\x80\x80",
+            "unicode-word": "x \u03bb y".encode(),
+            "comment-eof": b"/* outer /* inner */",
+            "raw-eof": b'r##"text"#',
+            "text-newline": b'"text\r\nnext',
+            "backtick-eof": b"`bad",
+            "backtick-empty": b"``",
+            "backtick-contents": b"`two words`",
+            "format-brace": b'f"text } tail"',
+            "format-hole-eof": b'f"{value',
+            "format-newline": b'f"{value\nnext',
+            "diagnostic-budget": b"~" * 140,
+        }
+        bad_characters = (b"''", b"'ab'", b"'\\q'", b"'\\u{}'", b"'\\u{gg}'",
+                          b"'\\u{1234567}'", b"'\\u{d800}'", b"'\\u{110000}'",
+                          b"'\\u1234'", b"'\\x41'", b"'\\'", b"'abc\n",
+                          b"b''", b"b'\\x0'", b"b'\\xgg'", b"b'\\u{41}'",
+                          "b'\u00e9'".encode())
+        for i, literal in enumerate(bad_characters):
+            invalid[f"character-{i}"] = literal
+        cases = [(name, data, 0) for name, data in valid.items()]
+        cases += [(name, data, 1) for name, data in invalid.items()]
+        rng = random.Random(0)
+        for i in range(64):
+            cases.append((f"mixed-{i}", b"\x00" + bytes(rng.randrange(128) for _ in range(128)), 1))
+        for path in sorted((ROOT.parent / "compiler").rglob("*.mt")):
+            cases.append(("compiler-" + "-".join(path.relative_to(ROOT.parent / "compiler").parts),
+                          path.read_bytes(), 0))
+        for name, data, expected in cases:
+            path = directory / (name + ".mt")
+            path.write_bytes(data)
+            reference = run([executable, "tokens", str(path)], expected)
+            actual = run([native, str(path)], expected)
+            wanted = [(token["kind"], token["begin"], token["end"])
+                      for token in json.loads(reference.stdout)["tokens"]]
+            found = [tuple(map(int, line.split())) for line in actual.stdout.splitlines()]
+            if found != wanted:
+                mismatch = next((i for i, pair in enumerate(zip(found, wanted)) if pair[0] != pair[1]),
+                                min(len(found), len(wanted)))
+                raise AssertionError(f"{name}: token {mismatch}: {found[mismatch:mismatch + 1]} != {wanted[mismatch:mismatch + 1]}")
+            native_diagnostics = re.findall(r"error\[(\w+)\] (\d+):(\d+) ([^\n]*)", actual.stderr)
+            diagnostics = []
+            for phase, begin, end, message in native_diagnostics:
+                begin, end = int(begin), int(end)
+                if not 0 <= begin <= end <= len(data):
+                    raise AssertionError(f"{name}: invalid diagnostic span {begin}:{end}")
+                line = data[:begin].count(b"\n") + 1
+                start = data.rfind(b"\n", 0, begin) + 1
+                column = sum(byte & 0xc0 != 0x80 for byte in data[start:begin]) + 1
+                diagnostics.append((str(line), str(column), phase, message))
+            reference_diagnostics = re.findall(r":(\d+):(\d+): error\[(\w+)\]: ([^\n]*)", reference.stderr)
+            if diagnostics != reference_diagnostics:
+                raise AssertionError(f"{name}: diagnostics differ\n{diagnostics}\n{reference_diagnostics}")
+            if name.startswith("character-") and any(int(end) != len(data.rstrip(b"\n")) for _, _, end, _ in native_diagnostics):
+                raise AssertionError(f"{name}: character diagnostic lost its full token span")
+            if re.findall(r"(\d+) additional diagnostics suppressed", actual.stderr) != re.findall(r"(\d+) additional diagnostics suppressed", reference.stderr):
+                raise AssertionError(f"{name}: diagnostic suppression count differs")
+            evidence["cases"].append({"name": name, "source_sha256": digest(path),
+                                      "tokens": len(found), "diagnostics": len(diagnostics)})
+
+    def selfhost_parser():
+        native = str(Path(seed).resolve())
+        evidence["scope"] = "Self-hosted parser core shapes, lossless tokens, recovery and limits; extended grammar remains unsupported"
+        evidence["seed_sha256"] = digest(native)
+        kinds = {0: "integer", 1: "boolean", 2: "unit", 3: "name", 4: "group",
+                 5: "unary", 6: "binary", 7: "call", 8: "block", 9: "if",
+                 10: "binding", 11: "assign", 12: "return", 13: "while",
+                 14: "loop", 15: "break", 16: "continue", 17: "field",
+                 25: "tuple", 26: "array", 27: "index", 28: "range",
+                 30: "coalesce", 31: "character", 32: "text", 34: "floating", 35: "cast"}
+        textual = {"integer", "floating", "boolean", "character", "text", "name", "unary", "binary", "coalesce", "range", "assign", "binding", "field"}
+
+        def inspect_native(result, data):
+            nodes, edges, tokens = [], [], []
+            for line in result.stdout.splitlines():
+                fields = line.split()
+                if fields[0] == "node":
+                    index, kind, begin, end, first, last, operation, semicolon = fields[1:]
+                    assert int(index) == len(nodes), line
+                    nodes.append((kind, *map(int, (begin, end, first, last, operation, semicolon))))
+                elif fields[0] == "edge":
+                    edges.append(int(fields[1]))
+                elif fields[0] == "token":
+                    tokens.append(tuple(map(int, fields[1:])))
+                else:
+                    raise AssertionError(line)
+            for index, (kind, begin, end, first, last, operation, semicolon) in enumerate(nodes):
+                assert 0 <= begin <= end <= len(data), (kind, begin, end)
+                assert 0 <= first <= last <= len(edges), (kind, first, last)
+                assert operation == -1 or 0 <= operation < len(tokens), (kind, operation)
+                for child in edges[first:last]:
+                    assert 0 <= child < index, (kind, child, index)
+                    assert begin <= nodes[child][1] <= nodes[child][2] <= end, (kind, nodes[child])
+            if nodes:
+                assert nodes[-1][0] == "module", nodes[-1]
+                seen, work = set(), [len(nodes) - 1]
+                while work:
+                    index = work.pop()
+                    assert index not in seen, "syntax nodes have multiple parents"
+                    seen.add(index)
+                    work.extend(edges[nodes[index][3]:nodes[index][4]])
+                assert len(seen) == len(nodes), "orphaned syntax nodes"
+            return nodes, edges, tokens
+
+        def native_shape(index, nodes, edges, tokens, data):
+            kind, begin, end, first, last, operation, semicolon = nodes[index]
+            children = edges[first:last]
+            text = data[begin:end].decode()
+            if kind == "binding":
+                text = data[nodes[children[0]][1]:nodes[children[0]][2]].decode().strip('`')
+                children = [child for child in children[1:] if nodes[child][0] != "type"]
+            elif kind == "field":
+                text = data[nodes[children[-1]][1]:nodes[children[-1]][2]].decode().strip('`')
+                children = children[:-1]
+            elif kind == "call":
+                children = children[:1] + edges[nodes[children[1]][3]:nodes[children[1]][4]]
+            elif kind == "cast":
+                children = children[:1]
+            elif kind in {"unary", "binary", "coalesce", "range", "assign"}:
+                token = tokens[operation]
+                text = data[token[1]:token[2]].decode()
+            if kind == "repeat":
+                kind = "array"
+            if kind == "byte":
+                kind = "character"
+            if kind == "name":
+                text = text.strip('`')
+            return (kind, text if kind in textual else "", bool(semicolon),
+                    [native_shape(child, nodes, edges, tokens, data) for child in children])
+
+        def reference_shape(node):
+            kind = kinds[node["kind"]]
+            return (kind, node["text"] if kind in textual else "", node["semicolon"],
+                    [reference_shape(child) for child in node["children"]])
+
+        accepted = {
+            "declarations": "fn add(read a: i32, mut b: Other,): i32\n{ a + b }\nfn main() { add(first, second) }\n",
+            "precedence": "1 + 2 * 3 << 1 == 14 && !false || true",
+            "association": "a - b - c ?? d ?? e",
+            "unary-cast": "-value as i32 + *read other",
+            "group": "(1 + 2) * (3 - 4)",
+            "tuple-index": "(1, 2,).0 + values[2]",
+            "calls": "object.method(1, other(2, 3),)[index].field",
+            "array": "[1, 2, 3,][0]",
+            "repeat": "[42; count]",
+            "ranges": "(1..3, ..4, 5.., .., 1..=3)",
+            "literals": "(1.25e+3, 'x', b'\\xff', \"a\\n\", r#\"raw\\n\"#, br#\"bytes\"#)",
+            "bindings": "let value: i32 = 2\nvar count = value\ncount += 3\nlet _ = other()\ncount",
+            "tail-newline": "42 // tail\n",
+            "tail-semicolon": "42\n;\n",
+            "call-newline": "one()\ntwo()\n42",
+            "group-newline": "(1)\n2",
+            "comment-separator": "1 /* a\r\n b */ 2",
+            "rhs-newline": "1 +\n /* x */ 2",
+            "block-in-call": "accept({ 1\n2 },\n 3)",
+            "if-else": "if enabled { 1 }\n/*x*/ else if other { 2 } else { 3 }",
+            "if-no-else": "if enabled { one() }\n42",
+            "loops": "while enabled { if done { break }; continue }\nloop { break 42 }",
+            "return-newline": "return\n(42)",
+            "return-group": "return (\n42\n)",
+            "quoted-name": "`type`(1)",
+        }
+        for name, body in accepted.items():
+            path = source("parser-" + name, body if name == "declarations" else "fn main() {\n" + body + "\n}\n")
+            reference = run([executable, "syntax", str(path)])
+            actual = run([native, "syntax", str(path)])
+            data = path.read_bytes()
+            nodes, edges, tokens = inspect_native(actual, data)
+            wanted = json.loads(reference.stdout)
+            assert tokens == [(token["kind"], token["begin"], token["end"]) for token in wanted["tokens"]], name
+            functions = [index for index, node in enumerate(nodes) if node[0] == "function"]
+            assert len(functions) == len(wanted["functions"])
+            for index, reference_function in zip(functions, wanted["functions"]):
+                function = nodes[index]
+                identifier = nodes[edges[function[3]]]
+                assert data[identifier[1]:identifier[2]].decode().strip('`') == reference_function["name"]
+                block = edges[function[4] - 1]
+                found = native_shape(block, nodes, edges, tokens, data)
+                expected = reference_shape(reference_function["body"])
+                assert found == expected, f"{name}: shape differs\n{found}\n{expected}"
+            evidence["cases"].append({"name": name, "source_sha256": digest(path), "nodes": len(nodes)})
+
+        rejected = {
+            "missing-rhs": "fn main() { 1 + }",
+            "same-line": "fn main() { 1 2 }",
+            "comparison-chain": "fn main() { a < b < c }",
+            "range-chain": "fn main() { 1..2..3 }",
+            "inclusive-bound": "fn main() { 1..= }",
+            "let-mut": "fn main() { let mut x = 1 }",
+            "missing-initializer": "fn main() { let x }",
+            "continue-value": "fn main() { continue 2 }",
+            "unclosed-call": "fn main() { call(1 }",
+            "unclosed-block": "fn main() { 42",
+            "depth": "fn main() { " + "!" * 300 + "true }",
+            "depth-block": "fn main() { " + "{" * 300 + "0" + "}" * 300 + " }",
+            "depth-else": "fn main() { " + "if true { 0 } else " * 300 + "{ 1 } }",
+        }
+        for name, text in rejected.items():
+            path = source("parser-" + name, text)
+            reference = run([executable, "syntax", str(path)], 1)
+            actual = run([native, "syntax", str(path)], 1)
+            inspect_native(actual, path.read_bytes())
+            wanted = re.search(r":(\d+):(\d+): error\[(\w+)\]: ([^\n]*)", reference.stderr)
+            found = re.search(r"error\[(\w+)\] (\d+):(\d+) ([^\n]*)", actual.stderr)
+            assert wanted and found, (name, reference.stderr, actual.stderr)
+            begin = int(found[2])
+            data = path.read_bytes()
+            line = data[:begin].count(b"\n") + 1
+            column = len(data[data.rfind(b"\n", 0, begin) + 1:begin].decode()) + 1
+            assert found[1] == wanted[3], (name, found[0], wanted[0])
+            if not name.startswith("depth"):
+                assert (str(line), str(column)) == wanted.group(1, 2), (name, found[0], wanted[0])
+            evidence["cases"].append({"name": name, "phase": found[1], "source_sha256": digest(path)})
+
+        for name, text in {"recovery": "fn main() {\nlet a =\n;\nlet b =\n;\n42\n}\nfn after() { 7 }",
+                           "unsupported": "type Product { value: i32 }\nfn after() { 7 }"}.items():
+            path = source("parser-" + name, text)
+            actual = run([native, "syntax", str(path)], 1)
+            nodes, edges, tokens = inspect_native(actual, path.read_bytes())
+            assert sum(node[0] == "function" for node in nodes) >= 1, actual.stdout
+            assert sum(node[0] == "error" for node in nodes) >= (2 if name == "recovery" else 1), actual.stdout
+            if name == "recovery":
+                assert sum(node[0] == "function" for node in nodes) == 2
+                assert any(node[0] == "integer" and path.read_bytes()[node[1]:node[2]] == b"42" for node in nodes)
+            assert f"error[{'parse' if name == 'recovery' else 'feature'}]" in actual.stderr, actual.stderr
+            evidence["cases"].append({"name": name, "source_sha256": digest(path)})
+
+        for i, literal in enumerate(('"\\q"', '"\\x80"', '"\\u{}"', '"\\u{d800}"', '"\\u{110000}"',
+                                     'b"\\u{41}"', 'b"\\xgg"', 'b"\u00e9"', 'br#"\u00e9"#')):
+            path = source(f"parser-text-{i}", "fn main() { " + literal + " }\n")
+            reference = run([executable, "check", str(path)], 1)
+            actual = run([native, "syntax", str(path)], 1)
+            wanted = re.search(r"error\[lex\]: ([^\n]*)", reference.stderr)
+            found = re.search(r"error\[lex\] (\d+):(\d+) ([^\n]*)", actual.stderr)
+            assert wanted and found and wanted[1] == found[3], (reference.stderr, actual.stderr)
+            assert path.read_bytes()[int(found[1]):int(found[2])].decode() == literal
+            evidence["cases"].append({"name": f"text-{i}", "source_sha256": digest(path)})
+
+        for i, text in enumerate(("fn generic<T>() { 0 }", "fn slice(x: [u8]) { 0 }",
+                                  "fn main() { if let present(x) = value { x } }",
+                                  "fn defaults(x: i32 = 1) { x }", "fn main() { call(value: 1) }",
+                                  "fn main() { object?.field }", "fn main() { T.(Trait).member }",
+                                  "fn main() { factory<i32, Other>(value) }",
+                                  "fn main() { factory<Outer<Inner>>(value) }")):
+            path = source(f"parser-feature-{i}", text)
+            actual = run([native, "syntax", str(path)], 1)
+            assert "error[feature]" in actual.stderr, actual.stderr
+            evidence["cases"].append({"name": f"feature-{i}", "source_sha256": digest(path)})
+
+        for name, text, expected in (("empty-module", "", 0),
+                                      ("parser-budget", "fn main() {\n" + "let x =;\n" * 140 + "}\n", 1)):
+            path = source("parser-" + name, text)
+            reference = run([executable, "syntax", str(path)], expected)
+            actual = run([native, "syntax", str(path)], expected)
+            inspect_native(actual, path.read_bytes())
+            if expected:
+                assert actual.stderr.count("error[parse]") == reference.stderr.count("error[parse]") == 100
+                assert "40 additional diagnostics suppressed" in actual.stderr
+            evidence["cases"].append({"name": name, "source_sha256": digest(path)})
 
     def inspect_fast_math():
         name = "machine-numeric-explicit-function-and-module-relaxations"
@@ -221,7 +503,11 @@ def run_suite(mode, executable, directory):
             raise AssertionError("undefined sanitization was not explained")
 
     try:
-        if mode == "fast-math":
+        if mode == "selfhost-lexer":
+            selfhost_lexer()
+        elif mode == "selfhost-parser":
+            selfhost_parser()
+        elif mode == "fast-math":
             inspect_fast_math()
         elif mode == "broken-pipe":
             broken_pipe()
@@ -436,8 +722,11 @@ def run_suite(mode, executable, directory):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("syntax", "fast-math", "broken-pipe",
-                                         "sanitizers"))
+                                         "sanitizers", "selfhost-lexer", "selfhost-parser"))
     parser.add_argument("executable")
     parser.add_argument("directory")
+    parser.add_argument("--seed", help="compiled Mettle seed for selfhost probes")
     args = parser.parse_args()
-    run_suite(args.mode, args.executable, args.directory)
+    if args.mode.startswith("selfhost-") and not args.seed:
+        parser.error(args.mode + " requires --seed")
+    run_suite(args.mode, args.executable, args.directory, args.seed)

@@ -1,8 +1,9 @@
-import alloc.vec.{List, new}
+import alloc.vec.{ List, new }
 import core.text.Text
-import mettle_foundation.{Span, invalid_utf8}
-import mettle_foundation.{Diagnostics, Phase}
-import super.token.{Kind, Token}
+import mettle_foundation.{ Span, invalid_utf8 }
+import mettle_foundation.{ Diagnostics, Phase }
+import super.token.{ Kind, Token }
+import super.characters.character_value
 
 pub type Lexed { pub tokens: List<Token>; pub diagnostics: Diagnostics }
 
@@ -232,6 +233,8 @@ extend<region r> Scanner<region r> {
                 self.pos += if bytes { 2usize } else { 1usize }
                 let _ = self.quoted(b'\'')
                 self.add(if bytes { Kind.Byte } else { Kind.Character }, begin)
+                let span = self.span(begin, self.pos)
+                let _ = character_value(read self.bytes[begin..self.pos], bytes, span, mut self.result.diagnostics)
             } else if word_start(byte) {
                 self.word()
                 self.add(Kind.Word, begin)
