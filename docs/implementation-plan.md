@@ -1203,6 +1203,12 @@ source-freeze gate for this verification batch, not I13 or LNX milestone closure
 
 No earlier Ubuntu 26.04 receipt substitutes for these gates. Known gaps in the
 larger language/capability inventory remain outside a claim that these tests pass.
+The initial Ubuntu 24.04 preflight stopped before compilation because WSL does
+not expose `/sys/class/dmi/id/sys_vendor`. Reopened the tool/freeze task:
+`tools/build.py` now records the unavailable optional DMI probe and its error,
+and explicitly withholds hardware/performance qualification. The failed console
+and foundation receipts are preserved; no compile/test result was invalidated.
+Refreeze the updated tool and ledger before restarting the consolidated run.
 
 **L054 status (const evaluation): implemented and verified on macOS ARM64.** The `compiler/consteval` evaluator and `const fn` are wired into constants, array lengths, constant generic arguments and statics. Evidence: `tests/source/{run,fail}/const-eval-*.mt` (Debug and Release, including the recursion-depth limit, which evaluates on a dedicated large stack) and `compiler.consteval-target` (`tests/consteval/target_width.cpp`); the driver admits no 32-bit target, so target-width evidence is that checker-level unit test. Gap addressed, verified on macOS arm64: a mutable unsuffixed integer local in a `const fn` (`var i = 0`) stays open instead of being fixed to `i32`; assignment of a typed value or a use against a scalar expectation fixes its type (`tests/source/run/const-eval-open-integer-local.mt`). An immutable `let` or a copy into another binding still defaults to `i32`.
 

@@ -139,9 +139,16 @@ def main():
                 for name in ("Scrt1.o", "crti.o", "crtn.o", "libc.so.6", "libstdc++.so",
                              "libgcc_s.so.1")]
             sysroot_files.append(Path("/usr/include/features.h"))
+            try:
+                evidence["system_vendor"] = Path("/sys/class/dmi/id/sys_vendor").read_text().strip()
+            except OSError as error:
+                evidence["system_vendor"] = None
+                evidence["system_vendor_probe_error"] = str(error)
             evidence["execution"] = (
                 "QEMU x86-64 emulation; not native hardware/performance evidence"
-                if Path("/sys/class/dmi/id/sys_vendor").read_text().strip() == "QEMU"
+                if evidence["system_vendor"] == "QEMU"
+                else "Linux host; DMI vendor unavailable; not hardware/performance qualification"
+                if evidence["system_vendor"] is None
                 else "Linux host; see system and kernel identity")
         else:
             sdk = Path(probe(["xcrun", "--show-sdk-path"]))
