@@ -1,3 +1,4 @@
+import package.core.iter.{FromItems, OwnedIterable}
 // Atomically reference-counted shared owner. Counting is atomic; that makes
 // the handles themselves thread-safe, not the payload: an `Arc<T>` crosses or
 // is shared between threads only when `T` is both Transferable and Shareable.
@@ -674,5 +675,53 @@ extend Pinned<Text> implements Default {
     static fn default(): Pinned<Text> {
         let raw = copy_text("").into_raw()
         Pinned(raw.p, raw.h, raw.a)
+    }
+}
+
+extend<T: unsized, A: Allocator> Weak<T, A> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.write_str("(Weak)") }
+}
+extend Arc<Text> implements From<read Text> {
+    static fn from(value: read Text): Arc<Text> { copy_text(value) }
+}
+extend Arc<Text> implements From<super.string.String> {
+    static fn from(value: take super.string.String): Arc<Text> { copy_text(value.as_text()) }
+}
+extend<T> Arc<T> implements From<super.boxed.Box<T>> {
+    static fn from(value: take super.boxed.Box<T>): Arc<T> { new(value.into_inner()) }
+}
+extend<T: Clone> Arc<[T]> implements From<read [T]> {
+    static fn from(values: read [T]): Arc<[T]> {
+        var copies = super.vec.with_capacity<T>(values.len())
+        var index = 0usize
+        while index < values.len() {
+            copies.push(values[index].clone())
+            index += 1usize
+        }
+        Arc<[T]>.from(copies)
+    }
+}
+extend<T> Arc<[T]> implements FromItems<T> {
+    static fn from_iter<I: OwnedIterable<Item = T>>(items: take I): Arc<[T]> {
+        let values = super.vec.List<T>.(FromItems<T>).from_iter(items)
+        Arc<[T]>.from(values)
+    }
+}
+extend<T> Arc<[T]> implements From<super.vec.List<T>> {
+    static fn from(values: take super.vec.List<T>): Arc<[T]> {
+        var source = values
+        let length = source.len()
+        var owner = new_uninit_slice<T>(length)
+        match take owner.get_mut() {
+            present(slots) => {
+                var index = length
+                while index > 0usize {
+                    index -= 1usize
+                    slots[index] = core.mem.MaybeUninit<T>.new(source.pop().unwrap())
+                }
+            },
+            none => {}
+        }
+        unsafe { owner.assume_init() }
     }
 }

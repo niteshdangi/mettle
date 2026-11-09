@@ -6,6 +6,8 @@
 
 ## Comments in internal code should never be written to explain some code, code should be self understandable, comments only allowed for non-obvious things, that too in max 1 line rarely 2 lines for complex non-obvious things.
 
+## NEVER OVER EXPAND ANY TASK MORE THAN WHATS NEEDED and what was the task
+
 ## If I asked something to be done, DONOT STOP AFTER ACKNOWLEDGING, OR DOING HALF WORK FROM ABOVE WITHOUT DOING FULL TASK WHAT I ASKED. If you know its not done then dont stop without completing that task properly. Below Rules are AI generated, if some rule wastes time for a task which can skip some rules below then skip it. 
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and the normative
