@@ -493,6 +493,23 @@ pub interface Iterator: Sized {
         }
         (yes, no)
     }
+    take fn unzip<A, B, Left: Default + ExtendItems<A>, Right: Default + ExtendItems<B>>(): (Left, Right)
+    where Self: Iterator<Item = (A, B)> {
+        var source = self
+        var left = Left.(Default).default()
+        var right = Right.(Default).default()
+        while true {
+            match take Self.(Iterator).next(mut source) {
+                present(item) => {
+                    let (a, b): (A, B) = item
+                    left.extend(once(a))
+                    right.extend(once(b))
+                },
+                none => { break }
+            }
+        }
+        (left, right)
+    }
     take fn collect<C: FromItems<Self.Item>>(): C { C.(FromItems<Self.Item>).from_iter(self) }
 }
 
@@ -2067,8 +2084,48 @@ extend f64 implements Product {
     fn times(other: take f64): f64 { self * other }
 }
 
-// Value traits of the adapters that hold no closure: they clone and default by
-// their fields. Adapters holding a closure stay without these impls.
+// Cloning preserves iterator position, buffered items and callable state.
+extend<B, I: Clone, F: Clone> Mapped<B, I, F> implements Clone {
+    fn clone(): Mapped<B, I, F> { Mapped(self.iter.clone(), self.f.clone(), Phantom<B>()) }
+}
+extend<I: Clone, F: Clone> Filtered<I, F> implements Clone {
+    fn clone(): Filtered<I, F> { Filtered(self.iter.clone(), self.test.clone()) }
+}
+extend<B, I: Clone, F: Clone> FilterMapped<B, I, F> implements Clone {
+    fn clone(): FilterMapped<B, I, F> { FilterMapped(self.iter.clone(), self.f.clone(), Phantom<B>()) }
+}
+extend<B, I: Clone, F: Clone> MappedWhile<B, I, F> implements Clone {
+    fn clone(): MappedWhile<B, I, F> { MappedWhile(self.iter.clone(), self.f.clone(), Phantom<B>()) }
+}
+extend<O: Clone, U: Clone, F: Clone> FlatMapped<O, U, F> implements Clone {
+    fn clone(): FlatMapped<O, U, F> {
+        FlatMapped(self.outer.clone(), self.front.clone(), self.back.clone(), self.outer_done, self.f.clone())
+    }
+}
+extend<U: Iterator + Clone, O: Iterator<Item = U> + Clone> Flatten<U, O> implements Clone {
+    fn clone(): Flatten<U, O> {
+        Flatten(self.outer.clone(), self.front.clone(), self.back.clone(), self.outer_done)
+    }
+}
+extend<region r, T, I: Clone> Cloned<region r, T, I> implements Clone {
+    fn clone(): Cloned<region r, T, I> { Cloned(self.iter.clone(), Phantom<T>()) }
+}
+extend<region r, T, I: Clone> Copied<region r, T, I> implements Clone {
+    fn clone(): Copied<region r, T, I> { Copied(self.iter.clone(), Phantom<T>()) }
+}
+extend<I: Clone, F: Clone> TakenWhile<I, F> implements Clone {
+    fn clone(): TakenWhile<I, F> { TakenWhile(self.iter.clone(), self.test.clone(), self.done) }
+}
+extend<I: Clone, F: Clone> SkippedWhile<I, F> implements Clone {
+    fn clone(): SkippedWhile<I, F> { SkippedWhile(self.iter.clone(), self.test.clone(), self.started) }
+}
+extend<I: Clone, F: Clone> Inspected<I, F> implements Clone {
+    fn clone(): Inspected<I, F> { Inspected(self.iter.clone(), self.f.clone()) }
+}
+extend<I: Clone> Cycled<I> implements Clone {
+    fn clone(): Cycled<I> { Cycled(self.original.clone(), self.iter.clone(), self.yielded, self.done) }
+}
+
 extend<I: Iterator + Clone> Enumerated<I> implements Clone {
     fn clone(): Enumerated<I> { Enumerated(self.iter.clone(), self.index) }
 }

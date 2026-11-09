@@ -7,6 +7,7 @@ import core.convert.From
 import core.convert.Into
 import core.convert.TryFrom
 import core.convert.TryInto
+import alloc.boxed.Box
 
 type Wrapped { value: i32 }
 enum ConversionError { Negative }
@@ -22,6 +23,12 @@ extend Positive implements TryFrom<i32> {
         if value < 0 { failure(ConversionError.Negative) }
         else { success(Positive(value)) }
     }
+}
+
+type OwnedInput { value: Box<i32> }
+type OwnedOutput { value: Box<i32> }
+extend OwnedInput implements Into<OwnedOutput> {
+    take fn into(): OwnedOutput { OwnedOutput(self.value) }
 }
 
 fn main(): i32 {
@@ -40,6 +47,28 @@ fn main(): i32 {
     match via_try_into {
         success(value) => { if value.value != 20 { return 4 } },
         failure(_) => { return 4 }
+    }
+    let lossless: (Wrapped throws Never) = Wrapped.(TryFrom<i32>).try_from(22)
+    match lossless {
+        success(value) => { if value.value != 22 { return 9 } },
+    }
+    let lossless_into: (Wrapped throws Never) = i32.(TryInto<Wrapped>).try_into(23i32)
+    match lossless_into {
+        success(value) => { if value.value != 23 { return 10 } },
+    }
+    match i32.(TryInto<Positive>).try_into(-1i32) {
+        success(_) => { return 11 },
+        failure(error) => match error {
+            ConversionError.Negative => {},
+        }
+    }
+    let input = OwnedInput(alloc.boxed.new(31))
+    let address = core.ptr.from_ref(*input.value.get())
+    match OwnedOutput.(TryFrom<OwnedInput>).try_from(input) {
+        success(output) => {
+            if *output.value.get() != 31 { return 12 }
+            if core.ptr.from_ref(*output.value.get()) != address { return 13 }
+        }
     }
 
     let owned = 21i32.to_owned()

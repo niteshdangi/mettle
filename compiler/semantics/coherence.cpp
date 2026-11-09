@@ -379,7 +379,14 @@ bool Solver::someImplementationCouldApply(Type subject, Type interfaceType) {
   }
   for (auto position : candidatesFor(declaration)) {
     const auto &candidate = database.implementations[position];
-    auto bindings = match(candidate.target, subject, true);
+    std::vector<Type> pattern{candidate.target}, actual{subject};
+    const auto &offered = types.erased(candidate.interfaceType).arguments;
+    const auto &requested = types.erased(interfaceType).arguments;
+    pattern.insert(pattern.end(), offered.begin(), offered.end());
+    actual.insert(actual.end(), requested.begin(), requested.end());
+    auto bindings =
+        match(types.structural(AggregateKind::Tuple, std::move(pattern)),
+              types.structural(AggregateKind::Tuple, std::move(actual)), true);
     if (bindings && constraints(candidate, *bindings, candidate.span, {}, true))
       return true;
   }

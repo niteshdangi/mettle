@@ -10,6 +10,74 @@ docs/capability-coverage.md (L003 L005 L009 S005-S014 S019-S021 S024 S025).
 
 ## Handoff (start here in a new session)
 
+**Adapter Clone batch (2026-11-09).** Twelve generic adapter implementations
+clone their stored fields: Mapped, Filtered, FilterMapped, MappedWhile,
+FlatMapped, Flatten, Cloned, Copied, TakenWhile, SkippedWhile, Inspected and
+Cycled. The existing `ToOwned` blanket reuses those implementations without
+another copy algorithm. Phantom result types do not acquire a Clone bound.
+The expanded value-trait fixture passes Linux debug/release natively and with
+emitted ASan, checking independent partially consumed Flatten/Cloned/Copied
+positions, their ToOwned results and Cycled wraparound. Nine corresponding
+Clone/ToOwned rows are evidenced; fifteen callable-adapter rows are declared,
+not yet behaviorally verified. Current ledger: 8,988 evidenced, 399 declared,
+3,903 missing and 5 not applicable.
+
+Peekable remains blocked: its slot carries `<associated.0>??`; neither an
+explicit `Iterator<Item = T>` bound nor typed helper normalizes that projection
+to `T??` in the Clone implementation body. The unbuildable attempted
+implementation was removed, leaving the original API intact. No compiler
+changes were made for this batch and no capability area is closed.
+
+**Blanket conversion batch (2026-11-09).** Coherence now matches both a
+candidate's target and interface arguments before checking its requirements.
+The standalone disjoint-destination case fails on the old compiler and passes
+on the repaired compiler; genuine-overlap and unconstrained-downstream cases
+remain rejected. `core.convert` now supplies one
+`TryFrom<U> for T where U: Into<T>` implementation, including direct user
+`Into` implementations, and integer widenings no longer repeat infallible
+`TryFrom` bodies. The existing `TryInto` blanket delegates through it.
+
+The worklist maps 192 TryFrom and 192 TryInto blanket exposures as **declared**,
+not blanket-wide behavioral passes. Ten directly exercised conversion
+protocol/member rows are evidenced. Current counts: 8,979 evidenced, 384
+declared, 3,927 missing and 5 not applicable. Per-type/profile closure for those
+384 exposures is still required; this does not close a capability area.
+
+The focused compiler build, `compiler.boundaries`, `compiler.modules-memory`
+and pinned clang-tidy pass. Generic conversion, target inference and floating
+conversion fixtures pass both source profiles. The integer fixture's release
+compile reached its unchanged 60-second limit, so its 514 conversion assertions
+were moved unchanged to `i13-integer-conversion-interfaces`; the other 2,365
+operator assertions remain in the original fixture. Both split fixtures pass
+both source profiles with their unchanged 60-second limits. The emitted
+owner-conversion ASan build also reached the 60-second limit and remains
+unverified; no sanitizer, timeout or assertion was weakened. This is a scoped
+validation gap, not a sanitizer pass or closure receipt. The Linux validation checkout was
+synchronized with the current owner's compiler inputs before the incremental
+build, preserving its unrelated documentation changes.
+
+**Shared algorithm batch (2026-11-09).** `Iterator.unzip` now uses one generic
+implementation over `Default + ExtendItems`, with no collection-specific
+dependency in `core`. The consumer fixture covers empty and heterogeneous
+sequences, order preservation and movement/drop counts for non-Copy owners.
+The existing source runner passed the complete consumer fixture in Linux debug
+and release source profiles, both natively and with emitted ASan. The pinned
+linker required the already installed `libxml2.so.2` compatibility directory
+in `LD_LIBRARY_PATH`; no toolchain or system package changed. The compiler was
+the existing Linux Release binary, with the current owner's library supplied
+through `--library-dir`. Only the unzip operation row is credited: the ledger
+now has 8,969 evidenced, 4,321 missing and 5 not applicable records. No capability
+area or full operation closure is claimed. These cases do not establish every
+destination collection's allocation or destructor-panic contract.
+Initial diagnostics identify an unresolved `Self.Item` tuple during nested
+pattern checking and absent result-tuple generic inference. Explicit local
+typing still reports `<associated.0>`: the equality-only where clause does not
+resolve the interface member during declaration checking. The method now uses
+the equivalent `Self: Iterator<Item = (A, B)>` interface bound; fixtures spell
+output type arguments explicitly without changing the collection contract.
+Explicit `Self.(Iterator).next` dispatch resolves the duplicate interface
+method candidates from that bound. No compiler or runtime source changed.
+
 **Linux session (2026-11-09).** The operation ledger records 7,962 of 13,295
 rows evidenced (5,328 missing, 5 not applicable). Added since 2026-11-08:
 generated all-width integer and f32/f64 operation programs; the integer surface
@@ -35,8 +103,8 @@ Open, with evidence:
   fail `Static`/`Any`. Keeping `static` in erased types breaks type equality;
   the check needs deferral to the region phase. Blocks Any for ~35 iterator,
   guard and drain types.
-- Rust's `TryFrom<U> for T where U: Into<T>` blanket needs coherence to rule
-  out pairs whose Into is never implemented (384 rows).
+- The conversion blanket blocker is repaired by the batch above; its 384
+  mapped exposure rows still need per-type behavioral closure.
 - Clone for arrays (element-wise construction), cells, ManuallyDrop and the
   collection/slice/text iterators; Send/Sync for vec::IntoIter and the sorted
   map/set iterators; ReadDir, Scope and ScopedJoinHandle are declared not

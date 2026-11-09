@@ -9,6 +9,7 @@ import core.clone.Clone
 import core.default.Default
 import core.iter
 import core.iter.{Iterator}
+import core.borrow.ToOwned
 
 type Ticks { at: i32; last: i32 }
 
@@ -95,10 +96,74 @@ fn checks_default_then_clone(): i32 {
     0
 }
 
+type NestedTicks { at: i32 }
+extend NestedTicks implements Iterator {
+    type Item = iter.Range<i32>
+    mut fn next(): iter.Range<i32>? {
+        if self.at == 3 { return none }
+        self.at += 1
+        present(iter.range(0, self.at))
+    }
+}
+extend NestedTicks implements Clone {
+    fn clone(): NestedTicks { NestedTicks(self.at) }
+}
+type ReadTicks<region r> { values: read [i32] from r; at: usize }
+extend<region r> ReadTicks<region r> implements Iterator {
+    type Item = read i32 from r
+    mut fn next(): (read i32 from r)? {
+        if self.at == self.values.len() { return none }
+        let index = self.at
+        self.at += 1usize
+        present(read self.values[index])
+    }
+}
+extend<region r> ReadTicks<region r> implements Clone {
+    fn clone(): ReadTicks<region r> { ReadTicks(self.values, self.at) }
+}
+
+fn checks_buffered_clones(): i32 {
+    var nested = NestedTicks(0).flatten()
+    if nested.next() != present(0) || nested.next() != present(0) { return 47 }
+    var nested_copy = nested.clone()
+    var nested_owned = nested.to_owned()
+    if nested.next() != present(1) || nested_copy.next() != present(1) ||
+        nested_owned.next() != present(1) { return 48 }
+    if nested.count() != 3usize || nested_copy.count() != 3usize { return 49 }
+
+    var cycling = iter.range(0, 2).cycle()
+    if cycling.next() != present(0) || cycling.next() != present(1) { return 50 }
+    var cycling_copy = cycling.clone()
+    if cycling.next() != present(0) || cycling_copy.next() != present(0) { return 51 }
+    0
+}
+
+fn checks_borrowed_clones(): i32 {
+    let values = [3, 4, 5]
+    var cloned = ReadTicks(read values, 0usize).cloned()
+    if cloned.next() != present(3) { return 60 }
+    var cloned_copy = cloned.clone()
+    var cloned_owned = cloned.to_owned()
+    if cloned.next() != present(4) || cloned_copy.next() != present(4) ||
+        cloned_owned.next() != present(4) { return 61 }
+    if cloned.next() != present(5) || cloned_copy.next() != present(5) { return 62 }
+    var copied = ReadTicks(read values, 0usize).copied()
+    if copied.next() != present(3) { return 63 }
+    var copied_copy = copied.clone()
+    var copied_owned = copied.to_owned()
+    if copied.next() != present(4) || copied_copy.next() != present(4) ||
+        copied_owned.next() != present(4) { return 64 }
+    0
+}
+
 fn main(): i32 {
     var code = checks_clone_positions()
     if code != 0 { return code }
     code = checks_default_adapters()
     if code != 0 { return code }
-    checks_default_then_clone()
+    code = checks_default_then_clone()
+    if code != 0 { return code }
+    code = checks_buffered_clones()
+    if code != 0 { return code }
+    checks_borrowed_clones()
 }

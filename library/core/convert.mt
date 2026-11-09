@@ -27,13 +27,11 @@ extend<T, U> T implements Into<U> where U: From<T> {
     take fn into(): U { U.(From<T>).from(self) }
 }
 
-// Rust's blanket `TryFrom<U> for T where U: Into<T>` needs coherence to rule
-// out explicit fallible pairs whose `Into` is never implemented; until then the
-// identity conversion is the blanket, and each lossless library pair declares
-// its never-failing TryFrom beside its From.
-extend<T> T implements TryFrom<T> {
+extend<T, U: Into<T>> T implements TryFrom<U> {
     type Error = Never
-    static fn try_from(value: take T): (T throws Never) { success(value) }
+    static fn try_from(value: take U): (T throws Never) {
+        success(U.(Into<T>).into(value))
+    }
 }
 
 extend<T, U> T implements TryInto<U> where U: TryFrom<T> {

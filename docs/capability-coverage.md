@@ -62,6 +62,29 @@ implementation records are not-applicable on Darwin. Unmapped records are not
 evidence of missing code, and unreviewed existing code receives no automatic
 credit.
 
+The 2026-11-09 shared-algorithm batch adds `core.iter.Iterator.unzip`,
+implemented once through `Default + ExtendItems`. The existing consumer
+fixture passes Linux debug/release source profiles natively and with emitted
+ASan, covering empty input, heterogeneous order-preserving output and owned
+element drop counts. At that batch the worklist recorded 8,969 evidenced, 4,321 missing
+and 5 not applicable rows. This is scoped operation evidence, not S011 or I13
+closure; see [the work package](i13-library.md#handoff-start-here-in-a-new-session).
+
+The subsequent shared conversion batch implements the lossless `TryFrom`
+blanket once and reuses the existing `TryInto` blanket. Coherence candidate
+matching now includes interface arguments. The worklist maps 384 blanket
+exposures as declared and credits ten directly exercised conversion protocol
+rows: 8,979 evidenced, 384 declared, 3,927 missing and 5 not applicable.
+Declared is implemented-but-unverified at the per-type/profile level, not a
+passing operation count. The work package records focused checks and limits.
+
+The adapter Clone follow-up adds twelve generic field-wise implementations,
+reusing the ToOwned blanket. Nine Clone/ToOwned records have native and emitted
+ASan debug/release state-preservation evidence; fifteen callable-adapter
+records are declared only. Latest ledger: 8,988 evidenced, 399 declared,
+3,903 missing and 5 not applicable. Peekable projection normalization and
+whole S011 closure remain open.
+
 ## Equivalence policy
 
 Native syntax may replace Rust syntax, not the promised safe capability.

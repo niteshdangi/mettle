@@ -1655,6 +1655,31 @@ None of these supporting repairs closes S011's full operation inventory or
 source-freeze prerequisites. All eighteen areas remain partial;
 the operation CSV has not been credited from name matches.
 
+The 2026-11-09 shared iterator batch implements `Iterator.unzip` once over
+`Default + ExtendItems`, without compiler/runtime changes. The existing
+`i13-iter-consumers` fixture passes Linux debug/release source profiles natively
+and with emitted ASan (empty input, heterogeneous order and owned drop counts).
+Only that operation is credited; S011 and the I13 freeze gate remain open.
+The work package records the focused tool/environment scope.
+
+The following high-fanout batch repairs coherence candidate matching to include
+interface arguments and implements lossless `TryFrom` once through `Into`,
+removing repeated integer infallible conversions. The 192 TryFrom and 192
+TryInto blanket exposures are mapped as declared, not per-type/profile
+behavioral passes. Ten directly exercised conversion protocol rows are
+evidenced. The worklist now records 8,979 evidenced, 384 declared, 3,927 missing
+and 5 not applicable. Focused compiler CTest/static analysis and conversion
+source checks pass within the work package's scope; remaining per-type
+closure and full source-freeze prerequisites remain open.
+
+The adapter follow-up adds twelve generic Clone implementations and reuses
+the existing ToOwned algorithm. The expanded iterator value-trait fixture
+passes native and emitted-ASan debug/release source profiles. Nine rows are
+evidenced and fifteen are declared only; latest worklist counts are 8,988
+evidenced, 399 declared, 3,903 missing and 5 not applicable. Peekable's
+unresolved associated buffer type remains a concrete blocker, recorded in
+the work package. No area or milestone closure is claimed.
+
 I13 closes the V1 operation subset defined in `docs/library-surface.md`
 section 6.1 with compiled native declarations and per-operation semantic
 evidence, including its supporting protocols, reexports and target cfg branches

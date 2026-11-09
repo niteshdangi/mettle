@@ -270,6 +270,9 @@ current implementations do not prove disjointness when downstream
 implementations remain possible. Implementation parameters must be determined
 by their target, interface inputs or equalities, rather than surviving unresolved
 until specialization.
+Potential interface candidates match both the target and interface arguments
+before checking their constraints; a match on the target alone cannot establish
+that a conversion to a different destination exists.
 
 The pipeline verifies and analyzes every symbolic body, including unused
 declarations, before requesting concrete instances. The `instances` component

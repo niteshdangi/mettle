@@ -146,6 +146,37 @@ fn checks_by_ref(): i32 {
     0
 }
 
+type Counted {
+    value: i32
+    drops: ptr<mut usize>
+    // The enclosing checks_unzip scope keeps this counter alive through every drop.
+    drop { unsafe { *self.drops += 1usize } }
+}
+
+fn checks_unzip(): i32 {
+    let (empty_left, empty_right) = iter.empty<(i32, bool)>().unzip<i32, bool, List<i32>, List<bool>>()
+    if empty_left.len() != 0usize || empty_right.len() != 0usize { return 80 }
+    let (left, right) = iter.range(0, 4).map(
+        fn(value: take i32): (i32, bool) { (value * 10, value % 2 == 0) }
+    ).unzip<i32, bool, List<i32>, List<bool>>()
+    if left.len() != 4usize || right.len() != 4usize { return 81 }
+    if left.as_slice()[0usize] != 0 || left.as_slice()[3usize] != 30 { return 82 }
+    if !right.as_slice()[0usize] || right.as_slice()[1usize] ||
+        !right.as_slice()[2usize] || right.as_slice()[3usize] { return 83 }
+    var drops = 0usize
+    {
+        var pairs = alloc.vec.new<(Counted, Counted)>()
+        pairs.push((Counted(1, core.ptr.from_mut(drops)), Counted(2, core.ptr.from_mut(drops))))
+        pairs.push((Counted(3, core.ptr.from_mut(drops)), Counted(4, core.ptr.from_mut(drops))))
+        let (owners_left, owners_right) = pairs.into_iter().unzip<Counted, Counted, List<Counted>, List<Counted>>()
+        if drops != 0usize { return 84 }
+        if owners_left.len() != 2usize || owners_right.len() != 2usize { return 85 }
+        if owners_left.as_slice()[1usize].value != 3 || owners_right.as_slice()[0usize].value != 2 { return 86 }
+    }
+    if drops != 4usize { return 87 }
+    0
+}
+
 fn main(): i32 {
     var code = checks_folds()
     if code != 0 { return code }
@@ -157,5 +188,7 @@ fn main(): i32 {
     if code != 0 { return code }
     code = checks_sums_and_collection()
     if code != 0 { return code }
-    checks_by_ref()
+    code = checks_by_ref()
+    if code != 0 { return code }
+    checks_unzip()
 }
