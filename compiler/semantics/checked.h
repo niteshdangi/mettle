@@ -37,6 +37,7 @@ struct ReceiverPlan {
 struct DeferredInterfaceBound {
   Type subject = Type::Unknown, interfaceType = Type::Unknown;
   TypeSyntax syntax{};
+  interfaces::Property property = interfaces::Property::Interface;
 };
 struct NodeFacts {
   Type type = Type::Unknown;

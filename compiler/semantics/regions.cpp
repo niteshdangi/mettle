@@ -2225,8 +2225,10 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
   for (const auto &bound : facts(node).deferredInterfaceBounds) {
     auto subject =
         replace(types.substitute(bound.subject, typeBindings), bindings);
-    auto required = decorate(bound.interfaceType, bound.syntax,
-                             declarationContext, node.span);
+    auto required = bound.property == interfaces::Property::Interface
+                        ? decorate(bound.interfaceType, bound.syntax,
+                                   declarationContext, node.span)
+                        : Type::Unknown;
     required = replace(types.substitute(required, typeBindings), bindings);
     std::vector<interfaces::Obligation> assumptions;
     for (const auto &[type, interface] : currentFacts->interfaceBounds)
@@ -2235,7 +2237,13 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
                              std::move(assumptions),
                              current->context.environment);
     proof.setEqualities(currentFacts->genericEqualities);
-    if (!proof.prove({subject, required}, node.span, false))
+    std::vector<RegionId> staticRegions;
+    proof.collectStaticRegions(&staticRegions);
+    const bool holds =
+        proof.prove({subject, required, bound.property}, node.span, false);
+    for (auto region : staticRegions)
+      require(region, RegionId::Static, node.span);
+    if (!holds)
       error(node.span,
             "interface bound does not hold after region inference: " +
                 displayType(types, subject) + " requires " +

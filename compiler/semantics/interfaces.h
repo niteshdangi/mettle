@@ -125,6 +125,10 @@ public:
   void setCallableProof(CallableProof proof) {
     callableProof = std::move(proof);
   }
+  // Static proofs accept non-static regions and record them for the caller.
+  void collectStaticRegions(std::vector<RegionId> *sink) {
+    staticRegions = sink;
+  }
   void setEqualities(std::span<const TypeBinding> equalities) {
     contextualEqualities.assign(equalities.begin(), equalities.end());
   }
@@ -164,6 +168,7 @@ public:
 
 private:
   CallableProof callableProof{};
+  std::vector<RegionId> *staticRegions = nullptr;
   TypeStore &types;
   const Database &database;
   Diagnostics &diagnostics;
