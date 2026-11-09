@@ -196,12 +196,9 @@ std::vector<std::pair<ViewPath, Type>> viewPaths(Type type,
       visit(aggregate.components[1], std::move(path));
       return;
     }
+    // The region pass bounds an owned erased payload by its `from` sources.
     if (owningHandle(current, types) && !aggregate.genericArguments.empty()) {
-      auto payload = aggregate.genericArguments.front();
-      auto prior = result.size();
-      visit(payload, path);
-      if (result.size() == prior && types.isErased(payload))
-        result.emplace_back(path, Type::Unknown);
+      visit(aggregate.genericArguments.front(), path);
       return;
     }
     const auto &fields = types.product(current).fields;
@@ -741,9 +738,11 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                   continue;
                 for (auto referent : loan->second.targets) {
                   if (imprecise(target.place))
-                    project(
-                        referent.place,
-                        Projection::opaque(types.view(currentType).payload));
+                    project(referent.place,
+                            Projection::opaque(
+                                types.isView(currentType)
+                                    ? types.view(currentType).payload
+                                    : Type::Unknown));
                   referent.authority.insert(id);
                   join(referent.authority, target.authority);
                   next.insert(std::move(referent));
@@ -751,6 +750,9 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
               }
             }
             targets = std::move(next);
+            // A raw pointer's pointee has no further view type to follow.
+            if (!types.isView(currentType))
+              return targets;
             currentType = types.view(currentType).payload;
           }
         }
@@ -1432,11 +1434,10 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                   for (auto id : contents(memory, referent.place))
                     for (auto target : result.loans.at(id).targets) {
                       if (imprecise(referent.place))
-                        project(
-                            target.place,
-                            Projection::opaque(types.view(priorType).payload));
+                        project(target.place, Projection::opaque(type));
                       target.authority.insert(id);
-                      if (types.view(priorType).mode == ParameterMode::Mut)
+                      if (!types.isView(priorType) ||
+                          types.view(priorType).mode == ParameterMode::Mut)
                         join(target.authority, referent.authority);
                       next.insert(std::move(target));
                     }

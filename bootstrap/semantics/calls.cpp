@@ -111,8 +111,18 @@ void Checker::formatArguments(Node &n, const Function &callee,
           target = j;
     if (target >= callee.parameters.size() || !callee.parameters[target].format)
       continue;
-    if (argument.label == formatRecipeLabel) {
-      permittedRecipes.insert(&argument);
+    // Macro expansion may wrap a forwarded f-string in a group or block.
+    auto *wrapped = &n.children[i];
+    while (((*wrapped)->kind == Kind::Group ||
+            (*wrapped)->kind == Kind::Block) &&
+           (*wrapped)->children.size() == 1)
+      wrapped = &(*wrapped)->children[0];
+    if (wrapped != &n.children[i] && (*wrapped)->label == formatRecipeLabel) {
+      auto inner = std::move(*wrapped);
+      n.children[i] = std::move(inner);
+    }
+    if (n.children[i]->label == formatRecipeLabel) {
+      permittedRecipes.insert(n.children[i].get());
       continue;
     }
     if (argument.kind == Kind::Name) {

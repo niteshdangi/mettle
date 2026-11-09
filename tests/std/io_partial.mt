@@ -1,5 +1,5 @@
 // Partial reads and writes stay visible; the *_all helpers loop over them.
-import std.io.{Reader, Writer, Error, ErrorKind}
+import std.io.{BufRead, Reader, Writer, Error, ErrorKind}
 import alloc.vec.List
 
 // Reads at most `step` bytes per call.
@@ -100,18 +100,18 @@ fn run(): i32 throws Error {
     src.data.extend_from_slice("one\ntwo\n\nlast".as_bytes())
     var r = std.io.buf_reader_with_capacity(4usize, src)
     var line = alloc.vec.new<u8>()
-    let l1 = try r.read_line(line)
+    let l1 = try r.read_until(10u8, line)
     if l1 != 4usize || line[0usize] != 111u8 { return 14 }
     line.clear()
-    let l2 = try r.read_line(line)
+    let l2 = try r.read_until(10u8, line)
     line.clear()
-    let l3 = try r.read_line(line)
+    let l3 = try r.read_until(10u8, line)
     if l2 != 4usize || l3 != 1usize { return 15 }
     line.clear()
-    let l4 = try r.read_line(line)
+    let l4 = try r.read_until(10u8, line)
     if l4 != 4usize { return 16 }
     line.clear()
-    let l5 = try r.read_line(line)
+    let l5 = try r.read_until(10u8, line)
     if l5 != 0usize { return 17 }
     0
 }

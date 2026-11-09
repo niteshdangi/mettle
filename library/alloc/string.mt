@@ -6,9 +6,41 @@ import package.core.fmt
 import package.core.ops.{Deref, IndexRange}
 import package.core.hash.{Hash, Hasher}
 import package.core.borrow.KeyView
+import package.core.borrow.{AsRef, AsMut, Borrow, ToOwned}
 import super.vec.{List, slice_ptr}
 import package.core.cmp.{Ordering, PartialEq, Eq, PartialOrd, Ord}
-import package.core.text.{Text, from_utf8_unchecked}
+import package.core.text.{
+    Text,
+    Pattern,
+    from_utf8_unchecked,
+    from_utf8_unchecked_mut
+}
+extend<A: Allocator> String implements ExtendItems<package.alloc.boxed.Box<Text, A>> {
+    mut fn extend<I: OwnedIterable<Item = package.alloc.boxed.Box<Text, A>>>(
+        take items: I
+    ): Unit {
+        var source = items.into_iter()
+        while true {
+            match take source.next() {
+                present(value) => self.push_str(value.get()),
+                none => { break }
+            }
+        }
+    }
+}
+extend<A: Allocator> String implements FromItems<package.alloc.boxed.Box<Text, A>> {
+    static fn from_iter<I: OwnedIterable<Item = package.alloc.boxed.Box<Text, A>>>(
+        take items: I
+    ): String {
+        var result = new()
+        String.(ExtendItems<package.alloc.boxed.Box<Text, A>>).extend(mut result, take items)
+        result
+    }
+}
+import package.core.iter.{OwnedIterable, FromItems, ExtendItems}
+import package.core.convert.{From, TryFrom}
+import package.core.text.FromStr
+import package.core.ops.{Add, AddAssign}
 
 // Owned, growable UTF-8 text: a `List<u8>` whose bytes are always well formed.
 pub type String<A: Allocator = Global> {
@@ -39,6 +71,19 @@ pub type StringDrain<region r, A: Allocator> {
 extend<region r, A: Allocator> StringDrain<region r, A> {
     pub fn as_str(): read Text from self {
         unsafe { from_utf8_unchecked(self.bytes.as_slice()) }
+    }
+}
+extend<region r, A: Allocator> StringDrain<region r, A> implements AsRef<Text> {
+    fn as_ref(): read Text from self { self.as_str() }
+}
+extend<region r, A: Allocator> StringDrain<region r, A> implements AsRef<[u8]> {
+    fn as_ref(): read [u8] from self { self.bytes.as_slice() }
+}
+extend<region r, A: Allocator> StringDrain<region r, A> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        var debug = try f.debug_tuple("Drain")
+        try debug.field(self.as_str())
+        try debug.finish()
     }
 }
 extend<region r, A: Allocator> StringDrain<region r, A> implements Iterator {
@@ -139,6 +184,55 @@ extend String {
     pub init(read text: Text) {
         self.v = super.vec.new<u8>()
         self.push_str(text)
+    }
+    pub static fn from_utf16(read units: [u16]): String throws FromUtf16Error {
+        try package.alloc.string.from_utf16(units)
+    }
+    pub static fn from_utf16_lossy(read units: [u16]): String {
+        package.alloc.string.from_utf16_lossy(units)
+    }
+    pub static fn from_utf16be(read units: [u16]): String throws FromUtf16Error {
+        try package.alloc.string.from_utf16be(units)
+    }
+    pub static fn from_utf16le(read units: [u16]): String throws FromUtf16Error {
+        try package.alloc.string.from_utf16le(units)
+    }
+    pub static fn from_utf16be_lossy(read units: [u16]): String {
+        package.alloc.string.from_utf16be_lossy(units)
+    }
+    pub static fn from_utf16le_lossy(read units: [u16]): String {
+        package.alloc.string.from_utf16le_lossy(units)
+    }
+    // Safety: the pointer and capacity must satisfy List's Global allocation
+    // invariants, and the initialized bytes must be well-formed UTF-8.
+    pub unsafe static fn from_raw_parts(
+        pointer: ptr<mut u8>,
+        length: usize,
+        capacity: usize
+    ): String {
+        from_valid_bytes(
+            unsafe { List<u8>.from_raw_parts(pointer, length, capacity) }
+        )
+    }
+    pub take fn into_raw_parts(): (ptr<mut u8>, usize, usize) {
+        self.into_bytes().into_raw_parts()
+    }
+    pub static fn from_utf8<A: Allocator>(
+        take bytes: List<u8, A>
+    ): String<A> throws FromUtf8Error<A> {
+        try package.alloc.string.from_utf8(take bytes)
+    }
+    pub static fn from_utf8_lossy(read bytes: [u8]): String {
+        package.alloc.string.from_utf8_lossy(bytes)
+    }
+    pub static fn from_utf8_lossy_owned(take bytes: List<u8>): String {
+        package.alloc.string.from_utf8_lossy_owned(take bytes)
+    }
+    // Safety: every byte must be well-formed UTF-8.
+    pub unsafe static fn from_utf8_unchecked<A: Allocator>(
+        take bytes: List<u8, A>
+    ): String<A> {
+        from_valid_bytes(take bytes)
     }
 }
 
@@ -334,6 +428,41 @@ pub fn from_utf16_lossy(read units: [u16]): String {
     result
 }
 
+fn utf16_endian_units(read units: [u16], big_endian: bool): List<u16> {
+    var converted = super.vec.with_capacity<u16>(units.len())
+    var index = 0usize
+    while index < units.len() {
+        let value = units[index]
+        converted.push(if big_endian {
+            ((value & 0x00ffu16) << 8u16) | (value >> 8u16)
+        } else {
+            value
+        })
+        index += 1usize
+    }
+    converted
+}
+
+pub fn from_utf16be(read units: [u16]): String throws FromUtf16Error {
+    let converted = utf16_endian_units(units, true)
+    try from_utf16(converted.as_slice())
+}
+
+pub fn from_utf16le(read units: [u16]): String throws FromUtf16Error {
+    let converted = utf16_endian_units(units, false)
+    try from_utf16(converted.as_slice())
+}
+
+pub fn from_utf16be_lossy(read units: [u16]): String {
+    let converted = utf16_endian_units(units, true)
+    from_utf16_lossy(converted.as_slice())
+}
+
+pub fn from_utf16le_lossy(read units: [u16]): String {
+    let converted = utf16_endian_units(units, false)
+    from_utf16_lossy(converted.as_slice())
+}
+
 fn first_char(read t: Text): char {
     var it = t.chars()
     match it.next() { present(c) => c, none => panic_precondition() }
@@ -344,8 +473,74 @@ extend<A: Allocator> String<A> {
     pub fn capacity(): usize { self.v.capacity() }
     pub fn is_empty(): bool { self.v.is_empty() }
     pub fn as_bytes(): read [u8] from self { self.v.as_slice() }
+    // Safety: the bytes must be restored to well-formed UTF-8 before the
+    // string is next observed as text or dropped.
+    pub mut unsafe fn as_bytes_mut(): mut [u8] from self {
+        self.v.as_mut_slice()
+    }
+    pub fn as_ptr(): ptr<read u8> { self.v.as_ptr() }
+    pub mut fn as_mut_ptr(): ptr<mut u8> { self.v.as_mut_ptr() }
     // Borrowed text view; while it lives the string cannot change.
     pub fn as_text(): read Text from self { unsafe { from_utf8_unchecked(self.v.as_slice()) } }
+    pub mut fn as_mut_str(): mut Text from self {
+        match take package.core.text.from_utf8_mut(self.v.as_mut_slice()) {
+            present(text) => text,
+            none => { panic_precondition() }
+        }
+    }
+    pub mut fn get_mut(start: usize, end: usize): (mut Text from self)? {
+        self.as_mut_str().get_mut(start, end)
+    }
+    // Safety: both endpoints are in bounds and UTF-8 scalar boundaries.
+    pub unsafe fn get_unchecked(
+        start: usize,
+        end: usize
+    ): read Text from self {
+        unsafe { self.as_text().get_unchecked(start, end) }
+    }
+    // Safety: both endpoints are in bounds and UTF-8 scalar boundaries.
+    pub mut unsafe fn get_unchecked_mut(
+        start: usize,
+        end: usize
+    ): mut Text from self {
+        unsafe { self.as_mut_str().get_unchecked_mut(start, end) }
+    }
+    pub mut fn split_at_mut(
+        mid: usize
+    ): (mut Text from self, mut Text from self) {
+        self.as_mut_str().split_at_mut(mid)
+    }
+    pub mut fn split_at_mut_checked(
+        mid: usize
+    ): (mut Text from self, mut Text from self)? {
+        self.as_mut_str().split_at_mut_checked(mid)
+    }
+    pub fn strip_circumfix<P: Pattern, S: Pattern>(
+        take prefix: P,
+        take suffix: S
+    ): (read Text from self)? {
+        self.as_text().strip_circumfix(take prefix, take suffix)
+    }
+    pub fn substr_range<R: package.core.iter.RangeBounds<usize>>(
+        read range: R
+    ): (read Text from self)? {
+        self.as_text().substr_range(range)
+    }
+    pub take fn into_boxed_str(): package.alloc.boxed.Box<Text, A> {
+        package.alloc.boxed.from_string(take self)
+    }
+    pub take fn leak(): mut Text from static {
+        let bytes = self.into_bytes().leak()
+        unsafe { from_utf8_unchecked_mut(bytes) }
+    }
+    pub take fn into_raw_parts_with_alloc(): (
+        ptr<mut u8>,
+        usize,
+        usize,
+        A
+    ) {
+        self.into_bytes().into_raw_parts_with_alloc()
+    }
     pub take fn into_bytes(): List<u8, A> {
         unsafe {
             let v = core.ptr.`read`(core.ptr.from_ref(self.v))
@@ -580,6 +775,19 @@ extend<A: Allocator> String<A> implements Ord {
 extend<A: Allocator> String<A> implements KeyView<Text> {
     fn key_view(): read Text from self { self.as_text() }
 }
+extend<A: Allocator> String<A> implements AsRef<Text> {
+    fn as_ref(): read Text from self { self.as_text() }
+}
+extend<A: Allocator> String<A> implements Borrow<Text> {
+    fn borrow(): read Text from self { self.as_text() }
+}
+extend Text implements ToOwned {
+    type Owned = String
+    fn to_owned(): String { from_text(self) }
+}
+extend<A: Allocator> String<A> implements AsMut<Text> {
+    mut fn as_mut(): mut Text from self { self.as_mut_str() }
+}
 extend<A: Allocator> String<A> implements Hash {
     fn hash<H: Hasher>(mut state: H): Unit { self.as_text().hash(mut state) }
 }
@@ -588,6 +796,11 @@ extend<A: Allocator> String<A> implements Hash {
 extend<A: Allocator> String<A> implements fmt.Write {
     mut fn write_str(read s: Text): Unit throws fmt.Error {
         self.push_str(s)
+    }
+}
+extend<A: Allocator> String<A> {
+    pub mut fn write_fmt(message: format fmt.Message): Unit throws fmt.Error {
+        try message.write_to(mut self)
     }
 }
 
@@ -611,6 +824,10 @@ extend<A: Allocator> String<A> implements Deref {
     type Target = Text
     fn deref(): read Text from self { self.as_text() }
 }
+extend<A: Allocator> String<A> implements package.core.ops.DerefMut {
+    type Target = Text
+    mut fn deref_mut(): mut Text from self { self.as_mut_str() }
+}
 extend<A: Allocator> String<A> implements IndexRange {
     type Output = Text
     fn index_range(start: usize, end: usize): read Text from self { self.as_text().index_range(start, end) }
@@ -620,6 +837,150 @@ extend<A: Allocator> String<A> implements fmt.Display {
 }
 extend<A: Allocator> String<A> implements fmt.Debug {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try Text.(fmt.Debug).fmt(self.as_text(), mut f) }
+}
+
+extend<A: Allocator> String<A> implements TryFrom<List<u8, A>> {
+    type Error = FromUtf8Error<A>
+    static fn try_from(take bytes: List<u8, A>): (Outcome<String<A>, FromUtf8Error<A>>) {
+        match take capture from_utf8(bytes) {
+            success(value) => success(value),
+            failure(error) => failure(error)
+        }
+    }
+}
+
+extend<region r, A: Allocator> String<A> implements ExtendItems<read Text from r> {
+    mut fn extend<I: OwnedIterable<Item = read Text from r>>(take items: I): Unit {
+        var source = items.into_iter()
+        while true {
+            match take source.next() {
+                present(text) => self.push_str(text),
+                none => { break }
+            }
+        }
+    }
+}
+
+extend<region r> String implements FromItems<read Text from r> {
+    static fn from_iter<I: OwnedIterable<Item = read Text from r>>(take items: I): String {
+        var result = new()
+        result.extend(items)
+        result
+    }
+}
+extend<A: Allocator> String<A> implements ExtendItems<char> {
+    mut fn extend<I: OwnedIterable<Item = char>>(take items: I): Unit {
+        var source = items.into_iter()
+        while true {
+            match take source.next() {
+                present(value) => self.push(value),
+                none => { break }
+            }
+        }
+    }
+}
+extend String implements FromItems<char> {
+    static fn from_iter<I: OwnedIterable<Item = char>>(take items: I): String {
+        var result = new()
+        result.extend(take items)
+        result
+    }
+}
+extend<region r, A: Allocator> String<A> implements ExtendItems<read char from r> {
+    mut fn extend<I: OwnedIterable<Item = read char from r>>(take items: I): Unit {
+        var source = items.into_iter()
+        while true {
+            match take source.next() {
+                present(value) => self.push(*value),
+                none => { break }
+            }
+        }
+    }
+}
+extend<region r> String implements FromItems<read char from r> {
+    static fn from_iter<I: OwnedIterable<Item = read char from r>>(
+        take items: I
+    ): String {
+        var result = new()
+        result.extend(take items)
+        result
+    }
+}
+extend<A: Allocator> String<A> implements ExtendItems<String> {
+    mut fn extend<I: OwnedIterable<Item = String>>(take items: I): Unit {
+        var source = items.into_iter()
+        while true {
+            match take source.next() {
+                present(value) => self.push_str(value.as_text()),
+                none => { break }
+            }
+        }
+    }
+}
+extend String implements FromItems<String> {
+    static fn from_iter<I: OwnedIterable<Item = String>>(take items: I): String {
+        var result = new()
+        result.extend(take items)
+        result
+    }
+}
+
+extend String implements FromStr {
+    type Error = Never
+    static fn from_str(read input: Text): String throws Never { from_text(input) }
+}
+extend<region r> String implements From<read Text from r> {
+    static fn from(take input: read Text from r): String { from_text(input) }
+}
+extend String implements From<char> {
+    static fn from(take value: char): String {
+        var result = new()
+        result.push(value)
+        result
+    }
+}
+extend<A: Allocator> String<A> implements From<package.alloc.boxed.Box<Text, A>> {
+    static fn from(
+        take value: package.alloc.boxed.Box<Text, A>
+    ): String<A> {
+        let raw = value.into_raw()
+        // Text and byte slices share length metadata and retain the allocator.
+        let bytes_pointer = unsafe {
+            core.mem.transmute<ptr<mut [u8]>>(raw.0)
+        }
+        let byte_box: package.alloc.boxed.Box<[u8], A> = unsafe {
+            package.alloc.boxed.from_raw_in(bytes_pointer, raw.1)
+        }
+        let bytes = List<u8, A>.(
+            From<package.alloc.boxed.Box<[u8], A>>
+        ).from(take byte_box)
+        from_valid_bytes(take bytes)
+    }
+}
+extend<region r> String implements From<read String from r> {
+    static fn from(take value: read String from r): String {
+        from_text(value.as_text())
+    }
+}
+extend<region r, A: Allocator> String<A> implements AddAssign<read Text from r> {
+    mut fn add_assign(read rhs: read Text from r): Unit { self.push_str(rhs) }
+}
+extend<region r> String implements Add<read Text from r> {
+    type Output = String
+    fn add(read rhs: read Text from r): String {
+        concat(self.as_text(), rhs)
+    }
+}
+extend<A: Allocator> String<A> implements AsRef<[u8]> {
+    fn as_ref(): read [u8] from self { self.as_bytes() }
+}
+extend<A: Allocator> String<A> implements PartialEq<Text> {
+    fn eq(read other: Text): bool { self.as_text() == other }
+}
+extend<A: Allocator> String<A> implements PartialOrd<Text> {
+    fn partial_cmp(read other: Text): Ordering? {
+        self.as_text().partial_cmp(other)
+    }
 }
 
 // Concatenation: a new string holding `a` followed by `b`.

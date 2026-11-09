@@ -37,7 +37,7 @@ fn main(): i32 {
         any.type_id<alloc.btree.Keys<region static, i32, i32, alloc.alloc.Global>>(),
         any.type_id<alloc.btree.Values<region static, i32, i32, alloc.alloc.Global>>(),
         any.type_id<alloc.btree.Entry<region static, i32, i32, alloc.alloc.Global>>(),
-        any.type_id<std.ffi.CStr<region static>>(),
+        any.type_id<read std.ffi.CStr from static>(),
         any.type_id<core.fmt.Message<region static>>(),
         any.type_id<core.future.Context<region static>>(),
         any.type_id<std.sync.mutex.MutexGuard<i32, region static>>()

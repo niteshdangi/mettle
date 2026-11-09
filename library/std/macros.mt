@@ -9,6 +9,8 @@ import package.alloc.vec
 import package.alloc.vec.List
 import package.alloc.string
 import package.alloc.string.String
+import package.core.fmt
+import package.core.fmt.Debug
 import package.core.iter.Iterator
 import package.core.text.Text
 import super.io
@@ -161,4 +163,44 @@ pub fn depends_on_env(read name: Text): Unit throws Error { try put("rerun-if-en
 pub fn reproducible(): Unit throws Error {
     var out = io.stdout()
     try out.write_all("mettle:reproducible\n".as_bytes())
+}
+
+fn debug_text<T: Debug>(read value: T): String {
+    var output = string.new()
+    {
+        var formatter = fmt.formatter(mut output, fmt.spec())
+        match capture T.(Debug).fmt(read value, mut formatter) {
+            success(_) => {},
+            failure(_) => { package.core.panic.panic("debug formatting failed") }
+        }
+    }
+    output
+}
+
+pub fn debug_value<T: Debug>(take value: T): T {
+    let rendered = debug_text(read value)
+    io.eprint(f"{rendered}\n")
+    value
+}
+
+pub macro dbg {
+    ($value:expr) => { debug_value($value) };
+}
+
+pub macro matches {
+    ($value:expr, $pattern:pat) => { match $value { $pattern => true, _ => false } };
+}
+
+pub macro format_args {
+    ($message:expr) => { $message };
+}
+
+pub macro todo {
+    () => { package.core.panic.panic("not yet implemented") };
+    ($message:expr) => { package.core.panic.panic($message) };
+}
+
+pub macro unimplemented {
+    () => { package.core.panic.panic("not implemented") };
+    ($message:expr) => { package.core.panic.panic($message) };
 }

@@ -66,6 +66,7 @@ pub fn min<T: Ord>(take a: T, take b: T): T { if b.cmp(read a).is_lt() { b } els
 pub fn max<T: Ord>(take a: T, take b: T): T { if b.cmp(read a).is_lt() { a } else { b } }
 // Requires low <= high.
 pub fn clamp<T: Ord>(take value: T, take low: T, take high: T): T {
+    if low.cmp(read high).is_gt() { super.panic.panic("clamp requires low <= high") }
     if value.cmp(read low).is_lt() { low } else if high.cmp(read value).is_lt() { high } else { value }
 }
 

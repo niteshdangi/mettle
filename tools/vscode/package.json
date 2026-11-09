@@ -1,8 +1,8 @@
 {
   "name": "mettle-language",
   "displayName": "Mettle Language",
-  "description": "Mettle .mt syntax highlighting and basic editing support.",
-  "version": "0.0.1",
+  "description": "Mettle .mt source and .mettle package/lock highlighting and basic editing support.",
+  "version": "0.0.4",
   "publisher": "mettle-local",
   "private": true,
   "engines": {
@@ -12,7 +12,9 @@
   "files": [
     "README.md",
     "language-configuration.json",
-    "syntaxes/mettle.tmLanguage.json"
+    "mettle-data-configuration.json",
+    "syntaxes/mettle.tmLanguage.json",
+    "syntaxes/mettle-data.tmLanguage.json"
   ],
   "contributes": {
     "languages": [
@@ -21,6 +23,12 @@
         "aliases": ["Mettle", "mettle"],
         "extensions": [".mt"],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "mettle-data",
+        "aliases": ["Mettle Data", "mettle-data"],
+        "extensions": [".mettle"],
+        "configuration": "./mettle-data-configuration.json"
       }
     ],
     "grammars": [
@@ -28,13 +36,23 @@
         "language": "mettle",
         "scopeName": "source.mettle",
         "path": "./syntaxes/mettle.tmLanguage.json",
+        "unbalancedBracketScopes": ["keyword.operator.mettle"],
         "tokenTypes": {
           "meta.interpolation.mettle": "other"
         }
+      },
+      {
+        "language": "mettle-data",
+        "scopeName": "source.mettle-data",
+        "path": "./syntaxes/mettle-data.tmLanguage.json"
       }
     ],
     "configurationDefaults": {
       "[mettle]": {
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true
+      },
+      "[mettle-data]": {
         "editor.tabSize": 4,
         "editor.insertSpaces": true
       }

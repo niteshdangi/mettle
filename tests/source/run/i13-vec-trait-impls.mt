@@ -83,6 +83,14 @@ fn main(): i32 {
     if from_ref_array[0usize] != 4 { return 14 }
     let bytes = List<u8>.(From<read Text>).from("ab")
     if bytes.len() != 2usize || bytes[1usize] != 98u8 { return 15 }
+    var mutable_slice_source = [7, 8]
+    let mutable_slice: mut [i32] = mut mutable_slice_source
+    let from_mut_slice = List<i32>.(From<mut [i32]>).from(take mutable_slice)
+    if from_mut_slice[1usize] != 8 { return 42 }
+    var mutable_array_source = [9, 10]
+    let mutable_array: mut [i32; 2] = mut mutable_array_source
+    let from_mut_array = List<i32>.(From<mut [i32; 2]>).from(take mutable_array)
+    if from_mut_array[0usize] != 9 { return 43 }
 
     let items = List<i32>.(FromItems<i32>).from_iter(c.clone().into_iter())
     if items[1usize] != 20 { return 16 }

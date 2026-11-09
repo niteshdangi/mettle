@@ -4,6 +4,7 @@
 // `.` components are ignored, while a leading `.` in a relative path remains.
 import package.alloc.vec
 import package.alloc.vec.List
+import package.alloc.boxed.Box
 import package.alloc.alloc.AllocError
 import package.alloc.string.String
 import package.alloc.string.FromUtf8Error
@@ -13,6 +14,14 @@ import package.core.slice
 import super.ffi
 import super.ffi.{OsStr, OsString}
 import package.core.clone.Clone
+import package.core.borrow.{AsRef, Borrow, ToOwned}
+import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import package.core.convert.From
+import package.core.default.Default
+import package.core.hash.{Hash, Hasher}
+import package.core.iter.{FromItems, ExtendItems, OwnedIterable}
+import package.core.ops.{Deref, DerefMut}
+import package.core.fmt.{Debug, Formatter, Error}
 
 pub type Path { bytes: [u8] }
 
@@ -88,6 +97,101 @@ fn checked_part(read bytes: [u8], start: usize, end: usize): read [u8] {
         present(part) => part,
         none => { package.core.panic.panic("path component bounds invariant failed") }
     }
+}
+
+fn component_tag(component: Component): u8 {
+    match component {
+        Component.RootDir => 0u8,
+        Component.CurDir => 1u8,
+        Component.ParentDir => 2u8,
+        Component.Normal(_) => 3u8
+    }
+}
+
+fn compare_bytes(read left: [u8], read right: [u8]): Ordering {
+    var index = 0usize
+    while index < left.len() && index < right.len() {
+        if left[index] != right[index] {
+            return if left[index] < right[index] {
+                Ordering.Less
+            } else {
+                Ordering.Greater
+            }
+        }
+        index += 1usize
+    }
+    if left.len() < right.len() {
+        Ordering.Less
+    } else if left.len() > right.len() {
+        Ordering.Greater
+    } else {
+        Ordering.Equal
+    }
+}
+
+fn compare_components(read left: Path, read right: Path): Ordering {
+    var a = left.components()
+    var b = right.components()
+    while true {
+        match a.next() {
+            present(left_component) => match b.next() {
+                present(right_component) => {
+                    let left_tag = component_tag(left_component)
+                    let right_tag = component_tag(right_component)
+                    if left_tag != right_tag {
+                        return if left_tag < right_tag {
+                            Ordering.Less
+                        } else {
+                            Ordering.Greater
+                        }
+                    }
+                    match left_component {
+                        Component.Normal(left_name) => match right_component {
+                            Component.Normal(right_name) => {
+                                let order = compare_bytes(
+                                    left_name.as_bytes(),
+                                    right_name.as_bytes()
+                                )
+                                if order != Ordering.Equal { return order }
+                            },
+                            _ => {}
+                        },
+                        _ => {}
+                    }
+                },
+                none => { return Ordering.Greater }
+            },
+            none => {
+                return if b.next().is_present() {
+                    Ordering.Less
+                } else {
+                    Ordering.Equal
+                }
+            }
+        }
+    }
+    Ordering.Equal
+}
+
+fn hash_path<H: Hasher>(read value: Path, mut state: H): Unit {
+    var components = value.components()
+    while true {
+        match components.next() {
+            present(component) => {
+                state.write_u8(component_tag(component))
+                match component {
+                    Component.Normal(name) => {
+                        let bytes = name.as_bytes()
+                        state.write_usize(bytes.len())
+                        state.write(bytes)
+                    },
+                    _ => {}
+                }
+            },
+            none => { break }
+        }
+    }
+    state.write_u8(255u8)
 }
 
 extend<region r> Component<region r> {
@@ -222,6 +326,7 @@ extend Path {
             has_leading_cur_dir(bytes)
         )
     }
+
     pub fn iter<region r>(receiver read self: Path from r): Iter<region r> {
         Iter(self.components())
     }
@@ -369,6 +474,87 @@ extend Path {
     }
 }
 
+extend Path implements PartialEq {
+    fn eq(read other: Path): bool {
+        self.cmp(other) == Ordering.Equal
+    }
+}
+extend Path implements Eq {}
+extend Path implements PartialOrd {
+    fn partial_cmp(read other: Path): Ordering? { present(self.cmp(other)) }
+}
+extend Path implements Ord {
+    fn cmp(read other: Path): Ordering { compare_components(self, other) }
+}
+extend Path implements PartialEq<OsStr> {
+    fn eq(read other: OsStr): bool {
+        self.cmp(path_from_os_str(other)) == Ordering.Equal
+    }
+}
+extend Path implements PartialOrd<OsStr> {
+    fn partial_cmp(read other: OsStr): Ordering? {
+        present(self.cmp(path_from_os_str(other)))
+    }
+}
+extend Path implements PartialEq<OsString> {
+    fn eq(read other: OsString): bool {
+        self.cmp(path_from_os_str(other.as_os_str())) == Ordering.Equal
+    }
+}
+extend Path implements PartialOrd<OsString> {
+    fn partial_cmp(read other: OsString): Ordering? {
+        present(self.cmp(path_from_os_str(other.as_os_str())))
+    }
+}
+extend Path implements PartialEq<PathBuf> {
+    fn eq(read other: PathBuf): bool {
+        self.cmp(other.as_path()) == Ordering.Equal
+    }
+}
+extend Path implements PartialOrd<PathBuf> {
+    fn partial_cmp(read other: PathBuf): Ordering? {
+        present(self.cmp(other.as_path()))
+    }
+}
+extend Path implements PartialEq<String> {
+    fn eq(read other: String): bool {
+        self.cmp(path_from_text(other.as_text())) == Ordering.Equal
+    }
+}
+extend Path implements PartialEq<Text> {
+    fn eq(read other: Text): bool {
+        self.cmp(path_from_text(other)) == Ordering.Equal
+    }
+}
+extend Path implements PartialOrd<String> {
+    fn partial_cmp(read other: String): Ordering? {
+        present(self.cmp(path_from_text(other.as_text())))
+    }
+}
+extend Path implements PartialOrd<Text> {
+    fn partial_cmp(read other: Text): Ordering? {
+        present(self.cmp(path_from_text(other)))
+    }
+}
+extend Path implements Hash {
+    fn hash<H: Hasher>(mut state: H): Unit { hash_path(self, mut state) }
+}
+extend Path implements ToOwned {
+    type Owned = PathBuf
+    fn to_owned(): PathBuf { self.to_path_buf() }
+}
+extend Path implements AsRef<OsStr> {
+    fn as_ref(): read OsStr from self { self.as_os_str() }
+}
+extend Path implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let display = self.to_string_lossy()
+        var debug = try f.debug_tuple("Path")
+        try debug.field(display.as_text())
+        try debug.finish()
+    }
+}
+
 extend<region r> Components<region r> implements package.core.iter.Iterator {
     type Item = Component<region r>
     mut fn next(): Component<region r>? {
@@ -513,6 +699,11 @@ extend PathBuf {
         path_buf_with_capacity(capacity)
     }
     pub fn as_path(): read Path from self { path(self.v.as_slice()) }
+    pub mut fn as_mut_path(): mut Path from self {
+        let fat = core.ptr.from_mut(self.v.as_mut_slice())
+        let view = unsafe { core.mem.transmute<ptr<mut Path>>(fat) }
+        unsafe { mut *view }
+    }
     pub fn as_os_str(): read OsStr from self { ffi.os_str(self.v.as_slice()) }
     pub mut fn as_mut_os_str(): mut OsStr from self { ffi.os_str_mut(self.v.as_mut_slice()) }
     pub fn as_bytes(): read [u8] from self { self.v.as_slice() }
@@ -538,6 +729,22 @@ extend PathBuf {
     pub fn to_string_lossy(): String { self.as_path().to_string_lossy() }
     pub fn display(): String { self.as_path().display() }
     pub fn to_path_buf(): PathBuf { path_buf_from_bytes(self.v.as_slice()) }
+    pub take fn into_boxed_path(): Box<Path> {
+        let bytes = self.v.into_boxed_slice()
+        let raw = bytes.into_raw()
+        // Path is a single unsized byte-slice field, preserving the allocation
+        // and length metadata used by Box<[u8]>.
+        let path_pointer = unsafe {
+            core.mem.transmute<ptr<mut Path>>(raw.0)
+        }
+        unsafe { package.alloc.boxed.from_raw_in(path_pointer, raw.1) }
+    }
+    pub take fn leak(): mut Path from static {
+        let bytes = self.v.leak()
+        let fat = core.ptr.from_mut(bytes)
+        let view = unsafe { core.mem.transmute<ptr<mut Path>>(fat) }
+        unsafe { mut *view }
+    }
     pub take fn into_os_string(): OsString { ffi.os_string_from_vec(self.v) }
     pub take fn into_string(): String throws FromUtf8Error {
         try package.alloc.string.from_utf8(self.v)
@@ -657,6 +864,9 @@ extend PathBuf {
 extend Path implements PathInput {
     fn as_path(): read Path from self { path(self.as_bytes()) }
 }
+extend Text implements PathInput {
+    fn as_path(): read Path from self { path(self.as_bytes()) }
+}
 extend PathBuf implements PathInput {
     fn as_path(): read Path from self { path(self.v.as_slice()) }
 }
@@ -666,8 +876,238 @@ extend OsStr implements PathInput {
 extend OsString implements PathInput {
     fn as_path(): read Path from self { path(self.as_bytes()) }
 }
+extend String implements PathInput {
+    fn as_path(): read Path from self { path(self.as_bytes()) }
+}
 
 // Value types duplicate by copy; owners clone their buffers.
 extend PathBuf implements Clone {
     fn clone(): PathBuf { PathBuf(self.v.clone()) }
+}
+
+extend PathBuf implements Borrow<Path> {
+    fn borrow(): read Path from self { self.as_path() }
+}
+extend PathBuf implements Deref {
+    type Target = Path
+    fn deref(): read Path from self { self.as_path() }
+}
+extend PathBuf implements DerefMut {
+    type Target = Path
+    mut fn deref_mut(): mut Path from self { self.as_mut_path() }
+}
+extend PathBuf implements AsRef<Path> {
+    fn as_ref(): read Path from self { self.as_path() }
+}
+extend PathBuf implements AsRef<OsStr> {
+    fn as_ref(): read OsStr from self { self.as_os_str() }
+}
+extend OsStr implements AsRef<Path> {
+    fn as_ref(): read Path from self { path(self.as_bytes()) }
+}
+extend OsString implements AsRef<Path> {
+    fn as_ref(): read Path from self { path(self.as_bytes()) }
+}
+extend PathBuf implements package.core.borrow.AsMut<Path> {
+    mut fn as_mut(): mut Path from self { self.as_mut_path() }
+}
+extend PathBuf implements PartialEq {
+    fn eq(read other: PathBuf): bool { self.as_path() == other.as_path() }
+}
+extend<region r> PathBuf implements PartialEq<read Path from r> {
+    fn eq(read other: read Path from r): bool { self.as_path() == other }
+}
+extend PathBuf implements PartialEq<OsString> {
+    fn eq(read other: OsString): bool {
+        self.as_path() == path_from_os_str(other.as_os_str())
+    }
+}
+extend PathBuf implements PartialEq<OsStr> {
+    fn eq(read other: OsStr): bool {
+        self.as_path() == path_from_os_str(other)
+    }
+}
+extend PathBuf implements Eq {}
+extend PathBuf implements PartialOrd {
+    fn partial_cmp(read other: PathBuf): Ordering? {
+        present(self.as_path().cmp(other.as_path()))
+    }
+}
+extend<region r> PathBuf implements PartialOrd<read Path from r> {
+    fn partial_cmp(read other: read Path from r): Ordering? {
+        present(self.as_path().cmp(other))
+    }
+}
+extend PathBuf implements PartialOrd<OsString> {
+    fn partial_cmp(read other: OsString): Ordering? {
+        present(self.as_path().cmp(path_from_os_str(other.as_os_str())))
+    }
+}
+extend PathBuf implements PartialOrd<OsStr> {
+    fn partial_cmp(read other: OsStr): Ordering? {
+        present(self.as_path().cmp(path_from_os_str(other)))
+    }
+}
+extend PathBuf implements PartialEq<String> {
+    fn eq(read other: String): bool {
+        self.as_path() == path_from_text(other.as_text())
+    }
+}
+extend PathBuf implements PartialOrd<String> {
+    fn partial_cmp(read other: String): Ordering? {
+        present(self.as_path().cmp(path_from_text(other.as_text())))
+    }
+}
+extend PathBuf implements PartialEq<Text> {
+    fn eq(read other: Text): bool {
+        self.as_path() == path_from_text(other)
+    }
+}
+extend PathBuf implements PartialOrd<Text> {
+    fn partial_cmp(read other: Text): Ordering? {
+        present(self.as_path().cmp(path_from_text(other)))
+    }
+}
+extend OsStr implements PartialEq<Path> {
+    fn eq(read other: Path): bool {
+        path_from_os_str(self) == other
+    }
+}
+extend OsStr implements PartialOrd<Path> {
+    fn partial_cmp(read other: Path): Ordering? {
+        present(path_from_os_str(self).cmp(other))
+    }
+}
+extend OsStr implements PartialEq<PathBuf> {
+    fn eq(read other: PathBuf): bool {
+        path_from_os_str(self) == other.as_path()
+    }
+}
+extend OsStr implements PartialOrd<PathBuf> {
+    fn partial_cmp(read other: PathBuf): Ordering? {
+        present(path_from_os_str(self).cmp(other.as_path()))
+    }
+}
+extend OsString implements PartialEq<Path> {
+    fn eq(read other: Path): bool {
+        path_from_os_str(self.as_os_str()) == other
+    }
+}
+extend OsString implements PartialOrd<Path> {
+    fn partial_cmp(read other: Path): Ordering? {
+        present(path_from_os_str(self.as_os_str()).cmp(other))
+    }
+}
+extend OsString implements PartialEq<PathBuf> {
+    fn eq(read other: PathBuf): bool {
+        path_from_os_str(self.as_os_str()) == other.as_path()
+    }
+}
+extend OsString implements PartialOrd<PathBuf> {
+    fn partial_cmp(read other: PathBuf): Ordering? {
+        present(path_from_os_str(self.as_os_str()).cmp(other.as_path()))
+    }
+}
+extend PathBuf implements Ord {
+    fn cmp(read other: PathBuf): Ordering { self.as_path().cmp(other.as_path()) }
+}
+extend PathBuf implements Hash {
+    fn hash<H: Hasher>(mut state: H): Unit { hash_path(self.as_path(), mut state) }
+}
+extend PathBuf implements Default {
+    static fn default(): PathBuf { new_path_buf() }
+}
+extend PathBuf implements From<OsString> {
+    static fn from(take value: OsString): PathBuf {
+        PathBuf(value.into_encoded_bytes())
+    }
+}
+extend PathBuf implements From<String> {
+    static fn from(take value: String): PathBuf {
+        PathBuf(value.into_bytes())
+    }
+}
+extend PathBuf implements From<Box<Path>> {
+    static fn from(take value: Box<Path>): PathBuf {
+        let raw = value.into_raw()
+        // The inverse cast preserves the same byte-slice layout and metadata.
+        let bytes_pointer = unsafe {
+            core.mem.transmute<ptr<mut [u8]>>(raw.0)
+        }
+        let byte_box: Box<[u8]> = unsafe {
+            package.alloc.boxed.from_raw_in(bytes_pointer, raw.1)
+        }
+        PathBuf(List<u8>.(From<Box<[u8]>>).from(take byte_box))
+    }
+}
+extend Box<Path> implements From<PathBuf> {
+    static fn from(take value: PathBuf): Box<Path> {
+        value.into_boxed_path()
+    }
+}
+extend<region r, T: PathInput + unsized> PathBuf implements From<read T from r> {
+    static fn from(take value: read T from r): PathBuf {
+        path_buf_from_bytes(value.as_path().as_bytes())
+    }
+}
+extend OsString implements From<PathBuf> {
+    static fn from(take value: PathBuf): OsString {
+        value.into_os_string()
+    }
+}
+extend PathBuf implements package.core.text.FromStr {
+    type Error = Never
+    static fn from_str(read input: Text): PathBuf throws Never { path_buf_from_text(input) }
+}
+extend<P: PathInput> PathBuf implements ExtendItems<P> {
+    mut fn extend<I: OwnedIterable<Item = P>>(take items: I): Unit {
+        var source = items.into_iter()
+        while true {
+            match take source.next() {
+                present(item) => self.push(item.as_path()),
+                none => { break }
+            }
+        }
+    }
+}
+extend<P: PathInput> PathBuf implements FromItems<P> {
+    static fn from_iter<I: OwnedIterable<Item = P>>(take items: I): PathBuf {
+        var result = new_path_buf()
+        PathBuf.(ExtendItems<P>).extend(mut result, items)
+        result
+    }
+}
+extend PathBuf implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let display = self.to_string_lossy()
+        var debug = try f.debug_tuple("PathBuf")
+        try debug.field(display.as_text())
+        try debug.finish()
+    }
+}
+extend package.alloc.string.String implements AsRef<OsStr> {
+    fn as_ref(): read OsStr from self { ffi.os_str(self.as_bytes()) }
+}
+extend package.alloc.string.String implements AsRef<Path> {
+    fn as_ref(): read Path from self { path(self.as_bytes()) }
+}
+extend package.alloc.string.String implements PartialEq<Path> {
+    fn eq(read other: Path): bool {
+        path_from_text(self.as_text()) == other
+    }
+}
+extend package.alloc.string.String implements PartialEq<PathBuf> {
+    fn eq(read other: PathBuf): bool {
+        path_from_text(self.as_text()) == other.as_path()
+    }
+}
+extend package.alloc.string.String implements PartialOrd<Path> {
+    fn partial_cmp(read other: Path): Ordering? {
+        present(path_from_text(self.as_text()).cmp(other))
+    }
+}
+extend package.alloc.string.String implements PartialOrd<PathBuf> {
+    fn partial_cmp(read other: PathBuf): Ordering? {
+        present(path_from_text(self.as_text()).cmp(other.as_path()))
+    }
 }

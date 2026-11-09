@@ -1,7 +1,7 @@
 import package.core.iter.{FromItems, OwnedIterable}
 import package.core.borrow.{AsRef, Borrow}
 import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
-import package.core.convert.From
+import package.core.convert.{From, TryFrom}
 import package.core.fmt
 import package.core.hash.{Hash, Hasher}
 import package.core.ops.Deref
@@ -9,6 +9,7 @@ import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, layout_arr
 import package.core.clone.Clone
 import package.core.default.Default
 import package.core.text.Text
+import package.core.any.Any
 import super.vec.slice_ptr_mut
 
 type RcHeader {
@@ -571,6 +572,45 @@ extend<T, A: Allocator> Rc<[T], A> implements From<super.vec.List<T, A>> {
 }
 
 // Shared handles compare, hash and format as their payload; `ptr_eq` tests identity.
+extend<T, const N: usize> Rc<[T]> implements From<[T; N]> {
+    static fn from(take items: [T; N]): Rc<[T]> {
+        var owner = new_uninit_slice<T>(N)
+        {
+            let destination = match take owner.get_mut() {
+                present(view) => view,
+                none => core.intrinsics.abort()
+            }
+            let pointer = destination.as_mut_ptr()
+            var index = 0usize
+            for item in take items {
+                // The iterator yields exactly N items, so each index is in bounds.
+                unsafe {
+                    core.ptr.write(
+                        pointer.add(index),
+                        core.mem.MaybeUninit<T>.new(item)
+                    )
+                }
+                index += 1usize
+            }
+        }
+        // The array iteration initializes every slot before ownership changes.
+        unsafe { owner.assume_init() }
+    }
+}
+
+extend<T, const N: usize, A: Allocator> Rc<[T; N], A>
+    implements TryFrom<Rc<[T], A>>
+{
+    type Error = Rc<[T], A>
+
+    static fn try_from(take value: Rc<[T], A>): Outcome<Rc<[T; N], A>, Rc<[T], A>> {
+        if value.get().len() != N { return failure(value) }
+        let raw = value.into_raw()
+        // Equal lengths preserve layout when slice metadata becomes an array type.
+        success(unsafe { from_raw(RawRc(raw.p.cast<[T; N]>(), raw.h, raw.a)) })
+    }
+}
+
 extend<T: unsized, A: Allocator> Rc<T, A> implements Deref {
     type Target = T
     fn deref(): read T from self { self.get() }
@@ -602,6 +642,15 @@ extend<T: fmt.Display + unsized, A: Allocator> Rc<T, A> implements fmt.Display {
 }
 extend<T: fmt.Debug + unsized, A: Allocator> Rc<T, A> implements fmt.Debug {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try T.(fmt.Debug).fmt(self.get(), mut f) }
+}
+
+extend<A: Allocator> Rc<any Any, A> {
+    pub take fn downcast<T: Static>(): Outcome<Rc<T, A>, Rc<any Any, A>> {
+        if !core.any.is<T>(self.get()) { return failure(self) }
+        let raw = self.into_raw()
+        // A matching TypeId guarantees the erased payload has T's layout.
+        success(unsafe { from_raw(RawRc(raw.p.cast<T>(), raw.h, raw.a)) })
+    }
 }
 
 // Shared owner whose payload never moves until the last owner destroys it.

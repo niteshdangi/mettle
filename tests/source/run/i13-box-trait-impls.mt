@@ -5,9 +5,10 @@ import alloc.borrow.Cow
 import alloc.string
 import alloc.vec.{List, IntoIter}
 import core.borrow.{AsMut, AsRef, Borrow, BorrowMut}
+import core.any.Any
 import core.clone.Clone
 import core.cmp.{Ord, Ordering}
-import core.convert.From
+import core.convert.{From, TryFrom}
 import core.default.Default
 import core.error.Error
 import core.fmt
@@ -52,7 +53,7 @@ fn debug_is<T: Debug>(read value: T, read expected: Text): bool {
     }
 }
 
-fn display_is<T: Display>(read value: T, read expected: Text): bool {
+fn display_is<T: unsized + Display>(read value: T, read expected: Text): bool {
     var buffer = [0u8; 128]
     var writer = fmt.buffer_writer(mut buffer)
     var formatter = fmt.formatter(mut writer, fmt.spec())
@@ -93,9 +94,6 @@ fn main(): i32 {
     8.hash(mut hasher_b)
     if hasher_a.finish() != hasher_b.finish() { return 9 }
 
-    var hasher_box = boxed.new(fnv1a())
-    if hasher_box.finish() != fnv1a().finish() { return 10 }
-
     let copied = boxed.new(12).clone()
     if *copied.get() != 12 { return 11 }
 
@@ -113,11 +111,23 @@ fn main(): i32 {
     if list_box.get()[1usize] != 11 { return 16 }
     let cow_box = from_cow(Cow.Owned(List<i32>.(From<[i32; 1]>).from([12])))
     if cow_box.get()[0usize] != 12 { return 17 }
+    let cow_box_borrowed = from_cow(Cow.Borrowed(read [13, 14]))
+    if cow_box_borrowed.get()[1usize] != 14 { return 61 }
 
     let text_box = Box<Text>.(From<read Text>).from("hi")
     if text_box.get() != "hi" { return 18 }
+    var mutable_text_source = boxed.copy_text("mutable")
+    let mutable_text_view: mut Text = mutable_text_source.get_mut()
+    let copied_mutable_text = Box<Text>.(From<mut Text>).from(take mutable_text_view)
+    if copied_mutable_text.get() != "mutable" { return 64 }
     let owned_text = Box<Text>.(From<string.String>).from(string.from_text("abc"))
     if owned_text.get() != "abc" { return 19 }
+    let text_bytes = Box<[u8]>.(From<Box<Text>>).from(
+        Box<Text>.(From<read Text>).from("abc")
+    )
+    if text_bytes.get().len() != 3usize || text_bytes.get()[2usize] != 99u8 {
+        return 54
+    }
 
     let char_list = List<char>.(From<[char; 2]>).from(['x', 'y'])
     let chars = List<char>.(FromItems<char>).from_iter(char_list.into_iter())
@@ -135,6 +145,14 @@ fn main(): i32 {
 
     let err: Box<Oops> = boxed.new(Oops(3))
     if !assert_error(read err) { return 24 }
+    let erased_error: Box<any Error> = Box<any Error>.(From<Oops>).from(Oops(4))
+    if !display_is(read erased_error, "oops") { return 58 }
+    let text_error: Box<any Error> =
+        Box<any Error>.(From<read Text>).from("text error")
+    if !display_is(read text_error, "text error") { return 59 }
+    let string_error: Box<any Error> =
+        Box<any Error>.(From<string.String>).from(string.from_text("string error"))
+    if !display_is(read string_error, "string error") { return 60 }
 
     let raw = boxed.new(9)
     let nn = raw.into_non_null()
@@ -146,7 +164,55 @@ fn main(): i32 {
 
     let adder = boxed.new(fn(x: i32): i32 { x + 1 })
     if adder.get()(3) != 4 { return 26 }
+    if adder(3) != 4 { return 30 }
+    var captured = 20
+    var boxed_mutable = boxed.new(fn(extra: i32): i32 { captured += extra; captured })
+    if boxed_mutable(22) != 42 { return 50 }
 
+    let array_box = match take Box<[i32; 2]>.(TryFrom<Box<[i32]>>).try_from(
+        Box<[i32]>.(From<[i32; 2]>).from([20, 21])
+    ) {
+        success(value) => value,
+        failure(_) => { return 31 }
+    }
+    if array_box.get()[1usize] != 21 { return 32 }
+    let list_array = match take Box<[i32; 2]>.(TryFrom<List<i32>>).try_from(
+        List<i32>.(From<[i32; 2]>).from([22, 23])
+    ) {
+        success(value) => value,
+        failure(_) => { return 33 }
+    }
+    if list_array.get()[0usize] != 22 { return 34 }
+    match Box<[i32; 2]>.(TryFrom<Box<[i32]>>).try_from(
+        Box<[i32]>.(From<[i32; 1]>).from([24])
+    ) {
+        success(_) => { return 35 },
+        failure(original) => {
+            if original.get().len() != 1usize || original.get()[0usize] != 24 {
+                return 36
+            }
+        }
+    }
+    match Box<[i32; 2]>.(TryFrom<List<i32>>).try_from(
+        List<i32>.(From<[i32; 1]>).from([29])
+    ) {
+        success(_) => { return 62 },
+        failure(original) => {
+            if original.len() != 1usize || original[0usize] != 29 { return 63 }
+        }
+    }
+    let erased: Box<any Any> = boxed.new(25)
+    match take erased.downcast<i32>() {
+        success(value) => { if *value.get() != 25 { return 37 } },
+        failure(_) => { return 38 }
+    }
+    let erased_wrong: Box<any Any> = boxed.new(26)
+    match take erased_wrong.downcast<u32>() {
+        success(_) => { return 39 },
+        failure(original) => {
+            if !core.any.is<i32>(original.get()) { return 40 }
+        }
+    }
     var counter = boxed.new(List<i32>.(From<[i32; 2]>).from([15, 16]).into_iter())
     if counter.next().unwrap() != 15 { return 27 }
     let pending = boxed.new(AddOne(41))

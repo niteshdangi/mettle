@@ -6,8 +6,9 @@ import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, layout_arr
 import package.core.borrow.{AsRef, Borrow}
 import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import package.core.clone.Clone
-import package.core.convert.From
+import package.core.convert.{From, TryFrom}
 import package.core.default.Default
+import package.core.error.Error
 import package.core.fmt
 import package.core.hash.{Hash, Hasher}
 import package.core.ops.Deref
@@ -567,7 +568,13 @@ extend<T: fmt.Debug + unsized, A: Allocator> Arc<T, A> implements fmt.Debug {
         try T.(fmt.Debug).fmt(self.get(), mut f)
     }
 }
-
+extend<T: Error + unsized, A: Allocator> Arc<T, A> implements Error {
+    fn source<region r>(
+        receiver read self: Self from r
+    ): (read any Error from r)? {
+        T.(Error).source(self.get())
+    }
+}
 extend<T: unsized, A: Allocator> Weak<T, A> {
     // The allocation remains alive while this weak owner exists, but its
     // payload may already have been destroyed; dereferencing is never valid
@@ -684,6 +691,9 @@ extend<T: unsized, A: Allocator> Weak<T, A> implements fmt.Debug {
 extend<region r> Arc<Text> implements From<read Text from r> {
     static fn from(take value: read Text from r): Arc<Text> { copy_text(value) }
 }
+extend<region r> Arc<Text> implements From<mut Text from r> {
+    static fn from(take value: mut Text from r): Arc<Text> { copy_text(read value) }
+}
 extend Arc<Text> implements From<super.string.String> {
     static fn from(take value: super.string.String): Arc<Text> { copy_text(value.as_text()) }
 }
@@ -692,6 +702,17 @@ extend<T> Arc<T> implements From<super.boxed.Box<T>> {
 }
 extend<region r, T: Clone> Arc<[T]> implements From<read [T] from r> {
     static fn from(take values: read [T] from r): Arc<[T]> {
+        var copies = super.vec.with_capacity<T>(values.len())
+        var index = 0usize
+        while index < values.len() {
+            copies.push(values[index].clone())
+            index += 1usize
+        }
+        Arc<[T]>.from(copies)
+    }
+}
+extend<region r, T: Clone> Arc<[T]> implements From<mut [T] from r> {
+    static fn from(take values: mut [T] from r): Arc<[T]> {
         var copies = super.vec.with_capacity<T>(values.len())
         var index = 0usize
         while index < values.len() {
@@ -723,5 +744,28 @@ extend<T> Arc<[T]> implements From<super.vec.List<T>> {
             none => {}
         }
         unsafe { owner.assume_init() }
+    }
+}
+extend<T, const N: usize> Arc<[T]> implements From<[T; N]> {
+    static fn from(take items: [T; N]): Arc<[T]> {
+        let values = super.vec.List<T>.(From<[T; N]>).from(items)
+        Arc<[T]>.(From<super.vec.List<T>>).from(values)
+    }
+}
+extend<A: Allocator> Arc<[u8], A> implements From<Arc<Text, A>> {
+    static fn from(take value: Arc<Text, A>): Arc<[u8], A> {
+        let raw = value.into_raw()
+        // Text is a byte-slice tail with byte-count metadata; ownership and allocation stay unchanged.
+        let bytes = unsafe { core.mem.transmute<ptr<mut [u8]>>(raw.p) }
+        Arc(bytes, raw.h, raw.a)
+    }
+}
+extend<T, const N: usize, A: Allocator> Arc<[T; N], A> implements TryFrom<Arc<[T], A>> {
+    type Error = Arc<[T], A>
+    static fn try_from(take value: Arc<[T], A>): Outcome<Arc<[T; N], A>, Arc<[T], A>> {
+        if value.get().len() != N { return failure(value) }
+        let raw = value.into_raw()
+        // The length check validates the array extent; payload and header allocation stay unchanged.
+        success(Arc(raw.p.cast<[T; N]>(), raw.h, raw.a))
     }
 }

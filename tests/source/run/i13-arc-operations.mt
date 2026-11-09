@@ -6,9 +6,16 @@
 
 import alloc.arc
 import core.clone.Clone
-import core.cmp.{Eq, PartialEq}
-import core.convert.From
+import core.borrow.{AsRef, Borrow}
+import core.cmp.{Eq, Ord, PartialEq, PartialOrd}
+import core.convert.{From, TryFrom}
 import core.default.Default
+import core.error.Error
+import core.fmt
+import core.fmt.{Debug, Display}
+import core.hash.hash_one
+import core.iter.FromItems
+import core.ops.Deref
 
 type Probe {
     drops: arc.Arc<core.sync.atomic.AtomicUsize>
@@ -23,12 +30,69 @@ type Node {
     value: i32
 }
 
+type ArcErrorLeaf {}
+extend ArcErrorLeaf implements Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str("leaf") }
+}
+extend ArcErrorLeaf implements Display {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str("leaf") }
+}
+extend ArcErrorLeaf implements Error {}
+
+type ArcErrorBranch { cause: ArcErrorLeaf }
+extend ArcErrorBranch implements Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str("branch") }
+}
+extend ArcErrorBranch implements Display {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str("branch") }
+}
+extend ArcErrorBranch implements Error {
+    fn source<region r>(receiver read self: ArcErrorBranch from r): (read any Error from r)? {
+        let cause: read any Error = read self.cause
+        present(cause)
+    }
+}
+
 fn drops_of(read counter: arc.Arc<core.sync.atomic.AtomicUsize>): usize {
     counter.get().load(core.sync.atomic.Ordering.SeqCst)
 }
 
 fn default_value<T: Default>(): T { T.(Default).default() }
 fn from_value<T: From<i32>>(value: i32): T { T.(From<i32>).from(value) }
+fn error_source<region r, E: Error>(read value: E from r): (read any Error from r)? {
+    E.(Error).source(value)
+}
+fn borrow_i32<T: Borrow<i32>>(read value: T): i32 {
+    *T.(Borrow<i32>).borrow(value)
+}
+fn debug_is<T: Debug>(read value: T, read expected: core.text.Text): bool {
+    var buffer = [0u8; 64]
+    var writer = fmt.buffer_writer(mut buffer)
+    var formatter = fmt.formatter(mut writer, fmt.spec())
+    match capture T.(Debug).fmt(value, mut formatter) {
+        success(unit) => {},
+        failure(error) => { return false }
+    }
+    let written = writer.len()
+    match fmt.written_text(read buffer, written) {
+        present(actual) => actual == expected,
+        none => false
+    }
+}
+fn display_is<T: unsized + Display>(read value: T, read expected: core.text.Text): bool {
+    var buffer = [0u8; 64]
+    var writer = fmt.buffer_writer(mut buffer)
+    var formatter = fmt.formatter(mut writer, fmt.spec())
+    match capture T.(Display).fmt(value, mut formatter) {
+        success(unit) => {},
+        failure(error) => { return false }
+    }
+    let written = writer.len()
+    match fmt.written_text(read buffer, written) {
+        present(actual) => actual == expected,
+        none => false
+    }
+}
 
 // new, retain, clone, downgrade and the count and identity queries
 fn checks_construction_and_counts(): i32 {
@@ -240,9 +304,92 @@ fn checks_defaults_and_conversions(): i32 {
     if empty_slice.get().len() != 0usize { return 101 }
     let empty_text: arc.Arc<core.text.Text> = default_value<arc.Arc<core.text.Text>>()
     if empty_text.get().as_bytes().len() != 0usize { return 102 }
+    let default_weak: arc.Weak<i32> = default_value<arc.Weak<i32>>()
+    if default_weak.strong_count() != 0usize || default_weak.weak_count() != 0usize {
+        return 103
+    }
+    if !debug_is(read default_weak, "(Weak)") { return 104 }
     let converted: arc.Arc<i32> = from_value<arc.Arc<i32>>(33)
     let other = arc.new(33)
-    if !(converted == other) { return 103 }
+    if !(converted == other) { return 105 }
+    let boxed = alloc.boxed.new(34)
+    let from_box = arc.Arc<i32>.(From<alloc.boxed.Box<i32>>).from(boxed)
+    if *from_box.get() != 34 { return 119 }
+
+    let low = arc.new(3)
+    let high = arc.new(4)
+    if !(low < high) || low.cmp(read high) != core.cmp.Ordering.Less { return 106 }
+    if low.partial_cmp(read high) != present(core.cmp.Ordering.Less) { return 107 }
+    if *arc.Arc<i32>.(Deref).deref(read high) != 4 { return 108 }
+    if *arc.Arc<i32>.(AsRef<i32>).as_ref(read high) != 4 { return 109 }
+    if borrow_i32(read high) != 4 { return 110 }
+    if hash_one(read high) != hash_one(read 4i32) { return 111 }
+    if !debug_is(read high, "4") || !display_is(read high, "4") {
+        return 112
+    }
+    let error = arc.new(ArcErrorBranch(ArcErrorLeaf()))
+    if !display_is(read error, "branch") { return 126 }
+    match error_source(read error) {
+        present(source) => { if !display_is(source, "leaf") { return 127 } },
+        none => { return 128 }
+    }
+
+    let from_array = arc.Arc<[i32]>.(From<[i32; 3]>).from([4, 5, 6])
+    if from_array.get().len() != 3usize || from_array.get()[2usize] != 6 {
+        return 113
+    }
+    let slice_source = [11, 12, 13]
+    let slice_view: read [i32] = read slice_source
+    let from_slice = arc.Arc<[i32]>.(From<read [i32]>).from(slice_view)
+    if from_slice.get()[0usize] != 11 || from_slice.get()[2usize] != 13 {
+        return 120
+    }
+    var mutable_source = [14, 15]
+    let mutable_view: mut [i32] = mut mutable_source
+    let from_mut_slice = arc.Arc<[i32]>.(From<mut [i32]>).from(take mutable_view)
+    if from_mut_slice.get()[0usize] != 14 || from_mut_slice.get()[1usize] != 15 {
+        return 121
+    }
+    let text_owner = arc.Arc<core.text.Text>.(From<read core.text.Text>).from("sync")
+    let bytes_owner = arc.Arc<[u8]>.(From<arc.Arc<core.text.Text>>).from(text_owner)
+    if bytes_owner.get().len() != 4usize || bytes_owner.get()[0usize] != b's' {
+        return 122
+    }
+    var mutable_text_bytes = [b'o', b'k']
+    let mutable_text = match take core.text.from_utf8_mut(mut mutable_text_bytes) {
+        present(value) => value,
+        none => { return 124 }
+    }
+    let mutable_text_owner = arc.Arc<core.text.Text>.(From<mut core.text.Text>).from(
+        take mutable_text
+    )
+    if mutable_text_owner.get().as_bytes()[1usize] != b'k' { return 125 }
+    let string_owner = arc.Arc<core.text.Text>.(From<alloc.string.String>).from(
+        alloc.string.from_text("text")
+    )
+    if string_owner.get().as_bytes().len() != 4usize { return 123 }
+    match arc.Arc<[i32; 3]>.(TryFrom<arc.Arc<[i32]>>).try_from(from_array) {
+        success(array) => {
+            if array.get()[0usize] != 4 || array.get()[2usize] != 6 { return 115 }
+        },
+        failure(_) => { return 116 }
+    }
+    let wrong_values = alloc.vec.List<i32>.(From<[i32; 2]>).from([9, 10])
+    let wrong_length = arc.Arc<[i32]>.(From<alloc.vec.List<i32>>).from(wrong_values)
+    match arc.Arc<[i32; 3]>.(TryFrom<arc.Arc<[i32]>>).try_from(wrong_length) {
+        success(_) => { return 117 },
+        failure(original) => {
+            if original.get().len() != 2usize || original.get()[1usize] != 10 {
+                return 118
+            }
+        }
+    }
+    let list = alloc.vec.List<i32>.(From<[i32; 2]>).from([7, 8])
+    let from_items = arc.Arc<[i32]>.(FromItems<i32>).from_iter(list.into_iter())
+    if from_items.get().len() != 2usize || from_items.get()[1usize] != 8 {
+        return 114
+    }
+
     0
 }
 

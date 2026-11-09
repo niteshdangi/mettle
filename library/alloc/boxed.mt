@@ -1,9 +1,10 @@
 import package.core.borrow.{AsMut, AsRef, Borrow, BorrowMut}
 import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
-import package.core.convert.From
+import package.core.convert.{From, TryFrom}
 import package.core.error.Error
 import package.core.fmt
 import package.core.hash.{Hash, Hasher}
+import package.core.any.Any
 import package.core.iter.{BidirectionalIterator, ExactSizeIterator, FusedIterator}
 import package.core.iter.{FromItems, Iterable, Iterator, MutableIterable, OwnedIterable}
 import package.core.ops.{Deref, DerefMut}
@@ -25,6 +26,19 @@ pub type Box<T: unsized, A: Allocator = super.alloc.Global> {
         unsafe { core.ptr.drop_in_place(self.p) }
     }
 }
+
+type BoxTextError { message: super.string.String }
+extend BoxTextError implements fmt.Display {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str(self.message.as_text())
+    }
+}
+extend BoxTextError implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try super.string.String.(fmt.Debug).fmt(read self.message, mut f)
+    }
+}
+extend BoxTextError implements Error {}
 
 // Owns the exact Box<[T]> allocation. Values in [front, back) remain
 // initialized and iterator-owned; moved-out elements are outside that range.
@@ -578,11 +592,40 @@ extend<T, const N: usize> Box<[T]> implements From<[T; N]> {
 extend<T, A: Allocator> Box<[T], A> implements From<super.vec.List<T, A>> {
     static fn from(take items: super.vec.List<T, A>): Box<[T], A> { items.into_boxed_slice() }
 }
+extend<A: Allocator> Box<[u8], A> implements From<Box<Text, A>> {
+    static fn from(take value: Box<Text, A>): Box<[u8], A> {
+        let raw = value.into_raw()
+        // Text and byte slices share length metadata and byte alignment.
+        let bytes = unsafe { core.mem.transmute<ptr<mut [u8]>>(raw.0) }
+        unsafe { from_raw_in(bytes, raw.1) }
+    }
+}
 extend<region r, T: Clone> Box<[T]> implements From<super.borrow.Cow<region r, T>> {
     static fn from(take value: super.borrow.Cow<region r, T>): Box<[T]> { value.into_owned().into_boxed_slice() }
 }
 extend<region r> Box<Text> implements From<read Text from r> {
     static fn from(take value: read Text from r): Box<Text> { copy_text(value) }
+}
+extend<region r> Box<Text> implements From<mut Text from r> {
+    static fn from(take value: mut Text from r): Box<Text> { copy_text(value) }
+}
+extend<T, const N: usize, A: Allocator> Box<[T; N], A> implements TryFrom<Box<[T], A>> {
+    type Error = Box<[T], A>
+    static fn try_from(take value: Box<[T], A>): Outcome<Box<[T; N], A>, Box<[T], A>> {
+        if value.get().len() != N { return failure(value) }
+        let raw = value.into_raw()
+        success(Box(raw.0.cast<[T; N]>(), raw.1))
+    }
+}
+extend<T, const N: usize, A: Allocator> Box<[T; N], A> implements TryFrom<super.vec.List<T, A>> {
+    type Error = super.vec.List<T, A>
+    static fn try_from(
+        take value: super.vec.List<T, A>
+    ): Outcome<Box<[T; N], A>, super.vec.List<T, A>> {
+        if value.len() != N { return failure(value) }
+        let raw = value.into_boxed_slice().into_raw()
+        success(Box(raw.0.cast<[T; N]>(), raw.1))
+    }
 }
 extend Box<Text> implements From<super.string.String> {
     static fn from(take value: super.string.String): Box<Text> { from_string(value) }
@@ -602,6 +645,26 @@ extend<T: unsized> Box<T> {
         unsafe { core.ptr.NonNull.new_unchecked(raw.0) }
     }
 }
+extend<A: Allocator> Box<any Any, A> {
+    pub take fn downcast<T: Static>(): Outcome<Box<T, A>, Box<any Any, A>> {
+        if !core.any.is<T>(self.get()) { return failure(self) }
+        let raw = self.into_raw()
+        success(Box(raw.0.cast<T>(), raw.1))
+    }
+}
+extend<E: Error + Static> Box<any Error> implements From<E> {
+    static fn from(take value: E): Box<any Error> { new(value) }
+}
+extend Box<any Error> implements From<super.string.String> {
+    static fn from(take value: super.string.String): Box<any Error> {
+        new(BoxTextError(value))
+    }
+}
+extend<region r> Box<any Error> implements From<read Text from r> {
+    static fn from(take value: read Text from r): Box<any Error> {
+        new(BoxTextError(super.string.from_text(value)))
+    }
+}
 extend<T: PartialEq, A: Allocator> Box<T, A> implements PartialEq {
     fn eq(read other: Box<T, A>): bool { self.get().eq(other.get()) }
 }
@@ -615,10 +678,10 @@ extend<T: Ord, A: Allocator> Box<T, A> implements Ord {
 extend<T: Hash, A: Allocator> Box<T, A> implements Hash {
     fn hash<H: Hasher>(mut state: H): Unit { self.get().hash(mut state) }
 }
-extend<T: fmt.Display, A: Allocator> Box<T, A> implements fmt.Display {
+extend<T: fmt.Display + unsized, A: Allocator> Box<T, A> implements fmt.Display {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try T.(fmt.Display).fmt(self.get(), mut f) }
 }
-extend<T: fmt.Debug, A: Allocator> Box<T, A> implements fmt.Debug {
+extend<T: fmt.Debug + unsized, A: Allocator> Box<T, A> implements fmt.Debug {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try T.(fmt.Debug).fmt(self.get(), mut f) }
 }
 
@@ -664,6 +727,14 @@ extend<T: unsized, A: Allocator> Pinned<T, A> {
             core.mem.forget(take self)
             from_raw_in(p, a)
         }
+    }
+}
+
+// A pinned owner reached through a pinned view keeps its payload pinned.
+extend<region r, T: unsized, A: Allocator> pinned mut Pinned<T, A> from r {
+    pub mut fn as_deref_mut(): pinned mut T from self {
+        let owner = unsafe { self.get_unchecked_mut() }
+        unsafe { core.pin.Pin.new_unchecked(mut *owner.p) }
     }
 }
 

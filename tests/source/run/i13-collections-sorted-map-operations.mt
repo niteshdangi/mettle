@@ -3,9 +3,20 @@ import alloc.btree
 import alloc.btree.Entry
 import alloc.vec
 import core.clone.Clone
-import core.cmp.{Ordering}
+import core.cmp.{Eq, Ordering}
+import core.convert.From
 import core.default.Default
+import core.fmt.Debug
+import core.hash.hash_one
 import core.iter.{ExtendItems, FromItems, OwnedIterable}
+
+fn require_debug<T: Debug>(read value: T): bool { true }
+fn require_eq<T: Eq>(read value: T): bool { true }
+
+type MapDrop {
+    drops: ptr<mut usize>
+    drop { unsafe { *self.drops += 1usize } }
+}
 
 // Counts the keys and returns -1 unless they are strictly ascending.
 fn ordered_keys(read map: btree.SortedMap<i32, i32>): i32 {
@@ -33,6 +44,7 @@ fn main(): i32 {
     var map = btree.new<i32, i32>()
     if map.insert(5, 50).is_present() { return 3 }
     if map.insert(1, 10).is_present() || map.insert(9, 90).is_present() { return 4 }
+    if !require_debug(read map) { return 96 }
     match map.insert(5, 55) {
         present(old) => { if old != 50 { return 5 } },
         none => { return 6 }
@@ -59,11 +71,16 @@ fn main(): i32 {
         none => { return 16 }
     }
     if *map.get(3).unwrap() != 31 { return 17 }
+    if map[3] != 31 || map[9] != 90 { return 23 }
     if *map.first_key().unwrap() != 1 || *map.last_key().unwrap() != 9 { return 18 }
     let (first_key, first_value) = map.first_key_value().unwrap()
     if *first_key != 1 || *first_value != 10 { return 19 }
     let (last_key, last_value) = map.last_key_value().unwrap()
     if *last_key != 9 || *last_value != 90 { return 20 }
+    match take map.last_entry() {
+        present(entry) => { if *entry.key() != 9 { return 21 } },
+        none => { return 22 }
+    }
 
     // Ordered removal from both ends and by key.
     match take map.first_entry() {
@@ -101,6 +118,7 @@ fn main(): i32 {
 
     // Entry API on an ordered map.
     var counts = btree.new<i32, i32>()
+    if !require_debug(read counts.entry(1)) { return 90 }
     let fresh = counts.entry(1).or_insert(7)
     *fresh += 1
     if *counts.get(1).unwrap() != 8 { return 40 }
@@ -112,6 +130,11 @@ fn main(): i32 {
     if *counts.get(3).unwrap() != 301 { return 43 }
     let defaulted = counts.entry(4).or_default()
     if *defaulted != 0 { return 44 }
+    {
+        var inserted = counts.entry(6).insert_entry(600)
+        if *inserted.key() != 6 || *inserted.get() != 600 { return 45 }
+        if inserted.remove() != 600 { return 46 }
+    }
     match take counts.entry(4) {
         Entry.Occupied(occupied) => {
             var view = take occupied
@@ -169,6 +192,33 @@ fn main(): i32 {
     for pair in counts.extract_if(fn(read key: i32, mut value: i32): bool { value > 100 }) {
         extracted += pair.0
     }
+    var drops = 0usize
+    {
+        var dropping = btree.new<i32, MapDrop>()
+        dropping.insert(1, MapDrop(core.ptr.from_mut(drops)))
+        dropping.insert(2, MapDrop(core.ptr.from_mut(drops)))
+        dropping.insert(3, MapDrop(core.ptr.from_mut(drops)))
+    }
+    if drops != 3usize { return 91 }
+    {
+        var dropping = btree.new<i32, MapDrop>()
+        dropping.insert(1, MapDrop(core.ptr.from_mut(drops)))
+        dropping.insert(2, MapDrop(core.ptr.from_mut(drops)))
+        dropping.insert(3, MapDrop(core.ptr.from_mut(drops)))
+        var items = dropping.into_iter()
+        if items.next().is_none() { return 92 }
+    }
+    if drops != 6usize { return 93 }
+    var same_map = btree.new<i32, i32>()
+    same_map.insert(2, 20)
+    same_map.insert(1, 10)
+    var reordered_map = btree.new<i32, i32>()
+    reordered_map.insert(1, 10)
+    reordered_map.insert(2, 20)
+    if !require_eq(read same_map) || !(same_map == reordered_map) ||
+        hash_one(read same_map) != hash_one(read reordered_map) {
+        return 94
+    }
     if extracted != 3 || counts.len() != 4usize { return 56 }
     counts.retain(fn(read key: i32, mut value: i32): bool { key != 4 })
     if counts.contains_key(4) || counts.len() != 3usize { return 57 }
@@ -205,5 +255,37 @@ fn main(): i32 {
     var owned_total = 0
     for pair in grown.into_iter() { owned_total += pair.value }
     if owned_total != 210 { return 74 }
+
+    var appended = btree.new<i32, i32>()
+    appended.insert(1, 10)
+    appended.insert(2, 20)
+    var append_source = btree.new<i32, i32>()
+    append_source.insert(2, 200)
+    append_source.insert(3, 30)
+    appended.append(mut append_source)
+    if appended.len() != 3usize || !append_source.is_empty() ||
+        *appended.get(2).unwrap() != 200 {
+        return 75
+    }
+    appended.clear()
+    if !appended.is_empty() { return 76 }
+
+    let array_map = btree.SortedMap<i32, i32>.(From<[(i32, i32); 3]>).from([(3, 30), (1, 10), (3, 31)])
+    if array_map.len() != 2usize || *array_map.get(3).unwrap() != 31 { return 77 }
+    let array_set = btree.SortedSet<i32>.(From<[i32; 3]>).from([3, 1, 3])
+    if array_set.len() != 2usize || *array_set.first().unwrap() != 1 { return 78 }
+
+    var keys_map = btree.new<i32, i32>()
+    keys_map.insert(2, 20)
+    keys_map.insert(1, 10)
+    var keys_sum = 0
+    for key in keys_map.into_keys() { keys_sum += key }
+    if keys_sum != 3 { return 79 }
+    var values_map = btree.new<i32, i32>()
+    values_map.insert(2, 20)
+    values_map.insert(1, 10)
+    var values_sum = 0
+    for value in values_map.into_values() { values_sum += value }
+    if values_sum != 30 { return 80 }
     0
 }

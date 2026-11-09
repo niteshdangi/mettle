@@ -26,6 +26,21 @@ extend<T> T? implements From<T> {
     static fn from(take value: T): T? { present(value) }
 }
 
+extend<region r, T> (read T from r)? implements From<read (T?) from r> {
+    static fn from(take value: read (T?) from r): (read T from r)? {
+        value.as_ref()
+    }
+}
+
+extend<region r, T> (mut T from r)? implements From<mut (T?) from r> {
+    static fn from(take value: mut (T?) from r): (mut T from r)? {
+        match mut *value {
+            present(item) => present(mut item),
+            none => none
+        }
+    }
+}
+
 extend<T, U> T implements Into<U> where U: From<T> {
     take fn into(): U { U.(From<T>).from(self) }
 }

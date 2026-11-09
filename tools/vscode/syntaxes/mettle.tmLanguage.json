@@ -5,8 +5,10 @@
   "patterns": [
     {"include": "#comments"},
     {"include": "#strings"},
-    {"include": "#quoted-identifiers"},
     {"include": "#declarations"},
+    {"include": "#generic-references"},
+    {"include": "#calls"},
+    {"include": "#quoted-identifiers"},
     {"include": "#keywords"},
     {"include": "#numbers"},
     {"include": "#types"},
@@ -81,7 +83,7 @@
     "format-hole": {
       "name": "meta.interpolation.mettle",
       "begin": "\\{",
-      "end": "\\}",
+      "end": "\\}|$",
       "patterns": [
         {"include": "#expression-braces"},
         {"include": "$self"}
@@ -89,7 +91,7 @@
     },
     "expression-braces": {
       "begin": "\\{",
-      "end": "\\}",
+      "end": "\\}|$",
       "patterns": [
         {"include": "#expression-braces"},
         {"include": "$self"}
@@ -102,22 +104,131 @@
     "declarations": {
       "patterns": [
         {
-          "match": "\\b(fn)\\s+(`[A-Za-z_][A-Za-z0-9_]*`|[A-Za-z_][A-Za-z0-9_]*)",
-          "captures": {
+          "begin": "\\b(fn|macro)\\s+(`[A-Za-z_][A-Za-z0-9_]*`|[A-Za-z_][A-Za-z0-9_]*)",
+          "beginCaptures": {
             "1": {"name": "storage.type.function.mettle"},
             "2": {"name": "entity.name.function.mettle"}
-          }
+          },
+          "end": "(?=\\S)",
+          "applyEndPatternLast": true,
+          "patterns": [{"include": "#generic-parameters"}]
         },
         {
-          "match": "\\b(type|enum|interface|union|alias)\\s+(`[A-Za-z_][A-Za-z0-9_]*`|[A-Za-z_][A-Za-z0-9_]*)",
-          "captures": {
+          "begin": "\\b(type|enum|interface|union|alias)\\s+(`[A-Za-z_][A-Za-z0-9_]*`|[A-Za-z_][A-Za-z0-9_]*)",
+          "beginCaptures": {
             "1": {"name": "storage.type.mettle"},
             "2": {"name": "entity.name.type.mettle"}
+          },
+          "end": "(?=\\S)",
+          "applyEndPatternLast": true,
+          "patterns": [{"include": "#generic-parameters"}]
+        },
+        {
+          "begin": "(?<!\\.)\\b(?:(extend)|(for))\\b(?=\\s*<)",
+          "beginCaptures": {
+            "1": {"name": "storage.modifier.mettle"},
+            "2": {"name": "keyword.control.mettle"}
+          },
+          "end": "(?=\\S)",
+          "applyEndPatternLast": true,
+          "patterns": [{"include": "#generic-parameters"}]
+        },
+        {
+          "match": "\\b(let|var)\\s+(`[A-Za-z_][A-Za-z0-9_]*`|[A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {"name": "storage.type.mettle"},
+            "2": {"name": "variable.other.mettle"}
           }
         },
         {
           "name": "entity.other.attribute-name.mettle",
           "match": "@[A-Za-z_][A-Za-z0-9_:]*"
+        }
+      ]
+    },
+    "generic-parameters": {
+      "name": "meta.generic.mettle",
+      "begin": "<(?![<=])",
+      "beginCaptures": {
+        "0": {"name": "punctuation.definition.generic.mettle"}
+      },
+      "end": ">",
+      "endCaptures": {
+        "0": {"name": "punctuation.definition.generic.mettle"}
+      },
+      "patterns": [{"include": "#generic-contents"}]
+    },
+    "generic-references": {
+      "name": "meta.generic.mettle",
+      "comment": "Balance same-line arguments, protecting const braces, before checking type/expression followers. Declarations use their own multiline context.",
+      "begin": "(?<![A-Za-z0-9_`])(?:(\\.)\\s*)?([A-Za-z_][A-Za-z0-9_]*|`[A-Za-z_][A-Za-z0-9_]*`)\\s*(?=(?<generic><(?:[A-Za-z0-9_`\\s.,:;?+=\\[\\]()]|\\g<generic>|(?<constant>\\{(?:[^{}\"']|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'|\\g<constant>)*\\}))+>)\\s*(?:[().,;\\]}:{?=+]|\\b(?:where|implements|from|throws|not)\\b|$))(<)",
+      "beginCaptures": {
+        "1": {"name": "punctuation.separator.mettle"},
+        "2": {
+          "patterns": [
+            {"include": "#types"},
+            {"name": "entity.name.function.mettle", "match": "`?[A-Za-z_][A-Za-z0-9_]*`?"}
+          ]
+        },
+        "5": {"name": "punctuation.definition.generic.mettle"}
+      },
+      "end": ">",
+      "endCaptures": {
+        "0": {"name": "punctuation.definition.generic.mettle"}
+      },
+      "patterns": [{"include": "#generic-contents"}]
+    },
+    "generic-contents": {
+      "patterns": [
+        {"include": "#comments"},
+        {"include": "#strings"},
+        {"include": "#const-expression"},
+        {"include": "#generic-brackets"},
+        {"include": "#generic-parameters"},
+        {"include": "#quoted-identifiers"},
+        {"include": "#keywords"},
+        {"include": "#numbers"},
+        {"include": "#types"},
+        {"include": "#operators"}
+      ]
+    },
+    "const-expression": {
+      "begin": "\\{",
+      "end": "\\}",
+      "patterns": [
+        {"include": "#const-expression"},
+        {"include": "$self"}
+      ]
+    },
+    "generic-brackets": {
+      "begin": "\\[",
+      "end": "\\]",
+      "patterns": [
+        {"include": "#generic-brackets"},
+        {"include": "#const-expression"},
+        {"include": "$self"}
+      ]
+    },
+    "calls": {
+      "patterns": [
+        {
+          "name": "variable.other.metavariable.mettle",
+          "match": "\\$[A-Za-z_][A-Za-z0-9_]*"
+        },
+        {
+          "name": "entity.name.function.macro.mettle",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b(?=\\s*!\\s*[({\\[])"
+        },
+        {
+          "match": "(\\.\\s*)(`[A-Za-z_][A-Za-z0-9_]*`|[a-z_][A-Za-z0-9_]*)(?=\\s*\\()",
+          "captures": {
+            "1": {"name": "punctuation.separator.mettle"},
+            "2": {"name": "entity.name.function.mettle"}
+          }
+        },
+        {
+          "name": "entity.name.function.mettle",
+          "match": "\\b(?!(?:if|while|for|match|fn|pub|async|unsafe|const|init|drop|present|success|failure|self|Self|from)\\b)[a-z_][A-Za-z0-9_]*\\b(?=\\s*\\()"
         }
       ]
     },
@@ -145,7 +256,28 @@
         },
         {
           "name": "storage.modifier.mettle",
-          "match": "\\b(?:pub|copy|read|mut|take|async|unsafe|extern|static|const|init|drop|heap|shared|weak|local|pinned|as|where|region|implements|receiver|impl|module|import)\\b"
+          "match": "\\b(?:pub|copy|read|mut|take|async|unsafe|extern|static|const|init|drop|heap|shared|weak|local|pinned|as|where|region|implements|receiver|module|import)\\b"
+        },
+        {
+          "name": "storage.modifier.mettle",
+          "match": "(?<!\\.)\\bextend\\b(?=\\s*(?:<|[A-Za-z_`]))"
+        },
+        {
+          "name": "storage.modifier.mettle",
+          "match": "(?<!\\.)\\b(?:from|any|some|not)\\b(?=\\s+[A-Za-z_`]|\\s*\\()"
+        },
+        {
+          "match": "([:+])\\s*(unsized)\\b",
+          "captures": {
+            "1": {"patterns": [{"include": "#operators"}]},
+            "2": {"name": "storage.modifier.mettle"}
+          }
+        },
+        {
+          "match": "(?<=:)\\s*(format)\\b",
+          "captures": {
+            "1": {"name": "storage.modifier.mettle"}
+          }
         }
       ]
     },
@@ -153,7 +285,7 @@
       "patterns": [
         {
           "name": "constant.numeric.float.mettle",
-          "match": "\\b[0-9](?:_?[0-9])*(?:\\.[0-9](?:_?[0-9])*(?:[eE][+-]?[0-9](?:_?[0-9])*)?(?:f32|f64)?|[eE][+-]?[0-9](?:_?[0-9])*(?:f32|f64)?|f32|f64)\\b"
+          "match": "(?<!\\.)\\b[0-9](?:_?[0-9])*(?:\\.[0-9](?:_?[0-9])*(?:[eE][+-]?[0-9](?:_?[0-9])*)?(?:f32|f64)?|[eE][+-]?[0-9](?:_?[0-9])*(?:f32|f64)?|f32|f64)\\b"
         },
         {
           "name": "constant.numeric.integer.mettle",
@@ -181,7 +313,7 @@
       "patterns": [
         {
           "name": "keyword.operator.mettle",
-          "match": "\\?\\?|\\?\\.|\\.\\.=|\\.\\.|=>|::|<<=?|>>=?|[+*/%&|^!=<>-]=?|\\?"
+          "match": "\\?\\?|\\?\\.|\\.\\.=|\\.\\.\\.|\\.\\.|=>|&&|\\|\\||<<=?|>>=?|[+*/%&|^!=<>-]=?|\\?"
         },
         {
           "name": "punctuation.separator.mettle",

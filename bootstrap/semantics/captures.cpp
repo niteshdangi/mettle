@@ -576,9 +576,15 @@ void Checker::inferCaptures(ClosureFacts &closure) {
             auto type = facts(*node.children[0]).type;
             while (checked.types->isView(type))
               type = checked.types->view(type).payload;
+            if (call.receiverPlan)
+              type = call.receiverPlan->target;
             const auto signature = checked.types->callable(type);
             if (call.optional)
               visit(*node.children[0]->children[0], ParameterMode::Read);
+            else if (call.receiverPlan)
+              visit(*node.children[0], signature.mode == ParameterMode::Mut
+                                           ? ParameterMode::Mut
+                                           : ParameterMode::Read);
             else
               visit(*node.children[0], signature.mode);
             for (std::size_t i = 1; i < node.children.size(); ++i)

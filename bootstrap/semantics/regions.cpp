@@ -610,6 +610,13 @@ private:
                       std::set<Type> &inferred, const std::set<Type> &fixed,
                       Span span);
   Type unsized(Type source, Type target);
+  // An array argument the checker unsized to a slice formal.
+  Type unsizedArgument(Type actual, Type formal) {
+    return types.isSlice(formal) && types.isProduct(actual) &&
+                   types.product(actual).kind == AggregateKind::Array
+               ? unsized(actual, formal)
+               : actual;
+  }
   Type erased(Type source, Type target, Span span);
   void wellformed(Type type, Span span, bool indirect = false,
                   bool tail = false, unsigned depth = 0);
@@ -870,10 +877,21 @@ Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
             actual != context.arguments.end())
           argument = actual->second;
         else if (argumentIndex < syntax.arguments.size() &&
-                 syntax.arguments[argumentIndex].type)
-          argument = decorate(argument, *syntax.arguments[argumentIndex].type,
-                              context, span, fallback, stored);
-        else if (owner && typeIndex == 0 && owner->nested) {
+                 syntax.arguments[argumentIndex].type) {
+          const auto &argumentSyntax = *syntax.arguments[argumentIndex].type;
+          argument = decorate(argument, argumentSyntax, context, span, fallback,
+                              stored);
+          // An erased handle payload (`Box<any I from r>`) is bounded like
+          // `heap any I`: by its `from` sources, else by nothing borrowed.
+          if (types.isErased(argument) &&
+              !ownerSpelling(types.product(origin).name).empty())
+            argument = types.erasedBound(
+                argument, !argumentSyntax.sources.empty()
+                              ? sources(argumentSyntax, context, span, fallback)
+                          : !syntax.sources.empty()
+                              ? sources(syntax, context, span, fallback)
+                              : RegionId::Static);
+        } else if (owner && typeIndex == 0 && owner->nested) {
           // An owned erased payload is bounded by the owner's `from`
           // sources; without them it holds no borrow.
           auto bound = fallback;
@@ -1147,6 +1165,15 @@ void RegionPass::infer(Type actual, Type formal,
            p < from.arguments.size() && p < to.arguments.size(); ++p)
         infer(from.arguments[p], to.arguments[p], bindings);
     }
+  } else if (types.isSlice(formal)) {
+    // Slices and the arrays unsized into them bind through their elements.
+    auto element = types.slice(formal).element;
+    if (types.isSlice(actual))
+      infer(types.slice(actual).element, element, bindings);
+    else if (types.isProduct(actual) &&
+             types.product(actual).kind == AggregateKind::Array &&
+             types.product(actual).components.size() == 1)
+      infer(types.product(actual).components[0], element, bindings);
   } else if (types.isProduct(actual) && types.isProduct(formal)) {
     auto from = types.product(actual), to = types.product(formal);
     if (from.kind == AggregateKind::Array && to.kind == AggregateKind::Array &&
@@ -1203,6 +1230,22 @@ bool RegionPass::require(Type actual, Type expected, Span span, bool enforce,
     return true;
   auto result =
       relations.coerce(actual, expected, current->context.environment);
+  if (result != RegionAnswer::Proven && !callable) {
+    // Either side may hold the inference regions a coercion must bind.
+    std::vector<std::pair<RegionId, RegionId>> bindings;
+    infer(actual, expected, bindings);
+    infer(expected, actual, bindings);
+    auto environment = current->context.environment;
+    bool valid = !bindings.empty();
+    for (const auto &[variable, value] : bindings)
+      valid &= solver.instantiate(variable, value, environment) ==
+               RegionAnswer::Proven;
+    if (valid) {
+      result = relations.coerce(actual, expected, environment);
+      if (result == RegionAnswer::Proven)
+        current->context.environment = std::move(environment);
+    }
+  }
   if (result != RegionAnswer::Proven)
     error(span,
           result == RegionAnswer::Inconclusive
@@ -1515,6 +1558,8 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
     auto callable = expression(*node.children[0]);
     while (types.isView(callable))
       callable = types.view(callable).payload;
+    if (facts(node).receiverPlan)
+      callable = facts(node).receiverPlan->target;
     if (types.isCallable(callable)) {
       auto descriptor = types.callable(callable);
       if (auto found = closureDescriptors.find(callable.index());
@@ -1670,6 +1715,8 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
     auto callable = expression(*node.children[0]);
     while (types.isView(callable))
       callable = types.view(callable).payload;
+    if (facts(node).receiverPlan)
+      callable = facts(node).receiverPlan->target;
     if (types.isParameter(callable) && types.isCallable(callable))
       callable = callableBound(callable, current->context, node.span);
     if (!types.isCallable(callable))
@@ -1994,6 +2041,21 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
        ++i)
     typeBindings.push_back(
         {functions[callee].genericParameters[i], facts(node).typeArguments[i]});
+  if (!receiverCall && !declaration.interfaceOwner.empty() &&
+      !typeBindings.empty() && !node.children.empty()) {
+    const auto &callee = *node.children[0];
+    if (callee.annotation.form == TypeForm::Projection &&
+        callee.annotation.elements.size() == 2)
+      typeBindings[0].argument =
+          decorate(typeBindings[0].argument, callee.annotation.elements[0],
+                   current->context, node.span);
+    else if (!callee.ownerGenericArguments.empty()) {
+      TypeSyntax owner;
+      owner.arguments = callee.ownerGenericArguments;
+      typeBindings[0].argument = decorate(typeBindings[0].argument, owner,
+                                          current->context, node.span);
+    }
+  }
   std::set<Type> inferredParameters;
   std::set<Type> fixedParameters;
   std::vector<const GenericParameter *> explicitParameters;
@@ -2124,6 +2186,7 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
       for (unsigned hidden = 0; hidden < facts(node).hiddenReceiver; ++hidden)
         if (types.isOpaque(actual) && !types.product(actual).fields.empty())
           actual = types.product(actual).fields[0].type;
+    actual = unsizedArgument(actual, formals[parameter]);
     infer(actual, formals[parameter], bindings);
     infer(lifetime, replace(signature.backing[parameter], substitution),
           bindings);
@@ -2274,6 +2337,7 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
     if (!facts(*node.children[i + 1]).borrowConversion && borrowed &&
         types.isView(actual) && !types.isView(formals[target]))
       actual = types.view(actual).payload;
+    actual = unsizedArgument(actual, formals[target]);
     requireArgument(actual, replace(formals[target], bindings),
                     functions[callee].locals[target].mode == ParameterMode::Mut,
                     node.children[i + 1]->span,
@@ -2780,6 +2844,22 @@ Type RegionPass::expression(const Node &node) {
   case Kind::Array: {
     if (!types.isProduct(type))
       break;
+    // A compact array has one element type that every element must fit.
+    if (types.product(type).fields.empty() &&
+        !types.product(type).components.empty()) {
+      const auto record = types.product(type);
+      auto element = node.children.empty()
+                         ? inferred(record.components[0],
+                                    store.local(current->context.scope))
+                         : expression(*node.children[0]);
+      // A repeat literal `[value; count]` has one element expression.
+      for (std::size_t i = 1; !node.flag && i < node.children.size(); ++i)
+        require(expression(*node.children[i]), element, node.children[i]->span);
+      type = record.arrayCount == Type::Unknown
+                 ? types.structural(AggregateKind::Array, {element}, 0)
+                 : types.arrayType(element, record.arrayCount);
+      break;
+    }
     auto fields = types.product(type).fields;
     for (std::size_t i = 0; i < fields.size(); ++i) {
       auto index = node.flag && node.kind == Kind::Array ? 0 : i;
@@ -3026,8 +3106,12 @@ void RegionPass::resultSources(std::size_t index) {
         }
       }
     if (facts.resultSources.empty() &&
-        std::any_of(required.begin(), required.end(),
-                    [](auto region) { return region != RegionId::Static; }))
+        std::any_of(required.begin(), required.end(), [&](auto region) {
+          return region != RegionId::Static &&
+                 std::find(signatures[index].quantified.begin(),
+                           signatures[index].quantified.end(),
+                           region) == signatures[index].quantified.end();
+        }))
       diagnostics.error("ownership", syntax.span,
                         "borrowed result has no eligible input source");
   } else if (eligible.size() == 1)
@@ -3170,6 +3254,13 @@ Type RegionPass::erased(Type source, Type target, Span span) {
 }
 
 Type RegionPass::unsized(Type source, Type target) {
+  if (types.isView(source) && types.isSlice(target)) {
+    const auto actual = types.view(source);
+    if (types.isProduct(actual.payload) &&
+        types.product(actual.payload).kind == AggregateKind::Array)
+      return types.viewType(unsized(actual.payload, target), actual.mode,
+                            actual.region);
+  }
   if (types.isView(source) && types.isView(target)) {
     const auto actual = types.view(source), wanted = types.view(target);
     if (wanted.mode == ParameterMode::Mut &&
@@ -3657,8 +3748,9 @@ void RegionPass::run() {
       if (syntax.parameters[p].name == "self" && syntax.implementation >= 0) {
         annotation = &module.implementations[syntax.implementation].target;
         // A pinned receiver's target annotation describes the pinned view's
-        // payload, not the structural `Pin` wrapper.
-        if (types.isProduct(type) &&
+        // payload, not the structural `Pin` wrapper, unless the target is
+        // itself the pin (`extend pinned read T`).
+        if (annotation->form != TypeForm::Pinned && types.isProduct(type) &&
             types.product(type).kind == AggregateKind::Pin &&
             types.isView(types.product(type).fields[0].type)) {
           auto view = types.view(types.product(type).fields[0].type);
@@ -3679,8 +3771,7 @@ void RegionPass::run() {
       // its own quantified region, outliving the parameter's view region, so
       // reborrows of nested views satisfy the invariant payload.
       auto fallback = signature.backing[p];
-      bool viewed = syntax.parameters[p].name != "self" &&
-                    !types.isView(type) &&
+      bool viewed = !types.isView(type) &&
                     (functions[i].locals[p].mode == ParameterMode::Read ||
                      functions[i].locals[p].mode == ParameterMode::Mut);
       if (viewed)
@@ -3904,6 +3995,17 @@ void RegionPass::run() {
     fixedOwnerRegions(contract.implementation, actual);
     fixedOwnerRegions(contract.declaration, expected);
     auto bindings = contract.bindings;
+    const auto &implementation = module.functions[contract.implementation];
+    if (implementation.implementation >= 0 &&
+        !functions[contract.declaration].genericParameters.empty()) {
+      const auto &target =
+          module.implementations[implementation.implementation].target;
+      for (auto &binding : bindings)
+        if (binding.parameter ==
+            functions[contract.declaration].genericParameters[0])
+          binding.argument = decorate(binding.argument, target,
+                                      current->context, contract.span);
+    }
     if (!module.functions[contract.implementation].parameters.empty() &&
         module.functions[contract.implementation].parameters[0].name ==
             "self" &&
@@ -3913,20 +4015,33 @@ void RegionPass::run() {
       // `Self` is the receiver's region-decorated type; for a pinned
       // receiver, the payload of its pinned view.
       auto self = actual.parameters[0].type;
-      if (types.isProduct(self) &&
+      if (module.functions[contract.declaration]
+                  .parameters[0]
+                  .annotation.form == TypeForm::Pinned &&
+          types.isProduct(self) &&
           types.product(self).kind == AggregateKind::Pin)
         self = types.isView(types.product(self).fields[0].type)
                    ? types.view(types.product(self).fields[0].type).payload
                    : Type::Unknown;
-      if (self != Type::Unknown)
+      if (self != Type::Unknown) {
         for (auto &binding : bindings)
           if (binding.parameter ==
               functions[contract.declaration].genericParameters[0])
             binding.argument = self;
+        // `Self` carries the receiver's elided regions, which the method
+        // quantifies; the declaration must quantify them too.
+        for (auto region : contained(self))
+          if (std::find(actual.regionParameters.begin(),
+                        actual.regionParameters.end(),
+                        region) != actual.regionParameters.end() &&
+              std::find(expected.regionParameters.begin(),
+                        expected.regionParameters.end(),
+                        region) == expected.regionParameters.end())
+            expected.regionParameters.push_back(region);
+      }
     }
     auto providedType = types.callableType(std::move(actual));
     auto requiredType = types.callableType(std::move(expected));
-    const auto &implementation = module.functions[contract.implementation];
     if (implementation.implementation >= 0) {
       const auto &syntax =
           module.implementations[implementation.implementation];

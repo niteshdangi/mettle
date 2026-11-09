@@ -2,6 +2,7 @@
 import alloc.vec.List
 import core.cmp.Ordering
 import core.convert.From
+import core.iter.{BidirectionalIterator, Iterator, ExactSizeIterator}
 
 fn sample(): List<i32> {
     let arr = [5, 1, 4, 2, 3, 0]
@@ -199,5 +200,161 @@ fn main(): i32 {
     }
     let pr = fresh.as_ptr_range()
     if pr.start != fresh.as_ptr() { return 66 }
+    let pmr = cm_src.as_mut_ptr_range()
+    if pmr.start != cm_src.as_mut_ptr() { return 67 }
+    match fresh.strip_circumfix([5], [0]) {
+        present(part) => { if part.len() != 4usize || part[0usize] != 1 { return 68 } },
+        none => { return 68 }
+    }
+
+    var array_windows = fresh.array_windows<3usize>()
+    if array_windows.size_hint().0 != 4usize { return 69 }
+    match take array_windows.next_back() {
+        present(window) => { if window[0usize] != 2 || window[2usize] != 0 { return 70 } },
+        none => { return 70 }
+    }
+
+    var checked = sample()
+    match take capture checked.get_disjoint_mut(read [4usize, 1usize]) {
+        success(parts) => {
+            *parts[0usize] = 40
+            *parts[1usize] = 10
+        },
+        failure(_) => { return 71 }
+    }
+    if checked[4usize] != 40 || checked[1usize] != 10 { return 72 }
+    unsafe {
+        let parts = checked.get_disjoint_unchecked_mut(read [0usize, 5usize])
+        *parts[0usize] = 50
+        *parts[1usize] = 80
+    }
+    if checked[0usize] != 50 || checked[5usize] != 80 { return 76 }
+
+    var splitn_mut_source = sample()
+    var splitn_mut_count = 0usize
+    for part in splitn_mut_source.splitn_mut(2usize, fn(read a: i32): bool { a == 4 }) {
+        if splitn_mut_count == 0usize {
+            if part.len() != 2usize || part[0usize] != 5 { return 77 }
+        } else if part.len() != 3usize || part[0usize] != 2 {
+            return 78
+        }
+        splitn_mut_count += 1usize
+    }
+    if splitn_mut_count != 2usize { return 79 }
+    var rsplit_mut_source = sample()
+    var rsplit_mut_count = 0usize
+    for part in rsplit_mut_source.rsplit_mut(fn(read a: i32): bool { a == 4 }) {
+        if rsplit_mut_count == 0usize {
+            if part.len() != 3usize || part[0usize] != 2 { return 80 }
+        } else if part.len() != 2usize || part[0usize] != 5 {
+            return 81
+        }
+        rsplit_mut_count += 1usize
+    }
+    if rsplit_mut_count != 2usize { return 82 }
+    var rsplitn_mut_source = sample()
+    var rsplitn_mut_count = 0usize
+    for part in rsplitn_mut_source.rsplitn_mut(2usize, fn(read a: i32): bool { a == 4 }) {
+        if rsplitn_mut_count == 0usize {
+            if part.len() != 3usize || part[0usize] != 2 { return 83 }
+        } else if part.len() != 2usize || part[0usize] != 5 {
+            return 84
+        }
+        rsplitn_mut_count += 1usize
+    }
+    if rsplitn_mut_count != 2usize { return 85 }
+    var zero_splitn_count = 0usize
+    var zero_splitn_source = sample()
+    for part in zero_splitn_source.splitn_mut(0usize, fn(read a: i32): bool { a == 4 }) {
+        zero_splitn_count += 1usize
+    }
+    if zero_splitn_count != 0usize { return 98 }
+    var zero_rsplitn_count = 0usize
+    var zero_rsplitn_source = sample()
+    for part in zero_rsplitn_source.rsplitn_mut(0usize, fn(read a: i32): bool { a == 4 }) {
+        zero_rsplitn_count += 1usize
+    }
+    if zero_rsplitn_count != 0usize { return 99 }
+    var one_splitn_count = 0usize
+    var one_splitn_source = sample()
+    for part in one_splitn_source.splitn_mut(1usize, fn(read a: i32): bool { a == 4 }) {
+        if part.len() != 6usize { return 100 }
+        one_splitn_count += 1usize
+    }
+    if one_splitn_count != 1usize { return 101 }
+    var one_rsplitn_count = 0usize
+    var one_rsplitn_source = sample()
+    for part in one_rsplitn_source.rsplitn_mut(1usize, fn(read a: i32): bool { a == 4 }) {
+        if part.len() != 6usize { return 102 }
+        one_rsplitn_count += 1usize
+    }
+    if one_rsplitn_count != 1usize { return 103 }
+
+    var byte_values = List<u8>.(From<[u8; 13]>).from([0u8, 1u8, 2u8, 3u8, 4u8, 5u8, 6u8, 7u8, 8u8, 9u8, 10u8, 11u8, 12u8])
+    let byte_len = byte_values.len()
+    unsafe {
+        let (prefix, words, suffix) = byte_values.align_to_mut<u32>()
+        if words.len() < 2usize || words.as_ptr().addr() % 4usize != 0usize { return 73 }
+        if prefix.len() + words.len() * 4usize + suffix.len() != byte_len { return 74 }
+        words[0usize] = 0x12345678u32
+    }
+    unsafe {
+        let (_prefix, words, _suffix) = byte_values.align_to<u32>()
+        if words[0usize] != 0x12345678u32 { return 75 }
+    }
+    let triples = List<[u8; 3]>.(From<[[u8; 3]; 5]>).from([
+        [1u8, 2u8, 3u8], [4u8, 5u8, 6u8], [7u8, 8u8, 9u8], [10u8, 11u8, 12u8], [13u8, 14u8, 15u8]
+    ])
+    unsafe {
+        let (prefix, words, suffix) = triples.align_to<u16>()
+        if words.len() != 6usize { return 86 }
+        if prefix.len() * 3usize + words.len() * 2usize + suffix.len() * 3usize != 15usize {
+            return 87
+        }
+    }
+    var mutable_triples = List<[u8; 3]>.(From<[[u8; 3]; 5]>).from([
+        [1u8, 2u8, 3u8], [4u8, 5u8, 6u8], [7u8, 8u8, 9u8], [10u8, 11u8, 12u8], [13u8, 14u8, 15u8]
+    ])
+    unsafe {
+        let (prefix, words, suffix) = mutable_triples.align_to_mut<u16>()
+        if words.len() != 6usize { return 92 }
+        if prefix.len() * 3usize + words.len() * 2usize + suffix.len() * 3usize != 15usize {
+            return 93
+        }
+        words[0usize] = 0x1234u16
+    }
+    let zst_items = List<Unit>.(From<[Unit; 3]>).from([(), (), ()])
+    unsafe {
+        let (prefix, middle, suffix) = zst_items.align_to<u32>()
+        if prefix.len() != 3usize || middle.len() != 0usize || suffix.len() != 0usize {
+            return 88
+        }
+        if middle.as_ptr().addr() % 4usize != 0usize { return 89 }
+    }
+    let empty_bytes = List<u8>.(From<[u8; 0]>).from([])
+    unsafe {
+        let (prefix, middle, suffix) = empty_bytes.align_to<u32>()
+        if prefix.len() != 0usize || middle.len() != 0usize || suffix.len() != 0usize {
+            return 90
+        }
+        if middle.as_ptr().addr() % 4usize != 0usize { return 91 }
+    }
+    var mutable_zst_items = List<Unit>.(From<[Unit; 3]>).from([(), (), ()])
+    unsafe {
+        let (prefix, middle, suffix) = mutable_zst_items.align_to_mut<u32>()
+        if prefix.len() != 3usize || middle.len() != 0usize || suffix.len() != 0usize {
+            return 94
+        }
+        if middle.as_ptr().addr() % 4usize != 0usize { return 95 }
+    }
+    var mutable_empty_bytes = List<u8>.(From<[u8; 0]>).from([])
+    unsafe {
+        let (prefix, middle, suffix) = mutable_empty_bytes.align_to_mut<u32>()
+        if prefix.len() != 0usize || middle.len() != 0usize || suffix.len() != 0usize {
+            return 96
+        }
+        if middle.as_ptr().addr() % 4usize != 0usize { return 97 }
+    }
+
     0
 }

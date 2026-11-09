@@ -1,12 +1,31 @@
 // profiles: debug release
 import core.iter.BidirectionalIterator
 import core.iter.{ ExactSizeIterator, Iterator }
+import core.clone.Clone
+import core.fmt
+import core.fmt.Debug
+import core.text.Text
 
 fn sum_read(read part: [i32]): i32 {
     var total = 0
     var i = 0usize
     while i < part.len() { total += part[i]; i += 1usize }
     total
+}
+
+fn debug_is<T: Debug>(read value: T, read expected: Text): bool {
+    var buffer = [0u8; 128]
+    var writer = fmt.buffer_writer(mut buffer)
+    var formatter = fmt.formatter(mut writer, fmt.spec())
+    match capture T.(Debug).fmt(value, mut formatter) {
+        success(unit) => {},
+        failure(error) => { return false }
+    }
+    let written = writer.len()
+    match fmt.written_text(read buffer, written) {
+        present(actual) => actual == expected,
+        none => false
+    }
 }
 
 fn main(): i32 {
@@ -179,6 +198,27 @@ fn main(): i32 {
     match short_slice.last_chunk<2usize>() {
         present(part) => { if part[0usize] != 8 { return 47 } },
         none => { return 47 }
+    }
+
+    let debug_values = [1, 2, 3, 4, 5]
+    let debug_slice: read [i32] = read debug_values
+    var debug_chunks = debug_slice.chunks(2usize)
+    if !debug_chunks.next().is_present() { return 48 }
+    let copied_chunks = debug_chunks.clone()
+    if !debug_is(read copied_chunks, "Chunks([3, 4], [5])") { return 49 }
+    match take debug_chunks.next_back() {
+        present(part) => { if part[0usize] != 5 { return 50 } },
+        none => { return 50 }
+    }
+    var debug_windows = debug_slice.windows(2usize)
+    if !debug_windows.next().is_present() { return 51 }
+    let copied_windows = debug_windows.clone()
+    if !debug_is(read copied_windows, "Windows([2, 3], [3, 4], [4, 5])") {
+        return 52
+    }
+    match take debug_windows.next_back() {
+        present(part) => { if part[0usize] != 4 || part[1usize] != 5 { return 53 } },
+        none => { return 53 }
     }
     0
 }

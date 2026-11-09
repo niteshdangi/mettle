@@ -6,12 +6,28 @@
 import std.thread
 import std.sync.mpsc
 import core.clone.Clone
+import core.fmt
+import core.fmt.Debug
+import core.text.Text
 
 fn discard<T>(take value: T): Unit {}
+fn require_debug<T: Debug>(read value: T, read prefix: Text): Unit {
+    var output = alloc.string.new()
+    {
+        var formatter = fmt.formatter(mut output, fmt.spec())
+        match capture T.(Debug).fmt(value, mut formatter) {
+            success(_) => {},
+            failure(_) => { panic("mpsc Debug formatting failed") }
+        }
+    }
+    assert(output.as_text().starts_with(read prefix), "mpsc Debug prefix")
+}
 
 // Disconnection follows the last sender; a dropped rendezvous_worker refuses sends.
 fn checks_channel_basics(): i32 {
     let pair = mpsc.channel<i32>()
+    require_debug(read pair.0, "Sender")
+    require_debug(read pair.1, "Receiver")
     let tx = pair.0
     let rx = pair.1
     let sent = capture tx.send(10)
@@ -153,6 +169,8 @@ fn checks_iterators(): i32 {
 // rendezvous channel blocks until the rendezvous_worker takes the message.
 fn checks_bounded_and_rendezvous(): i32 {
     let bounded = mpsc.sync_channel<i32>(1usize)
+    require_debug(read bounded.0, "SyncSender")
+    require_debug(read bounded.1, "Receiver")
     let bounded_tx = bounded.0
     let bounded_rx = bounded.1
     let accepted = capture bounded_tx.try_send(1)

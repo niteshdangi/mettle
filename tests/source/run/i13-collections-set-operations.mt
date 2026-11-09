@@ -2,11 +2,17 @@
 import alloc.hash_map
 import alloc.vec
 import core.clone.Clone
+import core.cmp.Eq
 import core.default.Default
 import core.fmt.{Debug, Error, buffer_writer, formatter, spec, written_text}
-import core.iter.{ExtendItems, FromItems, OwnedIterable}
+import core.iter.{ExtendItems, FromItems, OwnedIterable, ExactSizeIterator}
 
 fn default_value<T: Default>(): T { T.(Default).default() }
+fn require_debug<T: Debug>(read value: T): bool { true }
+fn require_eq<T: Eq>(read value: T): bool { true }
+fn exact_len<I: ExactSizeIterator>(read items: I): usize {
+    I.(ExactSizeIterator).len(items)
+}
 
 fn render<T: Debug>(read value: T, mut buffer: [u8]): usize throws Error {
     var out = buffer_writer(mut buffer)
@@ -71,8 +77,14 @@ fn run(): i32 throws Error {
     for value in set.iter() { total += *value }
     if total != 3 + 7 + 8 + 9 { return 21 }
     var owned = 0
-    for value in set.drain() { owned += value }
+    var drain = set.drain()
+    if exact_len(read drain) != 4usize { return 53 }
+    for value in drain { owned += value }
     if owned != 27 || !set.is_empty() { return 22 }
+    var debug_set = hash_map.set_new<i32>()
+    debug_set.insert(1)
+    var debug_drain = debug_set.drain()
+    if !require_debug(read debug_drain) { return 26 }
     set.insert(1)
     set.insert(2)
     set.insert(3)
@@ -117,7 +129,7 @@ fn run(): i32 throws Error {
 
     // Clone, equality, Debug and collection construction.
     let duplicate = left.clone()
-    if duplicate != left || duplicate.len() != 3usize { return 40 }
+    if !require_eq(read duplicate) || duplicate != left || duplicate.len() != 3usize { return 40 }
     if left == right { return 41 }
     let written = try render(read left, mut buffer)
     match written_text(read buffer, written) {

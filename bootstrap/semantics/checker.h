@@ -177,6 +177,8 @@ private:
              std::vector<DiagnosticMessage> related = {});
   void diagnoseBorrowedMatchMove(const Node &expression, int variable);
   bool inOrdinaryMatchPattern = false;
+  // Resolving a pinned receiver's own (non-target) methods.
+  bool pinAsOwner = false;
   void coerce(Node &expression, int actual, int expected, Span span);
   int join(Node &left, int a, Node &right, int b, Span span);
   Type annotation(const TypeSyntax &syntax, Span span,

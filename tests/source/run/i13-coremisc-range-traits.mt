@@ -4,7 +4,9 @@
 
 import core.cmp.{Eq, PartialEq}
 import core.clone.Clone
+import core.convert.Into
 import core.default.Default
+import core.hash.hash_one
 import core.iter
 import core.iter.{BidirectionalIterator, ExactSizeIterator, Iterator, RangeBounds}
 
@@ -14,6 +16,9 @@ fn checks_range(): i32 {
     let span = iter.Range(2i32, 6i32)
     let duplicate = span.clone()
     if duplicate != span || duplicate.start != 2 || duplicate.end != 6 { return 1 }
+    if hash_one(read span) != hash_one(read duplicate) { return 9 }
+    let converted: iter.Range<i32> = span.clone().into()
+    if converted != span { return 20 }
     if span == iter.Range(2i32, 7i32) { return 2 }
     let fallback: iter.Range<i32> = default_of<iter.Range<i32>>()
     if fallback.start != 0 || fallback.end != 0 || !fallback.is_empty() { return 3 }
@@ -30,6 +35,9 @@ fn checks_inclusive(): i32 {
     let closed = iter.RangeInclusive.new(1i32, 3i32)
     let duplicate = closed.clone()
     if duplicate != closed { return 10 }
+    if hash_one(read closed) != hash_one(read duplicate) { return 19 }
+    let converted: iter.RangeInclusive<i32> = closed.clone().into()
+    if converted != closed { return 21 }
     if closed == iter.RangeInclusive.new(1i32, 4i32) { return 11 }
     let (low, high) = closed.clone().into_inner()
     if low != 1 || high != 3 { return 12 }

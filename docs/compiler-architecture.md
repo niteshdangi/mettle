@@ -192,6 +192,30 @@ stack avoids allocating a vector per node. Recovery rolls back incomplete arena
 entries before adding an error node, preserving later valid syntax. Comment
 newlines are exposed by the cursor without copying or splitting lexer tokens.
 Consumers must reject diagnostics or a missing root before semantic compilation.
+Structural type nodes retain grouping, ownership/access, optional nesting and
+source annotations. Pointer closers and optional suffixes may consume part of
+a symbol token through cursor offsets; the original token and its span remain
+unchanged, while each node ends at its consumed source position.
+Application lookahead caches rejections by opening-token index and newline
+suppression context in a lazy bitset. Reusable angle/delimiter stacks exclude
+nested expression delimiters from angle matching. A candidate uses the shared
+type-argument parser; rejection restores cursor, arenas and diagnostics before
+comparison parsing. Failed outer lookahead must preserve viable inner applications.
+Generic type arguments retain their type/constant/region form and associated
+binding syntax. Callable types retain region binders, modifiers, parameter
+access, result and error-effect nodes; grouping controls effect attachment.
+Reinterpreting a named argument as a constant expression rolls back its syntax
+arena entries before reparsing. Generic expression boundaries are cursor state
+and are restored during recovery.
+Function declarations retain visibility/modifiers, generic parameters, defaults,
+bounds, where constraints and effects as syntax nodes. Generic expression
+applications retain their receiver and type/constant/region arguments separately
+from runtime call arguments. Expression bodies retain their arrow-token index.
+Inline module declarations own nested item bodies rather than flattened scope
+copies. External modules have no body; import nodes retain paths, aliases,
+grouped names, glob selection and visibility. Shared item dispatch and visibility
+parsing preserve enclosing spans; source loading and module identities remain
+resolution responsibilities.
 
 Owner type annotations retain an `Owner` syntax form and resolve in semantics to
 the nominal `alloc` library types: `heap T` to `Box<T>`, `shared T` to `Arc<T>`,

@@ -224,7 +224,7 @@ void Builder::branch(const Node &condition, Value value, int a, int b) {
 }
 ir::Value Builder::merge(Type type, const std::vector<Value> &values,
                          const std::vector<int> &blocks) {
-  if (values.empty()) {
+  if (values.empty() || type == Type::Never) {
     terminate({Exit::Unreachable});
     return {};
   }

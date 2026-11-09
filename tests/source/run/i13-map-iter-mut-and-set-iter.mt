@@ -1,5 +1,5 @@
 import alloc.hash_map
-import core.iter.{Iterator, BidirectionalIterator, Iterable}
+import core.iter.{Iterator, BidirectionalIterator, Iterable, OwnedIterable}
 
 type CountedValue {
     value: i32
@@ -79,6 +79,13 @@ fn main(): i32 {
     assert(iter.size_hint() == (3usize, present(3usize)), "set hint")
     assert(iter.next().is_present(), "set key")
     assert(iter.size_hint() == (2usize, present(2usize)), "set hint after pull")
+    var owned_set = hash_map.set_new<i32>()
+    let _h = owned_set.insert(4)
+    let _i = owned_set.insert(9)
+    var owned_iter = owned_set.into_iter()
+    assert(owned_iter.size_hint() == (2usize, present(2usize)), "owned set hint")
+    assert(owned_iter.next().is_present(), "owned set item")
+    assert(owned_iter.size_hint() == (1usize, present(1usize)), "owned set hint after pull")
     var map = hash_map.new<i32, i32>()
     let _f = map.insert(1, 10)
     let _g = map.insert(2, 20)

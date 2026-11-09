@@ -1,7 +1,11 @@
 import alloc.linked_list
+import alloc.hash_map
+import alloc.btree
 import alloc.vec
 import alloc.vec_deque
 import core.iter.{BidirectionalIterator, ExactSizeIterator, FusedIterator, Iterator}
+import core.default.Default
+import core.fmt.Debug
 
 type Counted {
     value: i32
@@ -12,6 +16,10 @@ type Counted {
 fn exact_len<I: ExactSizeIterator>(read items: I): usize {
     I.(ExactSizeIterator).len(items)
 }
+
+fn require_debug<T: Debug>(read value: T): bool { true }
+
+fn default_value<T: Default>(): T { T.(Default).default() }
 
 fn require_fused<I: FusedIterator>(take items: I): Unit {
     let _ = items
@@ -287,5 +295,145 @@ fn main(): i32 {
         filtered[1usize] != 3 {
         return 67
     }
+
+    var map = hash_map.new<i32, i32>()
+    map.insert(1, 10)
+    map.insert(2, 20)
+    if exact_len(read map.iter()) != 2usize ||
+        exact_len(read map.keys()) != 2usize ||
+        exact_len(read map.values()) != 2usize {
+        return 68
+    }
+    {
+        var iter = map.iter_mut()
+        if exact_len(read iter) != 2usize { return 69 }
+        let _ = iter.next()
+        if exact_len(read iter) != 1usize { return 70 }
+    }
+    {
+        var drain = map.drain()
+        if exact_len(read drain) != 2usize { return 71 }
+        let _ = drain.next_back()
+        if exact_len(read drain) != 1usize { return 72 }
+    }
+    var owned_map = hash_map.new<i32, i32>()
+    owned_map.insert(1, 10)
+    owned_map.insert(2, 20)
+    if exact_len(read owned_map.into_iter()) != 2usize { return 73 }
+    var keys_map = hash_map.new<i32, i32>()
+    keys_map.insert(1, 10)
+    keys_map.insert(2, 20)
+    if exact_len(read keys_map.into_keys()) != 2usize { return 74 }
+    var values_map = hash_map.new<i32, i32>()
+    values_map.insert(1, 10)
+    values_map.insert(2, 20)
+    if exact_len(read values_map.into_values()) != 2usize { return 75 }
+
+    var sorted = btree.new<i32, i32>()
+    sorted.insert(1, 10)
+    sorted.insert(2, 20)
+    if exact_len(read sorted.iter()) != 2usize ||
+        exact_len(read sorted.keys()) != 2usize ||
+        exact_len(read sorted.values()) != 2usize {
+        return 76
+    }
+    {
+        var iter = sorted.iter_mut()
+        if exact_len(read iter) != 2usize { return 77 }
+        let _ = iter.next_back()
+        if exact_len(read iter) != 1usize { return 78 }
+    }
+    {
+        var iter = sorted.values_mut()
+        if exact_len(read iter) != 2usize { return 79 }
+        let _ = iter.next()
+        if exact_len(read iter) != 1usize { return 80 }
+    }
+    var sorted_owned = btree.new<i32, i32>()
+    sorted_owned.insert(1, 10)
+    sorted_owned.insert(2, 20)
+    if exact_len(read sorted_owned.into_iter()) != 2usize { return 81 }
+    var sorted_keys = btree.new<i32, i32>()
+    sorted_keys.insert(1, 10)
+    sorted_keys.insert(2, 20)
+    if exact_len(read sorted_keys.into_keys()) != 2usize { return 82 }
+    var sorted_values = btree.new<i32, i32>()
+    sorted_values.insert(1, 10)
+    sorted_values.insert(2, 20)
+    if exact_len(read sorted_values.into_values()) != 2usize { return 83 }
+    var double_ended_map = btree.new<i32, i32>()
+    double_ended_map.insert(1, 10)
+    double_ended_map.insert(2, 20)
+    double_ended_map.insert(3, 30)
+    {
+        var iter = double_ended_map.into_iter()
+        match take iter.next_back() {
+            present(entry) => { if entry.key != 3 || entry.value != 30 { return 85 } },
+            none => { return 86 }
+        }
+        match take iter.next() {
+            present(entry) => { if entry.key != 1 || entry.value != 10 { return 87 } },
+            none => { return 88 }
+        }
+        match take iter.next_back() {
+            present(entry) => { if entry.key != 2 || entry.value != 20 { return 89 } },
+            none => { return 90 }
+        }
+        if iter.next().is_present() || iter.next_back().is_present() ||
+            exact_len(read iter) != 0usize {
+            return 91
+        }
+    }
+
+    let default_hash_iter: hash_map.MapIntoIter<i32, i32> =
+        default_value<hash_map.MapIntoIter<i32, i32>>()
+    let default_hash_keys: hash_map.IntoKeys<i32, i32, alloc.alloc.Global> =
+        default_value<hash_map.IntoKeys<i32, i32, alloc.alloc.Global>>()
+    let default_hash_values: hash_map.IntoValues<i32, i32, alloc.alloc.Global> =
+        default_value<hash_map.IntoValues<i32, i32, alloc.alloc.Global>>()
+    let default_hash_set: hash_map.SetIntoIter<i32> =
+        default_value<hash_map.SetIntoIter<i32>>()
+    let default_sorted_iter: btree.MapIntoIter<i32, i32, alloc.alloc.Global> =
+        default_value<btree.MapIntoIter<i32, i32, alloc.alloc.Global>>()
+    let default_sorted_keys: btree.IntoKeys<i32, i32, alloc.alloc.Global> =
+        default_value<btree.IntoKeys<i32, i32, alloc.alloc.Global>>()
+    let default_sorted_values: btree.IntoValues<i32, i32, alloc.alloc.Global> =
+        default_value<btree.IntoValues<i32, i32, alloc.alloc.Global>>()
+    let default_sorted_set: btree.SetIntoIter<i32, alloc.alloc.Global> =
+        default_value<btree.SetIntoIter<i32, alloc.alloc.Global>>()
+    let default_deque_iter: vec_deque.DequeIntoIter<i32> =
+        default_value<vec_deque.DequeIntoIter<i32>>()
+    if default_hash_iter.size_hint() != (0usize, present(0usize)) ||
+        default_hash_keys.size_hint() != (0usize, present(0usize)) ||
+        default_hash_values.size_hint() != (0usize, present(0usize)) ||
+        default_hash_set.size_hint() != (0usize, present(0usize)) ||
+        default_sorted_iter.size_hint() != (0usize, present(0usize)) ||
+        default_sorted_keys.size_hint() != (0usize, present(0usize)) ||
+        default_sorted_values.size_hint() != (0usize, present(0usize)) ||
+        default_sorted_set.size_hint() != (0usize, present(0usize)) ||
+        default_deque_iter.size_hint() != (0usize, present(0usize)) {
+        return 84
+    }
+    var debug_sorted = btree.new<i32, i32>()
+    debug_sorted.insert(1, 10)
+    let _ = require_debug(read debug_sorted.into_iter())
+    var debug_hash_map = hash_map.new<i32, i32>()
+    debug_hash_map.insert(1, 10)
+    let _ = require_debug(read debug_hash_map.into_iter())
+    var debug_keys = hash_map.new<i32, i32>()
+    debug_keys.insert(1, 10)
+    let _ = require_debug(read debug_keys.into_keys())
+    var debug_values = hash_map.new<i32, i32>()
+    debug_values.insert(1, 10)
+    let _ = require_debug(read debug_values.into_values())
+    var debug_set = hash_map.set_new<i32>()
+    debug_set.insert(1)
+    let _ = require_debug(read debug_set.into_iter())
+    var debug_sorted_set = btree.set_new<i32>()
+    debug_sorted_set.insert(1)
+    let _ = require_debug(read debug_sorted_set.into_iter())
+    var debug_deque = vec_deque.new<i32>()
+    debug_deque.push_back(1)
+    let _ = require_debug(read debug_deque.into_iter())
     0
 }

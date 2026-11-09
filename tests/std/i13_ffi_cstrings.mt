@@ -1,6 +1,6 @@
 import std.ffi.{CStr, CString, FromBytesWithNulError, FromBytesUntilNulError, FromVecWithNulError, NulError}
 import core.clone.Clone
-import core.cmp.{Ord, PartialEq}
+import core.cmp.{Ord, PartialEq, PartialOrd}
 
 fn main(): i32 {
     let payload: [u8; 3] = [255u8, 128u8, 65u8]
@@ -14,10 +14,16 @@ fn main(): i32 {
 
     let terminated: [u8; 4] = [255u8, 128u8, 65u8, 0u8]
     if !std.ffi.bytes_equal(value.as_bytes_with_nul(), terminated) { return 4 }
+    if value.as_ptr().cast<u8>() != value.as_bytes_with_nul().as_ptr() { return 42 }
+    if value.to_string_lossy().as_text() != "\u{fffd}\u{fffd}A" { return 43 }
     let borrowed = value.as_c_str()
     if !std.ffi.bytes_equal(borrowed.to_bytes(), payload) { return 5 }
     if !std.ffi.bytes_equal(borrowed.to_bytes_with_nul(), terminated) { return 6 }
+    if borrowed.as_ptr().cast<u8>() != borrowed.to_bytes_with_nul().as_ptr() { return 44 }
+    if !borrowed.cmp(borrowed).is_eq() { return 46 }
+    if !borrowed.partial_cmp(borrowed).is_present() { return 47 }
     if borrowed.to_str().is_present() { return 7 }
+    if borrowed.to_string_lossy().as_text() != "\u{fffd}\u{fffd}A" { return 45 }
     let duplicate = value.clone()
     if !duplicate.eq(borrowed) || !borrowed.eq(duplicate) { return 38 }
     if !duplicate.cmp(value).is_eq() { return 39 }

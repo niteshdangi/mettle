@@ -151,6 +151,14 @@ consumes byte storage; `into_vec` transfers it back. Embedded NUL is representab
 in an OS string but rejected at operations requiring NUL-terminated OS inputs.
 No implicit lossy conversion is inserted at that boundary.
 
+`CStr` is an unsized validated byte-string view; its extent includes exactly
+one NUL, at the end. Constructors borrow the validated input bytes.
+`CString` owns that storage, and its `Borrow<CStr>`, `AsRef<CStr>` and `Deref`
+views stay within the owner's borrow without allocating or creating temporary
+wrapper storage. Suffix indexing retains the terminator and rejects a start
+past it. Unsafe constructors require the same byte invariant and readable
+storage for the entire view lifetime.
+
 Windows `OsStringExt.from_wide(read [u16])` copies exactly the supplied UTF-16
 code units, including unpaired surrogates. It does not require or remove a
 trailing zero; zero is content until a later OS operation rejects it.

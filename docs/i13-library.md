@@ -182,6 +182,23 @@ copies; `fmt.write` takes an f-string (`f"{value}"`).
 All evidence below is revision/profile scoped; older broader runs do not
 qualify later compiler edits. All eighteen areas remain partial.
 
+All 72 changed fixtures pass on Linux x86-64 with the current Release bootstrap:
+50 source programs in their declared profiles, three source rejections and
+19 hosted std programs. The RefCell fixture corrects its expected replacement
+value and now checks both fields of both swapped values. This is not full
+milestone or release qualification.
+
+- Macro expansion defers ordinary import graphs until an invocation needs them;
+  import indexing feeds one non-reentrant fixed point. The in-memory regression,
+  nine existing macro positives and twelve negatives pass. Former timeout cases
+  `box-callable-through-deref` and `i13-any-static-views` pass native debug/release
+  with unchanged 60-second command limits.
+- Borrowed array-to-slice conversion preserves the source view and nested
+  element regions. `region-array-slice-arguments` passes native debug/release
+  and emitted-ASan debug. Focused stored-view invariance, read-to-mut rejection
+  and symbolic-array escape negatives pass. The full `i13_io_cursor_vectored` fixture type-checks
+  with the repaired current-tree Debug compiler and passes native Linux execution
+  in the changed-fixture check above.
 - Regional/associated normalization preserves nominal arguments, tuple/field
   regions, generic assumptions and cross-region contracts; view-bearing bounds
   are rechecked after inference. Current instrumented algorithms/boundaries,

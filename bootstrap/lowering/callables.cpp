@@ -210,12 +210,38 @@ Builder::Value Builder::indirectCallExpression(const Node &node) {
   auto type = module.facts(callee).type;
   while (module.typeStore()->isView(type))
     type = module.typeStore()->view(type).payload;
+  if (facts.receiverPlan)
+    type = facts.receiverPlan->target;
   const auto signature = module.typeStore()->callable(type);
   bool abstract = module.typeStore()->isParameter(type);
   bool thin = module.typeStore()->isFunctionPointer(type) || abstract;
   std::vector<Value> arguments;
   Value target;
-  if (thin) {
+  if (facts.receiverPlan) {
+    const auto &plan = *facts.receiverPlan;
+    bool borrowed = signature.mode == ParameterMode::Read ||
+                    signature.mode == ParameterMode::Mut;
+    std::optional<Value> passed;
+    if (borrowed &&
+        (thin || signature.environmentMode != ParameterMode::Value))
+      passed = receiverBorrow(callee, plan, signature.mode);
+    else {
+      auto location = receiverPlace(receiverSource(callee), plan, callee.span);
+      if (live())
+        passed = emit({Op::Load, {}, {}, {}, "", location, -1, 0, callee.span},
+                      type);
+    }
+    if (!live())
+      return {};
+    if (thin)
+      target = *passed;
+    else if (!module.closures()
+                  .at(module.facts(callee).closure >= 0
+                          ? module.facts(callee).closure
+                          : static_cast<int>(signature.function))
+                  ->captures.empty())
+      arguments.push_back(*passed);
+  } else if (thin) {
     if (signature.mode == ParameterMode::Read ||
         signature.mode == ParameterMode::Mut)
       target = borrow(callee, signature.mode, false, false, Type::Unknown,

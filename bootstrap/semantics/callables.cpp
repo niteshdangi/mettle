@@ -1,4 +1,5 @@
 #include "semantics/checker.h"
+#include "support/limits.h"
 #include "types/layout.h"
 #include <algorithm>
 #include <functional>
@@ -383,9 +384,43 @@ int Checker::indirectCall(Node &node, bool reachable, int calleeVariable) {
                       : this->node(*node.children[0], reachable);
   fields(false);
   auto type = inference.value(variable);
+  auto source = type;
   while (checked.types->isView(type)) {
     type = checked.types->view(type).payload;
     ++facts(node).dereferences;
+  }
+  // A callable reached through Deref (`Box<fn(i32): i32>`) is called in place.
+  if (!checked.types->isCallable(type) && checked.types->isProduct(type)) {
+    ReceiverPlan plan{source, source, {}};
+    while (checked.types->isView(plan.target)) {
+      ReceiverStep step;
+      step.source = plan.target;
+      step.target = checked.types->view(plan.target).payload;
+      plan.target = step.target;
+      plan.steps.push_back(std::move(step));
+    }
+    for (unsigned depth = 0; depth < limits::typeDepth &&
+                             !checked.types->isCallable(plan.target);
+         ++depth) {
+      auto step = dereferenceStep(plan.target, false, node.span);
+      if (!step)
+        break;
+      plan.target = step->target;
+      plan.steps.push_back(std::move(*step));
+    }
+    if (checked.types->isCallable(plan.target)) {
+      type = plan.target;
+      facts(node).dereferences = 0;
+      const auto mode = checked.types->callable(type).mode;
+      if (mode == ParameterMode::Mut) {
+        requireMutablePlace(*node.children[0]);
+        mutableReceiverPlan(plan, node.span);
+      } else if (mode != ParameterMode::Read &&
+                 !checked.types->isCopy(type))
+        error("ownership", node.span,
+              "cannot move a consuming callable out of a borrowed place");
+      facts(node).receiverPlan = std::move(plan);
+    }
   }
   if (!checked.types->isCallable(type)) {
     error("type", node.span, "expression is not callable");

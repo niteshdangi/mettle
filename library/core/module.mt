@@ -3,6 +3,7 @@
 // other compiler built-in modules remain compiler-owned.
 pub module any
 pub module borrow
+pub module cell
 pub module char
 pub module clone
 pub module cmp
@@ -14,11 +15,13 @@ pub module fmt
 pub module future
 pub module hash
 pub module iter
+pub module mem
 pub module num
 pub module ops
 pub module option
 pub module outcome
 pub module panic
+pub module pin
 pub module ptr
 pub module slice
 pub module text

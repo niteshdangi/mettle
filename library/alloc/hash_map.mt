@@ -1,11 +1,10 @@
-import package.core.iter.{Iterator, BidirectionalIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import package.core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
 import package.core.clone.Clone
 import package.core.default.Default
 import package.core.cmp.Eq
 import package.core.fmt
-import package.core.slice.SliceIter
 import super.alloc.{Allocator, Global, AllocError, Layout, layout_unchecked, handle_alloc_error, layout_of}
-import package.core.hash.{Hash, hash_one}
+import package.core.hash.{BuildHasher, Hash, SipHasher, sip13}
 import super.vec.List
 import package.core.cmp.PartialEq
 import package.core.borrow.KeyView
@@ -22,10 +21,23 @@ pub type Bucket<K, V> {
 // Entries live densely in a `List` and a power-of-two index table (linear
 // probing, backward-shift deletion) maps hashes to entry positions. Both
 // blocks come from the same allocator; iteration order is unspecified.
-pub type Map<K, V, A: Allocator = Global> {
+pub copy type DefaultHashBuilder {}
+extend DefaultHashBuilder implements Clone {
+    fn clone(): DefaultHashBuilder { DefaultHashBuilder() }
+}
+extend DefaultHashBuilder implements BuildHasher {
+    type Hasher = SipHasher
+    fn build_hasher(): SipHasher { sip13(0u64, 0u64) }
+}
+extend DefaultHashBuilder implements Default {
+    static fn default(): DefaultHashBuilder { DefaultHashBuilder() }
+}
+
+pub type Map<K, V, A: Allocator = Global, S: BuildHasher = DefaultHashBuilder> {
     entries: List<Bucket<K, V>, A>
     idx: ptr<mut usize>
     icap: usize
+    builder: S
     drop {
         if self.icap != 0usize {
             let layout = unsafe { layout_unchecked(self.icap * 8usize, 8usize) }
@@ -62,13 +74,33 @@ extend<region r, K, V, A: Allocator> MapDrain<region r, K, V, A> implements Bidi
         }
     }
 }
+extend<region r, K, V, A: Allocator> MapDrain<region r, K, V, A> implements ExactSizeIterator {}
+extend<region r, K: fmt.Debug, V: fmt.Debug, A: Allocator> MapDrain<region r, K, V, A> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        let entries = self.inner.as_slice()
+        try f.write_str("MapDrain(")
+        try f.debug_open("{")
+        var i = 0usize
+        while i < entries.len() {
+            let entry = read entries[i]
+            try f.debug_item_start(i == 0usize)
+            try K.(fmt.Debug).fmt(entry.key, mut f)
+            try f.write_str(": ")
+            try V.(fmt.Debug).fmt(entry.value, mut f)
+            try f.debug_item_end()
+            i += 1usize
+        }
+        try f.debug_close("}", entries.len() == 0usize)
+        try f.write_str(")")
+    }
+}
 
-pub type ExtractIf<region r, K, V, A: Allocator, F> {
-    map: mut Map<K, V, A> from r
+pub type ExtractIf<region r, K, V, A: Allocator, S: BuildHasher, F> {
+    map: mut Map<K, V, A, S> from r
     predicate: F
     index: usize
 }
-extend<region r, K: Hash + PartialEq, V, A: Allocator, F: mut fn(read K, mut V): bool> ExtractIf<region r, K, V, A, F> implements Iterator {
+extend<region r, K: Hash + PartialEq, V, A: Allocator, S: BuildHasher, F: mut fn(read K, mut V): bool> ExtractIf<region r, K, V, A, S, F> implements Iterator {
     type Item = (K, V)
     mut fn next(): (K, V)? {
         while self.index < self.map.entries.len() {
@@ -88,12 +120,39 @@ pub fn new_in<K, V, A: Allocator>(take a: A): Map<K, V, A> {
     Map<K, V, A>(allocator: take a)
 }
 pub fn new<K, V>(): Map<K, V> { new_in(Global()) }
+pub fn with_capacity_in<K: Hash + PartialEq, V, A: Allocator>(capacity: usize, take a: A): Map<K, V, A> {
+    var map = new_in<K, V, A>(take a)
+    map.reserve(capacity)
+    map
+}
+pub fn with_capacity<K: Hash + PartialEq, V>(capacity: usize): Map<K, V> {
+    with_capacity_in(capacity, Global())
+}
+pub fn with_hasher<K, V, S: BuildHasher>(take builder: S): Map<K, V, Global, S> {
+    Map<K, V, Global, S>(allocator: Global(), builder: take builder)
+}
+pub fn with_capacity_and_hasher_in<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher>(
+    capacity: usize,
+    take allocator: A,
+    take builder: S
+): Map<K, V, A, S> {
+    var map = Map<K, V, A, S>(allocator: take allocator, builder: take builder)
+    map.reserve(capacity)
+    map
+}
+pub fn with_capacity_and_hasher<K: Hash + PartialEq, V, S: BuildHasher>(
+    capacity: usize,
+    take builder: S
+): Map<K, V, Global, S> {
+    with_capacity_and_hasher_in(capacity, Global(), take builder)
+}
 
 extend<K, V> Map<K, V> {
     pub init() {
         self.entries = super.vec.new<Bucket<K, V>>()
         self.idx = core.ptr.null_mut<usize>()
         self.icap = 0usize
+        self.builder = DefaultHashBuilder()
     }
 }
 
@@ -102,12 +161,20 @@ extend<K, V, A: Allocator> Map<K, V, A> {
         self.entries = super.vec.new_in<Bucket<K, V>, A>(take allocator)
         self.idx = core.ptr.null_mut<usize>()
         self.icap = 0usize
+        self.builder = DefaultHashBuilder()
     }
 }
 
-fn hash_of<Q: Hash + unsized>(read k: Q): u64 { hash_one(k) }
+extend<K, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
+    pub init(take allocator: A, take builder: S) {
+        self.entries = super.vec.new_in<Bucket<K, V>, A>(take allocator)
+        self.idx = core.ptr.null_mut<usize>()
+        self.icap = 0usize
+        self.builder = take builder
+    }
+}
 
-extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
+extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
     pub fn len(): usize { self.entries.len() }
     pub fn is_empty(): bool { self.entries.is_empty() }
     pub fn capacity(): usize {
@@ -140,7 +207,7 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
         none
     }
     fn find_entry<Q: Hash + PartialEq + unsized>(read key: Q): usize? where K: KeyView<Q> {
-        let hash = hash_of(key)
+        let hash = self.builder.hash_one(key)
         match self.find_pos(hash, key) {
             present(pos) => present(self.slot(pos)),
             none => none
@@ -325,6 +392,7 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
             none => none
         }
     }
+    // Safety: both keys must exist and designate distinct entries.
     pub mut unsafe fn get_disjoint_unchecked_mut<Q: Hash + PartialEq + unsized, R: Hash + PartialEq + unsized>(
         read first: Q,
         read second: R
@@ -343,7 +411,7 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
     }
     pub mut fn extract_if<F: mut fn(read K, mut V): bool>(
         take predicate: F
-    ): ExtractIf<region self, K, V, A, F> {
+    ): ExtractIf<region self, K, V, A, S, F> {
         ExtractIf(mut self, predicate, 0usize)
     }
     pub mut fn retain<F: mut fn(read K, mut V): bool>(take predicate: F): Unit {
@@ -362,7 +430,7 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
     // Inserts or replaces; a replaced value is returned. On allocation failure
     // the map is unchanged and the pair is dropped.
     pub mut fn try_insert(take key: K, take value: V): V? throws AllocError {
-        let hash = hash_of(key)
+        let hash = self.builder.hash_one(key)
         match self.find_pos(hash, key) {
             present(pos) => {
                 let s = self.slot(pos)
@@ -440,7 +508,7 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
         self.remove_at(s, pos)
     }
     pub mut fn remove_entry<Q: Hash + PartialEq + unsized>(read key: Q): (K, V)? where K: KeyView<Q> {
-        let hash = hash_of(key)
+        let hash = self.builder.hash_one(key)
         let pos = match self.find_pos(hash, key) { present(p) => p, none => { return none } }
         let s = self.slot(pos)
         present(self.remove_at(s, pos))
@@ -472,11 +540,24 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
     }
 }
 
-// Set of keys backed by a map with unit values.
-pub type Set<K, A: Allocator = Global> { map: Map<K, Unit, A> }
+extend<K, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
+    pub fn hasher(): read S from self { read self.builder }
+}
+extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher, Q: Hash + PartialEq + unsized> Map<K, V, A, S> implements package.core.ops.Index<Q> where K: KeyView<Q> {
+    type Output = V
+    fn index(read key: Q): read V from self {
+        match self.get(key) {
+            present(value) => value,
+            none => super.alloc.panic_precondition()
+        }
+    }
+}
 
-fn set_from_map<K, A: Allocator>(take map: Map<K, Unit, A>): Set<K, A> {
-    let result: Set<K, A>
+// Set of keys backed by a map with unit values.
+pub type Set<K, A: Allocator = Global, S: BuildHasher = DefaultHashBuilder> { map: Map<K, Unit, A, S> }
+
+fn set_from_map<K, A: Allocator, S: BuildHasher>(take map: Map<K, Unit, A, S>): Set<K, A, S> {
+    let result: Set<K, A, S>
     result.map = take map
     result
 }
@@ -485,6 +566,30 @@ pub fn set_new_in<K, A: Allocator>(take a: A): Set<K, A> {
     Set<K, A>(allocator: take a)
 }
 pub fn set_new<K>(): Set<K> { Set<K>() }
+pub fn set_with_capacity_in<K: Hash + PartialEq, A: Allocator>(capacity: usize, take a: A): Set<K, A> {
+    var set = set_new_in<K, A>(take a)
+    set.reserve(capacity)
+    set
+}
+pub fn set_with_capacity<K: Hash + PartialEq>(capacity: usize): Set<K> {
+    set_with_capacity_in(capacity, Global())
+}
+pub fn set_with_hasher<K, S: BuildHasher>(take builder: S): Set<K, Global, S> {
+    set_from_map(with_hasher<K, Unit, S>(take builder))
+}
+pub fn set_with_capacity_and_hasher_in<K: Hash + PartialEq, A: Allocator, S: BuildHasher>(
+    capacity: usize,
+    take allocator: A,
+    take builder: S
+): Set<K, A, S> {
+    set_from_map(with_capacity_and_hasher_in<K, Unit, A, S>(capacity, take allocator, take builder))
+}
+pub fn set_with_capacity_and_hasher<K: Hash + PartialEq, S: BuildHasher>(
+    capacity: usize,
+    take builder: S
+): Set<K, Global, S> {
+    set_with_capacity_and_hasher_in(capacity, Global(), take builder)
+}
 
 extend<K> Set<K> {
     pub init() { self.map = new<K, Unit>() }
@@ -496,7 +601,13 @@ extend<K, A: Allocator> Set<K, A> {
     }
 }
 
-extend<K: Hash + PartialEq, A: Allocator> Set<K, A> {
+extend<K, A: Allocator, S: BuildHasher> Set<K, A, S> {
+    pub init(take allocator: A, take builder: S) {
+        self.map = Map<K, Unit, A, S>(allocator: take allocator, builder: take builder)
+    }
+}
+
+extend<K: Hash + PartialEq, A: Allocator, S: BuildHasher> Set<K, A, S> {
     pub fn len(): usize { self.map.len() }
     pub fn capacity(): usize { self.map.capacity() }
     pub fn is_empty(): bool { self.map.is_empty() }
@@ -537,7 +648,7 @@ extend<K: Hash + PartialEq, A: Allocator> Set<K, A> {
         }
     }
     pub mut fn replace(take value: K): K? {
-        let hash = hash_of(value)
+        let hash = self.map.builder.hash_one(value)
         match self.map.find_pos(hash, value) {
             present(pos) => {
                 let index = self.map.slot(pos)
@@ -555,6 +666,10 @@ extend<K: Hash + PartialEq, A: Allocator> Set<K, A> {
     }
     pub mut fn clear(): Unit { self.map.clear() }
     pub fn as_entries(): read [Bucket<K, Unit>] from self { self.map.as_entries() }
+}
+
+extend<K, A: Allocator, S: BuildHasher> Set<K, A, S> {
+    pub fn hasher(): read S from self { self.map.hasher() }
 }
 
 pub type SetDrain<region r, K, A: Allocator> {
@@ -578,13 +693,30 @@ extend<region r, K, A: Allocator> SetDrain<region r, K, A> implements Bidirectio
         }
     }
 }
+extend<region r, K, A: Allocator> SetDrain<region r, K, A> implements ExactSizeIterator {}
+extend<region r, K: fmt.Debug, A: Allocator> SetDrain<region r, K, A> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        let entries = self.inner.inner.as_slice()
+        try f.write_str("SetDrain(")
+        try f.debug_open("{")
+        var i = 0usize
+        while i < entries.len() {
+            try f.debug_item_start(i == 0usize)
+            try K.(fmt.Debug).fmt(entries[i].key, mut f)
+            try f.debug_item_end()
+            i += 1usize
+        }
+        try f.debug_close("}", entries.len() == 0usize)
+        try f.write_str(")")
+    }
+}
 
-pub type SetExtractIf<region r, K, A: Allocator, F> {
-    set: mut Set<K, A> from r
+pub type SetExtractIf<region r, K, A: Allocator, S: BuildHasher, F> {
+    set: mut Set<K, A, S> from r
     predicate: F
     index: usize
 }
-extend<region r, K: Hash + PartialEq, A: Allocator, F: mut fn(read K): bool> SetExtractIf<region r, K, A, F> implements Iterator {
+extend<region r, K: Hash + PartialEq, A: Allocator, S: BuildHasher, F: mut fn(read K): bool> SetExtractIf<region r, K, A, S, F> implements Iterator {
     type Item = K
     mut fn next(): K? {
         while self.index < self.set.map.entries.len() {
@@ -601,14 +733,14 @@ extend<region r, K: Hash + PartialEq, A: Allocator, F: mut fn(read K): bool> Set
 
 // Each algebra iterator scans the left set first, then the right set when its
 // operation needs right-only elements. Set iteration order remains unspecified.
-pub type SetAlgebra<region r, K, A: Allocator> {
-    left: read Set<K, A> from r
-    right: read Set<K, A> from r
+pub type SetAlgebra<region r, K, A: Allocator, S: BuildHasher> {
+    left: read Set<K, A, S> from r
+    right: read Set<K, A, S> from r
     mode: u8
     side: u8
     index: usize
 }
-extend<region r, K: Hash + PartialEq, A: Allocator> SetAlgebra<region r, K, A> implements Iterator {
+extend<region r, K: Hash + PartialEq, A: Allocator, S: BuildHasher> SetAlgebra<region r, K, A, S> implements Iterator {
     type Item = read K from r
     mut fn next(): (read K from r)? {
         while self.side < 2u8 {
@@ -651,20 +783,20 @@ extend<region r, K: Hash + PartialEq, A: Allocator> SetAlgebra<region r, K, A> i
     }
 }
 
-extend<K: Hash + PartialEq, A: Allocator> Set<K, A> {
-    pub fn `union`(read other: Set<K, A> from self): SetAlgebra<region self, K, A> {
+extend<K: Hash + PartialEq, A: Allocator, S: BuildHasher> Set<K, A, S> {
+    pub fn `union`(read other: Set<K, A, S> from self): SetAlgebra<region self, K, A, S> {
         SetAlgebra(read self, read other, 0u8, 0u8, 0usize)
     }
-    pub fn intersection(read other: Set<K, A> from self): SetAlgebra<region self, K, A> {
+    pub fn intersection(read other: Set<K, A, S> from self): SetAlgebra<region self, K, A, S> {
         SetAlgebra(read self, read other, 1u8, 0u8, 0usize)
     }
-    pub fn difference(read other: Set<K, A> from self): SetAlgebra<region self, K, A> {
+    pub fn difference(read other: Set<K, A, S> from self): SetAlgebra<region self, K, A, S> {
         SetAlgebra(read self, read other, 2u8, 0u8, 0usize)
     }
-    pub fn symmetric_difference(read other: Set<K, A> from self): SetAlgebra<region self, K, A> {
+    pub fn symmetric_difference(read other: Set<K, A, S> from self): SetAlgebra<region self, K, A, S> {
         SetAlgebra(read self, read other, 3u8, 0u8, 0usize)
     }
-    pub fn is_subset(read other: Set<K, A>): bool {
+    pub fn is_subset(read other: Set<K, A, S>): bool {
         var i = 0usize
         while i < self.map.entries.len() {
             if !other.contains(self.map.entries[i].key) { return false }
@@ -672,7 +804,7 @@ extend<K: Hash + PartialEq, A: Allocator> Set<K, A> {
         }
         true
     }
-    pub fn is_superset(read other: Set<K, A>): bool {
+    pub fn is_superset(read other: Set<K, A, S>): bool {
         var i = 0usize
         while i < other.map.entries.len() {
             if !self.contains(other.map.entries[i].key) { return false }
@@ -680,7 +812,7 @@ extend<K: Hash + PartialEq, A: Allocator> Set<K, A> {
         }
         true
     }
-    pub fn is_disjoint(read other: Set<K, A>): bool {
+    pub fn is_disjoint(read other: Set<K, A, S>): bool {
         var i = 0usize
         while i < self.map.entries.len() {
             if other.contains(self.map.entries[i].key) { return false }
@@ -691,7 +823,7 @@ extend<K: Hash + PartialEq, A: Allocator> Set<K, A> {
     pub mut fn drain(): SetDrain<region self, K, A> { SetDrain(self.map.drain()) }
     pub mut fn extract_if<F: mut fn(read K): bool>(
         take predicate: F
-    ): SetExtractIf<region self, K, A, F> {
+    ): SetExtractIf<region self, K, A, S, F> {
         SetExtractIf(mut self, predicate, 0usize)
     }
     pub mut fn retain<F: mut fn(read K): bool>(take predicate: F): Unit {
@@ -712,41 +844,74 @@ extend<K: Hash + PartialEq, A: Allocator> Set<K, A> {
 // Map iteration is in insertion order and yields the stored buckets. Keys are
 // never exposed mutably because that could break the table's hash invariants.
 pub type Iter<region r, K, V> {
-    inner: SliceIter<region r, Bucket<K, V>>
-    remaining: usize
+    items: (read [Bucket<K, V>] from r)?
+    front: usize
+    back: usize
 }
 extend<region r, K, V> Iter<region r, K, V> implements Iterator {
     type Item = read Bucket<K, V> from r
     mut fn next(): (read Bucket<K, V> from r)? {
-        match self.inner.next() {
-            present(entry) => {
-                self.remaining -= 1usize
-                present(entry)
-            },
+        if self.front >= self.back { return none }
+        let index = self.front
+        self.front += 1usize
+        match read self.items {
+            present(items) => present(read items[index]),
             none => none
         }
     }
-    fn size_hint(): (usize, usize?) { (self.remaining, present(self.remaining)) }
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.back - self.front
+        (remaining, present(remaining))
+    }
 }
-extend<K, V, A: Allocator> Map<K, V, A> implements Iterable {
+extend<region r, K, V> Iter<region r, K, V> implements Clone {
+    fn clone(): Iter<region r, K, V> { Iter(self.items, self.front, self.back) }
+}
+extend<region r, K, V> Iter<region r, K, V> implements ExactSizeIterator {}
+extend<region r, K, V> Iter<region r, K, V> implements Default {
+    static fn default(): Iter<region r, K, V> { Iter(none, 0usize, 0usize) }
+}
+extend<region r, K: fmt.Debug, V: fmt.Debug> Iter<region r, K, V> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("Iter(")
+        try f.debug_open("[")
+        var index = self.front
+        while index < self.back {
+            match read self.items {
+                present(items) => {
+                    try f.debug_item_start(index == self.front)
+                    try K.(fmt.Debug).fmt(items[index].key, mut f)
+                    try f.write_str(": ")
+                    try V.(fmt.Debug).fmt(items[index].value, mut f)
+                    try f.debug_item_end()
+                },
+                none => { break }
+            }
+            index += 1usize
+        }
+        try f.debug_close("]", self.front == self.back)
+        try f.write_str(")")
+    }
+}
+extend<K, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> implements Iterable {
     type Item = Bucket<K, V>
     type Iter<region r> = Iter<region r, K, V>
     fn iter<region r>(receiver read self: Self from r): Iter<region r, K, V> {
-        Iter(self.entries.as_slice().iter(), self.entries.len())
+        Iter(present(self.entries.as_slice()), 0usize, self.entries.len())
     }
 }
-extend<K, A: Allocator> Set<K, A> implements Iterable {
+extend<K, A: Allocator, S: BuildHasher> Set<K, A, S> implements Iterable {
     type Item = K
     type Iter<region r> = Keys<region r, K, Unit>
     fn iter<region r>(receiver read self: Self from r): Keys<region r, K, Unit> {
-        Keys(self.map.entries.as_slice().iter(), self.map.entries.len())
+        Keys(present(self.map.entries.as_slice()), 0usize, self.map.entries.len())
     }
 }
 
 // Consuming iteration moves out entries without consulting the now-stale
 // index; dropping the iterator releases the remaining buckets and index block.
-pub type MapIntoIter<K, V, A: Allocator = Global> { map: Map<K, V, A> }
-extend<K, V, A: Allocator> MapIntoIter<K, V, A> implements Iterator {
+pub type MapIntoIter<K, V, A: Allocator = Global, S: BuildHasher = DefaultHashBuilder> { map: Map<K, V, A, S> }
+extend<K, V, A: Allocator, S: BuildHasher> MapIntoIter<K, V, A, S> implements Iterator {
     type Item = (K, V)
     mut fn next(): (K, V)? {
         match take self.map.entries.pop() {
@@ -759,20 +924,33 @@ extend<K, V, A: Allocator> MapIntoIter<K, V, A> implements Iterator {
         (remaining, present(remaining))
     }
 }
-extend<K, V, A: Allocator> Map<K, V, A> implements OwnedIterable {
+extend<K, V, A: Allocator, S: BuildHasher> MapIntoIter<K, V, A, S> implements ExactSizeIterator {}
+extend<K: fmt.Debug, V: fmt.Debug, A: Allocator, S: BuildHasher> MapIntoIter<K, V, A, S> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("MapIntoIter(")
+        try Map<K, V, A, S>.(fmt.Debug).fmt(read self.map, mut f)
+        try f.write_str(")")
+    }
+}
+extend<K: Hash + PartialEq, V, A: Allocator + Default, S: BuildHasher + Default> MapIntoIter<K, V, A, S> implements Default {
+    static fn default(): MapIntoIter<K, V, A, S> {
+        MapIntoIter(Map<K, V, A, S>.(Default).default())
+    }
+}
+extend<K, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> implements OwnedIterable {
     type Item = (K, V)
-    type IntoIter = MapIntoIter<K, V, A>
-    fn into_iter(receiver take self: Self): MapIntoIter<K, V, A> {
+    type IntoIter = MapIntoIter<K, V, A, S>
+    fn into_iter(receiver take self: Self): MapIntoIter<K, V, A, S> {
         MapIntoIter(take self)
     }
 }
 
-extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
-    pub take fn into_keys(): IntoKeys<K, V, A> { IntoKeys(self.into_iter()) }
-    pub take fn into_values(): IntoValues<K, V, A> { IntoValues(self.into_iter()) }
+extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
+    pub take fn into_keys(): IntoKeys<K, V, A, S> { IntoKeys(self.into_iter()) }
+    pub take fn into_values(): IntoValues<K, V, A, S> { IntoValues(self.into_iter()) }
 }
-pub type IntoKeys<K, V, A: Allocator> { inner: MapIntoIter<K, V, A> }
-extend<K, V, A: Allocator> IntoKeys<K, V, A> implements Iterator {
+pub type IntoKeys<K, V, A: Allocator = Global, S: BuildHasher = DefaultHashBuilder> { inner: MapIntoIter<K, V, A, S> }
+extend<K, V, A: Allocator, S: BuildHasher> IntoKeys<K, V, A, S> implements Iterator {
     type Item = K
     mut fn next(): K? {
         match take self.inner.next() {
@@ -782,8 +960,30 @@ extend<K, V, A: Allocator> IntoKeys<K, V, A> implements Iterator {
     }
     fn size_hint(): (usize, usize?) { self.inner.size_hint() }
 }
-pub type IntoValues<K, V, A: Allocator> { inner: MapIntoIter<K, V, A> }
-extend<K, V, A: Allocator> IntoValues<K, V, A> implements Iterator {
+extend<K, V, A: Allocator, S: BuildHasher> IntoKeys<K, V, A, S> implements ExactSizeIterator {}
+extend<K: fmt.Debug, V, A: Allocator, S: BuildHasher> IntoKeys<K, V, A, S> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        let entries = self.inner.map.entries.as_slice()
+        try f.write_str("IntoKeys(")
+        try f.debug_open("[")
+        var i = 0usize
+        while i < entries.len() {
+            try f.debug_item_start(i == 0usize)
+            try K.(fmt.Debug).fmt(entries[i].key, mut f)
+            try f.debug_item_end()
+            i += 1usize
+        }
+        try f.debug_close("]", entries.len() == 0usize)
+        try f.write_str(")")
+    }
+}
+extend<K: Hash + PartialEq, V, A: Allocator + Default, S: BuildHasher + Default> IntoKeys<K, V, A, S> implements Default {
+    static fn default(): IntoKeys<K, V, A, S> {
+        IntoKeys(MapIntoIter<K, V, A, S>.(Default).default())
+    }
+}
+pub type IntoValues<K, V, A: Allocator = Global, S: BuildHasher = DefaultHashBuilder> { inner: MapIntoIter<K, V, A, S> }
+extend<K, V, A: Allocator, S: BuildHasher> IntoValues<K, V, A, S> implements Iterator {
     type Item = V
     mut fn next(): V? {
         match take self.inner.next() {
@@ -793,9 +993,31 @@ extend<K, V, A: Allocator> IntoValues<K, V, A> implements Iterator {
     }
     fn size_hint(): (usize, usize?) { self.inner.size_hint() }
 }
+extend<K, V, A: Allocator, S: BuildHasher> IntoValues<K, V, A, S> implements ExactSizeIterator {}
+extend<K, V: fmt.Debug, A: Allocator, S: BuildHasher> IntoValues<K, V, A, S> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        let entries = self.inner.map.entries.as_slice()
+        try f.write_str("IntoValues(")
+        try f.debug_open("[")
+        var i = 0usize
+        while i < entries.len() {
+            try f.debug_item_start(i == 0usize)
+            try V.(fmt.Debug).fmt(entries[i].value, mut f)
+            try f.debug_item_end()
+            i += 1usize
+        }
+        try f.debug_close("]", entries.len() == 0usize)
+        try f.write_str(")")
+    }
+}
+extend<K: Hash + PartialEq, V, A: Allocator + Default, S: BuildHasher + Default> IntoValues<K, V, A, S> implements Default {
+    static fn default(): IntoValues<K, V, A, S> {
+        IntoValues(MapIntoIter<K, V, A, S>.(Default).default())
+    }
+}
 
-pub type SetIntoIter<K, A: Allocator = Global> { inner: MapIntoIter<K, Unit, A> }
-extend<K, A: Allocator> SetIntoIter<K, A> implements Iterator {
+pub type SetIntoIter<K, A: Allocator = Global, S: BuildHasher = DefaultHashBuilder> { inner: MapIntoIter<K, Unit, A, S> }
+extend<K, A: Allocator, S: BuildHasher> SetIntoIter<K, A, S> implements Iterator {
     type Item = K
     mut fn next(): K? {
         match take self.inner.next() {
@@ -805,118 +1027,277 @@ extend<K, A: Allocator> SetIntoIter<K, A> implements Iterator {
     }
     fn size_hint(): (usize, usize?) { self.inner.size_hint() }
 }
-extend<K, A: Allocator> Set<K, A> implements OwnedIterable {
+extend<K, A: Allocator, S: BuildHasher> SetIntoIter<K, A, S> implements ExactSizeIterator {}
+extend<K: fmt.Debug, A: Allocator, S: BuildHasher> SetIntoIter<K, A, S> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        let entries = self.inner.map.entries.as_slice()
+        try f.debug_open("{")
+        var i = 0usize
+        while i < entries.len() {
+            try f.debug_item_start(i == 0usize)
+            try K.(fmt.Debug).fmt(entries[i].key, mut f)
+            try f.debug_item_end()
+            i += 1usize
+        }
+        try f.debug_close("}", entries.len() == 0usize)
+    }
+}
+extend<K: Hash + PartialEq, A: Allocator + Default, S: BuildHasher + Default> SetIntoIter<K, A, S> implements Default {
+    static fn default(): SetIntoIter<K, A, S> {
+        SetIntoIter(MapIntoIter<K, Unit, A, S>.(Default).default())
+    }
+}
+extend<K, A: Allocator, S: BuildHasher> Set<K, A, S> implements OwnedIterable {
     type Item = K
-    type IntoIter = SetIntoIter<K, A>
-    fn into_iter(receiver take self: Self): SetIntoIter<K, A> {
+    type IntoIter = SetIntoIter<K, A, S>
+    fn into_iter(receiver take self: Self): SetIntoIter<K, A, S> {
         SetIntoIter(self.map.into_iter())
     }
 }
 
 // The exclusive map borrow keeps entries dense and stable; advancing the
 // cursor before yielding ensures each mutable value slot is issued only once.
-pub type IterMut<region r, K, V, A: Allocator> {
-    map: mut Map<K, V, A> from r
+pub type IterMut<region r, K, V, A: Allocator = Global, S: BuildHasher = DefaultHashBuilder> {
+    map: (mut Map<K, V, A, S> from r)?
     index: usize
 }
-extend<region r, K, V, A: Allocator> IterMut<region r, K, V, A> implements Iterator {
+extend<region r, K, V, A: Allocator, S: BuildHasher> IterMut<region r, K, V, A, S> implements Iterator {
     type Item = (read K from r, mut V from r)
     mut fn next(): (read K from r, mut V from r)? {
-        if self.index >= self.map.entries.len() { return none }
-        let i = self.index
-        self.index += 1usize
-        let entry = unsafe { self.map.entries.as_mut_ptr().add(i) }
-        present((unsafe { read (*entry).key }, unsafe { mut (*entry).value }))
+        match mut self.map {
+            present(map) => {
+                if self.index >= map.entries.len() { return none }
+                let i = self.index
+                self.index += 1usize
+                let entry = unsafe { map.entries.as_mut_ptr().add(i) }
+                present((unsafe { read (*entry).key }, unsafe { mut (*entry).value }))
+            },
+            none => none
+        }
     }
     fn size_hint(): (usize, usize?) {
-        let remaining = self.map.entries.len() - self.index
-        (remaining, present(remaining))
+        match read self.map {
+            present(map) => {
+                let remaining = map.entries.len() - self.index
+                (remaining, present(remaining))
+            },
+            none => (0usize, present(0usize))
+        }
     }
 }
-extend<K, V, A: Allocator> Map<K, V, A> {
-    pub mut fn iter_mut(): IterMut<region self, K, V, A> {
-        IterMut(mut self, 0usize)
+extend<region r, K, V, A: Allocator, S: BuildHasher> IterMut<region r, K, V, A, S> implements ExactSizeIterator {}
+extend<region r, K, V, A: Allocator, S: BuildHasher> IterMut<region r, K, V, A, S> implements Default {
+    static fn default(): IterMut<region r, K, V, A, S> { IterMut(none, 0usize) }
+}
+extend<region r, K: fmt.Debug, V: fmt.Debug, A: Allocator, S: BuildHasher> IterMut<region r, K, V, A, S> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("IterMut(")
+        try f.debug_open("{")
+        match read self.map {
+            present(map) => {
+                var index = self.index
+                var first = true
+                while index < map.entries.len() {
+                    let entry = read map.entries[index]
+                    try f.debug_item_start(first)
+                    try K.(fmt.Debug).fmt(entry.key, mut f)
+                    try f.write_str(": ")
+                    try V.(fmt.Debug).fmt(entry.value, mut f)
+                    try f.debug_item_end()
+                    first = false
+                    index += 1usize
+                }
+            },
+            none => {}
+        }
+        try f.debug_close("}", self.size_hint().0 == 0usize)
+        try f.write_str(")")
+    }
+}
+extend<K, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
+    pub mut fn iter_mut(): IterMut<region self, K, V, A, S> {
+        IterMut(present(mut self), 0usize)
     }
 }
 
 // Generic mutable iteration visits values only: mutable keys could break the
 // table's hash invariants.
-pub type ValuesMut<region r, K, V, A: Allocator> { map: mut Map<K, V, A> from r; index: usize }
-extend<region r, K, V, A: Allocator> ValuesMut<region r, K, V, A> implements Iterator {
+pub type ValuesMut<region r, K, V, A: Allocator = Global, S: BuildHasher = DefaultHashBuilder> { map: (mut Map<K, V, A, S> from r)?; index: usize }
+extend<region r, K, V, A: Allocator, S: BuildHasher> ValuesMut<region r, K, V, A, S> implements Iterator {
     type Item = mut V from r
     mut fn next(): (mut V from r)? {
-        if self.index < self.map.entries.len() {
-            let i = self.index
-            self.index += 1usize
-            present(unsafe { mut (*self.map.entries.as_mut_ptr().add(i)).value })
-        } else {
-            none
+        match mut self.map {
+            present(map) => {
+                if self.index < map.entries.len() {
+                    let i = self.index
+                    self.index += 1usize
+                    present(unsafe { mut (*map.entries.as_mut_ptr().add(i)).value })
+                } else {
+                    none
+                }
+            },
+            none => none
         }
     }
     fn size_hint(): (usize, usize?) {
-        let remaining = self.map.entries.len() - self.index
-        (remaining, present(remaining))
+        match read self.map {
+            present(map) => {
+                let remaining = map.entries.len() - self.index
+                (remaining, present(remaining))
+            },
+            none => (0usize, present(0usize))
+        }
+    }
+}
+extend<region r, K, V, A: Allocator, S: BuildHasher> ValuesMut<region r, K, V, A, S> implements ExactSizeIterator {}
+extend<region r, K, V, A: Allocator, S: BuildHasher> ValuesMut<region r, K, V, A, S> implements Default {
+    static fn default(): ValuesMut<region r, K, V, A, S> { ValuesMut(none, 0usize) }
+}
+extend<region r, K, V: fmt.Debug, A: Allocator, S: BuildHasher> ValuesMut<region r, K, V, A, S> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("ValuesMut(")
+        try f.debug_open("[")
+        match read self.map {
+            present(map) => {
+                var index = self.index
+                var first = true
+                while index < map.entries.len() {
+                    try f.debug_item_start(first)
+                    try V.(fmt.Debug).fmt(map.entries[index].value, mut f)
+                    try f.debug_item_end()
+                    first = false
+                    index += 1usize
+                }
+            },
+            none => {}
+        }
+        try f.debug_close("]", self.size_hint().0 == 0usize)
+        try f.write_str(")")
     }
 }
 // Borrowed iterators over the keys or the values only.
 pub type Keys<region r, K, V> {
-    inner: SliceIter<region r, Bucket<K, V>>
-    remaining: usize
+    items: (read [Bucket<K, V>] from r)?
+    front: usize
+    back: usize
 }
 extend<region r, K, V> Keys<region r, K, V> implements Iterator {
     type Item = read K from r
     mut fn next(): (read K from r)? {
-        match self.inner.next() {
-            present(e) => {
-                self.remaining -= 1usize
-                present(read e.key)
-            },
+        if self.front >= self.back { return none }
+        let index = self.front
+        self.front += 1usize
+        match read self.items {
+            present(items) => present(read items[index].key),
             none => none
         }
     }
-    fn size_hint(): (usize, usize?) { (self.remaining, present(self.remaining)) }
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.back - self.front
+        (remaining, present(remaining))
+    }
 }
+extend<region r, K, V> Keys<region r, K, V> implements Clone {
+    fn clone(): Keys<region r, K, V> { Keys(self.items, self.front, self.back) }
+}
+extend<region r, K, V> Keys<region r, K, V> implements Default {
+    static fn default(): Keys<region r, K, V> { Keys(none, 0usize, 0usize) }
+}
+extend<region r, K: fmt.Debug, V> Keys<region r, K, V> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("Keys(")
+        try f.debug_open("[")
+        var index = self.front
+        while index < self.back {
+            match read self.items {
+                present(items) => {
+                    try f.debug_item_start(index == self.front)
+                    try K.(fmt.Debug).fmt(items[index].key, mut f)
+                    try f.debug_item_end()
+                },
+                none => { break }
+            }
+            index += 1usize
+        }
+        try f.debug_close("]", self.front == self.back)
+        try f.write_str(")")
+    }
+}
+extend<region r, K, V> Keys<region r, K, V> implements ExactSizeIterator {}
 pub type Values<region r, K, V> {
-    inner: SliceIter<region r, Bucket<K, V>>
-    remaining: usize
+    items: (read [Bucket<K, V>] from r)?
+    front: usize
+    back: usize
 }
 extend<region r, K, V> Values<region r, K, V> implements Iterator {
     type Item = read V from r
     mut fn next(): (read V from r)? {
-        match self.inner.next() {
-            present(e) => {
-                self.remaining -= 1usize
-                present(read e.value)
-            },
+        if self.front >= self.back { return none }
+        let index = self.front
+        self.front += 1usize
+        match read self.items {
+            present(items) => present(read items[index].value),
             none => none
         }
     }
-    fn size_hint(): (usize, usize?) { (self.remaining, present(self.remaining)) }
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.back - self.front
+        (remaining, present(remaining))
+    }
 }
-extend<K, V, A: Allocator> Map<K, V, A> {
+extend<region r, K, V> Values<region r, K, V> implements Clone {
+    fn clone(): Values<region r, K, V> { Values(self.items, self.front, self.back) }
+}
+extend<region r, K, V> Values<region r, K, V> implements Default {
+    static fn default(): Values<region r, K, V> { Values(none, 0usize, 0usize) }
+}
+extend<region r, K, V: fmt.Debug> Values<region r, K, V> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("Values(")
+        try f.debug_open("[")
+        var index = self.front
+        while index < self.back {
+            match read self.items {
+                present(items) => {
+                    try f.debug_item_start(index == self.front)
+                    try V.(fmt.Debug).fmt(items[index].value, mut f)
+                    try f.debug_item_end()
+                },
+                none => { break }
+            }
+            index += 1usize
+        }
+        try f.debug_close("]", self.front == self.back)
+        try f.write_str(")")
+    }
+}
+extend<region r, K, V> Values<region r, K, V> implements ExactSizeIterator {}
+extend<K, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
     pub fn keys(): Keys<region self, K, V> {
-        Keys(self.entries.as_slice().iter(), self.entries.len())
+        Keys(present(self.entries.as_slice()), 0usize, self.entries.len())
     }
     pub fn values(): Values<region self, K, V> {
-        Values(self.entries.as_slice().iter(), self.entries.len())
+        Values(present(self.entries.as_slice()), 0usize, self.entries.len())
     }
 }
-extend<K, V, A: Allocator> Map<K, V, A> implements MutableIterable {
+extend<K, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> implements MutableIterable {
     type Item = V
-    type IterMut<region r> = ValuesMut<region r, K, V, A>
-    fn iter_mut<region r>(receiver mut self: Self from r): ValuesMut<region r, K, V, A> { ValuesMut(mut self, 0usize) }
+    type IterMut<region r> = ValuesMut<region r, K, V, A, S>
+    fn iter_mut<region r>(receiver mut self: Self from r): ValuesMut<region r, K, V, A, S> { ValuesMut(present(mut self), 0usize) }
 }
-extend<K, V, A: Allocator> Map<K, V, A> {
-    pub mut fn values_mut(): ValuesMut<region self, K, V, A> { ValuesMut(mut self, 0usize) }
-}
-
-extend<K: Hash + PartialEq, V, A: Allocator + Default> Map<K, V, A> implements Default {
-    static fn default(): Map<K, V, A> { new_in(A.(Default).default()) }
+extend<K, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
+    pub mut fn values_mut(): ValuesMut<region self, K, V, A, S> { ValuesMut(present(mut self), 0usize) }
 }
 
-extend<K: Hash + PartialEq + Clone, V: Clone, A: Allocator + Clone> Map<K, V, A> implements Clone {
-    fn clone(): Map<K, V, A> {
-        var out = new_in<K, V, A>(self.entries.allocator().clone())
+extend<K: Hash + PartialEq, V, A: Allocator + Default, S: BuildHasher + Default> Map<K, V, A, S> implements Default {
+    static fn default(): Map<K, V, A, S> {
+        Map<K, V, A, S>(allocator: A.(Default).default(), builder: S.(Default).default())
+    }
+}
+
+extend<K: Hash + PartialEq + Clone, V: Clone, A: Allocator + Clone, S: BuildHasher + Clone> Map<K, V, A, S> implements Clone {
+    fn clone(): Map<K, V, A, S> {
+        var out = Map<K, V, A, S>(allocator: self.entries.allocator().clone(), builder: self.builder.clone())
         var i = 0usize
         while i < self.entries.len() {
             let e = read self.entries[i]
@@ -927,8 +1308,8 @@ extend<K: Hash + PartialEq + Clone, V: Clone, A: Allocator + Clone> Map<K, V, A>
     }
 }
 // Equal when both hold the same keys with equal values, in any order.
-extend<K: Hash + PartialEq, V: PartialEq, A: Allocator> Map<K, V, A> implements PartialEq {
-    fn eq(read other: Map<K, V, A>): bool {
+extend<K: Hash + PartialEq, V: PartialEq, A: Allocator, S: BuildHasher, U: BuildHasher> Map<K, V, A, S> implements PartialEq<Map<K, V, A, U>> {
+    fn eq(read other: Map<K, V, A, U>): bool {
         if self.len() != other.len() { return false }
         var i = 0usize
         while i < self.entries.len() {
@@ -942,8 +1323,8 @@ extend<K: Hash + PartialEq, V: PartialEq, A: Allocator> Map<K, V, A> implements 
         true
     }
 }
-extend<K: Hash + PartialEq, V: Eq, A: Allocator> Map<K, V, A> implements Eq {}
-extend<K: fmt.Debug, V: fmt.Debug, A: Allocator> Map<K, V, A> implements fmt.Debug {
+extend<K: Hash + PartialEq, V: Eq, A: Allocator, S: BuildHasher> Map<K, V, A, S> implements Eq {}
+extend<K: fmt.Debug, V: fmt.Debug, A: Allocator, S: BuildHasher> Map<K, V, A, S> implements fmt.Debug {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
         try f.debug_open("{")
         var i = 0usize
@@ -959,7 +1340,7 @@ extend<K: fmt.Debug, V: fmt.Debug, A: Allocator> Map<K, V, A> implements fmt.Deb
         try f.debug_close("}", self.entries.len() == 0usize)
     }
 }
-extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> implements ExtendItems<(K, V)> {
+extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> implements ExtendItems<(K, V)> {
     mut fn extend<I: OwnedIterable<Item = (K, V)>>(take items: I): Unit {
         var source = items.into_iter()
         while true {
@@ -978,18 +1359,32 @@ extend<K: Hash + PartialEq, V> Map<K, V> implements FromItems<(K, V)> {
     }
 }
 
-extend<K: Hash + PartialEq + Clone, A: Allocator + Clone> Set<K, A> implements Clone {
-    fn clone(): Set<K, A> { set_from_map(self.map.clone()) }
+extend<K: Hash + PartialEq, V, const N: usize> Map<K, V> implements package.core.convert.From<[(K, V); N]> {
+    static fn from(take items: [(K, V); N]): Map<K, V> {
+        var out = new<K, V>()
+        var source = super.vec.List<(K, V)>.(package.core.convert.From<[(K, V); N]>).from(items).into_iter()
+        while true {
+            match take source.next() {
+                present(item) => { let _ = out.insert(item.0, item.1) },
+                none => { break }
+            }
+        }
+        out
+    }
 }
-extend<K: Hash + PartialEq, A: Allocator + Default> Set<K, A> implements Default {
-    static fn default(): Set<K, A> { set_from_map(new_in<K, Unit, A>(A.(Default).default())) }
+
+extend<K: Hash + PartialEq + Clone, A: Allocator + Clone, S: BuildHasher + Clone> Set<K, A, S> implements Clone {
+    fn clone(): Set<K, A, S> { set_from_map(self.map.clone()) }
+}
+extend<K: Hash + PartialEq, A: Allocator + Default, S: BuildHasher + Default> Set<K, A, S> implements Default {
+    static fn default(): Set<K, A, S> { set_from_map(Map<K, Unit, A, S>.(Default).default()) }
 }
 
 // The operators build new sets from clones of the operands' elements, as the
 // `&a | &b` forms of the baseline do.
-extend<K: Hash + PartialEq + Clone, A: Allocator + Clone> Set<K, A> implements BitOr<Set<K, A>> {
-    type Output = Set<K, A>
-    fn bitor(read rhs: Set<K, A>): Set<K, A> {
+extend<K: Hash + PartialEq + Clone, A: Allocator + Clone, S: BuildHasher + Clone> Set<K, A, S> implements BitOr<Set<K, A, S>> {
+    type Output = Set<K, A, S>
+    fn bitor(read rhs: Set<K, A, S>): Set<K, A, S> {
         var out = self.clone()
         var i = 0usize
         while i < rhs.map.entries.len() {
@@ -999,10 +1394,10 @@ extend<K: Hash + PartialEq + Clone, A: Allocator + Clone> Set<K, A> implements B
         out
     }
 }
-extend<K: Hash + PartialEq + Clone, A: Allocator + Clone> Set<K, A> implements BitAnd<Set<K, A>> {
-    type Output = Set<K, A>
-    fn bitand(read rhs: Set<K, A>): Set<K, A> {
-        var out = set_from_map(new_in<K, Unit, A>(self.map.allocator().clone()))
+extend<K: Hash + PartialEq + Clone, A: Allocator + Clone, S: BuildHasher + Clone> Set<K, A, S> implements BitAnd<Set<K, A, S>> {
+    type Output = Set<K, A, S>
+    fn bitand(read rhs: Set<K, A, S>): Set<K, A, S> {
+        var out = set_from_map(Map<K, Unit, A, S>(allocator: self.map.allocator().clone(), builder: self.map.hasher().clone()))
         var i = 0usize
         while i < self.map.entries.len() {
             if rhs.contains(self.map.entries[i].key) {
@@ -1013,10 +1408,10 @@ extend<K: Hash + PartialEq + Clone, A: Allocator + Clone> Set<K, A> implements B
         out
     }
 }
-extend<K: Hash + PartialEq + Clone, A: Allocator + Clone> Set<K, A> implements Sub<Set<K, A>> {
-    type Output = Set<K, A>
-    fn sub(read rhs: Set<K, A>): Set<K, A> {
-        var out = set_from_map(new_in<K, Unit, A>(self.map.allocator().clone()))
+extend<K: Hash + PartialEq + Clone, A: Allocator + Clone, S: BuildHasher + Clone> Set<K, A, S> implements Sub<Set<K, A, S>> {
+    type Output = Set<K, A, S>
+    fn sub(read rhs: Set<K, A, S>): Set<K, A, S> {
+        var out = set_from_map(Map<K, Unit, A, S>(allocator: self.map.allocator().clone(), builder: self.map.hasher().clone()))
         var i = 0usize
         while i < self.map.entries.len() {
             if !rhs.contains(self.map.entries[i].key) {
@@ -1027,10 +1422,10 @@ extend<K: Hash + PartialEq + Clone, A: Allocator + Clone> Set<K, A> implements S
         out
     }
 }
-extend<K: Hash + PartialEq + Clone, A: Allocator + Clone> Set<K, A> implements BitXor<Set<K, A>> {
-    type Output = Set<K, A>
-    fn bitxor(read rhs: Set<K, A>): Set<K, A> {
-        var out = set_from_map(new_in<K, Unit, A>(self.map.allocator().clone()))
+extend<K: Hash + PartialEq + Clone, A: Allocator + Clone, S: BuildHasher + Clone> Set<K, A, S> implements BitXor<Set<K, A, S>> {
+    type Output = Set<K, A, S>
+    fn bitxor(read rhs: Set<K, A, S>): Set<K, A, S> {
+        var out = set_from_map(Map<K, Unit, A, S>(allocator: self.map.allocator().clone(), builder: self.map.hasher().clone()))
         var i = 0usize
         while i < self.map.entries.len() {
             if !rhs.contains(self.map.entries[i].key) {
@@ -1049,8 +1444,8 @@ extend<K: Hash + PartialEq + Clone, A: Allocator + Clone> Set<K, A> implements B
     }
 }
 // Equal when both hold the same elements, in any order.
-extend<K: Hash + PartialEq, A: Allocator> Set<K, A> implements PartialEq {
-    fn eq(read other: Set<K, A>): bool {
+extend<K: Hash + PartialEq, A: Allocator, S: BuildHasher, U: BuildHasher> Set<K, A, S> implements PartialEq<Set<K, A, U>> {
+    fn eq(read other: Set<K, A, U>): bool {
         if self.len() != other.len() { return false }
         var i = 0usize
         while i < self.map.entries.len() {
@@ -1063,8 +1458,8 @@ extend<K: Hash + PartialEq, A: Allocator> Set<K, A> implements PartialEq {
         true
     }
 }
-extend<K: Hash + PartialEq, A: Allocator> Set<K, A> implements Eq {}
-extend<K: fmt.Debug, A: Allocator> Set<K, A> implements fmt.Debug {
+extend<K: Hash + PartialEq, A: Allocator, S: BuildHasher> Set<K, A, S> implements Eq {}
+extend<K: fmt.Debug, A: Allocator, S: BuildHasher> Set<K, A, S> implements fmt.Debug {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
         try f.debug_open("{")
         var i = 0usize
@@ -1077,7 +1472,7 @@ extend<K: fmt.Debug, A: Allocator> Set<K, A> implements fmt.Debug {
         try f.debug_close("}", self.map.entries.len() == 0usize)
     }
 }
-extend<K: Hash + PartialEq, A: Allocator> Set<K, A> implements ExtendItems<K> {
+extend<K: Hash + PartialEq, A: Allocator, S: BuildHasher> Set<K, A, S> implements ExtendItems<K> {
     mut fn extend<I: OwnedIterable<Item = K>>(take items: I): Unit {
         var source = items.into_iter()
         while true {
@@ -1093,27 +1488,41 @@ extend<K: Hash + PartialEq> Set<K> implements FromItems<K> {
     }
 }
 
+extend<K: Hash + PartialEq, const N: usize> Set<K> implements package.core.convert.From<[K; N]> {
+    static fn from(take items: [K; N]): Set<K> {
+        var out = set_new<K>()
+        var source = super.vec.List<K>.(package.core.convert.From<[K; N]>).from(items).into_iter()
+        while true {
+            match take source.next() {
+                present(item) => { let _ = out.insert(item) },
+                none => { break }
+            }
+        }
+        out
+    }
+}
+
 // Owned storage moves or is shared exactly when its elements and allocator do.
-unsafe extend<K: Transferable, V: Transferable, A: Allocator + Transferable> Map<K, V, A> implements Transferable {}
-unsafe extend<K: Shareable, V: Shareable, A: Allocator + Shareable> Map<K, V, A> implements Shareable {}
+unsafe extend<K: Transferable, V: Transferable, A: Allocator + Transferable, S: BuildHasher + Transferable> Map<K, V, A, S> implements Transferable {}
+unsafe extend<K: Shareable, V: Shareable, A: Allocator + Shareable, S: BuildHasher + Shareable> Map<K, V, A, S> implements Shareable {}
 
 // An entry owns the query key and exclusively borrows its map until consumed.
 // The occupied index remains valid because the loan excludes map mutation.
-pub type OccupiedEntry<region r, K, V, A: Allocator = Global> {
-    map: mut Map<K, V, A> from r
+pub type OccupiedEntry<region r, K, V, A: Allocator = Global, S: BuildHasher = DefaultHashBuilder> {
+    map: mut Map<K, V, A, S> from r
     index: usize
 }
-pub type VacantEntry<region r, K, V, A: Allocator = Global> {
-    map: mut Map<K, V, A> from r
+pub type VacantEntry<region r, K, V, A: Allocator = Global, S: BuildHasher = DefaultHashBuilder> {
+    map: mut Map<K, V, A, S> from r
     key: K
 }
-pub enum Entry<region r, K, V, A: Allocator = Global> {
-    Occupied(OccupiedEntry<region r, K, V, A>);
-    Vacant(VacantEntry<region r, K, V, A>)
+pub enum Entry<region r, K, V, A: Allocator = Global, S: BuildHasher = DefaultHashBuilder> {
+    Occupied(OccupiedEntry<region r, K, V, A, S>);
+    Vacant(VacantEntry<region r, K, V, A, S>)
 }
 
-extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
-    pub mut fn entry(take key: K): Entry<region self, K, V, A> {
+extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
+    pub mut fn entry(take key: K): Entry<region self, K, V, A, S> {
         match self.find_entry(key) {
             present(index) => Entry.Occupied(OccupiedEntry(mut self, index)),
             none => Entry.Vacant(VacantEntry(mut self, key))
@@ -1121,7 +1530,7 @@ extend<K: Hash + PartialEq, V, A: Allocator> Map<K, V, A> {
     }
 }
 
-extend<region r, K: Hash + PartialEq, V, A: Allocator> OccupiedEntry<region r, K, V, A> {
+extend<region r, K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> OccupiedEntry<region r, K, V, A, S> {
     pub fn key(): read K from self { read self.map.entries[self.index].key }
     pub fn get(): read V from self { read self.map.entries[self.index].value }
     // The exclusive map loan preserves this initialized index; the returned
@@ -1141,7 +1550,7 @@ extend<region r, K: Hash + PartialEq, V, A: Allocator> OccupiedEntry<region r, K
     }
 }
 
-extend<region r, K: Hash + PartialEq, V, A: Allocator> VacantEntry<region r, K, V, A> {
+extend<region r, K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> VacantEntry<region r, K, V, A, S> {
     pub take fn insert(take value: V): mut V from r {
         let slot = self.map.or_insert(self.key, value)
         // The returned pointer is to the inserted value; the exclusive map
@@ -1151,7 +1560,7 @@ extend<region r, K: Hash + PartialEq, V, A: Allocator> VacantEntry<region r, K, 
     }
 }
 
-extend<region r, K: Hash + PartialEq, V, A: Allocator> Entry<region r, K, V, A> {
+extend<region r, K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Entry<region r, K, V, A, S> {
     pub take fn or_insert(take value: V): mut V from r {
         match take self {
             Entry.Occupied(entry) => entry.into_mut(),
@@ -1173,7 +1582,7 @@ extend<region r, K: Hash + PartialEq, V, A: Allocator> Entry<region r, K, V, A> 
             }
         }
     }
-    pub take fn insert_entry(take value: V): OccupiedEntry<region r, K, V, A> {
+    pub take fn insert_entry(take value: V): OccupiedEntry<region r, K, V, A, S> {
         match take self {
             Entry.Occupied(entry) => {
                 var occupied = entry
@@ -1187,7 +1596,7 @@ extend<region r, K: Hash + PartialEq, V, A: Allocator> Entry<region r, K, V, A> 
             }
         }
     }
-    pub take fn and_modify<F: take fn(mut V): Unit>(take modify: F): Entry<region r, K, V, A> {
+    pub take fn and_modify<F: take fn(mut V): Unit>(take modify: F): Entry<region r, K, V, A, S> {
         match take self {
             Entry.Occupied(entry) => {
                 var occupied = entry
@@ -1199,8 +1608,27 @@ extend<region r, K: Hash + PartialEq, V, A: Allocator> Entry<region r, K, V, A> 
     }
 }
 
-extend<region r, K: Hash + PartialEq, V: Default, A: Allocator> Entry<region r, K, V, A> {
+extend<region r, K: Hash + PartialEq, V: Default, A: Allocator, S: BuildHasher> Entry<region r, K, V, A, S> {
     pub take fn or_default(): mut V from r {
         self.or_insert_with(take fn(): V { V.(Default).default() })
+    }
+}
+
+extend<region r, K: Hash + PartialEq + fmt.Debug, V: fmt.Debug, A: Allocator, S: BuildHasher> Entry<region r, K, V, A, S> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        match self {
+            Entry.Occupied(entry) => {
+                try f.write_str("Occupied(")
+                try K.(fmt.Debug).fmt(entry.key(), mut f)
+                try f.write_str(": ")
+                try V.(fmt.Debug).fmt(entry.get(), mut f)
+                try f.write_str(")")
+            },
+            Entry.Vacant(entry) => {
+                try f.write_str("Vacant(")
+                try K.(fmt.Debug).fmt(entry.key, mut f)
+                try f.write_str(")")
+            }
+        }
     }
 }

@@ -10,10 +10,13 @@ import super.ffi
 import super.ffi.{OsStr, OsString}
 import super.io
 import super.io.{Error, ErrorKind, Reader, Writer}
-import super.path.{PathBuf, PathInput}
+import super.path.{Path, PathBuf, PathInput}
+import package.core.iter.Iterator
 import package.core.text.Text
 import super.sys
 import package.core.clone.Clone
+import package.core.cmp.{Eq, PartialEq}
+import package.core.fmt.{Debug, Formatter}
 
 extern "C" {
     unsafe fn getpid(): i32;
@@ -42,6 +45,21 @@ extend ExitStatus {
     // The terminating signal when a signal ended the child.
     pub fn signal(): i32? { if (self.raw & 127) != 0 && (self.raw & 127) != 127 { present(self.raw & 127) } else { none } }
     pub fn succeeded(): bool { self.raw == 0 }
+}
+
+extend ExitStatus implements PartialEq {
+    fn eq(read other: ExitStatus): bool { self.raw == other.raw }
+}
+extend ExitStatus implements Eq {}
+extend ExitStatus implements Debug {
+    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+        try f.write_str("ExitStatus { raw: ")
+        try i32.(package.core.fmt.Display).fmt(self.raw, mut f)
+        try f.write_str(" }")
+    }
+}
+extend ExitStatus implements package.core.default.Default {
+    static fn default(): ExitStatus { ExitStatus(0) }
 }
 
 // Linux signal names, as the reference ExitStatus display prints them.
@@ -160,6 +178,9 @@ extend Child {
         self.stderr_fd = -1
         present(ChildOutput(fd))
     }
+    pub mut fn stdin(): ChildStdin? { self.take_stdin() }
+    pub mut fn stdout(): ChildOutput? { self.take_stdout() }
+    pub mut fn stderr(): ChildOutput? { self.take_stderr() }
 
     // Waits for the child to end, closing its input pipe first so it cannot
     // block forever waiting for input this process still holds open.
@@ -193,9 +214,46 @@ extend Child {
             if e.raw_os_error() != present(3) { throw e }
         }
     }
+
+    pub take fn wait_with_output(): Output throws Error {
+        var child = self
+        try collect_output(child)
+    }
 }
 
 type EnvChange { name: OsString; value: OsString; remove: bool }
+
+pub type CommandArgs<region r> { values: read [OsString] from r; index: usize }
+extend<region r> CommandArgs<region r> implements Iterator {
+    type Item = read OsStr from r
+    mut fn next(): (read OsStr from r)? {
+        if self.index == self.values.len() { return none }
+        let value = self.values[self.index].as_os_str()
+        self.index += 1usize
+        present(value)
+    }
+}
+
+pub type CommandEnvs<region r> { values: read [EnvChange] from r; index: usize }
+extend<region r> CommandEnvs<region r> implements Iterator {
+    type Item = (read OsStr from r, read OsStr from r)
+    mut fn next(): (read OsStr from r, read OsStr from r)? {
+        while self.index < self.values.len() {
+            let current = read self.values[self.index]
+            self.index += 1usize
+            var latest = true
+            var next = self.index
+            while next < self.values.len() {
+                if current.name.same(self.values[next].name) { latest = false }
+                next += 1usize
+            }
+            if latest && !current.remove {
+                return present((current.name.as_os_str(), current.value.as_os_str()))
+            }
+        }
+        none
+    }
+}
 
 // A command under construction: program, arguments, environment changes,
 // working directory and standard streams.
@@ -219,11 +277,39 @@ pub fn command(read program: OsStr): Command {
 pub fn command_text(read program: Text): Command { command(ffi.os_str_from_text(program)) }
 
 extend Command {
+    pub static fn new(read program: OsStr): Command { command(program) }
+
     pub mut fn arg(read a: OsStr): Unit { self.args.push(a.to_os_string()) }
     pub mut fn arg_text(read a: Text): Unit { self.args.push(ffi.os_string_from_text(a)) }
+    pub mut fn args<region r>(read values: [OsString] from r): Unit {
+        var index = 0usize
+        while index < values.len() {
+            self.args.push(values[index].as_os_str().to_os_string())
+            index += 1usize
+        }
+    }
+    pub fn get_program<region r>(receiver read self: Command from r): read OsStr from r {
+        self.program.as_os_str()
+    }
+    pub fn get_args<region r>(receiver read self: Command from r): CommandArgs<region r> {
+        CommandArgs(self.args.as_slice(), 0usize)
+    }
+    pub fn get_envs<region r>(receiver read self: Command from r): CommandEnvs<region r> {
+        CommandEnvs(self.changes.as_slice(), 0usize)
+    }
+    pub fn get_current_dir<region r>(receiver read self: Command from r): (read Path from r)? {
+        if self.has_cwd { present(self.cwd.as_path()) } else { none }
+    }
     // Sets `name` for the child only.
     pub mut fn env(read name: OsStr, read value: OsStr): Unit {
         self.changes.push(EnvChange(name.to_os_string(), value.to_os_string(), false))
+    }
+    pub mut fn envs<region r>(read values: [(OsString, OsString)] from r): Unit {
+        var index = 0usize
+        while index < values.len() {
+            self.env(values[index].0.as_os_str(), values[index].1.as_os_str())
+            index += 1usize
+        }
     }
     // Removes `name` from the child's environment.
     pub mut fn env_remove(read name: OsStr): Unit {
@@ -326,27 +412,113 @@ extend Command {
         self.stdin = Stdio.Null
         self.stdout = Stdio.Piped
         self.stderr = Stdio.Piped
-        var child = try self.spawn()
-        var out = vec.new<u8>()
-        var err = vec.new<u8>()
-        var chunk = [0u8; 4096]
-        while child.stdout_fd >= 0 || child.stderr_fd >= 0 {
-            let ready = unsafe { sys.mettle_rt_poll_pair(child.stdout_fd, child.stderr_fd) }
-            if ready < 0 { throw io.last_os_error() }
-            if (ready & 1) != 0 {
-                let n = try io.read_fd(child.stdout_fd, chunk)
-                if n == 0usize { let closed = unsafe { sys.close(child.stdout_fd) }; child.stdout_fd = -1 }
-                else { out.extend_from_slice(chunk.split_at(n).0) }
-            }
-            if (ready & 2) != 0 {
-                let n = try io.read_fd(child.stderr_fd, chunk)
-                if n == 0usize { let closed = unsafe { sys.close(child.stderr_fd) }; child.stderr_fd = -1 }
-                else { err.extend_from_slice(chunk.split_at(n).0) }
-            }
-        }
-        let status = try child.wait()
-        Output(status, out, err)
+        let child = try self.spawn()
+        try child.wait_with_output()
     }
+}
+
+fn collect_output(mut child: Child): Output throws Error {
+    if child.stdin_fd >= 0 {
+        let closed = unsafe { sys.close(child.stdin_fd) }
+        child.stdin_fd = -1
+    }
+    var out = vec.new<u8>()
+    var err = vec.new<u8>()
+    var chunk = [0u8; 4096]
+    while child.stdout_fd >= 0 || child.stderr_fd >= 0 {
+        let ready = unsafe { sys.mettle_rt_poll_pair(child.stdout_fd, child.stderr_fd) }
+        if ready < 0 { throw io.last_os_error() }
+        if (ready & 1) != 0 {
+            let n = try io.read_fd(child.stdout_fd, chunk)
+            if n == 0usize { let closed = unsafe { sys.close(child.stdout_fd) }; child.stdout_fd = -1 }
+            else { out.extend_from_slice(chunk.split_at(n).0) }
+        }
+        if (ready & 2) != 0 {
+            let n = try io.read_fd(child.stderr_fd, chunk)
+            if n == 0usize { let closed = unsafe { sys.close(child.stderr_fd) }; child.stderr_fd = -1 }
+            else { err.extend_from_slice(chunk.split_at(n).0) }
+        }
+    }
+    Output(try child.wait(), out, err)
+}
+
+extend Output implements PartialEq {
+    fn eq(read other: Output): bool {
+        self.status == other.status &&
+            self.stdout.as_slice() == other.stdout.as_slice() &&
+            self.stderr.as_slice() == other.stderr.as_slice()
+    }
+}
+extend Output implements Eq {}
+extend Output implements Debug {
+    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+        try f.write_str("Output { status: ")
+        try self.status.fmt(mut f)
+        try f.write_str(", stdout: ")
+        try fmt_bytes(self.stdout.as_slice(), mut f)
+        try f.write_str(", stderr: ")
+        try fmt_bytes(self.stderr.as_slice(), mut f)
+        try f.write_str(" }")
+    }
+}
+
+fn fmt_bytes(read bytes: [u8], mut f: Formatter): Unit throws package.core.fmt.Error {
+    try f.write_char('[')
+    var i = 0usize
+    while i < bytes.len() {
+        if i != 0usize { try f.write_str(", ") }
+        try u8.(package.core.fmt.Debug).fmt(bytes[i], mut f)
+        i += 1usize
+    }
+    try f.write_char(']')
+}
+
+extend Stdio {
+    pub static fn inherit(): Stdio { Stdio.Inherit }
+}
+extend Stdio implements Debug {
+    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+        match self {
+            Stdio.Inherit => try f.write_str("Inherit"),
+            Stdio.Piped => try f.write_str("Piped"),
+            Stdio.Null => try f.write_str("Null")
+        }
+    }
+}
+
+extend Child implements Debug {
+    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+        try f.write_str("Child { id: ")
+        try i32.(package.core.fmt.Display).fmt(self.pid, mut f)
+        try f.write_str(" }")
+    }
+}
+
+extend Command implements Debug {
+    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+        try f.write_str("Command { program: ")
+        match self.program.as_os_str().to_str() {
+            present(text) => try Text.(package.core.fmt.Debug).fmt(text, mut f),
+            none => try f.write_str("\"<non-UTF-8>\"")
+        }
+        try f.write_str(", args: ")
+        try fmt_os_strings(self.args.as_slice(), mut f)
+        try f.write_str(" }")
+    }
+}
+
+fn fmt_os_strings(read values: [OsString], mut f: Formatter): Unit throws package.core.fmt.Error {
+    try f.write_char('[')
+    var i = 0usize
+    while i < values.len() {
+        if i != 0usize { try f.write_str(", ") }
+        match values[i].as_os_str().to_str() {
+            present(text) => try Text.(package.core.fmt.Debug).fmt(text, mut f),
+            none => try f.write_str("\"<non-UTF-8>\"")
+        }
+        i += 1usize
+    }
+    try f.write_char(']')
 }
 
 // Value types duplicate by copy; owners clone their buffers.

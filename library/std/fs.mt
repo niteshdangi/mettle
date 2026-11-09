@@ -9,14 +9,18 @@ import super.ffi
 import super.ffi.{OsStr, OsString}
 import super.io
 import super.io.{Error, ErrorKind, Reader, Writer}
+pub import super.io.SeekFrom
 import super.path.{Path, PathBuf, PathInput}
 import super.sys
 import super.time.SystemTime
 import package.core.clone.Clone
+import package.core.cmp.PartialEq
+import package.core.hash.{Hash, Hasher}
 
 extern "C" {
     unsafe fn fsync(fd: i32): i32;
     unsafe fn ftruncate(fd: i32, length: i64): i32;
+    unsafe fn flock(fd: i32, operation: i32): i32;
     unsafe fn pread(fd: i32, buffer: ptr<mut u8>, count: usize, offset: i64): isize;
     unsafe fn pwrite(fd: i32, buffer: ptr<read u8>, count: usize, offset: i64): isize;
     unsafe fn dup(fd: i32): i32;
@@ -37,9 +41,31 @@ pub type File {
     }
 }
 
-pub copy enum SeekFrom { Start(u64), End(i64), Current(i64) }
-
 pub copy enum FileType { File, Directory, Symlink, Other }
+
+extend FileType {
+    pub fn is_file(): bool { (self as i32) == (FileType.File as i32) }
+    pub fn is_dir(): bool { (self as i32) == (FileType.Directory as i32) }
+    pub fn is_symlink(): bool { (self as i32) == (FileType.Symlink as i32) }
+}
+
+extend FileType implements PartialEq {
+    fn eq(read other: FileType): bool { (self as i32) == (other as i32) }
+}
+extend FileType implements package.core.cmp.Eq {}
+extend FileType implements Hash {
+    fn hash<H: Hasher>(mut state: H): Unit { state.write_u8(self as u8) }
+}
+extend FileType implements package.core.fmt.Debug {
+    fn fmt(mut f: package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+        match self {
+            FileType.File => try f.write_str("File"),
+            FileType.Directory => try f.write_str("Directory"),
+            FileType.Symlink => try f.write_str("Symlink"),
+            FileType.Other => try f.write_str("Other")
+        }
+    }
+}
 
 type RealPathBuffer {
     p: ptr<mut u8>
@@ -203,6 +229,13 @@ pub fn open(read input: PathInput): File throws Error {
     try o.open(input)
 }
 
+pub fn create_new(read input: PathInput): File throws Error {
+    var o = open_options()
+    o.set_write(true)
+    o.set_create_new(true)
+    try o.open(input)
+}
+
 // Creates or truncates for writing.
 pub fn create(read input: PathInput): File throws Error {
     var o = open_options()
@@ -213,7 +246,13 @@ pub fn create(read input: PathInput): File throws Error {
 }
 
 extend File {
+    pub static fn options(): OpenOptions { open_options() }
     pub fn as_raw_fd(): i32 { self.fd }
+    pub fn lock(): Unit throws Error { try file_lock(self.fd, 2) }
+    pub fn lock_shared(): Unit throws Error { try file_lock(self.fd, 1) }
+    pub fn try_lock(): Unit throws Error { try file_lock(self.fd, 6) }
+    pub fn try_lock_shared(): Unit throws Error { try file_lock(self.fd, 5) }
+    pub fn unlock(): Unit throws Error { try file_lock(self.fd, 8) }
     pub fn try_clone(): File throws Error {
         let cloned = unsafe { dup(self.fd) }
         if cloned < 0 { throw io.last_os_error() }
@@ -225,24 +264,7 @@ extend File {
         if r != 0 { throw io.last_os_error() }
         metadata_from(info)
     }
-    pub mut fn seek(pos: SeekFrom): u64 throws Error {
-        var whence = 0
-        var offset = 0i64
-        match pos {
-            SeekFrom.Start(n) => {
-                if n > 9223372036854775807u64 {
-                    throw io.from_kind(ErrorKind.InvalidInput)
-                }
-                whence = 0
-                offset = n as i64
-            },
-            SeekFrom.Current(n) => { whence = 1; offset = n },
-            SeekFrom.End(n) => { whence = 2; offset = n }
-        }
-        let r = unsafe { sys.lseek(self.fd, offset, whence) }
-        if r < 0i64 { throw io.last_os_error() }
-        r as u64
-    }
+    pub mut fn seek(pos: SeekFrom): u64 throws Error { try seek_file(self.fd, pos) }
     pub fn sync_all(): Unit throws Error {
         if unsafe { fsync(self.fd) } != 0 { throw io.last_os_error() }
     }
@@ -260,13 +282,63 @@ extend File {
     }
 }
 
+extend File implements package.core.fmt.Debug {
+    fn fmt(mut f: package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+        var debug = try f.debug_struct("File")
+        try debug.field("fd", self.fd)
+        try debug.finish()
+    }
+}
+
+fn file_lock(fd: i32, operation: i32): Unit throws Error {
+    while true {
+        if unsafe { flock(fd, operation) } == 0 { return }
+        let error = io.last_os_error()
+        if !error.kind().is(ErrorKind.Interrupted) { throw error }
+    }
+}
+
+fn seek_file(fd: i32, pos: SeekFrom): u64 throws Error {
+    var whence = 0
+    var offset = 0i64
+    match pos {
+        SeekFrom.Start(n) => {
+            if n > 9223372036854775807u64 {
+                throw io.from_kind(ErrorKind.InvalidInput)
+            }
+            whence = 0
+            offset = n as i64
+        },
+        SeekFrom.Current(n) => { whence = 1; offset = n },
+        SeekFrom.End(n) => { whence = 2; offset = n }
+    }
+    let result = unsafe { sys.lseek(fd, offset, whence) }
+    if result < 0i64 { throw io.last_os_error() }
+    result as u64
+}
+
+extend File implements io.Seek {
+    mut fn seek(pos: SeekFrom): u64 throws Error { try seek_file(self.fd, pos) }
+}
+
 extend File implements Reader {
+    mut fn read_some(mut buf: [u8]): usize throws Error { try io.read_fd(self.fd, buf) }
+}
+extend<region r> read File from r implements Reader {
     mut fn read_some(mut buf: [u8]): usize throws Error { try io.read_fd(self.fd, buf) }
 }
 
 extend File implements Writer {
     mut fn write_some(read buf: [u8]): usize throws Error { try io.write_fd(self.fd, buf) }
     mut fn flush(): Unit throws Error {}
+}
+extend<region r> read File from r implements Writer {
+    mut fn write_some(read buf: [u8]): usize throws Error { try io.write_fd(self.fd, buf) }
+    mut fn flush(): Unit throws Error {}
+}
+
+extend<region r> read File from r implements io.Seek {
+    mut fn seek(pos: SeekFrom): u64 throws Error { try seek_file(self.fd, pos) }
 }
 
 // POSIX positional I/O; calls do not change the file's shared cursor.
@@ -465,6 +537,15 @@ extend DirEntry {
     }
 }
 
+extend DirEntry implements package.core.fmt.Debug {
+    fn fmt(mut f: package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+        var debug = try f.debug_struct("DirEntry")
+        try debug.field("name", self.name.as_os_str())
+        try debug.field("path", self.path().as_path().as_bytes())
+        try debug.finish()
+    }
+}
+
 // Open directory listing; `.` and `..` are skipped and the order is the
 // operating system's. Closed on drop.
 pub type ReadDir {
@@ -498,6 +579,15 @@ extend ReadDir {
         }
         let bytes = unsafe { sys.bytes_from_c(name) }
         present(DirEntry(ffi.os_string_from_vec(bytes), self.dir.as_path().to_path_buf()))
+    }
+}
+
+extend ReadDir implements package.core.fmt.Debug {
+    fn fmt(mut f: package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+        var debug = try f.debug_struct("ReadDir")
+        try debug.field("path", self.dir.as_path().as_bytes())
+        try debug.field("finished", self.finished)
+        try debug.finish()
     }
 }
 
@@ -572,4 +662,34 @@ extend OpenOptions implements Clone {
 }
 extend Permissions implements Clone {
     fn clone(): Permissions { self }
+}
+extend Permissions implements PartialEq {
+    fn eq(read other: Permissions): bool { self.mode == other.mode }
+}
+extend Permissions implements package.core.cmp.Eq {}
+extend Permissions implements package.core.fmt.Debug {
+    fn fmt(mut f: package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+        var debug = try f.debug_struct("Permissions")
+        try debug.field("mode", self.mode)
+        try debug.finish()
+    }
+}
+extend Metadata implements package.core.fmt.Debug {
+    fn fmt(mut f: package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+        var debug = try f.debug_struct("Metadata")
+        try debug.field("size", self.size)
+        try debug.field("kind", self.kind)
+        try debug.field("mode", self.mode)
+        try debug.field("modified_secs", self.modified_secs)
+        try debug.field("modified_nanos", self.modified_nanos)
+        try debug.finish()
+    }
+}
+extend OpenOptions implements package.core.fmt.Debug {
+    fn fmt(mut f: package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+        var debug = try f.debug_struct("OpenOptions")
+        try debug.field("flags", self.flags)
+        try debug.field("mode", self.mode)
+        try debug.finish()
+    }
 }

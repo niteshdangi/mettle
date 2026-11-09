@@ -1,6 +1,6 @@
 import alloc.vec.{ List, new }
 import core.text.Text
-import mettle_foundation.{ Span, invalid_utf8 }
+import mettle_foundation.{ Span, invalid_utf8, SOURCE_BYTES }
 import mettle_foundation.{ Diagnostics, Phase }
 import super.token.{ Kind, Token }
 import super.characters.character_value
@@ -254,8 +254,8 @@ extend<region r> Scanner<region r> {
 
 pub fn tokenize(read bytes: [u8], source: u32): Lexed {
     var scanner = Scanner(read bytes, source, 0usize, false, new<usize>(), Lexed(new<Token>(), Diagnostics()))
-    if bytes.len() > 1073741824usize {
-        scanner.error(Phase.Limit, 0usize, 0usize, "source file exceeds 1 GiB")
+    if bytes.len() > SOURCE_BYTES {
+        scanner.error(Phase.Limit, 0usize, 0usize, "source file must be smaller than 4 GiB")
         scanner.add(Kind.End, 0usize)
     } else if let present(offset) = invalid_utf8(bytes) {
         scanner.error(Phase.Lex, offset, offset + 1, "source is not valid UTF-8")

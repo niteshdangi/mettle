@@ -45,13 +45,17 @@ review obligations; CMake dependencies alone do not prove include isolation.
   Compiler resource limits are explicit diagnostics, not silent truncation, and
   follow one policy (`bootstrap/support/limits.h`): depth limits (parser,
   syntax, type nesting) protect the native stack and stay small and fixed;
-  count limits (functions, products, locals, CFG blocks, witness slots, source
-  and token bytes) are set at 2^22..2^30 so only pathological input reaches
-  them and every algorithm behind them must stay near-linear; object sizes are
-  bounded by the signed pointer range. Arrays of more than 64 elements (1024
-  expanded elements when nested) of non-droppable elements are compact: one
-  place with an element type and a length, so only the target address-space
-  check (`error[limit]`, "array size exceeds target address space") bounds
+  count limits (functions, products, locals, CFG blocks, witness slots and
+  tokens) are set at 2^22..2^30 so only pathological input reaches them and
+  every algorithm behind them must stay near-linear. Source/data files must be
+  smaller than 4 GiB (at most 2^32 - 1 bytes), matching the self-hosted compiler's
+  per-file `u32` span offsets and the established 32-bit source-position practice
+  in [rustc](https://github.com/rust-lang/rust/blob/master/compiler/rustc_span/src/lib.rs).
+  The self-hosted driver and lexer share `foundation.SOURCE_BYTES`.
+  Object sizes are bounded by the signed pointer range. Arrays of more than
+  64 elements (1024 expanded elements when nested) of non-droppable elements are
+  compact: one place with an element type and a length, so only the target
+  address-space check (`error[limit]`, "array size exceeds target address space") bounds
   them. Arrays of droppable elements keep one cleanup place per element and
   are capped at 2^16 total elements (`TypeStore::droppableArrayElements`,
   `error[limit]`); this is an implementation limit, not a language rule.

@@ -50,6 +50,21 @@ public:
       macroModules[{name}] = {fs::path(source->path).parent_path(),
                               source->path, source->id, std::nullopt};
     }
+    // Library macros (`std.macros.dbg`) resolve before the libraries mount.
+    if (!library.directory.empty())
+      for (std::string libraryName : {"core", "alloc", "std"}) {
+        auto path = (fs::path(library.directory) / libraryName / "module.mt")
+                        .lexically_normal()
+                        .generic_string();
+        auto source = provider(path);
+        if (!source)
+          continue;
+        sourceId(*source);
+        macroModules.try_emplace({libraryName},
+                                 MacroModuleLocation{
+                                     fs::path(path).parent_path(), path,
+                                     source->id, std::nullopt});
+      }
     read(std::move(root), {}, directory, 0, true);
     if (library.harness != Library::Harness::None && diagnostics.empty()) {
       bool bench = library.harness == Library::Harness::Bench;

@@ -1144,7 +1144,6 @@ extend<region r, T: Clone, const N: usize> List<T> implements From<mut [T; N] fr
 extend<region r> List<u8> implements From<read Text from r> {
     static fn from(take text: read Text from r): List<u8> { text.as_bytes().to_vec() }
 }
-
 extend<T: PartialEq<U>, U, A: Allocator> List<T, A> implements PartialEq<[U]> {
     fn eq(read other: [U]): bool {
         if self.len != other.len() { return false }
@@ -1358,3 +1357,7 @@ extend<T: fmt.Debug, A: Allocator> List<T, A> implements fmt.Debug {
 // Owned storage moves or is shared exactly when its elements and allocator do.
 unsafe extend<T: Transferable, A: Allocator + Transferable> List<T, A> implements Transferable {}
 unsafe extend<T: Shareable, A: Allocator + Shareable> List<T, A> implements Shareable {}
+// The iterator exclusively owns its allocation and all still-initialized items.
+unsafe extend<T: Transferable, A: Allocator + Transferable> IntoIter<T, A> implements Transferable {}
+// Shared iterator access only reads items; mutation and destruction are exclusive.
+unsafe extend<T: Shareable, A: Allocator + Shareable> IntoIter<T, A> implements Shareable {}

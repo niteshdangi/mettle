@@ -7,12 +7,89 @@
 // `cx.waker()`) or `Ready(value)`. Spurious wake-ups are allowed; concurrent
 // polls are not. Polling after `Ready` is outside the protocol: compiler
 // generated futures panic with a defined message.
+import package.core.clone.Clone
+import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import package.core.convert.From
+import package.core.fmt.{Debug, Formatter}
+import package.core.hash.{Hash, Hasher}
 
 pub enum Poll<T> { Ready(T); Pending }
 
 extend<T> Poll<T> {
     pub fn is_ready(): bool { match self { Poll.Ready(value) => true, Poll.Pending => false } }
     pub fn is_pending(): bool { match self { Poll.Ready(value) => false, Poll.Pending => true } }
+    pub take fn map<U>(f: fn(take T): U): Poll<U> {
+        match take self {
+            Poll.Ready(value) => Poll.Ready(f(value)),
+            Poll.Pending => Poll.Pending
+        }
+    }
+}
+
+extend<T: Clone> Poll<T> implements Clone {
+    fn clone(): Poll<T> {
+        match self {
+            Poll.Ready(value) => Poll.Ready(value.clone()),
+            Poll.Pending => Poll.Pending
+        }
+    }
+}
+extend<T: PartialEq> Poll<T> implements PartialEq {
+    fn eq(read other: Poll<T>): bool {
+        match self {
+            Poll.Ready(value) => match other {
+                Poll.Ready(other_value) => value == other_value,
+                Poll.Pending => false
+            },
+            Poll.Pending => other.is_pending()
+        }
+    }
+}
+extend<T: Eq> Poll<T> implements Eq {}
+extend<T: PartialOrd> Poll<T> implements PartialOrd {
+    fn partial_cmp(read other: Poll<T>): Ordering? {
+        match self {
+            Poll.Ready(value) => match other {
+                Poll.Ready(other_value) => value.partial_cmp(other_value),
+                Poll.Pending => present(Ordering.Less)
+            },
+            Poll.Pending => present(if other.is_pending() { Ordering.Equal } else { Ordering.Greater })
+        }
+    }
+}
+extend<T: Ord> Poll<T> implements Ord {
+    fn cmp(read other: Poll<T>): Ordering {
+        match self {
+            Poll.Ready(value) => match other {
+                Poll.Ready(other_value) => value.cmp(other_value),
+                Poll.Pending => Ordering.Less
+            },
+            Poll.Pending => if other.is_pending() { Ordering.Equal } else { Ordering.Greater }
+        }
+    }
+}
+extend<T: Hash> Poll<T> implements Hash {
+    fn hash<H: Hasher>(mut state: H): Unit {
+        match self {
+            Poll.Ready(value) => { state.write_u8(0u8); value.hash(mut state) },
+            Poll.Pending => state.write_u8(1u8)
+        }
+    }
+}
+extend<T: Debug> Poll<T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+        match self {
+            Poll.Ready(value) => {
+                try f.write_str("Ready(")
+                try value.fmt(mut f)
+                try f.write_str(")")
+            },
+            Poll.Pending => try f.write_str("Pending")
+        }
+    }
+}
+extend<T> Poll<T> implements From<T> {
+    static fn from(take value: T): Poll<T> { Poll.Ready(value) }
 }
 
 extend<T, E> Poll<(Outcome<T, E>)> {
@@ -86,9 +163,6 @@ extend Waker {
                 core.mem.transmute<usize>(self.raw.vtable.release) == core.mem.transmute<usize>(other.release)
         }
     }
-    pub fn clone(): Waker {
-        Waker((self.raw.vtable.clone)(self.raw.data))
-    }
     pub fn data(): ptr<mut u8> { self.raw.data }
     // Transfers this reference to a caller that will invoke exactly one
     // `wake` or `release` callback.
@@ -97,6 +171,25 @@ extend Waker {
         core.mem.forget(self)
         raw
     }
+}
+
+extend Waker implements Clone {
+    fn clone(): Waker { Waker((self.raw.vtable.clone)(self.raw.data)) }
+}
+
+extend Waker implements Debug {
+    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+        try f.write_str("Waker")
+    }
+}
+
+extend Waker {
+    pub unsafe static fn from_raw(raw: RawWaker): Waker { waker_from_raw(raw) }
+    pub unsafe static fn new(data: ptr<mut u8>, vtable: RawWakerVTable): Waker {
+        waker_from_raw(RawWaker(data, vtable))
+    }
+    pub static fn noop(): Waker { noop_waker() }
+    pub fn vtable(): RawWakerVTable { self.raw.vtable }
 }
 
 fn noop_clone(data: ptr<mut u8>): RawWaker { RawWaker(data, noop_table()) }
@@ -121,6 +214,14 @@ pub type Context<region c> {
 extend<region c> Context<region c> {
     pub static fn from_waker(read waker: Waker from c): Context<region c> { Context(read waker) }
     pub fn waker(): read Waker from self { read *self.waker }
+}
+
+extend<region c> Context<region c> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+        try f.write_str("Context { waker: ")
+        try self.waker().fmt(mut f)
+        try f.write_str(" }")
+    }
 }
 
 // The future of an `async` body (S030, L052). The compiler turns the body into

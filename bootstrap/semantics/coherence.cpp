@@ -236,8 +236,9 @@ bool Solver::constraints(const Implementation &implementation,
   }
   std::vector<Obligation> requirements;
   for (auto requirement : implementation.requirements) {
-    requirement.subject = substituted(requirement.subject);
-    requirement.interfaceType = substituted(requirement.interfaceType);
+    requirement.subject = normalize(substituted(requirement.subject), {}, span);
+    requirement.interfaceType =
+        normalize(substituted(requirement.interfaceType), {}, span);
     requirements.push_back(requirement);
     if (potential) {
       if (!types.isSymbolic(requirement.subject) &&

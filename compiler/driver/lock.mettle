@@ -14,7 +14,7 @@ packages: [
         version: "0.1.0"
         id: "mettle-foundation@0.1.0|path+../foundation|target"
         source: "path+../foundation"
-        checksum: "sha256:598ac23569c52facf95c17076d69442c7ccc238340e253e38542d5acc5916e48"
+        checksum: "sha256:005e6e3f873cd63c99bddaccc382827f9305ff87c90752b23de18413dc0eef67"
         features: []
         dependencies: []
     }
@@ -23,7 +23,7 @@ packages: [
         version: "0.1.0"
         id: "mettle-syntax@0.1.0|path+../syntax|target"
         source: "path+../syntax"
-        checksum: "sha256:1ec97bfde2bc2de2881f454bf2d80e4ec7819248f88063572be5b72b4eac3b6e"
+        checksum: "sha256:a002637ecb403978fd3ccd11cf01045928478798e4f26661cf77e2853799e415"
         features: []
         dependencies: ["mettle-foundation@0.1.0|path+../foundation|target"]
     }

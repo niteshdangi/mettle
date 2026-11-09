@@ -5,8 +5,15 @@ import alloc.vec_deque
 import core.clone.Clone
 import core.cmp.{ Eq, PartialEq, Ord, Ordering }
 import core.default.Default
-import core.iter.{ ExtendItems, FromItems, Iterator, OwnedIterable, BidirectionalIterator }
+import core.fmt.Debug
+import core.iter.{ ExtendItems, FromItems, Iterator, OwnedIterable, BidirectionalIterator, ExactSizeIterator }
 import core.convert.From
+
+fn require_debug<T: Debug>(read value: T): bool { true }
+fn require_eq<T: Eq>(read value: T): bool { true }
+fn exact_len<I: ExactSizeIterator>(read items: I): usize {
+    I.(ExactSizeIterator).len(items)
+}
 
 type Counted {
     value: i32
@@ -193,10 +200,12 @@ fn main(): i32 {
     var removed = 0
     {
         var drain = drained.drain(1usize..3usize)
+        if !require_debug(read drain) || exact_len(read drain) != 2usize { return 117 }
         match take drain.next() {
             present(value) => { removed += value },
             none => { return 70 }
         }
+        if exact_len(read drain) != 1usize { return 75 }
         match take drain.next_back() {
             present(value) => { removed += value * 10 },
             none => { return 71 }
@@ -254,7 +263,7 @@ fn main(): i32 {
 
     // Traits: Clone, comparisons, Default, Index and conversions.
     let cloned = kept.clone()
-    if !same(cloned, [1, 5]) || cloned != kept { return 100 }
+    if !require_eq(read cloned) || !same(cloned, [1, 5]) || cloned != kept { return 100 }
     var other = vec_deque.new<i32>()
     other.push_back(1)
     other.push_back(6)
@@ -265,6 +274,38 @@ fn main(): i32 {
     if kept[0usize] != 11 { return 103 }
     let plain = List<i32>.(From<vec_deque.Deque<i32>>).from(kept)
     if plain.len() != 2usize || plain[1usize] != 5 { return 104 }
+    var contiguous = vec.new<i32>()
+    contiguous.reserve_exact(4usize)
+    contiguous.push(7)
+    contiguous.push(8)
+    let restored = vec_deque.Deque<i32>.(From<List<i32>>).from(contiguous)
+    if restored.len() != 2usize || restored.capacity() < 4usize ||
+        restored[0usize] != 7 || restored[1usize] != 8 {
+        return 107
+    }
+    let slice_values = [7, 8]
+    let slice_view: read [i32] = read slice_values
+    if !(restored == slice_view) { return 108 }
+    let array_view: read [i32; 2] = read slice_values
+    if !(restored == array_view) || !(restored == [7, 8]) { return 113 }
+    {
+        var mutable_array_source = [7, 8]
+        let mutable_array_view: mut [i32; 2] = mut mutable_array_source
+        if !(restored == mutable_array_view) { return 114 }
+    }
+    {
+        var mutable_slice_source = [7, 8]
+        let mutable_slice_view: mut [i32] = mut mutable_slice_source
+        if !(restored == mutable_slice_view) { return 115 }
+    }
+    let vector_view = List<i32>.(From<[i32; 2]>).from([7, 8])
+    if !(restored == vector_view) { return 116 }
+    var borrow_source = vec.new<i32>()
+    borrow_source.push(12)
+    borrow_source.push(13)
+    var borrow_extended = vec_deque.new<i32>()
+    borrow_extended.extend(borrow_source.iter())
+    if !same(borrow_extended, [12, 13]) { return 109 }
 
     var source = vec.new<i32>()
     source.push(3)

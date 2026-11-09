@@ -41,6 +41,18 @@ pub interface Write {
 }
 
 pub copy enum Align { Unknown, Left, Right, Center }
+extend Align implements super.cmp.PartialEq {
+    fn eq(read other: Align): bool {
+        match (self, other) {
+            (Align.Unknown, Align.Unknown) => true,
+            (Align.Left, Align.Left) => true,
+            (Align.Right, Align.Right) => true,
+            (Align.Center, Align.Center) => true,
+            _ => false
+        }
+    }
+}
+extend Align implements super.cmp.Eq {}
 
 // Rendering options for one value: `width` pads, `precision` truncates text
 // (or limits digits where a type defines it), sign flags select positive-sign
@@ -72,8 +84,10 @@ pub type DebugMap<region s, region b> {
 
 extend<region r> Formatter<region r> {
     pub fn options(): Spec { self.options }
+    pub fn align(): Align { self.options.align }
     pub fn width(): usize? { self.options.width }
     pub fn precision(): usize? { self.options.precision }
+    pub fn fill(): char { self.options.fill }
     pub fn alternate(): bool { self.options.alternate }
     pub fn sign_plus(): bool { self.options.plus }
     pub fn sign_minus(): bool { self.options.minus }

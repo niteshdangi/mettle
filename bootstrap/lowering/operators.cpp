@@ -7,6 +7,22 @@ Builder::Value Builder::operatorExpression(const Node &node) {
   auto argument = [&](std::size_t index) {
     const auto &source = *node.children[index];
     auto mode = module.function(facts.callee).locals[index].mode;
+    // A view-typed operand (`s += "!"` with `Rhs = read Text`) is borrowed
+    // as a view value, not through to its payload.
+    if (index > 0 && mode == ParameterMode::Read &&
+        module.typeStore()->isView(facts.callParameterTypes[index]) &&
+        module.typeStore()->isView(module.facts(source).type) &&
+        module.typeStore()->view(module.facts(source).type).payload ==
+            module.typeStore()->view(facts.callParameterTypes[index])
+                .payload) {
+      auto value = use(expression(source));
+      if (!live())
+        return Value{};
+      auto location = materialize(value, source.span, temporaryScope);
+      return emit({ir::Op::BorrowRead, {}, {}, {}, "", location, -1, 0,
+                   source.span},
+                  value.type, ir::Access::Read);
+    }
     if (mode == ParameterMode::Read || mode == ParameterMode::Mut) {
       auto dereferences =
           index == 0 ? facts.dereferences

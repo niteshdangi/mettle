@@ -1,4 +1,4 @@
-import package.core.iter.{Iterator, BidirectionalIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import package.core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
 import package.core.clone.Clone
 import package.core.default.Default
 import package.core.cmp.{Eq, PartialEq, PartialOrd}
@@ -621,6 +621,17 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
     }
 }
 
+extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
+    pub mut fn append(mut other: SortedMap<K, V, A>): Unit {
+        while true {
+            match take other.pop_first() {
+                present(entry) => { let _ = self.insert(entry.0, entry.1) },
+                none => { break }
+            }
+        }
+    }
+}
+
 // An entry owns its lookup key and exclusively borrows the map until consumed.
 // Occupied node positions remain stable while that loan prevents map mutation.
 pub type OccupiedEntry<region r, K, V, A: Allocator = Global> {
@@ -734,6 +745,25 @@ extend<region r, K: Ord, V, A: Allocator> Entry<region r, K, V, A> {
 extend<region r, K: Ord, V: Default, A: Allocator> Entry<region r, K, V, A> {
     pub take fn or_default(): mut V from r {
         self.or_insert_with(take fn(): V { V.(Default).default() })
+    }
+}
+
+extend<region r, K: Ord + fmt.Debug, V: fmt.Debug, A: Allocator> Entry<region r, K, V, A> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        match self {
+            Entry.Occupied(entry) => {
+                try f.write_str("Occupied(")
+                try K.(fmt.Debug).fmt(entry.key(), mut f)
+                try f.write_str(": ")
+                try V.(fmt.Debug).fmt(entry.get(), mut f)
+                try f.write_str(")")
+            },
+            Entry.Vacant(entry) => {
+                try f.write_str("Vacant(")
+                try K.(fmt.Debug).fmt(entry.key(), mut f)
+                try f.write_str(")")
+            }
+        }
     }
 }
 
@@ -912,7 +942,7 @@ extend<K: Ord, A: Allocator> SortedSet<K, A> {
 // next positions to yield from each end and `left` entries remain, so the two
 // ends never cross.
 pub type EntryIter<region r, K, V, A: Allocator> {
-    map: read SortedMap<K, V, A> from r
+    map: (read SortedMap<K, V, A> from r)?
     front_node: ptr<mut Node<K, V>>
     front_idx: usize
     back_node: ptr<mut Node<K, V>>
@@ -945,6 +975,45 @@ extend<region r, K, V, A: Allocator> EntryIter<region r, K, V, A> implements Bid
             self.back_idx = before.1
         }
         present(unsafe { read *at })
+    }
+}
+extend<region r, K, V, A: Allocator> EntryIter<region r, K, V, A> implements ExactSizeIterator {}
+extend<region r, K, V, A: Allocator> EntryIter<region r, K, V, A> implements Clone {
+    fn clone(): EntryIter<region r, K, V, A> {
+        EntryIter(self.map, self.front_node, self.front_idx, self.back_node, self.back_idx, self.left)
+    }
+}
+extend<region r, K, V, A: Allocator> EntryIter<region r, K, V, A> implements Default {
+    // The absent map and zero count keep the null cursors out of both ends.
+    static fn default(): EntryIter<region r, K, V, A> {
+        EntryIter(none, null_node<K, V>(), 0usize, null_node<K, V>(), 0usize, 0usize)
+    }
+}
+extend<region r, K: fmt.Debug, V: fmt.Debug, A: Allocator> EntryIter<region r, K, V, A> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("Iter(")
+        try f.debug_open("{")
+        var node = self.front_node
+        var idx = self.front_idx
+        var left = self.left
+        var first = true
+        while left != 0usize {
+            let entry = unsafe { node_entry(node, idx) }
+            try f.debug_item_start(first)
+            try K.(fmt.Debug).fmt(unsafe { read (*entry).key }, mut f)
+            try f.write_str(": ")
+            try V.(fmt.Debug).fmt(unsafe { read (*entry).value }, mut f)
+            try f.debug_item_end()
+            first = false
+            left -= 1usize
+            if left != 0usize {
+                let after = unsafe { successor(node, idx) }
+                node = after.0
+                idx = after.1
+            }
+        }
+        try f.debug_close("}", self.left == 0usize)
+        try f.write_str(")")
     }
 }
 
@@ -1054,7 +1123,7 @@ extend<K, V, A: Allocator> SortedMap<K, V, A> implements Iterable {
     fn iter<region r>(receiver read self: Self from r): EntryIter<region r, K, V, A> {
         let first = unsafe { first_pos(self.root) }
         let last = unsafe { last_pos(self.root) }
-        EntryIter(read self, first.0, first.1, last.0, last.1, self.len)
+        EntryIter(present(read self), first.0, first.1, last.0, last.1, self.len)
     }
 }
 extend<K, A: Allocator> SortedSet<K, A> implements Iterable {
@@ -1063,7 +1132,7 @@ extend<K, A: Allocator> SortedSet<K, A> implements Iterable {
     fn iter<region r>(receiver read self: Self from r): Keys<region r, K, Unit, A> {
         let first = unsafe { first_pos(self.map.root) }
         let last = unsafe { last_pos(self.map.root) }
-        Keys(EntryIter(read self.map, first.0, first.1, last.0, last.1, self.map.len))
+        Keys(EntryIter(present(read self.map), first.0, first.1, last.0, last.1, self.map.len))
     }
 }
 
@@ -1075,6 +1144,8 @@ pub type MapIntoIter<K, V, A: Allocator> {
     a: A
     node: ptr<mut Node<K, V>>
     idx: usize
+    back_node: ptr<mut Node<K, V>>
+    back_idx: usize
     left: usize
     drop {
         unsafe {
@@ -1101,9 +1172,10 @@ extend<K, V, A: Allocator> SortedMap<K, V, A> implements OwnedIterable {
             let root = self.root
             let n = self.len
             let first = first_pos(root)
+            let last = last_pos(root)
             let a = core.ptr.`read`(core.ptr.from_ref(self.a))
             core.mem.forget(take self)
-            MapIntoIter(root, a, first.0, first.1, n)
+            MapIntoIter(root, a, first.0, first.1, last.0, last.1, n)
         }
     }
 }
@@ -1123,6 +1195,59 @@ extend<K, V, A: Allocator> MapIntoIter<K, V, A> implements Iterator {
     }
     fn size_hint(): (usize, usize?) { (self.left, present(self.left)) }
 }
+extend<K, V, A: Allocator> MapIntoIter<K, V, A> implements BidirectionalIterator {
+    mut fn next_back(): Bucket<K, V>? {
+        if self.left == 0usize { return none }
+        let n = self.back_node
+        let i = self.back_idx
+        self.left -= 1usize
+        if self.left != 0usize {
+            let before = unsafe { predecessor(n, i) }
+            self.back_node = before.0
+            self.back_idx = before.1
+        }
+        present(unsafe { core.ptr.`read`(node_entry(n, i)) })
+    }
+}
+extend<K, V, A: Allocator> MapIntoIter<K, V, A> implements ExactSizeIterator {}
+extend<K: fmt.Debug, V: fmt.Debug, A: Allocator> MapIntoIter<K, V, A> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.debug_open("{")
+        var node = self.node
+        var idx = self.idx
+        var left = self.left
+        var first = true
+        while left != 0usize {
+            let entry = unsafe { node_entry(node, idx) }
+            try f.debug_item_start(first)
+            try K.(fmt.Debug).fmt(unsafe { read (*entry).key }, mut f)
+            try f.write_str(": ")
+            try V.(fmt.Debug).fmt(unsafe { read (*entry).value }, mut f)
+            try f.debug_item_end()
+            first = false
+            left -= 1usize
+            if left != 0usize {
+                let after = unsafe { successor(node, idx) }
+                node = after.0
+                idx = after.1
+            }
+        }
+        try f.debug_close("}", self.left == 0usize)
+    }
+}
+extend<K, V, A: Allocator + Default> MapIntoIter<K, V, A> implements Default {
+    static fn default(): MapIntoIter<K, V, A> {
+        MapIntoIter(
+            null_node<K, V>(),
+            A.(Default).default(),
+            null_node<K, V>(),
+            0usize,
+            null_node<K, V>(),
+            0usize,
+            0usize
+        )
+    }
+}
 extend<K, V, A: Allocator> SortedMap<K, V, A> {
     pub take fn into_keys(): IntoKeys<K, V, A> { IntoKeys(self.into_iter()) }
     pub take fn into_values(): IntoValues<K, V, A> { IntoValues(self.into_iter()) }
@@ -1138,6 +1263,20 @@ extend<K, V, A: Allocator> IntoKeys<K, V, A> implements Iterator {
     }
     fn size_hint(): (usize, usize?) { self.inner.size_hint() }
 }
+extend<K, V, A: Allocator> IntoKeys<K, V, A> implements BidirectionalIterator {
+    mut fn next_back(): K? {
+        match take self.inner.next_back() {
+            present(entry) => present(entry.key),
+            none => none
+        }
+    }
+}
+extend<K, V, A: Allocator> IntoKeys<K, V, A> implements ExactSizeIterator {}
+extend<K, V, A: Allocator + Default> IntoKeys<K, V, A> implements Default {
+    static fn default(): IntoKeys<K, V, A> {
+        IntoKeys(MapIntoIter<K, V, A>.(Default).default())
+    }
+}
 pub type IntoValues<K, V, A: Allocator> { inner: MapIntoIter<K, V, A> }
 extend<K, V, A: Allocator> IntoValues<K, V, A> implements Iterator {
     type Item = V
@@ -1148,6 +1287,20 @@ extend<K, V, A: Allocator> IntoValues<K, V, A> implements Iterator {
         }
     }
     fn size_hint(): (usize, usize?) { self.inner.size_hint() }
+}
+extend<K, V, A: Allocator> IntoValues<K, V, A> implements BidirectionalIterator {
+    mut fn next_back(): V? {
+        match take self.inner.next_back() {
+            present(entry) => present(entry.value),
+            none => none
+        }
+    }
+}
+extend<K, V, A: Allocator> IntoValues<K, V, A> implements ExactSizeIterator {}
+extend<K, V, A: Allocator + Default> IntoValues<K, V, A> implements Default {
+    static fn default(): IntoValues<K, V, A> {
+        IntoValues(MapIntoIter<K, V, A>.(Default).default())
+    }
 }
 extend<K, V, A: Allocator> MapIntoIter<K, V, A> {
     pub fn len(): usize { self.left }
@@ -1164,6 +1317,41 @@ extend<K, A: Allocator> SetIntoIter<K, A> implements Iterator {
     }
     fn size_hint(): (usize, usize?) { self.inner.size_hint() }
 }
+extend<K, A: Allocator> SetIntoIter<K, A> implements BidirectionalIterator {
+    mut fn next_back(): K? {
+        match take self.inner.next_back() {
+            present(pair) => present(pair.key),
+            none => none
+        }
+    }
+}
+extend<K, A: Allocator> SetIntoIter<K, A> implements ExactSizeIterator {}
+extend<K: fmt.Debug, A: Allocator> SetIntoIter<K, A> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.debug_open("{")
+        var node = self.inner.node
+        var idx = self.inner.idx
+        var left = self.inner.left
+        while left != 0usize {
+            let entry = unsafe { node_entry(node, idx) }
+            try f.debug_item_start(left == self.inner.left)
+            try K.(fmt.Debug).fmt(unsafe { read (*entry).key }, mut f)
+            try f.debug_item_end()
+            left -= 1usize
+            if left != 0usize {
+                let after = unsafe { successor(node, idx) }
+                node = after.0
+                idx = after.1
+            }
+        }
+        try f.debug_close("}", self.inner.left == 0usize)
+    }
+}
+extend<K, A: Allocator + Default> SetIntoIter<K, A> implements Default {
+    static fn default(): SetIntoIter<K, A> {
+        SetIntoIter(MapIntoIter<K, Unit, A>.(Default).default())
+    }
+}
 extend<K, A: Allocator> SortedSet<K, A> implements OwnedIterable {
     type Item = K
     type IntoIter = SetIntoIter<K, A>
@@ -1175,9 +1363,10 @@ extend<K, A: Allocator> SortedSet<K, A> implements OwnedIterable {
 // Mutable iteration returns an immutable key and exclusive value view in key
 // order, without exposing mutation that could break the tree's ordering.
 // The exclusive map borrow keeps links stable; successor advancement and the
-// remaining count ensure each entry slot is issued at most once.
+// remaining count ensure each entry slot is issued at most once. An empty
+// default has no map and never dereferences its null cursors.
 pub type IterMut<region r, K, V, A: Allocator> {
-    map: mut SortedMap<K, V, A> from r
+    map: (mut SortedMap<K, V, A> from r)?
     front_node: ptr<mut Node<K, V>>
     front_idx: usize
     back_node: ptr<mut Node<K, V>>
@@ -1212,18 +1401,51 @@ extend<region r, K, V, A: Allocator> IterMut<region r, K, V, A> implements Bidir
         present(unsafe { (read (*at).key, mut (*at).value) })
     }
 }
+extend<region r, K, V, A: Allocator> IterMut<region r, K, V, A> implements ExactSizeIterator {}
+extend<region r, K, V, A: Allocator> IterMut<region r, K, V, A> implements Default {
+    static fn default(): IterMut<region r, K, V, A> {
+        IterMut(none, null_node<K, V>(), 0usize, null_node<K, V>(), 0usize, 0usize)
+    }
+}
+extend<region r, K: fmt.Debug, V: fmt.Debug, A: Allocator> IterMut<region r, K, V, A> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("IterMut(")
+        try f.debug_open("{")
+        var node = self.front_node
+        var idx = self.front_idx
+        var left = self.left
+        var first = true
+        while left != 0usize {
+            let entry = unsafe { node_entry(node, idx) }
+            try f.debug_item_start(first)
+            try K.(fmt.Debug).fmt(unsafe { read (*entry).key }, mut f)
+            try f.write_str(": ")
+            try V.(fmt.Debug).fmt(unsafe { read (*entry).value }, mut f)
+            try f.debug_item_end()
+            first = false
+            left -= 1usize
+            if left != 0usize {
+                let after = unsafe { successor(node, idx) }
+                node = after.0
+                idx = after.1
+            }
+        }
+        try f.debug_close("}", self.left == 0usize)
+        try f.write_str(")")
+    }
+}
 extend<K, V, A: Allocator> SortedMap<K, V, A> {
     pub mut fn iter_mut(): IterMut<region self, K, V, A> {
         let first = unsafe { first_pos(self.root) }
         let last = unsafe { last_pos(self.root) }
         let n = self.len
-        IterMut(mut self, first.0, first.1, last.0, last.1, n)
+        IterMut(present(mut self), first.0, first.1, last.0, last.1, n)
     }
 }
 
 // Generic mutable iteration visits values only, in key order.
 pub type ValuesMut<region r, K, V, A: Allocator> {
-    map: mut SortedMap<K, V, A> from r
+    map: (mut SortedMap<K, V, A> from r)?
     node: ptr<mut Node<K, V>>
     idx: usize
     left: usize
@@ -1243,6 +1465,38 @@ extend<region r, K, V, A: Allocator> ValuesMut<region r, K, V, A> implements Ite
     }
     fn size_hint(): (usize, usize?) { (self.left, present(self.left)) }
 }
+extend<region r, K, V, A: Allocator> ValuesMut<region r, K, V, A> implements ExactSizeIterator {}
+extend<region r, K, V, A: Allocator> ValuesMut<region r, K, V, A> implements Default {
+    // The absent map and zero count make the null cursor unreachable.
+    static fn default(): ValuesMut<region r, K, V, A> {
+        ValuesMut(none, null_node<K, V>(), 0usize, 0usize)
+    }
+}
+extend<region r, K, V: fmt.Debug, A: Allocator> ValuesMut<region r, K, V, A> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("ValuesMut(")
+        try f.debug_open("[")
+        var node = self.node
+        var idx = self.idx
+        var left = self.left
+        var first = true
+        while left != 0usize {
+            let entry = unsafe { node_entry(node, idx) }
+            try f.debug_item_start(first)
+            try V.(fmt.Debug).fmt(unsafe { read (*entry).value }, mut f)
+            try f.debug_item_end()
+            first = false
+            left -= 1usize
+            if left != 0usize {
+                let after = unsafe { successor(node, idx) }
+                node = after.0
+                idx = after.1
+            }
+        }
+        try f.debug_close("]", self.left == 0usize)
+        try f.write_str(")")
+    }
+}
 // Borrowed iterators over the keys or the values only.
 pub type Keys<region r, K, V, A: Allocator> { inner: EntryIter<region r, K, V, A> }
 extend<region r, K, V, A: Allocator> Keys<region r, K, V, A> implements Iterator {
@@ -1252,6 +1506,40 @@ extend<region r, K, V, A: Allocator> Keys<region r, K, V, A> implements Iterator
     }
     fn size_hint(): (usize, usize?) { self.inner.size_hint() }
 }
+extend<region r, K, V, A: Allocator> Keys<region r, K, V, A> implements Clone {
+    fn clone(): Keys<region r, K, V, A> { Keys(self.inner.clone()) }
+}
+extend<region r, K, V, A: Allocator> Keys<region r, K, V, A> implements Default {
+    static fn default(): Keys<region r, K, V, A> {
+        Keys(EntryIter<region r, K, V, A>.(Default).default())
+    }
+}
+extend<region r, K: fmt.Debug, V, A: Allocator> Keys<region r, K, V, A> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("Keys(")
+        try f.debug_open("[")
+        var node = self.inner.front_node
+        var idx = self.inner.front_idx
+        var left = self.inner.left
+        var first = true
+        while left != 0usize {
+            let entry = unsafe { node_entry(node, idx) }
+            try f.debug_item_start(first)
+            try K.(fmt.Debug).fmt(unsafe { read (*entry).key }, mut f)
+            try f.debug_item_end()
+            first = false
+            left -= 1usize
+            if left != 0usize {
+                let after = unsafe { successor(node, idx) }
+                node = after.0
+                idx = after.1
+            }
+        }
+        try f.debug_close("]", self.inner.left == 0usize)
+        try f.write_str(")")
+    }
+}
+extend<region r, K, V, A: Allocator> Keys<region r, K, V, A> implements ExactSizeIterator {}
 extend<region r, K, V, A: Allocator> Keys<region r, K, V, A> implements BidirectionalIterator {
     mut fn next_back(): (read K from r)? {
         match self.inner.next_back() { present(e) => present(read e.key), none => none }
@@ -1265,6 +1553,40 @@ extend<region r, K, V, A: Allocator> Values<region r, K, V, A> implements Iterat
     }
     fn size_hint(): (usize, usize?) { self.inner.size_hint() }
 }
+extend<region r, K, V, A: Allocator> Values<region r, K, V, A> implements Clone {
+    fn clone(): Values<region r, K, V, A> { Values(self.inner.clone()) }
+}
+extend<region r, K, V, A: Allocator> Values<region r, K, V, A> implements Default {
+    static fn default(): Values<region r, K, V, A> {
+        Values(EntryIter<region r, K, V, A>.(Default).default())
+    }
+}
+extend<region r, K, V: fmt.Debug, A: Allocator> Values<region r, K, V, A> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("Values(")
+        try f.debug_open("[")
+        var node = self.inner.front_node
+        var idx = self.inner.front_idx
+        var left = self.inner.left
+        var first = true
+        while left != 0usize {
+            let entry = unsafe { node_entry(node, idx) }
+            try f.debug_item_start(first)
+            try V.(fmt.Debug).fmt(unsafe { read (*entry).value }, mut f)
+            try f.debug_item_end()
+            first = false
+            left -= 1usize
+            if left != 0usize {
+                let after = unsafe { successor(node, idx) }
+                node = after.0
+                idx = after.1
+            }
+        }
+        try f.debug_close("]", self.inner.left == 0usize)
+        try f.write_str(")")
+    }
+}
+extend<region r, K, V, A: Allocator> Values<region r, K, V, A> implements ExactSizeIterator {}
 extend<region r, K, V, A: Allocator> Values<region r, K, V, A> implements BidirectionalIterator {
     mut fn next_back(): (read V from r)? {
         match self.inner.next_back() { present(e) => present(read e.value), none => none }
@@ -1274,12 +1596,12 @@ extend<K, V, A: Allocator> SortedMap<K, V, A> {
     pub fn keys(): Keys<region self, K, V, A> {
         let first = unsafe { first_pos(self.root) }
         let last = unsafe { last_pos(self.root) }
-        Keys(EntryIter(read self, first.0, first.1, last.0, last.1, self.len))
+        Keys(EntryIter(present(read self), first.0, first.1, last.0, last.1, self.len))
     }
     pub fn values(): Values<region self, K, V, A> {
         let first = unsafe { first_pos(self.root) }
         let last = unsafe { last_pos(self.root) }
-        Values(EntryIter(read self, first.0, first.1, last.0, last.1, self.len))
+        Values(EntryIter(present(read self), first.0, first.1, last.0, last.1, self.len))
     }
 }
 extend<K, V, A: Allocator> SortedMap<K, V, A> implements MutableIterable {
@@ -1288,14 +1610,14 @@ extend<K, V, A: Allocator> SortedMap<K, V, A> implements MutableIterable {
     fn iter_mut<region r>(receiver mut self: Self from r): ValuesMut<region r, K, V, A> {
         let first = unsafe { first_pos(self.root) }
         let n = self.len
-        ValuesMut(mut self, first.0, first.1, n)
+        ValuesMut(present(mut self), first.0, first.1, n)
     }
 }
 extend<K, V, A: Allocator> SortedMap<K, V, A> {
     pub mut fn values_mut(): ValuesMut<region self, K, V, A> {
         let first = unsafe { first_pos(self.root) }
         let n = self.len
-        ValuesMut(mut self, first.0, first.1, n)
+        ValuesMut(present(mut self), first.0, first.1, n)
     }
 }
 
@@ -1359,6 +1681,15 @@ extend<K: PartialEq, V: PartialEq, A: Allocator> SortedMap<K, V, A> implements P
     }
 }
 extend<K: Eq, V: Eq, A: Allocator> SortedMap<K, V, A> implements Eq {}
+extend<K: Ord, V, A: Allocator, Q: Ord + unsized> SortedMap<K, V, A> implements package.core.ops.Index<Q> where K: KeyView<Q> {
+    type Output = V
+    fn index(read key: Q): read V from self {
+        match self.get(key) {
+            present(value) => value,
+            none => super.alloc.panic_precondition()
+        }
+    }
+}
 // Lexicographic over `(key, value)` entries in key order.
 extend<K: PartialOrd, V: PartialOrd, A: Allocator> SortedMap<K, V, A> implements PartialOrd {
     fn partial_cmp(read other: SortedMap<K, V, A>): Ordering? {
@@ -1475,6 +1806,20 @@ extend<K: Ord, V> SortedMap<K, V> implements FromItems<(K, V)> {
     }
 }
 
+extend<K: Ord, V, const N: usize> SortedMap<K, V> implements package.core.convert.From<[(K, V); N]> {
+    static fn from(take items: [(K, V); N]): SortedMap<K, V> {
+        var out = new<K, V>()
+        var source = super.vec.List<(K, V)>.(package.core.convert.From<[(K, V); N]>).from(items).into_iter()
+        while true {
+            match take source.next() {
+                present(item) => { let _ = out.insert(item.0, item.1) },
+                none => { break }
+            }
+        }
+        out
+    }
+}
+
 extend<K: Clone, A: Allocator + Clone> SortedSet<K, A> implements Clone {
     fn clone(): SortedSet<K, A> { SortedSet(self.map.clone()) }
 }
@@ -1522,6 +1867,20 @@ extend<K: Ord> SortedSet<K> implements FromItems<K> {
     static fn from_iter<I: OwnedIterable<Item = K>>(take items: I): SortedSet<K> {
         var out = set_new<K>()
         out.extend(items)
+        out
+    }
+}
+
+extend<K: Ord, const N: usize> SortedSet<K> implements package.core.convert.From<[K; N]> {
+    static fn from(take items: [K; N]): SortedSet<K> {
+        var out = set_new<K>()
+        var source = super.vec.List<K>.(package.core.convert.From<[K; N]>).from(items).into_iter()
+        while true {
+            match take source.next() {
+                present(item) => { let _ = out.insert(item) },
+                none => { break }
+            }
+        }
         out
     }
 }

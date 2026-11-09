@@ -764,9 +764,13 @@ public:
     for (const auto &definition : definitions)
       define(definition.begin, definition.macro, definition.end);
     collectImports(0, pieces.size(), modulePath);
-    resolveMacroImports();
     if (definitionsOnly)
       return std::nullopt;
+    for (std::size_t i = 0; i < pieces.size(); ++i)
+      if (invocationAt(pieces, i)) {
+        resolveMacroImports();
+        break;
+      }
     bool procedural = false, macroInvocation = false;
     for (std::size_t i = 0; i < pieces.size(); ++i) {
       procedural |= procedure(pieces, i);
@@ -806,6 +810,7 @@ private:
   std::vector<std::string> chain;
   std::size_t marks = 0;
   bool failed = false;
+  bool resolvingImports = false;
   std::string text;
   std::vector<Generation::Mapping> mappings;
 
@@ -1126,6 +1131,9 @@ private:
   }
 
   void resolveMacroImports() {
+    if (resolvingImports)
+      return;
+    resolvingImports = true;
     bool changed;
     do {
       changed = false;
@@ -1144,6 +1152,7 @@ private:
         changed = true;
       }
     } while (changed);
+    resolvingImports = false;
   }
 
   static std::vector<std::string> tokenPath(const Pieces &in, std::size_t begin,
@@ -1338,15 +1347,19 @@ private:
                        module->sourcePath, modules, macros, importedMacros,
                        indexedModules, pendingImports);
       indexer.run(true);
+      resolveMacroImports();
     }
     return module;
   }
 
+  static bool invocationAt(const Pieces &in, std::size_t i) {
+    return in[i].kind == TokenKind::Word && i + 2 < in.size() &&
+           symbol(in[i + 1], "!") && !in[i + 1].space && opener(in[i + 2]) &&
+           !(i > 0 && symbol(in[i - 1], "::"));
+  }
+
   Invocation invoked(const Pieces &in, std::size_t i) {
-    if (in[i].kind != TokenKind::Word || i + 2 >= in.size() ||
-        !symbol(in[i + 1], "!") || in[i + 1].space || !opener(in[i + 2]))
-      return {};
-    if (i > 0 && symbol(in[i - 1], "::"))
+    if (!invocationAt(in, i))
       return {};
     auto caller =
         in[i].context.empty() ? scopeAt(in[i].origin.begin) : in[i].context;
@@ -1387,10 +1400,8 @@ private:
   }
 
   bool procedure(const Pieces &in, std::size_t i) {
-    if (!procedures || in[i].kind != TokenKind::Word || i + 2 >= in.size() ||
-        !symbol(in[i + 1], "!") || in[i + 1].space || !opener(in[i + 2]))
-      return false;
-    if (i > 0 && (symbol(in[i - 1], ".") || symbol(in[i - 1], "::")))
+    if (!procedures || !invocationAt(in, i) ||
+        (i > 0 && symbol(in[i - 1], ".")))
       return false;
     return procedures->names.contains(in[i].text) && !invoked(in, i).macro;
   }

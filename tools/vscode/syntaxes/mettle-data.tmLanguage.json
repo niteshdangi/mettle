@@ -1,0 +1,36 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Mettle Data",
+  "scopeName": "source.mettle-data",
+  "patterns": [
+    {"include": "source.mettle#comments"},
+    {
+      "name": "support.type.property-name.mettle-data",
+      "match": "\\b[A-Za-z_][A-Za-z0-9_-]*(?=\\s*[:{])"
+    },
+    {
+      "name": "support.type.property-name.mettle-data",
+      "begin": "\"(?=(?:[^\"\\\\]|\\\\.)*\"\\s*[:{])",
+      "end": "\"|$",
+      "patterns": [{"include": "source.mettle#escapes"}]
+    },
+    {
+      "name": "string.quoted.double.mettle-data",
+      "begin": "\"",
+      "end": "\"|$",
+      "patterns": [{"include": "source.mettle#escapes"}]
+    },
+    {
+      "name": "constant.language.mettle-data",
+      "match": "\\b(?:true|false|none)\\b"
+    },
+    {
+      "name": "constant.numeric.mettle-data",
+      "match": "(?<![\\w.])-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\\b"
+    },
+    {
+      "name": "punctuation.separator.mettle-data",
+      "match": "[{}\\[\\],:]"
+    }
+  ]
+}

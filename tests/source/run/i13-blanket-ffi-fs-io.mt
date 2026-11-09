@@ -13,7 +13,7 @@ fn tryinto_ok<T: core.convert.TryInto<T>>(): Unit {}
 fn string_ok<T: alloc.string.ToString>(): Unit {}
 fn send_ok<T: unsized + Transferable>(): Unit {}
 fn sync_ok<T: unsized + Shareable>(): Unit {}
-alias A_ffi_CStr = std.ffi.CStr<region static>
+alias A_ffi_CStr = std.ffi.CStr
 alias A_ffi_CString = std.ffi.CString
 alias A_ffi_OsStr = std.ffi.OsStr
 alias A_ffi_OsString = std.ffi.OsString
@@ -184,7 +184,6 @@ fn main(): i32 {
     into_ok<A_io_Stdout>()
     send_ok<A_io_Stdout>()
     sync_ok<A_io_Stdout>()
-    // gap ffi::CStr Any: region-borrowing field (read [u8] from r) makes Static fail even at region static
     // gap ffi::OsString ToOwned: no Clone implementation (ToOwned blanket requires Clone)
     // gap fs::FileType ToOwned: no Clone implementation
     // gap fs::Metadata ToOwned: no Clone implementation

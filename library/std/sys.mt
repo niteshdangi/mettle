@@ -72,6 +72,30 @@ extern "C" {
     pub unsafe fn strerror(code: i32): ptr<read u8>;
 }
 
+// An owned POSIX descriptor. Dropping closes it unless `into_raw_fd` transfers
+// ownership; `as_raw_fd` only lends the integer descriptor.
+pub type OwnedFd {
+    fd: i32
+    drop {
+        if self.fd >= 0 { let closed = unsafe { close(self.fd) } }
+    }
+}
+
+extend OwnedFd {
+    // Safety: `fd` must be open and exclusively owned by the caller.
+    pub unsafe static fn from_raw_fd(fd: i32): OwnedFd { OwnedFd(fd) }
+
+    // The returned integer is borrowed; do not close it or use it after self.
+    pub fn as_raw_fd(): i32 { self.fd }
+
+    pub take fn into_raw_fd(): i32 {
+        var this = self
+        let fd = this.fd
+        this.fd = -1
+        fd
+    }
+}
+
 // `open` flags understood by `mettle_rt_open`.
 pub fn open_read(): i32 { 1 }
 pub fn open_write(): i32 { 2 }

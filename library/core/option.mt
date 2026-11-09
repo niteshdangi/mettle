@@ -26,7 +26,6 @@ extend<T> T? {
     pub fn as_ref(): (read T from self)? {
         match self { present(value) => present(read value), none => none }
     }
-
     pub mut fn as_mut(): (mut T from self)? {
         match mut self { present(value) => present(mut value), none => none }
     }
@@ -184,6 +183,32 @@ extend<T> T? {
     // double-ended, like slice iteration.
     pub fn iter(): super.slice.SliceIter<region self, T> { self.as_slice().iter() }
     pub mut fn iter_mut(): super.slice.SliceIterMut<region self, T> { self.as_mut_slice().iter_mut() }
+}
+
+extend<T> T? {
+    pub fn as_pin_ref(receiver take self: pinned read Self): (pinned read T from self)? {
+        match self.get_ref() {
+            present(value) => {
+                let payload: read T from self = read value
+                // Safety: the payload remains at its address for the parent pin's loan.
+                present(unsafe { core.pin.Pin.new_unchecked(payload) })
+            },
+            none => none
+        }
+    }
+}
+
+extend<T> T? {
+    pub fn as_pin_mut(receiver mut self: pinned mut Self): (pinned mut T from self)? {
+        match mut (unsafe { self.get_unchecked_mut() }) {
+            present(value) => {
+                let payload: mut T from self = mut value
+                // Safety: the payload remains at its address for the parent pin's loan.
+                present(unsafe { core.pin.Pin.new_unchecked(payload) })
+            },
+            none => none
+        }
+    }
 }
 
 

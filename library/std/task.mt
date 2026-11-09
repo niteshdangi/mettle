@@ -19,6 +19,8 @@ import package.alloc.alloc.Global
 import package.alloc.vec.List
 import package.alloc.vec_deque.Deque
 import package.core.future.{Future, Poll, Context, Waker, RawWaker, RawWakerVTable}
+import package.core.clone.Clone
+import package.core.convert.From
 import package.core.panic.panic
 
 extern "C" {
@@ -64,6 +66,10 @@ pub fn waker_from_arc<W: Wake + Transferable + Shareable>(read handle: Arc<W>): 
     let dup = boxed.new(handle.retain())
     let parts = dup.into_raw()
     unsafe { package.core.future.waker_from_raw(RawWaker(parts.0.cast<u8>(), waker_table<W>())) }
+}
+
+extend<W: Wake + Transferable + Shareable> Waker implements From<Arc<W>> {
+    static fn from(take handle: Arc<W>): Waker { waker_from_arc(read handle) }
 }
 
 // A latch that a waker sets and a blocked thread consumes.

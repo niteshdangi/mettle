@@ -4,6 +4,8 @@ import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import package.core.default.Default
 import package.core.hash.{Hash, Hasher}
 import package.core.ops.{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign}
+import package.core.fmt.{Debug, Display, Formatter}
+import package.core.outcome
 import super.sys
 import package.core.clone.Clone
 
@@ -11,7 +13,11 @@ import package.core.clone.Clone
 pub copy type Duration { secs: u64; nanos: u32 }
 
 pub fn duration(secs: u64, nanos: u32): Duration {
-    Duration(secs + (nanos / 1000000000u32) as u64, nanos % 1000000000u32)
+    let normalized_secs = match secs.checked_add((nanos / 1000000000u32) as u64) {
+        present(value) => value,
+        none => package.core.panic.panic("overflow when constructing duration")
+    }
+    Duration(normalized_secs, nanos % 1000000000u32)
 }
 pub fn from_secs(secs: u64): Duration { Duration(secs, 0u32) }
 pub fn from_millis(millis: u64): Duration { Duration(millis / 1000u64, ((millis % 1000u64) * 1000000u64) as u32) }
@@ -19,6 +25,7 @@ pub fn from_micros(micros: u64): Duration { Duration(micros / 1000000u64, ((micr
 pub fn from_nanos(nanos: u64): Duration { Duration(nanos / 1000000000u64, (nanos % 1000000000u64) as u32) }
 
 extend Duration {
+    pub static fn new(secs: u64, nanos: u32): Duration { duration(secs, nanos) }
     pub fn as_secs(): u64 { self.secs }
     pub fn subsec_nanos(): u32 { self.nanos }
     pub fn subsec_millis(): u32 { self.nanos / 1000000u32 }
@@ -63,8 +70,86 @@ extend Duration {
         self.secs < other.secs || (self.secs == other.secs && self.nanos < other.nanos)
     }
     pub fn same(other: Duration): bool { self.secs == other.secs && self.nanos == other.nanos }
+
+    pub static fn from_hours(hours: u64): Duration {
+        match hours.checked_mul(3600u64) {
+            present(secs) => Duration(secs, 0u32),
+            none => package.core.panic.panic("overflow when constructing duration")
+        }
+    }
+
+    pub static fn from_mins(minutes: u64): Duration {
+        match minutes.checked_mul(60u64) {
+            present(secs) => Duration(secs, 0u32),
+            none => package.core.panic.panic("overflow when constructing duration")
+        }
+    }
+
+    pub static fn from_nanos_u128(nanos: u128): Duration {
+        let secs = nanos / 1000000000u128
+        if secs > 18446744073709551615u128 {
+            package.core.panic.panic("overflow when constructing duration")
+        }
+        Duration(secs as u64, (nanos % 1000000000u128) as u32)
+    }
+
+    pub static fn try_from_secs_f32(seconds: f32): (Outcome<Duration, TryFromFloatSecsError>) {
+        Duration.try_from_secs_f64(seconds as f64)
+    }
+
+    pub static fn try_from_secs_f64(seconds: f64): (Outcome<Duration, TryFromFloatSecsError>) {
+        if seconds.is_nan() || seconds.is_infinite() || seconds < 0.0f64 ||
+           seconds >= 18446744073709551616.0f64 {
+            return failure(TryFromFloatSecsError())
+        }
+        let secs = seconds as u64
+        let nanos = ((seconds - secs as f64) * 1000000000.0f64 + 0.5f64) as u64
+        if nanos == 1000000000u64 {
+            match secs.checked_add(1u64) {
+                present(normalized) => success(Duration(normalized, 0u32)),
+                none => failure(TryFromFloatSecsError())
+            }
+        } else {
+            success(Duration(secs, nanos as u32))
+        }
+    }
+
+    pub static fn from_secs_f32(seconds: f32): Duration {
+        Duration.from_secs_f64(seconds as f64)
+    }
+
+    pub static fn from_secs_f64(seconds: f64): Duration {
+        match Duration.try_from_secs_f64(seconds) {
+            success(value) => value,
+            failure(error) => package.core.panic.panic("invalid floating-point duration")
+        }
+    }
+
+    pub fn mul_f32(rhs: f32): Duration { Duration.from_secs_f32(self.as_secs_f32() * rhs) }
+    pub fn mul_f64(rhs: f64): Duration { Duration.from_secs_f64(self.as_secs_f64() * rhs) }
+    pub fn div_f32(rhs: f32): Duration { Duration.from_secs_f32(self.as_secs_f32() / rhs) }
+    pub fn div_f64(rhs: f64): Duration { Duration.from_secs_f64(self.as_secs_f64() / rhs) }
+    pub fn div_duration_f32(rhs: Duration): f32 { self.as_secs_f32() / rhs.as_secs_f32() }
+    pub fn div_duration_f64(rhs: Duration): f64 { self.as_secs_f64() / rhs.as_secs_f64() }
 }
 
+pub copy type TryFromFloatSecsError {}
+
+extend TryFromFloatSecsError implements Debug {
+    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+        try f.write_str("TryFromFloatSecsError")
+    }
+}
+
+extend Duration implements Debug {
+    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+        try f.write_str("Duration { secs: ")
+        try u64.(Display).fmt(self.secs, mut f)
+        try f.write_str(", nanos: ")
+        try u32.(Display).fmt(self.nanos, mut f)
+        try f.write_str(" }")
+    }
+}
 fn clock(which: i32): Duration {
     var out = [0i64; 2]
     let r = unsafe { sys.mettle_rt_clock(which, core.ptr.from_mut(out).cast<i64>()) }
@@ -78,6 +163,7 @@ pub copy type Instant { since_start: Duration }
 pub fn now(): Instant { Instant(clock(0)) }
 
 extend Instant {
+    pub static fn now(): Instant { package.std.time.now() }
     pub fn elapsed(): Duration { now().duration_since(self) }
     // Zero if `earlier` is later (the clock is monotonic, so only for misuse).
     pub fn duration_since(earlier: Instant): Duration { self.since_start.saturating_sub(earlier.since_start) }
@@ -104,6 +190,7 @@ pub fn system_now(): SystemTime {
 pub copy type SystemTimeError { backwards_by: Duration }
 
 extend SystemTime {
+    pub static fn now(): SystemTime { system_now() }
     pub fn unix_secs(): i64 { self.secs }
     pub fn subsec_nanos(): u32 { self.nanos }
 
@@ -348,6 +435,24 @@ extend SystemTime implements Hash {
     }
 }
 
+extend Instant implements Debug {
+    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+        try f.write_str("Instant { since_start: ")
+        try self.since_start.fmt(mut f)
+        try f.write_str(" }")
+    }
+}
+
+extend SystemTime implements Debug {
+    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+        try f.write_str("SystemTime { secs: ")
+        try i64.(Display).fmt(self.secs, mut f)
+        try f.write_str(", nanos: ")
+        try u32.(Display).fmt(self.nanos, mut f)
+        try f.write_str(" }")
+    }
+}
+
 extend SystemTime implements Add<Duration> {
     type Output = SystemTime
     fn add(read rhs: Duration): SystemTime {
@@ -365,6 +470,22 @@ extend SystemTime implements Sub<Duration> {
             present(t) => t,
             none => package.core.panic.panic("overflow when subtracting duration from system time")
         }
+    }
+}
+
+extend SystemTime implements AddAssign<Duration> {
+    mut fn add_assign(read rhs: Duration): Unit {
+        let sum = self + rhs
+        self.secs = sum.secs
+        self.nanos = sum.nanos
+    }
+}
+
+extend SystemTime implements SubAssign<Duration> {
+    mut fn sub_assign(read rhs: Duration): Unit {
+        let difference = self - rhs
+        self.secs = difference.secs
+        self.nanos = difference.nanos
     }
 }
 

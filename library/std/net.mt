@@ -1,7 +1,7 @@
 // Synchronous POSIX TCP and UDP sockets, IPv4/IPv6 addresses, and DNS lookup.
 import package.core.outcome
 import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
-import package.core.convert.From
+import package.core.convert.{From, Into}
 import package.core.fmt.{Debug, Display, Formatter, Write}
 import package.core.hash.{Hash, Hasher}
 import package.core.ops.{BitAnd, BitAndAssign, BitOr, BitOrAssign, Not}
@@ -109,6 +109,8 @@ extend SocketAddrV6 {
 }
 
 extend Ipv4Addr {
+    pub const BITS: u32 = 32u32
+
     pub static fn new(a: u8, b: u8, c: u8, d: u8): Ipv4Addr { ipv4(a, b, c, d) }
     pub static fn from_bits(bits: u32): Ipv4Addr { Ipv4Addr(bits) }
     pub static fn from_octets(octets: [u8; 4]): Ipv4Addr {
@@ -148,6 +150,8 @@ extend Ipv4Addr {
 }
 
 extend Ipv6Addr {
+    pub const BITS: u32 = 128u32
+
     pub static fn new(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u16, h: u16): Ipv6Addr {
         ipv6(a, b, c, d, e, f, g, h)
     }
@@ -319,6 +323,12 @@ extend IpAddr {
 
 extend SocketAddr {
     pub static fn new(ip: IpAddr, port: u16): SocketAddr { socket_addr_ip(ip, port) }
+    pub static fn V4(addr: SocketAddrV4): SocketAddr {
+        socket_addr(addr.ip, addr.port)
+    }
+    pub static fn V6(addr: SocketAddrV6): SocketAddr {
+        SocketAddr(IpAddr.V6(addr.ip), addr.port, addr.flowinfo, addr.scope_id)
+    }
     pub fn ip(): IpAddr { self.ip }
     pub mut fn set_ip(ip: IpAddr): Unit { self.ip = ip }
     pub fn port(): u16 { self.port }
@@ -879,15 +889,36 @@ fn stream_write(fd: i32, read buf: [u8]): usize throws Error {
     n as usize
 }
 
+fn socket_peek(fd: i32, mut buf: [u8]): usize throws Error {
+    if buf.len() == 0usize { return 0usize }
+    while true {
+        let count = unsafe { recv(fd, sys.data_mut(buf), buf.len(), 2) }
+        if count >= 0isize { return count as usize }
+        let error = net_error()
+        if !error.kind().is(ErrorKind.Interrupted) { throw error }
+    }
+    0usize
+}
+
 pub type TcpStream {
     fd: i32
     drop { if self.fd >= 0 { let closed = unsafe { sys.close(self.fd) } } }
+}
+
+extend TcpStream implements From<sys.OwnedFd> {
+    static fn from(take fd: sys.OwnedFd): TcpStream { TcpStream(fd.into_raw_fd()) }
 }
 
 pub type TcpListener {
     fd: i32
     accept_millis: i32
     drop { if self.fd >= 0 { let closed = unsafe { sys.close(self.fd) } } }
+}
+
+extend TcpListener implements From<sys.OwnedFd> {
+    static fn from(take fd: sys.OwnedFd): TcpListener {
+        TcpListener(fd.into_raw_fd(), -1)
+    }
 }
 
 pub type Incoming<region r> { listener: read TcpListener from r }
@@ -902,6 +933,25 @@ pub type AsyncTcpStream {
 pub type AsyncTcpListener {
     fd: i32
     drop { if self.fd >= 0 { let closed = unsafe { sys.close(self.fd) } } }
+}
+
+fn debug_socket(name: read Text, fd: i32, mut f: Formatter): Unit throws package.core.fmt.Error {
+    try f.write_str(name)
+    try f.write_str(" { fd: ")
+    try i32.(Display).fmt(fd, mut f)
+    try f.write_str(" }")
+}
+
+extend TcpListener implements Debug {
+    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+        try debug_socket("TcpListener", self.fd, mut f)
+    }
+}
+
+extend TcpStream implements Debug {
+    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+        try debug_socket("TcpStream", self.fd, mut f)
+    }
 }
 
 unsafe extend AsyncTcpStream implements Transferable {}
@@ -976,6 +1026,8 @@ pub fn async_tcp_listen(addr: SocketAddr): AsyncTcpListener throws Error {
 }
 
 extend TcpListener {
+    pub static fn bind(addr: SocketAddr): TcpListener throws Error { try tcp_listen(addr) }
+
     pub fn incoming<region r>(
         receiver read self: TcpListener from r
     ): Incoming<region r> {
@@ -1078,20 +1130,14 @@ extend AsyncTcpListener {
 }
 
 extend TcpStream {
+    pub static fn connect(addr: SocketAddr): TcpStream throws Error { try tcp_connect(addr) }
     pub static fn connect_timeout(addr: SocketAddr, timeout: Duration): TcpStream throws Error {
         try tcp_connect_timeout(addr, timeout)
     }
     pub fn local_addr(): SocketAddr throws Error { try local_of(self.fd, 0) }
     pub fn peer_addr(): SocketAddr throws Error { try local_of(self.fd, 1) }
     pub fn peek(mut buf: [u8]): usize throws Error {
-        if buf.len() == 0usize { return 0usize }
-        while true {
-            let count = unsafe { recv(self.fd, sys.data_mut(buf), buf.len(), 2) }
-            if count >= 0isize { return count as usize }
-            let error = net_error()
-            if !error.kind().is(ErrorKind.Interrupted) { throw error }
-        }
-        0usize
+        try socket_peek(self.fd, buf)
     }
     pub fn try_clone(): TcpStream throws Error {
         let cloned = unsafe { dup(self.fd) }
@@ -1145,9 +1191,32 @@ extend TcpStream implements Writer {
     mut fn flush(): Unit throws Error {}
 }
 
+extend<region r> read TcpStream from r implements Reader {
+    mut fn read_some(mut buf: [u8]): usize throws Error { try stream_read(self.fd, buf) }
+}
+
+extend<region r> read TcpStream from r implements Writer {
+    mut fn write_some(read buf: [u8]): usize throws Error { try stream_write(self.fd, buf) }
+    mut fn flush(): Unit throws Error {}
+}
+
 pub type UdpSocket {
     fd: i32
     drop { if self.fd >= 0 { let closed = unsafe { sys.close(self.fd) } } }
+}
+
+extend UdpSocket implements From<sys.OwnedFd> {
+    static fn from(take fd: sys.OwnedFd): UdpSocket { UdpSocket(fd.into_raw_fd()) }
+}
+
+extend UdpSocket implements Debug {
+    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+        try debug_socket("UdpSocket", self.fd, mut f)
+    }
+}
+
+extend UdpSocket {
+    pub static fn bind(addr: SocketAddr): UdpSocket throws Error { try udp_bind(addr) }
 }
 
 pub fn udp_bind(addr: SocketAddr): UdpSocket throws Error {
@@ -1271,6 +1340,7 @@ extend UdpSocket {
 
     pub fn send(read buf: [u8]): usize throws Error { try stream_write(self.fd, buf) }
     pub fn recv(mut buf: [u8]): usize throws Error { try stream_read(self.fd, buf) }
+    pub fn peek(mut buf: [u8]): usize throws Error { try socket_peek(self.fd, buf) }
 }
 
 type ResolveHandle {
@@ -1383,9 +1453,19 @@ extend Ipv6Addr implements BitAndAssign<Ipv6Addr> {
         self.bytes = Ipv6Addr.from_bits(self.to_bits() & rhs.to_bits()).bytes
     }
 }
+extend<region rhs_region> Ipv6Addr implements BitAndAssign<read Ipv6Addr from rhs_region> {
+    mut fn bitand_assign(read rhs: read Ipv6Addr from rhs_region): Unit {
+        self.bytes = Ipv6Addr.from_bits(self.to_bits() & (*rhs).to_bits()).bytes
+    }
+}
 extend Ipv6Addr implements BitOrAssign<Ipv6Addr> {
     mut fn bitor_assign(read rhs: Ipv6Addr): Unit {
         self.bytes = Ipv6Addr.from_bits(self.to_bits() | rhs.to_bits()).bytes
+    }
+}
+extend<region rhs_region> Ipv6Addr implements BitOrAssign<read Ipv6Addr from rhs_region> {
+    mut fn bitor_assign(read rhs: read Ipv6Addr from rhs_region): Unit {
+        self.bytes = Ipv6Addr.from_bits(self.to_bits() | (*rhs).to_bits()).bytes
     }
 }
 extend Ipv6Addr implements FromStr {
@@ -1408,6 +1488,32 @@ extend IpAddr implements PartialEq {
 extend IpAddr implements Eq {}
 extend IpAddr implements PartialOrd {
     fn partial_cmp(read other: IpAddr): Ordering? { present(self.cmp(other)) }
+}
+extend IpAddr implements PartialEq<Ipv4Addr> {
+    fn eq(read other: Ipv4Addr): bool {
+        match self { IpAddr.V4(ip) => ip == other, IpAddr.V6(_) => false }
+    }
+}
+extend IpAddr implements PartialEq<Ipv6Addr> {
+    fn eq(read other: Ipv6Addr): bool {
+        match self { IpAddr.V6(ip) => ip == other, IpAddr.V4(_) => false }
+    }
+}
+extend IpAddr implements PartialOrd<Ipv4Addr> {
+    fn partial_cmp(read other: Ipv4Addr): Ordering? {
+        match self {
+            IpAddr.V4(ip) => present(ip.cmp(other)),
+            IpAddr.V6(_) => present(Ordering.Greater)
+        }
+    }
+}
+extend IpAddr implements PartialOrd<Ipv6Addr> {
+    fn partial_cmp(read other: Ipv6Addr): Ordering? {
+        match self {
+            IpAddr.V4(_) => present(Ordering.Less),
+            IpAddr.V6(ip) => present(ip.cmp(other))
+        }
+    }
 }
 extend IpAddr implements Ord {
     fn cmp(read other: IpAddr): Ordering {
@@ -1447,6 +1553,15 @@ extend IpAddr implements From<Ipv4Addr> {
 extend IpAddr implements From<Ipv6Addr> {
     static fn from(take value: Ipv6Addr): IpAddr { IpAddr.V6(value) }
 }
+extend IpAddr implements From<[u8; 4]> {
+    static fn from(take value: [u8; 4]): IpAddr { IpAddr.V4(Ipv4Addr.from_octets(value)) }
+}
+extend IpAddr implements From<[u8; 16]> {
+    static fn from(take value: [u8; 16]): IpAddr { IpAddr.V6(Ipv6Addr.from_octets(value)) }
+}
+extend IpAddr implements From<[u16; 8]> {
+    static fn from(take value: [u16; 8]): IpAddr { IpAddr.V6(Ipv6Addr.from_segments(value)) }
+}
 
 extend SocketAddr implements PartialEq {
     fn eq(read other: SocketAddr): bool { self.same(other) }
@@ -1474,6 +1589,21 @@ extend SocketAddr implements Hash {
 extend SocketAddr implements FromStr {
     type Error = io.Error
     static fn from_str(read input: Text): SocketAddr throws io.Error { try parse_socket_addr(input) }
+}
+extend<I: Into<IpAddr>> SocketAddr implements From<(I, u16)> {
+    static fn from(take value: (I, u16)): SocketAddr {
+        socket_addr_ip(value.0.into(), value.1)
+    }
+}
+extend SocketAddr implements From<SocketAddrV4> {
+    static fn from(take value: SocketAddrV4): SocketAddr {
+        socket_addr(value.ip, value.port)
+    }
+}
+extend SocketAddr implements From<SocketAddrV6> {
+    static fn from(take value: SocketAddrV6): SocketAddr {
+        socket_addr_v6(value.ip, value.port, value.flowinfo, value.scope_id)
+    }
 }
 
 // Value types duplicate by copy; owners clone their buffers.

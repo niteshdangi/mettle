@@ -2,12 +2,15 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 // Resource limits protect the compiler from exhausting its own stack, memory
 // or time. Recursion depths are bounded by the stack the compiler runs on;
 // count limits only trip on pathological input, far above any real program.
 namespace mettle::limits {
-inline constexpr std::size_t sourceBytes = std::size_t{1} << 30;
+// Self-hosted source spans use per-file 32-bit byte offsets.
+inline constexpr std::size_t sourceBytes =
+    std::numeric_limits<std::uint32_t>::max();
 inline constexpr std::size_t tokens = std::size_t{1} << 26;
 inline constexpr std::size_t functions = std::size_t{1} << 22;
 inline constexpr std::size_t products = std::size_t{1} << 22;

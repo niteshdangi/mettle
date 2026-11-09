@@ -1,14 +1,14 @@
 // Buffered reading keeps byte order across fill_buf, consume and read_line;
 // buffered writing holds small writes until flush and passes large ones through.
 import alloc.vec.List
-import std.io.{Error, Reader, Writer}
+import std.io.{BufRead, Error, Reader, Writer}
 
 fn run(): i32 throws Error {
     // Reading lines through a small buffer.
     let source = "alpha\nbeta\ngamma".as_bytes()
     var reader = std.io.buf_reader_with_capacity(4usize, std.io.slice_reader(source))
     var line = alloc.vec.new<u8>()
-    let first = try reader.read_line(mut line)
+    let first = try reader.read_until(10u8, mut line)
     if first != 6usize || line.len() != 6usize { return 1 }
     if line[0usize] != 97u8 { return 2 }
 
@@ -16,14 +16,14 @@ fn run(): i32 throws Error {
     let peeked = try reader.fill_buf()
     if peeked.len() == 0usize || peeked[0usize] != 98u8 { return 3 }
     reader.consume(1usize)
-    let second = try reader.read_line(mut line)
+    let second = try reader.read_until(10u8, mut line)
     if second != 4usize || line[0usize] != 101u8 { return 4 }
 
     line.clear()
-    let last = try reader.read_line(mut line)
+    let last = try reader.read_until(10u8, mut line)
     if last != 5usize || line[4usize] != 97u8 { return 5 }
     line.clear()
-    let eof = try reader.read_line(mut line)
+    let eof = try reader.read_until(10u8, mut line)
     if eof != 0usize { return 6 }
 
     // Small writes are held until flush; a write larger than the buffer goes through.

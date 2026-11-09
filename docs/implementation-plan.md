@@ -989,7 +989,14 @@ Preparatory work does not close I13/I14 or qualify I15.
 | --- | --- | --- |
 | Package/API and rebuild contracts | Source-package edges exercised by the lexer seed; independent compilation remains specified only | Architecture section 1.1; implement compiled interfaces and query reuse |
 | Foundation, syntax and driver seed | Builds and runs on Linux x86-64 in debug/release; 114 token/diagnostic parity cases pass per profile | `compiler/{foundation,syntax,driver}`; `tests/probes.py selfhost-lexer BOOTSTRAP EVIDENCE --seed DRIVER`; complete syntax coverage remains open |
-| Parser core | Partial grammar implemented; 60 focused cases pass in debug/release | `syntax/{tree,parser}` owns unchanged tokens, compact node/child arenas, spans and syntax-only IDs. First acceptance covers functions with named parameter/result types, expressions/statements, precedence, newline/semicolon tails, nested blocks, recovery and depth limits. Extended declarations, types, patterns, generic applications and remaining expression forms still need porting; recognized unported forms report `feature`. No type/IR/ownership interface changes are required. |
+| Parser core | Partial grammar implemented; initial 60-case debug/release receipt, expanded receipts below | `syntax/{tree,parser}` owns unchanged tokens, compact node/child arenas, spans and syntax-only IDs. Functions, types, generic applications, imports/modules, core expressions/statements, precedence, newline/semicolon tails, nested blocks, recovery and depth limits are exercised. Other item declarations, patterns and remaining expression forms still need porting; recognized unported forms report `feature`. No semantic type/IR/ownership interface changes are required. |
+| Structural type parser | Implemented; expanded 105-case parser probe passes in debug/release and the address-sanitized native driver on Linux x86-64, based on `20e7bba` | `syntax/{parser,tree}` now represents slices/arrays, tuples/groups, borrows, owners/pinning, pointers, optionals and source annotations from language-grammar section 3. `selfhost-parser` adds accepted structure, immutable token spans, malformed/recovery and depth cases. Generic, callable, bounded and projection types remain outside this batch. No semantic/IR/backend changes. |
+| Parser lookahead hardening | Implemented; 108 focused cases pass in debug/release and the address-sanitized native driver | `syntax/parser` named-generic lookahead previously rescanned comma-separated comparisons. A lazy per-opening rejection bitset and reusable unmatched-opening stack preserve viable inner applications. Existing 105-case receipts precede this change; the expanded probe retains 108 cases and 223 commands per configuration. No C++/library changes or release speed claim. |
+| Extended type parser | Implemented; final 150-case probe passes in debug/release and the address-sanitized native driver | `syntax/{parser,tree}` now represents named/region/constant/associated arguments, higher-ranked region binders, callable signatures/effects, erased/opaque bounds and associated projections from language-grammar sections 2-3. `selfhost-parser` covers type structure, angle-token boundaries, effect attachment, rejection/recovery and depth, including quoted `Outcome` identity. Async callable types retain the bootstrap's explicit feature diagnostic. Declaration generics and generic calls are implemented in the following batch; no semantic/IR/backend changes. |
+| Generic function declarations and applications | Implemented; 183 cases verified in debug incrementally and in complete release/address-sanitized runs | `syntax/{parser,tree}` now represents generic parameters/defaults, bounds/where clauses, parameter defaults, effects, visibility/unsafe/const modifiers and expression bodies. Applications use the shared type-argument parser with rollback and context-aware rejection caching. Focused probes cover declaration structure, generic followers, mixed constant/type arguments, diagnostics/recovery and comparison scaling. Contextual `.drop` names now parse. Other item declarations, parameter patterns/receivers, foreign/variadic function declarations and async bodies remain separate work. Prior 150-case receipts precede this batch. |
+| Import/module declarations | Implemented; 203 cases verified in debug incrementally and in complete release/address-sanitized runs | `syntax/{parser,tree}` now represents import paths/aliases/groups/globs, shared visibility, external/inline modules, item separators, scoped recovery and nesting limits. The existing parser probe checks hierarchy/spans, lexical token parity and bootstrap syntax acceptance/rejection. Source loading, canonical module identities and name resolution stay outside parsing. Prior 183-case receipts precede this batch; no I15 closure claim. |
+| Parser/driver correctness review | Implemented; 14 focused probes and two bounded-reader tests pass in debug/release/emitted-ASan | `syntax/parser` isolates/restores block generic boundaries and retains contextual `format` parameter modifiers. `driver/main` checks opened regular-file size before allocation and bounds reads before appending. Probes cover nested generic shifts/closers, modifier structure/contextual names and oversized sparse-file rejection in both CLI modes (96 MiB process cap in debug/release; uncapped under ASan); reader tests cover zero/exact/over-limit and multi-chunk input. Preserved `seed-final/mettle` and `/home/nites/mettle-d/library` were used; receipts are under the existing selfhost evidence directory in `repairs-focus-{debug,release,asan}` plus `repairs-restore-debug`. Current concurrent bootstrap/library work and milestone closure remain unqualified. |
+| Source-size policy alignment | Implemented; bootstrap syntax/packages build and pinned formatting pass; debug/release/emitted-ASan sparse-file probes pass | Source/data byte ceilings are 2^32 - 1, the self-hosted per-file `u32` span range, rather than an arbitrary 1 GiB cap. `foundation.SOURCE_BYTES` is shared by the driver/lexer; `bootstrap/support/limits.h` matches it. The existing probe rejects a sparse 4 GiB source in both CLI modes before allocation (96 MiB cap in debug/release, uncapped under ASan); receipts are in `source-cap-{debug,release,asan}` under the existing selfhost evidence directory, using the preserved bootstrap/library. Prior review receipts exercised the old 1 GiB boundary; no multi-GiB successful compilation, full bootstrap requalification or milestone closure is claimed. |
 | Compiled dependency interfaces and query engine | Missing | Future `pipeline`, `ir`, `packages`; consumers must skip unchanged dependency parsing/checking; validate metadata and invalidation edges |
 | Checked frontend and verified middle end | Missing | Future `frontend`, `types`, `ir`, `middle`; preserve full language/ownership contracts and existing corpus |
 | Backend, build and editor integration | Missing | Future backend/pipeline/packages/editor/driver implementations; replace C++ responsibilities through defined interfaces |
@@ -1014,6 +1021,69 @@ the expanded 114-case lexer corpus, including all ten compiler source files.
 Evidence is retained under `/home/nites/lanes/selfhost-86da951/parser-final-{debug,release,asan}`.
 This qualifies the exercised parser subset, not the entire bootstrap compiler
 under sanitizers. Full grammar, semantic checking and self-compilation remain open.
+
+The 2026-11-10 structural-type batch expands that probe to 105 cases (219
+commands) per debug/release/address-sanitized native driver. Type acceptance and
+rejection locations are compared with the preserved C++ seed; type-node shapes
+are checked against explicit grammar expectations because the C++ inspector
+does not expose type trees. The batch covers partial-token `>>=` pointer closers,
+individual `??` suffix spans, parenthesized borrow/optional nesting, source
+annotations, malformed-type recovery and type-depth limits. Evidence is retained
+under `/home/nites/lanes/selfhost-86da951/types-final-{debug,release,asan}`.
+It does not qualify concurrent C++/library changes, semantic typing or I15 closure.
+
+The subsequent parser review reproduced repeated named-application lookahead on
+flat comparison arguments. At 512/2,048/8,192 arguments, the native release
+`syntax` command took 0.045/0.447/7.115 seconds before rejection caching and
+0.008/0.028/0.129 seconds afterward. These single-run, shared-host measurements
+include inspection output and are engineering evidence, not P12 or a release
+comparison. Inputs and binary identities are retained under the existing
+selfhost evidence directory in `parser-scaling/{before,after}.json`; focused
+debug/release/address-sanitized receipts are in `lookahead-final-{debug,release,asan}`.
+The three added cases cover repeated comparisons and viable flat/nested generic
+calls inside rejected outer lookahead. Generic syntax was unimplemented at that
+batch's source revision; the following batch adds generic types.
+
+The extended-type batch passes 150 cases (339 commands) per native debug,
+release and address-sanitized driver, with receipts under the existing selfhost
+evidence directory in `extended-final-{debug,release,asan}`. Generic constants
+preserve closing-angle boundaries while parentheses/braces permit shift
+expressions; named-to-constant fallback leaves no orphan nodes. Callable cases
+cover access, ABI/variadic syntax, region binders and nested/grouped effect
+attachment. Outcome arity/positional requirements also apply to quoted names.
+The selected grammar's `Buffer<const {N + 1}>` is accepted and checked against
+explicit native structure and bootstrap lexer tokens; the preserved C++ seed
+rejects this form at `{`, so its parser is not used as the acceptance oracle
+for that case. This records a reference discrepancy, not a new language form.
+Concurrent C++/library changes, semantic typing and I15 closure are unqualified.
+
+The generic-function batch verifies 183 parser cases. Debug evidence combines
+178 passing cases in `functions-final-debug` with five signature/application
+cases in `functions-final-debug-tail`, using the same native binary identity;
+the first run stopped on a test-display expectation corrected without native
+source changes. Release and address-sanitized runs pass all 183 cases (459
+commands each) under `functions-final-{release,asan}` in the existing selfhost
+evidence directory. The existing probe's `--filter` selects focused parser cases.
+Coverage includes syntax-only generic followers, qualified specialized members,
+contextual `.drop`, full signature structure, failed-lookahead rollback and the
+100-diagnostic cap. The 512/2,048/8,192 comparison-argument inspection took
+0.019/0.065/0.225 seconds on the shared host, retained in
+`parser-scaling/generic-functions.json`; this is engineering scaling evidence,
+not a release or best-in-class performance result.
+
+The import/module batch verifies 203 cases. Debug combines 26 focused cases
+under `modules-focus-debug` and 177 remaining cases under
+`modules-regressions-debug`, using the same native binary identity. Release and
+address-sanitized runs pass all 203 cases (496 commands each) under
+`modules-final-{release,asan}` in the existing selfhost evidence directory.
+New cases cover nested hierarchy, visibility/aliases/groups/globs, item
+terminators, external-module comment lookahead, malformed-item recovery and
+module-depth limits. Nine literal diagnostic messages were matched against the
+preserved bootstrap in the debug run, then retained as explicit expectations;
+`modules-literal-expectations-debug` rechecks those nine cases without redundant
+bootstrap library checks. Native phase/message/full-literal-span assertions
+remain enforced. Concurrent C++/library work, module loading, name resolution
+and full self-hosting remain unqualified.
 
 Seed compilation exposed a bootstrap ownership-analysis crash: generic payload
 traversal discarded enclosing field paths and used payload indices against

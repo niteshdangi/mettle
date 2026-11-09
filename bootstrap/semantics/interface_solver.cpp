@@ -128,6 +128,13 @@ Solver::match(Type pattern, Type actual, bool symmetric,
     }
     if (types.isSlice(pattern) && types.isSlice(actual))
       return unify(types.slice(pattern).element, types.slice(actual).element);
+    // An erased payload's lifetime bound is a region fact, checked by the
+    // region relations rather than by shape.
+    if (types.isErased(pattern) && types.isErased(actual) &&
+        (types.erased(pattern).bound != RegionId::Unspecified ||
+         types.erased(actual).bound != RegionId::Unspecified))
+      return unify(types.erasedBound(pattern, RegionId::Unspecified),
+                   types.erasedBound(actual, RegionId::Unspecified));
     if (types.isProduct(pattern) && types.isProduct(actual)) {
       auto originA = nominalOrigin(types, pattern),
            originB = nominalOrigin(types, actual);

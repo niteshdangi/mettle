@@ -1,4 +1,5 @@
 pub copy type Span { pub source: u32; pub begin: u32; pub end: u32 }
+pub const SOURCE_BYTES: usize = 4294967295usize
 
 pub fn invalid_utf8(read bytes: [u8]): usize? {
     var offset = 0usize

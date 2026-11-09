@@ -16,7 +16,7 @@ bool rawTextStart(const std::string &s, std::size_t i) {
 std::vector<Token> tokenize(const Source &source, Diagnostics &diagnostics) {
   Diagnostics::SourceContext context(diagnostics, source);
   if (source.text.size() > limits::sourceBytes) {
-    diagnostics.error("limit", {}, "source file exceeds 1 GiB");
+    diagnostics.error("limit", {}, "source file must be smaller than 4 GiB");
     return {{TokenKind::End, {0, 0, source.id}, ""}};
   }
   if (auto invalid = invalidUtf8(source.text)) {

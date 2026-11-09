@@ -85,6 +85,11 @@ fn show<T: Display>(read value: T, options: Spec): String {
 fn is_text(actual: String, read expected: Text): bool { actual.as_text() == expected }
 
 fn checks_padding(): i32 {
+    var sink = String("")
+    let options = opts('*', Align.Center, present(6usize), present(3usize), false, false, false)
+    var formatter = fmt.formatter(mut sink, options)
+    if formatter.align() != Align.Center || formatter.fill() != '*' { return 7 }
+    if formatter.width() != present(6usize) || formatter.precision() != present(3usize) { return 8 }
     let right = show_text("ab", opts(' ', Align.Right, present(5usize), none, false, false, false))
     if !is_text(right, "   ab") { return 1 }
     let left = show_text("ab", opts('*', Align.Left, present(4usize), none, false, false, false))
@@ -127,6 +132,21 @@ fn checks_builders(): i32 {
     if !is_text(tuple, "Pair(1, 2)") { return 23 }
     let map = show(Table(9i32), opts(' ', Align.Unknown, none, none, false, false, false))
     if !is_text(map, "{9: 9}") { return 24 }
+    match capture checks_debug_set() {
+        success(code) => { if code != 0 { return code } },
+        failure(_) => { return 26 }
+    }
+    0
+}
+
+fn checks_debug_set(): i32 throws Error {
+    var output = String("")
+    var formatter = fmt.formatter(mut output, fmt.spec())
+    var set = try formatter.debug_set()
+    try set.entry(1i32)
+    try set.entry(2i32)
+    try set.finish()
+    if output.as_text() != "{1, 2}" { return 25 }
     0
 }
 

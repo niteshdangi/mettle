@@ -49,8 +49,21 @@ std::optional<std::size_t> Checker::receiverCandidate(
   // call.text and bypass inherent methods and import visibility.
   const bool protocol = call.kind == Kind::Call && !call.text.empty();
   auto self = receiver;
-  bool pinned = checked.types->isProduct(receiver) &&
+  bool pinned = !pinAsOwner && checked.types->isProduct(receiver) &&
                 checked.types->product(receiver).kind == AggregateKind::Pin;
+  // A pin's own methods (`extend pinned read T`) precede its target's;
+  // its builtin methods precede both.
+  static const std::set<std::string_view> builtinPinMethods{
+      "as_ref",  "as_mut",           "get_ref",   "get_mut",
+      "get_unchecked_mut", "into_inner", "into_inner_unchecked"};
+  if (pinned && !builtinPinMethods.contains(name) &&
+      !name.starts_with("project_")) {
+    pinAsOwner = true;
+    auto own = receiverCandidate(receiver, mode, name, call, arguments);
+    pinAsOwner = false;
+    if (own)
+      return own;
+  }
   if (pinned)
     self = checked.types->view(checked.types->product(receiver).components[0])
                .payload;

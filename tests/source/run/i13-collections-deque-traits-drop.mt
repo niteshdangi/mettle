@@ -10,6 +10,11 @@ type Counted {
     drops: ptr<mut usize>
     drop { unsafe { *self.drops += 1usize } }
 }
+extend Counted implements Debug {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws Error {
+        try i32.(Debug).fmt(self.value, mut f)
+    }
+}
 
 fn render<T: Debug>(read value: T, mut buffer: [u8]): usize throws Error {
     var out = buffer_writer(mut buffer)
@@ -19,6 +24,7 @@ fn render<T: Debug>(read value: T, mut buffer: [u8]): usize throws Error {
 }
 
 fn require_eq<T: Eq>(read value: T): bool { true }
+fn require_debug<T: Debug>(read value: T): bool { true }
 
 fn run(): i32 throws Error {
     var buffer = [0u8; 64]
@@ -116,6 +122,7 @@ fn drop_checks(): i32 {
                 present(item) => { if item.value != 2 { return 1 } },
                 none => { return 2 }
             }
+            if !require_debug(read drain) { return 6 }
         }
         if drops != 2usize { return 3 }
         if full.len() != 2usize || full[0usize].value != 1 || full[1usize].value != 4 {

@@ -31,18 +31,27 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def run_suite(mode, executable, directory, seed=None):
+def run_suite(mode, executable, directory, seed=None, case_filter=None):
     executable = str(Path(executable).resolve())
     directory = Path(directory) / mode
     directory.mkdir(parents=True, exist_ok=True)
     evidence = {"scope": "Source regressions through the initial I06 machine boundary; not full language or release qualification",
                 "status": "in_progress", "mode": mode, "compiler_sha256": digest(executable),
                 "host": platform.platform(), "commands": [], "cases": []}
+    if case_filter:
+        evidence["case_filter"] = case_filter
 
-    def run(arguments, expected=0, timeout=30, env=None, input_text=None):
+    def selected(name):
+        return not case_filter or re.search(case_filter, name)
+
+    def run(arguments, expected=0, timeout=30, env=None, input_text=None, memory_limit=None):
+        def constrain_memory():
+            resource.setrlimit(resource.RLIMIT_AS, (memory_limit, memory_limit))
+
         begin = time.perf_counter()
         result = subprocess.run(arguments, text=True, capture_output=True,
-                                timeout=timeout, env=env, input=input_text)
+                                timeout=timeout, env=env, input=input_text,
+                                preexec_fn=constrain_memory if memory_limit else None)
         evidence["commands"].append({"command": list(map(str, arguments)),
                                     "exit_status": result.returncode,
                                     "elapsed_seconds": time.perf_counter() - begin,
@@ -142,6 +151,22 @@ def run_suite(mode, executable, directory, seed=None):
         native = str(Path(seed).resolve())
         evidence["scope"] = "Self-hosted parser core shapes, lossless tokens, recovery and limits; extended grammar remains unsupported"
         evidence["seed_sha256"] = digest(native)
+        if selected("source-limit"):
+            path = directory / "source-limit.mt"
+            with path.open("wb") as file:
+                file.truncate(1 << 32)
+            try:
+                memory_limit = None if os.environ.get("ASAN_OPTIONS") else 96 * 1024 * 1024
+                control = source("source-limit-control", "fn main() { 0 }\n")
+                for command in ([], ["syntax"]):
+                    run([native, *command, str(control)], memory_limit=memory_limit)
+                    result = run([native, *command, str(path)], 1, memory_limit=memory_limit)
+                    assert not result.stdout, result.stdout
+                    assert result.stderr == "error[limit] 0:0 source file must be smaller than 4 GiB\n", result.stderr
+                evidence["cases"].append({"name": "source-limit", "source_bytes": path.stat().st_size,
+                                          "memory_limit": memory_limit})
+            finally:
+                path.unlink()
         kinds = {0: "integer", 1: "boolean", 2: "unit", 3: "name", 4: "group",
                  5: "unary", 6: "binary", 7: "call", 8: "block", 9: "if",
                  10: "binding", 11: "assign", 12: "return", 13: "while",
@@ -186,9 +211,12 @@ def run_suite(mode, executable, directory, seed=None):
             kind, begin, end, first, last, operation, semicolon = nodes[index]
             children = edges[first:last]
             text = data[begin:end].decode()
+            if kind == "generic-apply":
+                base = native_shape(children[0], nodes, edges, tokens, data)
+                return (base[0], base[1], bool(semicolon), base[3])
             if kind == "binding":
                 text = data[nodes[children[0]][1]:nodes[children[0]][2]].decode().strip('`')
-                children = [child for child in children[1:] if nodes[child][0] != "type"]
+                children = [child for child in children[1:] if nodes[child][0] != "type" and not nodes[child][0].startswith("type-")]
             elif kind == "field":
                 text = data[nodes[children[-1]][1]:nodes[children[-1]][2]].decode().strip('`')
                 children = children[:-1]
@@ -210,6 +238,12 @@ def run_suite(mode, executable, directory, seed=None):
 
         def reference_shape(node):
             kind = kinds[node["kind"]]
+            if kind == "name" and "::" in node["text"]:
+                parts = node["text"].split("::")
+                shape = ("name", parts[0], False, [])
+                for part in parts[1:]:
+                    shape = ("field", part, False, [shape])
+                return (shape[0], shape[1], node["semicolon"], shape[3])
             return (kind, node["text"] if kind in textual else "", node["semicolon"],
                     [reference_shape(child) for child in node["children"]])
 
@@ -239,20 +273,55 @@ def run_suite(mode, executable, directory, seed=None):
             "return-newline": "return\n(42)",
             "return-group": "return (\n42\n)",
             "quoted-name": "`type`(1)",
+            "pointer-binding": "var value: ptr<read ptr<mut i32>>=other\nvalue",
+            "structural-binding": "let value: (read [u8] from r)? = other\nvalue",
+            "structural-cast": "value as ptr<read i32>",
+            "comparison-arguments": "call(" + ", ".join(["a < b"] * 256) + ")",
+            "generic-call": "factory<i32, Other>(value)",
+            "generic-nested-call": "factory<Outer<Inner>>(value)",
+            "generic-mixed-comparison": "call(a < b, factory<T>(x))",
+            "generic-mixed-nested": "call(a < b, factory<Outer<Inner>>(x))",
+            "generic-value": "let convert = parse<i32>\nconvert(value)",
+            "generic-semicolon": "factory<T>;\n42",
+            "generic-member": "object.convert<T>(value).field",
+            "generic-projection-member": "factory<T>.member(value)",
+            "generic-drop-member": "factory<T>.drop(value)",
+            "contextual-drop-member": "core.mem.drop(value)",
+            "generic-compound-types": "factory<[u8; N], ptr<read T>, fn(): U>(value)",
+            "generic-constant-comparisons": "factory<{a < b && c > d}>(value)",
+            "generic-block-shift": "outer(call<4 + { factory<[i32; 8 >> 1]>(0) }>())",
+            "generic-block-boundary-restore": "outer(factory<Buffer<4 + { inner<[i32; 8 >> 1]>(0) } + 2>>())",
+            "generic-comment-newline": "let convert = parse<T> /* newline\n */ next()",
+            "generic-quirk": "assert(a < b, c > (d))",
+            "generic-parenthesized-comparison": "assert((a < b), c > (d))",
+            "declaration-generic": "fn identity<T, region r, const N: usize = 4>(read value: T): T { value }",
+            "declaration-defaults": "fn defaults<T = i32>(value: T = 42): T { value }",
+            "declaration-constraints": "fn convert<T: Trait + ?Sized, U>(value: T): U\nwhere T: Other, U = Result<T> { other(value) }",
+            "declaration-public": "pub(package) unsafe const fn identity<T>(value: T): T => value",
+            "declaration-effect": "fn load<T>(value: T): T throws Error where T: Trait { value }",
+            "declaration-generic-value": "fn main() => factory<T>",
+            "declaration-contextual-format": "fn format(format: format, value: format.Message) { format }",
+            "declaration-imports": "pub import dep.api as renamed\nimport core.text.{Text, Other as Alias,}\nimport external.api.*\nfn main() { 42 }",
+            "declaration-modules": "pub module tools\n{\nimport dep.api\nmodule child\nfn inspect() { 42 }\nmodule nested { fn inner() { 7 } }\n}\nmodule remote\nfn main() { 0 }",
+            "declaration-module-comments": "module one /* a\r\n b */ { import dep\nfn inside() { 1 } }\nmodule two /* c\n d */\nfn main() { 2 }",
+            "generic-binding": "var value: Outer<Inner<i32>>=other\nvalue",
         }
         for name, body in accepted.items():
-            path = source("parser-" + name, body if name == "declarations" else "fn main() {\n" + body + "\n}\n")
+            if not selected(name):
+                continue
+            path = source("parser-" + name, body if name == "declarations" or name.startswith("declaration-") else "fn main() {\n" + body + "\n}\n")
             reference = run([executable, "syntax", str(path)])
             actual = run([native, "syntax", str(path)])
             data = path.read_bytes()
             nodes, edges, tokens = inspect_native(actual, data)
             wanted = json.loads(reference.stdout)
-            assert tokens == [(token["kind"], token["begin"], token["end"]) for token in wanted["tokens"]], name
+            lexical = json.loads(run([executable, "tokens", str(path)]).stdout)
+            assert tokens == [(token["kind"], token["begin"], token["end"]) for token in lexical["tokens"]], name
             functions = [index for index, node in enumerate(nodes) if node[0] == "function"]
             assert len(functions) == len(wanted["functions"])
             for index, reference_function in zip(functions, wanted["functions"]):
                 function = nodes[index]
-                identifier = nodes[edges[function[3]]]
+                identifier = next(nodes[child] for child in edges[function[3]:function[4]] if nodes[child][0] == "name")
                 assert data[identifier[1]:identifier[2]].decode().strip('`') == reference_function["name"]
                 block = edges[function[4] - 1]
                 found = native_shape(block, nodes, edges, tokens, data)
@@ -274,8 +343,59 @@ def run_suite(mode, executable, directory, seed=None):
             "depth": "fn main() { " + "!" * 300 + "true }",
             "depth-block": "fn main() { " + "{" * 300 + "0" + "}" * 300 + " }",
             "depth-else": "fn main() { " + "if true { 0 } else " * 300 + "{ 1 } }",
+            "type-unit": "fn inspect(value: ()) { 0 }",
+            "type-pointer-access": "fn inspect(value: ptr<i32>) { 0 }",
+            "type-pointer-close": "fn inspect(value: ptr<read i32) { 0 }",
+            "type-local-owner": "fn inspect(value: local i32) { 0 }",
+            "type-array-count": "fn inspect(value: [u8;]) { 0 }",
+            "type-array-close": "fn inspect(value: [u8) { 0 }",
+            "type-tuple-element": "fn inspect(value: (u8,,i32)) { 0 }",
+            "type-empty-sources": "fn inspect(value: read Text from ()) { 0 }",
+            "type-source-tail": "fn inspect(value: read Text from (a,)) { 0 }",
+            "depth-type-array": "fn inspect(value: " + "[" * 300 + "u8" + "]" * 300 + ") { 0 }",
+            "depth-type-owner": "fn inspect(value: " + "heap " * 300 + "u8) { 0 }",
+            "generic-missing-type": "fn inspect(value: List<type Item = >) { 0 }",
+            "generic-missing-region": "fn inspect(value: View<region>) { 0 }",
+            "generic-missing-close": "fn inspect(value: List<T) { 0 }",
+            "outcome-bare": "fn inspect(value: Outcome) { 0 }",
+            "outcome-quoted-bare": "fn inspect(value: `Outcome`) { 0 }",
+            "outcome-arity": "fn inspect(value: Outcome<T>) { 0 }",
+            "outcome-extra": "fn inspect(value: Outcome<T, E, U>) { 0 }",
+            "outcome-region": "fn inspect(value: Outcome<T, region r>) { 0 }",
+            "outcome-associated": "fn inspect(value: Outcome<Item = T, E>) { 0 }",
+            "callable-result": "fn inspect(value: fn()) { 0 }",
+            "callable-parameter": "fn inspect(value: fn(,): T) { 0 }",
+            "callable-abi": "fn inspect(value: extern C fn(): T) { 0 }",
+            "callable-effect-type": "fn inspect(value: fn(): T throws ) { 0 }",
+            "stored-effect": "fn inspect(value: T throws E) { 0 }",
+            "generic-const-no-type": "fn inspect<const N>() { 0 }",
+            "generic-region-default": "fn inspect<region r = T>() { 0 }",
+            "generic-default-missing": "fn inspect<T = >() { 0 }",
+            "generic-declaration-close": "fn inspect<T(value: T) { 0 }",
+            "constraint-missing-bound": "fn inspect<T>() where T: { 0 }",
+            "parameter-default-missing": "fn inspect(value: T = ) { 0 }",
+            "function-arrow-result": "fn inspect() -> T { 0 }",
+            "generic-speculation-rollback": "fn main() { a < (b + c) > (d) }",
+            "generic-suppressed-newline": "fn main() { (factory<T>\n + other) }",
+            "generic-empty-application": "fn main() { factory<>(value) }",
+            "generic-after-call": "fn main() { factory<T>() < U > (value) }",
+            "import-path-missing": "import",
+            "import-alias-missing": "import dep as",
+            "import-empty-group": "import dep.{}",
+            "import-group-comma": "import dep.{A B}",
+            "import-group-close": "import dep.{A",
+            "import-item-separator": "import dep fn main() { 0 }",
+            "module-name-missing": "module {}",
+            "module-item-separator": "module dep fn main() { 0 }",
+            "module-close": "module dep { fn inside() { 0 }",
+            "depth-module": "module nested { " * 300 + "}" * 300,
+            "projection-member": "fn inspect(value: T.(Trait).) { 0 }",
+            "depth-type-generic": "fn inspect(value: " + "Outer<" * 300 + "T" + ">" * 300 + ") { 0 }",
+            "depth-type-callable": "fn inspect(value: " + "fn(): " * 300 + "T) { 0 }",
         }
         for name, text in rejected.items():
+            if not selected(name):
+                continue
             path = source("parser-" + name, text)
             reference = run([executable, "syntax", str(path)], 1)
             actual = run([native, "syntax", str(path)], 1)
@@ -293,42 +413,60 @@ def run_suite(mode, executable, directory, seed=None):
             evidence["cases"].append({"name": name, "phase": found[1], "source_sha256": digest(path)})
 
         for name, text in {"recovery": "fn main() {\nlet a =\n;\nlet b =\n;\n42\n}\nfn after() { 7 }",
+                           "recovery-type": "fn main() {\nlet a: [u8;] = x;\nlet b: ptr<i32> = x;\n42\n}\nfn after() { 7 }",
+                           "recovery-generic": "fn main() {\nlet a: List<region> = x;\nlet b: fn(): = x;\n42\n}\nfn after() { 7 }",
+                           "recovery-application": "fn main() {\nlet a = factory<type Item = >();\nlet b = (factory<T>\n + other);\n42\n}\nfn after() { 7 }",
+                           "recovery-module": "module broken { import dep as; import missing fn inside() { 42 } }\nfn after() { 7 }",
                            "unsupported": "type Product { value: i32 }\nfn after() { 7 }"}.items():
+            if not selected(name):
+                continue
             path = source("parser-" + name, text)
             actual = run([native, "syntax", str(path)], 1)
             nodes, edges, tokens = inspect_native(actual, path.read_bytes())
             assert sum(node[0] == "function" for node in nodes) >= 1, actual.stdout
-            assert sum(node[0] == "error" for node in nodes) >= (2 if name == "recovery" else 1), actual.stdout
-            if name == "recovery":
+            assert sum(node[0] == "error" for node in nodes) >= (2 if name.startswith("recovery") else 1), actual.stdout
+            if name.startswith("recovery"):
                 assert sum(node[0] == "function" for node in nodes) == 2
                 assert any(node[0] == "integer" and path.read_bytes()[node[1]:node[2]] == b"42" for node in nodes)
-            assert f"error[{'parse' if name == 'recovery' else 'feature'}]" in actual.stderr, actual.stderr
+            assert f"error[{'parse' if name.startswith('recovery') else 'feature'}]" in actual.stderr, actual.stderr
             evidence["cases"].append({"name": name, "source_sha256": digest(path)})
 
-        for i, literal in enumerate(('"\\q"', '"\\x80"', '"\\u{}"', '"\\u{d800}"', '"\\u{110000}"',
-                                     'b"\\u{41}"', 'b"\\xgg"', 'b"\u00e9"', 'br#"\u00e9"#')):
+        bad_text = (('"\\q"', "invalid text escape"),
+                    ('"\\x80"', "text byte escape requires two hexadecimal digits no greater than 7f"),
+                    ('"\\u{}"', "invalid Unicode scalar escape"),
+                    ('"\\u{d800}"', "invalid Unicode scalar escape"),
+                    ('"\\u{110000}"', "invalid Unicode scalar escape"),
+                    ('b"\\u{41}"', "invalid text escape"),
+                    ('b"\\xgg"', "byte escape requires two hexadecimal digits"),
+                    ('b"\u00e9"', "byte text must contain only ASCII characters"),
+                    ('br#"\u00e9"#', "byte text must contain only ASCII characters"))
+        for i, (literal, message) in enumerate(bad_text):
+            if not selected(f"text-{i}"):
+                continue
             path = source(f"parser-text-{i}", "fn main() { " + literal + " }\n")
-            reference = run([executable, "check", str(path)], 1)
             actual = run([native, "syntax", str(path)], 1)
-            wanted = re.search(r"error\[lex\]: ([^\n]*)", reference.stderr)
             found = re.search(r"error\[lex\] (\d+):(\d+) ([^\n]*)", actual.stderr)
-            assert wanted and found and wanted[1] == found[3], (reference.stderr, actual.stderr)
+            assert found and message == found[3], (message, actual.stderr)
             assert path.read_bytes()[int(found[1]):int(found[2])].decode() == literal
             evidence["cases"].append({"name": f"text-{i}", "source_sha256": digest(path)})
 
-        for i, text in enumerate(("fn generic<T>() { 0 }", "fn slice(x: [u8]) { 0 }",
-                                  "fn main() { if let present(x) = value { x } }",
-                                  "fn defaults(x: i32 = 1) { x }", "fn main() { call(value: 1) }",
+        for i, text in enumerate(("fn main() { if let present(x) = value { x } }",
+                                  "fn main() { call(value: 1) }",
                                   "fn main() { object?.field }", "fn main() { T.(Trait).member }",
-                                  "fn main() { factory<i32, Other>(value) }",
-                                  "fn main() { factory<Outer<Inner>>(value) }")):
+                                  "fn inspect(value: async fn(): i32) { 0 }",
+                                  "import dep.{nested.Name}")):
+            if not selected(f"feature-{i}"):
+                continue
             path = source(f"parser-feature-{i}", text)
             actual = run([native, "syntax", str(path)], 1)
             assert "error[feature]" in actual.stderr, actual.stderr
             evidence["cases"].append({"name": f"feature-{i}", "source_sha256": digest(path)})
 
         for name, text, expected in (("empty-module", "", 0),
-                                      ("parser-budget", "fn main() {\n" + "let x =;\n" * 140 + "}\n", 1)):
+                                      ("parser-budget", "fn main() {\n" + "let x =;\n" * 140 + "}\n", 1),
+                                      ("speculation-budget", "fn main() {\n" + "let x = f<(a + b)>(c);\n" * 140 + "}\n", 1)):
+            if not selected(name):
+                continue
             path = source("parser-" + name, text)
             reference = run([executable, "syntax", str(path)], expected)
             actual = run([native, "syntax", str(path)], expected)
@@ -337,6 +475,198 @@ def run_suite(mode, executable, directory, seed=None):
                 assert actual.stderr.count("error[parse]") == reference.stderr.count("error[parse]") == 100
                 assert "40 additional diagnostics suppressed" in actual.stderr
             evidence["cases"].append({"name": name, "source_sha256": digest(path)})
+
+        def type_shape(index, nodes, edges, tokens, data):
+            kind, begin, end, first, last, operation, _ = nodes[index]
+            children = edges[first:last]
+            if kind == "default-value":
+                assert len(children) == 1 and not nodes[children[0]][0].startswith("type"), (kind, children)
+                expression = nodes[children[0]]
+                return "default-value(expr[" + data[expression[1]:expression[2]].decode() + "])"
+            if kind == "name":
+                return data[begin:end].decode().strip('`')
+            if kind == "type":
+                if all(nodes[child][0] == "name" for child in children):
+                    return ".".join(type_shape(child, nodes, edges, tokens, data) for child in children)
+                assert len(children) == 1, (kind, children)
+                return type_shape(children[0], nodes, edges, tokens, data)
+            structural = {"generic-apply", "generic-parameters", "generic-parameter", "bounds", "constraints", "constraint", "default-type", "default-value", "visibility", "modifier", "parameters", "parameter", "module", "module-declaration", "module-body", "import", "import-path", "import-alias", "import-group", "import-name", "import-glob", "function", "block"}
+            if not kind.startswith("type-") and kind not in structural:
+                return "expr[" + data[begin:end].decode() + "]"
+            label = kind.removeprefix("type-")
+            if kind in {"type-owner", "type-pointer", "type-borrow", "type-modifier", "type-parameter", "generic-parameter", "constraint", "modifier", "parameter"} and operation != -1:
+                token = tokens[operation]
+                qualifier = data[token[1]:token[2]].decode()
+                if kind == "type-owner" and qualifier == "local":
+                    qualifier = " ".join(data[begin:end].decode().split()[:2])
+                label += "[" + qualifier + "]"
+            return label + "(" + ",".join(type_shape(child, nodes, edges, tokens, data) for child in children) + ")"
+
+        structural_types = {
+            "qualified": ("core.text.Text", "core.text.Text"),
+            "inferred": ("_", "_"),
+            "slice": ("[u8]", "slice(u8)"),
+            "array": ("[i32; 2 + 3]", "array(i32,expr[2 + 3])"),
+            "nested-array": ("[[u8; 4]; 2]", "array(array(u8,expr[4]),expr[2])"),
+            "group": ("(i32)", "group(i32)"),
+            "tuple": ("(i32, [u8],)", "tuple(i32,slice(u8))"),
+            "single-tuple": ("(i32,)", "tuple(i32)"),
+            "borrow": ("read [u8] from r", "sources(borrow[read](slice(u8)),r)"),
+            "mutable": ("mut i32 from static", "sources(borrow[mut](i32),static)"),
+            "sources": ("read Text from (a, static, b)", "sources(borrow[read](Text),a,static,b)"),
+            "borrow-optional": ("read i32? from r", "sources(borrow[read](optional(i32)),r)"),
+            "optional-borrow": ("(read i32 from r)?", "optional(group(sources(borrow[read](i32),r)))"),
+            "double-optional": ("i32??", "optional(optional(i32))"),
+            "heap": ("heap [u8]", "owner[heap](slice(u8))"),
+            "shared": ("shared Item", "owner[shared](Item)"),
+            "weak": ("weak Item", "owner[weak](Item)"),
+            "local-shared": ("local shared Item", "owner[local shared](Item)"),
+            "local-weak": ("local weak Item", "owner[local weak](Item)"),
+            "pinned": ("pinned heap Item", "pinned(owner[heap](Item))"),
+            "pinned-view": ("pinned read Item from r", "pinned(sources(borrow[read](Item),r))"),
+            "pointer": ("ptr<read i32>", "pointer[read](i32)"),
+            "nested-pointer": ("ptr<read ptr<mut i32>>", "pointer[read](pointer[mut](i32))"),
+            "pointer-optional": ("ptr<mut i32>?", "optional(pointer[mut](i32))"),
+            "multiline": ("[\n(read Text from (\na, b\n), u8)\n]", "slice(tuple(sources(borrow[read](Text),a,b),u8))"),
+            "generic": ("List<u8>", "apply(List,arguments(argument(u8)))"),
+            "generic-nested": ("Outer<Inner<i32>>", "apply(Outer,arguments(argument(apply(Inner,arguments(argument(i32))))))"),
+            "generic-region": ("View<region r, region static, T,>", "apply(View,arguments(region-argument(r),region-argument(static),argument(T)))"),
+            "generic-const": ("Buffer<4, true, b'x'>", "apply(Buffer,arguments(const-argument(expr[4]),const-argument(expr[true]),const-argument(expr[b'x'])))"),
+            "generic-const-name": ("Buffer<N + 1>", "apply(Buffer,arguments(const-argument(expr[N + 1])))"),
+            "generic-const-nested": ("Outer<Buffer<4>>", "apply(Outer,arguments(argument(apply(Buffer,arguments(const-argument(expr[4]))))))"),
+            "generic-const-shift": ("Buffer<{N >> 1}>", "apply(Buffer,arguments(const-argument(expr[N >> 1])))"),
+            "generic-explicit-const": ("Buffer<const {N + 1}>", "apply(Buffer,arguments(const-argument(expr[N + 1])))"),
+            "generic-associated": ("Future<Output = i32>", "apply(Future,arguments(argument(Output,i32)))"),
+            "generic-explicit-associated": ("Future<type Output = i32>", "apply(Future,arguments(argument(Output,i32)))"),
+            "generic-associated-const": ("Buffer<const N = 2 + 3>", "apply(Buffer,arguments(const-argument(N,expr[2 + 3])))"),
+            "outcome": ("Outcome<T, Error>", "outcome(Outcome,arguments(argument(T),argument(Error)))"),
+            "outcome-quoted": ("`Outcome`<T, Error>", "outcome(Outcome,arguments(argument(T),argument(Error)))"),
+            "erased": ("any Trait + Other<T>", "erased(Trait,apply(Other,arguments(argument(T))))"),
+            "opaque": ("some Trait<Item = T>", "opaque(apply(Trait,arguments(argument(Item,T))))"),
+            "ranked-bound": ("any for<region r> Trait<region r>", "erased(for(binders(r),apply(Trait,arguments(region-argument(r)))))"),
+            "projection": ("T.(Trait).Item", "projection(T,Trait,Item)"),
+            "slice-projection": ("[u8].(Trait).Item", "projection(slice(u8),Trait,Item)"),
+            "generic-projection": ("Container<T>.(Trait<U>).Item<V>", "projection(apply(Container,arguments(argument(T))),apply(Trait,arguments(argument(U))),Item,arguments(argument(V)))"),
+            "chained-projection": ("T.(Trait).Item.(Other).Value?", "optional(projection(projection(T,Trait,Item),Other,Value))"),
+            "callable": ("fn(): Unit", "callable(parameters(),Unit)"),
+            "callable-modes": ("mut fn(read i32, take T,): bool", "callable(modifier[mut](),parameters(parameter[read](i32),parameter[take](T)),bool)"),
+            "callable-consuming": ("take fn(T): U", "callable(modifier[take](),parameters(parameter(T)),U)"),
+            "callable-foreign": ('unsafe extern "C" fn(ptr<read u8>, ...): i32', 'callable(modifier[unsafe](),modifier[extern](expr["C"]),parameters(parameter(pointer[read](u8)),variadic()),i32)'),
+            "callable-effect": ("fn(T): U throws Error", "callable(parameters(parameter(T)),U,effect(Error))"),
+            "callable-ranked": ("for<region r> fn(read Text from r): read Text from r", "callable(binders(r),parameters(parameter[read](sources(Text,r))),sources(borrow[read](Text),r))"),
+            "callable-nested-effect": ("fn(): fn(): T throws Error", "callable(parameters(),callable(parameters(),T,effect(Error)))"),
+            "callable-grouped-effect": ("fn(): (fn(): T) throws Error", "callable(parameters(),group(callable(parameters(),T)),effect(Error))"),
+        }
+        for name, (text, expected) in structural_types.items():
+            if not selected("type-" + name):
+                continue
+            path = source("parser-type-" + name, f"fn inspect(value: {text}): {text} {{ 0 }}\n")
+            if name != "generic-explicit-const":
+                run([executable, "syntax", str(path)])
+            reference = run([executable, "tokens", str(path)])
+            actual = run([native, "syntax", str(path)])
+            data = path.read_bytes()
+            nodes, edges, tokens = inspect_native(actual, data)
+            assert tokens == [(token["kind"], token["begin"], token["end"]) for token in json.loads(reference.stdout)["tokens"]], name
+            function = nodes[-2]
+            assert function[0] == "function", function
+            children = edges[function[3]:function[4]]
+            parameter = edges[nodes[children[1]][3]]
+            annotation = edges[nodes[parameter][4] - 1]
+            for index in (annotation, children[2]):
+                found = type_shape(index, nodes, edges, tokens, data)
+                assert found == expected, (name, found, expected)
+            if name == "double-optional":
+                assert [data[node[1]:node[2]].decode() for node in nodes if node[0] == "type-optional"] == ["i32?", "i32??"] * 2
+            evidence["cases"].append({"name": "type-" + name, "source_sha256": digest(path)})
+
+        signatures = {
+            "full": (
+                "pub(package) unsafe const fn select<region r: static, T: Trait + ?Sized = Other, const N: usize = 4>(read value: T = input): T throws Error\nwhere T: Other + ?Sized, region r: static, T = Result<T> => value",
+                ["visibility(package)", "modifier[unsafe]()", "modifier[const]()", "select",
+                 "generic-parameters(generic-parameter[region](r,bounds(static)),generic-parameter(T,bounds(Trait,modifier[?](Sized)),default-type(Other)),generic-parameter[const](N,usize,default-value(expr[4])))",
+                 "parameters(parameter[read](value,T,default-value(expr[input])))", "T", "effect(Error)",
+                 "constraints(constraint[:](T,bounds(Other,modifier[?](Sized))),constraint[:](modifier[region](r),bounds(static)),constraint[=](T,apply(Result,arguments(argument(T)))))"]),
+            "callable-bound": (
+                "fn invoke<F: for<region r> fn(read Text from r): Unit>(take operation: F): Unit { operation(value) }",
+                ["invoke", "generic-parameters(generic-parameter(F,bounds(callable(binders(r),parameters(parameter[read](sources(Text,r))),Unit))))", "parameters(parameter[take](operation,F))", "Unit"]),
+            "outer-effect": (
+                "fn make(): (fn(): T) throws Error => factory<T>",
+                ["make", "parameters()", "group(callable(parameters(),T))", "effect(Error)"]),
+            "inner-effect": (
+                "fn make(): fn(): T throws Error => factory<T>",
+                ["make", "parameters()", "callable(parameters(),T,effect(Error))"]),
+            "format-parameters": (
+                "fn inspect(value: format core.fmt.Message, other: format Message) { 0 }",
+                ["inspect", "parameters(parameter(value,modifier[format](),core.fmt.Message),parameter(other,modifier[format](),Message))"]),
+        }
+        for name, (text, expected) in signatures.items():
+            if not selected("signature-" + name):
+                continue
+            path = source("parser-signature-" + name, text)
+            run([executable, "syntax", str(path)])
+            actual = run([native, "syntax", str(path)])
+            data = path.read_bytes()
+            nodes, edges, tokens = inspect_native(actual, data)
+            function = nodes[-2]
+            children = edges[function[3]:function[4] - 1]
+            found = [type_shape(child, nodes, edges, tokens, data) for child in children]
+            assert found == expected, (name, found, expected)
+            evidence["cases"].append({"name": "signature-" + name, "source_sha256": digest(path)})
+
+        if selected("application-structure"):
+            path = source("parser-generic-application-structure", "fn main() { factory<[u8], region r, const N = 4>(value) }")
+            run([executable, "syntax", str(path)])
+            actual = run([native, "syntax", str(path)])
+            data = path.read_bytes()
+            nodes, edges, tokens = inspect_native(actual, data)
+            applications = [index for index, node in enumerate(nodes) if node[0] == "generic-apply"]
+            assert len(applications) == 1, applications
+            found = type_shape(applications[0], nodes, edges, tokens, data)
+            assert found == "generic-apply(factory,arguments(argument(slice(u8)),region-argument(r),const-argument(N,expr[4])))", found
+            evidence["cases"].append({"name": "application-structure", "source_sha256": digest(path)})
+
+        module_cases = {
+            "imports": (
+                "pub(package) import dep.api as selected;\nimport dep.{A, B as C,}\nimport dep.*",
+                "module(import(visibility(package),import-path(dep,api),import-alias(selected)),import(import-path(dep),import-group(import-name(A),import-name(B,import-alias(C)))),import(import-path(dep),import-glob()))",
+                ["pub(package) import dep.api as selected"]),
+            "inline": (
+                "pub module api {\nimport dep\nmodule child;\nfn entry() { 42 }\n}",
+                "module(module-declaration(visibility(),api,module-body(import(import-path(dep)),module-declaration(child),function(entry,parameters(),block(expr[42])))))",
+                ["module child"]),
+            "external-and-nested": (
+                "module one\n{\nmodule two {}\n}\nmodule three\nfn after() { 0 }",
+                "module(module-declaration(one,module-body(module-declaration(two,module-body()))),module-declaration(three),function(after,parameters(),block(expr[0])))",
+                []),
+            "quoted": (
+                "import `type`.`module`.{`fn` as escaped,}\nmodule `type`;",
+                "module(import(import-path(type,module),import-group(import-name(fn,import-alias(escaped)))),module-declaration(type))",
+                ["module `type`"]),
+            "comment-lookahead": (
+                "module outer /* c\n */ { import dep }\nmodule remote /* c\n */\nfn after() { 0 }",
+                "module(module-declaration(outer,module-body(import(import-path(dep)))),module-declaration(remote),function(after,parameters(),block(expr[0])))",
+                []),
+        }
+        for name, (text, expected, terminated) in module_cases.items():
+            if not selected("module-" + name):
+                continue
+            path = source("parser-module-" + name, text)
+            run([executable, "syntax", str(path)])
+            reference = run([executable, "tokens", str(path)])
+            actual = run([native, "syntax", str(path)])
+            data = path.read_bytes()
+            nodes, edges, tokens = inspect_native(actual, data)
+            assert tokens == [(token["kind"], token["begin"], token["end"]) for token in json.loads(reference.stdout)["tokens"]], name
+            found = type_shape(len(nodes) - 1, nodes, edges, tokens, data)
+            assert found == expected, (name, found, expected)
+            marked = [data[node[1]:node[2]].decode() for node in nodes if node[0] in {"import", "module-declaration"} and node[6]]
+            assert sorted(marked) == sorted(terminated), (name, marked, terminated)
+            if name == "comment-lookahead":
+                assert any(node[0] == "module-declaration" and data[node[1]:node[2]] == b"module remote" for node in nodes)
+            evidence["cases"].append({"name": "module-" + name, "source_sha256": digest(path)})
+        if not evidence["cases"]:
+            raise ValueError("no parser cases match --filter")
 
     def inspect_fast_math():
         name = "machine-numeric-explicit-function-and-module-relaxations"
@@ -726,7 +1056,10 @@ if __name__ == "__main__":
     parser.add_argument("executable")
     parser.add_argument("directory")
     parser.add_argument("--seed", help="compiled Mettle seed for selfhost probes")
+    parser.add_argument("--filter", help="only selfhost-parser cases whose name matches this regular expression")
     args = parser.parse_args()
     if args.mode.startswith("selfhost-") and not args.seed:
         parser.error(args.mode + " requires --seed")
-    run_suite(args.mode, args.executable, args.directory, args.seed)
+    if args.filter and args.mode != "selfhost-parser":
+        parser.error("--filter requires selfhost-parser")
+    run_suite(args.mode, args.executable, args.directory, args.seed, args.filter)

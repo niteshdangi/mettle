@@ -330,7 +330,8 @@ std::optional<Value> parse(const Source &source, Diagnostics &diagnostics,
                            const std::string &phase) {
   Diagnostics::SourceContext context(diagnostics, source);
   if (source.text.size() > limits::sourceBytes) {
-    diagnostics.error(phase, {0, 0, source.id}, "data file exceeds 1 GiB");
+    diagnostics.error(phase, {0, 0, source.id},
+                      "data file must be smaller than 4 GiB");
     return std::nullopt;
   }
   if (auto bad = invalidUtf8(source.text)) {

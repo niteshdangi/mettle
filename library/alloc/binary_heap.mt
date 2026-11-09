@@ -1,8 +1,7 @@
-import package.core.iter.{Iterator, OwnedIterable, Iterable, FromItems, ExtendItems}
+import package.core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, OwnedIterable, Iterable, FromItems, ExtendItems}
 import package.core.clone.Clone
 import package.core.default.Default
 import package.core.fmt
-import package.core.slice.SliceIter
 import super.alloc.{Allocator, Global, AllocError, PushError}
 import super.vec.List
 import package.core.cmp.{Ord, Ordering}
@@ -20,18 +19,20 @@ copy type HeapAppendEntry {
 
 // Max-heap on a `List`.
 pub type BinaryHeap<T, A: Allocator = Global> { data: List<T, A> }
+pub type Iter<region r, T> { items: (read [T] from r)?; front: usize; back: usize }
 pub type PeekMut<region r, T: Ord, A: Allocator> {
     queue: mut BinaryHeap<T, A> from r
-    drop { sift_down(mut *self.queue) }
+    drop { sift_down(mut *self.queue, 0usize) }
 }
 
-fn sift_down<T: Ord, A: Allocator>(mut queue: BinaryHeap<T, A>): Unit {
+fn sift_down<T: Ord, A: Allocator>(mut queue: BinaryHeap<T, A>, start: usize): Unit {
     let n = queue.data.len()
-    if n < 2usize { return () }
+    if start >= n { return () }
     // Compare first so a panicking comparison does not leave a partial sift.
     var path = [0usize; 64]
     var depth = 0usize
-    var node = 0usize
+    let origin = start
+    var node = origin
     while true {
         let left = node * 2usize + 1usize
         if left >= n { break }
@@ -39,7 +40,7 @@ fn sift_down<T: Ord, A: Allocator>(mut queue: BinaryHeap<T, A>): Unit {
         if left + 1usize < n && queue.data[left + 1usize].cmp(queue.data[left]).is_gt() {
             child = left + 1usize
         }
-        if queue.data[child].cmp(queue.data[0usize]).is_gt() {
+        if queue.data[child].cmp(queue.data[origin]).is_gt() {
             path[depth] = child
             depth += 1usize
             node = child
@@ -47,7 +48,7 @@ fn sift_down<T: Ord, A: Allocator>(mut queue: BinaryHeap<T, A>): Unit {
             break
         }
     }
-    node = 0usize
+    node = origin
     var i = 0usize
     while i < depth {
         let child = path[i]
@@ -408,11 +409,87 @@ extend<T, A: Allocator> BinaryHeap<T, A> {
     }
 }
 
+extend<T: Ord, A: Allocator> BinaryHeap<T, A> implements package.core.convert.From<List<T, A>> {
+    static fn from(take items: List<T, A>): BinaryHeap<T, A> {
+        var out = BinaryHeap(items)
+        var i = out.data.len() / 2usize
+        while i != 0usize {
+            i -= 1usize
+            sift_down(mut out, i)
+        }
+        out
+    }
+}
+
+extend<T: Ord, const N: usize> BinaryHeap<T> implements package.core.convert.From<[T; N]> {
+    static fn from(take items: [T; N]): BinaryHeap<T> {
+        let list = super.vec.List<T>.(package.core.convert.From<[T; N]>).from(items)
+        BinaryHeap<T>.(package.core.convert.From<super.vec.List<T>>).from(take list)
+    }
+}
+
 // Iteration is in heap (storage) order, not sorted order.
 extend<T, A: Allocator> BinaryHeap<T, A> implements Iterable {
     type Item = T
-    type Iter<region r> = SliceIter<region r, T>
-    fn iter<region r>(receiver read self: Self from r): SliceIter<region r, T> { self.data.as_slice().iter() }
+    type Iter<region r> = Iter<region r, T>
+    fn iter<region r>(receiver read self: Self from r): Iter<region r, T> {
+        Iter(present(self.data.as_slice()), 0usize, self.data.len())
+    }
+}
+extend<region r, T> Iter<region r, T> implements Iterator {
+    type Item = read T from r
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.back - self.front
+        (remaining, present(remaining))
+    }
+    mut fn next(): (read T from r)? {
+        if self.front >= self.back { return none }
+        let index = self.front
+        self.front += 1usize
+        match read self.items {
+            present(items) => present(read items[index]),
+            none => none
+        }
+    }
+}
+extend<region r, T> Iter<region r, T> implements BidirectionalIterator {
+    mut fn next_back(): (read T from r)? {
+        if self.front >= self.back { return none }
+        self.back -= 1usize
+        match read self.items {
+            present(items) => present(read items[self.back]),
+            none => none
+        }
+    }
+}
+extend<region r, T> Iter<region r, T> implements ExactSizeIterator {}
+extend<region r, T> Iter<region r, T> implements Clone {
+    fn clone(): Iter<region r, T> { Iter(self.items, self.front, self.back) }
+}
+extend<region r, T> Iter<region r, T> implements Default {
+    static fn default(): Iter<region r, T> { Iter(none, 0usize, 0usize) }
+}
+extend<region r, T: fmt.Debug> Iter<region r, T> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("Iter(")
+        try f.debug_open("[")
+        var index = self.front
+        var first = true
+        while index < self.back {
+            match read self.items {
+                present(items) => {
+                    try f.debug_item_start(first)
+                    try T.(fmt.Debug).fmt(items[index], mut f)
+                    try f.debug_item_end()
+                    first = false
+                },
+                none => { break }
+            }
+            index += 1usize
+        }
+        try f.debug_close("]", self.front == self.back)
+        try f.write_str(")")
+    }
 }
 
 extend<T, A: Allocator> BinaryHeap<T, A> implements OwnedIterable {

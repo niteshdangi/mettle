@@ -4,7 +4,7 @@
 // expect-file: report.txt=lines=4\nwords=13\nbytes=66\n
 // File-processing CLI: reads a file line by line through BufferedReader, counts,
 // then writes a report file through BufferedWriter and prints a summary.
-import std.io.{Error, Reader, Writer}
+import std.io.{BufRead, Error, Reader, Writer}
 import std.ffi
 import std.path
 import alloc.vec.List
@@ -49,7 +49,7 @@ fn count(read input: path.Path, read report: path.Path): i32 throws Error {
     var line = alloc.vec.new<u8>()
     while true {
         line.clear()
-        let n = try reader.read_line(line)
+        let n = try reader.read_until(10u8, line)
         if n == 0usize { break }
         lines += 1usize
         bytes += n

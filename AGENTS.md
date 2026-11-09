@@ -1,5 +1,7 @@
 # Mettle contributor and agent rules
 
+## ANY CODE WRITTEN SHOULD BE BEST-IN-CLASS
+
 ## No type of bloat is allowed be it Tests / Docs / Code / Code Comments. If you know its a bloat and is not needed, cut that immediately
 
 ## Whenever working on task if you know you dont need any checklist verification for that then absolutely dont do that. If you changes affects one system run targeted checks only. No Broad builds/ checks should be ran. If you know a thing is going to waste time, immediately stop it, and work in most efficient & fastest way without compromising quality of project.
@@ -24,6 +26,10 @@ and dependencies. Update both with architectural changes.
   upgrade, dependency, language feature, public ABI or license decision.
 - Own resources with RAII; preserve source spans and explicit error phases.
   Never publish code recovered from an invalid tree or an unchecked IR.
+- Do not impose arbitrary restrictive limits. New or tightened limits must follow
+  established systems-language/compiler practice, with documented precedent and
+  a concrete safety, representation or resource constraint; stricter limits
+  require explicit owner approval.
 - Keep library layers `core -> no allocator/OS`, `alloc -> core`,
   `std -> alloc/core`; executor selection stays optional.
 - Add focused behavioral regression tests for changed behavior. Do not weaken
@@ -45,6 +51,8 @@ and dependencies. Update both with architectural changes.
   refactors or polish (see implementation-plan section 8).
 - Keep changes surgical, preserve other people's work, and do not claim a
   milestone, target, safety property or speedup without current evidence.
+- Always provide a best-effort ETA when asked, stating assumptions and
+  uncertainty; never respond that you have no ETA.
 - Do not publish, choose a license, initialize/amend Git history or
   configure paid services without the owner's explicit request.
 

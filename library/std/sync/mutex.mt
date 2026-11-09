@@ -55,6 +55,7 @@ extend<G> TryLockError<G> implements Display {
         }
     }
 }
+extend<G> TryLockError<G> implements CoreError {}
 // Mutual exclusion around `value`. Only one guard exists at a time, so `T`
 // needs to be Transferable (the lock moves it between threads) but not
 // Shareable.

@@ -2,12 +2,14 @@
 import alloc.btree
 import alloc.vec
 import core.clone.Clone
-import core.cmp.{Ordering, PartialEq, PartialOrd}
+import core.cmp.{Eq, Ordering, PartialEq, PartialOrd}
 import core.default.Default
 import core.fmt.{Debug, Error, buffer_writer, formatter, spec, written_text}
+import core.hash.hash_one
 import core.iter.{ExtendItems, FromItems, OwnedIterable}
 
 fn default_value<T: Default>(): T { T.(Default).default() }
+fn require_eq<T: Eq>(read value: T): bool { true }
 
 fn render<T: Debug>(read value: T, mut buffer: [u8]): usize throws Error {
     var out = buffer_writer(mut buffer)
@@ -155,6 +157,12 @@ fn run(): i32 throws Error {
     let sym = left ^ right
     if sym.len() != 4usize || sym.contains(3) || !sym.contains(5) { return 49 }
     if left.len() != 3usize || right.len() != 3usize { return 50 }
+    let same_order = set_of(1, 2, 3)
+    let reordered = set_of(3, 1, 2)
+    if !require_eq(read same_order) || !(same_order == reordered) ||
+        hash_one(read same_order) != hash_one(read reordered) {
+        return 52
+    }
 
     // Owned iteration yields ascending elements.
     var owned_total = 0

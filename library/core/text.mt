@@ -4,7 +4,8 @@ import super.cmp.Ordering
 import super.cmp.PartialEq
 import super.cmp.PartialOrd
 import super.char
-import super.iter.{Iterator, BidirectionalIterator, Reversed}
+import super.iter.{Iterator, BidirectionalIterator, Reversed, Bound, RangeBounds}
+import super.fmt.{Debug, Formatter, Error}
 
 // Unsized, validated UTF-8 view; the view metadata is the byte count. Only
 // the checked constructors below create views of Text, which keeps the
@@ -238,7 +239,16 @@ pub unsafe fn from_utf8_unchecked_mut(mut bytes: [u8]): mut Text from bytes {
     unsafe { mut *view }
 }
 
-pub type Chars<region r> { bytes: read [u8] from r; front: usize; back: usize }
+pub type Chars<region r> { bytes: read [u8] from r; front: usize; back: usize; remaining: usize }
+fn count_chars(read bytes: [u8]): usize {
+    var count = 0usize
+    var index = 0usize
+    while index < bytes.len() {
+        index += scalar_width(bytes, index)
+        count += 1usize
+    }
+    count
+}
 extend<region r> Chars<region r> {
     pub fn as_str(): read Text from r {
         let bytes = match super.slice.subslice(self.bytes, self.front, self.back) {
@@ -250,11 +260,13 @@ extend<region r> Chars<region r> {
 }
 extend<region r> Chars<region r> implements Iterator {
     type Item = char
+    fn size_hint(): (usize, usize?) { (self.remaining, present(self.remaining)) }
     mut fn next(): char? {
         if self.front >= self.back { return none }
         let width = scalar_width(self.bytes, self.front)
         let value = scalar_at(self.bytes, self.front, width)
         self.front += width
+        self.remaining -= 1usize
         present(value)
     }
 }
@@ -268,11 +280,26 @@ extend<region r> Chars<region r> implements BidirectionalIterator {
         let width = self.back - start
         let value = scalar_at(self.bytes, start, width)
         self.back = start
+        self.remaining -= 1usize
         present(value)
     }
 }
+extend<region r> Chars<region r> implements super.iter.ExactSizeIterator {}
+extend<region r> Chars<region r> implements super.clone.Clone {
+    fn clone(): Chars<region r> {
+        Chars(self.bytes, self.front, self.back, self.remaining)
+    }
+}
+extend<region r> Chars<region r> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var debug = try f.debug_struct("Chars")
+        try debug.field("text", self.as_str())
+        try debug.field("remaining", self.remaining)
+        try debug.finish()
+    }
+}
 
-pub type CharIndices<region r> { bytes: read [u8] from r; front: usize; back: usize }
+pub type CharIndices<region r> { bytes: read [u8] from r; front: usize; back: usize; remaining: usize }
 extend<region r> CharIndices<region r> {
     pub fn as_str(): read Text from r {
         let bytes = match super.slice.subslice(self.bytes, self.front, self.back) {
@@ -285,12 +312,14 @@ extend<region r> CharIndices<region r> {
 }
 extend<region r> CharIndices<region r> implements Iterator {
     type Item = (usize, char)
+    fn size_hint(): (usize, usize?) { (self.remaining, present(self.remaining)) }
     mut fn next(): (usize, char)? {
         if self.front >= self.back { return none }
         let start = self.front
         let width = scalar_width(self.bytes, start)
         let value = scalar_at(self.bytes, start, width)
         self.front += width
+        self.remaining -= 1usize
         present((start, value))
     }
 }
@@ -304,7 +333,22 @@ extend<region r> CharIndices<region r> implements BidirectionalIterator {
         let width = self.back - start
         let value = scalar_at(self.bytes, start, width)
         self.back = start
+        self.remaining -= 1usize
         present((start, value))
+    }
+}
+extend<region r> CharIndices<region r> implements super.iter.ExactSizeIterator {}
+extend<region r> CharIndices<region r> implements super.clone.Clone {
+    fn clone(): CharIndices<region r> {
+        CharIndices(self.bytes, self.front, self.back, self.remaining)
+    }
+}
+extend<region r> CharIndices<region r> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var debug = try f.debug_struct("CharIndices")
+        try debug.field("text", self.as_str())
+        try debug.field("remaining", self.remaining)
+        try debug.finish()
     }
 }
 
@@ -468,6 +512,18 @@ extend<region r> Split<region r> implements BidirectionalIterator {
                 present(self.rest)
             }
         }
+    }
+}
+extend<region r> Split<region r> implements super.clone.Clone {
+    fn clone(): Split<region r> { Split(self.rest, self.separator, self.done) }
+}
+extend<region r> Split<region r> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var debug = try f.debug_struct("Split")
+        try debug.field("rest", self.rest)
+        try debug.field("separator", self.separator)
+        try debug.field("done", self.done)
+        try debug.finish()
     }
 }
 
@@ -894,6 +950,17 @@ extend<region r> SplitWhitespace<region r> implements BidirectionalIterator {
         present(item)
     }
 }
+extend<region r> SplitWhitespace<region r> implements super.clone.Clone {
+    fn clone(): SplitWhitespace<region r> { SplitWhitespace(self.rest, self.ascii) }
+}
+extend<region r> SplitWhitespace<region r> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var debug = try f.debug_struct("SplitWhitespace")
+        try debug.field("rest", self.rest)
+        try debug.field("ascii", self.ascii)
+        try debug.finish()
+    }
+}
 
 // Lines ended by `\n` or `\r\n`; a final line without a terminator is kept and
 // a trailing terminator does not produce an empty line.
@@ -923,6 +990,10 @@ extend<region r> Lines<region r> implements Iterator {
 pub type Bytes<region r> { bytes: read [u8] from r; front: usize; back: usize }
 extend<region r> Bytes<region r> implements Iterator {
     type Item = u8
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.back - self.front
+        (remaining, present(remaining))
+    }
     mut fn next(): u8? {
         if self.front >= self.back { return none }
         let value = self.bytes[self.front]
@@ -935,6 +1006,19 @@ extend<region r> Bytes<region r> implements BidirectionalIterator {
         if self.front >= self.back { return none }
         self.back -= 1usize
         present(self.bytes[self.back])
+    }
+}
+extend<region r> Bytes<region r> implements super.iter.ExactSizeIterator {}
+extend<region r> Bytes<region r> implements super.clone.Clone {
+    fn clone(): Bytes<region r> { Bytes(self.bytes, self.front, self.back) }
+}
+extend<region r> Bytes<region r> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var debug = try f.debug_struct("Bytes")
+        try debug.field("bytes", self.bytes)
+        try debug.field("front", self.front)
+        try debug.field("back", self.back)
+        try debug.finish()
     }
 }
 
@@ -1035,6 +1119,42 @@ extend Text {
             none => none
         }
     }
+    pub mut fn get_mut(start: usize, end: usize): (mut Text from self)? {
+        if start > end || end > self.len() ||
+            !self.is_char_boundary(start) || !self.is_char_boundary(end) {
+            return none
+        }
+        let (_, tail) = match take self.bytes.split_at_mut_checked(start) {
+            present(parts) => parts,
+            none => { return none }
+        }
+        let (middle, _) = match take tail.split_at_mut_checked(end - start) {
+            present(parts) => parts,
+            none => { return none }
+        }
+        from_utf8_mut(middle)
+    }
+    // Safety: the range is in bounds and both endpoints are UTF-8 boundaries.
+    pub unsafe fn get_unchecked(
+        start: usize,
+        end: usize
+    ): read Text from self {
+        unsafe {
+            from_utf8_unchecked(
+                super.slice.subslice_unchecked(read self.bytes, start, end)
+            )
+        }
+    }
+    // Safety: the range is in bounds and both endpoints are UTF-8 boundaries.
+    pub mut unsafe fn get_unchecked_mut(
+        start: usize,
+        end: usize
+    ): mut Text from self {
+        match take self.get_mut(start, end) {
+            present(value) => value,
+            none => { super.panic.panic("unchecked text range precondition failed") }
+        }
+    }
     pub fn starts_with<P: Pattern>(take pattern: P): bool {
         var matcher = pattern
         match matcher.match_front(read self) { present(_) => true, none => false }
@@ -1045,6 +1165,26 @@ extend Text {
             present(length) => self.get(length, self.len()),
             none => none
         }
+    }
+    pub fn strip_circumfix<P: Pattern, S: Pattern>(
+        take prefix: P,
+        take suffix: S
+    ): (read Text from self)? {
+        var front = prefix
+        var back = suffix
+        let start = match front.match_front(read self) {
+            present(length) => length,
+            none => { return none }
+        }
+        let end = match back.match_back(read self) {
+            present(length) => length,
+            none => { return none }
+        }
+        if start > self.len() || end > self.len() - start ||
+            !self.is_char_boundary(start) || !self.is_char_boundary(self.len() - end) {
+            return none
+        }
+        self.get(start, self.len() - end)
     }
     pub fn trim_start_matches<P: Pattern>(take pattern: P): read Text from self {
         var matcher = pattern
@@ -1251,6 +1391,51 @@ extend Text {
             none => none
         }
     }
+    pub mut fn split_at_mut(mid: usize): (mut Text from self, mut Text from self) {
+        match take self.split_at_mut_checked(mid) {
+            present(parts) => parts,
+            none => { super.panic.panic("failed to slice string") }
+        }
+    }
+    pub mut fn split_at_mut_checked(
+        mid: usize
+    ): (mut Text from self, mut Text from self)? {
+        if mid > self.len() || !self.is_char_boundary(mid) { return none }
+        let parts = match take self.bytes.split_at_mut_checked(mid) {
+            present(value) => value,
+            none => { return none }
+        }
+        let first = match take from_utf8_mut(parts.0) {
+            present(value) => value,
+            none => { return none }
+        }
+        let second = match take from_utf8_mut(parts.1) {
+            present(value) => value,
+            none => { return none }
+        }
+        present((first, second))
+    }
+    pub fn substr_range<R: RangeBounds<usize>>(
+        read range: R
+    ): (read Text from self)? {
+        let start = match range.start_bound() {
+            Bound.Included(value) => *value,
+            Bound.Excluded(value) => match value.checked_add(1usize) {
+                present(next) => next,
+                none => { return none }
+            },
+            Bound.Unbounded => 0usize
+        }
+        let end = match range.end_bound() {
+            Bound.Included(value) => match value.checked_add(1usize) {
+                present(next) => next,
+                none => { return none }
+            },
+            Bound.Excluded(value) => *value,
+            Bound.Unbounded => self.len()
+        }
+        self.get(start, end)
+    }
     pub fn rsplit_once(read separator: Text): (read Text from self, read Text from self)? {
         match self.rfind(read separator) {
             present(at) => {
@@ -1292,8 +1477,12 @@ extend Text {
         SplitWhitespace(read self, true)
     }
     pub fn lines(): Lines<region self> { Lines(read self, "\n") }
-    pub fn chars(): Chars<region self> { Chars(read self.bytes, 0usize, self.bytes.len()) }
-    pub fn char_indices(): CharIndices<region self> { CharIndices(read self.bytes, 0usize, self.bytes.len()) }
+    pub fn chars(): Chars<region self> {
+        Chars(read self.bytes, 0usize, self.bytes.len(), count_chars(self.bytes))
+    }
+    pub fn char_indices(): CharIndices<region self> {
+        CharIndices(read self.bytes, 0usize, self.bytes.len(), count_chars(self.bytes))
+    }
     pub fn encode_utf16(): TextUtf16<region self> {
         TextUtf16(self.chars(), 0u16, false, 0u16, false)
     }

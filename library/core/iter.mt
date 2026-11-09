@@ -10,6 +10,8 @@ import super.option
 import super.cmp.Ordering
 import super.clone.Clone
 import super.default.Default
+import super.fmt.{Debug, Formatter, Error}
+import super.hash.{Hash, Hasher}
 
 pub interface Iterator: Sized {
     type Item;
@@ -531,6 +533,62 @@ pub interface FromItems<T>: Sized {
 pub interface ExtendItems<T> {
     mut fn extend<I: OwnedIterable<Item = T>>(take items: I): Unit;
 }
+
+type OptionalItems<T, I: Iterator<Item = T?>> {
+    iter: I
+    valid: bool
+}
+extend<T, I: Iterator<Item = T?>> OptionalItems<T, I> implements Iterator {
+    type Item = T
+    mut fn next(): T? {
+        if !self.valid { return none }
+        match take self.iter.next() {
+            present(value) => match take value {
+                present(item) => present(item),
+                none => { self.valid = false; none }
+            },
+            none => none
+        }
+    }
+}
+extend<T, C: FromItems<T>> C? implements FromItems<T?> {
+    static fn from_iter<I: OwnedIterable<Item = T?>>(take items: I): C? {
+        let iter: I.(OwnedIterable).IntoIter = I.(OwnedIterable).into_iter(items)
+        var optional: OptionalItems<T, I.(OwnedIterable).IntoIter> = OptionalItems(iter, true)
+        let value = C.(FromItems<T>).from_iter(mut optional)
+        if optional.valid { present(value) } else { none }
+    }
+}
+
+type OutcomeItems<T, E, I: Iterator<Item = (Outcome<T, E>)>> {
+    iter: I
+    error: E?
+}
+extend<T, E, I: Iterator<Item = (Outcome<T, E>)>> OutcomeItems<T, E, I> implements Iterator {
+    type Item = T
+    mut fn next(): T? {
+        if self.error.is_present() { return none }
+        match take self.iter.next() {
+            present(value) => match take value {
+                success(item) => present(item),
+                failure(error) => { self.error = present(error); none }
+            },
+            none => none
+        }
+    }
+}
+extend<T, E, C: FromItems<T>> (Outcome<C, E>) implements FromItems<(Outcome<T, E>)> {
+    static fn from_iter<I: OwnedIterable<Item = (Outcome<T, E>)>>(take items: I): (Outcome<C, E>) {
+        let iter: I.(OwnedIterable).IntoIter = I.(OwnedIterable).into_iter(items)
+        var outcomes: OutcomeItems<T, E, I.(OwnedIterable).IntoIter> = OutcomeItems(iter, none)
+        let value = C.(FromItems<T>).from_iter(mut outcomes)
+        match take outcomes.error {
+            present(found) => failure(found),
+            none => success(value)
+        }
+    }
+}
+
 // `let v: List<i32> = collect(items)`.
 pub fn collect<T, I: OwnedIterable<Item = T>, C: FromItems<T>>(take items: I): C {
     C.(FromItems<T>).from_iter(items)
@@ -663,6 +721,27 @@ pub interface MutableIterable {
     type Item;
     type IterMut<region r>: Iterator<Item = mut Self.Item from r>;
     fn iter_mut<region r>(receiver mut self: Self from r): Self.IterMut<region r>;
+}
+
+extend<T> T? implements Iterable {
+    type Item = T
+    type Iter<region r> = super.slice.SliceIter<region r, T>
+    fn iter<region r>(receiver read self: T? from r): super.slice.SliceIter<region r, T> { self.iter() }
+}
+extend<T> T? implements MutableIterable {
+    type Item = T
+    type IterMut<region r> = super.slice.SliceIterMut<region r, T>
+    fn iter_mut<region r>(receiver mut self: T? from r): super.slice.SliceIterMut<region r, T> { self.iter_mut() }
+}
+extend<T, E> (Outcome<T, E>) implements Iterable {
+    type Item = T
+    type Iter<region r> = super.slice.SliceIter<region r, T>
+    fn iter<region r>(receiver read self: (Outcome<T, E>) from r): super.slice.SliceIter<region r, T> { self.iter() }
+}
+extend<T, E> (Outcome<T, E>) implements MutableIterable {
+    type Item = T
+    type IterMut<region r> = super.slice.SliceIterMut<region r, T>
+    fn iter_mut<region r>(receiver mut self: (Outcome<T, E>) from r): super.slice.SliceIterMut<region r, T> { self.iter_mut() }
 }
 
 // Every iterator is trivially its own OwnedIterable.
@@ -1472,6 +1551,9 @@ extend<T> Empty<T> implements Iterator {
     mut fn next(): T? { none }
     fn size_hint(): (usize, usize?) { (0usize, present(0usize)) }
 }
+extend<T> Empty<T> implements Default {
+    static fn default(): Empty<T> { Empty(Phantom<T>()) }
+}
 extend<T> Empty<T> implements BidirectionalIterator {
     mut fn next_back(): T? { none }
 }
@@ -2219,12 +2301,188 @@ extend<I: Iterator + Default> Fused<I> implements Default {
 extend<I: Iterator + Default> Reversed<I> implements Default {
     static fn default(): Reversed<I> { Reversed(I.(Default).default()) }
 }
+extend<region r, T, I: Iterator<Item = read T from r> + Default> Cloned<region r, T, I> implements Default {
+    static fn default(): Cloned<region r, T, I> { Cloned(I.(Default).default(), Phantom<T>()) }
+}
+extend<region r, T: Copy, I: Iterator<Item = read T from r> + Default> Copied<region r, T, I> implements Default {
+    static fn default(): Copied<region r, T, I> { Copied(I.(Default).default(), Phantom<T>()) }
+}
+extend<U: Iterator, O: Iterator<Item = U> + Default> Flatten<U, O> implements Default {
+    static fn default(): Flatten<U, O> { Flatten(O.(Default).default(), none, none, false) }
+}
 extend<I: Iterator + Default> Peekable<I> implements Default {
     static fn default(): Peekable<I> { Peekable(I.(Default).default(), none, false) }
+}
+extend<I: Iterator + Clone> Peekable<I> implements Clone where I.Item: Clone {
+    fn clone(): Peekable<I> { Peekable(self.iter.clone(), self.slot.clone(), self.filled) }
 }
 extend<A: Iterator + Default, B: Iterator + Default> Zipped<A, B> implements Default {
     static fn default(): Zipped<A, B> { Zipped(A.(Default).default(), B.(Default).default()) }
 }
 extend<T, A: Iterator<Item = T> + Default, B: Iterator<Item = T> + Default> Chained<A, B> implements Default {
     static fn default(): Chained<A, B> { Chained(A.(Default).default(), present(B.(Default).default()), true) }
+}
+
+fn debug_one<T: Debug + unsized>(
+    mut f: Formatter,
+    read name: super.text.Text,
+    read field_name: super.text.Text,
+    read value: T
+): Unit throws Error {
+    var debug = try f.debug_struct(name)
+    try debug.field(field_name, value)
+    try debug.finish()
+}
+fn debug_two<A: Debug + unsized, B: Debug + unsized>(
+    mut f: Formatter,
+    read name: super.text.Text,
+    read first_name: super.text.Text,
+    read first: A,
+    read second_name: super.text.Text,
+    read second: B
+): Unit throws Error {
+    var debug = try f.debug_struct(name)
+    try debug.field(first_name, first)
+    try debug.field(second_name, second)
+    try debug.finish()
+}
+fn debug_three<A: Debug + unsized, B: Debug + unsized, C: Debug + unsized>(
+    mut f: Formatter,
+    read name: super.text.Text,
+    read first_name: super.text.Text,
+    read first: A,
+    read second_name: super.text.Text,
+    read second: B,
+    read third_name: super.text.Text,
+    read third: C
+): Unit throws Error {
+    var debug = try f.debug_struct(name)
+    try debug.field(first_name, first)
+    try debug.field(second_name, second)
+    try debug.field(third_name, third)
+    try debug.finish()
+}
+fn debug_four<A: Debug + unsized, B: Debug + unsized, C: Debug + unsized, D: Debug + unsized>(
+    mut f: Formatter,
+    read name: super.text.Text,
+    read first_name: super.text.Text,
+    read first: A,
+    read second_name: super.text.Text,
+    read second: B,
+    read third_name: super.text.Text,
+    read third: C,
+    read fourth_name: super.text.Text,
+    read fourth: D
+): Unit throws Error {
+    var debug = try f.debug_struct(name)
+    try debug.field(first_name, first)
+    try debug.field(second_name, second)
+    try debug.field(third_name, third)
+    try debug.field(fourth_name, fourth)
+    try debug.finish()
+}
+
+extend<A: Iterator + Debug, B: Iterator + Debug> Chained<A, B> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_three(mut f, "Chained", "first", read self.first, "second", read self.second, "first_live", read self.first_live)
+    }
+}
+extend<region r, T, I: Iterator + Debug> Cloned<region r, T, I> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_one(mut f, "Cloned", "iter", read self.iter)
+    }
+}
+extend<region r, T, I: Iterator + Debug> Copied<region r, T, I> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_one(mut f, "Copied", "iter", read self.iter)
+    }
+}
+extend<I: Iterator + Debug> Enumerated<I> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_two(mut f, "Enumerated", "iter", read self.iter, "index", read self.index)
+    }
+}
+extend<I: Iterator + Debug, F> Filtered<I, F> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_one(mut f, "Filtered", "iter", read self.iter)
+    }
+}
+extend<O: Iterator + Debug, U: Iterator + Debug, F> FlatMapped<O, U, F> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_four(mut f, "FlatMapped", "outer", read self.outer, "front", read self.front, "back", read self.back, "outer_done", read self.outer_done)
+    }
+}
+extend<U: Iterator + Debug, O: Iterator<Item = U> + Debug> Flatten<U, O> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_four(mut f, "Flatten", "outer", read self.outer, "front", read self.front, "back", read self.back, "outer_done", read self.outer_done)
+    }
+}
+extend<B, I: Iterator + Debug, F> Mapped<B, I, F> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_one(mut f, "Mapped", "iter", read self.iter)
+    }
+}
+extend<I: Iterator + Debug> Peekable<I> implements Debug where I.Item: Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_three(mut f, "Peekable", "iter", read self.iter, "slot", read self.slot, "filled", read self.filled)
+    }
+}
+extend<I: Iterator + BidirectionalIterator + Debug> Reversed<I> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_one(mut f, "Reversed", "iter", read self.iter)
+    }
+}
+extend<I: Iterator + Debug> Skipped<I> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_two(mut f, "Skipped", "iter", read self.iter, "pending", read self.pending)
+    }
+}
+extend<I: Iterator + Debug, F> SkippedWhile<I, F> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_two(mut f, "SkippedWhile", "iter", read self.iter, "started", read self.started)
+    }
+}
+extend<I: Iterator + Debug> Stepped<I> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_three(mut f, "Stepped", "iter", read self.iter, "step", read self.step, "first", read self.first)
+    }
+}
+extend<I: Iterator + Debug> Limited<I> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_two(mut f, "Limited", "iter", read self.iter, "remaining", read self.remaining)
+    }
+}
+extend<I: Iterator + Debug, F> TakenWhile<I, F> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_two(mut f, "TakenWhile", "iter", read self.iter, "done", read self.done)
+    }
+}
+extend<A: Iterator + Debug, B: Iterator + Debug> Zipped<A, B> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_two(mut f, "Zipped", "first", read self.first, "second", read self.second)
+    }
+}
+
+extend<T: Hash> Range<T> implements Hash {
+    fn hash<H: Hasher>(mut state: H): Unit {
+        self.start.hash(mut state)
+        self.end.hash(mut state)
+    }
+}
+extend<T: Debug> Range<T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_two(mut f, "Range", "start", read self.start, "end", read self.end)
+    }
+}
+extend<T: Hash> RangeInclusive<T> implements Hash {
+    fn hash<H: Hasher>(mut state: H): Unit {
+        self.start.hash(mut state)
+        self.end.hash(mut state)
+        self.done.hash(mut state)
+    }
+}
+extend<T: Debug> RangeInclusive<T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_three(mut f, "RangeInclusive", "start", read self.start, "end", read self.end, "done", read self.done)
+    }
 }

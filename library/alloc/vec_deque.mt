@@ -625,7 +625,7 @@ extend<T, A: Allocator> Deque<T, A> {
     }
     pub fn range(start: usize, end: usize): DequeIter<region self, T, A> {
         if start > end || end > self.len { super.alloc.panic_precondition() }
-        DequeIter(read self, start, end)
+        DequeIter(present(read self), start, end)
     }
     pub mut fn drain<R: RangeBounds<usize>>(take range: R): DequeDrain<region self, T, A> {
         let start = match R.(RangeBounds<usize>).start_bound(read range) {
@@ -819,10 +819,26 @@ extend<region r, T, A: Allocator> DequeDrain<region r, T, A> implements Bidirect
 }
 extend<region r, T, A: Allocator> DequeDrain<region r, T, A> implements ExactSizeIterator {}
 extend<region r, T, A: Allocator> DequeDrain<region r, T, A> implements FusedIterator {}
+extend<region r, T: fmt.Debug, A: Allocator> DequeDrain<region r, T, A> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("DequeDrain(")
+        try f.debug_open("[")
+        var i = self.front
+        while i < self.back {
+            let value = unsafe { read *self.deque.buf.add(self.deque.physical(i)) }
+            try f.debug_item_start(i == self.front)
+            try T.(fmt.Debug).fmt(value, mut f)
+            try f.debug_item_end()
+            i += 1usize
+        }
+        try f.debug_close("]", self.front == self.back)
+        try f.write_str(")")
+    }
+}
 
 // Borrowed front-to-back iterator over a ring buffer.
 pub type DequeIter<region r, T, A: Allocator> {
-    deque: read Deque<T, A> from r
+    deque: (read Deque<T, A> from r)?
     front: usize
     back: usize
 }
@@ -836,7 +852,10 @@ extend<region r, T, A: Allocator> DequeIter<region r, T, A> implements Iterator 
         if self.front < self.back {
             let i = self.front
             self.front += 1usize
-            present(unsafe { read *self.deque.buf.add(self.deque.physical(i)) })
+            match read self.deque {
+                present(deque) => present(unsafe { read *deque.buf.add(deque.physical(i)) }),
+                none => none
+            }
         } else {
             none
         }
@@ -846,22 +865,51 @@ extend<region r, T, A: Allocator> DequeIter<region r, T, A> implements Bidirecti
     mut fn next_back(): (read T from r)? {
         if self.front == self.back { return none }
         self.back -= 1usize
-        present(unsafe { read *self.deque.buf.add(self.deque.physical(self.back)) })
+        match read self.deque {
+            present(deque) => present(unsafe { read *deque.buf.add(deque.physical(self.back)) }),
+            none => none
+        }
     }
 }
 extend<region r, T, A: Allocator> DequeIter<region r, T, A> implements ExactSizeIterator {}
 extend<region r, T, A: Allocator> DequeIter<region r, T, A> implements FusedIterator {}
+extend<region r, T, A: Allocator> DequeIter<region r, T, A> implements Clone {
+    fn clone(): DequeIter<region r, T, A> { DequeIter(self.deque, self.front, self.back) }
+}
+extend<region r, T, A: Allocator> DequeIter<region r, T, A> implements Default {
+    static fn default(): DequeIter<region r, T, A> { DequeIter(none, 0usize, 0usize) }
+}
+extend<region r, T: fmt.Debug, A: Allocator> DequeIter<region r, T, A> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("Iter(")
+        try f.debug_open("[")
+        var index = self.front
+        while index < self.back {
+            match read self.deque {
+                present(deque) => {
+                    try f.debug_item_start(index == self.front)
+                    try T.(fmt.Debug).fmt(unsafe { read *deque.buf.add(deque.physical(index)) }, mut f)
+                    try f.debug_item_end()
+                },
+                none => { break }
+            }
+            index += 1usize
+        }
+        try f.debug_close("]", self.front == self.back)
+        try f.write_str(")")
+    }
+}
 extend<T, A: Allocator> Deque<T, A> implements Iterable {
     type Item = T
     type Iter<region r> = DequeIter<region r, T, A>
     fn iter<region r>(receiver read self: Self from r): DequeIter<region r, T, A> {
-        DequeIter(read self, 0usize, self.len)
+        DequeIter(present(read self), 0usize, self.len)
     }
 }
 
 // Mutable front-to-back iterator over a ring buffer.
 pub type DequeIterMut<region r, T, A: Allocator> {
-    deque: mut Deque<T, A> from r
+    deque: (mut Deque<T, A> from r)?
     front: usize
     back: usize
 }
@@ -875,7 +923,10 @@ extend<region r, T, A: Allocator> DequeIterMut<region r, T, A> implements Iterat
         if self.front < self.back {
             let i = self.front
             self.front += 1usize
-            present(unsafe { mut *self.deque.buf.add(self.deque.physical(i)) })
+            match mut self.deque {
+                present(deque) => present(unsafe { mut *deque.buf.add(deque.physical(i)) }),
+                none => none
+            }
         } else {
             none
         }
@@ -885,17 +936,43 @@ extend<region r, T, A: Allocator> DequeIterMut<region r, T, A> implements Bidire
     mut fn next_back(): (mut T from r)? {
         if self.front == self.back { return none }
         self.back -= 1usize
-        present(unsafe { mut *self.deque.buf.add(self.deque.physical(self.back)) })
+        match mut self.deque {
+            present(deque) => present(unsafe { mut *deque.buf.add(deque.physical(self.back)) }),
+            none => none
+        }
     }
 }
 extend<region r, T, A: Allocator> DequeIterMut<region r, T, A> implements ExactSizeIterator {}
 extend<region r, T, A: Allocator> DequeIterMut<region r, T, A> implements FusedIterator {}
+extend<region r, T, A: Allocator> DequeIterMut<region r, T, A> implements Default {
+    static fn default(): DequeIterMut<region r, T, A> { DequeIterMut(none, 0usize, 0usize) }
+}
+extend<region r, T: fmt.Debug, A: Allocator> DequeIterMut<region r, T, A> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("IterMut(")
+        try f.debug_open("[")
+        match read self.deque {
+            present(deque) => {
+                var index = self.front
+                while index < self.back {
+                    try f.debug_item_start(index == self.front)
+                    try T.(fmt.Debug).fmt(unsafe { read *deque.buf.add(deque.physical(index)) }, mut f)
+                    try f.debug_item_end()
+                    index += 1usize
+                }
+            },
+            none => {}
+        }
+        try f.debug_close("]", self.front == self.back)
+        try f.write_str(")")
+    }
+}
 extend<T, A: Allocator> Deque<T, A> implements MutableIterable {
     type Item = T
     type IterMut<region r> = DequeIterMut<region r, T, A>
     fn iter_mut<region r>(receiver mut self: Self from r): DequeIterMut<region r, T, A> {
         let n = self.len
-        DequeIterMut(mut self, 0usize, n)
+        DequeIterMut(present(mut self), 0usize, n)
     }
 }
 
@@ -913,6 +990,21 @@ extend<T, A: Allocator> DequeIntoIter<T, A> implements BidirectionalIterator {
 }
 extend<T, A: Allocator> DequeIntoIter<T, A> implements ExactSizeIterator {}
 extend<T, A: Allocator> DequeIntoIter<T, A> implements FusedIterator {}
+extend<T: fmt.Debug, A: Allocator> DequeIntoIter<T, A> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("DequeIntoIter(")
+        try Deque<T, A>.(fmt.Debug).fmt(read self.deque, mut f)
+        try f.write_str(")")
+    }
+}
+extend<T: Clone, A: Allocator + Clone> DequeIntoIter<T, A> implements Clone {
+    fn clone(): DequeIntoIter<T, A> { DequeIntoIter(self.deque.clone()) }
+}
+extend<T, A: Allocator + Default> DequeIntoIter<T, A> implements Default {
+    static fn default(): DequeIntoIter<T, A> {
+        DequeIntoIter(new_in<T, A>(A.(Default).default()))
+    }
+}
 extend<T, A: Allocator> Deque<T, A> implements OwnedIterable {
     type Item = T
     type IntoIter = DequeIntoIter<T, A>
@@ -943,7 +1035,57 @@ extend<T: PartialEq, A: Allocator> Deque<T, A> implements PartialEq {
         true
     }
 }
+extend<T: PartialEq<U>, U, A: Allocator> Deque<T, A> implements PartialEq<[U]> {
+    fn eq(read other: [U]): bool {
+        if self.len != other.len() { return false }
+        var i = 0usize
+        while i < self.len {
+            if !self[i].eq(other[i]) { return false }
+            i += 1usize
+        }
+        true
+    }
+}
+extend<T: PartialEq<U>, U, A: Allocator> Deque<T, A> implements PartialEq<super.vec.List<U, A>> {
+    fn eq(read other: super.vec.List<U, A>): bool {
+        if self.len != other.len() { return false }
+        var i = 0usize
+        while i < self.len {
+            if !self[i].eq(other[i]) { return false }
+            i += 1usize
+        }
+        true
+    }
+}
 extend<T: Eq, A: Allocator> Deque<T, A> implements Eq {}
+extend<region r, T: PartialEq<U>, U, A: Allocator> Deque<T, A> implements PartialEq<read [U] from r> {
+    fn eq(read other: read [U] from r): bool {
+        Deque<T, A>.(PartialEq<[U]>).eq(self, *other)
+    }
+}
+extend<region r, T: PartialEq<U>, U, A: Allocator> Deque<T, A> implements PartialEq<mut [U] from r> {
+    fn eq(read other: mut [U] from r): bool {
+        Deque<T, A>.(PartialEq<[U]>).eq(self, *other)
+    }
+}
+extend<T: PartialEq<U>, U, A: Allocator, const N: usize> Deque<T, A> implements PartialEq<[U; N]> {
+    fn eq(read other: [U; N]): bool {
+        let items: read [U] = read other
+        Deque<T, A>.(PartialEq<[U]>).eq(self, items)
+    }
+}
+extend<region r, T: PartialEq<U>, U, A: Allocator, const N: usize> Deque<T, A> implements PartialEq<read [U; N] from r> {
+    fn eq(read other: read [U; N] from r): bool {
+        let items: read [U] = read *other
+        Deque<T, A>.(PartialEq<[U]>).eq(self, items)
+    }
+}
+extend<region r, T: PartialEq<U>, U, A: Allocator, const N: usize> Deque<T, A> implements PartialEq<mut [U; N] from r> {
+    fn eq(read other: mut [U; N] from r): bool {
+        let items: read [U] = read *other
+        Deque<T, A>.(PartialEq<[U]>).eq(self, items)
+    }
+}
 extend<T: PartialOrd, A: Allocator> Deque<T, A> implements PartialOrd {
     fn partial_cmp(read other: Deque<T, A>): Ordering? {
         var i = 0usize
@@ -1000,6 +1142,17 @@ extend<T, A: Allocator> Deque<T, A> implements ExtendItems<T> {
         }
     }
 }
+extend<region r, T: Copy, A: Allocator> Deque<T, A> implements ExtendItems<read T from r> {
+    mut fn extend<I: OwnedIterable<Item = read T from r>>(take items: I): Unit {
+        var source = items.into_iter()
+        while true {
+            match take source.next() {
+                present(item) => { self.push_back(*item) },
+                none => { break }
+            }
+        }
+    }
+}
 extend<T> Deque<T> implements FromItems<T> {
     static fn from_iter<I: OwnedIterable<Item = T>>(take items: I): Deque<T> {
         var out = new<T>()
@@ -1011,6 +1164,20 @@ extend<T> Deque<T> implements FromItems<T> {
 // Owned storage moves or is shared exactly when its elements and allocator do.
 unsafe extend<T: Transferable, A: Allocator + Transferable> Deque<T, A> implements Transferable {}
 unsafe extend<T: Shareable, A: Allocator + Shareable> Deque<T, A> implements Shareable {}
+
+extend<T, A: Allocator> Deque<T, A> implements package.core.convert.From<super.vec.List<T, A>> {
+    static fn from(take source: super.vec.List<T, A>): Deque<T, A> {
+        let parts = source.into_raw_parts_with_alloc()
+        Deque(parts.0, parts.2, 0usize, parts.1, parts.3)
+    }
+}
+
+extend<T, const N: usize> Deque<T> implements package.core.convert.From<[T; N]> {
+    static fn from(take items: [T; N]): Deque<T> {
+        let list = super.vec.List<T>.(package.core.convert.From<[T; N]>).from(items)
+        Deque<T>.(package.core.convert.From<super.vec.List<T>>).from(list)
+    }
+}
 
 // The ring is rotated in place to start at slot zero, then its allocation is
 // adopted by the list (same layout, no element copies beyond the rotation).

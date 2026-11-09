@@ -1,3 +1,4 @@
+#include "expansion/macros.h"
 #include "pipeline/compile.h"
 #include "resolution/load.h"
 #include "resolution/resolve.h"
@@ -30,6 +31,20 @@ void inMemorySources() {
   require(
       mettle::pipeline::compile(sources, compilationDiagnostics).has_value(),
       "in-memory multi-source pipeline failed");
+}
+
+void ordinaryImportsDoNotLoadMacroModules() {
+  mettle::Diagnostics diagnostics;
+  mettle::expansion::MacroModuleProvider provider =
+      [](const auto &,
+         const auto &) -> std::optional<mettle::expansion::MacroModuleSource> {
+    throw std::runtime_error("ordinary imports triggered macro module loading");
+  };
+  auto expanded = mettle::expansion::expandMacros(
+      {"memory/root.mt", "import std.io.Reader\nfn main() { 0 }\n"},
+      diagnostics, [] { return mettle::SourceId{1}; }, nullptr, {}, provider);
+  require(!expanded && diagnostics.empty(),
+          "source without macro invocations was expanded");
 }
 
 void syntaxAndIdentities() {
@@ -178,6 +193,7 @@ void catalogLibrary() {
 int main() {
   try {
     inMemorySources();
+    ordinaryImportsDoNotLoadMacroModules();
     syntaxAndIdentities();
     sameDeclarationGlobs();
     delayedExplicitImport();

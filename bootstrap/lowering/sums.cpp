@@ -24,6 +24,9 @@ Builder::Value Builder::unwrapOutcome(Value outcome, Span span) {
   int success = block(), failure = block();
   terminate({ir::Exit::Branch, test, success, failure});
   current = failure;
+  if (sum.fields[2].type == Type::Never)
+    terminate({ir::Exit::Unreachable});
+  else {
   auto failed = storage;
   failed.fields.push_back(Projection::field(2));
   auto error =
@@ -40,6 +43,7 @@ Builder::Value Builder::unwrapOutcome(Value outcome, Span span) {
                  sum.fields[2].type),
             span);
   fail(error, span);
+  }
   current = success;
   if (sum.fields[1].type == Type::Never) {
     terminate({ir::Exit::Unreachable});
@@ -229,10 +233,12 @@ Builder::Value Builder::sumExpression(const Node &node) {
   else {
     auto errorType = module.typeStore()->product(produced).components[1];
     auto error = merge(errorType, handler.errors, handler.predecessors);
-    auto failure = variant(produced, 1, {error}, node.span);
-    values.push_back(use(failure));
-    predecessors.push_back(current);
-    jump(done);
+    if (live()) {
+      auto failure = variant(produced, 1, {error}, node.span);
+      values.push_back(use(failure));
+      predecessors.push_back(current);
+      jump(done);
+    }
   }
   current = done;
   return track(merge(produced, values, predecessors), node.span);
