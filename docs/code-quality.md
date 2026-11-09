@@ -23,10 +23,9 @@ The direction is source/tokens/syntax, resolution/types, compiler-owned CFG and
 cleanup, runtime/ABI lowering, then the backend adapter. Each stage consumes
 explicitly valid input and preserves source identity/spans needed downstream.
 The [architecture contract](compiler-architecture.md) owns the full component
-design. `compiler/modules.json` declares each current component's sources, public
-headers and direct dependencies and drives its CMake target. Cycles, undeclared
-includes, access to another component's private headers and unowned compiler
-files fail the build.
+design. CMake declares each current component target and its link dependencies,
+discovering sources in the component directory. Source-level boundaries are
+review obligations; CMake dependencies alone do not prove include isolation.
 
 - Source, syntax, semantics and compiler-owned IR must not include LLVM or
   backend headers. The driver orchestrates; it does not define typing/ownership.
@@ -68,8 +67,8 @@ files fail the build.
   CFG verification precedes dataflow; initialization/ownership analysis must
   not be folded into AST lowering or an IR printer.
 
-The automated boundary check covers direct includes, not an entire transitive
-dependency graph or a proof of semantic independence.
+CMake component targets do not prove direct include isolation or semantic
+independence. Review source-level boundaries in the affected change.
 
 ## 3. C++ implementation style and ownership
 
@@ -280,7 +279,7 @@ framework or test added just to validate the wording of this standard.
 
 | Change | Required evidence |
 | --- | --- |
-| Every change | Pinned formatting; the build's module/include check |
+| Every change | Pinned formatting; affected CMake component build |
 | Compiler/runtime C++ | Incremental build and applicable CTest fixtures |
 | Memory/unsafe/ownership | Above plus ASan/UBSan build and relevant boundary/cleanup regressions |
 | Language behavior or IR/backend | Debug/Release source-profile checks; Linux source execution when target behavior/lowering is affected |

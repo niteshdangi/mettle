@@ -2,8 +2,8 @@
 
 The [code quality standard](docs/code-quality.md) is normative.
 The [compiler architecture](docs/compiler-architecture.md) defines responsibilities,
-representations and future feature placement. `compiler/modules.json` is the
-enforced current component graph, not an inventory of unimplemented features.
+representations and future feature placement. CMake declares the current
+component targets and dependencies.
 The [language specifications](docs/core-semantics.md) define behavior;
 implementation convenience does not override them.
 
@@ -24,10 +24,8 @@ cmake --build build/linux-x86_64/Debug
 ctest --test-dir build/linux-x86_64/Debug --output-on-failure
 ```
 
-Configuring and building runs `tools/check_modules.py` (component ownership,
-public headers, dependency DAG). Format C++ with the pinned `clang-format`.
-CMake also validates the module graph at configure time and checks direct
-component boundaries on builds, including individual component targets.
+Format C++ with the pinned `clang-format`. CMake builds independent component
+targets with explicit link dependencies.
 
 For a new build configuration use the existing reproducibility workflow:
 

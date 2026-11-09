@@ -12,10 +12,10 @@ tests. These share language contracts and must evolve atomically. Packages
 compiled by Mettle are not C++ compiler components. A separate repository is
 justified by an independently owned/released product, not by folder size.
 
-The current compiler graph lives in `compiler/modules.json`. It owns source
-membership and direct dependencies and drives CMake targets. `tools/check_modules.py` (run at configure)
-rejects cycles, unowned compiler files, undeclared component includes and LLVM
-leaks. Direct includes are checked; this is not a C++ semantic dependency proof.
+The current compiler targets and direct link dependencies live in `CMakeLists.txt`.
+CMake discovers sources within each component directory. Include isolation,
+public-header use and the LLVM boundary are reviewed at source level; target
+dependencies alone do not prove them.
 The design below also identifies later components; do not create empty targets
 for them.
 
@@ -585,7 +585,7 @@ Implement shared metadata and its dependent producers/validators/consumers
 coherently, with one writer and no builds racing source edits. A shared
 representation change invalidates dependent compiler objects and relevant
 receipts; it does not justify rerunning unrelated passing test groups per edit.
-New files enter `compiler/modules.json` only with their implementation and
+New component directories enter CMake only with their implementation and
 component-owned dependencies. No full qualification matrix starts until the
 inventory, fixtures and documentation satisfy the source-freeze gate.
 
@@ -870,8 +870,8 @@ archive are replaced by the components above. The boundary suite checks actual
 IR rejection, dominance/phi handling, independent initialization analysis,
 checked-tree move/lifetime behavior, immutable source spelling, in-memory UTF-8
 validation and rejection before a verified program can be published.
-Dependency regressions reject cycles, unknown edges, unowned files, private
-header access and LLVM leaks.
+The historical dependency regressions checked cycles, unknown edges, unowned
+files, private-header access and LLVM leaks; that separate checker is retired.
 
 Historical I03 qualification passed twelve CTest suites in each ordinary configuration and
 thirteen under ASan/UBSan, with byte-identical clean rebuilds and ordinary/instrumented

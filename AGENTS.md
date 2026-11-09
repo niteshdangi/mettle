@@ -4,8 +4,8 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) and the normative
 [code quality standard](docs/code-quality.md) before changing this repository.
 These rules apply to compiler, runtime, libraries, tools, tests and documentation.
 The [compiler architecture](docs/compiler-architecture.md) owns component
-responsibilities and phase contracts; `compiler/modules.json` owns the current
-enforced source/dependency graph. Update both with architectural changes.
+responsibilities and phase contracts; CMake owns the current component targets
+and dependencies. Update both with architectural changes.
 
 - Preserve the selected language contracts; unsupported is not invalid.
 - Keep LLVM types/includes out of source, syntax, semantics and compiler-owned IR.
@@ -20,8 +20,12 @@ enforced source/dependency graph. Update both with architectural changes.
   assertions, ownership rules, overflow policy or fixtures to make a test pass.
 - Follow established compiler testing practice: source compile/run pass/fail
   cases, focused algorithm unit tests, and applicable codegen/link/ABI probes.
-  Reuse the existing runners; no new test framework, custom testing DSL or
-  directory/layout assertions without a concrete functional need.
+  Reuse the existing runners; no new test framework or custom testing DSL.
+- Never add tests for file or directory inventories, repository layout, CMake
+  wiring, checker existence/removal or policy wording. Do not replace a removed
+  check with a test of the same bookkeeping. Removing checks alone does not
+  justify a build, CTest run or qualification matrix; require a concrete
+  behavioral regression or affected executable contract before testing.
 - For code changes, build, run CTest and the applicable checks in the
   standard's validation matrix; format C++ with the pinned `clang-format`.
 - Unsafe/memory changes require documented invariants and sanitizer evidence.

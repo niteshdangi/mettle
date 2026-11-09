@@ -26,7 +26,7 @@ the annexes refine older broad descriptions, without overriding user decisions.
 | Area | Owning documents | Documentation result |
 | --- | --- | --- |
 | Architecture and release progression | README; decisions; implementation-plan | Independent C++/LLVM V1, substantive self-hosting V1.1, own backend V1.2 |
-| Syntax and fixtures | core-grammar; language-grammar; examples | Composed grammar and full-corpus expectations, including colon results, body-based inference, Unit/Never and explicit discard; I02 scalar execution is separate, not full-corpus qualification |
+| Syntax and fixtures | core-grammar; language-grammar; examples | Composed grammar and declared fixture expectations; colon results, body-based inference, Unit/Never and explicit discard remain language contracts, checked by behavioral compiler tests rather than grammar-spelling rules; I02 scalar execution is separate, not full-corpus qualification |
 | Ownership, typing and cleanup | core-semantics; semantic-rules | Parameter modes, Copy, CFG state, loans/regions, coercions, dispatch and exceptional replacement |
 | Advanced mechanisms | advanced-contracts; specification-annex; memory-and-concurrency | Pinning, consts, macros, coherence, erasure, memory/atomics and borrowed-task epochs |
 | Library and ABI | library-and-abi; baseline-mapping; library-surface; baseline artifacts | Recursive operation contracts, source/context identity, stability and explicit supporting-protocol mappings |
@@ -52,8 +52,8 @@ cross-checked. Both official archives and all 2,976 extracted Rust library
 The validator checks canonical reexports, declaration references, runtime versus
 const classification, implementation/interface-member instability, native-rule
 and conditional-protocol assignments, all capability owners, grammar reference
-closure, function-result/built-in/discard grammar policies, Markdown links/fences
-and exact fixture-manifest membership.
+closure, Markdown links/fences and declared fixture expectations. It does not
+enforce grammar spelling, a fixed milestone count or an example-file inventory.
 It must reject genuinely unmapped supporting declarations rather than treat
 every downloaded page as covered.
 

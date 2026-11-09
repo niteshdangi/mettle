@@ -56,8 +56,8 @@ I05 receipts remain unchanged historical evidence.
 
 The [compiler architecture](docs/compiler-architecture.md) defines component
 responsibilities, phase-owned representations and the full-language growth map.
-`compiler/modules.json` drives independent CMake targets and enforces source
-ownership, public headers and a dependency DAG. Future responsibilities are
+`CMakeLists.txt` defines independent compiler targets and their link dependencies.
+Future responsibilities are
 specified without pretending the corresponding features are implemented.
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and the
@@ -68,7 +68,7 @@ cmake --build build/linux-x86_64/Debug
 ctest --test-dir build/linux-x86_64/Debug --output-on-failure
 ```
 
-The build runs the module check; warnings are errors. Format C++ with the
+Warnings are errors. Format C++ with the
 pinned `clang-format`. A separate
 `python3 tools/build.py --configuration Debug --sanitizers` build instruments
 project C++ with ASan/UBSan. These checks do not prove a safety model or replace

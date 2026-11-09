@@ -633,7 +633,7 @@ After these, work through the subset area by area, in this order:
 You may change the compiler (compiler/**, runtime C++) when a V1 operation needs
 it. Follow the C++ compiler scope in docs/implementation-plan.md section 8:
 V1-required features and correctness/soundness fixes only, no C++-only tuning
-or refactors. Keep the module boundaries in compiler/modules.json, format with
+or refactors. Keep the component boundaries in CMake, format with
 the pinned clang-format, and add a focused source run/fail regression for each
 compiler fix. Never weaken an API or a test to avoid a compiler fix.
 

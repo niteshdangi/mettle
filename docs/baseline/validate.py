@@ -25,41 +25,6 @@ def project_files(project, pattern):
                 yield Path(directory) / name
 
 
-def function_grammar_checks(productions, filename):
-    failures = []
-    compact = {name: re.sub(r"\s+", "", body) for name, body in productions.items()}
-
-    def reject(problem):
-        failures.append({"file": filename, "problem": problem})
-
-    if any('"->"' in body for body in compact.values()):
-        reject("Obsolete arrow result delimiter in native grammar")
-    if compact.get("result_annotation") not in {'":",type_ref;', '":",simple_type;'}:
-        reject("Function results must use a colon type annotation")
-    for name in ("function", "closure"):
-        if name in compact and "[result_annotation]" not in compact[name]:
-            reject(f"{name} must permit body-based result inference")
-    for name in ("callable_type", "foreign_declaration"):
-        if name in compact and ("result_annotation" not in compact[name] or
-                                "[result_annotation]" in compact[name]):
-            reject(f"{name} must require an explicit result")
-    if "unit_type" in compact or any(
-            '"(",")"' in compact.get(name, "")
-            for name in ("type_ref", "type_atom")):
-        reject("Unit is a named type; empty parentheses are only a value")
-    if "unit_value" in compact and compact["unit_value"] != '"(",")";':
-        reject("The unit value must remain empty parentheses")
-    if "unit_value" not in compact.get("primary", ""):
-        reject("Expressions must retain the unit value")
-    if '"never"' in compact.get("type_atom", ""):
-        reject("Never is a predeclared type name, not a lowercase keyword")
-    if filename == "core-grammar.md" and (
-            "discard_binding" not in compact.get("binding", "") or
-            compact.get("discard_binding") != '"let","_","=",expression;'):
-        reject("Core explicit discard must require an initializer and create no named binding")
-    return failures
-
-
 def documentation_checks(project):
     failures = []
     documents = list(project_files(project, "*.md"))
@@ -104,15 +69,16 @@ def documentation_checks(project):
             check_link(capability_file, target)
     milestone_text = (project / "docs/implementation-plan.md").read_text()
     milestone_rows = re.findall(
-        r"^\| (I\d\d) \| ([^|\n]+) \| ([^|\n]+) \| ([^|\n]+) \|$",
+        r"^\|\s*(I\d+)\s*\|\s*([^|\n]+)\|\s*([^|\n]+)\|\s*([^|\n]+)\|\s*$",
         milestone_text, re.M)
     milestone_ids = {row[0] for row in milestone_rows}
-    if len(milestone_rows) != 17 or milestone_ids != {f"I{i:02d}" for i in range(1, 18)}:
-        failures.append({"problem": "Implementation milestone identity/count mismatch"})
+    if not milestone_rows or len(milestone_rows) != len(milestone_ids):
+        failures.append({"problem": "Missing or duplicate implementation milestone identities"})
     milestone_owners = {}
     for milestone, entries in re.findall(
-            r"^\| (I\d\d) \| ([LSTA\d, -]+) \|$", milestone_text, re.M):
-        for entry in entries.split(", "):
+            r"^\|\s*(I\d+)\s*\|\s*([LSTA\d, -]+)\|\s*$", milestone_text, re.M):
+        for entry in entries.strip().split(","):
+            entry = entry.strip()
             match = re.fullmatch(r"([LSTA])(\d{3})(?:-([LSTA])(\d{3}))?", entry)
             if not match or (match[3] and match[1] != match[3]) or milestone not in milestone_ids:
                 failures.append({"problem": "Invalid milestone capability range", "entry": entry})
@@ -133,7 +99,6 @@ def documentation_checks(project):
         names = [name for name, _ in productions]
         if len(set(names)) != len(names):
             failures.append({"file": filename, "problem": "Duplicate grammar production"})
-        failures.extend(function_grammar_checks(dict(productions), filename))
         grammar.update(productions)
         production_counts[filename] = len(productions)
     references = set()
@@ -149,8 +114,6 @@ def documentation_checks(project):
             if path in fixtures or not path.is_file() or case["expect"] not in {"accept", "reject"}:
                 failures.append({"file": case["file"], "problem": "Duplicate/invalid specification fixture"})
             fixtures.add(path)
-    if fixtures != {p.resolve() for p in (project / "examples").rglob("*.mt")}:
-        failures.append({"problem": "Fixture manifest membership mismatch"})
     for path in project_files(project, "*.json"):
         json.loads(path.read_text())
     for path in project_files(project, "*.py"):
@@ -160,7 +123,6 @@ def documentation_checks(project):
         "implementation_milestones_planned": len(milestone_rows),
         "milestone_capabilities_checked": len(milestone_owners),
         "grammar_productions": production_counts, "composed_grammar_productions": len(grammar),
-        "function_result_and_unit_policies_checked": True,
         "fixture_expectations_checked": len(fixtures), "fixtures_executed": False,
     }, failures
 

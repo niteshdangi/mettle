@@ -26,7 +26,6 @@
       "language-grammar.md": 110
     },
     "composed_grammar_productions": 139,
-    "function_result_and_unit_policies_checked": true,
     "fixture_expectations_checked": 23,
     "fixtures_executed": false
   },

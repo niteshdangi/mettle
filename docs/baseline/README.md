@@ -28,8 +28,8 @@ python3 docs/baseline/validate.py
 
 Run from the project root. All commands fail on detected inconsistencies.
 The first also checks the extracted library source set and its contents against
-the verified archive. The tests cover result/built-in/discard grammar policies
-and native Unit/Never mapping. The final validator requires all generated data
+the verified archive. The tests cover operation selection and native Unit/Never
+mapping. The final validator requires all generated data
 and the checked-in specification/facility register.
 
 **Case-insensitive filesystems:** the archive contains case-distinct Hexagon
@@ -99,8 +99,9 @@ force independently.
 Validation checks record/CSV membership, declaration-link closure, source/page
 identity, runtime-versus-const stability, reexports, case-distinct names,
 interface-member inheritance, supporting-protocol assignments and the project
-documentation's grammar references, result/built-in/discard syntax policies,
-capability owners, links and fixtures.
+documentation's grammar references, capability owners, links and declared
+fixture expectations. It does not freeze grammar spelling, milestone counts
+or membership of every example in an expectations manifest.
 
 It does **not** typecheck native declarations, prove the ownership/memory model,
 compile all cfg expansions, run the Mettle fixtures, certify target

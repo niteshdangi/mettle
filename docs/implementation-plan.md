@@ -91,7 +91,9 @@ than weakening existing examples to make an early compiler appear complete.
 The normative [compiler architecture](compiler-architecture.md) defines component
 ownership, phase representations, future feature placement and dependency
 enforcement. The tree below is a repository overview, not a sufficient module
-design. The architecture correction and its passing gates precede I03.
+design. CMake declares component targets and dependencies and discovers source
+files within their directories without a per-file inventory. The
+architecture correction and its passing gates precede I03.
 
 Create these only when implementing the owning milestone:
 

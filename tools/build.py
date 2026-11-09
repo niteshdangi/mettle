@@ -12,6 +12,8 @@ from pathlib import Path
 
 from bootstrap import ROOT, artifacts, host_platform, sha256
 
+CPP_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hpp"}
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -39,10 +41,6 @@ def main():
         "mettle-runtime-tests", "mettle-thread-tests", "mettle-consteval-tests",
         "mettle-cleanup-frame-tests",
         "mettle-cleanup-program-tests", "mettle-cleanup-source-tests")
-    modules = json.loads((ROOT / "compiler/modules.json").read_text())["modules"]
-    archive_names = ["libmettle_runtime.a", "libmettle_machine_callbacks.a", *(
-        "libmettle_" + module["name"] + ".a" for module in modules
-        if module["kind"] == "STATIC")]
     commands = [
         [str(cmake), "-S", str(ROOT), "-B", str(build), "-G", "Ninja",
          f"-DCMAKE_BUILD_TYPE={arguments.configuration}", f"-DCMAKE_C_COMPILER={clang}",
@@ -72,7 +70,7 @@ def main():
                  ROOT / ".clang-format", ROOT / ".clang-tidy", ROOT / ".editorconfig"] +
                 [path for directory in ("compiler", "runtime", "library", "tests", "tools", "examples")
                  for path in (ROOT / directory).rglob("*")
-                 if path.is_file() and path.suffix in {".cpp", ".c", ".h", ".py", ".json", ".yaml", ".mt"}])
+                 if path.is_file() and path.suffix in CPP_SUFFIXES | {".py", ".json", ".yaml", ".mt"}])
         },
         "steps": [],
         "first_build_mode": "clean build, compared byte-for-byte with a second clean build",
@@ -98,7 +96,10 @@ def main():
         return (result.stdout + result.stderr).strip()
 
     def binary_hashes():
-        names = [*executable_names, *archive_names]
+        archives = sorted(path.name for path in build.glob("libmettle_*.a"))
+        if "libmettle_runtime.a" not in archives or "libmettle_machine_callbacks.a" not in archives:
+            raise RuntimeError("Build did not produce the required runtime archives")
+        names = [*executable_names, *archives]
         return {name: sha256(build / name) for name in names}
 
     def planned_commands():
@@ -106,7 +107,7 @@ def main():
             if command[0] == str(ctest) and arguments.quality:
                 owned = [ROOT / name for name in ("compiler", "runtime", "tests")]
                 sources = sorted(path for root in owned for path in root.rglob("*")
-                                 if path.suffix in {".cpp", ".h"})
+                                 if path.is_file() and path.suffix in CPP_SUFFIXES)
                 yield [str(binaries["llvm"] / "clang-format"), "--dry-run", "--Werror",
                        *map(str, sources)]
                 database = json.loads((build / "compile_commands.json").read_text())
@@ -211,7 +212,7 @@ def main():
                 if arguments.configuration == "Debug":
                     evidence["debug_information_verification"] = probe(
                         [str(binaries["llvm"] / "llvm-dwarfdump"), "--verify",
-                         str(build / "CMakeFiles/mettle.dir/compiler/driver/main.cpp.o")])
+                         str(build / "mettle")])
         evidence["rebuilt_artifacts"] = binary_hashes()
         if evidence["rebuilt_artifacts"] != evidence["first_build"]:
             raise RuntimeError("Clean rebuild changed compiler artifacts in the same environment")
