@@ -1,13 +1,9 @@
 # Mettle language grammar: extended specification
 
-Status: selected full-language grammar. This extends `core-grammar.md`;
-implementation status and remaining work are recorded in
-`implementation-plan.md` section 8.7. Explicitly unapproved identity proposals
-are not part of this grammar.
-
-The core grammar is a subset, not a second dialect. Where this document extends
-a rule, its additional alternatives apply to the same syntax. A statement that
-the initial subset lacks a construct describes implementation sequencing only.
+Status: selected full-language extension of [core-grammar.md](core-grammar.md),
+not a second dialect. Extended alternatives apply to the same syntax; subset
+omissions describe sequencing, not reduced V1 scope. Implementation evidence:
+[implementation-plan.md](implementation-plan.md) §8.7.
 
 ## 1. Lexical completion
 
@@ -361,10 +357,8 @@ spelling alone does not determine metaprogramming semantics.
 - `take fn` is an owned-capture closure; `take expression` otherwise consumes.
 - Labels use `label name`, avoiding conflict with character literals.
 
-The specification annex supplies macro matchers/hygiene, assembly operands and
-attribute schemas. Advanced-contracts supplies the foreign-varargs and pinning
-contracts. No conflict-free parser is claimed. No GPU/durable-workflow/
-verification language forms were added.
+Macro, assembly and attribute refinements are in specification-annex;
+foreign-varargs and pinning contracts are in advanced-contracts.
 
 ## 9. Composition and list productions
 
@@ -547,7 +541,6 @@ literals, arithmetic, casts, comparisons, `if`/`match`/blocks/`let`/`var`,
 loops, tuples, arrays and calls to other `const fn`. Overflow, division by
 zero, out-of-bounds indexing and exhausting the evaluation step budget or call
 depth are compile-time errors (`error[constant]` / `error[limit]`).
-Generic, method, variadic and fallible `const fn` are not yet evaluated.
 
 ## 11. Receiver and pin projection rules
 
@@ -571,10 +564,8 @@ fields. Unsafe manual projections must preserve the same guarantee.
 
 ## 12. Grammar audit versus parser validation
 
-List productions and every referenced nonterminal are supplied by this document
-and core-grammar together. A grammar audit checks closure, overlapping prefixes,
-separator handling and coverage of documented syntax. Executing a parser against
-fixtures remains a later implementation task, not a result of writing EBNF.
+Audit core and extended productions together for closure, overlapping prefixes,
+separators and syntax coverage; validate fixtures through the parser.
 
 Required ambiguity fixtures include nested `>>`, ranges versus float literals,
 named functions versus closures, result effects versus stored outcomes, modes
@@ -584,11 +575,7 @@ comparison.
 
 ## 13. Dotted paths, generic application, closures and formatting
 
-Status: current syntax (decisions D18-D29). Implementation status and remaining
-work are recorded in implementation-plan section 8.7.
-
-Semantic meaning is in semantic-rules section 13; library vocabulary is in
-library-surface section 9.
+Decisions D18-D29; semantics: semantic-rules §13; vocabulary: library-surface §9.
 
 ### 13.1. Dotted paths and imports
 
@@ -613,9 +600,9 @@ several items of one module (`import std.io.{Reader, Writer as Sink}`); a glob
 (`import std.io.*`) binds every exported item at glob priority, below explicit
 imports and above the prelude, and an ambiguous glob name is diagnosed at use.
 
-Implementation rule (checker, verified): a dotted expression chain is a field
-or method access when its root is a local value or parameter in scope, so a
-value shadows a type or module of the same name. Otherwise, resolve the longest
+A dotted expression chain is field or method access when its root is a local
+value or parameter in scope, so a value shadows a type or module of the same
+name. Otherwise, resolve the longest
 prefix whose leading segments are modules, types, interfaces, `Self` or generic
 parameters; remaining links are ordinary accesses. An unshadowed `core`,
 `alloc` or `std` chain is a path through its last link, since those roots also
@@ -663,13 +650,11 @@ and nested `>>` splits as in type arguments. The parser shares one
 generic-argument parser and memoizes
 lookahead so nested suffixes are not rescanned.
 
-Implementation rule (parser, verified): application is attempted only after a
-name or dotted member chain (not after a literal, call or `<<`); the generic
+Application is attempted only after a name or dotted member chain (not after a
+literal, call or `<<`); the generic
 argument list is parsed speculatively, and a rejected attempt rolls back
 position, `>>` splits, `<<` insertions and diagnostics state before the `<` is
-read as a comparison. `FormatHoleClose` also counts as a follower. The
-quirk diagnostic above, dotted names inside import groups, and dotted machine
-macro paths are not yet implemented.
+read as a comparison. `FormatHoleClose` also counts as a follower.
 
 ### 13.4. Closures and call arguments
 

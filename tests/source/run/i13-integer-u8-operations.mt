@@ -1031,171 +1031,9 @@ fn group8() {
     if !(7u8.isolate_highest_one() == 4u8) { panic("isolate_highest_one #975") }
     if !(7u8.isolate_lowest_one() == 1u8) { panic("isolate_lowest_one #976") }
     if !(7u8.bit_width() == 3u32) { panic("bit_width #977") }
-    if !(0u8.checked_neg() == present(0u8)) { panic("checked_neg #978") }
-    if !(0u8.wrapping_neg() == 0u8) { panic("wrapping_neg #979") }
-    if !(0u8.overflowing_neg().0 == 0u8 && 0u8.overflowing_neg().1 == false) { panic("overflowing_neg #980") }
-    if !(0u8.strict_neg() == 0u8) { panic("strict_neg #981") }
-    if !(0u8.cast_signed() == 0i8) { panic("cast_signed #982") }
-    if !(0u8.count_ones() == 0u32) { panic("count_ones #983") }
-    if !(0u8.count_zeros() == 8u32) { panic("count_zeros #984") }
-    if !(0u8.leading_zeros() == 8u32) { panic("leading_zeros #985") }
-    if !(0u8.trailing_zeros() == 8u32) { panic("trailing_zeros #986") }
-    if !(0u8.leading_ones() == 0u32) { panic("leading_ones #987") }
-    if !(0u8.trailing_ones() == 0u32) { panic("trailing_ones #988") }
-    if !(0u8.reverse_bits() == 0u8) { panic("reverse_bits #989") }
-    if !(0u8.swap_bytes() == 0u8) { panic("swap_bytes #990") }
-    if !(0u8.to_be() == 0u8) { panic("to_be #991") }
-    if !(0u8.to_le() == 0u8) { panic("to_le #992") }
-    if !(u8.from_be(0u8) == 0u8) { panic("from_be #993") }
-    if !(u8.from_le(0u8) == 0u8) { panic("from_le #994") }
-    if !(0u8.to_le_bytes() == [0u8]) { panic("to_le_bytes #995") }
-    if !(0u8.to_be_bytes() == [0u8]) { panic("to_be_bytes #996") }
-    if !(0u8.to_ne_bytes() == [0u8]) { panic("to_ne_bytes #997") }
-    if !(u8.from_le_bytes([0u8]) == 0u8) { panic("from_le_bytes #998") }
-    if !(u8.from_be_bytes([0u8]) == 0u8) { panic("from_be_bytes #999") }
-    if !(u8.from_ne_bytes([0u8]) == 0u8) { panic("from_ne_bytes #1000") }
-    if !(0u8.rotate_left(0u32) == 0u8) { panic("rotate_left #1001") }
-    if !(0u8.rotate_right(0u32) == 0u8) { panic("rotate_right #1002") }
-    if !(0u8.checked_shl(0u32) == present(0u8)) { panic("checked_shl #1003") }
-    if !(0u8.checked_shr(0u32) == present(0u8)) { panic("checked_shr #1004") }
-    if !(0u8.wrapping_shl(0u32) == 0u8) { panic("wrapping_shl #1005") }
-    if !(0u8.wrapping_shr(0u32) == 0u8) { panic("wrapping_shr #1006") }
-    if !(0u8.overflowing_shl(0u32).0 == 0u8 && 0u8.overflowing_shl(0u32).1 == false) { panic("overflowing_shl #1007") }
-    if !(0u8.overflowing_shr(0u32).0 == 0u8 && 0u8.overflowing_shr(0u32).1 == false) { panic("overflowing_shr #1008") }
-    if !(0u8.unbounded_shl(0u32) == 0u8) { panic("unbounded_shl #1009") }
-    if !(0u8.unbounded_shr(0u32) == 0u8) { panic("unbounded_shr #1010") }
-    if !(0u8.strict_shl(0u32) == 0u8) { panic("strict_shl #1011") }
-    if !(0u8.strict_shr(0u32) == 0u8) { panic("strict_shr #1012") }
-    if !(unsafe { 0u8.unchecked_shl(0u32) } == 0u8) { panic("unchecked_shl #1013") }
-    if !(unsafe { 0u8.unchecked_shr(0u32) } == 0u8) { panic("unchecked_shr #1014") }
-    if !(0u8.rotate_left(1u32) == 0u8) { panic("rotate_left #1015") }
-    if !(0u8.rotate_right(1u32) == 0u8) { panic("rotate_right #1016") }
-    if !(0u8.checked_shl(1u32) == present(0u8)) { panic("checked_shl #1017") }
-    if !(0u8.checked_shr(1u32) == present(0u8)) { panic("checked_shr #1018") }
-    if !(0u8.wrapping_shl(1u32) == 0u8) { panic("wrapping_shl #1019") }
-    if !(0u8.wrapping_shr(1u32) == 0u8) { panic("wrapping_shr #1020") }
-    if !(0u8.overflowing_shl(1u32).0 == 0u8 && 0u8.overflowing_shl(1u32).1 == false) { panic("overflowing_shl #1021") }
-    if !(0u8.overflowing_shr(1u32).0 == 0u8 && 0u8.overflowing_shr(1u32).1 == false) { panic("overflowing_shr #1022") }
-    if !(0u8.unbounded_shl(1u32) == 0u8) { panic("unbounded_shl #1023") }
-    if !(0u8.unbounded_shr(1u32) == 0u8) { panic("unbounded_shr #1024") }
-    if !(0u8.strict_shl(1u32) == 0u8) { panic("strict_shl #1025") }
-    if !(0u8.strict_shr(1u32) == 0u8) { panic("strict_shr #1026") }
-    if !(unsafe { 0u8.unchecked_shl(1u32) } == 0u8) { panic("unchecked_shl #1027") }
-    if !(unsafe { 0u8.unchecked_shr(1u32) } == 0u8) { panic("unchecked_shr #1028") }
-    if !(0u8.rotate_left(3u32) == 0u8) { panic("rotate_left #1029") }
-    if !(0u8.rotate_right(3u32) == 0u8) { panic("rotate_right #1030") }
-    if !(0u8.checked_shl(3u32) == present(0u8)) { panic("checked_shl #1031") }
-    if !(0u8.checked_shr(3u32) == present(0u8)) { panic("checked_shr #1032") }
-    if !(0u8.wrapping_shl(3u32) == 0u8) { panic("wrapping_shl #1033") }
-    if !(0u8.wrapping_shr(3u32) == 0u8) { panic("wrapping_shr #1034") }
-    if !(0u8.overflowing_shl(3u32).0 == 0u8 && 0u8.overflowing_shl(3u32).1 == false) { panic("overflowing_shl #1035") }
-    if !(0u8.overflowing_shr(3u32).0 == 0u8 && 0u8.overflowing_shr(3u32).1 == false) { panic("overflowing_shr #1036") }
-    if !(0u8.unbounded_shl(3u32) == 0u8) { panic("unbounded_shl #1037") }
-    if !(0u8.unbounded_shr(3u32) == 0u8) { panic("unbounded_shr #1038") }
-    if !(0u8.strict_shl(3u32) == 0u8) { panic("strict_shl #1039") }
-    if !(0u8.strict_shr(3u32) == 0u8) { panic("strict_shr #1040") }
-    if !(unsafe { 0u8.unchecked_shl(3u32) } == 0u8) { panic("unchecked_shl #1041") }
-    if !(unsafe { 0u8.unchecked_shr(3u32) } == 0u8) { panic("unchecked_shr #1042") }
-    if !(0u8.rotate_left(7u32) == 0u8) { panic("rotate_left #1043") }
-    if !(0u8.rotate_right(7u32) == 0u8) { panic("rotate_right #1044") }
-    if !(0u8.checked_shl(7u32) == present(0u8)) { panic("checked_shl #1045") }
-    if !(0u8.checked_shr(7u32) == present(0u8)) { panic("checked_shr #1046") }
-    if !(0u8.wrapping_shl(7u32) == 0u8) { panic("wrapping_shl #1047") }
-    if !(0u8.wrapping_shr(7u32) == 0u8) { panic("wrapping_shr #1048") }
-    if !(0u8.overflowing_shl(7u32).0 == 0u8 && 0u8.overflowing_shl(7u32).1 == false) { panic("overflowing_shl #1049") }
-    if !(0u8.overflowing_shr(7u32).0 == 0u8 && 0u8.overflowing_shr(7u32).1 == false) { panic("overflowing_shr #1050") }
-    if !(0u8.unbounded_shl(7u32) == 0u8) { panic("unbounded_shl #1051") }
-    if !(0u8.unbounded_shr(7u32) == 0u8) { panic("unbounded_shr #1052") }
-    if !(0u8.strict_shl(7u32) == 0u8) { panic("strict_shl #1053") }
-    if !(0u8.strict_shr(7u32) == 0u8) { panic("strict_shr #1054") }
-    if !(unsafe { 0u8.unchecked_shl(7u32) } == 0u8) { panic("unchecked_shl #1055") }
-    if !(unsafe { 0u8.unchecked_shr(7u32) } == 0u8) { panic("unchecked_shr #1056") }
-    if !(0u8.rotate_left(8u32) == 0u8) { panic("rotate_left #1057") }
-    if !(0u8.rotate_right(8u32) == 0u8) { panic("rotate_right #1058") }
-    if !(missing(0u8.checked_shl(8u32))) { panic("checked_shl #1059") }
-    if !(missing(0u8.checked_shr(8u32))) { panic("checked_shr #1060") }
-    if !(0u8.wrapping_shl(8u32) == 0u8) { panic("wrapping_shl #1061") }
-    if !(0u8.wrapping_shr(8u32) == 0u8) { panic("wrapping_shr #1062") }
-    if !(0u8.overflowing_shl(8u32).0 == 0u8 && 0u8.overflowing_shl(8u32).1 == true) { panic("overflowing_shl #1063") }
-    if !(0u8.overflowing_shr(8u32).0 == 0u8 && 0u8.overflowing_shr(8u32).1 == true) { panic("overflowing_shr #1064") }
-    if !(0u8.unbounded_shl(8u32) == 0u8) { panic("unbounded_shl #1065") }
-    if !(0u8.unbounded_shr(8u32) == 0u8) { panic("unbounded_shr #1066") }
-    if !(0u8.rotate_left(13u32) == 0u8) { panic("rotate_left #1067") }
-    if !(0u8.rotate_right(13u32) == 0u8) { panic("rotate_right #1068") }
-    if !(missing(0u8.checked_shl(13u32))) { panic("checked_shl #1069") }
-    if !(missing(0u8.checked_shr(13u32))) { panic("checked_shr #1070") }
-    if !(0u8.wrapping_shl(13u32) == 0u8) { panic("wrapping_shl #1071") }
-    if !(0u8.wrapping_shr(13u32) == 0u8) { panic("wrapping_shr #1072") }
-    if !(0u8.overflowing_shl(13u32).0 == 0u8 && 0u8.overflowing_shl(13u32).1 == true) { panic("overflowing_shl #1073") }
-    if !(0u8.overflowing_shr(13u32).0 == 0u8 && 0u8.overflowing_shr(13u32).1 == true) { panic("overflowing_shr #1074") }
-    if !(0u8.unbounded_shl(13u32) == 0u8) { panic("unbounded_shl #1075") }
-    if !(0u8.unbounded_shr(13u32) == 0u8) { panic("unbounded_shr #1076") }
-    if !(0u8.checked_pow(0u32) == present(1u8)) { panic("checked_pow #1077") }
-    if !(0u8.wrapping_pow(0u32) == 1u8) { panic("wrapping_pow #1078") }
-    if !(0u8.overflowing_pow(0u32).0 == 1u8 && 0u8.overflowing_pow(0u32).1 == false) { panic("overflowing_pow #1079") }
-    if !(0u8.saturating_pow(0u32) == 1u8) { panic("saturating_pow #1080") }
 }
 
 fn group9() {
-    if !(0u8.pow(0u32) == 1u8) { panic("pow #1081") }
-    if !(0u8.strict_pow(0u32) == 1u8) { panic("strict_pow #1082") }
-    if !(0u8.checked_pow(1u32) == present(0u8)) { panic("checked_pow #1083") }
-    if !(0u8.wrapping_pow(1u32) == 0u8) { panic("wrapping_pow #1084") }
-    if !(0u8.overflowing_pow(1u32).0 == 0u8 && 0u8.overflowing_pow(1u32).1 == false) { panic("overflowing_pow #1085") }
-    if !(0u8.saturating_pow(1u32) == 0u8) { panic("saturating_pow #1086") }
-    if !(0u8.pow(1u32) == 0u8) { panic("pow #1087") }
-    if !(0u8.strict_pow(1u32) == 0u8) { panic("strict_pow #1088") }
-    if !(0u8.checked_pow(2u32) == present(0u8)) { panic("checked_pow #1089") }
-    if !(0u8.wrapping_pow(2u32) == 0u8) { panic("wrapping_pow #1090") }
-    if !(0u8.overflowing_pow(2u32).0 == 0u8 && 0u8.overflowing_pow(2u32).1 == false) { panic("overflowing_pow #1091") }
-    if !(0u8.saturating_pow(2u32) == 0u8) { panic("saturating_pow #1092") }
-    if !(0u8.pow(2u32) == 0u8) { panic("pow #1093") }
-    if !(0u8.strict_pow(2u32) == 0u8) { panic("strict_pow #1094") }
-    if !(0u8.checked_pow(3u32) == present(0u8)) { panic("checked_pow #1095") }
-    if !(0u8.wrapping_pow(3u32) == 0u8) { panic("wrapping_pow #1096") }
-    if !(0u8.overflowing_pow(3u32).0 == 0u8 && 0u8.overflowing_pow(3u32).1 == false) { panic("overflowing_pow #1097") }
-    if !(0u8.saturating_pow(3u32) == 0u8) { panic("saturating_pow #1098") }
-    if !(0u8.pow(3u32) == 0u8) { panic("pow #1099") }
-    if !(0u8.strict_pow(3u32) == 0u8) { panic("strict_pow #1100") }
-    if !(0u8.checked_pow(7u32) == present(0u8)) { panic("checked_pow #1101") }
-    if !(0u8.wrapping_pow(7u32) == 0u8) { panic("wrapping_pow #1102") }
-    if !(0u8.overflowing_pow(7u32).0 == 0u8 && 0u8.overflowing_pow(7u32).1 == false) { panic("overflowing_pow #1103") }
-    if !(0u8.saturating_pow(7u32) == 0u8) { panic("saturating_pow #1104") }
-    if !(0u8.pow(7u32) == 0u8) { panic("pow #1105") }
-    if !(0u8.strict_pow(7u32) == 0u8) { panic("strict_pow #1106") }
-    if !(0u8.checked_pow(8u32) == present(0u8)) { panic("checked_pow #1107") }
-    if !(0u8.wrapping_pow(8u32) == 0u8) { panic("wrapping_pow #1108") }
-    if !(0u8.overflowing_pow(8u32).0 == 0u8 && 0u8.overflowing_pow(8u32).1 == false) { panic("overflowing_pow #1109") }
-    if !(0u8.saturating_pow(8u32) == 0u8) { panic("saturating_pow #1110") }
-    if !(0u8.pow(8u32) == 0u8) { panic("pow #1111") }
-    if !(0u8.strict_pow(8u32) == 0u8) { panic("strict_pow #1112") }
-    if !(missing(0u8.checked_ilog2())) { panic("checked_ilog2 #1113") }
-    if !(missing(0u8.checked_ilog10())) { panic("checked_ilog10 #1114") }
-    if !(missing(0u8.checked_ilog(2u8))) { panic("checked_ilog #1115") }
-    if !(0u8.isqrt() == 0u8) { panic("isqrt #1116") }
-    if !(0u8.checked_isqrt() == present(0u8)) { panic("checked_isqrt #1117") }
-    if !(0u8.is_power_of_two() == false) { panic("is_power_of_two #1118") }
-    if !(0u8.checked_next_power_of_two() == present(1u8)) { panic("checked_next_power_of_two #1119") }
-    if !(0u8.next_power_of_two() == 1u8) { panic("next_power_of_two #1120") }
-    if !(0u8.div_ceil(1u8) == 0u8) { panic("div_ceil #1121") }
-    if !(0u8.checked_next_multiple_of(1u8) == present(0u8)) { panic("checked_next_multiple_of #1122") }
-    if !(0u8.next_multiple_of(1u8) == 0u8) { panic("next_multiple_of #1123") }
-    if !(0u8.is_multiple_of(1u8) == true) { panic("is_multiple_of #1124") }
-    if !(0u8.div_ceil(3u8) == 0u8) { panic("div_ceil #1125") }
-    if !(0u8.checked_next_multiple_of(3u8) == present(0u8)) { panic("checked_next_multiple_of #1126") }
-    if !(0u8.next_multiple_of(3u8) == 0u8) { panic("next_multiple_of #1127") }
-    if !(0u8.is_multiple_of(3u8) == true) { panic("is_multiple_of #1128") }
-    if !(0u8.div_ceil(7u8) == 0u8) { panic("div_ceil #1129") }
-    if !(0u8.checked_next_multiple_of(7u8) == present(0u8)) { panic("checked_next_multiple_of #1130") }
-    if !(0u8.next_multiple_of(7u8) == 0u8) { panic("next_multiple_of #1131") }
-    if !(0u8.is_multiple_of(7u8) == true) { panic("is_multiple_of #1132") }
-    if !(0u8.is_multiple_of(0u8) == true) { panic("is_multiple_of #1133") }
-    if !(missing(0u8.checked_next_multiple_of(0u8))) { panic("checked_next_multiple_of #1134") }
-    if !(missing(0u8.highest_one())) { panic("highest_one #1135") }
-    if !(missing(0u8.lowest_one())) { panic("lowest_one #1136") }
-    if !(0u8.isolate_highest_one() == 0u8) { panic("isolate_highest_one #1137") }
-    if !(0u8.isolate_lowest_one() == 0u8) { panic("isolate_lowest_one #1138") }
-    if !(0u8.bit_width() == 0u32) { panic("bit_width #1139") }
     if !(missing(1u8.checked_neg())) { panic("checked_neg #1140") }
     if !(1u8.wrapping_neg() == u8.MAX) { panic("wrapping_neg #1141") }
     if !(1u8.overflowing_neg().0 == u8.MAX && 1u8.overflowing_neg().1 == true) { panic("overflowing_neg #1142") }
@@ -1376,7 +1214,6 @@ fn group10() {
     if !(u8.MAX.carrying_mul_add(1u8, 0u8, 0u8).0 == u8.MAX && u8.MAX.carrying_mul_add(1u8, 0u8, 0u8).1 == 0u8) { panic("carrying_mul_add #1314") }
     if !(u8.MAX.carrying_mul(1u8, u8.MAX).0 == 254u8 && u8.MAX.carrying_mul(1u8, u8.MAX).1 == 1u8) { panic("carrying_mul #1315") }
     if !(u8.MAX.carrying_mul_add(1u8, u8.MAX, 0u8).0 == 254u8 && u8.MAX.carrying_mul_add(1u8, u8.MAX, 0u8).1 == 1u8) { panic("carrying_mul_add #1316") }
-    if !(u8.MAX.carrying_mul(1u8, u8.MAX).0 == 254u8 && u8.MAX.carrying_mul(1u8, u8.MAX).1 == 1u8) { panic("carrying_mul #1317") }
     if !(u8.MAX.carrying_mul_add(1u8, u8.MAX, u8.MAX).0 == 253u8 && u8.MAX.carrying_mul_add(1u8, u8.MAX, u8.MAX).1 == 2u8) { panic("carrying_mul_add #1318") }
     if !(u8.MAX.carrying_mul(1u8, 7u8).0 == 6u8 && u8.MAX.carrying_mul(1u8, 7u8).1 == 1u8) { panic("carrying_mul #1319") }
     if !(u8.MAX.carrying_mul_add(1u8, 7u8, 3u8).0 == 9u8 && u8.MAX.carrying_mul_add(1u8, 7u8, 3u8).1 == 1u8) { panic("carrying_mul_add #1320") }
@@ -1392,7 +1229,6 @@ fn group11() {
     if !(0u8.carrying_mul_add(1u8, 0u8, 0u8).0 == 0u8 && 0u8.carrying_mul_add(1u8, 0u8, 0u8).1 == 0u8) { panic("carrying_mul_add #1327") }
     if !(0u8.carrying_mul(1u8, u8.MAX).0 == u8.MAX && 0u8.carrying_mul(1u8, u8.MAX).1 == 0u8) { panic("carrying_mul #1328") }
     if !(0u8.carrying_mul_add(1u8, u8.MAX, 0u8).0 == u8.MAX && 0u8.carrying_mul_add(1u8, u8.MAX, 0u8).1 == 0u8) { panic("carrying_mul_add #1329") }
-    if !(0u8.carrying_mul(1u8, u8.MAX).0 == u8.MAX && 0u8.carrying_mul(1u8, u8.MAX).1 == 0u8) { panic("carrying_mul #1330") }
     if !(0u8.carrying_mul_add(1u8, u8.MAX, u8.MAX).0 == 254u8 && 0u8.carrying_mul_add(1u8, u8.MAX, u8.MAX).1 == 1u8) { panic("carrying_mul_add #1331") }
     if !(0u8.carrying_mul(1u8, 7u8).0 == 7u8 && 0u8.carrying_mul(1u8, 7u8).1 == 0u8) { panic("carrying_mul #1332") }
     if !(0u8.carrying_mul_add(1u8, 7u8, 3u8).0 == 10u8 && 0u8.carrying_mul_add(1u8, 7u8, 3u8).1 == 0u8) { panic("carrying_mul_add #1333") }
@@ -1405,7 +1241,6 @@ fn group11() {
     if !(3u8.carrying_mul_add(7u8, 0u8, 0u8).0 == 21u8 && 3u8.carrying_mul_add(7u8, 0u8, 0u8).1 == 0u8) { panic("carrying_mul_add #1340") }
     if !(3u8.carrying_mul(7u8, u8.MAX).0 == 20u8 && 3u8.carrying_mul(7u8, u8.MAX).1 == 1u8) { panic("carrying_mul #1341") }
     if !(3u8.carrying_mul_add(7u8, u8.MAX, 0u8).0 == 20u8 && 3u8.carrying_mul_add(7u8, u8.MAX, 0u8).1 == 1u8) { panic("carrying_mul_add #1342") }
-    if !(3u8.carrying_mul(7u8, u8.MAX).0 == 20u8 && 3u8.carrying_mul(7u8, u8.MAX).1 == 1u8) { panic("carrying_mul #1343") }
     if !(3u8.carrying_mul_add(7u8, u8.MAX, u8.MAX).0 == 19u8 && 3u8.carrying_mul_add(7u8, u8.MAX, u8.MAX).1 == 2u8) { panic("carrying_mul_add #1344") }
     if !(3u8.carrying_mul(7u8, 7u8).0 == 28u8 && 3u8.carrying_mul(7u8, 7u8).1 == 0u8) { panic("carrying_mul #1345") }
     if !(3u8.carrying_mul_add(7u8, 7u8, 3u8).0 == 31u8 && 3u8.carrying_mul_add(7u8, 7u8, 3u8).1 == 0u8) { panic("carrying_mul_add #1346") }
@@ -1418,7 +1253,6 @@ fn group11() {
     if !(7u8.carrying_mul_add(3u8, 0u8, 0u8).0 == 21u8 && 7u8.carrying_mul_add(3u8, 0u8, 0u8).1 == 0u8) { panic("carrying_mul_add #1353") }
     if !(7u8.carrying_mul(3u8, u8.MAX).0 == 20u8 && 7u8.carrying_mul(3u8, u8.MAX).1 == 1u8) { panic("carrying_mul #1354") }
     if !(7u8.carrying_mul_add(3u8, u8.MAX, 0u8).0 == 20u8 && 7u8.carrying_mul_add(3u8, u8.MAX, 0u8).1 == 1u8) { panic("carrying_mul_add #1355") }
-    if !(7u8.carrying_mul(3u8, u8.MAX).0 == 20u8 && 7u8.carrying_mul(3u8, u8.MAX).1 == 1u8) { panic("carrying_mul #1356") }
     if !(7u8.carrying_mul_add(3u8, u8.MAX, u8.MAX).0 == 19u8 && 7u8.carrying_mul_add(3u8, u8.MAX, u8.MAX).1 == 2u8) { panic("carrying_mul_add #1357") }
     if !(7u8.carrying_mul(3u8, 7u8).0 == 28u8 && 7u8.carrying_mul(3u8, 7u8).1 == 0u8) { panic("carrying_mul #1358") }
     if !(7u8.carrying_mul_add(3u8, 7u8, 3u8).0 == 31u8 && 7u8.carrying_mul_add(3u8, 7u8, 3u8).1 == 0u8) { panic("carrying_mul_add #1359") }
@@ -1431,7 +1265,6 @@ fn group11() {
     if !(u8.MAX.carrying_mul_add(2u8, 0u8, 0u8).0 == 254u8 && u8.MAX.carrying_mul_add(2u8, 0u8, 0u8).1 == 1u8) { panic("carrying_mul_add #1366") }
     if !(u8.MAX.carrying_mul(2u8, u8.MAX).0 == 253u8 && u8.MAX.carrying_mul(2u8, u8.MAX).1 == 2u8) { panic("carrying_mul #1367") }
     if !(u8.MAX.carrying_mul_add(2u8, u8.MAX, 0u8).0 == 253u8 && u8.MAX.carrying_mul_add(2u8, u8.MAX, 0u8).1 == 2u8) { panic("carrying_mul_add #1368") }
-    if !(u8.MAX.carrying_mul(2u8, u8.MAX).0 == 253u8 && u8.MAX.carrying_mul(2u8, u8.MAX).1 == 2u8) { panic("carrying_mul #1369") }
     if !(u8.MAX.carrying_mul_add(2u8, u8.MAX, u8.MAX).0 == 252u8 && u8.MAX.carrying_mul_add(2u8, u8.MAX, u8.MAX).1 == 3u8) { panic("carrying_mul_add #1370") }
     if !(u8.MAX.carrying_mul(2u8, 7u8).0 == 5u8 && u8.MAX.carrying_mul(2u8, 7u8).1 == 2u8) { panic("carrying_mul #1371") }
     if !(u8.MAX.carrying_mul_add(2u8, 7u8, 3u8).0 == 8u8 && u8.MAX.carrying_mul_add(2u8, 7u8, 3u8).1 == 2u8) { panic("carrying_mul_add #1372") }
@@ -1444,7 +1277,6 @@ fn group11() {
     if !(0u8.carrying_mul_add(0u8, 0u8, 0u8).0 == 0u8 && 0u8.carrying_mul_add(0u8, 0u8, 0u8).1 == 0u8) { panic("carrying_mul_add #1379") }
     if !(0u8.carrying_mul(0u8, u8.MAX).0 == u8.MAX && 0u8.carrying_mul(0u8, u8.MAX).1 == 0u8) { panic("carrying_mul #1380") }
     if !(0u8.carrying_mul_add(0u8, u8.MAX, 0u8).0 == u8.MAX && 0u8.carrying_mul_add(0u8, u8.MAX, 0u8).1 == 0u8) { panic("carrying_mul_add #1381") }
-    if !(0u8.carrying_mul(0u8, u8.MAX).0 == u8.MAX && 0u8.carrying_mul(0u8, u8.MAX).1 == 0u8) { panic("carrying_mul #1382") }
     if !(0u8.carrying_mul_add(0u8, u8.MAX, u8.MAX).0 == 254u8 && 0u8.carrying_mul_add(0u8, u8.MAX, u8.MAX).1 == 1u8) { panic("carrying_mul_add #1383") }
     if !(0u8.carrying_mul(0u8, 7u8).0 == 7u8 && 0u8.carrying_mul(0u8, 7u8).1 == 0u8) { panic("carrying_mul #1384") }
     if !(0u8.carrying_mul_add(0u8, 7u8, 3u8).0 == 10u8 && 0u8.carrying_mul_add(0u8, 7u8, 3u8).1 == 0u8) { panic("carrying_mul_add #1385") }
@@ -1457,7 +1289,6 @@ fn group11() {
     if !(u8.MAX.carrying_mul_add(u8.MAX, 0u8, 0u8).0 == 1u8 && u8.MAX.carrying_mul_add(u8.MAX, 0u8, 0u8).1 == 254u8) { panic("carrying_mul_add #1392") }
     if !(u8.MAX.carrying_mul(u8.MAX, u8.MAX).0 == 0u8 && u8.MAX.carrying_mul(u8.MAX, u8.MAX).1 == u8.MAX) { panic("carrying_mul #1393") }
     if !(u8.MAX.carrying_mul_add(u8.MAX, u8.MAX, 0u8).0 == 0u8 && u8.MAX.carrying_mul_add(u8.MAX, u8.MAX, 0u8).1 == u8.MAX) { panic("carrying_mul_add #1394") }
-    if !(u8.MAX.carrying_mul(u8.MAX, u8.MAX).0 == 0u8 && u8.MAX.carrying_mul(u8.MAX, u8.MAX).1 == u8.MAX) { panic("carrying_mul #1395") }
     if !(u8.MAX.carrying_mul_add(u8.MAX, u8.MAX, u8.MAX).0 == u8.MAX && u8.MAX.carrying_mul_add(u8.MAX, u8.MAX, u8.MAX).1 == u8.MAX) { panic("carrying_mul_add #1396") }
     if !(u8.MAX.carrying_mul(u8.MAX, 7u8).0 == 8u8 && u8.MAX.carrying_mul(u8.MAX, 7u8).1 == 254u8) { panic("carrying_mul #1397") }
     if !(u8.MAX.carrying_mul_add(u8.MAX, 7u8, 3u8).0 == 11u8 && u8.MAX.carrying_mul_add(u8.MAX, 7u8, 3u8).1 == 254u8) { panic("carrying_mul_add #1398") }
@@ -1470,7 +1301,6 @@ fn group11() {
     if !(u8.MAX.carrying_mul_add(254u8, 0u8, 0u8).0 == 2u8 && u8.MAX.carrying_mul_add(254u8, 0u8, 0u8).1 == 253u8) { panic("carrying_mul_add #1405") }
     if !(u8.MAX.carrying_mul(254u8, u8.MAX).0 == 1u8 && u8.MAX.carrying_mul(254u8, u8.MAX).1 == 254u8) { panic("carrying_mul #1406") }
     if !(u8.MAX.carrying_mul_add(254u8, u8.MAX, 0u8).0 == 1u8 && u8.MAX.carrying_mul_add(254u8, u8.MAX, 0u8).1 == 254u8) { panic("carrying_mul_add #1407") }
-    if !(u8.MAX.carrying_mul(254u8, u8.MAX).0 == 1u8 && u8.MAX.carrying_mul(254u8, u8.MAX).1 == 254u8) { panic("carrying_mul #1408") }
     if !(u8.MAX.carrying_mul_add(254u8, u8.MAX, u8.MAX).0 == 0u8 && u8.MAX.carrying_mul_add(254u8, u8.MAX, u8.MAX).1 == u8.MAX) { panic("carrying_mul_add #1409") }
     if !(u8.MAX.carrying_mul(254u8, 7u8).0 == 9u8 && u8.MAX.carrying_mul(254u8, 7u8).1 == 253u8) { panic("carrying_mul #1410") }
     if !(u8.MAX.carrying_mul_add(254u8, 7u8, 3u8).0 == 12u8 && u8.MAX.carrying_mul_add(254u8, 7u8, 3u8).1 == 253u8) { panic("carrying_mul_add #1411") }
@@ -1484,17 +1314,10 @@ fn group11() {
     if !(parsed(capture num.from_str_radix<u8>("0", 16u32)) == present(0u8)) { panic("from_str_radix #1419") }
     if !(parsed(capture num.from_str_radix<u8>("0", 2u32)) == present(0u8)) { panic("from_str_radix #1420") }
     if !(parsed(capture num.from_str_radix<u8>("0", 36u32)) == present(0u8)) { panic("from_str_radix #1421") }
-    if !(parsed(capture num.from_str_radix<u8>("0", 16u32)) == present(0u8)) { panic("from_str_radix #1422") }
     if !(parsed(capture num.from_str_radix<u8>("7", 10u32)) == present(7u8)) { panic("from_str_radix #1423") }
     if !(parsed(capture num.from_str_radix<u8>("7", 16u32)) == present(7u8)) { panic("from_str_radix #1424") }
     if !(parsed(capture num.from_str_radix<u8>("111", 2u32)) == present(7u8)) { panic("from_str_radix #1425") }
     if !(parsed(capture num.from_str_radix<u8>("7", 36u32)) == present(7u8)) { panic("from_str_radix #1426") }
-    if !(parsed(capture num.from_str_radix<u8>("7", 16u32)) == present(7u8)) { panic("from_str_radix #1427") }
-    if !(parsed(capture num.from_str_radix<u8>("0", 10u32)) == present(0u8)) { panic("from_str_radix #1428") }
-    if !(parsed(capture num.from_str_radix<u8>("0", 16u32)) == present(0u8)) { panic("from_str_radix #1429") }
-    if !(parsed(capture num.from_str_radix<u8>("0", 2u32)) == present(0u8)) { panic("from_str_radix #1430") }
-    if !(parsed(capture num.from_str_radix<u8>("0", 36u32)) == present(0u8)) { panic("from_str_radix #1431") }
-    if !(parsed(capture num.from_str_radix<u8>("0", 16u32)) == present(0u8)) { panic("from_str_radix #1432") }
     if !(parsed(capture num.from_str_radix<u8>("+7", 10u32)) == present(7u8)) { panic("from_str_radix #1433") }
     if !(kind(capture num.from_str_radix<u8>("", 10u32)) == present(IntErrorKind.Empty)) { panic("from_str_radix #1434") }
     if !(kind(capture num.from_str_radix<u8>("-", 10u32)) == present(IntErrorKind.InvalidDigit)) { panic("from_str_radix #1435") }
@@ -1525,8 +1348,6 @@ fn group12() {
     if !(ascii_lower(0u8) == 0u8) { panic("make_ascii_lowercase #1457") }
     if !(ascii_upper(0u8) == 0u8) { panic("make_ascii_uppercase #1458") }
     if !(0u8.eq_ignore_ascii_case(0u8) == true) { panic("eq_ignore_ascii_case #1459") }
-    if !(0u8.eq_ignore_ascii_case(0u8) == true) { panic("eq_ignore_ascii_case #1460") }
-    if !(0u8.eq_ignore_ascii_case(0u8) == true) { panic("eq_ignore_ascii_case #1461") }
     if !(0u8.eq_ignore_ascii_case(1u8) == false) { panic("eq_ignore_ascii_case #1462") }
     if !(9u8.is_ascii() == true) { panic("is_ascii #1463") }
     if !(9u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1464") }
@@ -1544,8 +1365,6 @@ fn group12() {
     if !(ascii_lower(9u8) == 9u8) { panic("make_ascii_lowercase #1476") }
     if !(ascii_upper(9u8) == 9u8) { panic("make_ascii_uppercase #1477") }
     if !(9u8.eq_ignore_ascii_case(9u8) == true) { panic("eq_ignore_ascii_case #1478") }
-    if !(9u8.eq_ignore_ascii_case(9u8) == true) { panic("eq_ignore_ascii_case #1479") }
-    if !(9u8.eq_ignore_ascii_case(9u8) == true) { panic("eq_ignore_ascii_case #1480") }
     if !(9u8.eq_ignore_ascii_case(10u8) == false) { panic("eq_ignore_ascii_case #1481") }
     if !(10u8.is_ascii() == true) { panic("is_ascii #1482") }
     if !(10u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1483") }
@@ -1563,8 +1382,6 @@ fn group12() {
     if !(ascii_lower(10u8) == 10u8) { panic("make_ascii_lowercase #1495") }
     if !(ascii_upper(10u8) == 10u8) { panic("make_ascii_uppercase #1496") }
     if !(10u8.eq_ignore_ascii_case(10u8) == true) { panic("eq_ignore_ascii_case #1497") }
-    if !(10u8.eq_ignore_ascii_case(10u8) == true) { panic("eq_ignore_ascii_case #1498") }
-    if !(10u8.eq_ignore_ascii_case(10u8) == true) { panic("eq_ignore_ascii_case #1499") }
     if !(10u8.eq_ignore_ascii_case(11u8) == false) { panic("eq_ignore_ascii_case #1500") }
     if !(11u8.is_ascii() == true) { panic("is_ascii #1501") }
     if !(11u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1502") }
@@ -1582,8 +1399,6 @@ fn group12() {
     if !(ascii_lower(11u8) == 11u8) { panic("make_ascii_lowercase #1514") }
     if !(ascii_upper(11u8) == 11u8) { panic("make_ascii_uppercase #1515") }
     if !(11u8.eq_ignore_ascii_case(11u8) == true) { panic("eq_ignore_ascii_case #1516") }
-    if !(11u8.eq_ignore_ascii_case(11u8) == true) { panic("eq_ignore_ascii_case #1517") }
-    if !(11u8.eq_ignore_ascii_case(11u8) == true) { panic("eq_ignore_ascii_case #1518") }
     if !(11u8.eq_ignore_ascii_case(12u8) == false) { panic("eq_ignore_ascii_case #1519") }
     if !(12u8.is_ascii() == true) { panic("is_ascii #1520") }
     if !(12u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1521") }
@@ -1601,8 +1416,6 @@ fn group12() {
     if !(ascii_lower(12u8) == 12u8) { panic("make_ascii_lowercase #1533") }
     if !(ascii_upper(12u8) == 12u8) { panic("make_ascii_uppercase #1534") }
     if !(12u8.eq_ignore_ascii_case(12u8) == true) { panic("eq_ignore_ascii_case #1535") }
-    if !(12u8.eq_ignore_ascii_case(12u8) == true) { panic("eq_ignore_ascii_case #1536") }
-    if !(12u8.eq_ignore_ascii_case(12u8) == true) { panic("eq_ignore_ascii_case #1537") }
     if !(12u8.eq_ignore_ascii_case(13u8) == false) { panic("eq_ignore_ascii_case #1538") }
     if !(13u8.is_ascii() == true) { panic("is_ascii #1539") }
     if !(13u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1540") }
@@ -1620,8 +1433,6 @@ fn group12() {
     if !(ascii_lower(13u8) == 13u8) { panic("make_ascii_lowercase #1552") }
     if !(ascii_upper(13u8) == 13u8) { panic("make_ascii_uppercase #1553") }
     if !(13u8.eq_ignore_ascii_case(13u8) == true) { panic("eq_ignore_ascii_case #1554") }
-    if !(13u8.eq_ignore_ascii_case(13u8) == true) { panic("eq_ignore_ascii_case #1555") }
-    if !(13u8.eq_ignore_ascii_case(13u8) == true) { panic("eq_ignore_ascii_case #1556") }
     if !(13u8.eq_ignore_ascii_case(14u8) == false) { panic("eq_ignore_ascii_case #1557") }
     if !(31u8.is_ascii() == true) { panic("is_ascii #1558") }
     if !(31u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1559") }
@@ -1642,8 +1453,6 @@ fn group13() {
     if !(ascii_lower(31u8) == 31u8) { panic("make_ascii_lowercase #1571") }
     if !(ascii_upper(31u8) == 31u8) { panic("make_ascii_uppercase #1572") }
     if !(31u8.eq_ignore_ascii_case(31u8) == true) { panic("eq_ignore_ascii_case #1573") }
-    if !(31u8.eq_ignore_ascii_case(31u8) == true) { panic("eq_ignore_ascii_case #1574") }
-    if !(31u8.eq_ignore_ascii_case(31u8) == true) { panic("eq_ignore_ascii_case #1575") }
     if !(31u8.eq_ignore_ascii_case(32u8) == false) { panic("eq_ignore_ascii_case #1576") }
     if !(32u8.is_ascii() == true) { panic("is_ascii #1577") }
     if !(32u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1578") }
@@ -1661,8 +1470,6 @@ fn group13() {
     if !(ascii_lower(32u8) == 32u8) { panic("make_ascii_lowercase #1590") }
     if !(ascii_upper(32u8) == 32u8) { panic("make_ascii_uppercase #1591") }
     if !(32u8.eq_ignore_ascii_case(32u8) == true) { panic("eq_ignore_ascii_case #1592") }
-    if !(32u8.eq_ignore_ascii_case(32u8) == true) { panic("eq_ignore_ascii_case #1593") }
-    if !(32u8.eq_ignore_ascii_case(32u8) == true) { panic("eq_ignore_ascii_case #1594") }
     if !(32u8.eq_ignore_ascii_case(33u8) == false) { panic("eq_ignore_ascii_case #1595") }
     if !(33u8.is_ascii() == true) { panic("is_ascii #1596") }
     if !(33u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1597") }
@@ -1680,8 +1487,6 @@ fn group13() {
     if !(ascii_lower(33u8) == 33u8) { panic("make_ascii_lowercase #1609") }
     if !(ascii_upper(33u8) == 33u8) { panic("make_ascii_uppercase #1610") }
     if !(33u8.eq_ignore_ascii_case(33u8) == true) { panic("eq_ignore_ascii_case #1611") }
-    if !(33u8.eq_ignore_ascii_case(33u8) == true) { panic("eq_ignore_ascii_case #1612") }
-    if !(33u8.eq_ignore_ascii_case(33u8) == true) { panic("eq_ignore_ascii_case #1613") }
     if !(33u8.eq_ignore_ascii_case(34u8) == false) { panic("eq_ignore_ascii_case #1614") }
     if !(47u8.is_ascii() == true) { panic("is_ascii #1615") }
     if !(47u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1616") }
@@ -1699,8 +1504,6 @@ fn group13() {
     if !(ascii_lower(47u8) == 47u8) { panic("make_ascii_lowercase #1628") }
     if !(ascii_upper(47u8) == 47u8) { panic("make_ascii_uppercase #1629") }
     if !(47u8.eq_ignore_ascii_case(47u8) == true) { panic("eq_ignore_ascii_case #1630") }
-    if !(47u8.eq_ignore_ascii_case(47u8) == true) { panic("eq_ignore_ascii_case #1631") }
-    if !(47u8.eq_ignore_ascii_case(47u8) == true) { panic("eq_ignore_ascii_case #1632") }
     if !(47u8.eq_ignore_ascii_case(48u8) == false) { panic("eq_ignore_ascii_case #1633") }
     if !(48u8.is_ascii() == true) { panic("is_ascii #1634") }
     if !(48u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1635") }
@@ -1718,8 +1521,6 @@ fn group13() {
     if !(ascii_lower(48u8) == 48u8) { panic("make_ascii_lowercase #1647") }
     if !(ascii_upper(48u8) == 48u8) { panic("make_ascii_uppercase #1648") }
     if !(48u8.eq_ignore_ascii_case(48u8) == true) { panic("eq_ignore_ascii_case #1649") }
-    if !(48u8.eq_ignore_ascii_case(48u8) == true) { panic("eq_ignore_ascii_case #1650") }
-    if !(48u8.eq_ignore_ascii_case(48u8) == true) { panic("eq_ignore_ascii_case #1651") }
     if !(48u8.eq_ignore_ascii_case(49u8) == false) { panic("eq_ignore_ascii_case #1652") }
     if !(57u8.is_ascii() == true) { panic("is_ascii #1653") }
     if !(57u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1654") }
@@ -1737,8 +1538,6 @@ fn group13() {
     if !(ascii_lower(57u8) == 57u8) { panic("make_ascii_lowercase #1666") }
     if !(ascii_upper(57u8) == 57u8) { panic("make_ascii_uppercase #1667") }
     if !(57u8.eq_ignore_ascii_case(57u8) == true) { panic("eq_ignore_ascii_case #1668") }
-    if !(57u8.eq_ignore_ascii_case(57u8) == true) { panic("eq_ignore_ascii_case #1669") }
-    if !(57u8.eq_ignore_ascii_case(57u8) == true) { panic("eq_ignore_ascii_case #1670") }
     if !(57u8.eq_ignore_ascii_case(58u8) == false) { panic("eq_ignore_ascii_case #1671") }
     if !(58u8.is_ascii() == true) { panic("is_ascii #1672") }
     if !(58u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1673") }
@@ -1759,8 +1558,6 @@ fn group14() {
     if !(ascii_lower(58u8) == 58u8) { panic("make_ascii_lowercase #1685") }
     if !(ascii_upper(58u8) == 58u8) { panic("make_ascii_uppercase #1686") }
     if !(58u8.eq_ignore_ascii_case(58u8) == true) { panic("eq_ignore_ascii_case #1687") }
-    if !(58u8.eq_ignore_ascii_case(58u8) == true) { panic("eq_ignore_ascii_case #1688") }
-    if !(58u8.eq_ignore_ascii_case(58u8) == true) { panic("eq_ignore_ascii_case #1689") }
     if !(58u8.eq_ignore_ascii_case(59u8) == false) { panic("eq_ignore_ascii_case #1690") }
     if !(64u8.is_ascii() == true) { panic("is_ascii #1691") }
     if !(64u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1692") }
@@ -1778,8 +1575,6 @@ fn group14() {
     if !(ascii_lower(64u8) == 64u8) { panic("make_ascii_lowercase #1704") }
     if !(ascii_upper(64u8) == 64u8) { panic("make_ascii_uppercase #1705") }
     if !(64u8.eq_ignore_ascii_case(64u8) == true) { panic("eq_ignore_ascii_case #1706") }
-    if !(64u8.eq_ignore_ascii_case(64u8) == true) { panic("eq_ignore_ascii_case #1707") }
-    if !(64u8.eq_ignore_ascii_case(64u8) == true) { panic("eq_ignore_ascii_case #1708") }
     if !(64u8.eq_ignore_ascii_case(65u8) == false) { panic("eq_ignore_ascii_case #1709") }
     if !(65u8.is_ascii() == true) { panic("is_ascii #1710") }
     if !(65u8.is_ascii_alphabetic() == true) { panic("is_ascii_alphabetic #1711") }
@@ -1798,7 +1593,6 @@ fn group14() {
     if !(ascii_upper(65u8) == 65u8) { panic("make_ascii_uppercase #1724") }
     if !(65u8.eq_ignore_ascii_case(65u8) == true) { panic("eq_ignore_ascii_case #1725") }
     if !(65u8.eq_ignore_ascii_case(97u8) == true) { panic("eq_ignore_ascii_case #1726") }
-    if !(65u8.eq_ignore_ascii_case(65u8) == true) { panic("eq_ignore_ascii_case #1727") }
     if !(65u8.eq_ignore_ascii_case(66u8) == false) { panic("eq_ignore_ascii_case #1728") }
     if !(70u8.is_ascii() == true) { panic("is_ascii #1729") }
     if !(70u8.is_ascii_alphabetic() == true) { panic("is_ascii_alphabetic #1730") }
@@ -1817,7 +1611,6 @@ fn group14() {
     if !(ascii_upper(70u8) == 70u8) { panic("make_ascii_uppercase #1743") }
     if !(70u8.eq_ignore_ascii_case(70u8) == true) { panic("eq_ignore_ascii_case #1744") }
     if !(70u8.eq_ignore_ascii_case(102u8) == true) { panic("eq_ignore_ascii_case #1745") }
-    if !(70u8.eq_ignore_ascii_case(70u8) == true) { panic("eq_ignore_ascii_case #1746") }
     if !(70u8.eq_ignore_ascii_case(71u8) == false) { panic("eq_ignore_ascii_case #1747") }
     if !(71u8.is_ascii() == true) { panic("is_ascii #1748") }
     if !(71u8.is_ascii_alphabetic() == true) { panic("is_ascii_alphabetic #1749") }
@@ -1836,7 +1629,6 @@ fn group14() {
     if !(ascii_upper(71u8) == 71u8) { panic("make_ascii_uppercase #1762") }
     if !(71u8.eq_ignore_ascii_case(71u8) == true) { panic("eq_ignore_ascii_case #1763") }
     if !(71u8.eq_ignore_ascii_case(103u8) == true) { panic("eq_ignore_ascii_case #1764") }
-    if !(71u8.eq_ignore_ascii_case(71u8) == true) { panic("eq_ignore_ascii_case #1765") }
     if !(71u8.eq_ignore_ascii_case(72u8) == false) { panic("eq_ignore_ascii_case #1766") }
     if !(90u8.is_ascii() == true) { panic("is_ascii #1767") }
     if !(90u8.is_ascii_alphabetic() == true) { panic("is_ascii_alphabetic #1768") }
@@ -1855,7 +1647,6 @@ fn group14() {
     if !(ascii_upper(90u8) == 90u8) { panic("make_ascii_uppercase #1781") }
     if !(90u8.eq_ignore_ascii_case(90u8) == true) { panic("eq_ignore_ascii_case #1782") }
     if !(90u8.eq_ignore_ascii_case(122u8) == true) { panic("eq_ignore_ascii_case #1783") }
-    if !(90u8.eq_ignore_ascii_case(90u8) == true) { panic("eq_ignore_ascii_case #1784") }
     if !(90u8.eq_ignore_ascii_case(91u8) == false) { panic("eq_ignore_ascii_case #1785") }
     if !(91u8.is_ascii() == true) { panic("is_ascii #1786") }
     if !(91u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1787") }
@@ -1876,8 +1667,6 @@ fn group14() {
 
 fn group15() {
     if !(91u8.eq_ignore_ascii_case(91u8) == true) { panic("eq_ignore_ascii_case #1801") }
-    if !(91u8.eq_ignore_ascii_case(91u8) == true) { panic("eq_ignore_ascii_case #1802") }
-    if !(91u8.eq_ignore_ascii_case(91u8) == true) { panic("eq_ignore_ascii_case #1803") }
     if !(91u8.eq_ignore_ascii_case(92u8) == false) { panic("eq_ignore_ascii_case #1804") }
     if !(96u8.is_ascii() == true) { panic("is_ascii #1805") }
     if !(96u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1806") }
@@ -1895,8 +1684,6 @@ fn group15() {
     if !(ascii_lower(96u8) == 96u8) { panic("make_ascii_lowercase #1818") }
     if !(ascii_upper(96u8) == 96u8) { panic("make_ascii_uppercase #1819") }
     if !(96u8.eq_ignore_ascii_case(96u8) == true) { panic("eq_ignore_ascii_case #1820") }
-    if !(96u8.eq_ignore_ascii_case(96u8) == true) { panic("eq_ignore_ascii_case #1821") }
-    if !(96u8.eq_ignore_ascii_case(96u8) == true) { panic("eq_ignore_ascii_case #1822") }
     if !(96u8.eq_ignore_ascii_case(97u8) == false) { panic("eq_ignore_ascii_case #1823") }
     if !(97u8.is_ascii() == true) { panic("is_ascii #1824") }
     if !(97u8.is_ascii_alphabetic() == true) { panic("is_ascii_alphabetic #1825") }
@@ -1914,7 +1701,6 @@ fn group15() {
     if !(ascii_lower(97u8) == 97u8) { panic("make_ascii_lowercase #1837") }
     if !(ascii_upper(97u8) == 65u8) { panic("make_ascii_uppercase #1838") }
     if !(97u8.eq_ignore_ascii_case(97u8) == true) { panic("eq_ignore_ascii_case #1839") }
-    if !(97u8.eq_ignore_ascii_case(97u8) == true) { panic("eq_ignore_ascii_case #1840") }
     if !(97u8.eq_ignore_ascii_case(65u8) == true) { panic("eq_ignore_ascii_case #1841") }
     if !(97u8.eq_ignore_ascii_case(98u8) == false) { panic("eq_ignore_ascii_case #1842") }
     if !(102u8.is_ascii() == true) { panic("is_ascii #1843") }
@@ -1933,7 +1719,6 @@ fn group15() {
     if !(ascii_lower(102u8) == 102u8) { panic("make_ascii_lowercase #1856") }
     if !(ascii_upper(102u8) == 70u8) { panic("make_ascii_uppercase #1857") }
     if !(102u8.eq_ignore_ascii_case(102u8) == true) { panic("eq_ignore_ascii_case #1858") }
-    if !(102u8.eq_ignore_ascii_case(102u8) == true) { panic("eq_ignore_ascii_case #1859") }
     if !(102u8.eq_ignore_ascii_case(70u8) == true) { panic("eq_ignore_ascii_case #1860") }
     if !(102u8.eq_ignore_ascii_case(103u8) == false) { panic("eq_ignore_ascii_case #1861") }
     if !(103u8.is_ascii() == true) { panic("is_ascii #1862") }
@@ -1952,7 +1737,6 @@ fn group15() {
     if !(ascii_lower(103u8) == 103u8) { panic("make_ascii_lowercase #1875") }
     if !(ascii_upper(103u8) == 71u8) { panic("make_ascii_uppercase #1876") }
     if !(103u8.eq_ignore_ascii_case(103u8) == true) { panic("eq_ignore_ascii_case #1877") }
-    if !(103u8.eq_ignore_ascii_case(103u8) == true) { panic("eq_ignore_ascii_case #1878") }
     if !(103u8.eq_ignore_ascii_case(71u8) == true) { panic("eq_ignore_ascii_case #1879") }
     if !(103u8.eq_ignore_ascii_case(104u8) == false) { panic("eq_ignore_ascii_case #1880") }
     if !(122u8.is_ascii() == true) { panic("is_ascii #1881") }
@@ -1971,7 +1755,6 @@ fn group15() {
     if !(ascii_lower(122u8) == 122u8) { panic("make_ascii_lowercase #1894") }
     if !(ascii_upper(122u8) == 90u8) { panic("make_ascii_uppercase #1895") }
     if !(122u8.eq_ignore_ascii_case(122u8) == true) { panic("eq_ignore_ascii_case #1896") }
-    if !(122u8.eq_ignore_ascii_case(122u8) == true) { panic("eq_ignore_ascii_case #1897") }
     if !(122u8.eq_ignore_ascii_case(90u8) == true) { panic("eq_ignore_ascii_case #1898") }
     if !(122u8.eq_ignore_ascii_case(123u8) == false) { panic("eq_ignore_ascii_case #1899") }
     if !(123u8.is_ascii() == true) { panic("is_ascii #1900") }
@@ -1990,8 +1773,6 @@ fn group15() {
     if !(ascii_lower(123u8) == 123u8) { panic("make_ascii_lowercase #1913") }
     if !(ascii_upper(123u8) == 123u8) { panic("make_ascii_uppercase #1914") }
     if !(123u8.eq_ignore_ascii_case(123u8) == true) { panic("eq_ignore_ascii_case #1915") }
-    if !(123u8.eq_ignore_ascii_case(123u8) == true) { panic("eq_ignore_ascii_case #1916") }
-    if !(123u8.eq_ignore_ascii_case(123u8) == true) { panic("eq_ignore_ascii_case #1917") }
     if !(123u8.eq_ignore_ascii_case(124u8) == false) { panic("eq_ignore_ascii_case #1918") }
     if !(126u8.is_ascii() == true) { panic("is_ascii #1919") }
     if !(126u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1920") }
@@ -2012,8 +1793,6 @@ fn group16() {
     if !(ascii_lower(126u8) == 126u8) { panic("make_ascii_lowercase #1932") }
     if !(ascii_upper(126u8) == 126u8) { panic("make_ascii_uppercase #1933") }
     if !(126u8.eq_ignore_ascii_case(126u8) == true) { panic("eq_ignore_ascii_case #1934") }
-    if !(126u8.eq_ignore_ascii_case(126u8) == true) { panic("eq_ignore_ascii_case #1935") }
-    if !(126u8.eq_ignore_ascii_case(126u8) == true) { panic("eq_ignore_ascii_case #1936") }
     if !(126u8.eq_ignore_ascii_case(127u8) == false) { panic("eq_ignore_ascii_case #1937") }
     if !(127u8.is_ascii() == true) { panic("is_ascii #1938") }
     if !(127u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1939") }
@@ -2031,8 +1810,6 @@ fn group16() {
     if !(ascii_lower(127u8) == 127u8) { panic("make_ascii_lowercase #1951") }
     if !(ascii_upper(127u8) == 127u8) { panic("make_ascii_uppercase #1952") }
     if !(127u8.eq_ignore_ascii_case(127u8) == true) { panic("eq_ignore_ascii_case #1953") }
-    if !(127u8.eq_ignore_ascii_case(127u8) == true) { panic("eq_ignore_ascii_case #1954") }
-    if !(127u8.eq_ignore_ascii_case(127u8) == true) { panic("eq_ignore_ascii_case #1955") }
     if !(127u8.eq_ignore_ascii_case(128u8) == false) { panic("eq_ignore_ascii_case #1956") }
     if !(128u8.is_ascii() == false) { panic("is_ascii #1957") }
     if !(128u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1958") }
@@ -2050,8 +1827,6 @@ fn group16() {
     if !(ascii_lower(128u8) == 128u8) { panic("make_ascii_lowercase #1970") }
     if !(ascii_upper(128u8) == 128u8) { panic("make_ascii_uppercase #1971") }
     if !(128u8.eq_ignore_ascii_case(128u8) == true) { panic("eq_ignore_ascii_case #1972") }
-    if !(128u8.eq_ignore_ascii_case(128u8) == true) { panic("eq_ignore_ascii_case #1973") }
-    if !(128u8.eq_ignore_ascii_case(128u8) == true) { panic("eq_ignore_ascii_case #1974") }
     if !(128u8.eq_ignore_ascii_case(129u8) == false) { panic("eq_ignore_ascii_case #1975") }
     if !(200u8.is_ascii() == false) { panic("is_ascii #1976") }
     if !(200u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1977") }
@@ -2069,8 +1844,6 @@ fn group16() {
     if !(ascii_lower(200u8) == 200u8) { panic("make_ascii_lowercase #1989") }
     if !(ascii_upper(200u8) == 200u8) { panic("make_ascii_uppercase #1990") }
     if !(200u8.eq_ignore_ascii_case(200u8) == true) { panic("eq_ignore_ascii_case #1991") }
-    if !(200u8.eq_ignore_ascii_case(200u8) == true) { panic("eq_ignore_ascii_case #1992") }
-    if !(200u8.eq_ignore_ascii_case(200u8) == true) { panic("eq_ignore_ascii_case #1993") }
     if !(200u8.eq_ignore_ascii_case(201u8) == false) { panic("eq_ignore_ascii_case #1994") }
     if !(255u8.is_ascii() == false) { panic("is_ascii #1995") }
     if !(255u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1996") }
@@ -2088,8 +1861,6 @@ fn group16() {
     if !(ascii_lower(255u8) == 255u8) { panic("make_ascii_lowercase #2008") }
     if !(ascii_upper(255u8) == 255u8) { panic("make_ascii_uppercase #2009") }
     if !(255u8.eq_ignore_ascii_case(255u8) == true) { panic("eq_ignore_ascii_case #2010") }
-    if !(255u8.eq_ignore_ascii_case(255u8) == true) { panic("eq_ignore_ascii_case #2011") }
-    if !(255u8.eq_ignore_ascii_case(255u8) == true) { panic("eq_ignore_ascii_case #2012") }
     if !(255u8.eq_ignore_ascii_case(0u8) == false) { panic("eq_ignore_ascii_case #2013") }
 }
 

@@ -1786,22 +1786,18 @@ fn group14() {
     if !(parsed(capture num.from_str_radix<i8>("-80", 16u32)) == present(i8.MIN)) { panic("from_str_radix #1724") }
     if !(parsed(capture num.from_str_radix<i8>("-10000000", 2u32)) == present(i8.MIN)) { panic("from_str_radix #1725") }
     if !(parsed(capture num.from_str_radix<i8>("-3k", 36u32)) == present(i8.MIN)) { panic("from_str_radix #1726") }
-    if !(parsed(capture num.from_str_radix<i8>("-80", 16u32)) == present(i8.MIN)) { panic("from_str_radix #1727") }
     if !(parsed(capture num.from_str_radix<i8>("7", 10u32)) == present(7i8)) { panic("from_str_radix #1728") }
     if !(parsed(capture num.from_str_radix<i8>("7", 16u32)) == present(7i8)) { panic("from_str_radix #1729") }
     if !(parsed(capture num.from_str_radix<i8>("111", 2u32)) == present(7i8)) { panic("from_str_radix #1730") }
     if !(parsed(capture num.from_str_radix<i8>("7", 36u32)) == present(7i8)) { panic("from_str_radix #1731") }
-    if !(parsed(capture num.from_str_radix<i8>("7", 16u32)) == present(7i8)) { panic("from_str_radix #1732") }
     if !(parsed(capture num.from_str_radix<i8>("0", 10u32)) == present(0i8)) { panic("from_str_radix #1733") }
     if !(parsed(capture num.from_str_radix<i8>("0", 16u32)) == present(0i8)) { panic("from_str_radix #1734") }
     if !(parsed(capture num.from_str_radix<i8>("0", 2u32)) == present(0i8)) { panic("from_str_radix #1735") }
     if !(parsed(capture num.from_str_radix<i8>("0", 36u32)) == present(0i8)) { panic("from_str_radix #1736") }
-    if !(parsed(capture num.from_str_radix<i8>("0", 16u32)) == present(0i8)) { panic("from_str_radix #1737") }
     if !(parsed(capture num.from_str_radix<i8>("-7", 10u32)) == present((-7i8))) { panic("from_str_radix #1738") }
     if !(parsed(capture num.from_str_radix<i8>("-7", 16u32)) == present((-7i8))) { panic("from_str_radix #1739") }
     if !(parsed(capture num.from_str_radix<i8>("-111", 2u32)) == present((-7i8))) { panic("from_str_radix #1740") }
     if !(parsed(capture num.from_str_radix<i8>("-7", 36u32)) == present((-7i8))) { panic("from_str_radix #1741") }
-    if !(parsed(capture num.from_str_radix<i8>("-7", 16u32)) == present((-7i8))) { panic("from_str_radix #1742") }
     if !(parsed(capture num.from_str_radix<i8>("+7", 10u32)) == present(7i8)) { panic("from_str_radix #1743") }
     if !(kind(capture num.from_str_radix<i8>("", 10u32)) == present(IntErrorKind.Empty)) { panic("from_str_radix #1744") }
     if !(kind(capture num.from_str_radix<i8>("-", 10u32)) == present(IntErrorKind.InvalidDigit)) { panic("from_str_radix #1745") }

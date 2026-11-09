@@ -1,10 +1,8 @@
 # Selected reference profiles
 
-These are fixed design/test-environment selections, not supported-platform
-claims, recommendations of the latest releases, or verified installed artifacts.
-The compiler/backend/build-tool source IDs are in toolchain-pins.json.
-An execution manifest must add immutable SDK/sysroot/package digests before a
-result can count as reproducible evidence.
+Design/test selections, not support claims or installed-artifact locks.
+Source IDs: toolchain-pins.json. Reproducible execution also requires immutable
+SDK/sysroot/package digests.
 
 ## Initial profile choices
 
@@ -19,14 +17,11 @@ result can count as reproducible evidence.
 | wasm32-core | Explicit embedding; no WASI imports by default | wasm32-unknown-unknown; core plus optional allocator | embedder abort/trap |
 | cortex-m3 | QEMU 9.2.0 lm3s6965evb model | thumbv7m-none-eabi; soft-float AAPCS32; ELF/DWARF | user panic handler, no hosted unwind |
 
-These identify minimum requested interfaces, not an assurance that every later
-OS remains compatible. Production validation uses maintained installations with
-exact patch/build identities; a version-family label is not an immutable lock.
-Owner decision (2026-11-09): Linux qualification uses the installed host and
-records its actual distribution, libc and kernel. No Ubuntu release or glibc
-version is mandated, and no distro-specific compatibility claim follows from a
-passing run on another environment.
-QEMU tests are emulated-board evidence, not proof on physical hardware.
+Minimum interfaces do not assure later-OS compatibility. Validate maintained
+installations with exact patch/build identities. Owner decision (2026-11-09):
+Linux uses the installed host, recording distribution/libc/kernel; no Ubuntu or
+glibc version mandate or inferred cross-distribution compatibility.
+QEMU qualifies emulation, not physical hardware.
 
 Use the platform's C ABI specifications for argument classification and aggregate
 layout. Pointer widths are 64 bits for the five native hosted profiles and 32
@@ -47,9 +42,9 @@ macOS uses its selected platform SDK/linker. WASI uses its explicit SDK startup
 and imports. Freestanding uses a project-provided vector/startup object, linker
 script and panic handler.
 
-Hosted std requires those platform services, not an implicit async runtime.
-Core-only profiles do not pretend to support files, processes or hosted thread
-facilities. Feature-specific applicability is recorded in the capability audit.
+Hosted std requires platform services, not an implicit executor. Core-only
+profiles exclude files/processes/hosted threads; record feature applicability
+in the capability audit.
 
 Compatible unwinding is a capability to implement and probe, not permission to
 unwind through an ordinary C boundary. Early abort-only compiler milestones do
@@ -62,9 +57,8 @@ and linker revisions, CRT/libc identity, startup objects, CPU feature mask,
 allocator, panic mode, debug format, target libraries and command-line flags.
 Compiler source revisions alone cannot substitute for this environment lock.
 
-A missing installed artifact digest blocks reproducibility claims, not the
-selection of a documented target design. Do not invent SDK hashes or download
-large SDKs solely to make a planning document look tested.
+Missing artifact digests block reproducibility, not design selection. Do not
+invent hashes or download SDKs just to complete a planning record.
 
 ## Sources
 

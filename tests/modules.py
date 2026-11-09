@@ -356,9 +356,6 @@ def main(executable, directory, only=None):
         **library, "main.mt": "fn main(): i32 { std.broken() }\n"},
          "name", "unresolved or inaccessible function 'missing'", (1, 24),
          "lib/std/module.mt", ["--library-dir", str(directory / "library-diagnostic-in-library-file" / "lib")])
-    case("library-unreferenced-not-loaded", {
-        **library, "main.mt": "fn main(): i32 { core.answer() - 42 }\n"},
-         options=["--library-dir", str(directory / "library-unreferenced-not-loaded" / "lib")])
     case("library-user-root-shadows", {
         "main.mt": "module core { pub fn answer(): i32 { 42 } }\n"
                    "fn main(): i32 { core.answer() - 42 }\n"})

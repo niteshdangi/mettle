@@ -1,9 +1,8 @@
 # Compiler, runtime and library architecture
 
-Status: selected production architecture, with enforced component boundaries
-and concrete I03-I05 phase representations. The contracts below govern the full
-language, not a disposable scalar compiler. Components marked future are
-specified responsibilities, not implemented features.
+Normative component and phase contracts for the full language. Future components
+are responsibilities, not delivered features. Implementation/qualification scope
+is tracked in [implementation-plan.md](implementation-plan.md).
 
 ## 1. Repository and component boundaries
 
@@ -26,7 +25,7 @@ for them.
 | `diagnostics` | Structured failures and source rendering | Parsing/recovery decisions or process exit |
 | `syntax` | Tokens, keyword/operator metadata, lexer, parsed AST and parser/recovery | Resolved bindings, inferred types, CFG slots, LLVM |
 | `expansion` | Attribute validation, `@cfg` target/feature predicate evaluation (inactive items are parsed but dropped before resolution), `@derive` generation of ordinary `extend` declarations as separately registered generated sources with span provenance back to the attribute and offending field/variant; test/benchmark collection and harness synthesis (`harness.cpp`: in a test build, the selected package's `@test`/`@bench` functions are recorded with qualified module paths, the root `main` is dropped and a synthesized harness entry is loaded beside it; each test then runs in its own process); declarative macro expansion (`macros.cpp`, token-level, before parsing; qualified lookup and explicit/grouped macro imports resolve through an injected loader callback, public imports become macro reexports, and macro declaration syntax facts are retained for resolution; the loader owns source discovery; generated tokens retain definition-site hygiene, template/argument provenance and invocation spans) and the procedural-macro protocol (`procedural.{h,cpp}`: versioned request/response encoding and parsing; `macros.cpp` calls an injected host callback, re-lexes its text output and attributes the tokens to the invocation, and never starts a process itself) | Name resolution, type checking, LLVM |
-| `documentation` | `mettle doc` and doctests, verified on macOS arm64: documentation extraction from the lexer's comment tokens (`///` item docs, `//!` module docs, declaration headers as written, visibility filtering, `document.cpp`), reduced markdown blocks (`markdown.cpp`), fenced-example classification and generated `@test` functions (`doctest.cpp`) and deterministic dependency-free HTML (`html.cpp`). Resolved-reference rendering accepts canonical identities from the driver; the static search index remains deterministic. The new reference rendering is implemented, unverified (not yet built). | Performing name resolution, type checking, filesystem I/O, process execution, LLVM |
+| `documentation` | `mettle doc` and doctests: documentation extraction from the lexer's comment tokens (`///` item docs, `//!` module docs, declaration headers as written, visibility filtering, `document.cpp`), reduced markdown blocks (`markdown.cpp`), fenced-example classification and generated `@test` functions (`doctest.cpp`) and deterministic dependency-free HTML (`html.cpp`). Resolved-reference rendering accepts canonical identities from the driver; the static search index remains deterministic. | Performing name resolution, type checking, filesystem I/O, process execution, LLVM |
 | `resolution` | Compilation-local module identities, distinct type/value/module/macro namespaces, item/import scopes, package alias mounting, `pub(path)` visibility boundaries and canonical declaration names; source-provider-driven module assembly | Inference, backend types or filesystem I/O |
 | `packages` | Manifest/lock TOML, SemVer requirements, dependency solving with features over path, local-registry and Git sources, checksums, the package build plan (mounts, build scripts and `[macros]` programs handed to the driver) and the content-addressed build store (`store`) | Source parsing, semantics, network access or artifact publication |
 | `types` | Compiler-owned language type identities/operations, source-oriented diagnostic type display, target facts and target-layout results | Parsed AST, LLVM types/target machines, toolchain state |
@@ -45,9 +44,9 @@ for them.
 | `driver` | CLI, inspection serialization, Git source fetching (system `git`), source loading, build-script and procedural-macro execution (`procedural.cpp`: host build, process run, reproducible-result reuse; `observe.cpp`: declared-input state shared with build scripts), cache-key assembly and lookup, artifact publication and native link invocation, `mettle run`/`test`/`bench` execution (`execute.cpp`: temporary builds, per-test process spawning and optional timeout, human/JSON result reporting, and doctest builds that overlay generated tests on package module sources and judge `compile_fail` examples from captured diagnostics) and `mettle doc` (`document.cpp`: package graph/name-resolution orchestration, path discovery, parse validation, warnings and output files) | Typing, inference, borrow rules or dataflow algorithms |
 
 Components are build/link units, not processes or public plugin APIs. Public
-headers expose the minimum boundary; algorithm context and mutable working state
-remain private. Splitting one algorithm across many trivial files is not a goal.
-Neither arbitrary line limits nor the number of directories establish quality.
+headers expose the minimum boundary; algorithm context and mutable state stay
+private. Trivial file splits, line limits and directory counts are not quality
+criteria.
 
 Floating constant evaluation uses a per-compilation numeric callback, injected
 by the driver through the backend-independent pipeline and checker (including
@@ -58,8 +57,7 @@ APFloat/APInt folding, without host floating arithmetic or libm. `consteval`
 owns contextual types, stable-const admission, source function frames, byte
 arrays and target endianness; semantics owns method/type/variant resolution and
 typed static materialization. IR verification validates the carrier before LLVM
-lowering. These additions have focused macOS ARM64 native, compiler-sanitizer,
-emitted-ASan and LSP evidence; full I13 qualification remains pending.
+lowering.
 
 ## 2. Syntax and checked representations
 
@@ -81,17 +79,16 @@ owner to a slice owner and from a sized concrete owner to an erased-interface
 owner. `OwnerUnsize` transfers the original allocation and allocator while
 attaching slice-count or witness metadata; it never reallocates. Dynamic
 `size_of_val`/`align_of_val` and drop use that metadata, and erased witness
-tables carry size, alignment and a specialized drop callback. The `Box` path is
-implemented but unverified (not yet built). Unsized `Arc`, `Rc` and `Weak` use
+tables carry size, alignment and a specialized drop callback. Unsized `Arc`,
+`Rc` and `Weak` use
 a separate count header followed by a metadata-aligned payload in one allocation;
 their handles preserve both the fat payload pointer and the thin header pointer,
 and the header retains the exact allocation layout for final-weak deallocation.
 Droppable structural slice tails use the tail metadata to reach their specialized
 element-drop loop. `Arc<Text>.copy_text` and `Rc<Text>.copy_text` accept only
-validated `Text` views, preserving UTF-8 validity while copying. These shared
-owner, structural-tail and Text paths are implemented, unverified (not yet
-built). Pinned owning handles remain unsupported; pinning does not follow merely
-from shared or unique heap ownership.
+validated `Text` views, preserving UTF-8 validity while copying. Pinning does not
+follow merely from shared or unique heap ownership; safe pinned owning handles
+are a separate S003 obligation.
 
 Semantic checking produces a move-only checked module that owns the parsed
 module plus resolved facts. Facts are indexed by stable node addresses within
@@ -208,8 +205,6 @@ Inherent-extension inits use the same hidden-self lowering and cleanup as
 type-body inits; their target and bounds remain declaration-owned conditions.
 Expansion retains derive request names and spans so semantics can reject an
 unsupported derive after constructors from other extensions have been collected.
-This constructor-selection change is implemented but has not yet been built
-or verified.
 
 Callable descriptors retain parameter access, success/error types, result-source
 indices and read/mut/take capability independently of native function pointers.
@@ -319,9 +314,8 @@ elaboration, and lowering emits the loop, `next` call, match and cleanup from it
 
 Borrowed slices use a private `{data, count}` representation. Borrowed erased
 interfaces use `{data, count, witness}`; the count is zero for sized implementors.
-The slice `len()` primitive reads element-count metadata through the existing
-verified `SliceLength` operation; it evaluates its receiver once and returns
-`usize`. This does not yet provide the remaining I07 slice or text surface.
+The slice `len()` primitive reads element-count metadata through the verified
+`SliceLength` operation, evaluates its receiver once and returns `usize`.
 Immutable witness tables record the receiver metadata kind and concrete alignment,
 then method entries and verified parent-interface links. Calls reconstruct a
 slice handle when needed, rather than retaining an address into a temporary
@@ -332,11 +326,9 @@ Erasing a witness-metadata implementor itself, rather than upcasting its existin
 interface or structurally unsizing its tail, still requires a sized adapter.
 The compiler diagnoses that unsupported conversion; it never silently allocates
 an adapter or retains dangling metadata.
-This is not a restriction on ordinary concrete-to-interface erasure or
-child-to-superinterface upcasts. It concerns a new erasure whose implementor
-already needs witness metadata, which the new view must not discard. A sized
-adapter retains the original handle under ordinary borrow/lifetime rules and
-implements the target interface; the adapter need not allocate on the heap.
+Ordinary concrete erasure and child-to-superinterface upcasts are unaffected.
+A sized adapter retains the original handle/metadata under ordinary lifetime
+rules and implements the target interface without requiring heap allocation.
 
 Opaque return declarations retain one hidden type identity across all return
 paths. Generated adapters preserve declared receiver modes, Self arguments and
@@ -462,8 +454,7 @@ pending replacement, and aborts on a second panic before installation. Borrowed
 referents are not scope-owned cleanup roots. Physical entry-block storage does not
 extend a source lifetime: only eligible direct borrowed initializers extend their
 temporary to the binding block. Generic instances preserve these declared
-ownership rules. Owning library handles and source-level panic APIs remain
-subsequent milestones.
+ownership rules.
 
 The I06 machine boundary shares operation signatures between checking and IR
 verification in `types/machine`. Raw memory operations retain explicit unsafe
@@ -510,11 +501,9 @@ the destructured input.
 
 ### I06 completion interface plan
 
-Status: shared interface plan implemented for the initial section 8.3 machine
-boundary; frozen-input qualification remains separate. It covers the eight source
-workstreams together so their representations are not rediscovered one feature
-at a time. It does not add targets, portable SIMD, thread libraries,
-allocator-backed pin owners or general I09 compile-time programming.
+Shared interfaces for the eight initial machine-boundary workstreams. Scope
+excludes new targets, portable SIMD, thread libraries, allocator-backed pin
+owners and general I09 compile-time programming.
 
 | Workstream | Producer and shared representation | Validators and consumers |
 | --- | --- | --- |
@@ -594,9 +583,7 @@ inventory, fixtures and documentation satisfy the source-freeze gate.
 
 ### I11 async state-machine interface plan
 
-Status: implemented as a coroutine closure and backend state machine
-(verified on macOS arm64; see `implementation-plan.md` section 8.4 for the
-inventory and open items). The parser desugars async bodies into
+The parser desugars async bodies into
 `core.future.coroutine(take fn(): T { .. })` and `await` into a poll loop
 around `core.intrinsics.coroutine_suspend`, so the closure body is checked and
 analyzed as ordinary code; `ir::Exit::Suspend` is the suspension edge and
@@ -604,17 +591,12 @@ analyzed as ordinary code; `ir::Exit::Suspend` is the suspension edge and
 (`AggregateKind::Coroutine`) is laid out by the backend as the body's
 persistent cleanup frame through `TypeStore::coroutineLayout`; layout checks
 before the backend skip coroutine-dependent types (`types::coroutineDependent`).
-The interface plan below is the contract this implementation meets, except
-where the inventory lists open items.
-Compiler erasure also admits pinned `Future.poll` dispatch through
-`any Future<Output = T>` when the associated output is fixed; this addition is
-implemented, unverified (not yet built). It is borrowed interface dispatch, not
-an owning erased value. `alloc.future.Erased<T>` remains the tested explicit
-heap owner for `Static` futures, using typed poll/release callbacks.
-`Box<any Future>` now uses the general heap-unsizing and dynamic-drop path, but
-has not been validated by a dedicated fixture. Erased async-interface returns
-remain unsupported until the source interface has an explicit future-storage
-contract.
+Pinned `Future.poll` through `any Future<Output = T>` requires a fixed associated
+output. Borrowed dispatch is distinct from the explicit Static heap owner
+`alloc.future.Erased<T>` with typed poll/release callbacks and from
+`Box<any Future>`'s general unsizing/drop path. Erased async-interface returns
+still need an explicit source future-storage contract. Verification and open
+items are in implementation-plan section 8.4.
 
 The shared interfaces must be implemented together, not enabled one at a time
 for source programs:
@@ -727,8 +709,7 @@ are derived from each function's DISubprogram and call-site locations. Sums use
 a discriminator and per-variant payload structures in a DWARF variant part;
 offsets come from the compiler layout, including overlapping payloads. A final
 pass drops locations that would not verify. Without `-g` the adapter emits no
-metadata. The current DWARF additions are implemented, unverified (not yet
-built); CodeView/PDB remains open.
+metadata. CodeView/PDB remains open for its separately gated profile.
 
 ## 6. Compilation state, errors and side effects
 
@@ -813,10 +794,8 @@ Do not implement speculative plugin loading or a second backend now.
 
 ## 8. Runtime, libraries and tools
 
-`library/core` requires no allocator, OS or executor (`library/alloc` and
-`library/std` are currently root stubs without implementations). `library/alloc` depends
-on core and an explicit allocator. `library/std` adds hosted services. Create
-these source trees with their implementations, not empty architecture markers.
+`library/core` requires no allocator, OS or executor. `library/alloc` depends
+on core and an explicit allocator; `library/std` adds hosted services.
 Library contracts include access/regions, allocation, failure, invalidation and
 complexity; they do not depend on compiler C++ AST/type structures.
 
@@ -828,8 +807,7 @@ The current hosted runtime's panic ABI is private compiler support, not a stable
 public C ABI. It uses C++ exceptions, a thread-local unwind-depth indicator and
 integer panic codes. `std.panic.catch_panic` is a hosted language API layered on
 that boundary and returns an owned code/message payload after cleanup. This API
-does not establish compatible C-unwind interoperability or a stable public ABI;
-its implementation remains unverified until built and exercised.
+does not establish compatible C-unwind interoperability or a stable public ABI.
 
 Package resolution/build planning (`packages`, planned before compilation and
 handed to the loader as source/version/context-specific `Library::packages`
@@ -837,8 +815,8 @@ mounts; each package instance gets a unique internal canonical prefix, while
 `package.NAME` imports resolve against the owning package's direct dependency
 aliases. The driver owns Git CLI execution; the lock records its immutable
 commit and source checksum. Host dependency mounts and feature sets are kept
-separate from target mounts. These T001 changes are implemented, unverified
-(not yet built); remote HTTP registries remain unspecified and unsupported.
+separate from target mounts. Remote HTTP registries remain unspecified and
+unsupported.
 Failures carry the `manifest`, `package`, `lock` or `feature` phase.
 Documentation, formatting and editor protocol
 handling are clients of the compiler, not branches in semantic analysis.
@@ -848,7 +826,7 @@ an installed Rust toolchain.
 
 ## 9. Incrementality, determinism and testing
 
-This refactor does not implement a query engine. Preserve its future boundary:
+Preserve the future query boundary:
 explicit inputs/options/target, compilation-scoped IDs, immutable published
 results and no undeclared environment reads in semantic components.
 Future cache keys must include source/dependency identities, features, target,
@@ -867,37 +845,13 @@ Linux target execution. Documentation must distinguish existing implementation,
 future boundaries and unqualified claims. Architecture changes update this
 contract, the module graph and affected tests together.
 
-Current realization (2026-10-29): sixteen components have actual source owners
-and distinct CMake targets. The former combined syntax/IR files and frontend
-archive are replaced by the components above. The boundary suite checks actual
-IR rejection, dominance/phi handling, independent initialization analysis,
-checked-tree move/lifetime behavior, immutable source spelling, in-memory UTF-8
-validation and rejection before a verified program can be published.
-The historical dependency regressions checked cycles, unknown edges, unowned
-files, private-header access and LLVM leaks; that separate checker is retired.
-
-Historical I03 qualification passed twelve CTest suites in each ordinary configuration and
-thirteen under ASan/UBSan, with byte-identical clean rebuilds and ordinary/instrumented
-quality receipts. The instrumented quality gate analyzes all owned C++ translation units.
-Frontend/IR/analysis compilation
-does not receive LLVM include paths, and the standalone boundary-test executable
-has no LLVM symbol dependency. Both ordinary builds cross-emit objects for
-the scalar/product/ownership source executions, two foundation smokes and native
-cleanup/recovery probes on Linux. Per ordinary compiler build, the Linux runner
-executed 134 source/profile cases, six cleanup probes and the foundation smoke;
-identity guards bound those results to that milestone's source, compiler, runtime and generators.
-Evidence remains under `build/macos-arm64/`, `build/quality/` and
-`build/linux-target/`; none of this claims the future components implemented.
-
-Current I05 qualification (2026-10-29) passes fourteen ordinary CTest suites and
-fifteen under ASan/UBSan, including the independent detector probes. Ordinary and
-instrumented static analysis and fast quality pass. All three native clean
-rebuilds are byte-identical. Each ordinary compiler passes 316 Linux
-source/profile cases, six cleanup cases and the foundation smoke; source,
-compiler, runtime, tool and artifact identities are checked.
-`build/i05-qualification.json` records the evidence and any separately checked
-documentation-only completion update. This qualifies the macOS ARM64 compiler
-host and Linux x86-64 target, not a Linux compiler host, public ABI or runtime parity.
+The boundary suite exercises IR rejection, dominance/phis, independent
+initialization, checked-tree lifetime/moves, immutable spelling, in-memory UTF-8
+and rejection before verified publication. Frontend/IR/analysis compilation
+receives no LLVM includes; the standalone boundary executable has no LLVM
+symbol dependency. The separate historical dependency checker is retired.
+Revision-bound I03/I05 qualification is recorded once in implementation-plan
+section 8.2, not inferred from component counts.
 
 ## F-string lowering
 
@@ -907,8 +861,8 @@ Cross-branch inference: a generic call at the tail of an `if`/`else` or `match` 
 
 A hole's type is checked through the `core.fmt.Hole` bound of `core.fmt.field`: one blanket library implementation covers every sized `Display` type and `Text` has its own; when the bound fails, `Checker::interfaceObligation` reports a dedicated "cannot fill an f-string hole" error instead of the generic obligation message.
 
-Dotted-path resolution and generic application (grammar section 13; parser and checker behavior verified): the parser applies the syntax-only generic-follower rule, including for `a<b>(c)`. A dotted expression chain stays a syntax-only `Field` chain; `dottedPath` (`syntax/ast.h`) flattens such a chain. The checker decides field versus qualified path in `Checker::qualifyDottedPath` (`semantics/names.cpp`), called by the `controlFlow` pre-check walk (which tracks lexical bindings) and over static initializers, before flow analysis and the call graph so both see the qualified call target: a lexically bound root is a value and keeps its field/method meaning (a local named like a type or module shadows it); otherwise the longest prefix whose leading segments are modules, types, interfaces, `Self` or generic parameters is resolved as a path (per-segment generic arguments map to `ownerGenericArguments`/`genericArguments`), and remaining links stay `Field` accesses. This is the one deliberate in-place syntax rewrite, done before any checked fact exists. The library loader also mounts a library root named by `core.x`/`alloc.x`/`std.x`.
+Dotted-path resolution and generic application (grammar section 13): the parser applies the syntax-only generic-follower rule, including for `a<b>(c)`. A dotted expression chain stays a syntax-only `Field` chain; `dottedPath` (`syntax/ast.h`) flattens such a chain. The checker decides field versus qualified path in `Checker::qualifyDottedPath` (`semantics/names.cpp`), called by the `controlFlow` pre-check walk (which tracks lexical bindings) and over static initializers, before flow analysis and the call graph so both see the qualified call target: a lexically bound root is a value and keeps its field/method meaning (a local named like a type or module shadows it); otherwise the longest prefix whose leading segments are modules, types, interfaces, `Self` or generic parameters is resolved as a path (per-segment generic arguments map to `ownerGenericArguments`/`genericArguments`), and remaining links stay `Field` accesses. This is the one deliberate in-place syntax rewrite, done before any checked fact exists. The library loader also mounts a library root named by `core.x`/`alloc.x`/`std.x`.
 
-`lint/lint.{h,cpp}` implements `mettle lint` (implemented and verified on macOS arm64; test `lint_reports_semantic_findings`): the driver compiles through `pipeline::compile` with a checked-module observer, so a lint run reports every front-end and ownership error first; findings are produced only when compilation succeeds. Rules (`unused-binding`, `unused-mutability`, `unused-import`, `unreachable-code`, `unused-outcome`) read `CheckedModule` facts (`find` accessors, `exclusivePlace`, `flow`, closure captures) and `Resolution::importUsed`; `Diagnostic` carries a severity so findings print as `warning[rule]` or, when denied, `error[rule]`. The driver filters out library, dependency and generated-source spans.
+`lint/lint.{h,cpp}` implements `mettle lint`: the driver compiles through `pipeline::compile` with a checked-module observer, so a lint run reports every front-end and ownership error first; findings are produced only when compilation succeeds. Rules (`unused-binding`, `unused-mutability`, `unused-import`, `unreachable-code`, `unused-outcome`) read `CheckedModule` facts (`find` accessors, `exclusivePlace`, `flow`, closure captures) and `Resolution::importUsed`; `Diagnostic` carries a severity so findings print as `warning[rule]` or, when denied, `error[rule]`. The driver filters out library, dependency and generated-source spans.
 
-`syntax/fingerprint.{h,cpp}` provides the syntax-tree fingerprint used by formatting checks. `syntax/format.{h,cpp}` is the token-based formatter behind `mettle fmt` (verified): it lays out lines from the lexer's tokens (indentation from bracket nesting, normalized horizontal gaps, collapsed blank lines, no line break added or removed) and returns text only after re-lexing it and proving the same token sequence, the same fingerprint and idempotence; it has no LLVM or semantic dependency and the driver owns file I/O (atomic replace, `--check`) and passes declarative-macro expansion as the parse hook.
+`syntax/fingerprint.{h,cpp}` provides the syntax-tree fingerprint used by formatting checks. `syntax/format.{h,cpp}` is the token-based formatter behind `mettle fmt`: it lays out lines from the lexer's tokens (indentation from bracket nesting, normalized horizontal gaps, collapsed blank lines, no line break added or removed) and returns text only after re-lexing it and proving the same token sequence, the same fingerprint and idempotence; it has no LLVM or semantic dependency and the driver owns file I/O (atomic replace, `--check`) and passes declarative-macro expansion as the parse hook.

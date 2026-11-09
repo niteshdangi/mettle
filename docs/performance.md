@@ -2,9 +2,7 @@
 
 ## 1. Accepted requirement
 
-Mettle must not read like a Rust copy; its accepted main points are better source
-readability, runtime at least as fast, faster compilation and smaller build-cache
-storage than Rust (decisions D16-D17). The last three are measured gates:
+Decisions D16-D17 require better readability and three measured release gates:
 
 - **Runtime** must match or beat the frozen Rust baseline on each agreed
   representative workload.
@@ -14,14 +12,10 @@ storage than Rust (decisions D16-D17). The last three are measured gates:
 - **Retained build-cache bytes** must beat the frozen Rust/Cargo baseline for the
   same workloads and build states (section 5.1).
 
-Each gate is corpus-based and uses the decision rule of section 4 on a qualified
-runner. Peak compiler/program memory (RSS), allocation counts and binary size are
-reported with every result but have no equality gate of their own; do not hide
-unacceptable resource growth simply because a gated metric passes.
-
-The former 10-percent slowdown investigation threshold is superseded. A win on
-one workload does not compensate for a credible slowdown on another.
-These are corpus-based release requirements, not theorems about all programs.
+Apply section 4 on a qualified runner. Report compiler/program RSS, allocations
+and binary size; they have no equality gates, but unacceptable growth must be
+visible. No slowdown allowance or cross-workload compensation applies; the
+former 10-percent investigation threshold is superseded.
 
 ## 2. Benchmark definitions
 
@@ -67,9 +61,8 @@ with matching overflow policy and generic CPU selection. An independent Python
 calculation checks each exit checksum. It records compiler elapsed time/process
 peak RSS, sources/binaries and six randomized pairs per size in `build/p01/`.
 These include process startup and use one uncontrolled shared-host session.
-They are not the two-session pilot, confidence/precision experiment or a runtime
-parity verdict. The actual Rust comparator version is recorded; a mismatch with
-the frozen 1.99.1 baseline cannot qualify the release comparison.
+This is engineering evidence only. Record the actual Rust version; anything
+other than frozen 1.99.1 cannot qualify release comparison.
 
 ## 4. Decision rule
 
@@ -120,10 +113,8 @@ Measure clean builds from defined empty build state, incremental builds after
 fixed edits, semantic check latency, LSP edit response, peak compiler memory,
 binary/debug-info size, retained build-cache bytes and bootstrap stages.
 
-Do not conflate compiler execution speed with the speed of code it produces.
-Additional optimization may improve application runtime while increasing build
-time. Self-hosting and backend ownership are architectural goals, not expected
-automatic speedups.
+Compiler time and produced-program runtime are separate metrics; self-hosting or
+backend ownership implies no speedup.
 
 ### 5.1. Compile-time and build-storage gate
 
@@ -178,10 +169,10 @@ The user build cache is built to retain less than Cargo's `target/` directory:
 
 Accounting uses logical file sizes; allocated bytes are at least as large, so
 the gate comparison must use allocated bytes per the definition above.
-Live-build leases and dependency-object reuse are implemented, unverified (no
-builds or tests have been run for this change). The driver holds a lease for
-its active whole-build key, pruning preserves leased entries, and `clean`
-refuses a store with live leases.
+The driver leases its active whole-build key; pruning preserves leased entries
+and `clean` refuses live leases. macOS ARM64 behavioral receipts for leases and
+dependency-object reuse are in implementation-plan section 8.4; current Linux
+requalification remains separate.
 
 For eligible debug executable builds, the loader and IR preserve package
 ownership through specialization. Each dependency object contains only
@@ -198,10 +189,8 @@ under one store lock per build; lookup does not hold a per-package lease, so
 concurrent pruning can only cause a safe cache miss. Corrupt blobs fail
 checksum verification and are rebuilt. The new `object_cache_integrity` case
 covers dependency-object reuse after a root-only edit, clean/incremental output
-equivalence and corruption recovery, but remains unrun. Parsing and later
-front-end phases still run for the whole program. No retained-byte or
-compile-time advantage over Cargo is asserted until the qualified-runner
-measurement exists.
+equivalence and corruption recovery. Parsing/later front-end phases still run
+whole-program; retained-byte and compile-time advantages require measurement.
 
 ### 5.2. Compiler-work regression guard
 
@@ -223,7 +212,7 @@ development machine.
 
 ### 5.3. D17 comparison harness
 
-Status: implemented, not yet run (no result, win or parity is claimed).
+Status: implemented, not run; no comparison result.
 `tools/bench_compare.py` builds each paired workload with
 `mettle build --profile release --overflow-checks off --cache-dir <fresh>` and
 `cargo build --release --offline` (fresh `CARGO_TARGET_DIR` and `CARGO_HOME`,
@@ -279,15 +268,11 @@ section 5.2 instruction counters are not collected here.
 
 ### 5.4. Loan-analysis compile-time work
 
-Status: implemented, unmeasured and unverified. The ownership loan analysis
-in `compiler/analysis/loans.cpp` previously retained a complete `availableAfter`
-loan set for every instruction. It now reconstructs each point's availability
-by walking backward from the fixed-point block output, and filters the live set
-in place. This removes per-instruction availability snapshots and their
-repeated set-node copies; expected benefit is lower analysis time and memory for
-loan-rich CFGs, including hosted standard-library builds. Ownership results are
-intended to be unchanged; no build, regression suite or timing measurement was
-run for this change.
+Implemented, unmeasured and unverified: `compiler/analysis/loans.cpp`
+reconstructs availability backward from fixed-point block output and filters live
+sets in place instead of retaining per-instruction `availableAfter` snapshots.
+Ownership results must be unchanged; no build/regression/timing receipt exists
+for this change.
 
 The reported debug/sanitizer compile-time baseline (~37 seconds versus 2.7
 seconds for Release) was not reproduced here. Debug object emission currently
@@ -295,9 +280,7 @@ uses `CodeGenOptLevel::None` and does not run LLVM's per-module O2 pipeline.
 The compiler does not explicitly select FastISel or GlobalISel, and sanitizer
 instrumentation still runs in debug emission. No selector change was made
 without measured evidence across supported targets.
-The compiler architecture requires checking every symbolic body, including
-unused declarations, so lazy checking of unused standard-library items was not
-introduced.
+Every symbolic body, including unused declarations, must still be checked.
 
 ## 6. V1 / V1.1 / V1.2 evidence
 

@@ -28,9 +28,8 @@ python3 docs/baseline/validate.py
 
 Run from the project root. All commands fail on detected inconsistencies.
 The first also checks the extracted library source set and its contents against
-the verified archive. The tests cover operation selection and native Unit/Never
-mapping. The final validator requires all generated data
-and the checked-in specification/facility register.
+the verified archive. The tests cover operation selection and native Unit/Never mapping; the
+validator requires generated data and the specification/facility register.
 
 **Case-insensitive filesystems:** the archive contains case-distinct Hexagon
 declarations. Ordinary extraction may overwrite one with another. The auditor
@@ -53,11 +52,10 @@ auditing a filesystem glob alone is insufficient.
 | supporting-protocols.json | Native equivalents for stable contracts with experimental default/sealed/compiler-controlled supporting declarations |
 | validation.json | Current consistency checks and exact operation-manifest digest |
 
-An operation URL identifies an exposure/context. A canonical ID identifies the
-source declaration plus signature and owning/implementation context; it is not
-a type ABI hash. Reexports retain exposure records but share definition identity.
-Different operations generated at the same macro source line remain distinct.
-Neither row counts nor canonical counts are a feature-completion percentage.
+An operation URL identifies an exposure/context; a canonical ID identifies the
+source declaration, signature and owning/implementation context. Reexports
+share definition identity. Different macro-generated operations remain distinct.
+These counts are not feature-completion percentages or ABI identities.
 
 The inventory contains 35,345 public pages, 123,118 associated records and
 82,270 implementation relations: 240,733 records in total. Exact stable, const,

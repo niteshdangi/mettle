@@ -1021,171 +1021,9 @@ fn group8() {
     if !(7u32.isolate_highest_one() == 4u32) { panic("isolate_highest_one #977") }
     if !(7u32.isolate_lowest_one() == 1u32) { panic("isolate_lowest_one #978") }
     if !(7u32.bit_width() == 3u32) { panic("bit_width #979") }
-    if !(0u32.checked_neg() == present(0u32)) { panic("checked_neg #980") }
-    if !(0u32.wrapping_neg() == 0u32) { panic("wrapping_neg #981") }
-    if !(0u32.overflowing_neg().0 == 0u32 && 0u32.overflowing_neg().1 == false) { panic("overflowing_neg #982") }
-    if !(0u32.strict_neg() == 0u32) { panic("strict_neg #983") }
-    if !(0u32.cast_signed() == 0i32) { panic("cast_signed #984") }
-    if !(0u32.count_ones() == 0u32) { panic("count_ones #985") }
-    if !(0u32.count_zeros() == 32u32) { panic("count_zeros #986") }
-    if !(0u32.leading_zeros() == 32u32) { panic("leading_zeros #987") }
-    if !(0u32.trailing_zeros() == 32u32) { panic("trailing_zeros #988") }
-    if !(0u32.leading_ones() == 0u32) { panic("leading_ones #989") }
-    if !(0u32.trailing_ones() == 0u32) { panic("trailing_ones #990") }
-    if !(0u32.reverse_bits() == 0u32) { panic("reverse_bits #991") }
-    if !(0u32.swap_bytes() == 0u32) { panic("swap_bytes #992") }
-    if !(0u32.to_be() == 0u32) { panic("to_be #993") }
-    if !(0u32.to_le() == 0u32) { panic("to_le #994") }
-    if !(u32.from_be(0u32) == 0u32) { panic("from_be #995") }
-    if !(u32.from_le(0u32) == 0u32) { panic("from_le #996") }
-    if !(0u32.to_le_bytes() == [0u8, 0u8, 0u8, 0u8]) { panic("to_le_bytes #997") }
-    if !(0u32.to_be_bytes() == [0u8, 0u8, 0u8, 0u8]) { panic("to_be_bytes #998") }
-    if !(0u32.to_ne_bytes() == [0u8, 0u8, 0u8, 0u8]) { panic("to_ne_bytes #999") }
-    if !(u32.from_le_bytes([0u8, 0u8, 0u8, 0u8]) == 0u32) { panic("from_le_bytes #1000") }
-    if !(u32.from_be_bytes([0u8, 0u8, 0u8, 0u8]) == 0u32) { panic("from_be_bytes #1001") }
-    if !(u32.from_ne_bytes([0u8, 0u8, 0u8, 0u8]) == 0u32) { panic("from_ne_bytes #1002") }
-    if !(0u32.rotate_left(0u32) == 0u32) { panic("rotate_left #1003") }
-    if !(0u32.rotate_right(0u32) == 0u32) { panic("rotate_right #1004") }
-    if !(0u32.checked_shl(0u32) == present(0u32)) { panic("checked_shl #1005") }
-    if !(0u32.checked_shr(0u32) == present(0u32)) { panic("checked_shr #1006") }
-    if !(0u32.wrapping_shl(0u32) == 0u32) { panic("wrapping_shl #1007") }
-    if !(0u32.wrapping_shr(0u32) == 0u32) { panic("wrapping_shr #1008") }
-    if !(0u32.overflowing_shl(0u32).0 == 0u32 && 0u32.overflowing_shl(0u32).1 == false) { panic("overflowing_shl #1009") }
-    if !(0u32.overflowing_shr(0u32).0 == 0u32 && 0u32.overflowing_shr(0u32).1 == false) { panic("overflowing_shr #1010") }
-    if !(0u32.unbounded_shl(0u32) == 0u32) { panic("unbounded_shl #1011") }
-    if !(0u32.unbounded_shr(0u32) == 0u32) { panic("unbounded_shr #1012") }
-    if !(0u32.strict_shl(0u32) == 0u32) { panic("strict_shl #1013") }
-    if !(0u32.strict_shr(0u32) == 0u32) { panic("strict_shr #1014") }
-    if !(unsafe { 0u32.unchecked_shl(0u32) } == 0u32) { panic("unchecked_shl #1015") }
-    if !(unsafe { 0u32.unchecked_shr(0u32) } == 0u32) { panic("unchecked_shr #1016") }
-    if !(0u32.rotate_left(1u32) == 0u32) { panic("rotate_left #1017") }
-    if !(0u32.rotate_right(1u32) == 0u32) { panic("rotate_right #1018") }
-    if !(0u32.checked_shl(1u32) == present(0u32)) { panic("checked_shl #1019") }
-    if !(0u32.checked_shr(1u32) == present(0u32)) { panic("checked_shr #1020") }
-    if !(0u32.wrapping_shl(1u32) == 0u32) { panic("wrapping_shl #1021") }
-    if !(0u32.wrapping_shr(1u32) == 0u32) { panic("wrapping_shr #1022") }
-    if !(0u32.overflowing_shl(1u32).0 == 0u32 && 0u32.overflowing_shl(1u32).1 == false) { panic("overflowing_shl #1023") }
-    if !(0u32.overflowing_shr(1u32).0 == 0u32 && 0u32.overflowing_shr(1u32).1 == false) { panic("overflowing_shr #1024") }
-    if !(0u32.unbounded_shl(1u32) == 0u32) { panic("unbounded_shl #1025") }
-    if !(0u32.unbounded_shr(1u32) == 0u32) { panic("unbounded_shr #1026") }
-    if !(0u32.strict_shl(1u32) == 0u32) { panic("strict_shl #1027") }
-    if !(0u32.strict_shr(1u32) == 0u32) { panic("strict_shr #1028") }
-    if !(unsafe { 0u32.unchecked_shl(1u32) } == 0u32) { panic("unchecked_shl #1029") }
-    if !(unsafe { 0u32.unchecked_shr(1u32) } == 0u32) { panic("unchecked_shr #1030") }
-    if !(0u32.rotate_left(3u32) == 0u32) { panic("rotate_left #1031") }
-    if !(0u32.rotate_right(3u32) == 0u32) { panic("rotate_right #1032") }
-    if !(0u32.checked_shl(3u32) == present(0u32)) { panic("checked_shl #1033") }
-    if !(0u32.checked_shr(3u32) == present(0u32)) { panic("checked_shr #1034") }
-    if !(0u32.wrapping_shl(3u32) == 0u32) { panic("wrapping_shl #1035") }
-    if !(0u32.wrapping_shr(3u32) == 0u32) { panic("wrapping_shr #1036") }
-    if !(0u32.overflowing_shl(3u32).0 == 0u32 && 0u32.overflowing_shl(3u32).1 == false) { panic("overflowing_shl #1037") }
-    if !(0u32.overflowing_shr(3u32).0 == 0u32 && 0u32.overflowing_shr(3u32).1 == false) { panic("overflowing_shr #1038") }
-    if !(0u32.unbounded_shl(3u32) == 0u32) { panic("unbounded_shl #1039") }
-    if !(0u32.unbounded_shr(3u32) == 0u32) { panic("unbounded_shr #1040") }
-    if !(0u32.strict_shl(3u32) == 0u32) { panic("strict_shl #1041") }
-    if !(0u32.strict_shr(3u32) == 0u32) { panic("strict_shr #1042") }
-    if !(unsafe { 0u32.unchecked_shl(3u32) } == 0u32) { panic("unchecked_shl #1043") }
-    if !(unsafe { 0u32.unchecked_shr(3u32) } == 0u32) { panic("unchecked_shr #1044") }
-    if !(0u32.rotate_left(31u32) == 0u32) { panic("rotate_left #1045") }
-    if !(0u32.rotate_right(31u32) == 0u32) { panic("rotate_right #1046") }
-    if !(0u32.checked_shl(31u32) == present(0u32)) { panic("checked_shl #1047") }
-    if !(0u32.checked_shr(31u32) == present(0u32)) { panic("checked_shr #1048") }
-    if !(0u32.wrapping_shl(31u32) == 0u32) { panic("wrapping_shl #1049") }
-    if !(0u32.wrapping_shr(31u32) == 0u32) { panic("wrapping_shr #1050") }
-    if !(0u32.overflowing_shl(31u32).0 == 0u32 && 0u32.overflowing_shl(31u32).1 == false) { panic("overflowing_shl #1051") }
-    if !(0u32.overflowing_shr(31u32).0 == 0u32 && 0u32.overflowing_shr(31u32).1 == false) { panic("overflowing_shr #1052") }
-    if !(0u32.unbounded_shl(31u32) == 0u32) { panic("unbounded_shl #1053") }
-    if !(0u32.unbounded_shr(31u32) == 0u32) { panic("unbounded_shr #1054") }
-    if !(0u32.strict_shl(31u32) == 0u32) { panic("strict_shl #1055") }
-    if !(0u32.strict_shr(31u32) == 0u32) { panic("strict_shr #1056") }
-    if !(unsafe { 0u32.unchecked_shl(31u32) } == 0u32) { panic("unchecked_shl #1057") }
-    if !(unsafe { 0u32.unchecked_shr(31u32) } == 0u32) { panic("unchecked_shr #1058") }
-    if !(0u32.rotate_left(32u32) == 0u32) { panic("rotate_left #1059") }
-    if !(0u32.rotate_right(32u32) == 0u32) { panic("rotate_right #1060") }
-    if !(missing(0u32.checked_shl(32u32))) { panic("checked_shl #1061") }
-    if !(missing(0u32.checked_shr(32u32))) { panic("checked_shr #1062") }
-    if !(0u32.wrapping_shl(32u32) == 0u32) { panic("wrapping_shl #1063") }
-    if !(0u32.wrapping_shr(32u32) == 0u32) { panic("wrapping_shr #1064") }
-    if !(0u32.overflowing_shl(32u32).0 == 0u32 && 0u32.overflowing_shl(32u32).1 == true) { panic("overflowing_shl #1065") }
-    if !(0u32.overflowing_shr(32u32).0 == 0u32 && 0u32.overflowing_shr(32u32).1 == true) { panic("overflowing_shr #1066") }
-    if !(0u32.unbounded_shl(32u32) == 0u32) { panic("unbounded_shl #1067") }
-    if !(0u32.unbounded_shr(32u32) == 0u32) { panic("unbounded_shr #1068") }
-    if !(0u32.rotate_left(37u32) == 0u32) { panic("rotate_left #1069") }
-    if !(0u32.rotate_right(37u32) == 0u32) { panic("rotate_right #1070") }
-    if !(missing(0u32.checked_shl(37u32))) { panic("checked_shl #1071") }
-    if !(missing(0u32.checked_shr(37u32))) { panic("checked_shr #1072") }
-    if !(0u32.wrapping_shl(37u32) == 0u32) { panic("wrapping_shl #1073") }
-    if !(0u32.wrapping_shr(37u32) == 0u32) { panic("wrapping_shr #1074") }
-    if !(0u32.overflowing_shl(37u32).0 == 0u32 && 0u32.overflowing_shl(37u32).1 == true) { panic("overflowing_shl #1075") }
-    if !(0u32.overflowing_shr(37u32).0 == 0u32 && 0u32.overflowing_shr(37u32).1 == true) { panic("overflowing_shr #1076") }
-    if !(0u32.unbounded_shl(37u32) == 0u32) { panic("unbounded_shl #1077") }
-    if !(0u32.unbounded_shr(37u32) == 0u32) { panic("unbounded_shr #1078") }
-    if !(0u32.checked_pow(0u32) == present(1u32)) { panic("checked_pow #1079") }
-    if !(0u32.wrapping_pow(0u32) == 1u32) { panic("wrapping_pow #1080") }
 }
 
 fn group9() {
-    if !(0u32.overflowing_pow(0u32).0 == 1u32 && 0u32.overflowing_pow(0u32).1 == false) { panic("overflowing_pow #1081") }
-    if !(0u32.saturating_pow(0u32) == 1u32) { panic("saturating_pow #1082") }
-    if !(0u32.pow(0u32) == 1u32) { panic("pow #1083") }
-    if !(0u32.strict_pow(0u32) == 1u32) { panic("strict_pow #1084") }
-    if !(0u32.checked_pow(1u32) == present(0u32)) { panic("checked_pow #1085") }
-    if !(0u32.wrapping_pow(1u32) == 0u32) { panic("wrapping_pow #1086") }
-    if !(0u32.overflowing_pow(1u32).0 == 0u32 && 0u32.overflowing_pow(1u32).1 == false) { panic("overflowing_pow #1087") }
-    if !(0u32.saturating_pow(1u32) == 0u32) { panic("saturating_pow #1088") }
-    if !(0u32.pow(1u32) == 0u32) { panic("pow #1089") }
-    if !(0u32.strict_pow(1u32) == 0u32) { panic("strict_pow #1090") }
-    if !(0u32.checked_pow(2u32) == present(0u32)) { panic("checked_pow #1091") }
-    if !(0u32.wrapping_pow(2u32) == 0u32) { panic("wrapping_pow #1092") }
-    if !(0u32.overflowing_pow(2u32).0 == 0u32 && 0u32.overflowing_pow(2u32).1 == false) { panic("overflowing_pow #1093") }
-    if !(0u32.saturating_pow(2u32) == 0u32) { panic("saturating_pow #1094") }
-    if !(0u32.pow(2u32) == 0u32) { panic("pow #1095") }
-    if !(0u32.strict_pow(2u32) == 0u32) { panic("strict_pow #1096") }
-    if !(0u32.checked_pow(3u32) == present(0u32)) { panic("checked_pow #1097") }
-    if !(0u32.wrapping_pow(3u32) == 0u32) { panic("wrapping_pow #1098") }
-    if !(0u32.overflowing_pow(3u32).0 == 0u32 && 0u32.overflowing_pow(3u32).1 == false) { panic("overflowing_pow #1099") }
-    if !(0u32.saturating_pow(3u32) == 0u32) { panic("saturating_pow #1100") }
-    if !(0u32.pow(3u32) == 0u32) { panic("pow #1101") }
-    if !(0u32.strict_pow(3u32) == 0u32) { panic("strict_pow #1102") }
-    if !(0u32.checked_pow(31u32) == present(0u32)) { panic("checked_pow #1103") }
-    if !(0u32.wrapping_pow(31u32) == 0u32) { panic("wrapping_pow #1104") }
-    if !(0u32.overflowing_pow(31u32).0 == 0u32 && 0u32.overflowing_pow(31u32).1 == false) { panic("overflowing_pow #1105") }
-    if !(0u32.saturating_pow(31u32) == 0u32) { panic("saturating_pow #1106") }
-    if !(0u32.pow(31u32) == 0u32) { panic("pow #1107") }
-    if !(0u32.strict_pow(31u32) == 0u32) { panic("strict_pow #1108") }
-    if !(0u32.checked_pow(32u32) == present(0u32)) { panic("checked_pow #1109") }
-    if !(0u32.wrapping_pow(32u32) == 0u32) { panic("wrapping_pow #1110") }
-    if !(0u32.overflowing_pow(32u32).0 == 0u32 && 0u32.overflowing_pow(32u32).1 == false) { panic("overflowing_pow #1111") }
-    if !(0u32.saturating_pow(32u32) == 0u32) { panic("saturating_pow #1112") }
-    if !(0u32.pow(32u32) == 0u32) { panic("pow #1113") }
-    if !(0u32.strict_pow(32u32) == 0u32) { panic("strict_pow #1114") }
-    if !(missing(0u32.checked_ilog2())) { panic("checked_ilog2 #1115") }
-    if !(missing(0u32.checked_ilog10())) { panic("checked_ilog10 #1116") }
-    if !(missing(0u32.checked_ilog(2u32))) { panic("checked_ilog #1117") }
-    if !(0u32.isqrt() == 0u32) { panic("isqrt #1118") }
-    if !(0u32.checked_isqrt() == present(0u32)) { panic("checked_isqrt #1119") }
-    if !(0u32.is_power_of_two() == false) { panic("is_power_of_two #1120") }
-    if !(0u32.checked_next_power_of_two() == present(1u32)) { panic("checked_next_power_of_two #1121") }
-    if !(0u32.next_power_of_two() == 1u32) { panic("next_power_of_two #1122") }
-    if !(0u32.div_ceil(1u32) == 0u32) { panic("div_ceil #1123") }
-    if !(0u32.checked_next_multiple_of(1u32) == present(0u32)) { panic("checked_next_multiple_of #1124") }
-    if !(0u32.next_multiple_of(1u32) == 0u32) { panic("next_multiple_of #1125") }
-    if !(0u32.is_multiple_of(1u32) == true) { panic("is_multiple_of #1126") }
-    if !(0u32.div_ceil(3u32) == 0u32) { panic("div_ceil #1127") }
-    if !(0u32.checked_next_multiple_of(3u32) == present(0u32)) { panic("checked_next_multiple_of #1128") }
-    if !(0u32.next_multiple_of(3u32) == 0u32) { panic("next_multiple_of #1129") }
-    if !(0u32.is_multiple_of(3u32) == true) { panic("is_multiple_of #1130") }
-    if !(0u32.div_ceil(7u32) == 0u32) { panic("div_ceil #1131") }
-    if !(0u32.checked_next_multiple_of(7u32) == present(0u32)) { panic("checked_next_multiple_of #1132") }
-    if !(0u32.next_multiple_of(7u32) == 0u32) { panic("next_multiple_of #1133") }
-    if !(0u32.is_multiple_of(7u32) == true) { panic("is_multiple_of #1134") }
-    if !(0u32.is_multiple_of(0u32) == true) { panic("is_multiple_of #1135") }
-    if !(missing(0u32.checked_next_multiple_of(0u32))) { panic("checked_next_multiple_of #1136") }
-    if !(missing(0u32.highest_one())) { panic("highest_one #1137") }
-    if !(missing(0u32.lowest_one())) { panic("lowest_one #1138") }
-    if !(0u32.isolate_highest_one() == 0u32) { panic("isolate_highest_one #1139") }
-    if !(0u32.isolate_lowest_one() == 0u32) { panic("isolate_lowest_one #1140") }
-    if !(0u32.bit_width() == 0u32) { panic("bit_width #1141") }
     if !(missing(1u32.checked_neg())) { panic("checked_neg #1142") }
     if !(1u32.wrapping_neg() == u32.MAX) { panic("wrapping_neg #1143") }
     if !(1u32.overflowing_neg().0 == u32.MAX && 1u32.overflowing_neg().1 == true) { panic("overflowing_neg #1144") }
@@ -1366,7 +1204,6 @@ fn group10() {
     if !(u32.MAX.carrying_mul_add(1u32, 0u32, 0u32).0 == u32.MAX && u32.MAX.carrying_mul_add(1u32, 0u32, 0u32).1 == 0u32) { panic("carrying_mul_add #1316") }
     if !(u32.MAX.carrying_mul(1u32, u32.MAX).0 == 4294967294u32 && u32.MAX.carrying_mul(1u32, u32.MAX).1 == 1u32) { panic("carrying_mul #1317") }
     if !(u32.MAX.carrying_mul_add(1u32, u32.MAX, 0u32).0 == 4294967294u32 && u32.MAX.carrying_mul_add(1u32, u32.MAX, 0u32).1 == 1u32) { panic("carrying_mul_add #1318") }
-    if !(u32.MAX.carrying_mul(1u32, u32.MAX).0 == 4294967294u32 && u32.MAX.carrying_mul(1u32, u32.MAX).1 == 1u32) { panic("carrying_mul #1319") }
     if !(u32.MAX.carrying_mul_add(1u32, u32.MAX, u32.MAX).0 == 4294967293u32 && u32.MAX.carrying_mul_add(1u32, u32.MAX, u32.MAX).1 == 2u32) { panic("carrying_mul_add #1320") }
 }
 
@@ -1382,7 +1219,6 @@ fn group11() {
     if !(0u32.carrying_mul_add(1u32, 0u32, 0u32).0 == 0u32 && 0u32.carrying_mul_add(1u32, 0u32, 0u32).1 == 0u32) { panic("carrying_mul_add #1329") }
     if !(0u32.carrying_mul(1u32, u32.MAX).0 == u32.MAX && 0u32.carrying_mul(1u32, u32.MAX).1 == 0u32) { panic("carrying_mul #1330") }
     if !(0u32.carrying_mul_add(1u32, u32.MAX, 0u32).0 == u32.MAX && 0u32.carrying_mul_add(1u32, u32.MAX, 0u32).1 == 0u32) { panic("carrying_mul_add #1331") }
-    if !(0u32.carrying_mul(1u32, u32.MAX).0 == u32.MAX && 0u32.carrying_mul(1u32, u32.MAX).1 == 0u32) { panic("carrying_mul #1332") }
     if !(0u32.carrying_mul_add(1u32, u32.MAX, u32.MAX).0 == 4294967294u32 && 0u32.carrying_mul_add(1u32, u32.MAX, u32.MAX).1 == 1u32) { panic("carrying_mul_add #1333") }
     if !(0u32.carrying_mul(1u32, 7u32).0 == 7u32 && 0u32.carrying_mul(1u32, 7u32).1 == 0u32) { panic("carrying_mul #1334") }
     if !(0u32.carrying_mul_add(1u32, 7u32, 3u32).0 == 10u32 && 0u32.carrying_mul_add(1u32, 7u32, 3u32).1 == 0u32) { panic("carrying_mul_add #1335") }
@@ -1395,7 +1231,6 @@ fn group11() {
     if !(1000u32.carrying_mul_add(7u32, 0u32, 0u32).0 == 7000u32 && 1000u32.carrying_mul_add(7u32, 0u32, 0u32).1 == 0u32) { panic("carrying_mul_add #1342") }
     if !(1000u32.carrying_mul(7u32, u32.MAX).0 == 6999u32 && 1000u32.carrying_mul(7u32, u32.MAX).1 == 1u32) { panic("carrying_mul #1343") }
     if !(1000u32.carrying_mul_add(7u32, u32.MAX, 0u32).0 == 6999u32 && 1000u32.carrying_mul_add(7u32, u32.MAX, 0u32).1 == 1u32) { panic("carrying_mul_add #1344") }
-    if !(1000u32.carrying_mul(7u32, u32.MAX).0 == 6999u32 && 1000u32.carrying_mul(7u32, u32.MAX).1 == 1u32) { panic("carrying_mul #1345") }
     if !(1000u32.carrying_mul_add(7u32, u32.MAX, u32.MAX).0 == 6998u32 && 1000u32.carrying_mul_add(7u32, u32.MAX, u32.MAX).1 == 2u32) { panic("carrying_mul_add #1346") }
     if !(1000u32.carrying_mul(7u32, 7u32).0 == 7007u32 && 1000u32.carrying_mul(7u32, 7u32).1 == 0u32) { panic("carrying_mul #1347") }
     if !(1000u32.carrying_mul_add(7u32, 7u32, 3u32).0 == 7010u32 && 1000u32.carrying_mul_add(7u32, 7u32, 3u32).1 == 0u32) { panic("carrying_mul_add #1348") }
@@ -1408,7 +1243,6 @@ fn group11() {
     if !(7u32.carrying_mul_add(1000u32, 0u32, 0u32).0 == 7000u32 && 7u32.carrying_mul_add(1000u32, 0u32, 0u32).1 == 0u32) { panic("carrying_mul_add #1355") }
     if !(7u32.carrying_mul(1000u32, u32.MAX).0 == 6999u32 && 7u32.carrying_mul(1000u32, u32.MAX).1 == 1u32) { panic("carrying_mul #1356") }
     if !(7u32.carrying_mul_add(1000u32, u32.MAX, 0u32).0 == 6999u32 && 7u32.carrying_mul_add(1000u32, u32.MAX, 0u32).1 == 1u32) { panic("carrying_mul_add #1357") }
-    if !(7u32.carrying_mul(1000u32, u32.MAX).0 == 6999u32 && 7u32.carrying_mul(1000u32, u32.MAX).1 == 1u32) { panic("carrying_mul #1358") }
     if !(7u32.carrying_mul_add(1000u32, u32.MAX, u32.MAX).0 == 6998u32 && 7u32.carrying_mul_add(1000u32, u32.MAX, u32.MAX).1 == 2u32) { panic("carrying_mul_add #1359") }
     if !(7u32.carrying_mul(1000u32, 7u32).0 == 7007u32 && 7u32.carrying_mul(1000u32, 7u32).1 == 0u32) { panic("carrying_mul #1360") }
     if !(7u32.carrying_mul_add(1000u32, 7u32, 3u32).0 == 7010u32 && 7u32.carrying_mul_add(1000u32, 7u32, 3u32).1 == 0u32) { panic("carrying_mul_add #1361") }
@@ -1421,7 +1255,6 @@ fn group11() {
     if !(u32.MAX.carrying_mul_add(2u32, 0u32, 0u32).0 == 4294967294u32 && u32.MAX.carrying_mul_add(2u32, 0u32, 0u32).1 == 1u32) { panic("carrying_mul_add #1368") }
     if !(u32.MAX.carrying_mul(2u32, u32.MAX).0 == 4294967293u32 && u32.MAX.carrying_mul(2u32, u32.MAX).1 == 2u32) { panic("carrying_mul #1369") }
     if !(u32.MAX.carrying_mul_add(2u32, u32.MAX, 0u32).0 == 4294967293u32 && u32.MAX.carrying_mul_add(2u32, u32.MAX, 0u32).1 == 2u32) { panic("carrying_mul_add #1370") }
-    if !(u32.MAX.carrying_mul(2u32, u32.MAX).0 == 4294967293u32 && u32.MAX.carrying_mul(2u32, u32.MAX).1 == 2u32) { panic("carrying_mul #1371") }
     if !(u32.MAX.carrying_mul_add(2u32, u32.MAX, u32.MAX).0 == 4294967292u32 && u32.MAX.carrying_mul_add(2u32, u32.MAX, u32.MAX).1 == 3u32) { panic("carrying_mul_add #1372") }
     if !(u32.MAX.carrying_mul(2u32, 7u32).0 == 5u32 && u32.MAX.carrying_mul(2u32, 7u32).1 == 2u32) { panic("carrying_mul #1373") }
     if !(u32.MAX.carrying_mul_add(2u32, 7u32, 3u32).0 == 8u32 && u32.MAX.carrying_mul_add(2u32, 7u32, 3u32).1 == 2u32) { panic("carrying_mul_add #1374") }
@@ -1434,7 +1267,6 @@ fn group11() {
     if !(0u32.carrying_mul_add(0u32, 0u32, 0u32).0 == 0u32 && 0u32.carrying_mul_add(0u32, 0u32, 0u32).1 == 0u32) { panic("carrying_mul_add #1381") }
     if !(0u32.carrying_mul(0u32, u32.MAX).0 == u32.MAX && 0u32.carrying_mul(0u32, u32.MAX).1 == 0u32) { panic("carrying_mul #1382") }
     if !(0u32.carrying_mul_add(0u32, u32.MAX, 0u32).0 == u32.MAX && 0u32.carrying_mul_add(0u32, u32.MAX, 0u32).1 == 0u32) { panic("carrying_mul_add #1383") }
-    if !(0u32.carrying_mul(0u32, u32.MAX).0 == u32.MAX && 0u32.carrying_mul(0u32, u32.MAX).1 == 0u32) { panic("carrying_mul #1384") }
     if !(0u32.carrying_mul_add(0u32, u32.MAX, u32.MAX).0 == 4294967294u32 && 0u32.carrying_mul_add(0u32, u32.MAX, u32.MAX).1 == 1u32) { panic("carrying_mul_add #1385") }
     if !(0u32.carrying_mul(0u32, 7u32).0 == 7u32 && 0u32.carrying_mul(0u32, 7u32).1 == 0u32) { panic("carrying_mul #1386") }
     if !(0u32.carrying_mul_add(0u32, 7u32, 3u32).0 == 10u32 && 0u32.carrying_mul_add(0u32, 7u32, 3u32).1 == 0u32) { panic("carrying_mul_add #1387") }
@@ -1447,7 +1279,6 @@ fn group11() {
     if !(u32.MAX.carrying_mul_add(u32.MAX, 0u32, 0u32).0 == 1u32 && u32.MAX.carrying_mul_add(u32.MAX, 0u32, 0u32).1 == 4294967294u32) { panic("carrying_mul_add #1394") }
     if !(u32.MAX.carrying_mul(u32.MAX, u32.MAX).0 == 0u32 && u32.MAX.carrying_mul(u32.MAX, u32.MAX).1 == u32.MAX) { panic("carrying_mul #1395") }
     if !(u32.MAX.carrying_mul_add(u32.MAX, u32.MAX, 0u32).0 == 0u32 && u32.MAX.carrying_mul_add(u32.MAX, u32.MAX, 0u32).1 == u32.MAX) { panic("carrying_mul_add #1396") }
-    if !(u32.MAX.carrying_mul(u32.MAX, u32.MAX).0 == 0u32 && u32.MAX.carrying_mul(u32.MAX, u32.MAX).1 == u32.MAX) { panic("carrying_mul #1397") }
     if !(u32.MAX.carrying_mul_add(u32.MAX, u32.MAX, u32.MAX).0 == u32.MAX && u32.MAX.carrying_mul_add(u32.MAX, u32.MAX, u32.MAX).1 == u32.MAX) { panic("carrying_mul_add #1398") }
     if !(u32.MAX.carrying_mul(u32.MAX, 7u32).0 == 8u32 && u32.MAX.carrying_mul(u32.MAX, 7u32).1 == 4294967294u32) { panic("carrying_mul #1399") }
     if !(u32.MAX.carrying_mul_add(u32.MAX, 7u32, 3u32).0 == 11u32 && u32.MAX.carrying_mul_add(u32.MAX, 7u32, 3u32).1 == 4294967294u32) { panic("carrying_mul_add #1400") }
@@ -1460,7 +1291,6 @@ fn group11() {
     if !(u32.MAX.carrying_mul_add(4294967294u32, 0u32, 0u32).0 == 2u32 && u32.MAX.carrying_mul_add(4294967294u32, 0u32, 0u32).1 == 4294967293u32) { panic("carrying_mul_add #1407") }
     if !(u32.MAX.carrying_mul(4294967294u32, u32.MAX).0 == 1u32 && u32.MAX.carrying_mul(4294967294u32, u32.MAX).1 == 4294967294u32) { panic("carrying_mul #1408") }
     if !(u32.MAX.carrying_mul_add(4294967294u32, u32.MAX, 0u32).0 == 1u32 && u32.MAX.carrying_mul_add(4294967294u32, u32.MAX, 0u32).1 == 4294967294u32) { panic("carrying_mul_add #1409") }
-    if !(u32.MAX.carrying_mul(4294967294u32, u32.MAX).0 == 1u32 && u32.MAX.carrying_mul(4294967294u32, u32.MAX).1 == 4294967294u32) { panic("carrying_mul #1410") }
     if !(u32.MAX.carrying_mul_add(4294967294u32, u32.MAX, u32.MAX).0 == 0u32 && u32.MAX.carrying_mul_add(4294967294u32, u32.MAX, u32.MAX).1 == u32.MAX) { panic("carrying_mul_add #1411") }
     if !(u32.MAX.carrying_mul(4294967294u32, 7u32).0 == 9u32 && u32.MAX.carrying_mul(4294967294u32, 7u32).1 == 4294967293u32) { panic("carrying_mul #1412") }
     if !(u32.MAX.carrying_mul_add(4294967294u32, 7u32, 3u32).0 == 12u32 && u32.MAX.carrying_mul_add(4294967294u32, 7u32, 3u32).1 == 4294967293u32) { panic("carrying_mul_add #1413") }
@@ -1474,17 +1304,10 @@ fn group11() {
     if !(parsed(capture num.from_str_radix<u32>("0", 16u32)) == present(0u32)) { panic("from_str_radix #1421") }
     if !(parsed(capture num.from_str_radix<u32>("0", 2u32)) == present(0u32)) { panic("from_str_radix #1422") }
     if !(parsed(capture num.from_str_radix<u32>("0", 36u32)) == present(0u32)) { panic("from_str_radix #1423") }
-    if !(parsed(capture num.from_str_radix<u32>("0", 16u32)) == present(0u32)) { panic("from_str_radix #1424") }
     if !(parsed(capture num.from_str_radix<u32>("7", 10u32)) == present(7u32)) { panic("from_str_radix #1425") }
     if !(parsed(capture num.from_str_radix<u32>("7", 16u32)) == present(7u32)) { panic("from_str_radix #1426") }
     if !(parsed(capture num.from_str_radix<u32>("111", 2u32)) == present(7u32)) { panic("from_str_radix #1427") }
     if !(parsed(capture num.from_str_radix<u32>("7", 36u32)) == present(7u32)) { panic("from_str_radix #1428") }
-    if !(parsed(capture num.from_str_radix<u32>("7", 16u32)) == present(7u32)) { panic("from_str_radix #1429") }
-    if !(parsed(capture num.from_str_radix<u32>("0", 10u32)) == present(0u32)) { panic("from_str_radix #1430") }
-    if !(parsed(capture num.from_str_radix<u32>("0", 16u32)) == present(0u32)) { panic("from_str_radix #1431") }
-    if !(parsed(capture num.from_str_radix<u32>("0", 2u32)) == present(0u32)) { panic("from_str_radix #1432") }
-    if !(parsed(capture num.from_str_radix<u32>("0", 36u32)) == present(0u32)) { panic("from_str_radix #1433") }
-    if !(parsed(capture num.from_str_radix<u32>("0", 16u32)) == present(0u32)) { panic("from_str_radix #1434") }
     if !(parsed(capture num.from_str_radix<u32>("+7", 10u32)) == present(7u32)) { panic("from_str_radix #1435") }
     if !(kind(capture num.from_str_radix<u32>("", 10u32)) == present(IntErrorKind.Empty)) { panic("from_str_radix #1436") }
     if !(kind(capture num.from_str_radix<u32>("-", 10u32)) == present(IntErrorKind.InvalidDigit)) { panic("from_str_radix #1437") }

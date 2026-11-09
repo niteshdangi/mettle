@@ -35,22 +35,13 @@ python3 tools/build.py --configuration Release
 python3 tools/build.py --configuration Debug --sanitizers
 ```
 
-`--quality` replaces the standalone CTest step with the build-directory quality
-gate, which includes CTest. This runs each configuration's tests once while
-retaining static analysis and clean-rebuild reproducibility checks.
-Run full static analysis in the selected build configuration; additionally use
-`--quality` for another configuration when its changed compiler definitions or
-sources require separate analysis, rather than repeating identical analysis.
-
-The selected LLVM 22.1.3 replaces 21.1.8 to resolve the Darwin sanitizer
-startup failure. The instrumented corpus and both detector probes pass; see the
-[compatibility decision](docs/code-quality.md#5-unsafe-memory-and-concurrency).
-Do not silently substitute runtimes or disable instrumentation.
-
-The gated compiler host is Linux x86-64 from 2026-11-08 (owner decision;
-implementation-plan section 8.0). Earlier closures were qualified on a macOS
-ARM64 host; their evidence does not establish Linux compiler-host
-qualification until LNX completes.
+`--quality` includes CTest, static analysis and clean-rebuild checks; do not
+also run standalone CTest. Repeat static analysis in another configuration only
+when its changed definitions or sources require it.
+The [quality standard](docs/code-quality.md#5-unsafe-memory-and-concurrency)
+owns sanitizer requirements and the toolchain compatibility decision.
+The Linux host qualification gate and historical macOS evidence scopes are in
+[implementation-plan section 8.0](docs/implementation-plan.md).
 
 Cross-target/backend changes also require the existing Linux source runner:
 
@@ -63,11 +54,9 @@ Start the dedicated VM first and stop it after dependent work; see the
 
 ## Change checklist
 
-Tests follow the [conventional compiler categories](docs/code-quality.md#6-diagnostics-and-behavioral-tests):
-source compile/run pass/fail cases, diagnostics, focused algorithm unit tests
-and applicable codegen/link/ABI or library tests. Use the existing CTest/Python
-and C++ runners. Do not create a framework or a new directory hierarchy merely
-to resemble Rust; every additional test must guard meaningful behavior.
+Use existing runners and the
+[compiler test categories](docs/code-quality.md#6-diagnostics-and-behavioral-tests);
+each regression must guard meaningful behavior.
 
 - Explain the problem, changed behavior and affected compiler/library boundary.
 - Include a regression that fails without the fix and tests the relevant edge.

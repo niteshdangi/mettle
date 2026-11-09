@@ -14106,6 +14106,6 @@ fn main(): i32 {
     t = t + g497(1).value.a
     t = t + g498(1).value.a
     t = t + g499(1).value.a
-    if t < 0 { return 1 }
+    if t != 3895 { return 1 }
     return 0
 }

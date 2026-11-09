@@ -1,343 +1,170 @@
 # I13 library work package
 
-Repo: the owner's checkout (Windows `D:\mettle`; build under WSL2 or an
-Linux environment), main at `fd4f46a`. I01-I12 are
-closed for the macOS ARM64 host and Darwin ARM64 target only. From 2026-11-08
-the gated profile is `linux-x64` (implementation-plan section 8.0); Linux
-requalification LNX precedes further area closure. All non-library
-I13 rows are closed. What remains is library work: the 18 `P` rows in
-docs/capability-coverage.md (L003 L005 L009 S005-S014 S019-S021 S024 S025).
+Gated profile: `linux-x64` (Linux x86-64 host/target, owner decision
+2026-11-08). I01-I12 receipts retain their macOS-host/Darwin and recorded
+cross-target scopes, not Linux-host qualification. LNX (implementation-plan
+section 8.0) precedes further I13 closure.
+All non-library I13 rows are closed within their recorded scope. The 18 library
+areas remain partial: L003, L005, L009, S005-S014, S019-S021, S024-S025.
 
 ## Handoff (start here in a new session)
 
-**Adapter Clone batch (2026-11-09).** Twelve generic adapter implementations
-clone their stored fields: Mapped, Filtered, FilterMapped, MappedWhile,
-FlatMapped, Flatten, Cloned, Copied, TakenWhile, SkippedWhile, Inspected and
-Cycled. The existing `ToOwned` blanket reuses those implementations without
-another copy algorithm. Phantom result types do not acquire a Clone bound.
-The expanded value-trait fixture passes Linux debug/release natively and with
-emitted ASan, checking independent partially consumed Flatten/Cloned/Copied
-positions, their ToOwned results and Cycled wraparound. Nine corresponding
-Clone/ToOwned rows are evidenced; fifteen callable-adapter rows are declared,
-not yet behaviorally verified. Current ledger: 8,988 evidenced, 399 declared,
-3,903 missing and 5 not applicable.
+Latest operation ledger (2026-11-09): **8,988 evidenced, 399 declared,
+3,903 missing, 5 not applicable** of 13,295 records. Declared means implemented
+but not behaviorally verified per type/profile. Subset/source-cfg reconciliation
+and Linux applicability review remain open; no area is closed by these batches.
 
-Peekable remains blocked: its slot carries `<associated.0>??`; neither an
-explicit `Iterator<Item = T>` bound nor typed helper normalizes that projection
-to `T??` in the Clone implementation body. The unbuildable attempted
-implementation was removed, leaving the original API intact. No compiler
-changes were made for this batch and no capability area is closed.
+| 2026-11-09 batch | Implementation and focused Linux evidence | Remaining obligation |
+| --- | --- | --- |
+| Shared unzip | One `Iterator.unzip` over `Default + ExtendItems`, independent of collections in core. `i13-iter-consumers` passes native/emitted-ASan debug/release: empty input, heterogeneous ordered output, non-Copy movement/drops. Only unzip credited. | Destination-specific allocation/destructor-panic contracts. Declaration checking needs `Self: Iterator<Item = (A, B)>`, explicit `Self.(Iterator).next` and explicit output arguments; equality-only `Self.Item` and result-tuple inference remain unsupported. |
+| Conversion blanket | Coherence matches target **and interface arguments** before requirements. Disjoint-destination regression fails old/passes repaired compiler; genuine overlap and unconstrained downstream cases reject. One `TryFrom<U> for T where U: Into<T>` covers direct user Into; TryInto delegates. Ten directly tested rows evidenced; 192 TryFrom + 192 TryInto exposures declared. | Per-type/profile evidence for all 384 exposures; emitted owner-conversion ASan compile hit unchanged 60 s bound and remains unverified. |
+| Adapter Clone | Field-wise Clone for Mapped, Filtered, FilterMapped, MappedWhile, FlatMapped, Flatten, Cloned, Copied, TakenWhile, SkippedWhile, Inspected, Cycled; ToOwned reuses it, phantom outputs gain no Clone bound. Value-trait fixture passes native/emitted-ASan debug/release, checking independent partially consumed Flatten/Cloned/Copied positions, ToOwned and Cycled wraparound. Nine rows evidenced, fifteen callable-adapter rows declared. | Peekable Clone: buffer remains `<associated.0>??` even with `Iterator<Item = T>` or a typed helper. Unbuildable attempt removed; original API unchanged. |
 
-**Blanket conversion batch (2026-11-09).** Coherence now matches both a
-candidate's target and interface arguments before checking its requirements.
-The standalone disjoint-destination case fails on the old compiler and passes
-on the repaired compiler; genuine-overlap and unconstrained-downstream cases
-remain rejected. `core.convert` now supplies one
-`TryFrom<U> for T where U: Into<T>` implementation, including direct user
-`Into` implementations, and integer widenings no longer repeat infallible
-`TryFrom` bodies. The existing `TryInto` blanket delegates through it.
+Conversion validation: incremental compiler build, `compiler.boundaries`,
+`compiler.modules-memory`, pinned clang-tidy and generic/inference/float
+conversion fixtures pass. The integer fixture hit its 60 s release-compile
+bound; 514 assertions moved unchanged to `i13-integer-conversion-interfaces`,
+leaving 2,365 operators in the original fixture. Both pass both profiles at
+unchanged bounds. The unzip batch used the existing Linux Release compiler
+with current `--library-dir` and installed `libxml2.so.2` via `LD_LIBRARY_PATH`;
+no compiler/runtime/package change. Conversion compiler inputs were synchronized
+without reverting unrelated checkout documentation.
 
-The worklist maps 192 TryFrom and 192 TryInto blanket exposures as **declared**,
-not blanket-wide behavioral passes. Ten directly exercised conversion
-protocol/member rows are evidenced. Current counts: 8,979 evidenced, 384
-declared, 3,927 missing and 5 not applicable. Per-type/profile closure for those
-384 exposures is still required; this does not close a capability area.
+**Open prerequisites:**
+- Lazy coherent per-module core loading: product comparison without importing
+  `core.cmp` currently mounts all core (~7 s/build across 963 import-free cases).
+- Defer Static admission for view-bearing types to region checking: erased
+  typing rejects `read T from static` and `Holder<region static>`; retaining
+  static there breaks type equality. Blocks Any for ~35 iterator/guard/drain
+  types. Collision-safe identity itself is fixed (2026-11-08), not a blocker.
+- Clone for arrays (element construction), cells, ManuallyDrop and collection/
+  slice/text iterators; Send/Sync for vec::IntoIter and sorted iterators;
+  ReadDir, Scope and ScopedJoinHandle lack reference-derived thread properties.
+- Inline throwing try_for_each closures, tuple associated constants
+  (`char::UNICODE_VERSION`), Option pinned projections, unsized/erased iterator
+  forwarding, allocator Clone compatibility, Condvar mutex association and
+  atomic RwLockWriteGuard downgrade. Borrowed `Chained.next`, native range
+  bounds, exact/fused protocols and minimal NonNull are integrated with scoped
+  evidence below, not complete operation closure.
+- Source builds use ~2 GB each; 16 CTest workers exhaust a 23 GB WSL and can
+  push `i13-text-whitespace-splits-boundaries` (~45 s alone) over 60 s. Preserve
+  bounds; limit concurrency rather than crediting OOM/timeouts.
 
-The focused compiler build, `compiler.boundaries`, `compiler.modules-memory`
-and pinned clang-tidy pass. Generic conversion, target inference and floating
-conversion fixtures pass both source profiles. The integer fixture's release
-compile reached its unchanged 60-second limit, so its 514 conversion assertions
-were moved unchanged to `i13-integer-conversion-interfaces`; the other 2,365
-operator assertions remain in the original fixture. Both split fixtures pass
-both source profiles with their unchanged 60-second limits. The emitted
-owner-conversion ASan build also reached the 60-second limit and remains
-unverified; no sanitizer, timeout or assertion was weakened. This is a scoped
-validation gap, not a sanitizer pass or closure receipt. The Linux validation checkout was
-synchronized with the current owner's compiler inputs before the incremental
-build, preserving its unrelated documentation changes.
+**Execution and owner cadence (2026-11-01).** One orchestrator owns compiler/**,
+runtime C++, integration, all builds and tests. Lanes (`gpt-6-luna` only) write
+library/tests in separate worktrees, return patches, and do not build, check,
+execute or commit. Stop for a compiler blocker with a minimal `.mt` repro and
+error; never weaken the API. Independent lanes: collections (S006/S010), maps/
+sets (S008/S009), iterators then slices (S011/L009), text/char (S007), numeric/
+format/cmp/hash (L003/L005/S012/S013), owners/alloc (S005/S014), hosted
+(S019-S021/S024/S025). Integrate coherent deliveries before taking another.
+Only focused checks/necessary incremental builds during implementation; two
+new full runs are authorized: after 10 of 18 whole areas complete and at full
+library completion. Area completion requires selected declarations, behavior,
+inventory and docs; final qualification also requires source freeze/quality.
 
-**Shared algorithm batch (2026-11-09).** `Iterator.unzip` now uses one generic
-implementation over `Default + ExtendItems`, with no collection-specific
-dependency in `core`. The consumer fixture covers empty and heterogeneous
-sequences, order preservation and movement/drop counts for non-Copy owners.
-The existing source runner passed the complete consumer fixture in Linux debug
-and release source profiles, both natively and with emitted ASan. The pinned
-linker required the already installed `libxml2.so.2` compatibility directory
-in `LD_LIBRARY_PATH`; no toolchain or system package changed. The compiler was
-the existing Linux Release binary, with the current owner's library supplied
-through `--library-dir`. Only the unzip operation row is credited: the ledger
-now has 8,969 evidenced, 4,321 missing and 5 not applicable records. No capability
-area or full operation closure is claimed. These cases do not establish every
-destination collection's allocation or destructor-panic contract.
-Initial diagnostics identify an unresolved `Self.Item` tuple during nested
-pattern checking and absent result-tuple generic inference. Explicit local
-typing still reports `<associated.0>`: the equality-only where clause does not
-resolve the interface member during declaration checking. The method now uses
-the equivalent `Self: Iterator<Item = (A, B)>` interface bound; fixtures spell
-output type arguments explicitly without changing the collection contract.
-Explicit `Self.(Iterator).next` dispatch resolves the duplicate interface
-method candidates from that bound. No compiler or runtime source changed.
+**Historical limits (not current passes):**
+- 2026-11-01 13:04:39 IST / 07:34:39 UTC: 40-minute budget expired with zero
+  whole areas complete/qualified; no extension/full run. Rc Vec-to-slice with
+  non-Clone allocator passed native Debug only; Release/compiler and emitted
+  sanitizers/reconciliation pending. Map/collection artifacts were unintegrated.
+- That session's display-name/ODR Any prototype was rejected and removed; its
+  stale binary passes do not qualify source. The later collision-safe identity
+  repair supersedes the hash blocker, not unsized/Static admission gaps.
+- Discarded `origin/libs` (23.6k lines) was never compiled against main. Useful
+  compiler repairs are in `02d2cd0`; do not merge/cherry-pick that branch.
 
-**Linux session (2026-11-09).** The operation ledger records 7,962 of 13,295
-rows evidenced (5,328 missing, 5 not applicable). Added since 2026-11-08:
-generated all-width integer and f32/f64 operation programs; the integer surface
-(BITS, unprefixed abs, carrying/borrowing arithmetic, bit queries,
-checked_signed_diff); integer and bool operator interfaces with any integer
-shift count; integer From/TryFrom and TryFromIntError; array comparisons;
-Result copied/cloned in the reference shape; time ordering; Clone for std value
-types, tuples (1-12), outcomes, Reverse and NonNull; Display for io::Error,
-ErrorKind and ExitStatus; blanket and auto-property evidence for 147 types; and
-the six library lanes. Compiler fixes: 128-bit from_bytes alignment, u8
-is_ascii, vertical tab as ASCII whitespace, float fract/midpoint/clamp, macro
-hygiene for quoted/generic function parameters, and borrow-origin analysis on
-unresolved summary projection types. Syntax: unqualified interface calls
-(`u64.from(x)`), `.into()`/`.try_into()` from the expected type, unsuffixed
-index literals, and `from` without backticks.
-
-Open, with evidence:
-- Comparing products without importing `core.cmp` needs `core` loaded; loading
-  all of `core` costs ~7 s per build (963 import-free tests), so it needs
-  lazy per-module loading that keeps implementations coherent.
-- `Static` cannot be decided during type checking for view-bearing types:
-  regions are erased there, so `read T from static` and `Holder<region static>`
-  fail `Static`/`Any`. Keeping `static` in erased types breaks type equality;
-  the check needs deferral to the region phase. Blocks Any for ~35 iterator,
-  guard and drain types.
-- The conversion blanket blocker is repaired by the batch above; its 384
-  mapped exposure rows still need per-type behavioral closure.
-- Clone for arrays (element-wise construction), cells, ManuallyDrop and the
-  collection/slice/text iterators; Send/Sync for vec::IntoIter and the sorted
-  map/set iterators; ReadDir, Scope and ScopedJoinHandle are declared not
-  Transferable/Shareable where the reference derives both.
-- Lane blockers: Iterator::unzip, inline throwing closures in try_for_each,
-  borrowed chain in a helper, tuple associated constants
-  (char::UNICODE_VERSION), RwLockWriteGuard::downgrade (runtime).
-- Suite concurrency: each source test build uses ~2 GB; at the CTest default of
-  16 jobs a 23 GB WSL runs out of memory, and i13-text-whitespace-splits-
-  boundaries (~45 s alone) exceeds 60 s under load.
-
-**Linux session (2026-11-08), gated on `linux-x64`.** Collision-safe Any
-identity is implemented: `typeIdentity` (compiler/types/identity.cpp) encodes
-types injectively and independently of the compilation (canonical nominal
-paths; callable binder size, result sources and region relations; `static`
-kept, bound regions by binder position, free regions erased). `type_id` is the
-address of a link-once hidden byte named by that identity, so equal types merge
-across packages and partitions and distinct identities are distinct symbols;
-no hash is involved. Generic instances whose arguments contain a function
-pointer append a hash of the identity to their symbol name, because display
-names omit binders and collided ("duplicate CFG function"). Evidence:
-`i13-any-callable-source-identity`, `i13-any-type-identity-structure`,
-`i13-any-static-identity`, `erased-read-argument-erases-referent` (both
-profiles) and the cross-package `type_id_survives_public_reexport`, `debug_info`,
-`incremental_reuse` and `debugger_workflow` package cases.
-
-Option and Result operation batch: `core.option` gains `insert`, `zip`,
-`as_slice`, `as_mut_slice`, `iter` and `iter_mut`; `core.outcome` gains `or`,
-`iter` and `iter_mut`. The iterators reuse the slice iterators, so they are
-exact-size, fused and double-ended. `i13-option-operations.mt` and
-`i13-outcome-operations.mt` plus six absence/presence panic cases pass in both
-profiles, and the operations tests pass emitted ASan in both profiles. The
-ledger credits 62 Option and 52 Result records (`v1-operations.csv`).
-Open in these families:
-- `Option::as_pin_ref`/`as_pin_mut` (4 records): compiler blocker. A
-  `receiver self: take pinned read T? from r` returning
-  `(pinned read T from r)?` fails region solving ("inconclusive"), whether it
-  goes through `get_ref` (which reborrows the pin handle) or
-  `into_inner_unchecked`.
-- `Result::copied`/`cloned` (4 records): contract question. Rust's shape is
-  `Result<&T, E> -> Result<T, E>`; the library's is
-  `((read T) throws (read E)) -> (T throws E)`, which the existing
-  `i13-coretraits-option-outcome-followup` asserts. Reconciling needs an owner
-  decision, not a silent change.
-- Found while scanning neighbouring families: `core.mem.take`,
-  `ManuallyDrop::{new,into_inner,take,drop}` evidence, `core.array.from_fn`
-  and the `Ord::{min,max,clamp}` methods (the library has only free
-  functions). `mem` is a compiler-owned module, so a library `mem` needs a
-  loader change like the one `core.ptr` has.
-The previous attempt (`origin/libs`, 23.6k lines) was never compiled against
-main and was discarded. Its useful compiler fixes are in `02d2cd0`. Do not
-merge or cherry-pick from it; write each lane fresh against current main.
-
-**Execution model.** One orchestrator owns the compiler: it builds, changes
-compiler/** and runtime C++, runs ctest, and merges lanes. Lane agents
-(`gpt-6-luna` only) write library code and tests in their own worktree. They
-do not build, check, execute tests or commit. The orchestrator can check their
-library directory with its own binary:
-
-    M=$PWD/build/linux-x86_64/Release/mettle
-    $M check --library-dir $PWD/library FILE.mt
-    $M build --library-dir $PWD/library FILE.mt -o /tmp/x && /tmp/x
-
-The orchestrator batches focused checks across coherent deliveries, not the full
-suites or CTest. A lane that needs a compiler change stops and reports a
-minimal repro (a short `.mt` file plus the error) to the orchestrator. It must
-not work around the compiler by weakening an API or a test.
-
-**Lanes** (independent file sets; patches only, no commits authorized):
-1. Collections: vec, vec_deque, linked_list, binary_heap (S006, S010).
-2. Maps/sets: hash_map, btree, collections (S008, S009).
-3. Iterators: core/iter (S011), then slice (L009).
-4. Text: core/text, char, alloc/string (S007).
-5. Numbers/format: num, float, fmt, cmp, hash (L003, L005, S012, S013).
-6. Owners/alloc: arc, rc, boxed, alloc (S005, S014).
-7. Hosted: std thread, sync, fs, path, net (S019-S021, S024, S025).
-
-**Current validation cadence (owner decision, 2026-11-01):** use only
-focused checks and necessary incremental builds during implementation.
-The orchestrator owns all builds and execution. Permit two new full
-build/validation runs: after ten of the eighteen partial capability areas
-are complete, and at full I13 library completion. A few implemented operations
-do not close an area: its applicable selected declarations, behavioral evidence,
-inventory and documentation must be complete. Earlier bounded batch freezes
-do not authorize another broad run. Final milestone qualification remains
-subject to the complete source-freeze and quality gates.
-
-**Deadline stop (2026-11-01, 13:04:39 IST / 07:34:39 UTC):** the owner's
-40-minute execution budget expired with zero of the eighteen whole areas
-code-complete or qualified. Implementation stopped; no extension or new full
-qualification was started. The earlier 79-record floating supporting-trait
-receipt remains evidence only for its pinned inputs. Rc Vec-to-slice conversion
-is integrated and passed a native Debug execution with a non-Clone allocator;
-Release, compiler sanitizers, emitted sanitizers and reconciliation are pending.
-Map and collection deliveries remain unintegrated artifacts.
-
-The Any Static/unsized admission changes are partial. A focused callable
-regression demonstrated that display type names are not unique semantic
-identities. The newly authored display-name/ODR identity lowering was removed,
-not declared sound; the existing hash lowering remains an unresolved blocker.
-The native compiler binary still contains the rejected prototype and does not
-match current backend source, so its Any passes are not current-source evidence.
-The valid failing regression is retained. Further work requires rebuilding,
-correct identity lowering, profile/sanitizer/codegen/package checks and complete
-operation/source-cfg reconciliation. Allocator-clone compatibility, pointer and
-iterator prerequisites, owner conversions, collection integration, and hosted
-thread/synchronization/filesystem/network work also remain open.
-
-**Lessons from the discarded branch** (each caused errors there):
-- Reserved words cannot be identifiers: `var copy read mut take shared heap
-  local weak pinned success failure present none interface`, among others; see
-  `isReservedWord` in compiler/syntax/token.cpp. Use backticks for a public
-  name (`` `var` ``, `` `success` ``) or rename locals and fields.
-- An explicit receiver (`receiver self: ...`) cannot combine with `mut`/`take`.
-- Every name used needs an import (`import package.core.fmt` and so on);
-  duplicate bindings (an import and a local fn of the same name) are errors.
-- Do not add a second form of an existing method (for example two `pop_if`
-  or two `fmt.write`); extend or replace the existing one.
-- `format` parameters take f-strings: `fmt.write(mut w, f"{value}")`.
-- Check coherent integrations before taking another delivery; avoid large
-  unaudited patches rather than rebuilding after every small edit.
+Lane pitfalls: escape reserved public names (see `isReservedWord`); explicit
+`receiver self:` cannot combine with mut/take; import every used name without
+duplicate bindings; extend existing methods instead of adding compatibility
+copies; `fmt.write` takes an f-string (`f"{value}"`).
 
 ## Read first
 - AGENTS.md, CONTRIBUTING.md, docs/code-quality.md
 - docs/library-surface.md: sections 1-3, 6.1 (the V1 subset), 9 (Mettle names)
   and 10-13
-- docs/implementation-plan.md, the I13 paragraphs (~line 1390)
+- docs/implementation-plan.md section 8.5
 - docs/capability-coverage.md
 
 ## Current integration state
 
-Native `Bound`/`RangeBounds`, borrowed unsized Text endpoints, exact/fused
-iterator protocols, size hints and mixed-end adapters are implemented with
-focused Debug/Release evidence. The compiler repairs preserve nominal generic
-argument and tuple component regions, recheck view-bearing generic interface
-bounds after region inference, and recover associated-inferred argument regions.
-Conditional-static and distinct invariant-region negatives reject at the
-interface obligation; a valid shared-region/static case also passes. These are
-supporting protocols, not complete S011 or I13 closure.
+All evidence below is revision/profile scoped; older broader runs do not
+qualify later compiler edits. All eighteen areas remain partial.
 
-Pinned targeted clang-tidy, the compiler algorithm executable and
-`compiler.boundaries` pass. The instrumented compiler/algorithm targets build;
-instrumented algorithms, boundaries and five exact regional negatives pass.
-Current regional normalization inputs pass instrumented algorithms, boundaries,
-six focused positive programs in both profiles and three exact safety negatives.
-Six collection/resource programs also pass emitted ASan in both profiles,
-including deque destructor-panic restoration, invalid Vec ranges/splice cleanup,
-heap append comparison-panic recovery and unchecked slice splits. Pinned
-targeted static analysis passes for both changed compiler files. Older broader
-receipts are not substituted for current-input evidence. No new full
-qualification run has been started.
+- Regional/associated normalization preserves nominal arguments, tuple/field
+  regions, generic assumptions and cross-region contracts; view-bearing bounds
+  are rechecked after inference. Current instrumented algorithms/boundaries,
+  six positive programs in both profiles and three exact safety negatives pass;
+  five earlier regional negatives also pass. Nested Box coherence accepts the
+  disjoint case and rejects genuine overlap. Pinned Future forwarding selects
+  the owner's projection rather than borrowing its view handle.
+- Bound/RangeBounds with borrowed unsized Text endpoints, exact/fused hints,
+  mixed-end adapters and borrowed chaining have focused Debug/Release evidence.
+  Conditional-static/invariant negatives reject at the interface obligation;
+  a valid shared-region/static case passes. These do not close S011.
+- Six resource programs pass emitted ASan in both profiles: deque destructor-
+  panic restoration, invalid Vec ranges/splice cleanup, heap append comparison-
+  panic recovery and unchecked slice splits. Targeted pinned static analysis
+  passes both changed compiler files. Collection/append/guarded-drain work is
+  integrated, not fully qualified; queued deliveries require fresh integration
+  and inventory checks, not credit from an older handoff.
+- L005 decimal parsing at both widths covers halfway/sticky/subnormal/maximal
+  values, overflow/underflow and grammar errors. Fixed-precision Display/Debug
+  covers tie-even/carry/zero/padding/tiny values and writer failure. MIN/MAX and
+  all 28 constant values have typed static/runtime bit checks and immutable-local
+  inference; metadata retains u32/i32 types and NaN payload is not promised
+  except where the exact-bit const contract requires it. Parsing/formatting and
+  current constants have focused compiler/emitted-ASan checks in both profiles.
+- All 92 stable const-callable float records (80 forms) pass focused native,
+  compiler-ASan/UBSan and emitted-ASan acceptance: exact IEEE bits, NaN payloads,
+  negative zero, endian bytes, source const frames, static storage, contextual
+  binary32 literals (no binary64 double-round), aliases, 128-bit casts,
+  classification and midpoint edges. Wrong-width/array/arity, non-const,
+  unsafe-call and clamp-precondition negatives reject; clamp failure is a VM
+  diagnostic. Original algebraic assertions remain. Driver/LSP use the same
+  LLVM-free callback. Receipts: `i13-float-const-current-inputs.json`,
+  `i13-float-const-clamp-{final,instrumented-final,emitted-final}`; final batch
+  includes ten positives/eight negatives and affected sanitizer reruns.
+- Another 79 L005 records cover thirteen lossless From pairs, 64 owned/read-view
+  operators and two ToString records via the alloc Display blanket. Native and
+  compiler-ASan/UBSan generic dispatch, endpoints, IEEE values, assignments,
+  unsized Text, independent String ownership and formatting-error panic pass;
+  five programs pass emitted ASan in both profiles. Regional/ownership negatives
+  still reject. The batch rechecks all 28 values and 92 const records. Mapping/
+  receipts: `i13-L005-float-supporting-acceptance-v3.csv`,
+  `i13-float-traits-current-inputs.json`. Complete 301-record runtime/profile
+  closure, unsized/Static Any and default comparison RHS-Self remain open.
 
-The collection iterator/append/slice delivery and guarded deque drain are
-integrated but not fully verified. Nested coherence now passes its disjoint
-positive and genuine-overlap negative, including compiler sanitizers. Pinned
-Future forwarding selects the owner's projection rather than borrowing its view
-handle. Regional normalization preserves nominal arguments and fields when
-associated types resolve; generic assumptions retain their declared regions,
-and cross-region interface arguments are decorated for contract comparison.
-Borrowed Box collection and five related regional/associated cases pass both
-profiles, with three exact safety negatives. Collection/slice operations,
-iterator hints, Vec ranges and deque boundary/drop/unwind cases have focused
-passing receipts, including the emitted-ASan resource checks above. Native take consumes
-Copy values too: fixture counters use independent copied bindings, and range
-bounds use indices rather than stored values. Numeric,
-map/hasher/range, general Cow/array/Future, services and thread/sync follow-up
-patches remain queued for integration; their runtime and inventory blockers are
-not waived. The S006 slice-Cow-to-List conversion now has focused evidence.
-All eighteen capability areas remain partial.
+Collision-safe Any identity (2026-11-08): `compiler/types/identity.cpp` encodes
+canonical nominal paths, callable binder size/result sources/relations, static
+and bound-region positions while erasing free regions. `type_id` is the address
+of an identity-named link-once hidden byte, not a hash. Function-pointer generic
+arguments add an identity hash to instance symbols because display names omit
+binders. Both-profile fixtures: `i13-any-callable-source-identity`,
+`i13-any-type-identity-structure`, `i13-any-static-identity`,
+`erased-read-argument-erases-referent`; package cases:
+`type_id_survives_public_reexport`, `debug_info`, `incremental_reuse`,
+`debugger_workflow`.
 
-The current L005 batch has focused passing evidence for decimal `FromStr`
-at both float widths, including halfway rounding, long sticky mantissas,
-subnormals, finite maxima, overflow/underflow and grammar rejection.
-Fixed-precision Display/Debug passes tie-even rounding, carry, signed and
-integral zero fractions, padding, very small values and writer failure.
-Native f32/f64 MIN/MAX resolve in runtime and static contexts with exact-bit
-checks. Runtime algebraic operations preserve the selected strict IEEE behavior;
-extension parsing now distinguishes `const fn` from associated constants.
-Six focused cases pass through the instrumented compiler, and five float
-programs pass emitted ASan in both profiles; the expanded parsing fixture has
-its own current compiler/emitted-ASan receipts. Algorithms, component boundaries
-and targeted static analysis pass. No full qualification run is added.
-The corrected 301-record audit exposed missing constant values and 92 selected
-stable const-callable methods whose floating/method evaluation is unsupported.
-All 28 selected f32/f64 constant values now pass typed static/runtime assertions
-and local immutable-binding inference, including exponent/radix metadata,
-precision thresholds and IEEE exceptional values. Metadata retains u32/i32
-types rather than inheriting the float owner's type; NaN payload is not promised.
-The existing native static initializer handles these values and exact
-width/type mismatch negatives pass. Current compiler and emitted-ASan checks
-pass in both profiles.
+Linux 2026-11-09 integration adds all-width integer/f32/f64 programs; integer
+BITS/abs/carry/borrow/bit/signed-diff operations and operators with integer shift
+counts; conversions/TryFromIntError; array comparisons; reference-shaped Result
+copied/cloned; time ordering; Clone for std values, tuples 1-12, outcomes,
+Reverse and NonNull; io/ErrorKind/ExitStatus Display; 147-type blanket/property
+evidence. Compiler fixes cover 128-bit from_bytes alignment, u8 ASCII,
+vertical-tab whitespace, float fract/midpoint/clamp, quoted/generic parameter hygiene
+and unresolved borrow-origin projections. Unqualified interface calls, expected-
+type into/try_into, unsuffixed indices and unescaped `from` are integrated.
+The earlier Result copied/cloned shape question is superseded by this batch;
+its per-operation evidence remains governed by the ledger.
 
-The 92 selected stable const-callable records (80 distinct f32/f64 call forms)
-now have focused Debug/Release acceptance. The evaluator preserves exact IEEE
-bits through constructors, endian byte conversions, source const-function frames
-and static storage, including signaling/quiet NaN payloads and negative zero.
-Contextual binary32 literals avoid intermediate binary64 rounding; alias
-factories, 128-bit casts, enum classification and NaN/infinity midpoint edges
-pass. Exact wrong-width/array/arity, non-const, clamp-precondition and unsafe-call
-negatives pass. Clamp preconditions are VM diagnostics, not adapter exceptions.
-The original algebraic const fixture passes without removing assertions.
-
-The coherent compiler batch has native and ASan/UBSan compiler builds,
-focused compiler CTest/IR algorithms, pinned static analysis and emitted-ASan
-evidence. Ten positive cases and eight negative cases passed the native batch;
-the final affected const-method/boundary cases and negatives were rerun under
-compiler sanitizers, with emitted ASan for the positive cases. LSP diagnostics
-also exercise exact-bit folding and width rejection through the same callback.
-Receipts and the 92-ID mapping are retained in
-`i13-float-const-current-inputs.json` and the session's
-`i13-float-const-clamp-{final,instrumented-final,emitted-final}` artifacts.
-This closes the const-callability obligation, not the remaining 301-record
-L005 runtime/supporting-trait inventory. L005 and all eighteen areas remain
-partial; no new full qualification run is authorized by this batch.
-
-The next L005 supporting-trait batch implements 79 selected records: thirteen
-lossless numeric `From` pairs, sixty-four owned/readonly-view arithmetic,
-assignment and negation forms, and the two float `ToString` records through
-the allocator-layer Display blanket. Focused native and compiler-ASan/UBSan
-checks pass for actual generic trait dispatch, integer endpoints, finite
-widening, signed zero, NaNs, assignment effects, unsized Text, independent
-String ownership and formatting-error panic. Copied float folds and associated
-view results retain their regional proofs; invalid region/ownership cases
-remain rejected. The same batch rechecks all 28 values and 92 const records.
-Emitted-ASan checks pass for the five supporting-trait/conversion/formatting
-cases in both source profiles. The current 301-record inventory and scoped
-receipts are retained in `i13-L005-float-supporting-acceptance-v3.csv` and
-`i13-float-traits-current-inputs.json`.
-
-This is not L005 completion. Collision-safe Any identity, the unsized Any
-contract, default comparison RHS-Self disambiguation and complete 301-record
-operation/profile coverage remain open. No whole capability area is closed by
-the supporting-trait batch.
+Option/Result Linux 2026-11-08: Option insert/zip/slice/iter/iter_mut and Result
+or/iter/iter_mut reuse exact/fused/double-ended slice iterators. Both-profile
+operation and six panic cases pass; operations also pass emitted ASan (62 Option,
+52 Result records credited). Option as_pin_ref/as_pin_mut (four records) still
+fail region solving through either get_ref or into_inner_unchecked. Neighbouring
+mem.take, ManuallyDrop new/into_inner/take/drop evidence, array.from_fn and Ord
+min/max/clamp remain to reconcile; library mem needs a loader coexistence path.
 
 ## Goal (definition of done)
 Every operation in the V1 subset (docs/library-surface.md section 6.1, roughly
@@ -377,124 +204,44 @@ never as passed.
 
 ## Current library batch
 
-`tools/v1_operations.py` now generates `docs/baseline/v1-operations.csv` from
-the frozen manifest and preserves manually reviewed native paths, statuses and
-evidence on regeneration. It retains each canonical substitution and exposure,
-grouping integer/float/atomic widths and nominal type/trait pairs into families.
-The initial worklist has 13,295 canonical records in 2,442 operation families
-and 2,309 implementation families; these are generated worklist counts, not a
-qualified denominator or a revision of the selected subset. Scope reconciliation
-against the approximate section 6.1 counts and the source-cfg audit remain open.
-Blank native paths and `missing` mean not yet mapped in this worklist, not proof
-that code is absent. Nine operations (13 baseline exposures), covering List
-and deque retention plus the text/char follow-up, currently carry reviewed
-focused execution evidence. Five Windows-only
-implementation records are not-applicable on Darwin. No other operation is
-automatically credited from a name match. Unknown rendered target conditions
-are blocked; inherited/source-only cfg branches still need the owning audit.
+`tools/v1_operations.py` preserves reviewed native paths/status/evidence and
+canonical substitutions/exposures. Its 13,295 records group into 2,442 operation
+and 2,309 implementation families; these provisional counts are not the
+qualified denominator. Blank paths/missing are unmapped, not proof of absent
+code. Unknown rendered target conditions are blocked; inherited/source-only cfg
+still needs audit. Five Windows-only exclusions recorded on Darwin require
+Linux applicability review. Latest statuses are in the handoff above.
 
-The S006 retain follow-up implements mutable-callable predicates for
-`List.retain` and `retain_mut`. Both visit in order, allocate nothing and
-compact in linear time. A cleanup guard preserves the kept prefix and
-unvisited suffix on predicate or element-destructor panic, excluding an element
-before its destructor runs so recovery cannot drop it twice. Allocation and
-capacity are unchanged. The exclusive receiver keeps the raw-pointer guard's
-allocation live and stable; its initialized ranges are documented in
-`library/alloc/vec.mt`.
+**Retain/text/iterator integration contracts:**
+- List retain/retain_mut: stateful predicates, ordered linear allocation-free
+  compaction, fixed allocation/capacity; guard preserves kept/unvisited ranges
+  on callback/destructor panic and excludes a removed value before destruction.
+  Deque retain/retain_mut applies the same guarantees to wrapped ring order
+  with head/capacity/allocation fixed. Invariants live in vec.mt/vec_deque.mt.
+- Text/String whitespace splitting supports reverse/mixed traversal; UTF-16
+  iteration supports reverse traversal. char.encode_utf16 writes into a supplied
+  buffer and returns its borrowed initialized prefix, replacing the accidental
+  no-argument convenience. Small-buffer failure checks panic identity/message
+  and unchanged destination, not any crash.
+- Mutable-view Iterator/BidirectionalIterator forwarding preserves `Item =
+  I.Item` and `by_ref`'s `mut Self` result. Method checking rebinds owner regions
+  into the provided method; region selection uses decorated callable bounds and
+  solver proofs, retaining separate erased ABI and higher-ranked checks. Native
+  Iterator's Sized restriction leaves unsized forwarding open.
+- Formatter hints distinguish generic closers from operators and match-arm
+  separators from continued expressions. Original new fixtures pass fmt;
+  grouped-import/else layout in older files remains an orchestrator follow-up.
 
-Focused Debug/Release source executions pass in
-`tests/source/run/i13-list-stateful-retain.mt`, including stateful visitation,
-empty/all/none cases and zero-sized values with destructors. The original
-stateful drop-count case is restored in `tests/alloc/i13_slice_collections.mt`.
-`tests/std/collection_panic_safety_vec.mt` checks both retain variants after
-callback/destructor panic, multiple compaction holes, remaining contents,
-exact destruction counts and reuse. On the retain-only input, Release CTest
-passed 24/24 (including both source suites and alloc/std), the documentation
-validator passed, and the three changed programs passed emitted ASan.
-The instrumented compiler/runtime build and ASan/UBSan detector startup passed,
-as did instrumented `backend.cleanup-source`; instrumented `library.alloc`
-exceeded its unchanged 900-second suite timeout. Its chained focused checks did
-not run, so instrumented validation remains incomplete. The timeout is not
-waived or raised. S006 remains partial.
+**Historical macOS ARM64 receipts (not Linux qualification):**
 
-The integrated S010 deque follow-up adds read `retain` and stateful
-`retain_mut`, with linear, allocation-free wrapped-ring compaction. Its cleanup
-guard excludes removed slots before destruction and restores retained/unvisited
-values after callback or destructor panic. Focused Debug/Release source
-execution and the hosted panic/drop-count program pass. Head, capacity and
-allocation remain fixed; zero-sized values and repeated cleanup are covered.
-The guard's initialized-range and ring-order invariants are documented in
-`library/alloc/vec_deque.mt`.
+| Batch | Passing scope | Unverified/failed scope |
+| --- | --- | --- |
+| Retain-only | `i13-list-stateful-retain.mt`, restored `tests/alloc/i13_slice_collections.mt`, `collection_panic_safety_vec.mt`: stateful/empty/all/none/zero-size/drop/panic/reuse; Debug/Release, Release CTest 24/24, docs and three emitted-ASan programs. Compiler/runtime build, detectors, `backend.cleanup-source` pass. | Instrumented `library.alloc` hit unchanged 900 s bound; chained checks did not run. |
+| S006/S007/S010 before compiler follow-up | Release CTest 24/24; ten changed programs emitted ASan; compiler-ASan/UBSan List/deque hosted panic checks. Deque fixed storage, zero-size/repeated cleanup covered. | Narrow instrumented List/deque/char source compiles hit unchanged 60 s bound; not passes. |
+| Iterator/compiler follow-up | Restored by_ref/take_n and owned filter-map drop cases; `iterator-associated-item-through-callable-bound.mt`, `mutable-view-interface-associated-result.mt`, owned drop executable; existing callable/higher-ranked/region negatives. Formatter original fixtures/package fixed points pass. Release-sanitized build/detectors and six cases (12 profiles) pass; targeted static analysis. | Original Debug-sanitized char compile took 309.21 s with active semantic work/no report, not a startup failure. Earlier timeouts remain unqualified; no bounds/instrumentation changed. Consolidated CTest deferred to owner gates. |
 
-The integrated S007 text follow-up restores backward/mixed whitespace splitting
-over Text and owned String, and backward UTF-16 iteration. It adds
-`char.is_ascii_whitespace` and the selected buffer-writing `char.encode_utf16`,
-whose returned initialized prefix borrows the supplied buffer. The accidental
-no-argument char convenience is replaced, not duplicated; Text's UTF-16
-iterator remains. Focused Debug/Release boundary cases and the owned String
-program pass. The small-buffer regression catches the specified panic and checks
-its code/message and unchanged destination rather than treating any crash as
-success.
-
-Before the compiler follow-up, consolidated Release CTest passed 24/24 for the
-integrated S006/S007/S010
-batch, including both source profiles and alloc/std suites. All ten changed
-source/alloc/hosted programs passed emitted ASan. The ASan/UBSan compiler and
-runtime passed the List and deque hosted panic/cleanup programs through the
-existing `tests/std.py` check with unchanged bounds. Narrow instrumented source
-runs for List, deque and small-buffer char each exceeded the unchanged
-60-second build bound; their instrumented source-profile checks remain
-incomplete. These timeouts and the earlier full instrumented alloc timeout
-are not waived, raised or reported as sanitizer passes. Those results are
-historical, not qualification of the subsequent compiler changes.
-
-The S011 follow-up restores the original `by_ref().take_n()` view-reuse and
-owned filter+map drop-count cases. Mutable-view Iterator/BidirectionalIterator
-forwarding preserves `Item = I.Item` and `by_ref`'s selected `mut Self` result;
-no wrapper return type or ownership exception is added. Both compiler blockers
-were confirmed under LLDB and repaired at their owning boundaries:
-
-- The interface method-contract checker substituted owner types but left Self's
-  view in the implementation's rigid region binder. It now rebinds owner regions
-  into the provided method's context before normalization.
-- Region-phase implementation selection compared raw and region-decorated Item
-  type identities using the runtime callable shape predicate. It now uses
-  decorated callable bounds and the region solver, retaining the separate
-  erased ABI/capability check and higher-ranked proof.
-
-The restored iterator fixture, new compiler regressions
-`iterator-associated-item-through-callable-bound.mt` and
-`mutable-view-interface-associated-result.mt`, and owned iterator drop-count
-executable pass focused native checks. Existing higher-ranked, callable and
-region/interface rejection cases still reject as specified. S011 remains
-partial; this does not establish all-adapter or operation-subset closure.
-The current native Iterator explicitly requires Sized, so erased/unsized
-iterator forwarding is not covered by this repair. That existing native
-restriction is not evidence that the selected unsized operation is invalid.
-
-The two new-fixture formatter failures are repaired without reindenting the
-tests to match incorrect output. Syntax-derived hints distinguish generic angle
-closers from trailing binary operators and match-arm separators from continued
-expressions. Both original fixtures now pass `mettle fmt --check`; the existing
-package formatter test covers peer arms in let/return/wrapped matches, generic
-fields, unspaced comparisons, macro preservation and fixed points. Preexisting
-grouped-import/else-layout differences in older library files remain a narrow
-orchestrator-owned formatting follow-up, not a reason for whole-file churn.
-
-The original unoptimized Debug-sanitized char compile completed diagnostically
-in 309.21 seconds with no sanitizer report. Samples show active macro loading
-and semantic checking, not sanitizer startup failure. The follow-up uses the
-repository-supported Release-sanitized configuration with the same pinned
-toolchain and both ASan/UBSan enabled; this changes compiler optimization, not
-Mettle source profiles or test bounds. Its build and detector startup pass, as
-do six focused source cases (12 Debug/Release executions), including all three
-that exceeded the original 60-second bound with the unoptimized compiler.
-The historical Debug-sanitized timeouts remain unqualified; no compiler tuning,
-timeout increase, disabled instrumentation or speedup claim is substituted for
-evidence.
-The later follow-up has focused static-analysis evidence; consolidated Release
-CTest remains deferred to the owner's two full-run gates. This is not I13
-qualification.
+Release-sanitized is the supported compiler-optimization configuration with the
+same pinned ASan/UBSan toolchain, not a change to source profiles or a speed claim.
 
 ### S006 List follow-up
 
@@ -524,95 +271,59 @@ remain open (the latter with L009). S006 remains partial.
 
 ### Integrated follow-up and focused evidence
 
-All eighteen capability areas remain partial. The additional integrated work is:
+Prior macOS ARM64 integrations (focused receipts only):
+- Hash/ordered map/set iteration retains key/value relationships; stateful
+  retain/extraction and callback-panic checks include 96-entry tree rebalance.
+  Unchanged traversal advances a successor; removal recomputes lower bound.
+  Range-bounded extraction still needs integration with native bounds.
+- Tuple comparison/hash covers 1-12, including unsized last field; unsized prefix
+  rejects. Cyclic macro indexing avoids duplicate definitions. Wrapping value/
+  hash/format/default and owned/borrowed folds cover all twelve integer widths,
+  empty identities and overflow. Arithmetic/bitwise/shift/unary/assignment has
+  Debug/Release boundary evidence; four divide/remainder-zero cases retain traps.
+  Primitive Clone/Default includes 128-bit values; Clone includes both floats.
+  Stable reverse_bits exists; excluded unstable methods are not V1 obligations.
+- Stateful slice/collection callbacks cover mutable dedup, deque search, linked
+  extraction and partial-order sortedness. Heap retain visits original elements
+  once and heapifies an index permutation before committing; predicate/compare
+  panic cannot move/remove elements. Linear Global scratch begins at first
+  rejection. The upward-sift counterexample checks visits/pop order/drops.
+  Vector dedup guards recover initialized contents after callback/destructor
+  panic. Four callback/unwind programs pass emitted ASan in both profiles; two
+  new source cases also pass compiler ASan/UBSan at unchanged bounds; four
+  existing allocator/sort programs pass focused checks.
+- Box/Rc/Arc uninitialized/zeroed slices, initialized conversion, empty weak and
+  Box mutable pointer access have layout/failure/drop evidence with custom
+  allocators; indexed machine initialization preserves exclusive slice access.
+- Path components/bytes/remaining views/Clone/ancestors preserve non-Unicode
+  bytes and `..`, trim boundaries without losing an unconsumed root and support
+  mixed ends. Component is Copy and gives its string view by value.
+- Condvar mutable predicates use Duration with one total budget, release/reacquire
+  at zero and recheck before timeout; Mutex/RwLock exclusive access preserves
+  recoverable poisoned views. Channel call sites use Duration; static Once
+  remains. Mutex association and atomic downgrade remain open.
 
-- Hash/ordered map and set iteration preserves key/value access relationships.
-  Stateful retain/extraction callbacks and callback-panic recovery pass focused
-  checks, including a 96-entry ordered-tree rebalance case. Unchanged ordered
-  traversal advances its successor; removal recomputes its lower-bound cursor.
-  Range-bounded ordered extraction still needs the native bounds protocol.
-- Tuple comparison/hash covers arities 1-12, including an unsized final field.
-  Cyclic module macro indexing no longer reports duplicate definitions.
-  Prefix unsized fields remain rejected. Wrapping value/hash/format delegation
-  passes an all-integer-width fixture; primitive Clone includes both 128-bit
-  integers and both floats. Wrapping Default and owned sum/product folds pass
-  all-width empty-identity and overflow checks in both profiles; primitive
-  Default includes both 128-bit integers. Arithmetic, bitwise, shift, unary and
-  assignment operators now have all-twelve-width Debug/Release evidence,
-  including overflow and shift-count boundaries. Four representative
-  divide/remainder-by-zero cases retain the native trap contract in both
-  profiles. The selected stable `reverse_bits` method is already implemented;
-  excluded unstable inherent methods are not new V1 obligations. Borrowed folds
-  have the additional focused evidence recorded below.
-- Stateful collection/slice callbacks include mutable deduplication, deque
-  searches, linked extraction and sortedness with partial-order handling.
-  Heap retain evaluates original items once and heapifies an index permutation
-  before committing swaps; predicate/comparison panic cannot move/remove heap
-  elements. Its linear-time strategy uses linear Global scratch storage after
-  the first rejected item. The upward-sift counterexample checks every key's
-  visit count, retained pop order and destruction count. Vector dedup guards
-  recover initialized contents after callback or removed-element destructor
-  panic. Focused source and hosted unwind cases pass, as do all four new/changed
-  callback/unwind programs under emitted ASan in both profiles. Both new source
-  cases also pass the ASan/UBSan compiler in both profiles at the unchanged
-  bounds; four existing allocator collection/sort programs pass focused checks.
-- Box/Rc/Arc uninitialized and zeroed slices, initialized-owner conversion,
-  empty weak handles and Box mutable raw-pointer access have focused evidence,
-  including custom-allocator layout/failure/drop checks. Indexed machine
-  initialization now preserves the checked exclusive slice access.
-- Path components, byte iteration, remaining views, clone and ancestors support
-  mixed-direction traversal without resolving `..` or changing non-Unicode
-  bytes. Boundary trimming preserves an unconsumed root. Component is Copy;
-  its string view is obtained by value, not by borrowing a temporary component.
-  Filesystem access/bounds/EOF and address-parser round trips also pass focused
-  hosted checks.
-- Condvar predicates accept mutable state and payload access. Timeouts use
-  Duration, retain one total budget, release/reacquire even at zero duration,
-  and recheck the predicate before declaring timeout. Mutex/RwLock exclusive
-  access reports poison while preserving the recoverable mutable view.
-  Existing channel timeout call sites are updated; static-capable Once is
-  unchanged. Condvar mutex association and atomic rwlock downgrade remain open.
+Compiler fixes retain loans through carried-view propagation: loop-local sibling
+results are disjoint only without cross-call carriage; inactive enum fields do
+not create region obligations; nominal results distinguish storage from carried
+views. Escape/exclusive/invariant negatives remain. Five source cases in both
+profiles, eight sanitizer negatives, instrumented clone/enum/path and six
+emitted-ASan owner/pointer/map/path programs pass. Threaded wait/poison/barrier
+passes emitted TSan after detector probes. Pinned formatting/static analysis,
+component boundaries and focused CTest pass, not race freedom or area closure.
 
-The compiler follow-up preserves existing contracts rather than relaxing them:
-loop-local sibling returned views gain disjointness only without cross-invocation
-carriage; nullary enum values exclude inactive variant fields from region proofs;
-region-carrying nominal results distinguish borrowed storage from carried views.
-Origin propagation must not permanently seed a receiver-storage loan while those
-carried views are still propagating through its fixed point. Focused escape,
-exclusive-alias and invariant-region rejections remain in place.
-
-The earlier follow-up's narrow evidence includes five source cases in both
-profiles (clone, nullary enum, path and both map callback cases), eight rejection cases under the
-ASan/UBSan compiler, instrumented clone/enum/path executions in both profiles,
-and six emitted-ASan programs in both profiles covering owner slices, raw-pointer
-access, ordered traversal, paths and map panic recovery. The new threaded
-wait/poison/barrier fixture passes emitted TSan in both profiles after the actual
-sanitizer detector probes pass. Pinned targeted clang-tidy/clang-format, component
-boundaries and the focused compiler-boundaries CTest pass. These are scoped
-macOS ARM64 receipts, not an area closure, race-freedom proof or full run.
-The new generic operator fixture exposed recursive reconstruction of independent
-where bounds while creating solvers that had no equalities or Unpin requirements
-to check. A bounded compiler sample records the cause. Solver creation is now
-conditional on actual obligations, without removing inference, equality or
-Unpin checks. The unchanged 60-second source bound is retained: seven numeric
-cases pass both profiles, eight generic-default/equality/Unpin positive cases
-pass both profiles, and eight contextual/recursive/equality rejection cases
-pass. The instrumented compiler passes the operator regression and three
-equality/Unpin positives in both profiles plus those eight negatives.
-Incremental normal/instrumented builds, targeted static analysis, formatting,
-compiler-boundaries CTest and the instrumented startup/detector checks pass.
-`core.ptr.NonNull` is now source-visible with the minimal constructor/pointer
-access needed by List parts, and the loader keeps compiler-owned pointer
-operations lazy. Most selected `NonNull` operations remain missing, as do the
-other prerequisite protocols. The operation CSV credits the tested NonNull
-entry points and leaves the broader inventory missing. The six retained Luna
-lanes deliver isolated patches without running builds or tests; the orchestrator
-owns integration and execution.
+Generic proof elaboration now creates solvers only for actual equality/Unpin
+obligations, avoiding recursive reconstruction without removing proofs. At the
+unchanged 60 s bound: seven numeric cases and eight generic-default/equality/
+Unpin positives pass both profiles; eight contextual/recursive/equality negatives
+reject. Compiler sanitizers pass operators, three equality/Unpin positives and
+the eight negatives; incremental builds, detectors and targeted quality pass.
+Minimal source-visible NonNull and lazy pointer loading are covered under S006;
+most NonNull operations and remaining prerequisites stay open.
 
 ### Further operation batch
 
-The following additions have focused native evidence; none closes a capability
-area or the selected operation inventory:
+Historical macOS ARM64 focused evidence; no whole-area/operation closure:
 
 - `Sum<Input = Self>` and `Product<Input = Self>` distinguish input from output.
   Consuming `Iterator.sum<S>()`/`product<P>()` support explicit or context-inferred
@@ -667,35 +378,22 @@ Baseline/documentation validation and the seven operation-inventory plus six
 syntax-inventory Python tests pass. No new full build, CTest suite or
 qualification matrix has run.
 
-Borrowed `chain` remains **INCOMPLETE**: a standalone two-Once borrowed-item
-reproduction fails ownership checking in `Chained.next`, independently of any
-fold. The session preserves that reproduction and a source-freeze prerequisite;
-direct borrowed-slice fold evidence does not establish chained-view coverage.
+Historical borrowed-chain blocker: the standalone two-Once case failed in
+`Chained.next`, independently of folds; direct slice folds did not cover it.
+The later regional integration has focused chaining passes (Current integration
+state); full operation/frozen-input qualification remains open.
 
 ## Known gaps to fix first
-Linux profile (2026-11-08): finish LNX first (implementation-plan section 8.0,
-"LNX status"). Collision-safe Any identity is fixed and the Linux Release CTest
-passes 22/22. Re-evaluate every Darwin-inapplicable record for Linux before
-crediting an area. The open items found in the Option/Result batch are listed
-in the handoff section.
 
-Closure trim patterns and owned Text construction are integrated with focused
-evidence; they are no longer missing declarations. Remaining prerequisites
-include borrowed chained-item propagation, exact-size/fused and unsized iterator
-protocols, native range bounds,
-NonNull exposure beside compiler-owned pointer intrinsics, collision-safe Any
-identity, and the synchronization operations identified above. Complete selected
-operation/source-cfg reconciliation remains necessary before closing any area.
+Finish LNX (implementation-plan section 8.0), review every Darwin-inapplicable
+record for Linux and close the handoff prerequisites. Closure trim patterns,
+owned Text, borrowed chaining, bounds/exact/fused protocols, minimal NonNull and
+collision-safe identity are integrated with scoped evidence, not missing
+mechanisms or full-area passes. Reconcile all selected operations/source cfg.
 
-After these, work through the subset area by area, in this order:
-1. collections, entries and drain;
-2. iterator adapters;
-3. text and char;
-4. owners and cells;
-5. sync, atomics and mpsc;
-6. hosted fs, io, process, net, env, time and thread;
-7. macros;
-8. mem and ptr functions.
+Then close areas in order: collections/entries/drain; adapters; text/char;
+owners/cells; sync/atomics/mpsc; hosted fs/io/process/net/env/time/thread;
+macros; mem/ptr.
 
 ## Compiler changes
 You may change the compiler (compiler/**, runtime C++) when a V1 operation needs
@@ -705,16 +403,10 @@ or refactors. Keep the component boundaries in CMake, format with
 the pinned clang-format, and add a focused source run/fail regression for each
 compiler fix. Never weaken an API or a test to avoid a compiler fix.
 
-Compiler work also in your scope:
-- **Integer literals don't infer `usize` from a library Index impl:** `list[0]`
-  on List/VecDeque defaults to `i32` and finds no `Index<i32>`; built-in slices
-  already infer `usize`. The argument type comes from `inference.value(right)` in
-  `Checker::operatorCall` (compiler/semantics/operators.cpp); an unresolved
-  integer-literal variable should take the index type of the receiver's sole
-  integer Index implementation. Then drop the `0usize` suffixes in
-  tests/source/run/i13-text-whitespace-splits-boundaries.mt (~lines 352-415).
-- **Sanitized hosted-std compile time:** 37 s against a 30 s probe bound
-  (Release is 2.7 s). Diagnose before changing anything.
+Remaining compiler follow-up: diagnose sanitized hosted-std compile time
+(~37 s versus a 30 s probe bound; Release ~2.7 s) before changing anything.
+Unsuffixed library index inference is integrated in the Linux batch, not a
+missing feature.
 
 ## Owner rules
 - **Mettle must not look like Rust.** Use Mettle names and syntax (section 9),
@@ -730,27 +422,23 @@ Compiler work also in your scope:
   - Each lane works on its own branch and worktree, for example
     `git worktree add ../mettle-wt/lib-iter -b lib/iter main`; the
     orchestrator rebases and merges lanes one at a time.
-  - Commit small, coherent batches with the trailer
-    `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`.
-  - The owner merges.
+  - No commits are authorized for the current lanes; the owner merges.
 
 ## Commands
-These are orchestrator commands. Lane agents use only the `--library-dir`
-commands in the handoff section. Run from the repository root.
+Orchestrator only; run from the repository root. Lanes do not execute commands.
 
 - **Build:**
   `.tools/linux-x86_64/cmake/bin/cmake --build build/linux-x86_64/Release`
   (configure once with the command in README "Linux host build")
 - **Source suites:**
-  `python3 tests/source.py run build/linux-x86_64/Release/mettle /tmp/libout`
+  `python3 tests/source.py run build/linux-x86_64/Release/mettle build/library-source-out`
   and the same command with `fail` instead of `run`.
 - **Std programs:**
-  `python3 tests/std.py build/linux-x86_64/Release/mettle /tmp/stdout tests/std`
+  `python3 tests/std.py build/linux-x86_64/Release/mettle build/library-std-out tests/std`
 - **Full suite:**
   `.tools/linux-x86_64/cmake/bin/ctest --test-dir build/linux-x86_64/Release -j2`
 - **Sanitizers:** for memory or unsafe changes, compile the program with
   `--sanitize address`. For threads and sync, use `--sanitize thread`.
   `--sanitize undefined` is rejected by design.
 
-Run focused tests while iterating. Run the full suites once per batch, before
-committing.
+Run focused tests while iterating; full runs require the owner gates above.

@@ -1,7 +1,6 @@
 # Memory and concurrency design contract
 
-Status: selected semantic contract and obligations for implementation/review.
-No claim of a mechanically proved model or a validated unsafe runtime is made.
+Status: selected semantic contract, not a mechanically proved model.
 
 ## 1. Allocations, bytes and values
 
@@ -75,10 +74,8 @@ translation into optimization metadata needs a separately checked lowering.
 
 ## 4. Atomics and happens-before
 
-Adopt the frozen Rust atomic contract: C++20-style ordering without consume,
-translated to memory accesses rather than requiring permanent atomic objects.
-This is explicit incorporation of that baseline contract, not a new relaxed
-memory model. The normative source is the pinned std::sync::atomic documentation.
+Adopt the pinned std::sync::atomic contract: C++20-style ordering without consume,
+applied to memory accesses rather than permanent atomic objects.
 
 Define sequenced-before within a thread; synchronization edges from matching
 release/acquire operations, valid fences, thread start/join and synchronization
@@ -166,10 +163,7 @@ Custom executors can opt into this unsafe epoch/lease interface. Ordinary owned
 tasks retain independent scheduling and are not restricted to parent epochs.
 Direct borrowed await remains available without spawned-task registration.
 
-This mechanism has real scheduling/bookkeeping costs and weaker independence
-than owned tasks. Compare it with equivalent scoped execution, not detached work.
-It implements the accepted scoped-borrowing direction without adding a universal
-ban on schedulers or a promise of zero-cost task scopes.
+Comparison must include scheduling/bookkeeping under equivalent scoped execution.
 
 ## 7. Required review cases and trusted boundary
 
@@ -178,10 +172,9 @@ padding, raw-pointer phases, reborrows, overlapping atomics, release/acquire
 publication, repeated wake after parent drop, forgotten parent state, child panic,
 recursive polling and an uncooperative child.
 
-The implementation must supply operational tests/model checks before claiming
-these contracts are soundly enforced. Safe code relies on unsafe runtime,
-allocator, executor and foreign implementations honoring their explicit
-contracts. This document selects the design; it does not certify those components.
+Require operational tests/model checks before claiming enforcement. Unsafe
+runtime, allocator, executor and foreign implementations remain trusted to
+honor their explicit contracts.
 
 Primary normative comparisons:
 - https://doc.rust-lang.org/1.99.1/std/ptr/index.html

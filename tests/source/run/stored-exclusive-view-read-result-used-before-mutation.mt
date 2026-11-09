@@ -67,7 +67,17 @@ extend<region r> Cursor<region r> {
     fn peek(): read i32 from r { unsafe { read *self.v.ptr } }
     mut fn grow(x: i32): Unit { self.v.push(x) }
 }
-fn main(): i32 {
+type Wrap<region q, region r> { c: mut Cursor<region r> from q }
+type SharedCursor<region r> { v: read List<i32> from r }
+extend<region r> SharedCursor<region r> {
+    fn peek(): read i32 from r { unsafe { read *self.v.ptr } }
+}
+fn first<T>(c: read List<T>): (read T from c)? {
+    var it = c.iter()
+    it.next()
+}
+
+fn stored_read_before_mutation(): i32 {
     var v = new_vec<i32>()
     v.push(1)
     var cur = Cursor(mut v)
@@ -76,5 +86,68 @@ fn main(): i32 {
     let sum = *a + *b
     cur.v.push(2)
     cur.grow(3)
-    sum - 2
+    if sum != 2 { return 1 }
+    0
+}
+
+fn nested_read_before_mutation(): i32 {
+    var v = new_vec<i32>()
+    v.push(1)
+    var c = Cursor(mut v)
+    var w = Wrap(mut c)
+    let a = w.c.peek()
+    let x = *a
+    w.c.v.push(2)
+    if x != 1 { return 1 }
+    0
+}
+
+fn shared_reborrows_coexist(): i32 {
+    var v = new_vec<i32>()
+    var cur = Cursor(mut v)
+    let x = read cur.v
+    let y = read cur.v
+    if x.len != 0usize || y.len != 0usize { return 1 }
+    0
+}
+
+fn read_per_loop_iteration(): i32 {
+    var v = new_vec<i32>()
+    v.push(1)
+    var cur = Cursor(mut v)
+    var sum = 0
+    var i = 0
+    while i < 3 { let a = cur.peek(); sum += *a; cur.grow(i + 0); i += 1 }
+    if sum != 3 { return 1 }
+    0
+}
+
+fn shared_read_results_coexist(): i32 {
+    var v = new_vec<i32>()
+    v.push(1)
+    let cur = SharedCursor(read v)
+    let a = cur.peek()
+    let b = cur.peek()
+    if *a != 1 || *b != 1 || cur.v.len != 1usize { return 1 }
+    0
+}
+
+fn local_iterator_result_returned(): i32 {
+    var v = new_vec<i32>()
+    v.push(4)
+    match first(read v) {
+        present(x) => { if *x != 4 { return 1 } },
+        none => { return 1 }
+    }
+    0
+}
+
+fn main(): i32 {
+    if stored_read_before_mutation() != 0 { return 1 }
+    if nested_read_before_mutation() != 0 { return 2 }
+    if shared_reborrows_coexist() != 0 { return 3 }
+    if read_per_loop_iteration() != 0 { return 4 }
+    if shared_read_results_coexist() != 0 { return 5 }
+    if local_iterator_result_returned() != 0 { return 6 }
+    0
 }

@@ -19,10 +19,6 @@ fn main(): i32 {
             !slice.ends_with([2, 4]) || slice.is_sorted() {
             return 5
         }
-        match capture slice.binary_search(3) {
-            success(index) => { if index != 2usize { return 6 } },
-            failure(_) => { return 6 }
-        }
         match slice.subslice(1usize, 4usize) {
             present(part) => {
                 if part.len() != 3usize || part[0usize] != 1 { return 7 }

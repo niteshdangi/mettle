@@ -1,10 +1,8 @@
 # Packages, tools and development contracts
 
-Status: selected design. The package-directory `mettle check|build` path is
-implemented. The I09 T001 package-instance, Git-source and host/target-context
-additions below are implemented and verified on macOS arm64. An installed
-toolchain is not yet available.
-These operations are native equivalents, not Cargo-manifest compatibility.
+Selected package/tool contracts and implemented subsets are distinguished below.
+Recorded verification is macOS arm64 unless stated otherwise; it does not
+qualify the gated Linux host. An installed toolchain remains unavailable.
 
 ### Unicode table generation (I07)
 
@@ -21,7 +19,7 @@ mapping: those mappings come from `UnicodeData.txt` and unconditional
 
 ### Emitted-program sanitizers (I10/I11)
 
-Status: implemented and verified on macOS arm64 (`probe.sanitizers`). `mettle build`, `mettle run`
+Implemented (`probe.sanitizers`): `mettle build`, `mettle run`
 and `mettle test` accept `--sanitize address` or `--sanitize thread` for
 single-file and package inputs. The driver instruments emitted LLVM/object
 code, links the matching instrumented `alloc`, `panic`, `sys` and `thread`
@@ -34,8 +32,7 @@ Although `undefined` is a recognized sanitizer name, it currently produces a
 clear unsupported-feature diagnostic. Mettle defines checked integer overflow
 itself, and this backend does not yet emit UBSan checks for other undefined
 operations; linking the UBSan runtime alone would not instrument emitted code.
-Do not treat this mode as UBSan or cross-target qualification; the ASan and
-TSan probes run on macOS arm64 only.
+The emitted backend does not provide UBSan or cross-target qualification.
 
 ### 1.1. Implemented subset (I09 T001)
 
@@ -53,21 +50,15 @@ with `import package.name`.
   (`feature`, `dep:x`, `x/f`; optional dependencies imply a feature),
   `[registry] path` (root only) and parsed but unused `[dev-dependencies]`.
   Unknown keys are errors.
-- Versions: SemVer requirements (`^`, `~`, comparators, `*`, comma
-  intersections, arrays as unions). Highest non-yanked version wins; a
-  lock-recorded version is preferred (even if yanked). Incompatible versions
-  of one package can coexist; each exact source/version/context has a distinct
-  package identity, internal module root and linked symbol namespace.
+- Versions: section 1 defines requirements and selection. Each exact
+  source/version/context has a distinct module root and linked symbol namespace.
 - Local registry: `<registry>/<name>/<version>/Mettle.toml` plus sources; a
   `YANKED` file yanks a version. Select with `--registry DIR` (repeatable,
   before the manifest `[registry]`). No remote HTTP registry fetch exists;
   `--offline` prevents Git fetching and uses only already-cached commits.
-- Git sources: `{ git = URL, rev = REV }`, `{ git = URL, tag = TAG }` or
-  `{ git = URL, branch = BRANCH }` use the system `git` CLI. Mirrors and
-  detached checkouts live under the configured Mettle cache's `sources/git`;
-  the lock records the resolved commit, not a moving selector. Offline mode
-  uses the locked commit only when it is already present in that store. A
-  dirty or mismatched cached checkout is rejected.
+- Git selectors (`rev`, `tag`, `branch`) use the system `git` CLI, with mirrors
+  and detached checkouts in cache `sources/git`. Offline builds require the
+  locked commit there. Dirty or mismatched cached checkouts are rejected.
 - `Mettle.lock`: `version = 2` plus `[[package]]` entries (`id`, name,
   version, `source` = `root`/`path+REL`/`registry+REL`/`git+URL#COMMIT`,
   `checksum`, resolved `features`, dependency-instance IDs). Checksum is
@@ -85,12 +76,8 @@ with `import package.name`.
   package build-script output directories still need isolation when the same
   package is selected in both contexts. Optional build-dependencies are
   rejected. Library-only roots cannot be built.
-  Build scripts (T002) and the content-addressed build cache
-  (T003) follow; both are implemented and verified on macOS arm64 (Release
-  and Debug).
-  Existing package tests are in `tests/packages.py`; the new
-  `coexisting_versions`, `git_source` and `host_target_separation` cases pass
-  on macOS arm64 Release.
+  Evidence: `tests/packages.py` cases `coexisting_versions`, `git_source`,
+  `host_target_separation` (Release); T002/T003 passed Debug and Release.
 
 ### Build scripts (T002)
 
@@ -111,17 +98,13 @@ participate in dependency analysis before consumers compile. Scripts run with
 ordinary host capabilities and are never sandboxed, but their execution,
 decisions and outputs are visible with `--explain`.
 
-A script is rerun on every build unless it declares `reproducible` (its output
-is a function of the declared files and variables, its compiled binary and
-the target/profile/features). Undeclared inputs therefore always force a rerun;
-a rerun that regenerates unchanged tokens still reuses the compiled program.
-The contract is recorded in the build cache and rechecked (input hashes,
-variable values, hashes of every generated file) before reuse.
+Reuse follows section 2's host-execution contract, including the script binary,
+target/profile/features, declared input hashes/variables and generated-file hashes.
 
 ### Procedural macros (L056)
 
-Status: implemented and verified on macOS arm64 (tests `procedural_macro` and
-`procedural_macro_failure` in `tests/packages.py`).
+Implemented; evidence: `procedural_macro` and `procedural_macro_failure` in
+`tests/packages.py`.
 
 A package declares host-program macros in `Mettle.toml`:
 
@@ -155,14 +138,9 @@ diagnostics in generated code point at the `name!(...)` use. A program
 failure, a protocol violation, a reported error or text that does not lex is a
 `macro` diagnostic at the invocation.
 
-Caching follows the build-script rule: a macro reruns on every build unless it
-declared `reproducible`; it is then reused only while its binary, request,
-declared files/directories and environment variables are unchanged
-(`--explain` shows `rerun (...)` or `reused`). Undeclared inputs therefore
-always force a rerun. Each response text is part of the consumer's build key,
-so a changed external input changes the output while an unchanged expansion
-reuses the cached compile. Tests: `tests/packages.py` (`procedural_macro`,
-`procedural_macro_failure`), fixtures in `tests/packages/proc-macro`.
+Reuse follows section 2, including the binary, request and declared inputs.
+`--explain` reports `rerun (...)` or `reused`; response text enters the consumer's
+build key. Fixtures: `tests/packages/proc-macro`.
 Known gaps: macros are not namespaced per package; no definition-site,
 fresh-identity or span-carrying token constructors or per-token diagnostics
 (an error points at the whole invocation); the program-side token API exposes
@@ -209,11 +187,9 @@ can therefore turn a lookup into a safe miss, but cannot change build output.
 The whole-build key retains its existing live lease; `clean` refuses to remove
 a store with live leases.
 
-`object_cache_integrity` was updated to check dependency-object reuse after a
-root-only edit, compare incremental and clean executable outputs, and corrupt a
-cached dependency object to require checksum-triggered regeneration; it passes
-on macOS arm64 Release.
-No performance benefit is claimed before measurement. `--no-cache` disables
+Evidence: `object_cache_integrity` covers root-only edits, clean/incremental
+output equality and corrupt-object regeneration (Release).
+`--no-cache` disables
 both whole-build and package-object caches. Storage design: performance.md
 section 5.1.1. Flags: `--cache-dir DIR`, `--no-cache`,
 `--cache-limit-kib N`, `--cache-max-age-days N`, `--explain`;
@@ -248,8 +224,8 @@ Registry packages lock their archive digest; path packages record their resolved
 location and content-input identity for builds, without pretending local edits
 are immutable published versions.
 
-Version requirements support exact, caret, tilde and comparator intersections.
-An array of requirement strings denotes their union. Ordering follows SemVer;
+Version requirements support exact, caret, tilde, wildcard and comma-separated
+comparator intersections; arrays denote unions. Ordering follows SemVer;
 prereleases require explicit prerelease selection. Resolve deterministically to
 the highest compatible non-yanked candidate subject to the complete constraints,
 backtracking when needed. A locked yanked release remains usable unless policy
@@ -321,8 +297,9 @@ generic bounds, macro results or ABI layout.
 | mettle lint | Native diagnostic rules; structured findings and source/expansion provenance |
 | mettle doc | Public/API documentation, source links and cross-package references |
 
-`mettle fmt FILE... [--check]` is implemented and verified: it
-works on the token stream (`syntax/format.{h,cpp}`) and changes only whitespace.
+`mettle fmt FILE... [--check]` works on the token stream
+(`syntax/format.{h,cpp}`) and changes only whitespace. Base formatting has
+recorded verification; the expanded wrapping described below remains unverified.
 Indentation is 4 spaces per bracket level (a continuation after a comma or
 trailing operator, or starting with `.`, gets one more level where applicable);
 spacing is
@@ -330,8 +307,7 @@ normalized after `,` `;` `:`, around `=`, comparison/compound-assignment/`=>`/`-
 inside one-line `{ }` and removed around `.` and inside `()`/`[]`; other
 gaps (`<`, `-`, `&`, ...) keep one space or none as written. Trailing whitespace
 goes, blank-line runs collapse to one (none after `{` or before `}`), the file
-ends in one newline. Line breaking is implemented and verified on macOS arm64
-(`fmt_normalizes_layout_only`): it targets 100 bytes and breaks after commas in
+ends in one newline. Expanded line breaking targets 100 bytes and breaks after commas in
 call, parameter, generic and collection lists, constructors and match arms,
 and after binary operators. Chained member calls are not broken, since a line
 starting with `.` does not continue an expression. Continuation indentation follows the bracket
@@ -342,16 +318,14 @@ changes the parse it falls back to the unwrapped layout. Comments, text
 literals and macro gaps remain intact. Each result is re-lexed and re-parsed and must have
 the same token sequence, the same syntax-tree fingerprint and be a fixed point;
 otherwise the file is reported and left untouched. Files that define
-declarative macros are parsed after expansion for both fingerprints. In the
-prior formatter verification, every source-corpus run case passed and
-formatted fail cases reported the same phase, line and message (columns may
-move); this expanded wrapping implementation has not been built or tested.
+declarative macros are parsed after expansion for both fingerprints. Prior source-corpus checks preserved run results and fail phases/messages/lines
+(columns may move). Expanded wrapping has not been built or tested.
 `--check` prints each file
 that would change with its first differing line and exits 1 without writing;
 otherwise changed files are replaced atomically (temporary file and rename).
 
-`mettle lint FILE|PACKAGE [--format human|json] [--allow|--warn|--deny RULE]... [build options]` is
-implemented and verified. It runs the same front end as `check`
+`mettle lint FILE|PACKAGE [--format human|json] [--allow|--warn|--deny RULE]... [build options]`
+is implemented (`lint_reports_semantic_findings`). It uses the front end of `check`
 (parse, expansion, resolution, typing, ownership; any error is reported as usual
 and no lint runs) and then semantic lints over the checked program, never over
 raw text. Findings are structured diagnostics with spans and expansion
@@ -374,7 +348,8 @@ warnings` makes all findings fail). The `@allow(RULE, ...)`, `@warn(...)`,
 `@deny(...)` and `@forbid(...)` attributes on a function override the flags inside
 that function; `RULE` may be spelled with `-` or `_`, and unknown names are
 ignored. Attributes on imports and on products/extensions and line breaking of
-findings are not implemented. JSON findings are implemented and verified on macOS arm64: one JSON object per line on stdout, ordered as human findings, with
+findings are not implemented. JSON emits one object per line on stdout, in human
+finding order, with
 `code`, `level` (`warn` or `deny`), `span` (`file`, zero-based byte `begin`
 and exclusive `end`), and `message`. No suggestion field is emitted because
 the current rules do not provide structured suggestions. Front-end failures
@@ -384,11 +359,9 @@ Target, profile, feature, package/workspace and lock/offline selections are
 shared options. Unknown or unavailable requested capabilities fail explicitly;
 partial compiler milestones cannot count unsupported programs as passed tests.
 
-Implemented and verified: `check`, `build`, `run`, `test`, `bench` and `fmt`
-(plus `clean` and the inspection commands). The T007 runner
-extensions in section 4 are implemented and verified on macOS arm64. `lint` is implemented and
-verified (test `lint_reports_semantic_findings`). `doc` and doctests are
-implemented and verified (see section 4.1).
+Implemented commands: `check`, `build`, `run`, `test`, `bench`, `fmt`, `clean`,
+inspection commands, `lint` and `doc`; their scoped evidence and gaps are
+recorded in the relevant sections.
 
 ```
 mettle run   FILE|PACKAGE [build options] [-- ARGS...]
@@ -414,8 +387,8 @@ reports pass/fail/ignored, process termination and infrastructure failure
 separately. Test ordering is not a language guarantee. `--jobs` selects test
 concurrency; a deterministic seed option is not yet provided.
 
-Runner extensions in this T007 work are implemented and verified on macOS
-arm64 (test `test_json_timeout_and_modules`). `@test` marks a function in any module of the selected package with no
+Evidence: `test_json_timeout_and_modules`. `@test` marks a function in any
+module of the selected package with no
 parameters and result `Unit`, or `Unit throws E` (returning the failure fails
 the test). Inline and file modules (`module name`) are included; displayed
 names are fully qualified, such as `network.connect`. `@ignore` /
@@ -478,11 +451,8 @@ Benchmark runners do not weaken the performance protocol's registered metrics.
 
 ### 4.1. Documentation comments, `mettle doc` and doctests
 
-Status: documentation generation and doctests were previously verified on
-macOS arm64 (packages cases `doc_writes_deterministic_html`,
-`doctests_run_isolated_examples`). Resolved reference links and dependency
-package pages are implemented and verified on macOS arm64
-(`doc_resolves_dependency_links_and_warns`).
+Evidence: package cases `doc_writes_deterministic_html`,
+`doctests_run_isolated_examples` and `doc_resolves_dependency_links_and_warns`.
 
 `///` documents the item that follows it (before or between its attributes) and
 `//!` the enclosing file or inline module. The lexer already keeps comments as
@@ -561,9 +531,8 @@ analysis reports that state rather than guessing a result from callers.
 
 `mettle lsp [--library-dir DIR] [--target TRIPLE] [--freestanding]` runs the
 language server (LSP 3.17, JSON-RPC with `Content-Length` framing on standard
-input/output; UTF-16 positions). T005 status: implemented and verified on macOS arm64, including the completion,
-signature-help, references and checked-facts changes below (test
-`language_server`). It supports full and ranged text synchronization with
+input/output; UTF-16 positions). Evidence: `language_server`. It supports full
+and ranged text synchronization with
 `publishDiagnostics` (each open document is analyzed by the compiler front end
 on its in-memory text; editing a document re-analyzes the open documents that
 read it; parse errors still produce diagnostics), `hover`, `definition`,
@@ -591,10 +560,8 @@ facts do not yet disambiguate members across provider-loaded files. Provider
 sources are indexed only when encountered by an open document, not through
 workspace-wide package discovery. Generated diagnostics map to a user source
 span when possible but do not yet expose the full expansion chain as related
-information. Readable source-oriented diagnostic type display and structured
-notes/help are implemented and verified on macOS arm64 (`diagnostic-help-*`
-source cases and `language_server`); the LSP includes these subdiagnostics in
-the published message text.
+information. Source-oriented type display and structured notes/help appear in
+published message text (`diagnostic-help-*` cases and `language_server`).
 
 Rename observes namespaces, public paths and hygienic expansion identity.
 Generated identifiers are edited at their source/generator only when the mapping
@@ -608,10 +575,8 @@ Moved/uninitialized values must not be presented as live valid values.
 Optimization may eliminate values; report optimized-out rather than inventing
 their contents. Static region analysis does not require runtime region objects.
 
-Status (I12/T006; the DWARF changes for lexical scopes, moved-value liveness,
-erased witness types and inlining are verified on macOS arm64 by `debug_info`,
-and the LLDB workflow and summaries by `debugger_workflow`):
-`mettle build -g`
+I12/T006 evidence: `debug_info` (DWARF) and `debugger_workflow` (batch LLDB,
+Release). `mettle build -g`
 emits DWARF 4 through `llvm::DIBuilder` in the LLVM adapter
 (`backend/llvm/debug.*`): a compile unit and file per source, a subprogram per
 source function (source name; linkage name is the symbol), a line-table
@@ -634,9 +599,6 @@ tokens use the invocation location in line tables. A coroutine future's state
 DWARF variant part (`start`, `await #N (line L)`, `running`, and `done`), with
 captured environment and output fields and per-suspension fields for
 scope-initialized locals. The LLDB summary renders `state = await #N (line L)`.
-These coroutine changes are verified on macOS arm64 by `debug_info` and the
-automated LLDB `debugger_workflow` case.
-
 For LLDB, import `tools/debug/mettle_lldb.py` with
 `command script import /path/to/mettle/tools/debug/mettle_lldb.py`. It registers
 best-effort summaries for native `List`, slices, erased views, `String`, text
@@ -646,9 +608,6 @@ than guessing. `tests/packages.py::debugger_workflow` builds a `-g` executable,
 imports these summaries into batch LLDB, and checks source breakpoints,
 parameters/locals, list and slice lengths, a tagged variant, an erased view and
 a suspended coroutine state. It prints a clear skip if LLDB is unavailable.
-This workflow and the summaries pass on macOS arm64 Release with batch LLDB,
-including the suspended coroutine summary.
-
 The comp dir is the root source's directory; without `-g` the adapter emits no
 debug metadata. `-g` is explicit (the `debug` profile does not imply it), and
 `-g` builds bypass the build cache. On Darwin an executable's DWARF stays in
@@ -658,8 +617,7 @@ Lexical blocks carry source scopes; named locals start unavailable until
 initialized, become unavailable after moves/drops or scope exit, and regain a
 location after a whole-place store. Optimizer-generated `inlinedAt` locations
 use source subprograms and call-site locations; `@inline`, `@inline(always)`
-and `@inline(never)` map to LLVM optimization hints. These changes and their
-new `debug_info` assertions are verified on macOS arm64.
+and `@inline(never)` map to LLVM optimization hints.
 Remaining gaps include subprogram parameter/return types, some unsupported
 layouts, concrete dynamic types for sized erased values, monomorphization
 records and interactive LLDB verification. Windows CodeView/PDB remains open
@@ -688,46 +646,17 @@ specified for both products, which have different owners and must not be mixed.
 
 ### 7.1. Compiler-development storage
 
-Address measured candidates first. A prior broad sample was 45.2 GiB in `.tools`
-and 3.8 GiB in `build`. The table lists allocated blocks (`du -sk`) observed on
-2026-10-30: a point-in-time observation, not an atomic or current inventory.
+Inventory archive/version hashes, worktree/VM consumers, evidence obligations
+and offline pins before proposing owner-approved retirement. Directory names
+and allocated-block counts alone do not establish artifact identity or physical
+savings. Remove only approved resolved paths; verify build selection,
+bootstrap and evidence access afterward.
 
-| Candidate | GiB | Disposition |
-| --- | ---: | --- |
-| `.tools/linux-x86_64/llvm` | 11.3 | Active pinned LLVM 22.1.3: retain |
-| `.tools/linux-x86_64/llvm-21.1.8` | 10.5 | Historical version, not a byte duplicate; audit consumers before retirement |
-| `.tools/macos-arm64/llvm` | 7.3 | Active host toolchain: retain |
-| `.tools/macos-arm64/llvm-21.1.8` | 7.8 | Historical host version: same retirement audit |
-| `.tools/downloads` | 6.6 | Verified archives kept after extraction; choose offline retention before pruning |
-
-The two historical versions and the downloads are about 24.8 GiB of
-**candidate**, not guaranteed reclaimable, space; allocated-block reports can
-double-count shared or cloned storage and do not prove physical savings. README
-records the deliberate preservation of historical toolchains, and inspected
-CMake caches use the mutable `llvm` path even for historical `*-llvm21` build
-directories, so a directory name alone cannot prove which compiler produced an
-artifact.
-
-Lane worktrees are transient source/build storage outside the checkout, not a
-fixed table entry or an automatic-pruning candidate: report their size only in an
-operational snapshot, and aim for zero lane-owned data once all lanes are merged
-and retired. Shared Git metadata is accounted separately, unmerged source and
-active builds are protected, and retirement uses the owner-approved Git worktree
-operation, never recursive cache deletion.
-
-**Storage audit work package** (operational; it does not wait for an application
-artifact store): inventory exact archive/version hashes, active worktree and VM
-consumers, historical evidence obligations and offline pins; agree a retirement
-list; remove only approved resolved paths; then verify bootstrap, build selection
-and evidence access. Sibling-worktree and VM consumers are not yet cleared and no
-deletion has been performed.
-
-**Retention policy.** Keep explicitly pinned offline archives; otherwise permit
-removal of a downloaded archive only after checksum verification and successful
-extraction. Keep the refusal to overwrite unknown installations. Share pinned
-tool installations across worktrees when identities match instead of
-replicating full LLVM distributions. None of this changes the language or weakens
-reproducibility checks.
+Keep pinned offline archives; other downloads may be removed after checksum
+verification and successful extraction. Preserve refusal to overwrite unknown
+installations and share toolchains only when identities match. Protect unmerged
+source and active builds; retire lane worktrees through owner-approved Git
+operations, accounting for shared metadata separately.
 
 ### 7.2. End-user cache store
 
@@ -743,9 +672,8 @@ account for all symbol files, since moving debug data alone does not reduce
 total size. Budget changes must not silently change overflow, panic,
 specialization or ABI.
 
-The managed store now exists for build outputs (performance.md section 5.1.1)
-and `mettle clean` implements its deletion and accounting. A separate
-`mettle storage` report, dependency-source and debug-data pruning, and
-live-build leases remain deferred; until then use filesystem reports. Measure
+The build-output store, live leases and `mettle clean` are implemented (section
+T003). A separate `mettle storage` report and dependency-source/debug-data pruning
+remain deferred; use filesystem reports. Measure
 cold/warm retained bytes, peak scratch, rebuild cost and matched runtime behavior
 before selecting default budgets or claiming savings.

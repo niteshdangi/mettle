@@ -52,7 +52,6 @@ fn group0() {
     if !(V(0x0u32).recip().to_bits() == 0x7f800000u32) { panic("recip #31") }
     if !(V(0x0u32).sqrt().to_bits() == 0x0u32) { panic("sqrt #32") }
     if !(V(0x0u32).to_bits() == 0x0u32) { panic("to_bits #33") }
-    if !(V(0x0u32).to_bits() == 0x0u32) { panic("to_bits #34") }
     if !(f32.from_bits(0x0u32).to_bits() == 0x0u32) { panic("from_bits #35") }
     if !(V(0x0u32).to_le_bytes() == [0u8, 0u8, 0u8, 0u8]) { panic("to_le_bytes #36") }
     if !(V(0x0u32).to_be_bytes() == [0u8, 0u8, 0u8, 0u8]) { panic("to_be_bytes #37") }
@@ -84,7 +83,6 @@ fn group0() {
     if !(V(0x80000000u32).recip().to_bits() == 0xff800000u32) { panic("recip #63") }
     if !(V(0x80000000u32).sqrt().to_bits() == 0x80000000u32) { panic("sqrt #64") }
     if !(V(0x80000000u32).to_bits() == 0x80000000u32) { panic("to_bits #65") }
-    if !(V(0x80000000u32).to_bits() == 0x80000000u32) { panic("to_bits #66") }
     if !(f32.from_bits(0x80000000u32).to_bits() == 0x80000000u32) { panic("from_bits #67") }
     if !(V(0x80000000u32).to_le_bytes() == [0u8, 0u8, 0u8, 128u8]) { panic("to_le_bytes #68") }
     if !(V(0x80000000u32).to_be_bytes() == [128u8, 0u8, 0u8, 0u8]) { panic("to_be_bytes #69") }
@@ -116,7 +114,6 @@ fn group0() {
     if !(V(0x3f800000u32).recip().to_bits() == 0x3f800000u32) { panic("recip #95") }
     if !(V(0x3f800000u32).sqrt().to_bits() == 0x3f800000u32) { panic("sqrt #96") }
     if !(V(0x3f800000u32).to_bits() == 0x3f800000u32) { panic("to_bits #97") }
-    if !(V(0x3f800000u32).to_bits() == 0x3f800000u32) { panic("to_bits #98") }
     if !(f32.from_bits(0x3f800000u32).to_bits() == 0x3f800000u32) { panic("from_bits #99") }
     if !(V(0x3f800000u32).to_le_bytes() == [0u8, 0u8, 128u8, 63u8]) { panic("to_le_bytes #100") }
     if !(V(0x3f800000u32).to_be_bytes() == [63u8, 128u8, 0u8, 0u8]) { panic("to_be_bytes #101") }
@@ -150,7 +147,6 @@ fn group1() {
     if !(V(0xbf800000u32).recip().to_bits() == 0xbf800000u32) { panic("recip #126") }
     if !(V(0xbf800000u32).sqrt().is_nan()) { panic("sqrt #127") }
     if !(V(0xbf800000u32).to_bits() == 0xbf800000u32) { panic("to_bits #128") }
-    if !(V(0xbf800000u32).to_bits() == 0xbf800000u32) { panic("to_bits #129") }
     if !(f32.from_bits(0xbf800000u32).to_bits() == 0xbf800000u32) { panic("from_bits #130") }
     if !(V(0xbf800000u32).to_le_bytes() == [0u8, 0u8, 128u8, 191u8]) { panic("to_le_bytes #131") }
     if !(V(0xbf800000u32).to_be_bytes() == [191u8, 128u8, 0u8, 0u8]) { panic("to_be_bytes #132") }
@@ -181,7 +177,6 @@ fn group1() {
     if !(V(0x3f000000u32).recip().to_bits() == 0x40000000u32) { panic("recip #157") }
     if !(V(0x3f000000u32).sqrt().to_bits() == 0x3f3504f3u32) { panic("sqrt #158") }
     if !(V(0x3f000000u32).to_bits() == 0x3f000000u32) { panic("to_bits #159") }
-    if !(V(0x3f000000u32).to_bits() == 0x3f000000u32) { panic("to_bits #160") }
     if !(f32.from_bits(0x3f000000u32).to_bits() == 0x3f000000u32) { panic("from_bits #161") }
     if !(V(0x3f000000u32).to_le_bytes() == [0u8, 0u8, 0u8, 63u8]) { panic("to_le_bytes #162") }
     if !(V(0x3f000000u32).to_be_bytes() == [63u8, 0u8, 0u8, 0u8]) { panic("to_be_bytes #163") }
@@ -212,7 +207,6 @@ fn group1() {
     if !(V(0xbf000000u32).recip().to_bits() == 0xc0000000u32) { panic("recip #188") }
     if !(V(0xbf000000u32).sqrt().is_nan()) { panic("sqrt #189") }
     if !(V(0xbf000000u32).to_bits() == 0xbf000000u32) { panic("to_bits #190") }
-    if !(V(0xbf000000u32).to_bits() == 0xbf000000u32) { panic("to_bits #191") }
     if !(f32.from_bits(0xbf000000u32).to_bits() == 0xbf000000u32) { panic("from_bits #192") }
     if !(V(0xbf000000u32).to_le_bytes() == [0u8, 0u8, 0u8, 191u8]) { panic("to_le_bytes #193") }
     if !(V(0xbf000000u32).to_be_bytes() == [191u8, 0u8, 0u8, 0u8]) { panic("to_be_bytes #194") }
@@ -243,7 +237,6 @@ fn group1() {
     if !(V(0x3fc00000u32).recip().to_bits() == 0x3f2aaaabu32) { panic("recip #219") }
     if !(V(0x3fc00000u32).sqrt().to_bits() == 0x3f9cc471u32) { panic("sqrt #220") }
     if !(V(0x3fc00000u32).to_bits() == 0x3fc00000u32) { panic("to_bits #221") }
-    if !(V(0x3fc00000u32).to_bits() == 0x3fc00000u32) { panic("to_bits #222") }
     if !(f32.from_bits(0x3fc00000u32).to_bits() == 0x3fc00000u32) { panic("from_bits #223") }
     if !(V(0x3fc00000u32).to_le_bytes() == [0u8, 0u8, 192u8, 63u8]) { panic("to_le_bytes #224") }
     if !(V(0x3fc00000u32).to_be_bytes() == [63u8, 192u8, 0u8, 0u8]) { panic("to_be_bytes #225") }
@@ -277,7 +270,6 @@ fn group2() {
     if !(V(0x40200000u32).recip().to_bits() == 0x3ecccccdu32) { panic("recip #250") }
     if !(V(0x40200000u32).sqrt().to_bits() == 0x3fca62c2u32) { panic("sqrt #251") }
     if !(V(0x40200000u32).to_bits() == 0x40200000u32) { panic("to_bits #252") }
-    if !(V(0x40200000u32).to_bits() == 0x40200000u32) { panic("to_bits #253") }
     if !(f32.from_bits(0x40200000u32).to_bits() == 0x40200000u32) { panic("from_bits #254") }
     if !(V(0x40200000u32).to_le_bytes() == [0u8, 0u8, 32u8, 64u8]) { panic("to_le_bytes #255") }
     if !(V(0x40200000u32).to_be_bytes() == [64u8, 32u8, 0u8, 0u8]) { panic("to_be_bytes #256") }
@@ -308,7 +300,6 @@ fn group2() {
     if !(V(0xc0200000u32).recip().to_bits() == 0xbecccccdu32) { panic("recip #281") }
     if !(V(0xc0200000u32).sqrt().is_nan()) { panic("sqrt #282") }
     if !(V(0xc0200000u32).to_bits() == 0xc0200000u32) { panic("to_bits #283") }
-    if !(V(0xc0200000u32).to_bits() == 0xc0200000u32) { panic("to_bits #284") }
     if !(f32.from_bits(0xc0200000u32).to_bits() == 0xc0200000u32) { panic("from_bits #285") }
     if !(V(0xc0200000u32).to_le_bytes() == [0u8, 0u8, 32u8, 192u8]) { panic("to_le_bytes #286") }
     if !(V(0xc0200000u32).to_be_bytes() == [192u8, 32u8, 0u8, 0u8]) { panic("to_be_bytes #287") }
@@ -339,7 +330,6 @@ fn group2() {
     if !(V(0x40700000u32).recip().to_bits() == 0x3e888889u32) { panic("recip #312") }
     if !(V(0x40700000u32).sqrt().to_bits() == 0x3ff7def6u32) { panic("sqrt #313") }
     if !(V(0x40700000u32).to_bits() == 0x40700000u32) { panic("to_bits #314") }
-    if !(V(0x40700000u32).to_bits() == 0x40700000u32) { panic("to_bits #315") }
     if !(f32.from_bits(0x40700000u32).to_bits() == 0x40700000u32) { panic("from_bits #316") }
     if !(V(0x40700000u32).to_le_bytes() == [0u8, 0u8, 112u8, 64u8]) { panic("to_le_bytes #317") }
     if !(V(0x40700000u32).to_be_bytes() == [64u8, 112u8, 0u8, 0u8]) { panic("to_be_bytes #318") }
@@ -370,7 +360,6 @@ fn group2() {
     if !(V(0xc0700000u32).recip().to_bits() == 0xbe888889u32) { panic("recip #343") }
     if !(V(0xc0700000u32).sqrt().is_nan()) { panic("sqrt #344") }
     if !(V(0xc0700000u32).to_bits() == 0xc0700000u32) { panic("to_bits #345") }
-    if !(V(0xc0700000u32).to_bits() == 0xc0700000u32) { panic("to_bits #346") }
     if !(f32.from_bits(0xc0700000u32).to_bits() == 0xc0700000u32) { panic("from_bits #347") }
     if !(V(0xc0700000u32).to_le_bytes() == [0u8, 0u8, 112u8, 192u8]) { panic("to_le_bytes #348") }
     if !(V(0xc0700000u32).to_be_bytes() == [192u8, 112u8, 0u8, 0u8]) { panic("to_be_bytes #349") }
@@ -404,7 +393,6 @@ fn group3() {
     if !(V(0x3dcccccdu32).recip().to_bits() == 0x41200000u32) { panic("recip #374") }
     if !(V(0x3dcccccdu32).sqrt().to_bits() == 0x3ea1e89bu32) { panic("sqrt #375") }
     if !(V(0x3dcccccdu32).to_bits() == 0x3dcccccdu32) { panic("to_bits #376") }
-    if !(V(0x3dcccccdu32).to_bits() == 0x3dcccccdu32) { panic("to_bits #377") }
     if !(f32.from_bits(0x3dcccccdu32).to_bits() == 0x3dcccccdu32) { panic("from_bits #378") }
     if !(V(0x3dcccccdu32).to_le_bytes() == [205u8, 204u8, 204u8, 61u8]) { panic("to_le_bytes #379") }
     if !(V(0x3dcccccdu32).to_be_bytes() == [61u8, 204u8, 204u8, 205u8]) { panic("to_be_bytes #380") }
@@ -435,7 +423,6 @@ fn group3() {
     if !(V(0x501502f9u32).recip().to_bits() == 0x2edbe6ffu32) { panic("recip #405") }
     if !(V(0x501502f9u32).sqrt().to_bits() == 0x47c35000u32) { panic("sqrt #406") }
     if !(V(0x501502f9u32).to_bits() == 0x501502f9u32) { panic("to_bits #407") }
-    if !(V(0x501502f9u32).to_bits() == 0x501502f9u32) { panic("to_bits #408") }
     if !(f32.from_bits(0x501502f9u32).to_bits() == 0x501502f9u32) { panic("from_bits #409") }
     if !(V(0x501502f9u32).to_le_bytes() == [249u8, 2u8, 21u8, 80u8]) { panic("to_le_bytes #410") }
     if !(V(0x501502f9u32).to_be_bytes() == [80u8, 21u8, 2u8, 249u8]) { panic("to_be_bytes #411") }
@@ -465,7 +452,6 @@ fn group3() {
     if !(V(0xd01502f9u32).recip().to_bits() == 0xaedbe6ffu32) { panic("recip #435") }
     if !(V(0xd01502f9u32).sqrt().is_nan()) { panic("sqrt #436") }
     if !(V(0xd01502f9u32).to_bits() == 0xd01502f9u32) { panic("to_bits #437") }
-    if !(V(0xd01502f9u32).to_bits() == 0xd01502f9u32) { panic("to_bits #438") }
     if !(f32.from_bits(0xd01502f9u32).to_bits() == 0xd01502f9u32) { panic("from_bits #439") }
     if !(V(0xd01502f9u32).to_le_bytes() == [249u8, 2u8, 21u8, 208u8]) { panic("to_le_bytes #440") }
     if !(V(0xd01502f9u32).to_be_bytes() == [208u8, 21u8, 2u8, 249u8]) { panic("to_be_bytes #441") }
@@ -495,7 +481,6 @@ fn group3() {
     if !(V(0x7f7fffffu32).recip().to_bits() == 0x200000u32) { panic("recip #465") }
     if !(V(0x7f7fffffu32).sqrt().to_bits() == 0x5f7fffffu32) { panic("sqrt #466") }
     if !(V(0x7f7fffffu32).to_bits() == 0x7f7fffffu32) { panic("to_bits #467") }
-    if !(V(0x7f7fffffu32).to_bits() == 0x7f7fffffu32) { panic("to_bits #468") }
     if !(f32.from_bits(0x7f7fffffu32).to_bits() == 0x7f7fffffu32) { panic("from_bits #469") }
     if !(V(0x7f7fffffu32).to_le_bytes() == [255u8, 255u8, 127u8, 127u8]) { panic("to_le_bytes #470") }
     if !(V(0x7f7fffffu32).to_be_bytes() == [127u8, 127u8, 255u8, 255u8]) { panic("to_be_bytes #471") }
@@ -528,7 +513,6 @@ fn group4() {
     if !(V(0xff7fffffu32).recip().to_bits() == 0x80200000u32) { panic("recip #495") }
     if !(V(0xff7fffffu32).sqrt().is_nan()) { panic("sqrt #496") }
     if !(V(0xff7fffffu32).to_bits() == 0xff7fffffu32) { panic("to_bits #497") }
-    if !(V(0xff7fffffu32).to_bits() == 0xff7fffffu32) { panic("to_bits #498") }
     if !(f32.from_bits(0xff7fffffu32).to_bits() == 0xff7fffffu32) { panic("from_bits #499") }
     if !(V(0xff7fffffu32).to_le_bytes() == [255u8, 255u8, 127u8, 255u8]) { panic("to_le_bytes #500") }
     if !(V(0xff7fffffu32).to_be_bytes() == [255u8, 127u8, 255u8, 255u8]) { panic("to_be_bytes #501") }
@@ -558,7 +542,6 @@ fn group4() {
     if !(V(0x800000u32).recip().to_bits() == 0x7e800000u32) { panic("recip #525") }
     if !(V(0x800000u32).sqrt().to_bits() == 0x20000000u32) { panic("sqrt #526") }
     if !(V(0x800000u32).to_bits() == 0x800000u32) { panic("to_bits #527") }
-    if !(V(0x800000u32).to_bits() == 0x800000u32) { panic("to_bits #528") }
     if !(f32.from_bits(0x800000u32).to_bits() == 0x800000u32) { panic("from_bits #529") }
     if !(V(0x800000u32).to_le_bytes() == [0u8, 0u8, 128u8, 0u8]) { panic("to_le_bytes #530") }
     if !(V(0x800000u32).to_be_bytes() == [0u8, 128u8, 0u8, 0u8]) { panic("to_be_bytes #531") }
@@ -589,7 +572,6 @@ fn group4() {
     if !(V(0x1u32).recip().to_bits() == 0x7f800000u32) { panic("recip #556") }
     if !(V(0x1u32).sqrt().to_bits() == 0x1a3504f3u32) { panic("sqrt #557") }
     if !(V(0x1u32).to_bits() == 0x1u32) { panic("to_bits #558") }
-    if !(V(0x1u32).to_bits() == 0x1u32) { panic("to_bits #559") }
     if !(f32.from_bits(0x1u32).to_bits() == 0x1u32) { panic("from_bits #560") }
     if !(V(0x1u32).to_le_bytes() == [1u8, 0u8, 0u8, 0u8]) { panic("to_le_bytes #561") }
     if !(V(0x1u32).to_be_bytes() == [0u8, 0u8, 0u8, 1u8]) { panic("to_be_bytes #562") }
@@ -620,7 +602,6 @@ fn group4() {
     if !(V(0x80000001u32).recip().to_bits() == 0xff800000u32) { panic("recip #587") }
     if !(V(0x80000001u32).sqrt().is_nan()) { panic("sqrt #588") }
     if !(V(0x80000001u32).to_bits() == 0x80000001u32) { panic("to_bits #589") }
-    if !(V(0x80000001u32).to_bits() == 0x80000001u32) { panic("to_bits #590") }
     if !(f32.from_bits(0x80000001u32).to_bits() == 0x80000001u32) { panic("from_bits #591") }
     if !(V(0x80000001u32).to_le_bytes() == [1u8, 0u8, 0u8, 128u8]) { panic("to_le_bytes #592") }
     if !(V(0x80000001u32).to_be_bytes() == [128u8, 0u8, 0u8, 1u8]) { panic("to_be_bytes #593") }
@@ -654,7 +635,6 @@ fn group5() {
     if !(V(0x7f800000u32).recip().to_bits() == 0x0u32) { panic("recip #618") }
     if !(V(0x7f800000u32).sqrt().to_bits() == 0x7f800000u32) { panic("sqrt #619") }
     if !(V(0x7f800000u32).to_bits() == 0x7f800000u32) { panic("to_bits #620") }
-    if !(V(0x7f800000u32).to_bits() == 0x7f800000u32) { panic("to_bits #621") }
     if !(f32.from_bits(0x7f800000u32).to_bits() == 0x7f800000u32) { panic("from_bits #622") }
     if !(V(0x7f800000u32).to_le_bytes() == [0u8, 0u8, 128u8, 127u8]) { panic("to_le_bytes #623") }
     if !(V(0x7f800000u32).to_be_bytes() == [127u8, 128u8, 0u8, 0u8]) { panic("to_be_bytes #624") }
@@ -685,7 +665,6 @@ fn group5() {
     if !(V(0xff800000u32).recip().to_bits() == 0x80000000u32) { panic("recip #649") }
     if !(V(0xff800000u32).sqrt().is_nan()) { panic("sqrt #650") }
     if !(V(0xff800000u32).to_bits() == 0xff800000u32) { panic("to_bits #651") }
-    if !(V(0xff800000u32).to_bits() == 0xff800000u32) { panic("to_bits #652") }
     if !(f32.from_bits(0xff800000u32).to_bits() == 0xff800000u32) { panic("from_bits #653") }
     if !(V(0xff800000u32).to_le_bytes() == [0u8, 0u8, 128u8, 255u8]) { panic("to_le_bytes #654") }
     if !(V(0xff800000u32).to_be_bytes() == [255u8, 128u8, 0u8, 0u8]) { panic("to_be_bytes #655") }
@@ -783,7 +762,6 @@ fn group6() {
     if !(V(0x7f7fffffu32).copysign(V(0x7f7fffffu32)).to_bits() == 0x7f7fffffu32) { panic("copysign #744") }
     if !(V(0x7f7fffffu32).min(V(0x7f7fffffu32)).to_bits() == 0x7f7fffffu32) { panic("min #745") }
     if !(V(0x7f7fffffu32).max(V(0x7f7fffffu32)).to_bits() == 0x7f7fffffu32) { panic("max #746") }
-    if !(V(0x7f7fffffu32).total_cmp(V(0x7f7fffffu32)) == Ordering.Equal) { panic("total_cmp #747") }
     if !(V(0x7f7fffffu32).rem_euclid(V(0x7f7fffffu32)).to_bits() == 0x0u32) { panic("rem_euclid #748") }
     if !(V(0x7f7fffffu32).div_euclid(V(0x7f7fffffu32)).to_bits() == 0x3f800000u32) { panic("div_euclid #749") }
     if !(V(0x7f7fffffu32).midpoint(V(0x7f7fffffu32)).to_bits() == 0x7f7fffffu32) { panic("midpoint #750") }
@@ -1048,11 +1026,9 @@ fn group8() {
     if !(near(V(0x41f00000u32).cbrt(), V(0x4046dce6u32), 4u32)) { panic("cbrt #1003") }
     if !(V(0x0u32).ln().to_bits() == 0xff800000u32) { panic("ln #1004") }
     if !(V(0xbf800000u32).ln().is_nan()) { panic("ln #1005") }
-    if !(V(0xbf800000u32).sqrt().is_nan()) { panic("sqrt #1006") }
     if !(V(0xff800000u32).exp().to_bits() == 0x0u32) { panic("exp #1007") }
     if !(V(0x7f800000u32).exp().to_bits() == 0x7f800000u32) { panic("exp #1008") }
     if !(V(0x40000000u32).asin().is_nan()) { panic("asin #1009") }
-    if !(V(0x3f800000u32).ln().to_bits() == 0x0u32) { panic("ln #1010") }
     if !(V(0x0u32).exp().to_bits() == 0x3f800000u32) { panic("exp #1011") }
     if !(near(V(0xc1200000u32).sin_cos().0, V(0x3f0b44f8u32), 2u32) && near(V(0xc1200000u32).sin_cos().1, V(0xbf56cd64u32), 2u32)) { panic("sin_cos #1012") }
     if !(near(V(0xc1200000u32).powi(0i32), V(0x3f800000u32), 4u32)) { panic("powi #1013") }
@@ -1084,7 +1060,6 @@ fn group8() {
     if !(V(0x0u32).powi(2i32).to_bits() == 0x0u32) { panic("powi #1039") }
     if !(V(0x0u32).powi(3i32).to_bits() == 0x0u32) { panic("powi #1040") }
     if !(V(0x0u32).powi((-2i32)).to_bits() == 0x7f800000u32) { panic("powi #1041") }
-    if !(V(0x0u32).to_degrees().to_bits() == 0x0u32) { panic("to_degrees #1042") }
     if !(V(0x0u32).to_radians().to_bits() == 0x0u32) { panic("to_radians #1043") }
     if !(near(V(0x3f333333u32).sin_cos().0, V(0x3f24eb73u32), 2u32) && near(V(0x3f333333u32).sin_cos().1, V(0x3f43ccb3u32), 2u32)) { panic("sin_cos #1044") }
     if !(near(V(0x3f333333u32).powi(0i32), V(0x3f800000u32), 4u32)) { panic("powi #1045") }

@@ -1,11 +1,4 @@
-// expect-error: type 11:39 unsatisfied interface bound 'Static'
-type Plain { a: i32; b: bool }
-type Raw { p: ptr<mut u8> }
-type Cellular { c: core.cell.Cell<i32> }
-type Blocked { a: i32 }
-extend Blocked not Transferable
-fn send<T: Transferable>(value: take T): Unit {}
-fn share<T: Shareable>(value: read T): Unit {}
+// expect-error: type 4:39 unsatisfied interface bound 'Static'
 fn owned<T: Transferable + Static>(value: take T): Unit {}
 fn main(): i32 {
   let k = 4; let f = fn(): i32 { k }; owned(f)

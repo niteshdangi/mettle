@@ -1,15 +1,9 @@
 # Mettle core semantics
 
-Status: selected working specification. This document develops the accepted
-Mettle design blueprint; it is not a safety proof or implemented-language claim.
-Examples use provisional syntax.
-
-`core-grammar.md` selects the first working grammar subset. Complete specification
-fixtures and their expected outcomes are in `../examples/core/`; the full corpus
-is not yet compiler-qualified. I02 validates scalar cases separately.
-Within that subset, `Copy` and `copy type` are the
-working capability and opt-in spellings. Other illustrative syntax here may
-remain outside that grammar.
+Status: selected semantics, refined by [semantic-rules.md](semantic-rules.md);
+not implementation evidence or a safety proof. [core-grammar.md](core-grammar.md)
+defines the initial subset; [language-grammar.md](language-grammar.md) extends it.
+Specification fixtures are in `../examples/core/`.
 
 ## 1. Settled architectural constraints
 
@@ -48,10 +42,6 @@ A shared handle is not bitwise duplicable: duplicating its bits cannot substitut
 for a correctly accounted additional owner. An aggregate does not acquire
 implicit retention simply because one of its fields is a shared handle.
 
-Rust precedent: `Copy` permits bitwise duplication and is not overloadable;
-non-`Copy` assignment moves. `Arc.clone` explicitly retains the same allocation.
-Mettle preserves these cost distinctions, with native ownership syntax.
-
 ## 3. Initial semantic examples
 
 For an owned, non-copy `String`:
@@ -73,26 +63,14 @@ inspect(second)        // Both owners remain usable.
 inspect(third)
 ```
 
-The `retain()` spelling is illustrative. No clone or retain may be inserted to
-make the rejected examples compile.
+No clone or retain may be inserted to make the rejected examples compile.
 
 ## 4. Accepted decision: ordinary parameter values
 
-Ordinary copyable parameters receive independent values. Ordinary non-copy
-resource parameters read-borrow. Explicit read borrowing remains possible for
-copyable types.
-
-Generic signatures select their default mode from declaration-known
-capabilities, as specified below, not from later specialization.
-
-Rust comparison: ordinary parameters receive values, copying `Copy` types and
-moving non-`Copy` types. Mettle preserves the ordinary copyable-value behavior
-but intentionally borrows non-copy resources by default.
-
-Performance rationale: value passing for small scalars avoids requiring
-indirection when it cannot be eliminated. Borrowing large copyable values can
-avoid byte-copying costs. Either may optimize to equivalent code; type
-copyability alone does not establish the fastest ABI.
+Parameter mode selection is defined in
+[semantic-rules.md §2](semantic-rules.md#2-value-formation-and-parameter-modes).
+Copyable values can avoid indirection; borrowing can avoid large byte copies.
+Neither establishes the fastest ABI.
 
 The rule mandates no physical register, stack slot, pointer, or memory copy.
 ABI lowering may optimize representation only while preserving source-visible
@@ -103,48 +81,16 @@ potential source/API compatibility break.
 
 ### 4.1. Accepted decision: generic parameter defaults
 
-Select the default mode using the capabilities established by the declaration:
-
-- Unconstrained `T` read-borrows, including when instantiated with a copyable type.
-- `T` known to satisfy the bitwise-duplication capability receives a value.
-- Explicit read borrowing overrides a known duplication capability.
-- Explicit `take T` requests ownership; it does not require duplication.
-
-`Copy` below is a provisional name for the bitwise-duplication capability.
-
-```text
-fn inspect<T>(x: T) { ... }                 // Read borrow.
-fn duplicate<T: Copy>(x: T): T { x }        // Owned value; duplication allowed.
-fn identity<T>(x: take T): T { x }          // Ownership-preserving transfer.
-fn invalid<T>(x: T): T { x }                // Reject: borrow cannot become owner.
-```
-
-`inspect<Int>` still borrows. In contrast, a concrete `x: Int` parameter receives
-a value. This distinction follows the public declaration, not implementation
-discovery. Constraints that imply the duplication capability have the same
-effect as declaring it directly. Adding such a constraint may change access
-semantics and is a potential compatibility break.
-
-Generic body checking uses this single declared contract. Monomorphization
-cannot grant new ownership permissions, insert implicit retains/clones, or
-change observable aliasing and value/snapshot behavior. Representation-level
-optimization remains allowed when it preserves that contract.
-
-Rust comparison: unconstrained by-value `T` receives ownership, while `&T`
-borrows; a `Copy` bound permits duplication. Mettle intentionally defaults
-unconstrained parameters to borrowing rather than receiving ownership.
-
-Performance: no allocation, retain, or runtime capability test is required by
-mode selection. Copy-constrained small values may avoid indirection; borrowing
-large values may avoid copying bytes. Specialization may eliminate either cost
-when semantics permit, but equal generated code is not guaranteed. Compare
-against Rust signatures requesting equivalent ownership operations.
+The operational owner is semantic-rules §2. Implied Copy constraints select the
+same value default as explicit Copy bounds; adding either can change access
+semantics and break compatibility. Mode selection requires no allocation,
+retain or runtime capability test. Specialization may optimize representation,
+not change observable aliasing or value/snapshot behavior.
 
 ## 5. Accepted decision: copyability eligibility
 
 Copyability permits bitwise duplication without custom code, retention, or
 allocation. Eligibility does not promise a small representation or cheap copying.
-The capability name and opt-in spelling remain provisional.
 
 - Primitive scalar values and `Unit` are copyable.
 - Arrays and tuples are copyable when every element type is copyable.
@@ -173,20 +119,7 @@ Changing a field so an opted-in type is no longer eligible is a compilation
 error, not a silent transition to move semantics. Removing the opt-in is an
 explicit potential API break, including its effect on parameter defaults.
 
-Rust comparison: named structs/enums explicitly implement or derive `Copy`;
-their fields must qualify, and a type implementing `Drop` cannot implement
-`Copy`. Mettle follows that control model using native declaration syntax.
-
-Performance: explicit versus automatic eligibility adds no intrinsic runtime
-work. Copying a large representation may be more expensive than borrowing it;
-a move may also copy bytes. Neither operation is universally faster. Explicit
-opt-in controls the semantic availability of duplication, not optimizer quality.
-
 ## 6. Routine rules selected under design delegation
-
-The following rules develop the accepted architecture under delegated authority.
-They are specification decisions, not separately user-approved milestones or
-validated compiler behavior. Remaining formalization is identified in section 13.
 
 ### 6.1. Explicit consumption
 
@@ -199,12 +132,6 @@ This preserves the blueprint's explicit consuming contract. Consumption does not
 erase bytes, invalidate earlier independent copies, or create a security boundary.
 Taking from a borrowed place is not permission to leave its owner's storage
 uninitialized; use a sound replacement/extraction operation instead.
-
-Rust comparison: ordinary by-value passing copies a Copy source and leaves it
-usable. Mettle does the same for ordinary copyable parameters, but explicit
-consumption additionally invalidates the source in static analysis.
-Performance: source invalidation requires no runtime clearing. It does not make
-integer transfers intrinsically faster than ordinary copies.
 
 ### 6.2. Bindings, places, and initialization
 
@@ -248,11 +175,7 @@ Provide replacement, optional extraction, consuming iteration, and owned
 decomposition operations with valid postconditions. Unique heap extraction needs
 its own deallocation contract; pinning can forbid extraction.
 
-Rust comparison: this follows Rust's mutable-place, move, definite-initialization,
-and destructor-constrained partial-move model.
-Performance: compile-time checks add no required borrow-tracking runtime.
-Conditional cleanup may need runtime initialization flags when control flow
-cannot eliminate them; do not promise zero overhead for every cleanup path.
+Conditional cleanup may require runtime initialization flags.
 
 ## 7. Loans and access validity
 
@@ -290,11 +213,8 @@ appending a vector's current length. Reservation cannot allow conflicting writes
 moves, or active exclusive loans. semantic-rules section 5 specifies activation
 and exceptional argument cleanup; it is not a license to waive alias checks.
 
-Rust comparison: Rust provides static borrowing, reborrowing, field-sensitive
-access, and selected two-phase borrows. Mettle preserves these capabilities.
-Performance: neither language requires a runtime borrow counter for statically
-validated loans. Checked slice splitting and runtime interior-mutability
-containers have their own visible costs.
+Statically validated loans require no runtime borrow counter; checked splitting
+and interior-mutability containers may have runtime costs.
 
 ## 8. Returned values and regions
 
@@ -346,8 +266,7 @@ It is not a keyword, a newly named product, `none`, a failure, or `Never`.
 An omitted result is not shorthand for `Unit`: it infers `Unit` only when the
 body's ordinary exits produce unit. Inference changes no runtime representation.
 `Never` is the predeclared uninhabited type, not a synonym for `Unit`; no value
-can be fabricated to return it. It replaces the former lowercase built-in
-spelling, without changing divergence or coercion rules.
+can be fabricated to return it.
 
 ### 8.2. Borrowed results
 
@@ -367,11 +286,9 @@ Mutable returned views preserve exclusivity and reborrow constraints. Separate
 results may carry independent regions instead of unnecessarily tying them all
 together.
 
-Rust comparison: explicit input/output lifetime relationships provide this
-capability. Mettle changes notation, not the obligation to prove validity.
-Performance: region relationships are static; they require no runtime lifetime
-object, allocation, or retention. Variance, higher-ranked substitution, and
-associated borrowed views need precise type-system rules before implementation.
+Regions require no runtime lifetime object, allocation or retention. Variance,
+higher-ranked substitution and associated views are refined in semantic-rules
+and specification-annex.
 
 ## 9. Evaluation order
 
@@ -416,12 +333,8 @@ receiver reservation rules. Monomorphization must not change that order.
 Do not casually lower compound assignment into ordinary assignment, duplicate
 destination evaluation, or introduce a copy requirement.
 
-Rust comparison: ordinary operands are left-to-right, assignment evaluates the
-RHS first, and compound assignment has the primitive/overloaded distinction.
-Named/default arguments are Mettle additions, not Rust-equivalent syntax.
-Performance: neither order is inherently faster across workloads. Preserving
-defined effects constrains optimization; pure independent work may still reorder.
-Defaults execute only when omitted, with no required runtime argument dictionary.
+Pure independent work may reorder when observable effects are preserved.
+Defaults execute only when omitted, without a runtime argument dictionary.
 
 ## 10. Destruction and failure edges
 
@@ -453,10 +366,8 @@ Outer cleanup may subsequently destroy that installed value if its scope exits.
 A second destructor panic during unwinding aborts. This is not transactional
 rollback and does not preserve the old value.
 
-The refined rule and its exceptional-CFG obligations are in `semantic-rules.md`.
-It supersedes the earlier draft's instruction to destroy the pending replacement
-on every unwind. Externally borrowed destinations and pinned replacement still
-require explicit validation; no formal soundness proof is claimed.
+The exceptional-CFG obligations are in `semantic-rules.md`. Externally borrowed
+destinations and pinned replacement require explicit validation.
 
 If RHS or destination evaluation fails before old-value destruction, unwind
 already-created operands according to their scopes. Do not promise rollback:
@@ -468,13 +379,8 @@ panic unwind aborts; abort and explicit forgetting do not promise cleanup.
 Async suspension is not scope exit; dropping suspended state destroys initialized
 state synchronously and cannot run arbitrary async cleanup.
 
-Rust comparison: initialized-only cleanup, reverse local order, field order, and
-separate unwind/abort behavior are precedents. Mettle's exceptional initialization
-and recovery rules must be independently specified rather than inferred from
-these broad similarities.
-Performance: static drop elaboration avoids a mandatory tracing collector or
-per-object cleanup registry. Unwind tables, landing paths, and conditional flags
-can still affect code size and execution; measure equivalent panic policies.
+Cleanup requires no tracing collector or per-object registry; unwind paths and
+conditional flags may affect code size and execution.
 
 ## 11. Temporary scope baseline
 
@@ -488,21 +394,13 @@ initializers where the language explicitly assigns the temporary to the binding'
 enclosing block. Do not infer arbitrary extensions by looking into callees.
 Declaring a named owner first is the general explicit alternative.
 
-`semantic-rules.md` now supplies the selected native scope table for conditions,
-short-circuit operands, guards/scrutinees, tails, optionals, capture and defaults.
-Validate the table against the extended grammar before declaring scope checking
-complete. These interactions are not settled by calling everything a statement
-temporary.
-
-Rust comparison: temporary scopes and selected syntactic lifetime extensions
-determine observable cleanup, including edition-specific rules.
-Performance: shorter retention may reduce live resources but changes observable
-destruction. Do not choose drop timing solely because it benchmarks better.
+`semantic-rules.md` supplies the scope table for conditions, short-circuit
+operands, guards/scrutinees, tails, optionals, capture and defaults. Drop timing
+is observable and cannot change solely for performance.
 
 ## 12. Semantic acceptance corpus
 
-These cases are specification expectations, not runnable tests or passing results.
-Native syntax and diagnostic identifiers will be fixed with the grammar.
+These are specification expectations, not passing-test receipts.
 
 | ID | Scenario | Required outcome |
 | --- | --- | --- |
@@ -540,9 +438,7 @@ Native syntax and diagnostic identifiers will be fixed with the grammar.
 
 ## 13. Specification refinements and implementation gate
 
-The routine semantic direction is now recorded. A compiler core is not ready to
-claim these guarantees until typing/CFG rules and the acceptance cases agree.
-The owning refinements are:
+Owning refinements:
 
 - `semantic-rules.md` supplies the typing/state framework, CFG joins, receiver
   activation, variance, selected temporary scopes and unwind restoration.
@@ -555,9 +451,8 @@ The owning refinements are:
 - library-surface.md and tooling-and-packages.md supply native operation/
   compiler-facility translation and development-tool contracts.
 
-Existing examples and the case matrix are not executable evidence. Implementation
-must validate these contracts across their interactions; no strong LLVM aliasing
-promise follows merely from a source-level read/mut spelling.
+Validate contract interactions before claiming enforcement; source-level
+read/mut spelling alone does not justify LLVM aliasing promises.
 
 ## Sources
 

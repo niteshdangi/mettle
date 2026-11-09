@@ -1790,22 +1790,18 @@ fn group14() {
     if !(parsed(capture num.from_str_radix<isize>("-8000000000000000", 16u32)) == present(isize.MIN)) { panic("from_str_radix #1728") }
     if !(parsed(capture num.from_str_radix<isize>("-1000000000000000000000000000000000000000000000000000000000000000", 2u32)) == present(isize.MIN)) { panic("from_str_radix #1729") }
     if !(parsed(capture num.from_str_radix<isize>("-1y2p0ij32e8e8", 36u32)) == present(isize.MIN)) { panic("from_str_radix #1730") }
-    if !(parsed(capture num.from_str_radix<isize>("-8000000000000000", 16u32)) == present(isize.MIN)) { panic("from_str_radix #1731") }
     if !(parsed(capture num.from_str_radix<isize>("7", 10u32)) == present(7isize)) { panic("from_str_radix #1732") }
     if !(parsed(capture num.from_str_radix<isize>("7", 16u32)) == present(7isize)) { panic("from_str_radix #1733") }
     if !(parsed(capture num.from_str_radix<isize>("111", 2u32)) == present(7isize)) { panic("from_str_radix #1734") }
     if !(parsed(capture num.from_str_radix<isize>("7", 36u32)) == present(7isize)) { panic("from_str_radix #1735") }
-    if !(parsed(capture num.from_str_radix<isize>("7", 16u32)) == present(7isize)) { panic("from_str_radix #1736") }
     if !(parsed(capture num.from_str_radix<isize>("0", 10u32)) == present(0isize)) { panic("from_str_radix #1737") }
     if !(parsed(capture num.from_str_radix<isize>("0", 16u32)) == present(0isize)) { panic("from_str_radix #1738") }
     if !(parsed(capture num.from_str_radix<isize>("0", 2u32)) == present(0isize)) { panic("from_str_radix #1739") }
     if !(parsed(capture num.from_str_radix<isize>("0", 36u32)) == present(0isize)) { panic("from_str_radix #1740") }
-    if !(parsed(capture num.from_str_radix<isize>("0", 16u32)) == present(0isize)) { panic("from_str_radix #1741") }
     if !(parsed(capture num.from_str_radix<isize>("-7", 10u32)) == present((-7isize))) { panic("from_str_radix #1742") }
     if !(parsed(capture num.from_str_radix<isize>("-7", 16u32)) == present((-7isize))) { panic("from_str_radix #1743") }
     if !(parsed(capture num.from_str_radix<isize>("-111", 2u32)) == present((-7isize))) { panic("from_str_radix #1744") }
     if !(parsed(capture num.from_str_radix<isize>("-7", 36u32)) == present((-7isize))) { panic("from_str_radix #1745") }
-    if !(parsed(capture num.from_str_radix<isize>("-7", 16u32)) == present((-7isize))) { panic("from_str_radix #1746") }
     if !(parsed(capture num.from_str_radix<isize>("+7", 10u32)) == present(7isize)) { panic("from_str_radix #1747") }
     if !(kind(capture num.from_str_radix<isize>("", 10u32)) == present(IntErrorKind.Empty)) { panic("from_str_radix #1748") }
     if !(kind(capture num.from_str_radix<isize>("-", 10u32)) == present(IntErrorKind.InvalidDigit)) { panic("from_str_radix #1749") }

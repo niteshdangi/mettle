@@ -1,7 +1,7 @@
 # Platform and feature contracts
 
-Status: selected planning profiles and design gates, not supported products.
-No target has been built or executed yet.
+Status: selected profiles and qualification gates. Support evidence is recorded
+in [implementation-plan.md](implementation-plan.md).
 
 ## 1. Target profile selection
 
@@ -23,8 +23,7 @@ capabilities need explicit diagnostics and profile applicability in the matrix.
 
 [Reference profiles](reference-profiles.md) select OS/SDK/API baselines, WASI
 runtime, CPU baselines, linker policy and a concrete freestanding board model.
-Installed artifact hashes and build/execution probes remain required before
-support or reproducibility claims. A selected version is not a successful probe.
+Support/reproducibility claims require installed hashes and build/execution probes.
 
 For each profile record endianness, pointer width, scalar/aggregate alignment,
 calling convention, register/stack passing, stack alignment, atomics available,
@@ -47,9 +46,7 @@ Specify who allocates/frees, callback lifetime, reentrancy, thread affinity,
 buffer length/capacity, and ownership on every failure path. Generated adapters
 must not imply safety beyond these conditions.
 
-Performance comparison: direct C-compatible calls can avoid an additional
-adapter, while ownership/type translation can require work. Measure each bridge
-against Rust performing the same translation; no universal zero-cost claim.
+Compare bridges with Rust performing the same ownership/type translation.
 
 ## 3. Generic/interface contract gate
 
@@ -62,10 +59,8 @@ Before implementing broad interfaces, define:
 - Sized/unsized results, generic methods, and opaque return identity.
 - Concrete versus erased async return storage and explicit allocation.
 
-Monomorphization is the default concrete path; explicit `any` is the runtime
-dispatch path. Neither promises universally faster execution: indirect calls may
-inhibit optimization, while excessive specialization may hurt code locality.
-Do not use runtime type tests merely to select ownership mode.
+Concrete calls monomorphize by default; explicit `any` uses runtime dispatch.
+Ownership mode selection uses no runtime type tests.
 
 ## 4. Outcomes and optionals contract gate
 
@@ -79,10 +74,6 @@ source contracts. Define local handling, propagation, capture, explicit mapping,
 generic callbacks, function pointers, and async construction versus execution.
 Do not introduce dynamic error erasure, stack traces, or allocations by default.
 
-Performance comparison: tagged results can match equivalent Rust Option/Result
-operations; exact layout and optimizer behavior need measurement. Replacing them
-with nullable pointers or exceptions is not automatically equivalent.
-
 ## 5. Memory and unsafe contract gate
 
 Write explicit validity, initialization, alignment, provenance, aliasing,
@@ -94,9 +85,7 @@ Safe wrappers must remain sound when ordinary safe code forgets a value.
 Use independent interpreter/model cases where feasible; sanitizer success alone
 does not establish the memory model.
 
-Performance comparison: more aggressive alias assumptions can enable optimization
-only when justified. Unsound metadata is a correctness defect, not a speed win.
-No mandatory runtime borrow checker substitutes for the accepted static model.
+No mandatory runtime borrow checker substitutes for the selected static model.
 
 ## 6. Async and concurrency contract gate
 
@@ -110,18 +99,12 @@ on another worker while the enclosing future is dropped, cancellation requested
 but unfinished, panic, forgotten handles, and parent storage destruction. Do not
 publish a safe API based solely on a destructor guard.
 
-The first async prototype may use directly awaited borrowing and owned spawned
-tasks while the borrowed-scope mechanism is established. That is sequencing, not
-a permanent capability exclusion or completed async release.
-
 Define Transferable/Shareable derivation, unsafe implementations, negative
 declarations, guard affinity, atomic orders, and local/shared reference counting.
 Do not silently upgrade local counting or lock every shared payload.
 
-Performance comparison: inline concrete futures avoid mandatory per-await
-allocation. Erased/spawned futures may allocate. Compare matched executors,
-workload concurrency, I/O implementations, cancellation, and storage policies;
-otherwise runtime differences cannot be attributed to the language.
+Concrete futures require no per-await allocation; erased/spawned futures may
+allocate. Compare matched executors, concurrency, I/O, cancellation and storage.
 
 ## 7. Library and tooling contract gate
 

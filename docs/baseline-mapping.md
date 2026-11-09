@@ -130,19 +130,13 @@ by the selected WASI interface, not all POSIX services.
 
 ## 6. Audit evidence and acceptance
 
-The catalog audit records public exposure, parent context, target predicates,
-runtime/const stability and association. Metadata extraction is discovery
-evidence. Absence of a rendered Experimental badge is not conclusive stability
-if the parent module/implementation is unstable.
-
 For implementation acceptance, each operation needs a checked native declaration
 and semantic evidence covering signatures, ownership, failure, allocation,
 threading, layout and unsafe requirements. Representative tests alone do not
 prove that every item was mapped.
 
-The verified archive inventory supplies source/context identities and recursive
-contract assignments. Conditional supporting protocols are specified separately
-in library-surface.md section 8; implementation members inherit their interface
-member's stability. See baseline/README.md for reproduction and exact scope.
-Native declaration typechecking, all-target cfg expansion and runtime differential
-evidence remain unperformed. The documentation gate does not certify them.
+The [baseline inventory](baseline/README.md) owns provenance, runtime/const
+stability and reproduction. Conditional supporting protocols are defined in
+[library-surface section 8](library-surface.md); implementation members inherit
+their interface member's stability. Metadata and documentation consistency
+alone do not establish native typechecking, target applicability or execution.

@@ -43,7 +43,7 @@ fn main(): i32 {
     if polls.load(core.sync.atomic.Ordering.SeqCst) != 1usize ||
        drops.load(core.sync.atomic.Ordering.SeqCst) != 1usize { return 2 }
     match mut saved {
-        present(waker) => { waker.wake_by_ref() },
+        present(waker) => { waker.wake_by_ref(); waker.wake_by_ref() },
         none => { return 3 }
     }
     saved = none

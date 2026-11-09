@@ -67,9 +67,6 @@ review obligations; CMake dependencies alone do not prove include isolation.
   CFG verification precedes dataflow; initialization/ownership analysis must
   not be folded into AST lowering or an IR printer.
 
-CMake component targets do not prove direct include isolation or semantic
-independence. Review source-level boundaries in the affected change.
-
 ## 3. C++ implementation style and ownership
 
 Use C++20 and the pinned Clang. `.clang-format` selects LLVM-based formatting,
@@ -167,40 +164,21 @@ memory-model proof or blanket TSan coverage of the compiler, libraries or
 uninstrumented emitted programs. Native thread implementation still requires
 its own race/failure validation when it lands.
 
-I06 requalification (ASan/UBSan, `build/macos-arm64/Asan`, all 26 CTest suites):
-the instrumented compiler found one real heap-use-after-free, in
-`checkInterfaceContracts`, which held a reference into the erased-type store
-across `substituteRegions` calls that intern new erased types; it now works on a
-copy. The existing scalar positive case
-`generic-iteration-through-family-bounded-protocols` is its regression under
-ASan. Library programs (`library.core/alloc/std`) link the instrumented runtime
-and passed. A throwaway token-mutation fuzzer over every scalar POSITIVE/NEGATIVE
-source (15,000 `mettle check` runs under ASan/UBSan: deletion, duplication,
-swap, cross-source insertion) found no crash, internal error or sanitizer
-report; the only slow inputs were the documented specialization-nesting limit
-diagnostic and a 430 KB valid program. Under heavy host load the fixed CTest
-timeouts of the sanitized scalar and machine suites can expire; those suites
-were rerun unmodified without the timeout and passed.
+Historical I06 ASan/UBSan requalification found and repaired an erased-type-store
+reference invalidated by interning in `checkInterfaceContracts`;
+`generic-iteration-through-family-bounded-protocols` guards that failure.
+The 26-suite run, 15,000 mutation runs and emitted threaded checks are historical
+macOS evidence, not current qualification. Retired `mutex_poison.mt` recovery
+checks now reside in `tests/std/i13-sync-mutex-rwlock.mt`.
 
-Threaded Mettle programs: historical evidence outside the repository showed
-that for `tests/std/{threads_basic,thread_scope,
-sync_primitives,mutex_poison,arc_races}.mt`, `mettle build --emit llvm`, the
-`sanitize_thread` attribute rewrite used by `tests/backend/memory.py`, and a
-TSan-compiled `runtime/*.cpp` produced executables that ran clean (no report,
-exit 0). `--sanitize thread` and an intentional-race emitted-program probe
-(`probe.sanitizers`) pass on macOS arm64; this is not a race-freedom proof.
-
-On the current macOS 27.0.1 host, the previous LLVM 21.1.8 ASan runtime stalled before
-`main`. A local startup sample shows reentrant initialization via dyld cache
-enumeration and malloc. The matching
+LLVM 21.1.8 ASan stalled before `main` on macOS 27.0.1 during dyld/malloc
+initialization. The matching
 [upstream fix](https://github.com/llvm/llvm-project/pull/182943) was
 [backported to LLVM 22](https://github.com/llvm/llvm-project/pull/188913).
 LLVM/Clang/compiler-rt are now pinned together to 22.1.3, which includes that
 backport; CMake/Ninja and language contracts are unchanged.
-At the compatibility gate, the instrumented compiler passed all nine then-current
-CTest suites, including probes that
-require an actual heap-buffer-overflow report from ASan and a signed-overflow
-report from UBSan, both with exit status 99.
+The historical compatibility gate passed nine suites, including actual ASan
+heap-overflow and UBSan signed-overflow detector reports with exit status 99.
 `abort_on_error=0` selects that exit behavior on Darwin; `halt_on_error=1` and
 nonrecovering instrumentation remain enabled. The 15-second startup guard and
 ordinary negative-test expectations remain unchanged.

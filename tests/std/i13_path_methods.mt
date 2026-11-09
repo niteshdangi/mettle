@@ -103,7 +103,6 @@ fn run(): i32 throws Error {
     if !parent_is(owned.as_path(), "/tmp") { return 33 }
     buffer.clear()
     if !buffer.is_empty() || !buffer.as_path().is_empty() { return 34 }
-    if buffer.capacity() < 0usize { return 35 }
     var sized = PathBuf.with_capacity(64usize)
     if sized.capacity() < 64usize { return 36 }
     sized.reserve(128usize)

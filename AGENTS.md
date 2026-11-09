@@ -1,5 +1,13 @@
 # Mettle contributor and agent rules
 
+## No type of bloat is allowed be it Tests / Docs / Code / Code Comments. If you know its a bloat and is not needed, cut that immediately
+
+## Whenever working on task if you know you dont need any checklist verification for that then absolutely dont do that. If you changes affects one system run targeted checks only. No Broad builds/ checks should be ran. If you know a thing is going to waste time, immediately stop it, and work in most efficient & fastest way without compromising quality of project.
+
+## Comments in internal code should never be written to explain some code, code should be self understandable, comments only allowed for non-obvious things, that too in max 1 line rarely 2 lines for complex non-obvious things.
+
+## If I asked something to be done, DONOT STOP AFTER ACKNOWLEDGING, OR DOING HALF WORK FROM ABOVE WITHOUT DOING FULL TASK WHAT I ASKED. If you know its not done then dont stop without completing that task properly. Below Rules are AI generated, if some rule wastes time for a task which can skip some rules below then skip it. 
+
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and the normative
 [code quality standard](docs/code-quality.md) before changing this repository.
 These rules apply to compiler, runtime, libraries, tools, tests and documentation.

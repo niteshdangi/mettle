@@ -1,7 +1,7 @@
 # Native library surface and signature translation
 
-Status: normative design. The frozen operation manifests enumerate contracts,
-not implementations or compiled native declarations.
+Status: normative operation translation; manifests are contracts, not
+implementation receipts. Evidence: [implementation-plan.md](implementation-plan.md).
 
 ## 1. What specifies an operation
 
@@ -266,10 +266,9 @@ external name alone does not give a native-layout value a stable C calling ABI.
 
 ### Initial assembly and architecture mechanisms
 
-The I06 implementation uses compiler-owned target facts for Linux x86-64
-(SSE/SSE2 baseline) and Darwin ARM64 (NEON baseline); it never selects host-native
-CPU tuning. This is an initial implementation inventory, not I13's complete
-per-operation/per-profile closure or a target-qualification receipt.
+The initial mechanisms use compiler-owned Linux x86-64 SSE/SSE2 and Darwin
+ARM64 NEON baselines, never host-native tuning. Full operation/profile
+obligations remain subject to §6.
 
 `asm!` and `core.arch.asm!` implement the annex's ordered inputs, early/late
 outputs, split/same-place inouts, typed full-width/generic integer constants,
@@ -450,11 +449,8 @@ Selected free functions and macros:
 
 ## 7. What this does not certify
 
-The manifests and rules finish the design's operation inventory and translation
-obligations. They do not prove a generated declaration typechecks, an unsafe
-implementation is sound, every cfg branch has been executed, or runtime parity.
-Those are mandatory implementation acceptance checks, not results produced by
-copying a reference URL or assigning a rule ID.
+Qualification requires checked declarations, unsafe invariants, applicable cfg
+execution and runtime comparison; manifest records alone establish none of these.
 
 ## 8. Conditional supporting protocols
 
@@ -498,7 +494,7 @@ process-attribute methods are not smuggled in as supporting-protocol exceptions.
 
 ## 9. Vocabulary and the `experience-1` prelude
 
-Status: implemented (decision D21). Canonical reexports or aliases preserve the
+Decision D21. Canonical reexports or aliases preserve the
 baseline identities that baseline-mapping.md requires; there is one collection
 implementation, not a branded and a compatibility copy. Compiler-recognized
 protocols follow resolved declaration identities, not a second set of
@@ -536,9 +532,8 @@ the collection type `Map`:
 `Map` names the collection; iterator adapters use the names in the table. The
 iterator module does not export a `Map` alias for an adapter.
 
-The accurate standard names `Iterator`, `Iterable`, `Copy`, `Clone`, `Eq`, `Ord`,
-`Hash`, `Text` and `String` are retained: their presence alone is not evidence
-of a copied design, and renaming them would only reduce accuracy.
+Retain `Iterator`, `Iterable`, `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Text`
+and `String`.
 
 **Library prelude `experience-1`, exact contents:**
 
@@ -561,9 +556,8 @@ avoid redundant adapters but never manufacture an owned String.
 
 ## 10. Formatting and output
 
-Status: accepted design (decisions D23-D24); implementation partial (see
-section 10.3). Core owns sink formatting; **std
-owns Writer's `write`/`write_line` methods and the byte-I/O adapter**;
+Decisions D23-D24. Core owns sink formatting; **std owns Writer's
+`write`/`write_line` methods and the byte-I/O adapter**;
 `write_all(bytes)` and `flush()` stay methods too.
 
 ### 10.1. `format` parameters and `core.fmt.Message`
@@ -589,26 +583,23 @@ interpolation's shape. Conceptually it views literal pieces and a caller-stack
 array of fields, each carrying a value-context pointer, a checked renderer
 function pointer and formatting options; unsized values use a stack-resident
 view descriptor with their metadata, never a truncated fat pointer. The layout
-is compiler-owned, not a public ABI promise, and not a dependency on any Rust
-layout (Rust documents `fmt::Arguments` only as an opaque precompiled
-abstraction). This is explicit borrowed erasure at the format boundary: indirect
+is compiler-owned, not a public or Rust ABI promise. This is explicit borrowed
+erasure at the format boundary: indirect
 renderer calls, no heap allocation, no Box, and no implicit retention or copy of
 payloads. A fixed borrowed sink adapter keeps the renderer ABI independent of
 the concrete writer. Logger and relay functions therefore have one body across
 message shapes; renderer thunks may be shared per value-type/format operation;
 ordinary unrelated generics may still specialize. Normal backend inlining stays
 possible: the guarantee is no recipe-shape instantiation of the logger, not
-identical machine code. Measure indirect-call cost, renderer/code-size growth
-and check cost in the F1 deliverable.
+identical machine code. Measure indirect calls, renderer/code-size growth and
+check cost under performance.md.
 
 Receiver, ordinary arguments and holes evaluate once in source order. Owned hole
 temporaries survive through the enclosing call; borrowed holes are loans only
 through that call and its cleanup; on failure each established temporary is
 destroyed exactly once. The description itself allocates nothing, while
 `alloc.fmt.string` explicitly allocates an owned String and user formatters keep
-their own documented costs. The first slice supports primitive/Text/String
-holes, brace escaping and source-span errors, and needs no first-class format
-lifetimes, new paths, constructors or concise closures.
+their own documented costs.
 
 Each formatted Writer method retains the first full `io.Error` from the sink and
 returns it unchanged, including raw OS information. A formatter failure with no
@@ -635,40 +626,18 @@ non-pipe errors still panic, while fallible Writer methods never request this
 termination and preserve returned error identity. Programs needing controlled
 cleanup use `try out.write_line(...)` and handle broken pipe themselves.
 
-The behavior is panic-on-ordinary-failure with a quiet broken pipe. The CLI's
-error-reporting branches keep an explicit `let _ = capture ...` so their
-exit-status policy does not become 101.
-
 ### 10.3. Implementation status
 
-F1 is partially implemented and verified on macOS arm64 (Release and Debug):
-`f"..{expr}.."` holes for integers, `bool`, `char`, `Text` and
-`String`; a non-f-string argument lifted to a one-hole message; two-level
-forwarding; the no-escape rules (no binding, return, capture, ordinary-parameter
-use, or function value); `Writer.write`/`write_line` and `print`/`eprint`,
-including both broken-pipe dispositions (`probe.broken-pipe`); float holes (`f32`/`f64`
-`Display`/`Debug` in `library/core/float.mt`: shortest round-trip digits by
-exact big-integer arithmetic, no libc, plain positional notation, `NaN`/`inf`,
-`-0`; `Spec.precision` is not applied to floats); holes for any sized type
-implementing `core.fmt.Display` through one blanket `Hole` implementation
-(the per-primitive and `String` implementations were removed; `Text` keeps its
-own because it is unsized); and a dedicated type error ("a value of this type
-cannot fill an f-string hole; it must be Text or implement core.fmt.Display")
-replacing "unsatisfied interface obligation" for a hole. Fixtures:
-`tests/source/run/fstring-float-and-display-holes.mt`,
-`tests/source/fail/fstring-hole-type-cannot-be-formatted.mt`.
-
-Not done: format specifiers, `Debug` holes, region tracking of hole loans
-(holes use raw pointers kept alive by the enclosing call), and the
-indirect-call, code-size and check-cost measurements.
+Formatting is profile-scoped and incomplete; current receipts and remaining F1
+work belong to implementation-plan. The current hole surface accepts Text or
+sized Display implementors. Current float formatting uses shortest round-trip
+digits, plain positional notation, `NaN`/`inf` and `-0`, without libc;
+`Spec.precision` does not yet apply to floats. Format specifiers, Debug holes,
+hole-loan region tracking and cost measurements remain open.
 
 ## 11. Lending lines and byte iteration
 
-Status: implemented (`BufferedReader.read_line_into`/`read_bytes_line_into`,
-`[u8].bytes()`; fixtures
-`tests/source/{run,fail}/read-line-into*`, `tests/std/cli_wordcount_lines.mt`).
-The unsafe `String.as_mut_vec` helper supports the line reader. Std buffered
-readers provide:
+Std buffered readers provide:
 
 ```text
 mut fn read_line_into(buf: mut String): (read Text from buf)? throws io.Error
@@ -693,10 +662,9 @@ generic-loop ownership from a later Copy instantiation.
 
 ## 12. Borrowed keys and path input
 
-Status: `core.borrow.KeyView<Q: unsized>` (identity and `String` to `Text`) is
-implemented on the hash/ordered maps and sets. `std.path.PathInput` for
-Path/PathBuf/OsStr/OsString is implemented for POSIX fs, env, process and
-`Writer.write_path`; Windows path input is not delivered.
+`core.borrow.KeyView<Q: unsized>` applies to hash/ordered maps and sets.
+`std.path.PathInput` covers fs, env, process and Writer path input; Windows
+delivery remains a target gate.
 
 **KeyView.** `KeyView<Q>` exposes `read Q from self` without allocation or
 retention. `Map<K,V>.get<Q>(key: read Q)` requires `K: KeyView<Q>` and
@@ -728,11 +696,8 @@ where required. This is display, not reversible serialization; native paths
 remain available separately, and no invalid Text or lossy String conversion is
 constructed.
 
-The current path/OS-string implementation is POSIX-profile code. The call site
-is platform-neutral, but Windows storage, sink dispatch and output expectations
-are target prerequisites, not established support. The POSIX byte-view statements
-in library-and-abi.md section 6 are reconciled with the native Windows path
-contract before that profile is delivered (implementation-plan section 8.7, R2).
+Windows storage, sink dispatch and output expectations are target prerequisites,
+not established support (implementation-plan §8.7, R2).
 
 ## 13. Hosted task scopes and networking
 
@@ -754,18 +719,15 @@ parent but cannot access its storage. Registration allocates pinned child
 storage and polling is proportional to the number of registered children; this
 is not a zero-cost or parallel-execution guarantee.
 
-Status: IPv6 addresses and sockets, timed TCP connection, and name resolution
-are implemented and verified on macOS arm64, for the existing POSIX hosted
-profile. Async networking and reactor integration are implemented but
-unverified (not yet built). The optional `std.task` executor adds `readable`,
+The POSIX hosted network surface's optional `std.task` executor adds `readable`,
 `writable`, and `sleep`; its per-executor reactor parks while no task is ready.
 These readiness futures require a `std.task` waker. `std.net` adds
 `AsyncTcpListener`/`AsyncTcpStream`, `async_tcp_listen`,
 `async_tcp_connect`/`AsyncTcpStream.connect`, and async `accept`, `read_some`,
 `write_some`, and `write_all`. These wrappers use nonblocking sockets and retry
 after advisory readiness. Dropping a pending I/O or timer future deregisters
-its reactor token. The macOS implementation uses kqueue; the POSIX fallback
-path and the public async API have not yet been built or run.
+its reactor token. The macOS reactor uses kqueue; profile qualification is
+recorded separately.
 
 The selected `std.net` names are `Ipv6Addr`, `IpAddr`, and
 `SocketAddr`; constructors are `ipv6`, `ipv6_localhost`, `ipv6_unspecified`,

@@ -1,9 +1,7 @@
 # Specification annex: selected rules
 
-Status: normative design selections under delegated authority, not implementation
-or proof results. This annex resolves the named design choices in earlier drafts.
-In case of conflict, explicit user decisions win; this annex then supersedes
-earlier statements that its covered subjects are unspecified.
+Status: normative refinements, not implementation/proof results. Explicit owner
+decisions take precedence; this annex supersedes earlier unspecified rules.
 
 ## 1. Numeric operations and constant evaluation
 
@@ -122,8 +120,7 @@ aggregate capture.
 Capture initialization follows first lexical occurrence of the captured place
 in the closure body after hygienic expansion. After projection merging, use the
 earliest occurrence of any merged child. Destroy captures in that resulting
-field order. This deterministic Mettle rule is not claimed to match Rust's
-unspecified captured-value destruction order.
+field order.
 
 Callable capability is inferred from body use: consuming a capture requires
 consume-on-call; mutating requires mutate-on-call; read-only repeated use permits
@@ -269,14 +266,9 @@ and target metadata; ordinary inline assembly cannot unexpectedly unwind.
 
 ## 6. Versioned baseline incorporation
 
-For detailed instruction/register tables, target C ABI facts and individual
-standard-library operations, the frozen baseline documents are normative input
-to the mapping policy in baseline-mapping.md. This avoids inventing different
-contracts merely to rename an existing primitive.
-
-Incorporation does not establish implementation, safety proof, binary
-compatibility or a measured runtime result. Contradictions with a native Mettle
-rule are reported as mapping conflicts and cannot be called complete parity.
+Frozen instruction/register tables, target C ABI facts and per-operation
+contracts are normative input under [baseline-mapping.md](baseline-mapping.md).
+Conflicts with native rules reopen mapping; incorporation is not qualification.
 
 ## 7. Coherence, erasure and opaque types
 
@@ -320,15 +312,10 @@ not admitted by that contract.
 
 ## 8. Rust comparison and runtime implications
 
-| Selection | Rust relationship | Runtime implication |
-| --- | --- | --- |
-| Numeric conversions | Preserve the baseline's explicit primitive cast behavior | No speed win follows from renaming casts; strict/relaxed float modes must match |
-| Higher-ranked solving | Region binders and declared constraints are static obligations | Solver work affects compilation; it does not require runtime region objects |
-| Capture/drop order | Mettle selects a deterministic capture order rather than relying on Rust's unspecified closure-field drop order | Can change observable destructor order; not intrinsically faster |
-| Macro phases/hygiene | Native token grammar rather than Rust token compatibility | Primarily compile-time cost; generated code still determines runtime |
-| Layout/assembly | Equivalent C and machine-operation capabilities | Unsafe optimizer promises can affect speed but are not valid if false |
-| Concrete/erased interfaces | Monomorphized and explicit dynamic paths remain separate | Indirection/allocation can cost; specialization can increase code size |
-| Borrowed task epochs | An explicit native containment mechanism, not ordinary detached Rust tasks | Registration and join costs; no universal zero-cost claim |
+Compare equivalent numeric modes, layout/assembly promises, dispatch and scoped
+task lifetimes under [performance.md](performance.md). Region solving requires
+no runtime region objects. Mettle's deterministic capture destruction order
+differs from Rust's unspecified order.
 
 Primary comparison material:
 - https://doc.rust-lang.org/1.99.1/reference/types/closure.html

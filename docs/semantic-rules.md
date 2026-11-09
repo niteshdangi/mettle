@@ -1,8 +1,7 @@
 # Core typing and operational rules
 
-Status: selected semantic rules for the described subset; not a formal safety
-proof. These rules refine `core-semantics.md`. Unsupported cases must remain
-visible rather than be inferred from examples.
+Status: selected operational refinement of [core-semantics.md](core-semantics.md),
+not a formal safety proof.
 
 ## 1. Judgments and state
 
@@ -13,8 +12,7 @@ Let Effects record typed failure, panic capability and suspension for the CFG.
 
 `Gamma; Delta; Loans |- expression : T => Delta', Loans'` means that evaluation
 is valid at that program point and produces T with the stated successor state.
-It is a judgment schema; it is not an implemented solver or mechanically checked
-proof. Exceptional successors carry separate states.
+Exceptional successors carry separate states.
 
 A place is a root plus field/tuple/index/dereference projections. Field-sensitive
 state is tracked only where object identity and disjointness are established.
@@ -42,10 +40,12 @@ so a maybe-initialized value is never blindly destroyed.
 - Exclusive borrow p: require a mutable initialized place and no conflicting
   live access; create the exclusive loan or an eligible reservation.
 
-Ordinary parameters with declaration-known Copy receive values. Ordinary
-unconstrained T read-borrows, including a later Copy instantiation. Constraints
-are elaborated at declaration checking, so generic specialization does not alter
-ownership permissions. An explicit mode overrides the default.
+Ordinary parameters with declaration-known Copy receive independent values;
+other ordinary parameters read-borrow. Unconstrained T therefore read-borrows,
+including a later Copy instantiation. Implied Copy constraints count as
+declaration-known Copy. Generic specialization does not alter ownership
+permissions. Explicit read overrides Copy; explicit take requires ownership,
+not Copy; explicit mut requires exclusive access.
 
 An owned result requires an owned value or a permitted duplication. Returning
 a read view as owned non-copy T is invalid. No automatic deep copy, retain,
@@ -238,10 +238,8 @@ assignment operator. Existing live aliases cannot access the destination during
 the exclusive operation. Pinned destinations require a compatible in-place
 replacement contract and may not be replaced through an ordinary movable path.
 
-This selected rule supersedes the earlier draft's ambiguous instruction to drop
-the replacement on every old-destructor unwind. It needs explicit exceptional
-CFG cases for externally borrowed storage, aggregate fields and catch scopes;
-it is not claimed to be formally proved.
+Require exceptional CFG cases for externally borrowed storage, aggregate fields
+and catch scopes.
 
 ## 9. Native temporary scope table
 
@@ -288,9 +286,7 @@ In addition to the core corpus, require:
 - A required constant's arithmetic cannot silently change a type's layout between
   development and release profiles.
 
-These are specification obligations, not passing tests. The specification annex
-and memory-and-concurrency document select the advanced contracts. Mechanization,
-sound lowering and adversarial execution remain separate technical work.
+These are specification obligations, not passing-test receipts.
 
 ## 11. Coercion sites and method selection
 
@@ -396,9 +392,7 @@ unreachable code.
 
 ## 13. Resolution, lookup, construction and inference
 
-Status: current semantic design (decisions D18-D22). Spelling is in
-language-grammar section 13; implementation status and remaining R1 work are in
-implementation-plan section 8.7.
+Spelling: language-grammar §13 (decisions D18-D22).
 
 ### 13.1. Qualified resolution, shadowing and interface selection
 
@@ -511,6 +505,3 @@ support first; add solver work only for a demonstrated unresolved case.
 - https://doc.rust-lang.org/1.99.1/reference/destructors.html
 - https://rustc-dev-guide.rust-lang.org/borrow_check/two_phase_borrows.html
 - https://doc.rust-lang.org/nomicon/subtyping.html
-
-Mettle rules above are design selections. Shared terminology does not make
-the Rust references a proof of the Mettle type system.

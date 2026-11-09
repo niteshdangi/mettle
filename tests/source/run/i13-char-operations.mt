@@ -35,9 +35,9 @@ fn escape_text(text: take Escape): string.String {
 }
 
 fn checks_construction(): i32 {
-    if from_u32(0x10ffffu32).is_none() { return 1 }
+    if !char_is(from_u32(0x10ffffu32), '\u{10ffff}') { return 1 }
     if from_u32(0x110000u32).is_present() { return 2 }
-    if from_u32(0xd7ffu32).is_none() { return 3 }
+    if !char_is(from_u32(0xd7ffu32), '\u{d7ff}') { return 3 }
     if from_u32(0xd800u32).is_present() { return 4 }
     if from_u32(0xdfffu32).is_present() { return 5 }
     if from_u32(0xe000u32).is_none() { return 6 }

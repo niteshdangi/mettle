@@ -1,10 +1,10 @@
 # Standard library, package and ABI contracts
 
-Status: architecture and native API contracts. The
-[baseline mapping policy](baseline-mapping.md) incorporates unchanged per-item
-contracts and specifies their translation. The source-backed inventory and its
-checks are documented in [baseline/README.md](baseline/README.md). Native
-declaration checking and executable parity remain implementation work.
+Status: selected library/ABI contracts. Per-operation rules and names are owned
+by [library-surface.md](library-surface.md), with unchanged contracts incorporated
+under [baseline-mapping.md](baseline-mapping.md). Profile-scoped implementation
+evidence is recorded in [implementation-plan.md](implementation-plan.md);
+the API contract is not a qualification receipt.
 
 ## 1. Library layers and naming
 
@@ -16,8 +16,8 @@ low-level memory facilities. It requires neither allocator nor OS.
 allocation-backed formatting and explicitly erased values. It depends on a
 provided allocator but does not require processes, files or an executor.
 
-`alloc.future.erase` (implemented, verified on macOS arm64) consumes a `Static` future
-and allocates a fixed-address payload using the global allocator. Its
+`alloc.future.erase` consumes a `Static` future and allocates a fixed-address
+payload using the global allocator. Its
 `Erased<T>` handle can move without moving the payload; polling dispatches
 through pinned exclusive access and dropping the handle destroys and frees the
 payload. Construction does not poll. This interface does not erase
@@ -29,9 +29,9 @@ underlying contracts.
 networking and processes. The official async runtime is separately selectable,
 not linked merely because a program imports core.
 
-The local `std.task` executor and its synchronous `scope` are implemented,
-verified on macOS arm64. `spawn` allocates a task, requires `Transferable + Static` future
-and output, and returns a non-transferable handle. Joining drives the executor;
+The local `std.task` executor's `spawn` allocates a task, requires a
+`Transferable + Static` future and output, and returns a non-transferable handle.
+Joining drives the executor;
 dropping or aborting the handle cancels, and poll/destructor panics become
 `JoinError.Panicked`. The executor retains registrations even if handles are
 forgotten and closes them on drop. A local scope permits `Within` borrows,
@@ -40,20 +40,11 @@ keep children running across an enclosing async future's polls. No fairness or
 bounded completion is promised. Completed task metadata is retained until the
 executor is destroyed. Calling `run` or `run_until_stalled` reentrantly from a
 task poll on that same executor panics rather than nesting a poll or blocking.
-This reentrancy guard is implemented but unverified.
 
-Working prelude: scalar names, Copy, Sized, iterator/call capabilities, Text,
-String when allocation is enabled, and native optional/outcome constructors.
-The loader implements the core subset (`Text`, iterator interfaces, comparison
-interfaces, `panic`, `assert`, `String`); it has lowest name priority and no
-opt-out. Do not silently reexport every platform API or choose a runtime from the prelude.
-The versioned `experience-1` prelude of library-surface.md section 9 specifies
-the current prelude, including `List`, `Map` and `Set` when allocation is enabled.
-
-Package and module paths use dotted qualification
-(language-grammar.md section 13). Names in this document are selected API
-contracts, not a promise of source compatibility with Rust; collection,
-interface and I/O names follow library-surface.md section 9.
+The exact versioned `experience-1` prelude, collection/interface/I/O names and
+canonical aliases are in library-surface §9; compiler-predeclared names remain
+separate. The prelude neither reexports platform APIs nor selects an executor.
+Package/module paths use dotted qualification (language-grammar §13).
 
 ## 2. Ownership and allocation operations
 
@@ -159,14 +150,11 @@ Fixed-precision Display/Debug rounds fractional digits ties to even, propagates
 carry and preserves the sign of zero; width, alignment and writer errors remain
 part of the formatter contract. Native float MIN/MAX preserve their type and
 finite bit pattern in static and runtime use. Runtime algebraic wrappers use
-strict operators. The 92 selected stable const-callable records have focused
-binary32/binary64 acceptance through the target software evaluator, not merely
-parsed `const fn` declarations. Bit and endian-byte conversions preserve exact
-NaN payloads and signed zero through const-function frames and static storage.
+strict operators. Bit and endian-byte conversions preserve exact NaN payloads
+and signed zero through const-function frames and static storage.
 Contextual literals round directly to the requested width; numeric casts and
 classification retain their declared result types. Non-const calls and invalid
-clamp bounds are rejected during required initialization. Broader floating
-runtime/supporting-trait operation closure remains separate.
+clamp bounds are rejected during required initialization.
 
 The selected lossless numeric `From` implementations admit bool and the
 selected narrow integer domains for f32/f64, plus f32-to-f64 widening. Boolean
@@ -192,8 +180,8 @@ implicit narrowing or changing source identifier/lexer rules.
 Vector growth factor is not a semantic guarantee. Ordered maps guarantee key
 ordering; hash-map iteration order is unspecified and hash policy is visible.
 Capacity/allocator choices must not change semantic ownership. Drain, entry,
-split, splice and cursor APIs need individual contracts before being counted as
-implemented equivalents.
+split, splice and cursor APIs retain their individual contracts under
+library-surface.
 
 ## 4. Optional, outcomes and errors
 
@@ -265,21 +253,15 @@ permits it. Process exit status, environment encoding, handle inheritance and
 thread-local destructors remain profile-specific obligations outside the hosted
 pthread profiles.
 
-The POSIX hosted `std.net` surface includes IPv4/IPv6 TCP and UDP, RFC 5952
-IPv6 text formatting, `getaddrinfo`-based `resolve`, and a poll-backed
-`TcpStream.connect_timeout`; these additions are implemented and verified on macOS
-arm64 (`tests/std/net_*`). IPv6 `SocketAddr` preserves port, flowinfo and scope id in socket
-operations; its bracketed text form includes the optional scope id but not
-flowinfo. DNS errors map to the portable I/O error kind while preserving the
-runtime's errno-style error value. Windows networking is not included.
+The POSIX `std.net` address, socket, resolution and timeout contracts are in
+library-surface §13. DNS errors retain the runtime's errno-style value alongside
+a portable I/O kind. No Windows networking profile is selected here.
 
 The native `std` modules are `io`, `ffi`, `path`, `fs`, `process`, `env`,
 `time`, `net` and `panic`. Raw OS errors are kept in `io.Error` unchanged next
 to a portable kind; operations that time out report kind `TimedOut` and keep the
-OS number. `OsStr`/`Path` are byte sequences without a Unicode requirement on the POSIX profiles; the
-native Windows path encoding and its display (`write_path`) are specified in
-library-surface.md section 12 and reconciled with this statement before the
-Windows profile is delivered. A
+OS number. `OsStr`/`Path` preserve POSIX bytes without a Unicode requirement; Windows native
+storage and `write_path` display follow library-surface §12. A
 byte string containing NUL is rejected with `InvalidInput` before reaching the OS.
 The hosted panic hook (`std.panic.set_hook`) receives the message before
 unwinding. An uncaught message panic exits with status 101; hosted
@@ -342,9 +324,8 @@ linker and sysroot before reproducible builds. The lock also records optional
 build flags, enabled targets and host tools. Keep platform SDK licensing and
 distribution constraints separate from the Mettle project license decision.
 
-Source identities are pinned in toolchain-pins.json and target designs in
-reference-profiles.md. Installed artifact hashes and target probe results remain
-absent. Do not fill them with invented hashes.
+Source identities are in toolchain-pins.json; target designs are in
+reference-profiles.md. Record actual installed hashes and probe results.
 
 ## 9. Package and compatibility policy
 
@@ -368,14 +349,9 @@ The exact project license remains an owner decision.
 
 ## 10. Comparison and performance
 
-Rust already provides layered core/alloc/std, ownership-bearing containers,
-zero-allocation-capable iteration/formatting and explicit unsafe ABI facilities.
-Mettle must preserve equivalent operations rather than claim them as inventions.
-
-For equivalent layout, allocator, dispatch and failure behavior, syntax changes
-establish no speed advantage. Avoid mandatory allocation in borrowed views,
-concrete iterators, ordinary error results or C-compatible calls. Measure the
-actual implementation against equivalent Rust paths.
+Borrowed views, concrete iterators, ordinary error results and C-compatible
+calls require no mandatory allocation. Compare equivalent layout, allocator,
+dispatch and failure behavior under [performance.md](performance.md).
 
 Primary baseline:
 - https://doc.rust-lang.org/1.99.1/core/

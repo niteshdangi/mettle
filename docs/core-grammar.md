@@ -1,28 +1,20 @@
 # Mettle core grammar, draft 0.1
 
-Status: selected working syntax under delegated design authority. I02 implements
-the scalar portion. I03 adds concrete product declarations/construction, field
-reads/writes, partial initialization and move/read/mut/take call checking.
-Stored views, destruction/unwind and the complete grammar below remain incomplete.
-This remains a specification input, not an executable standard.
-Ownership behavior is governed by `core-semantics.md`.
-`language-grammar.md` extends this subset with the selected full-language forms.
-Writing either document does not establish parser validation; implemented
-scalar checks are recorded separately under the compiler build evidence.
+Status: selected initial subset, extended by [language-grammar.md](language-grammar.md),
+with behavior defined in [core-semantics.md](core-semantics.md).
+Implementation evidence is recorded in [implementation-plan.md](implementation-plan.md).
 
 ## 1. Scope and conventions
 
-This draft defines single-file programs with values, functions, named product
-types, copyability, generic declarations, ownership modes, expressions, and basic
-control flow. The accompanying programs are complete within that subset.
+This subset defines single-file values, functions, named products, copyability,
+generics, ownership modes, expressions and basic control flow.
 
 The subset is an internal implementation milestone, not reduced V1 scope.
 Enums/matching, native optionals/outcomes, interfaces, modules, closures, region
 binder syntax, async, macros, FFI, and unsafe syntax remain required extensions.
 Do not accept ad hoc spellings for these merely because this draft omits them.
 
-Use `.mt` for the working example corpus. This selects a local file convention,
-not a reserved public extension or a claim about editor support.
+The example corpus uses `.mt`.
 
 EBNF conventions: `=` defines a rule; `|` is choice; `{ ... }` is repetition;
 `[ ... ]` is optional; quoted text is a literal token. Uppercase names denote
@@ -281,29 +273,14 @@ Semantic diagnostic identifiers are not frozen yet.
 
 ## 8. Rust comparison and performance
 
-Rust is the reference for declared Copy capability, static generic checking,
-ownership/cleanup, and ordinary expression evaluation. Mettle's selected syntax
-adds newline-separated statements, `var`, `copy type`, ownership-mode vocabulary,
-and labeled construction/calls. This is not Rust source compatibility.
-
-No inherent runtime winner follows from choosing these spellings. Labels resolve
-statically; generated constructors lower to field initialization; generic modes
-resolve from declarations. None requires a runtime name dictionary, type test,
-clone, or retain. Parser simplicity can influence tooling/compilation cost, but
-no compile-time speed result is claimed before implementation; the accepted
-compile-time requirement is in performance.md section 1.
-
-Changing a delimiter is not a performance optimization. Preserve equivalent
-ownership operations and evaluate the runtime gate on generated programs.
+Labels and generic modes resolve statically; constructors initialize fields.
+These require no runtime name dictionary, type test, clone or retain.
+Comparison gates are defined in [performance.md](performance.md).
 
 ## 9. Grammar completion gate
 
-Before declaring the core parser-ready, implement a grammar validation harness
-or parser and run every example, ambiguous-prefix case, separator case, and
-negative diagnostic through it. This document alone does not establish that the
-grammar is conflict-free or correctly implemented.
+Validate examples, ambiguous prefixes, separators and negative diagnostics
+through the parser before claiming grammar enforcement.
 
 The extended productions in language-grammar.md supply the other V1 constructs.
-Validate those productions as their parser support arrives rather than
-retroactively changing the meaning of accepted core programs without a recorded
-compatibility decision.
+Changes to accepted core meanings require a recorded compatibility decision.

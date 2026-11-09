@@ -1,12 +1,6 @@
-// expect-error: type 11:3 unsatisfied interface bound 'Transferable'
-type Plain { a: i32; b: bool }
+// expect-error: type 5:3 unsatisfied interface bound 'Transferable'
 type Raw { p: ptr<mut u8> }
-type Cellular { c: core.cell.Cell<i32> }
-type Blocked { a: i32 }
-extend Blocked not Transferable
 fn send<T: Transferable>(value: take T): Unit {}
-fn share<T: Shareable>(value: read T): Unit {}
-fn owned<T: Transferable + Static>(value: take T): Unit {}
 fn main(): i32 {
   send(Raw(core.ptr.null_mut<u8>()))
   0

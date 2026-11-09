@@ -1,6 +1,6 @@
 # Advanced ownership, async and metaprogramming contracts
 
-Status: selected architecture elaboration, not an implemented safe API.
+Status: selected architectural contracts.
 The [memory/concurrency contract](memory-and-concurrency.md) specifies borrowed
 task execution epochs; the [specification annex](specification-annex.md) completes
 macro, numeric, solver and attribute selections.
@@ -30,11 +30,8 @@ Shared ownership does not by itself imply pinning. Unique heap ownership does
 not by itself prohibit moving the payload out. An address-sensitive C callback
 must separately establish storage stability and callback cancellation/lifetime.
 
-Rust comparison: these are pinning capabilities, not a claim that Mettle invented
-stable addresses. Automatic safe self-referential construction is not added as
-a new language feature by this document.
-Performance: stable heap storage may allocate; inline pinned storage need not.
-The state/owner representation determines costs, not the presence of the keyword.
+Automatic safe self-referential construction is not selected. Stable heap
+storage may allocate; inline pinned storage need not.
 
 ## 2. Futures and executor protocol
 
@@ -110,14 +107,8 @@ Executors not implementing that contract still support owned tasks and directly
 awaited borrowing. This is a contract requirement, not a blanket ban on custom
 schedulers.
 
-The mechanism is selected; independent soundness review and implementation
-evidence remain required. No API is labeled safely implemented merely because
-its intended execution-epoch protocol is documented.
-
-Rust comparison: scoped threads and futures provide relevant capabilities, but
-ordinary future dropping is not proof of safe borrowed task containment.
-Performance: registration/join bookkeeping is a real cost. Compare against an
-equivalent scoped implementation, not detached work with weaker lifetime rules.
+Require soundness review and execution evidence; comparison uses equivalent
+scoped execution, including registration/join costs.
 
 ## 4. Constant evaluation and host execution
 
@@ -161,16 +152,10 @@ definition-site identity; deliberately captured names require an explicit
 capture operation. Record both invocation and definition spans for diagnostics.
 Expansion happens before ordinary name/type checking of emitted items.
 
-Declarative macros occupy a namespace distinct from values and types.
-`pub macro` makes a definition available to a qualified invocation or explicit
-import through its module path, including a resolved package path. Type, value
-and macro imports remain distinct, and one import can bind names in multiple
-namespaces. A `pub import` reexports an imported macro; a private import does
-not. Private definitions are visible only within their defining module and
-descendants; attempting an inaccessible qualified call or import is a
-name-phase diagnostic. Restricted `pub(path)` boundaries apply to macros and
-the other item kinds. These macro import, reexport and restricted-visibility
-changes are implemented, unverified (not yet built).
+Macro namespaces, imports, reexports and restricted visibility follow
+specification-annex §4 and language-grammar §2. Private macros are visible only
+in their defining module and descendants; inaccessible calls/imports diagnose
+in the name phase.
 
 Procedural extensions consume/produce versioned token streams and source spans.
 Derive and attribute extensions receive the relevant item tokens; they cannot
@@ -216,9 +201,5 @@ annex defines packed/align combinations and assembly operand/option contracts.
 
 ## 7. Remaining design versus implementation evidence
 
-These are advanced architectural contracts, not a claim of full formalization.
-The linked refinements select mechanisms; compiler/runtime tests, ABI probes
-and independent safety review remain additional evidence.
-
-No verification-first language, native GPU model, durable workflow semantics, or
-C++ migration-first scope has been accepted through these extensions.
+Require compiler/runtime tests, ABI probes and independent safety review.
+These extensions add no rejected identity proposal to scope.

@@ -22,17 +22,13 @@
 | D16 | Identity: Mettle must not read like a Rust copy. Its main points are (1) better source readability than Rust, (2) runtime speed matching or beating Rust (D10), (3) faster compilation than Rust, (4) less build-cache storage than Rust/Cargo. Accepted 2026-10-30. Judge the language on the exhibit programs of [implementation-plan.md §8.7](implementation-plan.md#87-experience-track-readability-compile-cost-and-storage), not on punctuation counts or resemblance to another language |
 | D17 | Compile time (clean, incremental, check-only) and retained build-cache bytes must beat the frozen Rust/Cargo baseline on the agreed representative workloads: corpus-based like the runtime gate, measured on a qualified runner, with RSS and binary size reported. The compiler-work budget (median retired-instruction ratio at most 1.05, successive growth at most 2.2x) is an additional regression guard. See [performance.md §5.1](performance.md#51-compile-time-and-build-storage-gate) and [§5.2](performance.md#52-compiler-work-regression-guard). Replaces the earlier "no accepted equality gate" for compile time |
 
-The shared-assignment rule supersedes the original v0.21 implicit-retain rule.
-The runtime gate supersedes its greater-than-10-percent investigation trigger.
-The finalized Word blueprint predates the detailed parameter and copyability
-decisions; these source documents carry those subsequent refinements.
+These decisions supersede v0.21 implicit retention, the 10-percent slowdown
+trigger and the Word blueprint's earlier parameter/copyability rules.
 
 ## Experience revision (accepted 2026-10-30)
 
-These decisions carry the D16 identity into the source language and library.
-They define the current syntax and vocabulary and retain the V1 capability,
-ownership, failure and runtime contracts. Implementation and verification
-status are tracked in [implementation-plan.md §8.7](implementation-plan.md#87-experience-track-readability-compile-cost-and-storage).
+D18-D29 retain V1 capability, ownership, failure and runtime contracts.
+Implementation/verification: [implementation-plan.md §8.7](implementation-plan.md#87-experience-track-readability-compile-cost-and-storage).
 
 | ID | Decision | Normative section |
 | --- | --- | --- |
@@ -64,13 +60,9 @@ status are tracked in [implementation-plan.md §8.7](implementation-plan.md#87-e
   the initial primitive/overloaded compound-assignment distinction.
 - `.mt`, `copy type`, `Copy`, and labeled `Type(...)` calls are working grammar
   conventions, not public compatibility promises.
-- Single-file scalar native execution on Linux x86-64 is the first source
-  compilation milestone (I02); products, ownership and generics follow without
-  shrinking V1.
-- C++20, CMake, Ninja, Clang, and fixture-driven tests are the initial toolchain
-  direction. toolchain-pins.json selects immutable source commits; I01 adds
-  archive locks, installed artifact identities and verified native macOS
-  Debug/Release builds with Linux target execution.
+- I02's first executable slice is Linux x86-64 scalar code, not reduced V1.
+- C++20/CMake/Ninja/Clang, existing fixture runners; toolchain-pins.json fixes
+  source IDs and I01 adds archive/installed-artifact locks.
 - specification-annex.md selects numeric conversions, higher-ranked solving,
   closure/pattern cleanup, macro phases, layouts, assembly and dispatch rules.
 - memory-and-concurrency.md selects validity/provenance/atomic contracts and
@@ -86,21 +78,14 @@ status are tracked in [implementation-plan.md §8.7](implementation-plan.md#87-e
 
 ## Implementation and product gates
 
-- Owner decision (2026-10-31): Linux and Windows execution is excluded from all
-  gates run on the macOS development machine; the owner runs those targets on a
-  separate machine. Milestone closures here state their macOS host/Darwin
-  target scope and do not claim Linux or Windows execution.
-- Owner decision (2026-11-08), superseding the gated-profile part of the entry
-  above: the macOS ARM64 development machine is no longer available. Remaining
-  work (I13-I14) gates on the `linux-x64` reference profile: a Linux x86-64
-  compiler host targeting x86_64-unknown-linux-gnu, run under WSL2 on the owner's
-  Windows machine or a maintained Linux environment. Owner amendment
-  (2026-11-09): remove the Ubuntu-release/glibc-version requirement; qualify the
-  installed host and record its actual versions. macOS ARM64 is no longer gated;
-  its I01-I12 receipts remain
-  evidence for that profile only and do not transfer. Windows x64
-  (MSVC/PE/CodeView) stays ungated: selecting it would be a scope expansion
-  requiring a separate owner decision. See implementation-plan section 8.0.
+- 2026-10-31: gates on the macOS machine excluded Linux/Windows execution;
+  those ran separately. Historical closures retain their recorded scope.
+- 2026-11-08: unavailable macOS machine replaced by `linux-x64` host/target for
+  remaining I13-I14 gates (WSL2 or maintained Linux). I01-I12 macOS evidence
+  does not transfer; LNX is required. 2026-11-09 amendment removes Ubuntu/glibc
+  version mandates; record the installed environment. Windows MSVC/PE/CodeView
+  remains ungated and needs owner approval for scope expansion. Full gates:
+  implementation-plan section 8.0.
 
 | Work | Blocks | Resolution |
 | --- | --- | --- |
@@ -122,34 +107,22 @@ status are tracked in [implementation-plan.md §8.7](implementation-plan.md#87-e
 
 ## Documentation and implementation boundary
 
-The specification pack covers core and advanced rules, composed grammar,
-examples, all 107 capability owners, the pinned library operation contracts,
-toolchain/profile selections, tooling and the measurement/release plan.
-[specification-status.md](specification-status.md) defines the completion gate
-and binds its evidence to the current validation result.
-
-The original documentation task closed before implementation was authorized.
-I01 implements the compiler foundation; I02 qualifies a scalar source compiler
-with native macOS and Linux target execution/diagnostic evidence. Closing the documentation
-gate does not prove a parser conflict-free, declarations coherent, the memory
-model sound, targets supported or runtime competitive. Nor does it choose the
-project license or revive a rejected language-identity proposal.
-
-No arbitrary calendar dates or staffing estimates are included. Estimate from
-measured prototype progress and actual team capacity. Do not create a public
-repository, install tools, choose a legal license, or reserve domains merely
-because a planning document lists them.
+[specification-status.md](specification-status.md) owns the closed documentation
+gate and evidence. Specification completion does not prove parser/coherence/
+memory-model correctness, target support or performance, choose a license or
+revive rejected identity proposals. Estimates require measured progress/capacity;
+plans do not authorize publication, installation, licensing or domain reservation.
 
 ## Proposed (not accepted): declarative macro surface
 
-Status: proposed for owner review; implemented unverified in I09 (L055).
+Owner acceptance remains proposed. L055 implementation/verification is tracked
+in implementation-plan section 9, separately from approval of this surface.
 
 - Definitions use the documented working form `macro name { (matcher) => { expansion }; }`;
   invocations are `name!(...)`, `name![...]` or `name!{...}`. Definitions are
   order independent and scoped to their inline module within a source file.
-  Qualified invocation of public definitions across file modules and package
-  dependencies is implemented but unverified; explicit macro imports and
-  reexports remain unimplemented.
+  Qualified public invocation, imports and reexports have the implementation
+  status recorded there.
 - Fragment kinds are `expr stmt pat ty path ident literal tt block item`
   (the spelling of the specification-annex follow-set table).
 - Hygiene: identifiers an expansion binds (`let`, `var`, `for`, closure

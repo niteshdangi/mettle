@@ -106,6 +106,11 @@ fn checks_mutex_poison(): i32 {
         success(g) => { if *g.get() != 2 { return 38 } },
         failure(_) => { return 39 }
     }
+    let try_recovered = capture shared_lock.get().try_lock()
+    match take try_recovered {
+        success(g) => { if *g.get() != 2 { return 38 } },
+        failure(_) => { return 39 }
+    }
     0
 }
 
