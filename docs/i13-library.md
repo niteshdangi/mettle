@@ -1,7 +1,7 @@
 # I13 library work package
 
 Repo: the owner's checkout (Windows `D:\mettle`; build under WSL2 or an
-Ubuntu 24.04 environment), main at `fd4f46a`. I01-I12 are
+Linux environment), main at `fd4f46a`. I01-I12 are
 closed for the macOS ARM64 host and Darwin ARM64 target only. From 2026-11-08
 the gated profile is `linux-x64` (implementation-plan section 8.0); Linux
 requalification LNX precedes further area closure. All non-library

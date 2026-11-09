@@ -10,8 +10,8 @@ result can count as reproducible evidence.
 
 | Profile | Reference environment | CPU / ABI / format | Initial panic policy |
 | --- | --- | --- | --- |
-| linux-x64 | Ubuntu 24.04 LTS userland; glibc 2.39 interface baseline | x86_64-unknown-linux-gnu; x86-64 baseline, no AVX requirement; SysV; ELF/DWARF | unwind and abort |
-| linux-arm64 | Ubuntu 24.04 LTS userland; glibc 2.39 interface baseline | aarch64-unknown-linux-gnu; ARMv8-A baseline; AAPCS64; ELF/DWARF | unwind and abort |
+| linux-x64 | Maintained Linux userland; record the installed distribution and libc identity per run | x86_64-unknown-linux-gnu; x86-64 baseline, no AVX requirement; SysV; ELF/DWARF | unwind and abort |
+| linux-arm64 | Maintained Linux userland; record the installed distribution and libc identity per run | aarch64-unknown-linux-gnu; ARMv8-A baseline; AAPCS64; ELF/DWARF | unwind and abort |
 | windows-x64 | Windows 11 24H2; Windows SDK 10.0.26100.0 | x86_64-pc-windows-msvc; Windows x64 C ABI; PE/COFF, CodeView/PDB | platform unwind and abort |
 | macos-arm64 | macOS 15 deployment baseline; Xcode 16.2 SDK bundle | aarch64-apple-darwin; Apple ARM64 C ABI; Mach-O/DWARF | platform unwind and abort |
 | android-arm64 | Android API 28 deployment baseline; NDK r27c | aarch64-linux-android; Bionic C ABI; ELF/DWARF | unwind and abort for compatible native boundaries |
@@ -22,6 +22,10 @@ result can count as reproducible evidence.
 These identify minimum requested interfaces, not an assurance that every later
 OS remains compatible. Production validation uses maintained installations with
 exact patch/build identities; a version-family label is not an immutable lock.
+Owner decision (2026-11-09): Linux qualification uses the installed host and
+records its actual distribution, libc and kernel. No Ubuntu release or glibc
+version is mandated, and no distro-specific compatibility claim follows from a
+passing run on another environment.
 QEMU tests are emulated-board evidence, not proof on physical hardware.
 
 Use the platform's C ABI specifications for argument classification and aggregate
@@ -64,7 +68,6 @@ large SDKs solely to make a planning document look tested.
 
 ## Sources
 
-- https://releases.ubuntu.com/24.04/
 - https://learn.microsoft.com/en-us/windows/apps/windows-sdk/downloads
 - https://developer.apple.com/documentation/xcode-release-notes/xcode-16_2-release-notes
 - https://github.com/android/ndk/releases/tag/r27c

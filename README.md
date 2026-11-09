@@ -77,7 +77,7 @@ target execution/reproducibility gates.
 ## Building the compiler
 
 From this directory, using Python 3.9+ and curl. The gated host is Linux
-x86-64 (Ubuntu 24.04, natively or under WSL2 on Windows); its requalification
+x86-64 (natively or under WSL2 on Windows); its requalification
 status is tracked as LNX in implementation-plan section 8.0. The earlier native
 macOS ARM64 build was validated but is no longer gated.
 macOS also needs the Command Line Tools SDK and zstd development library.
@@ -269,7 +269,9 @@ python3 tools/test_linux_target.py --source --libraries
 limactl --tty=false stop mettle-linux-x64
 ```
 
-The VM image is digest-pinned Ubuntu 24.04 AMD64. Guest packages are recorded in
+The optional VM image is digest-pinned in `tools/linux-vm.yaml`; it does not
+select the distribution or libc version required for host qualification.
+Guest packages are recorded in
 build evidence rather than claimed to be an immutable apt repository. Execution
 uses an actual Linux kernel under x86-64 emulation, not native x86 hardware or
 valid performance-comparison evidence.

@@ -93,9 +93,11 @@ status are tracked in [implementation-plan.md §8.7](implementation-plan.md#87-e
 - Owner decision (2026-11-08), superseding the gated-profile part of the entry
   above: the macOS ARM64 development machine is no longer available. Remaining
   work (I13-I14) gates on the `linux-x64` reference profile: a Linux x86-64
-  compiler host targeting x86_64-unknown-linux-gnu (Ubuntu 24.04, glibc 2.39),
-  run under WSL2 on the owner's Windows machine or an equivalent Ubuntu 24.04
-  environment. macOS ARM64 is no longer gated; its I01-I12 receipts remain
+  compiler host targeting x86_64-unknown-linux-gnu, run under WSL2 on the owner's
+  Windows machine or a maintained Linux environment. Owner amendment
+  (2026-11-09): remove the Ubuntu-release/glibc-version requirement; qualify the
+  installed host and record its actual versions. macOS ARM64 is no longer gated;
+  its I01-I12 receipts remain
   evidence for that profile only and do not transfer. Windows x64
   (MSVC/PE/CodeView) stays ungated: selecting it would be a scope expansion
   requiring a separate owner decision. See implementation-plan section 8.0.

@@ -269,9 +269,10 @@ delivered by its own gates.
 Owner decision (2026-11-08): with the macOS ARM64 machine unavailable, the
 remaining V1 milestones gate on `linux-x64` from reference-profiles.md: a
 Linux x86-64 compiler host producing x86_64-unknown-linux-gnu executables on
-Ubuntu 24.04 (glibc 2.39). The owner's working environment is WSL2 on Windows;
-an Ubuntu 24.04 container with the same pins is equivalent for build and
-functional evidence. Windows x64 (MSVC ABI, PE/COFF, CodeView/PDB) stays
+the installed maintained Linux userland. The owner's working environment is WSL2
+on Windows. Owner amendment (2026-11-09): no Ubuntu release or glibc version is
+mandated; each qualification run records the actual OS, libc, kernel and sysroot
+identities. Windows x64 (MSVC ABI, PE/COFF, CodeView/PDB) stays
 ungated; selecting it later is a scope expansion needing an owner decision.
 
 Consequences:
@@ -1133,7 +1134,7 @@ Source-review repair batch (2026-11-09; base `d8dbc580`, qualification pending):
 these are correctness repairs to existing obligations, not milestone closure.
 The owner authorized execution on 2026-11-09. Focused validation was completed
 in an isolated WSL Ubuntu 26.04 snapshot with the pinned LLVM 22.1.3 tools;
-this is not the specified Ubuntu 24.04 LNX qualification profile.
+these are focused receipts rather than complete LNX qualification.
 
 | Existing obligation | Starting state and owning source | Remaining repair and regression |
 | --- | --- | --- |
@@ -1182,12 +1183,12 @@ CTest cases pass. This removes the formatting blocker without claiming a full
 repository static-analysis/reproducibility run.
 Logs, tool markers and source hashes are retained untracked under
 `build/review-verification/` in the owner checkout; execution artifacts remain in
-`/home/nites/lanes/review-repairs-3ccd407/build/`. A complete Ubuntu 24.04 LNX
+`/home/nites/lanes/review-repairs-3ccd407/build/`. A complete Linux-host LNX
 matrix and retained-memory-bound measurements remain outstanding.
 
 Main qualification request (2026-11-09; executable-source baseline `458096e`):
 the owner requested the remaining full CTest, repository static-analysis,
-clean-build reproducibility, complete compiler ASan/UBSan and Ubuntu 24.04
+clean-build reproducibility, complete compiler ASan/UBSan and Linux-host
 checks. The repair implementation and acceptance fixtures above are complete;
 the three subsequent source edits are verified whitespace-only. This is the
 source-freeze gate for this verification batch, not I13 or LNX milestone closure.
@@ -1195,13 +1196,13 @@ source-freeze gate for this verification batch, not I13 or LNX milestone closure
 | Task | State before consolidated qualification | Acceptance / owning inputs |
 | --- | --- | --- |
 | Repair source, fixtures and owning documentation | Implemented; focused scope verified as above | `compiler`, `runtime`, `library`, `tests`, this ledger; no known repair implementation gap |
-| Ubuntu 24.04 environment and input identity | Preparing isolated rootfs; not yet qualified | Upstream SHA-256-verified Ubuntu base; pinned `tools/toolchain-artifacts.json`; record source/tool/sysroot hashes |
+| Linux host environment and input identity | Installed Ubuntu 26.04 WSL selected by owner; full qualification pending | Pinned `tools/toolchain-artifacts.json`; record actual OS/libc/source/tool/sysroot hashes |
 | Debug quality and full CTest | Pending frozen-input run | `tools/build.py --configuration Debug --quality`; no weakened assertions or timeouts |
 | Release full CTest and clean rebuild | Pending Debug gate | `tools/build.py --configuration Release`; compare artifact bytes |
 | Complete compiler/runtime ASan/UBSan | Pending ordinary qualification | `tools/build.py --configuration Debug --sanitizers`; startup/detector probes and full CTest |
 | Failure recovery and final record | Pending results | Reopen affected source/freeze tasks for any repair; preserve failed receipts; rerun only invalidated checks and commit fixes |
 
-No earlier Ubuntu 26.04 receipt substitutes for these gates. Known gaps in the
+Earlier focused receipts do not substitute for these full gates. Known gaps in the
 larger language/capability inventory remain outside a claim that these tests pass.
 The initial Ubuntu 24.04 preflight stopped before compilation because WSL does
 not expose `/sys/class/dmi/id/sys_vendor`. Reopened the tool/freeze task:
@@ -1209,6 +1210,11 @@ not expose `/sys/class/dmi/id/sys_vendor`. Reopened the tool/freeze task:
 and explicitly withholds hardware/performance qualification. The failed console
 and foundation receipts are preserved; no compile/test result was invalidated.
 Refreeze the updated tool and ledger before restarting the consolidated run.
+The owner then removed the hardcoded distribution/libc requirement. The
+Ubuntu 24.04 run was interrupted during static analysis at the owner's request;
+its completed build and partial analysis receipts remain historical evidence.
+Continue the consolidated qualification on the installed Ubuntu 26.04 WSL,
+recording actual environment identities rather than imposing an OS version.
 
 **L054 status (const evaluation): implemented and verified on macOS ARM64.** The `compiler/consteval` evaluator and `const fn` are wired into constants, array lengths, constant generic arguments and statics. Evidence: `tests/source/{run,fail}/const-eval-*.mt` (Debug and Release, including the recursion-depth limit, which evaluates on a dedicated large stack) and `compiler.consteval-target` (`tests/consteval/target_width.cpp`); the driver admits no 32-bit target, so target-width evidence is that checker-level unit test. Gap addressed, verified on macOS arm64: a mutable unsuffixed integer local in a `const fn` (`var i = 0`) stays open instead of being fixed to `i32`; assignment of a typed value or a use against a scalar expectation fixes its type (`tests/source/run/const-eval-open-integer-local.mt`). An immutable `let` or a copy into another binding still defaults to `i32`.
 
