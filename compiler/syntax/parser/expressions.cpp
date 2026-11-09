@@ -235,9 +235,9 @@ std::unique_ptr<Node> Parser::primary() {
     result = awaitExpression(NodeOwner(primary()), token.span);
   } else if (is("heap") || is("shared") || is("weak") ||
              (is("local") && peek(1).text == "shared") ||
-             (is("pinned") && (peek(1).text == "heap" ||
-                               peek(1).text == "shared" ||
-                               peek(1).text == "local"))) {
+             (is("pinned") &&
+              (peek(1).text == "heap" || peek(1).text == "shared" ||
+               peek(1).text == "local"))) {
     const bool pinned = take("pinned");
     const auto operation = tokens[position++];
     std::string constructor;

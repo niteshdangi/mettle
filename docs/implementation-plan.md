@@ -1173,8 +1173,13 @@ the repaired libraries and freshly built runtimes: compiler changes through
 checked with the new Debug compiler. No clean-build reproducibility or complete
 compiler-sanitizer qualification is claimed.
 
-Full quality remains blocked by existing formatting violations in untouched
-`analysis/origins.cpp`, `lowering/opaque.cpp` and `syntax/parser/expressions.cpp`.
+The owner subsequently authorized formatting `analysis/origins.cpp`,
+`lowering/opaque.cpp` and `syntax/parser/expressions.cpp`. Pinned clang-format
+22.1.3 now passes across all compiler/runtime/test C++ files. The three source
+edits contain whitespace only; the incremental Debug build and the three
+`compiler.boundaries`, `compiler.consteval-target`, `compiler.modules-memory`
+CTest cases pass. This removes the formatting blocker without claiming a full
+repository static-analysis/reproducibility run.
 Logs, tool markers and source hashes are retained untracked under
 `build/review-verification/` in the owner checkout; execution artifacts remain in
 `/home/nites/lanes/review-repairs-3ccd407/build/`. A complete Ubuntu 24.04 LNX

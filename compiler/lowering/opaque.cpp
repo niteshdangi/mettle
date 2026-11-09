@@ -288,26 +288,31 @@ void erasedAdapters(ir::Program &program, TypeStore &types,
       for (std::size_t p = 0; p < declaration.parameters; ++p) {
         auto mode = declaration.locals[p].mode;
         auto type = solver.normalize(declaration.locals[p].type, bindings, {});
-        adapter.locals.push_back({"argument", type, false, {}, mode, 0,
+        adapter.locals.push_back({"argument",
+                                  type,
+                                  false,
+                                  {},
+                                  mode,
+                                  0,
                                   static_cast<std::uint32_t>(p)});
         auto access = mode == ParameterMode::Read  ? ir::Access::Read
                       : mode == ParameterMode::Mut ? ir::Access::Mut
                                                    : ir::Access::Owned;
-        operands.push_back(emit({access == ir::Access::Read  ? ir::Op::BorrowRead
-                                 : access == ir::Access::Mut ? ir::Op::BorrowMut
-                                 : mode == ParameterMode::Take ||
-                                         !types.isCopy(type)
-                                     ? ir::Op::Move
-                                     : ir::Op::Load,
-                                 {},
-                                 {},
-                                 {},
-                                 "",
-                                 {static_cast<int>(p), {}},
-                                 -1,
-                                 0,
-                                 {}},
-                                type, access));
+        operands.push_back(
+            emit({access == ir::Access::Read  ? ir::Op::BorrowRead
+                  : access == ir::Access::Mut ? ir::Op::BorrowMut
+                  : mode == ParameterMode::Take || !types.isCopy(type)
+                      ? ir::Op::Move
+                      : ir::Op::Load,
+                  {},
+                  {},
+                  {},
+                  "",
+                  {static_cast<int>(p), {}},
+                  -1,
+                  0,
+                  {}},
+                 type, access));
       }
       const auto signature = descriptor.methodTypes[slot];
       ir::Instruction witness{ir::Op::WitnessMethod,
@@ -321,9 +326,15 @@ void erasedAdapters(ir::Program &program, TypeStore &types,
                               {}};
       witness.interfaceType = ownerType;
       witness.interfaceMethod = static_cast<int>(method);
-      ir::Instruction call{
-          ir::Op::IndirectCall, {}, std::move(operands), {}, "", {-1, {}}, -1,
-          0,                    {}};
+      ir::Instruction call{ir::Op::IndirectCall,
+                           {},
+                           std::move(operands),
+                           {},
+                           "",
+                           {-1, {}},
+                           -1,
+                           0,
+                           {}};
       call.target = emit(std::move(witness), signature);
       call.indirectType = signature;
       call.erasedDispatch = true;
@@ -348,8 +359,11 @@ void erasedAdapters(ir::Program &program, TypeStore &types,
                                    ? ir::Terminator{ir::Exit::Unreachable}
                                    : ir::Terminator{ir::Exit::Return, result};
       program.opaqueAdapters.push_back(
-          {erased, ownerType, static_cast<int>(method),
-           static_cast<int>(program.functions.size()), {}});
+          {erased,
+           ownerType,
+           static_cast<int>(method),
+           static_cast<int>(program.functions.size()),
+           {}});
       program.functions.push_back(std::move(adapter));
     }
   }
