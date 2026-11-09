@@ -1,5 +1,137 @@
 // Checked construction of Unicode scalar values.
-import super.iter.Iterator
+import super.clone.Clone
+import super.cmp.{Eq, PartialEq}
+import super.convert.{From, TryFrom}
+import super.error.{Error as CoreError}
+import super.fmt.{Debug, Display, Error, Formatter, fmt_radix}
+import super.iter.{Iterator, OwnedIterable}
+import super.text.{FromStr, Text}
+
+// The failure of a `char` conversion from an integer that is not a scalar value.
+pub copy type CharTryFromError { }
+extend CharTryFromError implements PartialEq {
+    fn eq(other: read CharTryFromError): bool { true }
+}
+extend CharTryFromError implements Eq {}
+extend CharTryFromError implements Clone {
+    fn clone(): CharTryFromError { self }
+}
+extend CharTryFromError implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        try f.write_str("CharTryFromError(())")
+    }
+}
+extend CharTryFromError implements Display {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        try f.write_str("converted integer out of range for `char`")
+    }
+}
+extend CharTryFromError implements CoreError {}
+
+// The failure of a conversion from a `char` whose code point does not fit the target.
+pub copy type TryFromCharError { }
+extend TryFromCharError implements PartialEq {
+    fn eq(other: read TryFromCharError): bool { true }
+}
+extend TryFromCharError implements Eq {}
+extend TryFromCharError implements Clone {
+    fn clone(): TryFromCharError { self }
+}
+extend TryFromCharError implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        try f.write_str("TryFromCharError(())")
+    }
+}
+extend TryFromCharError implements Display {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        try f.write_str("unicode code point out of range")
+    }
+}
+extend TryFromCharError implements CoreError {}
+
+pub copy enum CharErrorKind { EmptyString, TooManyChars }
+pub copy type ParseCharError { pub kind: CharErrorKind }
+extend ParseCharError implements PartialEq {
+    fn eq(other: read ParseCharError): bool { (self.kind as u8) == (other.kind as u8) }
+}
+extend ParseCharError implements Eq {}
+extend ParseCharError implements Clone {
+    fn clone(): ParseCharError { self }
+}
+extend ParseCharError implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        match self.kind {
+            CharErrorKind.EmptyString => try f.write_str("ParseCharError { kind: EmptyString }"),
+            CharErrorKind.TooManyChars => try f.write_str("ParseCharError { kind: TooManyChars }")
+        }
+    }
+}
+extend ParseCharError implements Display {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        match self.kind {
+            CharErrorKind.EmptyString => try f.write_str("cannot parse char from empty string"),
+            CharErrorKind.TooManyChars => try f.write_str("too many characters in string")
+        }
+    }
+}
+extend ParseCharError implements CoreError {}
+
+extend char implements FromStr {
+    type Error = ParseCharError
+    static fn from_str(input: read Text): char throws ParseCharError {
+        var scalars = input.chars()
+        let first = match scalars.next() {
+            present(value) => value,
+            none => { throw ParseCharError(CharErrorKind.EmptyString) }
+        }
+        if scalars.next().is_present() { throw ParseCharError(CharErrorKind.TooManyChars) }
+        first
+    }
+}
+
+extend char implements TryFrom<u32> {
+    type Error = CharTryFromError
+    static fn try_from(value: take u32): (char throws CharTryFromError) {
+        match from_u32(value) {
+            present(scalar) => success(scalar),
+            none => failure(CharTryFromError())
+        }
+    }
+}
+
+extend char implements From<u8> {
+    static fn from(value: take u8): char {
+        unsafe { from_u32_unchecked(value as u32) }
+    }
+}
+
+extend u32 implements From<char> {
+    static fn from(value: take char): u32 { value as u32 }
+}
+extend u64 implements From<char> {
+    static fn from(value: take char): u64 { value as u64 }
+}
+extend u128 implements From<char> {
+    static fn from(value: take char): u128 { value as u128 }
+}
+
+macro char_try_from {
+    ($($target:ident),*) => {
+        $(
+            extend $target implements TryFrom<char> {
+                type Error = TryFromCharError
+                static fn try_from(value: take char): ($target throws TryFromCharError) {
+                    match (value as u32).checked_cast<$target>() {
+                        present(converted) => success(converted),
+                        none => failure(TryFromCharError())
+                    }
+                }
+            }
+        )*
+    };
+}
+
+char_try_from!(u8, u16, usize)
 
 pub fn from_u32(value: u32): char? {
     if value > 0x10ffffu32 || (value >= 0xd800u32 && value <= 0xdfffu32) {
@@ -389,6 +521,69 @@ fn case_mapping(source: char, mapping: [u32; 4]): CaseMapping {
         match from_u32(mapping[3usize]) { present(c) => c, none => source }
     } else { source }
     CaseMapping([first, second, third], mapping[0usize] as usize, 0usize)
+}
+
+// The failure of decoding an unpaired UTF-16 surrogate.
+pub copy type DecodeUtf16Error { code: u16 }
+extend DecodeUtf16Error implements PartialEq {
+    fn eq(other: read DecodeUtf16Error): bool { self.code == other.code }
+}
+extend DecodeUtf16Error implements Eq {}
+extend DecodeUtf16Error implements Clone {
+    fn clone(): DecodeUtf16Error { self }
+}
+extend DecodeUtf16Error implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        var debug = try f.debug_struct("DecodeUtf16Error")
+        try debug.field("code", read self.code)
+        try debug.finish()
+    }
+}
+extend DecodeUtf16Error implements Display {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        try f.write_str("unpaired surrogate found: ")
+        try fmt_radix(mut f, self.code as u64, false, 16u64, false, "")
+    }
+}
+extend DecodeUtf16Error implements CoreError {}
+
+extend DecodeUtf16Error {
+    pub fn unpaired_surrogate(): u16 { self.code }
+}
+
+pub type DecodeUtf16<I> { iter: I; buffered: u16? }
+
+pub fn decode_utf16<I: OwnedIterable<Item = u16>>(items: take I): DecodeUtf16<I.(OwnedIterable).IntoIter> {
+    DecodeUtf16(I.(OwnedIterable).into_iter(items), none)
+}
+
+extend<I: Iterator<Item = u16>> DecodeUtf16<I> implements Iterator {
+    type Item = (char throws DecodeUtf16Error)
+    mut fn next(): (char throws DecodeUtf16Error)? {
+        let pending = self.buffered
+        self.buffered = none
+        let unit = match pending {
+            present(value) => value,
+            none => match self.iter.next() {
+                present(value) => value,
+                none => { return none }
+            }
+        }
+        if unit < 0xd800u16 || unit > 0xdfffu16 {
+            return present(success(unsafe { from_u32_unchecked(unit as u32) }))
+        }
+        if unit >= 0xdc00u16 { return present(failure(DecodeUtf16Error(unit))) }
+        let second = match self.iter.next() {
+            present(value) => value,
+            none => { return present(failure(DecodeUtf16Error(unit))) }
+        }
+        if second < 0xdc00u16 || second > 0xdfffu16 {
+            self.buffered = present(second)
+            return present(failure(DecodeUtf16Error(unit)))
+        }
+        let code = ((((unit - 0xd800u16) as u32) << 10u32) | ((second - 0xdc00u16) as u32)) + 0x10000u32
+        present(success(unsafe { from_u32_unchecked(code) }))
+    }
 }
 
 pub type CaseMapping { values: [char; 3]; length: usize; position: usize }

@@ -56,6 +56,11 @@ pub interface Hash {
 pub interface BuildHasher {
     type Hasher: Hasher;
     fn build_hasher(): Self.Hasher;
+    fn hash_one<T: Hash + unsized>(value: read T): u64 {
+        var state = self.build_hasher()
+        value.hash(mut state)
+        state.finish()
+    }
 }
 
 // Hashes one value with the default keyed SipHash-1-3 (zero key).
@@ -208,6 +213,12 @@ extend<T: Hash> [T] implements Hash {
             self[i].hash(mut state)
             i += 1usize
         }
+    }
+}
+extend<T: Hash, const N: usize> [T; N] implements Hash {
+    fn hash<H: Hasher>(state: mut H): Unit {
+        let items: read [T] = read self
+        items.hash(mut state)
     }
 }
 // The final element may be unsized; the prefix list is comma-terminated so

@@ -61,7 +61,7 @@ pub type Formatter<region r> { sink: mut any Write from r; options: Spec; indent
 pub fn formatter<W: Write>(sink: mut W, options: Spec): Formatter { Formatter(mut sink, options, 0usize, false) }
 
 pub type DebugStruct<region s, region b> { f: mut Formatter<region s> from b; first: bool }
-pub type DebugTuple<region s, region b> { f: mut Formatter<region s> from b; first: bool; count: usize }
+pub type DebugTuple<region s, region b> { f: mut Formatter<region s> from b; first: bool; count: usize; unnamed: bool }
 pub type DebugList<region s, region b> { f: mut Formatter<region s> from b; first: bool }
 pub type DebugSet<region s, region b> { f: mut Formatter<region s> from b; first: bool }
 pub type DebugMap<region s, region b> {
@@ -92,7 +92,7 @@ extend<region r> Formatter<region r> {
     ): DebugTuple<region r, region b> throws Error {
         try self.write_str(name)
         try self.debug_open("(")
-        DebugTuple(mut self, true, 0usize)
+        DebugTuple(mut self, true, 0usize, name.is_empty())
     }
     pub fn debug_list<region b>(
         receiver self: mut Formatter<region r> from b
@@ -267,7 +267,7 @@ extend<region s, region b> DebugTuple<region s, region b> {
         mut self
     }
     pub take fn finish(): Unit throws Error {
-        if self.count == 1usize && !self.f.alternate() { try self.f.write_str(",") }
+        if self.unnamed && self.count == 1usize && !self.f.alternate() { try self.f.write_str(",") }
         try self.f.debug_close(")", self.first)
     }
 }
@@ -415,6 +415,10 @@ pub unsafe fn literal<region r>(tail: read Text from r): Message<region r> {
 }
 
 extend<region r> Message<region r> {
+    // The whole message as text when it has no fields (a literal-only format).
+    pub fn as_str(): (read Text from r)? {
+        if self.fields.len() == 0usize { present(unsafe { piece_text(self.tail) }) } else { none }
+    }
     // Renders pieces and fields in order into `sink`, stopping at the first failure.
     pub fn write_to<W: Write>(sink: mut W): Unit throws Error {
         var out = Sink(core.ptr.from_mut(mut sink).cast<u8>(), sink_write<W>)

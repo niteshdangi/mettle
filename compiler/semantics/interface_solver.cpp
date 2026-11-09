@@ -479,9 +479,14 @@ bool Solver::proveConcurrency(Property property, Type subject, Span span) {
     return finish(sub(property, types.slice(subject).element));
   if (types.isView(subject)) {
     const auto &view = types.view(subject);
-    if (isStatic)
-      return finish(view.region == RegionId::Static &&
-                    sub(property, view.payload));
+    if (isStatic) {
+      if (view.region != RegionId::Static) {
+        if (!staticRegions)
+          return finish(false);
+        staticRegions->push_back(view.region);
+      }
+      return finish(sub(property, view.payload));
+    }
     // A read view crosses threads only when its payload may be shared; an
     // exclusive view carries the payload's own transfer property.
     auto payload =
@@ -511,8 +516,11 @@ bool Solver::proveConcurrency(Property property, Type subject, Span span) {
   const auto &record = types.product(subject);
   if (isStatic) {
     for (auto region : record.regionArguments)
-      if (region != RegionId::Static)
-        return finish(false);
+      if (region != RegionId::Static) {
+        if (!staticRegions)
+          return finish(false);
+        staticRegions->push_back(region);
+      }
     if (record.kind == AggregateKind::Array ||
         record.kind == AggregateKind::Coroutine) {
       auto components = record.components;

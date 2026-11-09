@@ -788,8 +788,10 @@ std::optional<CheckedModule> Checker::run() {
                 displayType(*checked.types, resolved.type) + " range");
     if (syntax->kind == Kind::Cast) {
       auto source = checked.nodes.at(syntax->children[0].get()).type;
-      if (source != Type::Never && source != Type::Unknown &&
-          !machineCastAllowed(*checked.types, source, resolved.type))
+      if (source != Type::Never &&
+          (source == Type::Unknown
+               ? diagnostics.empty()
+               : !machineCastAllowed(*checked.types, source, resolved.type)))
         error("type", syntax->span, "invalid scalar conversion");
     }
   }

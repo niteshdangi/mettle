@@ -4,6 +4,8 @@
 import super.text.Text
 import super.default.Default
 import super.clone.Clone
+import super.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import super.hash.{Hash, Hasher}
 import super.ops.Deref
 import super.ops.DerefMut
 
@@ -212,6 +214,53 @@ extend<T, E> (T? throws E) {
                 none => none
             },
             failure(error) => present(failure(error))
+        }
+    }
+}
+
+// Success orders before failure, as in Rust's variant order.
+extend<T: PartialEq, E: PartialEq> (T throws E) implements PartialEq {
+    fn eq(other: read (T throws E)): bool {
+        match self {
+            success(left) => match other { success(right) => left == right, failure(_) => false },
+            failure(left) => match other { failure(right) => left == right, success(_) => false }
+        }
+    }
+}
+extend<T: Eq, E: Eq> (T throws E) implements Eq {}
+extend<T: PartialOrd, E: PartialOrd> (T throws E) implements PartialOrd {
+    fn partial_cmp(other: read (T throws E)): Ordering? {
+        match self {
+            success(left) => match other {
+                success(right) => left.partial_cmp(right),
+                failure(_) => present(Ordering.Less)
+            },
+            failure(left) => match other {
+                failure(right) => left.partial_cmp(right),
+                success(_) => present(Ordering.Greater)
+            }
+        }
+    }
+}
+extend<T: Ord, E: Ord> (T throws E) implements Ord {
+    fn cmp(other: read (T throws E)): Ordering {
+        match self {
+            success(left) => match other {
+                success(right) => left.cmp(right),
+                failure(_) => Ordering.Less
+            },
+            failure(left) => match other {
+                failure(right) => left.cmp(right),
+                success(_) => Ordering.Greater
+            }
+        }
+    }
+}
+extend<T: Hash, E: Hash> (T throws E) implements Hash {
+    fn hash<H: Hasher>(state: mut H): Unit {
+        match self {
+            success(value) => { state.write_u8(0u8); value.hash(mut state) },
+            failure(error) => { state.write_u8(1u8); error.hash(mut state) }
         }
     }
 }

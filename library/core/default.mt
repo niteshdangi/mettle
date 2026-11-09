@@ -22,6 +22,7 @@ extend f64 implements Default { static fn default(): f64 { 0.0f64 } }
 extend bool implements Default { static fn default(): bool { false } }
 extend char implements Default { static fn default(): char { '\0' } }
 extend Unit implements Default { static fn default(): Unit { () } }
+extend<region r> read super.text.Text from r implements Default { static fn default(): read super.text.Text from r { "" } }
 extend<T> T? implements Default { static fn default(): T? { none } }
 extend<A: Default, B: Default> (A, B) implements Default {
     static fn default(): (A, B) { (A.(Default).default(), B.(Default).default()) }
@@ -29,5 +30,19 @@ extend<A: Default, B: Default> (A, B) implements Default {
 extend<A: Default, B: Default, C: Default> (A, B, C) implements Default {
     static fn default(): (A, B, C) {
         (A.(Default).default(), B.(Default).default(), C.(Default).default())
+    }
+}
+extend<T: Default, const N: usize> [T; N] implements Default {
+    static fn default(): [T; N] {
+        var result = core.mem.MaybeUninit<[T; N]>.uninit()
+        let slots = core.ptr.from_mut(result).cast<core.mem.MaybeUninit<T>>()
+        var i = 0usize
+        // Safety: every slot is in bounds and is written exactly once.
+        while i < N {
+            unsafe { mut *slots.add(i) }.write(T.(Default).default())
+            i += 1usize
+        }
+        // Safety: every element of the result array was initialized above.
+        unsafe { result.assume_init() }
     }
 }

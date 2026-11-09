@@ -259,6 +259,8 @@ public:
                                 {}, true);
       // Semantic analysis checks region contracts; concrete implementation
       // selection is by type identity, not by the caller's region identities.
+      std::vector<RegionId> checkedRegions;
+      solver.collectStaticRegions(&checkedRegions);
       auto self = store.eraseRegions(
           solver.normalize(call.interfaceSelf, bindings, call.span));
       auto interface =

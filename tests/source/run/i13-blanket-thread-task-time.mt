@@ -8,6 +8,8 @@ fn borrow_ok<T: unsized + core.borrow.Borrow<T>>(): Unit {}
 fn owned_ok<T: core.borrow.ToOwned>(): Unit {}
 fn from_ok<T: core.convert.From<T>>(): Unit {}
 fn into_ok<T: core.convert.Into<T>>(): Unit {}
+fn tryfrom_ok<T: core.convert.TryFrom<T>>(): Unit {}
+fn tryinto_ok<T: core.convert.TryInto<T>>(): Unit {}
 fn string_ok<T: alloc.string.ToString>(): Unit {}
 fn send_ok<T: unsized + Transferable>(): Unit {}
 fn sync_ok<T: unsized + Shareable>(): Unit {}
@@ -25,6 +27,8 @@ fn main(): i32 {
     // task::Context
     borrow_ok<A_task_Context>()
     from_ok<A_task_Context>()
+    tryfrom_ok<A_task_Context>()
+    tryinto_ok<A_task_Context>()
     into_ok<A_task_Context>()
     send_ok<A_task_Context>()
     sync_ok<A_task_Context>()
@@ -32,6 +36,8 @@ fn main(): i32 {
     any_ok<A_task_Poll>()
     borrow_ok<A_task_Poll>()
     from_ok<A_task_Poll>()
+    tryfrom_ok<A_task_Poll>()
+    tryinto_ok<A_task_Poll>()
     into_ok<A_task_Poll>()
     send_ok<A_task_Poll>()
     sync_ok<A_task_Poll>()
@@ -39,6 +45,8 @@ fn main(): i32 {
     any_ok<A_task_Waker>()
     borrow_ok<A_task_Waker>()
     from_ok<A_task_Waker>()
+    tryfrom_ok<A_task_Waker>()
+    tryinto_ok<A_task_Waker>()
     into_ok<A_task_Waker>()
     send_ok<A_task_Waker>()
     sync_ok<A_task_Waker>()
@@ -46,6 +54,8 @@ fn main(): i32 {
     any_ok<A_thread_JoinHandle>()
     borrow_ok<A_thread_JoinHandle>()
     from_ok<A_thread_JoinHandle>()
+    tryfrom_ok<A_thread_JoinHandle>()
+    tryinto_ok<A_thread_JoinHandle>()
     into_ok<A_thread_JoinHandle>()
     send_ok<A_thread_JoinHandle>()
     sync_ok<A_thread_JoinHandle>()
@@ -53,16 +63,22 @@ fn main(): i32 {
     any_ok<A_thread_Scope>()
     borrow_ok<A_thread_Scope>()
     from_ok<A_thread_Scope>()
+    tryfrom_ok<A_thread_Scope>()
+    tryinto_ok<A_thread_Scope>()
     into_ok<A_thread_Scope>()
     // thread::ScopedJoinHandle
     any_ok<A_thread_ScopedJoinHandle>()
     borrow_ok<A_thread_ScopedJoinHandle>()
     from_ok<A_thread_ScopedJoinHandle>()
+    tryfrom_ok<A_thread_ScopedJoinHandle>()
+    tryinto_ok<A_thread_ScopedJoinHandle>()
     into_ok<A_thread_ScopedJoinHandle>()
     // thread::Thread
     any_ok<A_thread_Thread>()
     borrow_ok<A_thread_Thread>()
     from_ok<A_thread_Thread>()
+    tryfrom_ok<A_thread_Thread>()
+    tryinto_ok<A_thread_Thread>()
     into_ok<A_thread_Thread>()
     send_ok<A_thread_Thread>()
     sync_ok<A_thread_Thread>()
@@ -71,6 +87,8 @@ fn main(): i32 {
     any_ok<A_time_Duration>()
     borrow_ok<A_time_Duration>()
     from_ok<A_time_Duration>()
+    tryfrom_ok<A_time_Duration>()
+    tryinto_ok<A_time_Duration>()
     into_ok<A_time_Duration>()
     send_ok<A_time_Duration>()
     sync_ok<A_time_Duration>()
@@ -78,6 +96,8 @@ fn main(): i32 {
     any_ok<A_time_Instant>()
     borrow_ok<A_time_Instant>()
     from_ok<A_time_Instant>()
+    tryfrom_ok<A_time_Instant>()
+    tryinto_ok<A_time_Instant>()
     into_ok<A_time_Instant>()
     send_ok<A_time_Instant>()
     sync_ok<A_time_Instant>()
@@ -85,6 +105,8 @@ fn main(): i32 {
     any_ok<A_time_SystemTime>()
     borrow_ok<A_time_SystemTime>()
     from_ok<A_time_SystemTime>()
+    tryfrom_ok<A_time_SystemTime>()
+    tryinto_ok<A_time_SystemTime>()
     into_ok<A_time_SystemTime>()
     send_ok<A_time_SystemTime>()
     sync_ok<A_time_SystemTime>()

@@ -68,7 +68,7 @@ fn render(): i32 throws fmt.Error {
     let length = output.len()
     match fmt.written_text(read bytes, length) {
         present(text) => {
-            if text != "S { x: 1 }T(2,)[3]{4}{5: 6}{7: 8}" { return 2 }
+            if text != "S { x: 1 }T(2)[3]{4}{5: 6}{7: 8}" { return 2 }
         },
         none => { return 2 }
     }

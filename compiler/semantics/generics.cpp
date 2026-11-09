@@ -672,6 +672,20 @@ bool Checker::genericObligations(const GenericEnvironment &environment,
           property && (*property == interfaces::Property::Transferable ||
                        *property == interfaces::Property::Shareable ||
                        *property == interfaces::Property::Static)) {
+        if (*property == interfaces::Property::Static && call) {
+          std::vector<RegionId> regions;
+          interfaces::Solver proof(*checked.types, *checked.interfaceData,
+                                   diagnostics, interfaceAssumptions(),
+                                   regionEnvironment());
+          proof.collectStaticRegions(&regions);
+          if (proof.prove({binding.argument, Type::Unknown, *property}, span,
+                          false)) {
+            if (!regions.empty())
+              facts(*call).deferredInterfaceBounds.push_back(
+                  {binding.parameter, Type::Unknown, bound, *property});
+            continue;
+          }
+        }
         valid &= interfaceObligation(binding.argument, bound, span);
       } else if (!property && bound.name != "?Sized" &&
                  bound.name != "unsized") {
@@ -693,8 +707,12 @@ bool Checker::genericObligations(const GenericEnvironment &environment,
         interfaces::Solver proof(*checked.types, *checked.interfaceData,
                                  diagnostics, interfaceAssumptions(),
                                  regionEnvironment());
+        std::vector<RegionId> staticRegions;
+        if (call)
+          proof.collectStaticRegions(&staticRegions);
         if (proof.prove({binding.argument, required}, span, false)) {
-          if (call && checked.types->containsViews(binding.argument))
+          if (call && (checked.types->containsViews(binding.argument) ||
+                       !staticRegions.empty()))
             facts(*call).deferredInterfaceBounds.push_back(
                 {binding.parameter, declared, bound});
           continue;

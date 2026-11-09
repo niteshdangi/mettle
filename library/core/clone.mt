@@ -63,3 +63,17 @@ extend<T: Clone> T? implements Clone {
         }
     }
 }
+extend<T: Clone, const N: usize> [T; N] implements Clone {
+    fn clone(): [T; N] {
+        var result = core.mem.MaybeUninit<[T; N]>.uninit()
+        let slots = core.ptr.from_mut(result).cast<core.mem.MaybeUninit<T>>()
+        var i = 0usize
+        // Safety: every slot is in bounds and is written exactly once.
+        while i < N {
+            unsafe { mut *slots.add(i) }.write(self[i].clone())
+            i += 1usize
+        }
+        // Safety: every element of the result array was initialized above.
+        unsafe { result.assume_init() }
+    }
+}

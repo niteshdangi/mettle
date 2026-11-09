@@ -1,6 +1,8 @@
 import super.cmp.{PartialEq, PartialOrd, Ord, Ordering}
 import super.iter.{Iterator, BidirectionalIterator, Iterable, MutableIterable}
 import super.clone.Clone
+import super.borrow.{AsRef, AsMut, Borrow, BorrowMut}
+import super.ops.{Index, IndexMut}
 
 copy type Raw { data: ptr<read u8>; len: usize }
 
@@ -1753,5 +1755,84 @@ extend<T, const N: usize> [T; N] {
         }
         // Safety: every element of the result array was initialized above.
         unsafe { result.assume_init() }
+    }
+}
+
+extend<T, const N: usize> [T; N] {
+    pub fn len(): usize { N }
+    pub fn is_empty(): bool { N == 0usize }
+}
+extend<T, const N: usize> [T; N] implements AsRef<[T]> {
+    fn as_ref(): read [T] from self { read self }
+}
+extend<T, const N: usize> [T; N] implements Borrow<[T]> {
+    fn borrow(): read [T] from self { read self }
+}
+extend<T, const N: usize> [T; N] implements BorrowMut<[T]> {
+    mut fn borrow_mut(): mut [T] from self { mut self }
+}
+extend<T, const N: usize> [T; N] implements AsMut<[T]> {
+    mut fn as_mut(): mut [T] from self { mut self }
+}
+extend<T, const N: usize> [T; N] implements Index<usize> {
+    type Output = T
+    fn index(index: read usize): read T from self { read self[index] }
+}
+extend<T, const N: usize> [T; N] implements IndexMut<usize> {
+    type Output = T
+    mut fn index_mut(index: read usize): mut T from self { mut self[index] }
+}
+extend<T> [T] implements Index<usize> {
+    type Output = T
+    fn index(index: read usize): read T from self { read self[index] }
+}
+extend<T> [T] implements IndexMut<usize> {
+    type Output = T
+    mut fn index_mut(index: read usize): mut T from self { mut self[index] }
+}
+pub copy enum GetDisjointMutError { IndexOutOfBounds, OverlappingIndices }
+
+extend<T> [T] {
+    pub mut fn get_disjoint_mut<const N: usize>(
+        indices: read [usize; N]
+    ): [mut T from self; N] from self throws GetDisjointMutError {
+        var i = 0usize
+        while i < N {
+            if indices[i] >= self.len() { throw GetDisjointMutError.IndexOutOfBounds }
+            var j = 0usize
+            while j < i {
+                if indices[j] == indices[i] { throw GetDisjointMutError.OverlappingIndices }
+                j += 1usize
+            }
+            i += 1usize
+        }
+        var result = core.mem.MaybeUninit<[mut T from self; N] from self>.uninit()
+        let slots = core.ptr.from_mut(result).cast<core.mem.MaybeUninit<mut T from self>>()
+        let base = mutable_data_pointer(mut self)
+        i = 0usize
+        // Safety: indices are in bounds and pairwise distinct, so every view is disjoint.
+        while i < N {
+            unsafe { mut *slots.add(i) }.write(unsafe { mut *base.add(indices[i]) })
+            i += 1usize
+        }
+        // Safety: every element of the result array was initialized above.
+        unsafe { result.assume_init() }
+    }
+}
+
+extend<T, const N: usize> [T; N] implements Iterable {
+    type Item = T
+    type Iter<region r> = SliceIter<region r, T>
+    fn iter<region r>(receiver self: read Self from r): SliceIter<region r, T> {
+        let items: read [T] from r = read self
+        items.iter()
+    }
+}
+extend<T, const N: usize> [T; N] implements MutableIterable {
+    type Item = T
+    type IterMut<region r> = SliceIterMut<region r, T>
+    fn iter_mut<region r>(receiver self: mut Self from r): SliceIterMut<region r, T> {
+        let items: mut [T] from r = mut self
+        items.iter_mut()
     }
 }
