@@ -415,6 +415,10 @@ pub unsafe fn literal<region r>(tail: read Text from r): Message<region r> {
 }
 
 extend<region r> Message<region r> {
+    // The whole message as text when it has no fields (a literal-only format).
+    pub fn as_str(): (read Text from r)? {
+        if self.fields.len() == 0usize { present(unsafe { piece_text(self.tail) }) } else { none }
+    }
     // Renders pieces and fields in order into `sink`, stopping at the first failure.
     pub fn write_to<W: Write>(sink: mut W): Unit throws Error {
         var out = Sink(core.ptr.from_mut(mut sink).cast<u8>(), sink_write<W>)

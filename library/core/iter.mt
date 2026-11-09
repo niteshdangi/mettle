@@ -5,6 +5,7 @@
 import super.cmp.Ord
 import super.cmp.PartialEq
 import super.cmp.PartialOrd
+import super.cmp.Eq
 import super.option
 import super.cmp.Ordering
 import super.clone.Clone
@@ -1126,8 +1127,21 @@ extend<I: Iterator> Limited<I> {
     pub fn limit(): usize { self.remaining }
     pub mut fn set_limit(limit: usize): Unit { self.remaining = limit }
 }
+extend<I: ExactSizeIterator + BidirectionalIterator> Limited<I> implements BidirectionalIterator {
+    mut fn next_back(): I.(Iterator).Item? {
+        if self.remaining == 0usize { return none }
+        while self.iter.len() > self.remaining { let _ = self.iter.next_back() }
+        self.remaining -= 1usize
+        self.iter.next_back()
+    }
+}
 
 pub type Skipped<I> { iter: I; pending: usize }
+extend<I: ExactSizeIterator + BidirectionalIterator> Skipped<I> implements BidirectionalIterator {
+    mut fn next_back(): I.(Iterator).Item? {
+        if self.iter.len() > self.pending { self.iter.next_back() } else { none }
+    }
+}
 extend<I: Iterator> Skipped<I> implements Iterator {
     type Item = I.Item
     fn size_hint(): (usize, usize?) {
@@ -1438,6 +1452,18 @@ extend<T> Once<T> implements BidirectionalIterator {
 }
 extend<T> Once<T> implements ExactSizeIterator {}
 extend<T> Once<T> implements FusedIterator {}
+extend<T> T? implements OwnedIterable {
+    type Item = T
+    type IntoIter = Once<T>
+    fn into_iter(receiver self: take T?): Once<T> { Once(self) }
+}
+extend<T, E> (T throws E) implements OwnedIterable {
+    type Item = T
+    type IntoIter = Once<T>
+    fn into_iter(receiver self: take (T throws E)): Once<T> {
+        match take self { success(value) => Once(present(value)), failure(error) => Once(none) }
+    }
+}
 pub fn once<T>(value: take T): Once<T> { Once(present(value)) }
 
 pub type Empty<T> { marker: Phantom<T> }
@@ -1657,6 +1683,16 @@ pub type Range<T> { pub start: T; pub end: T }
 extend<T: Clone> Range<T> implements Clone {
     fn clone(): Range<T> { Range(self.start.clone(), self.end.clone()) }
 }
+extend<T: PartialEq> Range<T> implements PartialEq {
+    fn eq(other: read Range<T>): bool { self.start == other.start && self.end == other.end }
+}
+extend<T: Eq> Range<T> implements Eq {}
+extend<T: Default> Range<T> implements Default {
+    static fn default(): Range<T> { Range(T.(Default).default(), T.(Default).default()) }
+}
+extend<T: PartialOrd> Range<T> {
+    pub fn is_empty(): bool { !(self.start < self.end) }
+}
 extend<T: Step> Range<T> implements Iterator {
     type Item = T
     fn size_hint(): (usize, usize?) {
@@ -1704,6 +1740,17 @@ pub fn range_to_inclusive<T>(end: take T): RangeToInclusive<T> {
 pub type RangeInclusive<T> { pub start: T; pub end: T; done: bool }
 extend<T: Clone> RangeInclusive<T> implements Clone {
     fn clone(): RangeInclusive<T> { RangeInclusive(self.start.clone(), self.end.clone(), self.done) }
+}
+extend<T: PartialEq> RangeInclusive<T> implements PartialEq {
+    fn eq(other: read RangeInclusive<T>): bool {
+        self.start == other.start && self.end == other.end && self.done == other.done
+    }
+}
+extend<T: Eq> RangeInclusive<T> implements Eq {}
+extend<T: PartialOrd> RangeInclusive<T> {
+    pub static fn new(start: take T, end: take T): RangeInclusive<T> { RangeInclusive(start, end, false) }
+    pub fn is_empty(): bool { self.done || !(self.start <= self.end) }
+    pub take fn into_inner(): (T, T) { (self.start, self.end) }
 }
 extend<T: Step> RangeInclusive<T> implements Iterator {
     type Item = T

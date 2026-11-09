@@ -640,6 +640,18 @@ extend PathBuf {
     }
 
     pub fn same(other: read PathBuf): bool { ffi.bytes_equal(self.v.as_slice(), other.as_bytes()) }
+    pub fn file_name(): (read OsStr from self)? { self.as_path().file_name() }
+    pub fn file_stem(): (read OsStr from self)? { self.as_path().file_stem() }
+    pub fn file_prefix(): (read OsStr from self)? { self.as_path().file_prefix() }
+    pub fn extension(): (read OsStr from self)? { self.as_path().extension() }
+    pub fn parent(): (read Path from self)? { self.as_path().parent() }
+    pub fn join(other: read Path): PathBuf { self.as_path().join(other) }
+    pub fn starts_with(prefix: read Path): bool { self.as_path().starts_with(prefix) }
+    pub fn ends_with(suffix: read Path): bool { self.as_path().ends_with(suffix) }
+    pub fn strip_prefix(prefix: read Path): (read Path from self)? { self.as_path().strip_prefix(prefix) }
+    pub fn with_file_name(name: read OsStr): PathBuf { self.as_path().with_file_name(name) }
+    pub fn with_extension(extension: read OsStr): PathBuf { self.as_path().with_extension(extension) }
+    pub fn with_added_extension(extension: read OsStr): PathBuf { self.as_path().with_added_extension(extension) }
 }
 
 extend Path implements PathInput {

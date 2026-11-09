@@ -22,6 +22,9 @@ pub interface TryInto<T>: Sized {
 extend<T> T implements From<T> {
     static fn from(value: take T): T { value }
 }
+extend<T> T? implements From<T> {
+    static fn from(value: take T): T? { present(value) }
+}
 
 extend<T, U> T implements Into<U> where U: From<T> {
     take fn into(): U { U.(From<T>).from(self) }

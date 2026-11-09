@@ -43,7 +43,7 @@ and dependencies. Update both with architectural changes.
   refactors or polish (see implementation-plan section 8).
 - Keep changes surgical, preserve other people's work, and do not claim a
   milestone, target, safety property or speedup without current evidence.
-- Do not publish, choose a license, initialize/amend/commit Git history or
+- Do not publish, choose a license, initialize/amend Git history or
   configure paid services without the owner's explicit request.
 
 ## Milestone execution gates
