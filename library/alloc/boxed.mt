@@ -566,6 +566,42 @@ extend<T> Box<[T]> implements Default {
 extend Box<Text> implements Default {
     static fn default(): Box<Text> { copy_text("") }
 }
+extend<region r, T: Clone> Box<[T]> implements From<read [T] from r> {
+    static fn from(items: take read [T] from r): Box<[T]> { items.to_vec().into_boxed_slice() }
+}
+extend<region r, T: Clone> Box<[T]> implements From<mut [T] from r> {
+    static fn from(items: take mut [T] from r): Box<[T]> { items.to_vec().into_boxed_slice() }
+}
+extend<T, const N: usize> Box<[T]> implements From<[T; N]> {
+    static fn from(items: take [T; N]): Box<[T]> { super.vec.List<T>.(From<[T; N]>).from(items).into_boxed_slice() }
+}
+extend<T, A: Allocator> Box<[T], A> implements From<super.vec.List<T, A>> {
+    static fn from(items: take super.vec.List<T, A>): Box<[T], A> { items.into_boxed_slice() }
+}
+extend<region r, T: Clone> Box<[T]> implements From<super.borrow.Cow<region r, T>> {
+    static fn from(value: take super.borrow.Cow<region r, T>): Box<[T]> { value.into_owned().into_boxed_slice() }
+}
+extend<region r> Box<Text> implements From<read Text from r> {
+    static fn from(value: take read Text from r): Box<Text> { copy_text(value) }
+}
+extend Box<Text> implements From<super.string.String> {
+    static fn from(value: take super.string.String): Box<Text> { from_string(value) }
+}
+extend<T: unsized + Future + Unpin, A: Allocator> Box<T, A> implements Future {
+    type Output = T.(Future).Output
+    fn poll(receiver self: take pinned mut Self, cx: mut Context): Poll<T.(Future).Output> {
+        let owner: mut Box<T, A> = unsafe { self.get_unchecked_mut() }
+        T.(Future).poll(unsafe { core.pin.Pin.new_unchecked(mut *owner.p) }, mut cx)
+    }
+}
+
+pub unsafe fn from_non_null<T: unsized>(p: core.ptr.NonNull<T>): Box<T> { Box(p.as_ptr(), Global()) }
+extend<T: unsized> Box<T> {
+    pub take fn into_non_null(): core.ptr.NonNull<T> {
+        let raw = self.into_raw()
+        unsafe { core.ptr.NonNull.new_unchecked(raw.0) }
+    }
+}
 extend<T: PartialEq, A: Allocator> Box<T, A> implements PartialEq {
     fn eq(other: read Box<T, A>): bool { self.get().eq(other.get()) }
 }

@@ -9,12 +9,13 @@ import super.default.Default
 import super.error.{Error as CoreError}
 import super.fmt.{Binary, Debug, Display, Error, Formatter, LowerHex, Octal, UpperHex}
 import super.hash.{Hash, Hasher}
-import super.iter.{Product, Sum}
+import super.iter.{Iterator, Phantom, Product, Sum}
+import super.slice
 import super.ops.{Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign}
 import super.ops.{BitXor, BitXorAssign, Div, DivAssign, Mul, MulAssign}
 import super.ops.{Neg, Not, Rem, RemAssign, Shl, ShlAssign}
 import super.ops.{Shr, ShrAssign, Sub, SubAssign}
-import super.text.Text
+import super.text.{from_utf8_unchecked, FromStr, Text}
 
 pub copy enum IntErrorKind {
     Empty, InvalidDigit, PosOverflow, NegOverflow, InvalidRadix, Zero
@@ -3223,3 +3224,344 @@ wrapping_reference_unary!(i32, Neg, neg, -)
 wrapping_reference_unary!(i64, Neg, neg, -)
 wrapping_reference_unary!(i128, Neg, neg, -)
 wrapping_reference_unary!(isize, Neg, neg, -)
+
+macro integer_from_str {
+    ($($target:ident),*) => {
+        $(
+            extend $target implements FromStr {
+                type Error = ParseIntError
+                static fn from_str(input: read Text): $target throws ParseIntError {
+                    try parse_radix<$target>(input, 10u32)
+                }
+            }
+        )*
+    };
+}
+
+integer_from_str!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize)
+
+// The failure of parsing a `bool` from text other than "true" or "false".
+pub copy type ParseBoolError { }
+extend ParseBoolError implements PartialEq {
+    fn eq(other: read ParseBoolError): bool { true }
+}
+extend ParseBoolError implements Eq {}
+extend ParseBoolError implements Clone {
+    fn clone(): ParseBoolError { self }
+}
+extend ParseBoolError implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        try f.write_str("ParseBoolError")
+    }
+}
+extend ParseBoolError implements Display {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        try f.write_str("provided string was not `true` or `false`")
+    }
+}
+extend ParseBoolError implements CoreError {}
+
+extend bool implements FromStr {
+    type Error = ParseBoolError
+    static fn from_str(input: read Text): bool throws ParseBoolError {
+        if input.eq("true") { true } else if input.eq("false") { false } else { throw ParseBoolError() }
+    }
+}
+
+macro bool_try_from {
+    ($($source:ident),*) => {
+        $(
+            extend bool implements TryFrom<$source> {
+                type Error = TryFromIntError
+                static fn try_from(value: take $source): (bool throws TryFromIntError) {
+                    if value == 0 { success(false) } else if value == 1 { success(true) } else { failure(TryFromIntError()) }
+                }
+            }
+        )*
+    };
+}
+
+bool_try_from!(i8, i16, i32, i64, i128, u8, u16, u32, u64, u128)
+
+extend bool {
+    pub fn then<T>(f: fn(): T): T? {
+        if self { present(f()) } else { none }
+    }
+    pub fn ok_or<E>(error: take E): (Unit throws E) {
+        if self { success(()) } else { failure(error) }
+    }
+    pub fn ok_or_else<E>(error: fn(): E): (Unit throws E) {
+        if self { success(()) } else { failure(error()) }
+    }
+}
+
+pub type EscapeDefault { bytes: [u8; 4]; length: usize; position: usize }
+extend EscapeDefault implements Iterator {
+    type Item = u8
+    mut fn next(): u8? {
+        if self.position >= self.length { return none }
+        let value = self.bytes[self.position]
+        self.position += 1usize
+        present(value)
+    }
+}
+
+fn escape_hex_nibble(value: u8): u8 {
+    if value < 10u8 { 0x30u8 + value } else { 0x61u8 + value - 10u8 }
+}
+
+fn escape_default_byte(byte: u8): EscapeDefault {
+    let short: u8 = match byte {
+        0x09u8 => 0x74u8,
+        0x0au8 => 0x6eu8,
+        0x0du8 => 0x72u8,
+        0x5cu8 => 0x5cu8,
+        0x27u8 => 0x27u8,
+        0x22u8 => 0x22u8,
+        _ => 0u8
+    }
+    if short != 0u8 { return EscapeDefault([0x5cu8, short, 0u8, 0u8], 2usize, 0usize) }
+    if byte >= 0x20u8 && byte <= 0x7eu8 { return EscapeDefault([byte, 0u8, 0u8, 0u8], 1usize, 0usize) }
+    EscapeDefault([0x5cu8, 0x78u8, escape_hex_nibble(byte >> 4u8), escape_hex_nibble(byte & 0x0fu8)], 4usize, 0usize)
+}
+
+extend u8 {
+    pub fn escape_ascii(): EscapeDefault { escape_default_byte(self) }
+}
+
+// Non-zero integers; the wrapped value is never zero.
+pub copy type NonZero<T: Copy> { value: T }
+
+extend<T: Copy + Default + PartialEq> NonZero<T> {
+    pub static fn new(value: T): NonZero<T>? {
+        if value == T.(Default).default() { none } else { present(NonZero(value)) }
+    }
+    pub static unsafe fn new_unchecked(value: T): NonZero<T> { NonZero(value) }
+}
+
+macro nonzero_common {
+    ($type:ident) => {
+        extend NonZero<$type> {
+            pub fn get(): $type { self.value }
+            pub fn leading_zeros(): u32 { self.value.leading_zeros() }
+            pub fn trailing_zeros(): u32 { self.value.trailing_zeros() }
+            pub fn count_ones(): NonZero<u32> { NonZero(self.value.count_ones()) }
+            pub fn checked_add(other: $type): NonZero<$type>? {
+                match self.value.checked_add(other) {
+                    present(sum) => { if sum == 0 { none } else { present(NonZero(sum)) } },
+                    none => none
+                }
+            }
+            pub fn checked_mul(other: NonZero<$type>): NonZero<$type>? {
+                match self.value.checked_mul(other.value) {
+                    present(product) => present(NonZero(product)),
+                    none => none
+                }
+            }
+            pub fn checked_pow(exponent: u32): NonZero<$type>? {
+                match self.value.checked_pow(exponent) {
+                    present(power) => present(NonZero(power)),
+                    none => none
+                }
+            }
+        }
+        extend $type implements BitOr<NonZero<$type>> {
+            type Output = NonZero<$type>
+            fn bitor(rhs: read NonZero<$type>): NonZero<$type> { NonZero(self | rhs.value) }
+        }
+        extend NonZero<$type> implements BitOr<$type> {
+            type Output = NonZero<$type>
+            fn bitor(rhs: read $type): NonZero<$type> { NonZero(self.value | rhs) }
+        }
+        extend NonZero<$type> implements Clone {
+            fn clone(): NonZero<$type> { self }
+        }
+        extend NonZero<$type> implements PartialEq {
+            fn eq(other: read NonZero<$type>): bool { self.value == other.value }
+        }
+        extend NonZero<$type> implements Eq {}
+        extend NonZero<$type> implements PartialOrd {
+            fn partial_cmp(other: read NonZero<$type>): Ordering? { self.value.partial_cmp(read other.value) }
+        }
+        extend NonZero<$type> implements Ord {
+            fn cmp(other: read NonZero<$type>): Ordering { self.value.cmp(read other.value) }
+        }
+        extend NonZero<$type> implements Hash {
+            fn hash<State: Hasher>(state: mut State): Unit { self.value.hash(mut state) }
+        }
+        extend NonZero<$type> implements Debug {
+            fn fmt(f: mut Formatter): Unit throws Error { try $type.(Debug).fmt(read self.value, mut f) }
+        }
+        extend NonZero<$type> implements Display {
+            fn fmt(f: mut Formatter): Unit throws Error { try $type.(Display).fmt(read self.value, mut f) }
+        }
+        extend NonZero<$type> implements FromStr {
+            type Error = ParseIntError
+            static fn from_str(input: read Text): NonZero<$type> throws ParseIntError {
+                let value = try parse_radix<$type>(input, 10u32)
+                if value == 0 { throw ParseIntError(IntErrorKind.Zero) }
+                NonZero(value)
+            }
+        }
+        extend $type implements From<NonZero<$type>> {
+            static fn from(value: take NonZero<$type>): $type { value.value }
+        }
+    };
+}
+
+macro nonzero_unsigned {
+    ($type:ident) => {
+        extend NonZero<$type> {
+            pub fn is_power_of_two(): bool { self.value.is_power_of_two() }
+            pub fn saturating_add(other: $type): NonZero<$type> { NonZero(self.value.saturating_add(other)) }
+            pub fn saturating_mul(other: NonZero<$type>): NonZero<$type> {
+                NonZero(self.value.saturating_mul(other.value))
+            }
+            pub fn saturating_pow(exponent: u32): NonZero<$type> { NonZero(self.value.saturating_pow(exponent)) }
+        }
+        extend $type implements Div<NonZero<$type>> {
+            type Output = $type
+            fn div(rhs: read NonZero<$type>): $type { self / rhs.value }
+        }
+        extend $type implements Rem<NonZero<$type>> {
+            type Output = $type
+            fn rem(rhs: read NonZero<$type>): $type { self % rhs.value }
+        }
+        extend $type implements DivAssign<NonZero<$type>> {
+            mut fn div_assign(rhs: read NonZero<$type>): Unit { self = self / rhs.value }
+        }
+        extend $type implements RemAssign<NonZero<$type>> {
+            mut fn rem_assign(rhs: read NonZero<$type>): Unit { self = self % rhs.value }
+        }
+    };
+}
+
+macro nonzero_signed {
+    ($type:ident, $unsigned:ident) => {
+        extend NonZero<$type> {
+            pub fn abs(): NonZero<$type> { NonZero(self.value.abs()) }
+            pub fn unsigned_abs(): NonZero<$unsigned> { NonZero(self.value.unsigned_abs()) }
+            pub fn is_positive(): bool { self.value > 0 }
+            pub fn is_negative(): bool { self.value < 0 }
+        }
+        extend NonZero<$type> implements Neg {
+            type Output = NonZero<$type>
+            fn neg(): NonZero<$type> { NonZero(-self.value) }
+        }
+    };
+}
+
+// Lossless NonZero widenings mirror the `From` pairs between the integers.
+macro nonzero_from {
+    ($target:ident; $($source:ident),*) => {
+        $(
+            extend NonZero<$target> implements From<NonZero<$source>> {
+                static fn from(value: take NonZero<$source>): NonZero<$target> {
+                    NonZero(value.value as $target)
+                }
+            }
+        )*
+    };
+}
+
+nonzero_common!(i8)
+nonzero_common!(i16)
+nonzero_common!(i32)
+nonzero_common!(i64)
+nonzero_common!(i128)
+nonzero_common!(isize)
+nonzero_common!(u8)
+nonzero_common!(u16)
+nonzero_common!(u32)
+nonzero_common!(u64)
+nonzero_common!(u128)
+nonzero_common!(usize)
+
+nonzero_unsigned!(u8)
+nonzero_unsigned!(u16)
+nonzero_unsigned!(u32)
+nonzero_unsigned!(u64)
+nonzero_unsigned!(u128)
+nonzero_unsigned!(usize)
+
+nonzero_signed!(i8, u8)
+nonzero_signed!(i16, u16)
+nonzero_signed!(i32, u32)
+nonzero_signed!(i64, u64)
+nonzero_signed!(i128, u128)
+nonzero_signed!(isize, usize)
+
+nonzero_from!(u16; u8)
+nonzero_from!(u32; u8, u16)
+nonzero_from!(u64; u8, u16, u32)
+nonzero_from!(u128; u8, u16, u32, u64)
+nonzero_from!(usize; u8, u16)
+nonzero_from!(i16; u8, i8)
+nonzero_from!(i32; u8, u16, i8, i16)
+nonzero_from!(i64; u8, u16, u32, i8, i16, i32)
+nonzero_from!(i128; u8, u16, u32, u64, i8, i16, i32, i64)
+nonzero_from!(isize; u8, i8, i16)
+
+// Decimal text of an integer, formatted into a fixed buffer that holds the longest value.
+pub type NumBuffer<T> { bytes: [u8; 40]; marker: Phantom<T> }
+
+extend<T> NumBuffer<T> {
+    pub static fn new(): NumBuffer<T> { NumBuffer([0u8; 40], Phantom<T>()) }
+}
+
+fn write_decimal<T>(buffer: mut NumBuffer<T>, negative: bool, magnitude: u128): usize {
+    var position = 40usize
+    var rest = magnitude
+    if rest == 0u128 {
+        position -= 1usize
+        buffer.bytes[position] = 0x30u8
+    }
+    while rest > 0u128 {
+        position -= 1usize
+        buffer.bytes[position] = 0x30u8 + (rest % 10u128) as u8
+        rest = rest / 10u128
+    }
+    if negative {
+        position -= 1usize
+        buffer.bytes[position] = 0x2du8
+    }
+    position
+}
+
+fn decimal_text<T>(buffer: read NumBuffer<T>, start: usize): read Text from buffer {
+    unsafe { from_utf8_unchecked(unsafe { slice.subslice_unchecked(read buffer.bytes, start, 40usize) }) }
+}
+
+macro integer_format_into {
+    (signed $type:ident) => {
+        extend $type {
+            pub fn format_into(buffer: mut NumBuffer<$type>): read Text from buffer {
+                let wide = self as i128
+                let magnitude = if wide < 0i128 { wide.wrapping_neg() as u128 } else { wide as u128 }
+                let start = write_decimal(mut buffer, wide < 0i128, magnitude)
+                decimal_text(read buffer, start)
+            }
+        }
+    };
+    (unsigned $type:ident) => {
+        extend $type {
+            pub fn format_into(buffer: mut NumBuffer<$type>): read Text from buffer {
+                let start = write_decimal(mut buffer, false, self as u128)
+                decimal_text(read buffer, start)
+            }
+        }
+    };
+}
+
+integer_format_into!(signed i8)
+integer_format_into!(signed i16)
+integer_format_into!(signed i32)
+integer_format_into!(signed i64)
+integer_format_into!(signed i128)
+integer_format_into!(signed isize)
+integer_format_into!(unsigned u8)
+integer_format_into!(unsigned u16)
+integer_format_into!(unsigned u32)
+integer_format_into!(unsigned u64)
+integer_format_into!(unsigned u128)
+integer_format_into!(unsigned usize)

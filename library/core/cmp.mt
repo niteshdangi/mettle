@@ -2,6 +2,8 @@
 // these canonical paths; the primitive implementations below delegate to the
 // compiler's built-in scalar comparisons.
 import super.text.Text
+import super.default.Default
+import super.fmt.{ Debug, Formatter, Error }
 
 pub copy enum Ordering { Less, Equal, Greater }
 
@@ -51,6 +53,13 @@ pub interface PartialOrd<Rhs: unsized = Self>: PartialEq<Rhs> {
 // Total order consistent with `PartialOrd` and `Eq`.
 pub interface Ord: Eq + PartialOrd {
     fn cmp(other: read Self): Ordering;
+    // Equal values: `max` yields `other`, `min` yields `self`.
+    take fn max(other: take Self): Self where Self: Sized { if other.cmp(read self).is_lt() { self } else { other } }
+    take fn min(other: take Self): Self where Self: Sized { if other.cmp(read self).is_lt() { other } else { self } }
+    take fn clamp(low: take Self, high: take Self): Self where Self: Sized {
+        if low.cmp(read high).is_gt() { super.panic.panic("clamp requires low <= high") }
+        if self.cmp(read low).is_lt() { low } else if high.cmp(read self).is_lt() { high } else { self }
+    }
 }
 
 pub fn min<T: Ord>(a: take T, b: take T): T { if b.cmp(read a).is_lt() { b } else { a } }
@@ -71,6 +80,16 @@ extend<T: PartialOrd> Reverse<T> implements PartialOrd {
     fn partial_cmp(other: read Reverse<T>): Ordering? { other.value.partial_cmp(read self.value) }
 }
 extend<T: Ord> Reverse<T> implements Ord { fn cmp(other: read Reverse<T>): Ordering { other.value.cmp(read self.value) } }
+extend<T: Default> Reverse<T> implements Default {
+    static fn default(): Reverse<T> { Reverse(T.(Default).default()) }
+}
+extend<T: Debug> Reverse<T> implements Debug {
+    fn fmt(f: mut Formatter): Unit throws Error {
+        var debug = try f.debug_tuple("Reverse")
+        try debug.field(read self.value)
+        try debug.finish()
+    }
+}
 
 extend Ordering implements PartialEq {
     fn eq(other: read Ordering): bool {

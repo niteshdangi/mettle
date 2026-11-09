@@ -576,6 +576,16 @@ extend<region r, T, A: Allocator> Drain<region r, T, A> implements Bidirectional
 }
 extend<region r, T, A: Allocator> Drain<region r, T, A> implements ExactSizeIterator {}
 extend<region r, T, A: Allocator> Drain<region r, T, A> implements FusedIterator {}
+extend<region r, T, A: Allocator> Drain<region r, T, A> implements AsRef<[T]> {
+    fn as_ref(): read [T] from self { self.as_slice() }
+}
+extend<region r, T: fmt.Debug, A: Allocator> Drain<region r, T, A> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("Drain(")
+        try fmt.debug_slice(self.as_slice(), mut f)
+        try f.write_str(")")
+    }
+}
 
 extend<T: Clone, A: Allocator> List<T, A> {
     pub mut fn extend_from_slice(items: read [T]): Unit {
@@ -663,8 +673,26 @@ extend<T: PartialEq, A: Allocator> List<T, A> {
     }
 }
 
+extend<V> [V] {
+    pub fn concat<T: Clone>(): List<T> where V: Borrow<[T]> {
+        var result = with_capacity<T>(0usize)
+        for part in read self { result.extend_from_slice(part.borrow()) }
+        result
+    }
+    pub fn join<T: Clone>(sep: read [T]): List<T> where V: Borrow<[T]> {
+        var result = with_capacity<T>(0usize)
+        var first = true
+        for part in read self {
+            if !first { result.extend_from_slice(sep) }
+            first = false
+            result.extend_from_slice(part.borrow())
+        }
+        result
+    }
+}
+
 extend [u8] {
-    pub fn to_ascii_lowercase(): List<u8> {
+pub fn to_ascii_lowercase(): List<u8> {
         var result = with_capacity<u8>(self.len())
         result.extend_from_slice(self)
         result.as_mut_slice().make_ascii_lowercase()
@@ -1249,6 +1277,36 @@ extend<region r, T, A: Allocator, I: Iterator<Item = T>> Splice<region r, T, A, 
 extend<region r, T, A: Allocator, I: Iterator<Item = T>> Splice<region r, T, A, I> implements FusedIterator {}
 extend<T, A: Allocator> IntoIter<T, A> {
     pub fn len(): usize { self.back - self.front }
+    pub fn as_slice(): read [T] from self {
+        unsafe { read *slice_ptr(self.buf.add(self.front), self.back - self.front) }
+    }
+    pub mut fn as_mut_slice(): mut [T] from self {
+        unsafe { mut *slice_ptr_mut(self.buf.add(self.front), self.back - self.front) }
+    }
+}
+extend<T, A: Allocator> IntoIter<T, A> implements AsRef<[T]> {
+    fn as_ref(): read [T] from self { self.as_slice() }
+}
+extend<T: Clone, A: Allocator + Clone> IntoIter<T, A> implements Clone {
+    fn clone(): IntoIter<T, A> {
+        var out = with_capacity_in<T, A>(self.back - self.front, self.a.clone())
+        var i = self.front
+        while i < self.back {
+            out.push(unsafe { read *self.buf.add(i) }.clone())
+            i += 1usize
+        }
+        out.into_iter()
+    }
+}
+extend<T: fmt.Debug, A: Allocator> IntoIter<T, A> implements fmt.Debug {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("IntoIter(")
+        try fmt.debug_slice(self.as_slice(), mut f)
+        try f.write_str(")")
+    }
+}
+extend<T, A: Allocator + Default> IntoIter<T, A> implements Default {
+    static fn default(): IntoIter<T, A> { new_in<T, A>(A.(Default).default()).into_iter() }
 }
 
 // Borrowed iteration: `for x in read v` yields `read T from v`, `for x in mut v`
