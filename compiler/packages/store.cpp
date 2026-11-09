@@ -620,7 +620,12 @@ StoreUsage Store::usage() const {
 
 std::optional<StoreUsage> Store::clear(bool dryRun, std::string &error) {
   std::error_code code;
-  if (!fs::exists(directory, code))
+  const bool exists = fs::exists(directory, code);
+  if (code) {
+    error = "cannot inspect cache directory: " + code.message();
+    return std::nullopt;
+  }
+  if (!exists)
     return StoreUsage{};
   if (!fs::exists(directory / "VERSION", code)) {
     if (!fs::is_empty(directory, code)) {
@@ -642,12 +647,54 @@ std::optional<StoreUsage> Store::clear(bool dryRun, std::string &error) {
     error = "cache store has live build leases";
     return std::nullopt;
   }
-  for (const char *name : {"entries", "blobs", "tmp", "leases"})
+  for (const char *name : {"entries", "blobs", "tmp", "leases"}) {
     fs::remove_all(directory / name, code);
+    if (code) {
+      error = "cannot remove " + (directory / name).generic_string() + ": " +
+              code.message();
+      return std::nullopt;
+    }
+  }
+  // Do not remove the marker if unrelated contents would prevent removing the
+  // root. In particular, a failed clean must remain recognizable and retryable.
+  for (fs::directory_iterator it(directory, code), end; !code && it != end;
+       it.increment(code)) {
+    auto name = it->path().filename();
+    if (name != "VERSION" && name != "store.lock") {
+      error = "cache directory contains unexpected entry: " +
+              it->path().generic_string();
+      return std::nullopt;
+    }
+  }
+  if (code) {
+    error = "cannot inspect cache contents: " + code.message();
+    return std::nullopt;
+  }
+  auto restoreMarker = [&] {
+    std::ofstream marker(directory / "VERSION", std::ios::trunc);
+    marker << "mettle-store 1\n";
+    marker.close();
+    if (!marker)
+      error += "; could not restore cache marker";
+  };
   fs::remove(directory / "VERSION", code);
+  if (code) {
+    error = "cannot remove cache marker: " + code.message();
+    return std::nullopt;
+  }
   fs::remove(directory / "store.lock", code);
+  if (code) {
+    error = "cannot remove cache lock: " + code.message();
+    restoreMarker();
+    return std::nullopt;
+  }
   lock.release();
   fs::remove(directory, code);
+  if (code) {
+    error = "cannot remove cache directory: " + code.message();
+    restoreMarker();
+    return std::nullopt;
+  }
   return removed;
 }
 } // namespace mettle::packages

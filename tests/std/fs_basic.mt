@@ -84,6 +84,10 @@ fn run(): i32 throws Error {
     if m2.len() != 2u64 { return 14 }
     try std.fs.create_dir_all(path_from_text("ops/nested"))
     try std.fs.write(path_from_text("ops/source"), "copy me".as_bytes())
+    match take capture std.fs.create_dir_all(path_from_text("ops/source")) {
+        success(_) => { return 27 },
+        failure(e) => { if !e.kind().is(ErrorKind.AlreadyExists) { return 28 } }
+    }
     if try std.fs.copy(path_from_text("ops/source"), path_from_text("ops/copied")) != 7u64 {
         return 16
     }

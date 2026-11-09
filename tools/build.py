@@ -17,6 +17,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--configuration", choices=("Debug", "Release"), default="Debug")
     parser.add_argument("--sanitizers", action="store_true", help="enable compiler ASan/UBSan")
+    parser.add_argument("--quality", action="store_true",
+                        help="check pinned formatting and clang-tidy before CTest")
     arguments = parser.parse_args()
     selected = host_platform()
     items = artifacts(selected)
@@ -34,7 +36,8 @@ def main():
     build.mkdir(parents=True, exist_ok=True)
     executable_names = (
         "mettle", "mettle-object-smoke", "mettle-ir-tests", "mettle-module-tests",
-        "mettle-runtime-tests", "mettle-cleanup-frame-tests",
+        "mettle-runtime-tests", "mettle-thread-tests", "mettle-consteval-tests",
+        "mettle-cleanup-frame-tests",
         "mettle-cleanup-program-tests", "mettle-cleanup-source-tests")
     modules = json.loads((ROOT / "compiler/modules.json").read_text())["modules"]
     archive_names = ["libmettle_runtime.a", "libmettle_machine_callbacks.a", *(
@@ -45,6 +48,7 @@ def main():
          f"-DCMAKE_BUILD_TYPE={arguments.configuration}", f"-DCMAKE_C_COMPILER={clang}",
          f"-DCMAKE_CXX_COMPILER={cxx}", f"-DCMAKE_MAKE_PROGRAM={ninja}",
          f"-DLLVM_DIR={prefix / 'llvm/lib/cmake/llvm'}", "-DBUILD_TESTING=ON",
+         "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
          f"-DMETTLE_ENABLE_SANITIZERS={'ON' if arguments.sanitizers else 'OFF'}"],
         [str(cmake), "--build", str(build), "--target", "clean"],
         [str(cmake), "--build", str(build), "--parallel", str(min(os.cpu_count() or 1, 4))],
@@ -66,7 +70,7 @@ def main():
             for path in sorted(
                 [ROOT / "CMakeLists.txt", ROOT / "docs/toolchain-pins.json",
                  ROOT / ".clang-format", ROOT / ".clang-tidy", ROOT / ".editorconfig"] +
-                [path for directory in ("compiler", "runtime", "tests", "tools", "examples")
+                [path for directory in ("compiler", "runtime", "library", "tests", "tools", "examples")
                  for path in (ROOT / directory).rglob("*")
                  if path.is_file() and path.suffix in {".cpp", ".c", ".h", ".py", ".json", ".yaml", ".mt"}])
         },
@@ -97,8 +101,34 @@ def main():
         names = [*executable_names, *archive_names]
         return {name: sha256(build / name) for name in names}
 
+    def planned_commands():
+        for command in commands:
+            if command[0] == str(ctest) and arguments.quality:
+                owned = [ROOT / name for name in ("compiler", "runtime", "tests")]
+                sources = sorted(path for root in owned for path in root.rglob("*")
+                                 if path.suffix in {".cpp", ".h"})
+                yield [str(binaries["llvm"] / "clang-format"), "--dry-run", "--Werror",
+                       *map(str, sources)]
+                database = json.loads((build / "compile_commands.json").read_text())
+                units = set()
+                for entry in database:
+                    source = Path(entry["file"])
+                    if not source.is_absolute():
+                        source = Path(entry["directory"]) / source
+                    source = source.resolve()
+                    if any(source.is_relative_to(root) for root in owned):
+                        units.add(source)
+                if not units:
+                    raise RuntimeError("Quality gate found no owned compilation units")
+                for source in sorted(units):
+                    yield [str(binaries["llvm"] / "clang-tidy"), "-p", str(build),
+                           "--warnings-as-errors=*", str(source)]
+            yield command
+
     try:
         tools = [cmake, ctest, clang, cxx, ninja, binaries["llvm"] / "llvm-config"]
+        if arguments.quality:
+            tools.extend(binaries["llvm"] / name for name in ("clang-format", "clang-tidy"))
         if selected == "linux-x86_64":
             tools.append(binaries["llvm"] / "ld.lld")
             evidence["os_release"] = Path("/etc/os-release").read_text()
@@ -137,7 +167,7 @@ def main():
                 raise RuntimeError("The selected compiler has no sanitizer runtime artifacts")
             evidence["sanitizer_runtime_files"] = {
                 str(path): sha256(path) for path in sorted(runtime_files) if path.is_file()}
-        for number, command in enumerate(commands, 1):
+        for number, command in enumerate(planned_commands(), 1):
             first_build = (command[:2] == [str(cmake), "--build"] and
                            "--target" not in command and "first_build" not in evidence)
             print(subprocess.list2cmdline(command), flush=True)

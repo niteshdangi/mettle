@@ -139,5 +139,18 @@ fn main(): i32 {
     }
     if ex.run_until_stalled() != 0usize { return 22 }
     saved = none
+    // Exercise registry sweeping while stale wakers retain completed metadata.
+    var round = 0
+    while round < 256 {
+        let item = ex.spawn(Probe(core.ptr.from_mut(drops), core.ptr.from_mut(saved), 0, true))
+        match take capture item.join() {
+            success(value) => { if value != 42 { return 23 } },
+            failure(_) => { return 24 }
+        }
+        match mut saved { present(waker) => { waker.wake_by_ref() }, none => { return 25 } }
+        round += 1
+    }
+    if ex.run_until_stalled() != 0usize || ex.pending() != 0usize || drops != 263 { return 26 }
+    saved = none
     0
 }

@@ -1,8 +1,13 @@
+#include "../../runtime/sys.h"
 #include "../../runtime/thread.h"
 
 #include <atomic>
+#include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <sys/time.h>
+#include <unistd.h>
 
 namespace {
 void require(bool condition, const char *message) {
@@ -47,9 +52,28 @@ void set_slot(void *raw) {
   static int token;
   require(mettle_rt_tls_set(key, &token) == 0, "set slot");
 }
+void identify(void *raw) {
+  *static_cast<std::uintptr_t *>(raw) = mettle_rt_thread_current();
+}
+void interruptPoll(int) {}
 } // namespace
 
 int main() {
+  std::uintptr_t previous = mettle_rt_thread_current();
+  require(previous == mettle_rt_thread_current(), "current identity is stable");
+  for (int i = 0; i < 128; ++i) {
+    std::uintptr_t observed = 0, handle = 0;
+    require(mettle_rt_thread_spawn(identify, &observed, &handle) == 0,
+            "spawn identity");
+    require(mettle_rt_thread_join(handle) == 0, "join identity");
+    require(handle == observed && handle != previous, "thread identity reused");
+    mettle_rt_thread_unpark(previous);
+    char name[64]{};
+    if (i != 0)
+      require(mettle_rt_thread_name(previous, name, sizeof name) < 0,
+              "exited thread name must not access a recycled pthread");
+    previous = handle;
+  }
   Shared shared;
   require(shared.mutex && shared.cond && shared.rwlock, "allocation failed");
 
@@ -103,6 +127,27 @@ int main() {
   mettle_rt_tls_key_free(key);
 
   require(mettle_rt_thread_parallelism() >= 1, "parallelism");
+  // Signals may interrupt poll, but must not restart its finite deadline.
+  struct sigaction action{}, previousAction{};
+  action.sa_handler = interruptPoll;
+  sigemptyset(&action.sa_mask);
+  require(sigaction(SIGALRM, &action, &previousAction) == 0, "install signal");
+  int pipeEnds[2];
+  require(pipe(pipeEnds) == 0, "poll pipe");
+  itimerval timer{{0, 5000}, {0, 5000}}, previousTimer{};
+  require(setitimer(ITIMER_REAL, &timer, &previousTimer) == 0, "start signals");
+  const auto start = std::chrono::steady_clock::now();
+  const auto ready = mettle_rt_poll(pipeEnds[0], 0, 30);
+  const auto elapsed = std::chrono::steady_clock::now() - start;
+  itimerval stopped{};
+  require(setitimer(ITIMER_REAL, &stopped, nullptr) == 0, "stop signals");
+  require(sigaction(SIGALRM, &previousAction, nullptr) == 0, "restore signal");
+  require(setitimer(ITIMER_REAL, &previousTimer, nullptr) == 0, "restore timer");
+  close(pipeEnds[0]);
+  close(pipeEnds[1]);
+  require(ready == 0 && elapsed >= std::chrono::milliseconds(20) &&
+              elapsed < std::chrono::seconds(2),
+          "interruption extended poll deadline");
   mettle_rt_cond_free(shared.cond);
   mettle_rt_mutex_free(shared.mutex);
   mettle_rt_rwlock_free(shared.rwlock);

@@ -41,6 +41,11 @@ fn cat_roundtrip(): i32 throws Error {
     match take output { present(o) => { var r = o; let n = try r.read_to_end(out); if n != 10usize { return 2 } }, none => { return 3 } }
     let st = try child.wait()
     if st.code() != present(0) || !st.succeeded() { return 4 }
+    if (try child.wait()).code() != present(0) { return 5 }
+    match try child.try_wait() {
+        present(s) => { if s.code() != present(0) { return 6 } },
+        none => { return 7 }
+    }
     0
 }
 
@@ -59,6 +64,18 @@ fn run(): i32 throws Error {
     try sleeper.kill()
     let killed = try sleeper.wait()
     if killed.signal() != present(9) || has(killed.code()) { return 22 }
+    if (try sleeper.wait()).signal() != present(9) { return 32 }
+    try sleeper.kill()
+
+    var polled = try sh("exit 7").spawn()
+    var complete = false
+    while !complete {
+        match try polled.try_wait() {
+            present(s) => { if s.code() != present(7) { return 33 }; complete = true },
+            none => { std.thread.yield_now() }
+        }
+    }
+    if (try polled.wait()).code() != present(7) { return 34 }
 
     // Output captures both streams; environment and cwd apply to the child.
     try std.fs.create_dir(path_from_text("work"))

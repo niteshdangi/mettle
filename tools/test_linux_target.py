@@ -151,7 +151,7 @@ def library_cases(output):
         if header.startswith("// expect-error:"):
             continue
         cases.append(("alloc", program.stem, text, {
-            "expected": "nonzero" if header.startswith("// expect-exit: trap") else 0}))
+            "expected": -6 if header.startswith("// expect-exit: trap") else 0}))
     for program in sorted((ROOT / "tests/std").glob("*.mt")):
         text = program.read_text()
         options = directives(text)

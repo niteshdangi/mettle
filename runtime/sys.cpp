@@ -674,7 +674,23 @@ mettle_rt_spawn(const char *program, const char *const *argv,
 extern "C" std::int32_t mettle_rt_poll(std::int32_t fd, std::int32_t write,
                                        std::int32_t timeoutMillis) {
   pollfd request{fd, static_cast<short>(write ? POLLOUT : POLLIN), 0};
-  int result = retry([&] { return poll(&request, 1, timeoutMillis); });
+  using Clock = std::chrono::steady_clock;
+  const auto until = Clock::now() +
+                     std::chrono::milliseconds(std::max(0, timeoutMillis));
+  int remaining = timeoutMillis;
+  int result;
+  do {
+    result = poll(&request, 1, remaining);
+    if (result >= 0 || errno != EINTR)
+      break;
+    if (timeoutMillis >= 0) {
+      const auto now = Clock::now();
+      if (now >= until)
+        return 0;
+      remaining = static_cast<int>(
+          std::chrono::ceil<std::chrono::milliseconds>(until - now).count());
+    }
+  } while (true);
   return result < 0 ? -1 : result > 0 ? 1 : 0;
 }
 

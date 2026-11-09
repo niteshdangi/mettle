@@ -118,7 +118,7 @@ extend SystemTime {
 
     pub fn checked_add(d: Duration): SystemTime? {
         let t = self.total() + d.as_nanos() as i128
-        present(from_total(t))
+        checked_system_time(t)
     }
 
     fn total(): i128 { self.secs as i128 * 1000000000i128 + self.nanos as i128 }
@@ -133,6 +133,14 @@ fn from_total(n: i128): SystemTime {
     var nanos = n % 1000000000i128
     if nanos < 0i128 { nanos += 1000000000i128; secs -= 1i128 }
     SystemTime(secs as i64, nanos as u32)
+}
+
+fn checked_system_time(n: i128): SystemTime? {
+    if n < -9223372036854775808i128 * 1000000000i128 ||
+       n > 9223372036854775807i128 * 1000000000i128 + 999999999i128 {
+        return none
+    }
+    present(from_total(n))
 }
 
 // Blocks the calling thread for at least `d`.
@@ -319,7 +327,7 @@ extend Instant implements SubAssign<Duration> {
 extend SystemTime {
     pub fn checked_sub(d: Duration): SystemTime? {
         let t = self.total() - d.as_nanos() as i128
-        present(from_total(t))
+        checked_system_time(t)
     }
 
     pub fn elapsed(): Duration throws SystemTimeError {

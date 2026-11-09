@@ -1,7 +1,6 @@
 #include "thread.h"
 #include "panic.h"
 
-#include <bit>
 #include <cerrno>
 #include <cstddef>
 #include <cstdlib>
@@ -22,6 +21,8 @@ extern "C" void mettleRtTlsThreadDestructor(void *raw);
 
 namespace {
 struct ParkingState {
+  std::uintptr_t identity = 0;
+  pthread_t native{};
   pthread_mutex_t mutex{};
   pthread_cond_t condition{};
   bool token = false;
@@ -30,9 +31,14 @@ struct ParkingState {
 
 pthread_mutex_t parkingRegistryMutex = PTHREAD_MUTEX_INITIALIZER;
 std::vector<std::pair<std::uintptr_t, ParkingState *>> parkingRegistry;
+std::vector<std::pair<std::uintptr_t, pthread_t>> joinRegistry;
+std::uintptr_t nextThreadIdentity = 1;
 
-std::uintptr_t threadToken(pthread_t thread) {
-  return std::bit_cast<std::uintptr_t>(thread);
+// Called under parkingRegistryMutex. Exhaustion must never recycle an identity.
+std::uintptr_t threadToken() {
+  if (nextThreadIdentity == 0)
+    std::abort();
+  return nextThreadIdentity++;
 }
 
 void destroyParkingState(ParkingState *state) {
@@ -48,7 +54,7 @@ struct ParkingStateHolder {
   ~ParkingStateHolder() {
     if (!state)
       return;
-    const auto token = threadToken(pthread_self());
+    const auto token = state->identity;
     pthread_mutex_lock(&parkingRegistryMutex);
     for (auto it = parkingRegistry.begin(); it != parkingRegistry.end(); ++it) {
       if (it->first == token && it->second == state) {
@@ -85,14 +91,15 @@ ParkingState *currentParkingState() {
   auto *state = newParkingState();
   if (!state)
     return nullptr;
-  const auto token = threadToken(pthread_self());
   if (pthread_mutex_lock(&parkingRegistryMutex) != 0) {
     destroyParkingState(state);
     return nullptr;
   }
   try {
     parkingRegistry.reserve(parkingRegistry.size() + 1);
-    parkingRegistry.emplace_back(token, state);
+    state->identity = threadToken();
+    state->native = pthread_self();
+    parkingRegistry.emplace_back(state->identity, state);
   } catch (...) {
     pthread_mutex_unlock(&parkingRegistryMutex);
     destroyParkingState(state);
@@ -362,6 +369,7 @@ std::int32_t mettle_rt_thread_spawn_configured(
   }
   try {
     parkingRegistry.reserve(parkingRegistry.size() + 1);
+    joinRegistry.reserve(joinRegistry.size() + 1);
   } catch (...) {
     pthread_mutex_unlock(&parkingRegistryMutex);
     delete start;
@@ -387,8 +395,11 @@ std::int32_t mettle_rt_thread_spawn_configured(
     (void)pthread_setname_np(thread, truncated);
   }
 #endif
-  const auto token = threadToken(thread);
+  const auto token = threadToken();
+  parking->identity = token;
+  parking->native = thread;
   parkingRegistry.emplace_back(token, parking);
+  joinRegistry.emplace_back(token, thread);
   if (pthread_mutex_lock(&parking->mutex) != 0)
     std::abort();
   parking->registered = true;
@@ -399,10 +410,39 @@ std::int32_t mettle_rt_thread_spawn_configured(
   return 0;
 }
 std::int32_t mettle_rt_thread_join(std::uintptr_t handle) {
-  return pthread_join(std::bit_cast<pthread_t>(handle), nullptr);
+  pthread_t native{};
+  if (pthread_mutex_lock(&parkingRegistryMutex) != 0)
+    return EINVAL;
+  bool found = false;
+  for (auto it = joinRegistry.begin(); it != joinRegistry.end(); ++it) {
+    if (it->first == handle) {
+      native = it->second;
+      if (pthread_equal(native, pthread_self())) {
+        pthread_mutex_unlock(&parkingRegistryMutex);
+        return EDEADLK;
+      }
+      joinRegistry.erase(it);
+      found = true;
+      break;
+    }
+  }
+  pthread_mutex_unlock(&parkingRegistryMutex);
+  return found ? pthread_join(native, nullptr) : ESRCH;
 }
 std::int32_t mettle_rt_thread_detach(std::uintptr_t handle) {
-  return pthread_detach(std::bit_cast<pthread_t>(handle));
+  if (pthread_mutex_lock(&parkingRegistryMutex) != 0)
+    return EINVAL;
+  int status = ESRCH;
+  for (auto it = joinRegistry.begin(); it != joinRegistry.end(); ++it) {
+    if (it->first == handle) {
+      status = pthread_detach(it->second);
+      if (status == 0)
+        joinRegistry.erase(it);
+      break;
+    }
+  }
+  pthread_mutex_unlock(&parkingRegistryMutex);
+  return status;
 }
 std::int32_t mettle_rt_thread_catch(void *context, MettleThreadBody body) {
   const auto status = mettle_rt_catch(context, body);
@@ -412,7 +452,10 @@ std::int32_t mettle_rt_thread_catch(void *context, MettleThreadBody body) {
   return status == 0 ? tlsStatus : status;
 }
 std::uintptr_t mettle_rt_thread_current() {
-  return threadToken(pthread_self());
+  auto *state = currentParkingState();
+  if (!state)
+    std::abort();
+  return state->identity;
 }
 void mettle_rt_thread_park() {
   auto *state = currentParkingState();
@@ -459,8 +502,17 @@ std::intptr_t mettle_rt_thread_name(std::uintptr_t handle, char *buffer,
                                     std::size_t capacity) {
   if (!buffer || capacity == 0)
     return -EINVAL;
-  const int status =
-      pthread_getname_np(std::bit_cast<pthread_t>(handle), buffer, capacity);
+  if (pthread_mutex_lock(&parkingRegistryMutex) != 0)
+    return -EINVAL;
+  // Exit removes this entry under the same lock before destroying its state.
+  // A stale public token can never reach a recycled native pthread handle.
+  int status = ESRCH;
+  for (const auto &entry : parkingRegistry)
+    if (entry.first == handle) {
+      status = pthread_getname_np(entry.second->native, buffer, capacity);
+      break;
+    }
+  pthread_mutex_unlock(&parkingRegistryMutex);
   if (status != 0)
     return -status;
   const auto length = std::strlen(buffer);

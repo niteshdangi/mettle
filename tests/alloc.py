@@ -7,6 +7,7 @@ must be rejected by the compiler in that phase.
 """
 
 import re
+import signal
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -28,8 +29,9 @@ def check(executable, source, output):
         raise AssertionError(f"{source.name}: build failed\n{build.stderr}")
     run = subprocess.run([str(program)], text=True, capture_output=True, timeout=60)
     if header.startswith("// expect-exit: trap"):
-        if run.returncode == 0:
-            raise AssertionError(f"{source.name}: expected a runtime panic")
+        if run.returncode != -signal.SIGABRT:
+            raise AssertionError(
+                f"{source.name}: expected SIGABRT, got {run.returncode}\n{run.stderr}")
     elif run.returncode != 0:
         raise AssertionError(f"{source.name}: exited {run.returncode}\n{run.stdout}{run.stderr}")
 

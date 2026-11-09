@@ -472,6 +472,53 @@ def cache_corruption_and_clean():
     assert (foreign / "keep.txt").exists()
 
 
+def cache_clean_failure():
+    # Permission failures must leave a recognizable, retryable store.
+    if os.geteuid() == 0:
+        return  # Root bypasses directory permissions.
+    app = packages("incremental/app")
+    explained(app)
+    cache = evidence / "cache"
+    entries = cache / "entries"
+    entries.chmod(0o500)
+    try:
+        invoke(["clean"], 1, "cannot remove")
+        assert (cache / "VERSION").is_file()
+    finally:
+        entries.chmod(0o700)
+    invoke(["clean"])
+    assert not cache.exists()
+
+
+def cache_compiler_content_identity():
+    # ELF permits inert trailing bytes, so alter identity without touching code.
+    # Preserve path, size and timestamps to exclude metadata-based invalidation.
+    if sys.platform != "linux":
+        return
+    compiler = evidence / "compiler-copy"
+    shutil.copy2(mettle, compiler)
+    with compiler.open("ab") as stream:
+        stream.write(b"A")
+    environment = {**os.environ, "METTLE_CACHE_DIR": str(evidence / "cache")}
+    arguments = [str(compiler), "build", str(packages("incremental/app")),
+                 "-o", str(evidence / "identity.bin"), "--explain"]
+
+    def build():
+        result = subprocess.run(arguments, text=True, capture_output=True,
+                                timeout=600, env=environment)
+        assert result.returncode == 0, result.stderr
+        return result.stderr
+
+    assert "cache miss" in last_cache_event(build())
+    assert "cache hit" in last_cache_event(build())
+    stamp = compiler.stat()
+    with compiler.open("r+b") as stream:
+        stream.seek(-1, 2)
+        stream.write(b"B")
+    os.utime(compiler, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    assert "cache miss" in last_cache_event(build())
+
+
 def build_script():
     app = packages("build-script/app")
     text, built = explained(app)
@@ -1696,7 +1743,7 @@ CASES = [cyclic_module_macro_definition,
          manifest_diagnostics, package_options_need_package, incremental_reuse,
          object_cache_integrity,
          sanitizer_cache_key, edit_invalidation, cache_dedup_and_bound,
-         cache_corruption_and_clean,
+         cache_corruption_and_clean, cache_clean_failure, cache_compiler_content_identity,
          build_script, build_script_untracked_inputs,
          procedural_macro, procedural_macro_failure,
          public_declarative_macro_dependency,

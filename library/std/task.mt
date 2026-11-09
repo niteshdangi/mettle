@@ -482,7 +482,8 @@ extend Task implements Wake {
 }
 
 // Registry ownership is independent of both a handle and queued wakes.
-// Completed task metadata is retained until executor destruction.
+// Finished registrations are swept after driving the executor and amortized
+// across spawns. Handles and foreign wakers retain their own metadata owners.
 pub type Executor {
     hub: Arc<Shared>
     tasks: core.cell.UnsafeCell<List<ptr<mut u8>>>
@@ -556,9 +557,28 @@ fn new_task(erased: take ErasedFuture, hub: take Arc<Shared>): Arc<Task> {
 }
 
 extend Executor {
+    fn reap_finished(): Unit {
+        // Only the executor thread mutates this registry. A finished task has
+        // disposed its erased payload; releasing this owner cannot run user code.
+        unsafe {
+            var i = 0usize
+            while i < (*self.tasks.get()).len() {
+                let raw = (*self.tasks.get())[i]
+                if (*raw.cast<Arc<Task>>()).get().finished.load(core.sync.atomic.Ordering.Acquire) {
+                    let removed = (*self.tasks.get()).swap_remove(i)
+                    let _owner = reclaim_task(removed)
+                } else { i += 1usize }
+            }
+        }
+    }
+
     // Private callers must require either Transferable + Static or Within
     // bounds, and must retain the registration until destruction completes.
     fn spawn_inner<T, F: Future<Output = T>>(future: take F): JoinHandle<T> {
+        let registrations = unsafe { (*self.tasks.get()).len() }
+        if registrations > 64usize && registrations / 2usize >= self.pending() {
+            self.reap_finished()
+        }
         {
             let locked = capture self.hub.get().queue.lock()
             let guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
@@ -594,6 +614,7 @@ extend Executor {
                 none => { finished = true }
             }
         }
+        self.reap_finished()
     }
 
     // Polls every task that is currently ready, including tasks woken while
@@ -611,6 +632,7 @@ extend Executor {
                 none => { finished = true }
             }
         }
+        self.reap_finished()
         polls
     }
 }

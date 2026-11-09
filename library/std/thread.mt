@@ -46,10 +46,10 @@ pub copy type SpawnError { pub code: i32 }
 
 // Identity of a running thread.
 pub copy type ThreadId { pub raw: usize }
-pub type Thread { raw: usize }
+pub type Thread { raw: usize; name: String? }
 
 extend Thread implements Clone {
-    fn clone(): Thread { Thread(self.raw) }
+    fn clone(): Thread { Thread(self.raw, self.name.clone()) }
 }
 extend Thread implements Debug {
     fn fmt(f: mut Formatter): Unit throws Error {
@@ -78,7 +78,10 @@ extend ThreadId implements Debug {
 }
 
 pub fn current(): ThreadId { ThreadId(unsafe { mettle_rt_thread_current() }) }
-pub fn current_thread(): Thread { Thread(unsafe { mettle_rt_thread_current() }) }
+pub fn current_thread(): Thread {
+    let raw = unsafe { mettle_rt_thread_current() }
+    Thread(raw, native_thread_name(raw))
+}
 pub fn panicking(): bool { unsafe { mettle_rt_panicking() != 0 } }
 pub fn yield_now(): Unit { unsafe { mettle_rt_thread_yield() } }
 pub fn sleep_nanos(nanoseconds: u64): Unit { unsafe { mettle_rt_thread_sleep(nanoseconds) } }
@@ -110,19 +113,21 @@ extend ThreadId {
 extend Thread {
     pub fn id(): ThreadId { ThreadId(self.raw) }
     pub fn unpark(): Unit { unsafe { mettle_rt_thread_unpark(self.raw) } }
-    pub fn name(): String? {
-        var buffer = [0u8; 64]
-        let length = unsafe {
-            mettle_rt_thread_name(self.raw, core.ptr.from_mut(buffer).cast<u8>(), 64usize)
-        }
-        if length < 0isize { return none }
-        let bytes = unsafe {
-            slice.subslice_unchecked(buffer, 0usize, length as usize)
-        }
-        match package.core.text.from_utf8(bytes) {
-            present(text) => present(package.alloc.string.from_text(text)),
-            none => none
-        }
+    pub fn name(): String? { self.name.clone() }
+}
+
+fn native_thread_name(raw: usize): String? {
+    var buffer = [0u8; 64]
+    let length = unsafe {
+        mettle_rt_thread_name(raw, core.ptr.from_mut(buffer).cast<u8>(), 64usize)
+    }
+    if length < 0isize { return none }
+    let bytes = unsafe {
+        slice.subslice_unchecked(buffer, 0usize, length as usize)
+    }
+    match package.core.text.from_utf8(bytes) {
+        present(text) => present(package.alloc.string.from_text(text)),
+        none => none
     }
 }
 
@@ -159,7 +164,7 @@ extend Builder {
         JoinHandle(
             started.0,
             started.1,
-            Thread(unsafe { (*started.0).thread })
+            Thread(unsafe { (*started.0).thread }, self.name)
         )
     }
 
@@ -466,7 +471,7 @@ extend<region s> Scope<region s> {
         ScopedJoinHandle(
             header,
             slot,
-            Thread(unsafe { (*header).thread })
+            Thread(unsafe { (*header).thread }, config.name.clone())
         )
     }
 

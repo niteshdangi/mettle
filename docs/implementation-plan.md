@@ -1129,6 +1129,33 @@ initial POSIX hosted profile.
 
 ### 8.4. Builds, concurrency and async: I09-I11
 
+Source-review repair batch (2026-11-09; base `d8dbc580`, qualification pending):
+these are correctness repairs to existing obligations, not milestone closure.
+The owner's source-only restriction defers builds, CTest, pinned formatting,
+ASan/UBSan and TSan; all changed behavior needs those checks before qualification.
+
+| Existing obligation | Starting state and owning source | Remaining repair and regression |
+| --- | --- | --- |
+| I09 cache input identity | Partial: `driver/cache.cpp` uses binary metadata | Bind compiler/runtime bytes; same-size/same-time replacement fixture in `tests/packages.py` |
+| I09 cache clean | Partial: `packages/store.cpp` ignores deletion errors | Preserve marker/report failure; permission-denied cleanup fixture |
+| I10 thread lifecycle | Partial: `runtime/thread.cpp` reuses pthread identities | Unique runtime tokens and lifecycle-safe lookup; native thread lifecycle regression |
+| I11 executor retention | Partial: `std/task.mt` retains finished registrations | Reclaim quiescent finished entries; repeated completion and stale-waker regression |
+| I13 time/process/fs/net operations | Partial: overflow, reaping and filesystem/timeout edge cases | Bounds, cached child status, directory type and finite deadline regressions in `tests/std` |
+| Quality workflow and panic fixtures | Partial: `tools/build.py` lacks documented quality mode; alloc traps accept any failure | Restore format/static-analysis gate and require SIGABRT |
+
+All rows now have source repairs and focused fixtures (implemented, unverified).
+Thread names are owned by cloned library handles; runtime tokens never recycle,
+and live-name/unpark lookups serialize with thread exit. Executor sweeps release
+only finished registrations whose erased payload is already disposed; retained
+wakers and handles keep independent Arc owners. Repeated-completion/stale-waker
+fixtures cover those paths, but retained-memory bounds still need qualification.
+The quality option now checks pinned formatting and compilation-database-driven
+clang-tidy before CTest; alloc panic checks also match on the Linux target runner.
+No previous receipt qualifies these repairs. Source freeze awaits execution of
+the new fixtures, pinned formatting, relevant Debug/Release groups and native
+ASan/UBSan plus TSan. Full matrix qualification remains gated on that work and
+the owner's execution restriction being lifted.
+
 **L054 status (const evaluation): implemented and verified on macOS ARM64.** The `compiler/consteval` evaluator and `const fn` are wired into constants, array lengths, constant generic arguments and statics. Evidence: `tests/source/{run,fail}/const-eval-*.mt` (Debug and Release, including the recursion-depth limit, which evaluates on a dedicated large stack) and `compiler.consteval-target` (`tests/consteval/target_width.cpp`); the driver admits no 32-bit target, so target-width evidence is that checker-level unit test. Gap addressed, verified on macOS arm64: a mutable unsuffixed integer local in a `const fn` (`var i = 0`) stays open instead of being fixed to `i32`; assignment of a typed value or a use against a scalar expectation fixes its type (`tests/source/run/const-eval-open-integer-local.mt`). An immutable `let` or a copy into another binding still defaults to `i32`.
 
 The I13 L005 follow-up extends this evaluator with target-software floating
@@ -1272,8 +1299,10 @@ reentrant joins on an active executor are rejected. The synchronous local
 `task.scope` drives ready children and cancels suspended children before exit,
 including on parent unwind; its private executor retains children even when
 their handles are forgotten. It does not provide an asynchronous scope whose
-children remain suspended across parent polls. Completed task metadata stays
-registered until executor destruction. Tests added or updated:
+children remain suspended across parent polls. The 2026-11-09 source repair
+reclaims finished registrations after driving and amortizes sweeps across spawns;
+handles and stale wakers retain independent owners. This repair is unverified.
+Tests added or updated:
 `tests/std/{erased_future,direct_borrowed_future,neg_erased_future_borrow,
 neg_spawn_borrowed_future,neg_task_scope_body_local,task_owned,
 task_panic_isolation,task_scope,task_scope_async,async_executor}.mt`. Raw-waker

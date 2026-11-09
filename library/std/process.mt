@@ -114,7 +114,7 @@ pub type Child {
     stdin_fd: i32
     stdout_fd: i32
     stderr_fd: i32
-    done: bool
+    status: ExitStatus?
     drop {
         if self.stdin_fd >= 0 { let closed = unsafe { sys.close(self.stdin_fd) } }
         if self.stdout_fd >= 0 { let closed = unsafe { sys.close(self.stdout_fd) } }
@@ -164,29 +164,30 @@ extend Child {
     // Waits for the child to end, closing its input pipe first so it cannot
     // block forever waiting for input this process still holds open.
     pub mut fn wait(): ExitStatus throws Error {
+        match self.status { present(s) => { return s }, none => {} }
         if self.stdin_fd >= 0 {
             let closed = unsafe { sys.close(self.stdin_fd) }
             self.stdin_fd = -1
         }
-        self.done = true
         match try wait_status(self.pid, 0) {
-            present(s) => s,
+            present(s) => { self.status = present(s); s },
             none => ExitStatus(0)
         }
     }
 
     // The status if the child has already ended, without blocking.
     pub mut fn try_wait(): ExitStatus? throws Error {
+        match self.status { present(s) => { return present(s) }, none => {} }
         let r = try wait_status(self.pid, 1)
         match r {
-            present(s) => { self.done = true; present(s) },
+            present(s) => { self.status = present(s); present(s) },
             none => none
         }
     }
 
     // Sends SIGKILL; a child that already ended is not an error.
     pub mut fn kill(): Unit throws Error {
-        if self.done { return }
+        if self.status.is_present() { return }
         if unsafe { sys.kill(self.pid, 9) } != 0 {
             let e = io.last_os_error()
             if e.raw_os_error() != present(3) { throw e }
@@ -310,7 +311,7 @@ extend Command {
                                  core.ptr.from_mut(fds).cast<i32>())
         }
         if pid < 0 { throw io.last_os_error() }
-        Child(pid, fds[0usize], fds[1usize], fds[2usize], false)
+        Child(pid, fds[0usize], fds[1usize], fds[2usize], none)
     }
 
     // Runs to completion with inherited streams and returns how it ended.

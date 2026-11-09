@@ -1119,10 +1119,17 @@ extend TcpStream {
     pub fn set_read_timeout(limit: Duration?): Unit throws Error { try set_timeout(self.fd, 0, limit) }
     pub fn set_write_timeout(limit: Duration?): Unit throws Error { try set_timeout(self.fd, 1, limit) }
     pub fn wait_readable(limit: Duration): bool throws Error {
-        let millis = limit.as_millis() as i32
-        let result = unsafe { sys.mettle_rt_poll(self.fd, 0, millis) }
-        if result < 0 { throw io.last_os_error() }
-        result == 1
+        let started = package.std.time.now()
+        loop {
+            let remaining = limit.saturating_sub(started.elapsed())
+            let nanos = remaining.as_nanos()
+            let millis = (nanos + 999999u128) / 1000000u128
+            let chunk = if millis > 2147483647u128 { 2147483647i32 } else { millis as i32 }
+            let result = unsafe { sys.mettle_rt_poll(self.fd, 0, chunk) }
+            if result < 0 { throw io.last_os_error() }
+            if result > 0 { return true }
+            if !started.elapsed().lt(limit) { return false }
+        }
     }
     pub fn shutdown(how: i32): Unit throws Error {
         if unsafe { sys.shutdown(self.fd, how) } != 0 { throw io.last_os_error() }

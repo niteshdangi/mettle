@@ -427,7 +427,10 @@ fn create_dirs(p: read Path, mode: u32): Unit throws Error {
         failure(e) => {
             if e.kind().is(ErrorKind.AlreadyExists) {
                 let found = capture metadata(p)
-                if found.is_success() { return }
+                match take found {
+                    success(details) => { if details.is_dir() { return } },
+                    failure(_) => {}
+                }
                 throw e
             }
             if !e.kind().is(ErrorKind.NotFound) { throw e }
