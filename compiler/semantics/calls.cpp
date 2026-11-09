@@ -18,6 +18,16 @@ std::optional<std::string> Checker::staticInterfaceCall(Node &n,
     if (found == typeNames.end())
       return std::nullopt;
     self = found->second;
+    // A generic owner written with arguments (`Wrapping<i16>.default()`) is
+    // the instance those arguments name.
+    if (!n.children[0]->ownerGenericArguments.empty()) {
+      TypeSyntax owner;
+      owner.name = ownerSpelling;
+      owner.arguments = n.children[0]->ownerGenericArguments;
+      self = annotation(owner, n.span, current->owner);
+      if (self == Type::Unknown)
+        return std::nullopt;
+    }
   }
   // Static intrinsics of the numeric types keep their machine meaning.
   if (isNumeric(self) &&
@@ -75,6 +85,8 @@ std::optional<std::string> Checker::staticInterfaceCall(Node &n,
   const auto &chosen = candidates.front();
   const auto &definition =
       definitions[checked.types->erased(chosen.bound).declaration];
+  // The owner's arguments are part of `self` now, not arguments of the method.
+  n.children[0]->ownerGenericArguments.clear();
   facts(n).interfaceSelf = self;
   facts(n).interfaceType = chosen.bound;
   facts(n).interfaceMethod = static_cast<int>(chosen.method);

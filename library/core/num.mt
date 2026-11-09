@@ -3137,3 +3137,96 @@ integer_try_from!(i32; u32, u64, u128, usize, i64, i128, isize)
 integer_try_from!(i64; u64, u128, usize, i128, isize)
 integer_try_from!(i128; u128, usize, isize)
 integer_try_from!(isize; u16, u32, u64, u128, usize, i32, i64, i128)
+
+// Reference forms of the Wrapping operators: each delegates to the value
+// implementation above, so wrapping and shift-count behavior stay in one place.
+macro wrapping_reference_binary {
+    ($type:ident, $trait:ident, $method:ident, $operator:tt) => {
+        extend<region lhs_region> read Wrapping<$type> from lhs_region implements $trait<Wrapping<$type>> {
+            type Output = Wrapping<$type>
+            fn $method(rhs: read Wrapping<$type>): Wrapping<$type> { *self $operator rhs }
+        }
+        extend<region rhs_region> Wrapping<$type> implements $trait<read Wrapping<$type> from rhs_region> {
+            type Output = Wrapping<$type>
+            fn $method(rhs: read (read Wrapping<$type> from rhs_region)): Wrapping<$type> { self $operator *rhs }
+        }
+        extend<region lhs_region, region rhs_region> read Wrapping<$type> from lhs_region implements $trait<read Wrapping<$type> from rhs_region> {
+            type Output = Wrapping<$type>
+            fn $method(rhs: read (read Wrapping<$type> from rhs_region)): Wrapping<$type> { *self $operator *rhs }
+        }
+    };
+}
+
+macro wrapping_reference_assignment {
+    ($type:ident, $trait:ident, $method:ident, $operator:tt) => {
+        extend<region rhs_region> Wrapping<$type> implements $trait<read Wrapping<$type> from rhs_region> {
+            mut fn $method(rhs: read (read Wrapping<$type> from rhs_region)): Unit { self = self $operator *rhs }
+        }
+        extend<region rhs_region> Wrapping<$type> implements $trait<read $type from rhs_region> {
+            mut fn $method(rhs: read (read $type from rhs_region)): Unit { self = self $operator Wrapping(*rhs) }
+        }
+    };
+}
+
+macro wrapping_reference_shift {
+    ($type:ident, $trait:ident, $method:ident, $assign:ident, $assign_method:ident, $operator:tt) => {
+        extend<region lhs_region> read Wrapping<$type> from lhs_region implements $trait<usize> {
+            type Output = Wrapping<$type>
+            fn $method(rhs: read usize): Wrapping<$type> { *self $operator rhs }
+        }
+        extend<region rhs_region> Wrapping<$type> implements $trait<read usize from rhs_region> {
+            type Output = Wrapping<$type>
+            fn $method(rhs: read (read usize from rhs_region)): Wrapping<$type> { self $operator *rhs }
+        }
+        extend<region lhs_region, region rhs_region> read Wrapping<$type> from lhs_region implements $trait<read usize from rhs_region> {
+            type Output = Wrapping<$type>
+            fn $method(rhs: read (read usize from rhs_region)): Wrapping<$type> { *self $operator *rhs }
+        }
+        extend<region rhs_region> Wrapping<$type> implements $assign<read usize from rhs_region> {
+            mut fn $assign_method(rhs: read (read usize from rhs_region)): Unit { self = self $operator *rhs }
+        }
+    };
+}
+
+macro wrapping_reference_unary {
+    ($type:ident, $trait:ident, $method:ident, $operator:tt) => {
+        extend<region receiver_region> read Wrapping<$type> from receiver_region implements $trait {
+            type Output = Wrapping<$type>
+            fn $method(): Wrapping<$type> { $operator (*self) }
+        }
+    };
+}
+
+macro wrapping_reference_operators {
+    ($($type:ident),*) => {
+        $(
+            wrapping_reference_binary!($type, Add, add, +)
+            wrapping_reference_binary!($type, Sub, sub, -)
+            wrapping_reference_binary!($type, Mul, mul, *)
+            wrapping_reference_binary!($type, Div, div, /)
+            wrapping_reference_binary!($type, Rem, rem, %)
+            wrapping_reference_binary!($type, BitAnd, bitand, &)
+            wrapping_reference_binary!($type, BitOr, bitor, |)
+            wrapping_reference_binary!($type, BitXor, bitxor, ^)
+            wrapping_reference_assignment!($type, AddAssign, add_assign, +)
+            wrapping_reference_assignment!($type, SubAssign, sub_assign, -)
+            wrapping_reference_assignment!($type, MulAssign, mul_assign, *)
+            wrapping_reference_assignment!($type, DivAssign, div_assign, /)
+            wrapping_reference_assignment!($type, RemAssign, rem_assign, %)
+            wrapping_reference_assignment!($type, BitAndAssign, bitand_assign, &)
+            wrapping_reference_assignment!($type, BitOrAssign, bitor_assign, |)
+            wrapping_reference_assignment!($type, BitXorAssign, bitxor_assign, ^)
+            wrapping_reference_shift!($type, Shl, shl, ShlAssign, shl_assign, <<)
+            wrapping_reference_shift!($type, Shr, shr, ShrAssign, shr_assign, >>)
+            wrapping_reference_unary!($type, Not, not, !)
+        )*
+    };
+}
+
+wrapping_reference_operators!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize)
+wrapping_reference_unary!(i8, Neg, neg, -)
+wrapping_reference_unary!(i16, Neg, neg, -)
+wrapping_reference_unary!(i32, Neg, neg, -)
+wrapping_reference_unary!(i64, Neg, neg, -)
+wrapping_reference_unary!(i128, Neg, neg, -)
+wrapping_reference_unary!(isize, Neg, neg, -)
