@@ -152,7 +152,7 @@ fn main(): i32 {
     if *grown.peek().unwrap() != 11 || grown.len() != 2usize { return 36 }
     let duplicate = grown.clone()
     if duplicate.len() != 2usize || *duplicate.peek().unwrap() != 11 { return 37 }
-    let back = List<i32>.(From<binary_heap.BinaryHeap<i32>>).`from`(duplicate)
+    let back = List<i32>.(From<binary_heap.BinaryHeap<i32>>).from(duplicate)
     if back.len() != 2usize { return 38 }
     var owned_sum = 0
     for value in from_list.into_iter() { owned_sum += value }

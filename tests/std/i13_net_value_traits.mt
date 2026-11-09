@@ -59,9 +59,9 @@ fn run(): i32 throws Error {
     // FromStr and From build the same addresses as the inherent constructors.
     let parsed = try Ipv4Addr.(FromStr).from_str("10.0.0.1")
     if parsed != low { return 12 }
-    let from_octets = Ipv4Addr.(From<[u8; 4]>).`from`([10u8, 0u8, 0u8, 1u8])
+    let from_octets = Ipv4Addr.(From<[u8; 4]>).from([10u8, 0u8, 0u8, 1u8])
     if from_octets != low { return 13 }
-    if Ipv4Addr.(From<u32>).`from`(167772161u32) != low { return 14 }
+    if Ipv4Addr.(From<u32>).from(167772161u32) != low { return 14 }
 
     // IPv6: display, ordering and bit operations on the 128-bit value.
     let loopback = Ipv6Addr.localhost()
@@ -78,15 +78,15 @@ fn run(): i32 throws Error {
     let prefix = Ipv6Addr.from_bits(0xffff0000000000000000000000000000u128)
     if !((v6 & prefix) == Ipv6Addr.from_bits(0x20010000000000000000000000000000u128)) { return 19 }
     if !((loopback | prefix) == Ipv6Addr.from_bits(0xffff0000000000000000000000000001u128)) { return 20 }
-    if hash_one(read v6) != hash_one(read Ipv6Addr.(From<[u16; 8]>).`from`([8193u16, 3512u16, 0u16, 0u16, 0u16, 0u16, 0u16, 1u16])) {
+    if hash_one(read v6) != hash_one(read Ipv6Addr.(From<[u16; 8]>).from([8193u16, 3512u16, 0u16, 0u16, 0u16, 0u16, 0u16, 1u16])) {
         return 21
     }
 
     // IpAddr: IPv4 sorts before IPv6, and each family orders by its bytes.
-    let v4_address = IpAddr.(From<Ipv4Addr>).`from`(Ipv4Addr.new(10u8, 0u8, 0u8, 1u8))
-    let v6_address = IpAddr.(From<Ipv6Addr>).`from`(v6)
+    let v4_address = IpAddr.(From<Ipv4Addr>).from(Ipv4Addr.new(10u8, 0u8, 0u8, 1u8))
+    let v6_address = IpAddr.(From<Ipv6Addr>).from(v6)
     if !v4_address.cmp(v6_address).is_lt() || !v6_address.cmp(v4_address).is_gt() { return 22 }
-    if !(IpAddr.(From<Ipv4Addr>).`from`(Ipv4Addr.new(10u8, 0u8, 0u8, 2u8)).cmp(v4_address).is_gt()) { return 23 }
+    if !(IpAddr.(From<Ipv4Addr>).from(Ipv4Addr.new(10u8, 0u8, 0u8, 2u8)).cmp(v4_address).is_gt()) { return 23 }
     if v4_address != (try IpAddr.parse("10.0.0.1")) { return 24 }
     let from_text = try IpAddr.(FromStr).from_str("2001:db8::1")
     if from_text != v6_address { return 25 }

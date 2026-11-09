@@ -3,6 +3,84 @@
 #include "types/layout.h"
 
 namespace mettle {
+std::optional<std::string> Checker::staticInterfaceCall(Node &n,
+                                                        bool reachable) {
+  const auto &spelling = n.children[0]->text;
+  auto separator = spelling.rfind("::");
+  if (separator == std::string::npos)
+    return std::nullopt;
+  auto ownerSpelling = spelling.substr(0, separator);
+  auto member = spelling.substr(separator + 2);
+  Type self = builtinType(ownerSpelling);
+  if (self == Type::Unknown) {
+    auto found =
+        typeNames.find(typeName(ownerSpelling, n.span, current->owner));
+    if (found == typeNames.end())
+      return std::nullopt;
+    self = found->second;
+  }
+  // Static intrinsics of the numeric types keep their machine meaning.
+  if (isNumeric(self) &&
+      (member.starts_with("from_") || member == "MIN" || member == "MAX"))
+    return std::nullopt;
+  // Arguments are checked once here; the call reuses their results.
+  std::vector<Type> arguments;
+  for (std::size_t i = 1; i < n.children.size(); ++i) {
+    if (!n.children[i]->name.empty())
+      return std::nullopt;
+    auto variable = node(*n.children[i], reachable);
+    reusedNodes.insert(n.children[i].get());
+    arguments.push_back(inference.value(variable));
+  }
+  struct Candidate {
+    Type bound;
+    std::size_t method;
+  };
+  std::vector<Candidate> candidates;
+  const auto &definitions = checked.interfaceData->definitions;
+  for (std::size_t d = 0; d < definitions.size(); ++d) {
+    const auto &definition = definitions[d];
+    for (std::size_t m = 0; m < definition.methods.size(); ++m) {
+      const auto &method = definition.methods[m];
+      if (method.name != member || method.function < 0 ||
+          module.functions[method.function].receiver != "static")
+        continue;
+      ErasedType descriptor{definition.name, static_cast<std::uint32_t>(d)};
+      // An interface parameter is known when it is exactly the declared type
+      // of the method's first parameter (From<T>.from(value: take T)).
+      if (definition.parameters.size() == 1) {
+        const auto &declared = module.functions[method.function].parameters;
+        if (declared.empty() || arguments.empty() ||
+            !declared[0].annotation.arguments.empty() ||
+            declared[0].annotation.name !=
+                checked.types->name(definition.parameters[0]))
+          continue;
+        auto argument = arguments[0];
+        if (declared[0].mode != "read" && declared[0].mode != "mut")
+          while (checked.types->isView(argument))
+            argument = checked.types->view(argument).payload;
+        descriptor.arguments.push_back(argument);
+      } else if (!definition.parameters.empty())
+        continue;
+      auto bound = checked.types->erasedType(std::move(descriptor));
+      interfaces::Solver solver(*checked.types, *checked.interfaceData,
+                                diagnostics, interfaceAssumptions(),
+                                regionEnvironment());
+      if (solver.prove({self, bound}, n.span, false))
+        candidates.push_back({bound, m});
+    }
+  }
+  if (candidates.size() != 1)
+    return std::nullopt;
+  const auto &chosen = candidates.front();
+  const auto &definition =
+      definitions[checked.types->erased(chosen.bound).declaration];
+  facts(n).interfaceSelf = self;
+  facts(n).interfaceType = chosen.bound;
+  facts(n).interfaceMethod = static_cast<int>(chosen.method);
+  return checked.functions[definition.methods[chosen.method].function]
+      .canonicalName;
+}
 bool Checker::formatMessage(Type type) const {
   return checked.types->isProduct(type) &&
          checked.types->product(type).name == "core::fmt::Message";
@@ -271,6 +349,10 @@ int Checker::call(Node &n, bool reachable) {
     }
   } else {
     auto found = names.find(name);
+    if (found == names.end() && n.children[0]->kind == Kind::Name &&
+        n.children[0]->annotation.form != TypeForm::Projection)
+      if (auto resolved = staticInterfaceCall(n, reachable))
+        found = names.find(name = *resolved);
     if (found == names.end()) {
       if (auto primitive = targetCall(n, reachable))
         return *primitive;

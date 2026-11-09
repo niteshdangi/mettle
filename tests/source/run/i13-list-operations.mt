@@ -194,13 +194,13 @@ fn main(): i32 {
     }
     if drops != 6usize { return 51 }
 
-    let from_array = List<i32>.(From<[i32; 3]>).`from`([1, 2, 3])
+    let from_array = List<i32>.(From<[i32; 3]>).from([1, 2, 3])
     let view: read [i32] = List<i32>.(AsRef<[i32]>).as_ref(read from_array)
     if from_array.capacity() != 3usize || view.len() != 3usize || view[2usize] != 3 { return 52 }
     let same = [1, 2, 3]
     let other = [1, 2, 4]
     if !(from_array == same) || from_array == other { return 53 }
-    let boxed_back = List<i32>.(From<alloc.boxed.Box<[i32]>>).`from`(from_array.into_boxed_slice())
+    let boxed_back = List<i32>.(From<alloc.boxed.Box<[i32]>>).from(from_array.into_boxed_slice())
     if boxed_back.len() != 3usize || boxed_back[1usize] != 2 { return 54 }
     // Accessors, iteration and slice-owned conversions.
     var acc = filled(4)
@@ -229,19 +229,19 @@ fn main(): i32 {
     deque.push_front(0)
     let _front = deque.pop_front()
     deque.push_back(9)
-    let from_deque = List<i32>.(From<vec_deque.Deque<i32>>).`from`(deque)
+    let from_deque = List<i32>.(From<vec_deque.Deque<i32>>).from(deque)
     if from_deque.len() != 4usize || from_deque[0usize] != 1 || from_deque[3usize] != 9 { return 77 }
     var heap_source = binary_heap.new<i32>()
     heap_source.push(5)
     heap_source.push(8)
-    if List<i32>.(From<binary_heap.BinaryHeap<i32>>).`from`(heap_source).len() != 2usize { return 78 }
-    let from_string = List<u8>.(From<string.String>).`from`(string.from_text("hi"))
+    if List<i32>.(From<binary_heap.BinaryHeap<i32>>).from(heap_source).len() != 2usize { return 78 }
+    let from_string = List<u8>.(From<string.String>).from(string.from_text("hi"))
     if from_string.len() != 2usize || from_string[0usize] != 104u8 { return 79 }
-    let from_text = List<u8>.(From<read core.text.Text>).`from`("abc")
+    let from_text = List<u8>.(From<read core.text.Text>).from("abc")
     if from_text.len() != 3usize || from_text[2usize] != 99u8 { return 80 }
     let numbers = [4, 5, 6]
     let numbers_view: read [i32] = read numbers
-    let from_view = List<i32>.(From<read [i32]>).`from`(numbers_view)
+    let from_view = List<i32>.(From<read [i32]>).from(numbers_view)
     if from_view.len() != 3usize || from_view[1usize] != 5 { return 81 }
     var extended_from_view = vec.new<i32>()
     extend_borrowed(mut extended_from_view, read from_view)
@@ -249,7 +249,7 @@ fn main(): i32 {
         return 89
     }
     var numbers_copy = [7, 8]
-    let from_mut_array = List<i32>.(From<mut [i32; 2]>).`from`(mut numbers_copy)
+    let from_mut_array = List<i32>.(From<mut [i32; 2]>).from(mut numbers_copy)
     if from_mut_array.len() != 2usize || from_mut_array[0usize] != 7 { return 82 }
 
     let default_list = List<i32>.(Default).default()

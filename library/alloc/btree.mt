@@ -478,7 +478,7 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
         present((entry.key, entry.value))
     }
     // Entries with `from <= key < to` in ascending key order; empty when
-    // `to` is not above `from`.
+    // `to` is not above from.
     pub fn range(from: read K, to: read K): KeyRange<region self, K, V, A> {
         var start = (null_node<K, V>(), 0usize)
         var stop = (null_node<K, V>(), 0usize)

@@ -34,7 +34,7 @@ extend<region r, T: Clone> Cow<region r, T> {
 }
 
 extend<region r, T: Clone> List<T> implements From<Cow<region r, T>> {
-    static fn `from`(value: take Cow<region r, T>): List<T> {
+    static fn from(value: take Cow<region r, T>): List<T> {
         value.into_owned()
     }
 }

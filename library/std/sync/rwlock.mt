@@ -52,7 +52,7 @@ pub fn new<T>(value: take T): RwLock<T> {
     RwLock(raw, core.sync.atomic.AtomicBool.new(false), core.cell.UnsafeCell.new(value))
 }
 extend<T> RwLock<T> implements From<T> {
-    static fn `from`(value: take T): RwLock<T> { new(value) }
+    static fn from(value: take T): RwLock<T> { new(value) }
 }
 extend<T: Default> RwLock<T> implements Default {
     static fn default(): RwLock<T> { new(T.(Default).default()) }

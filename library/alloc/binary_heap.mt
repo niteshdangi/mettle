@@ -449,5 +449,5 @@ extend<T: Ord> BinaryHeap<T> implements FromItems<T> {
 }
 
 extend<T, A: Allocator> List<T, A> implements package.core.convert.From<BinaryHeap<T, A>> {
-    static fn `from`(source: take BinaryHeap<T, A>): List<T, A> { source.into_vec() }
+    static fn from(source: take BinaryHeap<T, A>): List<T, A> { source.into_vec() }
 }

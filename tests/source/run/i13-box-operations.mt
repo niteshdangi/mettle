@@ -39,7 +39,7 @@ fn main(): i32 {
     // Default and From<T> construct a boxed payload.
     let default_box = Box<i32>.(Default).default()
     if *default_box.get() != 0 { return 8 }
-    let from_value = Box<i32>.(From<i32>).`from`(7)
+    let from_value = Box<i32>.(From<i32>).from(7)
     if *from_value.get() != 7 { return 9 }
 
     // into_inner moves the payload out and frees the box.

@@ -79,7 +79,7 @@ fn main(): i32 {
         values.push(Payload(record_ptr, 29))
         if record.allocations != 1 || record.live != 1 { return 1 }
 
-        let owner = rc.Rc<[Payload], Probe>.(From<vec.List<Payload, Probe>>).`from`(values)
+        let owner = rc.Rc<[Payload], Probe>.(From<vec.List<Payload, Probe>>).from(values)
         if owner.get().len() != 2usize ||
             owner.get()[0usize].value != 13 ||
             owner.get()[1usize].value != 29 {
@@ -102,7 +102,7 @@ fn main(): i32 {
     let empty_ptr = core.ptr.from_mut(empty_record)
     {
         let empty = vec.new_in<i32, Probe>(Probe(empty_ptr))
-        let owner = rc.Rc<[i32], Probe>.(From<vec.List<i32, Probe>>).`from`(empty)
+        let owner = rc.Rc<[i32], Probe>.(From<vec.List<i32, Probe>>).from(empty)
         if owner.get().len() != 0usize || empty_record.allocations != 1 ||
             empty_record.deallocations != 0 || empty_record.live != 1 {
             return 5
@@ -117,7 +117,7 @@ fn main(): i32 {
     zero_sized.push(())
     zero_sized.push(())
     zero_sized.push(())
-    let zero_sized_owner = rc.Rc<[Unit]>.(From<vec.List<Unit>>).`from`(zero_sized)
+    let zero_sized_owner = rc.Rc<[Unit]>.(From<vec.List<Unit>>).from(zero_sized)
     if zero_sized_owner.get().len() != 3usize { return 7 }
     0
 }

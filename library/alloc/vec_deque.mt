@@ -1015,7 +1015,7 @@ unsafe extend<T: Shareable, A: Allocator + Shareable> Deque<T, A> implements Sha
 // The ring is rotated in place to start at slot zero, then its allocation is
 // adopted by the list (same layout, no element copies beyond the rotation).
 extend<T, A: Allocator> super.vec.List<T, A> implements package.core.convert.From<Deque<T, A>> {
-    static fn `from`(source: take Deque<T, A>): super.vec.List<T, A> {
+    static fn from(source: take Deque<T, A>): super.vec.List<T, A> {
         var ring = take source
         ring.make_contiguous()
         let size = core.mem.size_of<T>()

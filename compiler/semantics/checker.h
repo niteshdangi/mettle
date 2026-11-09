@@ -497,6 +497,9 @@ private:
   int checkNode(Node &node, bool reachable);
   int call(Node &node, bool reachable);
   std::optional<int> machineCall(Node &node, bool reachable, int receiver = -1);
+  // `Owner.member(args)` naming a static method of the one interface Owner
+  // implements for these arguments; records the qualified call's facts.
+  std::optional<std::string> staticInterfaceCall(Node &node, bool reachable);
   void products();
   void fields(bool final = true);
   int sumExpression(Node &node, bool reachable);

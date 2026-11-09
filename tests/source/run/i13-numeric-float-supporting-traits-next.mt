@@ -117,8 +117,8 @@ fn main(): i32 {
         return 3
     }
 
-    let from32 = f32.(From<f32>).`from`(nan32.clone())
-    let from64 = f64.(From<f64>).`from`(nan64.clone())
+    let from32 = f32.(From<f32>).from(nan32.clone())
+    let from64 = f64.(From<f64>).from(nan64.clone())
     let into32: f32 = f32.(Into<f32>).into(nan32.clone())
     let into64: f64 = f64.(Into<f64>).into(nan64.clone())
     let try_from32: (f32 throws Never) = f32.(TryFrom<f32>).try_from(nan32.clone())

@@ -34,7 +34,7 @@ fn require_display<T: Display>(value: read T, expected: read core.text.Text): Un
 fn require_error<T: CoreError>(value: read T): Unit {}
 
 fn from_value<T: From<i32>>(value: take i32): T {
-    T.(From<i32>).`from`(value)
+    T.(From<i32>).from(value)
 }
 
 fn borrowed_value<T: Borrow<i32>>(value: read T): i32 {

@@ -12,6 +12,7 @@ import package.core.text.Text
 import package.core.slice
 import super.ffi
 import super.ffi.{OsStr, OsString}
+import package.core.clone.Clone
 
 pub type Path { bytes: [u8] }
 
@@ -652,4 +653,9 @@ extend OsStr implements PathInput {
 }
 extend OsString implements PathInput {
     fn as_path(): read Path from self { path(self.as_bytes()) }
+}
+
+// Value types duplicate by copy; owners clone their buffers.
+extend PathBuf implements Clone {
+    fn clone(): PathBuf { PathBuf(self.v.clone()) }
 }

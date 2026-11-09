@@ -3083,7 +3083,7 @@ macro integer_from {
     ($target:ident; $($source:ident),*) => {
         $(
             extend $target implements From<$source> {
-                static fn `from`(value: take $source): $target { value as $target }
+                static fn from(value: take $source): $target { value as $target }
             }
             extend $target implements TryFrom<$source> {
                 type Error = Never

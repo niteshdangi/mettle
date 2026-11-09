@@ -14,6 +14,7 @@ import super.io.{Error, ErrorKind, Reader, Writer}
 import super.sys
 import super.task
 import super.time.Duration
+import package.core.clone.Clone
 
 extern "C" {
     unsafe fn dup(fd: i32): i32;
@@ -1339,10 +1340,10 @@ extend Ipv4Addr implements FromStr {
     static fn from_str(input: read Text): Ipv4Addr throws io.Error { try parse_ipv4(input) }
 }
 extend Ipv4Addr implements From<u32> {
-    static fn `from`(value: take u32): Ipv4Addr { Ipv4Addr(value) }
+    static fn from(value: take u32): Ipv4Addr { Ipv4Addr(value) }
 }
 extend Ipv4Addr implements From<[u8; 4]> {
-    static fn `from`(value: take [u8; 4]): Ipv4Addr { Ipv4Addr.from_octets(value) }
+    static fn from(value: take [u8; 4]): Ipv4Addr { Ipv4Addr.from_octets(value) }
 }
 
 extend Ipv6Addr implements PartialEq {
@@ -1385,13 +1386,13 @@ extend Ipv6Addr implements FromStr {
     static fn from_str(input: read Text): Ipv6Addr throws io.Error { try parse_ipv6(input) }
 }
 extend Ipv6Addr implements From<u128> {
-    static fn `from`(value: take u128): Ipv6Addr { Ipv6Addr.from_bits(value) }
+    static fn from(value: take u128): Ipv6Addr { Ipv6Addr.from_bits(value) }
 }
 extend Ipv6Addr implements From<[u8; 16]> {
-    static fn `from`(value: take [u8; 16]): Ipv6Addr { Ipv6Addr.from_octets(value) }
+    static fn from(value: take [u8; 16]): Ipv6Addr { Ipv6Addr.from_octets(value) }
 }
 extend Ipv6Addr implements From<[u16; 8]> {
-    static fn `from`(value: take [u16; 8]): Ipv6Addr { Ipv6Addr.from_segments(value) }
+    static fn from(value: take [u16; 8]): Ipv6Addr { Ipv6Addr.from_segments(value) }
 }
 
 extend IpAddr implements PartialEq {
@@ -1434,10 +1435,10 @@ extend IpAddr implements FromStr {
     static fn from_str(input: read Text): IpAddr throws io.Error { try parse_ip_addr(input) }
 }
 extend IpAddr implements From<Ipv4Addr> {
-    static fn `from`(value: take Ipv4Addr): IpAddr { IpAddr.V4(value) }
+    static fn from(value: take Ipv4Addr): IpAddr { IpAddr.V4(value) }
 }
 extend IpAddr implements From<Ipv6Addr> {
-    static fn `from`(value: take Ipv6Addr): IpAddr { IpAddr.V6(value) }
+    static fn from(value: take Ipv6Addr): IpAddr { IpAddr.V6(value) }
 }
 
 extend SocketAddr implements PartialEq {
@@ -1466,4 +1467,18 @@ extend SocketAddr implements Hash {
 extend SocketAddr implements FromStr {
     type Error = io.Error
     static fn from_str(input: read Text): SocketAddr throws io.Error { try parse_socket_addr(input) }
+}
+
+// Value types duplicate by copy; owners clone their buffers.
+extend Ipv4Addr implements Clone {
+    fn clone(): Ipv4Addr { self }
+}
+extend Ipv6Addr implements Clone {
+    fn clone(): Ipv6Addr { self }
+}
+extend IpAddr implements Clone {
+    fn clone(): IpAddr { self }
+}
+extend SocketAddr implements Clone {
+    fn clone(): SocketAddr { self }
 }

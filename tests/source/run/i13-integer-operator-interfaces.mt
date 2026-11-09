@@ -33,7 +33,7 @@ fn or_assign<A: BitOrAssign<B>, B>(a: take A, b: B): A { var x = a; x.bitor_assi
 fn xor_assign<A: BitXorAssign<B>, B>(a: take A, b: B): A { var x = a; x.bitxor_assign(b); x }
 fn shl_assign<A: ShlAssign<B>, B>(a: take A, b: B): A { var x = a; x.shl_assign(b); x }
 fn shr_assign<A: ShrAssign<B>, B>(a: take A, b: B): A { var x = a; x.shr_assign(b); x }
-fn widen<A, B: From<A>>(a: take A): B { B.(From<A>).`from`(a) }
+fn widen<A, B: From<A>>(a: take A): B { B.(From<A>).from(a) }
 fn widen_into<A: Into<B>, B>(a: take A): B { A.(Into<B>).into(a) }
 fn missing<T: Copy>(value: T?): bool {
     match value { none => true, present(_) => false }

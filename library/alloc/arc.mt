@@ -538,7 +538,7 @@ extend<T: unsized, A: Allocator> Arc<T, A> implements Borrow<T> {
     fn borrow(): read T from self { self.get() }
 }
 extend<T> Arc<T> implements From<T> {
-    static fn `from`(value: take T): Arc<T> { new(value) }
+    static fn from(value: take T): Arc<T> { new(value) }
 }
 
 extend<T: PartialEq + unsized, A: Allocator> Arc<T, A> implements PartialEq {

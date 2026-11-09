@@ -972,48 +972,48 @@ extend f64 {
 }
 
 extend f32 implements From<bool> {
-    static fn `from`(value: take bool): f32 {
+    static fn from(value: take bool): f32 {
         if value { 1.0f32 } else { 0.0f32 }
     }
 }
 extend f32 implements From<i8> {
-    static fn `from`(value: take i8): f32 { value as f32 }
+    static fn from(value: take i8): f32 { value as f32 }
 }
 extend f32 implements From<i16> {
-    static fn `from`(value: take i16): f32 { value as f32 }
+    static fn from(value: take i16): f32 { value as f32 }
 }
 extend f32 implements From<u8> {
-    static fn `from`(value: take u8): f32 { value as f32 }
+    static fn from(value: take u8): f32 { value as f32 }
 }
 extend f32 implements From<u16> {
-    static fn `from`(value: take u16): f32 { value as f32 }
+    static fn from(value: take u16): f32 { value as f32 }
 }
 
 extend f64 implements From<bool> {
-    static fn `from`(value: take bool): f64 {
+    static fn from(value: take bool): f64 {
         if value { 1.0f64 } else { 0.0f64 }
     }
 }
 extend f64 implements From<i8> {
-    static fn `from`(value: take i8): f64 { value as f64 }
+    static fn from(value: take i8): f64 { value as f64 }
 }
 extend f64 implements From<i16> {
-    static fn `from`(value: take i16): f64 { value as f64 }
+    static fn from(value: take i16): f64 { value as f64 }
 }
 extend f64 implements From<i32> {
-    static fn `from`(value: take i32): f64 { value as f64 }
+    static fn from(value: take i32): f64 { value as f64 }
 }
 extend f64 implements From<u8> {
-    static fn `from`(value: take u8): f64 { value as f64 }
+    static fn from(value: take u8): f64 { value as f64 }
 }
 extend f64 implements From<u16> {
-    static fn `from`(value: take u16): f64 { value as f64 }
+    static fn from(value: take u16): f64 { value as f64 }
 }
 extend f64 implements From<u32> {
-    static fn `from`(value: take u32): f64 { value as f64 }
+    static fn from(value: take u32): f64 { value as f64 }
 }
 extend f64 implements From<f32> {
-    static fn `from`(value: take f32): f64 { value as f64 }
+    static fn from(value: take f32): f64 { value as f64 }
 }
 
 macro float_binary_trait {

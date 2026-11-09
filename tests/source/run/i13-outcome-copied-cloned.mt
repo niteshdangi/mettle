@@ -1,5 +1,5 @@
 // profiles: debug release
-// Result::copied/cloned on read and mut success views: the success value is
+// The outcome's copied/cloned on read and mut success views: the success value is
 // copied or cloned, and the failure passes through unchanged (an owned,
 // non-Copy failure is moved, not cloned).
 import core.outcome

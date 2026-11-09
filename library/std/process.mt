@@ -13,6 +13,7 @@ import super.io.{Error, ErrorKind, Reader, Writer}
 import super.path.{PathBuf, PathInput}
 import package.core.text.Text
 import super.sys
+import package.core.clone.Clone
 
 extern "C" {
     unsafe fn getpid(): i32;
@@ -41,6 +42,47 @@ extend ExitStatus {
     // The terminating signal when a signal ended the child.
     pub fn signal(): i32? { if (self.raw & 127) != 0 && (self.raw & 127) != 127 { present(self.raw & 127) } else { none } }
     pub fn succeeded(): bool { self.raw == 0 }
+}
+
+// Linux signal names, as the reference ExitStatus display prints them.
+fn signal_name(signal: i32): read Text from static {
+    match signal {
+        1 => " (SIGHUP)", 2 => " (SIGINT)", 3 => " (SIGQUIT)", 4 => " (SIGILL)",
+        5 => " (SIGTRAP)", 6 => " (SIGABRT)", 7 => " (SIGBUS)", 8 => " (SIGFPE)",
+        9 => " (SIGKILL)", 10 => " (SIGUSR1)", 11 => " (SIGSEGV)", 12 => " (SIGUSR2)",
+        13 => " (SIGPIPE)", 14 => " (SIGALRM)", 15 => " (SIGTERM)", 16 => " (SIGSTKFLT)",
+        17 => " (SIGCHLD)", 18 => " (SIGCONT)", 19 => " (SIGSTOP)", 20 => " (SIGTSTP)",
+        21 => " (SIGTTIN)", 22 => " (SIGTTOU)", 23 => " (SIGURG)", 24 => " (SIGXCPU)",
+        25 => " (SIGXFSZ)", 26 => " (SIGVTALRM)", 27 => " (SIGPROF)", 28 => " (SIGWINCH)",
+        29 => " (SIGIO)", 30 => " (SIGPWR)", 31 => " (SIGSYS)",
+        _ => ""
+    }
+}
+
+// "exit status: N" for a normal exit, "signal: N (NAME)" (and " (core dumped)")
+// for a signal, matching the reference Unix display.
+extend ExitStatus implements package.core.fmt.Display {
+    fn fmt(f: mut package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+        match self.code() {
+            present(code) => {
+                try f.write_str("exit status: ")
+                return try i32.(package.core.fmt.Display).fmt(code, mut f)
+            },
+            none => {}
+        }
+        match self.signal() {
+            present(signal) => {
+                try f.write_str("signal: ")
+                try i32.(package.core.fmt.Display).fmt(signal, mut f)
+                try f.write_str(signal_name(signal))
+                if (self.raw & 128) != 0 { try f.write_str(" (core dumped)") }
+            },
+            none => {
+                try f.write_str("unrecognised wait status: ")
+                try i32.(package.core.fmt.Display).fmt(self.raw, mut f)
+            }
+        }
+    }
 }
 
 // Write end of a child's standard input; dropping it closes the stream, which
@@ -304,4 +346,12 @@ extend Command {
         let status = try child.wait()
         Output(status, out, err)
     }
+}
+
+// Value types duplicate by copy; owners clone their buffers.
+extend ExitStatus implements Clone {
+    fn clone(): ExitStatus { self }
+}
+extend Output implements Clone {
+    fn clone(): Output { Output(self.status, self.stdout.clone(), self.stderr.clone()) }
 }

@@ -506,5 +506,10 @@ pub fn cstring(bytes: read [u8]): List<u8> throws io.Error {
 }
 
 extend List<u8> implements package.core.convert.From<CString> {
-    static fn `from`(value: take CString): List<u8> { value.into_bytes() }
+    static fn from(value: take CString): List<u8> { value.into_bytes() }
+}
+
+// Value types duplicate by copy; owners clone their buffers.
+extend OsString implements Clone {
+    fn clone(): OsString { OsString(self.v.clone()) }
 }

@@ -553,7 +553,7 @@ extend<T: Clone, A: Allocator + Clone> Box<T, A> implements Clone {
     fn clone(): Box<T, A> { new_in(self.get().clone(), self.a.clone()) }
 }
 extend<T> Box<T> implements From<T> {
-    static fn `from`(value: take T): Box<T> { new(value) }
+    static fn from(value: take T): Box<T> { new(value) }
 }
 extend<T: Default> Box<T> implements Default {
     static fn default(): Box<T> { new(T.(Default).default()) }

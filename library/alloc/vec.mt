@@ -1077,7 +1077,7 @@ extend<T, A: Allocator> List<T, A> implements BorrowMut<[T]> {
 
 // The boxed slice's allocation becomes the list's buffer; nothing is copied.
 extend<T, A: Allocator> List<T, A> implements From<super.boxed.Box<[T], A>> {
-    static fn `from`(items: take super.boxed.Box<[T], A>): List<T, A> {
+    static fn from(items: take super.boxed.Box<[T], A>): List<T, A> {
         let length = items.get().len()
         let raw = items.into_raw()
         var list = new_in<T, A>(take raw.1)
@@ -1090,7 +1090,7 @@ extend<T, A: Allocator> List<T, A> implements From<super.boxed.Box<[T], A>> {
 
 // Moves the array's elements into a new exact-capacity list.
 extend<T, const N: usize> List<T> implements From<[T; N]> {
-    static fn `from`(items: take [T; N]): List<T> {
+    static fn from(items: take [T; N]): List<T> {
         var list = with_capacity<T>(N)
         unsafe {
             core.ptr.`copy`(core.ptr.from_ref(items).cast<T>(), list.ptr, N)
@@ -1102,19 +1102,19 @@ extend<T, const N: usize> List<T> implements From<[T; N]> {
 }
 
 extend<region r, T: Clone> List<T> implements From<read [T] from r> {
-    static fn `from`(items: take read [T] from r): List<T> { items.to_vec() }
+    static fn from(items: take read [T] from r): List<T> { items.to_vec() }
 }
 extend<region r, T: Clone> List<T> implements From<mut [T] from r> {
-    static fn `from`(items: take mut [T] from r): List<T> { items.to_vec() }
+    static fn from(items: take mut [T] from r): List<T> { items.to_vec() }
 }
 extend<region r, T: Clone, const N: usize> List<T> implements From<read [T; N] from r> {
-    static fn `from`(items: take read [T; N] from r): List<T> { items.to_vec() }
+    static fn from(items: take read [T; N] from r): List<T> { items.to_vec() }
 }
 extend<region r, T: Clone, const N: usize> List<T> implements From<mut [T; N] from r> {
-    static fn `from`(items: take mut [T; N] from r): List<T> { items.to_vec() }
+    static fn from(items: take mut [T; N] from r): List<T> { items.to_vec() }
 }
 extend<region r> List<u8> implements From<read Text from r> {
-    static fn `from`(text: take read Text from r): List<u8> { text.as_bytes().to_vec() }
+    static fn from(text: take read Text from r): List<u8> { text.as_bytes().to_vec() }
 }
 
 extend<T: PartialEq<U>, U, A: Allocator> List<T, A> implements PartialEq<[U]> {

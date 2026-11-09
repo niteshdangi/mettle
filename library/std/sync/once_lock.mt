@@ -45,7 +45,7 @@ pub fn new<T>(): OnceLock<T> {
     )
 }
 extend<T> OnceLock<T> implements From<T> {
-    static fn `from`(value: take T): OnceLock<T> {
+    static fn from(value: take T): OnceLock<T> {
         // The initialized state and payload are constructed before the cell escapes.
         OnceLock(
             core.sync.atomic.AtomicU32.new(2u32),

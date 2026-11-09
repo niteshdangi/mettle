@@ -2,7 +2,7 @@
 // failure value in Mettle's native success/failure outcome.
 
 pub interface From<T>: Sized {
-    static fn `from`(value: take T): Self;
+    static fn from(value: take T): Self;
 }
 
 pub interface Into<T>: Sized {
@@ -20,11 +20,11 @@ pub interface TryInto<T>: Sized {
 }
 
 extend<T> T implements From<T> {
-    static fn `from`(value: take T): T { value }
+    static fn from(value: take T): T { value }
 }
 
 extend<T, U> T implements Into<U> where U: From<T> {
-    take fn into(): U { U.(From<T>).`from`(self) }
+    take fn into(): U { U.(From<T>).from(self) }
 }
 
 // Rust's blanket `TryFrom<U> for T where U: Into<T>` needs coherence to rule

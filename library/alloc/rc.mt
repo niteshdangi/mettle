@@ -513,7 +513,7 @@ extend Rc<Text> implements Default {
 }
 
 extend<T, A: Allocator> Rc<[T], A> implements From<super.vec.List<T, A>> {
-    static fn `from`(values: take super.vec.List<T, A>): Rc<[T], A> {
+    static fn from(values: take super.vec.List<T, A>): Rc<[T], A> {
         let source = values.into_boxed_slice()
         let length = source.get().len()
         let source_layout = super.alloc.layout_of_val(source.get())
@@ -581,7 +581,7 @@ extend<T: unsized, A: Allocator> Rc<T, A> implements Borrow<T> {
     fn borrow(): read T from self { self.get() }
 }
 extend<T> Rc<T> implements From<T> {
-    static fn `from`(value: take T): Rc<T> { new(value) }
+    static fn from(value: take T): Rc<T> { new(value) }
 }
 extend<T: PartialEq + unsized, A: Allocator> Rc<T, A> implements PartialEq {
     fn eq(other: read Rc<T, A>): bool { self.get().eq(other.get()) }

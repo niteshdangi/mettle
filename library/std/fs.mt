@@ -12,6 +12,7 @@ import super.io.{Error, ErrorKind, Reader, Writer}
 import super.path.{Path, PathBuf, PathInput}
 import super.sys
 import super.time.SystemTime
+import package.core.clone.Clone
 
 extern "C" {
     unsafe fn fsync(fd: i32): i32;
@@ -554,4 +555,18 @@ extend PathBuf {
     pub fn is_symlink(): bool { self.as_path().is_symlink() }
     pub fn read_dir(): ReadDir throws Error { try super.fs.read_dir(self.as_path()) }
     pub fn read_link(): OsString throws Error { try super.fs.read_link(self.as_path()) }
+}
+
+// Value types duplicate by copy; owners clone their buffers.
+extend FileType implements Clone {
+    fn clone(): FileType { self }
+}
+extend Metadata implements Clone {
+    fn clone(): Metadata { self }
+}
+extend OpenOptions implements Clone {
+    fn clone(): OpenOptions { self }
+}
+extend Permissions implements Clone {
+    fn clone(): Permissions { self }
 }

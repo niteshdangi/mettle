@@ -263,7 +263,7 @@ fn main(): i32 {
     if !defaulted.is_empty() { return 102 }
     kept[0usize] = 11
     if kept[0usize] != 11 { return 103 }
-    let plain = List<i32>.(From<vec_deque.Deque<i32>>).`from`(kept)
+    let plain = List<i32>.(From<vec_deque.Deque<i32>>).from(kept)
     if plain.len() != 2usize || plain[1usize] != 5 { return 104 }
 
     var source = vec.new<i32>()

@@ -203,16 +203,52 @@ std::optional<std::size_t> Checker::receiverCandidate(
       std::vector<RegionBinding> regions;
       auto bindings =
           solver.applicable(implementation, self, call.span, &regions);
-      if (!bindings)
+      const auto declaration =
+          checked.types->erased(implementation.interfaceType).declaration;
+      const auto &definition = checked.interfaceData->definitions[declaration];
+      if (!visible(definition))
         continue;
-      auto bound = checked.types->substituteRegions(
-          checked.types->substitute(implementation.interfaceType, *bindings),
-          regions);
-      const auto &definition =
-          checked.interfaceData
-              ->definitions[checked.types->erased(bound).declaration];
-      if (visible(definition) && solver.prove({self, bound}, call.span, false))
-        consider(bound);
+      if (bindings) {
+        auto bound = checked.types->substituteRegions(
+            checked.types->substitute(implementation.interfaceType, *bindings),
+            regions);
+        if (solver.prove({self, bound}, call.span, false)) {
+          consider(bound);
+          continue;
+        }
+      }
+      // A conversion whose interface parameter is only the method's result
+      // (Into<U>.into(): U, TryInto<U>.try_into(): (U throws E)) takes that
+      // parameter from the type the call's context expects; the blanket's
+      // where clause is then proven for that type.
+      if (definition.parameters.size() != 1 || !expectedTypes.contains(&call))
+        continue;
+      auto declared =
+          std::find_if(definition.methods.begin(), definition.methods.end(),
+                       [&](const auto &method) { return method.name == name; });
+      if (declared == definition.methods.end() || declared->function < 0)
+        continue;
+      const auto &result = module.functions[declared->function].annotation;
+      auto parameterName = checked.types->name(definition.parameters[0]);
+      auto expected = expectedTypes.at(&call);
+      std::optional<Type> argument;
+      if (result.form == TypeForm::Named && result.arguments.empty() &&
+          result.name == parameterName)
+        argument = expected;
+      else if (result.form == TypeForm::Outcome && !result.elements.empty() &&
+               result.elements[0].form == TypeForm::Named &&
+               result.elements[0].name == parameterName &&
+               checked.types->isProduct(expected) &&
+               checked.types->product(expected).kind == AggregateKind::Outcome)
+        argument = checked.types->product(expected).components[0];
+      if (!argument || *argument == Type::Unknown)
+        continue;
+      auto inferred =
+          checked.types->erasedType({definition.name,
+                                     static_cast<std::uint32_t>(declaration),
+                                     {*argument}});
+      if (solver.prove({self, inferred}, call.span, false))
+        consider(inferred);
     }
   }
   std::sort(candidates.begin(), candidates.end());

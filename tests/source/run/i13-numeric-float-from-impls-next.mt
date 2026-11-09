@@ -5,7 +5,7 @@ import core.convert.{From, Into, TryFrom}
 import core.float
 
 fn from_value<S, T: From<S>>(value: take S): T {
-    T.(From<S>).`from`(value)
+    T.(From<S>).from(value)
 }
 
 fn into_value<S, T: From<S>>(value: take S): T {

@@ -10,6 +10,7 @@ import package.core.fmt
 import package.alloc.string.String
 import super.sys
 import super.path.PathInput
+import package.core.clone.Clone
 
 pub copy enum ErrorKind {
     NotFound, PermissionDenied, ConnectionRefused, ConnectionReset, ConnectionAborted,
@@ -65,18 +66,52 @@ pub fn from_kind(kind: ErrorKind): Error { Error(0, false, kind) }
 // socket timeout reported by the OS as "try again"); the raw number is kept.
 pub fn with_kind(code: i32, kind: ErrorKind): Error { Error(code, true, kind) }
 
-fn kind_description(kind: ErrorKind): String {
-    var s = package.alloc.string.new()
+// The reference description of each kind (its Display text).
+fn kind_text(kind: ErrorKind): read Text from static {
     match kind {
-        ErrorKind.InvalidInput => s.push_str("invalid input"),
-        ErrorKind.InvalidData => s.push_str("invalid data"),
-        ErrorKind.WriteZero => s.push_str("failed to write whole buffer"),
-        ErrorKind.UnexpectedEof => s.push_str("unexpected end of file"),
-        ErrorKind.TimedOut => s.push_str("timed out"),
-        ErrorKind.Unsupported => s.push_str("unsupported"),
-        _ => s.push_str("other error")
+        ErrorKind.NotFound => "entity not found",
+        ErrorKind.PermissionDenied => "permission denied",
+        ErrorKind.ConnectionRefused => "connection refused",
+        ErrorKind.ConnectionReset => "connection reset",
+        ErrorKind.ConnectionAborted => "connection aborted",
+        ErrorKind.NotConnected => "not connected",
+        ErrorKind.AddrInUse => "address in use",
+        ErrorKind.AddrNotAvailable => "address not available",
+        ErrorKind.BrokenPipe => "broken pipe",
+        ErrorKind.AlreadyExists => "entity already exists",
+        ErrorKind.WouldBlock => "operation would block",
+        ErrorKind.InvalidInput => "invalid input parameter",
+        ErrorKind.TimedOut => "timed out",
+        ErrorKind.Interrupted => "operation interrupted",
+        ErrorKind.OutOfMemory => "out of memory",
+        ErrorKind.IsADirectory => "is a directory",
+        ErrorKind.NotADirectory => "not a directory",
+        ErrorKind.DirectoryNotEmpty => "directory not empty",
+        ErrorKind.Other => "other error",
+        ErrorKind.InvalidData => "invalid data",
+        ErrorKind.WriteZero => "write zero",
+        ErrorKind.UnexpectedEof => "unexpected end of file",
+        ErrorKind.Unsupported => "unsupported"
     }
-    s
+}
+
+fn kind_description(kind: ErrorKind): String { package.alloc.string.from_text(kind_text(kind)) }
+
+extend ErrorKind implements fmt.Display {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error { try f.write_str(kind_text(self)) }
+}
+
+// An OS error shows the C library message and its number; a kind-only error
+// shows the kind's description.
+extend Error implements fmt.Display {
+    fn fmt(f: mut fmt.Formatter): Unit throws fmt.Error {
+        if !self.os { return try f.write_str(kind_text(self.kind)) }
+        let message = self.message()
+        try f.write_str(message.as_text())
+        try f.write_str(" (os error ")
+        try i32.(fmt.Display).fmt(self.code, mut f)
+        try f.write_char(')')
+    }
 }
 
 extend ErrorKind {
@@ -441,4 +476,9 @@ extend<W: Writer> BufferedWriter<W> implements Writer {
         try self.flush_buf()
         try self.inner.flush()
     }
+}
+
+// Value types duplicate by copy; owners clone their buffers.
+extend ErrorKind implements Clone {
+    fn clone(): ErrorKind { self }
 }

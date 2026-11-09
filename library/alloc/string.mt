@@ -734,5 +734,5 @@ extend Text {
 }
 
 extend<A: Allocator> List<u8, A> implements package.core.convert.From<String<A>> {
-    static fn `from`(text: take String<A>): List<u8, A> { text.into_bytes() }
+    static fn from(text: take String<A>): List<u8, A> { text.into_bytes() }
 }

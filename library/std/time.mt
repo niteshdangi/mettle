@@ -5,6 +5,7 @@ import package.core.default.Default
 import package.core.hash.{Hash, Hasher}
 import package.core.ops.{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign}
 import super.sys
+import package.core.clone.Clone
 
 // A length of time: whole seconds plus nanoseconds below one second.
 pub copy type Duration { secs: u64; nanos: u32 }
@@ -382,4 +383,15 @@ extend SystemTime implements Ord {
     fn cmp(other: read SystemTime): Ordering {
         if self.secs != other.secs { self.secs.cmp(read other.secs) } else { self.nanos.cmp(read other.nanos) }
     }
+}
+
+// Value types duplicate by copy; owners clone their buffers.
+extend Duration implements Clone {
+    fn clone(): Duration { self }
+}
+extend Instant implements Clone {
+    fn clone(): Instant { self }
+}
+extend SystemTime implements Clone {
+    fn clone(): SystemTime { self }
 }
