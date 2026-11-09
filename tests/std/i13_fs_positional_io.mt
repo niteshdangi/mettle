@@ -38,6 +38,24 @@ fn run(): i32 throws Error {
     var eof = [0u8; 1]
     if try file.read_at(eof, 8u64) != 0usize { return 12 }
 
+    {
+        var cloned = try file.try_clone()
+        if try cloned.seek(SeekFrom.Current(0i64)) != 1u64 { return 23 }
+        if try cloned.seek(SeekFrom.Start(2u64)) != 2u64 { return 24 }
+        if try file.seek(SeekFrom.Current(0i64)) != 2u64 { return 25 }
+    }
+    if try file.seek(SeekFrom.Start(1u64)) != 1u64 { return 26 }
+    try file.sync_all()
+    try file.sync_data()
+    if try file.seek(SeekFrom.Current(0i64)) != 1u64 ||
+        (try file.metadata()).len() != 8u64 {
+        return 27
+    }
+    try file.set_permissions(std.fs.permissions_from_mode(384u32))
+    if ((try file.metadata()).permissions().mode() & 511u32) != 384u32 {
+        return 28
+    }
+
     let invalid_read = capture file.read_at(eof, 9223372036854775808u64)
     match take invalid_read {
         success(count) => { return 13 },

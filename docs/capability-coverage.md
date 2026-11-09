@@ -50,8 +50,8 @@ still obligations. No executed all-target expansion or per-item native coherence
 check is claimed.
 
 Generate the I13 [worklist](baseline/v1-operations.csv) with
-`python3 tools/v1_operations.py`. Latest ledger (2026-11-09): **10,444 evidenced,
-35 declared, 2,811 missing, 5 not applicable** of 13,295 canonical records,
+`python3 tools/v1_operations.py`. Latest ledger (2026-11-09): **10,454 evidenced,
+35 declared, 2,801 missing, 5 not applicable** of 13,295 canonical records,
 grouped into 2,442 operation and 2,309 implementation families. Subset/source-cfg
 reconciliation and Linux applicability review remain open; the five Windows-only
 exclusions were recorded on Darwin. Missing/unmapped is not proof of absent
@@ -59,6 +59,10 @@ code; declarations/name matches are not behavioral passes.
 
 The 35 declared records comprise 20 conversion-blanket exposures and fifteen
 callable-adapter Clone/ToOwned records awaiting per-type/profile evidence.
+Ten hosted File/UDP operations gained focused Linux debug/release evidence;
+generic address inputs, zero-length datagrams and nonblocking error translation
+remain open as recorded in
+[the hosted reconciliation](i13-library.md#focused-hosted-reconciliation-2026-11-09).
 Focused unzip, conversion and adapter receipts, the unverified owner-conversion
 ASan compile and Peekable projection blocker are recorded once in
 [the work package](i13-library.md#handoff-start-here-in-a-new-session).

@@ -913,8 +913,8 @@ Current library implementation, blockers and exact focused receipts are owned by
 [i13-library.md](i13-library.md#handoff-start-here-in-a-new-session); the
 [capability inventory](capability-coverage.md#i13-macos-arm64-acceptance-inventory)
 retains row/fixture ownership. All eighteen library areas remain partial.
-Latest 2026-11-09 operation ledger: **10,444 evidenced, 35 declared,
-2,811 missing, 5 not applicable** (13,295 total, grouped into 2,442 operation
+Latest 2026-11-09 operation ledger: **10,454 evidenced, 35 declared,
+2,801 missing, 5 not applicable** (13,295 total, grouped into 2,442 operation
 and 2,309 implementation families; subset/source-cfg reconciliation pending).
 Unzip has focused Linux native/emitted-ASan debug/release evidence; 20
 conversion blanket exposures and fifteen callable-adapter Clone/ToOwned rows
@@ -922,6 +922,10 @@ are declared, not per-type/profile passes. Peekable associated-buffer projection
 is unresolved. Minimal NonNull, borrowed chaining, bounds/exact/fused protocols
 and collision-safe Any identity have scoped evidence, not full-area closure;
 Static/unsized Any, synchronization and complete operation coverage remain open.
+Ten File/UDP operations have focused Linux debug/release evidence from the
+[hosted reconciliation](i13-library.md#focused-hosted-reconciliation-2026-11-09);
+generic UDP address inputs, empty datagrams and nonblocking error translation
+remain open. This test-only batch does not qualify a new compiler revision.
 
 I13 closes the V1 operation subset defined in `docs/library-surface.md`
 section 6.1 with compiled native declarations and per-operation semantic

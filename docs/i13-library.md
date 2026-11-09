@@ -9,8 +9,8 @@ areas remain partial: L003, L005, L009, S005-S014, S019-S021, S024-S025.
 
 ## Handoff (start here in a new session)
 
-Latest operation ledger (2026-11-09): **10,444 evidenced, 35 declared,
-2,811 missing, 5 not applicable** of 13,295 records. Declared means implemented
+Latest operation ledger (2026-11-09): **10,454 evidenced, 35 declared,
+2,801 missing, 5 not applicable** of 13,295 records. Declared means implemented
 but not behaviorally verified per type/profile. Subset/source-cfg reconciliation
 and Linux applicability review remain open; no area is closed by these batches.
 The 35 declared records comprise 20 conversion-blanket exposures and fifteen
@@ -18,7 +18,8 @@ callable-adapter Clone/ToOwned records.
 
 ### Source-only backlog reconciliation (2026-11-09)
 
-All **2,846 remaining canonical IDs** match the existing source worklist.
+Before the focused verification below, all **2,846 remaining canonical IDs**
+matched the existing source worklist.
 The 2,811 missing records comprise **1,405 interface implementation relations,
 1,009 method/interface-method exposures and 397 other declaration records**,
 not 2,811 independent missing functions. They have 1,803 case-sensitive family
@@ -58,6 +59,33 @@ This is a complete first-pass partition, not completed semantic reconciliation.
 The 955 no-candidate records remain review work, not a confirmed missing-code
 count. Source cfg/Linux applicability and focused compile/run evidence remain
 open; this pass ran no compiler, build, sanitizer or qualification checks.
+
+### Focused hosted reconciliation (2026-11-09)
+
+Ten previously missing operations now have focused Linux debug/release evidence:
+File `try_clone`, `sync_all`, `sync_data`, `set_permissions`, and UdpSocket
+`local_addr`, `peer_addr`, `try_clone`, `take_error`, `set_read_timeout`,
+`set_write_timeout`. The extended `i13_fs_positional_io` and
+`i13_net_tcp_peek_incoming` fixtures and existing `net_loopback` fixture pass
+both profiles through the owning hosted runner at unchanged limits. They check
+shared file cursors and independent handle cleanup, synchronization success and
+unchanged file state, permission bits, unconnected-peer failure, duplicate socket
+traffic, empty pending-error queries, zero-timeout rejection, timeout removal
+and blocking receive expiration. `sync_data` currently uses `fsync`; these tests
+do not establish a data-only cost or persistence beyond OS guarantees.
+
+Evidence uses the existing Linux Release compiler with a byte-identical native
+snapshot of the current library and fixtures, not a rebuilt or newly qualified
+compiler. No full suite or sanitizer run was performed for this test-only batch.
+
+Contract review also confirms partial UDP surfaces that remain missing:
+`bind`, `connect` and `send_to` accept only one SocketAddr rather than the
+selected generic address input; connected `send`/`recv` reuse stream helpers
+that skip zero-length datagrams; and `net_error` translates WouldBlock to
+TimedOut without checking nonblocking mode. Consequently `send`, `recv`,
+`recv_from` and `set_nonblocking` are not credited from passing blocking
+loopback cases. The ten credited records reduce the open count to **2,836**;
+the rest of the source-only partition still requires contract resolution.
 
 The [native optional/outcome specification](native-value-contracts.md) now owns
 its explicitly assigned operation contracts. Its

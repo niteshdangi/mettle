@@ -63,7 +63,36 @@ fn run(): i32 throws Error {
     var udp_sender = try std.net.udp_bind(
         std.net.socket_addr(std.net.localhost(), 0u16)
     )
+    match take capture udp_receiver.peer_addr() {
+        success(_) => { return 14 },
+        failure(error) => {
+            if !error.kind().is(ErrorKind.NotConnected) { return 15 }
+        }
+    }
+    match take capture udp_receiver.set_read_timeout(present(from_millis(0u64))) {
+        success(_) => { return 16 },
+        failure(error) => {
+            if !error.kind().is(ErrorKind.InvalidInput) { return 17 }
+        }
+    }
+    match take capture udp_sender.set_write_timeout(present(from_millis(0u64))) {
+        success(_) => { return 18 },
+        failure(error) => {
+            if !error.kind().is(ErrorKind.InvalidInput) { return 19 }
+        }
+    }
+    try udp_receiver.set_read_timeout(none)
+    try udp_receiver.set_read_timeout(present(from_millis(1000u64)))
+    try udp_sender.set_write_timeout(present(from_millis(1000u64)))
+    try udp_sender.set_write_timeout(none)
+    if (try udp_receiver.take_error()).is_present() ||
+        (try udp_receiver.take_error()).is_present() {
+        return 20
+    }
     let receiver_address = try udp_receiver.local_addr()
+    if !receiver_address.ip.is_loopback() || receiver_address.port == 0u16 {
+        return 21
+    }
     try udp_sender.connect(receiver_address)
     if !(try udp_sender.peer_addr()).same(receiver_address) { return 7 }
     if try udp_sender.send(payload) != payload_bytes.len() { return 8 }
@@ -79,6 +108,23 @@ fn run(): i32 throws Error {
         datagram[3usize] != payload[3usize] ||
         datagram[4usize] != payload[4usize] {
         return 10
+    }
+    {
+        let cloned = try udp_receiver.try_clone()
+        if !(try cloned.local_addr()).same(receiver_address) { return 22 }
+        if try udp_sender.send(payload) != payload_bytes.len() { return 23 }
+        var through_clone = [0u8; 5]
+        let packet = try cloned.recv_from(through_clone)
+        if packet.0 != payload_bytes.len() { return 24 }
+        var index = 0usize
+        while index < payload_bytes.len() {
+            if through_clone[index] != payload[index] { return 25 }
+            index += 1usize
+        }
+    }
+    if try udp_sender.send(payload) != payload_bytes.len() { return 26 }
+    if (try udp_receiver.recv_from(datagram)).0 != payload_bytes.len() {
+        return 27
     }
     0
 }
