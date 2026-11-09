@@ -20,6 +20,13 @@ public:
                 std::uint32_t count = 0, Type symbolicCount = Type::Unknown);
   std::vector<int> components(int variable, AggregateKind kind, Span span);
   int representative(int variable) { return root(variable); }
+  // An integer literal whose type no constraint has chosen yet (it would
+  // default to i32).
+  bool pendingInteger(int variable) {
+    const auto &found = variables[root(variable)];
+    return found.type == Type::Unknown && !found.kind &&
+           found.numeric == Variable::Numeric::Integer;
+  }
   // Whether the variable is, or structurally contains, a listed representative.
   bool depends(int variable, const std::set<int> &representatives);
 

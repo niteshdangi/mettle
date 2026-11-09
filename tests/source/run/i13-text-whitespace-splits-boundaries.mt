@@ -386,7 +386,7 @@ fn main(): i32 {
     if list.len() != 2usize { return 91 }
     list.dedup_by_key(fn(value: mut i32): i32 { value })
     list.retain_mut(fn(value: mut i32): bool { value += 1; true })
-    if list[0usize] != 2 || list[1usize] != 3 { return 92 }
+    if list[0] != 2 || list[1] != 3 { return 92 }
     match list.pop_if(fn(value: mut i32): bool { value == 3 }) {
         present(value) => { if value != 3 { return 93 } },
         none => { return 93 }
@@ -396,7 +396,7 @@ fn main(): i32 {
     keyed_list.push(12)
     keyed_list.push(23)
     keyed_list.dedup_by_key(fn(value: mut i32): i32 { value / 10 })
-    if keyed_list.len() != 2usize || keyed_list[1usize] != 23 { return 106 }
+    if keyed_list.len() != 2usize || keyed_list[1] != 23 { return 106 }
     var extracted_source = vec.new<i32>()
     extracted_source.push(1)
     extracted_source.push(2)
@@ -419,7 +419,7 @@ fn main(): i32 {
         }
         unsafe { spare_test.set_len(2usize) }
         spare_test.shrink_to(1usize)
-        if spare_test[0usize] != 1 || spare_test[1usize] != 2 { return 123 }
+        if spare_test[0] != 1 || spare_test[1] != 2 { return 123 }
         var splice_source = vec.new<i32>()
         splice_source.push(1)
         splice_source.push(2)
@@ -431,8 +431,8 @@ fn main(): i32 {
             var splice = splice_source.splice(1usize..2usize, replacement)
         match splice.next() { present(value) => { if value != 2 { return 96 } }, none => { return 96 } }
     }
-    if splice_source.len() != 4usize || splice_source[1usize] != 8 ||
-        splice_source[2usize] != 9 { return 97 }
+    if splice_source.len() != 4usize || splice_source[1] != 8 ||
+        splice_source[2] != 9 { return 97 }
     let boxed = splice_source.into_boxed_slice()
     if boxed.get()[3] != 3 { return 98 }
     var leak_source = vec.new<i32>()
@@ -449,7 +449,7 @@ fn main(): i32 {
         match take range.next() { present(value) => { *value += 2 }, none => { return 100 } }
     }
     deque.retain_mut(fn(value: mut i32): bool { value != 3 })
-    if deque.len() != 2usize || deque[1usize] != 4 { return 101 }
+    if deque.len() != 2usize || deque[1] != 4 { return 101 }
     match deque.pop_front_if(fn(value: mut i32): bool { value == 1 }) {
         present(value) => { if value != 1 { return 102 } },
         none => { return 102 }

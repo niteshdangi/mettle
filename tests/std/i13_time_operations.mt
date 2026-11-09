@@ -1,6 +1,7 @@
 // Duration, Instant and SystemTime arithmetic: operators, checked and
 // saturating forms, equality, hashing and float conversion.
-import core.cmp.PartialEq
+import core.cmp
+import core.cmp.{Ord, Ordering, PartialEq, PartialOrd}
 import core.default.Default
 import core.hash.hash_one
 import std.io.Error
@@ -90,6 +91,30 @@ fn run(): i32 throws Error {
         success(d) => { if d.as_secs() > 60u64 { return 34 } },
         failure(e) => { return 35 }
     }
+    if ordering() != 0 { return ordering() }
+    0
+}
+
+// Duration, Instant and SystemTime order through PartialOrd/Ord: operators,
+// cmp, and the Ord-based min/max/clamp.
+fn ordering(): i32 {
+    let short = from_millis(1500u64)
+    let long = duration(2u64, 0u32)
+    let same = duration(1u64, 500000000u32)
+    if !(short < long) || short > long || !(short <= same) || !(short >= same) { return 40 }
+    if short.cmp(read long) != Ordering.Less || long.cmp(read short) != Ordering.Greater { return 41 }
+    if short.cmp(read same) != Ordering.Equal || short.partial_cmp(read long) != present(Ordering.Less) { return 42 }
+    // take consumes Copy values too, so each call gets its own copies.
+    let (s1, l1, s2, l2, s3, l3) = (short, long, short, long, short, long)
+    if cmp.max(s1, l1) != long || cmp.min(s2, l2) != short { return 43 }
+    if cmp.clamp(from_secs(9u64), s3, l3) != long { return 44 }
+    let earlier = now()
+    let later = earlier + from_millis(5u64)
+    if !(earlier < later) || later.cmp(read earlier) != Ordering.Greater || !(earlier <= earlier) { return 45 }
+    let epoch = unix_epoch()
+    let after = epoch + from_nanos(1u64)
+    if !(epoch < after) || after.cmp(read epoch) != Ordering.Greater { return 46 }
+    if (epoch - duration(1u64, 0u32)).cmp(read epoch) != Ordering.Less { return 47 }
     0
 }
 

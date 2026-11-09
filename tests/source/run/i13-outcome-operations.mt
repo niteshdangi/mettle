@@ -3,8 +3,8 @@
 // Evidence for the V1 Result operation subset on the stored outcome
 // `(T throws E)` (Rust Result -> `(T throws E)`, Ok -> success, Err ->
 // failure, is_ok/is_err -> is_success/is_failure). Each operation is called on
-// success and failure inputs and its result checked. copied/cloned are not
-// covered here: their selected shape is tracked as an open contract question.
+// success and failure inputs and its result checked. copied/cloned are in
+// i13-outcome-copied-cloned.mt.
 
 import core.outcome
 import core.option

@@ -7166,10 +7166,10 @@ B500f459703a83f9dcfffaf21,impl:time::Duration:any::Any,https://doc.rust-lang.org
 B9179f9afc24e65cd322a7c78,impl:time::Duration:borrow::Borrow,https://doc.rust-lang.org/1.99.1/core/time/struct.Duration.html#impl-Borrow%3CT%3E-for-T,,missing,
 B6aa9944bb6a2dcd63fb38576,impl:time::Duration:borrow::ToOwned,https://doc.rust-lang.org/1.99.1/std/time/struct.Duration.html#impl-ToOwned-for-T,,missing,
 B0739849b96a99c9ee16a7381,impl:time::Duration:clone::Clone,https://doc.rust-lang.org/1.99.1/core/time/struct.Duration.html#impl-Clone-for-Duration,,missing,
-Bdc91572b00736a80193169d7,impl:time::Duration:cmp::Eq,https://doc.rust-lang.org/1.99.1/core/time/struct.Duration.html#impl-Eq-for-Duration,,missing,
-Bf8f8a60018cba7b643ee8374,impl:time::Duration:cmp::Ord,https://doc.rust-lang.org/1.99.1/core/time/struct.Duration.html#impl-Ord-for-Duration,,missing,
+Bdc91572b00736a80193169d7,impl:time::Duration:cmp::Eq,https://doc.rust-lang.org/1.99.1/core/time/struct.Duration.html#impl-Eq-for-Duration,std.time,evidenced,tests/std/i13_time_operations.mt;tests/std/time_basic.mt
+Bf8f8a60018cba7b643ee8374,impl:time::Duration:cmp::Ord,https://doc.rust-lang.org/1.99.1/core/time/struct.Duration.html#impl-Ord-for-Duration,std.time,evidenced,tests/std/i13_time_operations.mt;tests/std/time_basic.mt
 B284243a9e7280cd3a57faeab,impl:time::Duration:cmp::PartialEq,https://doc.rust-lang.org/1.99.1/core/time/struct.Duration.html#impl-PartialEq-for-Duration,std.time,evidenced,tests/std/i13_time_operations.mt
-Baff66e6285a05f43275d85e4,impl:time::Duration:cmp::PartialOrd,https://doc.rust-lang.org/1.99.1/core/time/struct.Duration.html#impl-PartialOrd-for-Duration,,missing,
+Baff66e6285a05f43275d85e4,impl:time::Duration:cmp::PartialOrd,https://doc.rust-lang.org/1.99.1/core/time/struct.Duration.html#impl-PartialOrd-for-Duration,std.time,evidenced,tests/std/i13_time_operations.mt;tests/std/time_basic.mt
 Ba7ab6bb1962a1ab53d9e5e39,impl:time::Duration:convert::From,https://doc.rust-lang.org/1.99.1/core/time/struct.Duration.html#impl-From%3CT%3E-for-T,,missing,
 Bc35ca105df36976a0ff8ac09,impl:time::Duration:convert::Into,https://doc.rust-lang.org/1.99.1/core/time/struct.Duration.html#impl-Into%3CU%3E-for-T,,missing,
 Bba21b35f4e6b5e4430d39326,impl:time::Duration:convert::TryFrom,https://doc.rust-lang.org/1.99.1/core/time/struct.Duration.html#impl-TryFrom%3CU%3E-for-T,,missing,
@@ -7192,10 +7192,10 @@ B9b4a4da8c5240f9b94363b22,impl:time::Instant:any::Any,https://doc.rust-lang.org/
 B58d52e665e07df27c0ea1015,impl:time::Instant:borrow::Borrow,https://doc.rust-lang.org/1.99.1/std/time/struct.Instant.html#impl-Borrow%3CT%3E-for-T,,missing,
 Bdebdcb06857071627d5240f6,impl:time::Instant:borrow::ToOwned,https://doc.rust-lang.org/1.99.1/std/time/struct.Instant.html#impl-ToOwned-for-T,,missing,
 Bb5f8d5c5166f2157db069b68,impl:time::Instant:clone::Clone,https://doc.rust-lang.org/1.99.1/std/time/struct.Instant.html#impl-Clone-for-Instant,,missing,
-Bc041754aa989f9ad829af24a,impl:time::Instant:cmp::Eq,https://doc.rust-lang.org/1.99.1/std/time/struct.Instant.html#impl-Eq-for-Instant,,missing,
-B38ecedc5b9ab2bf317cee48d,impl:time::Instant:cmp::Ord,https://doc.rust-lang.org/1.99.1/std/time/struct.Instant.html#impl-Ord-for-Instant,,missing,
+Bc041754aa989f9ad829af24a,impl:time::Instant:cmp::Eq,https://doc.rust-lang.org/1.99.1/std/time/struct.Instant.html#impl-Eq-for-Instant,std.time,evidenced,tests/std/i13_time_operations.mt;tests/std/time_basic.mt
+B38ecedc5b9ab2bf317cee48d,impl:time::Instant:cmp::Ord,https://doc.rust-lang.org/1.99.1/std/time/struct.Instant.html#impl-Ord-for-Instant,std.time,evidenced,tests/std/i13_time_operations.mt;tests/std/time_basic.mt
 B1b2d453f6b61490c95dbc202,impl:time::Instant:cmp::PartialEq,https://doc.rust-lang.org/1.99.1/std/time/struct.Instant.html#impl-PartialEq-for-Instant,std.time,evidenced,tests/std/i13_time_operations.mt
-B8b62d7522cc1cfa109547964,impl:time::Instant:cmp::PartialOrd,https://doc.rust-lang.org/1.99.1/std/time/struct.Instant.html#impl-PartialOrd-for-Instant,,missing,
+B8b62d7522cc1cfa109547964,impl:time::Instant:cmp::PartialOrd,https://doc.rust-lang.org/1.99.1/std/time/struct.Instant.html#impl-PartialOrd-for-Instant,std.time,evidenced,tests/std/i13_time_operations.mt;tests/std/time_basic.mt
 Bae3cb109a78a8b83c22df1f5,impl:time::Instant:convert::From,https://doc.rust-lang.org/1.99.1/std/time/struct.Instant.html#impl-From%3CT%3E-for-T,,missing,
 B1998c1a58703e163d1a438bc,impl:time::Instant:convert::Into,https://doc.rust-lang.org/1.99.1/std/time/struct.Instant.html#impl-Into%3CU%3E-for-T,,missing,
 B24987adf10323eda93a3132a,impl:time::Instant:convert::TryFrom,https://doc.rust-lang.org/1.99.1/std/time/struct.Instant.html#impl-TryFrom%3CU%3E-for-T,,missing,
@@ -7214,10 +7214,10 @@ B85abc3cea3d8b9ef19cf09d2,impl:time::SystemTime:any::Any,https://doc.rust-lang.o
 Bfa4d361532e7cbbc2a98b41a,impl:time::SystemTime:borrow::Borrow,https://doc.rust-lang.org/1.99.1/std/time/struct.SystemTime.html#impl-Borrow%3CT%3E-for-T,,missing,
 Bba1611c5e5b5180a589e9447,impl:time::SystemTime:borrow::ToOwned,https://doc.rust-lang.org/1.99.1/std/time/struct.SystemTime.html#impl-ToOwned-for-T,,missing,
 B1320f3dd55f41934a6a13572,impl:time::SystemTime:clone::Clone,https://doc.rust-lang.org/1.99.1/std/time/struct.SystemTime.html#impl-Clone-for-SystemTime,,missing,
-B6916d13fe1830a1ec408009a,impl:time::SystemTime:cmp::Eq,https://doc.rust-lang.org/1.99.1/std/time/struct.SystemTime.html#impl-Eq-for-SystemTime,,missing,
-B8e7405f0032eeb9ae1d3587f,impl:time::SystemTime:cmp::Ord,https://doc.rust-lang.org/1.99.1/std/time/struct.SystemTime.html#impl-Ord-for-SystemTime,,missing,
+B6916d13fe1830a1ec408009a,impl:time::SystemTime:cmp::Eq,https://doc.rust-lang.org/1.99.1/std/time/struct.SystemTime.html#impl-Eq-for-SystemTime,std.time,evidenced,tests/std/i13_time_operations.mt;tests/std/time_basic.mt
+B8e7405f0032eeb9ae1d3587f,impl:time::SystemTime:cmp::Ord,https://doc.rust-lang.org/1.99.1/std/time/struct.SystemTime.html#impl-Ord-for-SystemTime,std.time,evidenced,tests/std/i13_time_operations.mt;tests/std/time_basic.mt
 B474489d89581d88568ed67a8,impl:time::SystemTime:cmp::PartialEq,https://doc.rust-lang.org/1.99.1/std/time/struct.SystemTime.html#impl-PartialEq-for-SystemTime,std.time,evidenced,tests/std/i13_time_operations.mt
-B749e51199064f68ce48f67d1,impl:time::SystemTime:cmp::PartialOrd,https://doc.rust-lang.org/1.99.1/std/time/struct.SystemTime.html#impl-PartialOrd-for-SystemTime,,missing,
+B749e51199064f68ce48f67d1,impl:time::SystemTime:cmp::PartialOrd,https://doc.rust-lang.org/1.99.1/std/time/struct.SystemTime.html#impl-PartialOrd-for-SystemTime,std.time,evidenced,tests/std/i13_time_operations.mt;tests/std/time_basic.mt
 B2420da3e23859ce188d87fb6,impl:time::SystemTime:convert::From,https://doc.rust-lang.org/1.99.1/std/time/struct.SystemTime.html#impl-From%3CT%3E-for-T,,missing,
 B5edc088c87cd209f6ce71d09,impl:time::SystemTime:convert::Into,https://doc.rust-lang.org/1.99.1/std/time/struct.SystemTime.html#impl-Into%3CU%3E-for-T,,missing,
 Bff0a0370c6661bc2c3d77b9b,impl:time::SystemTime:convert::TryFrom,https://doc.rust-lang.org/1.99.1/std/time/struct.SystemTime.html#impl-TryFrom%3CU%3E-for-T,,missing,
@@ -12351,10 +12351,10 @@ B1ba969d80b340aa8d85e148c,operation:result::Result::as_deref_mut,https://doc.rus
 B730e6677b0f96c1f04180383,operation:result::Result::as_deref_mut,https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html#method.as_deref_mut,core.outcome.(T throws E).as_deref_mut,evidenced,tests/source/run/i13-outcome-operations.mt
 B78f0d57ec61a10b9fb66caa7,operation:result::Result::as_mut,https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html#method.as_mut,core.outcome.(T throws E).as_mut,evidenced,tests/source/run/i13-outcome-operations.mt
 B9e071b334d04b14657e1ff71,operation:result::Result::as_ref,https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html#method.as_ref,core.outcome.(T throws E).as_ref,evidenced,tests/source/run/i13-outcome-operations.mt
-B26d42296405ea50b74bf0ee0,operation:result::Result::cloned,https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html#method.cloned-1,,missing,
-B3f90475c4965eb5c16591e52,operation:result::Result::cloned,https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html#method.cloned,,missing,
-B2291b60fdf857d5de1d0733e,operation:result::Result::copied,https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html#method.copied,,missing,
-B774c9ee13e654ab96e6086ca,operation:result::Result::copied,https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html#method.copied-1,,missing,
+B26d42296405ea50b74bf0ee0,operation:result::Result::cloned,https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html#method.cloned-1,core.outcome,evidenced,tests/source/run/i13-outcome-copied-cloned.mt;tests/source/run/i13-coretraits-option-outcome-followup.mt
+B3f90475c4965eb5c16591e52,operation:result::Result::cloned,https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html#method.cloned,core.outcome,evidenced,tests/source/run/i13-outcome-copied-cloned.mt;tests/source/run/i13-coretraits-option-outcome-followup.mt
+B2291b60fdf857d5de1d0733e,operation:result::Result::copied,https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html#method.copied,core.outcome,evidenced,tests/source/run/i13-outcome-copied-cloned.mt;tests/source/run/i13-coretraits-option-outcome-followup.mt
+B774c9ee13e654ab96e6086ca,operation:result::Result::copied,https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html#method.copied-1,core.outcome,evidenced,tests/source/run/i13-outcome-copied-cloned.mt;tests/source/run/i13-coretraits-option-outcome-followup.mt
 B6deb15f18b89e8158a766a11,operation:result::Result::err,https://doc.rust-lang.org/1.99.1/std/result/enum.Result.html#method.err,core.outcome.(T throws E).err,evidenced,tests/source/run/i13-outcome-operations.mt
 B70b8b28065f8e32528b8204f,operation:result::Result::err,https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html#method.err,core.outcome.(T throws E).err,evidenced,tests/source/run/i13-outcome-operations.mt
 B8fab807418da30f2439d0f29,operation:result::Result::expect,https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html#method.expect,core.outcome.(T throws E).expect,evidenced,tests/source/run/i13-outcome-operations.mt;tests/source/run/i13-outcome-expect-failure-panics.mt

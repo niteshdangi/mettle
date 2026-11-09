@@ -20,14 +20,15 @@ fn expect_15(value: read i32): Unit {
 
 fn borrowed_success<region r>(
     value: read i32 from r
-): ((read i32 from r) throws (read i32 from r)) {
+): ((read i32 from r) throws i32) {
     success(read value)
 }
 
+// Only the success value is borrowed; the failure is an owned value.
 fn borrowed_failure<region r>(
     value: read i32 from r
-): ((read i32 from r) throws (read i32 from r)) {
-    failure(read value)
+): ((read i32 from r) throws i32) {
+    failure(7)
 }
 
 fn main(): i32 {

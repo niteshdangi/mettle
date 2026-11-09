@@ -1,6 +1,6 @@
 // Monotonic and wall-clock time. `Instant` never goes backwards; `SystemTime`
 // can (clock adjustments), so differences are fallible.
-import package.core.cmp.{Eq, PartialEq}
+import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import package.core.default.Default
 import package.core.hash.{Hash, Hasher}
 import package.core.ops.{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign}
@@ -41,7 +41,7 @@ extend Duration {
     }
 
     pub fn checked_sub(other: Duration): Duration? {
-        if self.lt(other) { return none }
+        if self.before(other) { return none }
         var secs = self.secs - other.secs
         var nanos = 0u32
         if self.nanos >= other.nanos {
@@ -57,10 +57,10 @@ extend Duration {
         match self.checked_sub(other) { present(d) => d, none => Duration(0u64, 0u32) }
     }
 
-    pub fn lt(other: Duration): bool {
+    // Strictly shorter than `other`; the public order is PartialOrd/Ord.
+    fn before(other: Duration): bool {
         self.secs < other.secs || (self.secs == other.secs && self.nanos < other.nanos)
     }
-    pub fn le(other: Duration): bool { !other.lt(self) }
     pub fn same(other: Duration): bool { self.secs == other.secs && self.nanos == other.nanos }
 }
 
@@ -83,7 +83,6 @@ extend Instant {
     pub fn checked_add(d: Duration): Instant? {
         match self.since_start.checked_add(d) { present(t) => present(Instant(t)), none => none }
     }
-    pub fn lt(other: Instant): bool { self.since_start.lt(other.since_start) }
 }
 
 // A point on the wall clock, as seconds and nanoseconds from the Unix epoch
@@ -179,7 +178,7 @@ extend Duration {
     }
 
     pub fn abs_diff(other: Duration): Duration {
-        if self.lt(other) { sub_durations(other, self) } else { sub_durations(self, other) }
+        if self.before(other) { sub_durations(other, self) } else { sub_durations(self, other) }
     }
 
     pub fn as_secs_f64(): f64 { (self.secs as f64) + (self.nanos as f64) / 1000000000.0f64 }
@@ -357,5 +356,30 @@ extend SystemTime implements Sub<Duration> {
             present(t) => t,
             none => package.core.panic.panic("overflow when subtracting duration from system time")
         }
+    }
+}
+
+// Durations and instants order by length; system times by position on the
+// wall clock (seconds, then nanoseconds).
+extend Duration implements PartialOrd {
+    fn partial_cmp(other: read Duration): Ordering? { present(self.cmp(other)) }
+}
+extend Duration implements Ord {
+    fn cmp(other: read Duration): Ordering {
+        if self.before(other) { Ordering.Less } else if other.before(self) { Ordering.Greater } else { Ordering.Equal }
+    }
+}
+extend Instant implements PartialOrd {
+    fn partial_cmp(other: read Instant): Ordering? { present(self.cmp(other)) }
+}
+extend Instant implements Ord {
+    fn cmp(other: read Instant): Ordering { self.since_start.cmp(read other.since_start) }
+}
+extend SystemTime implements PartialOrd {
+    fn partial_cmp(other: read SystemTime): Ordering? { present(self.cmp(other)) }
+}
+extend SystemTime implements Ord {
+    fn cmp(other: read SystemTime): Ordering {
+        if self.secs != other.secs { self.secs.cmp(read other.secs) } else { self.nanos.cmp(read other.nanos) }
     }
 }

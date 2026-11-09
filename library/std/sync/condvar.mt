@@ -93,7 +93,7 @@ extend Condvar {
         var first_wait = true
         while test(current.get_mut()) {
             let elapsed = time.now().duration_since(start)
-            if !first_wait && !elapsed.lt(duration) {
+            if !first_wait && elapsed >= duration {
                 return (current, TimedOut(true))
             }
             let remaining = match duration.checked_sub(elapsed) {

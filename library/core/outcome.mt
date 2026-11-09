@@ -157,20 +157,40 @@ extend<T, E> (T throws E) {
     }
 }
 
-extend<region r, T: Clone, E: Clone> ((read T from r) throws (read E from r)) {
+// copied/cloned duplicate the borrowed success value; the failure passes
+// through unchanged.
+extend<region r, T: Clone, E> ((read T from r) throws E) {
     pub take fn cloned(): (T throws E) {
         match take self {
             success(value) => success(value.clone()),
-            failure(error) => failure(error.clone())
+            failure(error) => failure(error)
         }
     }
 }
 
-extend<region r, T: Copy, E: Copy> ((read T from r) throws (read E from r)) {
+extend<region r, T: Copy, E> ((read T from r) throws E) {
     pub take fn copied(): (T throws E) {
         match take self {
             success(value) => success(*value),
-            failure(error) => failure(*error)
+            failure(error) => failure(error)
+        }
+    }
+}
+
+extend<region r, T: Clone, E> ((mut T from r) throws E) {
+    pub take fn cloned(): (T throws E) {
+        match take self {
+            success(value) => success(value.clone()),
+            failure(error) => failure(error)
+        }
+    }
+}
+
+extend<region r, T: Copy, E> ((mut T from r) throws E) {
+    pub take fn copied(): (T throws E) {
+        match take self {
+            success(value) => success(*value),
+            failure(error) => failure(error)
         }
     }
 }

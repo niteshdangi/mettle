@@ -89,6 +89,31 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
   ErasedType descriptor{definition.name,
                         static_cast<std::uint32_t>(interface->second)};
   if (!definition.parameters.empty() && right >= 0) {
+    // An unsuffixed integer index takes the integer type of the receiver's
+    // only integer Index implementation (`list[0]` indexes by usize).
+    if ((token == "[]" || token == "[]mut") &&
+        inference.pendingInteger(right)) {
+      constexpr std::array integers{
+          Type::Usize, Type::U8, Type::U16, Type::U32, Type::U64, Type::U128,
+          Type::Isize, Type::I8, Type::I16, Type::I32, Type::I64, Type::I128};
+      std::optional<Type> sole;
+      bool ambiguous = false;
+      for (auto candidate : integers) {
+        ErasedType probe{definition.name,
+                         static_cast<std::uint32_t>(interface->second)};
+        probe.arguments.push_back(candidate);
+        interfaces::Solver solver(*checked.types, *checked.interfaceData,
+                                  diagnostics, interfaceAssumptions(),
+                                  regionEnvironment());
+        if (!solver.prove({self, checked.types->erasedType(std::move(probe))},
+                          node.span, false))
+          continue;
+        ambiguous |= sole.has_value();
+        sole = candidate;
+      }
+      if (sole && !ambiguous)
+        inference.set(right, *sole);
+    }
     auto argument = inference.value(right);
     // A view operand compares through its payload like the receiver does.
     while (dereferences != 0 && checked.types->isView(argument))
