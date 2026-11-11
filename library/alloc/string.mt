@@ -6,7 +6,7 @@ import package.core.fmt
 import package.core.ops.{Deref, IndexRange, RangeEnd}
 import package.core.hash.{Hash, Hasher}
 import package.core.borrow.KeyView
-import package.core.borrow.{AsRef, AsMut, Borrow, ToOwned}
+import package.core.borrow.{AsRef, AsMut, Borrow, OwnedType, ToOwned}
 import super.vec.{List, slice_ptr}
 import package.core.cmp.{Ordering, PartialEq, Eq, PartialOrd, Ord}
 import package.core.text.{
@@ -787,8 +787,10 @@ extend<A: Allocator> String<A> implements AsRef<Text> {
 extend<A: Allocator> String<A> implements Borrow<Text> {
     fn borrow(): read Text from self { self.as_text() }
 }
-extend Text implements ToOwned {
+extend Text implements OwnedType {
     type Owned = String
+}
+extend Text implements ToOwned {
     fn to_owned(): String { from_text(self) }
 }
 extend<A: Allocator> String<A> implements AsMut<Text> {

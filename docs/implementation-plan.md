@@ -1264,8 +1264,8 @@ Current library implementation, blockers and exact focused receipts are owned by
 [i13-library.md](i13-library.md#handoff-start-here-in-a-new-session); the
 [capability inventory](capability-coverage.md#i13-macos-arm64-acceptance-inventory)
 retains row/fixture ownership. All eighteen library areas remain partial.
-Latest 2026-11-10 operation ledger: **10,762 evidenced, 35 declared,
-2,493 missing, 5 not applicable** (13,295 total, grouped into 2,442 operation
+Latest 2026-11-11 operation ledger: **10,477 evidenced, 401 declared,
+2,412 missing, 5 not applicable** (13,295 total, grouped into 2,442 operation
 and 2,309 implementation families; subset/source-cfg reconciliation pending).
 Unzip has focused Linux native/emitted-ASan debug/release evidence; 20
 conversion blanket exposures and fifteen callable-adapter Clone/ToOwned rows
@@ -1273,10 +1273,23 @@ are declared, not per-type/profile passes. Peekable associated-buffer projection
 is unresolved. Minimal NonNull, borrowed chaining, bounds/exact/fused protocols
 and collision-safe Any identity have scoped evidence, not full-area closure;
 Static/unsized Any, synchronization and complete operation coverage remain open.
+The [2026-11-11 reconciliation](i13-library.md#parallel-reconciliation-2026-11-11)
+adds generic synchronous socket inputs, UDP peek_from and focused NonNull
+signature/alignment repairs. Eleven network and ten non-stable-const pointer
+records gain scoped evidence. Another 54 pointer records retain runtime
+acceptance but lack required stable-const support. The 312 reviewed integer
+power/division records are corrected from evidenced to declared: their prior
+runtime passes did not establish constant-callability, and direct constant
+reproductions remain unsupported. D31's ownership-type separation has focused
+ordinary and emitted-ASan cleanup acceptance; exact operation mapping remains
+open. Five IO records and one owning-array implementation gain scoped evidence.
+Borrow-carrying iterator retirement and callable Clone remain compiler blockers.
+No whole library area is closed.
 Ten File/UDP operations have focused Linux debug/release evidence from the
-[hosted reconciliation](i13-library.md#focused-hosted-reconciliation-2026-11-09);
-generic UDP address inputs, empty datagrams and nonblocking error translation
-remain open. This test-only batch does not qualify a new compiler revision.
+[hosted reconciliation](i13-library.md#focused-hosted-reconciliation-2026-11-09).
+Its generic UDP address, empty-datagram
+and nonblocking gaps are superseded by the focused 2026-11-11 batch, not by the
+earlier blocking loopback tests. Neither batch qualifies a compiler revision.
 
 I13 closes the V1 operation subset defined in `docs/library-surface.md`
 section 6.1 with compiled native declarations and per-operation semantic

@@ -298,6 +298,11 @@ void Checker::inferFromExpected(Type pattern, Type expected,
                       checked.types->view(expected).payload, bindings);
     return;
   }
+  if (checked.types->isSlice(pattern) && checked.types->isSlice(expected)) {
+    inferFromExpected(checked.types->slice(pattern).element,
+                      checked.types->slice(expected).element, bindings);
+    return;
+  }
   if (!checked.types->isProduct(pattern) || !checked.types->isProduct(expected))
     return;
   const auto &left = checked.types->product(pattern);

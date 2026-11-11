@@ -52,7 +52,7 @@ fn default_failure(): bool {
     unsafe { DROPS == 1usize && DEFAULT_CALLS == 2usize }
 }
 
-fn success(): bool {
+fn successful_initialization(): bool {
     unsafe { DROPS = 0usize; DEFAULT_CALLS = 10usize }
     {
         let source = [Guard(false), Guard(false)]
@@ -72,7 +72,7 @@ fn success(): bool {
 fn main(): i32 {
     if !clone_failure() { return 1 }
     if !default_failure() { return 2 }
-    if !success() { return 3 }
+    if !successful_initialization() { return 3 }
     let empty: [Guard; 0usize] = []
     let cloned = empty.clone()
     if cloned.len() != 0usize { return 4 }

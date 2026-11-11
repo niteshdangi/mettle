@@ -762,6 +762,7 @@ Type TypeStore::substitute(Type type, std::span<const TypeBinding> bindings) {
         argument = substitute(argument, bindings);
       auto index = entries.at(result.index() - builtins).index;
       products[index].regionOrigin = origin;
+      products[index].normalizedFields = record.normalizedFields;
       syncLookup();
       lookup.regionInstances[origin].push_back(
           static_cast<std::uint32_t>(result.index() - builtins));

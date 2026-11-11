@@ -14,7 +14,7 @@ import package.core.slice
 import super.ffi
 import super.ffi.{OsStr, OsString}
 import package.core.clone.Clone
-import package.core.borrow.{AsRef, Borrow, ToOwned}
+import package.core.borrow.{AsRef, Borrow, OwnedType, ToOwned}
 import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import package.core.convert.From
 import package.core.default.Default
@@ -579,8 +579,10 @@ extend Path implements PartialOrd<Text> {
 extend Path implements Hash {
     fn hash<H: Hasher>(mut state: H): Unit { hash_path(self, mut state) }
 }
-extend Path implements ToOwned {
+extend Path implements OwnedType {
     type Owned = PathBuf
+}
+extend Path implements ToOwned {
     fn to_owned(): PathBuf { self.to_path_buf() }
 }
 extend Path implements AsRef<OsStr> {

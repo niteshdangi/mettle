@@ -301,10 +301,10 @@ pub interface Iterator: Sized {
     take fn map_while<B, F: mut fn(take Self.Item): B?>(take f: F): MappedWhile<B, Self, F> {
         MappedWhile(self, f, Phantom<B>())
     }
-    take fn flat_map<U: Iterator, F: mut fn(take Self.Item): U>(take f: F): FlatMapped<Self, U, F> {
+    take fn flat_map<U: OwnedIterable, F: mut fn(take Self.Item): U>(take f: F): FlatMapped<Self, U, F> {
         FlatMapped(self, none, none, false, f)
     }
-    take fn flatten(): Flatten<Self.Item, Self> where Self.Item: Iterator {
+    take fn flatten(): Flatten<Self.Item, Self> where Self.Item: OwnedIterable {
         Flatten(self, none, none, false)
     }
     take fn cloned<region r, T: Clone>(): Cloned<region r, T, Self> where Self.Item = read T from r {
@@ -723,6 +723,54 @@ pub interface OwnedIterable: Sized {
     fn into_iter(receiver take self: Self): Self.IntoIter;
 }
 
+// Only [front, back) is initialized and owned; pointers never survive an iterator move.
+pub type ArrayIntoIter<T, const N: usize> {
+    storage: core.mem.MaybeUninit<[T; N]>
+    front: usize
+    back: usize
+    drop {
+        if self.front < self.back {
+            let first = self.front
+            let remaining = self.back - first
+            self.front = self.back
+            unsafe {
+                super.slice.drop_values(
+                    self.storage.as_mut_ptr().cast<T>().add(first), remaining
+                )
+            }
+        }
+    }
+}
+extend<T, const N: usize> ArrayIntoIter<T, N> implements Iterator {
+    type Item = T
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.back - self.front
+        (remaining, present(remaining))
+    }
+    mut fn next(): T? {
+        if self.front == self.back { return none }
+        let index = self.front
+        self.front += 1usize
+        unsafe { present(core.ptr.`read`(self.storage.as_mut_ptr().cast<T>().add(index))) }
+    }
+}
+extend<T, const N: usize> ArrayIntoIter<T, N> implements BidirectionalIterator {
+    mut fn next_back(): T? {
+        if self.front == self.back { return none }
+        self.back -= 1usize
+        unsafe { present(core.ptr.`read`(self.storage.as_mut_ptr().cast<T>().add(self.back))) }
+    }
+}
+extend<T, const N: usize> ArrayIntoIter<T, N> implements ExactSizeIterator {}
+extend<T, const N: usize> ArrayIntoIter<T, N> implements FusedIterator {}
+extend<T, const N: usize> [T; N] implements OwnedIterable {
+    type Item = T
+    type IntoIter = ArrayIntoIter<T, N>
+    fn into_iter(receiver take self: Self): ArrayIntoIter<T, N> {
+        ArrayIntoIter(core.mem.MaybeUninit<[T; N]>.new(self), 0usize, N)
+    }
+}
+
 // Borrowing iteration; the iterator is tied to the borrow of the receiver
 // through the family region `r`, so `for x in read c` yields `read Item from c`,
 // `for x in mut c` yields `mut Item from c`, and generic code can call `next`
@@ -852,9 +900,15 @@ extend<B, I: Iterator, F: mut fn(take I.Item): B?> MappedWhile<B, I, F> implemen
     }
 }
 
-pub type FlatMapped<O, U, F> { outer: O; front: U?; back: U?; outer_done: bool; f: F }
-extend<O: Iterator, U: Iterator, F: mut fn(take O.Item): U> FlatMapped<O, U, F> implements Iterator {
-    type Item = U.Item
+pub type FlatMapped<O, U: OwnedIterable, F> {
+    outer: O
+    front: U.IntoIter?
+    back: U.IntoIter?
+    outer_done: bool
+    f: F
+}
+extend<O: Iterator, U: OwnedIterable, F: mut fn(take O.Item): U> FlatMapped<O, U, F> implements Iterator {
+    type Item = U.(OwnedIterable).Item
     fn size_hint(): (usize, usize?) {
         let front = match read self.front {
             present(inner) => inner.size_hint(),
@@ -879,7 +933,7 @@ extend<O: Iterator, U: Iterator, F: mut fn(take O.Item): U> FlatMapped<O, U, F> 
         }
         (front.0.saturating_add(back.0), upper)
     }
-    mut fn next(): U.Item? {
+    mut fn next(): U.(OwnedIterable).Item? {
         while true {
             match mut self.front {
                 present(inner) => match take inner.next() {
@@ -898,15 +952,16 @@ extend<O: Iterator, U: Iterator, F: mut fn(take O.Item): U> FlatMapped<O, U, F> 
                 }
             }
             match take self.outer.next() {
-                present(item) => { self.front = present(self.f(item)) },
+                present(item) => { self.front = present(U.(OwnedIterable).into_iter(self.f(item))) },
                 none => { self.outer_done = true }
             }
         }
         none
     }
 }
-extend<O: Iterator + BidirectionalIterator, U: Iterator + BidirectionalIterator, F: mut fn(take O.Item): U> FlatMapped<O, U, F> implements BidirectionalIterator {
-    mut fn next_back(): U.Item? {
+extend<O: Iterator + BidirectionalIterator, U: OwnedIterable, F: mut fn(take O.Item): U> FlatMapped<O, U, F> implements BidirectionalIterator
+where U.IntoIter: BidirectionalIterator {
+    mut fn next_back(): U.(OwnedIterable).Item? {
         while true {
             match mut self.back {
                 present(inner) => match take inner.next_back() {
@@ -925,7 +980,7 @@ extend<O: Iterator + BidirectionalIterator, U: Iterator + BidirectionalIterator,
                 }
             }
             match take self.outer.next_back() {
-                present(item) => { self.back = present(self.f(item)) },
+                present(item) => { self.back = present(U.(OwnedIterable).into_iter(self.f(item))) },
                 none => { self.outer_done = true }
             }
         }
@@ -933,10 +988,10 @@ extend<O: Iterator + BidirectionalIterator, U: Iterator + BidirectionalIterator,
     }
 }
 
-pub type Flatten<U: Iterator, O: Iterator<Item = U>> {
+pub type Flatten<U: OwnedIterable, O: Iterator<Item = U>> {
     outer: O
-    front: U?
-    back: U?
+    front: U.IntoIter?
+    back: U.IntoIter?
     outer_done: bool
 }
 
@@ -991,8 +1046,8 @@ extend<B, I: Iterator, S, F: mut fn(mut S, take I.Item): B?> Scanned<B, I, S, F>
         }
     }
 }
-extend<U: Iterator, O: Iterator<Item = U>> Flatten<U, O> implements Iterator {
-    type Item = U.Item
+extend<U: OwnedIterable, O: Iterator<Item = U>> Flatten<U, O> implements Iterator {
+    type Item = U.(OwnedIterable).Item
     fn size_hint(): (usize, usize?) {
         let front = match read self.front {
             present(inner) => inner.size_hint(),
@@ -1017,7 +1072,7 @@ extend<U: Iterator, O: Iterator<Item = U>> Flatten<U, O> implements Iterator {
         }
         (front.0.saturating_add(back.0), upper)
     }
-    mut fn next(): U.Item? {
+    mut fn next(): U.(OwnedIterable).Item? {
         while true {
             match mut self.front {
                 present(inner) => match take inner.next() {
@@ -1036,15 +1091,16 @@ extend<U: Iterator, O: Iterator<Item = U>> Flatten<U, O> implements Iterator {
                 }
             }
             match take self.outer.next() {
-                present(inner) => { self.front = present(inner) },
+                present(inner) => { self.front = present(U.(OwnedIterable).into_iter(inner)) },
                 none => { self.outer_done = true }
             }
         }
         none
     }
 }
-extend<U: Iterator + BidirectionalIterator, O: Iterator<Item = U> + BidirectionalIterator> Flatten<U, O> implements BidirectionalIterator {
-    mut fn next_back(): U.Item? {
+extend<U: OwnedIterable, O: Iterator<Item = U> + BidirectionalIterator> Flatten<U, O> implements BidirectionalIterator
+where U.IntoIter: BidirectionalIterator {
+    mut fn next_back(): U.(OwnedIterable).Item? {
         while true {
             match mut self.back {
                 present(inner) => match take inner.next_back() {
@@ -1063,7 +1119,7 @@ extend<U: Iterator + BidirectionalIterator, O: Iterator<Item = U> + Bidirectiona
                 }
             }
             match take self.outer.next_back() {
-                present(inner) => { self.back = present(inner) },
+                present(inner) => { self.back = present(U.(OwnedIterable).into_iter(inner)) },
                 none => { self.outer_done = true }
             }
         }
@@ -1954,8 +2010,8 @@ extend<I: FusedIterator> Peekable<I> implements FusedIterator {}
 extend<T, F: mut fn(): T> RepeatWith<T, F> implements FusedIterator {}
 extend<T: Clone> Repeated<T> implements FusedIterator {}
 extend<T, F: mut fn(read T): T?> Successors<T, F> implements FusedIterator {}
-extend<U: Iterator, O: FusedIterator + Iterator<Item = U>> Flatten<U, O> implements FusedIterator {}
-extend<O: FusedIterator, U: Iterator, F: mut fn(take O.(Iterator).Item): U> FlatMapped<O, U, F> implements FusedIterator {}
+extend<U: OwnedIterable, O: FusedIterator + Iterator<Item = U>> Flatten<U, O> implements FusedIterator {}
+extend<O: FusedIterator, U: OwnedIterable, F: mut fn(take O.(Iterator).Item): U> FlatMapped<O, U, F> implements FusedIterator {}
 extend Range<i8> implements ExactSizeIterator {}
 extend Range<i16> implements ExactSizeIterator {}
 extend Range<i32> implements ExactSizeIterator {}
@@ -2269,12 +2325,12 @@ extend<B, I: Clone, F: Clone> FilterMapped<B, I, F> implements Clone {
 extend<B, I: Clone, F: Clone> MappedWhile<B, I, F> implements Clone {
     fn clone(): MappedWhile<B, I, F> { MappedWhile(self.iter.clone(), self.f.clone(), Phantom<B>()) }
 }
-extend<O: Clone, U: Clone, F: Clone> FlatMapped<O, U, F> implements Clone {
+extend<O: Clone, U: OwnedIterable, F: Clone> FlatMapped<O, U, F> implements Clone where U.IntoIter: Clone {
     fn clone(): FlatMapped<O, U, F> {
         FlatMapped(self.outer.clone(), self.front.clone(), self.back.clone(), self.outer_done, self.f.clone())
     }
 }
-extend<U: Iterator + Clone, O: Iterator<Item = U> + Clone> Flatten<U, O> implements Clone {
+extend<U: OwnedIterable, O: Iterator<Item = U> + Clone> Flatten<U, O> implements Clone where U.IntoIter: Clone {
     fn clone(): Flatten<U, O> {
         Flatten(self.outer.clone(), self.front.clone(), self.back.clone(), self.outer_done)
     }
@@ -2350,7 +2406,7 @@ extend<region r, T, I: Iterator<Item = read T from r> + Default> Cloned<region r
 extend<region r, T: Copy, I: Iterator<Item = read T from r> + Default> Copied<region r, T, I> implements Default {
     static fn default(): Copied<region r, T, I> { Copied(I.(Default).default(), Phantom<T>()) }
 }
-extend<U: Iterator, O: Iterator<Item = U> + Default> Flatten<U, O> implements Default {
+extend<U: OwnedIterable, O: Iterator<Item = U> + Default> Flatten<U, O> implements Default {
     static fn default(): Flatten<U, O> { Flatten(O.(Default).default(), none, none, false) }
 }
 extend<I: Iterator + Default> Peekable<I> implements Default {
@@ -2450,12 +2506,12 @@ extend<I: Iterator + Debug, F> Filtered<I, F> implements Debug {
         try debug_one(mut f, "Filtered", "iter", read self.iter)
     }
 }
-extend<O: Iterator + Debug, U: Iterator + Debug, F> FlatMapped<O, U, F> implements Debug {
+extend<O: Iterator + Debug, U: OwnedIterable, F> FlatMapped<O, U, F> implements Debug where U.IntoIter: Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
         try debug_four(mut f, "FlatMapped", "outer", read self.outer, "front", read self.front, "back", read self.back, "outer_done", read self.outer_done)
     }
 }
-extend<U: Iterator + Debug, O: Iterator<Item = U> + Debug> Flatten<U, O> implements Debug {
+extend<U: OwnedIterable, O: Iterator<Item = U> + Debug> Flatten<U, O> implements Debug where U.IntoIter: Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
         try debug_four(mut f, "Flatten", "outer", read self.outer, "front", read self.front, "back", read self.back, "outer_done", read self.outer_done)
     }

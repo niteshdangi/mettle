@@ -285,7 +285,9 @@ std::optional<int> Checker::genericConstruction(Node &n, bool reachable,
         return binding.argument == Type::Unknown;
       })) {
     auto expected = hint->second;
-    if (checked.types->isProduct(expected)) {
+    if (!declaration)
+      inferFromExpected(patternType, expected, bindings);
+    else if (checked.types->isProduct(expected)) {
       const auto &actual = checked.types->product(expected);
       if (actual.genericOrigin == origin &&
           actual.genericArguments.size() == bindings.size())
@@ -324,6 +326,7 @@ std::optional<int> Checker::genericConstruction(Node &n, bool reachable,
       declaration
           ? checked.types->instantiateProduct(origin, std::move(arguments))
           : normalizeGenericType(patternType, bindings, n.span);
+  result = normalizeGenericType(result, {}, n.span);
   for (std::size_t i = 0; i < actuals.size(); ++i) {
     auto target = facts(n).argumentOrder[i];
     if (target < fields.size())

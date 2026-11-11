@@ -535,6 +535,9 @@ spelling-based special cases.
 
 The hosted I/O names refer to `std.io`; `core.fmt.Write` retains its name.
 Under D31, slice Cow is an alias of `BorrowedOrOwned<region r,[T]>`.
+`core.borrow.OwnedType` supplies the associated owner independently of copying;
+`ToOwned` supplies copying into it. Borrowed/read Cow usage does not require
+Clone merely to name the owned branch.
 Under D30, the alloc Map default is deterministic; randomized hashing requires
 an explicit builder and must not introduce a hidden OS dependency into alloc.
 

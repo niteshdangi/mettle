@@ -69,12 +69,12 @@ extend<T: unsized> NonNull<T> {
 
     pub fn cast<U>(): NonNull<U> { NonNull(self.pointer.cast<U>()) }
 
-    // Safety: the pointer must be valid, aligned, and initialized for `T`.
+    // Safety: initialized, aligned `T` storage and a legal read loan are required.
     pub unsafe fn as_ref(): read T from self {
         unsafe { read *self.pointer }
     }
 
-    // Safety: the pointer must be uniquely accessible and valid for `T`.
+    // Safety: initialized, aligned `T` storage and an exclusive loan are required.
     pub unsafe mut fn as_mut(): mut T from self {
         unsafe { mut *self.pointer }
     }
@@ -95,13 +95,17 @@ extend<T: unsized> NonNull<T> {
     }
 
     // Safety: pointers must share an allocation and their byte distance fit `isize`.
-    pub unsafe fn byte_offset_from(origin: NonNull<T>): isize {
-        unsafe { self.pointer.byte_offset_from(origin.pointer) }
+    pub unsafe fn byte_offset_from<U: unsized>(origin: NonNull<U>): isize {
+        unsafe {
+            self.pointer.cast<u8>().byte_offset_from(origin.pointer.cast<u8>())
+        }
     }
 
-    // Safety: pointers must share an allocation and `self` must follow `origin`.
-    pub unsafe fn byte_offset_from_unsigned(origin: NonNull<T>): usize {
-        unsafe { self.pointer.byte_offset_from_unsigned(origin.pointer) }
+    // Safety: same-allocation byte distance must be nonnegative and fit `isize`.
+    pub unsafe fn byte_offset_from_unsigned<U: unsized>(origin: NonNull<U>): usize {
+        unsafe {
+            self.pointer.cast<u8>().byte_offset_from_unsigned(origin.pointer.cast<u8>())
+        }
     }
 
     // Safety: the pointer must address a valid `T` whose destructor has not run.
@@ -184,11 +188,11 @@ extend<T> NonNull<T> {
         self.pointer.addr() % core.mem.align_of<T>() == 0usize
     }
 
-    pub fn align_offset(align: isize): usize {
-        if align <= 0isize || (align & (align - 1isize)) != 0isize {
-            core.panic.panic("align must be a positive power of two")
+    pub fn align_offset(align: usize): usize {
+        if align == 0usize || (align & (align - 1usize)) != 0usize {
+            core.panic.panic("align must be a nonzero power of two")
         }
-        let alignment = align as usize
+        let alignment = align
         let address = self.pointer.addr()
         let size = core.mem.size_of<T>()
         if alignment == 1usize { return 0usize }
@@ -213,12 +217,10 @@ extend<T> NonNull<T> {
         ) % modulus
         let coefficient = reduced_size % modulus
         var inverse = 1usize
-        var iteration = 0usize
-        while iteration < 6usize {
+        while coefficient.wrapping_mul(inverse) % modulus != 1usize {
             inverse = inverse.wrapping_mul(
                 2usize.wrapping_sub(coefficient.wrapping_mul(inverse))
             )
-            iteration += 1usize
         }
         target.wrapping_mul(inverse) % modulus
     }
@@ -249,7 +251,7 @@ extend<T> NonNull<T> {
         unsafe { self.pointer.offset_from(origin.pointer) }
     }
 
-    // Safety: pointers must share an allocation and `self` must follow `origin`.
+    // Safety: same-allocation element distance must be nonnegative and fit `isize`.
     pub unsafe fn offset_from_unsigned(origin: NonNull<T>): usize {
         unsafe { self.pointer.offset_from_unsigned(origin.pointer) }
     }
@@ -264,22 +266,22 @@ extend<T> NonNull<T> {
         unsafe { core.ptr.read_unaligned(self.pointer.cast_const()) }
     }
 
-    // Safety: the pointer must address valid storage for `T`.
+    // Safety: the pointer must address initialized, aligned readable `T` storage.
     pub unsafe fn read_volatile(): T {
         unsafe { core.ptr.read_volatile(self.pointer.cast_const()) }
     }
 
-    // Safety: pointer must be writable, `value` valid, and any old value handled.
+    // Safety: aligned writable `T` storage is required; any old value must be handled.
     pub unsafe fn write(take value: T): Unit {
         unsafe { core.ptr.write(self.pointer, value) }
     }
 
-    // Safety: pointer must be writable, `value` valid, and any old value handled.
+    // Safety: writable `T` storage is required; any old value must be handled.
     pub unsafe fn write_unaligned(take value: T): Unit {
         unsafe { core.ptr.write_unaligned(self.pointer, value) }
     }
 
-    // Safety: pointer must be writable, `value` valid, and any old value handled.
+    // Safety: aligned writable `T` storage is required; any old value must be handled.
     pub unsafe fn write_volatile(take value: T): Unit {
         unsafe { core.ptr.write_volatile(self.pointer, value) }
     }
@@ -296,29 +298,33 @@ extend<T> NonNull<T> {
         previous
     }
 
-    // Safety: both pointers must address valid storage for `T`.
+    // Safety: both pointers must address initialized, aligned writable `T` storage.
     pub unsafe fn swap(other: NonNull<T>): Unit {
         unsafe { core.ptr.swap(self.pointer, other.pointer) }
     }
 
-    // Safety: ranges must be valid; caller must preserve initialization and drop ownership.
-    pub unsafe fn copy_from(source: ptr<read T>, count: usize): Unit {
-        unsafe { core.ptr.`copy`(source, self.pointer, count) }
+    // Safety: valid aligned ranges; caller must preserve initialization/drop ownership.
+    pub unsafe fn copy_from(source: NonNull<T>, count: usize): Unit {
+        unsafe { core.ptr.`copy`(source.pointer.cast_const(), self.pointer, count) }
     }
 
-    // Safety: valid nonoverlapping ranges; caller must preserve initialization/drop ownership.
-    pub unsafe fn copy_from_nonoverlapping(source: ptr<read T>, count: usize): Unit {
-        unsafe { core.ptr.`copy`(source, self.pointer, count) }
+    // Safety: valid aligned disjoint ranges; preserve initialization/drop ownership.
+    pub unsafe fn copy_from_nonoverlapping(source: NonNull<T>, count: usize): Unit {
+        unsafe {
+            core.ptr.copy_nonoverlapping(source.pointer.cast_const(), self.pointer, count)
+        }
     }
 
-    // Safety: ranges must be valid; caller must preserve initialization and drop ownership.
-    pub unsafe fn copy_to(destination: ptr<mut T>, count: usize): Unit {
-        unsafe { core.ptr.`copy`(self.pointer.cast_const(), destination, count) }
+    // Safety: valid aligned ranges; caller must preserve initialization/drop ownership.
+    pub unsafe fn copy_to(destination: NonNull<T>, count: usize): Unit {
+        unsafe { core.ptr.`copy`(self.pointer.cast_const(), destination.pointer, count) }
     }
 
-    // Safety: valid nonoverlapping ranges; caller must preserve initialization/drop ownership.
-    pub unsafe fn copy_to_nonoverlapping(destination: ptr<mut T>, count: usize): Unit {
-        unsafe { core.ptr.`copy`(self.pointer.cast_const(), destination, count) }
+    // Safety: valid aligned disjoint ranges; preserve initialization/drop ownership.
+    pub unsafe fn copy_to_nonoverlapping(destination: NonNull<T>, count: usize): Unit {
+        unsafe {
+            core.ptr.copy_nonoverlapping(self.pointer.cast_const(), destination.pointer, count)
+        }
     }
 }
 

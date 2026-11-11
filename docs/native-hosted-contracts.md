@@ -165,6 +165,10 @@ buffer contents need not be unchanged on error. Earlier successful calls in a
 compound operation retain their effects. Implementations and callers must check
 reported counts before indexing or exposing initialized prefixes; a buggy safe
 Reader/Writer implementation is not authority for unchecked memory access.
+Reader counts larger than the supplied extent produce `InvalidData` before
+appending, decrementing a Take allowance, yielding a byte or publishing a
+refilled buffer. Earlier successful progress is retained; an invalid count
+does not itself mark a Bytes iterator exhausted.
 
 `read_to_end(mut List<u8>)` appends until EOF, preserving existing contents and
 returning the appended count. It retries interruptions, may reserve repeatedly,
@@ -971,6 +975,18 @@ resolver's numeric failure alongside a portable I/O kind. DNS order, caching,
 search suffixes, interface configuration and addresses are OS/environment
 observations, not stable deterministic library results.
 
+The native protocol uses `type Iter<region r>: Iterator<Item = SocketAddr>`
+and `to_socket_addrs<region r>(receiver read self: Self from r)`.
+Numeric address values and address/port tuples produce one address without
+allocation. Address slices lend a copied-value iterator; keeping it alive
+keeps the source borrowed. Text/String socket forms and host/port tuples
+produce owned candidates. Synchronous TCP connect/listen and UDP bind/connect/
+send_to accept independently generic read inputs through this protocol;
+connect_timeout and the optional async endpoints retain their numeric inputs.
+TCP connect and TCP/UDP bind try candidates in order, as does UDP connect.
+An empty sequence is InvalidInput. UDP send_to uses only the first candidate,
+including when sending to it fails.
+
 #### Stable classification tables
 
 The following are exact tests, not queries of the current routing table or an
@@ -1058,6 +1074,12 @@ shift or arithmetic operators merely by selecting these interfaces.
 | `local_addr`, `peer_addr`, `take_error` | Observe endpoint state; unconnected peer queries fail. take_error retrieves and clears the pending socket error state, not an error history. |
 | `try_clone` | Duplicate an owned reference to the same socket; options and traffic queues are shared. It does not create a new TCP connection or UDP port. |
 | `shutdown(Read/Write/Both)` | Disable the requested connection half; write shutdown follows already accepted bytes with end-of-stream where supported. Repeated shutdown can succeed or report a platform error. Dropping one cloned handle need not close the connection while others own it. |
+
+UDP receive operations still consult the socket when given an empty buffer.
+`recv` and `recv_from` consume one queued datagram and discard any uncopied
+bytes; `peek` and `peek_from` leave it queued. With no datagram available,
+an empty buffer does not bypass blocking, nonblocking or timeout behavior.
+An empty datagram is observable and consumable independently of buffer size.
 
 Socket option getters/setters borrow the owner. Except for managed TCP listeners
 below, `set_nonblocking` changes shared kernel socket mode; subsequent progress

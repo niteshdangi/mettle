@@ -9,12 +9,96 @@ areas remain partial: L003, L005, L009, S005-S014, S019-S021, S024-S025.
 
 ## Handoff (start here in a new session)
 
-Latest operation ledger (2026-11-10): **10,762 evidenced, 35 declared,
-2,493 missing, 5 not applicable** of 13,295 records. Declared means implemented
+Latest operation ledger (2026-11-11): **10,477 evidenced, 401 declared,
+2,412 missing, 5 not applicable** of 13,295 records. Declared means implemented
 but not behaviorally verified per type/profile. Subset/source-cfg reconciliation
 and Linux applicability review remain open; no area is closed by these batches.
-The 35 declared records comprise 20 conversion-blanket exposures and fifteen
-callable-adapter Clone/ToOwned records.
+The declared records comprise the previous 20 conversion-blanket and fifteen
+callable-adapter records, 54 NonNull records with runtime but not stable-const
+acceptance, and 312 integer power/division records whose earlier runtime
+receipts did not establish their required stable constant-callability.
+
+### Parallel reconciliation (2026-11-11)
+
+- Synchronous TCP/UDP address inputs use the library ToSocketAddrs protocol.
+  Numeric values/tuples allocate nothing; address slices lend their iterators;
+  Text/String and host/port tuples produce owned candidates. TCP connect and
+  TCP/UDP bind retry candidates; UDP connect retries, while send_to uses only
+  the first. Empty inputs reject. UDP peek_from shares the native receive path
+  with recv_from and preserves the queued packet, including empty buffers.
+  Six network fixtures pass both profiles (12 units); both new fixtures pass
+  emitted ASan with an ASan/UBSan runtime (four units). The borrowed-iterator
+  mutation rejection passes. Eleven records gain scoped evidence. Network
+  socket options and other hosted operations remain open.
+- All reported NonNull method names already exist in the source; absence of a
+  ledger mapping was not absence of implementation. Four copy operations now
+  accept NonNull operands, byte distances accept heterogeneous thin/fat origins,
+  and align_offset uses usize and an unbounded-by-policy modular solution.
+  Its complexity is O(log alignment) word operations with O(1) storage.
+  The slice caller and existing pointer fixture migrate with the signatures.
+  Seven source fixtures pass both profiles (14 units), the unsafe-call negative
+  rejects, and four new fixtures pass emitted ASan with the ASan/UBSan runtime
+  in both profiles (eight units). Ten non-stable-const records gain evidence;
+  54 stable-const records remain declared, not complete.
+- Integer power boundaries and zero-divisor panics pass all twelve widths in
+  both profiles (four units). These fixtures strengthen runtime coverage, not
+  const support. A direct compiler reproduction rejects integer receivers in
+  required constants, and optional constant shapes are unsupported. All 312
+  reviewed power/division records have stable const eligibility in the frozen
+  catalog: their earlier evidenced status is corrected to declared, retaining
+  the runtime receipts. This is corrected accounting, not a runtime regression.
+- D31's owner-approved ownership-type/copying separation is specified in the
+  native contracts and implemented in core/alloc/hosted owners. All six Cow
+  fixtures pass both profiles across scoped integration reruns; general
+  custom-owner conversion also passes with the contextual-region compiler fix.
+  Concrete owner projections select the declaring OwnedType protocol.
+  Panic-copy cleanup also passes emitted ASan with the ASan/UBSan runtime in
+  both profiles. Complete operation mapping remains open.
+- Generic alias proofs now wait for implementation registration and own their
+  replay context; associated enum/alias storage retains normalized types and
+  regions through substitution. Contextual generic calls infer result regions
+  before replaying interface bounds: Cloned/Copied Default, alias obligations
+  and associated-owner forwarding pass both profiles (six units), plus the
+  general Cow rerun (two units). Seven focused negatives preserve rejection.
+  The updated ASan/UBSan compiler accepts the contextual Default and alias
+  checks and emits an associated-owner debug object without reports.
+  Five affected normal CTests, two sanitized type-graph/boundary CTests and
+  pinned static analysis on all eight changed compiler implementations pass.
+- Reader count validation covers read_to_end, Take, Bytes, copy and buffered
+  refill before using an oversized reported extent. Seven IO fixtures pass
+  both profiles (14 units), preserving progress and recovery. That receipt
+  precedes the contextual-region compiler fix; the new invalid-count fixture
+  also passes both profiles with the updated compiler and shared cleanup.
+  Five previously missing IO records gain scoped evidence.
+- Flatten/flat_map retain each produced OwnedIterable's IntoIter. Numeric,
+  optional/outcome and user-defined inners pass both profiles. Owning arrays
+  use inline storage and the shared slice cleanup primitive, now with an
+  active cleanup guard before destruction so one panic resumes the suffix.
+  Array move/empty/zero-sized/panic cleanup, existing boxed-owner iteration,
+  scalar clone/default cleanup and owned inner conversion pass both profiles
+  (eight units across scoped runs). Array and Cow panic cleanup pass emitted
+  ASan with the ASan/UBSan runtime in both profiles (four units). One owning
+  array implementation record gains evidence. Borrow-carrying non-Copy
+  flattened inners still expose an ownership-analysis blocker: a reduced
+  optional iterator, without any adapter or loop, cannot be cleared in the
+  exhausted branch when its Item owns a mutable view with Drop. Shortening
+  library match scopes does not fix it and was reverted. Named function
+  callbacks also lack the Clone support required by adapter cloning.
+
+After the compiler repairs, the four NonNull fixtures and two new networking
+fixtures pass both profiles again (12 units); their unsafe-call and retained
+input negatives also pass. The other four Cow fixtures pass both profiles
+on the updated compiler (eight units), supplementing general custom-owner
+conversion and instrumented panic-copy cleanup above.
+
+Initial network/pointer/integer receipts use the Release bootstrap at base
+`4ae025e` plus this batch's runtime/library changes; the integration receipts
+also include the compiler repairs described above. Networking and pointer sanitizer inputs are retained
+in the native WSL validation build under `i13-network-sanitized` and
+`i13-nonnull-sanitized`; those frozen snapshots precede D31 integration.
+The runtime builds and pinned static analysis pass; `probe.sanitizers` passes
+its detector/startup checks. These are focused receipts, not complete compiler
+sanitizer qualification, LNX completion or an I13 area closure.
 
 ### Source-only backlog reconciliation (2026-11-09)
 

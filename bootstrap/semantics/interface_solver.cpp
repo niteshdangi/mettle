@@ -1458,7 +1458,8 @@ Type Solver::normalize(Type type, std::span<const TypeBinding> bindings,
         return revealOpaque ? normalize(instance, {}, span) : instance;
       }
     }
-    if (!product.components.empty() && product.kind != AggregateKind::Product &&
+    if (product.regionOrigin == Type::Unknown && !product.components.empty() &&
+        product.kind != AggregateKind::Product &&
         product.kind != AggregateKind::Enumeration &&
         product.kind != AggregateKind::Opaque) {
       std::vector<Type> components;

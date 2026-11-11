@@ -433,7 +433,9 @@ pub interface Reader {
                 }
             }
             if n == 0usize { break }
-            out.extend_from_slice(chunk.split_at(n).0)
+            let bytes: read [u8] = read chunk
+            if n > bytes.len() { throw from_kind(ErrorKind.InvalidData) }
+            out.extend_from_slice(bytes.split_at(n).0)
             total += n
         }
         total
@@ -535,6 +537,7 @@ extend<R: Reader> Take<R> implements Reader {
         var count = buf.len()
         if (count as u64) > self.remaining { count = self.remaining as usize }
         let count_read = try self.inner.read_some(buf.split_at_mut(count).0)
+        if count_read > count { throw from_kind(ErrorKind.InvalidData) }
         self.remaining -= count_read as u64
         count_read
     }
@@ -551,7 +554,8 @@ extend<R: Reader> Bytes<R> implements package.core.iter.Iterator {
                 self.finished = true
                 none
             },
-            success(_) => present(success(byte[0usize])),
+            success(1usize) => present(success(byte[0usize])),
+            success(_) => present(failure(from_kind(ErrorKind.InvalidData))),
             failure(error) => present(failure(error))
         }
     }
@@ -761,7 +765,9 @@ pub fn `copy`<R: Reader + unsized, W: Writer + unsized>(mut reader: R, mut write
             }
         }
         if count == 0usize { break }
-        try writer.write_all(buffer.split_at(count).0)
+        let bytes: read [u8] = read buffer
+        if count > bytes.len() { throw from_kind(ErrorKind.InvalidData) }
+        try writer.write_all(bytes.split_at(count).0)
         total += count as u64
     }
     total
@@ -1141,6 +1147,7 @@ extend<R: Reader> BufferedReader<R> implements BufRead {
     mut fn fill_buf(): read [u8] from self throws Error {
         if self.pos >= self.filled {
             let n = try self.inner.read_some(self.buf.as_mut_slice())
+            if n > self.buf.len() { throw from_kind(ErrorKind.InvalidData) }
             self.pos = 0usize
             self.filled = n
         }

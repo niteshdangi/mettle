@@ -27,7 +27,8 @@ std::int32_t mettle_rt_open(const char *path, std::int32_t flags,
 // permission bits, modification seconds and nanoseconds. A
 // non-negative `fd` selects fstat; otherwise `follow` selects stat or lstat.
 std::int32_t mettle_rt_stat(const char *path, std::int32_t fd,
-                            std::int32_t follow, std::int64_t *out);
+                            std::int32_t follow,                             // Writable outputs borrow caller storage; peek leaves the datagram queued.
+                            std::int64_t *out);
 // Next entry name of an open directory, skipping `.` and `..`; null at the end
 // (with `errno` zero) or on failure.
 const char *mettle_rt_readdir(void *directory);
@@ -92,11 +93,10 @@ std::int64_t mettle_rt_sock_sendto(std::int32_t fd, const std::uint8_t *data,
                                    std::size_t addressSize, std::uint16_t port,
                                    std::uint32_t flowinfo,
                                    std::uint32_t scopeId);
-std::int64_t
-mettle_rt_sock_recvfrom(std::int32_t fd, std::uint8_t *data, std::size_t size,
-                        std::int32_t *family, std::uint8_t *address,
-                        std::size_t addressCapacity, std::uint16_t *port,
-                        std::uint32_t *flowinfo, std::uint32_t *scopeId);
+std::int64_t mettle_rt_sock_recvfrom(
+    std::int32_t fd, std::uint8_t *data, std::size_t size, std::int32_t peek,
+    std::int32_t *family, std::uint8_t *address, std::size_t addressCapacity,
+    std::uint16_t *port, std::uint32_t *flowinfo, std::uint32_t *scopeId);
 // Receive (send == 0) or send timeout in microseconds; zero disables it.
 std::int32_t mettle_rt_sock_timeout(std::int32_t fd, std::int32_t send,
                                     std::uint64_t micros);

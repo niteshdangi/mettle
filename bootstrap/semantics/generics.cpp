@@ -259,7 +259,7 @@ void Checker::validateGenericEnvironment(
                                    self->second) != dependencies.end();
     if (!dependsOnSelf)
       deferredObligations.push_back({&environment,
-                                     &environment,
+                                     environment,
                                      {TypeBinding{*found, value}},
                                      {*found},
                                      parameter.span});
@@ -271,8 +271,8 @@ void Checker::proveDeferredObligations() {
   auto saved = genericEnvironment;
   auto pending = std::move(deferredObligations);
   deferredObligations.clear();
-  for (const auto &item : pending) {
-    genericEnvironment = item.context;
+  for (auto &item : pending) {
+    genericEnvironment = item.context ? &*item.context : nullptr;
     obligationParameters = &item.parameters;
     obligationsOnly = true;
     genericObligations(*item.environment, item.bindings, item.span);
@@ -633,18 +633,21 @@ Checker::genericArguments(const std::vector<GenericParameter> &parameters,
                 displayType(*checked.types, binding.parameter) + "'");
     result.push_back(binding.argument);
   }
-  std::vector<Type> concrete;
+  std::vector<Type> deferred;
   if (!implementationsRegistered)
     for (const auto &binding : bindings)
       if (binding.argument != Type::Unknown &&
-          checked.types->typeParameters(binding.argument).empty())
-        concrete.push_back(binding.parameter);
-  if (!concrete.empty()) {
-    obligationParameters = &concrete;
+          !checked.types->isParameter(binding.argument))
+        deferred.push_back(binding.parameter);
+  if (!deferred.empty()) {
+    obligationParameters = &deferred;
     genericObligations(environment, bindings, span);
     obligationParameters = nullptr;
-    deferredObligations.push_back(
-        {&environment, nullptr, bindings, concrete, span});
+    deferredObligations.push_back({&environment,
+                                   genericEnvironment
+                                       ? std::make_optional(*genericEnvironment)
+                                       : std::nullopt,
+                                   bindings, deferred, span});
   } else
     genericObligations(environment, bindings, span);
   return result;

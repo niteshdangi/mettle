@@ -784,11 +784,11 @@ capacity byte list.
 Decision D31 names general borrowed-or-owned storage
 `alloc.borrow.BorrowedOrOwned<region r,B>`.
 It has Borrowed(read B from r) or Owned(B.Owned),
-with `B: ToOwned + unsized`. Reading/Deref lends B regardless of branch.
+with `B: core.borrow.OwnedType + unsized`. Reading/Deref lends B regardless of branch.
 `is_borrowed/is_owned` test the branch.
-`to_mut` requires exclusive handle access: borrowed content is copied through
+`to_mut` requires ToOwned and exclusive handle access: borrowed content is copied through
 ToOwned before yielding mut Owned; already-owned content is reused.
-`into_owned` consumes: it clones borrowed content through ToOwned and moves
+`into_owned` requires ToOwned and consumes: it clones borrowed content through ToOwned and moves
 owned content unchanged. Clone of Borrowed copies its view; Clone of Owned
 duplicates its content under the selected ToOwned/Clone contract.
 Panic during copying cleans a partial owner; it never exposes uninitialized
@@ -802,14 +802,14 @@ alloc. User-defined B retains its declared associated owner and bounds.
 The selected slice spelling `Cow<region r,T>` is the alias for
 `BorrowedOrOwned<region r,[T]>`, not a duplicate implementation.
 Its into_owned requires T: Clone, copies borrowed items, and moves an owned
-List without cloning. This is a specification assignment, not a claim that the
-current slice-only declaration has been replaced.
+List without cloning. Reading and extracting an already-owned variant do not
+require an element Clone bound.
 
-The existing slice declaration also permits borrowing non-Clone T without
-calling into_owned. Alias implementation must reconcile that extension with
-the general ToOwned bound without silently rejecting existing borrowed/read
-uses or granting cloning without its bound. This type-checking reconciliation
-remains explicit implementation work.
+The owner-approved 2026-11-11 refinement separates ownership identity from
+copying rather than requiring ToOwned on the enum. The slice identity exists
+for every T; only copying from borrowed storage requires T: Clone. The core
+protocol and its in-tree implementations migrate explicitly; no compiler
+special case infers an owner or grants cloning without its bound.
 
 ## 11. Structural implementations, cleanup and applicability
 

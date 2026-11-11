@@ -28,10 +28,13 @@ pub interface BorrowMut<T: unsized>: Borrow<T> {
     mut fn borrow_mut(): mut T from self;
 }
 
-pub interface ToOwned {
+pub interface OwnedType {
     type Owned: Borrow<Self>;
+}
+
+pub interface ToOwned: OwnedType {
     fn to_owned(): Self.Owned;
-    fn clone_into(mut owned: Self.Owned): Unit where Self.Owned: Clone {
+    fn clone_into(mut owned: Self.Owned): Unit {
         owned = self.to_owned()
     }
 }
@@ -52,8 +55,11 @@ extend<T: unsized> T implements BorrowMut<T> {
     mut fn borrow_mut(): mut T from self { mut self }
 }
 
-extend<T: Clone> T implements ToOwned {
+extend<T: Clone> T implements OwnedType {
     type Owned = T
+}
+
+extend<T: Clone> T implements ToOwned {
     fn to_owned(): T { self.clone() }
 }
 

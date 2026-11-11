@@ -317,11 +317,11 @@ private:
                              const GenericEnvironment &environment,
                              std::vector<TypeBinding> &bindings);
   GenericEnvironment *genericEnvironment = nullptr;
-  // Bounds on arguments that mention no type parameter (including defaults)
-  // are proved once every implementation is registered.
+  // Concrete and constructed argument bounds wait for implementation
+  // registration.
   struct DeferredObligation {
     const GenericEnvironment *environment;
-    GenericEnvironment *context;
+    std::optional<GenericEnvironment> context;
     std::vector<TypeBinding> bindings;
     std::vector<Type> parameters;
     Span span;

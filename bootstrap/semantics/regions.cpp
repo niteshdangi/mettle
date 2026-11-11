@@ -176,7 +176,10 @@ Type Checker::annotation(const TypeSyntax &syntax, Span span,
                                          annotationRegion(syntax, span));
   }
   if (auto generic = genericAnnotation(syntax, span, owner))
-    return *generic;
+    return implementationsRegistered && !genericDepth &&
+                   !collectingInterfaceAssumptions
+               ? normalizeGenericType(*generic, {}, span)
+               : *generic;
   auto resolved = typeName(syntax.name, span, owner, syntax.context);
   if (!typeNames.contains(resolved))
     if (auto alias = aliases.find(resolved); alias != aliases.end()) {
@@ -573,7 +576,7 @@ private:
   std::vector<RegionId> storage;
   std::unordered_map<const Node *, Type> expressions;
   std::unordered_map<const Node *, Type> expressionErrors;
-  std::unordered_map<const Node *, Type> expectedClosures;
+  std::unordered_map<const Node *, Type> expectedTypes;
   std::unordered_map<const Node *, Type> callableAdaptations;
   std::unordered_map<std::uint32_t, CallableType> closureDescriptors;
   std::vector<Type> *inferredReturns = nullptr;
@@ -643,7 +646,7 @@ private:
   Type receiver(Type actual, RegionId &location, const ReceiverPlan &plan,
                 Span span, bool bounded = false);
   Type closure(const Node &node);
-  void expectClosure(const Node &node, Type expected);
+  void expectType(const Node &node, Type expected);
   void pattern(const Pattern &pattern, Type type, RegionId region);
   void resultSources(std::size_t index);
   std::vector<RegionId> contained(Type type) const;
@@ -652,6 +655,7 @@ private:
   Type normalize(Type type, std::span<const TypeBinding> bindings,
                  std::size_t function, Span span,
                  const RegionEnvironment &environment);
+  Type normalizeValue(Type type, Span span);
   Type callableBound(Type type, RegionContext &context, Span span);
   void withinBounds(const std::vector<GenericParameter> &parameters,
                     const std::vector<GenericConstraint> &constraints,
@@ -750,8 +754,15 @@ const Module::Product *RegionPass::declaration(Type type) const {
 Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
                           RegionContext &context, Span span, RegionId fallback,
                           bool stored) {
-  if (auto found = annotations.find(&syntax); found != annotations.end())
+  if (auto found = annotations.find(&syntax); found != annotations.end()) {
     type = found->second;
+    if (!context.arguments.empty()) {
+      std::vector<TypeBinding> bindings;
+      for (const auto &[parameter, argument] : context.arguments)
+        bindings.push_back({parameter, argument});
+      type = types.substitute(type, bindings);
+    }
+  }
   if (type == Type::Unknown || type == Type::Never)
     return type;
   if (!types.isView(type) && !syntax.sources.empty())
@@ -994,6 +1005,7 @@ Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
         else
           argument = inferred(argument, store.inference(context.scope));
         nested.types[lexicalName(parameter.name, parameter.context)] = argument;
+        nested.arguments[parameters[typeIndex]] = argument;
         typeArguments.push_back(argument);
       }
       ++typeIndex;
@@ -1315,6 +1327,8 @@ bool RegionPass::require(Type actual, Type expected, Span span, bool enforce,
                                   RegionId::Static) != dependencies.end();
   if (!current->strict && !enforce && !callable && !staticContract)
     return true;
+  actual = normalizeValue(actual, span);
+  expected = normalizeValue(expected, span);
   auto result =
       relations.coerce(actual, expected, current->context.environment);
   if (result != RegionAnswer::Proven && !callable) {
@@ -1426,6 +1440,7 @@ void RegionPass::pattern(const Pattern &syntax, Type type, RegionId region) {
   auto found = patterns.find(&syntax);
   if (found == patterns.end())
     return;
+  type = normalizeValue(type, syntax.span);
   if (found->second.slot >= 0 &&
       static_cast<std::size_t>(found->second.slot) < locals.size()) {
     auto slot = static_cast<std::size_t>(found->second.slot);
@@ -1638,8 +1653,7 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
                             context, node.span);
         }
       }
-      expectClosure(*node.children[i],
-                    types.substitute(formal, checkedArguments));
+      expectType(*node.children[i], types.substitute(formal, checkedArguments));
     }
   } else if (facts(node).indirect) {
     auto callable = expression(*node.children[0]);
@@ -1654,7 +1668,7 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
         descriptor = found->second;
       for (std::size_t i = 1;
            i < node.children.size() && i <= descriptor.parameters.size(); ++i)
-        expectClosure(*node.children[i], descriptor.parameters[i - 1].type);
+        expectType(*node.children[i], descriptor.parameters[i - 1].type);
     }
   }
   std::vector<Type> arguments;
@@ -2234,6 +2248,10 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
     inferArguments(formals[parameter], actual, typeBindings, inferredParameters,
                    fixedParameters, node.span);
   }
+  if (auto expected = expectedTypes.find(&node);
+      expected != expectedTypes.end())
+    inferArguments(signature.result, expected->second, typeBindings,
+                   inferredParameters, fixedParameters, node.span);
   for (const auto &bound : facts(node).deferredInterfaceBounds) {
     auto subject = types.substitute(bound.subject, typeBindings);
     auto required = types.substitute(bound.interfaceType, typeBindings);
@@ -2471,26 +2489,26 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
   expressionErrors[&node] = replace(errorType, bindings);
   return replace(result, bindings);
 }
-void RegionPass::expectClosure(const Node &node, Type expected) {
+void RegionPass::expectType(const Node &node, Type expected) {
   if (facts(node).callableCoercion != Type::Unknown)
     callableAdaptations[&node] = expected;
-  if (node.kind == Kind::Closure)
-    expectedClosures[&node] = expected;
+  if (node.kind == Kind::Closure || node.kind == Kind::Call)
+    expectedTypes[&node] = expected;
   else if (node.kind == Kind::Group)
-    expectClosure(*node.children[0], expected);
+    expectType(*node.children[0], expected);
   else if (node.kind == Kind::Block && !node.children.empty())
-    expectClosure(*node.children.back(), expected);
+    expectType(*node.children.back(), expected);
   else if (node.kind == Kind::If)
     for (std::size_t i = 1; i < node.children.size(); ++i)
-      expectClosure(*node.children[i], expected);
+      expectType(*node.children[i], expected);
   else if (node.kind == Kind::Match)
     for (std::size_t i = 1; i < node.children.size(); ++i)
-      expectClosure(*node.children[i]->children.back(), expected);
+      expectType(*node.children[i]->children.back(), expected);
   else if ((node.kind == Kind::Tuple || node.kind == Kind::Array) &&
            types.isProduct(expected)) {
     auto fields = types.product(expected).fields;
     for (std::size_t i = 0; i < node.children.size() && i < fields.size(); ++i)
-      expectClosure(*node.children[i], fields[i].type);
+      expectType(*node.children[i], fields[i].type);
   }
 }
 Type RegionPass::closure(const Node &node) {
@@ -2500,9 +2518,8 @@ Type RegionPass::closure(const Node &node) {
   auto &checked = *closures[facts(node).closure];
   std::optional<CallableType> expected;
   Type expectedType = Type::Unknown;
-  if (auto found = expectedClosures.find(&node);
-      found != expectedClosures.end() &&
-      types.isFunctionPointer(found->second)) {
+  if (auto found = expectedTypes.find(&node);
+      found != expectedTypes.end() && types.isFunctionPointer(found->second)) {
     expectedType = found->second;
     expected = types.callable(expectedType);
   }
@@ -2620,7 +2637,7 @@ Type RegionPass::closure(const Node &node) {
                                 nested.context, node.span);
   std::vector<Type> returns;
   inferredReturns = nested.result == Type::Unknown ? &returns : nullptr;
-  expectClosure(*node.children[0], nested.result);
+  expectType(*node.children[0], nested.result);
   auto body = expression(*node.children[0]);
   if (facts(*node.children[0]).flow.normal) {
     if (inferredReturns)
@@ -2949,7 +2966,7 @@ Type RegionPass::expression(const Node &node) {
       declared = decorate(slot >= 0 ? currentFacts->locals[slot].type
                                     : facts(*node.children[0]).type,
                           node.annotation, current->context, node.span);
-      expectClosure(*node.children[0], *declared);
+      expectType(*node.children[0], *declared);
     }
     auto actual = expression(*node.children[0]);
     if (!node.patterns.empty()) {
@@ -2969,12 +2986,12 @@ Type RegionPass::expression(const Node &node) {
   }
   case Kind::Assign: {
     auto expected = expression(*node.children[0]);
-    expectClosure(*node.children[1], expected);
+    expectType(*node.children[1], expected);
     require(expression(*node.children[1]), expected, node.span);
   } break;
   case Kind::Return:
     if (!node.children.empty()) {
-      expectClosure(*node.children[0], current->result);
+      expectType(*node.children[0], current->result);
       auto actual = expression(*node.children[0]);
       if (inferredReturns)
         inferredReturns->push_back(actual);
@@ -3796,6 +3813,14 @@ void RegionPass::callableArguments(
     }
   }
 }
+Type RegionPass::normalizeValue(Type type, Span span) {
+  CallableType probe;
+  probe.result = type;
+  return types
+      .callable(normalize(types.callableType(std::move(probe)), {},
+                          currentFunction, span, current->context.environment))
+      .result;
+}
 Type RegionPass::normalize(Type type, std::span<const TypeBinding> bindings,
                            std::size_t function, Span span,
                            const RegionEnvironment &environment) {
@@ -4297,7 +4322,7 @@ void RegionPass::run() {
           eligible.size() == 1 ? eligible.front() : RegionId::Unspecified;
       bodyResult = inferredAsyncBodyResult(i, current->context, fallback);
     }
-    expectClosure(*module.functions[i].body, bodyResult);
+    expectType(*module.functions[i].body, bodyResult);
     auto result = expression(*module.functions[i].body);
     if (facts(*module.functions[i].body).flow.normal &&
         !module.functions[i].constructor)

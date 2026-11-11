@@ -139,11 +139,19 @@ Identity views simply reborrow; they never move the backing value.
 The selected identity/reborrow implementations are native facilities, not a
 general automatic conversion search.
 
-`alloc.borrow.ToOwned` has associated `Owned: Borrow<Self>`.
+`core.borrow.OwnedType` has associated `Owned: Borrow<Self>`; the relation
+identifies an owned representation without promising to construct it from a
+read. `core.borrow.ToOwned` refines that relation with copying.
+Concrete ownership projections select the declaring protocol:
+`B.(OwnedType).Owned`.
 `to_owned()` reads the view and constructs that owner; `clone_into(mut Owned)`
 updates an existing owner with equivalent content and may reuse capacity.
 Clone types use Clone; Text produces String; slices produce List with cloned
-elements. `ToString` is allocation-backed Display rendering, as specified by
+elements. Slice ownership identity does not require Clone; copying its elements
+does. Implementations declare storage identity separately from copying, including
+user-defined borrowed types with distinct owners. This is the owner-approved
+D31 source migration, not an implicit conversion or a compiler-derived owner.
+`ToString` is allocation-backed Display rendering, as specified by
 library-and-abi section 3. None of these protocols permits an implicit retain
 on ordinary assignment.
 
@@ -706,6 +714,11 @@ Other inherited methods use sections 6..8 with these Item/access bounds;
 this is not a new optional/outcome value method contract.
 
 `OwnedIterable` consumes the source into an iterator with an owned Item.
+Arrays consume into allocation-free `ArrayIntoIter<T, N>` with inline storage.
+Front/back calls share the initialized remaining range; moving the iterator
+does not retain pointers into its former storage. It is exact-size and fused.
+Destruction advances ownership before dropping each remaining element and
+continues cleanup if one destructor panics, subject to the double-panic policy.
 `Iterable` reads and `MutableIterable` exclusively borrows, with yielded
 views tied to that loan. Iterators themselves can implement OwnedIterable
 by identity. `by_ref()` lends the iterator exclusively so consuming adapter

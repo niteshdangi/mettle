@@ -4,11 +4,13 @@ import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import package.core.convert.{From, Into}
 import package.core.fmt.{Debug, Display, Formatter, Write}
 import package.core.hash.{Hash, Hasher}
+import package.core.iter.{Copied, Iterator, Once, OwnedIterable}
 import package.core.ops.{BitAnd, BitAndAssign, BitOr, BitOrAssign, Not}
 import package.core.slice
 import package.core.text.{FromStr, Text}
 import package.alloc.vec
 import package.alloc.vec.List
+import package.alloc.string.String
 import package.alloc.arc
 import package.alloc.arc.Arc
 import super.io
@@ -38,6 +40,120 @@ pub copy type SocketAddrV6 {
     pub port: u16
     pub flowinfo: u32
     pub scope_id: u32
+}
+
+pub interface ToSocketAddrs {
+    type Iter<region r>: Iterator<Item = SocketAddr>;
+    fn to_socket_addrs<region r>(receiver read self: Self from r): Self.Iter<region r> throws Error;
+}
+
+extend SocketAddr implements ToSocketAddrs {
+    type Iter<region r> = Once<SocketAddr>
+    fn to_socket_addrs<region r>(receiver read self: Self from r): Once<SocketAddr> throws Error {
+        let address: SocketAddr = self
+        package.core.iter.once(address)
+    }
+}
+
+extend SocketAddrV4 implements ToSocketAddrs {
+    type Iter<region r> = Once<SocketAddr>
+    fn to_socket_addrs<region r>(receiver read self: Self from r): Once<SocketAddr> throws Error {
+        package.core.iter.once(self.to_socket_addr())
+    }
+}
+
+extend SocketAddrV6 implements ToSocketAddrs {
+    type Iter<region r> = Once<SocketAddr>
+    fn to_socket_addrs<region r>(receiver read self: Self from r): Once<SocketAddr> throws Error {
+        package.core.iter.once(self.to_socket_addr())
+    }
+}
+
+extend (IpAddr, u16) implements ToSocketAddrs {
+    type Iter<region r> = Once<SocketAddr>
+    fn to_socket_addrs<region r>(receiver read self: Self from r): Once<SocketAddr> throws Error {
+        package.core.iter.once(socket_addr_ip(self.0, self.1))
+    }
+}
+
+extend (Ipv4Addr, u16) implements ToSocketAddrs {
+    type Iter<region r> = Once<SocketAddr>
+    fn to_socket_addrs<region r>(receiver read self: Self from r): Once<SocketAddr> throws Error {
+        package.core.iter.once(socket_addr(self.0, self.1))
+    }
+}
+
+extend (Ipv6Addr, u16) implements ToSocketAddrs {
+    type Iter<region r> = Once<SocketAddr>
+    fn to_socket_addrs<region r>(receiver read self: Self from r): Once<SocketAddr> throws Error {
+        package.core.iter.once(socket_addr_v6(self.0, self.1, 0u32, 0u32))
+    }
+}
+
+extend [SocketAddr] implements ToSocketAddrs {
+    type Iter<region r> = Copied<region r, SocketAddr, slice.SliceIter<region r, SocketAddr>>
+    fn to_socket_addrs<region r>(receiver read self: Self from r): Copied<region r, SocketAddr, slice.SliceIter<region r, SocketAddr>> throws Error {
+        self.iter().copied()
+    }
+}
+
+extend<const N: usize> [SocketAddr; N] implements ToSocketAddrs {
+    type Iter<region r> = Copied<region r, SocketAddr, slice.SliceIter<region r, SocketAddr>>
+    fn to_socket_addrs<region r>(receiver read self: Self from r): Copied<region r, SocketAddr, slice.SliceIter<region r, SocketAddr>> throws Error {
+        self.iter().copied()
+    }
+}
+
+extend Text implements ToSocketAddrs {
+    type Iter<region r> = vec.IntoIter<SocketAddr>
+    fn to_socket_addrs<region r>(receiver read self: Self from r): vec.IntoIter<SocketAddr> throws Error {
+        match take capture parse_socket_addr(self) {
+            success(address) => {
+                var addresses = vec.new<SocketAddr>()
+                addresses.push(address)
+                return addresses.into_iter()
+            },
+            failure(_) => {}
+        }
+        let separator = match self.rfind(':') {
+            present(index) => index,
+            none => throw invalid_address()
+        }
+        let host = match self.get(0usize, separator) {
+            present(value) => value,
+            none => throw invalid_address()
+        }
+        if host.is_empty() || host.find_byte(58u8).is_present() ||
+            host.find_byte(91u8).is_present() || host.find_byte(93u8).is_present() {
+            throw invalid_address()
+        }
+        let port = match self.get(separator + 1usize, self.len()) {
+            present(value) => try parse_port(value),
+            none => throw invalid_address()
+        }
+        (try resolve(host, port)).into_iter()
+    }
+}
+
+extend String implements ToSocketAddrs {
+    type Iter<region r> = vec.IntoIter<SocketAddr>
+    fn to_socket_addrs<region r>(receiver read self: Self from r): vec.IntoIter<SocketAddr> throws Error {
+        try self.as_text().to_socket_addrs()
+    }
+}
+
+extend<region host_region> (read Text from host_region, u16) implements ToSocketAddrs {
+    type Iter<region r> = vec.IntoIter<SocketAddr>
+    fn to_socket_addrs<region r>(receiver read self: Self from r): vec.IntoIter<SocketAddr> throws Error {
+        (try resolve(self.0, self.1)).into_iter()
+    }
+}
+
+extend (String, u16) implements ToSocketAddrs {
+    type Iter<region r> = vec.IntoIter<SocketAddr>
+    fn to_socket_addrs<region r>(receiver read self: Self from r): vec.IntoIter<SocketAddr> throws Error {
+        (try resolve(self.0.as_text(), self.1)).into_iter()
+    }
 }
 
 pub fn ipv4(a: u8, b: u8, c: u8, d: u8): Ipv4Addr {
@@ -959,7 +1075,22 @@ extend TcpStream implements Debug {
 unsafe extend AsyncTcpStream implements Transferable {}
 unsafe extend AsyncTcpListener implements Transferable {}
 
-pub fn tcp_connect(addr: SocketAddr): TcpStream throws Error {
+pub fn tcp_connect<A: ToSocketAddrs + unsized>(read addr: A): TcpStream throws Error {
+    var addresses = try addr.to_socket_addrs()
+    var last_error = io.from_kind(ErrorKind.InvalidInput)
+    while true {
+        let address = match take addresses.next() {
+            present(value) => value,
+            none => throw last_error
+        }
+        match take capture tcp_connect_address(address) {
+            success(stream) => { return stream },
+            failure(error) => { last_error = error }
+        }
+    }
+}
+
+fn tcp_connect_address(addr: SocketAddr): TcpStream throws Error {
     let fd = try new_socket(0, family_of(addr.ip))
     let stream = TcpStream(fd)
     try connect_address(fd, addr)
@@ -974,7 +1105,22 @@ pub fn tcp_connect_timeout(addr: SocketAddr, timeout: Duration): TcpStream throw
     stream
 }
 
-pub fn tcp_listen(addr: SocketAddr): TcpListener throws Error {
+pub fn tcp_listen<A: ToSocketAddrs + unsized>(read addr: A): TcpListener throws Error {
+    var addresses = try addr.to_socket_addrs()
+    var last_error = io.from_kind(ErrorKind.InvalidInput)
+    while true {
+        let address = match take addresses.next() {
+            present(value) => value,
+            none => throw last_error
+        }
+        match take capture tcp_listen_address(address) {
+            success(listener) => { return listener },
+            failure(error) => { last_error = error }
+        }
+    }
+}
+
+fn tcp_listen_address(addr: SocketAddr): TcpListener throws Error {
     let fd = try new_socket(0, family_of(addr.ip))
     let owned = unsafe { sys.OwnedFd.from_raw_fd(fd) }
     let listener = unsafe { try TcpListener.from_owned_fd(owned) }
@@ -1029,7 +1175,7 @@ pub fn async_tcp_listen(addr: SocketAddr): AsyncTcpListener throws Error {
 }
 
 extend TcpListener {
-    pub static fn bind(addr: SocketAddr): TcpListener throws Error { try tcp_listen(addr) }
+    pub static fn bind<A: ToSocketAddrs + unsized>(read addr: A): TcpListener throws Error { try tcp_listen(addr) }
 
     pub fn incoming<region r>(
         receiver read self: TcpListener from r
@@ -1141,7 +1287,7 @@ extend AsyncTcpListener {
 }
 
 extend TcpStream {
-    pub static fn connect(addr: SocketAddr): TcpStream throws Error { try tcp_connect(addr) }
+    pub static fn connect<A: ToSocketAddrs + unsized>(read addr: A): TcpStream throws Error { try tcp_connect(addr) }
     pub static fn connect_timeout(addr: SocketAddr, timeout: Duration): TcpStream throws Error {
         try tcp_connect_timeout(addr, timeout)
     }
@@ -1227,10 +1373,25 @@ extend UdpSocket implements Debug {
 }
 
 extend UdpSocket {
-    pub static fn bind(addr: SocketAddr): UdpSocket throws Error { try udp_bind(addr) }
+    pub static fn bind<A: ToSocketAddrs + unsized>(read addr: A): UdpSocket throws Error { try udp_bind(addr) }
 }
 
-pub fn udp_bind(addr: SocketAddr): UdpSocket throws Error {
+pub fn udp_bind<A: ToSocketAddrs + unsized>(read addr: A): UdpSocket throws Error {
+    var addresses = try addr.to_socket_addrs()
+    var last_error = io.from_kind(ErrorKind.InvalidInput)
+    while true {
+        let address = match take addresses.next() {
+            present(value) => value,
+            none => throw last_error
+        }
+        match take capture udp_bind_address(address) {
+            success(socket) => { return socket },
+            failure(error) => { last_error = error }
+        }
+    }
+}
+
+fn udp_bind_address(addr: SocketAddr): UdpSocket throws Error {
     let fd = try new_socket(1, family_of(addr.ip))
     let socket = UdpSocket(fd)
     try bind_address(fd, addr)
@@ -1306,18 +1467,34 @@ extend UdpSocket {
     pub fn set_read_timeout(limit: Duration?): Unit throws Error { try set_timeout(self.fd, 0, limit) }
     pub fn set_write_timeout(limit: Duration?): Unit throws Error { try set_timeout(self.fd, 1, limit) }
 
-    pub fn connect(addr: SocketAddr): Unit throws Error {
-        try connect_address(self.fd, addr)
+    pub fn connect<A: ToSocketAddrs + unsized>(read addr: A): Unit throws Error {
+        var addresses = try addr.to_socket_addrs()
+        var last_error = io.from_kind(ErrorKind.InvalidInput)
+        while true {
+            let address = match take addresses.next() {
+                present(value) => value,
+                none => throw last_error
+            }
+            match take capture connect_address(self.fd, address) {
+                success(_) => { return },
+                failure(error) => { last_error = error }
+            }
+        }
     }
 
-    pub fn send_to(read buf: [u8], addr: SocketAddr): usize throws Error {
-        let result = match addr.ip {
+    pub fn send_to<A: ToSocketAddrs + unsized>(read buf: [u8], read addr: A): usize throws Error {
+        var addresses = try addr.to_socket_addrs()
+        let destination = match take addresses.next() {
+            present(value) => value,
+            none => throw io.from_kind(ErrorKind.InvalidInput)
+        }
+        let result = match destination.ip {
             IpAddr.V4(ip) => {
                 let bytes = ip.octets()
-                unsafe { sys.mettle_rt_sock_sendto(self.fd, slice.data(buf), buf.len(), 4, slice.data(bytes), 4usize, addr.port, 0u32, 0u32) }
+                unsafe { sys.mettle_rt_sock_sendto(self.fd, slice.data(buf), buf.len(), 4, slice.data(bytes), 4usize, destination.port, 0u32, 0u32) }
             },
             IpAddr.V6(ip) => unsafe {
-                sys.mettle_rt_sock_sendto(self.fd, slice.data(buf), buf.len(), 6, slice.data(ip.bytes), 16usize, addr.port, addr.flowinfo, addr.scope_id)
+                sys.mettle_rt_sock_sendto(self.fd, slice.data(buf), buf.len(), 6, slice.data(ip.bytes), 16usize, destination.port, destination.flowinfo, destination.scope_id)
             }
         }
         if result < 0isize { throw net_error(self.fd) }
@@ -1325,20 +1502,11 @@ extend UdpSocket {
     }
 
     pub fn recv_from(mut buf: [u8]): (usize, SocketAddr) throws Error {
-        var family = 0i32
-        var address = [0u8; 16]
-        var port = 0u16
-        var flowinfo = 0u32
-        var scope_id = 0u32
-        let result = unsafe {
-            sys.mettle_rt_sock_recvfrom(
-                self.fd, sys.data_mut(buf), buf.len(), core.ptr.from_mut(family),
-                sys.data_mut(address), 16usize, core.ptr.from_mut(port),
-                core.ptr.from_mut(flowinfo), core.ptr.from_mut(scope_id)
-            )
-        }
-        if result < 0isize { throw net_error(self.fd) }
-        (result as usize, decode_socket_addr(family, address, port, flowinfo, scope_id))
+        try datagram_recv_from(self.fd, buf, 0)
+    }
+
+    pub fn peek_from(mut buf: [u8]): (usize, SocketAddr) throws Error {
+        try datagram_recv_from(self.fd, buf, 1)
     }
 
     pub fn send(read buf: [u8]): usize throws Error {
@@ -1348,6 +1516,23 @@ extend UdpSocket {
     }
     pub fn recv(mut buf: [u8]): usize throws Error { try datagram_recv(self.fd, buf, 0) }
     pub fn peek(mut buf: [u8]): usize throws Error { try datagram_recv(self.fd, buf, 2) }
+}
+
+fn datagram_recv_from(fd: i32, mut buf: [u8], peek: i32): (usize, SocketAddr) throws Error {
+    var family = 0i32
+    var address = [0u8; 16]
+    var port = 0u16
+    var flowinfo = 0u32
+    var scope_id = 0u32
+    let result = unsafe {
+        sys.mettle_rt_sock_recvfrom(
+            fd, sys.data_mut(buf), buf.len(), peek, core.ptr.from_mut(family),
+            sys.data_mut(address), 16usize, core.ptr.from_mut(port),
+            core.ptr.from_mut(flowinfo), core.ptr.from_mut(scope_id)
+        )
+    }
+    if result < 0isize { throw net_error(fd) }
+    (result as usize, decode_socket_addr(family, address, port, flowinfo, scope_id))
 }
 
 fn datagram_recv(fd: i32, mut buf: [u8], flags: i32): usize throws Error {

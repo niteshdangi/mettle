@@ -269,7 +269,7 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
         checked.types->product(expected).genericOrigin == type)
       type = expected;
     inference.equal(variable, inference.fresh(type), p.span);
-    const auto &product = checked.types->product(type);
+    const auto product = checked.types->product(type);
     if (checked.types->isSum(type)) {
       auto name = spelling.substr(delimiter + 2);
       for (std::size_t i = 0; i < product.variants.size(); ++i)
@@ -290,7 +290,8 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
         facts(p).fields.push_back(static_cast<std::uint32_t>(i));
     }
     for (auto field : facts(p).fields)
-      payloads.push_back(inference.fresh(product.fields[field].type));
+      payloads.push_back(inference.fresh(
+          normalizeGenericType(product.fields[field].type, {}, p.span)));
     if (p.kind == PatternKind::Product) {
       if (!p.rest && p.children.size() != facts(p).fields.size())
         error("type", p.span, "omitted product fields require '..'");
@@ -311,8 +312,8 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
           error("name", child.span, "duplicate pattern field");
         visibleField(type, *foundField, child.span, child.fieldContext);
         ordered.push_back(*foundField);
-        orderedTypes.push_back(
-            inference.fresh(product.fields[*foundField].type));
+        orderedTypes.push_back(inference.fresh(normalizeGenericType(
+            product.fields[*foundField].type, {}, child.span)));
       }
       facts(p).fields = std::move(ordered);
       payloads = std::move(orderedTypes);

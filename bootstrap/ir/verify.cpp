@@ -657,7 +657,8 @@ bool function(const Function &f, const Program &program,
             bindings.push_back(
                 {callee.genericParameters[p], n.typeArguments[p]});
           auto matches = [&](Type pattern, Type actual) {
-            return normalize ? normalize(pattern, bindings, f) == actual
+            return normalize ? normalize(pattern, bindings, f) ==
+                                   normalize(actual, {}, f)
                              : program.types->matchesSubstitution(
                                    pattern, actual, bindings);
           };
@@ -1114,7 +1115,8 @@ bool function(const Function &f, const Program &program,
                 {callee.genericParameters[p], n.typeArguments[p]});
           require(callee.indirectContract == (n.op == Op::IndirectCall));
           auto matches = [&](Type pattern, Type actual) {
-            return normalize ? normalize(pattern, bindings, f) == actual
+            return normalize ? normalize(pattern, bindings, f) ==
+                                   normalize(actual, {}, f)
                              : program.types->matchesSubstitution(
                                    pattern, actual, bindings);
           };

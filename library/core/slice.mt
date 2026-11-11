@@ -10,7 +10,10 @@ copy type Raw { data: ptr<read u8>; len: usize }
 type DropValuesGuard<T> {
     p: ptr<mut T>
     n: usize
-    drop {
+    drop { self.run() }
+}
+extend<T> DropValuesGuard<T> {
+    mut fn run(): Unit {
         while self.n != 0usize {
             // Advance before dropping so unwinding never revisits this value.
             let current = self.p
@@ -24,7 +27,8 @@ type DropValuesGuard<T> {
 // Safety: `p` points to `n` initialized, aligned `T` values that may be
 // exclusively destroyed. The range remains valid until all drops complete.
 pub unsafe fn drop_values<T>(p: ptr<mut T>, n: usize): Unit {
-    let _guard = DropValuesGuard(p, n)
+    var guard = DropValuesGuard(p, n)
+    guard.run()
 }
 
 pub fn data(read bytes: [u8]): ptr<read u8> {
@@ -77,7 +81,7 @@ fn alignment_partition<T, U>(
     if size_t == 0usize || size_u == 0usize { return (len, 0usize, 0usize) }
 
     let pointer = core.ptr.NonNull<T>.new(data.cast_mut()).unwrap()
-    let prefix = pointer.align_offset(core.mem.align_of<U>() as isize)
+    let prefix = pointer.align_offset(core.mem.align_of<U>())
     if prefix == 0xffffffffffffffffusize || prefix > len {
         return (len, 0usize, 0usize)
     }

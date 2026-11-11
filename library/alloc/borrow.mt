@@ -1,34 +1,82 @@
+pub import package.core.borrow.{OwnedType, ToOwned}
+import package.core.borrow.{AsRef, Borrow}
 import package.core.clone.Clone
 import package.core.convert.From
+import package.core.ops.Deref
+import package.core.panic.panic
 import super.vec.List
 
-// Slice Cow keeps borrowed reads or an owned Global List.
-pub enum Cow<region r, T> {
-    Borrowed(read [T] from r);
-    Owned(List<T>)
+extend<T> [T] implements OwnedType {
+    type Owned = List<T>
 }
 
-extend<region r, T> Cow<region r, T> {
+extend<T: Clone> [T] implements ToOwned {
+    fn to_owned(): List<T> { self.to_vec() }
+}
+
+pub enum BorrowedOrOwned<region r, B: OwnedType + unsized> {
+    Borrowed(read B from r);
+    Owned(B.Owned)
+}
+
+pub alias Cow<region r, T> = BorrowedOrOwned<region r, [T]>
+
+extend<region r, B: OwnedType + unsized> BorrowedOrOwned<region r, B> {
     pub fn is_borrowed(): bool {
         match self {
-            Cow.Borrowed(_) => true,
-            Cow.Owned(_) => false
+            BorrowedOrOwned.Borrowed(_) => true,
+            BorrowedOrOwned.Owned(_) => false
         }
     }
 
-    pub fn as_ref(): read [T] from self {
+    pub fn is_owned(): bool { !self.is_borrowed() }
+
+    pub fn as_ref(): read B from self {
         match self {
-            Cow.Borrowed(items) => items,
-            Cow.Owned(items) => items.as_slice()
+            BorrowedOrOwned.Borrowed(value) => value,
+            BorrowedOrOwned.Owned(value) => value.borrow()
         }
     }
 }
 
-extend<region r, T: Clone> Cow<region r, T> {
-    pub take fn into_owned(): List<T> {
+extend<region r, B: ToOwned + unsized> BorrowedOrOwned<region r, B> {
+    pub mut fn to_mut(): mut B.Owned from self {
+        if self.is_borrowed() {
+            let owned = self.as_ref().to_owned()
+            self = BorrowedOrOwned<region r, B>.Owned(owned)
+        }
+        match mut self {
+            BorrowedOrOwned.Owned(value) => mut value,
+            BorrowedOrOwned.Borrowed(_) => panic("to_mut failed to install an owner")
+        }
+    }
+
+    pub take fn into_owned(): B.Owned {
         match take self {
-            Cow.Borrowed(items) => items.to_vec(),
-            Cow.Owned(items) => items
+            BorrowedOrOwned.Borrowed(value) => value.to_owned(),
+            BorrowedOrOwned.Owned(value) => value
+        }
+    }
+}
+
+extend<region r, B: OwnedType + unsized> BorrowedOrOwned<region r, B> implements AsRef<B> {
+    fn as_ref(): read B from self { self.as_ref() }
+}
+
+extend<region r, B: OwnedType + unsized> BorrowedOrOwned<region r, B> implements Borrow<B> {
+    fn borrow(): read B from self { self.as_ref() }
+}
+
+extend<region r, B: OwnedType + unsized> BorrowedOrOwned<region r, B> implements Deref {
+    type Target = B
+    fn deref(): read B from self { self.as_ref() }
+}
+
+extend<region r, B: ToOwned + unsized> BorrowedOrOwned<region r, B> implements Clone {
+    fn clone(): BorrowedOrOwned<region r, B> {
+        match self {
+            BorrowedOrOwned.Borrowed(value) => BorrowedOrOwned.Borrowed(value),
+            BorrowedOrOwned.Owned(value) => BorrowedOrOwned.Owned(value.borrow().to_owned())
         }
     }
 }

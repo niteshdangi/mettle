@@ -1084,17 +1084,16 @@ extern "C" std::int64_t mettle_rt_sock_sendto(
   });
 }
 
-extern "C" std::int64_t
-mettle_rt_sock_recvfrom(std::int32_t fd, std::uint8_t *data, std::size_t size,
-                        std::int32_t *family, std::uint8_t *address,
-                        std::size_t addressCapacity, std::uint16_t *port,
-                        std::uint32_t *flowinfo, std::uint32_t *scopeId) {
+extern "C" std::int64_t mettle_rt_sock_recvfrom(
+    std::int32_t fd, std::uint8_t *data, std::size_t size, std::int32_t peek,
+    std::int32_t *family, std::uint8_t *address, std::size_t addressCapacity,
+    std::uint16_t *port, std::uint32_t *flowinfo, std::uint32_t *scopeId) {
   sockaddr_storage value;
   std::memset(&value, 0, sizeof value);
   socklen_t length = sizeof value;
   auto received = retry([&] {
-    return recvfrom(fd, data, size, 0, reinterpret_cast<sockaddr *>(&value),
-                    &length);
+    return recvfrom(fd, data, size, peek ? MSG_PEEK : 0,
+                    reinterpret_cast<sockaddr *>(&value), &length);
   });
   if (received >= 0 &&
       !readSocketAddress(reinterpret_cast<sockaddr *>(&value), length, family,

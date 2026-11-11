@@ -50,15 +50,21 @@ still obligations. No executed all-target expansion or per-item native coherence
 check is claimed.
 
 Generate the I13 [worklist](baseline/v1-operations.csv) with
-`python3 tools/v1_operations.py`. Latest ledger (2026-11-10): **10,762 evidenced,
-35 declared, 2,493 missing, 5 not applicable** of 13,295 canonical records,
+`python3 tools/v1_operations.py`. Latest ledger (2026-11-11): **10,477 evidenced,
+401 declared, 2,412 missing, 5 not applicable** of 13,295 canonical records,
 grouped into 2,442 operation and 2,309 implementation families. Subset/source-cfg
 reconciliation and Linux applicability review remain open; the five Windows-only
 exclusions were recorded on Darwin. Missing/unmapped is not proof of absent
 code; declarations/name matches are not behavioral passes.
 
-The 35 declared records comprise 20 conversion-blanket exposures and fifteen
-callable-adapter Clone/ToOwned records awaiting per-type/profile evidence.
+The declared records comprise 20 conversion-blanket exposures, fifteen
+callable-adapter Clone/ToOwned records, 54 NonNull runtime-only records and
+312 integer power/division records lacking stable-const acceptance.
+The latter were previously evidenced from runtime-only receipts; the corrected
+state preserves those receipts without crediting unimplemented const behavior.
+Eleven networking records, ten non-stable-const NonNull records, five IO
+records and one owning-array implementation gain scoped
+Linux evidence in the [parallel reconciliation](i13-library.md#parallel-reconciliation-2026-11-11).
 Ten hosted File/UDP operations gained focused Linux debug/release evidence;
 generic address inputs, zero-length datagrams and nonblocking error translation
 remain open as recorded in

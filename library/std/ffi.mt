@@ -7,7 +7,7 @@ import package.alloc.vec.List
 import package.alloc.alloc.AllocError
 import package.alloc.string.String
 import package.alloc.string.FromUtf8Error
-import package.core.borrow.{AsRef, Borrow, ToOwned}
+import package.core.borrow.{AsRef, Borrow, OwnedType, ToOwned}
 import package.core.convert.Into
 import package.core.clone.Clone
 import package.core.default.Default
@@ -481,8 +481,10 @@ extend CString implements Deref {
     fn deref(): read CStr from self { self.as_c_str() }
 }
 
-extend CStr implements ToOwned {
+extend CStr implements OwnedType {
     type Owned = CString
+}
+extend CStr implements ToOwned {
     fn to_owned(): CString { CString(clone_bytes(read self.bytes)) }
 }
 
@@ -648,8 +650,10 @@ extend<region r> OsString implements AsRef<OsStr> {
     fn as_ref(): read OsStr from self { self.as_os_str() }
 }
 
-extend OsStr implements ToOwned {
+extend OsStr implements OwnedType {
     type Owned = OsString
+}
+extend OsStr implements ToOwned {
     fn to_owned(): OsString { os_string_from_bytes(self.as_bytes()) }
 }
 
