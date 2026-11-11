@@ -26,8 +26,19 @@ fn main(): i32 {
     var dbg_calls = 0i32
     let dbg_value = dbg!({ dbg_calls += 1; 42i32 })
     if dbg_calls != 1 || dbg_value != 42 { return 43 }
+    let dbg_pair = dbg!({ dbg_calls += 1; dbg_calls }, { dbg_calls *= 2; dbg_calls },)
+    if dbg_calls != 4 || dbg_pair.0 != 2 || dbg_pair.1 != 4 { return 44 }
     let absent: i32? = none
     if !matches!(present(3i32), present(_)) || matches!(absent, present(_)) { return 42 }
+    var match_calls = 0i32
+    var guard_calls = 0i32
+    if !matches!({ match_calls += 1; present(3i32) }, present(value) if {
+        guard_calls += 1
+        value == 3
+    },) { return 45 }
+    if matches!(absent, present(_) if { guard_calls += 1; true }) { return 46 }
+    if matches!(present(3i32), present(value) if value == 4) { return 47 }
+    if match_calls != 1 || guard_calls != 1 { return 48 }
     var formatted = String("")
     match take capture formatted.write_fmt(format_args!(f"count={3}\n")) {
         success(_) => {},

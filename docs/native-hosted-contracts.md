@@ -277,6 +277,12 @@ convenience exit does not apply to stderr, arbitrary sockets or ordinary fallibl
 writers. Independently, ordinary descriptor writes remain subject to the inherited
 SIGPIPE disposition.
 
+`std.macros.dbg!` evaluates each supplied operand once, in source order,
+formats it through Debug to stderr and returns that operand, or a tuple for
+multiple operands. `matches!` evaluates its input once and returns a bool;
+an optional guard runs only after its pattern matches. Both accept a trailing
+comma. These contracts do not establish profile-gated debug assertions.
+
 `pipe(): (PipeReader, PipeWriter) throws Error` returns two independent unique
 owners for a one-way byte stream. Reads block while empty with writers alive;
 closing every writer allows EOF after buffered bytes drain. Writes may block

@@ -205,11 +205,15 @@ pub fn debug_value<T: Debug>(take value: T): T {
 }
 
 pub macro dbg {
-    ($value:expr) => { debug_value($value) };
+    ($value:expr $(,)?) => { debug_value($value) };
+    ($first:expr, $($rest:expr),+ $(,)?) => { (debug_value($first), $(debug_value($rest)),+) };
 }
 
 pub macro matches {
-    ($value:expr, $pattern:pat) => { match $value { $pattern => true, _ => false } };
+    ($value:expr, $pattern:pat if $guard:expr $(,)?) => {
+        match $value { $pattern if $guard => true, _ => false }
+    };
+    ($value:expr, $pattern:pat $(,)?) => { match $value { $pattern => true, _ => false } };
 }
 
 pub macro format_args {
