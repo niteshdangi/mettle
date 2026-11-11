@@ -305,8 +305,11 @@ private:
                       item.signature.find(" implements ") != std::string::npos);
         members(item.members, item.kind == Kind::Module ? &item.doc : nullptr,
                 item.kind, opens);
-        if (at < tokens.size() && isSymbol(tokens[at], "}"))
+        if (at < tokens.size() && isSymbol(tokens[at], "}")) {
+          if (item.kind == Kind::Module)
+            item.bodyEnd = tokens[at].span.begin;
           ++at;
+        }
       } else
         at = closing(end);
     } else

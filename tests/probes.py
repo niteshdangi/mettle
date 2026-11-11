@@ -10,6 +10,7 @@
               programs
   selfhost-lexer  compare a compiled Mettle lexer (--seed) with bootstrap tokens
   selfhost-parser  compare the Mettle parser core with bootstrap syntax
+  selfhost-unicode  Unicode 16.0 NFC/XID conformance through the native fixture
 """
 
 import argparse
@@ -24,6 +25,8 @@ import subprocess
 import time
 from pathlib import Path
 
+import processes
+
 ROOT = Path(__file__).resolve().parent
 
 
@@ -31,7 +34,7 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def run_suite(mode, executable, directory, seed=None, case_filter=None):
+def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=None):
     executable = str(Path(executable).resolve())
     directory = Path(directory) / mode
     directory.mkdir(parents=True, exist_ok=True)
@@ -44,13 +47,12 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None):
     def selected(name):
         return not case_filter or re.search(case_filter, name)
 
-    def run(arguments, expected=0, timeout=30, env=None, input_text=None, memory_limit=None):
+    def run(arguments, expected=0, env=None, input_text=None, memory_limit=None):
         def constrain_memory():
             resource.setrlimit(resource.RLIMIT_AS, (memory_limit, memory_limit))
 
         begin = time.perf_counter()
-        result = subprocess.run(arguments, text=True, capture_output=True,
-                                timeout=timeout, env=env, input=input_text,
+        result = processes.run(arguments, text=True, capture_output=True, env=env, input=input_text,
                                 preexec_fn=constrain_memory if memory_limit else None)
         evidence["commands"].append({"command": list(map(str, arguments)),
                                     "exit_status": result.returncode,
@@ -88,7 +90,6 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None):
             "utf8-overlong": b"\xe0\x80\x80",
             "utf8-surrogate": b"\xed\xa0\x80",
             "utf8-range": b"\xf4\x90\x80\x80",
-            "unicode-word": "x \u03bb y".encode(),
             "comment-eof": b"/* outer /* inner */",
             "raw-eof": b'r##"text"#',
             "text-newline": b'"text\r\nnext',
@@ -116,6 +117,8 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None):
             cases.append(("compiler-" + "-".join(path.relative_to(ROOT.parent / "compiler").parts),
                           path.read_bytes(), 0))
         for name, data, expected in cases:
+            if not selected(name):
+                continue
             path = directory / (name + ".mt")
             path.write_bytes(data)
             reference = run([executable, "tokens", str(path)], expected)
@@ -142,14 +145,67 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None):
                 raise AssertionError(f"{name}: diagnostics differ\n{diagnostics}\n{reference_diagnostics}")
             if name.startswith("character-") and any(int(end) != len(data.rstrip(b"\n")) for _, _, end, _ in native_diagnostics):
                 raise AssertionError(f"{name}: character diagnostic lost its full token span")
-            if re.findall(r"(\d+) additional diagnostics suppressed", actual.stderr) != re.findall(r"(\d+) additional diagnostics suppressed", reference.stderr):
-                raise AssertionError(f"{name}: diagnostic suppression count differs")
             evidence["cases"].append({"name": name, "source_sha256": digest(path),
                                       "tokens": len(found), "diagnostics": len(diagnostics)})
 
+        unicode_words = {
+            "unicode-scripts": ["αβ", "cafe\u0301", "_नमस्ते", "变量", "𐐀𐐨", "𮯰"],
+            "unicode-quoted": ["`λ`", "`cafe\u0301`", "`type`"],
+            "unicode-mixed": ["asciiλ123", "a\u0301_９", "\u2118x", "a\u200cx"],
+        }
+        for name, words in unicode_words.items():
+            if not selected(name):
+                continue
+            data = " ".join(words).encode()
+            wanted, at = [], 0
+            for index, word in enumerate(words):
+                encoded = word.encode()
+                wanted.append((10 if word.startswith("`") else 0, at, at + len(encoded)))
+                at += len(encoded)
+                if index + 1 < len(words):
+                    wanted.append((3, at, at + 1))
+                    at += 1
+            wanted.append((6, at, at))
+            path = directory / (name + ".mt")
+            path.write_bytes(data)
+            actual = run([native, str(path)])
+            assert [tuple(map(int, line.split())) for line in actual.stdout.splitlines()] == wanted, actual.stdout
+            assert not actual.stderr, actual.stderr
+            evidence["cases"].append({"name": name, "source_sha256": digest(path), "tokens": len(wanted)})
+        for name, text, spans in (("unicode-leading-mark", "\u0301name", [(0, 2)]),
+                                   ("unicode-symbol", "α😀β", [(2, 6)]),
+                                   ("unicode-17", "\U00011db0", [(0, 4)]),
+                                   ("unicode-quoted-mark", "`\u0301name`", [(0, 8)]),
+                                   ("unicode-quoted-space", "`λ name`", [(0, 9)])):
+            if not selected(name):
+                continue
+            path = source(name, text)
+            actual = run([native, str(path)], 1)
+            found = re.findall(r"error\[lex\] (\d+):(\d+) ([^\n]*)", actual.stderr)
+            assert [(int(begin), int(end)) for begin, end, _ in found] == spans, (name, actual.stderr)
+            message = "backtick contents must be an identifier" if "quoted" in name else "character is not permitted at the start of an identifier"
+            assert all(item[2] == message for item in found), actual.stderr
+            evidence["cases"].append({"name": name, "source_sha256": digest(path), "diagnostics": len(found)})
+
+    def selfhost_unicode():
+        native = str(Path(seed).resolve())
+        evidence["scope"] = "Unicode 16.0 NFC conformance, exhaustive XID scalar comparison and token/parser identity integration"
+        evidence["seed_sha256"] = digest(native)
+        data = Path(ucd_dir).resolve()
+        inputs = {"NormalizationTest.txt": "d811971453e7075e1ad56fb1b301eece5aa80757b81f6156e74a1bfb3ae5ceb1",
+                  "DerivedCoreProperties.txt": "39d35161f2954497f69e08bdb9e701493f476a3d30222de20028feda36c1dabd"}
+        for name, expected in inputs.items():
+            assert digest(data / name) == expected, name + ": not the pinned Unicode 16.0 input"
+        actual = run([native, str(data / "NormalizationTest.txt"), str(data / "DerivedCoreProperties.txt")])
+        match = re.fullmatch(r"normalization (\d+)\nxid 1114112\nnfc-singletons 1112064\nintegration passed\n", actual.stdout)
+        assert match and int(match[1]) == 19965, actual.stdout
+        assert not actual.stderr, actual.stderr
+        evidence["cases"].append({"name": "unicode-conformance", "normalization_rows": int(match[1]),
+                                  "xid_codepoints": 1114112, "nfc_scalar_coverage": 1112064, "inputs": inputs})
+
     def selfhost_parser():
         native = str(Path(seed).resolve())
-        evidence["scope"] = "Self-hosted parser core shapes, lossless tokens, recovery and limits; extended grammar remains unsupported"
+        evidence["scope"] = "Self-hosted selected grammar: structural syntax, lossless tokens, recovery and limits; no semantic or expansion qualification"
         evidence["seed_sha256"] = digest(native)
         if selected("source-limit"):
             path = directory / "source-limit.mt"
@@ -417,7 +473,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None):
                            "recovery-generic": "fn main() {\nlet a: List<region> = x;\nlet b: fn(): = x;\n42\n}\nfn after() { 7 }",
                            "recovery-application": "fn main() {\nlet a = factory<type Item = >();\nlet b = (factory<T>\n + other);\n42\n}\nfn after() { 7 }",
                            "recovery-module": "module broken { import dep as; import missing fn inside() { 42 } }\nfn after() { 7 }",
-                           "unsupported": "type Product { value: i32 }\nfn after() { 7 }"}.items():
+                           "recovery-product": "type Product { one: ; two: }\nfn after() { 42 }"}.items():
             if not selected(name):
                 continue
             path = source("parser-" + name, text)
@@ -426,7 +482,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None):
             assert sum(node[0] == "function" for node in nodes) >= 1, actual.stdout
             assert sum(node[0] == "error" for node in nodes) >= (2 if name.startswith("recovery") else 1), actual.stdout
             if name.startswith("recovery"):
-                assert sum(node[0] == "function" for node in nodes) == 2
+                assert sum(node[0] == "function" for node in nodes) == (1 if name == "recovery-product" else 2)
                 assert any(node[0] == "integer" and path.read_bytes()[node[1]:node[2]] == b"42" for node in nodes)
             assert f"error[{'parse' if name.startswith('recovery') else 'feature'}]" in actual.stderr, actual.stderr
             evidence["cases"].append({"name": name, "source_sha256": digest(path)})
@@ -450,17 +506,95 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None):
             assert path.read_bytes()[int(found[1]):int(found[2])].decode() == literal
             evidence["cases"].append({"name": f"text-{i}", "source_sha256": digest(path)})
 
-        for i, text in enumerate(("fn main() { if let present(x) = value { x } }",
-                                  "fn main() { call(value: 1) }",
-                                  "fn main() { object?.field }", "fn main() { T.(Trait).member }",
-                                  "fn inspect(value: async fn(): i32) { 0 }",
-                                  "import dep.{nested.Name}")):
-            if not selected(f"feature-{i}"):
+        grammar = {
+            "products": ("@derive(Clone) copy type Pair<T> { @pinned pub first: T; second: T; init(value: T) { self.first = value }; drop {} ; mut unsafe fn reset(): Unit {} }", {"product": 1, "field-declaration": 2, "constructor": 1, "destructor": 1, "attribute": 2}),
+            "contextual-extend": ("fn extend() {} fn inspect() { let extend = callback; extend(items); extend(take items); extend.extend(items); extend + 1; extend<T>(items) }", {"function": 2, "call": 4}),
+            "nested-extension": ("fn inspect() { extend<T> Pair<T> { fn method() {} }; extend (Pair<i32>) { fn other() {} } }", {"extension": 2, "function": 3}),
+            "extension-lifecycle": ("type Resource {} extend Resource { init(value: i32) {} drop {} }", {"constructor": 1, "destructor": 1, "extension": 1}),
+            "union": ("union Bits<T> { integer: u32, other: T }", {"union": 1, "field-declaration": 2}),
+            "enum": ("copy enum Event<T> { Empty, Value(T), Record { value: T }, Code = 4 }", {"enumeration": 1, "variant-declaration": 4, "members": 1}),
+            "interface": ("unsafe interface Source<T>: Base { type Item<U>: Bound where U: Copy = List<U>; const COUNT: usize = 2; fn next(): T\nasync(heap) mut fn total(): i32\nfn defaulted(): T { other() } }", {"interface": 1, "associated-type": 1, "constant": 1, "function": 3}),
+            "extension": ("unsafe extend<T> Pair<T> implements Source<T> where T: Copy { type Item = T; const COUNT: usize = 2; static unsafe fn empty(): Unit {} }\nextend Pair<i32> not Send", {"extension": 1, "negative-extension": 1, "associated-type": 1}),
+            "values": ("alias Names<T> = List<T>\nconst COUNT: usize = 4\nstatic mut TOTAL: i32 = 0", {"alias": 1, "constant": 1, "static": 1}),
+            "foreign": ('extern "C" { unsafe fn call(value: i32, ...): i32; static mut COUNT: i32 }\nextern "C" fn exported(value: i32, args: ...): i32 { value }', {"foreign": 2, "function": 2, "type-variadic": 2}),
+            "macros": ("macro select { ($value:expr) => { nested!([$value]) }; }\nselect!{ item }\nfn apply() { let callback: api.selector!(r) = take fn(value) { value }; callback(1) }", {"macro-definition": 1, "macro-invocation": 2, "closure": 1}),
+            "patterns": ("fn inspect((a, b): (i32, i32)) { let [first, rest @ ..] = values; let Pair { first: value, .. } = pair; let present(found) = optional else { return }; match take found { -3..=0 | 2 => 1, Event.Value(x) if x > 0 => x, _ => 0 } }", {"pattern-tuple": 1, "pattern-array": 1, "pattern-at": 1, "pattern-product": 1, "let-else": 1, "match": 1, "arm": 3, "guard": 1, "pattern-range": 1, "pattern-or": 1}),
+            "conditions": ("fn inspect() { if let present(x) = value, x > 0 { x } else { 0 }; while let success(x) = next(), x > 0 { break }; label outer: for (a, b) in pairs { if a { continue label outer }; break label outer b } }", {"conditions": 2, "condition": 2, "for": 1, "label": 3}),
+            "closures": ("fn inspect() { (async take fn(read x: T): T throws Error => x, fn((a, b)) { a }, async { await work() }) }", {"closure": 3, "await": 1, "type-effect": 1}),
+            "postfix": ("fn inspect() { call(value: 1, other: 2); object?.field; T.(Trait).member; [T; 4].(Trait).member }", {"named-argument": 2, "optional-field": 1, "projection": 1, "type-projection": 1, "type-array": 1}),
+            "errors-owners": ("fn inspect() { unsafe { (try call(), capture other(), none, present(1), success(2), failure(3), heap value, shared value, local shared value, weak owner, pinned heap value) }; throw error }", {"unsafe": 1, "try": 1, "capture": 1, "none": 1, "present": 1, "success": 1, "failure": 1, "owner": 5, "throw": 1}),
+            "interpolation": ('fn inspect() { f"head {{literal}} {call(1)} middle {f"nested {value}"} tail" }', {"interpolation": 2, "format-hole": 3}),
+            "async-callable": ("fn inspect(value: async fn(): i32) {}", {"type-callable": 1, "type-modifier": 1}),
+            "callable-bound": ("fn inspect(value: any for<region r> fn(read T from r): Unit) {}", {"type-erased": 1, "type-callable": 1, "type-binders": 1}),
+            "nested-items": ("fn inspect() { type Local {} fn inner() {} const VALUE: i32 = 2; inner() }", {"product": 1, "function": 2, "constant": 1}),
+            "signature-newline": ("interface Source { fn first(): i32\nfn second():\n i32\n}\nfn inspect():\nmut [i32; 4] from values {}", {"interface": 1, "function": 3}),
+            "grouped-projection": ("fn inspect() { (read T from r).(Trait).member; ([T; N]).(Trait).member }", {"type-projection": 2, "type-group": 2, "type-borrow": 1}),
+            "header-range": ("fn inspect() { match 1.. { _ => 0 }; for x in 1.. {} }", {"match": 1, "for": 1, "range": 2}),
+            "nested-async": ("fn inspect() { async fn inner() { await work() }; async fn(x) => x }", {"function": 2, "closure": 1}),
+            "sources-path": ("fn inspect(value: read T from package.region_name) {}", {"type-sources": 1}),
+            "contextual-copy": ("fn inspect() { core.ptr.copy(a, b, n) }", {"field": 2}),
+        }
+        for name, (text, required) in grammar.items():
+            if not selected("grammar-" + name):
                 continue
-            path = source(f"parser-feature-{i}", text)
+            path = source("parser-grammar-" + name, text)
+            actual = run([native, "syntax", str(path)])
+            data = path.read_bytes()
+            nodes, edges, tokens = inspect_native(actual, data)
+            lexical = json.loads(run([executable, "tokens", str(path)]).stdout)
+            assert tokens == [(token["kind"], token["begin"], token["end"]) for token in lexical["tokens"]], name
+            for kind, count in required.items():
+                assert sum(node[0] == kind for node in nodes) == count, (name, kind, count, actual.stdout)
+            evidence["cases"].append({"name": "grammar-" + name, "source_sha256": digest(path), "nodes": len(nodes)})
+
+        invalid_grammar = {
+            "union-method": "union Bad { fn method() {} }",
+            "optional-index": "fn bad() { value?.0 }",
+            "optional-projection": "fn bad() { T?.(Trait).member }",
+            "standalone-rest": "fn bad() { let .. = value }",
+            "tuple-rest": "fn bad() { let (a, ..) = value }",
+            "pinned-constructor": "fn bad() { pinned value }",
+            "callable-varargs": "fn bad(value: fn(i32, ...): Unit) {}",
+            "callable-empty-varargs": 'fn bad(value: extern "C" fn(...): Unit) {}',
+            "pattern-escape": r'fn bad() { match value { "\q" => 0 } }',
+            "foreign-body": 'extern "C" { fn bad(): Unit {} }',
+            "foreign-default": 'extern "C" { fn bad(value: i32 = 0): Unit; }',
+            "foreign-pattern": 'extern "C" { fn bad((a, b): (i32, i32)): Unit; }',
+            "foreign-varargs": 'extern "C" { fn bad(...): Unit; }',
+            "native-varargs": "fn bad(value: i32, ...): Unit {}",
+            "native-cursor": "fn bad(value: i32, args: ...): Unit {}",
+            "foreign-item": 'extern "C" { type Bad {} }',
+            "interface-result": "interface Bad { fn method(); }",
+            "duplicate-rest": "fn bad() { let [.., ..] = values }",
+            "rest-tail": "fn bad() { let Pair { .., value } = pair }",
+            "pattern-range": "fn bad() { match value { 1..other => 0 } }",
+            "condition-tail": "fn bad() { if true, {} }",
+            "arm-arrow": "fn bad() { match value { _ 0 } }",
+            "named-order": "fn bad() { call(value: 1, 2) }",
+            "token-tree": "macro bad { ([)] }",
+            "macro-close": "fn bad() { call!([) }",
+            "constructor-body": "type Bad { init() => 1 }",
+            "constructor-file": "init() {}",
+            "destructor-file": "drop {}",
+            "interpolation-escape": r'fn bad() { f"bad \q {value}" }',
+            "depth-pattern": "fn bad() { let " + "[" * 300 + "x" + "]" * 300 + " = values }",
+            "depth-macro": "macro bad { " + "(" * 300 + ")" * 300 + " }",
+        }
+        for name, text in invalid_grammar.items():
+            if not selected("grammar-invalid-" + name):
+                continue
+            path = source("parser-grammar-invalid-" + name, text)
             actual = run([native, "syntax", str(path)], 1)
-            assert "error[feature]" in actual.stderr, actual.stderr
-            evidence["cases"].append({"name": f"feature-{i}", "source_sha256": digest(path)})
+            inspect_native(actual, path.read_bytes())
+            phase = "limit" if name.startswith("depth-") else "lex" if name in {"interpolation-escape", "pattern-escape"} else "parse"
+            assert "error[" + phase + "]" in actual.stderr, (name, actual.stderr)
+            evidence["cases"].append({"name": "grammar-invalid-" + name, "source_sha256": digest(path), "phase": phase})
+
+        if selected("import-dotted-group"):
+            path = source("parser-import-dotted-group", "import dep.{nested.Name}")
+            actual = run([native, "syntax", str(path)], 1)
+            assert "error[parse]" in actual.stderr, actual.stderr
+            evidence["cases"].append({"name": "import-dotted-group", "source_sha256": digest(path)})
 
         for name, text, expected in (("empty-module", "", 0),
                                       ("parser-budget", "fn main() {\n" + "let x =;\n" * 140 + "}\n", 1),
@@ -472,8 +606,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None):
             actual = run([native, "syntax", str(path)], expected)
             inspect_native(actual, path.read_bytes())
             if expected:
-                assert actual.stderr.count("error[parse]") == reference.stderr.count("error[parse]") == 100
-                assert "40 additional diagnostics suppressed" in actual.stderr
+                assert actual.stderr.count("error[parse]") == reference.stderr.count("error[parse]") == 140
             evidence["cases"].append({"name": name, "source_sha256": digest(path)})
 
         def type_shape(index, nodes, edges, tokens, data):
@@ -740,7 +873,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None):
             child.stdout.read(16)
             child.stdout.close()
             stderr = child.stderr.read()
-            status = child.wait(timeout=30)
+            status = child.wait()
             evidence["cases"].append({"sigpipe_ignored": ignored, "exit_status": status,
                                       "stderr": stderr.decode(errors="replace")})
             if status != expected or stderr:
@@ -835,6 +968,8 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None):
     try:
         if mode == "selfhost-lexer":
             selfhost_lexer()
+        elif mode == "selfhost-unicode":
+            selfhost_unicode()
         elif mode == "selfhost-parser":
             selfhost_parser()
         elif mode == "fast-math":
@@ -937,12 +1072,12 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None):
             result = run([executable, "check", str(pattern_cascade)], 1)
             if result.stderr.count("error[") != 1:
                 raise AssertionError("A failed scrutinee cascaded into its generic pattern")
-            capped = source("reported-diagnostic-cap",
-                            "".join(f"fn f{i}() {{ 1+true }}\n" for i in range(140)) +
-                            "fn main(){0}\n")
-            result = run([executable, "check", str(capped)], 1)
-            if result.stderr.count("error[") != 100 or "40 additional diagnostics suppressed (limit 100)" not in result.stderr:
-                raise AssertionError("Diagnostic cap silently discarded failures")
+            every = source("every-diagnostic-reported",
+                           "".join(f"fn f{i}() {{ 1+true }}\n" for i in range(140)) +
+                           "fn main(){0}\n")
+            result = run([executable, "check", str(every)], 1)
+            if result.stderr.count("error[") != 140:
+                raise AssertionError("Diagnostics were discarded")
             visibility = source("one-visibility-diagnostic",
                                 "pub(nowhere) fn f(){}\nfn main(){0}\n")
             result = run([executable, "check", str(visibility)], 1)
@@ -999,7 +1134,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None):
                     kinds[category] = found.pop()
                 if len(set(kinds.values())) != len(kinds):
                     raise AssertionError(f"Distinct literal categories share a token kind: {kinds}")
-            text = "// UTF-8 comment: café\r\nfn main()\r\n{\r\n /* a\r\n /* b */ c */\r\n(0)\r\n}\r\n"
+            text = "// UTF-8 comment: cafÃ©\r\nfn main()\r\n{\r\n /* a\r\n /* b */ c */\r\n(0)\r\n}\r\n"
             path = source("lossless", text)
             for command in ("tokens", "syntax"):
                 result = run([executable, command, str(path)])
@@ -1036,6 +1171,8 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None):
                 raise AssertionError("Unknown target created a published output")
         else:
             raise ValueError(mode)
+        if case_filter and not evidence["cases"]:
+            raise ValueError("no cases match --filter")
         evidence["status"] = "passed"
     except Exception as error:
         evidence["status"] = "failed"
@@ -1052,14 +1189,17 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("syntax", "fast-math", "broken-pipe",
-                                         "sanitizers", "selfhost-lexer", "selfhost-parser"))
+                                         "sanitizers", "selfhost-lexer", "selfhost-parser", "selfhost-unicode"))
     parser.add_argument("executable")
     parser.add_argument("directory")
     parser.add_argument("--seed", help="compiled Mettle seed for selfhost probes")
-    parser.add_argument("--filter", help="only selfhost-parser cases whose name matches this regular expression")
+    parser.add_argument("--filter", help="only selfhost lexer/parser cases whose name matches this regular expression")
+    parser.add_argument("--ucd-dir", help="pinned Unicode 16.0.0 UCD directory for selfhost-unicode")
     args = parser.parse_args()
     if args.mode.startswith("selfhost-") and not args.seed:
         parser.error(args.mode + " requires --seed")
-    if args.filter and args.mode != "selfhost-parser":
-        parser.error("--filter requires selfhost-parser")
-    run_suite(args.mode, args.executable, args.directory, args.seed, args.filter)
+    if args.filter and args.mode not in {"selfhost-parser", "selfhost-lexer"}:
+        parser.error("--filter requires selfhost-parser or selfhost-lexer")
+    if args.mode == "selfhost-unicode" and not args.ucd_dir:
+        parser.error("selfhost-unicode requires --ucd-dir")
+    run_suite(args.mode, args.executable, args.directory, args.seed, args.filter, args.ucd_dir)

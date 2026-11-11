@@ -24,7 +24,7 @@ fn main(): i32 {
         present(piece) => { if piece != "one" { return 22 } },
         none => { return 22 }
     }
-    match matches.next_back() {
+    match matches.next() {
         present(piece) => { if piece != "one" { return 23 } },
         none => { return 23 }
     }
@@ -34,7 +34,7 @@ fn main(): i32 {
         present(item) => { if item.0 != 0usize || item.1 != "one" { return 25 } },
         none => { return 25 }
     }
-    match match_indices.next_back() {
+    match match_indices.next() {
         present(item) => { if item.0 != 5usize || item.1 != "one" { return 26 } },
         none => { return 26 }
     }
@@ -43,11 +43,21 @@ fn main(): i32 {
         present(item) => { if item.0 != 5usize { return 27 } },
         none => { return 27 }
     }
+    match reverse_indices.next() {
+        present(item) => { if item.0 != 0usize || item.1 != "one" { return 48 } },
+        none => { return 48 }
+    }
+    if reverse_indices.next().is_present() || match_indices.next().is_present() { return 49 }
     var reverse_matches = "one\u{e9}one".rmatches("one")
     match reverse_matches.next() {
         present(piece) => { if piece != "one" { return 28 } },
         none => { return 28 }
     }
+    match reverse_matches.next() {
+        present(piece) => { if piece != "one" { return 50 } },
+        none => { return 50 }
+    }
+    if reverse_matches.next().is_present() { return 51 }
     let trimmed = ".. \u{e9}x \n..".trim_start_matches(".").trim_start().trim_end_matches(".").trim_end()
     if trimmed != "\u{e9}x" { return 29 }
     if "..x..".trim_start_matches(".") != "x.." ||
@@ -135,7 +145,7 @@ fn main(): i32 {
     match bytes.next() { present(byte) => { if byte != 0x61u8 { return 9 } }, none => { return 9 } }
     match bytes.next_back() { present(byte) => { if byte != 0x2du8 { return 10 } }, none => { return 10 } }
 
-    var pieces = "a,b,c".split(",")
+    var pieces = "a,b,c".split(',')
     match pieces.next() { present(piece) => { if piece != "a" { return 11 } }, none => { return 11 } }
     match pieces.next_back() { present(piece) => { if piece != "c" { return 12 } }, none => { return 12 } }
     match pieces.next() { present(piece) => { if piece != "b" { return 13 } }, none => { return 13 } }
@@ -147,14 +157,16 @@ fn main(): i32 {
     }
 
     var valid_bytes = [0xc3u8, 0xa9u8]
-    match core.text.from_utf8_mut(mut valid_bytes) {
-        present(view) => { if view.len() != 2usize { return 20 } },
-        none => { return 20 }
+    match take core.text.from_utf8_mut(mut valid_bytes) {
+        success(view) => { if view.len() != 2usize || view != "\u{e9}" { return 20 } },
+        failure(_) => { return 20 }
     }
     var invalid_bytes = [0xc3u8]
-    match core.text.from_utf8_mut(mut invalid_bytes) {
-        present(_) => { return 21 },
-        none => {}
+    match take core.text.from_utf8_mut(mut invalid_bytes) {
+        success(_) => { return 21 },
+        failure(error) => {
+            if error.valid_up_to() != 0usize || error.error_len().is_present() { return 21 }
+        }
     }
 
     let replaced = text.replace("\u{e9}", "o")

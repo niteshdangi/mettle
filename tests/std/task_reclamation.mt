@@ -1,3 +1,4 @@
+import core.clone.Clone
 import core.future.{Context, Future, Poll, Waker}
 import std.task
 

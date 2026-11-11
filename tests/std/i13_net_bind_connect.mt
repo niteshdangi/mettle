@@ -53,10 +53,14 @@ fn run(): i32 throws Error {
     var server_writer = read server
     try server_writer.write_all("view".as_bytes())
     var stream_peek = [0u8; 4]
-    if try client.peek(mut stream_peek) != 4usize ||
-       stream_peek[0usize] != 118u8 || stream_peek[1usize] != 105u8 ||
-       stream_peek[2usize] != 101u8 || stream_peek[3usize] != 119u8 {
+    let peeked = try client.peek(mut stream_peek)
+    if peeked == 0usize || peeked > 4usize {
         return 14
+    }
+    var peek_index = 0usize
+    while peek_index < peeked {
+        if stream_peek[peek_index] != "view".as_bytes()[peek_index] { return 14 }
+        peek_index += 1usize
     }
     var client_reader = read client
     var borrowed_bytes = [0u8; 4]
@@ -116,7 +120,7 @@ fn run(): i32 throws Error {
         present(fd) => fd,
         none => { return 18 }
     }
-    let owned_listener = TcpListener.from(raw_listener)
+    let owned_listener = unsafe { try TcpListener.from_owned_fd(raw_listener) }
     if (try owned_listener.local_addr()).port != 0u16 { return 18 }
     let raw_stream = match take raw_socket(0) {
         present(fd) => fd,

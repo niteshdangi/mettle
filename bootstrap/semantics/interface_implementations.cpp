@@ -32,7 +32,8 @@ void Checker::concurrencyDeclaration(
   auto origin = checked.types->product(target).genericOrigin;
   if (origin == Type::Unknown)
     origin = target;
-  if (checked.types->product(origin).package != 0)
+  if (implementation.package == unknownPackage ||
+      checked.types->product(origin).package != implementation.package)
     error("type", syntax.span,
           name + " declaration must belong to the type's package");
   if (!syntax.negative && !syntax.unsafeImplementation)
@@ -79,6 +80,8 @@ void Checker::interfaceImplementations() {
   for (std::size_t function = 0; function < module.functions.size();
        ++function) {
     const auto &syntax = module.functions[function];
+    if (imported(syntax.span))
+      continue;
     if (syntax.interfaceOwner.empty() || syntax.implementation >= 0)
       continue;
     auto name = typeName(syntax.interfaceOwner, syntax.span);
@@ -101,6 +104,8 @@ void Checker::interfaceImplementations() {
   }
   for (std::size_t i = 0; i < module.implementations.size(); ++i) {
     const auto &syntax = module.implementations[i];
+    if (imported(syntax.span))
+      continue;
     auto foundEnvironment = implementationGenerics.find(&syntax);
     if (foundEnvironment == implementationGenerics.end()) {
       auto environment =
@@ -116,17 +121,21 @@ void Checker::interfaceImplementations() {
     interfaces::Implementation implementation;
     implementation.declaration = i;
     implementation.span = syntax.span;
+    implementation.package =
+        checked.namespaces().packageOf(syntax.span).value_or(unknownPackage);
     implementation.parameters = genericEnvironment->parameters;
     implementation.regions = std::move(implementationRegions);
     implementation.regionRequirements = regionEnvironment().assumptions;
     implementation.target = annotation(syntax.target, syntax.span);
-    genericEnvironment->names["Self"] = implementation.target;
+    genericEnvironment->names[nameKey("Self", syntax.span)] =
+        implementation.target;
     validateGenericEnvironment(syntax.genericParameters, syntax.constraints,
                                *genericEnvironment);
     implementation.equalities = genericEnvironment->equalities;
     implementation.target = checked.types->substitute(
         implementation.target, implementation.equalities);
-    genericEnvironment->names["Self"] = implementation.target;
+    genericEnvironment->names[nameKey("Self", syntax.span)] =
+        implementation.target;
     if (intrinsicProperty(syntax.interface, "Unpin", syntax.span)) {
       auto target = implementation.target;
       if (!checked.types->isProduct(target) ||
@@ -144,7 +153,8 @@ void Checker::interfaceImplementations() {
         if (!syntax.negative && !syntax.unsafeImplementation)
           error("unsafe", syntax.span,
                 "manual Unpin implementation requires an unsafe extend");
-        if (checked.types->product(origin).package != 0)
+        if (implementation.package == unknownPackage ||
+            checked.types->product(origin).package != implementation.package)
           error("type", syntax.span,
                 "Unpin implementation must belong to the type's package");
         if (!syntax.associated.empty() || !syntax.methodFunctions.empty())
@@ -207,9 +217,6 @@ void Checker::interfaceImplementations() {
     if (syntax.negative)
       error("feature", syntax.span,
             "this negative property is not implemented");
-    if (syntax.unsafeImplementation)
-      error("type", syntax.span,
-            "unsafe extend requires an unsafe native property");
     if (!syntax.interface.empty())
       implementation.interfaceType = interfaceBound(
           syntax.interface, syntax.span, {}, implementation.target);
@@ -219,6 +226,12 @@ void Checker::interfaceImplementations() {
       auto interfaceDeclaration =
           checked.types->erased(implementation.interfaceType).declaration;
       const auto &definition = database.definitions[interfaceDeclaration];
+      if (definition.unsafeInterface && !syntax.unsafeImplementation)
+        error("unsafe", syntax.span,
+              "unsafe interface implementation requires an unsafe extend");
+      else if (!definition.unsafeInterface && syntax.unsafeImplementation)
+        error("type", syntax.span,
+              "unsafe extend requires an unsafe interface or native property");
       for (std::size_t item = 0; item < definition.associated.size(); ++item) {
         const auto &required = definition.associated[item];
         auto provided =
@@ -383,7 +396,7 @@ void Checker::interfaceImplementations() {
           regionContracts.push_back(
               {static_cast<std::size_t>(*provided),
                static_cast<std::size_t>(required.function), syntax.span});
-        } else if (module.functions[required.function].body.get()) {
+        } else if (checked.hasBody(required.function)) {
           std::vector<Type> arguments{implementation.target};
           const auto &actual =
               checked.types->erased(implementation.interfaceType).arguments;
@@ -431,12 +444,19 @@ void Checker::interfaceImplementations() {
         value.requirements = interfaceAssumptions();
         const auto &regions = functionRegions(provided);
         value.regionRequirements = regions.environment.assumptions;
-        for (const auto &parameter : familySyntax->genericParameters) {
+        std::size_t familyParameter = provided.implicitGenericParameters;
+        for (std::size_t p = 0; p < familySyntax->genericParameters.size();
+             ++p) {
+          if (familyParameter >= provided.genericParameters.size())
+            break;
+          const auto &parameter = provided.genericParameters[familyParameter++];
           if (parameter.kind == GenericParameterKind::Region) {
-            if (auto region = regions.names.find(parameter.name);
+            if (auto region = regions.names.find(
+                    nameKey(parameter.name, parameter.context));
                 region != regions.names.end())
               value.regions.push_back(region->second);
-          } else if (auto type = genericEnvironment->names.find(parameter.name);
+          } else if (auto type = genericEnvironment->names.find(
+                         nameKey(parameter.name, parameter.context));
                      type != genericEnvironment->names.end()) {
             value.parameters.push_back(type->second);
           }
@@ -449,6 +469,9 @@ void Checker::interfaceImplementations() {
         genericEnvironment = outer;
       }
     } else if (syntax.interface.empty()) {
+      if (syntax.unsafeImplementation)
+        error("type", syntax.span,
+              "unsafe extend requires an unsafe interface or native property");
       for (std::size_t function = 0; function < module.functions.size();
            ++function) {
         const auto &method = module.functions[function];
@@ -468,6 +491,7 @@ void Checker::interfaceImplementations() {
     popRegionParameters();
   }
   genericEnvironment = saved;
+  database.argumentsReady = true;
   if (diagnostics.empty()) {
     interfaces::Solver solver(*checked.types, database, diagnostics);
     solver.coherent();
@@ -481,10 +505,17 @@ void Checker::interfaceImplementations() {
       interfaces::Solver solver(*checked.types, database, diagnostics,
                                 std::move(requirement.assumptions),
                                 std::move(requirement.regions));
+      if (!solver.wellFormedInterface(
+              requirement.subject, requirement.interfaceType, requirement.span))
+        continue;
+      if (requirement.projection == Type::Unknown)
+        continue;
       if (!solver.prove({requirement.subject, requirement.interfaceType},
                         requirement.span, false))
         error("type", requirement.span,
               "associated projection requires its interface bound");
+      else
+        solver.checkedProjection(requirement.projection, requirement.span);
     }
   projectionRequirements.clear();
 }
@@ -574,6 +605,8 @@ Checker::interfaceMethod(Type self, std::string_view name, Node &call) {
 void Checker::checkInterfaceContracts() {
   auto *saved = genericEnvironment;
   for (const auto &implementation : checked.interfaceData->implementations) {
+    if (imported(implementation.span))
+      continue;
     if (!checked.types->isErased(implementation.interfaceType))
       continue;
     // Copied: interning substituted types below may grow the erased-type store.
@@ -679,7 +712,8 @@ void Checker::checkInterfaceContracts() {
              module.implementations[provided.implementation].genericParameters)
           if (parameter.kind == GenericParameterKind::Region &&
               region < implementation.regions.size()) {
-            if (auto found = regionScope.names.find(parameter.name);
+            if (auto found = regionScope.names.find(
+                    nameKey(parameter.name, parameter.context));
                 found != regionScope.names.end())
               ownerRegions.push_back(
                   {implementation.regions[region], found->second});
@@ -715,6 +749,8 @@ void Checker::checkInterfaceContracts() {
           error("type", provided.span,
                 "implementation method contract does not match interface");
       };
+      if (provided.unsafeFunction && !declaration.unsafeFunction)
+        fail();
       if (!actual.targetFeatures.empty() &&
           !featuresAvailable(checked.targetDescription, expected.targetFeatures,
                              actual.targetFeatures))
@@ -763,6 +799,42 @@ void Checker::checkInterfaceContracts() {
             obligation.interfaceType, publicParameters);
         if (!contracts.prove(obligation, provided.span, false) &&
             !std::exchange(contractReported, true))
+          error("type", provided.span,
+                "implementation method strengthens its interface bounds");
+      }
+      for (std::size_t p = 0; p < ownExpected && p < ownActual; ++p) {
+        auto expectedParameter =
+            expected.genericParameters[required.implicitParameters + p];
+        auto actualParameter =
+            actual.genericParameters[implementation.parameters.size() + p];
+        auto needed =
+            checked.types->parameter(actualParameter).callableConstraint;
+        if (needed == Type::Unknown)
+          continue;
+        auto allowed =
+            checked.types->parameter(expectedParameter).callableConstraint;
+        if (allowed != Type::Unknown) {
+          allowed = solver.normalize(
+              checked.types->substitute(
+                  checked.types->substitute(allowed, publicBindings),
+                  publicParameters),
+              {}, provided.span);
+          needed = solver.normalize(
+              checked.types->substitute(needed, publicParameters), {},
+              provided.span);
+        }
+        bool proven = allowed != Type::Unknown &&
+                      checked.types->satisfiesCallable(
+                          checked.types->eraseRegions(allowed),
+                          checked.types->eraseRegions(needed));
+        if (proven) {
+          RegionSolver regions(checked.types->regions());
+          RegionTypeSolver callableRegions(*checked.types, regions);
+          proven =
+              callableRegions.coerce(allowed, needed, regionEnvironment()) ==
+              RegionAnswer::Proven;
+        }
+        if (!proven && !std::exchange(contractReported, true))
           error("type", provided.span,
                 "implementation method strengthens its interface bounds");
       }
@@ -839,7 +911,7 @@ std::optional<Type> Checker::associatedConstant(const Node &node) {
     return std::nullopt;
   if (node.text.find("::") == std::string::npos) {
     auto canonical =
-        checked.symbols->lookup(checked.symbols->moduleOf(node.span), node.text,
+        checked.symbols->lookup(nameModule(node.span, node.context), node.text,
                                 resolution::Namespace::Value, node.span);
     auto resolved = canonical ? inherentConstantNames.find(*canonical)
                               : inherentConstantNames.end();
@@ -856,7 +928,8 @@ std::optional<Type> Checker::associatedConstant(const Node &node) {
   Type subject = Type::Unknown;
   auto owner = current ? current->owner : std::string_view{};
   if (genericEnvironment) {
-    auto parameter = genericEnvironment->names.find(prefix);
+    auto parameter =
+        genericEnvironment->names.find(nameKey(prefix, node.context));
     if (parameter != genericEnvironment->names.end() &&
         !checked.types->isConstant(parameter->second))
       subject = parameter->second;
@@ -871,10 +944,11 @@ std::optional<Type> Checker::associatedConstant(const Node &node) {
       break;
     }
   if (subject == Type::Unknown && memberDeclared) {
-    auto canonicalType = typeName(prefix, node.span, owner);
+    auto canonicalType = typeName(prefix, node.span, owner, node.context);
     if (!canonicalType.empty()) {
       TypeSyntax syntax;
       syntax.name = prefix;
+      syntax.context = node.context;
       syntax.arguments = node.ownerGenericArguments;
       subject = annotation(syntax, node.span, owner);
     }
@@ -892,9 +966,9 @@ std::optional<Type> Checker::associatedConstant(const Node &node) {
     auto key = checked.types->product(ownerType).name + "::" + member;
     auto candidate = inherentConstantNames.find(key);
     auto lookupName = prefix == "Self" ? key : node.text;
-    auto canonical = checked.symbols->lookup(
-        checked.symbols->moduleOf(node.span), lookupName,
-        resolution::Namespace::Value, node.span);
+    auto canonical =
+        checked.symbols->lookup(nameModule(node.span, node.context), lookupName,
+                                resolution::Namespace::Value, node.span);
     auto resolved = canonical ? inherentConstantNames.find(*canonical)
                               : inherentConstantNames.end();
     if (resolved != inherentConstantNames.end())

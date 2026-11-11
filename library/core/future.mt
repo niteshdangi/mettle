@@ -18,7 +18,7 @@ pub enum Poll<T> { Ready(T); Pending }
 extend<T> Poll<T> {
     pub fn is_ready(): bool { match self { Poll.Ready(value) => true, Poll.Pending => false } }
     pub fn is_pending(): bool { match self { Poll.Ready(value) => false, Poll.Pending => true } }
-    pub take fn map<U>(f: fn(take T): U): Poll<U> {
+    pub take fn map<U, F: take fn(take T): U>(take f: F): Poll<U> {
         match take self {
             Poll.Ready(value) => Poll.Ready(f(value)),
             Poll.Pending => Poll.Pending
@@ -93,7 +93,7 @@ extend<T> Poll<T> implements From<T> {
 }
 
 extend<T, E> Poll<(Outcome<T, E>)> {
-    pub take fn map_ok<U>(f: fn(take T): U): Poll<(Outcome<U, E>)> {
+    pub take fn map_ok<U, F: take fn(take T): U>(take f: F): Poll<(Outcome<U, E>)> {
         match take self {
             Poll.Ready(result) => Poll.Ready(match take result {
                 success(value) => success(f(value)),
@@ -102,7 +102,7 @@ extend<T, E> Poll<(Outcome<T, E>)> {
             Poll.Pending => Poll.Pending
         }
     }
-    pub take fn map_err<F>(f: fn(take E): F): Poll<(Outcome<T, F>)> {
+    pub take fn map_err<F, G: take fn(take E): F>(take f: G): Poll<(Outcome<T, F>)> {
         match take self {
             Poll.Ready(result) => Poll.Ready(match take result {
                 success(value) => success(value),
@@ -152,7 +152,7 @@ extend Waker {
     }
     pub fn wake_by_ref(): Unit { (self.raw.vtable.wake_by_ref)(self.raw.data) }
     pub fn will_wake(read other: Waker): bool {
-        self.raw.data == other.raw.data
+        self.raw.data == other.raw.data && self.uses_vtable(other.raw.vtable)
     }
     // Identifies wakers built from one vtable by its callback addresses.
     pub fn uses_vtable(other: RawWakerVTable): bool {
@@ -255,10 +255,9 @@ extend<T, C> Coroutine<T, C> implements Future {
     }
 }
 
-// One poll of an awaited future from inside an async body. `future` is a local
-// of the suspended body, so it never moves once polled; `cx` is the context of
-// the poll that resumed the body.
-pub fn poll_await<F: Future>(mut future: F, cx: ptr<mut u8>): F.Output? {
+// Safety: future stays pinned through destruction; cx is a live, initialized,
+// exclusively borrowed Context for this poll.
+pub unsafe fn poll_await<F: Future>(mut future: F, cx: ptr<mut u8>): F.Output? {
     let context = unsafe { mut *cx.cast<Context>() }
     match take unsafe { core.pin.Pin.new_unchecked(mut future).poll(context) } {
         Poll.Ready(value) => present(value),

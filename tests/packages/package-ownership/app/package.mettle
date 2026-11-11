@@ -1,0 +1,5 @@
+name: "ownership-app"
+version: "0.1.0"
+dependencies {
+    remote: "../foreign"
+}

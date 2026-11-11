@@ -13,7 +13,7 @@ public:
   int fresh(Type type = Type::Unknown);
   int numeric(bool floating, Type type = Type::Unknown);
   Type value(int variable);
-  void equal(int a, int b, Span span, bool coercion = false);
+  bool equal(int a, int b, Span span, bool coercion = false);
   int joined(int a, int b, Span span);
   void set(int variable, Type type);
   int composite(AggregateKind kind, std::vector<int> components,

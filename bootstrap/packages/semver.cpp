@@ -47,6 +47,7 @@ bool identifiers(std::string_view text, bool tag) {
 struct Partial {
   std::uint64_t major = 0, minor = 0, patch = 0;
   int count = 0;
+  bool wildcard = false;
   std::vector<std::string> pre;
 };
 
@@ -71,6 +72,7 @@ std::optional<Partial> parsePartial(std::string_view text) {
   std::uint64_t *fields[] = {&partial.major, &partial.minor, &partial.patch};
   for (std::size_t i = 0; i < parts.size(); ++i) {
     if (parts[i] == "*" || parts[i] == "x" || parts[i] == "X") {
+      partial.wildcard = true;
       if (i == 0 && parts.size() == 1)
         return partial;
       if (i == 0 || i + 1 != parts.size())
@@ -150,7 +152,9 @@ bool expand(std::string_view text, std::vector<Comparator> &out,
     if (p.count == 0)
       return true;
     Version upper;
-    if (p.major > 0 || p.count == 0)
+    if (op.empty() && p.wildcard)
+      upper = above(p);
+    else if (p.major > 0)
       upper = versionOf(p.major + 1, 0, 0);
     else if (p.count == 1)
       upper = versionOf(1, 0, 0);

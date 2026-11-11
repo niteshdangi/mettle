@@ -1,0 +1,6 @@
+name: "host-script-order"
+version: "0.1.0"
+"build-dependencies" {
+    helper { path: "../helper" }
+}
+build { script: "build.mt" }

@@ -135,7 +135,10 @@ Parser::genericParameters(std::vector<std::string> *regions) {
       parameter.kind = GenericParameterKind::Region;
     else if (take("const"))
       parameter.kind = GenericParameterKind::Const;
-    parameter.name = name().text;
+    auto identifier = name();
+    parameter.name = identifier.text;
+    parameter.context = identifier.context;
+    parameter.nameSpan = identifier.span;
     if (parameter.kind == GenericParameterKind::Region && regions)
       regions->push_back(parameter.name);
     if (take(":")) {
@@ -146,9 +149,11 @@ Parser::genericParameters(std::vector<std::string> *regions) {
           TypeSyntax bound;
           if (parameter.kind == GenericParameterKind::Region && take("static"))
             bound.name = "static";
-          else if (take("?"))
-            bound.name = "?" + name().text;
-          else
+          else if (take("?")) {
+            auto identifier = name();
+            bound.name = "?" + identifier.text;
+            bound.context = identifier.context;
+          } else
             bound = type(false);
           parameter.bounds.push_back(std::move(bound));
         } while (take("+"));
@@ -186,7 +191,7 @@ std::vector<GenericArgument> Parser::genericArguments() {
     argument.span = peek().span;
     auto explicitType = take("type");
     auto explicitConst = !explicitType && take("const");
-    if (explicitType || explicitConst ||
+    if (explicitType || (explicitConst && !is("{")) ||
         ((peek().kind == TokenKind::Word ||
           peek().kind == TokenKind::QuotedWord) &&
          peek(1).text == "=")) {
@@ -194,14 +199,16 @@ std::vector<GenericArgument> Parser::genericArguments() {
       expect("=");
     }
     auto payload = position;
-    if (take("region"))
-      argument.region = take("static") ? "static" : name().text;
-    else if (explicitConst ||
-             (!explicitType &&
-              (peek().kind == TokenKind::Integer ||
-               peek().kind == TokenKind::Character ||
-               peek().kind == TokenKind::Byte || is("-") || is("!") ||
-               is("true") || is("false") || is("{")))) {
+    if (take("region")) {
+      auto token = peek();
+      argument.region = {take("static") ? "static" : name().text, token.span,
+                         token.context};
+    } else if (explicitConst ||
+               (!explicitType &&
+                (peek().kind == TokenKind::Integer ||
+                 peek().kind == TokenKind::Character ||
+                 peek().kind == TokenKind::Byte || is("-") || is("!") ||
+                 is("true") || is("false") || is("{")))) {
       argument.value = genericValue();
     } else {
       argument.type = std::make_shared<const TypeSyntax>(type(false));

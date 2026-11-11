@@ -7,6 +7,7 @@ Pattern Parser::pattern(int minimum) {
     fail("pattern nesting limit exceeded", "limit");
   Pattern result;
   result.span = peek().span;
+  result.context = peek().context;
   if (take("..")) {
     result.kind = PatternKind::Rest;
   } else if (is("(") || is("[")) {
@@ -73,9 +74,12 @@ Pattern Parser::pattern(int minimum) {
         Pattern child;
         if (take(":"))
           child = pattern();
-        else
+        else {
           child = {PatternKind::Binding, field.span, field.text};
+          child.context = field.context;
+        }
         child.field = field.text;
+        child.fieldContext = field.context;
         result.children.push_back(std::move(child));
         if (!take(",") && !is("}") && peek().kind != TokenKind::Newline)
           fail("expected a field pattern separator");

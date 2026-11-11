@@ -13,7 +13,7 @@ fn discard<T>(take value: T): Unit {}
 
 fn join_ok(take h: thread.JoinHandle<i32>): bool {
   let r = capture h.join()
-  match take r { success(v) => true, failure(e) => false }
+  match take r { success(v) => v == 0, failure(e) => false }
 }
 
 fn main(): i32 {
@@ -178,7 +178,6 @@ fn main(): i32 {
     CatchResult.Panicked(info) => {},
     CatchResult.Returned(value) => { return 38 }
   }
-  retry.wait_force()
   let recovered = core.sync.atomic.AtomicBool.new(false)
   let saw_poison = core.sync.atomic.AtomicBool.new(false)
   retry.call_once_force(fn(state: once.OnceState): Unit {
@@ -188,6 +187,7 @@ fn main(): i32 {
   if !recovered.load(core.sync.atomic.Ordering.Relaxed) ||
      !saw_poison.load(core.sync.atomic.Ordering.Relaxed) { return 31 }
   if !retry.is_completed() { return 32 }
+  retry.wait_force()
   let forced = once.new()
   let force_ran = core.sync.atomic.AtomicBool.new(false)
   let force_saw_poison = core.sync.atomic.AtomicBool.new(false)
@@ -356,7 +356,8 @@ fn main(): i32 {
   let waiter = thread.spawn(take fn(): i32 {
     let o = capture s2.get().lock()
     var g = match take o { success(g) => g, failure(e) => e.into_inner() }
-    g = c2.get().wait_while(g, fn(mut ready: bool): bool { !ready })
+    let waited = capture c2.get().wait_while(g, fn(mut ready: bool): bool { !ready })
+    g = match take waited { success(value) => value, failure(e) => e.into_inner() }
     0
   })
   let o = capture state.get().lock()
@@ -371,9 +372,10 @@ fn main(): i32 {
     success(guard) => guard,
     failure(error) => error.into_inner()
   }
-  let timeout = cv.get().wait_timeout_while(
+  let timeout_result = capture cv.get().wait_timeout_while(
     timeout_guard, std.time.from_nanos(0u64), fn(mut ready: bool): bool { !ready }
   )
+  let timeout = match take timeout_result { success(value) => value, failure(e) => e.into_inner() }
   if !timeout.1.timed_out() { return 27 }
 
   // thread-local values are per thread

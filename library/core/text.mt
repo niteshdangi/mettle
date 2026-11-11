@@ -4,8 +4,9 @@ import super.cmp.Ordering
 import super.cmp.PartialEq
 import super.cmp.PartialOrd
 import super.char
-import super.iter.{Iterator, BidirectionalIterator, Reversed, Bound, RangeBounds}
+import super.iter.{Iterator, BidirectionalIterator}
 import super.fmt.{Debug, Formatter, Error}
+import super.ops.RangeEnd
 
 // Unsized, validated UTF-8 view; the view metadata is the byte count. Only
 // the checked constructors below create views of Text, which keeps the
@@ -25,9 +26,89 @@ extend Text {
 
 // A successful match reports its byte length on a UTF-8 scalar boundary.
 // Empty matches stop trimming; a predicate is called only on a present scalar.
-pub interface Pattern {
+interface Pattern {
     mut fn match_front(read text: Text): usize?;
     mut fn match_back(read text: Text): usize?;
+}
+
+interface DoubleEndedPattern: Pattern {}
+extend char implements DoubleEndedPattern {}
+extend<F: mut fn(char): bool> F implements DoubleEndedPattern {}
+extend<region r> read [char] from r implements DoubleEndedPattern {}
+extend<region r, const N: usize> read [char; N] from r implements DoubleEndedPattern {}
+extend<const N: usize> [char; N] implements DoubleEndedPattern {}
+
+interface ClonePattern: Pattern + Sized { fn clone_pattern(): Self; }
+extend char implements ClonePattern { fn clone_pattern(): char { self } }
+extend<region r> read Text from r implements ClonePattern {
+    fn clone_pattern(): read Text from r { self }
+}
+extend<region r> read [char] from r implements ClonePattern {
+    fn clone_pattern(): read [char] from r { self }
+}
+extend<region r, const N: usize> read [char; N] from r implements ClonePattern {
+    fn clone_pattern(): read [char; N] from r { self }
+}
+extend<const N: usize> [char; N] implements ClonePattern {
+    fn clone_pattern(): [char; N] { self }
+}
+extend<F: mut fn(char): bool + super.clone.Clone> F implements ClonePattern {
+    fn clone_pattern(): F { self.clone() }
+}
+
+interface DebugPattern: Pattern { fn fmt_pattern(mut f: Formatter): Unit throws Error; }
+extend char implements DebugPattern {
+    fn fmt_pattern(mut f: Formatter): Unit throws Error { try char.(Debug).fmt(read self, mut f) }
+}
+extend<region r> read Text from r implements DebugPattern {
+    fn fmt_pattern(mut f: Formatter): Unit throws Error { try Text.(Debug).fmt(self, mut f) }
+}
+extend<region r> read [char] from r implements DebugPattern {
+    fn fmt_pattern(mut f: Formatter): Unit throws Error { try self.fmt(mut f) }
+}
+extend<region r, const N: usize> read [char; N] from r implements DebugPattern {
+    fn fmt_pattern(mut f: Formatter): Unit throws Error { try self.fmt(mut f) }
+}
+extend<const N: usize> [char; N] implements DebugPattern {
+    fn fmt_pattern(mut f: Formatter): Unit throws Error { try self.fmt(mut f) }
+}
+extend<F: mut fn(char): bool + Debug> F implements DebugPattern {
+    fn fmt_pattern(mut f: Formatter): Unit throws Error { try F.(Debug).fmt(read self, mut f) }
+}
+type PatternDebugRef<region r, P> { pattern: read P from r }
+extend<region r, P: DebugPattern> PatternDebugRef<region r, P> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error { try self.pattern.fmt_pattern(mut f) }
+}
+
+fn find_pattern<P: Pattern>(
+    read text: Text, mut pattern: P, reverse: bool
+): (usize, usize)? {
+    var at = if reverse { text.len() } else { 0usize }
+    while true {
+        let part = if reverse { text.get(0usize, at).unwrap() } else { text.get(at, text.len()).unwrap() }
+        let matched = if reverse { pattern.match_back(part) } else { pattern.match_front(part) }
+        match matched {
+            present(length) => {
+                if length > part.len() { super.panic.panic("invalid text pattern length") }
+                let start = if reverse { at - length } else { at }
+                let end = start + length
+                if !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+                    super.panic.panic("invalid text pattern boundary")
+                }
+                return present((start, end))
+            },
+            none => {}
+        }
+        if reverse {
+            if at == 0usize { break }
+            at -= 1usize
+            while !text.is_char_boundary(at) { at -= 1usize }
+        } else {
+            if at == text.len() { break }
+            at += scalar_width(text.bytes, at)
+        }
+    }
+    none
 }
 
 fn match_text_edge(read text: Text, read pattern: Text, reverse: bool): usize? {
@@ -205,24 +286,65 @@ fn scalar_at(read bytes: [u8], i: usize, width: usize): char {
     unsafe { core.mem.transmute<char>(value) }
 }
 
-pub fn from_utf8(read bytes: [u8]): (read Text from bytes)? {
+pub copy type Utf8Error { valid: usize; length: usize? }
+extend Utf8Error {
+    pub fn valid_up_to(): usize { self.valid }
+    pub fn error_len(): usize? { self.length }
+}
+extend Utf8Error implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var debug = try f.debug_struct("Utf8Error")
+        try debug.field("valid_up_to", self.valid)
+        try debug.field("error_len", self.length)
+        try debug.finish()
+    }
+}
+extend Utf8Error implements super.fmt.Display {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try f.write_str("invalid UTF-8 sequence")
+    }
+}
+extend Utf8Error implements super.error.Error {}
+
+fn validate_utf8(read bytes: [u8]): Utf8Error? {
     var i = 0usize
     while i < bytes.len() {
-        let width = scalar_width(bytes, i)
-        if width == 0usize { return none }
-        i += width
+        let first = bytes[i]
+        if first < 0x80u8 { i += 1usize; continue }
+        if first < 0xc2u8 || first > 0xf4u8 { return present(Utf8Error(i, present(1usize))) }
+        let needed = if first < 0xe0u8 { 2usize } else if first < 0xf0u8 { 3usize } else { 4usize }
+        var offset = 1usize
+        while offset < needed {
+            if offset == bytes.len() - i { return present(Utf8Error(i, none)) }
+            let byte = bytes[i + offset]
+            var low = 0x80u8
+            var high = 0xbfu8
+            if offset == 1usize {
+                if first == 0xe0u8 { low = 0xa0u8 }
+                if first == 0xedu8 { high = 0x9fu8 }
+                if first == 0xf0u8 { low = 0x90u8 }
+                if first == 0xf4u8 { high = 0x8fu8 }
+            }
+            if byte < low || byte > high { return present(Utf8Error(i, present(offset))) }
+            offset += 1usize
+        }
+        i += needed
     }
-    present(unsafe { from_utf8_unchecked(bytes) })
+    none
 }
 
-pub fn from_utf8_mut(mut bytes: [u8]): (mut Text from bytes)? {
-    var i = 0usize
-    while i < bytes.len() {
-        let width = scalar_width(read bytes, i)
-        if width == 0usize { return none }
-        i += width
+pub fn from_utf8(read bytes: [u8]): (Outcome<read Text from bytes, Utf8Error>) {
+    match validate_utf8(bytes) {
+        present(error) => failure(error),
+        none => success(unsafe { from_utf8_unchecked(bytes) })
     }
-    present(unsafe { from_utf8_unchecked_mut(mut bytes) })
+}
+
+pub fn from_utf8_mut(mut bytes: [u8]): (Outcome<mut Text from bytes, Utf8Error>) {
+    match validate_utf8(read bytes) {
+        present(error) => failure(error),
+        none => success(unsafe { from_utf8_unchecked_mut(mut bytes) })
+    }
 }
 
 // Safety: `bytes` is well-formed UTF-8.
@@ -239,7 +361,7 @@ pub unsafe fn from_utf8_unchecked_mut(mut bytes: [u8]): mut Text from bytes {
     unsafe { mut *view }
 }
 
-pub type Chars<region r> { bytes: read [u8] from r; front: usize; back: usize; remaining: usize }
+pub type Chars<region r> { bytes: read [u8] from r; front: usize; back: usize }
 fn count_chars(read bytes: [u8]): usize {
     var count = 0usize
     var index = 0usize
@@ -250,6 +372,7 @@ fn count_chars(read bytes: [u8]): usize {
     count
 }
 extend<region r> Chars<region r> {
+    pub fn len(): usize { count_chars(self.as_str().as_bytes()) }
     pub fn as_str(): read Text from r {
         let bytes = match super.slice.subslice(self.bytes, self.front, self.back) {
             present(part) => part,
@@ -260,13 +383,15 @@ extend<region r> Chars<region r> {
 }
 extend<region r> Chars<region r> implements Iterator {
     type Item = char
-    fn size_hint(): (usize, usize?) { (self.remaining, present(self.remaining)) }
+    fn size_hint(): (usize, usize?) {
+        let bytes = self.back - self.front
+        (bytes / 4usize + if bytes % 4usize == 0usize { 0usize } else { 1usize }, present(bytes))
+    }
     mut fn next(): char? {
         if self.front >= self.back { return none }
         let width = scalar_width(self.bytes, self.front)
         let value = scalar_at(self.bytes, self.front, width)
         self.front += width
-        self.remaining -= 1usize
         present(value)
     }
 }
@@ -280,27 +405,26 @@ extend<region r> Chars<region r> implements BidirectionalIterator {
         let width = self.back - start
         let value = scalar_at(self.bytes, start, width)
         self.back = start
-        self.remaining -= 1usize
         present(value)
     }
 }
-extend<region r> Chars<region r> implements super.iter.ExactSizeIterator {}
 extend<region r> Chars<region r> implements super.clone.Clone {
     fn clone(): Chars<region r> {
-        Chars(self.bytes, self.front, self.back, self.remaining)
+        Chars(self.bytes, self.front, self.back)
     }
 }
 extend<region r> Chars<region r> implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
         var debug = try f.debug_struct("Chars")
         try debug.field("text", self.as_str())
-        try debug.field("remaining", self.remaining)
+        try debug.field("remaining", self.len())
         try debug.finish()
     }
 }
 
-pub type CharIndices<region r> { bytes: read [u8] from r; front: usize; back: usize; remaining: usize }
+pub type CharIndices<region r> { bytes: read [u8] from r; front: usize; back: usize }
 extend<region r> CharIndices<region r> {
+    pub fn len(): usize { count_chars(self.as_str().as_bytes()) }
     pub fn as_str(): read Text from r {
         let bytes = match super.slice.subslice(self.bytes, self.front, self.back) {
             present(part) => part,
@@ -312,14 +436,16 @@ extend<region r> CharIndices<region r> {
 }
 extend<region r> CharIndices<region r> implements Iterator {
     type Item = (usize, char)
-    fn size_hint(): (usize, usize?) { (self.remaining, present(self.remaining)) }
+    fn size_hint(): (usize, usize?) {
+        let bytes = self.back - self.front
+        (bytes / 4usize + if bytes % 4usize == 0usize { 0usize } else { 1usize }, present(bytes))
+    }
     mut fn next(): (usize, char)? {
         if self.front >= self.back { return none }
         let start = self.front
         let width = scalar_width(self.bytes, start)
         let value = scalar_at(self.bytes, start, width)
         self.front += width
-        self.remaining -= 1usize
         present((start, value))
     }
 }
@@ -333,21 +459,19 @@ extend<region r> CharIndices<region r> implements BidirectionalIterator {
         let width = self.back - start
         let value = scalar_at(self.bytes, start, width)
         self.back = start
-        self.remaining -= 1usize
         present((start, value))
     }
 }
-extend<region r> CharIndices<region r> implements super.iter.ExactSizeIterator {}
 extend<region r> CharIndices<region r> implements super.clone.Clone {
     fn clone(): CharIndices<region r> {
-        CharIndices(self.bytes, self.front, self.back, self.remaining)
+        CharIndices(self.bytes, self.front, self.back)
     }
 }
 extend<region r> CharIndices<region r> implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
         var debug = try f.debug_struct("CharIndices")
         try debug.field("text", self.as_str())
-        try debug.field("remaining", self.remaining)
+        try debug.field("remaining", self.len())
         try debug.finish()
     }
 }
@@ -424,7 +548,8 @@ pub type TextEscape<region r> {
     pending: super.char.Escape;
     pending_ready: bool;
     unicode: bool;
-    debug: bool
+    debug: bool;
+    first: bool
 }
 extend<region r> TextEscape<region r> implements Iterator {
     type Item = char
@@ -439,8 +564,9 @@ extend<region r> TextEscape<region r> implements Iterator {
             match self.chars.next() {
                 present(c) => {
                     self.pending = if self.unicode { c.escape_unicode() }
-                        else if self.debug { c.escape_debug() }
+                        else if self.debug { c.escape_debug_ext(true, true, self.first) }
                         else { c.escape_default() }
+                    self.first = false
                     self.pending_ready = true
                 },
                 none => { return none }
@@ -471,382 +597,258 @@ extend<region r> UppercaseChars<region r> implements Iterator {
     }
 }
 
-// Pieces between occurrences of `separator`; an empty separator yields the whole text.
-pub type Split<region r> { rest: read Text from r; separator: read Text from r; done: bool }
-extend<region r> Split<region r> implements Iterator {
+pub type Split<region r, P = read Text from r> {
+    rest: read Text from r
+    pattern: P
+    done: bool
+    front_empty: bool
+    back_empty: bool
+}
+extend<region r, P: Pattern> Split<region r, P> {
+    mut fn finish(): (read Text from r)? {
+        if self.done { return none }
+        self.done = true
+        present(self.rest)
+    }
+    mut fn next_reverse(): (read Text from r)? {
+        if self.done { return none }
+        let end = self.rest.len()
+        var search_end = end
+        if !self.back_empty {
+            if end == 0usize { return self.finish() }
+            search_end = end - 1usize
+            while !self.rest.is_char_boundary(search_end) { search_end -= 1usize }
+        }
+        let search = self.rest.get(0usize, search_end).unwrap()
+        match find_pattern(search, mut self.pattern, true) {
+            present((start, stop)) => {
+                self.back_empty = stop != start
+                let piece = self.rest.get(stop, end).unwrap()
+                self.rest = self.rest.get(0usize, start).unwrap()
+                present(piece)
+            },
+            none => self.finish()
+        }
+    }
+}
+extend<region r, P: Pattern> Split<region r, P> implements Iterator {
     type Item = read Text from r
     mut fn next(): (read Text from r)? {
         if self.done { return none }
-        if self.separator.is_empty() {
-            self.done = true
-            return present(self.rest)
+        var search_start = 0usize
+        if !self.front_empty {
+            if self.rest.is_empty() { return self.finish() }
+            search_start = scalar_width(self.rest.bytes, 0usize)
         }
-        match self.rest.split_once(self.separator) {
-            present(p) => { self.rest = p.1; present(p.0) },
-            none => { self.done = true; present(self.rest) }
-        }
-    }
-}
-extend<region r> Split<region r> implements BidirectionalIterator {
-    mut fn next_back(): (read Text from r)? {
-        if self.done { return none }
-        if self.separator.is_empty() {
-            self.done = true
-            return present(self.rest)
-        }
-        match self.rest.rfind(read *self.separator) {
-            present(at) => {
-                let start = at + self.separator.len()
-                let tail = match self.rest.get(start, self.rest.len()) {
-                    present(part) => part,
-                    none => { super.panic.panic("split boundary invariant failed") }
-                }
-                self.rest = match self.rest.get(0usize, at) {
-                    present(part) => part,
-                    none => { super.panic.panic("split boundary invariant failed") }
-                }
-                present(tail)
+        let search = self.rest.get(search_start, self.rest.len()).unwrap()
+        match find_pattern(search, mut self.pattern, false) {
+            present((start, stop)) => {
+                self.front_empty = stop != start
+                let piece = self.rest.get(0usize, search_start + start).unwrap()
+                self.rest = self.rest.get(search_start + stop, self.rest.len()).unwrap()
+                present(piece)
             },
-            none => {
-                self.done = true
-                present(self.rest)
-            }
+            none => self.finish()
         }
     }
 }
-extend<region r> Split<region r> implements super.clone.Clone {
-    fn clone(): Split<region r> { Split(self.rest, self.separator, self.done) }
+extend<region r, P: DoubleEndedPattern> Split<region r, P> implements BidirectionalIterator {
+    mut fn next_back(): (read Text from r)? { self.next_reverse() }
 }
-extend<region r> Split<region r> implements Debug {
+extend<region r, P: ClonePattern> Split<region r, P> implements super.clone.Clone {
+    fn clone(): Split<region r, P> {
+        Split(self.rest, self.pattern.clone_pattern(), self.done, self.front_empty, self.back_empty)
+    }
+}
+extend<region r, P: DebugPattern> Split<region r, P> implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
         var debug = try f.debug_struct("Split")
         try debug.field("rest", self.rest)
-        try debug.field("separator", self.separator)
+        try debug.field("separator", PatternDebugRef(read self.pattern))
         try debug.field("done", self.done)
         try debug.finish()
     }
 }
-
-pub type SplitN<region r> {
-    rest: read Text from r;
-    separator: read Text from r;
-    remaining: usize
+pub type RSplit<region r, P> { inner: Split<region r, P> }
+extend<region r, P: Pattern> RSplit<region r, P> implements Iterator {
+    type Item = read Text from r
+    mut fn next(): (read Text from r)? { self.inner.next_reverse() }
 }
+extend<region r, P: DoubleEndedPattern> RSplit<region r, P> implements BidirectionalIterator {
+    mut fn next_back(): (read Text from r)? { self.inner.next() }
+}
+
+pub type SplitN<region r> { inner: Split<region r, read Text from r>; remaining: usize }
 extend<region r> SplitN<region r> implements Iterator {
     type Item = read Text from r
     mut fn next(): (read Text from r)? {
         if self.remaining == 0usize { return none }
         self.remaining -= 1usize
-        if self.remaining == 0usize || self.separator.is_empty() {
-            let result = self.rest
-            self.remaining = 0usize
-            self.rest = match self.rest.get(self.rest.len(), self.rest.len()) {
-                present(empty) => empty,
-                none => { super.panic.panic("split boundary invariant failed") }
-            }
-            return present(result)
-        }
-        match self.rest.split_once(self.separator) {
-            present(parts) => {
-                self.rest = parts.1
-                present(parts.0)
-            },
-            none => {
-                let result = self.rest
-                self.remaining = 0usize
-                self.rest = match self.rest.get(self.rest.len(), self.rest.len()) {
-                    present(empty) => empty,
-                    none => { super.panic.panic("split boundary invariant failed") }
-                }
-                present(result)
-            }
-        }
+        if self.remaining == 0usize { self.inner.finish() } else { self.inner.next() }
     }
 }
-
-pub type RSplitN<region r> {
-    rest: read Text from r;
-    separator: read Text from r;
-    remaining: usize
-}
+pub type RSplitN<region r> { inner: Split<region r, read Text from r>; remaining: usize }
 extend<region r> RSplitN<region r> implements Iterator {
     type Item = read Text from r
     mut fn next(): (read Text from r)? {
         if self.remaining == 0usize { return none }
         self.remaining -= 1usize
-        if self.remaining == 0usize || self.separator.is_empty() {
-            let result = self.rest
-            self.remaining = 0usize
-            self.rest = match self.rest.get(self.rest.len(), self.rest.len()) {
-                present(empty) => empty,
-                none => { super.panic.panic("split boundary invariant failed") }
-            }
-            return present(result)
-        }
-        match self.rest.rsplit_once(self.separator) {
-            present(parts) => {
-                self.rest = parts.0
-                present(parts.1)
-            },
-            none => {
-                let result = self.rest
-                self.remaining = 0usize
-                self.rest = match self.rest.get(self.rest.len(), self.rest.len()) {
-                    present(empty) => empty,
-                    none => { super.panic.panic("split boundary invariant failed") }
-                }
-                present(result)
-            }
-        }
+        if self.remaining == 0usize { self.inner.finish() } else { self.inner.next_reverse() }
     }
 }
-
-pub type SplitTerminator<region r> {
-    rest: read Text from r;
-    separator: read Text from r;
-    done: bool
-}
+pub type SplitTerminator<region r> { inner: Split<region r, read Text from r> }
 extend<region r> SplitTerminator<region r> implements Iterator {
     type Item = read Text from r
     mut fn next(): (read Text from r)? {
-        if self.done { return none }
-        if self.separator.is_empty() {
-            self.done = true
-            return present(self.rest)
-        }
-        match self.rest.split_once(self.separator) {
-            present(parts) => {
-                self.rest = parts.1
-                if self.rest.is_empty() { self.done = true }
-                present(parts.0)
-            },
-            none => {
-                self.done = true
-                present(self.rest)
-            }
+        match self.inner.next() {
+            present(piece) => if piece.is_empty() && self.inner.done { none } else { present(piece) },
+            none => none
         }
     }
 }
-
-pub type RSplitTerminator<region r> {
-    rest: read Text from r;
-    separator: read Text from r;
-    skip_trailing: bool;
-    done: bool
-}
+pub type RSplitTerminator<region r> { inner: Split<region r, read Text from r>; first: bool }
 extend<region r> RSplitTerminator<region r> implements Iterator {
     type Item = read Text from r
     mut fn next(): (read Text from r)? {
-        if self.done { return none }
-        if self.separator.is_empty() {
-            self.done = true
-            return present(self.rest)
-        }
-        if self.skip_trailing {
-            self.skip_trailing = false
-            if self.rest.ends_with(read *self.separator) {
-                let end = self.rest.len() - self.separator.len()
-                self.rest = match self.rest.get(0usize, end) {
-                    present(prefix) => prefix,
-                    none => { super.panic.panic("split boundary invariant failed") }
-                }
-                if self.rest.is_empty() {
-                    self.done = true
-                    return none
-                }
+        if self.first {
+            self.first = false
+            match self.inner.next_reverse() {
+                present(piece) => { if !piece.is_empty() { return present(piece) } },
+                none => { return none }
             }
         }
-        match self.rest.rsplit_once(self.separator) {
-            present(parts) => {
-                self.rest = parts.0
-                present(parts.1)
-            },
-            none => {
-                self.done = true
-                present(self.rest)
-            }
-        }
+        self.inner.next_reverse()
     }
 }
-
 pub type SplitInclusive<region r> {
-    rest: read Text from r;
-    separator: read Text from r;
+    rest: read Text from r
+    separator: read Text from r
     done: bool
+    first: bool
 }
 extend<region r> SplitInclusive<region r> implements Iterator {
     type Item = read Text from r
     mut fn next(): (read Text from r)? {
         if self.done { return none }
         if self.separator.is_empty() {
-            self.done = true
-            return present(self.rest)
-        }
-        match self.rest.split_once(self.separator) {
-            present(parts) => {
-                let original = self.rest
-                let end = parts.0.len() + self.separator.len()
-                let item = match original.get(0usize, end) {
-                    present(value) => value,
-                    none => { super.panic.panic("split boundary invariant failed") }
-                }
-                self.rest = parts.1
+            if self.first {
+                self.first = false
                 if self.rest.is_empty() { self.done = true }
-                present(item)
-            },
-            none => {
-                self.done = true
-                present(self.rest)
+                return self.rest.get(0usize, 0usize)
             }
+            if self.rest.is_empty() { self.done = true; return none }
+            let end = scalar_width(self.rest.bytes, 0usize)
+            let piece = self.rest.get(0usize, end).unwrap()
+            self.rest = self.rest.get(end, self.rest.len()).unwrap()
+            if self.rest.is_empty() { self.done = true }
+            return present(piece)
+        }
+        if self.rest.is_empty() { self.done = true; return none }
+        match self.rest.find(read *self.separator) {
+            present(at) => {
+                let end = at + self.separator.len()
+                let piece = self.rest.get(0usize, end).unwrap()
+                self.rest = self.rest.get(end, self.rest.len()).unwrap()
+                if self.rest.is_empty() { self.done = true }
+                present(piece)
+            },
+            none => { self.done = true; present(self.rest) }
         }
     }
 }
 
-fn find_match(read text: Text, read pattern: Text, start: usize, end: usize, reverse: bool): (usize, usize)? {
-    let remaining = match text.get(start, end) {
-        present(part) => part,
-        none => { return none }
-    }
-    let found = if reverse { remaining.rfind(read pattern) } else { remaining.find(read pattern) }
-    match found {
-        present(at) => {
-            let first = start + at
-            present((first, first + pattern.len()))
-        },
-        none => none
-    }
-}
-
-pub type Matches<region r> {
-    text: read Text from r;
-    pattern: read Text from r;
-    front: usize;
-    back: usize;
+pub type Matches<region r, P = read Text from r> {
+    text: read Text from r
+    pattern: P
+    front: usize
+    back: usize
     done: bool
 }
-extend<region r> Matches<region r> implements Iterator {
+extend<region r, P: Pattern> Matches<region r, P> {
+    mut fn next_range(reverse: bool): (usize, usize)? {
+        if self.done { return none }
+        let part = self.text.get(self.front, self.back).unwrap()
+        match find_pattern(part, mut self.pattern, reverse) {
+            present((start, end)) => {
+                let first = self.front + start
+                let last = self.front + end
+                if first == last {
+                    if self.front == self.back { self.done = true }
+                    else if reverse {
+                        self.back -= 1usize
+                        while !self.text.is_char_boundary(self.back) { self.back -= 1usize }
+                    } else { self.front += scalar_width(self.text.bytes, self.front) }
+                } else if reverse { self.back = first }
+                else { self.front = last }
+                present((first, last))
+            },
+            none => { self.done = true; none }
+        }
+    }
+}
+extend<region r, P: Pattern> Matches<region r, P> implements Iterator {
     type Item = read Text from r
     mut fn next(): (read Text from r)? {
-        if self.done { return none }
-        if self.pattern.is_empty() {
-            let at = self.front
-            if self.front == self.back {
-                self.done = true
-            } else {
-                self.front += scalar_width(self.text.bytes, self.front)
-            }
-            return self.text.get(at, at)
-        }
-        match find_match(self.text, self.pattern, self.front, self.back, false) {
-            present(bounds) => {
-                self.front = bounds.1
-                self.text.get(bounds.0, bounds.1)
-            },
-            none => {
-                self.done = true
-                none
-            }
+        match self.next_range(false) {
+            present((start, end)) => self.text.get(start, end),
+            none => none
         }
     }
 }
-extend<region r> Matches<region r> implements BidirectionalIterator {
+extend<region r, P: DoubleEndedPattern> Matches<region r, P> implements BidirectionalIterator {
     mut fn next_back(): (read Text from r)? {
-        if self.done { return none }
-        if self.pattern.is_empty() {
-            let at = self.back
-            if self.front == self.back {
-                self.done = true
-            } else {
-                var previous = self.back - 1usize
-                while previous > self.front && (self.text.bytes[previous] & 0xc0u8) == 0x80u8 {
-                    previous -= 1usize
-                }
-                self.back = previous
-            }
-            return self.text.get(at, at)
-        }
-        match find_match(self.text, self.pattern, self.front, self.back, true) {
-            present(bounds) => {
-                self.back = bounds.0
-                self.text.get(bounds.0, bounds.1)
-            },
-            none => {
-                self.done = true
-                none
-            }
+        match self.next_range(true) {
+            present((start, end)) => self.text.get(start, end),
+            none => none
         }
     }
 }
-
-pub type MatchIndices<region r> {
-    text: read Text from r;
-    pattern: read Text from r;
-    front: usize;
-    back: usize;
-    done: bool
+pub type RMatches<region r, P> { inner: Matches<region r, P> }
+extend<region r, P: Pattern> RMatches<region r, P> implements Iterator {
+    type Item = read Text from r
+    mut fn next(): (read Text from r)? {
+        match self.inner.next_range(true) {
+            present((start, end)) => self.inner.text.get(start, end),
+            none => none
+        }
+    }
 }
-extend<region r> MatchIndices<region r> implements Iterator {
+extend<region r, P: DoubleEndedPattern> RMatches<region r, P> implements BidirectionalIterator {
+    mut fn next_back(): (read Text from r)? { self.inner.next() }
+}
+pub type MatchIndices<region r, P = read Text from r> { inner: Matches<region r, P> }
+extend<region r, P: Pattern> MatchIndices<region r, P> implements Iterator {
     type Item = (usize, read Text from r)
     mut fn next(): (usize, read Text from r)? {
-        if self.done { return none }
-        if self.pattern.is_empty() {
-            let at = self.front
-            if self.front == self.back {
-                self.done = true
-            } else {
-                self.front += scalar_width(self.text.bytes, self.front)
-            }
-            return match self.text.get(at, at) {
-                present(empty) => present((at, empty)),
-                none => none
-            }
-        }
-        match find_match(self.text, self.pattern, self.front, self.back, false) {
-            present(bounds) => match self.text.get(bounds.0, bounds.1) {
-                present(item) => {
-                    self.front = bounds.1
-                    present((bounds.0, item))
-                },
-                none => none
-            },
-            none => {
-                self.done = true
-                none
-            }
+        match self.inner.next_range(false) {
+            present((start, end)) => present((start, self.inner.text.get(start, end).unwrap())),
+            none => none
         }
     }
 }
-extend<region r> MatchIndices<region r> implements BidirectionalIterator {
+extend<region r, P: DoubleEndedPattern> MatchIndices<region r, P> implements BidirectionalIterator {
     mut fn next_back(): (usize, read Text from r)? {
-        if self.done { return none }
-        if self.pattern.is_empty() {
-            let at = self.back
-            if self.front == self.back {
-                self.done = true
-            } else {
-                var previous = self.back - 1usize
-                while previous > self.front && (self.text.bytes[previous] & 0xc0u8) == 0x80u8 {
-                    previous -= 1usize
-                }
-                self.back = previous
-            }
-            return match self.text.get(at, at) {
-                present(empty) => present((at, empty)),
-                none => none
-            }
+        match self.inner.next_range(true) {
+            present((start, end)) => present((start, self.inner.text.get(start, end).unwrap())),
+            none => none
         }
-        match find_match(self.text, self.pattern, self.front, self.back, true) {
-            present(bounds) => match self.text.get(bounds.0, bounds.1) {
-                present(item) => {
-                    self.back = bounds.0
-                    present((bounds.0, item))
-                },
-                none => none
-            },
-            none => {
-                self.done = true
-                none
-            }
+    }
+}
+pub type RMatchIndices<region r, P> { inner: Matches<region r, P> }
+extend<region r, P: Pattern> RMatchIndices<region r, P> implements Iterator {
+    type Item = (usize, read Text from r)
+    mut fn next(): (usize, read Text from r)? {
+        match self.inner.next_range(true) {
+            present((start, end)) => present((start, self.inner.text.get(start, end).unwrap())),
+            none => none
+        }
+    }
+}
+extend<region r, P: DoubleEndedPattern> RMatchIndices<region r, P> implements BidirectionalIterator {
+    mut fn next_back(): (usize, read Text from r)? {
+        match self.inner.next_range(false) {
+            present((start, end)) => present((start, self.inner.text.get(start, end).unwrap())),
+            none => none
         }
     }
 }
@@ -1132,7 +1134,10 @@ extend Text {
             present(parts) => parts,
             none => { return none }
         }
-        from_utf8_mut(middle)
+        match take from_utf8_mut(middle) {
+            success(value) => present(value),
+            failure(_) => none
+        }
     }
     // Safety: the range is in bounds and both endpoints are UTF-8 boundaries.
     pub unsafe fn get_unchecked(
@@ -1243,17 +1248,17 @@ extend Text {
     pub fn contains<P: Pattern>(take pattern: P): bool {
         match self.find(pattern) { present(_) => true, none => false }
     }
-    pub fn matches(read pattern: Text from self): Matches<region self> {
-        Matches(read self, read pattern, 0usize, self.len(), false)
+    pub fn matches<P: Pattern>(take pattern: P): Matches<region self, P> {
+        Matches(read self, pattern, 0usize, self.len(), false)
     }
-    pub fn rmatches(read pattern: Text from self): Reversed<Matches<region self>> {
-        self.matches(pattern).rev()
+    pub fn rmatches<P: Pattern>(take pattern: P): RMatches<region self, P> {
+        RMatches(self.matches(pattern))
     }
-    pub fn match_indices(read pattern: Text from self): MatchIndices<region self> {
-        MatchIndices(read self, read pattern, 0usize, self.len(), false)
+    pub fn match_indices<P: Pattern>(take pattern: P): MatchIndices<region self, P> {
+        MatchIndices(self.matches(pattern))
     }
-    pub fn rmatch_indices(read pattern: Text from self): Reversed<MatchIndices<region self>> {
-        self.match_indices(pattern).rev()
+    pub fn rmatch_indices<P: Pattern>(take pattern: P): RMatchIndices<region self, P> {
+        RMatchIndices(self.matches(pattern))
     }
     pub fn eq_ignore_ascii_case(read other: Text): bool {
         if self.len() != other.len() { return false }
@@ -1286,7 +1291,7 @@ extend Text {
         var matcher = pattern
         trim_pattern_end(read self, mut matcher, 0usize)
     }
-    pub fn trim_matches<P: Pattern>(take pattern: P): read Text from self {
+    pub fn trim_matches<P: DoubleEndedPattern>(take pattern: P): read Text from self {
         var matcher = pattern
         let remaining = trim_pattern_start(read self, mut matcher)
         // The first rejected scalar has already been tested by this matcher.
@@ -1406,35 +1411,22 @@ extend Text {
             none => { return none }
         }
         let first = match take from_utf8_mut(parts.0) {
-            present(value) => value,
-            none => { return none }
+            success(value) => value,
+            failure(_) => { return none }
         }
         let second = match take from_utf8_mut(parts.1) {
-            present(value) => value,
-            none => { return none }
+            success(value) => value,
+            failure(_) => { return none }
         }
         present((first, second))
     }
-    pub fn substr_range<R: RangeBounds<usize>>(
-        read range: R
-    ): (read Text from self)? {
-        let start = match range.start_bound() {
-            Bound.Included(value) => *value,
-            Bound.Excluded(value) => match value.checked_add(1usize) {
-                present(next) => next,
-                none => { return none }
-            },
-            Bound.Unbounded => 0usize
-        }
-        let end = match range.end_bound() {
-            Bound.Included(value) => match value.checked_add(1usize) {
-                present(next) => next,
-                none => { return none }
-            },
-            Bound.Excluded(value) => *value,
-            Bound.Unbounded => self.len()
-        }
-        self.get(start, end)
+    pub fn substr_range(read substring: Text): super.iter.Range<usize>? {
+        let base = super.slice.data(self.as_bytes()).addr()
+        let address = super.slice.data(substring.as_bytes()).addr()
+        if address < base { return none }
+        let start = address - base
+        if start > self.len() || substring.len() > self.len() - start { return none }
+        present(super.iter.Range(start, start + substring.len()))
     }
     pub fn rsplit_once(read separator: Text): (read Text from self, read Text from self)? {
         match self.rfind(read separator) {
@@ -1451,24 +1443,26 @@ extend Text {
             none => none
         }
     }
-    pub fn split(read separator: Text from self): Split<region self> { Split(read self, read separator, false) }
-    pub fn rsplit(read separator: Text from self): Reversed<Split<region self>> {
-        self.split(separator).rev()
+    pub fn split<P: Pattern>(take separator: P): Split<region self, P> {
+        Split(read self, separator, false, true, true)
+    }
+    pub fn rsplit<P: Pattern>(take separator: P): RSplit<region self, P> {
+        RSplit(self.split(separator))
     }
     pub fn splitn(count: usize, read separator: Text from self): SplitN<region self> {
-        SplitN(read self, read separator, count)
+        SplitN(self.split(read separator), count)
     }
     pub fn rsplitn(count: usize, read separator: Text from self): RSplitN<region self> {
-        RSplitN(read self, read separator, count)
+        RSplitN(self.split(read separator), count)
     }
     pub fn split_terminator(read separator: Text from self): SplitTerminator<region self> {
-        SplitTerminator(read self, read separator, false)
+        SplitTerminator(self.split(read separator))
     }
     pub fn rsplit_terminator(read separator: Text from self): RSplitTerminator<region self> {
-        RSplitTerminator(read self, read separator, true, false)
+        RSplitTerminator(self.split(read separator), true)
     }
     pub fn split_inclusive(read separator: Text from self): SplitInclusive<region self> {
-        SplitInclusive(read self, read separator, false)
+        SplitInclusive(read self, read separator, false, true)
     }
     pub fn split_whitespace(): SplitWhitespace<region self> {
         SplitWhitespace(read self, false)
@@ -1478,22 +1472,22 @@ extend Text {
     }
     pub fn lines(): Lines<region self> { Lines(read self, "\n") }
     pub fn chars(): Chars<region self> {
-        Chars(read self.bytes, 0usize, self.bytes.len(), count_chars(self.bytes))
+        Chars(read self.bytes, 0usize, self.bytes.len())
     }
     pub fn char_indices(): CharIndices<region self> {
-        CharIndices(read self.bytes, 0usize, self.bytes.len(), count_chars(self.bytes))
+        CharIndices(read self.bytes, 0usize, self.bytes.len())
     }
     pub fn encode_utf16(): TextUtf16<region self> {
         TextUtf16(self.chars(), 0u16, false, 0u16, false)
     }
     pub fn escape_debug(): TextEscape<region self> {
-        TextEscape(self.chars(), '\0'.escape_debug(), false, false, true)
+        TextEscape(self.chars(), '\0'.escape_debug(), false, false, true, true)
     }
     pub fn escape_default(): TextEscape<region self> {
-        TextEscape(self.chars(), '\0'.escape_default(), false, false, false)
+        TextEscape(self.chars(), '\0'.escape_default(), false, false, false, true)
     }
     pub fn escape_unicode(): TextEscape<region self> {
-        TextEscape(self.chars(), '\0'.escape_unicode(), false, true, false)
+        TextEscape(self.chars(), '\0'.escape_unicode(), false, true, false, true)
     }
     pub fn lowercase_chars(): LowercaseChars<region self> {
         LowercaseChars(read self, self.char_indices(), '\0'.to_lowercase(), false, false)
@@ -1520,8 +1514,17 @@ extend Text implements PartialEq {
 // not start and end on a UTF-8 scalar boundary.
 extend Text implements super.ops.IndexRange {
     type Output = Text
-    fn index_range(start: usize, end: usize): read Text from self {
-        let stop = if end == 0xffffffffffffffffusize { self.bytes.len() } else { end }
+    fn index_range(start: usize, end: RangeEnd): read Text from self {
+        let stop = match end {
+            RangeEnd.Unbounded => self.bytes.len(),
+            RangeEnd.Exclusive(value) => value,
+            RangeEnd.Inclusive(value) => {
+                if value >= self.bytes.len() {
+                    super.panic.panic("text slice is out of bounds or not on a character boundary")
+                }
+                value + 1usize
+            }
+        }
         match self.get(start, stop) {
             present(part) => part,
             none => super.panic.panic("text slice is out of bounds or not on a character boundary")

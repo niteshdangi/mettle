@@ -3,9 +3,9 @@ fn main(): i32 {
     assert(text.trim_start_matches('\u{e9}') == "x\u{1f600}\u{1f600}", "scalar prefix")
     assert(text.trim_end_matches('\u{1f600}') == "\u{e9}\u{e9}x", "scalar suffix")
     assert("\u{e9}x\u{e9}".trim_matches('\u{e9}') == "x", "scalar both ends")
-    assert("ababxabab".trim_matches("ab") == "x", "repeated text pattern")
-    assert("x".trim_matches("") == "x", "empty pattern makes no progress")
-    assert("".trim_matches("ab") == "", "empty text")
+    assert("ababxabab".trim_start_matches("ab").trim_end_matches("ab") == "x", "repeated text pattern")
+    assert("x".trim_start_matches("").trim_end_matches("") == "x", "empty pattern makes no progress")
+    assert("".trim_start_matches("ab").trim_end_matches("ab") == "", "empty text")
     assert("aaa".trim_matches('a') == "", "all matching")
     assert("abc".trim_matches('x') == "abc", "no matching scalar")
 

@@ -1,0 +1,4 @@
+name: "helper"
+version: "0.1.0"
+kind: "library"
+build { script: "build.mt" }

@@ -4,6 +4,7 @@
 #include "semantics/check.h"
 #include "semantics/inference.h"
 #include "semantics/interfaces.h"
+#include "semantics/library.h"
 #include "semantics/region_solver.h"
 #include <functional>
 #include <map>
@@ -13,21 +14,38 @@
 #include <unordered_set>
 
 namespace mettle {
+std::vector<LexicalNameSyntax> resultSourceNames(const TypeSyntax &result,
+                                                 const TypeSyntax &error = {});
 class Checker {
 public:
   Checker(Module module, Diagnostics &diagnostics,
           std::shared_ptr<const resolution::Resolution> symbols,
           bool requireEntry = true, TargetFacts target = {},
-          NumericEvaluator numericEvaluator = nullptr)
-      : checked(std::move(module), std::move(symbols)), module(checked.tree),
-        diagnostics(diagnostics), inference(diagnostics, *checked.types),
-        requireEntry(requireEntry), numericEvaluator(numericEvaluator) {
+          NumericEvaluator numericEvaluator = nullptr,
+          std::shared_ptr<const ImportedDeclarations> imported = nullptr)
+      : checked(std::move(module), std::move(symbols),
+                imported ? imported->types : nullptr),
+        module(checked.tree), diagnostics(diagnostics),
+        inference(diagnostics, *checked.types), requireEntry(requireEntry),
+        numericEvaluator(numericEvaluator) {
     checked.targetDescription = std::move(target);
+    checked.importedDeclarations = std::move(imported);
     checked.types->setPointerBits(pointerBits());
   }
   std::optional<CheckedModule> run();
 
 private:
+  void importDeclarations();
+  void retainDeclarations();
+  interfaces::Database checkingInterfaces;
+  bool imported(Span span) const;
+  std::set<std::tuple<SourceId, std::size_t, std::size_t>> importedSpans;
+  std::unordered_map<const Node *, const CheckedExpression *>
+      importedExpressions;
+  std::unordered_map<const TypeSyntax *, Type> importedAnnotations;
+  const ImportedTypeDeclaration *
+  importedType(Span span,
+               const std::vector<ImportedTypeDeclaration> &items) const;
   friend class ConstantHost;
   TypeStore &typeStore() { return *checked.types; }
   // usize/isize width of the selected target; an unspecified target is 64.
@@ -51,6 +69,21 @@ private:
     int slot;
     Function *owner = nullptr;
   };
+  using NameKey = std::pair<std::string, std::uint64_t>;
+  static NameKey nameKey(std::string_view name,
+                         const SyntaxContextPtr &context) {
+    return {std::string(name), context ? context->identity : 0};
+  }
+  NameKey nameKey(std::string_view name, Span span) const {
+    return nameKey(name, diagnostics.syntaxContext(span));
+  }
+  static NameKey nameKey(const LexicalNameSyntax &name) {
+    return nameKey(name.spelling, name.context);
+  }
+  resolution::ModuleId nameModule(Span span,
+                                  std::optional<SyntaxContextPtr> context = {},
+                                  bool visibilityOnly = false) const;
+  resolution::ModuleId accessModule(const Node &node) const;
   CheckedModule checked;
   Module &module;
   Diagnostics &diagnostics;
@@ -61,6 +94,7 @@ private:
   void requireUnsafe(Span span);
   void machineDeclarations();
   void staticNamesAndTypes();
+  Type staticType(std::size_t index);
   void inherentConstantNamesAndTypes();
   void staticDeclarations();
   void staticLocals();
@@ -70,7 +104,9 @@ private:
   Type textLiteralType(const Node &node);
   std::optional<StaticConstant> staticInitializer(const Node &node, Type type);
   std::optional<StaticConstant> staticValue(std::size_t index);
-  std::optional<std::size_t> staticName(std::string_view name, Span span);
+  std::optional<std::size_t>
+  staticName(std::string_view name, Span span,
+             std::optional<SyntaxContextPtr> context = {});
   std::unordered_map<std::string, std::size_t> staticNames;
   bool staticsDeclared = false;
   struct InherentConstant {
@@ -86,6 +122,7 @@ private:
   std::optional<Type> inherentConstantValue(std::size_t index, Type subject);
   std::vector<const Module::Product *> deferredLayouts;
   std::vector<unsigned char> staticStates;
+  std::vector<unsigned char> staticTypeStates;
   void targetDeclarations();
   std::set<std::string> guardedFeatures{};
   std::set<std::string> availableFeatures() const;
@@ -118,9 +155,16 @@ private:
       {"i128", Type::I128},   {"isize", Type::Isize}, {"u16", Type::U16},
       {"u32", Type::U32},     {"u64", Type::U64},     {"u128", Type::U128},
       {"usize", Type::Usize}, {"f32", Type::F32},     {"f64", Type::F64}};
-  std::vector<std::unordered_map<std::string, Binding>> scopes;
+  std::vector<std::map<NameKey, Binding>> scopes;
+  std::map<Type, NameKey> genericNames;
   std::unordered_map<Function *, std::vector<int>> localVariables;
   std::unordered_map<const Function *, int> functionVariables;
+  std::unordered_set<const Function *> preparedFunctions;
+  std::unordered_set<const Function *> checkingFunctions;
+  std::unordered_set<const Function *> checkedFunctions;
+  void prepareFunction(Function &function);
+  void inferFunctionResult(Function &function);
+  std::vector<std::size_t> functionDependencies(Function &function);
   std::unordered_map<const Function *, int> asyncDefaultBodyVariables;
   std::unordered_map<const Node *, int> nodeVariables;
   // Expression results whose evaluation already reported an error.
@@ -146,11 +190,13 @@ private:
     std::string operation;
   };
   std::vector<NumericOperation> numericOperations;
+  struct GenericEnvironment;
   struct FieldRequest {
     Node *node;
     int base, result;
     bool resolved = false;
     Type origin = Type::Unknown;
+    GenericEnvironment *environment = nullptr;
   };
   std::vector<FieldRequest> fieldRequests;
   std::unordered_map<const Function *, std::size_t> closureFunctions;
@@ -192,7 +238,7 @@ private:
   struct AnnotationRegions {
     RegionScope scope;
     RegionEnvironment environment;
-    std::unordered_map<std::string, RegionId> names;
+    std::map<NameKey, RegionId> names;
     std::vector<RegionId> parameters;
     bool boundElision = false;
     RegionId fallback = RegionId::Unspecified;
@@ -208,7 +254,7 @@ private:
   const RegionEnvironment &regionEnvironment() const;
   void commitRegionEnvironment(RegionEnvironment environment);
   RegionId annotationRegion(const TypeSyntax &syntax, Span span);
-  RegionId regionReference(std::string_view name, Span span);
+  RegionId regionReference(const LexicalNameSyntax &name, Span span);
   AnnotationRegions &functionRegions(const Function &function);
   void
   assumeRegionConstraints(const std::vector<GenericConstraint> &constraints,
@@ -217,6 +263,10 @@ private:
                           std::string_view owner);
   Type callableRegionAnnotation(const TypeSyntax &syntax, Span span,
                                 std::string_view owner);
+  std::vector<std::size_t> carriedResultSources(
+      const TypeSyntax &result, const TypeSyntax &error,
+      std::span<const std::pair<NameKey, const TypeSyntax *>> parameters,
+      Span span);
   CallableType functionSignature(std::size_t index);
   int functionValue(Node &node, std::size_t index);
   int indirectCall(Node &node, bool reachable, int calleeVariable = -1);
@@ -239,9 +289,9 @@ private:
               bool aliasConstructor = false);
   std::optional<int> genericConstruction(Node &node, bool reachable,
                                          std::string_view name);
+  void completeGenericUnitVariant(Node &node, Type expected);
   std::optional<CallableType> genericFunctionValue(Node &node,
                                                    std::size_t callee);
-  struct GenericEnvironment;
   Type genericArgument(const GenericArgument &argument, Type parameter);
   void explicitGenericBindings(const Function &function, const Node &callee,
                                const GenericEnvironment &environment,
@@ -249,7 +299,7 @@ private:
   Type constantType(const Node &node, Type expected = Type::Unknown);
   Type constantContext(const Node &node);
   struct GenericEnvironment {
-    std::unordered_map<std::string, Type> names;
+    std::map<NameKey, Type> names;
     std::map<Type, std::vector<TypeSyntax>> bounds;
     std::vector<Type> parameters;
     std::map<Type, Type> defaults;
@@ -318,6 +368,8 @@ private:
   const std::vector<bool> &interfacesDeclaring(const std::string &name);
   std::unordered_map<const Module::Interface *, GenericEnvironment>
       interfaceGenerics;
+  std::unordered_map<const Module::Associated *, GenericEnvironment>
+      associatedGenerics;
   std::unordered_map<const Module::Implementation *, GenericEnvironment>
       implementationGenerics;
   std::unordered_map<const TypeSyntax *, Type> implicitInterfaceParameters;
@@ -326,12 +378,17 @@ private:
   // Bounds whose assumptions are being elaborated; a bound that mentions a
   // projection of its own environment is proven coinductively, not re-expanded.
   std::set<const TypeSyntax *> elaboratingBounds;
+  std::set<std::pair<Type, Type>> checkingInterfaceArguments;
+  // Declaration checks validate bounds; assumption collection only decodes
+  // them.
+  bool collectingInterfaceAssumptions = false;
   bool interfacesReady = false;
   struct ProjectionRequirement {
     Type subject, interfaceType;
     Span span;
     std::vector<interfaces::Obligation> assumptions;
     RegionEnvironment regions;
+    Type projection = Type::Unknown;
   };
   std::vector<ProjectionRequirement> projectionRequirements;
   std::unordered_map<const TypeSyntax *, Type> opaqueDeclarations;
@@ -353,7 +410,8 @@ private:
                               interfaces::Implementation &implementation);
   std::optional<interfaces::Property> propertyBound(const TypeSyntax &bound,
                                                     Span span) const;
-  std::vector<interfaces::Obligation> interfaceAssumptions();
+  std::vector<interfaces::Obligation>
+  interfaceAssumptions(const GenericEnvironment *inherited = nullptr);
   void expandSuperinterfaces(std::vector<interfaces::Obligation> &result);
   std::vector<interfaces::Obligation> resolveSuperinterfaces(std::size_t index);
   const std::vector<interfaces::Obligation> &
@@ -463,17 +521,22 @@ private:
   const std::vector<const Module::Product *> &
   productsNamed(const std::string &name) const;
   std::string typeName(std::string_view spelling, Span span,
-                       std::string_view owner = {}) const;
+                       std::string_view owner = {},
+                       std::optional<SyntaxContextPtr> context = {}) const;
   std::string callableName(std::string_view spelling, std::string_view owner,
-                           Span span) const;
-  bool visibleField(Type type, std::size_t field, Span use);
-  Binding lookup(const std::string &name, Span span);
-  int local(std::string name, int variable, bool mutableBinding, Span span);
+                           Span span,
+                           std::optional<SyntaxContextPtr> context = {}) const;
+  bool visibleField(Type type, std::size_t field, Span use,
+                    std::optional<SyntaxContextPtr> context = {});
+  Binding lookup(const std::string &name, Span span,
+                 std::optional<SyntaxContextPtr> context = {});
+  int local(std::string name, int variable, bool mutableBinding, Span span,
+            std::optional<SyntaxContextPtr> context = {});
   Flow flow(Node &node, std::string_view owner = {});
   void controlFlow(Function &function);
   bool pathContainer(std::string_view spelling, const Function *function,
                      Span span) const;
-  void qualifyDottedPath(Node &node, const std::set<std::string> &lexical,
+  void qualifyDottedPath(Node &node, const std::set<NameKey> &lexical,
                          const Function *function);
   void qualifyDottedPaths(Node &node);
   int loop(Node &node, bool reachable);

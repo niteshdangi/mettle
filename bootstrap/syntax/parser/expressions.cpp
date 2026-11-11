@@ -16,6 +16,7 @@ std::unique_ptr<Node> Parser::interfaceMember(std::unique_ptr<Node> subject) {
     receiver.name = *owner + "::" + subject->text;
   else
     fail("expected a type name before '.('");
+  receiver.context = subject->context;
   receiver.arguments = subject->genericArguments;
   for (const auto &argument : receiver.arguments)
     if (!argument.region.empty())
@@ -290,7 +291,8 @@ std::unique_ptr<Node> Parser::primary() {
     ++parens;
     if (take(")"))
       result =
-          node(Kind::Unit, {token.span.begin, tokens[position - 1].span.end});
+          node(Kind::Unit, {token.span.begin, tokens[position - 1].span.end,
+                            token.span.source});
     else {
       result = node(Kind::Group, token.span);
       result->children.push_back(expr());
@@ -415,6 +417,7 @@ std::unique_ptr<Node> Parser::primary() {
               ? tokens[position++]
               : name();
       auto field = node(Kind::Field, result->span, member.text);
+      field->context = member.context;
       field->flag = optionalMember;
       field->span.end = member.span.end;
       field->children.push_back(std::move(result));
@@ -432,14 +435,21 @@ std::unique_ptr<Node> Parser::primary() {
         if (is(")"))
           break;
         std::string label;
+        SyntaxContextPtr labelContext;
+        Span labelSpan{};
         if ((peek().kind == TokenKind::Word ||
              peek().kind == TokenKind::QuotedWord) &&
             peek(1).text == ":") {
-          label = name().text;
+          auto identifier = name();
+          label = identifier.text;
+          labelContext = identifier.context;
+          labelSpan = identifier.span;
           expect(":");
         }
         auto argument = expr();
         argument->name = label;
+        argument->fieldContext = std::move(labelContext);
+        argument->fieldSpan = labelSpan;
         call->children.push_back(std::move(argument));
       } while (take(","));
     }

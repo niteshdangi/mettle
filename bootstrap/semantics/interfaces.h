@@ -39,6 +39,8 @@ struct Associated {
   std::vector<RegionRequirement> regionRequirements{};
   bool asyncFuture = false;
   bool asyncFutureDefaultInferred = false;
+  std::vector<TypeBinding> equalities{};
+  std::vector<TypeBinding> defaults{};
 };
 struct Method {
   std::string name;
@@ -50,7 +52,7 @@ struct Method {
 struct Definition {
   std::string name;
   Span span;
-  std::uint32_t package = 0;
+  std::uint32_t package = unknownPackage;
   Type self = Type::Unknown;
   std::vector<Type> parameters{};
   std::vector<Obligation> superinterfaces{};
@@ -58,6 +60,9 @@ struct Definition {
   std::vector<Method> methods{};
   std::vector<RegionId> regions{};
   std::vector<RegionRequirement> regionRequirements{};
+  std::vector<Obligation> requirements{};
+  std::vector<TypeBinding> equalities{};
+  bool unsafeInterface = false;
 };
 struct MethodBinding {
   int function = -1;
@@ -75,7 +80,7 @@ struct AssociatedValue {
 struct Implementation {
   Type target = Type::Unknown, interfaceType = Type::Unknown;
   Span span;
-  std::uint32_t package = 0;
+  std::uint32_t package = unknownPackage;
   std::vector<Type> parameters{};
   std::vector<Obligation> requirements{};
   std::map<std::size_t, MethodBinding> methods{};
@@ -109,6 +114,7 @@ struct Database {
   // keyed by property and nominal origin.
   std::map<std::pair<Property, Type>, ConcurrencyDeclaration>
       concurrencyDeclarations;
+  bool argumentsReady = false;
 };
 std::vector<Type> hierarchy(TypeStore &types, const Database &database,
                             Type subject, Type interfaceType, Span span,
@@ -140,6 +146,9 @@ public:
         regionEnvironment(std::move(regionEnvironment)),
         revealOpaque(revealOpaque) {}
   bool prove(const Obligation &obligation, Span span, bool report = true);
+  bool wellFormedInterface(Type subject, Type interfaceType, Span span,
+                           bool report = true);
+  Type checkedProjection(Type projection, Span span, bool report = true);
   Type normalize(Type type, std::span<const TypeBinding> bindings, Span span);
   std::optional<Selection> method(Type self, Type interfaceType,
                                   std::size_t slot,
@@ -153,7 +162,8 @@ public:
   bool equalities(std::span<const TypeBinding> equations,
                   std::span<const Type> parameters,
                   std::vector<TypeBinding> &bindings, Span span,
-                  bool potential = false);
+                  bool potential = false,
+                  std::span<const TypeBinding> callableResults = {});
   bool constraints(const Implementation &implementation,
                    std::vector<TypeBinding> &bindings, Span span,
                    std::span<const RegionBinding> regions = {},
@@ -177,6 +187,7 @@ private:
   bool revealOpaque = false;
   std::map<std::pair<Type, Type>, std::vector<RegionBinding>> regionSelections;
   std::set<std::pair<Type, Type>> active;
+  std::set<std::pair<Type, Type>> checkingArguments;
   std::set<Type> normalizing;
   unsigned normalizationDepth = 0;
   std::size_t normalizationSteps = 0;

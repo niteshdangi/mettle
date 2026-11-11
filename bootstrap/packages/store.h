@@ -6,6 +6,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace mettle::packages {
@@ -69,6 +70,12 @@ public:
     // The entry or its blob failed verification and was deleted.
     Corrupt
   };
+  struct Data {
+    Lookup status = Lookup::Miss;
+    std::string bytes;
+  };
+  Data data(const std::string &key, std::uint64_t maximumBytes);
+  bool putData(const std::string &key, std::string_view bytes);
   // Copies the blob of `key` to `destination` (a fresh, privately owned
   // file; the shared blob is never exposed) and refreshes the entry's age.
   Lookup materialize(const std::string &key,

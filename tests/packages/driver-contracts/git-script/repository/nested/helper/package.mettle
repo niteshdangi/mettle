@@ -1,0 +1,9 @@
+name: "helper"
+version: "0.1.0"
+kind: "library"
+features {
+    default: []
+    host: []
+    target: []
+}
+build { script: "build.mt" }

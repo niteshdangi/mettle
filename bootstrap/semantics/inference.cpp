@@ -107,11 +107,11 @@ std::vector<int> TypeInference::components(int variable, AggregateKind kind,
   }
   return variables[variable].components;
 }
-void TypeInference::equal(int a, int b, Span span, bool coercion) {
+bool TypeInference::equal(int a, int b, Span span, bool coercion) {
   a = root(a);
   b = root(b);
   if (a == b)
-    return;
+    return true;
   auto at = variables[a].type, bt = variables[b].type;
   auto reportMismatch = [&](Type expected, Type found) {
     const std::array<Type, 2> namesInMessage{expected, found};
@@ -135,7 +135,7 @@ void TypeInference::equal(int a, int b, Span span, bool coercion) {
         std::move(related));
   };
   if (coercion && at == Type::Never)
-    return;
+    return true;
   auto an = variables[a].numeric, bn = variables[b].numeric;
   auto accepts = [](Variable::Numeric constraint, Type type) {
     return constraint == Variable::Numeric::None || type == Type::Unknown ||
@@ -146,7 +146,7 @@ void TypeInference::equal(int a, int b, Span span, bool coercion) {
       (an != Variable::Numeric::None && bn != Variable::Numeric::None &&
        an != bn)) {
     reportMismatch(value(b), value(a));
-    return;
+    return false;
   }
   if (variables[a].kind || variables[b].kind) {
     auto kind = variables[a].kind ? *variables[a].kind : *variables[b].kind;
@@ -157,23 +157,23 @@ void TypeInference::equal(int a, int b, Span span, bool coercion) {
         (bt != Type::Unknown &&
          (!types.isProduct(bt) || types.product(bt).kind != kind))) {
       diagnostics.error("type", span, "incompatible aggregate shape");
-      return;
+      return false;
     }
     if (!variables[a].kind && at == Type::Unknown) {
       if (occurs(a, b)) {
         diagnostics.error("type", span, "recursive inferred type");
-        return;
+        return false;
       }
       variables[a].parent = b;
-      return;
+      return true;
     }
     if (!variables[b].kind && bt == Type::Unknown) {
       if (occurs(b, a)) {
         diagnostics.error("type", span, "recursive inferred type");
-        return;
+        return false;
       }
       variables[b].parent = a;
-      return;
+      return true;
     }
     auto ac = components(a, kind, span), bc = components(b, kind, span);
     auto count = [&](int variable) {
@@ -185,22 +185,24 @@ void TypeInference::equal(int a, int b, Span span, bool coercion) {
     if (ac.size() != bc.size() ||
         (kind == AggregateKind::Array && count(a) != count(b))) {
       diagnostics.error("type", span, "aggregate lengths do not match");
-      return;
+      return false;
     }
     for (std::size_t i = 0; i < ac.size(); ++i)
-      equal(ac[i], bc[i], span);
+      if (!equal(ac[i], bc[i], span))
+        return false;
     variables[a].parent = b;
-    return;
+    return true;
   }
   if (at != Type::Unknown && bt != Type::Unknown && at != bt) {
     reportMismatch(bt, at);
-    return;
+    return false;
   }
   variables[a].parent = b;
   if (bt == Type::Unknown)
     variables[b].type = at;
   if (bn == Variable::Numeric::None)
     variables[b].numeric = an;
+  return true;
 }
 int TypeInference::joined(int a, int b, Span span) {
   if (value(a) == Type::Never)

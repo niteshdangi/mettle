@@ -8,9 +8,11 @@ import platform
 import resource
 import signal
 import struct
-import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import processes
 
 
 def sha256(path):
@@ -54,7 +56,7 @@ def main():
     }
 
     def run(command, expected=0, environment=None):
-        result = subprocess.run(command, capture_output=True, text=True, timeout=90,
+        result = processes.run(command, capture_output=True, text=True,
                                 env=build_environment if environment is None else environment)
         step = {"command": command, "exit_status": result.returncode}
         if environment is not None:

@@ -5,7 +5,7 @@ copy type Limited {
     live: ptr<mut i32>
 }
 
-extend Limited implements Allocator {
+unsafe extend Limited implements Allocator {
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {
         if unsafe { *self.budget } <= 0 {
             throw AllocError(layout.size(), layout.align())
@@ -16,22 +16,22 @@ extend Limited implements Allocator {
         var g = mut_global
         try g.allocate(layout)
     }
-    mut fn deallocate(p: ptr<mut u8>, layout: Layout): Unit {
+    mut unsafe fn deallocate(p: ptr<mut u8>, layout: Layout): Unit {
         unsafe { *self.live -= 1 }
         var g = Global()
-        g.deallocate(p, layout)
+        unsafe { g.deallocate(p, layout) }
     }
-    mut fn grow(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn grow(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
         if unsafe { *self.budget } <= 0 {
             throw AllocError(new_size, old.align())
         }
         unsafe { *self.budget -= 1 }
         var g = Global()
-        try g.grow(p, old, new_size)
+        unsafe { try g.grow(p, old, new_size) }
     }
-    mut fn shrink(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn shrink(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
         var g = Global()
-        try g.shrink(p, old, new_size)
+        unsafe { try g.shrink(p, old, new_size) }
     }
 }
 

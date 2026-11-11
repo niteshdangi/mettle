@@ -1,4 +1,3 @@
-
 // flags: --sanitize address
 
 type Slot<region r> { value: read i32 from r }

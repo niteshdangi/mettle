@@ -43,7 +43,7 @@ extend<T: unsized, A: Allocator> RawWeak<T, A> {
 fn allocation_layout<T>(): (Layout, usize) throws AllocError {
     let result = capture extend_layout(layout_of<ArcHeader>(), layout_of<T>())
     match take result {
-        success(layout) => layout,
+        success((layout, offset)) => (layout.pad_to_align(), offset),
         failure(error) => throw AllocError(error.size, error.align)
     }
 }
@@ -56,7 +56,7 @@ fn slice_allocation_layout<T>(len: usize): (Layout, usize, Layout) throws AllocE
     }
     let allocation_result = capture extend_layout(layout_of<ArcHeader>(), payload)
     let (allocation, offset) = match take allocation_result {
-        success(value) => value,
+        success((layout, offset)) => (layout.pad_to_align(), offset),
         failure(error) => throw AllocError(error.size, error.align)
     }
     (allocation, offset, payload)
@@ -273,7 +273,7 @@ pub fn try_copy_text_in<A: Allocator>(read value: Text, take allocator: A): Arc<
     let bytes = value.as_bytes()
     let result = capture extend_layout(layout_of<ArcHeader>(), super.alloc.layout_of_val(bytes))
     let (layout, offset) = match take result {
-        success(layout) => layout,
+        success((layout, offset)) => (layout.pad_to_align(), offset),
         failure(error) => throw AllocError(error.size, error.align)
     }
     let raw = try a.allocate(layout)
@@ -316,6 +316,35 @@ unsafe extend<T: Transferable + Shareable + unsized, A: Allocator + Shareable> W
 unsafe fn increment(count: ptr<mut core.sync.atomic.AtomicUsize>) {
     let previous = (*count).fetch_add(1usize, core.sync.atomic.Ordering.Relaxed)
     if previous > 0x7fffffffffffffffusize { core.intrinsics.abort() }
+}
+
+unsafe fn increment_weak(h: ptr<mut ArcHeader>): Unit {
+    var current = (*h).wk.load(core.sync.atomic.Ordering.Relaxed)
+    while true {
+        if current == usize.MAX {
+            current = (*h).wk.load(core.sync.atomic.Ordering.Relaxed)
+            continue
+        }
+        if current > 0x7fffffffffffffffusize { core.intrinsics.abort() }
+        match (*h).wk.compare_exchange_weak(
+            current, current + 1usize,
+            core.sync.atomic.Ordering.Acquire, core.sync.atomic.Ordering.Relaxed
+        ) {
+            success(_) => { return },
+            failure(seen) => { current = seen }
+        }
+    }
+}
+
+unsafe fn is_unique(h: ptr<mut ArcHeader>): bool {
+    if (*h).wk.compare_exchange(
+        1usize, usize.MAX,
+        core.sync.atomic.Ordering.Acquire, core.sync.atomic.Ordering.Relaxed
+    ).is_failure() { return false }
+    // Locking the implicit weak excludes downgrade until the strong check completes.
+    let unique = (*h).strong.load(core.sync.atomic.Ordering.Acquire) == 1usize
+    (*h).wk.store(1usize, core.sync.atomic.Ordering.Release)
+    unique
 }
 
 pub fn try_new_cyclic_in<T, A: Allocator + Clone, F: take fn(read Weak<T, A>): T>(
@@ -373,7 +402,7 @@ extend<T: unsized, A: Allocator + Clone> Arc<T, A> {
     }
     pub fn downgrade(): Weak<T, A> {
         let allocator = self.a.clone()
-        unsafe { increment(core.ptr.from_mut((*self.h).wk)) }
+        unsafe { increment_weak(self.h) }
         Weak(self.p, self.h, allocator)
     }
 }
@@ -408,20 +437,14 @@ extend<T: unsized, A: Allocator> Arc<T, A> {
         unsafe {
             let strong = (*self.h).strong.load(core.sync.atomic.Ordering.Acquire)
             let weak_total = (*self.h).wk.load(core.sync.atomic.Ordering.Acquire)
+            if weak_total == usize.MAX { return 0usize }
             if strong == 0usize || weak_total == 0usize { weak_total } else { weak_total - 1usize }
         }
     }
     pub fn ptr_eq(read other: Arc<T, A>): bool { self.h == other.h }
-    // Exclusive access only while no other strong or weak handle exists. A
-    // weak handle can only be created through a strong one, so when this
-    // handle is the sole owner nothing can race with the check.
+    // The weak-count lock synchronizes uniqueness with concurrent downgrade.
     pub mut fn get_mut(): (mut T from self)? {
-        unsafe {
-            let b = self.h
-            let unique = (*b).wk.load(core.sync.atomic.Ordering.Acquire) == 1usize &&
-                         (*b).strong.load(core.sync.atomic.Ordering.Acquire) == 1usize
-            if unique { present(mut *self.p) } else { none }
-        }
+        if unsafe { is_unique(self.h) } { present(unsafe { mut *self.p }) } else { none }
     }
 }
 
@@ -444,10 +467,16 @@ extend<T, A: Allocator> Arc<T, A> {
     // The payload if this was the only strong owner; otherwise releases this
     // handle and returns none.
     pub take fn into_inner(): T? {
-        let outcome = capture self.try_unwrap()
-        match take outcome {
-            success(v) => present(v),
-            failure(rc) => none
+        let raw = self.into_raw()
+        unsafe {
+            if (*raw.h).strong.fetch_sub(1usize, core.sync.atomic.Ordering.Release) != 1usize {
+                return none
+            }
+            core.sync.atomic.fence(core.sync.atomic.Ordering.Acquire)
+            let value = core.ptr.`read`(raw.p)
+            var allocator = raw.a
+            let _implicit = WeakRelease(raw.h, core.ptr.from_mut(allocator))
+            present(value)
         }
     }
     pub take fn unwrap_or_clone(): T where T: Clone {
@@ -508,7 +537,7 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
     pub fn retain(): Weak<T, A> {
         let allocator = self.a.clone()
         if self.h != core.ptr.null_mut<ArcHeader>() {
-            unsafe { increment(core.ptr.from_mut((*self.h).wk)) }
+            unsafe { increment_weak(self.h) }
         }
         Weak(self.p, self.h, allocator)
     }
@@ -589,6 +618,7 @@ extend<T: unsized, A: Allocator> Weak<T, A> {
         unsafe {
             let strong = (*self.h).strong.load(core.sync.atomic.Ordering.Acquire)
             let weak_total = (*self.h).wk.load(core.sync.atomic.Ordering.Acquire)
+            if weak_total == usize.MAX { return 0usize }
             if strong == 0usize || weak_total == 0usize { 0usize } else { weak_total - 1usize }
         }
     }
@@ -597,13 +627,27 @@ extend<T: unsized, A: Allocator> Weak<T, A> {
 
 extend<T: Clone, A: Allocator + Clone> Arc<T, A> {
     pub mut fn make_mut(): mut T from self {
-        let unique = unsafe {
-            (*self.h).wk.load(core.sync.atomic.Ordering.Acquire) == 1usize &&
-            (*self.h).strong.load(core.sync.atomic.Ordering.Acquire) == 1usize
+        if unsafe { is_unique(self.h) } { return unsafe { mut *self.p } }
+        let replacement = new_uninit_in<T, A>(self.a.clone())
+        let moved = unsafe {
+            (*self.h).strong.compare_exchange(
+                1usize, 0usize,
+                core.sync.atomic.Ordering.Acquire, core.sync.atomic.Ordering.Relaxed
+            ).is_success()
         }
-        if unique { return unsafe { mut *self.p } }
-        let replacement = new_in(self.get().clone(), self.a.clone())
-        let _old = unsafe { core.ptr.replace(core.ptr.from_mut(self), replacement) }
+        if moved {
+            unsafe { core.ptr.write(replacement.p.cast<T>(), core.ptr.`read`(self.p)) }
+            let initialized = unsafe { replacement.assume_init() }
+            let old = unsafe { core.ptr.replace(core.ptr.from_mut(self), initialized) }
+            let raw = old.into_raw()
+            var allocator = raw.a
+            let _implicit = WeakRelease(raw.h, core.ptr.from_mut(allocator))
+        } else {
+            let value = self.get().clone()
+            unsafe { core.ptr.write(replacement.p.cast<T>(), value) }
+            let initialized = unsafe { replacement.assume_init() }
+            let _old = unsafe { core.ptr.replace(core.ptr.from_mut(self), initialized) }
+        }
         unsafe { mut *self.p }
     }
 }

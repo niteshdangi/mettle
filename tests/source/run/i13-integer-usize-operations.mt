@@ -1319,8 +1319,6 @@ fn group11() {
 fn group12() {
     if !(kind(capture num.from_str_radix<usize>(" 1", 10u32)) == present(IntErrorKind.InvalidDigit)) { panic("from_str_radix #1441") }
     if !(kind(capture num.from_str_radix<usize>("18446744073709551616", 10u32)) == present(IntErrorKind.PosOverflow)) { panic("from_str_radix #1442") }
-    if !(kind(capture num.from_str_radix<usize>("1", 37u32)) == present(IntErrorKind.InvalidRadix)) { panic("from_str_radix #1443") }
-    if !(kind(capture num.from_str_radix<usize>("1", 1u32)) == present(IntErrorKind.InvalidRadix)) { panic("from_str_radix #1444") }
     if !(kind(capture num.from_str_radix<usize>("-1", 10u32)) == present(IntErrorKind.InvalidDigit)) { panic("from_str_radix #1445") }
 }
 

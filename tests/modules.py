@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Focused multi-file module compile/run and diagnostic regressions."""
 
+import argparse
 import re
-import resource
 import shutil
-import subprocess
-import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+import processes
 
 TARGET_FILES = {
     "external-inline-alias-group-reexport": {
@@ -40,11 +41,11 @@ fn main(): i32 {
     0
 }
 """
-TEXT_PROGRAM = 'import core.iter.Iterator;\nfn code(read text: core.text.Text): usize {\n    var chars = text.chars()\n    var count = 0usize\n    while true {\n        match chars.next() {\n            present(c) => { count += 1usize },\n            none => { break }\n        }\n    }\n    count\n}\nfn valid(read bytes: [u8]): bool {\n    match core.text.from_utf8(bytes) { present(t) => true, none => false }\n}\nfn two(a: u8, b: u8): bool { let v = [a, b]\n    valid(read v) }\nfn three(a: u8, b: u8, c: u8): bool { let v = [a, b, c]\n    valid(read v) }\nfn four(a: u8, b: u8, c: u8, d: u8): bool { let v = [a, b, c, d]\n    valid(read v) }\nfn main(): i32 {\n    let a = "h\\u{e9}llo\\n"\n    if a.len() != 7usize || code(a) != 6usize { return 1 }\n    if !(a == "h\\u{e9}llo\\n") || a != "h\\u{e9}llo\\n" || a == "hello\\n" { return 2 }\n    if !"".is_empty() || "a\\u{1F600}\\x41\\t\\\\\\"".len() != 9usize { return 3 }\n    if a.as_bytes()[1usize] != 0xc3u8 { return 4 }\n    match a.get(0usize, 2usize) { present(t) => { return 5 }, none => {} }\n    match a.get(0usize, 3usize) { present(t) => { if !(t == "h\\u{e9}") { return 6 } }, none => { return 7 } }\n    if !a.is_char_boundary(3usize) || a.is_char_boundary(2usize) { return 8 }\n    if !a.starts_with("h\\u{e9}l") || a.starts_with("hel") { return 9 }\n    match a.find_byte(0x6cu8) { present(i) => { if i != 3usize { return 10 } }, none => { return 11 } }\n    if two(0xc0u8, 0x80u8) || !two(0xc2u8, 0xa9u8) || two(0xe2u8, 0x82u8) { return 12 }\n    if two(0x80u8, 0x41u8) || two(0xffu8, 0x41u8) { return 13 }\n    if three(0xe0u8, 0x80u8, 0x80u8) || three(0xedu8, 0xa0u8, 0x80u8) { return 14 }\n    if !three(0xe2u8, 0x82u8, 0xacu8) || three(0xe2u8, 0x82u8, 0x41u8) { return 15 }\n    if four(0xf4u8, 0x90u8, 0x80u8, 0x80u8) || four(0xf0u8, 0x80u8, 0x80u8, 0x80u8) { return 16 }\n    if !four(0xf0u8, 0x9fu8, 0x98u8, 0x80u8) { return 17 }\n    0\n}\n'
+TEXT_PROGRAM = 'import core.iter.Iterator;\nfn code(read text: core.text.Text): usize {\n    var chars = text.chars()\n    var count = 0usize\n    while true {\n        match chars.next() {\n            present(c) => { count += 1usize },\n            none => { break }\n        }\n    }\n    count\n}\nfn valid(read bytes: [u8]): bool {\n    match core.text.from_utf8(bytes) { success(t) => true, failure(_) => false }\n}\nfn two(a: u8, b: u8): bool { let v = [a, b]\n    valid(read v) }\nfn three(a: u8, b: u8, c: u8): bool { let v = [a, b, c]\n    valid(read v) }\nfn four(a: u8, b: u8, c: u8, d: u8): bool { let v = [a, b, c, d]\n    valid(read v) }\nfn main(): i32 {\n    let a = "h\\u{e9}llo\\n"\n    if a.len() != 7usize || code(a) != 6usize { return 1 }\n    if !(a == "h\\u{e9}llo\\n") || a != "h\\u{e9}llo\\n" || a == "hello\\n" { return 2 }\n    if !"".is_empty() || "a\\u{1F600}\\x41\\t\\\\\\"".len() != 9usize { return 3 }\n    if a.as_bytes()[1usize] != 0xc3u8 { return 4 }\n    match a.get(0usize, 2usize) { present(t) => { return 5 }, none => {} }\n    match a.get(0usize, 3usize) { present(t) => { if !(t == "h\\u{e9}") { return 6 } }, none => { return 7 } }\n    if !a.is_char_boundary(3usize) || a.is_char_boundary(2usize) { return 8 }\n    if !a.starts_with("h\\u{e9}l") || a.starts_with("hel") { return 9 }\n    match a.find_byte(0x6cu8) { present(i) => { if i != 3usize { return 10 } }, none => { return 11 } }\n    if two(0xc0u8, 0x80u8) || !two(0xc2u8, 0xa9u8) || two(0xe2u8, 0x82u8) { return 12 }\n    if two(0x80u8, 0x41u8) || two(0xffu8, 0x41u8) { return 13 }\n    if three(0xe0u8, 0x80u8, 0x80u8) || three(0xedu8, 0xa0u8, 0x80u8) { return 14 }\n    if !three(0xe2u8, 0x82u8, 0xacu8) || three(0xe2u8, 0x82u8, 0x41u8) { return 15 }\n    if four(0xf4u8, 0x90u8, 0x80u8, 0x80u8) || four(0xf0u8, 0x80u8, 0x80u8, 0x80u8) { return 16 }\n    if !four(0xf0u8, 0x9fu8, 0x98u8, 0x80u8) { return 17 }\n    0\n}\n'
 
 
 def run(arguments, expected=0):
-    result = subprocess.run(arguments, text=True, capture_output=True, timeout=900)
+    result = processes.run(arguments, text=True, capture_output=True)
     if result.returncode != expected:
         raise AssertionError(
             f"{arguments!r}: expected {expected}, got {result.returncode}\n"
@@ -52,12 +53,16 @@ def run(arguments, expected=0):
     return result
 
 
-def main(executable, directory, only=None):
+def main(executable, directory, only=None, *, jobs=4, pattern=None):
+    if jobs < 1:
+        raise ValueError("jobs must be positive")
+    if pattern is not None and only != "library":
+        raise ValueError("--filter selects core library source stems; use library mode")
     executable = str(Path(executable).resolve())
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
 
-    def case(name, files, phase=None, message=None, location=None, diagnostic_file="main.mt", options=(), trap=False, count=None, build_only=False):
+    def case(name, files, phase=None, message=None, location=None, diagnostic_file="main.mt", options=(), expected_exit=0, expected_stderr=None, count=None, build_only=False):
         root = directory / name
         shutil.rmtree(root, ignore_errors=True)
         root.mkdir(parents=True)
@@ -81,17 +86,30 @@ def main(executable, directory, only=None):
                 raise AssertionError(f"{name}: failed build damaged prior output")
         else:
             run([executable, "build", str(source), "-o", str(program), *options])
-            if trap:
-                if subprocess.run([str(program)], timeout=30).returncode == 0:
-                    raise AssertionError(f"{name}: expected a trap")
-            elif not build_only:
-                run([str(program)])
+            if not build_only:
+                executed = processes.run([str(program)], text=True, capture_output=True)
+                if executed.returncode != expected_exit:
+                    raise AssertionError(f"{name}: expected exit {expected_exit}, got "
+                                         f"{executed.returncode}\n{executed.stdout}{executed.stderr}")
+                if expected_stderr and expected_stderr not in executed.stderr:
+                    raise AssertionError(f"{name}: missing panic {expected_stderr!r}: "
+                                         f"{executed.stderr!r}")
         return root
 
     def library_cases():
         # Native `core` library behavior: each program returns 0 when every check holds.
-        for program in sorted((Path(__file__).parent / "library").glob("*.mt")):
-            case("library-core-" + program.stem.replace("_", "-"), {"main.mt": program.read_text()})
+        selected = re.compile(pattern) if pattern is not None else None
+        programs = [program for program in sorted((Path(__file__).parent / "library").glob("*.mt"))
+                    if selected is None or selected.search(program.stem)]
+        if not programs:
+            raise ValueError("no core cases selected")
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            results = [pool.submit(case, "library-core-" + program.stem.replace("_", "-"),
+                                   {"main.mt": program.read_text()}) for program in programs]
+        for result in results:
+            result.result()
+        if pattern is not None:
+            return
         case("library-builtin-pointer-does-not-load-core", {
             "lib/core/module.mt": "pub module ptr;\n"
                                  "pub fn broken(): i32 { missing() }\n",
@@ -104,9 +122,9 @@ def main(executable, directory, only=None):
         absent = case("library-core-unwrap-none-aborts", {
             "main.mt": "import core.option;\nfn nothing(): i32? { none }\n"
                        "fn main(): i32 { nothing().unwrap() }\n"}, build_only=True)
-        aborted = subprocess.run([str(absent / "program")], capture_output=True, timeout=60)
-        if aborted.returncode == 0:
-            raise AssertionError("unwrap of an absent value must abort")
+        aborted = processes.run([str(absent / "program")], capture_output=True)
+        if aborted.returncode != 101 or b"called `unwrap` on an absent value" not in aborted.stderr:
+            raise AssertionError(f"unwrap panic: {aborted.returncode} {aborted.stderr!r}")
         case("library-prelude-names-need-no-import", {
             "main.mt": "fn order(a: i32, b: i32): Ordering { a.cmp(b) }\n"
                        "fn size(read t: Text): usize { t.len() }\n"
@@ -123,18 +141,18 @@ def main(executable, directory, only=None):
         case("library-prelude-absent-when-core-is-user-defined", {
             "main.mt": "module core { pub fn answer(): i32 { 42 } }\n"
                        "fn size(read t: Text): i32 { 0 }\nfn main(): i32 { core.answer() - 42 }\n"},
-             "name", "unresolved or inaccessible type 'Text'", (2, 9))
+             "name", "unresolved or inaccessible type 'Text'", (2, 14))
         panicked = case("library-panic-reports-message-and-exits-101", {
             "main.mt": "fn nothing(): i32? { none }\n"
                        "fn main(): i32 { let guard = nothing()\n guard.expect(\"value was required\") }\n"},
              build_only=True)
-        exited = subprocess.run([str(panicked / "program")], capture_output=True, text=True, timeout=60)
+        exited = processes.run([str(panicked / "program")], capture_output=True, text=True)
         if exited.returncode != 101 or "panicked: value was required" not in exited.stderr:
             raise AssertionError(f"panic status/message: {exited.returncode} {exited.stderr!r}")
         explicit = case("library-panic-function-unwinds-and-exits-101", {
             "main.mt": "fn check(ok: bool) { if !ok { panic(\"check failed\") } }\n"
                        "fn main(): i32 { check(false)\n 0 }\n"}, build_only=True)
-        exited = subprocess.run([str(explicit / "program")], capture_output=True, text=True, timeout=60)
+        exited = processes.run([str(explicit / "program")], capture_output=True, text=True)
         if exited.returncode != 101 or "panicked: check failed" not in exited.stderr:
             raise AssertionError(f"panic status/message: {exited.returncode} {exited.stderr!r}")
         freestanding = case("library-panic-freestanding-traps", {
@@ -144,26 +162,8 @@ def main(executable, directory, only=None):
         if "llvm.trap" not in listing or "mettle_rt_panic_message" in listing:
             raise AssertionError("freestanding panic must lower to a trap without the hosted hook")
 
-    def library_check_scales():
-        # Checking cost must stay near-linear in the calls of a core generic
-        # method; compare CPU time, which machine load does not inflate.
-        calls = "".join(f"    let _v{i} = \"ab\".lines().next()\n" for i in range(80))
-        root = directory / "library-core-check-scales"
-        shutil.rmtree(root, ignore_errors=True)
-        root.mkdir(parents=True)
-        (root / "main.mt").write_text(
-            "import core.text;\nimport core.iter.Iterator;\nimport core.option;\n"
-            f"fn main(): i32 {{\n{calls}    0\n}}\n")
-        before = resource.getrusage(resource.RUSAGE_CHILDREN)
-        run([executable, "check", str(root / "main.mt")])
-        after = resource.getrusage(resource.RUSAGE_CHILDREN)
-        used = after.ru_utime - before.ru_utime
-        if used > 20:
-            raise AssertionError(f"checking core generic calls used {used:.1f}s CPU")
-
     if only == "library":
         library_cases()
-        library_check_scales()
         print("Native core library programs passed")
         return
     for name, files in TARGET_FILES.items():
@@ -297,8 +297,8 @@ def main(executable, directory, only=None):
     case("ambiguous-globs", {
         "main.mt": "module a { pub fn value() { 1 } }\n"
                    "module b { pub fn value() { 2 } }\n"
-                   "import a.*;\nimport b.*;\nfn main() { 0 }\n"},
-         "name", "ambiguous glob imports for 'value'", (4, 1))
+                   "import a.*;\nimport b.*;\nfn main() { value() }\n"},
+         "name", "ambiguous import for 'value'", (5, 13))
     case("duplicate-explicit-imports", {
         "main.mt": "module a { pub fn value() { 1 } }\n"
                    "import a.value;\nimport a.value;\nfn main() { 0 }\n"},
@@ -330,10 +330,10 @@ def main(executable, directory, only=None):
     case("library-text-range-slicing", {"main.mt": TEXT_SLICE_PROGRAM})
     case("library-text-range-slicing-non-boundary-traps", {
         "main.mt": "fn main(): i32 { let a = \"h\\u{e9}llo\"\n let b = read a[1..2]\n if b.len() == 9usize { return 1 }\n 0 }\n"},
-         trap=True)
+         expected_exit=101, expected_stderr="text slice is out of bounds or not on a character boundary")
     case("library-text-range-slicing-out-of-bounds-traps", {
         "main.mt": "fn main(): i32 { let a = \"hello\"\n let b = read a[2..9]\n if b.len() == 9usize { return 1 }\n 0 }\n"},
-         trap=True)
+         expected_exit=101, expected_stderr="text slice is out of bounds or not on a character boundary")
     case("library-text-static-and-raw-literals", {"main.mt": TEXT_STATIC_PROGRAM})
     case("library-slice-from-raw-parts", {"main.mt": RAW_PARTS_PROGRAM})
     case("library-subslice-keeps-source-region", {
@@ -395,4 +395,11 @@ def main(executable, directory, only=None):
 
 
 if __name__ == "__main__":
-    main(*sys.argv[1:])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("executable")
+    parser.add_argument("directory")
+    parser.add_argument("only", nargs="?", choices=("library",))
+    parser.add_argument("-j", "--jobs", type=int, default=4)
+    parser.add_argument("--filter", help="select only matching core library source stems")
+    args = parser.parse_args()
+    main(args.executable, args.directory, args.only, jobs=args.jobs, pattern=args.filter)

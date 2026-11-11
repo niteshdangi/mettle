@@ -122,8 +122,15 @@ pub fn validate_text(read literal: [u8], span: Span, mut diagnostics: Diagnostic
         diagnostics.report(Phase.Lex, span, "unterminated text literal")
         return
     }
-    var index = start + 1
-    let end = literal.len() - 1
+    validate_content(read literal, start + 1, literal.len() - 1, bytes, span, mut diagnostics)
+}
+
+pub fn validate_fragment(read literal: [u8], span: Span, mut diagnostics: Diagnostics): Unit {
+    validate_content(read literal, 0usize, literal.len(), false, span, mut diagnostics)
+}
+
+fn validate_content(read literal: [u8], start: usize, end: usize, bytes: bool, span: Span, mut diagnostics: Diagnostics): Unit {
+    var index = start
     while index < end {
         let byte = literal[index]
         index += 1

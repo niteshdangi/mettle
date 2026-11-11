@@ -128,6 +128,7 @@ mettle_component(expansion STATIC expansion)
 mettle_component(documentation STATIC documentation)
 mettle_component(resolution STATIC resolution)
 mettle_component(types STATIC types)
+mettle_component(metadata STATIC metadata)
 mettle_component(places STATIC places)
 mettle_component(consteval STATIC consteval)
 mettle_component(semantics STATIC semantics)
@@ -149,10 +150,11 @@ target_link_libraries(mettle_expansion PUBLIC mettle_syntax mettle_source mettle
 target_link_libraries(mettle_documentation PUBLIC mettle_syntax mettle_source mettle_diagnostics mettle_support)
 target_link_libraries(mettle_resolution PUBLIC mettle_syntax mettle_expansion mettle_source mettle_diagnostics mettle_support)
 target_link_libraries(mettle_types PUBLIC mettle_support)
+target_link_libraries(mettle_metadata PUBLIC mettle_types mettle_source mettle_support)
 target_link_libraries(mettle_places PUBLIC mettle_types)
 target_link_libraries(mettle_consteval PUBLIC mettle_syntax mettle_types mettle_diagnostics mettle_source mettle_support)
-target_link_libraries(mettle_semantics PUBLIC mettle_syntax mettle_resolution mettle_types mettle_places mettle_consteval mettle_diagnostics mettle_support)
-target_link_libraries(mettle_ir PUBLIC mettle_source mettle_types mettle_places mettle_diagnostics mettle_support)
+target_link_libraries(mettle_semantics PUBLIC mettle_syntax mettle_resolution mettle_types mettle_metadata mettle_places mettle_consteval mettle_diagnostics mettle_support)
+target_link_libraries(mettle_ir PUBLIC mettle_source mettle_types mettle_metadata mettle_places mettle_diagnostics mettle_support)
 target_link_libraries(mettle_lowering PUBLIC mettle_semantics mettle_ir mettle_types mettle_diagnostics mettle_support)
 target_link_libraries(mettle_analysis PUBLIC mettle_ir mettle_places mettle_support mettle_diagnostics)
 target_link_libraries(mettle_instances PUBLIC mettle_ir mettle_types mettle_diagnostics mettle_support)
@@ -187,20 +189,57 @@ target_compile_definitions(mettle PRIVATE METTLE_VERSION="${PROJECT_VERSION}"
 add_dependencies(mettle mettle_runtime mettle_runtime_asan mettle_runtime_tsan)
 target_compile_options(mettle PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
+# Like Rust's test harness, tests are never killed for running long;
+# only CI job limits bound a run.
+set(DART_TESTING_TIMEOUT 0)
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(mettle-library-declaration-tests tests/semantics/library_test.cpp)
+  target_link_libraries(mettle-library-declaration-tests PRIVATE mettle_pipeline mettle_metadata)
+  target_compile_options(mettle-library-declaration-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME compiler.library-declarations COMMAND mettle-library-declaration-tests)
+  add_executable(mettle-ir-codec-tests tests/ir/codec_test.cpp)
+  target_link_libraries(mettle-ir-codec-tests PRIVATE mettle_ir mettle_metadata)
+  target_compile_options(mettle-ir-codec-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME ir.codec COMMAND mettle-ir-codec-tests)
+  add_executable(mettle-library-archive-tests
+    tests/packages/library_archive.cpp bootstrap/driver/library_archive.cpp
+    bootstrap/driver/library_cache.cpp)
+  target_link_libraries(mettle-library-archive-tests PRIVATE mettle_metadata mettle_packages mettle_diagnostics)
+  target_compile_options(mettle-library-archive-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME compiler.library-archive COMMAND mettle-library-archive-tests)
+  add_executable(mettle-type-graph-tests tests/types/type_graph.cpp)
+  target_link_libraries(mettle-type-graph-tests PRIVATE mettle_metadata)
+  target_compile_options(mettle-type-graph-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME compiler.type-graph COMMAND mettle-type-graph-tests)
   if(UNIX)
     add_executable(mettle-runtime-tests tests/runtime/panic.cpp)
     target_link_libraries(mettle-runtime-tests PRIVATE mettle_runtime)
     target_compile_options(mettle-runtime-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
     add_test(NAME runtime.panic COMMAND mettle-runtime-tests)
-    set_tests_properties(runtime.panic PROPERTIES TIMEOUT 120)
     add_executable(mettle-thread-tests tests/runtime/thread.cpp)
     find_package(Threads REQUIRED)
     target_link_libraries(mettle-thread-tests PRIVATE mettle_runtime Threads::Threads)
     target_compile_options(mettle-thread-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      target_link_options(mettle-thread-tests PRIVATE
+        "LINKER:--wrap=nanosleep"
+        "LINKER:--wrap=clock_gettime"
+        "LINKER:--wrap=accept4"
+        "LINKER:--wrap=socket"
+        "LINKER:--wrap=pipe"
+        "LINKER:--wrap=pipe2"
+        "LINKER:--wrap=poll"
+        "LINKER:--wrap=pthread_mutex_init"
+        "LINKER:--wrap=pthread_mutex_destroy"
+        "LINKER:--wrap=pthread_condattr_init"
+        "LINKER:--wrap=pthread_condattr_setclock"
+        "LINKER:--wrap=pthread_condattr_destroy"
+        "LINKER:--wrap=pthread_cond_init"
+        "LINKER:--wrap=pthread_cond_destroy"
+        "LINKER:--wrap=pthread_cond_timedwait")
+    endif()
     add_test(NAME runtime.thread COMMAND mettle-thread-tests)
-    set_tests_properties(runtime.thread PROPERTIES TIMEOUT 120)
     add_executable(mettle-cleanup-frame-tests tests/backend/cleanup_frame.cpp)
     target_link_libraries(mettle-cleanup-frame-tests PRIVATE mettle_backend_llvm)
     target_compile_options(mettle-cleanup-frame-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -241,8 +280,6 @@ if(BUILD_TESTING)
                      "$<TARGET_FILE:mettle_runtime>"
                      "${PROJECT_BINARY_DIR}/backend-cleanup-source-evidence"
                      ${METTLE_CLEANUP_TEST_FLAGS})
-    set_tests_properties(backend.cleanup-frame backend.cleanup-program backend.cleanup-source
-                         PROPERTIES TIMEOUT 240)
     if(METTLE_ENABLE_SANITIZERS)
       set_tests_properties(backend.cleanup-frame backend.cleanup-program backend.cleanup-source
         PROPERTIES ENVIRONMENT
@@ -267,13 +304,11 @@ if(BUILD_TESTING)
                      "$<TARGET_FILE:mettle>" "${CMAKE_CXX_COMPILER}"
                      "$<TARGET_FILE:mettle_runtime>" "$<TARGET_FILE:mettle_machine_callbacks>"
                      "${PROJECT_BINARY_DIR}/machine-evidence" ${METTLE_MACHINE_TEST_FLAGS})
-    set_tests_properties(backend.machine-interop PROPERTIES TIMEOUT 180)
     add_test(NAME backend.machine-memory-model
              COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/backend/memory.py"
                      "$<TARGET_FILE:mettle>" "${CMAKE_CXX_COMPILER}"
                      "${PROJECT_BINARY_DIR}/memory-model-evidence"
                      ${METTLE_MACHINE_TEST_FLAGS})
-    set_tests_properties(backend.machine-memory-model PROPERTIES TIMEOUT 240)
     if(METTLE_ENABLE_SANITIZERS)
       set_tests_properties(backend.machine-memory-model PROPERTIES ENVIRONMENT
         "ASAN_OPTIONS=halt_on_error=1:abort_on_error=0:exitcode=99;UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:exitcode=99")
@@ -300,7 +335,10 @@ if(BUILD_TESTING)
   target_link_libraries(mettle-consteval-tests PRIVATE mettle_pipeline)
   target_compile_options(mettle-consteval-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME compiler.consteval-target COMMAND mettle-consteval-tests)
-  set_tests_properties(compiler.consteval-target PROPERTIES TIMEOUT 120)
+  add_executable(mettle-macro-library-tests tests/expansion/macro_library.cpp)
+  target_link_libraries(mettle-macro-library-tests PRIVATE mettle_expansion)
+  target_compile_options(mettle-macro-library-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME compiler.macro-library COMMAND mettle-macro-library-tests)
   add_executable(mettle-module-tests tests/modules.cpp)
   target_link_libraries(mettle-module-tests PRIVATE mettle_pipeline mettle_resolution)
   target_compile_options(mettle-module-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -312,49 +350,52 @@ if(BUILD_TESTING)
            COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/packages.py"
                    "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/packages-evidence"
                    "${PROJECT_SOURCE_DIR}/tests/packages")
-  set_tests_properties(packages.resolution PROPERTIES TIMEOUT 600)
+  set(METTLE_LIBRARY_TEST_JOBS 4 CACHE STRING "Parallel workers per library suite")
+  cmake_host_system_information(RESULT METTLE_HOST_TEST_JOBS QUERY NUMBER_OF_LOGICAL_CORES)
+  set(METTLE_SOURCE_TEST_JOBS ${METTLE_HOST_TEST_JOBS} CACHE STRING
+      "Parallel workers per source suite")
+  foreach(jobs METTLE_LIBRARY_TEST_JOBS METTLE_SOURCE_TEST_JOBS)
+    if(NOT "${${jobs}}" MATCHES "^[1-9][0-9]*$")
+      message(FATAL_ERROR "${jobs} must be a positive integer")
+    endif()
+  endforeach()
   add_test(NAME library.alloc
            COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/alloc.py"
                    "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/alloc-evidence"
-                   "${PROJECT_SOURCE_DIR}/tests/alloc")
-  set_tests_properties(library.alloc PROPERTIES TIMEOUT 900)
+                   "${PROJECT_SOURCE_DIR}/tests/alloc" -j ${METTLE_LIBRARY_TEST_JOBS})
   add_test(NAME library.std
            COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/std.py"
                    "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/std-evidence"
-                   "${PROJECT_SOURCE_DIR}/tests/std")
-  set_tests_properties(library.std PROPERTIES TIMEOUT 1800)
+                   "${PROJECT_SOURCE_DIR}/tests/std" -j ${METTLE_LIBRARY_TEST_JOBS})
   add_test(NAME library.core
            COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/modules.py"
-                   "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/library-evidence" library)
-  set_tests_properties(compiler.modules-memory PROPERTIES TIMEOUT 120)
-  set_tests_properties(compiler.modules-source PROPERTIES TIMEOUT 600)
-  set_tests_properties(library.core PROPERTIES TIMEOUT 3600)
-  set_tests_properties(compiler.boundaries PROPERTIES TIMEOUT 120)
-  set_tests_properties(foundation.cli foundation.object-link-run foundation.backend-errors
-                       PROPERTIES TIMEOUT 120)
+                   "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/library-evidence" library
+                   -j ${METTLE_LIBRARY_TEST_JOBS})
+  set_tests_properties(library.alloc library.std library.core PROPERTIES
+                       PROCESSORS ${METTLE_LIBRARY_TEST_JOBS})
   # One file per case under tests/source, run by a parallel runner. Each test
   # reserves its worker count so `ctest -jN` does not oversubscribe the host.
-  cmake_host_system_information(RESULT METTLE_SOURCE_TEST_JOBS QUERY NUMBER_OF_LOGICAL_CORES)
   foreach(kind run fail)
     add_test(NAME source.${kind}
              COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/source.py"
                      ${kind} "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/source-evidence"
                      -j ${METTLE_SOURCE_TEST_JOBS})
-    set_tests_properties(source.${kind} PROPERTIES TIMEOUT 1800
+    set_tests_properties(source.${kind} PROPERTIES
                          PROCESSORS ${METTLE_SOURCE_TEST_JOBS})
   endforeach()
   foreach(mode syntax fast-math broken-pipe sanitizers)
     add_test(NAME probe.${mode}
              COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/probes.py"
                      "${mode}" "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/probe-evidence")
-    set_tests_properties(probe.${mode} PROPERTIES TIMEOUT 180)
   endforeach()
+  add_test(NAME tooling.contracts
+           COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tools/test_tooling.py"
+                   "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/tooling-evidence")
   if(METTLE_ENABLE_SANITIZERS)
     add_test(NAME foundation.sanitizers
              COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/foundation.py"
                      sanitizers "$<TARGET_FILE:mettle>" "${CMAKE_CXX_COMPILER}"
                      ${METTLE_LINKER_FLAGS})
-    set_tests_properties(foundation.sanitizers PROPERTIES TIMEOUT 120)
   endif()
   # Test builds never use the user's build cache.
   get_property(METTLE_TESTS DIRECTORY PROPERTY TESTS)

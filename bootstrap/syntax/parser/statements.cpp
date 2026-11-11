@@ -48,8 +48,13 @@ std::unique_ptr<Node> Parser::stmt() {
          (peek(1).text == "." || peek(1).text == "{"))) {
       result->patterns.push_back(pattern());
       result->text = "<pattern>";
-    } else
-      result->text = take("_") ? "_" : name().text;
+    } else if (take("_"))
+      result->text = "_";
+    else {
+      auto identifier = name();
+      result->text = identifier.text;
+      result->context = identifier.context;
+    }
     if (result->text == "_" && mutableBinding)
       fail("discard uses 'let _ = expression'");
     if (take(":"))

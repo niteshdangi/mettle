@@ -267,11 +267,12 @@ pub type Command {
     stdin: Stdio
     stdout: Stdio
     stderr: Stdio
+    stdio_set: u8
 }
 
 pub fn command(read program: OsStr): Command {
     Command(program.to_os_string(), vec.new<OsString>(), vec.new<EnvChange>(), false,
-            super.path.new_path_buf(), false, Stdio.Inherit, Stdio.Inherit, Stdio.Inherit)
+            super.path.new_path_buf(), false, Stdio.Inherit, Stdio.Inherit, Stdio.Inherit, 0u8)
 }
 
 pub fn command_text(read program: Text): Command { command(ffi.os_str_from_text(program)) }
@@ -321,9 +322,9 @@ extend Command {
         self.cwd = input.as_path().to_path_buf()
         self.has_cwd = true
     }
-    pub mut fn stdin(s: Stdio): Unit { self.stdin = s }
-    pub mut fn stdout(s: Stdio): Unit { self.stdout = s }
-    pub mut fn stderr(s: Stdio): Unit { self.stderr = s }
+    pub mut fn stdin(s: Stdio): Unit { self.stdin = s; self.stdio_set = self.stdio_set | 1u8 }
+    pub mut fn stdout(s: Stdio): Unit { self.stdout = s; self.stdio_set = self.stdio_set | 2u8 }
+    pub mut fn stderr(s: Stdio): Unit { self.stderr = s; self.stdio_set = self.stdio_set | 4u8 }
 
     // The child's environment as NUL-terminated `name=value` strings.
     fn environment(): List<List<u8>> throws Error {
@@ -362,6 +363,10 @@ extend Command {
 
     // Starts the child. Piped streams are reachable through the `Child`.
     pub fn spawn(): Child throws Error {
+        try self.spawn_with_stdio(self.stdin, self.stdout, self.stderr)
+    }
+
+    fn spawn_with_stdio(stdin: Stdio, stdout: Stdio, stderr: Stdio): Child throws Error {
         var strings = vec.new<List<u8>>()
         strings.push(try ffi.cstring(self.program.as_bytes()))
         var i = 0usize
@@ -386,7 +391,7 @@ extend Command {
         envp.push(core.ptr.null<u8>())
         var cwd_c = vec.new<u8>()
         if self.has_cwd { cwd_c = try ffi.cstring(self.cwd.as_bytes()) }
-        var modes = [stdio_code(self.stdin), stdio_code(self.stdout), stdio_code(self.stderr)]
+        var modes = [stdio_code(stdin), stdio_code(stdout), stdio_code(stderr)]
         var fds = [-1, -1, -1]
         let use_env = self.clear_env || self.changes.len() > 0usize
         let cwd_ptr = if self.has_cwd { cwd_c.as_ptr() } else { core.ptr.null<u8>() }
@@ -406,13 +411,12 @@ extend Command {
         try child.wait()
     }
 
-    // Runs to completion capturing standard output and error (both are piped
-    // regardless of earlier settings; input is closed).
+    // Capture/null defaults apply only to streams not explicitly configured.
     pub mut fn output(): Output throws Error {
-        self.stdin = Stdio.Null
-        self.stdout = Stdio.Piped
-        self.stderr = Stdio.Piped
-        let child = try self.spawn()
+        let stdin = if (self.stdio_set & 1u8) == 0u8 { Stdio.Null } else { self.stdin }
+        let stdout = if (self.stdio_set & 2u8) == 0u8 { Stdio.Piped } else { self.stdout }
+        let stderr = if (self.stdio_set & 4u8) == 0u8 { Stdio.Piped } else { self.stderr }
+        let child = try self.spawn_with_stdio(stdin, stdout, stderr)
         try child.wait_with_output()
     }
 }

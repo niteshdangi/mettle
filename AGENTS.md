@@ -2,11 +2,17 @@
 
 ## ANY CODE WRITTEN SHOULD BE BEST-IN-CLASS
 
+## Tautological abstractions, tests, compiler passes, language features, and wrappers are considered harmful. Every addition must introduce meaningful functionality, enforce an invariant, improve correctness, or reduce complexity. Otherwise, avoid it.
+
 ## No type of bloat is allowed be it Tests / Docs / Code / Code Comments. If you know its a bloat and is not needed, cut that immediately
 
 ## Whenever working on task if you know you dont need any checklist verification for that then absolutely dont do that. If you changes affects one system run targeted checks only. No Broad builds/ checks should be ran. If you know a thing is going to waste time, immediately stop it, and work in most efficient & fastest way without compromising quality of project.
 
 ## Comments in internal code should never be written to explain some code, code should be self understandable, comments only allowed for non-obvious things, that too in max 1 line rarely 2 lines for complex non-obvious things.
+
+## ALWAYS RUN TESTS / BUILDS IN THE MOST EFFICIENT WAY: size the work first (item count x per-item time / cores), use incremental builds and caches, parallelize across cores (`xargs -P`, `--jobs`, `ctest -j`), report results incrementally, and narrow to the affected set. Never run a serial loop over many builds.
+
+## NEVER DO ANYTHING THAT WASTES TIME. Always prefer the fastest and most efficient approach while keeping the highest quality.
 
 ## NEVER OVER EXPAND ANY TASK MORE THAN WHATS NEEDED and what was the task
 

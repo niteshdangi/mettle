@@ -53,13 +53,14 @@ struct BuildScript {
   std::string directory, source;
   std::vector<std::string> features;
   std::vector<std::pair<std::string, std::string>> dependencies;
-  bool root = false;
+  bool root = false, host = false;
 };
 
 // A procedural macro declared by a package of the graph; its program runs on
 // the host while sources expand.
 struct Macro {
   std::string name, package, version;
+  std::string identity;
   // Absolute package directory and canonical program source.
   std::string directory, source;
   std::vector<std::string> features;
@@ -67,17 +68,23 @@ struct Macro {
 };
 
 struct Plan {
+  struct PackageOrigin {
+    std::string identity, directory;
+    std::string gitRoot, gitCommit, gitSourceIdentity;
+    bool host = false;
+  };
   std::string package, version;
   std::string rootIdentity;
+  std::vector<PackageOrigin> origins;
   // Source file of the selected entry.
   std::string root;
   std::string kind;
   std::vector<std::string> emits;
   std::vector<Mount> mounts;
   std::vector<Mount> hostMounts;
-  // Build scripts of the root and its dependencies, in resolution order.
+  // Build scripts in dependency-first order.
   std::vector<BuildScript> scripts;
-  // Procedural macros of the root and its dependencies, in resolution order.
+  // Procedural macros of the root and its dependencies, dependency-first.
   std::vector<Macro> macros;
   // Dependencies visible from the root package.
   std::vector<std::pair<std::string, std::string>> dependencies;

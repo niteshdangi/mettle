@@ -1,4 +1,4 @@
-// expect-error: type
+// expect-error: type 10:13 unsatisfied interface bound 'Transferable'
 import std.thread
 import std.sync.mutex
 

@@ -19,6 +19,8 @@ fn main(): i32 {
             match range.next() {
                 present(entry) => {
                     if entry.key < 10i32 || entry.key >= 20i32 { return 1 }
+                    if entry.key != 10i32 + count { return 8 }
+                    if entry.value != entry.key * 2i32 { return 9 }
                     count += 1i32
                     sum += entry.value
                 },
@@ -39,14 +41,24 @@ fn main(): i32 {
 
     key = 2i32
     while key < 40i32 {
-        let removed = map.remove(key)
+        match map.remove(key) {
+            present(value) => { if value != key * 2i32 { return 10 } },
+            none => { return 11 }
+        }
         key += 3i32
     }
     previous = 0i32
+    count = 0i32
+    key = 1i32
     for entry in read map {
         if entry.key <= previous { return 5 }
+        if entry.key != key || entry.value != key * 2i32 { return 12 }
         previous = entry.key
+        count += 1i32
+        key += 1i32
+        if key % 3i32 == 2i32 { key += 1i32 }
     }
+    if count != 27i32 { return 13 }
     match map.get(40i32) {
         present(value) => { if *value != 80i32 { return 6 } },
         none => { return 7 }

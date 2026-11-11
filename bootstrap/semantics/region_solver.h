@@ -3,6 +3,7 @@
 #include "types/type.h"
 #include <cstddef>
 #include <map>
+#include <optional>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -17,8 +18,7 @@ struct RegionEnvironment {
 };
 class RegionSolver {
 public:
-  explicit RegionSolver(const RegionStore &regions, std::size_t budget = 4096)
-      : regions(regions), budget(budget) {}
+  explicit RegionSolver(const RegionStore &regions) : regions(regions) {}
   RegionAnswer outlives(RegionId longer, RegionId shorter,
                         const RegionEnvironment &environment);
   RegionAnswer leakCheck(const RegionEnvironment &environment) const;
@@ -30,14 +30,12 @@ private:
   using Key = std::tuple<RegionId, RegionId, RegionUniverse,
                          std::vector<RegionOutlives>,
                          std::vector<std::pair<RegionId, RegionId>>>;
-  RegionId resolve(RegionId region, const RegionEnvironment &environment,
-                   std::size_t &remaining) const;
+  std::optional<RegionId> resolve(RegionId region,
+                                  const RegionEnvironment &environment) const;
   RegionAnswer prove(RegionId longer, RegionId shorter,
                      const RegionEnvironment &environment,
-                     std::vector<RegionOutlives> &active,
-                     std::size_t &remaining) const;
+                     std::vector<RegionOutlives> &active) const;
   const RegionStore &regions;
-  std::size_t budget;
   std::map<Key, RegionAnswer> cache;
 };
 enum class Variance { Bivariant, Covariant, Contravariant, Invariant };
@@ -55,17 +53,13 @@ public:
 private:
   RegionAnswer compare(Type source, Type target,
                        const RegionEnvironment &environment,
-                       std::vector<std::pair<Type, Type>> &active,
-                       std::size_t &remaining);
+                       std::vector<std::pair<Type, Type>> &active);
   RegionAnswer callable(Type source, Type target,
                         const RegionEnvironment &environment,
-                        std::vector<std::pair<Type, Type>> &active,
-                        std::size_t &remaining);
+                        std::vector<std::pair<Type, Type>> &active);
   Type substitute(Type type,
                   const std::vector<std::pair<RegionId, RegionId>> &bindings);
-  std::optional<Variance> varianceFor(Type type, RegionId region,
-                                      Type parameter,
-                                      std::size_t &remaining) const;
+  Variance varianceFor(Type type, RegionId region, Type parameter) const;
   TypeStore &types;
   RegionSolver &regions;
   bool boundRejected = false;

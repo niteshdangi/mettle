@@ -33,7 +33,7 @@ fn run(): i32 throws Error {
     let text = try std.fs.read_to_string(path_from_text("a/b/f.txt"))
     if text.len() != 11usize { return 7 }
     try std.fs.rename(path_from_text("a/b/f.txt"), path_from_text("a/g.txt"))
-    if std.fs.exists(path_from_text("a/b/f.txt")) || !std.fs.exists(path_from_text("a/g.txt")) { return 8 }
+    if (try std.fs.exists(path_from_text("a/b/f.txt"))) || !(try std.fs.exists(path_from_text("a/g.txt"))) { return 8 }
     let dm = try std.fs.metadata(path_from_text("a/b"))
     if !dm.is_dir() { return 9 }
     var names = 0
@@ -63,7 +63,7 @@ fn run(): i32 throws Error {
     try std.fs.remove_dir(path_from_text("a/b/c"))
     try std.fs.remove_dir(path_from_text("a/b"))
     try std.fs.remove_dir(path_from_text("a"))
-    if std.fs.exists(path_from_text("a")) { return 12 }
+    if try std.fs.exists(path_from_text("a")) { return 12 }
     // Append and truncate through OpenOptions.
     try std.fs.write(path_from_text("t"), "abc".as_bytes())
     {
@@ -112,7 +112,7 @@ fn run(): i32 throws Error {
     if !(try std.fs.canonicalize(path_from_text("ops/source"))).is_absolute() { return 21 }
     if !try std.fs.try_exists(path_from_text("ops/source")) { return 22 }
     try std.fs.remove_dir_all(path_from_text("ops"))
-    if std.fs.exists(path_from_text("ops")) { return 23 }
+    if try std.fs.exists(path_from_text("ops")) { return 23 }
     var dirs = std.fs.DirBuilder.new()
     dirs.recursive(true)
     try dirs.create(path_from_text("builder/a/b"))

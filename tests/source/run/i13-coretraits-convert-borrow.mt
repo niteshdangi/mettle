@@ -16,6 +16,13 @@ extend Wrapped implements From<i32> {
     static fn from(take value: i32): Wrapped { Wrapped(value) }
 }
 
+extend Wrapped implements TryFrom<i32> {
+    type Error = Never
+    static fn try_from(take value: i32): (Outcome<Wrapped, Never>) {
+        success(Wrapped.(From<i32>).from(value))
+    }
+}
+
 type Positive { value: i32 }
 extend Positive implements TryFrom<i32> {
     type Error = ConversionError
@@ -29,6 +36,13 @@ type OwnedInput { value: Box<i32> }
 type OwnedOutput { value: Box<i32> }
 extend OwnedInput implements Into<OwnedOutput> {
     take fn into(): OwnedOutput { OwnedOutput(self.value) }
+}
+
+extend OwnedOutput implements TryFrom<OwnedInput> {
+    type Error = Never
+    static fn try_from(take value: OwnedInput): (Outcome<OwnedOutput, Never>) {
+        success(OwnedInput.(Into<OwnedOutput>).into(value))
+    }
 }
 
 fn main(): i32 {

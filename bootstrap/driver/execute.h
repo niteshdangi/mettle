@@ -4,6 +4,7 @@
 #include "resolution/load.h"
 #include "syntax/ast.h"
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -13,7 +14,8 @@ namespace mettle::driver {
 // package's annotated functions are returned through `discovered` when given.
 int build(const Options &options, std::vector<Module::TestFunction> *discovered,
           std::vector<resolution::SourceModule> *sourceModules = nullptr,
-          const std::map<std::string, std::string> *sourceOverrides = nullptr);
+          const std::map<std::string, std::string> *sourceOverrides = nullptr,
+          std::set<std::string> *failurePhases = nullptr);
 // `mettle run`, `mettle test` and `mettle bench`: build into a private
 // temporary directory, run the result and report.
 int execute(const Options &options);

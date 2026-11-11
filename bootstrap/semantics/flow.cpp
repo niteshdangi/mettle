@@ -43,6 +43,10 @@ Flow Checker::flow(Node &n, std::string_view owner) {
     }
   } else if (n.kind == Kind::Closure) {
     flow(*n.children[0], owner);
+  } else if (n.kind == Kind::Assign && n.text == "=") {
+    auto replacement = flow(*n.children[1], owner);
+    auto destination = flow(*n.children[0], owner);
+    result = combine(replacement, destination);
   } else if (n.kind == Kind::Block) {
     for (auto &child : n.children)
       result = combine(result, flow(*child, owner));
@@ -66,9 +70,10 @@ Flow Checker::flow(Node &n, std::string_view owner) {
     auto input = flow(*n.children[0], owner);
     auto body = flow(*n.children[1], owner);
     body.normal = true;
-    body.breaks.erase(facts(n).control);
-    body.continues.erase(facts(n).control);
     result = combine(input, body);
+    result.normal |= input.breaks.contains(facts(n).control);
+    result.breaks.erase(facts(n).control);
+    result.continues.erase(facts(n).control);
   } else if (n.kind == Kind::If) {
     result = flow(*n.children[0], owner);
     auto a = flow(*n.children[1], owner);
@@ -114,8 +119,10 @@ Flow Checker::flow(Node &n, std::string_view owner) {
   } else {
     for (std::size_t i = 0; i < n.children.size(); ++i) {
       auto child = flow(*n.children[i], owner);
-      if (n.kind == Kind::Binary && i == 1 &&
-          (n.text == "&&" || n.text == "||")) {
+      if (n.kind == Kind::Coalesce && i == 1)
+        child = branches({}, child);
+      else if (n.kind == Kind::Binary && i == 1 &&
+               (n.text == "&&" || n.text == "||")) {
         auto literal = booleanLiteral(*n.children[0]);
         if ((n.text == "&&" && literal == false) ||
             (n.text == "||" && literal == true))

@@ -12,7 +12,11 @@ fn main(): i32 {
     match take d.back_mut() { present(x) => { *x = 500 }, none => { return 22 } }
     d.insert(50usize, 777)
     if d[49usize] != -1 || d[50usize] != 777 || d[51usize] != 0 { return 24 }
-    if d.remove(50usize) != 777 || d[50usize] != 0 { return 25 }
+    match d.remove(50usize) {
+        present(value) => { if value != 777 { return 25 } },
+        none => { return 25 }
+    }
+    if d[50usize] != 0 { return 25 }
     d.shrink_to_fit()
     if d.capacity() < d.len() || d[0usize] != -500 || d[d.len() - 1usize] != 500 {
         return 23

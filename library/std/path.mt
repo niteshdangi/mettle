@@ -25,6 +25,18 @@ import package.core.fmt.{Debug, Formatter, Error}
 
 pub type Path { bytes: [u8] }
 
+pub copy type StripPrefixError {}
+extend StripPrefixError implements Clone {
+    fn clone(): StripPrefixError { self }
+}
+extend StripPrefixError implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error { try f.write_str("StripPrefixError") }
+}
+extend StripPrefixError implements package.core.fmt.Display {
+    fn fmt(mut f: Formatter): Unit throws Error { try f.write_str("prefix not found") }
+}
+extend StripPrefixError implements package.core.error.Error {}
+
 pub copy enum Component<region r> {
     RootDir,
     CurDir,
@@ -105,6 +117,38 @@ fn component_tag(component: Component): u8 {
         Component.CurDir => 1u8,
         Component.ParentDir => 2u8,
         Component.Normal(_) => 3u8
+    }
+}
+
+fn same_component(left: Component, right: Component): bool {
+    if component_tag(left) != component_tag(right) { return false }
+    match left {
+        Component.Normal(a) => match right {
+            Component.Normal(b) => a.same(b),
+            _ => false
+        },
+        _ => true
+    }
+}
+
+fn final_name_end(read bytes: [u8]): usize? {
+    var end = trimmed_end(bytes)
+    while end > 0usize {
+        let start = last_start(bytes, end)
+        if start == end || is_dot_dot(bytes, start, end) { return none }
+        if !is_dot(bytes, start, end) { return present(end) }
+        if start == 0usize { return none }
+        end = trimmed_end(checked_part(bytes, 0usize, start))
+    }
+    none
+}
+
+fn validate_extension(read extension: OsStr): Unit {
+    let bytes = extension.as_bytes()
+    var index = 0usize
+    while index < bytes.len() {
+        if is_sep(bytes[index]) { package.core.panic.panic("path extension contains a separator") }
+        index += 1usize
     }
 }
 
@@ -305,7 +349,12 @@ extend Path {
     pub fn as_os_str(): read OsStr from self { ffi.os_str(read self.bytes) }
     pub mut fn as_mut_os_str(): mut OsStr from self { ffi.os_str_mut(self.bytes) }
     pub fn is_empty(): bool { self.bytes.len() == 0usize }
-    pub fn to_str(): (read Text from self)? { package.core.text.from_utf8(read self.bytes) }
+    pub fn to_str(): (read Text from self)? {
+        match package.core.text.from_utf8(read self.bytes) {
+            success(text) => present(text),
+            failure(_) => none
+        }
+    }
     pub fn to_string_lossy(): String { ffi.lossy(read self.bytes) }
     pub fn is_absolute(): bool { self.bytes.len() > 0usize && is_sep(self.bytes[0usize]) }
     pub fn has_root(): bool { self.is_absolute() }
@@ -338,26 +387,21 @@ extend Path {
 
     // Last component; none for `/`, an empty path or one ending in `..`.
     pub fn file_name(): (read OsStr from self)? {
-        let bytes: read [u8] = read self.bytes
-        let end = trimmed_end(bytes)
-        if end == 0usize { return none }
-        let start = last_start(bytes, end)
-        if start == end { return none }
-        let name = unsafe { slice.subslice_unchecked(bytes, start, end) }
-        if name.len() == 1usize && name[0usize] == 46u8 { return none }
-        if name.len() == 2usize && name[0usize] == 46u8 && name[1usize] == 46u8 { return none }
-        present(ffi.os_str(name))
+        var components = self.components()
+        match components.next_back() {
+            present(Component.Normal(name)) => present(name),
+            _ => none
+        }
     }
 
     // Everything before the final component, without its separator.
     pub fn parent(): (read Path from self)? {
-        let bytes: read [u8] = read self.bytes
-        let end = trimmed_end(bytes)
-        if end == 0usize { return none }
-        if end == 1usize && is_sep(bytes[0usize]) { return none }
-        var start = last_start(bytes, end)
-        while start > 1usize && is_sep(bytes[start - 1usize]) { start -= 1usize }
-        present(path(unsafe { slice.subslice_unchecked(bytes, 0usize, start) }))
+        var components = self.components()
+        match components.next_back() {
+            present(Component.RootDir) => none,
+            present(_) => present(components.as_path()),
+            none => none
+        }
     }
 
     // Final component without the extension (a leading dot is not one).
@@ -415,44 +459,40 @@ extend Path {
     }
 
     pub fn starts_with(read prefix: Path): bool {
-        let a: read [u8] = read self.bytes
-        let b = prefix.as_bytes()
-        let bend = trimmed_end(b)
-        if bend == 0usize { return true }
-        if bend > a.len() { return false }
-        var i = 0usize
-        while i < bend {
-            if a[i] != b[i] { return false }
-            i += 1usize
+        match take capture self.strip_prefix(prefix) {
+            success(_) => true,
+            failure(_) => false
         }
-        bend == a.len() || is_sep(a[bend]) || (bend > 0usize && is_sep(b[bend - 1usize]))
     }
 
     pub fn ends_with(read suffix: Path): bool {
-        let a: read [u8] = read self.bytes
-        let b = suffix.as_bytes()
-        let a_end = trimmed_end(a)
-        let b_end = trimmed_end(b)
-        if b_end > a_end { return false }
-        let offset = a_end - b_end
-        var i = 0usize
-        while i < b_end {
-            if a[offset + i] != b[i] { return false }
-            i += 1usize
+        var actual = self.components()
+        var wanted = suffix.components()
+        while true {
+            match wanted.next_back() {
+                present(component) => match actual.next_back() {
+                    present(found) => { if !same_component(found, component) { return false } },
+                    none => { return false }
+                },
+                none => { return true }
+            }
         }
-        let component_start = last_start(a, trimmed_end(a))
-        b_end == 0usize || offset == 0usize || is_sep(a[offset - 1usize]) ||
-            component_start == offset
+        false
     }
 
-    pub fn strip_prefix(read prefix: Path): (read Path from self)? {
-        if !self.starts_with(prefix) { return none }
-        let bytes: read [u8] = read self.bytes
-        let prefix_len = trimmed_end(prefix.as_bytes())
-        if prefix_len == 0usize { return present(read self) }
-        var start = prefix_len
-        while start < bytes.len() && is_sep(bytes[start]) { start += 1usize }
-        present(path(unsafe { slice.subslice_unchecked(bytes, start, bytes.len()) }))
+    pub fn strip_prefix(read prefix: Path): read Path from self throws StripPrefixError {
+        var actual = self.components()
+        var wanted = prefix.components()
+        while true {
+            match wanted.next() {
+                present(component) => match actual.next() {
+                    present(found) => { if !same_component(found, component) { throw StripPrefixError() } },
+                    none => { throw StripPrefixError() }
+                },
+                none => { return actual.as_path() }
+            }
+        }
+        throw StripPrefixError()
     }
 
     pub fn with_file_name(read name: OsStr): PathBuf {
@@ -760,11 +800,7 @@ extend PathBuf {
     }
     pub mut fn shrink_to_fit(): Unit { self.v.shrink_to_fit() }
     pub mut fn shrink_to(minimum: usize): Unit {
-        if minimum > self.v.capacity() {
-            self.v.reserve(minimum - self.v.len())
-        } else if minimum <= self.v.len() {
-            self.v.shrink_to_fit()
-        }
+        self.v.shrink_to(minimum)
     }
 
     // Appends a component, adding a separator when needed; an absolute `p`
@@ -791,38 +827,20 @@ extend PathBuf {
     }
 
     pub mut fn set_file_name(read name: OsStr): bool {
-        if self.as_path().file_name().is_none() { return false }
-        let parent_len = match self.as_path().parent() {
-            present(parent) => present(parent.as_bytes().len()),
-            none => none
-        }
-        match parent_len {
-            present(n) => {
-                self.v.truncate(n)
-                if self.v.len() > 0usize && !is_sep(self.v[self.v.len() - 1usize]) {
-                    self.v.push(47u8)
-                }
-                self.v.extend_from_slice(name.as_bytes())
-                true
-            },
-            none => {
-                if self.v.is_empty() { return false }
-                self.v.clear()
-                self.v.extend_from_slice(name.as_bytes())
-                true
-            }
-        }
+        if self.as_path().file_name().is_present() { let _ = self.pop() }
+        self.push(path_from_os_str(name))
+        true
     }
 
     pub mut fn set_extension(read extension: OsStr): bool {
+        validate_extension(extension)
         let bytes = self.v.as_slice()
-        let end = trimmed_end(bytes)
+        let end = match final_name_end(bytes) {
+            present(end) => end,
+            none => { return false }
+        }
         let name_start = last_start(bytes, end)
         let name = unsafe { slice.subslice_unchecked(bytes, name_start, end) }
-        if name.len() == 0usize || (name.len() == 1usize && name[0usize] == 46u8) ||
-           (name.len() == 2usize && name[0usize] == 46u8 && name[1usize] == 46u8) {
-            return false
-        }
         match last_dot(name) {
             present(dot) => self.v.truncate(name_start + dot),
             none => self.v.truncate(end)
@@ -836,10 +854,13 @@ extend PathBuf {
     }
 
     pub mut fn add_extension(read extension: OsStr): Unit {
+        validate_extension(extension)
         let ext = extension.as_bytes()
         if ext.len() > 0usize {
-            let end = trimmed_end(self.v.as_slice())
-            if end == 0usize { return }
+            let end = match final_name_end(self.v.as_slice()) {
+                present(end) => end,
+                none => { return }
+            }
             self.v.truncate(end)
             self.v.push(46u8)
             self.v.extend_from_slice(ext)
@@ -855,7 +876,9 @@ extend PathBuf {
     pub fn join(read other: Path): PathBuf { self.as_path().join(other) }
     pub fn starts_with(read prefix: Path): bool { self.as_path().starts_with(prefix) }
     pub fn ends_with(read suffix: Path): bool { self.as_path().ends_with(suffix) }
-    pub fn strip_prefix(read prefix: Path): (read Path from self)? { self.as_path().strip_prefix(prefix) }
+    pub fn strip_prefix(read prefix: Path): read Path from self throws StripPrefixError {
+        try self.as_path().strip_prefix(prefix)
+    }
     pub fn with_file_name(read name: OsStr): PathBuf { self.as_path().with_file_name(name) }
     pub fn with_extension(read extension: OsStr): PathBuf { self.as_path().with_extension(extension) }
     pub fn with_added_extension(read extension: OsStr): PathBuf { self.as_path().with_added_extension(extension) }
@@ -893,7 +916,6 @@ extend PathBuf implements Deref {
     fn deref(): read Path from self { self.as_path() }
 }
 extend PathBuf implements DerefMut {
-    type Target = Path
     mut fn deref_mut(): mut Path from self { self.as_mut_path() }
 }
 extend PathBuf implements AsRef<Path> {

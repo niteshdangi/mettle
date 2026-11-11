@@ -47,7 +47,9 @@ fn main(): i32 {
             failure(_) => 1
         }
     })
-    thread.sleep_nanos(20000000u64)
+    while probe.get().load(core.sync.atomic.Ordering.Acquire) == 0usize {
+        thread.yield_now()
+    }
     if probe.get().load(core.sync.atomic.Ordering.Acquire) != 1usize { return 8 }
     let received = capture rx.recv()
     match take received {

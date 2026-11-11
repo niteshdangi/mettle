@@ -5,9 +5,10 @@
 
 namespace mettle::parsing {
 namespace {
-TypeSyntax namedType(std::string name) {
+TypeSyntax namedType(std::string name, SyntaxContextPtr context = {}) {
   TypeSyntax result;
   result.name = std::move(name);
+  result.context = std::move(context);
   return result;
 }
 
@@ -15,14 +16,16 @@ GenericArgument genericArgument(const GenericParameter &parameter) {
   GenericArgument result;
   result.span = parameter.span;
   if (parameter.kind == GenericParameterKind::Type) {
-    result.type = std::make_shared<const TypeSyntax>(namedType(parameter.name));
+    result.type = std::make_shared<const TypeSyntax>(
+        namedType(parameter.name, parameter.context));
   } else if (parameter.kind == GenericParameterKind::Region) {
-    result.region = parameter.name;
+    result.region = {parameter.name, parameter.nameSpan, parameter.context};
   } else {
     auto value = std::make_shared<Node>();
     value->kind = Kind::Name;
     value->span = parameter.span;
     value->text = parameter.name;
+    value->context = parameter.context;
     result.value = std::move(value);
   }
   return result;
@@ -31,8 +34,8 @@ GenericArgument genericArgument(const GenericParameter &parameter) {
 TypeSyntax asyncFutureProjection(const Module::Interface &interface,
                                  const Function &method,
                                  std::string_view family) {
-  TypeSyntax subject = namedType("Self");
-  TypeSyntax bound = namedType(interface.name);
+  TypeSyntax subject = namedType("Self", method.lexicalContext);
+  TypeSyntax bound = namedType(interface.name, interface.nameContext);
   for (const auto &parameter : interface.genericParameters)
     bound.arguments.push_back(genericArgument(parameter));
 
@@ -53,6 +56,7 @@ TypeSyntax asyncFutureProjection(const Module::Interface &interface,
 Function erasedAsyncCompanion(const Function &method, std::string_view name,
                               const std::string &interface, Span span) {
   Function result;
+  result.lexicalContext = method.lexicalContext;
   result.name = interface + "." + erasedAsyncName(name);
   // Definitions are identified by span; the contract token names this one.
   result.span = span;
@@ -69,13 +73,17 @@ Function erasedAsyncCompanion(const Function &method, std::string_view name,
         {parameter.name, parameter.annotation, parameter.span, parameter.mode});
     auto &copy = result.parameters.back();
     copy.format = parameter.format;
+    copy.context = parameter.context;
     if ((copy.mode == "read" || copy.mode == "mut") &&
         copy.annotation.sources.empty()) {
       GenericParameter region;
       region.kind = GenericParameterKind::Region;
       region.name = "$erased_" + std::to_string(result.parameters.size());
       region.span = parameter.span;
-      copy.annotation.sources.push_back(region.name);
+      region.nameSpan = parameter.span;
+      region.context = parameter.context;
+      copy.annotation.sources.push_back(
+          {region.name, region.nameSpan, region.context});
       result.genericParameters.push_back(std::move(region));
     }
   }
@@ -98,7 +106,8 @@ Function erasedAsyncCompanion(const Function &method, std::string_view name,
   erased.elements.push_back(std::move(future));
   for (const auto &parameter : result.genericParameters)
     if (parameter.kind == GenericParameterKind::Region)
-      erased.sources.push_back(parameter.name);
+      erased.sources.push_back(
+          {parameter.name, parameter.span, parameter.context});
   TypeSyntax owner;
   owner.form = TypeForm::Owner;
   owner.ownerKind = OwnerKind::Heap;
@@ -111,6 +120,7 @@ Function erasedAsyncCompanion(const Function &method, std::string_view name,
     value->kind = kind;
     value->span = method.span;
     value->text = std::move(text);
+    value->context = method.lexicalContext;
     return value;
   };
   auto receiver = make(Kind::Name, "self");
@@ -121,6 +131,7 @@ Function erasedAsyncCompanion(const Function &method, std::string_view name,
   for (std::size_t p = 1; p < method.parameters.size(); ++p) {
     const auto &parameter = method.parameters[p];
     auto argument = make(Kind::Name, parameter.name);
+    argument->context = parameter.context;
     if (parameter.mode == "read" || parameter.mode == "mut") {
       auto borrow = make(Kind::Unary, parameter.mode);
       borrow->children.push_back(std::move(argument));
@@ -145,9 +156,11 @@ TypeSyntax Parser::boundType() {
     for (const auto &parameter : parameters) {
       if (parameter.kind != GenericParameterKind::Region)
         fail("higher-ranked binders may contain only regions");
-      bound.binders.push_back(parameter.name);
+      bound.binders.push_back(
+          {parameter.name, parameter.nameSpan, parameter.context});
     }
   }
+  bound.context = peek().context;
   auto components = path();
   for (const auto &component : components) {
     if (!bound.name.empty())
@@ -188,8 +201,12 @@ Module::Associated Parser::associatedDeclaration() {
 }
 Module::Interface Parser::interfaceDeclaration() {
   Module::Interface result;
-  result.span = expect("interface").span;
-  result.name = name().text;
+  result.span = peek().span;
+  result.unsafeInterface = take("unsafe");
+  expect("interface");
+  auto identifier = name();
+  result.name = identifier.text;
+  result.nameContext = identifier.context;
   result.genericParameters = genericParameters();
   if (take(":"))
     do {
@@ -224,7 +241,7 @@ Module::Interface Parser::interfaceDeclaration() {
       }
       if (is("mut") || is("take") || is("static"))
         mode = tokens[position++].text;
-      auto method = function(true, true);
+      auto method = function(true);
       if (method.constructor)
         fail("constructors cannot be declared in an interface", "signature");
       method.item.attributes = std::move(metadata);
@@ -281,10 +298,13 @@ Module::Interface Parser::interfaceDeclaration() {
         method.error = {};
         result.associated.push_back(std::move(future));
       }
-      if (mode != "static" && !method.explicitReceiver)
+      if (mode != "static" && !method.explicitReceiver) {
         method.parameters.insert(
             method.parameters.begin(),
             {"self", TypeSyntax{"Self", "", {}, {}}, method.span, mode});
+        method.parameters.front().context = method.lexicalContext;
+        method.parameters.front().annotation.context = method.lexicalContext;
+      }
       if (!futureStorage.empty()) {
         if (mode == "static" || mode == "take")
           fail("an `async(heap)` method needs a read or mut receiver",
@@ -374,9 +394,11 @@ Module::Implementation Parser::implementationDeclaration() {
                               : method.parameters.front().mode;
       }
       method.item.visibility = std::move(visible);
-      if (!method.constructor && mode != "static" && !method.explicitReceiver)
+      if (!method.constructor && mode != "static" && !method.explicitReceiver) {
         method.parameters.insert(method.parameters.begin(),
                                  {"self", result.target, method.span, mode});
+        method.parameters.front().context = method.lexicalContext;
+      }
       result.methods.push_back(std::move(method));
     }
     separators();

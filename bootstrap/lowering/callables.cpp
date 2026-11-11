@@ -76,10 +76,17 @@ void callableContracts(ir::Program &program) {
         }
 }
 int Builder::closureIndex(std::size_t index) const {
+  if (imported && index < imported->closureFunctions.size())
+    return imported->closureFunctions[index];
   auto result = module.syntax().functions.size();
   for (const auto &function : module.syntax().functions)
     for (const auto &parameter : function.parameters)
-      result += parameter.defaultValue.get() != nullptr;
+      result += module.hasDefault(
+          static_cast<std::size_t>(&function -
+                                   module.syntax().functions.data()),
+          static_cast<std::size_t>(&parameter - function.parameters.data()));
+  if (imported)
+    result += imported->support.size() - imported->closureFunctions.size();
   return static_cast<int>(result + index);
 }
 std::vector<Type> Builder::closureArguments(Type type) const {
@@ -121,6 +128,8 @@ ir::Function Builder::runClosure(std::size_t index) {
   }
   for (auto source : checked.resultSources)
     function.resultSources.push_back(source - !environment);
+  for (auto source : checked.resultContents)
+    function.resultContents.push_back(source - !environment);
   for (std::size_t i = 0; i < function.locals.size(); ++i) {
     function.locals[i].scope = i < function.parameters ? 0 : -1;
     function.locals[i].order =
@@ -222,8 +231,7 @@ Builder::Value Builder::indirectCallExpression(const Node &node) {
     bool borrowed = signature.mode == ParameterMode::Read ||
                     signature.mode == ParameterMode::Mut;
     std::optional<Value> passed;
-    if (borrowed &&
-        (thin || signature.environmentMode != ParameterMode::Value))
+    if (borrowed && (thin || signature.environmentMode != ParameterMode::Value))
       passed = receiverBorrow(callee, plan, signature.mode);
     else {
       auto location = receiverPlace(receiverSource(callee), plan, callee.span);

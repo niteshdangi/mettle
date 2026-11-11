@@ -16,35 +16,47 @@ public:
     for (auto &declaration : module.modules) {
       auto scope = declaration.item.scope;
       scope.push_back(declaration.name);
-      if (!process(declaration.item.attributes, Site::Item))
+      auto span = extent(declaration.span, declaration.item.attributes);
+      if (!process(declaration.item.attributes, Site::Item)) {
         inactive.push_back(std::move(scope));
+        module.inactiveSyntax.push_back(span);
+      }
     }
     retain(module.modules, [&](Module::ModuleDeclaration &item) {
-      return !inside(item.item.scope);
+      auto scope = item.item.scope;
+      scope.push_back(item.name);
+      return !inside(scope);
     });
     retain(module.functions, [&](Function &item) {
       auto attributes = configuration.collectTests ? item.item.attributes
                                                    : std::vector<Attribute>{};
-      if (!keep(item.item, Site::Item))
+      auto span = extent(functionSpan(item), item.item.attributes);
+      if (!keep(item.item, Site::Item, functionSpan(item)))
         return false;
       if (configuration.collectTests)
         collect(item, attributes);
-      return !(configuration.dropEntry && item.item.scope.empty() &&
-               item.name == "main");
+      bool drop = configuration.dropEntry && item.item.scope.empty() &&
+                  item.name == "main";
+      if (drop)
+        module.inactiveSyntax.push_back(span);
+      return !drop;
     });
-    retain(module.statics,
-           [&](Module::Static &item) { return keep(item.item, Site::Item); });
-    retain(module.aliases,
-           [&](Module::Alias &item) { return keep(item.item, Site::Import); });
-    retain(module.imports,
-           [&](Module::Import &item) { return keep(item.item, Site::Import); });
+    retain(module.statics, [&](Module::Static &item) {
+      return keep(item.item, Site::Item, item.span);
+    });
+    retain(module.aliases, [&](Module::Alias &item) {
+      return keep(item.item, Site::Import, item.span);
+    });
+    retain(module.imports, [&](Module::Import &item) {
+      return keep(item.item, Site::Import, item.span);
+    });
     retain(module.interfaces, [&](Module::Interface &item) {
       methods(item.methods);
-      return keep(item.item, Site::Item);
+      return keep(item.item, Site::Item, item.span);
     });
     retain(module.implementations, [&](Module::Implementation &item) {
       methods(item.methods);
-      return keep(item.item, Site::Item);
+      return keep(item.item, Site::Item, item.span);
     });
     retain(module.products,
            [&](Module::Product &item) { return product(item); });
@@ -65,6 +77,20 @@ private:
     std::erase_if(items, [&](T &item) { return !keep(item); });
   }
 
+  static Span extent(Span span, const std::vector<Attribute> &attributes) {
+    for (const auto &attribute : attributes)
+      if (attribute.span.source == span.source)
+        span.begin = std::min(span.begin, attribute.span.begin);
+    return span;
+  }
+
+  static Span functionSpan(const Function &function) {
+    auto span = function.span;
+    if (function.body.get())
+      span.end = std::max(span.end, function.body->span.end);
+    return span;
+  }
+
   bool inside(const std::vector<std::string> &scope) const {
     return std::any_of(
         inactive.begin(), inactive.end(), [&](const auto &prefix) {
@@ -75,34 +101,59 @@ private:
 
   // Validates and consumes an item's attributes; an item inside an inactive
   // inline module is dropped together with the module.
-  bool keep(ItemSyntax &item, Site site) {
+  bool keep(ItemSyntax &item, Site site, Span span) {
+    span = extent(span, item.attributes);
     auto own = process(item.attributes, site);
-    return own && !inside(item.scope);
+    bool active = own && !inside(item.scope);
+    if (!active)
+      module.inactiveSyntax.push_back(span);
+    return active;
   }
 
   void methods(std::vector<Function> &members) {
     retain(members, [&](Function &method) {
-      return process(method.item.attributes, Site::Item);
+      auto span = extent(functionSpan(method), method.item.attributes);
+      bool active = process(method.item.attributes, Site::Item);
+      if (!active)
+        module.inactiveSyntax.push_back(span);
+      return active;
     });
   }
 
   bool product(Module::Product &item) {
+    auto span = extent(item.span, item.item.attributes);
     auto own = process(item.item.attributes, Site::Declaration);
     retain(item.fields, [&](Parameter &field) {
-      return process(field.attributes, Site::Field);
+      auto fieldSpan =
+          extent(field.syntaxSpan.value_or(field.span), field.attributes);
+      bool active = process(field.attributes, Site::Field);
+      if (!active)
+        module.inactiveSyntax.push_back(fieldSpan);
+      return active;
     });
     methods(item.methods);
     retain(item.variants, [&](Module::Product::Variant &variant) {
+      auto variantSpan = extent(variant.span, variant.attributes);
       auto variantActive = process(variant.attributes, Site::Variant);
       retain(variant.fields, [&](Parameter &field) {
-        return process(field.attributes, Site::VariantField);
+        auto fieldSpan =
+            extent(field.syntaxSpan.value_or(field.span), field.attributes);
+        bool active = process(field.attributes, Site::VariantField);
+        if (!active)
+          module.inactiveSyntax.push_back(fieldSpan);
+        return active;
       });
+      if (!variantActive)
+        module.inactiveSyntax.push_back(variantSpan);
       return variantActive;
     });
     item.hasDestructor =
         std::any_of(item.methods.begin(), item.methods.end(),
                     [](const Function &method) { return method.destructor; });
-    return own && !inside(item.item.scope);
+    bool active = own && !inside(item.item.scope);
+    if (!active)
+      module.inactiveSyntax.push_back(span);
+    return active;
   }
 
   static bool harnessAttribute(const std::string &name) {

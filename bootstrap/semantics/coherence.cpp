@@ -70,13 +70,17 @@ bool determined(Type type, const Implementation &implementation,
 bool Solver::equalities(std::span<const TypeBinding> equations,
                         std::span<const Type> parameters,
                         std::vector<TypeBinding> &bindings, Span span,
-                        bool potential) {
+                        bool potential,
+                        std::span<const TypeBinding> callableResults) {
   std::vector<TypeBinding> solved;
   for (const auto &binding : bindings)
     if (binding.argument != Type::Unknown)
       solved.push_back(binding);
   std::map<Type, Type> projected;
-  for (const auto &equation : equations) {
+  for (std::size_t i = 0; i < equations.size() + callableResults.size(); ++i) {
+    auto callableResult = i >= equations.size();
+    const auto &equation =
+        callableResult ? callableResults[i - equations.size()] : equations[i];
     if (++steps > limits::activeLoans) {
       regionInconclusive = true;
       if (!limitReported)
@@ -93,7 +97,9 @@ bool Solver::equalities(std::span<const TypeBinding> equations,
     }
     if (left == right)
       continue;
-    auto unified = match(left, right, true, &regionEnvironment);
+    // Callable result inference preserves regions; constraints proves them.
+    auto *regions = potential || callableResult ? nullptr : &regionEnvironment;
+    auto unified = match(left, right, true, regions);
     if (!unified) {
       auto unresolved = [&](Type type) {
         return types.isProjection(type) ||
@@ -105,7 +111,7 @@ bool Solver::equalities(std::span<const TypeBinding> equations,
       if (!unresolved(left))
         std::swap(left, right);
       auto [known, inserted] = projected.emplace(left, right);
-      if (!inserted && !match(known->second, right, true, &regionEnvironment))
+      if (!inserted && !match(known->second, right, true, regions))
         return false;
       continue;
     }
@@ -173,12 +179,15 @@ bool Solver::constraints(const Implementation &implementation,
       if (item == definition.associated.end() || !item->parameters.empty())
         continue;
       equations.push_back(
-          {types.projection(
-               requirement.subject, interfaceType,
-               static_cast<std::size_t>(item - definition.associated.begin())),
+          {types.substituteRegions(
+               types.projection(requirement.subject, interfaceType,
+                                static_cast<std::size_t>(
+                                    item - definition.associated.begin())),
+               regions),
            types.substituteRegions(binding.argument, regions)});
     }
   }
+  std::vector<TypeBinding> callableResults;
   for (auto parameter : implementation.parameters) {
     if (!types.isParameter(parameter))
       continue;
@@ -187,14 +196,20 @@ bool Solver::constraints(const Implementation &implementation,
     if (contract == Type::Unknown || actual == parameter ||
         !types.isCallable(actual))
       continue;
-    equations.push_back(
+    callableResults.push_back(
         {types.callable(contract).result, types.callable(actual).result});
   }
   if (!equalities(equations, implementation.parameters, bindings, span,
-                  potential))
+                  potential, callableResults))
     return false;
+  std::vector<RegionBinding> actualRegions(regions.begin(), regions.end());
+  for (auto &binding : actualRegions)
+    for (const auto &substitution : regionEnvironment.substitutions)
+      if (binding.argument == substitution.first)
+        binding.argument = substitution.second;
   auto substituted = [&](Type type) {
-    return types.substituteRegions(resolve(type, bindings, types), regions);
+    return types.substituteRegions(resolve(type, bindings, types),
+                                   actualRegions);
   };
   for (auto parameter : implementation.parameters) {
     auto actual = substituted(parameter);
@@ -222,14 +237,27 @@ bool Solver::constraints(const Implementation &implementation,
           (declaration.sized && !types.isSized(actual)))
         return false;
       if (declaration.callableConstraint != Type::Unknown) {
-        bool valid =
-            callableProof
-                ? callableProof(parameter, actual, bindings, regions, span)
-                : types.satisfiesCallable(
-                      actual,
-                      normalize(substituted(declaration.callableConstraint), {},
-                                span));
-        if (!valid)
+        auto proveCallable = [&] {
+          if (callableProof)
+            return callableProof(parameter, actual, bindings, actualRegions,
+                                 span);
+          auto expected =
+              normalize(substituted(declaration.callableConstraint), {}, span);
+          if (!types.isCallable(actual) || !types.isFunctionPointer(expected))
+            return false;
+          auto source = types.callableType(types.callable(actual));
+          if (!types.satisfiesCallable(types.eraseRegions(source),
+                                       types.eraseRegions(expected)))
+            return false;
+          if (revealOpaque)
+            return true;
+          RegionSolver proof(types.regions());
+          RegionTypeSolver contracts(types, proof);
+          auto answer = contracts.coerce(source, expected, regionEnvironment);
+          regionInconclusive |= answer == RegionAnswer::Inconclusive;
+          return answer == RegionAnswer::Proven;
+        };
+        if (!proveCallable())
           return false;
       }
     }
@@ -454,12 +482,14 @@ bool Solver::coherent() {
           types.product(nominal).genericOrigin != Type::Unknown)
         nominal = types.product(nominal).genericOrigin;
       bool localType =
-          types.isProduct(nominal) &&
+          left.package != unknownPackage && types.isProduct(nominal) &&
           (types.product(nominal).kind == AggregateKind::Product ||
            types.product(nominal).kind == AggregateKind::Enumeration ||
            types.product(nominal).kind == AggregateKind::Opaque) &&
           types.product(nominal).package == left.package;
-      if (definition.package != left.package && !localType) {
+      bool localInterface =
+          left.package != unknownPackage && definition.package == left.package;
+      if (!localInterface && !localType) {
         diagnostics.error("type", left.span,
                           "orphan interface implementation has no local owner");
         valid = false;

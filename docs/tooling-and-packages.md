@@ -6,7 +6,7 @@ qualify the gated Linux host. An installed toolchain remains unavailable.
 
 ### Unicode table generation (I07)
 
-`tools/unicode_tables.py UCD_DIR OUTPUT.mt` generates the Unicode 16.0.0
+`tools/unicode_tables.py UCD_DIR OUTPUT.mt` generates the Unicode 17.0.0
 property and case-mapping module used by `library/core/char.mt`. Keep the UCD
 input files and the generated `library/core/unicode_data.mt` synchronized with
 the version recorded in that module; the Unicode license notice is
@@ -67,10 +67,16 @@ bindings take precedence; `package.name` remains an optional root qualifier.
   `--offline` prevents Git fetching and uses only already-cached commits.
 - Git selectors (`rev`, `tag`, `branch`) use the system `git` CLI, with mirrors
   and detached checkouts in cache `sources/git`. Offline builds require the
-  locked commit there. Dirty or mismatched cached checkouts are rejected.
-- `lock.mettle`: `version: 2` plus a `packages` list of objects (`id`, name,
+  locked commit there and a matching recorded selector. Changing selectors
+  requires an unlocked update even when they resolve to the same commit.
+  Dirty or mismatched cached checkouts are rejected.
+- `lock.mettle`: `version: 3` plus a `packages` list of objects (`id`, name,
   version, `source` = `root`/`path+REL`/`registry+REL`/`git+URL#COMMIT`,
-  `checksum`, resolved `features`, dependency-instance IDs). Checksum is
+  `checksum`, resolved `features`, dependency-instance IDs, and `git_selectors`
+  for Git packages). Version 2 locks remain readable but require one unlocked
+  build to migrate before `--locked` or `--frozen` builds.
+  Nested Git path sources use `path+git+URL#COMMIT/REL`, independent of the
+  cache location. Checksum is
   SHA-256 over sorted relative paths,
   sizes and contents of `*.mt` and `*.mettle`, excluding generated `lock.mettle`
   files (hidden, `target`, `build` skipped). Registry and Git checksum mismatches always fail; other drift is
@@ -83,8 +89,7 @@ bindings take precedence; `package.name` remains an optional root qualifier.
   protocol is specified; no registry/account is created. Host and target
   package instances resolve features independently. Host dependency mounts are
   exposed only while compiling host build programs and procedural macros;
-  package build-script output directories still need isolation when the same
-  package is selected in both contexts. Optional build-dependencies are
+  their build-script outputs use separate writable package views. Optional build-dependencies are
   rejected. Compiled Mettle interface output (`emit: "package"`) requires the
   self-hosted compiler and reports `error[feature]`; source libraries work today.
   Evidence: `tests/packages.py` cases `coexisting_versions`, `git_source`,
@@ -97,9 +102,11 @@ with the hosted `std`, cached like any other program) that runs with the
 package directory as its working directory before consumers compile. Its
 environment adds `METTLE_OUT_DIR` (`target/mettle/out` in the package),
 `METTLE_PACKAGE_DIR`, `METTLE_PACKAGE_NAME`, `METTLE_PACKAGE_VERSION`,
-`METTLE_TARGET`, `METTLE_PROFILE` and `METTLE_FEATURES`. Stdout lines
+`METTLE_TARGET`, `METTLE_PROFILE` and `METTLE_FEATURES`. `METTLE_TARGET` is
+the host target for host dependencies and the selected target otherwise. Stdout lines
 `mettle:KEY=VALUE` are the only way to affect the build:
-`module=NAME=FILE` mounts a generated file as root module `NAME`,
+`module=NAME=FILE` mounts a generated file as root module `NAME`, also
+available by that name inside its owning dependency package,
 `feature=NAME` enables that `@cfg(feature = ...)` value for the package,
 `link-lib=NAME` adds `-lNAME`, and `rerun-if-changed=PATH`,
 `rerun-if-env-changed=VAR` and `reproducible` form the input contract below.
@@ -108,6 +115,15 @@ files are ordinary sources of the compile, so they are hashed by content and
 participate in dependency analysis before consumers compile. Scripts run with
 ordinary host capabilities and are never sandboxed, but their execution,
 decisions and outputs are visible with `--explain`.
+
+Git packages execute host tools in writable checkout-shaped copies beneath the
+root package's `target/mettle/package-work`, not in the immutable source cache.
+Each copy preserves package-relative paths, tracked contents/modes and Git
+metadata; `METTLE_PACKAGE_DIR` and the working directory name its package root,
+and `METTLE_OUT_DIR` remains that root's `target/mettle/out`.
+Host and target views are separate. Builds and clean serialize shared output
+slots with `target/mettle-package-work.lock`; generated files never become the
+authority for source identity or lock contents.
 
 Reuse follows section 2's host-execution contract, including the script binary,
 target/profile/features, declared input hashes/variables and generated-file hashes.
@@ -164,8 +180,9 @@ supported; only `name!(...)` invocations; no project isolation policy.
 ### Incremental builds and the build cache (T003)
 
 `mettle build` (executables and objects) keys its output by a SHA-256 over: the
-compiler identity (version, runtime target, size and mtime of the compiler and
-runtime library), emit/profile/overflow policy/target/linker/sysroot, the
+compiler identity (version, runtime target, compiler sanitizer mode, and paths
+and SHA-256 digests of the compiler and ordinary/address/thread runtime archives),
+emit/profile/overflow policy/target/linker/sysroot, the
 output's file name (the linker embeds it as the code-signature identifier),
 enabled features, mounts, link libraries, and every source the load step read.
 User sources count by token stream (comments, spacing and blank lines do not
@@ -175,7 +192,9 @@ and probed-but-absent paths as absent. A whole-build hit copies the stored
 artifact and skips checking, lowering, code generation and linking; a miss runs
 the same whole-build path as a clean build. CTest builds use a cache in the
 build tree, never the user's. Whole-build reuse remains available for
-executables and objects without `-g`.
+objects without `-g`, and for executables without `-g` or explicit native
+link libraries. Executables using `@link` or build-script `link-lib` bypass
+whole-build reuse because the linker may resolve changed library contents.
 
 Eligible `mettle build` debug executable builds additionally cache one object
 per resolved dependency package. The loader records package-instance ownership
@@ -340,6 +359,10 @@ declare a unique link identity; reject incompatible duplicate providers rather
 than linking an unpredictable one. Patch/override selections are explicit
 workspace configuration and enter the lock.
 
+The compiler-provided `core`, `alloc` and `std` tiers share one standard-library
+package instance for implementation ownership. Application and dependency
+instances remain distinct; tier visibility and layering rules are unchanged.
+
 Lock entries include exact source/version/commit/content identities, dependency
 edges and selected resolver format. Target and resolved features enter build
 records/cache keys. Reject a checksum mismatch. `--locked` rejects required lock
@@ -490,8 +513,9 @@ the test). Inline and file modules (`module name`) are included; displayed
 names are fully qualified, such as `network.connect`. `@ignore` /
 `@ignore("reason")` skips a test unless `--include-ignored` (run everything) or
 `--ignored` (run only ignored tests) is given; `@should_panic` /
-`@should_panic("text")` passes only when the test panics (exit status 101) or is
-ended by a signal, and the text, when given, must occur in its captured output.
+`@should_panic("text")` passes only when the test panics (exit status 101) or
+aborts with SIGABRT; unrelated signals do not satisfy the panic expectation.
+The text, when given, must occur in its captured output.
 The user's root `main` is not the entry of a test build and need not exist; the
 compiler generates the entry. Each test runs in its own process of the same
 executable (a hidden selector argument), `--jobs N` of them at a time
@@ -590,7 +614,9 @@ the filesystem without a local web server. Fenced code remains unlinked.
 the selected package (all items, `pub` or not) after its `@test` functions;
 `--doc` runs only the examples. Each generated test is overlaid on its original
 file while the complete package/module graph is built, so file-module examples
-retain their imports and module context without modifying package files. Each
+retain their imports and module context without modifying package files.
+Harness builds make test-bearing ancestor modules package-visible; ordinary
+builds retain their declared visibility. Each
 example runs in its own process through the test harness; if the combined build
 fails, examples are built one by one so only the broken ones fail. A code line
 written `~ code` (or `~`) is compiled but not rendered. The fence info is a
@@ -647,6 +673,8 @@ references and definitions use checked receiver/callee facts.
 Rename refuses ambiguous or unsafe cases (fields, variants, modules, `main`,
 reserved words as new names); local and parameter renames stay within their
 scope and update `name:` argument labels.
+Uniquely resolved qualified cross-file uses participate in references and
+rename edits under the same declaration-ambiguity checks.
 
 Known gaps: completion does not prove extension-method applicability or resolve
 all incomplete qualified paths; signature help does not substitute generic

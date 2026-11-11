@@ -166,10 +166,11 @@ parentheses place optionality outside a source-annotated type, as in
 loan obligations; they do not create ownership, retention or access authority.
 
 Bare interface parameter types denote independently generic concrete inputs.
-A bare interface parameter accessed through `read` or `mut` (or with no mode)
-only borrows its argument, so its implicit parameter is not required to be
-Sized and unsized implementors such as `Text` or slices are accepted; `take`
-keeps the Sized requirement.
+Explicit `read` or `mut` access borrows the argument. Omitted access follows
+semantic-rules section 2: declaration-known Copy, including implied Copy bounds,
+selects an independent value; otherwise it read-borrows. Borrowed implicit
+inputs need not be Sized, permitting unsized implementors such as `Text` or
+slices; `take` keeps the Sized requirement.
 `any Interface` is erased dispatch; `some Interface` is an opaque concrete return.
 Associated types and constants may be bound in generic arguments or constrained
 by a where clause. In generic arguments, `Item = T` is shorthand for
@@ -259,8 +260,13 @@ destructor    = "drop", block ;
 ```
 
 `async(heap)` is valid only on interface methods with a read or mut receiver
-and a declared output. A call through `any Interface` returns
-`pinned heap any Future<Output = T>` bounded by the call's borrowed inputs.
+and a declared success type `T`. A call through `any Interface` returns
+`pinned heap any Future<Output = T>` for a nonthrowing method, or
+`pinned heap any Future<Output = Outcome<T, E>>` when it declares `throws E`.
+Both retain the call's borrowed-input bounds. As with concrete async calls,
+the body failure is deferred until polling, not raised by future construction;
+`try await` propagates it. Argument and default evaluation retain their own
+effects.
 Async methods without it cannot be called through `any`.
 
 Members include fields, methods, constructors, associated constants, and one
@@ -551,11 +557,11 @@ binding       = ( "let" | "var" ), pattern, [ ":", type ],
                 [ "=", expression, [ "else", block ] ] ;
 break_stmt    = "break", [ "label", IDENT ], [ expression ] ;
 continue_stmt = "continue", [ "label", IDENT ] ;
-while_stmt    = [ "label", IDENT, ":" ], "while", condition, block ;
+while_stmt    = [ "label", IDENT, ":" ], "while", conditions, block ;
 for_stmt      = [ "label", IDENT, ":" ], "for", pattern, "in", expression, block ;
 throw_stmt    = "throw", expression ;
 condition     = expression | "let", pattern, "=", expression ;
-if_expr       = "if", condition, block, [ "else", ( if_expr | block ) ] ;
+if_expr       = "if", conditions, block, [ "else", ( if_expr | block ) ] ;
 loop_expr     = [ "label", IDENT, ":" ], "loop", block ;
 expression    = range_expr ;
 range_expr    = coalesce, [ ( ".." | "..=" ), [ coalesce ] ]

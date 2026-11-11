@@ -9,8 +9,8 @@ areas remain partial: L003, L005, L009, S005-S014, S019-S021, S024-S025.
 
 ## Handoff (start here in a new session)
 
-Latest operation ledger (2026-11-09): **10,454 evidenced, 35 declared,
-2,801 missing, 5 not applicable** of 13,295 records. Declared means implemented
+Latest operation ledger (2026-11-10): **10,762 evidenced, 35 declared,
+2,493 missing, 5 not applicable** of 13,295 records. Declared means implemented
 but not behaviorally verified per type/profile. Subset/source-cfg reconciliation
 and Linux applicability review remain open; no area is closed by these batches.
 The 35 declared records comprise 20 conversion-blanket exposures and fifteen

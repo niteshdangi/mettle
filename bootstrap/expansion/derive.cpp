@@ -116,10 +116,12 @@ private:
     for (const auto &parameter : product.genericParameters) {
       arguments += arguments.empty() ? "<" : ", ";
       if (parameter.kind == GenericParameterKind::Const)
-        arguments += "const ";
+        arguments += "{";
       else if (parameter.kind == GenericParameterKind::Region)
         arguments += "region ";
       arguments += identifier(parameter.name);
+      if (parameter.kind == GenericParameterKind::Const)
+        arguments += "}";
     }
     target += arguments.empty() ? "" : arguments + ">";
     put("extend " + target + " implements " + path + " {\n");
@@ -392,7 +394,13 @@ private:
   }
 
   void hash() {
-    put("fn hash<__H: " + core + "hash.Hasher>(mut state: __H): Unit {\n");
+    std::string hasher = "__H";
+    while (std::any_of(
+        product.genericParameters.begin(), product.genericParameters.end(),
+        [&](const auto &parameter) { return parameter.name == hasher; }))
+      hasher += "_";
+    put("fn hash<" + hasher + ": " + core +
+        "hash.Hasher>(mut state: " + hasher + "): Unit {\n");
     auto emit = [&](const Shape &shape) {
       if (product.enumeration)
         put("usize.(" + core + "hash.Hash).hash(" +

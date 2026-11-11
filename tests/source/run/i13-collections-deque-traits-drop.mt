@@ -66,8 +66,11 @@ fn run(): i32 throws Error {
         failure(_) => { return 9 }
     }
     if deque.len() != 5usize || deque[0usize] != -1 || deque[4usize] != 3 { return 10 }
+    let before_shrink = deque.capacity()
     deque.shrink_to_fit()
-    if deque.capacity() != 5usize { return 11 }
+    if deque.capacity() < 5usize || deque.capacity() > before_shrink ||
+        deque.len() != 5usize || deque[0usize] != -1 || deque[1usize] != 0 ||
+        deque[2usize] != 1 || deque[3usize] != 2 || deque[4usize] != 3 { return 11 }
 
     // IntoIter from both ends, with size hints that track remaining items.
     var owned = vec_deque.new<i32>()

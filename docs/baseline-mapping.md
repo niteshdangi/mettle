@@ -67,7 +67,7 @@ the default rule a blanket "covered" stamp.
 | weak ownership | weak T / local weak T |
 | Pin<P> | Pinned owner/view with equivalent address-stability obligations |
 | Option<T> | T?; None/Some become none/present without flattening |
-| Result<T,E> | Stored T throws E; Ok/Err become success/failure |
+| Result<T,E> | Stored Outcome<T, E>; Ok/Err become success/failure |
 | Send / Sync | Transferable / Shareable with the native derivation rules |
 | Fn / FnMut / FnOnce | Read/mutate/consume-callable capabilities |
 | associated types/constants | Native associated declarations and where equalities |

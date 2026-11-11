@@ -159,6 +159,49 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
   for (auto &parameter : parameters)
     parameter = normalizeGenericType(parameter, bindings, node.span);
   genericObligations(environment, bindings, node.span);
+  if (ranged) {
+    auto bound = typeNames.find("core::ops::RangeEnd");
+    bool valid = bound != typeNames.end() && parameters[1] == Type::Usize &&
+                 parameters[2] == bound->second &&
+                 checked.types->isProduct(parameters[2]);
+    if (valid) {
+      const auto &end = checked.types->product(parameters[2]);
+      auto hasVariant = [&](std::string_view name, bool payload) {
+        auto found =
+            std::find_if(end.variants.begin(), end.variants.end(),
+                         [&](const auto &item) { return item.name == name; });
+        return found != end.variants.end() &&
+               found->fields.size() == (payload ? 1u : 0u) &&
+               (!payload || (found->fields[0] < end.fields.size() &&
+                             end.fields[found->fields[0]].type == Type::Usize));
+      };
+      valid = end.kind == AggregateKind::Enumeration &&
+              end.variants.size() == 3 && hasVariant("Unbounded", false) &&
+              hasVariant("Exclusive", true) && hasVariant("Inclusive", true);
+    }
+    if (!valid) {
+      error("type", node.span,
+            "range indexing protocol requires bounds usize and "
+            "core.ops.RangeEnd");
+      return inference.fresh();
+    }
+    const auto receiver =
+        mutableIndex ? ParameterMode::Mut : ParameterMode::Read;
+    if (parameters[0] != self ||
+        callee.receiver != (mutableIndex ? "mut" : "read") ||
+        !checked.types->isView(result) ||
+        checked.types->view(result).mode != receiver || callee.unsafeFunction ||
+        callee.variadic) {
+      error("type", node.span,
+            "range indexing protocol requires a matching safe receiver and "
+            "view result");
+      return inference.fresh();
+    }
+    auto &range = *node.children[1];
+    if (callee.parameters[1].mode == "mut" &&
+        (range.name.empty() || range.name == "from"))
+      requireMutablePlace(*range.children.front());
+  }
   if (node.kind == Kind::Assign &&
       (callee.receiver != "mut" || result != Type::Unit))
     error("type", node.span,

@@ -58,32 +58,35 @@ llvm::Type *LoweringContext::storageType(Type valueType) {
   return valueType == Type::Bool ? builder.getInt8Ty() : type(valueType);
 }
 llvm::Value *LoweringContext::load(Type valueType, llvm::Value *address,
-                                   llvm::Align alignment) {
+                                   llvm::Align alignment, bool isVolatile) {
   if (indirect(valueType)) {
     auto *copy = temporary(valueType);
     builder.CreateMemCpy(copy, copy->getAlign(), address, alignment,
-                         layout(valueType).size);
+                         layout(valueType).size, isVolatile);
     return copy;
   }
   auto *loaded =
       builder.CreateAlignedLoad(storageType(valueType), address, alignment);
+  loaded->setVolatile(isVolatile);
   return loaded->getType() == type(valueType)
              ? loaded
              : builder.CreateTrunc(loaded, type(valueType));
 }
 void LoweringContext::store(Type valueType, llvm::Value *value,
-                            llvm::Value *address, llvm::Align alignment) {
+                            llvm::Value *address, llvm::Align alignment,
+                            bool isVolatile) {
   if (indirect(valueType)) {
-    if (value == address)
+    if (value == address && !isVolatile)
       return;
     builder.CreateMemMove(address, alignment, value,
                           llvm::Align(this->alignment(valueType)),
-                          layout(valueType).size);
+                          layout(valueType).size, isVolatile);
     return;
   }
   if (value->getType() != storageType(valueType))
     value = builder.CreateZExt(value, storageType(valueType));
-  builder.CreateAlignedStore(value, address, alignment);
+  builder.CreateAlignedStore(value, address, alignment)
+      ->setVolatile(isVolatile);
 }
 llvm::Type *LoweringContext::viewType(Type payload) {
   auto metadata = program.types->pointerMetadata(payload);

@@ -48,6 +48,47 @@ bool Resolution::inside(ModuleId module, ModuleId boundary) const {
   }
 }
 
+std::optional<std::uint32_t> Resolution::packageOf(Span span) const {
+  if (span.begin >= span.end)
+    return std::nullopt;
+  if (auto found = sourcePackages.find(span.source);
+      found != sourcePackages.end())
+    return found->second;
+  if (rawPackageInput && intervals.contains(span.source))
+    return 0;
+  return std::nullopt;
+}
+
+std::optional<std::uint32_t>
+Resolution::nativePackage(std::string_view name) const {
+  if (name != "core" && name != "alloc" && name != "std")
+    return std::nullopt;
+  auto found = packageInstances.find("native:standard-library");
+  return found == packageInstances.end()
+             ? std::nullopt
+             : std::optional<std::uint32_t>(found->second);
+}
+
+std::optional<std::uint32_t>
+Resolution::packageIndex(std::string_view identity) const {
+  auto found = packageInstances.find(std::string(identity));
+  if (found != packageInstances.end())
+    return found->second;
+  if (rawPackageInput && identity == "raw-root")
+    return 0;
+  return std::nullopt;
+}
+
+std::optional<std::string>
+Resolution::packageIdentity(std::uint32_t index) const {
+  for (const auto &[identity, candidate] : packageInstances)
+    if (candidate == index)
+      return identity;
+  if (rawPackageInput && index == 0)
+    return "raw-root";
+  return std::nullopt;
+}
+
 void Resolution::index() {
   intervals.clear();
   for (std::size_t i = 0; i < items.size(); ++i)
@@ -283,8 +324,18 @@ std::optional<std::string> Resolution::lookup(ModuleId from,
 
 class Resolver {
 public:
-  Resolver(const Module &tree, Diagnostics &diagnostics)
+  Resolver(const Module &tree, Diagnostics &diagnostics,
+           const SourcePackages &packages)
       : tree(tree), diagnostics(diagnostics) {
+    result.rawPackageInput = packages.empty();
+    for (const auto &[source, identity] : packages) {
+      if (identity.empty())
+        continue;
+      auto [instance, inserted] = result.packageInstances.try_emplace(
+          identity, static_cast<std::uint32_t>(result.packageInstances.size()));
+      (void)inserted;
+      result.sourcePackages.emplace(source, instance->second);
+    }
     result.moduleInfos.push_back({0, "", ""});
     result.scopes.emplace_back();
     result.definitions.push_back(
@@ -300,6 +351,7 @@ public:
     if (!diagnostics.empty())
       return {};
     prelude();
+    collectAssociatedFunctions();
     collectAssociatedConstants();
     if (!diagnostics.empty())
       return {};
@@ -314,6 +366,13 @@ private:
   std::unordered_map<std::string, ModuleId> moduleNames;
   std::unordered_set<std::string> diagnosed;
   std::unordered_set<const Module::Associated *> collectedAssociatedConstants;
+  std::unordered_set<std::size_t> associatedConstantDefinitions;
+  struct AssociatedFunction {
+    const Function *function;
+    std::size_t definition, item;
+    std::string owner;
+  };
+  std::vector<AssociatedFunction> associatedFunctions;
 
   ModuleId scope(const std::vector<std::string> &path) {
     std::vector<std::string> prefix;
@@ -510,6 +569,7 @@ private:
       auto module = scope(function.item.scope);
       auto name = itemName(module, function.name);
       auto visible = boundary(function.item, module, function.span);
+      auto item = result.items.size();
       result.items.push_back({function.span, module, name, visible});
       if (function.owner.empty())
         define(Namespace::Value, module, visible, function.name, name,
@@ -530,13 +590,45 @@ private:
                                       name,
                                       function.span,
                                       {}});
-        result.associatedItems[itemName(module, function.owner)].push_back(
-            index);
+        auto owner = itemName(module, function.owner);
+        result.associatedItems[owner].push_back(index);
+        associatedFunctions.push_back({&function, index, item, owner});
       }
     }
   }
 
-  void collectAssociatedConstants() {
+  bool collectAssociatedFunctions() {
+    bool changed = false;
+    for (auto &entry : associatedFunctions) {
+      auto module = scope(entry.function->item.scope);
+      auto owner = result.lookup(module, entry.function->owner, Namespace::Type,
+                                 entry.function->span, nullptr);
+      if (!owner)
+        continue;
+      auto canonical = result.associatedType(*owner);
+      if (!canonical || *canonical == entry.owner)
+        continue;
+      auto &old = result.associatedItems[entry.owner];
+      std::erase(old, entry.definition);
+      for (auto index : result.associatedItems[*canonical])
+        if (associatedConstantDefinitions.contains(index) &&
+            result.definitions[index].name ==
+                result.definitions[entry.definition].name)
+          diagnostics.error("name", result.definitions[index].span,
+                            "duplicate associated item '" +
+                                result.definitions[index].name + "'");
+      result.associatedItems[*canonical].push_back(entry.definition);
+      auto &definition = result.definitions[entry.definition];
+      definition.canonical = *canonical + "::" + definition.name;
+      result.items[entry.item].canonical = definition.canonical;
+      entry.owner = *canonical;
+      changed = true;
+    }
+    return changed;
+  }
+
+  bool collectAssociatedConstants() {
+    bool changed = false;
     for (const auto &implementation : tree.implementations) {
       if (!implementation.interface.empty() || implementation.negative)
         continue;
@@ -572,11 +664,14 @@ private:
                                       canonical,
                                       associated.span,
                                       {}});
+        associatedConstantDefinitions.insert(index);
         members.push_back(index);
         result.items.push_back(
             {associated.span, module, std::move(canonical), visible});
+        changed = true;
       }
     }
+    return changed;
   }
 
   struct Target {
@@ -697,7 +792,8 @@ private:
               bind(module, name, target, visible, true, entry.span, index);
       }
     } else {
-      auto found = targets(module, declaration.path);
+      auto found =
+          targets(declaration.synthesized ? 0 : module, declaration.path);
       if (found.empty())
         return false;
       resolved = true;
@@ -755,7 +851,8 @@ private:
       reserve(declaration, true);
     bool changed;
     do {
-      changed = false;
+      changed = collectAssociatedFunctions();
+      changed |= collectAssociatedConstants();
       for (std::size_t i = 0; i < tree.imports.size(); ++i) {
         bool complete = false;
         changed |= import(tree.imports[i], i, complete);
@@ -780,28 +877,14 @@ private:
            {},
            boundary(declaration.item, module, declaration.span)});
     }
-    for (ModuleId module = 0; module < result.scopes.size(); ++module)
-      for (const auto &[bindingKey, bindings] :
-           result.scopes[module].bindings) {
-        if (std::any_of(
-                bindings.begin(), bindings.end(),
-                [](const auto &entry) { return entry.explicitBinding; }))
-          continue;
-        std::unordered_set<std::size_t> declarations;
-        for (const auto &binding : bindings)
-          declarations.insert(binding.definition);
-        if (declarations.size() > 1)
-          diagnostics.error("name", tree.imports[*bindings.back().import].span,
-                            "ambiguous glob imports for '" +
-                                bindingKey.substr(2) + "'");
-      }
   }
 };
 
 std::shared_ptr<const Resolution> resolve(const Module &module,
-                                          Diagnostics &diagnostics) {
+                                          Diagnostics &diagnostics,
+                                          const SourcePackages &packages) {
   if (!diagnostics.empty())
     return {};
-  return Resolver(module, diagnostics).run();
+  return Resolver(module, diagnostics, packages).run();
 }
 } // namespace mettle::resolution

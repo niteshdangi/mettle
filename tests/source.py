@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Runs the one-file-per-case compiler programs in tests/source.
 
-  source.py run  COMPILER OUTDIR [-j N] [--filter REGEX] [--timeout-scale X]   tests/source/run/*.mt
-  source.py fail COMPILER OUTDIR [-j N] [--filter REGEX] [--timeout-scale X]   tests/source/fail/*.mt
+  source.py run  COMPILER OUTDIR [-j N] [--filter REGEX]   tests/source/run/*.mt
+  source.py fail COMPILER OUTDIR [-j N] [--filter REGEX]   tests/source/fail/*.mt
 
 Every case is a standalone program whose leading `// key: value` comment lines
 (see directives.py) configure it. The lines stay in the file, so diagnostic
@@ -14,7 +14,6 @@ run cases are built and executed once per profile:
   expect-exit-release  overrides expect-exit under the release profile
   profiles             space-separated subset of `debug release` (default both)
   flags                extra `mettle build` arguments
-  timeout              seconds allowed for each compile or execution (default 60)
   arch                 `aarch64` or `x86_64`: skipped on any other host
   truncated            reason: the file deliberately lacks its final newline because the
                        program ends mid-construct (the only way to omit it)
@@ -24,7 +23,7 @@ file untouched, and report every expected diagnostic:
   expect-error         `PHASE LINE:COL MESSAGE`; one diagnostic must carry all three
   expect-error-count   exact number of diagnostics (optional)
   expect-note/help     expected related diagnostic text (optional)
-  profiles, flags, timeout, arch as above (default profile: debug)
+  profiles, flags, arch as above (default profile: debug)
 """
 
 import argparse
@@ -37,17 +36,17 @@ import re
 import resource
 import shlex
 import signal
-import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import directives
+import processes
 
 ROOT = Path(__file__).resolve().parent / "source"
 PROFILES = ("debug", "release")
-COMMON_KEYS = {"profiles", "flags", "timeout", "arch", "truncated"}
+COMMON_KEYS = {"profiles", "flags", "arch", "truncated"}
 KEYS = {"run": COMMON_KEYS | {"expect-exit", "expect-exit-debug", "expect-exit-release"},
         "fail": COMMON_KEYS | {"expect-error", "expect-error-count",
                                "expect-note", "expect-help"}}
@@ -62,7 +61,6 @@ class Case:
     kind: str
     profiles: tuple
     flags: list
-    timeout: float
     arch: object
     exits: dict = field(default_factory=dict)
     errors: list = field(default_factory=list)
@@ -108,7 +106,7 @@ def parse_case(path, kind):
         raise ValueError(f"{name}: a `truncated` directive and a missing final newline "
                          "must go together")
     case = Case(name, path, kind, profiles, shlex.split(single(options, "flags", "", name)),
-                float(single(options, "timeout", "60", name)), single(options, "arch", None, name),
+                single(options, "arch", None, name),
                 header_lines=header_lines)
     if kind == "run":
         default = parse_exit(single(options, "expect-exit", "0", name), name)
@@ -152,12 +150,7 @@ class Runner:
 
     def run(self, arguments, expected=0):
         begin = time.perf_counter()
-        try:
-            result = subprocess.run(arguments, text=True, capture_output=True,
-                                    timeout=self.case.timeout)
-        except subprocess.TimeoutExpired:
-            raise AssertionError(f"{self.case.name}: {arguments!r} exceeded "
-                                 f"{self.case.timeout:g}s") from None
+        result = processes.run(arguments, text=True, capture_output=True)
         self.commands.append({"command": list(map(str, arguments)),
                               "exit_status": result.returncode,
                               "elapsed_seconds": time.perf_counter() - begin,
@@ -206,15 +199,13 @@ class Runner:
                                  "profile": profile, "source_sha256": digest(case.path)})
 
 
-def run_suite(kind, executable, output, jobs, pattern, scale=1.0):
+def run_suite(kind, executable, output, jobs, pattern):
     executable = str(Path(executable).resolve())
     directory = Path(output).resolve() / kind
     directory.mkdir(parents=True, exist_ok=True)
     cases = [case for case in load_cases(kind) if not pattern or re.search(pattern, case.name)]
     if not cases:
         raise SystemExit(f"no {kind} cases selected")
-    for case in cases:
-        case.timeout *= scale
     evidence = {"scope": "Source regressions through the initial I06 machine boundary; "
                          "not full language or release qualification",
                 "status": "in_progress", "mode": kind, "compiler_sha256": digest(executable),
@@ -258,8 +249,6 @@ if __name__ == "__main__":
     parser.add_argument("output")
     parser.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 1)
     parser.add_argument("--filter", help="only cases whose name matches this regular expression")
-    parser.add_argument("--timeout-scale", type=float, default=1.0,
-                        help="multiplies every case timeout (slow or heavily loaded machines)")
     arguments = parser.parse_args()
     run_suite(arguments.kind, arguments.executable, arguments.output, max(arguments.jobs, 1),
-              arguments.filter, arguments.timeout_scale)
+              arguments.filter)

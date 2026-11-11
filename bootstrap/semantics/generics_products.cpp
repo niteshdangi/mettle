@@ -31,7 +31,7 @@ std::optional<int> Checker::genericUnitVariant(Node &n) {
   auto origin = found->second;
   if (checked.types->product(origin).genericOrigin != Type::Unknown)
     origin = checked.types->product(origin).genericOrigin;
-  const auto &environment = productGenerics.at(declaration);
+  auto &environment = productGenerics.at(declaration);
   const auto &explicitArguments = n.ownerGenericArguments.empty()
                                       ? n.genericArguments
                                       : n.ownerGenericArguments;
@@ -51,14 +51,72 @@ std::optional<int> Checker::genericUnitVariant(Node &n) {
     arguments[index] = genericArgument(argument, environment.parameters[index]);
     ++index;
   }
+  if (auto expected = expectedTypes.find(&n);
+      expected != expectedTypes.end() &&
+      checked.types->isProduct(expected->second)) {
+    const auto instance = checked.types->product(expected->second);
+    if (instance.genericOrigin == origin &&
+        instance.genericArguments.size() == arguments.size())
+      for (std::size_t p = 0; p < arguments.size(); ++p)
+        if (arguments[p] == Type::Unknown)
+          arguments[p] = instance.genericArguments[p];
+  }
+  std::vector<TypeBinding> bindings;
+  for (std::size_t p = 0; p < arguments.size(); ++p)
+    bindings.push_back({environment.parameters[p], arguments[p]});
+  auto *caller = genericEnvironment;
+  genericEnvironment = &environment;
+  completeGenericBindings(environment, bindings, n.span);
+  genericEnvironment = caller;
+  for (std::size_t p = 0; p < arguments.size(); ++p)
+    arguments[p] = bindings[p].argument;
+  facts(n).typeArguments = arguments;
   if (std::find(arguments.begin(), arguments.end(), Type::Unknown) ==
-      arguments.end())
+      arguments.end()) {
+    if (!genericObligations(environment, bindings, n.span))
+      return inference.fresh();
     return inference.fresh(
         checked.types->instantiateProduct(origin, std::move(arguments)));
+  }
   // Remaining arguments come from the expected type once it is known.
   auto result = inference.fresh();
-  fieldRequests.push_back({&n, result, result, false, origin});
+  fieldRequests.push_back({&n, result, result, false, origin, caller});
   return result;
+}
+void Checker::completeGenericUnitVariant(Node &node, Type expected) {
+  const auto instance = checked.types->product(expected);
+  auto origin = instance.genericOrigin == Type::Unknown
+                    ? expected
+                    : instance.genericOrigin;
+  for (const auto &product : module.products) {
+    if (typeNames.at(definitionName(product.span, product.name)) != origin)
+      continue;
+    auto &environment = productGenerics.at(&product);
+    const auto arguments = facts(node).typeArguments;
+    if (instance.genericArguments.size() != environment.parameters.size() ||
+        arguments.size() != environment.parameters.size()) {
+      error("type", node.span, "generic variant argument count does not match");
+      return;
+    }
+    std::vector<TypeBinding> bindings;
+    for (std::size_t p = 0; p < arguments.size(); ++p) {
+      if (arguments[p] != Type::Unknown &&
+          arguments[p] != instance.genericArguments[p]) {
+        error("type", node.span,
+              "explicit generic variant argument does not match expected type");
+        return;
+      }
+      bindings.push_back(
+          {environment.parameters[p], instance.genericArguments[p]});
+    }
+    auto *caller = genericEnvironment;
+    genericEnvironment = &environment;
+    completeGenericBindings(environment, bindings, node.span);
+    genericEnvironment = caller;
+    genericObligations(environment, bindings, node.span);
+    facts(node).typeArguments = instance.genericArguments;
+    return;
+  }
 }
 std::optional<int> Checker::genericConstruction(Node &n, bool reachable,
                                                 std::string_view name) {
@@ -211,7 +269,11 @@ std::optional<int> Checker::genericConstruction(Node &n, bool reachable,
       error("type", argument.span, "duplicate constructor argument");
     used[target] = true;
     if (!enumeration)
-      visibleField(origin, fields[target], argument.span);
+      visibleField(origin, fields[target],
+                   argument.name.empty() ? n.children[0]->span
+                                         : argument.fieldSpan,
+                   argument.name.empty() ? n.children[0]->context
+                                         : argument.fieldContext);
     inferGeneric(pattern.fields[fields[target]].type, inference.value(variable),
                  bindings, argument.span);
   }

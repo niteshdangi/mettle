@@ -42,10 +42,12 @@ public:
                   const std::set<std::string> &rootFeatures) const;
   // A package object key excludes root sources but includes exact package and
   // library source bytes plus the package's resolved dependency object keys.
+  // Native partitions additionally key their lowered bodies and symbol uses.
   std::optional<std::string> packageObjectKey(
       const std::string &identity, const std::vector<std::string> &sources,
       const std::vector<std::pair<std::string, std::string>> &dependencies,
-      const std::set<std::string> &features, const Options &options) const;
+      const std::set<std::string> &features, const Options &options,
+      const std::string &nativePartition = {}) const;
   bool packageObjectsSafe() const { return packageInputsSafe; }
 
 private:

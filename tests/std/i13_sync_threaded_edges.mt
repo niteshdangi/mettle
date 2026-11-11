@@ -28,13 +28,14 @@ fn main(): i32 {
         }
         worker_entered.get().store(true, core.sync.atomic.Ordering.Release)
         var checks = 0
-        guard = worker_changed.get().wait_while(
+        let waited = capture worker_changed.get().wait_while(
             guard,
             fn(mut ready: bool): bool {
                 checks += 1
                 !ready
             }
         )
+        guard = match take waited { success(value) => value, failure(e) => e.into_inner() }
         if !*guard.get() || checks < 2 { return 1 }
         0
     })
@@ -63,9 +64,10 @@ fn main(): i32 {
         success(value) => value,
         failure(error) => error.into_inner()
     }
-    let timed = changed.get().wait_timeout(
+    let timed_result = capture changed.get().wait_timeout(
         timeout_guard, std.time.from_nanos(0u64)
     )
+    let timed = match take timed_result { success(value) => value, failure(e) => e.into_inner() }
     let timed_out = timed.1.timed_out()
     core.mem.drop(timed.0)
     if !timed_out { return 3 }
@@ -75,7 +77,7 @@ fn main(): i32 {
         success(value) => value,
         failure(error) => error.into_inner()
     }
-    let waited = changed.get().wait_timeout_while(
+    let waited_result = capture changed.get().wait_timeout_while(
         timeout_guard,
         std.time.from_nanos(0u64),
         fn(mut ready: bool): bool {
@@ -88,6 +90,7 @@ fn main(): i32 {
             }
         }
     )
+    let waited = match take waited_result { success(value) => value, failure(e) => e.into_inner() }
     if waited.1.timed_out() || timeout_checks != 2 || !*waited.0.get() {
         return 3
     }

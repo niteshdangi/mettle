@@ -18,7 +18,7 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
     return;
   }
   if (p.kind == PatternKind::Binding && p.children.empty())
-    if (auto storage = staticName(p.text, p.span);
+    if (auto storage = staticName(p.text, p.span, p.context);
         storage && module.statics[*storage].constant) {
       // A scalar `const` name in a pattern matches its value, like a literal.
       auto value = staticValue(*storage);
@@ -39,12 +39,13 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
       p.kind = PatternKind::Literal;
     }
   if (p.kind == PatternKind::Binding || p.kind == PatternKind::At) {
-    auto prior = scopes.back().find(p.text);
+    auto prior = scopes.back().find(nameKey(p.text, p.context));
     if (prior != scopes.back().end()) {
       error("name", p.span, "duplicate pattern binding '" + p.text + "'");
       return;
     }
-    auto slot = local(p.text, variable, mode == ParameterMode::Mut, p.span);
+    auto slot =
+        local(p.text, variable, mode == ParameterMode::Mut, p.span, p.context);
     facts(p).slot = slot;
     if (slot >= 0 &&
         (mode == ParameterMode::Mut ||
@@ -105,11 +106,11 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
   }
   if (p.kind == PatternKind::Or) {
     auto saved = scopes.back();
-    std::map<std::string, Binding> bindings;
+    std::map<NameKey, Binding> bindings;
     for (std::size_t i = 0; i < p.children.size(); ++i) {
       scopes.back() = saved;
       pattern(p.children[i], variable, mode);
-      std::map<std::string, Binding> currentBindings;
+      std::map<NameKey, Binding> currentBindings;
       for (const auto &[name, binding] : scopes.back())
         if (!saved.contains(name))
           currentBindings.emplace(name, binding);
@@ -131,7 +132,7 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
             if ((child.kind == PatternKind::Binding ||
                  child.kind == PatternKind::At ||
                  child.kind == PatternKind::Rest) &&
-                child.text == name)
+                nameKey(child.text, child.context) == name)
               facts(child).slot = found->second.slot;
             for (auto &nested : child.children)
               remap(nested);
@@ -191,8 +192,9 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
         for (std::size_t field = index; field < index + count; ++field)
           facts(child).fields.push_back(static_cast<std::uint32_t>(field));
         if (!child.text.empty()) {
-          auto slot = local(child.text, patternVariables[&child],
-                            mode == ParameterMode::Mut, child.span);
+          auto slot =
+              local(child.text, patternVariables[&child],
+                    mode == ParameterMode::Mut, child.span, child.context);
           facts(child).slot = slot;
           if (slot >= 0 && (mode == ParameterMode::Mut ||
                             (mode == ParameterMode::Read &&
@@ -228,7 +230,7 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
     }
   } else {
     auto canonical =
-        checked.symbols->lookup(checked.symbols->moduleOf(p.span), p.text,
+        checked.symbols->lookup(nameModule(p.span, p.context), p.text,
                                 resolution::Namespace::Value, p.span);
     auto spelling = canonical ? *canonical : p.text;
     auto delimiter = spelling.rfind("::");
@@ -307,7 +309,7 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
         }
         if (!used.insert(*foundField).second)
           error("name", child.span, "duplicate pattern field");
-        visibleField(type, *foundField, child.span);
+        visibleField(type, *foundField, child.span, child.fieldContext);
         ordered.push_back(*foundField);
         orderedTypes.push_back(
             inference.fresh(product.fields[*foundField].type));
@@ -375,7 +377,7 @@ int Checker::match(Node &n, bool reachable) {
           if (p.kind == PatternKind::Binding || p.kind == PatternKind::At ||
               (p.kind == PatternKind::Rest && !p.text.empty())) {
             auto variable = patternVariables.at(&p);
-            auto slot = local(p.text, variable, false, p.span);
+            auto slot = local(p.text, variable, false, p.span, p.context);
             facts(p).guardSlot = slot;
             if (slot >= 0 &&
                 !checked.types->isCopy(inference.value(variable))) {
@@ -478,7 +480,7 @@ int Checker::bindingPattern(Node &n, bool reachable) {
   std::function<void(const Pattern &)> shadow = [&](const Pattern &pattern) {
     if (pattern.kind == PatternKind::Binding ||
         pattern.kind == PatternKind::At || pattern.kind == PatternKind::Rest)
-      scopes.back().erase(pattern.text);
+      scopes.back().erase(nameKey(pattern.text, pattern.context));
     for (const auto &child : pattern.children)
       shadow(child);
   };

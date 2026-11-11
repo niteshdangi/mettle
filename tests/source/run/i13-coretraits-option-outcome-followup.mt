@@ -10,7 +10,6 @@ extend Wrapped implements Deref {
     fn deref(): read i32 from self { read self.value }
 }
 extend Wrapped implements DerefMut {
-    type Target = i32
     mut fn deref_mut(): mut i32 from self { mut self.value }
 }
 

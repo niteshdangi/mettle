@@ -233,11 +233,12 @@ ir::Value Builder::merge(Type type, const std::vector<Value> &values,
   Instruction phi{Op::Phi, {}, values, blocks, "", {-1, {}}, -1, 0, {}};
   return emit(std::move(phi), type);
 }
-ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics) {
+ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
+                  const ImportedBodies *imported) {
   ir::Program result;
   result.types = module.typeStore();
   for (std::size_t i = 0; i < module.syntax().functions.size(); ++i)
-    if (!module.function(i).library.empty())
+    if (!module.imported(i) && !module.function(i).library.empty())
       result.libraries.push_back(module.function(i).library);
   for (std::size_t i = 0; i < module.statics().size(); ++i) {
     const auto &facts = module.statics()[i];
@@ -246,25 +247,55 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics) {
                               facts.type, source.mutableBinding,
                               source.foreignDeclaration, source.span,
                               facts.initializer});
-    if (!facts.library.empty())
+    if (!source.item.checkedImport && !facts.library.empty())
       result.libraries.push_back(facts.library);
   }
   result.target = module.target();
   result.globalAssembly = module.globalAssembly();
   try {
-    for (std::size_t i = 0; i < module.syntax().functions.size(); ++i)
-      result.functions.push_back(
-          Builder(module).run(module.syntax().functions[i], i));
+    for (std::size_t i = 0; i < module.syntax().functions.size(); ++i) {
+      if (module.imported(i)) {
+        auto found =
+            imported ? imported->functions.find(i)
+                     : std::map<std::size_t, ir::Function>::const_iterator{};
+        if (!imported || found == imported->functions.end()) {
+          diagnostics.error("metadata", module.syntax().functions[i].span,
+                            "imported function has no verified symbolic body");
+          return result;
+        }
+        result.functions.push_back(found->second);
+      } else
+        result.functions.push_back(
+            Builder(module, imported).run(module.syntax().functions[i], i));
+    }
     for (std::size_t i = 0; i < module.syntax().functions.size(); ++i)
       for (std::size_t p = 0;
            p < module.syntax().functions[i].parameters.size(); ++p)
-        if (module.syntax().functions[i].parameters[p].defaultValue.get())
-          result.functions.push_back(
-              Builder(module).runDefault(module.syntax().functions[i], i, p));
+        if (module.hasDefault(i, p)) {
+          if (module.imported(i)) {
+            if (!imported || !imported->defaults.contains({i, p})) {
+              diagnostics.error(
+                  "metadata", module.syntax().functions[i].span,
+                  "imported default has no verified symbolic helper");
+              return result;
+            }
+            result.functions.push_back(imported->defaults.at({i, p}));
+          } else
+            result.functions.push_back(
+                Builder(module, imported)
+                    .runDefault(module.syntax().functions[i], i, p));
+        }
+    if (imported) {
+      result.functions.insert(result.functions.end(), imported->support.begin(),
+                              imported->support.end());
+      result.closureFunctions = imported->closureFunctions;
+    }
     for (std::size_t i = 0; i < module.closures().size(); ++i) {
+      if (module.closures()[i]->imported)
+        continue;
       result.closureFunctions.push_back(
           static_cast<int>(result.functions.size()));
-      result.functions.push_back(Builder(module).runClosure(i));
+      result.functions.push_back(Builder(module, imported).runClosure(i));
     }
     callableContracts(result);
   } catch (const LoweringLimit &error) {

@@ -10,8 +10,10 @@ fn run(): i32 throws Error {
     if !args[1usize].as_os_str().same(ffi.os_str_from_text("one")) { return 2 }
     if !args[2usize].as_os_str().same(ffi.os_str_from_text("two")) { return 3 }
     let name = ffi.os_str_from_text("MT_ENV_TEST")
+    // This process has no concurrent environment readers or foreign callbacks.
+    unsafe { try std.env.remove_var(name) }
     match std.env.var_os(name) { present(v) => { return 4 }, none => {} }
-    try std.env.set_var(name, ffi.os_str_from_text("a=b"))
+    unsafe { try std.env.set_var(name, ffi.os_str_from_text("a=b")) }
     match std.env.var_os(name) { present(v) => { if !v.as_os_str().same(ffi.os_str_from_text("a=b")) { return 5 } }, none => { return 6 } }
     var seen = false
     let all = std.env.vars()
@@ -21,11 +23,15 @@ fn run(): i32 throws Error {
         i += 1usize
     }
     if !seen { return 7 }
-    try std.env.remove_var(name)
+    unsafe { try std.env.remove_var(name) }
     match std.env.var_os(name) { present(v) => { return 8 }, none => {} }
     // Names with `=` or NUL are rejected.
-    let bad = capture std.env.set_var(ffi.os_str_from_text("A=B"), ffi.os_str_from_text("x"))
-    if bad.is_success() { return 9 }
+    match take std.panic.catch_panic(fn(): Unit {
+        unsafe { let _ = capture std.env.set_var(ffi.os_str_from_text("A=B"), ffi.os_str_from_text("x")) }
+    }) {
+        std.panic.CatchResult.Panicked(_) => {},
+        _ => { return 9 }
+    }
     // Changing directory is visible through current_dir.
     try std.fs.create_dir(path_from_text("sub"))
     let before = try std.env.current_dir()

@@ -14,7 +14,6 @@ extend<T> core.mem.ManuallyDrop<T> implements Deref {
 }
 
 extend<T> core.mem.ManuallyDrop<T> implements DerefMut {
-    type Target = T
     mut fn deref_mut(): mut T from self {
         unsafe { mut *core.ptr.from_mut(mut self).cast<T>() }
     }

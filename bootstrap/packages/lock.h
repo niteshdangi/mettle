@@ -12,7 +12,7 @@ namespace mettle::packages {
 // the selected features and the active dependency edges (by package identity).
 struct LockedPackage {
   std::string id, name, version, source, checksum;
-  std::vector<std::string> features, dependencies;
+  std::vector<std::string> features, dependencies, gitSelectors;
   // The entry in the parsed lock file (empty for a freshly resolved lock).
   Span span;
 };
@@ -21,7 +21,8 @@ struct LockedPackage {
 bool equivalent(const LockedPackage &left, const LockedPackage &right);
 
 struct Lock {
-  static constexpr std::int64_t format = 2;
+  static constexpr std::int64_t format = 3;
+  std::int64_t version = format;
   // The root package first, then the rest sorted by identity.
   std::vector<LockedPackage> packages;
 

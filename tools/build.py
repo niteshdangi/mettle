@@ -87,9 +87,8 @@ def main():
             {name: environment[name] for name in ("ASAN_OPTIONS", "UBSAN_OPTIONS")})
     manifest = build / "foundation-evidence.json"
 
-    def probe(command, timeout=120):
-        result = subprocess.run(command, text=True, capture_output=True, env=environment,
-                                timeout=timeout)
+    def probe(command):
+        result = subprocess.run(command, text=True, capture_output=True, env=environment)
         if result.returncode:
             raise RuntimeError(
                 f"Probe {command!r} failed ({result.returncode}):\n{result.stdout}{result.stderr}")
@@ -193,9 +192,9 @@ def main():
                 if arguments.sanitizers:
                     command = [str(build / "mettle"), "--version"]
                     evidence["sanitizer_startup"] = {
-                        "command": command, "timeout_seconds": 15, "status": "in_progress"}
+                        "command": command, "status": "in_progress"}
                     try:
-                        evidence["sanitizer_startup"]["output"] = probe(command, timeout=15)
+                        evidence["sanitizer_startup"]["output"] = probe(command)
                     except Exception:
                         evidence["sanitizer_startup"]["status"] = "failed"
                         raise

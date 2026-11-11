@@ -1,7 +1,54 @@
 #include "syntax/lexer.h"
 #include "syntax/parser/detail.h"
+#include <algorithm>
 
 namespace mettle::parsing {
+std::optional<std::size_t> Parser::fragmentEnd(std::string_view kind,
+                                               std::size_t begin) {
+  StateGuard guard(*this);
+  position = static_cast<std::size_t>(
+      std::lower_bound(tokens.begin(), tokens.end(), begin,
+                       [](const Token &token, std::size_t offset) {
+                         return token.span.begin < offset;
+                       }) -
+      tokens.begin());
+  parens = nesting = genericExpressionLevel = 0;
+  loopHeadParens.reset();
+  auto savedAsync = inAsyncBody;
+  inAsyncBody = true;
+  speculating = true;
+  struct Restore {
+    Parser &parser;
+    bool savedAsync;
+    ~Restore() {
+      parser.undoTokenEdits(0);
+      parser.speculating = false;
+      parser.inAsyncBody = savedAsync;
+    }
+  } restore{*this, savedAsync};
+  try {
+    if (kind == "expr")
+      expr();
+    else if (kind == "stmt")
+      stmt();
+    else if (kind == "pat")
+      pattern();
+    else if (kind == "ty")
+      type();
+    else if (kind == "path") {
+      do {
+        name();
+        if (genericOpen())
+          genericArguments();
+      } while (is(".") && nameToken(peek(1)) && take("."));
+    } else
+      return std::nullopt;
+    return peek().span.begin;
+  } catch (ParseFailure &) {
+    return std::nullopt;
+  }
+}
+
 void Parser::run(Module &module, std::vector<std::string> scope, bool nested) {
   separators();
   while (peek().kind != TokenKind::End && !(nested && is("}"))) {
@@ -20,15 +67,15 @@ void Parser::run(Module &module, std::vector<std::string> scope, bool nested) {
       } else if (is("extern") || (is("unsafe") && peek(1).text == "extern")) {
         foreignDeclaration(module, std::move(item));
       } else if (is("static") ||
-                 (is("const") && peek(1).kind == TokenKind::Word &&
-                  peek(1).text != "fn" && peek(1).text != "unsafe" &&
-                  peek(1).text != "async")) {
+                 (is("const") && nameToken(peek(1)) && peek(1).text != "fn" &&
+                  peek(1).text != "unsafe" && peek(1).text != "async")) {
         staticDeclaration(module, std::move(item), false);
       } else if (is("module")) {
         moduleDeclaration(module, std::move(item));
       } else if (is("import")) {
         importDeclaration(module, std::move(item));
-      } else if (is("interface")) {
+      } else if (is("interface") ||
+                 (is("unsafe") && peek(1).text == "interface")) {
         auto value = interfaceDeclaration();
         value.item = item;
         for (auto &method : value.methods)
@@ -100,6 +147,24 @@ void Parser::run(Module &module, std::vector<std::string> scope, bool nested) {
 } // namespace mettle::parsing
 
 namespace mettle {
+struct FragmentParser::Impl {
+  Diagnostics diagnostics;
+  parsing::Parser parser;
+
+  explicit Impl(const Source &source)
+      : parser(tokenize(source, diagnostics), diagnostics) {}
+};
+
+FragmentParser::FragmentParser(std::string text)
+    : impl(std::make_unique<Impl>(
+          Source{"<macro fragment>", std::move(text), 0})) {}
+FragmentParser::~FragmentParser() = default;
+std::optional<std::size_t> FragmentParser::end(std::string_view kind,
+                                               std::size_t begin) {
+  return impl->diagnostics.empty() ? impl->parser.fragmentEnd(kind, begin)
+                                   : std::nullopt;
+}
+
 namespace {
 // Semantic facts are keyed by syntax identity, so each method needs its own
 // copy of the inherited generic syntax rather than shared callable/nested
@@ -177,12 +242,14 @@ void completeDeclarations(Module &module) {
     for (const auto &interface : product.interfaces) {
       Module::Implementation implementation;
       implementation.target.name = product.name;
-      implementation.target.regions = product.regions;
+      implementation.target.context = product.nameContext;
+      implementation.target.regions = regionNames(product.genericParameters);
       for (const auto &parameter : product.genericParameters)
         if (parameter.kind != GenericParameterKind::Region) {
           GenericArgument argument;
           auto type = std::make_shared<TypeSyntax>();
           type->name = parameter.name;
+          type->context = parameter.context;
           argument.type = std::move(type);
           implementation.target.arguments.push_back(std::move(argument));
         }
@@ -203,20 +270,25 @@ void completeDeclarations(Module &module) {
       GenericParameter self;
       self.name = "Self";
       self.span = interface.span;
+      self.context = method.lexicalContext;
       TypeSyntax bound;
       bound.name = interface.name;
+      bound.context = interface.nameContext;
       for (const auto &parameter : interface.genericParameters) {
         GenericArgument argument;
-        if (parameter.kind == GenericParameterKind::Type)
-          argument.type = std::make_shared<const TypeSyntax>(
-              TypeSyntax{parameter.name, "", {}, {}});
-        else if (parameter.kind == GenericParameterKind::Region)
-          argument.region = parameter.name;
+        if (parameter.kind == GenericParameterKind::Type) {
+          TypeSyntax type{parameter.name, "", {}, {}};
+          type.context = parameter.context;
+          argument.type = std::make_shared<const TypeSyntax>(std::move(type));
+        } else if (parameter.kind == GenericParameterKind::Region)
+          argument.region = {parameter.name, parameter.nameSpan,
+                             parameter.context};
         else {
           auto value = std::make_shared<Node>();
           value->kind = Kind::Name;
           value->span = parameter.span;
           value->text = parameter.name;
+          value->context = parameter.context;
           argument.value = std::move(value);
         }
         bound.arguments.push_back(std::move(argument));

@@ -17,6 +17,7 @@ struct Chosen {
   Candidate candidate;
   std::map<std::pair<std::string, bool>, std::string> dependencies;
   std::set<std::string> features;
+  std::set<std::string> gitSelectors;
   bool defaults = false, expanded = false;
 };
 
@@ -29,6 +30,7 @@ struct State {
   std::map<std::string, Chosen> chosen;
   std::map<std::string, std::vector<Constraint>> constraints;
   std::deque<Edge> queue;
+  bool valid = true;
 };
 
 std::string describe(const Manifest &manifest) {
@@ -113,6 +115,8 @@ private:
 
   void enable(State &state, const std::string &id, const Edge &edge) {
     auto &chosen = state.chosen.at(id);
+    if (edge.spec && edge.spec->git)
+      chosen.gitSelectors.insert(gitSelector(*edge.spec));
     const auto &manifest = *chosen.candidate.manifest;
     Span where = edge.spec ? edge.spec->span : manifest.nameSpan;
     if (!chosen.expanded) {
@@ -194,8 +198,9 @@ private:
           failFatal(where, "implicit feature '" + feature +
                                "' refers to a missing dependency");
       } else {
-        failFatal(where, "package '" + manifest.name + "' has no feature '" +
-                             feature + "'");
+        note(where, "package '" + manifest.name + "' has no feature '" +
+                        feature + "'");
+        state.valid = false;
         return;
       }
     }
@@ -311,7 +316,7 @@ private:
           target;
     }
     enable(state, target, edge);
-    return !fatal;
+    return !fatal && state.valid;
   }
 
   void choose(State &state, const Edge &edge, Candidate candidate) {
@@ -343,7 +348,7 @@ private:
   }
 
   bool search(State state) {
-    while (!state.queue.empty() && !fatal) {
+    while (!state.queue.empty() && !fatal && state.valid) {
       auto edge = std::move(state.queue.front());
       state.queue.pop_front();
       if (edge.featureOnly) {
@@ -420,6 +425,8 @@ private:
         choose(branch, edge, std::move(option));
         if (fatal)
           return false;
+        if (!branch.valid)
+          continue;
         if (search(std::move(branch)))
           return true;
         if (fatal)
@@ -427,7 +434,7 @@ private:
       }
       return false;
     }
-    if (fatal)
+    if (fatal || !state.valid)
       return false;
     solution = std::move(state.chosen);
     return true;
@@ -440,6 +447,8 @@ private:
       package.candidate = chosen.candidate;
       package.identity = id;
       package.features.assign(chosen.features.begin(), chosen.features.end());
+      package.gitSelectors.assign(chosen.gitSelectors.begin(),
+                                  chosen.gitSelectors.end());
       for (const auto &[key, dependency] : chosen.dependencies)
         package.dependencies.emplace_back(key.first, dependency);
       return package;

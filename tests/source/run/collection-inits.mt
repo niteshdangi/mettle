@@ -10,25 +10,25 @@ type Arena {
     drop { unsafe { *self.drops += 1 } }
 }
 
-extend Arena implements Allocator {
+unsafe extend Arena implements Allocator {
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {
         var global = Global()
         let p = try global.allocate(layout)
         unsafe { *self.allocations += 1 }
         p
     }
-    mut fn deallocate(p: ptr<mut u8>, layout: Layout): Unit {
+    mut unsafe fn deallocate(p: ptr<mut u8>, layout: Layout): Unit {
         unsafe { *self.frees += 1 }
         var global = Global()
-        global.deallocate(p, layout)
+        unsafe { global.deallocate(p, layout) }
     }
-    mut fn grow(p: ptr<mut u8>, old: Layout, size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn grow(p: ptr<mut u8>, old: Layout, size: usize): ptr<mut u8> throws AllocError {
         var global = Global()
-        try global.grow(p, old, size)
+        unsafe { try global.grow(p, old, size) }
     }
-    mut fn shrink(p: ptr<mut u8>, old: Layout, size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn shrink(p: ptr<mut u8>, old: Layout, size: usize): ptr<mut u8> throws AllocError {
         var global = Global()
-        try global.shrink(p, old, size)
+        unsafe { try global.shrink(p, old, size) }
     }
 }
 

@@ -1,0 +1,4 @@
+name: "widget"
+version: "1.0.0"
+kind: "library"
+features { old_api: [] }

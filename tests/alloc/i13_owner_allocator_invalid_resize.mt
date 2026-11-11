@@ -10,7 +10,8 @@ fn check(): i32 throws AllocError {
     unsafe { core.ptr.write(pointer, 0x5Au8) }
 
     let oversized = 0x8000000000000000usize
-    match capture global.grow(pointer, layout, oversized) {
+    let oversized_result = unsafe { capture global.grow(pointer, layout, oversized) }
+    match take oversized_result {
         success(_) => { return 1 },
         failure(error) => {
             if error.size != oversized || error.align != 8usize { return 2 }
@@ -18,17 +19,15 @@ fn check(): i32 throws AllocError {
     }
     if unsafe { core.ptr.`read`(pointer) } != 0x5Au8 { return 3 }
 
-    match capture global.shrink(pointer, layout, oversized) {
-        success(_) => { return 4 },
-        failure(error) => {
-            if error.size != oversized || error.align != 8usize {
-                return 5
-            }
-        }
+    let smaller = match capture layout_from_size_align(4usize, 8usize) {
+        success(value) => value,
+        failure(_) => { return 4 }
     }
-    if unsafe { core.ptr.`read`(pointer) } != 0x5Au8 { return 6 }
+    let shrunk = unsafe { try global.shrink(pointer, layout, 4usize) }
+    if shrunk.addr() % 8usize != 0usize ||
+        unsafe { core.ptr.`read`(shrunk) } != 0x5Au8 { return 6 }
 
-    global.deallocate(pointer, layout)
+    unsafe { global.deallocate(shrunk, smaller) }
     0
 }
 

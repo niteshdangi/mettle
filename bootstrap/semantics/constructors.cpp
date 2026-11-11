@@ -30,7 +30,9 @@ bool Checker::constructorShapeMatches(const Function &function,
     used[target] = true;
   }
   for (std::size_t i = 0; i < used.size(); ++i)
-    if (!used[i] && !function.parameters[i].defaultValue.get())
+    if (!used[i] &&
+        !checked.hasDefault(
+            static_cast<std::size_t>(&function - module.functions.data()), i))
       return false;
   return true;
 }
@@ -45,7 +47,8 @@ bool Checker::constructorShapesOverlap(const Function &a, const Function &b) {
         labels.emplace(second.parameters[i].name, i);
     for (std::size_t i = 0; i < first.parameters.size(); ++i) {
       const auto &parameter = first.parameters[i];
-      if (parameter.defaultValue.get())
+      if (checked.hasDefault(
+              static_cast<std::size_t>(&first - module.functions.data()), i))
         continue;
       auto found = labels.find(parameter.name);
       std::size_t begin = 0;
@@ -634,13 +637,14 @@ int Checker::genericCustomConstruction(Node &call, bool reachable, Type origin,
 void Checker::constructor(Function &function) {
   if (!function.constructor)
     return;
-  if (scopes.back().contains("self")) {
+  if (scopes.back().contains(nameKey("self", function.lexicalContext))) {
     error("name", function.span,
           "a constructor parameter cannot shadow 'self'");
     return;
   }
   auto type = annotation(function.annotation, function.span, function.owner);
   facts(function).constructorSelfSlot =
-      local("self", inference.fresh(type), true, function.span);
+      local("self", inference.fresh(type), true, function.span,
+            function.lexicalContext);
 }
 } // namespace mettle

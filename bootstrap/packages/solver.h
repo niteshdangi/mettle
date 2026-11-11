@@ -56,6 +56,7 @@ struct ResolvedPackage {
   std::string identity;
   // Selected features and active dependencies, sorted.
   std::vector<std::string> features;
+  std::vector<std::string> gitSelectors;
   // Dependency manifest key and exact package instance identity.
   std::vector<std::pair<std::string, std::string>> dependencies;
   const std::string &name() const { return candidate.manifest->name; }

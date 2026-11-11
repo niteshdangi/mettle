@@ -11,7 +11,7 @@ int Builder::defaultIndex(std::size_t callee, std::size_t parameter) const {
   for (std::size_t f = 0; f < module.syntax().functions.size(); ++f)
     for (std::size_t p = 0; p < module.syntax().functions[f].parameters.size();
          ++p)
-      if (module.syntax().functions[f].parameters[p].defaultValue.get()) {
+      if (module.hasDefault(f, p)) {
         if (f == callee && p == parameter)
           return static_cast<int>(result);
         ++result;
@@ -175,24 +175,28 @@ Builder::Value Builder::defaultArgument(
     int success = block(), failure = block();
     terminate({Exit::Branch, test, success, failure});
     current = failure;
-    auto failed = storage;
-    failed.fields.push_back(Projection::field(2));
-    auto error =
-        track(emit({module.typeStore()->isCopy(errorType) ? Op::Load : Op::Move,
-                    {},
-                    {},
-                    {},
-                    "",
-                    failed,
-                    -1,
-                    0,
-                    span},
-                   errorType),
-              span);
-    auto outcome = variant(failures.type, 1, {error}, span);
-    failures.values.push_back(use(outcome));
-    failures.blocks.push_back(current);
-    jump(failures.done);
+    if (errorType == Type::Never)
+      terminate({Exit::Unreachable});
+    else {
+      auto failed = storage;
+      failed.fields.push_back(Projection::field(2));
+      auto error = track(
+          emit({module.typeStore()->isCopy(errorType) ? Op::Load : Op::Move,
+                {},
+                {},
+                {},
+                "",
+                failed,
+                -1,
+                0,
+                span},
+               errorType),
+          span);
+      auto outcome = variant(failures.type, 1, {error}, span);
+      failures.values.push_back(use(outcome));
+      failures.blocks.push_back(current);
+      jump(failures.done);
+    }
     current = success;
     auto passed = storage;
     passed.fields.push_back(Projection::field(1));

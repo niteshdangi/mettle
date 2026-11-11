@@ -59,11 +59,11 @@ RegionId RegionStore::intersection(std::vector<RegionId> sources) {
     return RegionId::Static;
   if (flattened.size() == 1)
     return flattened.front();
-  for (std::size_t i = 2; i < regions.size(); ++i)
-    if (regions[i].kind == RegionKind::Intersection &&
-        regions[i].sources == flattened)
-      return RegionId(static_cast<std::uint32_t>(i));
+  if (auto existing = intersections.find(flattened);
+      existing != intersections.end())
+    return existing->second;
   auto result = add(RegionKind::Intersection, {0, 0});
+  intersections.emplace(flattened, result);
   regions[result.index()].sources = std::move(flattened);
   return result;
 }
@@ -79,6 +79,9 @@ bool RegionStore::ancestor(RegionUniverse outer, RegionUniverse inner) const {
   while (inner != outer && inner != 0)
     inner = parents[inner];
   return outer == inner;
+}
+RegionUniverse RegionStore::universeParent(RegionUniverse universe) const {
+  return parents.at(universe);
 }
 bool RegionStore::visible(RegionId region, RegionUniverse universe) const {
   const auto &record = get(region);

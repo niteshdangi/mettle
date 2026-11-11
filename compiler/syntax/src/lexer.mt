@@ -4,6 +4,7 @@ import mettle_foundation.{ Span, invalid_utf8, SOURCE_BYTES }
 import mettle_foundation.{ Diagnostics, Phase }
 import super.token.{ Kind, Token }
 import super.characters.character_value
+import super.identifiers.{ is_start, is_continue, scalar_at }
 
 pub type Lexed { pub tokens: List<Token>; pub diagnostics: Diagnostics }
 
@@ -50,6 +51,19 @@ extend<region r> Scanner<region r> {
     }
     mut fn word(): Unit {
         while self.pos < self.bytes.len() && word_byte(self.bytes[self.pos]) { self.pos += 1 }
+    }
+    mut fn identifier(): Unit {
+        while self.pos < self.bytes.len() {
+            let byte = self.bytes[self.pos]
+            if byte < 128u8 {
+                if !word_byte(byte) { break }
+                self.pos += 1usize
+            } else {
+                let decoded = scalar_at(self.bytes, self.pos)
+                if !is_continue(decoded.0) { break }
+                self.pos += decoded.1
+            }
+        }
     }
     fn raw_quote(prefix: usize): usize? {
         var index = self.pos + prefix
@@ -207,11 +221,13 @@ extend<region r> Scanner<region r> {
             } else if byte == b'`' {
                 self.pos += 1
                 let content = self.pos
-                var valid = self.pos < self.bytes.len() && word_start(self.bytes[self.pos])
+                var valid = true
                 while self.pos < self.bytes.len() && self.bytes[self.pos] != b'`' && !newline(self.bytes[self.pos]) {
-                    valid = valid && word_byte(self.bytes[self.pos])
-                    self.pos += 1
+                    let decoded = scalar_at(self.bytes, self.pos)
+                    valid = valid && if self.pos == content { is_start(decoded.0) } else { is_continue(decoded.0) }
+                    self.pos += decoded.1
                 }
+                valid = valid && self.pos != content
                 if self.pos == self.bytes.len() || self.bytes[self.pos] != b'`' {
                     self.error(Phase.Lex, begin, self.pos, "unterminated backtick identifier")
                 } else { self.pos += 1 }
@@ -236,13 +252,17 @@ extend<region r> Scanner<region r> {
                 let span = self.span(begin, self.pos)
                 let _ = character_value(read self.bytes[begin..self.pos], bytes, span, mut self.result.diagnostics)
             } else if word_start(byte) {
-                self.word()
+                self.identifier()
                 self.add(Kind.Word, begin)
             } else if digit(byte) { self.number(begin) }
             else if byte >= 128u8 {
-                self.pos += if byte >= 0xf0u8 { 4usize } else if byte >= 0xe0u8 { 3usize } else { 2usize }
-                self.add(Kind.Word, begin)
-                self.error(Phase.Feature, begin, self.pos, "Unicode identifiers are not implemented in I02")
+                let decoded = scalar_at(self.bytes, self.pos)
+                self.pos += decoded.1
+                if is_start(decoded.0) { self.identifier(); self.add(Kind.Word, begin) }
+                else {
+                    self.add(Kind.Symbol, begin)
+                    self.error(Phase.Lex, begin, self.pos, "character is not permitted at the start of an identifier")
+                }
             } else { self.symbol(begin) }
         }
         if !self.holes.is_empty() { self.error(Phase.Lex, self.bytes.len(), self.bytes.len(), "unterminated f-string literal") }

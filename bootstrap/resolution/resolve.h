@@ -14,6 +14,7 @@
 
 namespace mettle::resolution {
 using ModuleId = std::uint32_t;
+using SourcePackages = std::unordered_map<SourceId, std::string>;
 enum class Namespace { Type, Value, Module, Macro };
 
 struct ModuleInfo {
@@ -25,6 +26,10 @@ struct ModuleInfo {
 class Resolution {
 public:
   ModuleId moduleOf(Span span) const;
+  std::optional<std::uint32_t> packageOf(Span span) const;
+  std::optional<std::uint32_t> nativePackage(std::string_view name) const;
+  std::optional<std::uint32_t> packageIndex(std::string_view identity) const;
+  std::optional<std::string> packageIdentity(std::uint32_t index) const;
   std::string canonical(Span span) const;
   bool accessible(Span declaration, ModuleId from) const;
   std::optional<std::string> lookup(ModuleId from, std::string_view spelling,
@@ -37,8 +42,8 @@ public:
   bool importUsed(std::size_t index, std::string_view name = {}) const;
 
 private:
-  friend std::shared_ptr<const Resolution> resolve(const Module &,
-                                                   Diagnostics &);
+  friend std::shared_ptr<const Resolution>
+  resolve(const Module &, Diagnostics &, const SourcePackages &);
   friend class Resolver;
   struct Definition {
     Namespace space;
@@ -70,6 +75,9 @@ private:
   std::vector<Definition> definitions;
   std::vector<Scope> scopes;
   std::vector<Item> items;
+  bool rawPackageInput = true;
+  std::unordered_map<SourceId, std::uint32_t> sourcePackages;
+  std::unordered_map<std::string, std::uint32_t> packageInstances;
   // Bindings that lookups went through, as (import index, local name).
   mutable std::set<std::pair<std::size_t, std::string>> usedImports;
   // Lookup indexes over `items`, built once after resolution completes.
@@ -94,5 +102,6 @@ private:
 // Trees and their declarations remain syntax-only; all canonical identities
 // live in this compilation-owned result.
 std::shared_ptr<const Resolution> resolve(const Module &module,
-                                          Diagnostics &diagnostics);
+                                          Diagnostics &diagnostics,
+                                          const SourcePackages &packages = {});
 } // namespace mettle::resolution

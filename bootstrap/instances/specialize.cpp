@@ -448,8 +448,11 @@ private:
     function.unpinBounds.clear();
     function.regionSignature =
         types->substitute(function.regionSignature, bindings);
+    if (hooks.normalizeRegionSignature)
+      function.regionSignature = hooks.normalizeRegionSignature(
+          function.regionSignature, bindings, *types, diagnostics);
     function.genericEqualities.clear();
-    if (types->containsViews(function.result))
+    if (types->containsViews(function.result, true))
       for (auto source : function.genericResultSources) {
         if (source >= function.parameters)
           throw std::invalid_argument(
@@ -457,7 +460,7 @@ private:
         // Only views carried by the instantiated argument can flow into the
         // result; the borrow of a `read`/`mut` parameter itself does not.
         const auto &parameter = function.locals[source];
-        if (!types->containsViews(parameter.type) ||
+        if (!types->containsViews(parameter.type, true) ||
             std::find(function.resultSources.begin(),
                       function.resultSources.end(),
                       source) != function.resultSources.end())
@@ -497,6 +500,14 @@ private:
           substitute(argument, false);
         for (auto &entry : instruction.witnessEntries)
           substitute(entry.owner, false);
+        if (instruction.op == ir::Op::DropPlace) {
+          auto payload = projectedType(
+              *types, function.locals.at(instruction.place.root).type,
+              instruction.place.fields);
+          if (!payload)
+            throw std::invalid_argument("explicit drop has an invalid place");
+          destructor(*payload, instruction.span);
+        }
         if (instruction.constantParameter != Type::Unknown) {
           auto identity =
               types->substitute(instruction.constantParameter, bindings);

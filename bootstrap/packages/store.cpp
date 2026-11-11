@@ -7,6 +7,7 @@
 #include <csignal>
 #include <fcntl.h>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <set>
 #include <sstream>
@@ -34,6 +35,12 @@ struct Entry {
   bool executable = false;
 };
 
+bool hexName(const std::string &name) {
+  return name.size() >= 2 && std::all_of(name.begin(), name.end(), [](char c) {
+           return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+         });
+}
+
 std::optional<Entry> parseEntry(const std::string &content) {
   auto end = content.find('\n');
   if (end == std::string::npos)
@@ -49,16 +56,11 @@ std::optional<Entry> parseEntry(const std::string &content) {
   }
   std::string mode;
   if (kind != "file" || !(head >> entry.blob >> entry.size >> mode) ||
-      entry.blob.size() != 64 || (mode != "x" && mode != "-"))
+      entry.blob.size() != 64 || !hexName(entry.blob) ||
+      (mode != "x" && mode != "-"))
     return std::nullopt;
   entry.executable = mode == "x";
   return entry;
-}
-
-bool hexName(const std::string &name) {
-  return name.size() >= 2 && std::all_of(name.begin(), name.end(), [](char c) {
-           return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
-         });
 }
 
 std::uint64_t sizeOf(const fs::path &path) {
@@ -268,6 +270,7 @@ bool Store::publishLocked(const fs::path &path, const std::string &content) {
   {
     std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
     out << content;
+    out.close();
     if (!out) {
       std::error_code ignored;
       fs::remove(temporary, ignored);
@@ -275,9 +278,12 @@ bool Store::publishLocked(const fs::path &path, const std::string &content) {
     }
   }
   fs::rename(temporary, path, error);
-  if (error)
-    fs::remove(temporary, error);
-  return !error;
+  if (error) {
+    std::error_code ignored;
+    fs::remove(temporary, ignored);
+    return false;
+  }
+  return true;
 }
 
 bool Store::put(const std::string &key, const fs::path &file, bool executable) {
@@ -296,13 +302,17 @@ bool Store::put(const std::string &key, const fs::path &file, bool executable) {
     fs::create_directories(path.parent_path(), error);
     auto temporary = scratch();
     fs::copy_file(file, temporary, fs::copy_options::overwrite_existing, error);
-    if (error)
+    if (error) {
+      std::error_code ignored;
+      fs::remove(temporary, ignored);
       return false;
+    }
     fs::permissions(temporary,
                     fs::perms::owner_read | fs::perms::group_read |
                         fs::perms::others_read,
                     fs::perm_options::replace, error);
-    fs::rename(temporary, path, error);
+    if (!error)
+      fs::rename(temporary, path, error);
     if (error) {
       fs::remove(temporary, error);
       return false;
@@ -311,6 +321,71 @@ bool Store::put(const std::string &key, const fs::path &file, bool executable) {
   return publishLocked(entryPath(key), "file " + *blob + " " +
                                            std::to_string(size) +
                                            (executable ? " x\n" : " -\n"));
+}
+
+bool Store::putData(const std::string &key, std::string_view bytes) {
+  if (key.size() < 2 ||
+      bytes.size() > static_cast<std::uint64_t>(
+                         std::numeric_limits<std::streamsize>::max()) ||
+      !prepare())
+    return false;
+  struct Temporary {
+    fs::path path;
+    ~Temporary() {
+      std::error_code error;
+      fs::remove(path, error);
+    }
+  } temporary{scratch()};
+  std::ofstream out(temporary.path, std::ios::binary | std::ios::trunc);
+  out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+  out.close();
+  return out && put(key, temporary.path, false);
+}
+
+Store::Data Store::data(const std::string &key, std::uint64_t maximumBytes) {
+  if (key.size() < 2)
+    return {};
+  auto path = entryPath(key);
+  auto content = readText(path);
+  if (!content)
+    return {};
+  auto entry = parseEntry(*content);
+  std::error_code error;
+  if (!entry || entry->text) {
+    fs::remove(path, error);
+    return {entry ? Lookup::Miss : Lookup::Corrupt, {}};
+  }
+  if (entry->size > maximumBytes ||
+      entry->size > static_cast<std::uint64_t>(
+                        std::numeric_limits<std::streamsize>::max()) ||
+      entry->size > std::string().max_size()) {
+    fs::remove(path, error);
+    return {Lookup::Corrupt, {}};
+  }
+  auto blob = blobPath(entry->blob);
+  auto size = fs::file_size(blob, error);
+  if (error) {
+    fs::remove(path, error);
+    return {};
+  }
+  if (size != entry->size) {
+    fs::remove(blob, error);
+    fs::remove(path, error);
+    return {Lookup::Corrupt, {}};
+  }
+  std::ifstream stream(blob, std::ios::binary);
+  std::string bytes(static_cast<std::size_t>(entry->size), '\0');
+  stream.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+  packages::Sha256 hash;
+  hash.update(bytes);
+  if (!stream || stream.peek() != std::char_traits<char>::eof() ||
+      hash.finish() != entry->blob) {
+    fs::remove(blob, error);
+    fs::remove(path, error);
+    return {Lookup::Corrupt, {}};
+  }
+  touch(path);
+  return {Lookup::Hit, std::move(bytes)};
 }
 
 bool Store::putMany(const std::vector<Artifact> &artifacts) {

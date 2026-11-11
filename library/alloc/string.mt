@@ -3,7 +3,7 @@ import super.alloc.{Allocator, Global, AllocError, panic_precondition}
 import package.core.clone.Clone
 import package.core.default.Default
 import package.core.fmt
-import package.core.ops.{Deref, IndexRange}
+import package.core.ops.{Deref, IndexRange, RangeEnd}
 import package.core.hash.{Hash, Hasher}
 import package.core.borrow.KeyView
 import package.core.borrow.{AsRef, AsMut, Borrow, ToOwned}
@@ -11,7 +11,6 @@ import super.vec.{List, slice_ptr}
 import package.core.cmp.{Ordering, PartialEq, Eq, PartialOrd, Ord}
 import package.core.text.{
     Text,
-    Pattern,
     from_utf8_unchecked,
     from_utf8_unchecked_mut
 }
@@ -45,6 +44,22 @@ import package.core.ops.{Add, AddAssign}
 // Owned, growable UTF-8 text: a `List<u8>` whose bytes are always well formed.
 pub type String<A: Allocator = Global> {
     v: List<u8, A>
+}
+
+// Safety: retained and unvisited bytes are separate valid UTF-8 extents; the guard rejoins them.
+type StringRetainGuard<A: Allocator> {
+    bytes: ptr<mut List<u8, A>>
+    original_len: usize
+    read_at: usize
+    write_at: usize
+    drop {
+        unsafe {
+            let pointer = (*self.bytes).as_mut_ptr()
+            let remaining = self.original_len - self.read_at
+            core.ptr.`copy`(pointer.add(self.read_at).cast_const(), pointer.add(self.write_at), remaining)
+            (*self.bytes).set_len(self.write_at + remaining)
+        }
+    }
 }
 
 // Produces independently owned UTF-8 using Global and the default Display
@@ -169,13 +184,13 @@ pub fn from_text_in<A: Allocator>(read t: Text, take a: A): String<A> {
 
 // Validates `bytes`; on failure the buffer comes back in the error.
 pub fn from_utf8<A: Allocator>(take bytes: List<u8, A>): String<A> throws FromUtf8Error<A> {
-    let ok = match package.core.text.from_utf8(bytes.as_slice()) {
-        present(_) => true,
-        none => false
+    let invalid = match package.core.text.from_utf8(bytes.as_slice()) {
+        success(_) => none,
+        failure(error) => present(error.valid_up_to())
     }
-    if !ok {
-        let n = valid_prefix(bytes.as_slice())
-        throw FromUtf8Error(bytes, n)
+    match invalid {
+        present(offset) => { throw FromUtf8Error(bytes, offset) },
+        none => {}
     }
     from_valid_bytes(take bytes)
 }
@@ -191,17 +206,17 @@ extend String {
     pub static fn from_utf16_lossy(read units: [u16]): String {
         package.alloc.string.from_utf16_lossy(units)
     }
-    pub static fn from_utf16be(read units: [u16]): String throws FromUtf16Error {
-        try package.alloc.string.from_utf16be(units)
+    pub static fn from_utf16be(read bytes: [u8]): String throws FromUtf16Error {
+        try package.alloc.string.from_utf16be(bytes)
     }
-    pub static fn from_utf16le(read units: [u16]): String throws FromUtf16Error {
-        try package.alloc.string.from_utf16le(units)
+    pub static fn from_utf16le(read bytes: [u8]): String throws FromUtf16Error {
+        try package.alloc.string.from_utf16le(bytes)
     }
-    pub static fn from_utf16be_lossy(read units: [u16]): String {
-        package.alloc.string.from_utf16be_lossy(units)
+    pub static fn from_utf16be_lossy(read bytes: [u8]): String {
+        package.alloc.string.from_utf16be_lossy(bytes)
     }
-    pub static fn from_utf16le_lossy(read units: [u16]): String {
-        package.alloc.string.from_utf16le_lossy(units)
+    pub static fn from_utf16le_lossy(read bytes: [u8]): String {
+        package.alloc.string.from_utf16le_lossy(bytes)
     }
     // Safety: the pointer and capacity must satisfy List's Global allocation
     // invariants, and the initialized bytes must be well-formed UTF-8.
@@ -241,20 +256,6 @@ extend<A: Allocator> String<A> {
         self.v = super.vec.new_in<u8, A>(take allocator)
         self.push_str(text)
     }
-}
-
-// Length of the longest well-formed prefix.
-fn valid_prefix(read bytes: [u8]): usize {
-    var end = bytes.len()
-    while end > 0usize {
-        let ok = match package.core.slice.subslice(bytes, 0usize, end) {
-            present(part) => match package.core.text.from_utf8(part) { present(_) => true, none => false },
-            none => false
-        }
-        if ok { return end }
-        end -= 1usize
-    }
-    0usize
 }
 
 fn encode_utf8(c: char, mut out: [u8; 4]): usize {
@@ -344,8 +345,8 @@ pub fn from_utf8_lossy(read bytes: [u8]): String {
                 none => { panic_precondition() }
             }
             let text = match package.core.text.from_utf8(part) {
-                present(value) => value,
-                none => { panic_precondition() }
+                success(value) => value,
+                failure(_) => { panic_precondition() }
             }
             result.push_str(text)
             index += width
@@ -428,39 +429,53 @@ pub fn from_utf16_lossy(read units: [u16]): String {
     result
 }
 
-fn utf16_endian_units(read units: [u16], big_endian: bool): List<u16> {
-    var converted = super.vec.with_capacity<u16>(units.len())
+fn utf16_endian_units(read bytes: [u8], big_endian: bool): List<u16> {
+    var converted = super.vec.with_capacity<u16>(bytes.len() / 2usize)
     var index = 0usize
-    while index < units.len() {
-        let value = units[index]
+    while bytes.len() - index >= 2usize {
+        let first = bytes[index] as u16
+        let second = bytes[index + 1usize] as u16
         converted.push(if big_endian {
-            ((value & 0x00ffu16) << 8u16) | (value >> 8u16)
+            (first << 8u16) | second
         } else {
-            value
+            first | (second << 8u16)
         })
-        index += 1usize
+        index += 2usize
     }
     converted
 }
 
-pub fn from_utf16be(read units: [u16]): String throws FromUtf16Error {
-    let converted = utf16_endian_units(units, true)
-    try from_utf16(converted.as_slice())
+fn from_utf16_endian(read bytes: [u8], big_endian: bool): String throws FromUtf16Error {
+    let converted = utf16_endian_units(bytes, big_endian)
+    let result = try from_utf16(converted.as_slice())
+    if bytes.len() % 2usize != 0usize {
+        // An odd tail identifies its incomplete unit and the one available byte.
+        throw FromUtf16Error(bytes.len() / 2usize, bytes[bytes.len() - 1usize] as u16)
+    }
+    result
 }
 
-pub fn from_utf16le(read units: [u16]): String throws FromUtf16Error {
-    let converted = utf16_endian_units(units, false)
-    try from_utf16(converted.as_slice())
+fn from_utf16_endian_lossy(read bytes: [u8], big_endian: bool): String {
+    let converted = utf16_endian_units(bytes, big_endian)
+    var result = from_utf16_lossy(converted.as_slice())
+    if bytes.len() % 2usize != 0usize { result.push('\u{fffd}') }
+    result
 }
 
-pub fn from_utf16be_lossy(read units: [u16]): String {
-    let converted = utf16_endian_units(units, true)
-    from_utf16_lossy(converted.as_slice())
+pub fn from_utf16be(read bytes: [u8]): String throws FromUtf16Error {
+    try from_utf16_endian(bytes, true)
 }
 
-pub fn from_utf16le_lossy(read units: [u16]): String {
-    let converted = utf16_endian_units(units, false)
-    from_utf16_lossy(converted.as_slice())
+pub fn from_utf16le(read bytes: [u8]): String throws FromUtf16Error {
+    try from_utf16_endian(bytes, false)
+}
+
+pub fn from_utf16be_lossy(read bytes: [u8]): String {
+    from_utf16_endian_lossy(bytes, true)
+}
+
+pub fn from_utf16le_lossy(read bytes: [u8]): String {
+    from_utf16_endian_lossy(bytes, false)
 }
 
 fn first_char(read t: Text): char {
@@ -484,8 +499,8 @@ extend<A: Allocator> String<A> {
     pub fn as_text(): read Text from self { unsafe { from_utf8_unchecked(self.v.as_slice()) } }
     pub mut fn as_mut_str(): mut Text from self {
         match take package.core.text.from_utf8_mut(self.v.as_mut_slice()) {
-            present(text) => text,
-            none => { panic_precondition() }
+            success(text) => text,
+            failure(_) => { panic_precondition() }
         }
     }
     pub mut fn get_mut(start: usize, end: usize): (mut Text from self)? {
@@ -515,16 +530,8 @@ extend<A: Allocator> String<A> {
     ): (mut Text from self, mut Text from self)? {
         self.as_mut_str().split_at_mut_checked(mid)
     }
-    pub fn strip_circumfix<P: Pattern, S: Pattern>(
-        take prefix: P,
-        take suffix: S
-    ): (read Text from self)? {
-        self.as_text().strip_circumfix(take prefix, take suffix)
-    }
-    pub fn substr_range<R: package.core.iter.RangeBounds<usize>>(
-        read range: R
-    ): (read Text from self)? {
-        self.as_text().substr_range(range)
+    pub fn substr_range(read substring: Text): package.core.iter.Range<usize>? {
+        self.as_text().substr_range(substring)
     }
     pub take fn into_boxed_str(): package.alloc.boxed.Box<Text, A> {
         package.alloc.boxed.from_string(take self)
@@ -728,27 +735,26 @@ extend<A: Allocator> String<A> {
 
     // Keeps the scalars for which `keep` returns true, compacting in place.
     pub mut fn retain<F: mut fn(char): bool>(mut keep: F): Unit {
-        var read_at = 0usize
-        var write_at = 0usize
-        while read_at < self.v.len() {
-            let rest = match self.as_text().get(read_at, self.v.len()) {
-                present(part) => part,
-                none => { panic_precondition() }
+        let original_len = self.v.len()
+        let pointer = self.v.as_mut_ptr()
+        unsafe { self.v.set_len(0usize) }
+        var guard = StringRetainGuard(core.ptr.from_mut(self.v), original_len, 0usize, 0usize)
+        while guard.read_at < original_len {
+            let c = {
+                let rest = unsafe {
+                    from_utf8_unchecked(read *slice_ptr(pointer.add(guard.read_at), original_len - guard.read_at))
+                }
+                first_char(rest)
             }
-            let c = first_char(rest)
             let width = c.len_utf8()
             if keep(c) {
-                var offset = 0usize
-                while offset < width {
-                    let byte = self.v.as_slice()[read_at + offset]
-                    self.v.as_mut_slice()[write_at + offset] = byte
-                    offset += 1usize
+                unsafe {
+                    core.ptr.`copy`(pointer.add(guard.read_at).cast_const(), pointer.add(guard.write_at), width)
                 }
-                write_at += width
+                guard.write_at += width
             }
-            read_at += width
+            guard.read_at += width
         }
-        self.v.truncate(write_at)
     }
 }
 
@@ -825,12 +831,11 @@ extend<A: Allocator> String<A> implements Deref {
     fn deref(): read Text from self { self.as_text() }
 }
 extend<A: Allocator> String<A> implements package.core.ops.DerefMut {
-    type Target = Text
     mut fn deref_mut(): mut Text from self { self.as_mut_str() }
 }
 extend<A: Allocator> String<A> implements IndexRange {
     type Output = Text
-    fn index_range(start: usize, end: usize): read Text from self { self.as_text().index_range(start, end) }
+    fn index_range(start: usize, end: RangeEnd): read Text from self { self.as_text().index_range(start, end) }
 }
 extend<A: Allocator> String<A> implements fmt.Display {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.pad(self.as_text()) }
@@ -1040,7 +1045,13 @@ fn replace_text(read text: Text, read pattern: Text, read replacement: Text, lim
 
 extend Text {
     pub fn repeat(count: usize): String {
-        var result = new()
+        let total = match self.len().checked_mul(count) {
+            present(length) => length,
+            none => panic_precondition()
+        }
+        if total > 0x7fffffffffffffffusize { panic_precondition() }
+        if total == 0usize { return new() }
+        var result = with_capacity(total)
         var remaining = count
         while remaining != 0usize {
             result.push_str(read self)

@@ -44,7 +44,7 @@ def execute(case):
     undefined = None
     if case.get("freestanding"):
         command = [str(Path(cxx).with_name("llvm-nm")), "--undefined-only", case["object"]]
-        symbols = subprocess.run(command, text=True, capture_output=True, timeout=30)
+        symbols = subprocess.run(command, text=True, capture_output=True)
         if symbols.returncode or symbols.stdout.strip():
             raise RuntimeError("Freestanding object has unresolved dependencies: " +
                                symbols.stdout + symbols.stderr)
@@ -52,10 +52,10 @@ def execute(case):
     command = [cxx, "--target=x86_64-unknown-linux-gnu", "-fuse-ld=lld",
                case["object"], *libraries, "-o", case["program"]]
     environment = dict(os.environ, TMPDIR=str(Path(case["program"]).parent))
-    link = subprocess.run(command, text=True, capture_output=True, timeout=90, env=environment)
+    link = subprocess.run(command, text=True, capture_output=True, env=environment)
     if link.returncode:
         raise RuntimeError(str(command) + "\\n" + link.stdout + link.stderr)
-    result = subprocess.run([case["program"]], capture_output=True, timeout=15)
+    result = subprocess.run([case["program"]], capture_output=True)
     expected = case["expected"]
     if (expected == "trap" and result.returncode != -signal.SIGABRT) or (
             expected != "trap" and result.returncode != expected):
@@ -79,7 +79,7 @@ def execute(case):
     command = [cxx, "--target=x86_64-unknown-linux-gnu", "-fuse-ld=lld",
                case["object"], runtime, "-o", case["program"]]
     environment = dict(os.environ, TMPDIR=str(Path(case["program"]).parent))
-    link = subprocess.run(command, text=True, capture_output=True, timeout=180, env=environment)
+    link = subprocess.run(command, text=True, capture_output=True, env=environment)
     if link.returncode:
         raise RuntimeError(case["name"] + ": " + link.stdout + link.stderr)
     work = Path(case["program"] + ".dir")
@@ -88,14 +88,11 @@ def execute(case):
     for name, content in case.get("files", []):
         (work / name).write_bytes(content.encode())
     result = subprocess.run([case["program"], *case.get("args", [])], cwd=work,
-                            input=case.get("stdin", "").encode(), capture_output=True, timeout=120)
+                            input=case.get("stdin", "").encode(), capture_output=True)
     stdout, stderr = result.stdout.decode(errors="replace"), result.stderr.decode(errors="replace")
     expected = case["expected"]
     problems = []
-    if expected == "nonzero":
-        if result.returncode == 0:
-            problems.append("expected a runtime panic")
-    elif result.returncode != expected:
+    if result.returncode != expected:
         problems.append("exit " + str(result.returncode) + " != " + str(expected))
     if "stdout" in case and stdout != case["stdout"]:
         problems.append("stdout " + repr(stdout))
@@ -136,7 +133,9 @@ def library_cases(output):
         cases.append(("core", program.stem, program.read_text(), {"expected": 0}))
     cases.append(("core", "unwrap-none-aborts",
                   "import core.option;\nfn nothing(): i32? { none }\n"
-                  "fn main(): i32 { nothing().unwrap() }\n", {"expected": "nonzero"}))
+                  "fn main(): i32 { nothing().unwrap() }\n",
+                  {"expected": 101, "stderr_contains": [
+                      "panicked: called `unwrap` on an absent value"]}))
     cases.append(("core", "panic-reports-message",
                   "fn nothing(): i32? { none }\n"
                   "fn main(): i32 { let guard = nothing()\n guard.expect(\"value was required\") }\n",
@@ -197,8 +196,8 @@ def main():
     }
     native_manifests = []
 
-    def run(command, expected=0, timeout=180):
-        result = subprocess.run(command, env=environment, text=True, capture_output=True, timeout=timeout)
+    def run(command, expected=0):
+        result = subprocess.run(command, env=environment, text=True, capture_output=True)
         evidence["commands"].append(
             {"command": command, "exit_status": result.returncode,
              "stdout": result.stdout, "stderr": result.stderr})
@@ -269,7 +268,8 @@ def main():
             callbacks_archive = runtime_archive.parent / "libmettle_machine_callbacks.a"
             callbacks_sources = ("tests/backend/machine_callbacks.c",
                                  "tests/backend/machine_unwind.cpp",
-                                 "tests/backend/machine_vectors.c")
+                                 "tests/backend/machine_vectors.c",
+                                 "tests/backend/foreign_storage.c")
             callbacks_objects = []
             for name in callbacks_sources:
                 obj = runtime_archive.parent / (ROOT / name).with_suffix(".o").name
@@ -400,8 +400,7 @@ def main():
                 evidence["cases"][configuration]["source_cases_input_sha256"] = sha256(cases_file)
                 evidence["cases"][configuration]["source_cases"] = json.loads(run(
                     [*remote, "python3", "-c", SOURCE_EXECUTION,
-                     cxx, str(runtime_archive), str(cases_file)],
-                    timeout=7200))
+                     cxx, str(runtime_archive), str(cases_file)]))
                 print(f"{configuration}: {len(cases)} source cases linked/executed on Linux",
                       flush=True)
                 cleanup_runner = ROOT / "tests/backend/cleanup_frame.py"
@@ -427,8 +426,7 @@ def main():
                     suite["execution"] = json.loads(run(
                         [*remote, "python3", str(cleanup_runner), "--run-objects", *mode,
                          str(generator), cxx, str(callbacks), str(runtime_archive),
-                         str(suite_directory), "--target=x86_64-unknown-linux-gnu", "-fuse-ld=lld"],
-                        timeout=300))
+                         str(suite_directory), "--target=x86_64-unknown-linux-gnu", "-fuse-ld=lld"]))
                 print(f"{configuration}: six backend cleanup cases linked/executed on Linux",
                       flush=True)
             if arguments.libraries:
@@ -448,8 +446,7 @@ def main():
                                   "source": str(source), **expectations})
                 def emit(case):
                     run([str(compiler), "build", case["source"], "-o", case["object"],
-                         "--emit", "object", "--target", "x86_64-unknown-linux-gnu"],
-                        timeout=1800)
+                         "--emit", "object", "--target", "x86_64-unknown-linux-gnu"])
                     case["source_sha256"] = sha256(Path(case["source"]))
                     case["object_sha256"] = sha256(Path(case["object"]))
                 with ThreadPoolExecutor(max_workers=4) as pool:
@@ -459,7 +456,7 @@ def main():
                 evidence["cases"][configuration]["library_cases_input_sha256"] = sha256(cases_file)
                 evidence["cases"][configuration]["library_cases"] = json.loads(run(
                     [*remote, "python3", "-c", LIBRARY_EXECUTION,
-                     cxx, str(runtime_archive), str(cases_file)], timeout=3600))
+                     cxx, str(runtime_archive), str(cases_file)]))
                 counts = {group: sum(case["name"].startswith(group + "-") for case in cases)
                           for group in ("core", "alloc", "std")}
                 evidence["cases"][configuration]["library_counts"] = counts

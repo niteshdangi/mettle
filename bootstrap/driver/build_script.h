@@ -12,12 +12,21 @@
 namespace mettle::driver {
 // What the build scripts of a package graph contribute to the compile.
 struct ScriptResults {
+  struct Host {
+    std::vector<resolution::Library::Package> modules;
+    std::vector<std::string> libraries;
+  };
   // Generated sources mounted as root modules.
   std::vector<resolution::Library::Package> modules;
-  // Extra `@cfg(feature = ...)` values by declaring package name.
+  // Extra `@cfg(feature = ...)` values by package-instance identity.
   std::map<std::string, std::set<std::string>> features;
   std::vector<std::string> libraries;
+  std::map<std::string, Host> hosts;
 };
+
+void injectHostContext(Options &host,
+                       const std::vector<packages::Mount> &mounts,
+                       const ScriptResults &results);
 
 // Compiles each script for the host and runs it in its package directory.
 // A script's stdout lines `mettle:KEY=VALUE` declare its results:

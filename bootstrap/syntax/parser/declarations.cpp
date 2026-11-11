@@ -10,7 +10,9 @@ Module::Product Parser::product() {
   result.unionType = take("union");
   if (!result.unionType)
     expect("type");
-  result.name = name().text;
+  auto identifier = name();
+  result.name = identifier.text;
+  result.nameContext = identifier.context;
   result.genericParameters = genericParameters(&result.regions);
   if (takeContinuation("implements"))
     do {
@@ -43,6 +45,7 @@ Module::Product Parser::product() {
         method.name = "drop";
         method.annotation.name = "Unit";
         method.span = tokens[position - 1].span;
+        method.lexicalContext = tokens[position - 1].context;
         newlines();
         method.body = block();
         method.destructor = true;
@@ -75,18 +78,25 @@ Module::Product Parser::product() {
         if (mode != "read")
           fail("custom constructors cannot select a receiver modifier");
         method.annotation.name = result.name;
-        method.annotation.regions = result.regions;
+        method.annotation.context = result.nameContext;
+        method.annotation.regions = regionNames(result.genericParameters);
         method.receiver = "static";
-      } else if (mode != "static" && !method.explicitReceiver)
+      } else if (mode != "static" && !method.explicitReceiver) {
         method.parameters.insert(
             method.parameters.begin(),
-            {"self", TypeSyntax{result.name, "", {}, result.regions},
+            {"self",
+             TypeSyntax{
+                 result.name, "", {}, regionNames(result.genericParameters)},
              method.span, mode});
+        method.parameters.front().context = method.lexicalContext;
+        method.parameters.front().annotation.context = result.nameContext;
+      }
       for (const auto &parameter : result.genericParameters)
         if (parameter.kind != GenericParameterKind::Region) {
           GenericArgument argument;
           auto syntax = std::make_shared<TypeSyntax>();
           syntax->name = parameter.name;
+          syntax->context = parameter.context;
           argument.type = std::move(syntax);
           if (method.constructor)
             method.annotation.arguments.push_back(argument);
@@ -100,6 +110,9 @@ Module::Product Parser::product() {
     auto field = name();
     expect(":");
     result.fields.push_back({field.text, type(), field.span});
+    result.fields.back().context = field.context;
+    result.fields.back().syntaxSpan = Span{
+        field.span.begin, tokens[position - 1].span.end, field.span.source};
     result.fields.back().visibility = std::move(memberVisibility);
     result.fields.back().attributes = std::move(metadata);
     if (result.unionType && take(",")) {
@@ -131,8 +144,9 @@ Module::Product Parser::product() {
       }
   return result;
 }
-Function Parser::function(bool allowDeclaration, bool inferAsyncResult) {
+Function Parser::function(bool allowDeclaration) {
   Function result;
+  result.lexicalContext = peek().context;
   result.unsafeFunction = take("unsafe") || pendingUnsafe;
   pendingUnsafe = false;
   result.constFunction = take("const");
@@ -204,6 +218,7 @@ Function Parser::function(bool allowDeclaration, bool inferAsyncResult) {
       }
       result.parameters.push_back(
           {std::move(parameterName), type(), parameter.span, mode});
+      result.parameters.back().context = parameter.context;
       result.parameters.back().format = format;
       if (!named)
         result.parameters.back().pattern = std::move(parameter);
@@ -265,7 +280,7 @@ Function Parser::function(bool allowDeclaration, bool inferAsyncResult) {
   }
   result.span.end = result.body->span.end;
   if (asyncFunction)
-    lowerAsync(result, inferAsyncResult && result.asyncOutput.empty());
+    lowerAsync(result, result.asyncOutput.empty());
   return result;
 }
 std::unique_ptr<Node> Parser::block() {

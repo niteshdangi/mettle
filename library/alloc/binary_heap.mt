@@ -22,7 +22,13 @@ pub type BinaryHeap<T, A: Allocator = Global> { data: List<T, A> }
 pub type Iter<region r, T> { items: (read [T] from r)?; front: usize; back: usize }
 pub type PeekMut<region r, T: Ord, A: Allocator> {
     queue: mut BinaryHeap<T, A> from r
-    drop { sift_down(mut *self.queue, 0usize) }
+    original_len: usize
+    drop {
+        if self.original_len != 0usize {
+            unsafe { self.queue.data.set_len(self.original_len) }
+            sift_down(mut *self.queue, 0usize)
+        }
+    }
 }
 
 fn sift_down<T: Ord, A: Allocator>(mut queue: BinaryHeap<T, A>, start: usize): Unit {
@@ -85,8 +91,14 @@ extend<region r, T: Ord, A: Allocator> PeekMut<region r, T, A> implements Deref 
     fn deref(): read T from self { unsafe { read *self.queue.data.as_ptr() } }
 }
 extend<region r, T: Ord, A: Allocator> PeekMut<region r, T, A> implements DerefMut {
-    type Target = T
-    mut fn deref_mut(): mut T from self { unsafe { mut *self.queue.data.as_mut_ptr() } }
+    mut fn deref_mut(): mut T from self {
+        if self.original_len == 0usize {
+            self.original_len = self.queue.data.len()
+            // A forgotten mutable guard exposes only a valid singleton heap.
+            unsafe { self.queue.data.set_len(1usize) }
+        }
+        unsafe { mut *self.queue.data.as_mut_ptr() }
+    }
 }
 
 pub fn new_in<T, A: Allocator>(take a: A): BinaryHeap<T, A> { BinaryHeap(super.vec.new_in<T, A>(a)) }
@@ -133,7 +145,7 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
     pub fn peek(): (read T from self)? { self.data.get(0usize) }
     pub mut fn peek_mut(): PeekMut<region self, T, A>? {
         if self.data.is_empty() { return none }
-        present(PeekMut(mut self))
+        present(PeekMut(mut self, 0usize))
     }
     pub fn as_slice(): read [T] from self { self.data.as_slice() }
 
@@ -394,7 +406,22 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
 
     pub take fn into_sorted_vec(): List<T, A> {
         var out = self.into_vec()
-        out.sort()
+        var end = out.len()
+        while end > 1usize {
+            end -= 1usize
+            out.swap(0usize, end)
+            var node = 0usize
+            while node < end / 2usize {
+                let left = node * 2usize + 1usize
+                var child = left
+                if left + 1usize < end && out[left + 1usize].cmp(out[left]).is_gt() {
+                    child = left + 1usize
+                }
+                if !out[child].cmp(out[node]).is_gt() { break }
+                out.swap(node, child)
+                node = child
+            }
+        }
         out
     }
 }

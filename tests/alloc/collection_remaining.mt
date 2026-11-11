@@ -9,7 +9,7 @@ fn main(): i32 {
         present(pair) => { *pair.0 += 1; *pair.1 += 2 },
         none => { return 1 }
     }
-    match map.get_disjoint_mut(1, 1) {
+    match map.get_disjoint_mut(1, 4) {
         none => {},
         present(_) => { return 2 }
     }

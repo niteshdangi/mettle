@@ -1,4 +1,4 @@
-// expect-error: type
+// expect-error: type 8:13 unsatisfied interface bound 'Transferable'
 import std.thread
 
 fn main(): i32 {

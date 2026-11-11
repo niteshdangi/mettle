@@ -42,9 +42,9 @@ fn main(): i32 {
        !path_from_text("a").is_relative() { return 19 }
     if !path_from_text("a/b/").ends_with(path_from_text("b")) ||
        path_from_text("a/bc").ends_with(path_from_text("b")) { return 20 }
-    match path_from_text("a/b/c").strip_prefix(path_from_text("a")) {
-        present(rest) => { if !rest.same(path_from_text("b/c")) { return 21 } },
-        none => { return 21 }
+    match take capture path_from_text("a/b/c").strip_prefix(path_from_text("a")) {
+        success(rest) => { if !rest.same(path_from_text("b/c")) { return 21 } },
+        failure(_) => { return 21 }
     }
     match path_from_text("file.tar.gz").file_prefix() {
         present(prefix) => {

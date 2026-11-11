@@ -11,10 +11,11 @@ import package.core.cmp.{Eq, PartialEq}
 import package.core.fmt.{Debug, Error, Formatter}
 import package.core.hash.{Hash, Hasher}
 import package.alloc.string.String
+import package.alloc.vec
 import package.core.text.Text
-import package.core.slice
 import package.core.option
 import package.std.time.Duration
+import super.sys
 
 extern "C" {
     unsafe fn mettle_rt_panicking(): i32;
@@ -117,17 +118,19 @@ extend Thread {
 }
 
 fn native_thread_name(raw: usize): String? {
-    var buffer = [0u8; 64]
-    let length = unsafe {
-        mettle_rt_thread_name(raw, core.ptr.from_mut(buffer).cast<u8>(), 64usize)
-    }
+    let length = unsafe { mettle_rt_thread_name(raw, core.ptr.null_mut<u8>(), 0usize) }
     if length < 0isize { return none }
-    let bytes = unsafe {
-        slice.subslice_unchecked(buffer, 0usize, length as usize)
+    var bytes = vec.with_capacity<u8>(length as usize + 1usize)
+    bytes.resize(length as usize + 1usize, 0u8)
+    let capacity = bytes.len()
+    let copied = unsafe {
+        mettle_rt_thread_name(raw, sys.data_mut(bytes.as_mut_slice()), capacity)
     }
-    match package.core.text.from_utf8(bytes) {
-        present(text) => present(package.alloc.string.from_text(text)),
-        none => none
+    if copied != length { return none }
+    bytes.truncate(length as usize)
+    match package.core.text.from_utf8(bytes.as_slice()) {
+        success(text) => present(package.alloc.string.from_text(text)),
+        failure(_) => none
     }
 }
 
@@ -140,19 +143,30 @@ extend Builder {
     pub static fn new(): Builder { Builder(none, 0usize) }
 
     pub mut fn name(read value: Text): Unit {
+        let bytes = value.as_bytes()
+        var index = 0usize
+        while index < bytes.len() {
+            if bytes[index] == 0u8 { panic("thread name contains NUL") }
+            index += 1usize
+        }
         self.name = present(package.alloc.string.from_text(value))
     }
 
     pub mut fn stack_size(bytes: usize): Unit { self.stack_size = bytes }
 
-    pub take fn spawn<T: Transferable + Static, F: fn(): T + Transferable + Static>(
+    pub take fn spawn<T: Transferable + Static, F: take fn(): T + Transferable + Static>(
         take f: F
     ): JoinHandle<T> throws SpawnError {
         let started = match self.name.as_view() {
             present(name) => unsafe {
+                let empty = 0u8
                 try start<T, F>(
                     f,
-                    package.core.slice.data(name.as_bytes()),
+                    if name.as_bytes().len() == 0usize {
+                        core.ptr.from_ref(empty)
+                    } else {
+                        package.core.slice.data(name.as_bytes())
+                    },
                     name.as_bytes().len(),
                     self.stack_size
                 )
@@ -171,7 +185,7 @@ extend Builder {
     pub take fn spawn_scoped<
         region s,
         T: Transferable,
-        F: fn(): T + Transferable + Within<region s>
+        F: take fn(): T + Transferable + Within<region s>
     >(
         read scope: Scope<region s> from s,
         take f: F
@@ -207,7 +221,7 @@ type Slot<T> {
     value: core.mem.MaybeUninit<T>
 }
 
-fn run_packet<T, F: fn(): T>(data: ptr<mut u8>): Unit {
+fn run_packet<T, F: take fn(): T>(data: ptr<mut u8>): Unit {
     unsafe {
         let packet = data.cast<Packet<F, T>>()
         let f = core.ptr.`read`((*packet).f.as_ptr())
@@ -219,23 +233,23 @@ fn run_packet<T, F: fn(): T>(data: ptr<mut u8>): Unit {
     }
 }
 
-fn release_packet<T, F: fn(): T>(data: ptr<mut u8>): Unit {
+fn release_packet<T, F: take fn(): T>(data: ptr<mut u8>): Unit {
     unsafe {
         let packet = data.cast<Packet<F, T>>()
-        if !(*packet).started { core.ptr.drop_in_place((*packet).f.as_mut_ptr()) }
         let slot = (*packet).slot
-        if (*slot).filled { core.ptr.drop_in_place((*slot).value.as_mut_ptr()) }
         let _slot = package.alloc.boxed.from_raw_in(slot, package.alloc.alloc.Global())
         let _packet = package.alloc.boxed.from_raw_in(packet, package.alloc.alloc.Global())
+        if !(*packet).started { core.ptr.drop_in_place((*packet).f.as_mut_ptr()) }
+        if (*slot).filled { core.ptr.drop_in_place((*slot).value.as_mut_ptr()) }
     }
 }
 
 // Drops one reference; the last one frees the shared state.
 unsafe fn release(header: ptr<mut Header>): Unit {
     if (*header).refs.fetch_sub(1u32, core.sync.atomic.Ordering.AcqRel) == 1u32 {
+        let _header = package.alloc.boxed.from_raw_in(header, package.alloc.alloc.Global())
         let release_data = (*header).release
         release_data((*header).data)
-        let _header = package.alloc.boxed.from_raw_in(header, package.alloc.alloc.Global())
     }
 }
 
@@ -255,7 +269,7 @@ extern "C" fn thread_entry(raw: ptr<mut u8>): Unit {
 
 // Allocates the shared state and starts the thread; on failure everything is
 // released again and the closure is dropped.
-unsafe fn start<T, F: fn(): T>(
+unsafe fn start<T, F: take fn(): T>(
     take f: F,
     name: ptr<read u8>,
     name_length: usize,
@@ -300,11 +314,11 @@ pub type JoinHandle<T> {
 unsafe extend<T: Transferable> JoinHandle<T> implements Transferable {}
 unsafe extend<T: Transferable> JoinHandle<T> implements Shareable {}
 
-pub fn try_spawn<T: Transferable + Static, F: fn(): T + Transferable + Static>(take f: F): JoinHandle<T> throws SpawnError {
+pub fn try_spawn<T: Transferable + Static, F: take fn(): T + Transferable + Static>(take f: F): JoinHandle<T> throws SpawnError {
     try Builder.new().spawn(f)
 }
 
-pub fn spawn<T: Transferable + Static, F: fn(): T + Transferable + Static>(take f: F): JoinHandle<T> {
+pub fn spawn<T: Transferable + Static, F: take fn(): T + Transferable + Static>(take f: F): JoinHandle<T> {
     let outcome = capture try_spawn<T, F>(f)
     match take outcome {
         success(handle) => handle,
@@ -330,6 +344,8 @@ extend<T> JoinHandle<T> {
     pub take fn join(): T throws Panicked {
         let header = self.header
         let slot = self.slot
+        // Transfer the owned name before suppressing the handle's detach destructor.
+        let _thread = unsafe { core.ptr.`read`(core.ptr.from_ref(self.thread)) }
         core.mem.forget(take self)
         unsafe {
             let outcome = capture finish(header, slot)
@@ -378,6 +394,7 @@ type ScopeGuard<region r, region s> {
     scope: read Scope<region s> from r
     panicked: bool
     drop {
+        let remaining = ScopeGuard(self.scope, false)
         unsafe {
             var failed = false
             let list = self.scope.threads.get()
@@ -396,6 +413,7 @@ type ScopeGuard<region r, region s> {
                     none => { more = false }
                 }
             }
+            core.mem.forget(take remaining)
             if failed && mettle_rt_panicking() == 0 { panic("a scoped thread panicked") }
         }
     }
@@ -417,6 +435,7 @@ extend<T> ScopedJoinHandle<T> {
     pub take fn join(): T throws Panicked {
         let header = self.header
         let slot = self.slot
+        let _thread = unsafe { core.ptr.`read`(core.ptr.from_ref(self.thread)) }
         core.mem.forget(take self)
         unsafe {
             let outcome = capture finish(header, slot)
@@ -441,7 +460,7 @@ extend<T> ScopedJoinHandle<T> implements Debug {
 extend<region s> Scope<region s> {
     fn try_spawn_configured<
         T: Transferable,
-        F: fn(): T + Transferable + Within<region s>
+        F: take fn(): T + Transferable + Within<region s>
     >(
         receiver read self: Scope<region s> from s,
         read config: Builder,
@@ -450,9 +469,14 @@ extend<region s> Scope<region s> {
         unsafe { (*self.threads.get()).reserve(1usize) }
         let started = match config.name.as_view() {
             present(name) => unsafe {
+                let empty = 0u8
                 try start<T, F>(
                     f,
-                    package.core.slice.data(name.as_bytes()),
+                    if name.as_bytes().len() == 0usize {
+                        core.ptr.from_ref(empty)
+                    } else {
+                        package.core.slice.data(name.as_bytes())
+                    },
                     name.as_bytes().len(),
                     config.stack_size
                 )
@@ -478,7 +502,7 @@ extend<region s> Scope<region s> {
     // Starts a thread that may borrow from the enclosing frame.
     pub fn spawn<
         T: Transferable,
-        F: fn(): T + Transferable + Within<region s>
+        F: take fn(): T + Transferable + Within<region s>
     >(
         receiver read self: Scope<region s> from s,
         take f: F

@@ -139,6 +139,12 @@ std::vector<Site> referencesAt(const Files &files, std::size_t file,
         matches = candidates.size() == 1 &&
                   candidates.front().file == target.file &&
                   candidates.front().declaration == target.declaration;
+      } else if (occurrence.role == Role::Member &&
+                 occurrence.name == item.name) {
+        auto candidates = targetsAt(files, g, occurrence.begin);
+        matches = candidates.size() == 1 &&
+                  candidates.front().file == target.file &&
+                  candidates.front().declaration == target.declaration;
       }
       if (matches)
         sites.push_back({g, occurrence.begin, occurrence.end});
@@ -201,6 +207,70 @@ RenamePlan planRename(const Files &files, std::size_t file, std::size_t offset,
   if (!validIdentifier(replacement)) {
     plan.error = "'" + replacement + "' is not a valid identifier";
     return plan;
+  }
+  if (replacement != item.name) {
+    if (item.scoped()) {
+      const auto &items = files[target.file].index->declarations();
+      for (const auto &other : items)
+        if (other.scoped() && other.name == replacement &&
+            other.scopeBegin == item.scopeBegin &&
+            other.scopeEnd == item.scopeEnd) {
+          plan.error = "'" + replacement + "' would duplicate a binding";
+          return plan;
+        }
+      for (const auto &occurrence : files[target.file].index->occurrences()) {
+        if (occurrence.role != Role::Lexical ||
+            (occurrence.declaration != target.declaration &&
+             occurrence.name != replacement))
+          continue;
+        int resolved = -1;
+        for (std::size_t d = 0; d < items.size(); ++d) {
+          const auto &candidate = items[d];
+          const auto &name = static_cast<int>(d) == target.declaration
+                                 ? replacement
+                                 : candidate.name;
+          if (!candidate.scoped() || name != replacement ||
+              candidate.scopeBegin > occurrence.begin ||
+              occurrence.begin >= candidate.scopeEnd)
+            continue;
+          if (resolved < 0 ||
+              candidate.scopeBegin >
+                  items[static_cast<std::size_t>(resolved)].scopeBegin)
+            resolved = static_cast<int>(d);
+        }
+        if (resolved != occurrence.declaration) {
+          plan.error = "'" + replacement + "' would change a binding";
+          return plan;
+        }
+      }
+    } else {
+      for (std::size_t g = 0; g < files.size(); ++g) {
+        for (const auto &other : files[g].index->declarations())
+          if (!other.scoped() && other.name == replacement) {
+            plan.error =
+                "'" + replacement + "' would conflict with a declaration";
+            return plan;
+          }
+        for (const auto &occurrence : files[g].index->occurrences())
+          if (occurrence.role == Role::Lexical && occurrence.declaration < 0 &&
+              occurrence.name == replacement) {
+            plan.error = "'" + replacement + "' would capture an existing use";
+            return plan;
+          }
+      }
+      for (const auto &site : referencesAt(files, file, offset, false)) {
+        const auto *reference =
+            files[site.file].index->occurrenceAt(site.begin);
+        if (!reference || reference->role != Role::Lexical)
+          continue;
+        for (const auto &other : files[site.file].index->declarations())
+          if (other.scoped() && other.name == replacement &&
+              other.scopeBegin <= site.begin && site.begin < other.scopeEnd) {
+            plan.error = "'" + replacement + "' would capture a reference";
+            return plan;
+          }
+      }
+    }
   }
   std::set<Site> edits;
   if (!item.scoped() && !topLevel(files, target.file, item) &&

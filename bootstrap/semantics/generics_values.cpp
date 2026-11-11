@@ -12,8 +12,8 @@ void Checker::seedInterfaceBindings(const Node &node,
 void Checker::seedInterfaceBindings(Type self, Type interfaceType,
                                     const GenericEnvironment &environment,
                                     std::vector<TypeBinding> &bindings) {
-  auto seed = [&](std::string_view name, Type argument) {
-    auto parameter = environment.names.find(std::string(name));
+  auto seed = [&](const NameKey &name, Type argument) {
+    auto parameter = environment.names.find(name);
     if (parameter == environment.names.end())
       return;
     for (auto &binding : bindings)
@@ -21,7 +21,7 @@ void Checker::seedInterfaceBindings(Type self, Type interfaceType,
         binding.argument = argument;
   };
   if (self != Type::Unknown)
-    seed("Self", self);
+    seed(nameKey("Self", environment.declarationSpan), self);
   if (!checked.types->isErased(interfaceType))
     return;
   const auto &descriptor = checked.types->erased(interfaceType);
@@ -31,7 +31,8 @@ void Checker::seedInterfaceBindings(Type self, Type interfaceType,
     if (parameter.kind == GenericParameterKind::Region)
       continue;
     if (argument < descriptor.arguments.size())
-      seed(parameter.name, descriptor.arguments[argument++]);
+      seed(nameKey(parameter.name, parameter.context),
+           descriptor.arguments[argument++]);
   }
 }
 void Checker::explicitGenericBindings(const Function &function,
@@ -66,7 +67,9 @@ void Checker::explicitGenericBindings(const Function &function,
         for (std::size_t i = 0; i < function.implicitGenericParameters &&
                                 i < function.genericParameters.size();
              ++i)
-          if (function.genericParameters[i].name == argument.type->name &&
+          if (nameKey(function.genericParameters[i].name,
+                      function.genericParameters[i].context) ==
+                  nameKey(argument.type->name, argument.type->context) &&
               function.genericParameters[i].kind !=
                   GenericParameterKind::Region)
             bound = &function.genericParameters[i];
@@ -89,7 +92,8 @@ void Checker::explicitGenericBindings(const Function &function,
       if (!declared)
         continue;
       const auto &parameter = *declared;
-      auto identity = environment.names.at(parameter.name);
+      auto identity =
+          environment.names.at(nameKey(parameter.name, parameter.context));
       auto binding = std::find_if(bindings.begin(), bindings.end(),
                                   [&](const TypeBinding &candidate) {
                                     return candidate.parameter == identity;
@@ -98,7 +102,9 @@ void Checker::explicitGenericBindings(const Function &function,
         binding = std::find_if(
             bindings.begin(), bindings.end(),
             [&](const TypeBinding &candidate) {
-              return checked.types->name(candidate.parameter) == parameter.name;
+              auto key = genericNames.find(candidate.parameter);
+              return key != genericNames.end() &&
+                     key->second == nameKey(parameter.name, parameter.context);
             });
       if (binding == bindings.end()) {
         error("type", span, "generic argument has no declaration binding");
@@ -131,6 +137,7 @@ Type Checker::genericArgument(const GenericArgument &argument, Type parameter) {
     Node name{};
     name.kind = Kind::Name;
     name.text = argument.type->name;
+    name.context = argument.type->context;
     name.span = argument.span;
     value = constantType(name);
   } else

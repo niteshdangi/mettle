@@ -14,6 +14,7 @@
 #include <new>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <dirent.h>
@@ -75,11 +76,13 @@ template <typename Call> auto retry(Call call) {
   return result;
 }
 
+#ifndef __linux__
 void setCloseOnExec(int fd) {
   int flags = fcntl(fd, F_GETFD);
   if (flags >= 0)
     fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
 }
+#endif
 
 bool socketAddress(std::int32_t family, const std::uint8_t *address,
                    std::size_t addressSize, std::uint16_t port,
@@ -254,14 +257,48 @@ std::int32_t resolverErrno(int result) {
 
 void setResolverError(int result) { errno = resolverErrno(result); }
 
+struct DirectoryCloser {
+  void operator()(DIR *directory) const {
+    const int failure = errno;
+    closedir(directory);
+    errno = failure;
+  }
+};
+using Directory = std::unique_ptr<DIR, DirectoryCloser>;
+
+Directory directoryAt(int parent, const char *path, bool noFollow = true) {
+  int flags = O_RDONLY | O_DIRECTORY | O_CLOEXEC;
+  if (noFollow)
+    flags |= O_NOFOLLOW;
+  int fd = retry([&] { return openat(parent, path, flags); });
+  if (fd < 0)
+    return {};
+  auto *directory = fdopendir(fd);
+  if (!directory) {
+    const int failure = errno;
+    ::close(fd);
+    errno = failure;
+  }
+  return Directory(directory);
+}
+
 // Closes both ends of a pipe on scope exit unless released.
 struct Pipe {
   int ends[2] = {-1, -1};
   bool open() {
+#ifdef __linux__
+    if (pipe2(ends, O_CLOEXEC) != 0)
+#else
     if (pipe(ends) != 0)
+#endif
       return false;
-    setCloseOnExec(ends[0]);
-    setCloseOnExec(ends[1]);
+    for (int &end : ends) {
+      int duplicate = mettle_rt_dup(end);
+      if (duplicate < 0)
+        return false;
+      ::close(end);
+      end = duplicate;
+    }
     return true;
   }
   void close() {
@@ -290,13 +327,25 @@ struct Pipe {
                            const std::int32_t *modes, const Pipe *standard,
                            int report) {
   for (int i = 0; i < 3; ++i) {
+    if (modes[i] == 0)
+      continue;
     int source = -1;
     if (modes[i] == 1)
       source = i == 0 ? standard[i].ends[0] : standard[i].ends[1];
     else if (modes[i] == 2)
-      source = open("/dev/null", i == 0 ? O_RDONLY : O_WRONLY);
-    if (modes[i] != 0 && (source < 0 || dup2(source, i) < 0))
+      source = open("/dev/null", (i == 0 ? O_RDONLY : O_WRONLY) | O_CLOEXEC);
+    if (source < 0)
       childFailure(report);
+    if (source == i) {
+      int flags = fcntl(source, F_GETFD);
+      if (flags < 0 || fcntl(source, F_SETFD, flags & ~FD_CLOEXEC) < 0)
+        childFailure(report);
+    } else {
+      if (dup2(source, i) < 0)
+        childFailure(report);
+      if (modes[i] == 2)
+        ::close(source);
+    }
   }
   if (cwd && chdir(cwd) != 0)
     childFailure(report);
@@ -521,6 +570,10 @@ void eraseReactorRegistration(ReactorState &state, std::uint64_t token,
 
 extern "C" std::int32_t mettle_rt_errno() { return errno; }
 extern "C" std::int32_t mettle_rt_errno_kind(std::int32_t code) {
+  if (code == ENOTSUP || code == EOPNOTSUPP || code == ENOSYS)
+    return 22;
+  if (code == EWOULDBLOCK)
+    return 10;
   switch (code) {
   case ENOENT:
     return 0;
@@ -559,12 +612,62 @@ extern "C" std::int32_t mettle_rt_errno_kind(std::int32_t code) {
     return 16;
   case ENOTEMPTY:
     return 17;
+  case E2BIG:
+    return 23;
+  case EXDEV:
+    return 24;
+  case EDEADLK:
+    return 25;
+  case ETXTBSY:
+    return 26;
+  case EFBIG:
+    return 27;
+  case ELOOP:
+    return 28;
+  case EHOSTUNREACH:
+    return 29;
+  case EINPROGRESS:
+  case EALREADY:
+    return 30;
+  case EIO:
+    return 31;
+  case ENAMETOOLONG:
+    return 32;
+  case ENETDOWN:
+    return 33;
+  case ENETUNREACH:
+    return 34;
+  case ESPIPE:
+    return 35;
+  case EDQUOT:
+    return 36;
+  case EROFS:
+    return 37;
+  case EBUSY:
+    return 38;
+  case ESTALE:
+    return 39;
+  case ENOSPC:
+    return 40;
+  case EMLINK:
+    return 41;
+  case EMFILE:
+  case ENFILE:
+    return 42;
   default:
     return 18;
   }
 }
 
 extern "C" void mettle_rt_set_errno(std::int32_t value) { errno = value; }
+
+extern "C" std::int32_t mettle_rt_errno_is_range(std::int32_t code) {
+  return code == ERANGE;
+}
+
+extern "C" std::int32_t mettle_rt_dup(std::int32_t fd) {
+  return retry([&] { return fcntl(fd, F_DUPFD_CLOEXEC, 3); });
+}
 
 extern "C" std::int32_t mettle_rt_open(const char *path, std::int32_t flags,
                                        std::uint32_t mode) {
@@ -615,6 +718,68 @@ extern "C" const char *mettle_rt_readdir(void *directory) {
       return name;
   }
   return nullptr;
+}
+
+extern "C" std::int32_t mettle_rt_remove_dir_all(const char *path) {
+  try {
+    std::string pathName(path);
+    while (pathName.size() > 1 && pathName.back() == '/')
+      pathName.pop_back();
+    const auto split = pathName.rfind('/');
+    const auto rootName = split == std::string::npos ? pathName
+                          : pathName == "/" ? "."
+                                            : pathName.substr(split + 1);
+    const auto parentPath = split == std::string::npos ? "."
+                            : split == 0 ? "/"
+                                         : pathName.substr(0, split);
+    auto parentDirectory = directoryAt(AT_FDCWD, parentPath.c_str(), false);
+    if (!parentDirectory)
+      return -1;
+    int parentFd = dirfd(parentDirectory.get());
+    struct stat info;
+    if (fstatat(parentFd, rootName.c_str(), &info, AT_SYMLINK_NOFOLLOW) != 0)
+      return -1;
+    if (!S_ISDIR(info.st_mode))
+      return unlinkat(parentFd, rootName.c_str(), 0);
+    auto root = directoryAt(parentFd, rootName.c_str());
+    if (!root)
+      return -1;
+    struct Frame {
+      Directory directory;
+      std::string name;
+    };
+    std::vector<Frame> stack;
+    stack.push_back({std::move(root), rootName});
+    while (!stack.empty()) {
+      auto &frame = stack.back();
+      const char *entry = mettle_rt_readdir(frame.directory.get());
+      if (entry) {
+        int entryParent = dirfd(frame.directory.get());
+        if (fstatat(entryParent, entry, &info, AT_SYMLINK_NOFOLLOW) != 0)
+          return -1;
+        if (S_ISDIR(info.st_mode)) {
+          auto child = directoryAt(entryParent, entry);
+          if (!child)
+            return -1;
+          stack.push_back({std::move(child), entry});
+        } else if (unlinkat(entryParent, entry, 0) != 0)
+          return -1;
+        continue;
+      }
+      if (errno != 0)
+        return -1;
+      int entryParent = stack.size() == 1
+                            ? parentFd
+                            : dirfd(stack[stack.size() - 2].directory.get());
+      if (unlinkat(entryParent, frame.name.c_str(), AT_REMOVEDIR) != 0)
+        return -1;
+      stack.pop_back();
+    }
+    return 0;
+  } catch (const std::bad_alloc &) {
+    errno = ENOMEM;
+    return -1;
+  }
 }
 
 extern "C" std::int32_t mettle_rt_argc() { return arguments().count; }
@@ -713,10 +878,16 @@ extern "C" std::int32_t mettle_rt_sock_new(std::int32_t kind,
     errno = EAFNOSUPPORT;
     return -1;
   }
-  int fd = socket(nativeFamily, kind == 0 ? SOCK_STREAM : SOCK_DGRAM, 0);
+  int type = kind == 0 ? SOCK_STREAM : SOCK_DGRAM;
+#ifdef __linux__
+  type |= SOCK_CLOEXEC;
+#endif
+  int fd = socket(nativeFamily, type, 0);
   if (fd < 0)
     return -1;
+#ifndef __linux__
   setCloseOnExec(fd);
+#endif
 #ifdef SO_NOSIGPIPE
   int on = 1;
   setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof on);
@@ -768,37 +939,112 @@ extern "C" std::int32_t mettle_rt_sock_connect_timeout(
 
 extern "C" std::int32_t
 mettle_rt_sock_accept(std::int32_t fd, std::int32_t timeoutMillis,
+                      std::int32_t nonblocking, std::int32_t *timedOut,
                       std::int32_t *family, std::uint8_t *address,
                       std::size_t addressCapacity, std::uint16_t *port,
                       std::uint32_t *flowinfo, std::uint32_t *scopeId) {
-  if (timeoutMillis >= 0) {
-    std::int32_t ready = mettle_rt_poll(fd, 0, timeoutMillis);
-    if (ready < 0)
+  *timedOut = 0;
+  const bool timed = !nonblocking && timeoutMillis >= 0;
+  timespec until{};
+  if (timed) {
+    if (clock_gettime(CLOCK_MONOTONIC, &until) != 0)
       return -1;
-    if (ready == 0) {
-      errno = EAGAIN;
+    until.tv_nsec += (timeoutMillis % 1000) * 1000000L;
+    const auto seconds =
+        static_cast<time_t>(timeoutMillis / 1000 + until.tv_nsec / 1000000000L);
+    if (until.tv_sec < 0 ||
+        until.tv_sec > std::numeric_limits<time_t>::max() - seconds) {
+      errno = EOVERFLOW;
       return -1;
     }
+    until.tv_sec += seconds;
+    until.tv_nsec %= 1000000000L;
   }
-  sockaddr_storage value;
-  socklen_t size = sizeof value;
-  int accepted = retry(
-      [&] { return accept(fd, reinterpret_cast<sockaddr *>(&value), &size); });
-  if (accepted < 0)
+  auto remaining = [&]() -> int {
+    timespec now{};
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+      return -1;
+    if (now.tv_sec < 0) {
+      errno = EOVERFLOW;
+      return -1;
+    }
+    if (now.tv_sec > until.tv_sec ||
+        (now.tv_sec == until.tv_sec && now.tv_nsec >= until.tv_nsec))
+      return 0;
+    auto seconds = until.tv_sec - now.tv_sec;
+    auto nanos = until.tv_nsec - now.tv_nsec;
+    if (nanos < 0) {
+      --seconds;
+      nanos += 1000000000L;
+    }
+    if (seconds > INT_MAX / 1000)
+      return INT_MAX;
+    const auto millis = static_cast<std::int64_t>(seconds) * 1000 +
+                        (nanos + 999999L) / 1000000L;
+    return static_cast<int>(std::min<std::int64_t>(millis, INT_MAX));
+  };
+  auto expired = [&]() {
+    *timedOut = 1;
+    errno = EAGAIN;
     return -1;
-  setCloseOnExec(accepted);
+  };
+  sockaddr_storage value;
+  socklen_t size = 0;
+  int accepted = -1;
+  bool first = true;
+  while (true) {
+    if (!first && timed) {
+      const auto left = remaining();
+      if (left < 0)
+        return -1;
+      if (left == 0)
+        return expired();
+    }
+    first = false;
+    size = sizeof value;
+#ifdef __linux__
+    accepted =
+        accept4(fd, reinterpret_cast<sockaddr *>(&value), &size, SOCK_CLOEXEC);
+#else
+    accepted = accept(fd, reinterpret_cast<sockaddr *>(&value), &size);
+#endif
+    if (accepted >= 0)
+      break;
+    if (errno == EINTR)
+      continue;
+    if (nonblocking || (errno != EAGAIN && errno != EWOULDBLOCK))
+      return -1;
+    const auto left = timed ? remaining() : -1;
+    if (timed && left < 0)
+      return -1;
+    if (left == 0)
+      return expired();
+    pollfd request{fd, POLLIN, 0};
+    if (poll(&request, 1, left) < 0 && errno != EINTR)
+      return -1;
+  }
+  struct AcceptedSocket {
+    int fd;
+    ~AcceptedSocket() {
+      const int code = errno;
+      if (fd >= 0)
+        close(fd);
+      errno = code;
+    }
+  } socket{accepted};
+  const int flags = retry([&] { return fcntl(accepted, F_GETFD); });
+  if (flags < 0 ||
+      retry([&] { return fcntl(accepted, F_SETFD, flags | FD_CLOEXEC); }) < 0 ||
+      mettle_rt_set_blocking(accepted) != 0)
+    return -1;
 #ifdef SO_NOSIGPIPE
   int on = 1;
   setsockopt(accepted, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof on);
 #endif
   if (!readSocketAddress(reinterpret_cast<sockaddr *>(&value), size, family,
-                         address, addressCapacity, port, flowinfo, scopeId)) {
-    const int failure = errno;
-    close(accepted);
-    errno = failure;
+                         address, addressCapacity, port, flowinfo, scopeId))
     return -1;
-  }
-  return accepted;
+  return std::exchange(socket.fd, -1);
 }
 
 extern "C" std::int32_t
@@ -1003,10 +1249,15 @@ extern "C" std::int32_t mettle_rt_clock(std::int32_t clock, std::int64_t *out) {
 }
 
 extern "C" void mettle_rt_sleep(std::uint64_t seconds, std::uint32_t nanos) {
-  timespec request{static_cast<time_t>(seconds), static_cast<long>(nanos)};
-  timespec remaining;
-  while (nanosleep(&request, &remaining) != 0 && errno == EINTR)
-    request = remaining;
+  do {
+    const auto part = std::min(seconds, static_cast<std::uint64_t>(INT_MAX));
+    timespec request{static_cast<time_t>(part), static_cast<long>(nanos)};
+    timespec remaining;
+    while (nanosleep(&request, &remaining) != 0 && errno == EINTR)
+      request = remaining;
+    seconds -= part;
+    nanos = 0;
+  } while (seconds != 0);
 }
 
 extern "C" void *mettle_rt_reactor_new() {
@@ -1281,6 +1532,13 @@ extern "C" std::int32_t mettle_rt_reactor_wait(void *rawReactor) {
     return -1;
   }
 #endif
+}
+
+extern "C" std::int32_t mettle_rt_sock_is_nonblocking(std::int32_t fd) {
+  int flags = retry([&] { return fcntl(fd, F_GETFL); });
+  if (flags < 0)
+    return -1;
+  return (flags & O_NONBLOCK) != 0;
 }
 
 extern "C" std::int32_t mettle_rt_set_nonblocking(std::int32_t fd) {

@@ -359,7 +359,13 @@ private:
       llvm::report_fatal_error("async body contains its own state");
     auto frame = std::make_unique<CleanupFrame>(
         lowering, program.functions[body],
-        "mettle.coroutine." + std::to_string(body));
+        "mettle.coroutine." + program.functions[body].name);
+    if (partition.split)
+      for (auto *callback : {frame->body(), frame->unwind()}) {
+        callback->setLinkage(llvm::GlobalValue::ExternalLinkage);
+        callback->setVisibility(llvm::GlobalValue::HiddenVisibility);
+        callback->setDSOLocal(true);
+      }
     if (debugInfo)
       for (const auto &[state, coroutineBody] : program.coroutines)
         if (coroutineBody == body)
@@ -694,6 +700,12 @@ private:
     unsigned width = vectorWidth(functions[index]->getReturnType());
     for (auto *argument : arguments)
       width = std::max(width, vectorWidth(argument->getType()));
+    if (signatures[index]) {
+      auto *physical = signatures[index]->type;
+      width = std::max(width, vectorWidth(physical->getReturnType()));
+      for (auto *parameter : physical->params())
+        width = std::max(width, vectorWidth(parameter));
+    }
     auto differs = [&](const std::string &feature) {
       return featuresAvailable(program.target, callerFeatures, {feature}) !=
              featuresAvailable(program.target, callee.targetFeatures,
@@ -789,7 +801,7 @@ private:
                            functions[instruction.callee], arguments);
     if (contract.abiResult == Type::Never)
       builder.CreateUnreachable();
-    else if (indirectResult)
+    else if (contract.abiResult == Type::Unit || indirectResult)
       builder.CreateRetVoid();
     else
       builder.CreateRet(result);
@@ -842,7 +854,7 @@ private:
           pattern = static_cast<std::uint8_t>(byte);
       }
     }
-    if (pattern || !count) {
+    if (pattern || !count || !stride) {
       builder.CreateMemSet(base, builder.getInt8(pattern.value_or(0)),
                            count * stride, alignment);
     } else {
@@ -1235,7 +1247,8 @@ private:
             count = builder.CreateNeg(count);
           auto *element = method.starts_with("fetch_byte")
                               ? builder.getInt8Ty()
-                              : type(program.types->pointer(payload).payload);
+                              : lowering.storageType(
+                                    program.types->pointer(payload).payload);
           desired = builder.CreateGEP(element, old, count);
         } else
           desired =
@@ -1801,6 +1814,16 @@ private:
           auto *remainder = builder.CreateFRem(a, b);
           auto *zero = llvm::ConstantFP::get(type(self), 0.0);
           auto *negative = builder.CreateFCmpOLT(remainder, zero);
+          if (method == "div_euclid") {
+            auto *quotient =
+                invoke(llvm::Intrinsic::trunc, {builder.CreateFDiv(a, b)});
+            auto *one = llvm::ConstantFP::get(type(self), 1.0);
+            auto *adjusted =
+                builder.CreateSelect(builder.CreateFCmpOGT(b, zero),
+                                     builder.CreateFSub(quotient, one),
+                                     builder.CreateFAdd(quotient, one));
+            return builder.CreateSelect(negative, adjusted, quotient);
+          }
           auto *magnitude = invoke(llvm::Intrinsic::fabs, {b});
           auto *adjusted = builder.CreateFAdd(remainder, magnitude);
           remainder = builder.CreateSelect(negative, adjusted, remainder);
@@ -1808,9 +1831,7 @@ private:
               builder.CreateFCmpOGE(remainder, magnitude), zero, remainder);
           remainder = builder.CreateSelect(
               builder.CreateFCmpOEQ(remainder, zero), zero, remainder);
-          if (method == "rem_euclid")
-            return remainder;
-          return builder.CreateFDiv(builder.CreateFSub(a, remainder), b);
+          return remainder;
         }
         if (method == "midpoint") {
           auto two = [](llvm::Type *t) {
@@ -2366,10 +2387,10 @@ private:
         auto *rounded = builder.CreateExtractValue(sum, 0);
         auto *overflow =
             builder.CreateOr(zero, builder.CreateExtractValue(sum, 1));
-        if (!optional)
-          panicIf(overflow);
-        if (!optional)
+        if (!optional) {
+          panicIf(checked ? overflow : zero);
           return rounded;
+        }
         llvm::Value *aggregate =
             llvm::Constant::getNullValue(type(instruction.result.type));
         aggregate = builder.CreateInsertValue(
@@ -2752,14 +2773,16 @@ private:
           instruction.result.type, data,
           method == "read_unaligned"
               ? llvm::Align(1)
-              : llvm::Align(lowering.alignment(instruction.result.type)));
+              : llvm::Align(lowering.alignment(instruction.result.type)),
+          method == "read_volatile");
     if (method.starts_with("write") &&
         lowering.indirect(instruction.operands[1].type)) {
       lowering.store(
           instruction.operands[1].type, arguments[1], data,
           method == "write_unaligned"
               ? llvm::Align(1)
-              : llvm::Align(lowering.alignment(instruction.operands[1].type)));
+              : llvm::Align(lowering.alignment(instruction.operands[1].type)),
+          method == "write_volatile");
       return unit();
     }
     if (method.starts_with("read")) {
@@ -2910,7 +2933,7 @@ private:
           frame.alignment(n.place).value() < lowering.alignment(n.result.type))
         return false;
       const auto &next = block.instructions[position + 1];
-      return next.op != ir::Op::Phi &&
+      return next.op != ir::Op::Phi && next.op != ir::Op::ArrayRepeat &&
              std::any_of(next.operands.begin(), next.operands.end(),
                          [&](const ir::Value &operand) {
                            return operand.id == n.result.id;
@@ -3021,7 +3044,8 @@ private:
           result = llvm::UndefValue::get(type(n.result.type));
           result = builder.CreateInsertValue(result, address(n.place), 0);
           result = builder.CreateInsertValue(
-              result, builder.CreateZExt(get(0), builder.getInt64Ty()), 1);
+              result, builder.CreateZExtOrTrunc(get(0), builder.getInt64Ty()),
+              1);
           break;
         case ir::Op::OwnerUnsize: {
           auto sourceOwner = n.operands[0].type;
@@ -3038,7 +3062,8 @@ private:
           if (program.types->pointerMetadata(targetPayload) ==
               PointerMetadata::ElementCount) {
             pointer = builder.CreateInsertValue(
-                pointer, builder.CreateZExt(get(1), builder.getInt64Ty()), 1);
+                pointer,
+                builder.CreateZExtOrTrunc(get(1), builder.getInt64Ty()), 1);
           } else {
             std::vector<llvm::Constant *> methods;
             for (std::size_t method = 1; method < n.operands.size(); ++method)
@@ -3076,8 +3101,9 @@ private:
             result = llvm::UndefValue::get(type(n.result.type));
             result = builder.CreateInsertValue(
                 result,
-                builder.CreateGEP(type(program.types->slice(slice).element),
-                                  data, start),
+                builder.CreateGEP(
+                    lowering.storageType(program.types->slice(slice).element),
+                    data, start),
                 0);
             result = builder.CreateInsertValue(
                 result, builder.CreateSub(end, start), 1);
@@ -3168,7 +3194,12 @@ private:
           result = get(0);
           break;
         case ir::Op::Constant:
-          if (n.numeric) {
+          if (n.result.type == Type::Bool)
+            result =
+                builder.getInt1(n.numeric ? n.numeric->magnitude[0] != 0 ||
+                                                n.numeric->magnitude[1] != 0
+                                          : n.number != 0);
+          else if (n.numeric) {
             if (isFloating(n.result.type)) {
               llvm::APFloat number(n.result.type == Type::F32
                                        ? llvm::APFloat::IEEEsingle()
@@ -3198,8 +3229,6 @@ private:
           } else if (isInteger(n.result.type) || n.result.type == Type::Char)
             result =
                 llvm::ConstantInt::get(type(n.result.type), n.number, true);
-          if (n.result.type == Type::Bool)
-            result = builder.getInt1(n.number != 0);
           break;
         case ir::Op::Cast:
           result = cast(get(0), n.operands[0].type, n.result.type);
@@ -3322,7 +3351,7 @@ private:
           auto array = *projectedType(
               *program.types, source.locals[n.place.root].type, n.place.fields);
           auto stride = lowering.layout(n.result.type).size;
-          auto *index = builder.CreateSExt(get(0), builder.getInt64Ty());
+          auto *index = builder.CreateZExtOrTrunc(get(0), builder.getInt64Ty());
           auto *element = builder.CreateGEP(
               builder.getInt8Ty(), address(n.place),
               builder.CreateMul(index, builder.getInt64(stride)));

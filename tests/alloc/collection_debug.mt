@@ -50,8 +50,11 @@ fn main(): i32 {
     var m = hash_map.new<i32, i32>()
     if !is(render(m, false), "{}") || !is(render(m, true), "{}") { return 9 }
     m.insert(1, 10); m.insert(2, 20)
-    if !is(render(m, false), "{1: 10, 2: 20}") { return 10 }
-    if !is(render(m, true), "{\n    1: 10,\n    2: 20,\n}") { return 11 }
+    let compact_map = render(m, false)
+    if !is(compact_map, "{1: 10, 2: 20}") && !is(compact_map, "{2: 20, 1: 10}") { return 10 }
+    let pretty_map = render(m, true)
+    if !is(pretty_map, "{\n    1: 10,\n    2: 20,\n}") &&
+        !is(pretty_map, "{\n    2: 20,\n    1: 10,\n}") { return 11 }
     var s = hash_map.set_new<i32>()
     s.insert(5)
     if !is(render(s, false), "{5}") || !is(render(s, true), "{\n    5,\n}") { return 12 }

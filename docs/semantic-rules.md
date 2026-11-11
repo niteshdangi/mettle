@@ -362,9 +362,12 @@ and any yielded views.
 Range indexing `read base[a..b]` (also `a..`, `..b`, `..`, `a..=b`; bounds are
 `usize`) borrows a subslice of an array or slice, panicking when out of range or
 `a > b`; `mut base[..]` needs a mutable place. Other bases use
-`core.ops.IndexRange` (`fn index_range(start: usize, end: usize): read
-Self.Output from self`) or `IndexRangeMut`; an absent upper bound is passed as
-`usize.MAX` and `..=b` as `b + 1`. Outside indexing, `a..`, `..b`, `..=b`
+`core.ops.IndexRange` (`fn index_range(start: usize, end: RangeEnd): read
+Self.Output from self`) or `IndexRangeMut`. The upper bound is passed as
+`RangeEnd.Unbounded`, `RangeEnd.Exclusive(b)` or `RangeEnd.Inclusive(b)`;
+no arithmetic is performed to translate it. Implementations enforce their own
+bounds, including at `usize.MAX`.
+Outside indexing, `a..`, `..b`, `..=b`
 and `..` are `core.iter.RangeFrom`, `RangeTo`, `RangeToInclusive` and
 `RangeFull` values; only `RangeFrom` iterates.
 

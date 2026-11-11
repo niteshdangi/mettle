@@ -4,7 +4,7 @@
 
 import core.iter.{BidirectionalIterator, Iterator}
 import std.ffi.os_str_from_text
-import std.path.{Component, Path, PathBuf, path, path_from_text, path_buf_from_text}
+import std.path.{Component, Path, PathBuf, StripPrefixError, path, path_from_text, path_buf_from_text}
 
 fn normal_is(c: Component, read want: Text): bool {
     match c {
@@ -69,18 +69,27 @@ fn checks_prefix_and_suffix(): i32 {
     if !p.ends_with(path_from_text("lib")) || !p.ends_with(path_from_text("usr/lib")) { return 12 }
     if p.ends_with(path_from_text("ib")) || p.ends_with(path_from_text("/lib/x")) { return 13 }
     if !path_from_text("a/b/").starts_with(path_from_text("a/b")) { return 14 }
-    match p.strip_prefix(path_from_text("/usr")) {
-        present(rest) => { if !rest.same(path_from_text("lib")) { return 15 } },
-        none => { return 15 }
+    match capture p.strip_prefix(path_from_text("/usr")) {
+        success(rest) => { if !rest.same(path_from_text("lib")) { return 15 } },
+        failure(_) => { return 15 }
     }
-    if p.strip_prefix(path_from_text("/var")).is_present() { return 16 }
+    match capture p.strip_prefix(path_from_text("/var")) {
+        success(_) => { return 16 },
+        failure(error) => { let _error: StripPrefixError = error }
+    }
+    if !p.same(path_from_text("/usr/lib")) { return 47 }
 
     let buf = path_buf_from_text("/srv/data")
     if !buf.starts_with(path_from_text("/srv")) || !buf.ends_with(path_from_text("data")) { return 17 }
-    match buf.strip_prefix(path_from_text("/srv")) {
-        present(rest) => { if !rest.same(path_from_text("data")) { return 18 } },
-        none => { return 18 }
+    match capture buf.strip_prefix(path_from_text("/srv")) {
+        success(rest) => { if !rest.same(path_from_text("data")) { return 18 } },
+        failure(_) => { return 18 }
     }
+    match capture buf.strip_prefix(path_from_text("/var")) {
+        success(_) => { return 48 },
+        failure(error) => { let _error: StripPrefixError = error }
+    }
+    if !buf.as_path().same(path_from_text("/srv/data")) { return 49 }
     if component_count(buf.as_path()) != 3usize { return 19 }
     0
 }

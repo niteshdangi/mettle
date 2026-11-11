@@ -13,6 +13,7 @@
 #include <string_view>
 #include <tuple>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace mettle {
@@ -200,6 +201,7 @@ struct ProductLayout {
   std::vector<std::pair<std::uint32_t, unsigned>> unpinConditions{};
   bool conditionalUnpin = false;
 };
+inline constexpr std::uint32_t unknownPackage = UINT32_MAX;
 struct ProductType {
   std::string name;
   std::vector<TypeField> fields;
@@ -215,7 +217,7 @@ struct ProductType {
   std::vector<Type> genericArguments{};
   Type arrayCount = Type::Unknown;
   std::vector<Type> opaqueBounds{};
-  std::uint32_t package = 0;
+  std::uint32_t package = unknownPackage;
   Type regionOrigin = Type::Unknown;
   std::vector<RegionId> regionArguments{};
   Type regionPattern = Type::Unknown;
@@ -245,6 +247,7 @@ struct TypeParameter {
   std::vector<RegionId> regionArguments{};
   bool unpin = false;
   NumericLiteral numeric{};
+  Type erasedCallableConstraint = Type::Unknown;
 };
 struct TypeBinding {
   Type parameter, argument;
@@ -280,12 +283,39 @@ struct SliceType {
   std::string name;
   PointerMetadata metadata = PointerMetadata::ElementCount;
 };
+enum class ImportedTypeKind {
+  Product,
+  View,
+  Pointer,
+  Slice,
+  Parameter,
+  Callable,
+  Erased
+};
+struct ImportedProduct {
+  ProductType descriptor;
+  std::optional<CallableType> closure;
+  std::vector<Type> coroutineInterior;
+};
+struct ImportedPointer {
+  ViewType descriptor;
+};
+using ImportedTypeDefinition =
+    std::variant<ImportedProduct, ViewType, ImportedPointer, SliceType,
+                 TypeParameter, CallableType, ErasedType>;
 class TypeStore {
 public:
+  // Shells belong only to a transactional staging store until graph validation.
+  Type declareImportedType(ImportedTypeKind kind);
+  void defineImportedType(Type type, ImportedTypeDefinition definition);
+  ImportedTypeDefinition importedDefinition(Type type) const;
+  ImportedTypeKind importedKind(Type type) const;
+  std::vector<Type> storedTypes() const;
   Type declareProduct(std::string name, bool copyRequested);
   Type vectorType(std::string name, Type element, unsigned lanes,
                   unsigned alignment);
   void defineProduct(Type type, std::vector<TypeField> fields);
+  void setProductPackage(Type type, std::uint32_t package);
   void setProductLayout(Type type, ProductLayout layout);
   void defineEnumeration(Type type, std::vector<VariantType> variants,
                          std::vector<TypeField> fields);
@@ -324,6 +354,7 @@ public:
   Type regionalShell(Type origin, std::vector<RegionId> regions,
                      std::vector<Type> arguments, Type pattern = Type::Unknown);
   void setRegionPattern(Type type, Type pattern);
+  Type declaredRegions(Type type);
   void setDestructor(Type type, int function);
   void setNativeCleanup(Type type, NativeCleanup action);
   // A coroutine state's size and alignment are backend facts: its frame is
@@ -344,7 +375,8 @@ public:
   void setCoroutineInterior(Type closure, std::vector<Type> held);
   std::vector<Type> coroutineInterior(Type closure);
   bool needsDrop(Type type) const;
-  bool containsViews(Type type) const;
+  // Runtime provenance also includes borrows hidden by an erased payload.
+  bool containsViews(Type type, bool includeErasedPayloads = false) const;
   const ProductType &product(Type type) const;
   std::string_view name(Type type) const;
   bool isCopy(Type type) const;

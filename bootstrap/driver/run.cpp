@@ -1,6 +1,7 @@
 #include "backend/llvm/numeric.h"
 #include "driver/build_script.h"
 #include "driver/cache.h"
+#include "driver/checked_library.h"
 #include "driver/document.h"
 #include "driver/execute.h"
 #include "driver/inspect.h"
@@ -18,18 +19,26 @@
 #include "syntax/lexer.h"
 #include "syntax/parser.h"
 #include "types/target.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
 #include <algorithm>
+#include <cerrno>
 #include <cstdlib>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <set>
 #include <string_view>
+#include <sys/file.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
 
 namespace mettle::driver {
@@ -86,17 +95,32 @@ std::optional<std::string> gitOutput(const std::vector<std::string> &arguments,
                                      const std::filesystem::path &store,
                                      std::string &problem,
                                      bool allowEmpty = false) {
-  auto output =
-      store /
-      ("mettle-git-output-" +
-       std::to_string(std::hash<std::string>{}(arguments.back())) + ".txt");
-  if (!runGit(arguments, output.generic_string(), problem))
+  struct TemporaryOutput {
+    llvm::SmallString<256> path;
+    ~TemporaryOutput() {
+      if (!path.empty())
+        llvm::sys::fs::remove(path);
+    }
+  } output;
+  auto model = (store / "mettle-git-output-%%%%%%.txt").generic_string();
+  if (auto error = llvm::sys::fs::createUniqueFile(model, output.path)) {
+    problem = "cannot create git output file: " + error.message();
     return std::nullopt;
-  std::ifstream stream(output, std::ios::binary);
+  }
+  auto path = output.path.str().str();
+  if (!runGit(arguments, path, problem))
+    return std::nullopt;
+  std::ifstream stream(path, std::ios::binary);
+  if (!stream) {
+    problem = "cannot open git output file";
+    return std::nullopt;
+  }
   std::string text((std::istreambuf_iterator<char>(stream)),
                    std::istreambuf_iterator<char>());
-  std::error_code ignored;
-  std::filesystem::remove(output, ignored);
+  if (stream.bad()) {
+    problem = "cannot read git output file";
+    return std::nullopt;
+  }
   while (!text.empty() && (text.back() == '\n' || text.back() == '\r'))
     text.pop_back();
   if (text.empty() && !allowEmpty) {
@@ -193,6 +217,382 @@ checkoutGit(const Options &options, const std::string &url,
   return packages::GitCheckout{canonical.generic_string(), *commit};
 }
 
+namespace fs = std::filesystem;
+
+bool beneath(const fs::path &path, const fs::path &directory) {
+  auto relative = path.lexically_relative(directory);
+  return !relative.empty() && *relative.begin() != "..";
+}
+
+class PackageWorkCopies {
+public:
+  bool lock(const fs::path &root, std::string &problem) {
+    std::error_code error;
+    auto directory = root / "target";
+    fs::create_directories(directory, error);
+    if (error) {
+      problem =
+          "cannot create package build-lock directory: " + error.message();
+      return false;
+    }
+    auto path = directory / "mettle-package-work.lock";
+    guard.descriptor = open(path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+    if (guard.descriptor < 0 || flock(guard.descriptor, LOCK_EX) != 0) {
+      problem = "cannot lock package build work: " +
+                std::error_code(errno, std::generic_category()).message();
+      return false;
+    }
+    struct stat opened{}, current{};
+    if (fstat(guard.descriptor, &opened) != 0 ||
+        stat(path.c_str(), &current) != 0 || opened.st_dev != current.st_dev ||
+        opened.st_ino != current.st_ino) {
+      problem = "package build-work lock was replaced";
+      return false;
+    }
+    return true;
+  }
+
+  bool prepare(const Options &options, packages::Plan &plan,
+               std::string &problem) {
+    origins = plan.origins;
+    for (const auto &mount : plan.mounts)
+      inputs.push_back(mount.source);
+    for (const auto &mount : plan.hostMounts)
+      inputs.push_back(mount.source);
+    for (const auto &script : plan.scripts)
+      inputs.push_back(script.source);
+    for (const auto &macro : plan.macros)
+      inputs.push_back(macro.source);
+    inputs.push_back(plan.root);
+    auto root = origin(plan.rootIdentity);
+    if (!root) {
+      problem = "missing root package provenance";
+      return false;
+    }
+    try {
+      auto directory =
+          fs::path(root->directory) / "target" / "mettle" / "package-work";
+      for (bool host : {false, true}) {
+        std::map<fs::path, std::string> roots;
+        std::set<fs::path> outputs;
+        packages::Sha256 hash;
+        for (const auto &field :
+             {std::string("mettle-package-work-1"), plan.fingerprint,
+              options.target, options.profile,
+              std::string(host ? "host" : "target")}) {
+          hash.update(field);
+          hash.update(std::string_view("\0", 1));
+        }
+        for (const auto &package : origins) {
+          if (package.host != host)
+            continue;
+          auto work = fs::path(package.directory) / "target" / "mettle";
+          bool tool = false;
+          for (const auto &script : plan.scripts)
+            if (script.identity == package.identity) {
+              tool = true;
+              outputs.insert(work / "build-script");
+              outputs.insert(work / "build-script.stdout");
+              outputs.insert(work / "out");
+            }
+          for (const auto &macro : plan.macros)
+            if (macro.identity == package.identity) {
+              tool = true;
+              for (const auto &suffix :
+                   {"", ".request", ".response", ".stderr"})
+                outputs.insert(work / "macros" / (macro.name + suffix));
+            }
+          if (!tool || (!host && package.gitRoot.empty()))
+            continue;
+          roots.emplace(package.gitRoot.empty() ? package.directory
+                                                : package.gitRoot,
+                        package.gitCommit);
+          hash.update(package.identity);
+          hash.update(std::string_view("\0", 1));
+        }
+        if (roots.empty())
+          continue;
+        auto key = hash.finish();
+        auto &view = views[key];
+        view.host = host;
+        view.directory = fs::weakly_canonical(directory / key);
+        view.tree = view.directory / "tree";
+        view.roots = std::move(roots);
+        view.outputs = std::move(outputs);
+        view.outputs.insert(directory);
+      }
+      auto protectedPath = [&](const fs::path &destination) {
+        auto path = fs::weakly_canonical(destination);
+        return std::any_of(origins.begin(), origins.end(),
+                           [&](const auto &package) {
+                             return !package.gitRoot.empty() &&
+                                    (beneath(path, package.gitRoot) ||
+                                     beneath(package.gitRoot, path));
+                           });
+      };
+      bool tools = !plan.scripts.empty() || !plan.macros.empty();
+      if (tools && protectedPath(fs::path(root->directory) / "target" /
+                                 "mettle-package-work.lock")) {
+        problem = "package build lock would overlap immutable Git source";
+        return false;
+      }
+      for (const auto &[key, view] : views)
+        if (protectedPath(view.directory)) {
+          problem = "package build work would overlap immutable Git source";
+          return false;
+        }
+      if (tools && !lock(root->directory, problem))
+        return false;
+      if (!views.empty())
+        fs::create_directories(directory);
+      for (auto &[key, view] : views) {
+        bool fresh = !fs::exists(view.directory);
+        if (fresh) {
+          llvm::SmallString<256> staging;
+          if (auto error = llvm::sys::fs::createUniqueDirectory(
+                  view.directory.string() + ".staging", staging)) {
+            problem = "cannot stage package build copy: " + error.message();
+            return false;
+          }
+          view.pending = staging.str().str();
+        }
+        auto tree = (fresh ? view.pending : view.directory) / "tree";
+        mirror(view.roots.begin()->first.root_path(), tree, view);
+        for (const auto &[source, commit] : view.roots) {
+          auto destination = tree / source.relative_path();
+          copyInputs(source, destination, view, source);
+        }
+        if (fresh) {
+          fs::rename(view.pending, view.directory);
+          view.pending.clear();
+        }
+        view.tree = view.directory / "tree";
+        for (const auto &[source, commit] : view.roots) {
+          auto destination = view.tree / source.relative_path();
+          if (!commit.empty()) {
+            auto git = destination / ".git";
+            if (!fs::is_directory(fs::symlink_status(git)) ||
+                !fs::is_regular_file(fs::symlink_status(git / "config"))) {
+              problem = "Git build copy has no private repository metadata";
+              return false;
+            }
+            if (!runGit({"git", "--git-dir=" + git.string(), "config", "--file",
+                         (git / "config").string(), "core.worktree",
+                         destination.string()},
+                        std::nullopt, problem))
+              return false;
+          }
+          rebaseLinks(view.tree / source.relative_path(), view);
+        }
+      }
+      for (auto &mount : plan.mounts)
+        mount.source = rebound(mount.identity, mount.source);
+      for (auto &mount : plan.hostMounts)
+        mount.source = rebound(mount.identity, mount.source);
+      for (auto &script : plan.scripts) {
+        script.source = rebound(script.identity, script.source);
+        script.directory = rebound(script.identity, script.directory);
+      }
+      for (auto &macro : plan.macros) {
+        macro.source = rebound(macro.identity, macro.source);
+        macro.directory = rebound(macro.identity, macro.directory);
+      }
+      plan.root = rebound(plan.rootIdentity, plan.root);
+      for (const auto &script : plan.scripts) {
+        auto work = fs::path(script.directory) / "target" / "mettle";
+        for (const auto &name : {"build-script", "build-script.stdout", "out"})
+          if (protectedPath(work / name)) {
+            problem = "build-script output would overlap immutable Git source";
+            return false;
+          }
+      }
+      for (const auto &macro : plan.macros) {
+        auto work = fs::path(macro.directory) / "target" / "mettle" / "macros";
+        for (const auto &suffix : {"", ".request", ".response", ".stderr"})
+          if (protectedPath(work / (macro.name + suffix))) {
+            problem = "macro output would overlap immutable Git source";
+            return false;
+          }
+      }
+      return true;
+    } catch (const fs::filesystem_error &error) {
+      problem = error.what();
+      return false;
+    }
+  }
+
+  bool protects(const Options &options, const Diagnostics &diagnostics) const {
+    Diagnostics none;
+    for (const auto &package : origins)
+      if (!package.gitRoot.empty() &&
+          outputOverwritesSource(options, Source{package.gitRoot, ""}, none))
+        return true;
+    for (const auto &input : inputs)
+      if (outputOverwritesSource(options, Source{input, ""}, none))
+        return true;
+    for (const auto &source : diagnostics.registeredSources())
+      for (const auto &[key, view] : views)
+        if (beneath(source.path, view.tree)) {
+          auto original = fs::path(source.path).root_path() /
+                          fs::path(source.path).lexically_relative(view.tree);
+          if (outputOverwritesSource(options, Source{original.string(), ""},
+                                     none))
+            return true;
+        }
+    return false;
+  }
+
+private:
+  struct View {
+    bool host = false;
+    fs::path directory, tree, pending;
+    std::map<fs::path, std::string> roots;
+    std::set<fs::path> outputs;
+    int descriptor = -1;
+    View() = default;
+    View(const View &) = delete;
+    View &operator=(const View &) = delete;
+    ~View() {
+      std::error_code ignored;
+      if (!pending.empty())
+        fs::remove_all(pending, ignored);
+      if (descriptor >= 0) {
+        flock(descriptor, LOCK_UN);
+        close(descriptor);
+      }
+    }
+  };
+  View guard;
+  std::map<std::string, View> views;
+  std::vector<packages::Plan::PackageOrigin> origins;
+  std::vector<std::string> inputs;
+
+  const packages::Plan::PackageOrigin *
+  origin(const std::string &identity) const {
+    auto found =
+        std::find_if(origins.begin(), origins.end(), [&](const auto &package) {
+          return package.identity == identity;
+        });
+    return found == origins.end() ? nullptr : &*found;
+  }
+
+  static fs::path mapped(const fs::path &path, const View &view) {
+    if (beneath(path, view.tree))
+      return path;
+    for (const auto &[source, commit] : view.roots)
+      if (beneath(path, source))
+        return view.tree / path.relative_path();
+    std::error_code error;
+    auto canonical = fs::weakly_canonical(path, error);
+    if (!error)
+      for (const auto &[source, commit] : view.roots)
+        if (beneath(canonical, source))
+          return view.tree / canonical.relative_path();
+    return path;
+  }
+
+  std::string rebound(const std::string &identity, const fs::path &path) const {
+    auto package = origin(identity);
+    if (package)
+      for (const auto &[key, view] : views)
+        if (view.host == package->host)
+          return mapped(path, view).string();
+    return path.string();
+  }
+
+  static void directoryAt(const fs::path &path) {
+    auto status = fs::symlink_status(path);
+    if (!fs::is_directory(status)) {
+      fs::remove_all(path);
+      fs::create_directories(path);
+    }
+  }
+
+  static void link(const fs::path &source, const fs::path &destination) {
+    auto status = fs::symlink_status(destination);
+    if (fs::is_symlink(status) && fs::read_symlink(destination) == source)
+      return;
+    fs::remove_all(destination);
+    fs::create_symlink(source, destination);
+  }
+
+  static void mirror(const fs::path &source, const fs::path &destination,
+                     const View &view) {
+    if (view.roots.contains(source))
+      return;
+    directoryAt(destination);
+    for (const auto &entry : fs::directory_iterator(source)) {
+      bool branch = std::any_of(
+          view.roots.begin(), view.roots.end(),
+          [&](const auto &root) { return beneath(root.first, entry.path()); });
+      auto child = destination / entry.path().filename();
+      if (branch)
+        mirror(entry.path(), child, view);
+      else {
+        auto target = entry.path();
+        if (fs::is_symlink(entry.symlink_status())) {
+          std::error_code error;
+          auto canonical = fs::weakly_canonical(target, error);
+          if (!error) {
+            auto rebased = mapped(canonical, view);
+            if (rebased != canonical)
+              target = std::move(rebased);
+            if (std::any_of(view.roots.begin(), view.roots.end(),
+                            [&](const auto &root) {
+                              return beneath(root.first, canonical);
+                            }))
+              target = view.tree / canonical.relative_path();
+          }
+        }
+        link(target, child);
+      }
+    }
+  }
+
+  static void copyInputs(const fs::path &source, const fs::path &destination,
+                         const View &view, const fs::path &root) {
+    if (view.outputs.contains(source) ||
+        (source != root && view.roots.contains(source)))
+      return;
+    auto status = fs::symlink_status(source);
+    if (fs::is_directory(status)) {
+      directoryAt(destination);
+      for (const auto &entry : fs::directory_iterator(destination)) {
+        auto original = source / entry.path().filename();
+        bool retained = std::any_of(
+            view.outputs.begin(), view.outputs.end(),
+            [&](const auto &output) { return beneath(output, original); });
+        if (!retained && !fs::exists(fs::symlink_status(original)))
+          fs::remove_all(entry.path());
+      }
+      for (const auto &entry : fs::directory_iterator(source))
+        copyInputs(entry.path(), destination / entry.path().filename(), view,
+                   root);
+    } else if (fs::is_regular_file(status)) {
+      fs::remove_all(destination);
+      fs::copy_file(source, destination);
+      fs::permissions(destination, status.permissions());
+    } else {
+      link(fs::is_symlink(status) ? fs::read_symlink(source) : source,
+           destination);
+    }
+  }
+
+  static void rebaseLinks(const fs::path &directory, const View &view) {
+    for (fs::recursive_directory_iterator it(directory), end; it != end; ++it) {
+      if (it->path().filename() == ".git") {
+        it.disable_recursion_pending();
+        continue;
+      }
+      if (!fs::is_symlink(it->symlink_status()))
+        continue;
+      auto target = fs::read_symlink(it->path());
+      if (target.is_absolute())
+        link(mapped(target, view), it->path());
+    }
+  }
+};
+
 // `mettle clean`: empties the build cache and, given a package, that
 // package's generated build-script outputs.
 int clean(const Options &options) {
@@ -220,6 +620,11 @@ int clean(const Options &options) {
     std::error_code error;
     auto directory =
         fs::is_directory(input, error) ? input : input.parent_path();
+    PackageWorkCopies workCopies;
+    if (!options.dryRun && !workCopies.lock(directory, problem)) {
+      std::cerr << "mettle: error[io]: " << problem << '\n';
+      return 1;
+    }
     auto generated = directory / "target" / "mettle";
     if (fs::exists(generated, error)) {
       std::cout << "mettle: " << (options.dryRun ? "would remove " : "removed ")
@@ -496,14 +901,19 @@ int run(const Options &requested) {
 int build(const Options &requested,
           std::vector<Module::TestFunction> *discovered,
           std::vector<resolution::SourceModule> *sourceModules,
-          const std::map<std::string, std::string> *sourceOverrides) {
+          const std::map<std::string, std::string> *sourceOverrides,
+          std::set<std::string> *failurePhases) {
+  if (failurePhases)
+    failurePhases->clear();
   Options options = requested;
   std::optional<packages::Store> store;
+  PackageWorkCopies workCopies;
   std::string input = options.input;
   std::vector<resolution::Library::Package> dependencies;
   std::vector<std::pair<std::string, std::string>> packageDependencies;
   std::vector<packages::Macro> macros;
   std::vector<packages::Mount> hostPackages;
+  ScriptResults generated;
   std::set<std::string> rootFeatures =
       options.packageContext ? options.injectedFeatures
                              : std::set<std::string>(options.features.begin(),
@@ -525,7 +935,14 @@ int build(const Options &requested,
       planning.print(outcome.fallback, std::cerr);
       return 1;
     }
+    std::string workProblem;
+    if (!workCopies.prepare(options, *outcome.plan, workProblem)) {
+      std::cerr << "mettle: error[build]: cannot prepare package work: "
+                << workProblem << '\n';
+      return 1;
+    }
     input = outcome.plan->root;
+    options.packageInstance = outcome.plan->rootIdentity;
     options.library =
         outcome.plan->kind == "library" && options.harness.empty();
     if (!options.emitExplicit && options.harness.empty()) {
@@ -547,12 +964,15 @@ int build(const Options &requested,
     macros = outcome.plan->macros;
     packageDependencies = outcome.plan->dependencies;
     hostPackages = outcome.plan->hostMounts;
-    ScriptResults generated;
     if (!outcome.plan->scripts.empty()) {
       store = openStore(options);
       if (!runBuildScripts(options, *outcome.plan, store ? &*store : nullptr,
                            generated))
         return 1;
+    }
+    for (auto &macro : macros) {
+      const auto &extra = generated.features[macro.identity];
+      macro.features.insert(macro.features.end(), extra.begin(), extra.end());
     }
     for (const auto &mount : outcome.plan->mounts) {
       std::set<std::string> features(mount.features.begin(),
@@ -563,6 +983,7 @@ int build(const Options &requested,
       dependency.name = mount.name;
       dependency.source = mount.source;
       dependency.module = mount.module;
+      dependency.instanceIdentity = mount.identity;
       dependency.dependencies = mount.dependencies;
       dependency.features = std::move(features);
       dependencies.push_back(std::move(dependency));
@@ -644,10 +1065,11 @@ int build(const Options &requested,
     if (!store)
       store = openStore(options);
     procedural.emplace(options, std::move(macros), std::move(hostPackages),
-                       store ? &*store : nullptr, inputs);
+                       std::move(generated), store ? &*store : nullptr, inputs);
     if (!procedural->prepare())
       return 1;
   }
+  std::unique_ptr<CheckedLibraries> checkedCore;
   resolution::SourceProvider provider =
       [&](const std::string &path) -> std::optional<Source> {
     std::error_code error;
@@ -666,6 +1088,14 @@ int build(const Options &requested,
     if (error) {
       diagnostics.error("io", {},
                         "cannot identify " + path + ": " + error.message());
+      return std::nullopt;
+    }
+    if (checkedCore && checkedCore->active() &&
+        checkedCore->inputs().contains(canonical.generic_string())) {
+      diagnostics.error(
+          "metadata", {},
+          "checked core source requested after its interface was mounted: " +
+              canonical.generic_string());
       return std::nullopt;
     }
     auto text = (*child)->getBuffer().str();
@@ -694,6 +1124,7 @@ int build(const Options &requested,
   resolution::Library library;
   library.directory = options.libraryDirectory;
   library.freestanding = options.freestanding;
+  library.rootIdentity = options.packageInstance;
   library.packages = std::move(dependencies);
   options.packageDependencies = packageDependencies;
   library.packageDependencies = std::move(packageDependencies);
@@ -704,10 +1135,42 @@ int build(const Options &requested,
     library.harness = resolution::Library::Harness::Bench;
   if (procedural)
     library.procedures = &procedural->procedures();
+  SourceId nextSource = 1;
+  if (!options.noCache && !sourceOverrides && !sourceModules && !procedural &&
+      !options.libraryDirectory.empty() &&
+      (options.command == "build" || options.command == "check")) {
+    if (!store)
+      store = openStore(options);
+    if (store) {
+      std::string error;
+      checkedCore = CheckedLibraries::create(options, configuration, *store,
+                                             facts, backend::evaluateNumeric);
+      if (!checkedCore->mount(
+              library, diagnostics,
+              [&]() -> SourceId {
+                if (nextSource == std::numeric_limits<SourceId>::max())
+                  return 0;
+                return nextSource++;
+              },
+              error)) {
+        diagnostics.error("metadata", {}, error);
+        diagnostics.print(source, std::cerr);
+        return 1;
+      }
+    }
+  }
   std::vector<resolution::SourceModule> loadedSources;
+  resolution::SourcePackages sourcePackages;
   auto tree = resolution::load(source, provider, diagnostics, library,
-                               sourceModules, &loadedSources);
+                               sourceModules, &loadedSources, &sourcePackages);
+  if (checkedCore && checkedCore->active())
+    for (const auto &[path, source] : checkedCore->inputs()) {
+      (void)path;
+      inputs.record(source);
+    }
   pipeline::PackageOwners packageOwners;
+  if (checkedCore)
+    packageOwners = checkedCore->packageOwners();
   std::map<std::string, std::vector<std::string>> packageSources;
   for (const auto &loaded : loadedSources)
     if (!loaded.packageIdentity.empty()) {
@@ -717,13 +1180,30 @@ int build(const Options &requested,
   if (tree && discovered) {
     *discovered = tree->tests;
   }
+  if (tree && options.command == "build" &&
+      (outputOverwritesSource(options, source, diagnostics) ||
+       workCopies.protects(options, diagnostics))) {
+    std::cerr << "mettle: error[io]: output would overwrite the source\n";
+    return 1;
+  }
   // Executables and objects are reused when every input of the build,
   // as gathered while loading, matches a stored result.
   std::optional<std::string> cacheKey;
   packages::Store::Lease cacheLease;
+  auto linked = [](const auto &item) {
+    return std::any_of(
+        item.item.attributes.begin(), item.item.attributes.end(),
+        [](const auto &attribute) { return attribute.name == "link"; });
+  };
+  bool externalLibraries =
+      tree &&
+      (!options.extraLibraries.empty() ||
+       std::any_of(tree->functions.begin(), tree->functions.end(), linked) ||
+       std::any_of(tree->statics.begin(), tree->statics.end(), linked));
   // `-g` builds are never cached: paths and the Darwin dSYM are outputs that
   // the cache does not store.
   if (tree && options.command == "build" && !options.debugInfo &&
+      (options.emit != "executable" || !externalLibraries) &&
       options.emits.size() <= 1 &&
       (options.emit == "executable" || options.emit == "object")) {
     if (!store)
@@ -733,6 +1213,13 @@ int build(const Options &requested,
     if (store && (error || sourcePath != std::filesystem::weakly_canonical(
                                              options.output, error))) {
       cacheKey = inputs.key(options, mounts, configuration.features);
+      if (checkedCore && checkedCore->active()) {
+        packages::Sha256 hash;
+        hash.update("mettle-checked-library-consumer-1");
+        hash.update(*cacheKey);
+        hash.update(checkedCore->key());
+        cacheKey = hash.finish();
+      }
       cacheLease = store->acquireLease(*cacheKey);
       if (!cacheLease) {
         if (options.explain)
@@ -765,13 +1252,22 @@ int build(const Options &requested,
       findings = lint::run(checked, configuration);
     };
   }
-  auto program =
+  auto prepared =
       tree
-          ? pipeline::compile(std::move(*tree), diagnostics,
+          ? pipeline::prepare(std::move(*tree), diagnostics,
                               !options.freestanding && !options.library, facts,
-                              observer, packageOwners, backend::evaluateNumeric)
+                              observer, packageOwners, backend::evaluateNumeric,
+                              sourcePackages, nullptr, nullptr,
+                              checkedCore ? checkedCore->importer()
+                                          : pipeline::LibraryImporter{})
           : std::nullopt;
+  auto program = prepared ? pipeline::compile(std::move(*prepared), diagnostics)
+                          : std::nullopt;
   if (!program) {
+    if (failurePhases)
+      for (const auto &diagnostic : diagnostics.items)
+        if (diagnostic.severity == "error")
+          failurePhases->insert(diagnostic.phase);
     diagnostics.print(source, std::cerr);
     return 1;
   }
@@ -899,6 +1395,18 @@ int build(const Options &requested,
   }
   if (!splitPackages)
     packageObjects.clear();
+  if (checkedCore && checkedCore->active() && store) {
+    for (const auto &[owner, sources] : checkedCore->packageSources()) {
+      std::string error;
+      if (auto object = nativePackageObject(options, inputs, *program, owner,
+                                            sources, checkedCore->key(), error))
+        packageObjects.push_back(std::move(*object));
+      else if (!error.empty()) {
+        std::cerr << "mettle: error[backend]: " << error << '\n';
+        return 1;
+      }
+    }
+  }
   int status = emit(options, source, *program, diagnostics, packageObjects,
                     store ? &*store : nullptr);
   if (status == 0 && cacheKey && store) {

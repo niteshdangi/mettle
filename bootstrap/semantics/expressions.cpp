@@ -28,7 +28,7 @@ void Checker::function(Function &f) {
   scopes.emplace_back();
   loopResults.clear();
   for (auto &p : f.parameters) {
-    if (scopes.back().contains(p.name))
+    if (scopes.back().contains(nameKey(p.name, p.context)))
       error("name", p.span, "duplicate parameter '" + p.name + "'");
     auto t = annotation(p.annotation, p.span, f.owner);
     auto mode = p.mode == "take"           ? ParameterMode::Take
@@ -45,7 +45,7 @@ void Checker::function(Function &f) {
     auto slot = local(p.name, variable,
                       f.explicitReceiver && p.name == "self" &&
                           mode == ParameterMode::Take,
-                      p.span);
+                      p.span, p.context);
     if (slot >= 0)
       facts(f).locals[slot].mode = mode;
   }
@@ -60,7 +60,7 @@ void Checker::function(Function &f) {
     if (f.abi.empty())
       error("signature", f.variadicSpan,
             "a variadic cursor requires a foreign definition");
-    if (scopes.back().contains(f.variadicCursor))
+    if (scopes.back().contains(nameKey(f.variadicCursor, f.variadicSpan)))
       error("name", f.variadicSpan, "duplicate variadic cursor binding");
     auto cursor = checked.types->structural(AggregateKind::VarArgs, {});
     facts(f).variadicCursor =
@@ -170,7 +170,8 @@ int Checker::checkNode(Node &n, bool reachable) {
     break;
   case Kind::Name: {
     if (genericEnvironment) {
-      auto parameter = genericEnvironment->names.find(n.text);
+      auto parameter =
+          genericEnvironment->names.find(nameKey(n.text, n.context));
       if (parameter != genericEnvironment->names.end() &&
           checked.types->isConstant(parameter->second)) {
         facts(n).constantParameter = parameter->second;
@@ -181,7 +182,7 @@ int Checker::checkNode(Node &n, bool reachable) {
     }
     bool localName = false;
     for (const auto &scope : scopes)
-      localName |= scope.contains(n.text);
+      localName |= scope.contains(nameKey(n.text, n.context));
     if (!localName)
       if (auto primitive = machineValue(n)) {
         result = *primitive;
@@ -216,7 +217,7 @@ int Checker::checkNode(Node &n, bool reachable) {
           n, names.at(callableName(n.text, current->owner, n.span)));
       break;
     }
-    auto found = lookup(n.text, n.span);
+    auto found = lookup(n.text, n.span, n.context);
     result = found.variable;
     facts(n).slot = found.slot;
     if (formatVariables.contains(found.variable) &&
@@ -478,7 +479,7 @@ int Checker::checkNode(Node &n, bool reachable) {
       t = declared;
     }
     if (n.text != "_")
-      facts(n).slot = local(n.text, t, n.flag, n.span);
+      facts(n).slot = local(n.text, t, n.flag, n.span, n.context);
     result = unit();
     break;
   }
@@ -496,8 +497,14 @@ int Checker::checkNode(Node &n, bool reachable) {
       error("type", place.span, "assignment requires a local place");
       break;
     }
-    auto target = node(place, reachable);
-    auto rhs = node(*n.children[1], reachable);
+    int target, rhs;
+    if (n.text == "=") {
+      rhs = node(*n.children[1], reachable);
+      target = node(place, reachable && facts(*n.children[1]).flow.normal);
+    } else {
+      target = node(place, reachable);
+      rhs = node(*n.children[1], reachable);
+    }
     if (n.text != "=")
       if (auto overloaded = operatorCall(n, target, rhs)) {
         result = *overloaded;

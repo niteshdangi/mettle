@@ -23,6 +23,29 @@ struct Value {
   std::vector<Value> elements{};
 };
 
+struct Shape {
+  enum class Kind { Scalar, Unit, Tuple, Array };
+  Kind kind = Kind::Scalar;
+  Type type = Type::Unknown;
+  std::vector<Shape> elements{};
+  std::uint64_t count = 0;
+};
+
+struct CheckedFunction {
+  struct Parameter {
+    std::string name;
+    Shape shape;
+    Span span{};
+    const Node *defaultValue = nullptr;
+    SyntaxContextPtr context{};
+  };
+  std::vector<Parameter> parameters;
+  Shape result;
+  // Checked expression storage outlives every evaluation using this descriptor.
+  const Node *body = nullptr;
+  bool unsafeFunction = false;
+};
+
 struct Lookup {
   // Missing: no such name. Constant: an immutable value. Function: a callable
   // item. Symbolic: depends on an unbound generic parameter, so the
@@ -32,6 +55,9 @@ struct Lookup {
   Kind kind = Kind::Missing;
   Value value{};
   const Function *function = nullptr;
+  const CheckedFunction *checkedFunction = nullptr;
+  // Optional declaration-only eligibility contract for a checked body.
+  const Function *declaration = nullptr;
 };
 
 // Name resolution and diagnostics belong to the caller, so the evaluator
@@ -41,7 +67,7 @@ public:
   virtual ~Host() = default;
   virtual void report(const std::string &phase, Span span,
                       const std::string &message) = 0;
-  virtual Lookup lookup(const Node &name) = 0;
+  virtual Lookup lookup(const Node &name, std::size_t &remaining) = 0;
   virtual Type resolveType(const TypeSyntax &type, Span) {
     return builtinType(type.name);
   }
@@ -49,6 +75,12 @@ public:
   virtual Lookup variant(Type, std::string_view, Span) { return {}; }
   virtual Lookup floatingValue(Type, std::string_view, Span) { return {}; }
   virtual Lookup method(Type, const Node &) { return {}; }
+  virtual std::optional<Shape> expressionShape(const Node &) {
+    return std::nullopt;
+  }
+  virtual std::optional<Shape> functionResult(const Function &) {
+    return std::nullopt;
+  }
 };
 
 struct Options {
@@ -59,16 +91,6 @@ struct Options {
   bool unsafeContext = false;
   std::size_t stepBudget = limits::constEvalSteps;
   unsigned callDepth = limits::constEvalDepth;
-};
-
-// The type structure the evaluator can represent: scalars, Unit, tuples and
-// fixed-length arrays of those.
-struct Shape {
-  enum class Kind { Scalar, Unit, Tuple, Array };
-  Kind kind = Kind::Scalar;
-  Type type = Type::Unknown;
-  std::vector<Shape> elements{};
-  std::uint64_t count = 0;
 };
 
 struct Expectation {

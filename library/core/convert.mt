@@ -45,10 +45,10 @@ extend<T, U> T implements Into<U> where U: From<T> {
     take fn into(): U { U.(From<T>).from(self) }
 }
 
-extend<T, U: Into<T>> T implements TryFrom<U> {
+extend<T> T implements TryFrom<T> {
     type Error = Never
-    static fn try_from(take value: U): (Outcome<T, Never>) {
-        success(U.(Into<T>).into(value))
+    static fn try_from(take value: T): (Outcome<T, Never>) {
+        success(value)
     }
 }
 

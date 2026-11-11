@@ -15,7 +15,7 @@ extend<region r, T> pinned mut T from r {
     }
 
     // The caller must ensure the returned view remains pinned for region r.
-    pub take unsafe fn map_unchecked<U, F: for<region s> fn(
+    pub take unsafe fn map_unchecked<U, F: for<region s> take fn(
         read T from s
     ): read U from s>(take f: F): pinned read U from self {
         let value = unsafe { take self.into_inner_unchecked() }
@@ -23,7 +23,7 @@ extend<region r, T> pinned mut T from r {
     }
 
     // The caller must ensure the returned view remains pinned for region r.
-    pub mut unsafe fn map_unchecked_mut<U, F: for<region s> fn(
+    pub mut unsafe fn map_unchecked_mut<U, F: for<region s> take fn(
         mut T from s
     ): mut U from s>(take f: F): pinned mut U from self {
         let target = f(unsafe { self.get_unchecked_mut() })

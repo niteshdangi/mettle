@@ -40,7 +40,7 @@ extend<T: unsized, A: Allocator> RawWeak<T, A> {
 fn allocation_layout<T>(): (Layout, usize) throws AllocError {
     let result = capture extend_layout(layout_of<RcHeader>(), layout_of<T>())
     match take result {
-        success(layout) => layout,
+        success((layout, offset)) => (layout.pad_to_align(), offset),
         failure(error) => throw AllocError(error.size, error.align)
     }
 }
@@ -53,7 +53,7 @@ fn slice_allocation_layout<T>(len: usize): (Layout, usize, Layout) throws AllocE
     }
     let allocation_result = capture extend_layout(layout_of<RcHeader>(), payload)
     let (allocation, offset) = match take allocation_result {
-        success(value) => value,
+        success((layout, offset)) => (layout.pad_to_align(), offset),
         failure(error) => throw AllocError(error.size, error.align)
     }
     (allocation, offset, payload)
@@ -255,7 +255,7 @@ pub fn try_copy_text_in<A: Allocator>(read value: Text, take allocator: A): Rc<T
     let bytes = value.as_bytes()
     let result = capture extend_layout(layout_of<RcHeader>(), super.alloc.layout_of_val(bytes))
     let (layout, offset) = match take result {
-        success(layout) => layout,
+        success((layout, offset)) => (layout.pad_to_align(), offset),
         failure(error) => throw AllocError(error.size, error.align)
     }
     let raw = try a.allocate(layout)
@@ -441,11 +441,13 @@ pub unsafe fn decrement_strong_count<T: unsized, A: Allocator>(take raw: RawRc<T
 extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
     pub fn upgrade(): Rc<T, A>? {
         if self.h == core.ptr.null_mut<RcHeader>() { return none }
+        if unsafe { (*self.h).strong } == 0usize { return none }
+        let allocator = self.a.clone()
         unsafe {
             let b = self.h
             if (*b).strong == 0usize { return none }
             (*b).strong = bump((*b).strong)
-            present(Rc(self.p, b, self.a.clone()))
+            present(Rc(self.p, b, allocator))
         }
     }
     pub fn retain(): Weak<T, A> {
@@ -496,8 +498,23 @@ extend<T: unsized, A: Allocator> Weak<T, A> {
 extend<T: Clone, A: Allocator + Clone> Rc<T, A> {
     pub mut fn make_mut(): mut T from self {
         if self.is_unique() { return unsafe { mut *self.p } }
-        let replacement = new_in(self.get().clone(), self.a.clone())
-        let _old = unsafe { core.ptr.replace(core.ptr.from_mut(self), replacement) }
+        let replacement = new_uninit_in<T, A>(self.a.clone())
+        if unsafe { (*self.h).strong } == 1usize {
+            unsafe {
+                (*self.h).strong = 0usize
+                core.ptr.write(replacement.p.cast<T>(), core.ptr.`read`(self.p))
+            }
+            let initialized = unsafe { replacement.assume_init() }
+            let old = unsafe { core.ptr.replace(core.ptr.from_mut(self), initialized) }
+            let raw = old.into_raw()
+            var allocator = raw.a
+            let _implicit = WeakRelease(raw.h, core.ptr.from_mut(allocator))
+        } else {
+            let value = self.get().clone()
+            unsafe { core.ptr.write(replacement.p.cast<T>(), value) }
+            let initialized = unsafe { replacement.assume_init() }
+            let _old = unsafe { core.ptr.replace(core.ptr.from_mut(self), initialized) }
+        }
         unsafe { mut *self.p }
     }
 }

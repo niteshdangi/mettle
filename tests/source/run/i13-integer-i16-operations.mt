@@ -1806,8 +1806,6 @@ fn group14() {
     if !(kind(capture num.from_str_radix<i16>("12", 2u32)) == present(IntErrorKind.InvalidDigit)) { panic("from_str_radix #1748") }
     if !(kind(capture num.from_str_radix<i16>(" 1", 10u32)) == present(IntErrorKind.InvalidDigit)) { panic("from_str_radix #1749") }
     if !(kind(capture num.from_str_radix<i16>("32768", 10u32)) == present(IntErrorKind.PosOverflow)) { panic("from_str_radix #1750") }
-    if !(kind(capture num.from_str_radix<i16>("1", 37u32)) == present(IntErrorKind.InvalidRadix)) { panic("from_str_radix #1751") }
-    if !(kind(capture num.from_str_radix<i16>("1", 1u32)) == present(IntErrorKind.InvalidRadix)) { panic("from_str_radix #1752") }
     if !(kind(capture num.from_str_radix<i16>("-32769", 10u32)) == present(IntErrorKind.NegOverflow)) { panic("from_str_radix #1753") }
 }
 

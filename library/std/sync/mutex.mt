@@ -60,7 +60,7 @@ extend<G> TryLockError<G> implements CoreError {}
 // needs to be Transferable (the lock moves it between threads) but not
 // Shareable.
 pub type Mutex<T> {
-    pub raw: ptr<mut u8>
+    pub(super) raw: ptr<mut u8>
     poisoned: core.sync.atomic.AtomicBool
     value: core.cell.UnsafeCell<T>
     drop { unsafe { mettle_rt_mutex_free(self.raw) } }
@@ -71,7 +71,7 @@ unsafe extend<T: Transferable> Mutex<T> implements Shareable {}
 
 // Holds the lock until dropped. A guard stays on its acquiring thread.
 pub type MutexGuard<T, region r> {
-    pub lock: read Mutex<T> from r
+    pub(super) lock: read Mutex<T> from r
     drop {
         unsafe {
             if mettle_rt_panicking() != 0 {
@@ -141,6 +141,7 @@ extend<T> Mutex<T> {
     }
 }
 extend<T, region r> MutexGuard<T, region r> {
+    pub(super) fn is_poisoned(): bool { self.lock.is_poisoned() }
     pub fn get(): read T from self { unsafe { read *self.lock.value.get() } }
     pub mut fn get_mut(): mut T from self { unsafe { mut *self.lock.value.get() } }
 }
@@ -152,7 +153,6 @@ extend<T, region r> MutexGuard<T, region r> implements Deref {
     fn deref(): read T from self { self.get() }
 }
 extend<T, region r> MutexGuard<T, region r> implements DerefMut {
-    type Target = T
     mut fn deref_mut(): mut T from self { self.get_mut() }
 }
 

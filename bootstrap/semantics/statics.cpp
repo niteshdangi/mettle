@@ -27,11 +27,11 @@ void Checker::staticLocals() {
     localVariables[current].push_back(inference.fresh(type));
   }
 }
-std::optional<std::size_t> Checker::staticName(std::string_view name,
-                                               Span span) {
-  auto canonical =
-      checked.symbols->lookup(checked.symbols->moduleOf(span), name,
-                              resolution::Namespace::Value, span);
+std::optional<std::size_t>
+Checker::staticName(std::string_view name, Span span,
+                    std::optional<SyntaxContextPtr> context) {
+  auto canonical = checked.symbols->lookup(nameModule(span, context), name,
+                                           resolution::Namespace::Value, span);
   if (!canonical)
     return std::nullopt;
   auto found = staticNames.find(*canonical);
@@ -58,24 +58,12 @@ bool Checker::shareable(Type type, Span span) {
 // discriminants read constant storage before the remaining static checks run.
 void Checker::staticNamesAndTypes() {
   genericEnvironment = nullptr;
-  checked.staticStorage.resize(module.statics.size());
   for (auto &source : module.statics)
     if (source.initializer.get())
       qualifyDottedPaths(*source.initializer);
-  staticStates.resize(module.statics.size());
-  for (std::size_t i = 0; i < module.statics.size(); ++i) {
-    const auto &source = module.statics[i];
-    auto &storage = checked.staticStorage[i];
-    storage.identity = i;
-    storage.name = definitionName(source.span, source.name);
-    staticNames.emplace(storage.name, i);
-  }
   inherentConstantNamesAndTypes();
-  for (std::size_t i = 0; i < module.statics.size(); ++i) {
-    const auto &source = module.statics[i];
-    auto &storage = checked.staticStorage[i];
-    storage.type = annotation(source.annotation, source.span);
-  }
+  for (std::size_t i = 0; i < module.statics.size(); ++i)
+    staticType(i);
   staticsDeclared = true;
   // Resolve any values not forced by type annotations after storage types are
   // registered; this checks unused constants and catches forward-reference
@@ -84,9 +72,32 @@ void Checker::staticNamesAndTypes() {
     (void)inherentConstantValue(i, inherentConstants[i].target);
 }
 
+Type Checker::staticType(std::size_t index) {
+  auto &storage = checked.staticStorage[index];
+  if (staticTypeStates[index] == 2)
+    return storage.type;
+  const auto &source = module.statics[index];
+  if (staticTypeStates[index] == 1) {
+    error("constant", source.span, "cycle in required static type");
+    return Type::Unknown;
+  }
+  staticTypeStates[index] = 1;
+  auto *saved = genericEnvironment;
+  auto regions = std::move(annotationRegionScopes);
+  annotationRegionScopes.clear();
+  genericEnvironment = nullptr;
+  storage.type = annotation(source.annotation, source.span);
+  genericEnvironment = saved;
+  annotationRegionScopes = std::move(regions);
+  staticTypeStates[index] = 2;
+  return storage.type;
+}
+
 void Checker::inherentConstantNamesAndTypes() {
   auto *saved = genericEnvironment;
   for (const auto &syntax : module.implementations) {
+    if (imported(syntax.span))
+      continue;
     if (!syntax.interface.empty() || syntax.negative ||
         std::none_of(syntax.associated.begin(), syntax.associated.end(),
                      [](const auto &item) { return item.constant; }))
@@ -99,7 +110,7 @@ void Checker::inherentConstantNamesAndTypes() {
     pushRegionParameters(syntax.genericParameters, syntax.span);
     assumeRegionConstraints(syntax.constraints, syntax.span);
     auto target = annotation(syntax.target, syntax.span);
-    environment.names["Self"] = target;
+    environment.names[nameKey("Self", syntax.span)] = target;
     auto [registered, inserted] =
         implementationGenerics.emplace(&syntax, std::move(environment));
     (void)inserted;
@@ -161,6 +172,8 @@ void Checker::staticDeclarations() {
   genericEnvironment = nullptr;
   for (std::size_t i = 0; i < module.statics.size(); ++i) {
     const auto &source = module.statics[i];
+    if (imported(source.span))
+      continue;
     auto &storage = checked.staticStorage[i];
     if (!checked.types->isSized(storage.type) ||
         checked.types->isSymbolic(storage.type) ||
@@ -240,10 +253,12 @@ void Checker::staticInitializers() {
 
 std::optional<StaticConstant> Checker::staticValue(std::size_t index) {
   index = checked.staticStorage[index].identity;
+  if (staticType(index) == Type::Unknown)
+    return std::nullopt;
   auto &storage = checked.staticStorage[index];
   if (staticStates[index] == 2)
     return storage.initializer;
-  const auto &source = module.statics[index];
+  auto &source = module.statics[index];
   if (source.foreignDeclaration) {
     error("constant", source.span,
           "required initialization cannot read mutable or foreign storage");
@@ -254,6 +269,7 @@ std::optional<StaticConstant> Checker::staticValue(std::size_t index) {
     return std::nullopt;
   }
   staticStates[index] = 1;
+  qualifyDottedPaths(*source.initializer);
   auto depth = unsafeDepth;
   unsafeDepth = 0;
   storage.initializer = staticInitializer(*source.initializer, storage.type);
@@ -346,7 +362,8 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
     return result;
   }
   if (checked.types->isSum(type) &&
-      !(node.kind == Kind::Name && staticName(node.text, node.span))) {
+      !(node.kind == Kind::Name &&
+        staticName(node.text, node.span, node.context))) {
     auto record = checked.types->product(type);
     const Node *callee =
         node.kind == Kind::Call ? node.children[0].get() : &node;
@@ -354,12 +371,15 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
     std::size_t first = node.kind == Kind::Call ? 1 : 0;
     if (node.kind == Kind::None && record.kind == AggregateKind::Optional)
       selected = 0;
-    else if (node.kind == Kind::Variant &&
-             record.kind == AggregateKind::Optional)
-      selected = 1;
-    else if (callee->kind == Kind::Name) {
+    else if (node.kind == Kind::Variant) {
+      if (record.kind == AggregateKind::Optional && node.text == "present")
+        selected = 1;
+      else if (record.kind == AggregateKind::Outcome &&
+               (node.text == "success" || node.text == "failure"))
+        selected = node.text == "failure" ? 1 : 0;
+    } else if (callee->kind == Kind::Name) {
       auto canonical = checked.symbols->lookup(
-          checked.symbols->moduleOf(node.span), callee->text,
+          nameModule(callee->span, callee->context), callee->text,
           resolution::Namespace::Value, node.span);
       auto origin = record.genericOrigin == Type::Unknown
                         ? record.name
@@ -387,17 +407,36 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
         tag.scalar = record.layout.discriminants[selected];
       result.fields.push_back(std::move(tag));
     }
+    auto payloadStart = result.fields.size();
+    result.fields.resize(payloadStart + variant.fields.size());
+    std::vector<bool> initialized(variant.fields.size());
+    bool named = false;
     for (std::size_t i = 0; i < variant.fields.size(); ++i) {
-      auto value = staticInitializer(*node.children[first + i],
-                                     record.fields[variant.fields[i]].type);
+      const auto &argument = *node.children[first + i];
+      auto target = i;
+      if (!argument.name.empty()) {
+        named = true;
+        target = variant.fields.size();
+        for (std::size_t field = 0; field < variant.fields.size(); ++field)
+          if (record.fields[variant.fields[field]].name == argument.name)
+            target = field;
+      } else if (named)
+        return fail("positional arguments must precede named arguments");
+      if (target >= variant.fields.size())
+        return fail("unknown constant variant argument");
+      if (initialized[target])
+        return fail("duplicate constant variant argument");
+      initialized[target] = true;
+      auto value = staticInitializer(
+          argument, record.fields[variant.fields[target]].type);
       if (!value)
         return std::nullopt;
-      result.fields.push_back(std::move(*value));
+      result.fields[payloadStart + target] = std::move(*value);
     }
     return result;
   }
   if (node.kind == Kind::Name) {
-    if (auto index = staticName(node.text, node.span)) {
+    if (auto index = staticName(node.text, node.span, node.context)) {
       if (module.statics[*index].mutableBinding)
         return fail("required initialization cannot read mutable storage");
       if (checked.staticStorage[*index].type != type)
@@ -434,6 +473,17 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
         return result;
       }
     }
+    auto reported = reportedErrors;
+    if (auto identity = associatedConstant(node)) {
+      auto value = checked.types->scalarConstantValue(*identity);
+      if (!value || checked.types->parameter(*identity).valueType != type)
+        return fail("required associated constant has an incompatible type");
+      result.scalar = *value;
+      facts(node).type = type;
+      return result;
+    }
+    if (reportedErrors != reported)
+      return std::nullopt;
     return fail("required initializer does not name constant storage");
   }
   if (node.kind == Kind::Field || node.kind == Kind::Index) {
@@ -445,8 +495,9 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
         projections.push_back(root);
       root = root->children[0].get();
     }
-    auto storage = root->kind == Kind::Name ? staticName(root->text, root->span)
-                                            : std::nullopt;
+    auto storage = root->kind == Kind::Name
+                       ? staticName(root->text, root->span, root->context)
+                       : std::nullopt;
     if (!storage || module.statics[*storage].mutableBinding)
       return fail("constant projection requires immutable static storage");
     auto value = staticValue(*storage);
@@ -476,7 +527,7 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
             field = i;
       if (field >= record.fields.size())
         return fail("constant field or index is out of bounds");
-      visibleField(value->type, field, node.span);
+      visibleField(value->type, field, node.span, node.context);
       if (record.layout.unionType)
         requireUnsafe(node.span);
       auto members = staticConstantFields(*checked.types, *value).value();
@@ -545,7 +596,7 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
     }
     if (place->kind != Kind::Name)
       return fail("constant address requires static storage provenance");
-    auto index = staticName(place->text, place->span);
+    auto index = staticName(place->text, place->span, place->context);
     if (!index)
       return fail("constant address requires static storage");
     auto payload = checked.staticStorage[*index].type;
@@ -560,7 +611,8 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
                        [&](const auto &entry) { return entry.name == *field; });
       if (found == record.fields.end())
         return fail("unknown constant address projection");
-      visibleField(payload, found - record.fields.begin(), node.span);
+      visibleField(payload, found - record.fields.begin(), node.span,
+                   node.context);
       result.projections.push_back(found - record.fields.begin());
       payload = found->type;
     }
@@ -620,6 +672,7 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
       if (record.kind == AggregateKind::Atomic || !arguments.empty()) {
         TypeSyntax syntax;
         syntax.name = owner;
+        syntax.context = callee.context;
         syntax.arguments = std::move(arguments);
         auto declared = machineAnnotation(syntax, callee.span, "");
         if (!declared || *declared != type)
@@ -648,6 +701,7 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
     if (!intrinsic && !callee.genericArguments.empty()) {
       TypeSyntax syntax;
       syntax.name = callee.text;
+      syntax.context = callee.context;
       syntax.arguments = callee.genericArguments;
       if (checked.types->eraseRegions(annotation(syntax, node.span)) !=
           checked.types->eraseRegions(type))
@@ -668,7 +722,7 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
       if (field == record.fields.end())
         return fail("unknown constant union field");
       auto index = field - record.fields.begin();
-      visibleField(type, index, child.span);
+      visibleField(type, index, child.fieldSpan, child.fieldContext);
       auto value = staticInitializer(child, field->type);
       if (!value)
         return std::nullopt;
@@ -696,7 +750,9 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
       if (!initialized.insert(field).second)
         return fail("duplicate static initializer field");
       if (!intrinsic)
-        visibleField(type, field, child.span);
+        visibleField(type, field,
+                     child.name.empty() ? callee.span : child.fieldSpan,
+                     child.name.empty() ? callee.context : child.fieldContext);
       auto value = staticInitializer(child, record.fields[field].type);
       if (!value)
         return std::nullopt;
@@ -711,17 +767,20 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
         (node.kind == Kind::Array && record.kind != AggregateKind::Array))
       return fail("incompatible constant aggregate type");
     if (node.flag && node.kind == Kind::Array && node.children.size() == 2) {
-      auto count = constantInteger(*node.children[1]);
-      if (!count || *count < 0 ||
-          static_cast<std::uint64_t>(*count) !=
-              checked.types->arrayLength(type))
+      auto identity = constantType(*node.children[1]);
+      if (identity == Type::Unknown)
+        return std::nullopt;
+      auto count = checked.types->scalarConstantValue(identity);
+      if (!isInteger(checked.types->parameter(identity).valueType) || !count ||
+          count->negative || count->magnitude[1] ||
+          count->magnitude[0] != checked.types->arrayLength(type))
         return fail("constant aggregate length does not match");
       auto element = staticInitializer(*node.children[0], record.components[0]);
       if (!element)
         return std::nullopt;
-      if (!*count && checked.types->needsDrop(element->type))
+      if (!count->magnitude[0] && checked.types->needsDrop(element->type))
         return fail("constant repetition cannot execute an element destructor");
-      if (*count > 1 && !checked.types->isCopy(element->type))
+      if (count->magnitude[0] > 1 && !checked.types->isCopy(element->type))
         return fail("constant array repetition requires Copy elements");
       if (checked.types->compactArray(type)) {
         result.kind = StaticConstant::Kind::Repeat;
@@ -729,7 +788,8 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
         return result;
       }
       result.kind = StaticConstant::Kind::Aggregate;
-      result.fields.assign(*count, *element);
+      result.fields.assign(static_cast<std::size_t>(count->magnitude[0]),
+                           *element);
       return result;
     }
     if (checked.types->compactArray(type)

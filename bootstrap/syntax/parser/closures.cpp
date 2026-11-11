@@ -9,7 +9,8 @@ TypeSyntax Parser::callableType() {
       if (is(">"))
         break;
       expect("region");
-      callable->regions.push_back(name().text);
+      auto token = name();
+      callable->regions.push_back({token.text, token.span, token.context});
     } while (take(","));
     expect(">");
   }
@@ -75,6 +76,7 @@ std::unique_ptr<Node> Parser::closure() {
         parameter.mode = tokens[position++].text;
       parameter.span = peek().span;
       auto binding = pattern(2);
+      parameter.context = binding.context;
       if (binding.kind == PatternKind::Binding)
         parameter.name = binding.text;
       else {

@@ -66,6 +66,17 @@ exclusive system-wide access or freedom from concurrent foreign calls.
 `is_terminal` observes the resource kind and connection at the time of the query.
 Debug formatting of a raw identifier is diagnostic, not serialization.
 
+The managed `TcpListener` exception in hosted contracts section 9.2 additionally
+requires permanent physical `O_NONBLOCK`. Raw borrowing still lends the real
+socket; a foreign accept is physically nonblocking even when managed logical
+mode is blocking. Raw duplication/transfer carries no logical-mode state and
+never restores blocking. No alias may clear `O_NONBLOCK` or be independently
+re-adopted while a managed listener remains. Adoption therefore uses unsafe,
+fallible `TcpListener.from_owned_fd`, not safe `From<OwnedFd>`; authority over
+all aliases is stronger than owning one close obligation. Known managed clones
+share logical mode; arbitrary raw aliases and forked copies do not acquire that
+in-process state. This changes neither close-on-exec nor ordinary raw ownership.
+
 ### 2.1. Close-on-exec and inheritance
 
 On the selected native Unix profiles, library-created files, pipes and sockets

@@ -20,41 +20,40 @@ int Checker::aggregate(Node &n, bool reachable) {
         error("type", n.span, "array length requires an integer constant");
         return inference.fresh();
       }
-      auto evaluated = checked.types->constantValue(identity);
-      if (identity != Type::Unknown &&
-          checked.types->scalarConstantValue(identity) && !evaluated) {
+      auto scalar = checked.types->scalarConstantValue(identity);
+      if (scalar && scalar->negative) {
+        error(
+            "type", n.span,
+            "array repetition requires a bounded nonnegative integer constant");
+        return inference.fresh();
+      }
+      std::optional<std::uint64_t> evaluated;
+      if (scalar && !scalar->magnitude[1])
+        evaluated = scalar->magnitude[0];
+      if (identity != Type::Unknown && scalar && !evaluated) {
         error("limit", n.span, "array length limit exceeded");
         return inference.fresh();
       }
       if (identity != Type::Unknown && !evaluated) {
         inference.equal(payload, node(*n.children[0], reachable), n.span);
-        auto element = inference.value(payload);
-        if (element != Type::Unknown && !checked.types->isCopy(element))
-          error("ownership", n.span, "array repetition requires Copy elements");
         facts(n).constantCount = identity;
         return inference.composite(AggregateKind::Array, {payload}, 0,
                                    identity);
       }
       auto length = evaluated;
-      if (!length || *length < 0)
+      if (!length)
         error(
             "type", n.span,
             "array repetition requires a bounded nonnegative integer constant");
-      if (length &&
-          *length > static_cast<std::int64_t>(TypeStore::expandedArrayLimit)) {
+      if (length && *length > TypeStore::expandedArrayLimit) {
         // Large repetitions stay one symbolic repeat over a compact array.
         inference.equal(payload, node(*n.children[0], reachable), n.span);
-        auto element = inference.value(payload);
-        if (element != Type::Unknown && !checked.types->isCopy(element))
-          error("ownership", n.span, "array repetition requires Copy elements");
         facts(n).constantCount = identity;
         return inference.composite(AggregateKind::Array, {payload}, 0,
                                    checked.types->canonicalCount(identity));
       }
-      count = length && *length >= 0 ? static_cast<std::uint32_t>(*length) : 0;
+      count = length ? static_cast<std::uint32_t>(*length) : 0;
       inference.equal(payload, node(*n.children[0], reachable), n.span);
-      if (count > 1 && !checked.types->isCopy(inference.value(payload)))
-        error("ownership", n.span, "array repetition requires Copy elements");
     } else
       for (auto &child : n.children)
         inference.equal(payload, node(*child, reachable), child->span);
@@ -120,7 +119,8 @@ int Checker::aggregate(Node &n, bool reachable) {
     auto lower = node(*n.children[0], reachable);
     auto upper = node(*n.children[1], reachable);
     inference.equal(lower, upper, n.span);
-    inference.equal(lower, inference.numeric(false), n.span);
+    if (inference.value(lower) != Type::Char)
+      inference.equal(lower, inference.numeric(false), n.span);
     return inference.composite(AggregateKind::Range,
                                {lower, upper, inference.fresh(Type::Bool)});
   }
@@ -176,6 +176,7 @@ int Checker::aggregate(Node &n, bool reachable) {
       return fallback;
     return inference.joined(children[0], fallback, n.span);
   }
+  loopResults[facts(n).control] = inference.fresh(Type::Unit);
   if (auto *iterable = n.children[0].get(); iterable) {
     while (iterable->kind == Kind::Group)
       iterable = iterable->children[0].get();
@@ -187,6 +188,15 @@ int Checker::aggregate(Node &n, bool reachable) {
   if (type == Type::Unknown) {
     fields(false);
     type = inference.value(source);
+  }
+  if (type == Type::Never) {
+    scopes.emplace_back();
+    pattern(n.patterns[0], inference.fresh(), ParameterMode::Read);
+    irrefutable.emplace_back(&n.patterns[0],
+                             patternVariables.at(&n.patterns[0]));
+    node(*n.children[1], false);
+    scopes.pop_back();
+    return inference.fresh(facts(n).flow.normal ? Type::Unit : Type::Never);
   }
   bool consumes =
       n.children[0]->kind == Kind::Unary && n.children[0]->text == "take";
@@ -210,7 +220,6 @@ int Checker::aggregate(Node &n, bool reachable) {
           "Iterable or MutableIterable for its mode");
     return inference.fresh(Type::Unit);
   }
-  loopResults[facts(n).control] = inference.fresh(Type::Unit);
   facts(n).readView = checked.types->viewType(
       type, facts(n).iterationMode == ParameterMode::Mut ? ParameterMode::Mut
                                                          : ParameterMode::Read);

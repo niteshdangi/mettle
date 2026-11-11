@@ -6,6 +6,32 @@ namespace mettle {
 using evaluation::Lookup;
 using evaluation::Value;
 
+namespace {
+bool chargeConstant(const TypeStore &types, const StaticConstant &constant,
+                    std::size_t &budget) {
+  if (!budget)
+    return false;
+  --budget;
+  if (constant.kind == StaticConstant::Kind::Repeat) {
+    auto length = types.arrayLength(constant.type);
+    if (!length || constant.fields.empty())
+      return true;
+    if (*length) {
+      auto elementBudget = budget / *length;
+      auto before = elementBudget;
+      if (!chargeConstant(types, constant.fields.front(), elementBudget))
+        return false;
+      budget -= (before - elementBudget) * *length;
+    }
+  } else if (constant.kind == StaticConstant::Kind::Aggregate &&
+             !types.isSum(constant.type))
+    for (const auto &field : constant.fields)
+      if (!chargeConstant(types, field, budget))
+        return false;
+  return true;
+}
+} // namespace
+
 // Lets the evaluator read the checker's names and constants and report through
 // its diagnostics.
 class ConstantHost : public evaluation::Host {
@@ -15,12 +41,38 @@ public:
               const std::string &message) override {
     checker.error(phase, span, message);
   }
+  std::optional<evaluation::Shape> expressionShape(const Node &node) override {
+    if (auto imported = checker.importedExpressions.find(&node);
+        imported != checker.importedExpressions.end())
+      return checker.constantShape(imported->second->facts.at(&node).type);
+    auto found = checker.checked.find(node);
+    if (found && found->type != Type::Unknown)
+      return checker.constantShape(found->type);
+    if (auto found = checker.nodeVariables.find(&node);
+        found != checker.nodeVariables.end())
+      return checker.constantShape(checker.inference.value(found->second));
+    return std::nullopt;
+  }
+  std::optional<evaluation::Shape>
+  functionResult(const Function &function) override {
+    if (checker.facts(function).result == Type::Unknown)
+      checker.inferFunctionResult(
+          checker.module
+              .functions[&function - checker.module.functions.data()]);
+    return checker.constantShape(checker.facts(function).result);
+  }
   Type resolveType(const TypeSyntax &syntax, Span span) override {
+    if (auto imported = checker.importedAnnotations.find(&syntax);
+        imported != checker.importedAnnotations.end())
+      return imported->second;
     if (auto builtin = builtinType(syntax.name); builtin != Type::Unknown)
       return builtin;
-    if (!checker.checked.namespaces().lookup(
-            checker.checked.namespaces().moduleOf(span), syntax.name,
-            resolution::Namespace::Type, span))
+    bool generic = checker.genericEnvironment &&
+                   checker.genericEnvironment->names.contains(
+                       checker.nameKey(syntax.name, syntax.context));
+    if (!generic && !checker.checked.namespaces().lookup(
+                        checker.nameModule(span, syntax.context), syntax.name,
+                        resolution::Namespace::Type, span))
       return Type::Unknown;
     return checker.annotation(syntax, span);
   }
@@ -69,12 +121,22 @@ public:
       if (selected) {
         const auto &function = checker.module.functions[*selected];
         if (!checker.checked.namespaces().accessible(
-                function.span,
-                checker.checked.namespaces().moduleOf(node.span))) {
+                function.span, checker.accessModule(node))) {
           checker.error("name", node.span, "constant method is not accessible");
           result.kind = Lookup::Kind::Failed;
         } else {
           result.kind = Lookup::Kind::Function;
+          if (checker.checked.importedDeclarations) {
+            auto imported =
+                checker.checked.importedDeclarations->functions.find(*selected);
+            if (imported !=
+                    checker.checked.importedDeclarations->functions.end() &&
+                imported->second.body) {
+              result.checkedFunction = &imported->second.evaluation;
+              result.declaration = &function;
+              return result;
+            }
+          }
           result.function = &function;
         }
         return result;
@@ -86,14 +148,79 @@ public:
     }
     return result;
   }
-  Lookup lookup(const Node &name) override {
+  Lookup lookup(const Node &name, std::size_t &remaining) override {
     Lookup result;
     if (name.kind != Kind::Name)
       return result;
+    if (auto imported = checker.importedExpressions.find(&name);
+        imported != checker.importedExpressions.end()) {
+      const auto &expression = *imported->second;
+      const auto &facts = expression.facts.at(&name);
+      if (auto constant = expression.constants.find(&name);
+          constant != expression.constants.end()) {
+        auto budget = remaining;
+        if (!chargeConstant(checker.typeStore(), constant->second, budget)) {
+          checker.error(
+              "limit", name.span,
+              "constant evaluation exceeded the aggregate size limit");
+          result.kind = Lookup::Kind::Failed;
+          return result;
+        }
+        auto value = checker.constantValueOf(constant->second);
+        if (value) {
+          remaining = budget;
+          result.kind = Lookup::Kind::Constant;
+          result.value = std::move(*value);
+          return result;
+        }
+      }
+      if (facts.callee >= 0) {
+        const auto &imports = *checker.checked.importedDeclarations;
+        auto function = imports.functions.find(facts.callee);
+        result.kind = Lookup::Kind::Function;
+        if (function != imports.functions.end() && function->second.body) {
+          result.checkedFunction = &function->second.evaluation;
+          result.declaration = &checker.module.functions.at(facts.callee);
+        } else
+          result.function = &checker.module.functions.at(facts.callee);
+        return result;
+      }
+      if (facts.constantParameter != Type::Unknown)
+        return carrier(facts.constantParameter);
+      if (facts.variant >= 0 && enumeration(facts.type)) {
+        const auto &variants = checker.typeStore().product(facts.type).variants;
+        if (std::size_t(facts.variant) >= variants.size()) {
+          checker.error("metadata", name.span,
+                        "checked constant contains an invalid enum variant");
+          result.kind = Lookup::Kind::Failed;
+          return result;
+        }
+        result.kind = Lookup::Kind::Constant;
+        result.value.kind = Value::Kind::Enum;
+        result.value.type = facts.type;
+        result.value.number.magnitude[0] = facts.variant;
+        return result;
+      }
+      if (facts.numeric) {
+        result.kind = Lookup::Kind::Constant;
+        result.value.kind = isFloating(facts.type) ? Value::Kind::Floating
+                                                   : Value::Kind::Integer;
+        result.value.type = facts.type;
+        result.value.number = *facts.numeric;
+        return result;
+      }
+      if (facts.type != Type::Unknown)
+        return result;
+      checker.error("metadata", name.span,
+                    "checked constant contains an unresolved external name");
+      result.kind = Lookup::Kind::Failed;
+      return result;
+    }
     auto separator = name.text.rfind("::");
     if (separator != std::string::npos) {
       TypeSyntax syntax;
       syntax.name = name.text.substr(0, separator);
+      syntax.context = name.context;
       auto type = resolveType(syntax, name.span);
       if (enumeration(type))
         return variant(type, name.text.substr(separator + 2), name.span);
@@ -105,7 +232,14 @@ public:
       result.kind = Lookup::Kind::Failed;
       return result;
     };
-    if (auto storage = checker.staticName(name.text, name.span)) {
+    if (checker.genericEnvironment) {
+      auto found = checker.genericEnvironment->names.find(
+          checker.nameKey(name.text, name.context));
+      if (found != checker.genericEnvironment->names.end() &&
+          checker.typeStore().isConstant(found->second))
+        return carrier(found->second);
+    }
+    if (auto storage = checker.staticName(name.text, name.span, name.context)) {
       if (checker.module.statics[*storage].mutableBinding)
         return failure("required initialization cannot read mutable storage");
       auto value = checker.staticValue(*storage);
@@ -113,10 +247,18 @@ public:
         result.kind = Lookup::Kind::Failed;
         return result;
       }
+      auto budget = remaining;
+      if (!chargeConstant(checker.typeStore(), *value, budget)) {
+        checker.error("limit", name.span,
+                      "constant evaluation exceeded the aggregate size limit");
+        result.kind = Lookup::Kind::Failed;
+        return result;
+      }
       auto converted = checker.constantValueOf(*value);
       if (!converted)
         return failure("storage of this type cannot be read in a constant "
                        "expression");
+      remaining = budget;
       result.kind = Lookup::Kind::Constant;
       result.value = std::move(*converted);
       return result;
@@ -132,16 +274,21 @@ public:
       result.value.number = *checker.facts(name).numeric;
       return result;
     }
-    if (checker.genericEnvironment) {
-      auto found = checker.genericEnvironment->names.find(name.text);
-      if (found != checker.genericEnvironment->names.end() &&
-          checker.typeStore().isConstant(found->second))
-        return carrier(found->second);
-    }
-    auto canonical = checker.callableName(name.text, "", name.span);
+    auto canonical =
+        checker.callableName(name.text, "", name.span, name.context);
     if (auto function = checker.names.find(canonical);
         !canonical.empty() && function != checker.names.end()) {
       result.kind = Lookup::Kind::Function;
+      if (checker.checked.importedDeclarations) {
+        auto imported = checker.checked.importedDeclarations->functions.find(
+            function->second);
+        if (imported != checker.checked.importedDeclarations->functions.end() &&
+            imported->second.body) {
+          result.checkedFunction = &imported->second.evaluation;
+          result.declaration = &checker.module.functions[function->second];
+          return result;
+        }
+      }
       result.function = &checker.module.functions[function->second];
       return result;
     }
@@ -224,11 +371,12 @@ bool Checker::constFunctionCall(const Node &node) {
   if (separator != std::string::npos) {
     TypeSyntax syntax;
     syntax.name = callee.text.substr(0, separator);
+    syntax.context = callee.context;
     ConstantHost host(*this);
     if (isFloating(host.resolveType(syntax, callee.span)))
       return true;
   }
-  auto canonical = callableName(callee.text, "", callee.span);
+  auto canonical = callableName(callee.text, "", callee.span, callee.context);
   auto found = names.find(canonical);
   return !canonical.empty() && found != names.end() &&
          module.functions[found->second].constFunction;
@@ -344,8 +492,12 @@ std::optional<Value> Checker::constantValueOf(const StaticConstant &constant) {
     return std::nullopt;
   if (constant.kind == StaticConstant::Kind::Repeat) {
     auto length = checked.types->arrayLength(constant.type);
+    if (!length || constant.fields.empty())
+      return std::nullopt;
+    if (!*length)
+      return value;
     auto element = constantValueOf(constant.fields.front());
-    if (!length || !element || *length > limits::constEvalSteps)
+    if (!element)
       return std::nullopt;
     value.elements.assign(static_cast<std::size_t>(*length), *element);
     return value;

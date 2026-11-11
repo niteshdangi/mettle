@@ -439,31 +439,43 @@ int64_t mettle_c_integer(int8_t first, uint8_t second, int64_t third) {
   return first + second + third;
 }
 struct MettlePair mettle_c_pair(struct MettlePair value) {
+  if (value.first != 19 || value.second != 22)
+    return (struct MettlePair){0, 0};
   value.first += 1;
   value.second += 1;
   return value;
 }
 extern struct MettlePair mettle_export_pair(struct MettlePair value);
 struct MettlePair mettle_c_call_export(struct MettlePair value) {
+  if (value.first != 19 || value.second != 22)
+    return (struct MettlePair){0, 0};
   return mettle_export_pair(value);
 }
 struct MettleFloats mettle_c_floats(struct MettleFloats value) {
+  if (value.first != 19.0f || value.second != 22.0f)
+    return (struct MettleFloats){0.0f, 0.0f};
   value.first += 1.0f;
   value.second += 1.0f;
   return value;
 }
 struct MettleMixed mettle_c_mixed(struct MettleMixed value) {
+  if (value.first != 19.0 || value.second != 22)
+    return (struct MettleMixed){0.0, 0};
   value.first += 1.0;
   value.second += 1;
   return value;
 }
 struct MettleLarge mettle_c_large(struct MettleLarge value) {
+  if (value.first != 10 || value.second != 11 || value.third != 18)
+    return (struct MettleLarge){0, 0, 0};
   value.first += 1;
   value.second += 1;
   value.third += 1;
   return value;
 }
 struct MettlePacked mettle_c_packed(struct MettlePacked value) {
+  if (value.first != 19 || value.second != 22)
+    return (struct MettlePacked){0, 0};
   value.first += 1;
   value.second += 1;
   return value;
@@ -484,4 +496,38 @@ int32_t mettle_c_callback(int32_t (*callback)(void *, int32_t), void *context,
 size_t mettle_c_pair_size(void) { return sizeof(struct MettlePair); }
 size_t mettle_c_packed_offset(void) {
   return offsetof(struct MettlePacked, second);
+}
+
+struct __attribute__((packed)) MettlePackedInner {
+  uint64_t value;
+};
+struct MettlePackedOuter {
+  uint8_t prefix;
+  struct MettlePackedInner payload;
+};
+struct MettlePackedOuter mettle_c_nested_packed(struct MettlePackedOuter value) {
+  value.payload.value += 1;
+  return value;
+}
+struct MettlePackedOuter mettle_c_nested_packed_callback(
+    struct MettlePackedOuter (*callback)(struct MettlePackedOuter),
+    struct MettlePackedOuter value) {
+  return callback(value);
+}
+struct MettlePackedInner mettle_c_packed_inner(struct MettlePackedInner value) {
+  value.value += 1;
+  return value;
+}
+struct __attribute__((packed)) MettleOffsetInner {
+  uint8_t pad;
+  uint64_t value;
+};
+struct MettleRepairedOuter {
+  uint8_t prefix[7];
+  struct MettleOffsetInner payload;
+};
+struct MettleRepairedOuter mettle_c_repaired_packed(
+    struct MettleRepairedOuter value) {
+  value.payload.value += 1;
+  return value;
 }

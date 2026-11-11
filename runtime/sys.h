@@ -14,8 +14,11 @@ std::int32_t mettle_rt_errno();
 // Portable error class of an `errno` value, numbered like `std::io::ErrorKind`
 // (18 is the catch-all `Other`); platform errno numbers never leak into Mettle.
 std::int32_t mettle_rt_errno_kind(std::int32_t code);
+std::int32_t mettle_rt_errno_is_range(std::int32_t code);
 void mettle_rt_set_errno(std::int32_t value);
 
+// Duplicates with close-on-exec into a descriptor above standard streams.
+std::int32_t mettle_rt_dup(std::int32_t fd);
 // Portable open flags: 1 read, 2 write, 4 append, 8 truncate, 16 create,
 // 32 create-new. The descriptor is close-on-exec.
 std::int32_t mettle_rt_open(const char *path, std::int32_t flags,
@@ -28,6 +31,7 @@ std::int32_t mettle_rt_stat(const char *path, std::int32_t fd,
 // Next entry name of an open directory, skipping `.` and `..`; null at the end
 // (with `errno` zero) or on failure.
 const char *mettle_rt_readdir(void *directory);
+std::int32_t mettle_rt_remove_dir_all(const char *path);
 
 std::int32_t mettle_rt_argc();
 const char *mettle_rt_argv(std::int32_t index);
@@ -65,10 +69,12 @@ std::int32_t mettle_rt_sock_connect_timeout(
     std::int32_t fd, std::int32_t family, const std::uint8_t *address,
     std::size_t addressSize, std::uint16_t port, std::uint32_t flowinfo,
     std::uint32_t scopeId, std::uint64_t timeoutMicros);
-// Waits at most `timeoutMillis` (negative: forever) for a connection; a
-// timeout fails with EAGAIN because SO_RCVTIMEO does not cover accept.
+// Requires O_NONBLOCK; logical blocking expires via timedOut/EAGAIN (<0: forever).
+// The returned socket is blocking and close-on-exec.
 std::int32_t mettle_rt_sock_accept(std::int32_t fd, std::int32_t timeoutMillis,
-                                   std::int32_t *family, std::uint8_t *address,
+                                   std::int32_t nonblocking,
+                                   std::int32_t *timedOut, std::int32_t *family,
+                                   std::uint8_t *address,
                                    std::size_t addressCapacity,
                                    std::uint16_t *port, std::uint32_t *flowinfo,
                                    std::uint32_t *scopeId);
@@ -134,6 +140,7 @@ void mettle_rt_reactor_wake(void *reactor);
 std::int32_t mettle_rt_reactor_wait(void *reactor);
 
 // Descriptor blocking-mode operations used by `std.net`.
+std::int32_t mettle_rt_sock_is_nonblocking(std::int32_t fd);
 std::int32_t mettle_rt_set_nonblocking(std::int32_t fd);
 std::int32_t mettle_rt_set_blocking(std::int32_t fd);
 std::int32_t mettle_rt_sock_connect_start(std::int32_t fd, std::int32_t family,

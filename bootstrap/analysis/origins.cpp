@@ -176,6 +176,13 @@ std::vector<std::pair<ViewPath, Type>> viewPaths(Type type,
       result.emplace_back(std::move(path), current);
       return;
     }
+    if (types.isErased(current)) {
+      if (result.size() >= limits::activeLoans)
+        throw std::length_error("view projection limit exceeded");
+      // The hidden contents retain loans even after region erasure.
+      result.emplace_back(std::move(path), current);
+      return;
+    }
     if (types.isSlice(current)) {
       auto element = types.slice(current).element;
       path.push_back(Projection::opaque(element));
@@ -196,7 +203,6 @@ std::vector<std::pair<ViewPath, Type>> viewPaths(Type type,
       visit(aggregate.components[1], std::move(path));
       return;
     }
-    // The region pass bounds an owned erased payload by its `from` sources.
     if (owningHandle(current, types) && !aggregate.genericArguments.empty()) {
       visit(aggregate.genericArguments.front(), path);
       return;
@@ -212,14 +218,98 @@ std::vector<std::pair<ViewPath, Type>> viewPaths(Type type,
     }
     if (result.size() == prior && aggregate.genericOrigin != Type::Unknown)
       for (auto argument : aggregate.genericArguments) {
-        auto argumentPrior = result.size();
         visit(argument, path);
-        if (result.size() == argumentPrior && types.isErased(argument) &&
-            types.containsViews(argument))
-          result.emplace_back(path, Type::Unknown);
       }
   };
   visit(type, {});
+  return result;
+}
+ViewPath logicalViewPath(ViewPath path) {
+  for (auto &projection : path)
+    projection.type = Type::Unknown;
+  return path;
+}
+std::set<ViewPath> contentsOnlyResultPaths(const ir::Function &function,
+                                           const TypeStore &types) {
+  std::set<ViewPath> result;
+  if (!types.isFunctionPointer(function.regionSignature))
+    return result;
+  std::map<ViewPath, bool> declaredPaths;
+  // Regional products may lower to a different shape; their payloads match by
+  // erased declaration, static only if every declared occurrence is.
+  std::map<std::uint32_t, bool> staticPayloads;
+  const auto &signature = types.callable(function.regionSignature);
+  auto add = [&](Type declared, std::optional<std::uint32_t> field) {
+    for (auto [path, type] : viewPaths(declared, types)) {
+      const bool payload =
+          types.isErased(type) && types.erased(type).bound == RegionId::Static;
+      if (types.isErased(type))
+        staticPayloads.try_emplace(types.erased(type).declaration, true)
+            .first->second &= payload;
+      if (field)
+        path.insert(path.begin(), Projection::field(*field));
+      declaredPaths.try_emplace(logicalViewPath(std::move(path)), true)
+          .first->second &= payload;
+    }
+  };
+  if (signature.error == Type::Unknown)
+    add(signature.result, std::nullopt);
+  else if (types.isProduct(function.result) &&
+           types.product(function.result).kind == AggregateKind::Outcome) {
+    add(signature.result, 1);
+    add(signature.error, 2);
+  }
+  for (const auto &[path, type] : viewPaths(function.result, types)) {
+    if (auto declared = declaredPaths.find(logicalViewPath(path));
+        declared != declaredPaths.end()) {
+      if (declared->second)
+        result.insert(path);
+    } else if (types.isErased(type))
+      if (auto found = staticPayloads.find(types.erased(type).declaration);
+          found != staticPayloads.end() && found->second)
+        result.insert(path);
+  }
+  return result;
+}
+std::vector<std::set<ViewPath>>
+staticInputContents(const ir::Function &function, const TypeStore &types) {
+  if (!types.isFunctionPointer(function.regionSignature))
+    return {};
+  const auto &signature = types.callable(function.regionSignature);
+  if (signature.parameters.size() != function.parameters)
+    return {};
+  auto uncertain = [&](RegionId region) {
+    if (!types.regions().contains(region))
+      return true;
+    auto kind = types.regions().get(region).kind;
+    return kind == RegionKind::Unspecified || kind == RegionKind::Inference ||
+           kind == RegionKind::Intersection;
+  };
+  std::map<RegionId, std::vector<RegionId>> dependents;
+  std::set<RegionId> possible{RegionId::Static};
+  std::vector<RegionId> pending{RegionId::Static};
+  for (const auto &requirement : signature.regionRequirements) {
+    dependents[requirement.shorter].push_back(requirement.longer);
+    if (uncertain(requirement.shorter) &&
+        possible.insert(requirement.shorter).second)
+      pending.push_back(requirement.shorter);
+  }
+  while (!pending.empty()) {
+    auto region = pending.back();
+    pending.pop_back();
+    for (auto longer : dependents[region])
+      if (possible.insert(longer).second)
+        pending.push_back(longer);
+  }
+  std::vector<std::set<ViewPath>> result(function.parameters);
+  for (std::size_t source = 0; source < function.parameters; ++source)
+    for (const auto &[path, type] :
+         viewPaths(signature.parameters[source].type, types)) {
+      auto region = types.isView(type) ? types.view(type).region
+                                       : types.erased(type).bound;
+      if (uncertain(region) || possible.contains(region))
+        result[source].insert(logicalViewPath(path));
+    }
   return result;
 }
 ViewPath repackPath(const TypeStore &types, Type source, Type target,
@@ -418,6 +508,11 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                    const EffectSummaries &summaries) {
   const auto &types = *program.types;
   OriginInfo result;
+  const auto contentsOnlyPaths = contentsOnlyResultPaths(function, types);
+  const auto staticInputs = contentsOnlyPaths.empty()
+                                ? std::vector<std::set<ViewPath>>{}
+                                : staticInputContents(function, types);
+  std::map<int, std::set<ViewPath>> calleeContents;
   if (function.blocks.empty()) {
     if (function.indirectContract || function.declarationOnly ||
         function.foreignDeclaration) {
@@ -452,8 +547,11 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                 parameter.name;
           }
         }
+        // Through a call-local view the erased value's own payload is as
+        // transient as the view.
+        const auto erasedSelf = types.isErased(parameter.type);
         for (const auto &source : sources)
-          if (!transient || !source.fields.empty())
+          if (!transient || (source.fields.size() > (erasedSelf ? 1u : 0u)))
             inputs.insert(source);
       }
       for (std::size_t p = 0; p < function.parameters; ++p)
@@ -465,6 +563,8 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
         for (auto source : function.resultSources) {
           const auto &sources = parameterInputs[static_cast<int>(source)];
           for (auto backing : sources) {
+            if (contentsOnlyPaths.contains(path) && backing.fields.empty())
+              continue;
             backing.fields.push_back(Projection::opaque(
                 types.isView(type) ? types.view(type).payload : Type::Unknown));
             result.effects.returns[path].insert(std::move(backing));
@@ -610,6 +710,8 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
   };
   std::function<void(const StaticConstant &, Place)> constantOrigins =
       [&](const StaticConstant &constant, Place destination) {
+        if (!types.containsViews(constant.type, true))
+          return;
         if (constant.kind == StaticConstant::Kind::Address &&
             types.isView(constant.type)) {
           auto id = synthetic++;
@@ -649,6 +751,8 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
       function.blocks.size());
   std::vector<std::vector<std::map<Place, int>>> wildIds(
       function.blocks.size());
+  std::vector<const ir::Instruction *> definitions(function.values, nullptr);
+  std::vector<int> storedValues(function.locals.size(), -1);
   for (std::size_t b = 0; b < function.blocks.size(); ++b) {
     result.points[b].resize(function.blocks[b].instructions.size());
     created[b].resize(function.blocks[b].instructions.size());
@@ -656,6 +760,23 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
     wildIds[b].resize(function.blocks[b].instructions.size());
     for (std::size_t i = 0; i < function.blocks[b].instructions.size(); ++i) {
       const auto &instruction = function.blocks[b].instructions[i];
+      definitions[instruction.result.id] = &instruction;
+      const auto root = instruction.place.root;
+      if (types.isSum(function.result) &&
+          root >= static_cast<int>(function.parameters) &&
+          static_cast<std::size_t>(root) < function.locals.size() &&
+          function.locals[root].storage == StorageDuration::Automatic &&
+          function.locals[root].type == function.result) {
+        auto &stored = storedValues[root];
+        if (instruction.place.fields.empty() &&
+            instruction.op == ir::Op::Store && stored == -1)
+          stored = instruction.operands[0].id;
+        else if (!instruction.place.fields.empty() ||
+                 (instruction.op != ir::Op::Declare &&
+                  instruction.op != ir::Op::Load &&
+                  instruction.op != ir::Op::Move))
+          stored = -2;
+      }
       if (borrowed(instruction.op))
         created[b][i].push_back(instruction.result.id);
       else if (instruction.op == ir::Op::Machine &&
@@ -682,6 +803,22 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
         }
     }
   }
+  auto returnDefinition = [&](int value) -> const ir::Instruction * {
+    std::set<int> visited;
+    while (value >= 0 && static_cast<std::size_t>(value) < definitions.size() &&
+           visited.insert(value).second) {
+      const auto *definition = definitions[value];
+      if (!definition || definition->op == ir::Op::VariantConstruct)
+        return definition;
+      if ((definition->op != ir::Op::Load && definition->op != ir::Op::Move) ||
+          !definition->place.fields.empty() || definition->place.root < 0 ||
+          static_cast<std::size_t>(definition->place.root) >=
+              storedValues.size())
+        return nullptr;
+      value = storedValues[definition->place.root];
+    }
+    return nullptr;
+  };
   std::vector<std::vector<int>> predecessors(function.blocks.size());
   for (std::size_t b = 0; b < function.blocks.size(); ++b) {
     const auto &exit = function.blocks[b].exit;
@@ -738,11 +875,11 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                   continue;
                 for (auto referent : loan->second.targets) {
                   if (imprecise(target.place))
-                    project(referent.place,
-                            Projection::opaque(
-                                types.isView(currentType)
-                                    ? types.view(currentType).payload
-                                    : Type::Unknown));
+                    project(
+                        referent.place,
+                        Projection::opaque(types.isView(currentType)
+                                               ? types.view(currentType).payload
+                                               : Type::Unknown));
                   referent.authority.insert(id);
                   join(referent.authority, target.authority);
                   next.insert(std::move(referent));
@@ -769,6 +906,11 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
             return place;
           if (projection.kind == Projection::Kind::Dereference) {
             if (!types.isView(type)) {
+              if (owningHandle(type, types)) {
+                type = types.product(type).genericArguments.front();
+                kept = i + 1;
+                continue;
+              }
               place.fields.resize(kept);
               return place;
             }
@@ -1257,22 +1399,33 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
             auto found = source.find(sourcePath);
             if (found == source.end())
               continue;
-            auto from =
-                borrowedValue
-                    ? instruction.operands[0].type
-                    : types
-                          .view(*projectedType(
-                              types, instruction.operands[0].type, sourcePath))
-                          .payload;
-            auto to = borrowedValue ? instruction.result.type
-                                    : types.view(paths[path].second).payload;
+            auto from = Type::Unknown, to = Type::Unknown;
+            if (borrowedValue) {
+              from = instruction.operands[0].type;
+              to = instruction.result.type;
+            } else if (types.isView(paths[path].second)) {
+              from = types
+                         .view(*projectedType(
+                             types, instruction.operands[0].type, sourcePath))
+                         .payload;
+              to = types.view(paths[path].second).payload;
+            }
             auto id = created[b][i][path];
             auto &loan = result.loans[id];
             loan.mode = borrowedValue
                             ? (instruction.result.access == ir::Access::Read
                                    ? ParameterMode::Read
                                    : ParameterMode::Mut)
-                            : types.view(paths[path].second).mode;
+                        : types.isView(paths[path].second)
+                            ? types.view(paths[path].second).mode
+                            : ParameterMode::Read;
+            if (!borrowedValue && !types.isView(paths[path].second) &&
+                std::any_of(found->second.begin(), found->second.end(),
+                            [&](int parent) {
+                              return result.loans.at(parent).mode ==
+                                     ParameterMode::Mut;
+                            }))
+              loan.mode = ParameterMode::Mut;
             auto oldTargets = loan.targets.size(),
                  oldParents = loan.parents.size();
             join(loan.parents, found->second);
@@ -1365,6 +1518,10 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
             instruction.op == ir::Op::IndirectCall ||
             instruction.op == ir::Op::CatchCall) {
           const auto &callee = program.functions[instruction.callee];
+          auto [contentsOnly, inserted] =
+              calleeContents.try_emplace(instruction.callee);
+          if (inserted)
+            contentsOnly->second = contentsOnlyResultPaths(callee, types);
           const auto replacements = callTypes(callee, instruction, types);
           auto rebased = [&](ViewPath path) {
             for (auto &projection : path)
@@ -1373,6 +1530,9 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                 projection.type = found->second;
             return path;
           };
+          std::set<ViewPath> contentsOnlyCallPaths;
+          for (const auto &path : contentsOnly->second)
+            contentsOnlyCallPaths.insert(rebased(path));
           auto argumentPlace = [&](const Place &relativePlace) {
             auto argument = instruction.operands.at(relativePlace.root);
             auto type = argument.type;
@@ -1447,6 +1607,19 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
             }
             return referents;
           };
+          auto holds = [&](int parent, const std::set<Target> &holders) {
+            const auto &targets = result.loans.at(parent).targets;
+            return !targets.empty() &&
+                   std::all_of(targets.begin(), targets.end(),
+                               [&](const Target &target) {
+                                 return std::any_of(
+                                     holders.begin(), holders.end(),
+                                     [&](const Target &holder) {
+                                       return containsPlace(target.place,
+                                                            holder.place);
+                                     });
+                               });
+          };
           auto locationType = [&](const Place &place) -> std::optional<Type> {
             if (place.root >= 0)
               return projectedType(types, function.locals.at(place.root).type,
@@ -1508,6 +1681,11 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
               auto payload =
                   types.isView(view) ? types.view(view).payload : Type::Unknown;
               for (const auto &source : sources) {
+                auto inherit = [&](int parent) {
+                  if (parent != id && (source.root != destination.root ||
+                                       !holds(parent, objects)))
+                    loan.parents.insert(parent);
+                };
                 bool mutableSource =
                     callee.locals[source.root].mode != ParameterMode::Read;
                 std::vector<Target> candidates;
@@ -1526,8 +1704,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                 if (kept != retained.end() && kept->second.contains(source))
                   for (const auto &target : candidates)
                     for (auto parent : target.authority)
-                      if (parent != id)
-                        loan.parents.insert(parent);
+                      inherit(parent);
                 std::set<std::pair<Place, bool>> seen;
                 std::vector<std::pair<Target, bool>> pending;
                 for (auto target : candidates)
@@ -1544,8 +1721,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                       (loan.mode == ParameterMode::Read || writable)) {
                     loan.targets.insert(target);
                     for (auto parent : target.authority)
-                      if (parent != id)
-                        loan.parents.insert(parent);
+                      inherit(parent);
                   }
                   if (types.isView(*type)) {
                     const auto &reference = types.view(*type);
@@ -1576,8 +1752,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                     project(target.place, Projection::opaque(payload));
                     loan.targets.insert(target);
                     for (auto parent : target.authority)
-                      if (parent != id)
-                        loan.parents.insert(parent);
+                      inherit(parent);
                   }
                   if (seen.size() > limits::activeLoans)
                     throw std::length_error(
@@ -1597,10 +1772,12 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
             auto &loan = result.loans.at(created[b][i][path]);
             auto oldTargets = loan.targets.size(),
                  oldParents = loan.parents.size();
+            std::set<int> returnedSources;
             for (const auto &[returnedPath, sources] :
                  summaries[instruction.callee].returns)
               if (returnPath(rebased(returnedPath), paths[path].first))
                 for (const auto &source : sources) {
+                  returnedSources.insert(source.root);
                   auto referents = argumentPlace(source);
                   loan.targets.insert(referents.begin(), referents.end());
                 }
@@ -1613,6 +1790,10 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                 }
             Origins shadowed, retained;
             for (auto source : callee.resultSources) {
+              if (!callee.blocks.empty() &&
+                  contentsOnlyCallPaths.contains(paths[path].first) &&
+                  !returnedSources.contains(static_cast<int>(source)))
+                continue;
               const auto borrow =
                   flatten(result.values[instruction.operands[source].id]);
               auto parents = borrow;
@@ -1632,9 +1813,10 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
               // A result that names only regions carried inside a borrowed
               // value depends on the shared loans stored there, not on the
               // borrow of the value itself.
-              if (std::find(callee.resultContents.begin(),
-                            callee.resultContents.end(),
-                            source) != callee.resultContents.end() &&
+              if ((contentsOnlyCallPaths.contains(paths[path].first) ||
+                   std::find(callee.resultContents.begin(),
+                             callee.resultContents.end(),
+                             source) != callee.resultContents.end()) &&
                   callee.locals[source].mode != ParameterMode::Value &&
                   callee.locals[source].mode != ParameterMode::Take) {
                 Origins carried;
@@ -1725,22 +1907,9 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
             // loans of the object that holds the destination; those loans
             // govern the access to it, not the stored views.
             const auto &holders = arguments.at(destination);
-            auto holds = [&](int parent) {
-              const auto &targets = result.loans.at(parent).targets;
-              return !targets.empty() &&
-                     std::all_of(targets.begin(), targets.end(),
-                                 [&](const Target &target) {
-                                   return std::any_of(
-                                       holders.begin(), holders.end(),
-                                       [&](const Target &holder) {
-                                         return containsPlace(target.place,
-                                                              holder.place);
-                                       });
-                                 });
-            };
             auto inherit = [&](const Place &source, const Target &referent) {
               for (auto parent : referent.authority)
-                if (source.root != destination.root || !holds(parent))
+                if (source.root != destination.root || !holds(parent, holders))
                   loan.parents.insert(parent);
             };
             for (const auto &source : sources)
@@ -1798,8 +1967,19 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
         join(result.returns[b],
              flatten(result.values[function.blocks[b].exit.value.id]));
         const auto &returned = result.values[function.blocks[b].exit.value.id];
+        const auto *definition =
+            returnDefinition(function.blocks[b].exit.value.id);
         for (const auto &[path, type] : viewPaths(function.result, types)) {
           (void)type;
+          if (definition && definition->op == ir::Op::VariantConstruct &&
+              !path.empty() && path.front().kind == Projection::Kind::Field) {
+            const auto &fields = types.product(definition->result.type)
+                                     .variants[definition->number]
+                                     .fields;
+            if (std::find(fields.begin(), fields.end(), path.front().index) ==
+                fields.end())
+              continue;
+          }
           auto found = returned.find(path);
           if (found == returned.end() || found->second.empty())
             untracked.insert(path);
@@ -1873,13 +2053,16 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
   // declared regions promise it stays within the declared inputs: back it with
   // every place those inputs borrow so later access through them conflicts.
   for (const auto &[path, type] : viewPaths(function.result, types)) {
-    if ((!result.effects.returns[path].empty() && !untracked.contains(path)) ||
+    if ((!untracked.contains(path) &&
+         (contentsOnlyPaths.contains(path) ||
+          !result.effects.returns[path].empty())) ||
         result.effects.staticReturns.contains(path))
       continue;
     for (auto source : function.resultSources) {
       const auto &parameter = function.locals[source];
       std::set<Place> backing;
-      const bool contents = std::find(function.resultContents.begin(),
+      const bool contents = contentsOnlyPaths.contains(path) ||
+                            std::find(function.resultContents.begin(),
                                       function.resultContents.end(),
                                       source) != function.resultContents.end();
       if (!contents && (parameter.mode == ParameterMode::Read ||
@@ -1887,6 +2070,9 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
         backing.insert({static_cast<int>(source), {}});
       for (const auto &[inner, view] : viewPaths(parameter.type, types)) {
         (void)view;
+        if (contentsOnlyPaths.contains(path) && source < staticInputs.size() &&
+            !staticInputs[source].contains(logicalViewPath(inner)))
+          continue;
         Place place{static_cast<int>(source), inner};
         place.fields.push_back(Projection::dereference());
         backing.insert(std::move(place));
@@ -1904,6 +2090,17 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
       append(relative, place.fields);
       result.effects.overwrites.insert(std::move(relative));
     }
+  // A static payload never borrows an input's own storage.
+  for (const auto &path : contentsOnlyPaths)
+    if (auto found = result.effects.returns.find(path);
+        found != result.effects.returns.end())
+      std::erase_if(found->second, [](const Place &place) {
+        return std::none_of(place.fields.begin(), place.fields.end(),
+                            [](const Projection &projection) {
+                              return projection.kind ==
+                                     Projection::Kind::Dereference;
+                            });
+      });
   retainWithin(function, types, result.effects);
   return result;
 }

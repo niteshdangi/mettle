@@ -1,4 +1,3 @@
-
 // flags: --sanitize address
 
 type Child {

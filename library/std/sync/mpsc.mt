@@ -14,11 +14,32 @@ extern "C" {
     unsafe fn mettle_rt_select_notify(): Unit;
 }
 
+type Envelope<T> {
+    value: T
+    receipt: Arc<core.sync.atomic.AtomicBool>?
+}
+
+fn accepted(read receipt: Arc<core.sync.atomic.AtomicBool>?): bool {
+    match receipt {
+        present(flag) => flag.get().load(core.sync.atomic.Ordering.Acquire),
+        none => false
+    }
+}
+
+fn receive<T>(take envelope: Envelope<T>): T {
+    match envelope.receipt {
+        present(flag) => flag.get().store(true, core.sync.atomic.Ordering.Release),
+        none => {}
+    }
+    envelope.value
+}
+
 type Shared<T> {
-    queue: mutex.Mutex<Deque<T>>
+    queue: mutex.Mutex<Deque<Envelope<T>>>
     ready: condvar.Condvar
     space: condvar.Condvar
     bound: usize
+    rendezvous: bool
     waiting_receivers: core.sync.atomic.AtomicUsize
     senders: core.sync.atomic.AtomicUsize
     open: core.sync.atomic.AtomicBool
@@ -54,12 +75,29 @@ pub type Sender<T> {
 pub type Receiver<T> {
     chan: Arc<Shared<T>>
     drop {
-        let locked = capture self.chan.get().queue.lock()
-        let _guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
-        self.chan.get().open.store(false, core.sync.atomic.Ordering.Release)
-        self.chan.get().ready.notify_all()
-        self.chan.get().space.notify_all()
-        unsafe { mettle_rt_select_notify() }
+        var discarded = package.alloc.vec_deque.new<Envelope<T>>()
+        {
+            let locked = capture self.chan.get().queue.lock()
+            var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
+            self.chan.get().open.store(false, core.sync.atomic.Ordering.Release)
+            if self.chan.get().rendezvous {
+                match take guard.get_mut().pop_front() {
+                    present(envelope) => {
+                        if envelope.receipt.is_present() {
+                            guard.get_mut().push_back(envelope)
+                        } else {
+                            discarded.push_back(envelope)
+                        }
+                    },
+                    none => {}
+                }
+            } else {
+                discarded = core.mem.replace(guard.get_mut(), package.alloc.vec_deque.new<Envelope<T>>())
+            }
+            self.chan.get().ready.notify_all()
+            self.chan.get().space.notify_all()
+            unsafe { mettle_rt_select_notify() }
+        }
     }
 }
 extend<T> Receiver<T> not Shareable
@@ -78,12 +116,13 @@ pub type SyncSender<T> {
     }
 }
 
-fn new_shared<T>(bound: usize): Arc<Shared<T>> {
+fn new_shared<T>(bound: usize, rendezvous: bool): Arc<Shared<T>> {
     package.alloc.arc.new(Shared(
-        mutex.new(package.alloc.vec_deque.new<T>()),
+        mutex.new(package.alloc.vec_deque.new<Envelope<T>>()),
         condvar.new(),
         condvar.new(),
         bound,
+        rendezvous,
         core.sync.atomic.AtomicUsize.new(0usize),
         core.sync.atomic.AtomicUsize.new(1usize),
         core.sync.atomic.AtomicBool.new(true)
@@ -91,7 +130,7 @@ fn new_shared<T>(bound: usize): Arc<Shared<T>> {
 }
 
 pub fn channel<T>(): (Sender<T>, Receiver<T>) {
-    let chan = new_shared<T>(0usize)
+    let chan = new_shared<T>(0usize, false)
     let other = chan.retain()
     (Sender(chan), Receiver(other))
 }
@@ -99,7 +138,7 @@ pub fn channel<T>(): (Sender<T>, Receiver<T>) {
 // A zero bound is a rendezvous: send returns only after a receiver takes the
 // message.
 pub fn sync_channel<T>(bound: usize): (SyncSender<T>, Receiver<T>) {
-    let chan = new_shared<T>(bound)
+    let chan = new_shared<T>(bound, bound == 0usize)
     let other = chan.retain()
     (SyncSender(chan), Receiver(other))
 }
@@ -111,7 +150,7 @@ extend<T> Sender<T> {
         if !self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) {
             throw SendError(value)
         }
-        guard.get_mut().push_back(value)
+        guard.get_mut().push_back(Envelope(value, none))
         self.chan.get().ready.notify_one()
         unsafe { mettle_rt_select_notify() }
     }
@@ -122,7 +161,7 @@ extend<T> Sender<T> {
         if !self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) {
             throw TrySendError(value, true)
         }
-        guard.get_mut().push_back(value)
+        guard.get_mut().push_back(Envelope(value, none))
         self.chan.get().ready.notify_one()
         unsafe { mettle_rt_select_notify() }
     }
@@ -144,24 +183,34 @@ extend<T> SyncSender<T> {
               } else {
                   guard.get().len() >= self.chan.get().bound
               }) {
-            guard = self.chan.get().space.wait(guard)
+            let waited = capture self.chan.get().space.wait(guard)
+            guard = match take waited { success(g) => g, failure(e) => e.into_inner() }
         }
         if !self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) {
             throw SendError(value)
         }
-        guard.get_mut().push_back(value)
+        let receipt: Arc<core.sync.atomic.AtomicBool>? = if rendezvous {
+            present(package.alloc.arc.new(core.sync.atomic.AtomicBool.new(false)))
+        } else { none }
+        let queued_receipt = match receipt {
+            present(flag) => present(flag.retain()),
+            none => none
+        }
+        guard.get_mut().push_back(Envelope(value, queued_receipt))
         self.chan.get().ready.notify_one()
         unsafe { mettle_rt_select_notify() }
         if rendezvous {
-            while !guard.get().is_empty() &&
+            // Only receipt publication acknowledges this sender's own message.
+            while !accepted(read receipt) &&
                   self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) {
-                guard = self.chan.get().space.wait(guard)
+                let waited = capture self.chan.get().space.wait(guard)
+                guard = match take waited { success(g) => g, failure(e) => e.into_inner() }
             }
-            if !guard.get().is_empty() {
+            if !accepted(read receipt) {
                 let returned = guard.get_mut().pop_back()
                 self.chan.get().space.notify_all()
                 match take returned {
-                    present(unsent) => throw SendError(unsent),
+                    present(unsent) => throw SendError(unsent.value),
                     none => core.intrinsics.abort()
                 }
             }
@@ -183,7 +232,7 @@ extend<T> SyncSender<T> {
         if full {
             throw TrySendError(value, false)
         }
-        guard.get_mut().push_back(value)
+        guard.get_mut().push_back(Envelope(value, none))
         self.chan.get().ready.notify_one()
         unsafe { mettle_rt_select_notify() }
     }
@@ -209,37 +258,46 @@ extend<T> SyncSender<T> {
                 throw SendTimeoutError(value, true, false)
             }
             let remaining = (timeout_nanos as u128 - elapsed) as u64
-            let waited = self.chan.get().space.wait_timeout(
+            let waited = capture self.chan.get().space.wait_timeout(
                 guard, time.from_nanos(remaining)
             )
-            guard = waited.0
+            let pair = match take waited { success(pair) => pair, failure(e) => e.into_inner() }
+            guard = pair.0
         }
-        guard.get_mut().push_back(value)
+        let receipt: Arc<core.sync.atomic.AtomicBool>? = if rendezvous {
+            present(package.alloc.arc.new(core.sync.atomic.AtomicBool.new(false)))
+        } else { none }
+        let queued_receipt = match receipt {
+            present(flag) => present(flag.retain()),
+            none => none
+        }
+        guard.get_mut().push_back(Envelope(value, queued_receipt))
         self.chan.get().ready.notify_one()
         unsafe { mettle_rt_select_notify() }
         if rendezvous {
-            while !guard.get().is_empty() &&
+            while !accepted(read receipt) &&
                   self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) {
                 let elapsed = time.now().duration_since(started).as_nanos()
                 if elapsed >= timeout_nanos as u128 {
                     let returned = guard.get_mut().pop_back()
                     self.chan.get().space.notify_all()
                     match take returned {
-                        present(unsent) => throw SendTimeoutError(unsent, true, false),
+                        present(unsent) => throw SendTimeoutError(unsent.value, true, false),
                         none => core.intrinsics.abort()
                     }
                 }
                 let remaining = (timeout_nanos as u128 - elapsed) as u64
-                let waited = self.chan.get().space.wait_timeout(
+                let waited = capture self.chan.get().space.wait_timeout(
                     guard, time.from_nanos(remaining)
                 )
-                guard = waited.0
+                let pair = match take waited { success(pair) => pair, failure(e) => e.into_inner() }
+                guard = pair.0
             }
-            if !guard.get().is_empty() {
+            if !accepted(read receipt) {
                 let returned = guard.get_mut().pop_back()
                 self.chan.get().space.notify_all()
                 match take returned {
-                    present(unsent) => throw SendTimeoutError(unsent, false, true),
+                    present(unsent) => throw SendTimeoutError(unsent.value, false, true),
                     none => core.intrinsics.abort()
                 }
             }
@@ -261,8 +319,8 @@ extend<T> Receiver<T> {
         while waiting {
             let next = guard.get_mut().pop_front()
             match take next {
-                present(value) => {
-                    result = present(value)
+                present(envelope) => {
+                    result = present(receive(envelope))
                     waiting = false
                     self.chan.get().space.notify_all()
                 },
@@ -272,7 +330,8 @@ extend<T> Receiver<T> {
                     } else {
                         let _previous = self.chan.get().waiting_receivers.fetch_add(1usize, core.sync.atomic.Ordering.Relaxed)
                         self.chan.get().space.notify_one()
-                        guard = self.chan.get().ready.wait(guard)
+                        let waited = capture self.chan.get().ready.wait(guard)
+                        guard = match take waited { success(g) => g, failure(e) => e.into_inner() }
                         let _previous = self.chan.get().waiting_receivers.fetch_sub(1usize, core.sync.atomic.Ordering.Relaxed)
                     }
                 }
@@ -286,7 +345,11 @@ extend<T> Receiver<T> {
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
         let next = guard.get_mut().pop_front()
         match take next {
-            present(value) => { self.chan.get().space.notify_all(); value },
+            present(envelope) => {
+                let value = receive(envelope)
+                self.chan.get().space.notify_all()
+                value
+            },
             none => throw TryRecvError(self.chan.get().senders.load(core.sync.atomic.Ordering.Acquire) == 0usize)
         }
     }
@@ -311,16 +374,21 @@ extend<T> Receiver<T> {
                 waiting = true
             }
             let remaining = (timeout_nanos as u128 - elapsed) as u64
-            let waited = self.chan.get().ready.wait_timeout(
+            let waited = capture self.chan.get().ready.wait_timeout(
                 guard, time.from_nanos(remaining)
             )
-            guard = waited.0
+            let pair = match take waited { success(pair) => pair, failure(e) => e.into_inner() }
+            guard = pair.0
             let _previous = self.chan.get().waiting_receivers.fetch_sub(1usize, core.sync.atomic.Ordering.Relaxed)
             waiting = false
         }
         let next = guard.get_mut().pop_front()
         match take next {
-            present(value) => { self.chan.get().space.notify_all(); value },
+            present(envelope) => {
+                let value = receive(envelope)
+                self.chan.get().space.notify_all()
+                value
+            },
             none => core.intrinsics.abort()
         }
     }

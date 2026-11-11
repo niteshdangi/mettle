@@ -5,7 +5,6 @@
 import std.thread
 import std.time
 import std.sync.{ barrier, condvar, mutex }
-import std.panic.{ catch_panic, CatchResult }
 import alloc.arc
 import core.clone.Clone
 import core.default.Default
@@ -29,10 +28,12 @@ fn checks_condvar_handoff(): i32 {
             var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
             if by_loop {
                 while !*guard.get() {
-                    guard = worker_signal.get().wait(guard)
+                    let waited = capture worker_signal.get().wait(guard)
+                    guard = match take waited { success(g) => g, failure(e) => e.into_inner() }
                 }
             } else {
-                guard = worker_signal.get().wait_while(guard, fn(mut ready: bool): bool { !ready })
+                let waited = capture worker_signal.get().wait_while(guard, fn(mut ready: bool): bool { !ready })
+                guard = match take waited { success(g) => g, failure(e) => e.into_inner() }
             }
             if *guard.get() { 0 } else { 1 }
         }))
@@ -67,7 +68,8 @@ fn checks_condvar_handoff(): i32 {
     let idle_lock = mutex.new(0)
     let idle = capture idle_lock.lock()
     let idle_guard = match take idle { success(g) => g, failure(e) => e.into_inner() }
-    let expired = signal.get().wait_timeout(idle_guard, time.from_nanos(0u64))
+    let expired_result = capture signal.get().wait_timeout(idle_guard, time.from_nanos(0u64))
+    let expired = match take expired_result { success(value) => value, failure(e) => e.into_inner() }
     if !expired.1.timed_out() { return 11 }
     core.mem.drop(expired.0)
 
@@ -75,8 +77,9 @@ fn checks_condvar_handoff(): i32 {
     let ready_lock = mutex.new(true)
     let ready_result = capture ready_lock.lock()
     let ready_guard = match take ready_result { success(g) => g, failure(e) => e.into_inner() }
-    let immediate = signal.get().wait_timeout_while(ready_guard, time.from_nanos(60000000000u64),
+    let immediate_result = capture signal.get().wait_timeout_while(ready_guard, time.from_nanos(60000000000u64),
         fn(mut ready: bool): bool { !ready })
+    let immediate = match take immediate_result { success(value) => value, failure(e) => e.into_inner() }
     if immediate.1.timed_out() { return 12 }
     core.mem.drop(immediate.0)
 
@@ -84,8 +87,9 @@ fn checks_condvar_handoff(): i32 {
     let stuck_lock = mutex.new(false)
     let stuck = capture stuck_lock.lock()
     let stuck_guard = match take stuck { success(g) => g, failure(e) => e.into_inner() }
-    let stuck_wait = signal.get().wait_timeout_while(stuck_guard, time.from_nanos(0u64),
+    let stuck_result = capture signal.get().wait_timeout_while(stuck_guard, time.from_nanos(0u64),
         fn(mut ready: bool): bool { !ready })
+    let stuck_wait = match take stuck_result { success(value) => value, failure(e) => e.into_inner() }
     if !stuck_wait.1.timed_out() { return 13 }
     core.mem.drop(stuck_wait.0)
 
@@ -93,7 +97,8 @@ fn checks_condvar_handoff(): i32 {
     let fallback_lock = mutex.new(0)
     let fallback_locked = capture fallback_lock.lock()
     let fallback_guard = match take fallback_locked { success(g) => g, failure(e) => e.into_inner() }
-    let short = fallback.wait_timeout_ms(fallback_guard, 1u64)
+    let short_result = capture fallback.wait_timeout_ms(fallback_guard, 1u64)
+    let short = match take short_result { success(value) => value, failure(e) => e.into_inner() }
     if !short.1.timed_out() { return 14 }
     core.mem.drop(short.0)
     let defaulted: condvar.Condvar = default_value<condvar.Condvar>()
@@ -142,13 +147,11 @@ fn checks_barrier_rounds(): i32 {
     let copied = result.clone()
     if !result.is_leader() || !copied.is_leader() { return 22 }
 
-    // zero parties is rejected when the barrier is constructed
-    let rejected = catch_panic(fn(): Unit {
-        let _zero = barrier.new(0usize)
-    })
-    match rejected {
-        CatchResult.Panicked(_) => {},
-        CatchResult.Returned(_) => { return 23 }
+    let zero = barrier.new(0usize)
+    var trivial_round = 0
+    while trivial_round < 2 {
+        if !zero.wait().is_leader() || !solo.wait().is_leader() { return 23 }
+        trivial_round += 1
     }
     0
 }

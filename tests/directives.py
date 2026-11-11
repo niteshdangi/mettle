@@ -22,3 +22,17 @@ def parse(text):
         found.setdefault(match.group(1), []).append(match.group(2))
         count += 1
     return found, count
+
+
+def parse_error(entry):
+    match = re.fullmatch(r"(\w+) ([1-9]\d*):([1-9]\d*) (.+)", entry)
+    if not match:
+        raise ValueError("expect-error must be `PHASE LINE:COL MESSAGE`")
+    return match.groups()
+
+
+def matches_error(source, expectation, stderr):
+    phase, line, column, message = expectation
+    intended = (re.escape(f"{source}:{line}:{column}: error[{phase}]:") +
+                r"[^\n]*" + re.escape(message))
+    return re.search(intended, stderr) is not None

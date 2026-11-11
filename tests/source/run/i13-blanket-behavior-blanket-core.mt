@@ -27,7 +27,7 @@ fn main(): i32 {
 
     // alloc.string.String (owned String)
     let owned_text = String("blanket")
-    if owned_text.clone().borrow().as_text() != "blanket" { return 6 }
+    if String.(Borrow<String>).borrow(owned_text.clone()).as_text() != "blanket" { return 6 }
     let text_from = String.(From<String>).`from`(owned_text.clone())
     if text_from.as_text() != "blanket" { return 7 }
     let text_into: String = String.(Into<String>).into(owned_text.clone())

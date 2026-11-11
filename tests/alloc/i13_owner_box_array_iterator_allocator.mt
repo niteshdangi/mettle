@@ -13,7 +13,7 @@ type Record {
 
 type TaggedAllocator { record: ptr<mut Record>; identity: u32 }
 
-extend TaggedAllocator implements Allocator {
+unsafe extend TaggedAllocator implements Allocator {
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {
         var global = Global()
         let pointer = try global.allocate(layout)
@@ -28,7 +28,7 @@ extend TaggedAllocator implements Allocator {
         pointer
     }
 
-    mut fn deallocate(pointer: ptr<mut u8>, layout: Layout): Unit {
+    mut unsafe fn deallocate(pointer: ptr<mut u8>, layout: Layout): Unit {
         unsafe {
             (*self.record).deallocations += 1
             if self.identity != (*self.record).identity ||
@@ -39,14 +39,14 @@ extend TaggedAllocator implements Allocator {
             if layout.size() != 0usize { (*self.record).live -= 1 }
         }
         var global = Global()
-        global.deallocate(pointer, layout)
+        unsafe { global.deallocate(pointer, layout) }
     }
 
-    mut fn grow(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn grow(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
         throw AllocError(new_size, old.align())
     }
 
-    mut fn shrink(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn shrink(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
         throw AllocError(new_size, old.align())
     }
 }

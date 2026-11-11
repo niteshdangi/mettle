@@ -3,9 +3,8 @@
 namespace mettle {
 std::optional<int> Checker::variantCall(Node &n, std::string_view spelling,
                                         bool reachable) {
-  auto canonical =
-      checked.symbols->lookup(checked.symbols->moduleOf(n.span), spelling,
-                              resolution::Namespace::Value, n.span);
+  auto canonical = checked.symbols->lookup(
+      accessModule(n), spelling, resolution::Namespace::Value, n.span);
   auto resolved = canonical ? std::string_view(*canonical) : spelling;
   auto delimiter = resolved.rfind("::");
   if (delimiter == std::string_view::npos)
@@ -30,7 +29,7 @@ std::optional<int> Checker::variantCall(Node &n, std::string_view spelling,
   }
   facts(n).variant = variant;
   auto count = n.kind == Kind::Call ? n.children.size() - 1 : 0;
-  const auto &fields = product.variants[variant].fields;
+  const auto fields = product.variants[variant].fields;
   if (count != fields.size())
     error("type", n.span, "variant argument count does not match");
   std::vector<bool> used(fields.size());
@@ -42,7 +41,8 @@ std::optional<int> Checker::variantCall(Node &n, std::string_view spelling,
       named = true;
       target = fields.size();
       for (std::size_t field = 0; field < fields.size(); ++field)
-        if (product.fields[fields[field]].name == argument.name)
+        if (checked.types->product(type).fields[fields[field]].name ==
+            argument.name)
           target = field;
     } else if (named)
       error("type", argument.span,
@@ -57,7 +57,9 @@ std::optional<int> Checker::variantCall(Node &n, std::string_view spelling,
     used[target] = true;
     facts(n).argumentOrder.push_back(target);
     coerce(argument, actual,
-           inference.fresh(product.fields[fields[target]].type), argument.span);
+           inference.fresh(
+               checked.types->product(type).fields[fields[target]].type),
+           argument.span);
   }
   return inference.fresh(type);
 }

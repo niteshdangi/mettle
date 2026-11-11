@@ -112,8 +112,8 @@ Initial collection API obligations:
 | get(index) | Optional borrowed view; no ownership production |
 | index operator | Borrowed access with bounds panic unless proved in range |
 | get_mut(index) | Optional exclusive view tied to receiver loan |
-| push(value: take T) | Consume value; may allocate; exclusive receiver |
-| try_push(value: take T) | On allocation failure, return error retaining ownership of uninserted value |
+| push(take value: T) | Consume value; may allocate; exclusive receiver |
+| try_push(take value: T) | On allocation failure, return error retaining ownership of uninserted value |
 | pop() | Optional owned T; no clone |
 | insert/remove | Explicit element movement and iterator invalidation |
 | reserve/try_reserve | Capacity guarantee or typed failure; existing live views constrain use |

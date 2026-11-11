@@ -65,13 +65,13 @@ pub fn `var`(read name: OsStr): String throws VarError {
     match take var_os(name) {
         present(value) => {
             let valid = match package.core.text.from_utf8(value.as_bytes()) {
-                present(_) => true,
-                none => false
+                success(_) => true,
+                failure(_) => false
             }
             if !valid { throw VarError.NotUnicode(value) }
             match package.core.text.from_utf8(value.as_bytes()) {
-                present(text) => package.alloc.string.from_text(text),
-                none => package.core.panic.panic("validated environment value is not UTF-8")
+                success(text) => package.alloc.string.from_text(text),
+                failure(_) => package.core.panic.panic("validated environment value is not UTF-8")
             }
         },
         none => throw VarError.NotPresent
@@ -86,16 +86,35 @@ pub fn temp_dir(): PathBuf {
     }
 }
 
-// Fails with `InvalidInput` for an empty name or one containing `=` or NUL.
-pub fn set_var(read name: OsStr, read value: OsStr): Unit throws io.Error {
-    if name.is_empty() { throw io.from_kind(io.ErrorKind.InvalidInput) }
+fn validate_env(read name: OsStr, read value: OsStr): Unit {
+    if name.is_empty() { package.core.panic.panic("environment name is empty") }
+    let bytes = name.as_bytes()
+    var index = 0usize
+    while index < bytes.len() {
+        if bytes[index] == 0u8 || bytes[index] == 61u8 {
+            package.core.panic.panic("invalid environment name")
+        }
+        index += 1usize
+    }
+    let bytes = value.as_bytes()
+    index = 0usize
+    while index < bytes.len() {
+        if bytes[index] == 0u8 { package.core.panic.panic("invalid environment value") }
+        index += 1usize
+    }
+}
+
+// Safety: exclude concurrent environment access, including foreign and indirect readers.
+pub unsafe fn set_var(read name: OsStr, read value: OsStr): Unit throws io.Error {
+    validate_env(name, value)
     let cname = try ffi.cstring(name.as_bytes())
     let cvalue = try ffi.cstring(value.as_bytes())
     if unsafe { sys.setenv(cname.as_ptr(), cvalue.as_ptr(), 1) } != 0 { throw io.last_os_error() }
 }
 
-pub fn remove_var(read name: OsStr): Unit throws io.Error {
-    if name.is_empty() { throw io.from_kind(io.ErrorKind.InvalidInput) }
+// Safety: exclude concurrent environment access, including foreign and indirect readers.
+pub unsafe fn remove_var(read name: OsStr): Unit throws io.Error {
+    validate_env(name, ffi.os_str_from_text(""))
     let cname = try ffi.cstring(name.as_bytes())
     if unsafe { sys.unsetenv(cname.as_ptr()) } != 0 { throw io.last_os_error() }
 }
@@ -112,9 +131,13 @@ pub fn current_dir(): PathBuf throws io.Error {
             return super.path.path_buf_from_bytes(buf.as_slice())
         }
         let code = sys.errno()
-        let e = io.from_raw_os_error(code)
-        if !e.kind().is(io.ErrorKind.Other) || size > 65536usize { throw e }
-        size *= 2usize
+        if unsafe { sys.mettle_rt_errno_is_range(code) } == 0 {
+            throw io.from_raw_os_error(code)
+        }
+        size = match size.checked_mul(2usize) {
+            present(next) => next,
+            none => throw io.from_raw_os_error(code)
+        }
     }
     super.path.new_path_buf()
 }

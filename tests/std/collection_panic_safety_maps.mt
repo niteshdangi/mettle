@@ -152,12 +152,12 @@ fn main(): i32 {
         CatchResult.Returned(_) => { return 12 }
     }
     if dropping.len() != 0usize { return 13 }
-    if drops.get().load(core.sync.atomic.Ordering.SeqCst) != 1usize {
+    if drops.get().load(core.sync.atomic.Ordering.SeqCst) != 2usize {
         return 14
     }
     let _old = dropping.insert(3, DropBomb(drops.retain(), false))
     dropping.clear()
-    if drops.get().load(core.sync.atomic.Ordering.SeqCst) != 2usize {
+    if drops.get().load(core.sync.atomic.Ordering.SeqCst) != 3usize {
         return 15
     }
 

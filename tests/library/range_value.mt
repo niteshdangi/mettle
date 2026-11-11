@@ -29,7 +29,7 @@ fn total<I: Iterator<Item = i32>>(take it: I): i32 {
 
 fn main(): i32 {
     if total((3..).take_n(4usize)) != 18 { return 12 }
-    var upper_edge = 255u8..
+    var upper_edge = 255u8..=255u8
     match take upper_edge.next() {
         present(value) => { if value != 255u8 { return 16 } },
         none => { return 17 }
@@ -55,7 +55,7 @@ fn main(): i32 {
         present(value) => { if value != '\u{e001}' { return 25 } },
         none => { return 26 }
     }
-    var scalar_maximum = '\u{10ffff}'..
+    var scalar_maximum = '\u{10ffff}'..='\u{10ffff}'
     match take scalar_maximum.next() {
         present(value) => { if value != '\u{10ffff}' { return 28 } },
         none => { return 29 }

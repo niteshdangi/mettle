@@ -2,7 +2,7 @@
 // these canonical paths for user types; built-in scalar operators are intrinsic.
 
 pub interface Deref { type Target: unsized; fn deref(): read Self.Target; }
-pub interface DerefMut { type Target: unsized; mut fn deref_mut(): mut Self.Target; }
+pub interface DerefMut: Deref { mut fn deref_mut(): mut Self.Target; }
 
 pub interface Add<Rhs> { type Output; fn add(read rhs: Rhs): Self.Output; }
 pub interface Sub<Rhs> { type Output; fn sub(read rhs: Rhs): Self.Output; }
@@ -26,10 +26,8 @@ pub interface ShlAssign<Rhs> { mut fn shl_assign(read rhs: Rhs): Unit; }
 pub interface ShrAssign<Rhs> { mut fn shr_assign(read rhs: Rhs): Unit; }
 pub interface Neg { type Output; fn neg(): Self.Output; }
 pub interface Not { type Output; fn not(): Self.Output; }
-pub interface Index<I> { type Output: unsized; fn index(read index: I): read Self.Output from self; }
-pub interface IndexMut<I> { type Output: unsized; mut fn index_mut(read index: I): mut Self.Output from self; }
-// Range indexing `value[a..b]`, `value[a..]`, `value[..b]`, `value[..=b]`,
-// `value[..]` on a non-array, non-slice type: `end` is the exclusive upper
-// bound, or usize.MAX when the range has no upper bound.
-pub interface IndexRange { type Output: unsized; fn index_range(start: usize, end: usize): read Self.Output from self; }
-pub interface IndexRangeMut { type Output: unsized; mut fn index_range_mut(start: usize, end: usize): mut Self.Output from self; }
+pub interface Index<I: unsized> { type Output: unsized; fn index(read index: I): read Self.Output from self; }
+pub interface IndexMut<I: unsized> { type Output: unsized; mut fn index_mut(read index: I): mut Self.Output from self; }
+pub copy enum RangeEnd { Unbounded, Exclusive(usize), Inclusive(usize) }
+pub interface IndexRange { type Output: unsized; fn index_range(start: usize, end: RangeEnd): read Self.Output from self; }
+pub interface IndexRangeMut { type Output: unsized; mut fn index_range_mut(start: usize, end: RangeEnd): mut Self.Output from self; }

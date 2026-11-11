@@ -35,6 +35,35 @@ bool scalar(Type type) {
          type == Type::Char || type == Type::U8;
 }
 
+std::optional<std::uint64_t> unsignedConstant(const Instruction &instruction,
+                                              const TypeStore &types) {
+  if (instruction.op != Op::Constant)
+    return std::nullopt;
+  auto numeric = instruction.constantParameter == Type::Unknown
+                     ? instruction.numeric
+                     : types.scalarConstantValue(instruction.constantParameter);
+  if (numeric) {
+    if (numeric->negative || numeric->magnitude[1] || numeric->floatingBits ||
+        !numeric->floating.empty())
+      return std::nullopt;
+    return numeric->magnitude[0];
+  }
+  if (instruction.constantParameter != Type::Unknown || instruction.number < 0)
+    return std::nullopt;
+  return static_cast<std::uint32_t>(instruction.number);
+}
+
+bool arrayCount(const Instruction &length, Type array, const TypeStore &types) {
+  if (length.op != Op::Constant || length.result.type != Type::Usize)
+    return false;
+  auto count = types.product(array).arrayCount;
+  if (count != Type::Unknown && types.isSymbolic(count))
+    return length.constantParameter == count;
+  auto actual = unsignedConstant(length, types);
+  auto expected = types.arrayLength(array);
+  return actual && expected && *actual == *expected;
+}
+
 bool function(const Function &f, const Program &program,
               Diagnostics &diagnostics, const TypeNormalizer &normalize,
               const UnpinProof &unpinProof) {
@@ -330,7 +359,7 @@ bool function(const Function &f, const Program &program,
       case Op::UnsizeView:
         require(program.types->isView(result));
         if (arity(1))
-          require(n.operands[0].type == Type::I32);
+          require(n.operands[0].type == Type::Usize);
         if (slot() && program.types->isView(result) && n.operands.size() == 1) {
           auto source = *projectedType(
               *program.types, f.locals[n.place.root].type, n.place.fields);
@@ -343,23 +372,7 @@ bool function(const Function &f, const Program &program,
             if (where.block >= 0) {
               const auto &length =
                   f.blocks[where.block].instructions[where.position];
-              require(length.op == Op::Constant);
-              const auto &descriptor = program.types->product(*array);
-              if (descriptor.arrayCount != Type::Unknown &&
-                  program.types->isSymbolic(descriptor.arrayCount))
-                require(length.constantParameter == descriptor.arrayCount);
-              else {
-                auto actual = length.constantParameter == Type::Unknown
-                                  ? std::optional<std::int64_t>(length.number)
-                                  : program.types->constantValue(
-                                        length.constantParameter);
-                auto expected =
-                    descriptor.arrayCount == Type::Unknown
-                        ? std::optional<std::int64_t>(descriptor.fields.size())
-                        : program.types->constantValue(descriptor.arrayCount);
-                require(actual && expected && *actual == *expected &&
-                        *actual >= 0);
-              }
+              require(arrayCount(length, *array, *program.types));
             }
           }
         }
@@ -508,7 +521,7 @@ bool function(const Function &f, const Program &program,
                 PointerMetadata::ElementCount) {
               auto array =
                   program.types->unsizedArray(sourcePayload, targetPayload);
-              require(array && arity(2) && n.operands[1].type == Type::I32 &&
+              require(array && arity(2) && n.operands[1].type == Type::Usize &&
                       n.witnessEntries.empty() &&
                       n.interfaceSelf == Type::Unknown &&
                       n.interfaceType == Type::Unknown);
@@ -519,25 +532,7 @@ bool function(const Function &f, const Program &program,
                 if (where.block >= 0) {
                   const auto &length =
                       f.blocks[where.block].instructions[where.position];
-                  const auto &descriptor = program.types->product(*array);
-                  require(length.op == Op::Constant);
-                  if (descriptor.arrayCount != Type::Unknown &&
-                      program.types->isSymbolic(descriptor.arrayCount))
-                    require(length.constantParameter == descriptor.arrayCount);
-                  else {
-                    auto actual =
-                        length.constantParameter == Type::Unknown
-                            ? std::optional<std::int64_t>(length.number)
-                            : program.types->constantValue(
-                                  length.constantParameter);
-                    auto expected = descriptor.arrayCount == Type::Unknown
-                                        ? std::optional<std::int64_t>(
-                                              descriptor.fields.size())
-                                        : program.types->constantValue(
-                                              descriptor.arrayCount);
-                    require(actual && expected && *actual >= 0 &&
-                            *actual == *expected);
-                  }
+                  require(arrayCount(length, *array, *program.types));
                 }
               }
             } else {
@@ -793,30 +788,30 @@ bool function(const Function &f, const Program &program,
             const auto &advance = f.blocks[loop.step].instructions;
             bool cursor = tests.size() == 3 && advance.size() == 3;
             if (cursor) {
-              cursor = tests[0].op == Op::Load &&
-                       tests[0].result.id == loop.index.id &&
-                       tests[1].op == Op::Constant &&
-                       (tests[1].constantParameter != Type::Unknown ||
-                        (tests[1].result.type == Type::I32 &&
-                         program.types->arrayLength(*projectedType(
-                             *program.types, f.locals[loop.source.root].type,
-                             loop.source.fields)) ==
-                             static_cast<std::uint64_t>(tests[1].number))) &&
-                       tests[2].op == Op::Binary && tests[2].text == "<" &&
-                       tests[2].operands.size() == 2 &&
-                       tests[2].operands[0].id == loop.index.id &&
-                       tests[2].operands[1].id == tests[1].result.id &&
-                       tests[2].result.id == header.value.id &&
-                       advance[0].op == Op::Constant &&
-                       advance[0].number == 1 && advance[1].op == Op::Binary &&
-                       advance[1].text == "+" &&
-                       advance[1].operands.size() == 2 &&
-                       advance[1].operands[0].id == loop.index.id &&
-                       advance[1].operands[1].id == advance[0].result.id &&
-                       advance[2].op == Op::Store &&
-                       advance[2].place == tests[0].place &&
-                       advance[2].operands.size() == 1 &&
-                       advance[2].operands[0].id == advance[1].result.id;
+              cursor =
+                  tests[0].op == Op::Load &&
+                  tests[0].result.id == loop.index.id &&
+                  loop.index.type == Type::Usize &&
+                  arrayCount(tests[1],
+                             *projectedType(*program.types,
+                                            f.locals[loop.source.root].type,
+                                            loop.source.fields),
+                             *program.types) &&
+                  tests[2].op == Op::Binary && tests[2].text == "<" &&
+                  tests[2].operands.size() == 2 &&
+                  tests[2].operands[0].id == loop.index.id &&
+                  tests[2].operands[1].id == tests[1].result.id &&
+                  tests[2].result.id == header.value.id &&
+                  advance[0].result.type == Type::Usize &&
+                  unsignedConstant(advance[0], *program.types) == 1 &&
+                  advance[1].op == Op::Binary && advance[1].text == "+" &&
+                  advance[1].operands.size() == 2 &&
+                  advance[1].operands[0].id == loop.index.id &&
+                  advance[1].operands[1].id == advance[0].result.id &&
+                  advance[2].op == Op::Store &&
+                  advance[2].place == tests[0].place &&
+                  advance[2].operands.size() == 1 &&
+                  advance[2].operands[0].id == advance[1].result.id;
               for (auto block : loop.blocks)
                 if (!blockIndex(block))
                   cursor = false;
@@ -834,7 +829,7 @@ bool function(const Function &f, const Program &program,
           }
         require(iteration && n.result.access == Access::Owned);
         if (arity(1))
-          require(n.operands[0].type == Type::I32);
+          require(n.operands[0].type == Type::Usize);
         if (slot()) {
           auto array = *projectedType(
               *program.types, f.locals[n.place.root].type, n.place.fields);
@@ -1032,12 +1027,11 @@ bool function(const Function &f, const Program &program,
                    n.operands[0].access != Access::Owned));
         if (n.op == Op::IndirectCall) {
           value(n.target, static_cast<int>(b), i, n.span);
-          require(
-              program.types->isFunctionPointer(n.indirectType) &&
-              (n.target.type == n.indirectType ||
-               (program.types->isParameter(n.target.type) &&
-                program.types->parameter(n.target.type).callableConstraint ==
-                    n.indirectType)));
+          require(program.types->isFunctionPointer(n.indirectType) &&
+                  (n.target.type == n.indirectType ||
+                   (program.types->isParameter(n.target.type) &&
+                    program.types->parameter(n.target.type)
+                            .erasedCallableConstraint == n.indirectType)));
           if (program.types->isFunctionPointer(n.indirectType)) {
             const auto &signature = program.types->callable(n.indirectType);
             require(n.target.access ==
@@ -1065,8 +1059,6 @@ bool function(const Function &f, const Program &program,
         }
         if (n.callee < 0 ||
             static_cast<std::size_t>(n.callee) >= program.functions.size()) {
-          if (n.op == Op::IndirectCall)
-            break;
           fail(n.span, "invalid callee");
           break;
         case Op::Construct:
@@ -1127,9 +1119,21 @@ bool function(const Function &f, const Program &program,
                                    pattern, actual, bindings);
           };
           if (n.op == Op::IndirectCall &&
-              program.types->isFunctionPointer(n.indirectType))
-            require(program.types->callable(n.indirectType).resultSources ==
-                    callee.resultSources);
+              program.types->isFunctionPointer(n.indirectType)) {
+            const auto &signature = program.types->callable(n.indirectType);
+            require(signature.resultSources == callee.resultSources &&
+                    signature.parameters.size() == callee.parameters &&
+                    signature.abi == callee.abi &&
+                    signature.variadic == callee.variadic &&
+                    signature.unsafeCall == callee.unsafeFunction &&
+                    signature.targetFeatures == callee.targetFeatures &&
+                    n.callLocalParameters == callee.callLocalParameters &&
+                    callee.twoPhaseReceiver ==
+                        (n.erasedDispatch && !signature.parameters.empty() &&
+                         signature.parameters[0].mode == ParameterMode::Mut) &&
+                    callee.blocks.empty() && !callee.externalName.empty() &&
+                    !callee.foreignDeclaration && !callee.exportedDefinition);
+          }
           auto declared =
               n.interfaceMethod >= 0 && callee.interfaceResult != Type::Unknown
                   ? callee.interfaceResult
@@ -1361,8 +1365,15 @@ bool verify(const Program &program, Diagnostics &diagnostics,
     for (const auto &local : f.locals)
       type(local.type, {});
     for (const auto &block : f.blocks)
-      for (const auto &instruction : block.instructions)
+      for (const auto &instruction : block.instructions) {
         type(instruction.result.type, {});
+        if (instruction.op == Op::DropPlace && instruction.place.root >= 0 &&
+            static_cast<std::size_t>(instruction.place.root) < f.locals.size())
+          if (auto payload = projectedType(
+                  *program.types, f.locals[instruction.place.root].type,
+                  instruction.place.fields))
+            type(*payload, {});
+      }
   }
   std::function<bool(const StaticConstant &, Type)> constant =
       [&](const StaticConstant &value, Type expected) {

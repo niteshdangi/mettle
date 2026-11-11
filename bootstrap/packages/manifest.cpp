@@ -4,6 +4,16 @@
 #include <set>
 
 namespace mettle::packages {
+std::string gitSelector(const DependencySpec &dependency) {
+  if (dependency.rev)
+    return "rev=" + *dependency.rev;
+  if (dependency.tag)
+    return "tag=" + *dependency.tag;
+  if (dependency.branch)
+    return "branch=" + *dependency.branch;
+  return "HEAD";
+}
+
 namespace {
 using Kind = data::Value::Kind;
 

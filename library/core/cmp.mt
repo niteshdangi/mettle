@@ -21,7 +21,7 @@ extend Ordering {
     pub fn then(other: Ordering): Ordering {
         match self { Ordering.Equal => other, Ordering.Less => Ordering.Less, Ordering.Greater => Ordering.Greater }
     }
-    pub fn then_with(other: fn(): Ordering): Ordering {
+    pub fn then_with<F: take fn(): Ordering>(take other: F): Ordering {
         match self { Ordering.Equal => other(), Ordering.Less => Ordering.Less, Ordering.Greater => Ordering.Greater }
     }
 }

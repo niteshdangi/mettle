@@ -6,7 +6,7 @@ fn main(): i32 {
     var mapped = iter.range(0, 6).map_while(fn(take x: i32): i32? {
         if x == 3 { none } else { present(x) }
     })
-    if mapped.fold(0, fn(take sum: i32, take x: i32): i32 { sum + x }) != 3 {
+    if mapped.by_ref().fold(0, fn(take sum: i32, take x: i32): i32 { sum + x }) != 3 {
         return 1
     }
     match take mapped.next() { present(x) => { if x != 4 { return 2 } }, none => { return 2 } }

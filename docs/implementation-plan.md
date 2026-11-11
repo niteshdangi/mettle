@@ -362,8 +362,13 @@ callable fixtures retain their I05 contracts.
 Required array lengths use checked arithmetic in every profile; general const
 functions remain I09. Compact non-droppable arrays use one place and memory
 lowering; droppable arrays stay expanded, capped at 2^16. Array patterns,
-constant-index projection of large static arrays, large droppable by-value
-iteration and large aggregates across extern C remain unsupported. Large local
+constant-index projection of large static arrays and large droppable by-value
+iteration remain unsupported. Large extern C value snapshots use physical
+object storage, not pointer-valued SSA storage. The focused
+`c-memory-represented-aggregate-snapshots` probe passes Linux x86-64
+Debug/Release imports, exports, callbacks and varargs with independent C
+controls, including ASan/UBSan on the C fixture; this is not compiler or emitted
+Mettle sanitizer qualification, nor Darwin ABI evidence. Large local
 storage is bounded by the 8 MB thread stack. Earlier `[u8; 1_000_000]` timings
 are engineering observations, not qualified speed evidence.
 
@@ -556,7 +561,7 @@ I13):
 | Core values | UTF-8 validate/slice/search/trim/split/lines/chars/bytes/char_indices; nested option/outcome; comparison/Reverse, hash and iterator/range protocols; parsing, formatting and Any/downcast. Text literals are static validated Text; byte/raw literals retain static storage. Const items reuse required evaluation for expressions/array lengths/patterns/associated values. | `tests/library/*.mt`; inherent-associated-constant run/fail cases. |
 | Panic/exit | core panic/assert/unreachable -> panic_message: freestanding trap, hosted hook/stderr `panicked: msg` and code 101; builtin arithmetic/index traps abort. Only hosted std.process.exit, not core.process.exit. Catch returns owned code/message after cleanup. | `tests/std/process_exit.mt`, panic fixtures below. |
 | Optimization barrier | core.hint.black_box round-trips memory through empty sideeffect asm with memory clobber. | Existing compiler/library cases; no runtime comparison claim. |
-| Ranges | Non-for bounded/open ranges become native range values when core is mounted; direct-for ranges retain structural counted loops. Local iterator consumed by for. RangeFrom checked stepping stops at integer/scalar maximum and skips surrogates; end-bounded ranges are not iterators. | `range_value.mt`, `open-ended-range-values`, `end-bounded-range-is-not-an-iterator`. |
+| Ranges | Non-for bounded/open ranges become native range values when core is mounted; direct-for ranges retain structural counted loops. Local iterator consumed by for. RangeFrom follows integer-overflow policy; char stepping skips surrogates and panics beyond its maximum. Inclusive endpoints exhaust without overflow; end-bounded ranges are not iterators. | `range_value.mt`, `open-ended-range-values`, `end-bounded-range-is-not-an-iterator`; historical maximum-exhaustion expectations are superseded by `review-sequence-range-overflow` and `review-sequence-char-range-overflow`. |
 | Sorting | Core unstable sort: allocation-free introsort (median-of-three, short insertion, heap fallback, fixed pending stack). Alloc stable slice/List sort uses two Global index buffers and swaps initialized elements only after comparisons; alloc.vec must be mounted. | `tests/alloc/stable_sort.mt`, `tests/library/range_value.mt`. |
 | Unicode | Unicode 16.0.0 properties/case iterators and alloc text case conversion, including final sigma. Generator/table: tools/unicode_tables.py, core/unicode_data.mt. | `unicode_whitespace.mt`, `unicode_properties.mt`, `tests/alloc/unicode_case.mt`. |
 | Slice/text safety | Checked range slicing for arrays/slices; IndexRange/Mut for Text/user types (Text bounds and scalar boundaries panic). Unsafe from_raw_parts[_mut]/from_utf8_unchecked[_mut] leave result-region proof to caller. char.from_u32 returns optional; direct u32-as-char invalid. | Historical `char_from_u32` and `char-from-u32-is-checked`; retired library boundary checks now in `tests/source/run/i13-char-operations.mt`, not new qualification. |
@@ -564,6 +569,104 @@ I13):
 | Collections | List, String, Map/Set, SortedMap/Set, deque, heap, linked list: failure/growth/collisions/drops/invalidation and no-std parser workload. B-tree minimum degree 6, allocator nodes/parent links, split-down/borrow-merge removal, key-order iterators rather than contiguous entries. | `tests/alloc` including `map_entry`, `map_entry_blocks_map_use`, `btree_stress`, `btree_heap`, `sorted_entry`, `btree_alloc_failure`. |
 | Panic safety | Hosted catches restore valid collection state/exactly-once drops where cleanup proceeds; unvisited leaks permitted, second unwind panic aborts. | `tests/std/collection_panic_safety_{vec,maps,heap}.mt`. |
 | Traits | Core Clone; region-family Iterable/MutableIterable; List owns/derefs/indexes/clones/compares/hashes; String writes/compares/hashes like Text. Box/Rc deref/value traits, Box mutable deref/Clone. Collection Debug/pretty Debug, Clone/Eq where selected; ordered containers lexicographic/hash, Map/Set order-independent Eq and deliberately no Hash. BinaryHeap deliberately lacks Eq/MutableIterable; collections lack Display. Mutable map iteration exposes values, never keys. FromItems/ExtendItems/collect accept OwnedIterable; Debug covers options/outcomes/tuples 1-12/arrays. | `library.alloc`; nested Debug and callable-bound cases at Release CTest 24/24, `749854f`. |
+
+Source-prepared correctness repairs (baseline `883eda1`, native verification
+pending) restore `RangeFrom`'s ordinary integer-overflow policy and panic beyond
+`char.MAX`, and consuming receivers for whole-stream iterator consumers;
+historical I07 receipts above do not verify these repairs.
+The complete Linux Release run exposed stale `range_value.mt` expectations
+that open ranges exhaust at integer/char maxima. Native panic-entry debugging
+confirmed ordinary checked integer overflow, as specified by the current
+contract. The finite-endpoint checks now use inclusive bounds, preserving
+their value/exhaustion assertions; separate profile-specific open-range
+panic/wrap checks remain unchanged. The core rerun passed these range checks
+and exposed a stale prelude diagnostic column, now corrected from 9 to 14.
+The same qualification run found `collection_remaining.mt` expecting none for
+overlapping mutable map lookups, contrary to the selected panic contract.
+Its absence check now uses a missing key; the existing
+`review-ordered-algebra-heap-and-disjoint` regression retains duplicate-key
+panic coverage. The repaired collection case passes both profiles.
+Nineteen alloc/std rejection fixtures still used phase-only directives;
+their replacements identify the observed intended diagnostic's phase,
+message and exact location. Four borrowed-future/closure fixtures correctly
+report a region failure rather than a type failure. All 38 exact
+diagnostic/profile rechecks pass. Native debugging also confirmed `sync_primitives.mt`
+blocked in its second `Once.wait_force`, before same-thread forced recovery.
+That wait now follows successful recovery and its completion assertion,
+matching the existing concurrent poison-wait regression; both profiles pass.
+These fixture repairs do not change production library behavior. The full
+Release run and complete sanitizer qualification are not yet passing receipts.
+
+The same run exposed an I06 A008 debug-object defect: unreachable internal
+core definitions introduced integer-division, libm and memory-service references
+into the assembly/SIMD freestanding probe. Debug object emission now removes
+unreachable globals before machine lowering, preserving exported and
+assembly-retained symbols; live function bodies remain unoptimized. The existing
+no-undefined-symbol/link/run probe passes both profiles, as do six global-assembly
+and naked-entry round trips. Continuing the machine suite exposed a stale
+volatile-access oracle: it treated the cleanup-frame pointer as the source
+pointer. The oracle now follows the frame's first pointer slot, with positive
+and nonvolatile/unrelated-pointer negative controls. The remaining machine
+checks pass eight profile round trips and ten intended rejections.
+
+Library runners now accept bounded worker counts and source-stem filters;
+independent core files run concurrently, joined before supplemental checks and
+the child-CPU scaling probe. Alloc/std retain both profiles by default, and CTest
+reserves each library pool's worker count. Source worker counts are configurable
+for memory-heavy sanitizer runs. Four focused runner/oracle tests pass; the
+complete core rerun passes. Full qualification remains incomplete.
+
+The completed hosted suite exposed stale callers of Clone/Writer, unsafe
+environment mutation, throwing filesystem/path APIs, explicit copies from
+borrowed elements and optional text comparison; their assertions are preserved
+while updating the callers. All sixteen repaired programs now pass both
+profiles (32 source/profile cases), including an explicit caught-panic
+assertion for invalid environment names. Two compiler defects were isolated: direct-call
+region inference discarded the normalized associated error, and wildcard
+writeback retained a temporary same-container access loan. Both reduced
+compile checks now accept; six focused source programs pass both profiles
+and seven retained-source/escape rejection cases pass their exact diagnostics.
+
+The preserved package-suite log also exposes two integration defects:
+generated modules lack an alias inside their owning dependency package, and
+the root test harness cannot reach tests through private nested modules.
+Same-instance generated-module aliases and harness-only ancestor visibility
+address these without broadening ordinary source lookup or visibility.
+The nested doctest, complete Git-host regression, two dependency
+visibility/import checks and affected module-memory CTest pass.
+The original qualification was interrupted
+by an owner-approved Ubuntu restart after WSL became unavailable; completed
+receipts are retained, but neither a complete Release nor sanitizer pass is
+claimed. The sanitizer configuration has no compiled objects or executable;
+its full rebuild remains separate qualification work, not a focused-test
+receipt.
+
+The subsequently authorized unfinished rejection suite passes 684 applicable
+cases (698 compiler invocations). Runtime qualification was stopped at the
+owner's ten-minute deadline: reexecuting existing artifacts recovered 453
+passing source/profile checks and one stale reversed-set-range assertion.
+That assertion now checks equal-bound emptiness and catches the required
+reversed-bound panic; both profiles pass. Disambiguating the String Borrow
+target also passes both profiles. Repairing a malformed multiline result in
+`compact-array-symbolic-element-and-unpin` exposed compact counts being inferred
+with their canonical storage type instead of the formal const parameter type.
+Concrete lengths now infer in the formal type with a range check; symbolic
+counts retain their declared types. Five focused programs pass both profiles,
+including the original failure and expanded/compact boundary cases; overflow
+and symbolic-type rejection controls and the target-width CTest pass.
+The complete runtime suite and sanitizer qualification remain unfinished;
+earlier full-suite receipts do not qualify this compiler revision.
+
+2026-11-10: inclusive `usize.MAX` List indexing traps with overflow checks off.
+A finite exclusive `usize.MAX` collided with the public `IndexRange`
+unbounded-end sentinel: an empty `List` indexed with `[..usize.MAX]` returned an
+empty view. The owner approved changing the public protocol; its `RangeEnd`
+represents unbounded, exclusive and inclusive ends, including `..=usize.MAX`
+for custom indexers. Eight focused run cases passed Debug and Release, three
+negative cases passed, and the custom-indexing case passed emitted ASan. These
+used a temporary link against the preceding semantics components because the
+shared region-solver header changed concurrently; current-tree integration
+remains unverified. Prior sentinel-based receipts do not cover this protocol.
 
 Compiler/library seam obligations:
 - Borrowed slices use element-count len metadata; Text literals are validated
@@ -632,6 +735,67 @@ thread/sync target work is S019-S023; Windows-native paths/networking and other
 profiles are unqualified, not implementations inferred from POSIX evidence.
 
 ### 8.4. Builds, concurrency and async: I09-I11
+
+Main stabilization accepted by the owner on 2026-11-11. The owner requested
+closure of the final eight-group Linux-host behavior run after these groups
+passed: `library.core` (192.82 seconds), `compiler.modules-source`
+(318.06 seconds), `library.alloc` (719.59 seconds) and
+`backend.machine-interop` (1681.48 seconds). The run was stopped at the owner's
+request with `packages.resolution`, `library.std` and `source.run` in progress;
+`source.fail` had not started. The final input comparison recorded only
+`AGENTS.md` as changed during the run. Existing focused ordinary and ASan/UBSan
+receipts below are retained.
+
+The stabilization repairs cover constant expansion/indexing/target widths; region coercion,
+array/replacement/projection regions and interface obligations; throwing/default
+call lowering and conditional cleanup; parser/macro/harness correctness;
+native-link/cache identity, Git locking/path identity and cross-file rename.
+The evaluator now consumes checked shapes and inferred function results.
+Lazy static expressions receive ordinary semantic checking without executing
+their dead branches or emitting validation functions.
+Git lock format 3 records selectors; the owner approved the one-time unlocked
+migration from readable version 2 locks. Nested Git path identities no longer
+depend on the cache location.
+Pinned WSL Release incremental checks passed the reproduced regional defects,
+Git selector/cache relocation and rename cases, cfg source/import/generated
+cases, 70 constant/static rejection cases, and focused constant execution
+controls. After the latest constants changes, the incremental compiler build,
+all three focused compiler CTests, and eight cross-boundary/static compatibility
+controls (16 executions across both profiles) passed. The checker translation unit
+also passed ASan/UBSan lazy-initializer success and rejection controls.
+The early inferred-result gap was reproduced in an array header and repaired
+with demand-driven ordinary function inference, predeclared identities and
+cycle-checked lazy static headers. Existing inferred-result execution now covers
+aliases, product fields, function parameters/results, static and local headers,
+forward callees, branch/return joins and referenced constants. Early overflow
+and static-type cycles have focused rejection cases. Pinned WSL Release
+validation passed 18 execution cases across both profiles (36 executions),
+78 rejection cases (82 executions), and all three focused compiler CTests.
+ASan/UBSan instrumentation of the five changed implementation units passed two
+acceptance and six rejection controls, including inference inside a live caller
+scope. Later fixture strengthening reran only its affected profile pair and
+sanitized check; compiler inputs and the other passing controls were unchanged.
+These receipts do not qualify the entire dirty tree, all targets, compiler
+sanitizer coverage or a milestone.
+Translation-unit sanitizer receipts are not full-compiler sanitizer evidence.
+
+2026-11-10 stability repairs on the uncommitted working tree: I09 cache entry
+validation and publication (`bootstrap/packages/store.cpp`, focused cases in
+`tests/packages.py`); macro path/async fragments and generated await bindings
+(`bootstrap/expansion/macros.cpp`, `bootstrap/syntax/parser.cpp`,
+`bootstrap/syntax/parser/async.cpp`, focused source run/fail cases); and I10
+spawned thread names and attribute cleanup (`runtime/thread.cpp`,
+`library/std/thread.mt`, `tests/std/thread_current_name.mt` and
+`tests/std/thread_builder.mt`). Linux socket and process-pipe descriptors are
+created close-on-exec atomically (`runtime/sys.cpp`, `tests/runtime/thread.cpp`).
+The macOS fallback still creates descriptors before setting close-on-exec and
+is not covered by this Linux repair.
+Implemented; focused Linux cache, scoped thread and descriptor cases passed.
+The thread runtime test passed ASan/UBSan, and emitted thread-name cases passed
+ASan/TSan. Compiler cases used temporary links against preceding compiler
+components; concurrent semantics edits prevent treating these receipts as
+qualification of the whole tree. Rebuild and rerun affected cases after inputs
+are stable; this is not a milestone source freeze.
 
 Source-review repair batch (2026-11-09; base `d8dbc580`, qualification pending):
 these are correctness repairs to existing obligations, not milestone closure.
@@ -760,6 +924,159 @@ whole-build cache behavior remains covered by `incremental_reuse`,
 Parsed-AST/name/type/ownership/instantiation dependency separation and
 retained-byte/compile-time measurement (performance.md 5.1.1) move to I14 by
 owner decision (2026-10-31); Linux evidence is owner-run.
+
+The owner subsequently authorized a bootstrap exception for proper compiled
+library reuse: complete `core` first, then `alloc`/`std` through the same
+portable interface/import path. Architecture section 1.2 owns the scope and
+acceptance contract. Interface encoding/remapping, imported declarations and
+constant bodies, symbolic IR linking, invalidation and native-object reuse
+are separate obligations, not verified by the existing object cache.
+Only focused cold/warm, semantic and corruption/invalidation checks are
+authorized for this work; no broad suite restart is implied.
+The first implemented prerequisite is `evaluation::CheckedFunction`
+(`bootstrap/consteval/evaluate.h`): resolved callable contracts no longer need
+a syntax function declaration. Source and imported-call descriptors share the
+interpreter's cast, default, unsafe, overflow and recursion-budget behavior;
+focused Release `compiler.consteval-target` passes for 32/64-bit target facts.
+Persistent checked expressions, declaration/type/region remapping and the
+complete import pipeline remain missing. The two-consumer
+`checked_core_reuse` acceptance case is currently red at interface publication;
+ordinary native execution succeeds, but no checked-core reuse is delivered.
+Verified symbolic preparation is now a separate in-memory pipeline boundary
+(`PreparedProgram`); ordinary source compilation uses it before specialization
+and concrete admission. Its focused phase-ownership regression has passed
+translation-unit checks and Release `compiler.boundaries` plus
+`compiler.consteval-target` (2/2, 0.02 seconds). Portable type/region and macro records, imported declarations and
+checked expressions, symbolic IR linking and store/native integration are not
+qualified by this preparation API.
+The expansion-owned macro prerequisite is implemented in
+`bootstrap/expansion/macro_library.{h,cpp}` and `macros.{h,cpp}`. Portable rule
+records preserve private supports, imports/reexports, hygiene and provenance;
+complete overlapping module inventories deduplicate only when logically
+equal. Focused Release `compiler.macro-library` passes (1/1, 0.05 seconds);
+changed decoder/mount/test code also passes targeted pinned ASan/UBSan.
+Compiler/configuration/dependency compatibility, revision validation and
+registered source/generation provenance remain host obligations. This does
+not provide checked declarations, persistent constant bodies or core reuse.
+The type/region graph prerequisite is implemented in
+`bootstrap/metadata/type_graph.{h,cpp}`, with semantic reconstruction support
+in `types`. It uses logical definition/symbol mapping, preserves canonical
+structural identities and region ancestry/binders, and commits imports
+transactionally. Focused Release `compiler.type-graph` passes (1/1,
+0.04 seconds), including pre-existing/future factory equality, substitution,
+drop, recursive/regional types, closures/opaque storage and malformed-input
+rollback; focused pinned ASan/UBSan also passes. Full declaration/expression/
+IR encoding and consumer/store/native integration remain missing.
+The subsequent type-graph v2 correction separates closure ordinals from
+source-function identities; a polluted consumer mapping regression and focused
+ASan/UBSan pass. Driver archive/store primitives are implemented but not wired
+into compilation: revision-qualified source/generation/module catalogs,
+checksummed section envelopes, bounded verified blob reads and content-based
+source/configuration/dependency keys. Focused `compiler.library-archive` and
+pinned ASan/UBSan cover remapping, malformed input, corruption recovery,
+deduplication, leased eviction and concurrent publication. Source-module catalog
+extension currently has incremental sanitizer evidence; its Release rebuild is
+pending the shared build slot. Neither these primitives nor the codec
+prerequisites demonstrate end-to-end reuse or a speedup.
+Portable frontend declarations/checked expressions and symbolic IR now have
+focused source-free roundtrip coverage. The integrated compiler builds, and
+`compiler.boundaries`, `compiler.library-declarations`,
+`compiler.library-archive` and `ir.codec` passed together (4/4, 0.10 seconds)
+before the subsequent imported-const eligibility correction reopened the
+frontend inputs. The driver now wires lazy checked-core production/import and
+native object partitioning, including interface identity in the whole-build
+key. This supersedes the earlier missing-integration status: actual full-core
+publication and warm source-free interface import now execute two distinct
+consumers successfully. Integration fixes preserve Unit literal source identity
+and avoid rechecking producer-checked implementation contracts.
+Post-correction Release `compiler.library-declarations`,
+`compiler.modules-memory` and `compiler.macro-library` pass (3/3, 0.03 seconds);
+`compiler.boundaries` and `ir.codec` also have focused passing receipts.
+The native-object acceptance exposed whole-build fingerprint bookkeeping that
+disabled package-object eligibility; the interface fingerprint now enters the
+whole-build key without declaring generated source inputs. Targeted
+`checked_core_reuse` and `native_core_object_reuse` now pass: different consumers
+reuse both checked interfaces and native objects, with debug/Release ABI and
+source-content invalidation coverage. Driver-level interface corruption recovery
+and no-cache execution parity also pass. Ineligible source layouts now select
+ordinary compilation before registering compiled providers, and native partition
+verification errors fail compilation explicitly. The final incremental compiler
+build and both targeted reuse cases pass, including executing an externally
+linked source module through the ordinary compilation fallback.
+A single isolated Linux x86_64 debug sample before these last fallback/error-path
+adjustments measured 19.57 seconds cold, 9.69 seconds for a different warm
+consumer and 11.80 seconds without caching. Peak compiler RSS was respectively
+985128, 595536 and 924812 KiB; the shared cache retained 100989968 bytes for
+four entries/blobs and was then cleaned. This is not a repeated benchmark,
+release measurement or general speedup claim. Subsequent `alloc`/`std`
+integration and focused sanitizer receipts are recorded below.
+
+The subsequent `alloc`/`std` implementation uses the same portable format for
+dependency-closed native units, with deterministic replacement of smaller
+compiled headers before resolution and separate native-root object ownership.
+Actual full hosted-library source checking passes before caching changes.
+The integrated incremental build and focused real-library cross-consumer
+`alloc`/`std` execution/reuse pass in debug, including different generic arguments,
+different consumer function counts and execution of an imported async function.
+Coroutine partition support required logical callback names and hidden external
+declarations in non-owning partitions, rather than invalid internal declarations.
+The new header-replacement/dependency-shadow regression passes in
+`compiler.modules-memory`.
+The 2026-11-11 focused delivery supersedes the earlier missing-integration status:
+`checked_core_reuse`, `native_core_object_reuse`, `checked_alloc_std_reuse` and
+`checked_alloc_std_release_reuse` all pass. They check hits for every included
+native root, dependency-content invalidation, corruption recovery, uncached
+execution parity and imported async execution. `checked_native_macro_reuse`
+also passes with a consumer macro shadowing the library's private helper.
+An emitted ASan/leak-enabled build importing the real hosted async closure
+executes cleanly; its isolated cache and executable were cleaned. This does not
+instrument the C++ compiler or qualify every cleanup path.
+Cold source failures now forward original phases, spans, related messages and
+generated provenance rather than wrapping source errors as metadata errors.
+The final incremental build, `compiler.modules-memory`,
+`checked_native_macro_reuse` and `checked_library_diagnostics` pass after that
+error-path correction; the last test compares exact ordinary and macro-generated
+source diagnostic lines against uncached compilation and rejects publication.
+The heavy passing execution groups were not repeated after the error-only change.
+This error-path receipt covers the focused cases above; cross-target,
+reproducibility and full compiler-sanitizer qualification are separate scopes.
+No new general speedup claim is made.
+
+The subsequent Linux host qualification exposed a checked-interface phase
+mismatch: text iterator calls failed with caching but passed from source.
+Imported implementation targets had already been region-decorated while
+consumer receiver selection still used nominal types. Contracts now retain
+separate checking and finalized region databases; import selects each at its
+owning phase without erasing constraints or rechecking dependency bodies.
+A minimal regional associated-interface roundtrip reproduces the failure and
+passes under the compiler's ASan/UBSan build after the fix. Final affected
+integration reruns also exposed implementation-owned callable bounds missing
+from consumer region context. Restoring those bounds before the imported-rule
+early return fixes the minimal mapper regression and the real alloc iterator
+adapter in both source profiles; the adapter also builds and executes with the
+ASan/UBSan compiler. Five affected instrumented compiler groups pass.
+
+The same qualification found macro exports being overwritten for every loaded
+source, so checked libraries retained only the last module's macro inventory.
+Per-source exports now accumulate through expansion's existing validated
+import/export machinery, preserving overlap checks and source-qualified hygiene.
+The extended multi-file native macro reuse and exact diagnostic cases pass,
+as do the original global-assembly generic-symbol case and macro/module units.
+Ten affected ASan/UBSan compiler groups and both macro/diagnostic driver cases
+also pass after that fix. The final host batch's owner-accepted disposition is
+recorded at the start of this section.
+
+Controlled profiling found loan-origin initialization traversing large static
+tables without view-bearing values. It now uses the existing conservative
+`containsViews(type, true)` check to skip those initializer subtrees; only view
+addresses can seed static loans, and erased payloads remain included.
+Three static-address/initializer execution cases pass in both
+profiles and three static-borrow rejection cases pass. The same focused source
+cases pass under ASan/UBSan, along with four affected
+compiler/cleanup groups. The superseded old-compiler batch was stopped and its
+receipts preserved.
+The arbitrary 20-second CPU gate and its timing-only fixture were removed;
+behavioral cases remain unchanged. No general speedup claim is made.
 
 Dependency-object reuse passes macOS ARM64 Release `object_cache_integrity`
 (root-only reuse, clean/incremental equivalence, corruption recovery). Package
@@ -913,8 +1230,8 @@ Current library implementation, blockers and exact focused receipts are owned by
 [i13-library.md](i13-library.md#handoff-start-here-in-a-new-session); the
 [capability inventory](capability-coverage.md#i13-macos-arm64-acceptance-inventory)
 retains row/fixture ownership. All eighteen library areas remain partial.
-Latest 2026-11-09 operation ledger: **10,454 evidenced, 35 declared,
-2,801 missing, 5 not applicable** (13,295 total, grouped into 2,442 operation
+Latest 2026-11-10 operation ledger: **10,762 evidenced, 35 declared,
+2,493 missing, 5 not applicable** (13,295 total, grouped into 2,442 operation
 and 2,309 implementation families; subset/source-cfg reconciliation pending).
 Unzip has focused Linux native/emitted-ASan debug/release evidence; 20
 conversion blanket exposures and fifteen callable-adapter Clone/ToOwned rows
@@ -989,14 +1306,16 @@ Preparatory work does not close I13/I14 or qualify I15.
 | --- | --- | --- |
 | Package/API and rebuild contracts | Source-package edges exercised by the lexer seed; independent compilation remains specified only | Architecture section 1.1; implement compiled interfaces and query reuse |
 | Foundation, syntax and driver seed | Builds and runs on Linux x86-64 in debug/release; 114 token/diagnostic parity cases pass per profile | `compiler/{foundation,syntax,driver}`; `tests/probes.py selfhost-lexer BOOTSTRAP EVIDENCE --seed DRIVER`; complete syntax coverage remains open |
-| Parser core | Partial grammar implemented; initial 60-case debug/release receipt, expanded receipts below | `syntax/{tree,parser}` owns unchanged tokens, compact node/child arenas, spans and syntax-only IDs. Functions, types, generic applications, imports/modules, core expressions/statements, precedence, newline/semicolon tails, nested blocks, recovery and depth limits are exercised. Other item declarations, patterns and remaining expression forms still need porting; recognized unported forms report `feature`. No semantic type/IR/ownership interface changes are required. |
+| Parser core | Partial grammar implemented; initial 60-case debug/release receipt, expanded receipts below | `syntax/{tree,parser}` owns unchanged tokens, compact node/child arenas, spans and syntax-only IDs. Functions, types, generic applications, imports/modules, core expressions/statements, precedence, newline/semicolon tails, nested blocks, recovery and depth limits are exercised. This is historical subset evidence; the remaining forms are covered by the parser-closure row. No semantic type/IR/ownership interface changes are required. |
 | Structural type parser | Implemented; expanded 105-case parser probe passes in debug/release and the address-sanitized native driver on Linux x86-64, based on `20e7bba` | `syntax/{parser,tree}` now represents slices/arrays, tuples/groups, borrows, owners/pinning, pointers, optionals and source annotations from language-grammar section 3. `selfhost-parser` adds accepted structure, immutable token spans, malformed/recovery and depth cases. Generic, callable, bounded and projection types remain outside this batch. No semantic/IR/backend changes. |
 | Parser lookahead hardening | Implemented; 108 focused cases pass in debug/release and the address-sanitized native driver | `syntax/parser` named-generic lookahead previously rescanned comma-separated comparisons. A lazy per-opening rejection bitset and reusable unmatched-opening stack preserve viable inner applications. Existing 105-case receipts precede this change; the expanded probe retains 108 cases and 223 commands per configuration. No C++/library changes or release speed claim. |
-| Extended type parser | Implemented; final 150-case probe passes in debug/release and the address-sanitized native driver | `syntax/{parser,tree}` now represents named/region/constant/associated arguments, higher-ranked region binders, callable signatures/effects, erased/opaque bounds and associated projections from language-grammar sections 2-3. `selfhost-parser` covers type structure, angle-token boundaries, effect attachment, rejection/recovery and depth, including quoted `Outcome` identity. Async callable types retain the bootstrap's explicit feature diagnostic. Declaration generics and generic calls are implemented in the following batch; no semantic/IR/backend changes. |
+| Extended type parser | Implemented; final 150-case probe passes in debug/release and the address-sanitized native driver | `syntax/{parser,tree}` now represents named/region/constant/associated arguments, higher-ranked region binders, callable signatures/effects, erased/opaque bounds and associated projections from language-grammar sections 2-3. `selfhost-parser` covers type structure, angle-token boundaries, effect attachment, rejection/recovery and depth, including quoted `Outcome` identity. Async callable types retained the bootstrap's explicit feature diagnostic in that batch; parser closure adds their syntax. Declaration generics and generic calls are implemented in the following batch; no semantic/IR/backend changes. |
 | Generic function declarations and applications | Implemented; 183 cases verified in debug incrementally and in complete release/address-sanitized runs | `syntax/{parser,tree}` now represents generic parameters/defaults, bounds/where clauses, parameter defaults, effects, visibility/unsafe/const modifiers and expression bodies. Applications use the shared type-argument parser with rollback and context-aware rejection caching. Focused probes cover declaration structure, generic followers, mixed constant/type arguments, diagnostics/recovery and comparison scaling. Contextual `.drop` names now parse. Other item declarations, parameter patterns/receivers, foreign/variadic function declarations and async bodies remain separate work. Prior 150-case receipts precede this batch. |
 | Import/module declarations | Implemented; 203 cases verified in debug incrementally and in complete release/address-sanitized runs | `syntax/{parser,tree}` now represents import paths/aliases/groups/globs, shared visibility, external/inline modules, item separators, scoped recovery and nesting limits. The existing parser probe checks hierarchy/spans, lexical token parity and bootstrap syntax acceptance/rejection. Source loading, canonical module identities and name resolution stay outside parsing. Prior 183-case receipts precede this batch; no I15 closure claim. |
+| Remaining native parser closure | Implemented; frozen debug/release/emitted-ASan runs pass 260 focused cases and 997 corpus expectations per profile | `syntax/{parser,tree,characters}` represents products/unions/enums, interfaces/extensions/associated items, aliases/constants/statics/foreign items, attributes/balanced token trees, full patterns/matching, closures/async bodies, conditional bindings, iteration/labels, interpolation, named/optional/projection postfixes and nested items. Focused cases cover tree ownership/spans, malformed forms and recovery. Each profile passes 260 focused probes and 997 corpus expectations (990 accepted; seven malformed fixtures rejected); all four native parser package tests also pass in debug. Contextual `extend` probes restore failed declaration attempts before expression parsing; recovery skips callable `fn` tokens inside malformed parameter/type delimiters. Compiler/seed-library/probe identities and receipts are retained under `/home/nites/lanes/selfhost-86da951/parser-closure/` (`frozen-inputs.json`, `final-{debug,release,asan}`, corpus receipts and `unit-tests-debug.json`). No sanitizer reports occurred; source inputs stayed unchanged through qualification. No semantic desugaring, macro expansion/schema checking, module loading or code generation is included. The separate Unicode-XID/NFC qualification is recorded in the following row. |
 | Parser/driver correctness review | Implemented; 14 focused probes and two bounded-reader tests pass in debug/release/emitted-ASan | `syntax/parser` isolates/restores block generic boundaries and retains contextual `format` parameter modifiers. `driver/main` checks opened regular-file size before allocation and bounds reads before appending. Probes cover nested generic shifts/closers, modifier structure/contextual names and oversized sparse-file rejection in both CLI modes (96 MiB process cap in debug/release; uncapped under ASan); reader tests cover zero/exact/over-limit and multi-chunk input. Preserved `seed-final/mettle` and `/home/nites/mettle-d/library` were used; receipts are under the existing selfhost evidence directory in `repairs-focus-{debug,release,asan}` plus `repairs-restore-debug`. Current concurrent bootstrap/library work and milestone closure remain unqualified. |
 | Source-size policy alignment | Implemented; bootstrap syntax/packages build and pinned formatting pass; debug/release/emitted-ASan sparse-file probes pass | Source/data byte ceilings are 2^32 - 1, the self-hosted per-file `u32` span range, rather than an arbitrary 1 GiB cap. `foundation.SOURCE_BYTES` is shared by the driver/lexer; `bootstrap/support/limits.h` matches it. The existing probe rejects a sparse 4 GiB source in both CLI modes before allocation (96 MiB cap in debug/release, uncapped under ASan); receipts are in `source-cap-{debug,release,asan}` under the existing selfhost evidence directory, using the preserved bootstrap/library. Prior review receipts exercised the old 1 GiB boundary; no multi-GiB successful compilation, full bootstrap requalification or milestone closure is claimed. |
+| Native Unicode identifiers | Implemented and verified on frozen inputs in debug/release/emitted-ASan | `syntax/{lexer,token,identifiers,unicode_data}` uses pinned Unicode 16.0.0 XID/normalization data, retains original token/source spans and exposes NFC names on demand through `Token.identifier`. `tools/identifier_tables.py` validates official UCD hashes before generating 66,892 bytes of table entries. The existing probe runner and `tests/selfhost/unicode` cover ordinary/backtick names, invalid starts, byte spans, canonical identity, blocked composition/Hangul/long combining runs, all 19,965 normalization rows, the unlisted-singleton rule across all 1,112,064 scalars and XID membership across 1,114,112 code points. All three profiles pass 123 lexer cases, 57 parser grammar compatibility cases and complete NFC/XID conformance without sanitizer reports. Pinned formatting and exact table regeneration pass. Receipts and unchanged source/seed-library/UCD identities are under `/home/nites/lanes/selfhost-86da951/unicode/`: `final-{debug,release,asan}`, `frozen-inputs.json` and the reused, identical-input debug conformance receipt `development-full-debug`. No expansion/semantics work. |
 | Compiled dependency interfaces and query engine | Missing | Future `pipeline`, `ir`, `packages`; consumers must skip unchanged dependency parsing/checking; validate metadata and invalidation edges |
 | Checked frontend and verified middle end | Missing | Future `frontend`, `types`, `ir`, `middle`; preserve full language/ownership contracts and existing corpus |
 | Backend, build and editor integration | Missing | Future backend/pipeline/packages/editor/driver implementations; replace C++ responsibilities through defined interfaces |
@@ -1410,6 +1729,11 @@ I09 macOS ARM64 implementation/evidence:
   features and package features. Single-file `--features a,b`; package roots/
   dependencies see their own resolved features, standard libraries none
   (`tests/packages.py::features`).
+  Post-cfg inactive dependency filtering is integrated; the disabled external
+  module Debug/Release and modules-memory receipts do not verify pre-execution
+  staging. Owner-approved parser suspension/resumption remains unimplemented;
+  partial-token expansion and output-independent inactive-syntax validation
+  remain selected obligations.
 - **L055:** token matching/repetition/follow sets, provenance, binder hygiene,
   grouped expressions and explicit `$capture(name)`; eager argument expansion.
   Inline lexical namespaces and qualified public file/package invocations
@@ -1419,6 +1743,12 @@ I09 macOS ARM64 implementation/evidence:
   `macro-import-reexport`, `macro-import-ambiguous`, `restricted-macro-*` and
   package cases. Only pub import reexports; syntax stays unresolved in AST,
   bindings/visibility in side tables.
+  Review hygiene producer/consumer and demanded-definition-namespace patches
+  are prepared, not integrated or native-verified. The occurrence-level
+  region/borrow-source producer, identity-aware consumers, nested result-source
+  matching/deduplication, clones and fingerprints are also prepared. The native
+  checker fixture asserts distinct outer/authored `RegionId`s and nested
+  sources; its execution remains pending. L055 therefore remains partial.
 - **L056:** `tests/packages.py::{procedural_macro,procedural_macro_failure}`.
   `[macros.NAME] source/api` invokes host programs via driver/procedural.cpp;
   versioned line-token protocol in expansion/procedural and std.macros,

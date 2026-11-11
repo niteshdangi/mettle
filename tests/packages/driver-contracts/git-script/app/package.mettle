@@ -1,0 +1,5 @@
+name: "git-script-app"
+version: "0.1.0"
+dependencies {
+    "generated-git" { git: "__GIT_URL__", branch: "main" }
+}

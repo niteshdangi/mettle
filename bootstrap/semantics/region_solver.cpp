@@ -1,5 +1,6 @@
 #include "semantics/region_solver.h"
 #include <algorithm>
+#include <set>
 
 namespace mettle {
 bool requiresRegionProof(Type type, const TypeStore &types) {
@@ -38,11 +39,11 @@ bool requiresRegionProof(Type type, const TypeStore &types) {
   };
   return visit(visit, type);
 }
-RegionId RegionSolver::resolve(RegionId region,
-                               const RegionEnvironment &environment,
-                               std::size_t &remaining) const {
-  while (remaining) {
-    --remaining;
+std::optional<RegionId>
+RegionSolver::resolve(RegionId region,
+                      const RegionEnvironment &environment) const {
+  // A chain longer than the substitutions themselves is a cycle.
+  for (std::size_t step = 0; step <= environment.substitutions.size(); ++step) {
     auto found = std::find_if(
         environment.substitutions.begin(), environment.substitutions.end(),
         [&](const auto &binding) { return binding.first == region; });
@@ -50,35 +51,32 @@ RegionId RegionSolver::resolve(RegionId region,
       return region;
     region = found->second;
   }
-  return RegionId::Unspecified;
+  return std::nullopt;
 }
 RegionAnswer RegionSolver::instantiate(RegionId variable, RegionId value,
                                        RegionEnvironment &environment) const {
   if (regions.get(variable).kind != RegionKind::Inference)
     return RegionAnswer::Rejected;
-  std::size_t remaining = budget;
-  value = resolve(value, environment, remaining);
-  if (!remaining)
-    return RegionAnswer::Inconclusive;
+  auto resolved = resolve(value, environment);
+  if (!resolved)
+    return RegionAnswer::Rejected;
+  value = *resolved;
   if (variable == value)
     return RegionAnswer::Proven;
+  std::set<RegionId> visited;
   auto occurs = [&](auto &&self, RegionId nested) -> bool {
-    if (!remaining)
+    auto current = resolve(nested, environment);
+    if (!current || *current == variable)
       return true;
-    --remaining;
-    nested = resolve(nested, environment, remaining);
-    if (nested == variable)
-      return true;
-    const auto &record = regions.get(nested);
+    if (!visited.insert(*current).second)
+      return false;
+    const auto &record = regions.get(*current);
     for (auto source : record.sources)
       if (self(self, source))
         return true;
     return false;
   };
-  auto recursive = occurs(occurs, value);
-  if (!remaining)
-    return RegionAnswer::Inconclusive;
-  if (recursive)
+  if (occurs(occurs, value))
     return RegionAnswer::Rejected;
   if (!regions.visible(value, regions.get(variable).universe))
     return RegionAnswer::Rejected;
@@ -100,11 +98,9 @@ RegionSolver::leakCheck(const RegionEnvironment &environment) const {
     auto [prior, inserted] = unique.emplace(variable, value);
     if (!inserted && prior->second != value)
       return RegionAnswer::Rejected;
-    std::size_t remaining = budget;
-    auto resolved = resolve(value, environment, remaining);
-    if (!remaining)
-      return RegionAnswer::Inconclusive;
-    if (!regions.visible(resolved, regions.get(variable).universe))
+    auto resolved = resolve(value, environment);
+    if (!resolved ||
+        !regions.visible(*resolved, regions.get(variable).universe))
       return RegionAnswer::Rejected;
   }
   for (const auto &edge : environment.assumptions)
@@ -115,12 +111,13 @@ RegionSolver::leakCheck(const RegionEnvironment &environment) const {
 }
 RegionAnswer RegionSolver::prove(RegionId longer, RegionId shorter,
                                  const RegionEnvironment &environment,
-                                 std::vector<RegionOutlives> &active,
-                                 std::size_t &remaining) const {
-  longer = resolve(longer, environment, remaining);
-  shorter = resolve(shorter, environment, remaining);
-  if (!remaining)
-    return RegionAnswer::Inconclusive;
+                                 std::vector<RegionOutlives> &active) const {
+  auto resolvedLonger = resolve(longer, environment);
+  auto resolvedShorter = resolve(shorter, environment);
+  if (!resolvedLonger || !resolvedShorter)
+    return RegionAnswer::Rejected;
+  longer = *resolvedLonger;
+  shorter = *resolvedShorter;
   if (longer == RegionId::Unspecified || shorter == RegionId::Unspecified)
     return RegionAnswer::Rejected;
   if (longer == shorter || longer == RegionId::Static)
@@ -131,7 +128,7 @@ RegionAnswer RegionSolver::prove(RegionId longer, RegionId shorter,
     return RegionAnswer::Proven;
   if (left.kind == RegionKind::Intersection) {
     for (auto source : left.sources) {
-      auto result = prove(source, shorter, environment, active, remaining);
+      auto result = prove(source, shorter, environment, active);
       if (result != RegionAnswer::Proven)
         return result;
     }
@@ -142,7 +139,7 @@ RegionAnswer RegionSolver::prove(RegionId longer, RegionId shorter,
     // the intersection itself is valid only where all members remain valid.
     bool inconclusive = false;
     for (auto source : right.sources) {
-      auto result = prove(longer, source, environment, active, remaining);
+      auto result = prove(longer, source, environment, active);
       if (result == RegionAnswer::Proven)
         return result;
       inconclusive |= result == RegionAnswer::Inconclusive;
@@ -155,14 +152,10 @@ RegionAnswer RegionSolver::prove(RegionId longer, RegionId shorter,
   active.push_back(goal);
   bool inconclusive = false;
   for (const auto &edge : environment.assumptions) {
-    auto source = resolve(edge.longer, environment, remaining);
-    if (!remaining) {
-      active.pop_back();
-      return RegionAnswer::Inconclusive;
-    }
-    if (source != longer)
+    auto source = resolve(edge.longer, environment);
+    if (!source || *source != longer)
       continue;
-    auto result = prove(edge.shorter, shorter, environment, active, remaining);
+    auto result = prove(edge.shorter, shorter, environment, active);
     if (result == RegionAnswer::Proven) {
       active.pop_back();
       return result;
@@ -187,9 +180,8 @@ RegionAnswer RegionSolver::outlives(RegionId longer, RegionId shorter,
       !regions.visible(shorter, environment.universe))
     result = RegionAnswer::Rejected;
   if (result == RegionAnswer::Proven) {
-    std::size_t remaining = budget;
     std::vector<RegionOutlives> active;
-    result = prove(longer, shorter, environment, active, remaining);
+    result = prove(longer, shorter, environment, active);
   }
   cache.emplace(std::move(key), result);
   return result;
@@ -227,12 +219,10 @@ Variance reverse(Variance value) {
                                             : value;
 }
 } // namespace
-RegionAnswer RegionTypeSolver::compare(
-    Type source, Type target, const RegionEnvironment &environment,
-    std::vector<std::pair<Type, Type>> &active, std::size_t &remaining) {
-  if (!remaining)
-    return RegionAnswer::Inconclusive;
-  --remaining;
+RegionAnswer
+RegionTypeSolver::compare(Type source, Type target,
+                          const RegionEnvironment &environment,
+                          std::vector<std::pair<Type, Type>> &active) {
   if (source == target || source == Type::Never)
     return RegionAnswer::Proven;
   if (source == Type::Unknown || target == Type::Unknown)
@@ -248,31 +238,30 @@ RegionAnswer RegionTypeSolver::compare(
   active.push_back(goal);
   RegionAnswer answer = RegionAnswer::Rejected;
   if (types.isView(source) && types.isView(target)) {
-    const auto &from = types.view(source), &to = types.view(target);
+    const auto from = types.view(source), to = types.view(target);
     if (from.mode == to.mode || to.mode == ParameterMode::Read) {
       answer = regions.outlives(from.region, to.region, environment);
-      answer = together(answer, compare(from.payload, to.payload, environment,
-                                        active, remaining));
+      answer = together(answer,
+                        compare(from.payload, to.payload, environment, active));
       if (to.mode == ParameterMode::Mut)
-        answer = together(answer, compare(to.payload, from.payload, environment,
-                                          active, remaining));
+        answer = together(
+            answer, compare(to.payload, from.payload, environment, active));
     }
   } else if (types.isPointer(source) && types.isPointer(target)) {
     // Raw pointers carry no region; their pointee is checked like a view
     // payload, so equal pointees reached through distinct type ids match.
-    const auto &from = types.pointer(source), &to = types.pointer(target);
+    const auto from = types.pointer(source), to = types.pointer(target);
     if (from.mode == to.mode) {
-      answer =
-          compare(from.payload, to.payload, environment, active, remaining);
+      answer = compare(from.payload, to.payload, environment, active);
       if (to.mode == ParameterMode::Mut)
-        answer = together(answer, compare(to.payload, from.payload, environment,
-                                          active, remaining));
+        answer = together(
+            answer, compare(to.payload, from.payload, environment, active));
     }
   } else if (types.isSlice(source) && types.isSlice(target))
     answer = compare(types.slice(source).element, types.slice(target).element,
-                     environment, active, remaining);
+                     environment, active);
   else if (types.isProduct(source) && types.isProduct(target)) {
-    const auto &from = types.product(source), &to = types.product(target);
+    const auto from = types.product(source), to = types.product(target);
     if (from.regionPattern != Type::Unknown &&
         from.regionPattern == to.regionPattern &&
         from.regionArguments.size() ==
@@ -284,20 +273,14 @@ RegionAnswer RegionTypeSolver::compare(
       auto pattern = types.product(from.regionPattern);
       answer = RegionAnswer::Proven;
       for (std::size_t i = 0; i < from.regionArguments.size(); ++i) {
-        auto variance =
-            varianceFor(from.regionPattern, pattern.regionArguments[i],
-                        Type::Unknown, remaining);
-        if (!variance) {
-          answer = RegionAnswer::Inconclusive;
-          break;
-        }
-        if (*variance == Variance::Covariant ||
-            *variance == Variance::Invariant)
+        auto variance = varianceFor(from.regionPattern,
+                                    pattern.regionArguments[i], Type::Unknown);
+        if (variance == Variance::Covariant || variance == Variance::Invariant)
           answer = together(answer, regions.outlives(from.regionArguments[i],
                                                      to.regionArguments[i],
                                                      environment));
-        if (*variance == Variance::Contravariant ||
-            *variance == Variance::Invariant)
+        if (variance == Variance::Contravariant ||
+            variance == Variance::Invariant)
           answer = together(answer, regions.outlives(to.regionArguments[i],
                                                      from.regionArguments[i],
                                                      environment));
@@ -309,27 +292,16 @@ RegionAnswer RegionTypeSolver::compare(
           continue;
         }
         auto variance = varianceFor(from.regionPattern, RegionId::Unspecified,
-                                    pattern.genericArguments[i], remaining);
-        if (!variance) {
-          answer = together(answer, RegionAnswer::Inconclusive);
-          break;
-        }
-        // An owner holds its payload behind a raw pointer, yet owns it like
-        // a field: the payload is covariant, as for any owned value.
-        if (i == 0 && *variance == Variance::Bivariant &&
-            from.genericOrigin != Type::Unknown &&
-            !ownerSpelling(types.product(from.genericOrigin).name).empty())
-          variance = Variance::Covariant;
-        if (*variance == Variance::Covariant ||
-            *variance == Variance::Invariant)
+                                    pattern.genericArguments[i]);
+        if (variance == Variance::Covariant || variance == Variance::Invariant)
           answer = together(answer, compare(from.genericArguments[i],
                                             to.genericArguments[i], environment,
-                                            active, remaining));
-        if (*variance == Variance::Contravariant ||
-            *variance == Variance::Invariant)
+                                            active));
+        if (variance == Variance::Contravariant ||
+            variance == Variance::Invariant)
           answer = together(answer, compare(to.genericArguments[i],
                                             from.genericArguments[i],
-                                            environment, active, remaining));
+                                            environment, active));
       }
       active.pop_back();
       return answer;
@@ -366,7 +338,7 @@ RegionAnswer RegionTypeSolver::compare(
                          from.components.size() == 1 &&
                          to.components.size() == 1
                      ? compare(from.components[0], to.components[0],
-                               environment, active, remaining)
+                               environment, active)
                      : RegionAnswer::Rejected;
         active.pop_back();
         return answer;
@@ -374,13 +346,13 @@ RegionAnswer RegionTypeSolver::compare(
       for (std::size_t i = 0; i < from.fields.size(); ++i) {
         answer =
             together(answer, compare(from.fields[i].type, to.fields[i].type,
-                                     environment, active, remaining));
+                                     environment, active));
         if (from.kind == AggregateKind::Cell ||
             from.kind == AggregateKind::RefCell ||
             from.kind == AggregateKind::UnsafeCell)
           answer =
               together(answer, compare(to.fields[i].type, from.fields[i].type,
-                                       environment, active, remaining));
+                                       environment, active));
       }
     }
   } else if (types.isErased(source) && types.isErased(target)) {
@@ -409,9 +381,9 @@ RegionAnswer RegionTypeSolver::compare(
             answer = RegionAnswer::Rejected;
         } else {
           answer = together(answer, compare(from.arguments[p], to.arguments[p],
-                                            environment, active, remaining));
+                                            environment, active));
           answer = together(answer, compare(to.arguments[p], from.arguments[p],
-                                            environment, active, remaining));
+                                            environment, active));
         }
       }
       for (std::size_t p = 0; p < from.associated.size(); ++p) {
@@ -423,16 +395,16 @@ RegionAnswer RegionTypeSolver::compare(
         } else {
           answer = together(answer, compare(from.associated[p].argument,
                                             to.associated[p].argument,
-                                            environment, active, remaining));
+                                            environment, active));
           answer = together(answer, compare(to.associated[p].argument,
                                             from.associated[p].argument,
-                                            environment, active, remaining));
+                                            environment, active));
         }
       }
     }
   } else if (types.isFunctionPointer(source) &&
              types.isFunctionPointer(target)) {
-    answer = callable(source, target, environment, active, remaining);
+    answer = callable(source, target, environment, active);
   }
   active.pop_back();
   return answer;
@@ -445,9 +417,10 @@ Type RegionTypeSolver::substitute(
     substitutions.push_back({parameter, argument});
   return types.substituteRegions(type, substitutions);
 }
-RegionAnswer RegionTypeSolver::callable(
-    Type source, Type target, const RegionEnvironment &environment,
-    std::vector<std::pair<Type, Type>> &active, std::size_t &remaining) {
+RegionAnswer
+RegionTypeSolver::callable(Type source, Type target,
+                           const RegionEnvironment &environment,
+                           std::vector<std::pair<Type, Type>> &active) {
   auto from = types.callable(source), to = types.callable(target);
   if (from.parameters.size() != to.parameters.size() ||
       (from.mode == ParameterMode::Take && to.mode != ParameterMode::Take) ||
@@ -523,8 +496,7 @@ RegionAnswer RegionTypeSolver::callable(
   std::vector<std::pair<Type, Type>> inferring;
   auto inferType = [&](auto &&self, Type pattern, Type actual) -> void {
     auto pair = std::pair{pattern, actual};
-    if (inferring.size() >= 128 ||
-        std::find(inferring.begin(), inferring.end(), pair) != inferring.end())
+    if (std::find(inferring.begin(), inferring.end(), pair) != inferring.end())
       return;
     inferring.push_back(pair);
     if (types.isView(pattern) && types.isView(actual)) {
@@ -559,18 +531,14 @@ RegionAnswer RegionTypeSolver::callable(
         answer, regions.outlives(
                     replaceRegion(requirement.longer, sourceBindings),
                     replaceRegion(requirement.shorter, sourceBindings), inner));
-  answer = together(answer,
-                    compare(from.result, to.result, inner, active, remaining));
-  answer =
-      together(answer, compare(from.error, to.error, inner, active, remaining));
+  answer = together(answer, compare(from.result, to.result, inner, active));
+  answer = together(answer, compare(from.error, to.error, inner, active));
   for (std::size_t i = 0; i < from.parameters.size(); ++i) {
-    answer =
-        together(answer, compare(to.parameters[i].type, from.parameters[i].type,
-                                 inner, active, remaining));
+    answer = together(answer, compare(to.parameters[i].type,
+                                      from.parameters[i].type, inner, active));
     if (from.parameters[i].mode == ParameterMode::Mut)
-      answer = together(answer,
-                        compare(from.parameters[i].type, to.parameters[i].type,
-                                inner, active, remaining));
+      answer = together(answer, compare(from.parameters[i].type,
+                                        to.parameters[i].type, inner, active));
     if ((from.parameters[i].mode == ParameterMode::Read ||
          from.parameters[i].mode == ParameterMode::Mut) &&
         i < from.parameterRegions.size() && i < to.parameterRegions.size())
@@ -583,18 +551,14 @@ RegionAnswer RegionTypeSolver::callable(
 RegionAnswer RegionTypeSolver::coerce(Type source, Type target,
                                       const RegionEnvironment &environment) {
   std::vector<std::pair<Type, Type>> active;
-  std::size_t remaining = 4096;
   boundRejected = false;
-  return compare(source, target, environment, active, remaining);
+  return compare(source, target, environment, active);
 }
 Variance RegionTypeSolver::variance(Type type, RegionId parameter) const {
-  std::size_t remaining = 4096;
-  return varianceFor(type, parameter, Type::Unknown, remaining)
-      .value_or(Variance::Invariant);
+  return varianceFor(type, parameter, Type::Unknown);
 }
-std::optional<Variance>
-RegionTypeSolver::varianceFor(Type type, RegionId region, Type parameter,
-                              std::size_t &remaining) const {
+Variance RegionTypeSolver::varianceFor(Type type, RegionId region,
+                                       Type parameter) const {
   std::map<Type, Variance> values;
   std::map<Type, std::vector<Type>> parents;
   std::vector<Type> pending{type};
@@ -604,12 +568,21 @@ RegionTypeSolver::varianceFor(Type type, RegionId region, Type parameter,
       return result;
     if (types.isView(nested))
       result.push_back(types.view(nested).payload);
+    else if (types.isPointer(nested))
+      result.push_back(types.pointer(nested).payload);
     else if (types.isSlice(nested))
       result.push_back(types.slice(nested).element);
     else if (types.isProduct(nested)) {
       const auto &record = types.product(nested);
-      for (const auto &field : record.fields)
-        result.push_back(field.type);
+      bool owner =
+          !ownerSpelling(types.product(nominalOrigin(types, nested)).name)
+               .empty();
+      for (std::size_t i = 0; i < record.fields.size(); ++i) {
+        auto field = record.fields[i].type;
+        if (owner && i == 0 && types.isPointer(field))
+          field = types.pointer(field).payload;
+        result.push_back(field);
+      }
       result.insert(result.end(), record.components.begin(),
                     record.components.end());
     } else if (types.isFunctionPointer(nested)) {
@@ -626,9 +599,6 @@ RegionTypeSolver::varianceFor(Type type, RegionId region, Type parameter,
     return result;
   };
   while (!pending.empty()) {
-    if (!remaining)
-      return std::nullopt;
-    --remaining;
     auto nested = pending.back();
     pending.pop_back();
     if (!values.emplace(nested, Variance::Bivariant).second)
@@ -649,17 +619,15 @@ RegionTypeSolver::varianceFor(Type type, RegionId region, Type parameter,
   for (const auto &[nested, value] : values)
     pending.push_back(nested);
   while (!pending.empty()) {
-    if (!remaining)
-      return std::nullopt;
-    --remaining;
     auto nested = pending.back();
     pending.pop_back();
     auto result = nested == parameter && parameter != Type::Unknown
                       ? Variance::Covariant
                       : Variance::Bivariant;
-    if (nested != parameter && types.isView(nested)) {
+    if (nested != parameter &&
+        (types.isView(nested) || types.isPointer(nested))) {
       const auto &view = types.view(nested);
-      if (occurrence(view.region))
+      if (types.isView(nested) && occurrence(view.region))
         result = Variance::Covariant;
       auto payload = values.at(view.payload);
       if (view.mode == ParameterMode::Mut && payload != Variance::Bivariant)

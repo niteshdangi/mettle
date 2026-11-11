@@ -18,6 +18,10 @@ extend YieldOnce implements Future {
 }
 fn later(value: i32): YieldOnce { YieldOnce(value, false) }
 
+macro identity { ($value:expr) => { $value }; }
+macro await_plus_one { () => { await later(2) + 1 }; }
+async fn macro_await(): i32 { identity!(await later(4)) + 2 * await_plus_one!() }
+
 type Guard {
     counter: ptr<mut i32>
     drop { unsafe { *self.counter = *self.counter + 1 } }
@@ -97,6 +101,7 @@ fn poll_times<F: Future>(take future: F, times: i32): Unit {
 }
 
 fn main(): i32 {
+    if drive(macro_await()) != 10 { return 8 }
     if drive(borrow_across()) != 6 { return 1 }
     if drive(borrow_in_loop()) != 6 { return 2 }
     if drive(early_return(true)) != 7 || drive(early_return(false)) != 1 { return 3 }

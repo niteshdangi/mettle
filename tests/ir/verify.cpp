@@ -500,6 +500,146 @@ void conditionalUnpinProofCases() {
   require(!mettle::pipeline::admit(std::move(program), unproven),
           "conditional Unpin was admitted without its semantic proof context");
 }
+void indirectContractCases() {
+  mettle::Diagnostics diagnostics;
+  auto compiled = mettle::pipeline::compile(
+      mettle::Source{"indirect.mt",
+                     "fn answer(): i32 { 42 }\n"
+                     "fn invoke(callback: fn(): i32): i32 { callback() }\n"
+                     "fn main(): i32 { invoke(answer) }\n"},
+      diagnostics);
+  require(compiled.has_value(), "valid indirect call failed compilation");
+  auto original = compiled->program();
+  auto call = [](Program &program) -> Instruction & {
+    for (auto &function : program.functions)
+      for (auto &block : function.blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.op == Op::IndirectCall)
+            return instruction;
+    throw std::runtime_error("missing indirect-call fixture");
+  };
+  require(call(original).callee >= 0, "missing indirect-call contract");
+  require(mettle::pipeline::admit(original, diagnostics).has_value(),
+          "valid indirect-call contract was not admitted");
+  for (int mutation = 0; mutation < 8; ++mutation) {
+    auto malformed = original;
+    auto &instruction = call(malformed);
+    auto &contract = malformed.functions[instruction.callee];
+    switch (mutation) {
+    case 0:
+      instruction.callee = -1;
+      break;
+    case 1:
+      instruction.callee = static_cast<int>(malformed.functions.size());
+      break;
+    case 2:
+      contract.indirectContract = false;
+      break;
+    case 3:
+      contract.abi = "C";
+      break;
+    case 4:
+      contract.variadic = !contract.variadic;
+      break;
+    case 5:
+      contract.unsafeFunction = !contract.unsafeFunction;
+      break;
+    case 6:
+      contract.targetFeatures.insert("avx");
+      break;
+    case 7:
+      instruction.callLocalParameters.push_back(0);
+      break;
+    }
+    mettle::Diagnostics structural;
+    require(!verify(malformed, structural),
+            "malformed indirect-call contract passed structural verification");
+    require(
+        std::any_of(structural.items.begin(), structural.items.end(),
+                    [](const auto &item) { return item.phase == "internal"; }),
+        "indirect-call contract defect was blamed on source");
+    mettle::Diagnostics admission;
+    require(!mettle::pipeline::admit(std::move(malformed), admission),
+            "malformed indirect-call contract reached admission");
+  }
+}
+void rawDropTypeCases() {
+  auto types = std::make_shared<mettle::TypeStore>();
+  auto resource = types->declareProduct("RawOnly", false);
+  types->defineProduct(resource, {{"tag", Type::I32}});
+  auto pointer = types->pointerType(resource, mettle::ParameterMode::Mut);
+  Instruction drop{Op::DropPlace,
+                   {0, Type::Unit},
+                   {},
+                   {},
+                   "",
+                   {0, {mettle::Projection::dereference()}},
+                   -1,
+                   0,
+                   {}};
+  drop.unsafeAllowed = true;
+  Program program;
+  program.types = types;
+  program.requireEntry = false;
+  program.functions = {{"dispose",
+                        Type::Unit,
+                        1,
+                        {{"pointer", pointer, false, {}}},
+                        {{{drop}, {Exit::Return, {0, Type::Unit}}}},
+                        1}};
+  mettle::Diagnostics valid;
+  require(verify(program, valid), "valid raw-pointer drop was rejected");
+  types->setDestructor(resource, 99);
+  rejected(program, "destructor");
+  mettle::Diagnostics admission;
+  require(!mettle::pipeline::admit(std::move(program), admission),
+          "raw drop with an invalid destructor was admitted");
+}
+void packageOwnershipPropagation() {
+  mettle::TypeStore types;
+  auto parameter = types.declareParameter("T", false);
+  auto root = types.declareProduct("Owned", false);
+  types.setGenericParameters(root, {parameter});
+  types.defineProduct(root, {{"value", parameter}});
+  auto cached = types.instantiateProduct(root, {Type::I32});
+  auto regional =
+      types.regionalShell(cached, {mettle::RegionId::Static}, {Type::I32});
+  types.defineProduct(regional, {{"value", Type::I32}});
+  auto pattern =
+      types.regionalShell(root, {mettle::RegionId::Static}, {parameter});
+  types.defineProduct(pattern, {{"value", parameter}});
+  types.setRegionPattern(pattern, pattern);
+  auto genericPattern = types.instantiateProduct(pattern, {Type::I32});
+  std::vector<mettle::TypeBinding> bindings{{parameter, Type::I32}};
+  auto substituted = types.substitute(pattern, bindings);
+  std::vector<Type> family{root,    cached,         regional,
+                           pattern, genericPattern, substituted};
+  auto unrelated = types.declareProduct("Owned", false);
+  types.defineProduct(unrelated, {{"value", Type::I32}});
+  types.setProductPackage(unrelated, 9);
+  auto tuple = types.structural(mettle::AggregateKind::Tuple, {Type::I32});
+  auto requirePackages = [&](std::uint32_t expected) {
+    for (auto member : family)
+      require(types.product(member).package == expected,
+              "nominal derivative lost its declared package owner");
+    require(types.product(unrelated).package == 9 &&
+                types.product(tuple).package == mettle::unknownPackage,
+            "package propagation inferred ownership from spelling or shape");
+  };
+  types.setProductPackage(root, 7);
+  requirePackages(7);
+  require(types.instantiateProduct(root, {Type::I32}) == cached,
+          "package assignment changed generic instance identity");
+  auto future = types.instantiateProduct(root, {Type::I64});
+  family.push_back(future);
+  family.push_back(types.regionalProduct(future, {{"value", Type::I64}},
+                                         {mettle::RegionId::Static}, true));
+  requirePackages(7);
+  types.refreshProductInstances();
+  requirePackages(7);
+  types.setProductPackage(root, 0);
+  requirePackages(0);
+}
 void loopSiblingViewCases() {
   auto inspect = [](const std::string &body, int linked, int unlinked) {
     mettle::Diagnostics diagnostics;
@@ -550,6 +690,199 @@ void loopSiblingViewCases() {
           "let _ = *pair.0",
           1, 1);
 }
+void contentsOnlyResultPathCases() {
+  auto types = std::make_shared<mettle::TypeStore>();
+  mettle::ErasedType payload;
+  payload.name = "Payload";
+  auto unknown = types->erasedType(payload);
+  auto owned = types->erasedBound(unknown, mettle::RegionId::Static);
+  auto region = types->regions().bound(types->regions().binder(), "r");
+  auto borrowed = types->erasedBound(unknown, region);
+  auto view = types->viewType(Type::I32, mettle::ParameterMode::Read);
+  auto tag = types->declareParameter("Tag", false);
+  auto carrier = types->declareProduct("Hidden", false);
+  types->setGenericParameters(
+      carrier, {types->declareParameter("T", false, false),
+                types->declareParameter("U", false, false), tag});
+  types->defineProduct(carrier, {});
+  auto count = types->constant(Type::Usize, 65);
+  auto inspect = [&](Type first, Type second, bool contentsOnly) {
+    auto hidden = types->instantiateProduct(carrier, {first, second, tag});
+    auto declared = types->arrayType(hidden, count);
+    auto runtime = types->eraseRegions(declared);
+    mettle::CallableType signature;
+    signature.parameters = {{Type::I32, mettle::ParameterMode::Mut, "self"}};
+    signature.result = view;
+    signature.error = declared;
+    signature.abiResult = view;
+    signature.resultSources = {0};
+    Function function{
+        "abstract",
+        types->structural(mettle::AggregateKind::Outcome, {view, runtime}),
+        1,
+        {{"self", Type::I32, true, {}, mettle::ParameterMode::Mut}},
+        {}};
+    function.declarationOnly = true;
+    function.genericParameters = {tag};
+    function.regionSignature = types->callableType(std::move(signature));
+    function.resultSources = {0};
+    Program program;
+    program.types = types;
+    program.functions.push_back(std::move(function));
+    mettle::analysis::EffectSummaries summaries(1);
+    auto info =
+        mettle::analysis::origins(program.functions[0], program, summaries);
+    require(!info.effects.returns.at({mettle::Projection::field(1)}).empty(),
+            "contents-only selection removed the borrowed success source");
+    mettle::analysis::ViewPath path{
+        mettle::Projection::field(2),
+        mettle::Projection::opaque(types->product(runtime).components[0])};
+    auto error = info.effects.returns.find(path);
+    require((error == info.effects.returns.end() || error->second.empty()) ==
+                contentsOnly,
+            "opaque result classification did not require all-static leaves");
+    if (!contentsOnly)
+      return;
+    std::vector<mettle::TypeBinding> bindings{{tag, Type::I32}};
+    auto instantiated =
+        types->substitute(program.functions[0].result, bindings);
+    Instruction borrow{Op::BorrowMut,
+                       {0, Type::I32, Access::Mut},
+                       {},
+                       {},
+                       "",
+                       {0, {}},
+                       -1,
+                       0,
+                       {}};
+    Instruction call{Op::Call,
+                     {1, instantiated},
+                     {{0, Type::I32, Access::Mut}},
+                     {},
+                     "",
+                     {-1, {}},
+                     0,
+                     0,
+                     {}};
+    call.typeArguments = {Type::I32};
+    Function caller{"caller",
+                    instantiated,
+                    1,
+                    program.functions[0].locals,
+                    {{{borrow, call}, {Exit::Return, {1, instantiated}}}},
+                    2};
+    caller.resultSources = {0};
+    caller.regionSignature =
+        types->substitute(program.functions[0].regionSignature, bindings);
+    program.functions.push_back(std::move(caller));
+    mettle::analysis::EffectSummaries calls(2);
+    calls.slot(0) = info.effects;
+    auto transferred =
+        mettle::analysis::origins(program.functions[1], program, calls);
+    for (auto &projection : path)
+      projection.type = types->substitute(projection.type, bindings);
+    const auto &origins = transferred.values[1].at(path);
+    require(!origins.empty(), "instantiated erased result lost its loan slot");
+    for (auto id : origins)
+      require(transferred.loans.at(id).parents.empty() &&
+                  transferred.loans.at(id).targets.empty(),
+              "instantiated opaque result inherited receiver storage");
+    for (auto id : transferred.values[1].at({mettle::Projection::field(1)}))
+      require(!transferred.loans.at(id).parents.empty(),
+              "instantiated success lost its receiver ancestry");
+  };
+  inspect(owned, owned, true);
+  for (auto other : {unknown, borrowed, view}) {
+    inspect(owned, other, false);
+    inspect(other, owned, false);
+  }
+}
+void preparedDeclarations() {
+  mettle::Diagnostics diagnostics;
+  auto tree = mettle::parse({"prepared.mt",
+                             "fn identity<T: Copy>(value: T): T { value }\n"
+                             "fn main(): i32 { identity(42) - 42 }\n"},
+                            diagnostics);
+  unsigned observations = 0;
+  auto prepared = mettle::pipeline::prepare(
+      std::move(tree), diagnostics, true, {},
+      [&](const mettle::CheckedModule &) { ++observations; });
+  require(prepared.has_value() && diagnostics.empty(),
+          "valid symbolic declarations were not prepared");
+  require(observations == 1,
+          "preparation did not observe checking exactly once");
+  require(std::any_of(prepared->program().functions.begin(),
+                      prepared->program().functions.end(),
+                      [](const auto &function) {
+                        return !function.genericParameters.empty() &&
+                               !function.blocks.empty();
+                      }),
+          "preparation discarded symbolic generic bodies");
+  auto executable =
+      mettle::pipeline::compile(std::move(*prepared), diagnostics);
+  require(executable.has_value() && diagnostics.empty(),
+          "prepared declarations did not survive frontend destruction");
+  require(std::none_of(executable->program().functions.begin(),
+                       executable->program().functions.end(),
+                       [](const auto &function) {
+                         return !function.genericParameters.empty();
+                       }),
+          "prepared compilation skipped concrete specialization");
+  require(observations == 1, "prepared compilation repeated frontend checking");
+
+  mettle::Diagnostics invalid;
+  auto broken =
+      mettle::parse({"unprepared.mt", "fn main(): i32 { true }\n"}, invalid);
+  require(!mettle::pipeline::prepare(std::move(broken), invalid),
+          "preparation published an unchecked declaration");
+  require(!invalid.empty() && invalid.items.front().phase == "type",
+          "preparation changed the source rejection phase");
+}
+
+void importedPreparation() {
+  for (int failure = 0; failure != 4; ++failure) {
+    mettle::Diagnostics diagnostics;
+    auto tree =
+        mettle::parse({"consumer.mt", "fn main(): i32 { 0 }\n"}, diagnostics);
+    unsigned imports = 0, checks = 0;
+    mettle::pipeline::LibraryImporter import =
+        [&](const mettle::Module &, const mettle::resolution::Resolution &,
+            mettle::Diagnostics &)
+        -> std::optional<mettle::pipeline::ImportedProgram> {
+      ++imports;
+      if (failure == 1)
+        return std::nullopt;
+      mettle::pipeline::ImportedProgram imported;
+      imported.metadata.emplace();
+      imported.metadata->libraries = {"first", "second", "first"};
+      if (failure == 2)
+        imported.metadata->target.pointerBits = 32;
+      if (failure == 3)
+        imported.metadata->functions.push_back(
+            {"unplaced", mettle::Type::I32, 0, {}, {}});
+      return imported;
+    };
+    auto prepared = mettle::pipeline::prepare(
+        std::move(tree), diagnostics, true, {},
+        [&](const mettle::CheckedModule &) { ++checks; }, {}, nullptr, {},
+        nullptr, nullptr, import);
+    require(imports == 1, "library import repeated namespace resolution");
+    if (!failure) {
+      require(prepared.has_value() && diagnostics.empty() && checks == 1,
+              "post-resolution import did not preserve ordinary checking");
+      require(prepared->program().libraries ==
+                  std::vector<std::string>{"first", "second", "first"},
+              "import changed native library ordering or repetitions");
+      require(mettle::pipeline::compile(std::move(*prepared), diagnostics)
+                  .has_value(),
+              "post-resolution import bypassed concrete admission");
+    } else {
+      require(!prepared && !diagnostics.empty() &&
+                  diagnostics.items.front().phase == "metadata",
+              "invalid library metadata did not reject before publication");
+    }
+  }
+}
 } // namespace
 int main() {
   try {
@@ -560,7 +893,13 @@ int main() {
     ownedValueCases();
     variantRefinementCases();
     conditionalUnpinProofCases();
+    indirectContractCases();
+    rawDropTypeCases();
+    packageOwnershipPropagation();
     loopSiblingViewCases();
+    contentsOnlyResultPathCases();
+    preparedDeclarations();
+    importedPreparation();
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return 1;

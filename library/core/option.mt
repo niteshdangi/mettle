@@ -36,7 +36,7 @@ extend<T> T? {
             none => super.panic.panic("get_or_insert failed to install a value")
         }
     }
-    pub mut fn get_or_insert_with(take make: fn(): T): mut T from self {
+    pub mut fn get_or_insert_with<F: take fn(): T>(take make: F): mut T from self {
         if self.is_none() { let _ = self.replace(make()) }
         match mut self {
             present(current) => mut current,
@@ -61,20 +61,20 @@ extend<T> T? {
     pub take fn unwrap_or(take fallback: T): T {
         match take self { present(value) => value, none => fallback }
     }
-    pub take fn unwrap_or_else(fallback: fn(): T): T {
+    pub take fn unwrap_or_else<F: take fn(): T>(take fallback: F): T {
         match take self { present(value) => value, none => fallback() }
     }
 
-    pub take fn map<U>(f: fn(take T): U): U? {
+    pub take fn map<U, F: take fn(take T): U>(take f: F): U? {
         match take self { present(value) => present(f(value)), none => none }
     }
-    pub take fn map_or<U>(take fallback: U, f: fn(take T): U): U {
+    pub take fn map_or<U, F: take fn(take T): U>(take fallback: U, take f: F): U {
         match take self { present(value) => f(value), none => fallback }
     }
-    pub take fn map_or_else<U>(fallback: fn(): U, f: fn(take T): U): U {
+    pub take fn map_or_else<U, F: take fn(): U, G: take fn(take T): U>(take fallback: F, take f: G): U {
         match take self { present(value) => f(value), none => fallback() }
     }
-    pub take fn map_or_default<U: Default>(f: fn(take T): U): U {
+    pub take fn map_or_default<U: Default, F: take fn(take T): U>(take f: F): U {
         match take self { present(value) => f(value), none => U.(Default).default() }
     }
     pub take fn unwrap_or_default(): T where T: Default {
@@ -83,13 +83,13 @@ extend<T> T? {
             none => T.(Default).default()
         }
     }
-    pub take fn is_some_and(test: fn(take T): bool): bool {
+    pub take fn is_some_and<F: take fn(take T): bool>(take test: F): bool {
         match take self { present(value) => test(value), none => false }
     }
-    pub take fn is_none_or(test: fn(take T): bool): bool {
+    pub take fn is_none_or<F: take fn(take T): bool>(take test: F): bool {
         match take self { present(value) => test(value), none => true }
     }
-    pub take fn and_then<U>(f: fn(take T): U?): U? {
+    pub take fn and_then<U, F: take fn(take T): U?>(take f: F): U? {
         match take self { present(value) => f(value), none => none }
     }
     pub take fn and<U>(take other: U?): U? {
@@ -104,19 +104,19 @@ extend<T> T? {
             none => other
         }
     }
-    pub take fn or_else(f: fn(): T?): T? {
+    pub take fn or_else<F: take fn(): T?>(take f: F): T? {
         match take self { present(value) => present(value), none => f() }
     }
     pub take fn or(take other: T?): T? {
         match take self { present(value) => present(value), none => other }
     }
-    pub take fn filter(keep: fn(read T): bool): T? {
+    pub take fn filter<F: take fn(read T): bool>(take keep: F): T? {
         match take self {
             present(value) => if keep(read value) { present(value) } else { none },
             none => none
         }
     }
-    pub take fn inspect(f: fn(read T): Unit): T? {
+    pub take fn inspect<F: take fn(read T): Unit>(take f: F): T? {
         match take self {
             present(value) => { f(read value); present(value) },
             none => none
@@ -125,7 +125,7 @@ extend<T> T? {
     pub take fn ok_or<E>(take error: E): (Outcome<T, E>) {
         match take self { present(value) => success(value), none => failure(error) }
     }
-    pub take fn ok_or_else<E>(error: fn(): E): (Outcome<T, E>) {
+    pub take fn ok_or_else<E, F: take fn(): E>(take error: F): (Outcome<T, E>) {
         match take self { present(value) => success(value), none => failure(error()) }
     }
 
@@ -134,7 +134,7 @@ extend<T> T? {
         unsafe { core.ptr.replace(core.ptr.from_mut(self), none) }
     }
     pub mut fn take_value(): T? { self.`take`() }
-    pub mut fn take_if(take test: fn(mut T): bool): T? {
+    pub mut fn take_if<F: take fn(mut T): bool>(take test: F): T? {
         let should_take = match mut self {
             present(value) => test(mut value),
             none => false
@@ -219,7 +219,7 @@ extend<T: Deref> T? {
 }
 
 extend<T: DerefMut> T? {
-    pub mut fn as_deref_mut(): (mut T.(DerefMut).Target from self)? {
+    pub mut fn as_deref_mut(): (mut T.(Deref).Target from self)? {
         match mut self { present(value) => present(value.deref_mut()), none => none }
     }
 }

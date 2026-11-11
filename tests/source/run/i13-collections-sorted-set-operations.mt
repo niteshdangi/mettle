@@ -72,8 +72,14 @@ fn run(): i32 throws Error {
     for value in set.range(2, 7) { inside += value.key }
     if inside != 2 + 4 { return 17 }
     var none_inside = 0
-    for value in set.range(7, 2) { none_inside += 1 }
+    for value in set.range(7, 7) { none_inside += 1 }
     if none_inside != 0 { return 18 }
+    match take std.panic.catch_panic(fn(): Unit {
+        let _ = set.range(7, 2)
+    }) {
+        std.panic.CatchResult.Panicked(_) => {},
+        _ => { return 18 }
+    }
 
     // Ends and retention.
     match set.pop_last() {

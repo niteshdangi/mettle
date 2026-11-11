@@ -43,6 +43,7 @@ struct Item {
   std::vector<std::string> attributes;
   Doc doc;
   std::size_t line = 0;
+  std::size_t bodyEnd = std::string::npos;
   std::vector<Item> members;
 };
 

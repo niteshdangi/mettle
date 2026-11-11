@@ -38,7 +38,7 @@ fn main(): i32 {
     if bytes.len() != 2usize || bytes.next() != present(97u8) { return 9 }
     if debug_text(bytes).is_empty() { return 10 }
 
-    var split = "a,b,c".split(",")
+    var split = "a,b,c".split(',')
     var cloned_split = split.clone()
     match cloned_split.next() {
         present(part) => { if part != "a" { return 11 } },
@@ -67,11 +67,27 @@ fn main(): i32 {
         present(body) => { if body != "body" { return 16 } },
         none => { return 17 }
     }
-    match "a\u{e9}b".substr_range(1usize..3usize) {
-        present(part) => { if part != "\u{e9}" { return 18 } },
+    let source = "a\u{e9}b"
+    let part = match source.get(1usize, 3usize) {
+        present(part) => part,
         none => { return 19 }
     }
-    if "a\u{e9}b".substr_range(2usize..3usize).is_present() { return 20 }
+    match source.substr_range(part) {
+        present(range) => {
+            if range.start != 1usize || range.end != 3usize { return 18 }
+        },
+        none => { return 19 }
+    }
+    if source.get(2usize, 3usize).is_present() { return 20 }
+    let foreign = String("\u{e9}")
+    if source.substr_range(foreign.as_text()).is_present() { return 25 }
+    let empty = read source[3usize..3usize]
+    match source.substr_range(empty) {
+        present(range) => {
+            if range.start != 3usize || range.end != 3usize { return 26 }
+        },
+        none => { return 26 }
+    }
 
     var mutable = String("a\u{e9}b")
     match mutable.as_mut_str().split_at_mut_checked(1usize) {

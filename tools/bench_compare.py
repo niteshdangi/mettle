@@ -23,7 +23,6 @@ import shutil
 import statistics
 import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
 
@@ -59,7 +58,7 @@ class Runner:
         self.logs.mkdir(parents=True, exist_ok=True)
         self.count = 0
 
-    def run(self, command, cwd=None, env=None, timeout=900):
+    def run(self, command, cwd=None, env=None):
         self.count += 1
         out = self.logs / f"{self.count:05d}.out"
         err = self.logs / f"{self.count:05d}.err"
@@ -68,12 +67,7 @@ class Runner:
             start = time.perf_counter()
             process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout,
                                        stderr=stderr, stdin=subprocess.DEVNULL)
-            timer = threading.Timer(timeout, process.kill)
-            timer.start()
-            try:
-                _, status, usage = os.wait4(process.pid, 0)
-            finally:
-                timer.cancel()
+            _, status, usage = os.wait4(process.pid, 0)
             elapsed = time.perf_counter() - start
         process.returncode = os.waitstatus_to_exitcode(status)
         scale = 1 if sys.platform == "darwin" else 1024
@@ -86,6 +80,13 @@ class Runner:
         if result["returncode"] != 0:
             raise Failure(f"{' '.join(result['command'])}: exit {result['returncode']}\n"
                           f"{tail(result['stderr'])}")
+        return result
+
+    def program(self, executable):
+        result = self.run([executable])
+        if not 0 <= result["returncode"] < 128:
+            raise Failure(f"{executable}: expected a 7-bit checksum, "
+                          f"got exit {result['returncode']}\n{tail(result['stderr'])}")
         return result
 
 
@@ -175,14 +176,14 @@ def decide(mettle, rust, endpoints, kind):
     alpha = 0.05 / endpoints
     half = t_quantile(1.0 - alpha / 2.0, len(logs) - 1) * spread / math.sqrt(len(logs))
     lower, upper = math.exp(mean - half), math.exp(mean + half)
-    if lower > 1.0:
+    if half > RESOLUTION:
+        verdict = "inconclusive"
+    elif lower > 1.0:
         verdict = "slowdown"
     elif upper < 1.0:
         verdict = "win"
-    elif half <= RESOLUTION:
-        verdict = "tie"
     else:
-        verdict = "inconclusive"
+        verdict = "tie"
     if verdict == "inconclusive":
         gate = "inconclusive"
     elif kind == "runtime":
@@ -271,7 +272,7 @@ def module_generic(index, functions):
     for j in range(functions):
         body = f"(value * self.k + {j}) % {MOD}"
         mettle.append(f"type S{j} {{ k: i32 }}\n"
-                      f"impl S{j} implements Step {{ fn apply(value: i32): i32 {{ {body} }} }}\n")
+                      f"extend S{j} implements Step {{ fn apply(value: i32): i32 {{ {body} }} }}\n")
         rust.append(f"struct S{j} {{ k: i32 }}\n"
                     f"impl Step for S{j} {{ fn apply(&self, value: i32) -> i32 {{ {body} }} }}\n")
     mettle.append(f"pub fn run(x: i32): i32 {{\n    var v = {start}\n")
@@ -298,7 +299,7 @@ def generate_scale(destination, modules, functions, generic):
         text_m, text_r = make(i, functions)
         write(mettle_tree / "src" / f"m{i}.mt", text_m)
         write(rust_tree / "src" / f"m{i}.rs", text_r)
-        main_m.append(f"    acc = (acc + m{i}::run(acc)) % {MOD}\n")
+        main_m.append(f"    acc = (acc + m{i}.run(acc)) % {MOD}\n")
         main_r.append(f"    acc = (acc + m{i}::run(acc)) % {MOD};\n")
     main_m.append("    acc % 128\n}\n")
     main_r.append("    std::process::exit(acc % 128);\n}\n")
@@ -426,7 +427,7 @@ class Side:
         row["semantic_edit_build"] = self.build()["seconds"]
         row["retained_after_edits"] = self.retained()
         if first:
-            edited = self.runner.run([self.executable])
+            edited = self.runner.program(self.executable)
             row["edited_output"] = [edited["returncode"], edited["stdout"].decode("latin-1")]
         row["check"] = self.check()["seconds"]
         return row, kept
@@ -439,7 +440,7 @@ def median(values):
 def measure_runtime(runner, programs, warmup, blocks, runs, rng):
     for program in programs.values():
         for _ in range(warmup):
-            runner.run([program], timeout=300)
+            runner.program(program)
     samples = {"mettle": [], "rust": []}
     rss = {"mettle": [], "rust": []}
     outputs = {}
@@ -449,7 +450,7 @@ def measure_runtime(runner, programs, warmup, blocks, runs, rng):
         for side in order:
             times = []
             for _ in range(runs):
-                result = runner.run([programs[side]], timeout=300)
+                result = runner.program(programs[side])
                 outputs.setdefault(side, (result["returncode"], result["stdout"]))
                 if (result["returncode"], result["stdout"]) != outputs[side]:
                     raise Failure(f"{side} program output is not deterministic")

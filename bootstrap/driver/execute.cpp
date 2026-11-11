@@ -277,7 +277,10 @@ Result classify(const Module::TestFunction &entry, const Termination &outcome,
     return result;
   }
   if (entry.shouldPanic) {
-    if (!(panicked || outcome.signaled)) {
+    if (outcome.signaled && outcome.signal != SIGABRT) {
+      result.verdict = Verdict::Terminated;
+      result.reason = "terminated by " + signalName(outcome.signal);
+    } else if (!(panicked || outcome.signaled)) {
       result.verdict = Verdict::Failed;
       result.reason = "test did not panic as declared";
     } else if (!entry.panicMessage.empty() &&
@@ -537,6 +540,7 @@ int runUnitTests(const Options &options, bool &built,
 struct Compiled {
   int status = 0;
   std::string diagnostics;
+  std::set<std::string> failurePhases;
 };
 
 // Builds a test executable with generated source overlays, capturing
@@ -553,7 +557,8 @@ Compiled compile(const Options &options, const WorkDirectory &work,
   std::ostringstream captured;
   auto *previous = std::cerr.rdbuf(captured.rdbuf());
   Compiled result;
-  result.status = build(selected, &tests, nullptr, &sourceOverrides);
+  result.status =
+      build(selected, &tests, nullptr, &sourceOverrides, &result.failurePhases);
   std::cerr.rdbuf(previous);
   result.diagnostics = captured.str();
   return result;
@@ -571,31 +576,25 @@ harnessIndex(const std::vector<Module::TestFunction> &tests,
   return std::nullopt;
 }
 
-// The checking phases of the `error[PHASE]` diagnostics in `text`.
-std::set<std::string> phases(const std::string &text) {
-  std::set<std::string> found;
-  for (std::size_t at = text.find("error["); at != std::string::npos;
-       at = text.find("error[", at + 1)) {
-    auto end = text.find(']', at);
-    if (end != std::string::npos)
-      found.insert(text.substr(at + 6, end - at - 6));
-  }
-  return found;
-}
-
 // A compile_fail example passes when its program is rejected in the expected
 // phase. Without a named phase a malformed (lex/parse) or unsupported
 // (feature) program does not count: the example must fail checking.
 Result judgeCompileFail(const documentation::Example &example,
                         const Compiled &compiled) {
   Result result;
-  auto found = phases(compiled.diagnostics);
+  const auto &found = compiled.failurePhases;
+  static const std::set<std::string> checking{
+      "alignment", "attribute", "constant",  "effects", "name",
+      "ownership", "region",    "signature", "type",    "unsafe"};
+  bool infrastructure = false;
+  for (const auto &phase : found)
+    infrastructure |= phase != "lex" && phase != "parse" && phase != "macro" &&
+                      !checking.contains(phase);
   bool expected = false;
   for (const auto &phase : found)
-    expected |= example.phase.empty()
-                    ? phase != "lex" && phase != "parse" && phase != "feature"
-                    : phase == example.phase;
-  if (expected) {
+    expected |= example.phase.empty() ? checking.contains(phase)
+                                      : phase == example.phase;
+  if (compiled.status != 0 && !infrastructure && expected) {
     result.verdict = Verdict::Passed;
     result.note = "failed to compile as declared";
   } else {

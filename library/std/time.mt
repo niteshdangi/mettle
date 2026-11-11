@@ -102,15 +102,34 @@ extend Duration {
            seconds >= 18446744073709551616.0f64 {
             return failure(TryFromFloatSecsError())
         }
-        let secs = seconds as u64
-        let nanos = ((seconds - secs as f64) * 1000000000.0f64 + 0.5f64) as u64
-        if nanos == 1000000000u64 {
-            match secs.checked_add(1u64) {
-                present(normalized) => success(Duration(normalized, 0u32)),
-                none => failure(TryFromFloatSecsError())
-            }
+        let bits = seconds.to_bits()
+        let exponent = ((bits >> 52u32) & 2047u64) as i32
+        var significand = bits & 4503599627370495u64
+        var shift = -1074i32
+        if exponent != 0 {
+            significand |= 4503599627370496u64
+            shift = exponent - 1075
+        }
+        let scaled = significand as u128 * 1000000000u128
+        var total = 0u128
+        if shift >= 0 {
+            total = scaled << (shift as u32)
         } else {
-            success(Duration(secs, nanos as u32))
+            let right = (-shift) as u32
+            if right < 128u32 {
+                total = scaled >> right
+                let remainder = scaled & ((1u128 << right) - 1u128)
+                let halfway = 1u128 << (right - 1u32)
+                if remainder > halfway || (remainder == halfway && total % 2u128 != 0u128) {
+                    total += 1u128
+                }
+            }
+        }
+        let secs = total / 1000000000u128
+        if secs > 18446744073709551615u128 {
+            failure(TryFromFloatSecsError())
+        } else {
+            success(Duration(secs as u64, (total % 1000000000u128) as u32))
         }
     }
 
@@ -176,7 +195,13 @@ extend Instant {
 // (negative seconds precede it).
 pub copy type SystemTime { secs: i64; nanos: u32 }
 
-pub fn system_time_from_parts(secs: i64, nanos: u32): SystemTime { SystemTime(secs, nanos) }
+pub fn system_time_from_parts(secs: i64, nanos: u32): SystemTime {
+    let normalized = match secs.checked_add((nanos / 1000000000u32) as i64) {
+        present(value) => value,
+        none => package.core.panic.panic("overflow when constructing system time")
+    }
+    SystemTime(normalized, nanos % 1000000000u32)
+}
 
 pub fn unix_epoch(): SystemTime { SystemTime(0i64, 0u32) }
 

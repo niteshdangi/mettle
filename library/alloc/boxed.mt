@@ -368,12 +368,11 @@ extend<T, A: Allocator> Box<[core.mem.MaybeUninit<T>], A> {
 extend<T, A: Allocator> Box<T, A> {
     // Moves the value out and releases the block without dropping the value.
     pub take fn into_inner(): T {
+        let raw = self.into_raw()
+        var a = raw.1
         unsafe {
-            let p = self.p
-            let v = core.ptr.`read`(p)
-            var a = core.ptr.`read`(core.ptr.from_ref(self.a))
-            a.deallocate(p.cast<u8>(), layout_of<T>())
-            core.mem.forget(take self)
+            let v = core.ptr.`read`(raw.0)
+            a.deallocate(raw.0.cast<u8>(), layout_of<T>())
             v
         }
     }
@@ -403,7 +402,6 @@ extend<T: unsized, A: Allocator> Box<T, A> implements BorrowMut<T> {
     mut fn borrow_mut(): mut T from self { self.get_mut() }
 }
 extend<T: unsized, A: Allocator> Box<T, A> implements DerefMut {
-    type Target = T
     mut fn deref_mut(): mut T from self { self.get_mut() }
 }
 extend<T: Hasher + unsized, A: Allocator> Box<T, A> implements Hasher {
@@ -748,7 +746,6 @@ extend<T: unsized, A: Allocator> Pinned<T, A> implements Deref {
     fn deref(): read T from self { self.get_ref() }
 }
 extend<T: unsized + Unpin, A: Allocator> Pinned<T, A> implements DerefMut {
-    type Target = T
     mut fn deref_mut(): mut T from self { self.get_mut() }
 }
 // Awaiting a pinned owner polls its payload in place.

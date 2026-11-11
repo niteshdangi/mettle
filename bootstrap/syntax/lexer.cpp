@@ -275,6 +275,8 @@ std::vector<Token> tokenize(const Source &source, Diagnostics &diagnostics) {
   if (i != s.size())
     diagnostics.error("limit", {i, i}, "token limit exceeded");
   tokens.push_back({TokenKind::End, {s.size(), s.size(), source.id}, ""});
+  for (auto &token : tokens)
+    token.context = diagnostics.syntaxContext(token.span);
   return tokens;
 }
 } // namespace mettle

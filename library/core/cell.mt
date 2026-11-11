@@ -18,7 +18,7 @@ extend<T: Default> core.cell.RefCell<T> {
 }
 
 extend<T> core.cell.RefCell<T> {
-    pub fn replace_with(f: fn(mut T): T): T {
+    pub fn replace_with<F: take fn(mut T): T>(take f: F): T {
         var guard = self.borrow_mut()
         let current = guard.get_mut()
         let replacement = f(current)
@@ -166,6 +166,5 @@ extend<T: unsized> core.cell.RefMut<T> implements Deref {
     fn deref(): read T from self { self.get_ref() }
 }
 extend<T: unsized> core.cell.RefMut<T> implements DerefMut {
-    type Target = T
     mut fn deref_mut(): mut T from self { self.get_mut() }
 }

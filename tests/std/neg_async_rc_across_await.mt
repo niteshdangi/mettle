@@ -1,4 +1,4 @@
-// expect-error: type
+// expect-error: type 14:18 unsatisfied interface bound 'Transferable'
 // An Rc held across an await makes the future's state non-Transferable.
 import std.task
 import alloc.rc

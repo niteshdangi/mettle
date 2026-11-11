@@ -16,6 +16,9 @@ struct Hooks {
   std::function<Type(Type, std::span<const TypeBinding>, const ir::Function &,
                      Span, TypeStore &, Diagnostics &)>
       validateUnpin{};
+  std::function<Type(Type, std::span<const TypeBinding>, TypeStore &,
+                     Diagnostics &)>
+      normalizeRegionSignature{};
 };
 std::optional<ir::Program> specialize(const ir::Program &declarations,
                                       Diagnostics &diagnostics,

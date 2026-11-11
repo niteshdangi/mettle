@@ -18,16 +18,19 @@ fn serve(): i32 throws Error {
     let pair = try listener.accept()
     var conn = pair.0
     try conn.set_read_timeout(present(from_millis(20000u64)))
-    var buf = [0u8; 32]
-    let n = try conn.read_some(buf)
-    if n != 4usize || buf[0usize] != 112u8 { return 1 }
+    var buf = [0u8; 4]
+    try conn.read_exact(buf)
+    if buf[0usize] != 112u8 || buf[1usize] != 105u8 ||
+        buf[2usize] != 110u8 || buf[3usize] != 103u8 { return 1 }
     try conn.write_all("PONG".as_bytes())
     let out = child.take_stdout()
     var text = alloc.vec.new<u8>()
     match take out { present(o) => { var r = o; let c = try r.read_to_end(text) }, none => { return 2 } }
     let st = try child.wait()
     if st.code() != present(0) { return 3 }
-    if text.len() != 5usize || text[0usize] != 80u8 { return 4 }
+    if text.len() != 5usize || text[0usize] != 80u8 ||
+        text[1usize] != 79u8 || text[2usize] != 78u8 ||
+        text[3usize] != 71u8 || text[4usize] != 10u8 { return 4 }
     0
 }
 
@@ -56,7 +59,8 @@ fn client(read port_text: ffi.OsStr): i32 throws Error {
     try s.write_all("ping".as_bytes())
     var buf = [0u8; 8]
     try s.read_exact(buf.split_at_mut(4usize).0)
-    if buf[0usize] != 80u8 { return 1 }
+    if buf[0usize] != 80u8 || buf[1usize] != 79u8 ||
+        buf[2usize] != 78u8 || buf[3usize] != 71u8 { return 1 }
     std.io.print("PONG\n")
     0
 }

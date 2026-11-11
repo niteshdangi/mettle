@@ -97,30 +97,49 @@ fn main(): i32 {
     if leaked[0usize] != 43 { return 25 }
 
     var deque = alloc.vec_deque.new<i32>()
-    deque.push_back(1)
-    deque.push_back(2)
-    deque.push_back(3)
-    deque.push_back(4)
-    let first = deque.pop_front()
-    let second = deque.pop_front()
+    deque.reserve(4usize)
+    let capacity = deque.capacity()
+    while deque.len() < capacity { deque.push_back(0) }
+    deque[capacity - 2usize] = 3
+    deque[capacity - 1usize] = 4
+    while deque.len() > 2usize { let _removed = deque.pop_front() }
     deque.push_back(5)
     deque.push_back(6)
     let parts = deque.as_slices()
-    if parts.0.len() != 2usize || parts.1.len() != 2usize ||
-        parts.0[0usize] != 3 || parts.1[1usize] != 6 {
-        return 6
+    if parts.0.len() + parts.1.len() != 4usize { return 6 }
+    var slice_index = 0usize
+    while slice_index < 4usize {
+        let value = if slice_index < parts.0.len() {
+            parts.0[slice_index]
+        } else {
+            parts.1[slice_index - parts.0.len()]
+        }
+        if value != (slice_index as i32) + 3 { return 6 }
+        slice_index += 1usize
     }
     {
         let pieces = take deque.as_mut_slices()
-        pieces.0[0usize] = 30
-        pieces.1[1usize] = 60
+        if pieces.0.is_empty() {
+            pieces.1[0usize] = 30
+        } else {
+            pieces.0[0usize] = 30
+        }
+        if pieces.1.is_empty() {
+            pieces.0[pieces.0.len() - 1usize] = 60
+        } else {
+            pieces.1[pieces.1.len() - 1usize] = 60
+        }
     }
     deque.rotate_left(1usize)
     if deque[0usize] != 4 || deque[3usize] != 30 { return 7 }
-    let removed_front = deque.swap_remove_front(1usize)
-    if removed_front != 5 { return 8 }
-    let removed_back = deque.swap_remove_back(1usize)
-    if removed_back != 60 { return 9 }
+    match deque.swap_remove_front(1usize) {
+        present(value) => { if value != 5 { return 8 } },
+        none => { return 8 }
+    }
+    match deque.swap_remove_back(1usize) {
+        present(value) => { if value != 60 { return 9 } },
+        none => { return 9 }
+    }
     let right = deque.split_off(1usize)
     if deque.len() != 1usize || deque[0usize] != 4 ||
         right.len() != 1usize || right[0usize] != 30 {

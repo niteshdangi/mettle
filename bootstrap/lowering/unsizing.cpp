@@ -10,7 +10,7 @@ Builder::Value Builder::ownerCoercion(const Node &node) {
   auto targetOwner = facts.rebuiltType;
   auto sourcePayload = types.product(sourceOwner).genericArguments.front();
   auto targetPayload = types.product(targetOwner).genericArguments.front();
-  auto owner = use(rawExpression(node, true, true));
+  auto owner = use(rawValue(node, true, true));
   if (!live())
     return {};
 
@@ -24,12 +24,12 @@ Builder::Value Builder::ownerCoercion(const Node &node) {
     const auto &descriptor = types.product(*array);
     if (descriptor.arrayCount == Type::Unknown) {
       conversion.operands.push_back(constant(
-          Type::I32, static_cast<std::int32_t>(descriptor.fields.size())));
+          Type::Usize, static_cast<std::int32_t>(descriptor.fields.size())));
     } else {
       Instruction length{ir::Op::Constant, {}, {}, {},       "",
                          {-1, {}},         -1, 0,  node.span};
       length.constantParameter = descriptor.arrayCount;
-      conversion.operands.push_back(emit(std::move(length), Type::I32));
+      conversion.operands.push_back(emit(std::move(length), Type::Usize));
     }
   } else {
     if (!types.isErased(targetPayload))
@@ -96,7 +96,7 @@ Builder::Value Builder::viewCoercion(const Node &node) {
         node, true,
         module.typeStore()->view(facts.type).mode == ParameterMode::Mut, false);
   else {
-    auto value = rawExpression(node, false, true);
+    auto value = rawValue(node, false, true);
     if (!live())
       return {};
     source = materialize(value, node.span,
@@ -119,7 +119,7 @@ Builder::Value Builder::unsizedView(Place source, Type view, Type count,
                                     Span span) {
   Instruction length{ir::Op::Constant, {}, {}, {}, "", {-1, {}}, -1, 0, span};
   length.constantParameter = count;
-  auto size = emit(std::move(length), Type::I32);
+  auto size = emit(std::move(length), Type::Usize);
   return emit(
       {ir::Op::UnsizeView, {}, {size}, {}, "", std::move(source), -1, 0, span},
       view);

@@ -21,7 +21,8 @@ Checker::GenericEnvironment Checker::makeGenericEnvironment(
   for (const auto &parameter : parameters) {
     if (parameter.kind == GenericParameterKind::Region)
       continue;
-    if (result.names.contains(parameter.name)) {
+    auto key = nameKey(parameter.name, parameter.context);
+    if (result.names.contains(key)) {
       error("name", parameter.span,
             "duplicate generic parameter '" + parameter.name + "'");
       continue;
@@ -35,7 +36,8 @@ Checker::GenericEnvironment Checker::makeGenericEnvironment(
         sized = false;
     }
     for (const auto &constraint : constraints)
-      if (!constraint.region && constraint.subject.name == parameter.name)
+      if (!constraint.region &&
+          nameKey(constraint.subject.name, constraint.subject.context) == key)
         for (const auto &bound : constraint.bounds) {
           copy |= interfaceProperty(bound, "Copy", parameter.span);
           unpin |= interfaceProperty(bound, "Unpin", parameter.span);
@@ -56,14 +58,16 @@ Checker::GenericEnvironment Checker::makeGenericEnvironment(
       type = checked.types->declareParameter(parameter.name, copy, sized);
     if (unpin && parameter.kind == GenericParameterKind::Type)
       checked.types->constrainUnpin(type);
-    result.names.emplace(parameter.name, type);
+    result.names.emplace(key, type);
+    genericNames.emplace(type, key);
     result.parameters.push_back(type);
     result.bounds[type] = parameter.bounds;
   }
   for (const auto &constraint : constraints) {
     if (constraint.region)
       continue;
-    auto found = result.names.find(constraint.subject.name);
+    auto found = result.names.find(
+        nameKey(constraint.subject.name, constraint.subject.context));
     if (found != result.names.end()) {
       result.bounds[found->second].insert(result.bounds[found->second].end(),
                                           constraint.bounds.begin(),
@@ -76,6 +80,8 @@ Checker::GenericEnvironment Checker::makeGenericEnvironment(
 }
 void Checker::prepareGenerics() {
   for (const auto &product : module.products) {
+    if (imported(product.span))
+      continue;
     auto environment =
         makeGenericEnvironment(product.genericParameters, product.constraints);
     environment.declarationSpan = product.span;
@@ -84,6 +90,8 @@ void Checker::prepareGenerics() {
     productGenerics.emplace(&product, std::move(environment));
   }
   for (const auto &alias : module.aliases) {
+    if (imported(alias.span))
+      continue;
     auto environment =
         makeGenericEnvironment(alias.genericParameters, alias.constraints);
     environment.declarationSpan = alias.span;
@@ -91,8 +99,11 @@ void Checker::prepareGenerics() {
   }
   for (std::size_t i = 0; i < module.interfaces.size(); ++i) {
     const auto &interface = module.interfaces[i];
+    if (imported(interface.span))
+      continue;
     GenericEnvironment parent;
-    parent.names["Self"] = checked.interfaceData->definitions[i].self;
+    parent.names[nameKey("Self", interface.span)] =
+        checked.interfaceData->definitions[i].self;
     auto environment = makeGenericEnvironment(interface.genericParameters,
                                               interface.constraints, &parent);
     environment.declarationSpan = interface.span;
@@ -100,13 +111,16 @@ void Checker::prepareGenerics() {
     interfaceGenerics.emplace(&interface, std::move(environment));
   }
   for (const auto &product : module.products)
-    validateGenericEnvironment(product.genericParameters, product.constraints,
-                               productGenerics.at(&product));
+    if (!imported(product.span))
+      validateGenericEnvironment(product.genericParameters, product.constraints,
+                                 productGenerics.at(&product));
   for (const auto &alias : module.aliases)
-    validateGenericEnvironment(alias.genericParameters, alias.constraints,
-                               aliasGenerics.at(&alias));
+    if (!imported(alias.span))
+      validateGenericEnvironment(alias.genericParameters, alias.constraints,
+                                 aliasGenerics.at(&alias));
   for (const auto &interface : module.interfaces)
-    if (std::none_of(interface.genericParameters.begin(),
+    if (!imported(interface.span) &&
+        std::none_of(interface.genericParameters.begin(),
                      interface.genericParameters.end(),
                      [](const auto &parameter) {
                        return parameter.kind == GenericParameterKind::Region;
@@ -115,6 +129,8 @@ void Checker::prepareGenerics() {
                                  interface.constraints,
                                  interfaceGenerics.at(&interface));
   for (auto &function : module.functions) {
+    if (imported(function.span))
+      continue;
     const GenericEnvironment *parent = nullptr;
     if (!function.owner.empty() && function.implementation < 0) {
       auto name = typeName(function.owner, function.span);
@@ -127,12 +143,14 @@ void Checker::prepareGenerics() {
     functionGenerics.emplace(&function, std::move(environment));
   }
   for (auto &function : module.functions) {
+    if (imported(function.span))
+      continue;
     if (function.implementation >= 0) {
       auto saved = genericEnvironment;
       genericEnvironment = &functionGenerics.at(&function);
       const auto &implementation =
           module.implementations[function.implementation];
-      genericEnvironment->names["Self"] =
+      genericEnvironment->names[nameKey("Self", function.lexicalContext)] =
           annotation(implementation.target, function.span);
       genericEnvironment = saved;
     }
@@ -150,7 +168,8 @@ void Checker::validateGenericEnvironment(
     if (constraint.region || constraint.bounds.empty() ||
         !environment.boundConstraints.insert(&constraint).second)
       continue;
-    auto found = environment.names.find(constraint.subject.name);
+    auto found = environment.names.find(
+        nameKey(constraint.subject.name, constraint.subject.context));
     auto subject = found == environment.names.end()
                        ? annotation(constraint.subject, constraint.span)
                        : found->second;
@@ -182,7 +201,8 @@ void Checker::validateGenericEnvironment(
   for (const auto &constraint : constraints) {
     if (!constraint.equality)
       continue;
-    auto found = environment.names.find(constraint.subject.name);
+    auto found = environment.names.find(
+        nameKey(constraint.subject.name, constraint.subject.context));
     auto left = found == environment.names.end()
                     ? annotation(constraint.subject, constraint.span)
                     : found->second;
@@ -213,7 +233,11 @@ void Checker::validateGenericEnvironment(
       continue;
     auto found = std::find_if(
         environment.parameters.begin(), environment.parameters.end(),
-        [&](Type type) { return checked.types->name(type) == parameter.name; });
+        [&](Type type) {
+          auto key = genericNames.find(type);
+          return key != genericNames.end() &&
+                 key->second == nameKey(parameter.name, parameter.context);
+        });
     if (found == environment.parameters.end())
       continue;
     Type value = Type::Unknown;
@@ -228,7 +252,8 @@ void Checker::validateGenericEnvironment(
       continue;
     environment.defaults.emplace(*found, value);
     auto dependencies = checked.types->typeParameters(value);
-    auto self = environment.names.find("Self");
+    auto self =
+        environment.names.find(nameKey("Self", environment.declarationSpan));
     bool dependsOnSelf = self != environment.names.end() &&
                          std::find(dependencies.begin(), dependencies.end(),
                                    self->second) != dependencies.end();
@@ -289,7 +314,8 @@ void Checker::propagateGenericBindings(const GenericEnvironment &environment,
           if (argument.binding.empty() || !argument.type ||
               argument.type->form != TypeForm::Named)
             continue;
-          auto target = environment.names.find(argument.type->name);
+          auto target = environment.names.find(
+              nameKey(argument.type->name, argument.type->context));
           if (target == environment.names.end())
             continue;
           auto open = std::find_if(
@@ -408,7 +434,14 @@ Type Checker::constantContext(const Node &node) {
   if (node.kind == Kind::Integer)
     return literal(node);
   if (node.kind == Kind::Name) {
-    if (auto storage = staticName(node.text, node.span))
+    if (genericEnvironment) {
+      auto found =
+          genericEnvironment->names.find(nameKey(node.text, node.context));
+      if (found != genericEnvironment->names.end() &&
+          checked.types->isConstant(found->second))
+        return checked.types->parameter(found->second).valueType;
+    }
+    if (auto storage = staticName(node.text, node.span, node.context))
       return checked.staticStorage[*storage].type;
     if (auto primitive = machineValue(node))
       if (facts(node).numeric && isInteger(inference.value(*primitive)))
@@ -416,12 +449,6 @@ Type Checker::constantContext(const Node &node) {
     if (node.text.find("::") != std::string::npos)
       if (auto associated = associatedConstant(node))
         return checked.types->parameter(*associated).valueType;
-    if (genericEnvironment) {
-      auto found = genericEnvironment->names.find(node.text);
-      if (found != genericEnvironment->names.end() &&
-          checked.types->isConstant(found->second))
-        return checked.types->parameter(found->second).valueType;
-    }
   }
   for (const auto &child : node.children) {
     auto context = constantContext(*child);
@@ -445,6 +472,13 @@ Type Checker::constantType(const Node &node, Type expected) {
     qualifyDottedPaths(const_cast<Node &>(node));
   if (needsEvaluator(node))
     return evaluatedConstant(node, expected);
+  if (node.kind == Kind::Name && genericEnvironment) {
+    auto found =
+        genericEnvironment->names.find(nameKey(node.text, node.context));
+    if (found != genericEnvironment->names.end() &&
+        checked.types->isConstant(found->second))
+      return found->second;
+  }
   if (node.kind == Kind::Name)
     if (auto primitive = machineValue(node))
       if (facts(node).numeric && isInteger(inference.value(*primitive))) {
@@ -452,7 +486,7 @@ Type Checker::constantType(const Node &node, Type expected) {
         return checked.types->constant(facts(node).type, *facts(node).numeric);
       }
   if (node.kind == Kind::Name)
-    if (auto storage = staticName(node.text, node.span)) {
+    if (auto storage = staticName(node.text, node.span, node.context)) {
       if (module.statics[*storage].mutableBinding) {
         error("constant", node.span,
               "required initialization cannot read mutable storage");
@@ -478,12 +512,6 @@ Type Checker::constantType(const Node &node, Type expected) {
       return *associated;
     if (reportedErrors != errorsBefore)
       return Type::Unknown;
-  }
-  if (node.kind == Kind::Name && genericEnvironment) {
-    auto found = genericEnvironment->names.find(node.text);
-    if (found != genericEnvironment->names.end() &&
-        checked.types->isConstant(found->second))
-      return found->second;
   }
   if (node.kind == Kind::Name && node.text.find("::") == std::string::npos) {
     auto errorsBefore = reportedErrors;
@@ -731,6 +759,82 @@ bool Checker::genericObligations(const GenericEnvironment &environment,
       }
   }
   genericEnvironment = caller;
+  for (const auto &[subject, bounds] : environment.bounds) {
+    if (checked.types->isParameter(subject))
+      continue;
+    for (const auto &bound : bounds) {
+      if (bound.name == "unsized" || bound.name == "?Sized")
+        continue;
+      genericEnvironment = const_cast<GenericEnvironment *>(&environment);
+      auto property = propertyBound(bound, environment.declarationSpan)
+                          .value_or(interfaces::Property::Interface);
+      if (property == interfaces::Property::Unpin) {
+        genericEnvironment = caller;
+        continue;
+      }
+      auto declared =
+          bound.form == TypeForm::Callable
+              ? callableAnnotation(bound, environment.declarationSpan, {})
+          : property == interfaces::Property::Interface
+              ? interfaceBound(bound, environment.declarationSpan, {}, subject)
+              : Type::Unknown;
+      genericEnvironment = caller;
+      if (obligationParameters) {
+        auto dependencies = checked.types->typeParameters(subject);
+        auto interfaceDependencies = checked.types->typeParameters(declared);
+        dependencies.insert(dependencies.end(), interfaceDependencies.begin(),
+                            interfaceDependencies.end());
+        bool selected = std::any_of(
+            dependencies.begin(), dependencies.end(), [&](Type parameter) {
+              return std::find(obligationParameters->begin(),
+                               obligationParameters->end(),
+                               parameter) != obligationParameters->end();
+            });
+        if (selected != obligationsOnly)
+          continue;
+      }
+      auto actual = normalizeGenericType(subject, bindings, span);
+      actual = checked.types->substituteRegions(actual, regions);
+      auto required = normalizeGenericType(declared, bindings, span);
+      required = checked.types->substituteRegions(required, regions);
+      if (bound.form == TypeForm::Callable) {
+        valid &= callableObligation(actual, required, span);
+        continue;
+      }
+      interfaces::Solver proof(*checked.types, *checked.interfaceData,
+                               diagnostics, interfaceAssumptions(),
+                               regionEnvironment());
+      if (caller)
+        proof.setEqualities(caller->equalities);
+      std::vector<RegionId> staticRegions;
+      if (call)
+        proof.collectStaticRegions(&staticRegions);
+      bool regional = checked.types->containsViews(declared) ||
+                      checked.types->containsViews(actual) ||
+                      checked.types->containsViews(required);
+      bool holds = proof.prove({actual, required, property}, span, false);
+      if (!holds && call && regional) {
+        interfaces::Solver shape(*checked.types, *checked.interfaceData,
+                                 diagnostics, interfaceAssumptions(), {}, true);
+        if (caller)
+          shape.setEqualities(caller->equalities);
+        holds = shape.prove({actual, required, property}, span, false);
+      }
+      if (holds) {
+        if (call && (regional || !staticRegions.empty()))
+          facts(*call).deferredInterfaceBounds.push_back(
+              {subject, declared, bound, property});
+        continue;
+      }
+      if (property == interfaces::Property::Interface)
+        valid &= interfaceObligation(actual, required, span);
+      else {
+        error("type", span,
+              "unsatisfied interface bound '" + displayPath(bound.name) + "'");
+        valid = false;
+      }
+    }
+  }
   auto saved = genericEnvironment;
   genericEnvironment = const_cast<GenericEnvironment *>(&environment);
   auto requirements = interfaceAssumptions();
@@ -764,7 +868,8 @@ std::optional<Type> Checker::genericAnnotation(const TypeSyntax &syntax,
   if (syntax.form != TypeForm::Named || syntax.nested)
     return std::nullopt;
   if (genericEnvironment) {
-    auto found = genericEnvironment->names.find(syntax.name);
+    auto found =
+        genericEnvironment->names.find(nameKey(syntax.name, syntax.context));
     if (found != genericEnvironment->names.end()) {
       if (!syntax.arguments.empty())
         error("type", span, "generic parameter cannot take type arguments");
@@ -779,7 +884,7 @@ std::optional<Type> Checker::genericAnnotation(const TypeSyntax &syntax,
                                                           : ParameterMode::Mut);
     }
   }
-  auto name = typeName(syntax.name, span, owner);
+  auto name = typeName(syntax.name, span, owner, syntax.context);
   for (const auto *candidate : productsNamed(name))
     if (const auto &product = *candidate;
         !productGenerics.at(&product).parameters.empty()) {
@@ -796,6 +901,7 @@ std::optional<Type> Checker::genericAnnotation(const TypeSyntax &syntax,
           GenericArgument argument;
           TypeSyntax source;
           source.name = parameter.name;
+          source.context = parameter.context;
           argument.type = std::make_shared<const TypeSyntax>(std::move(source));
           argument.span = span;
           argumentSyntax.push_back(std::move(argument));
@@ -965,15 +1071,22 @@ bool Checker::inferGeneric(Type pattern, Type actual,
   bool valid = true;
   for (std::size_t i = 0; i < a.size(); ++i)
     valid &= inferGeneric(a[i], b[i], bindings, span);
-  if (left.kind == AggregateKind::Array && left.arrayCount != Type::Unknown)
-    valid &= inferGeneric(
-        left.arrayCount,
-        right.arrayCount != Type::Unknown
-            ? right.arrayCount
-            : checked.types->constant(
-                  checked.types->parameter(left.arrayCount).valueType,
-                  right.fields.size()),
-        bindings, span);
+  if (left.kind == AggregateKind::Array && left.arrayCount != Type::Unknown) {
+    auto count = right.arrayCount;
+    if (auto length = checked.types->arrayLength(actual)) {
+      auto valueType = checked.types->parameter(left.arrayCount).valueType;
+      NumericLiteral value;
+      value.magnitude[0] = *length;
+      if (!integerLiteralFits(value, valueType, pointerBits())) {
+        error(
+            "type", span,
+            "inferred array length is outside the const parameter type range");
+        return false;
+      }
+      count = checked.types->constant(valueType, value);
+    }
+    valid &= inferGeneric(left.arrayCount, count, bindings, span);
+  }
   return valid;
 }
 } // namespace mettle

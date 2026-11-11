@@ -1,4 +1,3 @@
-// timeout: 180
 copy type P0 { a: i32; b: i64 }
 copy type P1 { a: i32; b: i64 }
 copy type P2 { a: i32; b: i64 }

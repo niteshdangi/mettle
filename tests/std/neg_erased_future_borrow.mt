@@ -1,4 +1,4 @@
-// expect-error: type
+// expect-error: region 16:18 borrowed source does not outlive the required region
 import alloc.future
 import core.future.{Context, Future, Poll}
 

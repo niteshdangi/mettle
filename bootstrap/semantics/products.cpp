@@ -10,11 +10,15 @@ void Checker::products() {
   for (const auto &product : module.products) {
     identities.push_back(
         typeNames.at(definitionName(product.span, product.name)));
-    checked.types->setProductLayout(identities.back(), productLayout(product));
+    if (!imported(product.span))
+      checked.types->setProductLayout(identities.back(),
+                                      productLayout(product));
   }
   std::vector<std::vector<Span>> fieldSpans(module.products.size());
   for (std::size_t i = 0; i < module.products.size(); ++i) {
     const auto &product = module.products[i];
+    if (imported(product.span))
+      continue;
     auto savedEnvironment = genericEnvironment;
     genericEnvironment = &productGenerics.at(&product);
     std::unordered_set<std::string> names;
@@ -96,6 +100,8 @@ void Checker::products() {
     structural.erase(type);
   };
   visit = [&](std::size_t index, unsigned depth, Span use) {
+    if (imported(module.products[index].span))
+      return;
     if (depth > limits::typeDepth) {
       error("limit", module.products[index].span,
             "product nesting limit exceeded");

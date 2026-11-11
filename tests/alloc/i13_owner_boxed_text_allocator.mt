@@ -23,7 +23,7 @@ extend AuditedAllocator implements package.core.clone.Clone {
     fn clone(): AuditedAllocator { AuditedAllocator(self.record) }
 }
 
-extend AuditedAllocator implements Allocator {
+unsafe extend AuditedAllocator implements Allocator {
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {
         unsafe {
             (*self.record).allocations += 1
@@ -50,7 +50,7 @@ extend AuditedAllocator implements Allocator {
         pointer
     }
 
-    mut fn deallocate(pointer: ptr<mut u8>, layout: Layout): Unit {
+    mut unsafe fn deallocate(pointer: ptr<mut u8>, layout: Layout): Unit {
         unsafe {
             if layout.size() != 0usize {
                 if (*self.record).active0 &&
@@ -69,14 +69,14 @@ extend AuditedAllocator implements Allocator {
             (*self.record).deallocations += 1
         }
         var global = Global()
-        global.deallocate(pointer, layout)
+        unsafe { global.deallocate(pointer, layout) }
     }
 
-    mut fn grow(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn grow(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
         throw AllocError(new_size, old.align())
     }
 
-    mut fn shrink(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn shrink(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
         throw AllocError(new_size, old.align())
     }
 }

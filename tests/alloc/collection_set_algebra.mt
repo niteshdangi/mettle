@@ -162,14 +162,17 @@ fn main(): i32 {
     let _s2 = drained_set.insert(7)
     {
         var drain = drained_set.drain()
-        match drain.next() {
-            present(value) => { if value != 6 { return 32 } },
+        let front = match drain.next() {
+            present(value) => value,
             none => { return 33 }
         }
+        if front != 6 && front != 7 { return 32 }
         match drain.next_back() {
-            present(value) => { if value != 7 { return 56 } },
+            present(value) => { if value != 13 - front { return 56 } },
             none => { return 57 }
         }
+        match drain.next() { present(_) => { return 58 }, none => {} }
+        match drain.next_back() { present(_) => { return 58 }, none => {} }
     }
     if !drained_set.is_empty() { return 34 }
 

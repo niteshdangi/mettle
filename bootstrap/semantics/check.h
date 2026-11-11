@@ -13,5 +13,6 @@ std::optional<CheckedModule>
 check(Module module, Diagnostics &diagnostics,
       std::shared_ptr<const resolution::Resolution> symbols,
       bool requireEntry = true, TargetFacts target = {},
-      NumericEvaluator numericEvaluator = nullptr);
+      NumericEvaluator numericEvaluator = nullptr,
+      std::shared_ptr<const ImportedDeclarations> imported = nullptr);
 } // namespace mettle

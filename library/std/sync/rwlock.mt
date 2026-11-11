@@ -153,7 +153,6 @@ extend<T, region r> WriteGuard<T, region r> implements Deref {
     fn deref(): read T from self { self.get() }
 }
 extend<T, region r> WriteGuard<T, region r> implements DerefMut {
-    type Target = T
     mut fn deref_mut(): mut T from self { self.get_mut() }
 }
 

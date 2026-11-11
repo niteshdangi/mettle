@@ -11,6 +11,7 @@ bool sameSignature(const CallableType &a, const CallableType &b) {
   if (a.variadic != b.variadic || a.targetFeatures != b.targetFeatures)
     return false;
   if (a.parameters.size() != b.parameters.size() || a.result != b.result ||
+      a.abiResult != b.abiResult || a.environmentMode != b.environmentMode ||
       a.error != b.error || a.mode != b.mode || a.unsafeCall != b.unsafeCall ||
       a.abi != b.abi || a.resultSources != b.resultSources ||
       a.resultFromEnvironment != b.resultFromEnvironment ||
@@ -180,8 +181,10 @@ bool TypeStore::constrainCallableParameter(
       !satisfiesCallable(contract, prior))
     return false;
   if (prior == Type::Unknown || satisfiesCallable(contract, prior)) {
+    auto erased = eraseRegions(contract);
     auto &stored = parameters.at(entries.at(type.index() - builtins).index);
     stored.callableConstraint = contract;
+    stored.erasedCallableConstraint = erased;
     stored.callableLocalParameters = std::move(localParameters);
   }
   return true;

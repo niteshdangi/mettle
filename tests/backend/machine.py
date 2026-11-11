@@ -4,10 +4,14 @@
 import argparse
 import hashlib
 import json
+import os
 import platform
 import re
-import subprocess
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import processes
 
 
 ARM64 = globals().get("TARGET_ARCH", platform.machine()).lower() in ("aarch64", "arm64")
@@ -433,6 +437,34 @@ extern "C" {
 fn main() { if unsafe { mettle_c_machine_vector_definition(inspect) } == 42 { 0 } else { 1 } }
 """,
     **({
+    "machine-target-wide-vector-aggregate-c-abi": """
+@layout(C) copy type Wide { value: core.arch.x86_64.__m256i }
+@layout(C) copy type ScalarFloat { value: f64 }
+@target_feature("avx")
+unsafe extern "C" fn mettle_c_machine_wide_aggregate(value: Wide): Wide;
+@target_feature("avx")
+unsafe extern "C" fn mettle_c_machine_wide_callback(value: Wide): Wide;
+@target_feature("avx")
+unsafe extern "C" fn mettle_c_machine_wide_variadic(count: i32, ...): f64;
+@export_name("mettle_wide_aggregate_identity")
+@target_feature("avx")
+unsafe extern "C" fn identity(value: Wide): Wide { value }
+fn main() {
+    if is_x86_feature_detected!("avx") {
+        let value = Wide(unsafe { core.arch.x86_64._mm256_set1_epi32(41) })
+        let next = unsafe { mettle_c_machine_wide_aggregate(value) }
+        let next_lanes = unsafe { core.mem.transmute<[i32;8]>(next.value) }
+        if next_lanes[0] != 42 || next_lanes[7] != 42 { return 1 }
+        let result = unsafe { mettle_c_machine_wide_callback(next) }
+        let lanes = unsafe { core.mem.transmute<[i32;8]>(result.value) }
+        if lanes[0] != 42 || lanes[7] != 42 { return 2 }
+        let small = Wide(unsafe { core.arch.x86_64._mm256_set1_epi32(1) })
+        let variadic = unsafe { mettle_c_machine_wide_variadic(
+            7, small, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, ScalarFloat(13.0)) }
+        if variadic == 42.0 { 0 } else { 3 }
+    } else { 0 }
+}
+""",
     "machine-target-guarded-wide-vector-c-physical-abi": """
 @target_feature("avx")
 unsafe extern "C" fn mettle_c_machine_vector256(
@@ -637,6 +669,7 @@ copy type Large { first: i64; second: i64; third: i64 }
 copy type Packed { first: u8; second: i32 }
 @export_name("mettle_export_pair")
 extern "C" fn exported_pair(value: Pair): Pair {
+    if value.first != 19 || value.second != 22 { return Pair(0,0) }
     Pair(value.first + 1,value.second + 1)
 }
 extern "C" {
@@ -1210,6 +1243,46 @@ fn main() {
 } if DARWIN_ARM64 else {})
 
 SOURCES = {
+    "c-nested-packed-aggregate-absolute-field-alignment": PRELUDE + """
+@layout(C)
+@packed(1)
+copy type PackedInner { value:u64 }
+@layout(C)
+copy type PackedOuter { prefix:u8; payload:PackedInner }
+@layout(C)
+@packed(1)
+copy type OffsetInner { pad:u8; value:u64 }
+@layout(C)
+copy type RepairedOuter { prefix:[u8;7]; payload:OffsetInner }
+unsafe extern "C" fn nested_increment(value:PackedOuter):PackedOuter {
+    PackedOuter(value.prefix,PackedInner(value.payload.value + 1u64))
+}
+extern "C" {
+    unsafe fn mettle_c_nested_packed(value:PackedOuter):PackedOuter;
+    unsafe fn mettle_c_nested_packed_callback(
+        callback:unsafe extern "C" fn(PackedOuter):PackedOuter,
+        value:PackedOuter):PackedOuter;
+    unsafe fn mettle_c_packed_inner(value:PackedInner):PackedInner;
+    unsafe fn mettle_c_repaired_packed(value:RepairedOuter):RepairedOuter;
+}
+fn main() {
+    let input = PackedOuter(7u8,PackedInner(41u64))
+    let direct = unsafe { mettle_c_nested_packed(input) }
+    let callback = unsafe { mettle_c_nested_packed_callback(nested_increment,input) }
+    let inner = unsafe { mettle_c_packed_inner(PackedInner(41u64)) }
+    let repaired = unsafe { mettle_c_repaired_packed(
+        RepairedOuter([1u8,2u8,3u8,4u8,5u8,6u8,7u8],OffsetInner(9u8,41u64))) }
+    if input.prefix == 7u8 && input.payload.value == 41u64 &&
+       direct.prefix == 7u8 && direct.payload.value == 42u64 &&
+       callback.prefix == 7u8 && callback.payload.value == 42u64 &&
+       inner.value == 42u64 &&
+       repaired.prefix[0] == 1u8 && repaired.prefix[1] == 2u8 &&
+       repaired.prefix[2] == 3u8 && repaired.prefix[3] == 4u8 &&
+       repaired.prefix[4] == 5u8 && repaired.prefix[5] == 6u8 &&
+       repaired.prefix[6] == 7u8 && repaired.payload.pad == 9u8 &&
+       repaired.payload.value == 42u64 { 0 } else { 1 }
+}
+""",
     "review-aligned-wide-aggregate-stack-and-varargs": PRELUDE + """
 @layout(C)
 copy type AlignedWide { value:i128 }
@@ -1387,10 +1460,10 @@ unsafe extern "C" fn inspect(count: i32,args: ...): i32 {
     let large = args.arg<Large>()
     let packed = args.arg<Packed>()
     if mixed.first == 20.0f64 && mixed.second == 22 &&
-       integers == 55i64 && pair.first + pair.second == 42 &&
-       reals == 55.0f64 && floats.first + floats.second == 42.0f32 &&
-       large.first + large.second + large.third == 42i64 &&
-       packed.first as i32 + packed.second == 42 { 42 } else { -1 }
+       integers == 55i64 && pair.first == 20 && pair.second == 22 &&
+       reals == 55.0f64 && floats.first == 20.0f32 && floats.second == 22.0f32 &&
+       large.first == 10i64 && large.second == 12i64 && large.third == 20i64 &&
+       packed.first == 20u8 && packed.second == 22 { 42 } else { -1 }
 }
 extern "C" {
     unsafe fn mettle_c_variadic_definition_aggregates(
@@ -1609,22 +1682,22 @@ fn main() {
 fn main() {
     var counter = 40
     let context = core.ptr.from_mut(counter).cast<Unit>()
-    let pair = unsafe { mettle_c_pair(Pair(20,20)) }
-    let exported = unsafe { mettle_c_call_export(Pair(20,20)) }
-    let floats = unsafe { mettle_c_floats(Floats(20.0f32,20.0f32)) }
-    let mixed = unsafe { mettle_c_mixed(Mixed(20.0f64,20)) }
+    let pair = unsafe { mettle_c_pair(Pair(19,22)) }
+    let exported = unsafe { mettle_c_call_export(Pair(19,22)) }
+    let floats = unsafe { mettle_c_floats(Floats(19.0f32,22.0f32)) }
+    let mixed = unsafe { mettle_c_mixed(Mixed(19.0f64,22)) }
     let large = unsafe { mettle_c_large(Large(10i64,11i64,18i64)) }
-    let packed = unsafe { mettle_c_packed(Packed(20u8,20)) }
+    let packed = unsafe { mettle_c_packed(Packed(19u8,22)) }
     let called = unsafe { mettle_c_callback(callback,context,2) }
     let integer = unsafe { mettle_c_integer(-2i8,255u8,-211i64) }
     let size = unsafe { mettle_c_pair_size() }
     let offset = unsafe { mettle_c_packed_offset() }
-    if pair.first + pair.second == 42 &&
-       exported.first + exported.second == 42 &&
-       floats.first + floats.second == 42.0f32 &&
-       mixed.first + mixed.second as f64 == 42.0f64 &&
-       large.first + large.second + large.third == 42i64 &&
-       packed.first as i32 + packed.second == 42 &&
+    if pair.first == 20 && pair.second == 23 &&
+       exported.first == 20 && exported.second == 23 &&
+       floats.first == 20.0f32 && floats.second == 23.0f32 &&
+       mixed.first == 20.0f64 && mixed.second == 23 &&
+       large.first == 11i64 && large.second == 12i64 && large.third == 19i64 &&
+       packed.first == 20u8 && packed.second == 23 &&
        called == 42 && counter == 42 && integer == 42i64 &&
        size == core.mem.size_of<Pair>() &&
        offset == 1usize && core.mem.size_of<Packed>() == 5usize { 0 } else { 1 }
@@ -1717,6 +1790,50 @@ def functions(text):
                       re.M | re.S)
 
 
+def large_volatile_accesses(parameters, body):
+    pointers = lambda text: re.findall(r"\bptr\b[^,%\n]*?(%[-\w.]+)", text)
+    arguments = pointers(parameters)
+    if len(arguments) != 1:
+        raise AssertionError("large volatile probe requires one pointer parameter")
+    lines = body.splitlines()
+    slots = set()
+    for line in lines:
+        assigned = re.match(r"\s*(%[-\w.]+) = (getelementptr .*)", line)
+        if assigned and pointers(assigned[2]) == arguments and re.search(
+                r", i32 0, i32 0\s*$", assigned[2]):
+            slots.add(assigned[1])
+    aliases = set() if slots else {arguments[0]}
+    while True:
+        before = (len(aliases), len(slots))
+        for line in lines:
+            references = pointers(line)
+            assigned = re.match(r"\s*(%[-\w.]+) = (.*)", line)
+            if re.search(r"\bstore ptr\b", line) and len(references) == 2:
+                if references[0] in aliases:
+                    slots.add(references[1])
+            if assigned and references:
+                value, operation = assigned.groups()
+                if (operation.startswith("load ptr") and references[-1] in slots) or (
+                        operation.startswith(("getelementptr", "bitcast", "addrspacecast")) and
+                        references[0] in aliases):
+                    aliases.add(value)
+        if before == (len(aliases), len(slots)):
+            break
+    reads = writes = False
+    for line in lines:
+        references = pointers(line)
+        if not references:
+            continue
+        reads |= "load volatile" in line and references[-1] in aliases
+        writes |= "store volatile" in line and references[-1] in aliases
+        if re.search(r"@llvm\.mem(?:cpy|move|set)[^(]*\(", line) and re.search(
+                r"\bi1 true\s*\)", line):
+            writes |= references[0] in aliases
+            if "@llvm.memset" not in line and len(references) >= 2:
+                reads |= references[1] in aliases
+    return reads, writes
+
+
 def check_ir_shape(run, args, directory, evidence):
     def emit_llvm(name, source, *extra):
         path = directory / (name + ".mt")
@@ -1778,6 +1895,21 @@ def check_ir_shape(run, args, directory, evidence):
     evidence["cases"].append({"name": "volatile-accesses-remain-nonsynchronizing",
                               "phase": "backend"})
 
+    large_path = Path(__file__).resolve().parents[1] / "source" / "run" / "machine-large-volatile-pointer-accesses.mt"
+    for profile in ("debug", "release"):
+        large = emit_llvm("shape-large-volatile-" + profile, large_path.read_text(),
+                          "--profile", profile)
+        bodies = [(parameters, body) for name, parameters, body in functions(large)
+                  if name.strip('@"') == "mettle.abi.volatile_large.body"]
+        if len(bodies) != 1 or large_volatile_accesses(*bodies[0]) != (True, True):
+            raise AssertionError("Large volatile write or unused read was lost:\n" + large)
+        if re.search(r"\b(?:atomicrmw|cmpxchg|fence)\b|\b(?:load|store)\s+atomic\b",
+                     bodies[0][1]):
+            raise AssertionError("Large volatile accesses became synchronizing:\n" + large)
+        evidence["cases"].append({"name": "large-volatile-write-and-unused-read",
+                                  "phase": "backend", "profile": profile,
+                                  "source_sha256": digest(large_path)})
+
     # The module data layout is the target machine's, not a hand-written one.
     empty = directory / "empty.c"
     empty.write_text("")
@@ -1797,6 +1929,39 @@ def check_ir_shape(run, args, directory, evidence):
 
 
 def check_driver_outputs(run, args, directory, evidence):
+    linkage = directory / "explicit-library-linkage"
+    linkage.mkdir(exist_ok=True)
+    companion = linkage / "probe.c"
+    companion.write_text("int mettle_linkage_probe(int value) { return value + 2; }\n")
+    obj = linkage / "probe.o"
+    archive = linkage / "libmettle_linkage_probe.a"
+    run([args.cxx.with_name("clang"), "-std=c11", "-c", companion, "-o", obj])
+    run([args.cxx.with_name("llvm-ar"), "rcs", archive, obj])
+    search = {"LIBRARY_PATH": os.pathsep.join(filter(None, (
+        str(linkage), os.environ.get("LIBRARY_PATH"))))}
+    declaration = ('extern "C" { unsafe fn mettle_linkage_probe(value:i32):i32; }\n'
+                   'fn main():i32 { if unsafe { mettle_linkage_probe(40) } == 42 '
+                   '{ 0 } else { 1 } }\n')
+    source = linkage / "main.mt"
+    for profile in ("debug", "release"):
+        output = linkage / ("program-" + profile)
+        source.write_text('@link("mettle_linkage_probe")\n' + declaration)
+        run([args.compiler, "build", source, "--profile", profile, "-o", output],
+            environment=search)
+        run([output])
+        source.write_text(declaration)
+        output.write_bytes(b"preserve linkage output")
+        result = run([args.compiler, "build", source, "--profile", profile,
+                      "-o", output], expected=1, environment=search)
+        if ("error[link]" not in result.stderr or
+                "mettle_linkage_probe" not in result.stderr or
+                output.read_bytes() != b"preserve linkage output"):
+            raise AssertionError("Missing @link did not preserve the intended link failure:\n" +
+                                 result.stderr)
+        evidence["cases"].append({"name": "explicit-library-linkage-and-missing-link-control",
+                                  "phase": "link", "profile": profile,
+                                  "archive_sha256": digest(archive)})
+
     path = directory / "driver-output.mt"
     path.write_text(TRIVIAL_SOURCE)
     for emission in ("executable", "object", "llvm", "ir"):
@@ -1848,6 +2013,14 @@ def check_driver_outputs(run, args, directory, evidence):
                                   "phase": "link"})
 
 
+SOURCES["c-memory-represented-aggregate-snapshots"] = (
+    Path(__file__).with_name("foreign_storage.mt").read_text())
+
+if platform.system() == "Linux":
+    SOURCES["heap-sorted-no-global-allocation"] = (
+        Path(__file__).with_name("heap_sorted_no_global_allocation.mt").read_text())
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("compiler", type=Path)
@@ -1869,12 +2042,14 @@ def main():
                 "callbacks_sha256": digest(args.callbacks),
                 "commands": [], "cases": []}
 
-    def run(command, expected=0):
-        result = subprocess.run(list(map(str, command)), text=True, capture_output=True,
-                                timeout=60)
+    def run(command, expected=0, environment=None):
+        result = processes.run(list(map(str, command)), text=True, capture_output=True,
+                                env=None if environment is None else {**os.environ, **environment})
         evidence["commands"].append({"command": list(map(str, command)),
                                      "exit_status": result.returncode,
                                      "stdout": result.stdout, "stderr": result.stderr})
+        if environment is not None:
+            evidence["commands"][-1]["environment_overrides"] = environment
         if result.returncode != expected:
             raise AssertionError(f"{command!r}: exit {result.returncode}\n"
                                  f"{result.stdout}{result.stderr}")
@@ -1908,10 +2083,14 @@ def main():
                 libraries = [
                     darwin_callbacks_object, args.callbacks, args.runtime
                 ]
-            if name == "machine-target-guarded-wide-vector-c-physical-abi":
+            if name in ("machine-target-guarded-wide-vector-c-physical-abi",
+                        "machine-target-wide-vector-aggregate-c-abi"):
                 vector_object = directory / "machine_vectors.o"
+                fixture = ("machine_wide_aggregate.c"
+                           if name == "machine-target-wide-vector-aggregate-c-abi"
+                           else "machine_vectors.c")
                 command = [args.cxx.with_name("clang"), "-std=c11", "-mavx",
-                           "-c", Path(__file__).with_name("machine_vectors.c"),
+                           "-c", Path(__file__).with_name(fixture),
                            "-o", vector_object]
                 if args.sysroot:
                     command.append("--sysroot=" + args.sysroot)
@@ -1919,6 +2098,30 @@ def main():
                     command.append("-fsanitize=address,undefined")
                 run(command)
                 libraries.insert(0, vector_object)
+            if name == "c-memory-represented-aggregate-snapshots":
+                storage_object = directory / "foreign_storage.o"
+                command = [args.cxx.with_name("clang"), "-std=c11",
+                           "-Wall", "-Wextra", "-Wpedantic", "-Werror",
+                           "-c", Path(__file__).with_name("foreign_storage.c"),
+                           "-o", storage_object]
+                if args.sysroot:
+                    command.append("--sysroot=" + args.sysroot)
+                if args.sanitizers:
+                    command.append("-fsanitize=address,undefined")
+                run(command)
+                libraries.insert(0, storage_object)
+            if name == "heap-sorted-no-global-allocation":
+                allocation_object = directory / "heap_sorted_no_global_allocation.o"
+                command = [args.cxx.with_name("clang"), "-std=c11",
+                           "-Wall", "-Wextra", "-Wpedantic", "-Werror",
+                           "-c", Path(__file__).with_name("heap_sorted_no_global_allocation.c"),
+                           "-o", allocation_object]
+                if args.sysroot:
+                    command.append("--sysroot=" + args.sysroot)
+                if args.sanitizers:
+                    command.append("-fsanitize=address,undefined")
+                run(command)
+                libraries.insert(0, allocation_object)
             for profile in ("debug", "release"):
                 obj = directory / (name + "-" + profile + ".o")
                 program = directory / (name + "-" + profile)
@@ -1949,6 +2152,9 @@ def main():
                             "Volatile callback was lowered as synchronization:\n" +
                             instructions)
                 command = [args.cxx, obj, *libraries, "-o", program]
+                if name == "heap-sorted-no-global-allocation":
+                    command.extend(["-Wl,--wrap=mettle_rt_alloc",
+                                    "-Wl,--wrap=mettle_rt_realloc"])
                 command.extend(args.link_arg)
                 if args.sysroot:
                     command.append("--sysroot=" + args.sysroot)
@@ -1967,6 +2173,14 @@ def main():
                     case["c_fixture_sha256"] = digest(
                         Path(__file__).with_name("machine_callbacks.c"))
                     case["c_object_sha256"] = digest(darwin_callbacks_object)
+                if name == "c-memory-represented-aggregate-snapshots":
+                    case["c_fixture_sha256"] = digest(
+                        Path(__file__).with_name("foreign_storage.c"))
+                    case["c_object_sha256"] = digest(storage_object)
+                if name == "heap-sorted-no-global-allocation":
+                    case["c_fixture_sha256"] = digest(
+                        Path(__file__).with_name("heap_sorted_no_global_allocation.c"))
+                    case["c_object_sha256"] = digest(allocation_object)
                 evidence["cases"].append(case)
         for name, source in MACHINE_REJECTIONS.items():
             if args.case or not name.startswith(args.case_prefix):
@@ -2017,6 +2231,8 @@ def main():
                                           "program_sha256": digest(program),
                                           "undefined_symbols": []})
         if args.case or args.case_prefix:
+            if not evidence["cases"]:
+                raise ValueError("no machine cases selected")
             evidence["status"] = "passed"
             profiles = sum("profile" in case for case in evidence["cases"])
             rejected = len(evidence["cases"]) - profiles
@@ -2038,8 +2254,7 @@ def main():
             run([args.compiler, "build", path, "--freestanding", "--emit", "object",
                  "-o", obj, "--profile", profile])
             command = [args.cxx.with_name("llvm-nm"), "--undefined-only", obj]
-            result = subprocess.run(list(map(str, command)), text=True, capture_output=True,
-                                    timeout=30, check=True)
+            result = processes.run(list(map(str, command)), text=True, capture_output=True, check=True)
             if result.stdout.strip():
                 raise AssertionError("Freestanding core has undeclared runtime dependencies:\n" +
                                      result.stdout)
@@ -2100,6 +2315,10 @@ fn invoke(callback: unsafe extern "C" fn(): i32): i32 {
                                   "source_sha256": digest(path),
                                   "phase": "feature"})
         evidence["status"] = "passed"
+    except BaseException as error:
+        evidence["status"] = "failed"
+        evidence["error"] = str(error)
+        raise
     finally:
         (directory / "evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
     round_trips = sum("profile" in case for case in evidence["cases"])

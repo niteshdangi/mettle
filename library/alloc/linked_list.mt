@@ -20,8 +20,21 @@ pub type LinkedList<T, A: Allocator = Global> {
     len: usize
     a: A
     drop {
-        while self.len != 0usize {
-            let v = self.pop_front()
+        var remaining = LinkedDrop(core.ptr.from_mut(self))
+        remaining.run()
+    }
+}
+
+// Safety: list is exclusive and live; pop_front unlinks each owner before allocator/destructor callbacks.
+type LinkedDrop<T, A: Allocator> {
+    list: ptr<mut LinkedList<T, A>>
+    drop { self.run() }
+}
+
+extend<T, A: Allocator> LinkedDrop<T, A> {
+    mut fn run(): Unit {
+        while unsafe { (*self.list).len } != 0usize {
+            let value = unsafe { (*self.list).pop_front() }
         }
     }
 }

@@ -63,8 +63,8 @@ review obligations; CMake dependencies alone do not prove include isolation.
   (`limits::typeNameBytes`) is reported as `error[limit]`, so polymorphic
   recursion that doubles a type each level stops before the nesting limit's
   exponential cost; this is also an implementation limit.
-  At most 100 diagnostics are printed, followed by an
-  "N additional diagnostics suppressed" summary.
+  Every distinct diagnostic is printed; an identical repeated report is
+  dropped.
 - Parsed AST nodes carry syntax, not inference variables or resolved slots.
   Checking owns separate read-only facts; CFG owns no syntax pointers.
 - Backend emission accepts only the pipeline's verified program. Structural

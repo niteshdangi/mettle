@@ -14,9 +14,12 @@ Checker::vocabularyHelp(std::string_view spelling) const {
   return {};
 }
 
-Checker::Binding Checker::lookup(const std::string &name, Span span) {
+Checker::Binding Checker::lookup(const std::string &name, Span span,
+                                 std::optional<SyntaxContextPtr> context) {
+  auto lexical = context ? *context : diagnostics.syntaxContext(span);
+  auto key = nameKey(name, lexical);
   for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-    auto found = it->find(name);
+    auto found = it->find(key);
     if (found != it->end()) {
       auto binding = found->second;
       auto sourceScope = static_cast<std::size_t>(
@@ -41,16 +44,17 @@ Checker::Binding Checker::lookup(const std::string &name, Span span) {
           }
           slot = static_cast<int>(locals.size());
           locals.push_back({name, Type::Unknown, true, span});
+          locals.back().context = lexical;
           localVariables[closure].push_back(binding.variable);
           captures.push_back({binding, slot, span});
         }
         binding = {binding.variable, slot, closure};
-        scopes[boundary][name] = binding;
+        scopes[boundary][key] = binding;
       }
       return binding;
     }
   }
-  if (auto storage = staticName(name, span)) {
+  if (auto storage = staticName(name, span, context)) {
     for (std::size_t i = 0; i < facts(*current).locals.size(); ++i) {
       const auto &local = facts(*current).locals[i];
       if (local.storage != StorageDuration::Static ||
@@ -59,6 +63,9 @@ Checker::Binding Checker::lookup(const std::string &name, Span span) {
         continue;
       if (local.mutableBinding)
         requireUnsafe(span);
+      if (checked.staticStorage[*storage].type == Type::Unknown)
+        inference.equal(localVariables[current][i],
+                        inference.fresh(staticType(*storage)), span);
       return {localVariables[current][i], static_cast<int>(i), current};
     }
   }
@@ -79,14 +86,13 @@ bool Checker::pathContainer(std::string_view spelling, const Function *function,
       return true;
     for (const auto &parameter : function->genericParameters)
       if (parameter.kind == GenericParameterKind::Type &&
-          parameter.name == spelling)
+          nameKey(parameter.name, parameter.context) == nameKey(spelling, span))
         return true;
   }
   if (!typeName(spelling, span, owner).empty())
     return true;
   return checked.symbols
-      ->lookup(checked.symbols->moduleOf(span), spelling,
-               resolution::Namespace::Module, span)
+      ->lookup(nameModule(span), spelling, resolution::Namespace::Module, span)
       .has_value();
 }
 
@@ -97,8 +103,7 @@ bool Checker::pathContainer(std::string_view spelling, const Function *function,
 // qualified `Name` (carrying per-segment generic arguments) and any remaining
 // links stay ordinary field or method accesses. A value binding therefore
 // shadows a type or module of the same name.
-void Checker::qualifyDottedPath(Node &node,
-                                const std::set<std::string> &lexical,
+void Checker::qualifyDottedPath(Node &node, const std::set<NameKey> &lexical,
                                 const Function *function) {
   if (node.kind != Kind::Field || node.flag || node.children.size() != 1)
     return;
@@ -113,7 +118,7 @@ void Checker::qualifyDottedPath(Node &node,
       !root->ownerGenericArguments.empty() ||
       root->text.find("::") != std::string::npos ||
       (root->text == "self" && function && !function->owner.empty()) ||
-      lexical.contains(root->text))
+      lexical.contains(nameKey(root->text, root->context)))
     return;
   std::reverse(chain.begin(), chain.end());
   // Segment 0 is the root; segment i is chain[i - 1].
@@ -150,6 +155,7 @@ void Checker::qualifyDottedPath(Node &node,
   target.text = std::move(spelling);
   target.genericArguments = std::move(last);
   target.ownerGenericArguments = std::move(owner);
+  target.context = root->context;
   target.children.clear();
 }
 // Constant initializers have no function context: only module-level names and
@@ -160,15 +166,19 @@ void Checker::qualifyDottedPaths(Node &node) {
     qualifyDottedPaths(*child);
 }
 int Checker::local(std::string name, int variable, bool mutableBinding,
-                   Span span) {
+                   Span span, std::optional<SyntaxContextPtr> context) {
   if (facts(*current).locals.size() >= limits::locals) {
     error("limit", span, "local binding limit exceeded");
     return -1;
   }
   int slot = static_cast<int>(facts(*current).locals.size());
   facts(*current).locals.push_back({name, Type::Unknown, mutableBinding, span});
+  facts(*current).locals.back().context =
+      context ? *context : diagnostics.syntaxContext(span);
   localVariables[current].push_back(variable);
-  scopes.back()[name] = {variable, slot, current};
+  scopes.back()[nameKey(name, context ? *context
+                                      : diagnostics.syntaxContext(span))] = {
+      variable, slot, current};
   return slot;
 }
 } // namespace mettle

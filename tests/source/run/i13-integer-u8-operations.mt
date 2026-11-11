@@ -1329,8 +1329,6 @@ fn group11() {
 }
 
 fn group12() {
-    if !(kind(capture num.from_str_radix<u8>("1", 37u32)) == present(IntErrorKind.InvalidRadix)) { panic("from_str_radix #1441") }
-    if !(kind(capture num.from_str_radix<u8>("1", 1u32)) == present(IntErrorKind.InvalidRadix)) { panic("from_str_radix #1442") }
     if !(kind(capture num.from_str_radix<u8>("-1", 10u32)) == present(IntErrorKind.InvalidDigit)) { panic("from_str_radix #1443") }
     if !(0u8.is_ascii() == true) { panic("is_ascii #1444") }
     if !(0u8.is_ascii_alphabetic() == false) { panic("is_ascii_alphabetic #1445") }

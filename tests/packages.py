@@ -4,13 +4,17 @@
 Usage: packages.py MettleExecutable EvidenceDir FixturesDir
 """
 
+import hashlib
 import json
 import os
 import re
+import select
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import processes
 
 mettle, evidence, fixtures = (Path(a).resolve() for a in sys.argv[1:4])
 
@@ -23,8 +27,8 @@ def reset():
 def invoke(arguments, expected=0, contains=()):
     # Every case owns its build cache so runs never touch the user's.
     environment = {**os.environ, "METTLE_CACHE_DIR": str(evidence / "cache")}
-    result = subprocess.run([str(mettle), *map(str, arguments)], text=True,
-                            capture_output=True, timeout=600, env=environment)
+    result = processes.run([str(mettle), *map(str, arguments)], text=True,
+                            capture_output=True, env=environment)
     text = result.stdout + result.stderr
     if result.returncode != expected:
         raise AssertionError(f"{arguments}: expected {expected}, got "
@@ -37,8 +41,8 @@ def invoke(arguments, expected=0, contains=()):
 
 def invoke_json(arguments, expected=0):
     environment = {**os.environ, "METTLE_CACHE_DIR": str(evidence / "cache")}
-    result = subprocess.run([str(mettle), *map(str, arguments)], text=True,
-                            capture_output=True, timeout=600, env=environment)
+    result = processes.run([str(mettle), *map(str, arguments)], text=True,
+                            capture_output=True, env=environment)
     if result.returncode != expected:
         raise AssertionError(f"{arguments}: expected {expected}, got "
                              f"{result.returncode}\n"
@@ -52,7 +56,7 @@ def build_and_run(directory, *extra):
     output = evidence / "out.bin"
     output.unlink(missing_ok=True)
     invoke(["build", directory, "-o", output, *extra])
-    result = subprocess.run([str(output)], timeout=60)
+    result = processes.run([str(output)])
     assert result.returncode == 0, f"{directory}: program exited {result.returncode}"
 
 
@@ -73,7 +77,7 @@ def last_cache_event(text):
 
 
 def exit_code(program):
-    return subprocess.run([str(program)], timeout=60).returncode
+    return processes.run([str(program)]).returncode
 
 
 def cache_files(kind):
@@ -220,8 +224,8 @@ def library_entries():
         invoke(["build", app, "-o", prefix, "--profile", profile])
         for suffix in (".a", shared_suffix):
             executable = evidence / ("caller-" + profile + suffix)
-            result = subprocess.run([cxx, "-fuse-ld=lld", str(caller), str(prefix) + suffix,
-                                     "-Wl,-rpath," + str(prefix.parent), "-pthread", "-o", str(executable)], capture_output=True, text=True, timeout=60)
+            result = processes.run([cxx, "-fuse-ld=lld", str(caller), str(prefix) + suffix,
+                                     "-Wl,-rpath," + str(prefix.parent), "-pthread", "-o", str(executable)], capture_output=True, text=True)
             assert result.returncode == 0, result.stderr
             assert exit_code(executable) == 0
         assert 'define i32 @main(' not in Path(str(prefix) + ".ll").read_text()
@@ -235,8 +239,8 @@ def library_entries():
     manifest.write_text(original)
     freestanding = evidence / "freestanding.a"
     invoke(["build", app, "-o", freestanding, "--freestanding", "--cc", "missing-mettle-linker"])
-    result = subprocess.run([cxx, "-fuse-ld=lld", str(caller), str(freestanding), "-o", str(evidence / "freestanding")],
-                            capture_output=True, text=True, timeout=60)
+    result = processes.run([cxx, "-fuse-ld=lld", str(caller), str(freestanding), "-o", str(evidence / "freestanding")],
+                            capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert exit_code(evidence / "freestanding") == 0
     prefix = evidence / "preserved"
@@ -293,7 +297,7 @@ def lock_corruption():
     (app / "lock.mettle").write_text(lock + "broken {\n")
     invoke(["check", app], 1, "lock.mettle")
     (app / "lock.mettle").write_text(lock)
-    edit(app / "lock.mettle", 'version: 2\n', 'version: 99\n')
+    edit(app / "lock.mettle", 'version: 3\n', 'version: 99\n')
     invoke(["check", app], 1, "lock.mettle")
 
 
@@ -327,6 +331,23 @@ def version_conflict():
     (app / "lock.mettle").unlink()
 
 
+def wildcard_version_bounds():
+    app = evidence / "wildcard-app"
+    (app / "src").mkdir(parents=True)
+    (app / "src/main.mt").write_text("fn main(): i32 { 0 }\n")
+    release = packages("registry/util/1.2.0")
+    shutil.copytree(packages("registry/util/1.3.0"), release)
+    edit(release / "package.mettle", "1.3.0", "1.2.0")
+    manifest = app / "package.mettle"
+    for requirement, expected in (("1.2.*", "1.2.0"), ("1.2.x", "1.2.0"),
+                                  ("1.*", "1.3.0"), ("1.2", "1.3.0")):
+        manifest.write_text(
+            'name: "wildcard-app"\nversion: "0.1.0"\n'
+            'registry { path: "../registry" }\n'
+            f'dependencies {{ util: "{requirement}" }}\n')
+        (app / "lock.mettle").unlink(missing_ok=True)
+        invoke(["check", app])
+        assert f'version: "{expected}"' in lock_of(app), lock_of(app)
 def backtracking():
     app = packages("resolution/app")
     build_and_run(app)
@@ -366,8 +387,7 @@ def coexisting_versions():
     app = packages("coexisting-versions/app")
     output = evidence / "out.bin"
     invoke(["build", app, "-o", output])
-    result = subprocess.run([str(output)], capture_output=True, text=True,
-                            timeout=60)
+    result = processes.run([str(output)], capture_output=True, text=True)
     assert result.returncode == 0, (
         f"{app}: program exited {result.returncode}")
     assert result.stdout == "alpha-1\nalpha-2\n", result.stdout
@@ -384,26 +404,35 @@ def git_source():
     (repository / "src").mkdir()
     (app / "src").mkdir()
     (repository / "package.mettle").write_text(
-        'name: "gitlib"\nversion: "0.1.0"\nkind: "library"\n')
+        'name: "gitlib"\nversion: "0.1.0"\nkind: "library"\n'
+        'dependencies { helper { path: "helper" } }\n')
     (repository / "src/main.mt").write_text("pub fn value(): i32 { 7 }\n")
+    (repository / "helper/src").mkdir(parents=True)
+    (repository / "helper/package.mettle").write_text(
+        'name: "helper"\nversion: "0.1.0"\nkind: "library"\n')
+    (repository / "helper/src/main.mt").write_text("pub fn value(): i32 { 1 }\n")
     (app / "src/main.mt").write_text(
         "fn main(): i32 { gitlib.value() - 7 }\n")
-    subprocess.run(["git", "init", repository], check=True,
+    processes.run(["git", "init", repository], check=True,
                    capture_output=True, text=True)
-    subprocess.run(["git", "-C", repository, "checkout", "-b", "main"],
+    processes.run(["git", "-C", repository, "checkout", "-b", "main"],
                    check=True, capture_output=True, text=True)
-    subprocess.run(["git", "-C", repository, "config", "user.name",
+    processes.run(["git", "-C", repository, "config", "user.name",
                     "Mettle package test"], check=True, capture_output=True)
-    subprocess.run(["git", "-C", repository, "config", "user.email",
+    processes.run(["git", "-C", repository, "config", "user.email",
                     "packages-test@example.invalid"], check=True,
                    capture_output=True)
-    subprocess.run(["git", "-C", repository, "add", "package.mettle",
-                    "src/main.mt"], check=True, capture_output=True)
-    subprocess.run(["git", "-C", repository, "commit", "-m", "first"],
+    processes.run(["git", "-C", repository, "add", "package.mettle",
+                    "src/main.mt", "helper"], check=True, capture_output=True)
+    processes.run(["git", "-C", repository, "commit", "-m", "first"],
                    check=True, capture_output=True)
-    first = subprocess.run(
+    first = processes.run(
         ["git", "-C", repository, "rev-parse", "HEAD"], check=True,
         capture_output=True, text=True).stdout.strip()
+    processes.run(["git", "-C", repository, "branch", "other", first],
+                   check=True, capture_output=True)
+    processes.run(["git", "-C", repository, "tag", "first", first],
+                   check=True, capture_output=True)
     (app / "package.mettle").write_text(
         'name: "git-app"\nversion: "0.1.0"\n'
         'dependencies {\n'
@@ -412,15 +441,102 @@ def git_source():
     build_and_run(app)
     lock = lock_of(app)
     assert first in lock and "sha256:" in lock, lock
+    invoke(["check", app, "--locked", "--cache-dir", evidence / "other-cache"])
+    assert lock_of(app) == lock
     invoke(["check", app, "--offline", "--locked"])
     edit(repository / "src/main.mt", "{ 7 }", "{ 8 }")
-    subprocess.run(["git", "-C", repository, "add", "src/main.mt"],
+    processes.run(["git", "-C", repository, "add", "src/main.mt"],
                    check=True, capture_output=True)
-    subprocess.run(["git", "-C", repository, "commit", "-m", "second"],
+    processes.run(["git", "-C", repository, "commit", "-m", "second"],
                    check=True, capture_output=True)
     invoke(["check", app, "--locked"], 1, "--locked forbids changing it")
     invoke(["check", app, "--offline", "--locked"])
     assert lock_of(app) == lock
+    second = processes.run(
+        ["git", "-C", repository, "rev-parse", "HEAD"], check=True,
+        capture_output=True, text=True).stdout.strip()
+    manifest = app / "package.mettle"
+    original = manifest.read_text()
+    for selector in ('branch: "other"', f'rev: "{first}"',
+                     'tag: "first"', f'rev: "{second}"'):
+        manifest.write_text(original.replace('branch: "main"', selector))
+        invoke(["check", app, "--frozen"], 1, "--locked forbids changing it")
+        assert lock_of(app) == lock
+    manifest.write_text(original)
+    invoke(["check", app, "--frozen"])
+    (app / "lock.mettle").write_text(re.sub(
+        r"^        git_selectors:.*\n", "",
+        lock.replace("version: 3\n", "version: 2\n"), flags=re.MULTILINE))
+    invoke(["check", app, "--frozen"], 1, "lock format requires")
+    invoke(["check", app])
+    assert lock_of(app).startswith(
+        "// Generated by mettle; edit package.mettle to change dependencies.\n"
+        "version: 3\n")
+    invoke(["check", app, "--frozen"])
+
+
+def git_concurrent_output():
+    if os.name == "nt":
+        print("SKIP git_concurrent_output: POSIX git wrapper")
+        return
+    root = evidence / "git-concurrent"
+    root.mkdir()
+    git = shutil.which("git")
+    assert git
+    barrier = root / "barrier"
+    barrier.mkdir()
+    wrapper = root / "git"
+    wrapper.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, pathlib, subprocess, sys, time\n"
+        "result = subprocess.run([os.environ['REAL_GIT'], *sys.argv[1:]], "
+        "stdout=subprocess.PIPE)\n"
+        "sys.stdout.buffer.write(result.stdout)\n"
+        "sys.stdout.buffer.flush()\n"
+        "if sys.argv[1:][-3:] == ['--verify', '--end-of-options', 'HEAD^{commit}']:\n"
+        "    barrier = pathlib.Path(os.environ['GIT_BARRIER'])\n"
+        "    (barrier / str(os.getpid())).touch()\n"
+        "    deadline = time.monotonic() + 30\n"
+        "    while len(list(barrier.iterdir())) < 2:\n"
+        "        if time.monotonic() > deadline: sys.exit(2)\n"
+        "        time.sleep(0.01)\n"
+        "    time.sleep(0.1 if os.getpid() == "
+        "min(int(p.name) for p in barrier.iterdir()) else 0.5)\n"
+        "sys.exit(result.returncode)\n")
+    wrapper.chmod(0o755)
+    apps = []
+    for name in ("first", "second"):
+        repo, app = root / f"{name}-repo", root / f"{name}-app"
+        (repo / "src").mkdir(parents=True)
+        (repo / "package.mettle").write_text(
+            f'name: "{name}"\nversion: "0.1.0"\nkind: "library"\n')
+        (repo / "src/main.mt").write_text("pub fn value(): i32 { 0 }\n")
+        processes.run([git, "init", repo], check=True, capture_output=True)
+        processes.run([git, "-C", repo, "add", "."], check=True, capture_output=True)
+        processes.run([git, "-C", repo, "-c", "user.name=Test", "-c",
+                       "user.email=test@example.invalid", "commit", "-m", name],
+                      check=True, capture_output=True)
+        (app / "src").mkdir(parents=True)
+        (app / "src/main.mt").write_text("fn main(): i32 { 0 }\n")
+        (app / "package.mettle").write_text(
+            f'name: "{name}-app"\nversion: "0.1.0"\n'
+            f'dependencies {{ {name} {{ git: "{repo.as_uri()}" }} }}\n')
+        apps.append(app)
+    env = {**os.environ, "PATH": f"{root}{os.pathsep}{os.environ['PATH']}",
+           "REAL_GIT": git, "GIT_BARRIER": str(barrier),
+           "METTLE_CACHE_DIR": str(root / "cache")}
+    commands = [subprocess.Popen([str(mettle), "check", str(app)], env=env,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 text=True) for app in apps]
+    try:
+        results = [command.communicate(timeout=90) for command in commands]
+    finally:
+        for command in commands:
+            if command.poll() is None:
+                command.kill()
+                command.wait()
+    for command, (stdout, stderr) in zip(commands, results):
+        assert command.returncode == 0, stdout + stderr
 
 
 def host_target_separation():
@@ -544,6 +660,251 @@ def incremental_reuse():
     assert clean.read_bytes() == bytes_built
 
 
+def checked_core_reuse():
+    directory = evidence / "checked-core"
+    directory.mkdir()
+    library = directory / "library"
+    shutil.copytree(Path(__file__).resolve().parents[1] / "library" / "core",
+                    library / "core")
+    core = library / "core" / "module.mt"
+    core.write_text(core.read_text() +
+                    "\nfn reuse_helper(value: i32): i32 { value + 1 }\n"
+                    "pub const fn reuse_constant(value: i32): i32 { value + 1 }\n"
+                    "pub fn reuse_generic<T: Copy>(value: T): T { value }\n"
+                    "pub fn reuse_value(value: i32): i32 { reuse_helper(value) }\n")
+    first = directory / "first.mt"
+    second = directory / "second.mt"
+    first.write_text("const VALUE: i32 = core.reuse_constant(20)\n"
+                     "fn main(): i32 {\n"
+                     "    core.reuse_generic(core.reuse_value(VALUE)) - 22\n"
+                     "}\n")
+    second.write_text("const VALUE: i32 = core.reuse_constant(40)\n"
+                      "fn main(): i32 {\n"
+                      "    let wide = core.reuse_generic(42u64)\n"
+                      "    if wide != 42u64 { return 1 }\n"
+                      "    core.reuse_value(VALUE) - 42\n"
+                      "}\n")
+    arguments = ["--library-dir", library]
+    cold, program = explained(first, *arguments)
+    assert exit_code(program) == 0
+    assert "checked library interface cache stored core " in cold, cold
+    warm, program = explained(second, *arguments)
+    assert exit_code(program) == 0
+    assert "cache miss" in last_cache_event(warm), warm
+    assert "checked library interface cache hit core " in warm, warm
+    assert "library object cache hit core " in warm, warm
+    prefix = next(line.rsplit(" ", 1)[-1] for line in cold.splitlines()
+                  if "checked library interface cache stored core " in line)
+    entry = next(path for path in cache_files("entries")
+                 if path.name.startswith(prefix))
+    digest = entry.read_text().split()[1]
+    blob = next(path for path in cache_files("blobs") if path.name == digest)
+    blob.chmod(0o644)
+    blob.write_bytes(b"corrupted")
+    recovered, program = explained(second, *arguments)
+    assert exit_code(program) == 0
+    assert "checked library interface cache corrupt core" in recovered, recovered
+    assert "checked library interface cache stored core " in recovered, recovered
+    clean, program = explained(second, *arguments, "--no-cache")
+    assert exit_code(program) == 0
+    assert "checked library interface cache " not in clean, clean
+    if os.name != "nt":
+        external = directory / "external.mt"
+        external.write_text("pub fn external_value(): i32 { 42 }\n")
+        (library / "core" / "external.mt").symlink_to(external)
+        core.write_text(core.read_text() + "\npub module external\n")
+        second.write_text("import core.external\n"
+                          "fn main(): i32 { external.external_value() - 42 }\n")
+        fallback, program = explained(second, *arguments)
+        assert exit_code(program) == 0
+        assert "checked library interface cache ineligible core:" in fallback, fallback
+        assert "using source" in fallback, fallback
+
+
+def checked_alloc_std_reuse(profile="debug"):
+    directory = evidence / "checked-libraries"
+    directory.mkdir()
+    library = directory / "library"
+    original = Path(__file__).resolve().parents[1] / "library"
+    for root in ("core", "alloc", "std"):
+        shutil.copytree(original / root, library / root)
+    core = library / "core" / "module.mt"
+    core.write_text(core.read_text() +
+                    "\npub fn reuse_dependency(value: i32): i32 { value + 1 }\n")
+    for root in ("alloc", "std"):
+        module = library / root / "module.mt"
+        module.write_text(module.read_text() +
+                          "\nfn reuse_helper(value: i32): i32 { core.reuse_dependency(value) }\n"
+                          "pub const fn reuse_constant(value: i32): i32 { value + 1 }\n"
+                          "pub fn reuse_generic<T: Copy>(value: T): T { value }\n"
+                          "pub fn reuse_value(value: i32): i32 { reuse_helper(value) }\n")
+        if root == "std":
+            module.write_text(module.read_text() +
+                              "pub async fn reuse_async(value: i32): i32 { value + 1 }\n")
+        first, second = directory / f"{root}-first.mt", directory / f"{root}-second.mt"
+        first.write_text(f"const VALUE: i32 = {root}.reuse_constant(20)\n"
+                         f"fn main(): i32 {{ {root}.reuse_generic({root}.reuse_value(VALUE)) - 22 }}\n")
+        async_check = ("    if std.task.block_on(std.reuse_async(41)) != 42 { return 2 }\n"
+                       if root == "std" else "")
+        second.write_text("fn consumer_only(value: i32): i32 { value }\n"
+                          f"const VALUE: i32 = {root}.reuse_constant(40)\n"
+                          f"fn main(): i32 {{\n"
+                          f"    let wide = {root}.reuse_generic(42u64)\n"
+                          "    if wide != 42u64 { return 1 }\n"
+                          f"{async_check}"
+                          f"    consumer_only({root}.reuse_value(VALUE)) - 42\n"
+                          "}\n")
+        arguments = ["--library-dir", library, "--profile", profile]
+        cold, program = explained(first, *arguments)
+        assert exit_code(program) == 0
+        assert f"checked library interface cache stored {root} " in cold, cold
+        warm, program = explained(second, *arguments)
+        assert exit_code(program) == 0
+        assert "cache miss" in last_cache_event(warm), warm
+        assert f"checked library interface cache hit {root} " in warm, warm
+        assert f"library object cache hit {root} " in warm, warm
+        assert "library object cache hit core " in warm, warm
+        if root == "std":
+            assert "library object cache hit alloc " in warm, warm
+        if profile == "debug":
+            edit(core, "value + 1", "value + 2")
+            changed, program = explained(second, *arguments)
+            assert exit_code(program) == 1
+            assert f"checked library interface cache stored {root} " in changed, changed
+            assert f"library object cache miss {root} " in changed, changed
+            edit(core, "value + 2", "value + 1")
+            if root == "std":
+                _, program = explained(second, *arguments, "--no-cache")
+                assert exit_code(program) == 0
+
+
+def checked_alloc_std_release_reuse():
+    checked_alloc_std_reuse("release")
+
+
+def checked_native_macro_reuse():
+    directory = evidence / "native-macros"
+    library = directory / "library"
+    for root in ("core", "alloc", "std"):
+        module = library / root / "module.mt"
+        module.parent.mkdir(parents=True)
+        module.write_text("pub fn value(): i32 { 0 }\n")
+    module = library / "std" / "module.mt"
+    module.write_text(module.read_text() +
+                      "pub module tokens\n"
+                      "macro hidden { () => { 41 }; }\n"
+                      "pub macro reuse { () => { hidden!() + 1 }; }\n")
+    (module.parent / "tokens.mt").write_text(
+        "pub macro suffix { () => { 1 }; }\n")
+    first, second = directory / "first.mt", directory / "second.mt"
+    first.write_text("fn main(): i32 { std.value() + std.reuse!() + "
+                     "std.tokens.suffix!() - 43 }\n")
+    second.write_text("macro hidden { () => { 7 }; }\n"
+                      "fn extra(value: i32): i32 { value }\n"
+                      "fn main(): i32 { extra(std.value() + std.reuse!() + "
+                      "std.tokens.suffix!()) - 43 }\n")
+    arguments = ["--library-dir", library]
+    cold, program = explained(first, *arguments)
+    assert exit_code(program) == 0
+    assert "checked library interface cache stored std " in cold, cold
+    warm, program = explained(second, *arguments)
+    assert exit_code(program) == 0
+    assert "cache miss" in last_cache_event(warm), warm
+    assert "checked library interface cache hit std " in warm, warm
+    assert "library object cache hit std " in warm, warm
+
+
+def checked_library_diagnostics():
+    directory = evidence / "library-diagnostics"
+    module = directory / "library" / "core" / "module.mt"
+    module.parent.mkdir(parents=True)
+    consumer = directory / "main.mt"
+    consumer.write_text("fn main(): i32 { core.broken() }\n")
+    arguments = ["check", consumer, "--library-dir", directory / "library"]
+    for source, line in (
+            ("pub fn broken(): i32 { true }\n", 1),
+            ("macro broken { () => { true }; }\n"
+             "pub fn broken(): i32 { broken!() }\n", 2)):
+        module.write_text(source)
+        clean = invoke([*arguments, "--no-cache"], expected=1)
+        cached = invoke([*arguments, "--explain"], expected=1)
+        prefix = module.as_posix() + f":{line}:"
+        expected = [item for item in clean.splitlines() if item.startswith(prefix)]
+        actual = [item for item in cached.splitlines() if item.startswith(prefix)]
+        assert expected and actual == expected, (clean, cached)
+        assert any("error[type]" in item for item in actual), cached
+        assert "error[metadata]" not in cached, cached
+        assert "checked library interface cache stored core " not in cached, cached
+
+
+def native_core_object_reuse():
+    directory = evidence / "native-core"
+    directory.mkdir()
+    library = directory / "library"
+    shutil.copytree(Path(__file__).resolve().parents[1] / "library" / "core",
+                    library / "core")
+    core = library / "core" / "module.mt"
+    core.write_text(core.read_text() +
+                    "\npub fn native_value(unused: i32, value: i32): i32 { value + 1 }\n"
+                    "pub fn native_generic<T: Copy>(value: T): T { value }\n")
+    first, second = directory / "first.mt", directory / "second.mt"
+    first.write_text("fn main(): i32 {\n"
+                     "    core.native_generic(core.native_value(99, 41)) - 42\n"
+                     "}\n")
+    second.write_text("fn main(): i32 {\n"
+                      "    let wide = core.native_generic(42u64)\n"
+                      "    if wide != 42u64 { return 1 }\n"
+                      "    core.native_value(17, 81) - 82\n"
+                      "}\n")
+    for profile in ("debug", "release"):
+        arguments = ["--library-dir", library, "--profile", profile]
+        cold, program = explained(first, *arguments)
+        assert exit_code(program) == 0
+        assert "library object cache stored core " in cold, cold
+        warm, program = explained(second, *arguments)
+        assert exit_code(program) == 0
+        assert "cache miss" in last_cache_event(warm), warm
+        assert "library object cache hit core " in warm, warm
+        edit(core, "value + 1", "value + 2")
+        changed, program = explained(second, *arguments)
+        assert exit_code(program) == 1
+        assert "library object cache miss core " in changed, changed
+        edit(core, "value + 2", "value + 1")
+
+
+def linked_archive_changes_invalidate_executable():
+    if os.name == "nt":
+        return
+    cxx = os.environ.get("CXX") or shutil.which("clang++")
+    archiver = shutil.which("llvm-ar")
+    assert cxx and archiver, "the pinned Clang and llvm-ar must be on PATH"
+    directory = evidence / "native-link"
+    directory.mkdir()
+    native = directory / "probe.c"
+    obj = directory / "probe.o"
+    archive = directory / "libmettle_cache_probe.a"
+    source = directory / "main.mt"
+    source.write_text('@link("mettle_cache_probe")\n'
+                      'extern "C" fn probe(): i32;\n'
+                      'fn main(): i32 { unsafe { probe() } }\n')
+    previous = os.environ.get("LIBRARY_PATH")
+    os.environ["LIBRARY_PATH"] = os.pathsep.join(
+        filter(None, (str(directory), previous)))
+    try:
+        for expected in (1, 2):
+            native.write_text(f"int probe(void) {{ return {expected}; }}\n")
+            processes.run([cxx, "-x", "c", "-c", str(native), "-o", str(obj)],
+                          check=True)
+            processes.run([archiver, "rcs", str(archive), str(obj)], check=True)
+            _, program = explained(source)
+            assert exit_code(program) == expected
+    finally:
+        if previous is None:
+            os.environ.pop("LIBRARY_PATH", None)
+        else:
+            os.environ["LIBRARY_PATH"] = previous
+
+
 def object_cache_integrity():
     app = packages("path-dependency/app")
     first, _ = explained(app)
@@ -629,6 +990,21 @@ def edit_invalidation():
     assert exit_code(built) == 0
 
 
+def comment_newline_invalidates_cache():
+    source = evidence / "comment-newline.mt"
+    source.write_text("fn main(): i32 { return /* comment */ 7 }\n")
+    text, output = explained(source)
+    assert "cache stored" in text, text
+    before = output.read_bytes()
+    edit(source, "/* comment */", "/* changed */")
+    text = invoke(["build", source, "-o", output, "--explain"])
+    assert "cache hit" in text, text
+    edit(source, "/* changed */", "/* changed\n */")
+    text = invoke(["build", source, "-o", output, "--explain"], 1)
+    assert "cache hit" not in text, text
+    assert output.read_bytes() == before
+
+
 def cache_dedup_and_bound():
     app = packages("incremental/app")
     explained(app)
@@ -686,6 +1062,39 @@ def cache_corruption_and_clean():
     assert (foreign / "keep.txt").exists()
 
 
+def cache_corrupt_digest_preserves_other_files():
+    app = packages("incremental/app")
+    first, _ = explained(app)
+    prefix = last_cache_event(first).split()[-1]
+    entry = next(path for path in cache_files("entries")
+                 if path.name.startswith(prefix))
+    sentinel = evidence / "sentinel0"
+    sentinel.write_text("keep")
+    digest = "../" + "./" * 26 + sentinel.name
+    assert len(digest) == 64
+    entry.write_text(f"file {digest} 4 -\n")
+    text, built = explained(app)
+    assert "cache entry corrupt" in text, text
+    assert sentinel.read_text() == "keep"
+    assert exit_code(built) == 0
+
+
+def cache_publication_failure_is_reported():
+    app = packages("incremental/app")
+    first, _ = explained(app)
+    prefix = last_cache_event(first).split()[-1]
+    entry = next(path for path in cache_files("entries")
+                 if path.name.startswith(prefix))
+    entry.unlink()
+    entry.mkdir()
+    sentinel = entry / "keep"
+    sentinel.write_text("keep")
+    text, built = explained(app)
+    assert "cache could not store" in text, text
+    assert sentinel.read_text() == "keep"
+    assert exit_code(built) == 0
+
+
 def cache_clean_failure():
     # Permission failures must leave a recognizable, retryable store.
     if os.geteuid() == 0:
@@ -732,8 +1141,7 @@ def cache_compiler_content_identity():
                  "-o", str(evidence / "identity.bin"), "--explain"]
 
     def build():
-        result = subprocess.run(arguments, text=True, capture_output=True,
-                                timeout=600, env=environment)
+        result = processes.run(arguments, text=True, capture_output=True, env=environment)
         assert result.returncode == 0, result.stderr
         return result.stderr
 
@@ -824,18 +1232,21 @@ def public_declarative_macro_dependency():
     (dependency / "src").mkdir(parents=True)
     (app / "package.mettle").write_text(
         'name: "macro-app"\nversion: "0.1.0"\n'
-        'dependencies { units: "../units" }\n')
+        'dependencies { units { path: "../units", features: ["enabled"] } }\n')
     (dependency / "package.mettle").write_text(
-        'name: "units"\nversion: "0.1.0"\nkind: "library"\n')
+        'name: "units"\nversion: "0.1.0"\nkind: "library"\n'
+        'features { enabled: [] }\n')
     (app / "src/main.mt").write_text(
         "import package.units.value\n"
         "fn main(): i32 { value!() - 42 }\n")
     (dependency / "src/main.mt").write_text(
+        '@cfg(feature = "enabled")\n'
         "module macros {\n"
         "    pub macro value {\n"
         "        () => { 42 };\n"
         "    }\n"
         "}\n"
+        '@cfg(feature = "enabled")\n'
         "pub import macros.value\n")
     build_and_run(app)
 
@@ -1227,6 +1638,18 @@ def test_filter_exact():
            "2 passed; 0 failed; 0 ignored")
 
 
+def harness_quoted_names():
+    source = evidence / "quoted-tests.mt"
+    source.write_text(
+        '@test\nfn `if`() {}\n'
+        'module `loop` {\n@test\nfn `while`() {}\n}\n'
+        '@bench\nfn `else`() {}\n')
+    invoke(["test", source], 0,
+           ["test if ... ok", "test loop.while ... ok",
+            "2 passed; 0 failed; 0 ignored"])
+    invoke(["bench", source], 0, ["bench else ... ", "1 measured; 0 failed"])
+
+
 def bench_reports_timing():
     source = evidence / "bench.mt"
     source.write_text(
@@ -1265,7 +1688,7 @@ def find_dwarfdump():
             # the one that runs here.
             for tool in sorted(parent.glob(".tools/*/llvm/bin/llvm-dwarfdump")):
                 try:
-                    subprocess.run([str(tool), "--version"], check=True,
+                    processes.run([str(tool), "--version"], check=True,
                                    capture_output=True)
                     return tool
                 except (OSError, subprocess.SubprocessError):
@@ -1354,14 +1777,14 @@ def debug_info():
     # the standard STT_FILE symbol naming the source's basename; Mach-O has none.
     plain_bytes = plain[0].read_bytes()
     assert str(source.parent).encode() not in plain_bytes, "source path in plain object"
-    plain_info = subprocess.run([str(dwarfdump), "--debug-info", str(plain[0])],
+    plain_info = processes.run([str(dwarfdump), "--debug-info", str(plain[0])],
                                 text=True, capture_output=True, check=True).stdout
     assert "DW_TAG_compile_unit" not in plain_info, plain_info
     if not plain_bytes.startswith(b"\x7fELF"):
         assert b"debuggee.mt" not in plain_bytes, "source name in plain object"
-    subprocess.run([str(dwarfdump), "--verify", str(debug[0])],
+    processes.run([str(dwarfdump), "--verify", str(debug[0])],
                    text=True, capture_output=True, check=True)
-    info = subprocess.run([str(dwarfdump), "--debug-info", str(debug[0])],
+    info = processes.run([str(dwarfdump), "--debug-info", str(debug[0])],
                           text=True, capture_output=True, check=True).stdout
     assert "DW_TAG_compile_unit" in info, info
     assert "DW_TAG_subprogram" in info and '"add_up"' in info, info
@@ -1401,14 +1824,14 @@ def debug_info():
     assert slot, ir_text
     assert re.search(r'store ptr null, ptr ' + re.escape(slot.group(1)) +
                      r'\b', ir_text), ir_text
-    release_info = subprocess.run(
+    release_info = processes.run(
         [str(dwarfdump), "--debug-info", str(release)],
         text=True, capture_output=True, check=True).stdout
     assert "DW_TAG_inlined_subroutine" in release_info, release_info
     assert '"inline_increment"' in release_info, release_info
     assert "DW_AT_call_file" in release_info and \
         "DW_AT_call_line" in release_info, release_info
-    lines = subprocess.run([str(dwarfdump), "--debug-line", str(debug[0])],
+    lines = processes.run([str(dwarfdump), "--debug-line", str(debug[0])],
                            text=True, capture_output=True, check=True).stdout
     invocation_line = next(i for i, line in enumerate(
         source.read_text().splitlines(), 1) if "twice!(base)" in line)
@@ -1427,8 +1850,8 @@ def find_lldb():
     xcrun = shutil.which("xcrun")
     if xcrun:
         try:
-            result = subprocess.run([xcrun, "--find", "lldb"], text=True,
-                                    capture_output=True, timeout=30)
+            result = processes.run([xcrun, "--find", "lldb"], text=True,
+                                    capture_output=True)
             if result.returncode == 0 and result.stdout.strip():
                 candidates.append(result.stdout.strip())
         except (OSError, subprocess.SubprocessError):
@@ -1442,8 +1865,7 @@ def find_lldb():
         candidates.append(found)
     for tool in dict.fromkeys(candidates):
         try:
-            result = subprocess.run([tool, "--version"], capture_output=True,
-                                    timeout=30)
+            result = processes.run([tool, "--version"], capture_output=True)
             if result.returncode == 0:
                 return tool
         except (OSError, subprocess.SubprocessError):
@@ -1528,8 +1950,7 @@ def debugger_workflow():
         "-o", "continue",
         "--", str(output),
     ]
-    result = subprocess.run(commands, text=True, capture_output=True,
-                            timeout=180)
+    result = processes.run(commands, text=True, capture_output=True)
     text = result.stdout + result.stderr
     assert result.returncode == 0, f"{commands}: {text}"
     assert "stop reason = breakpoint" in text, text
@@ -1670,28 +2091,93 @@ class LanguageClient:
     def __init__(self):
         self.process = subprocess.Popen(
             [str(mettle), "lsp"], stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
+            start_new_session=os.name == "posix")
+        os.set_blocking(self.process.stdin.fileno(), False)
+        self.buffer = bytearray()
         self.next_id = 0
+
+    def __enter__(self):
+        try:
+            reply = self.request("initialize", {
+                "processId": None, "rootUri": None, "capabilities": {}})
+            assert "result" in reply, reply
+            self.notify("initialized", {})
+            return self
+        except BaseException:
+            processes.kill(self.process)
+            self.process.communicate()
+            raise
+
+    def __exit__(self, kind, value, traceback):
+        try:
+            if kind is None:
+                assert "result" in self.request("shutdown", None)
+                self.notify("exit", None)
+                assert self.process.wait() == 0
+        finally:
+            processes.kill(self.process)
+            self.process.communicate()
+
+    def checked(self, path, text=None):
+        uri = path.as_uri()
+        contents = path.read_text() if text is None else text
+        self.open(uri, contents)
+        published = self.wait(
+            lambda m: m.get("method") == "textDocument/publishDiagnostics"
+            and m["params"]["uri"] == uri)["params"]["diagnostics"]
+        assert published == [], f"{path}: {published}\n{contents}"
+        return {"uri": uri}
+
+    def close(self, document):
+        self.notify("textDocument/didClose", {"textDocument": document})
+        published = self.wait(
+            lambda m: m.get("method") == "textDocument/publishDiagnostics"
+            and m["params"]["uri"] == document["uri"])["params"]["diagnostics"]
+        assert published == [], (document, published)
+
+    def ready(self, stream, writing=False):
+        select.select([] if writing else [stream], [stream] if writing else [], [])
 
     def send(self, message):
         body = json.dumps({"jsonrpc": "2.0", **message}).encode()
-        self.process.stdin.write(
-            b"Content-Length: %d\r\n\r\n" % len(body) + body)
-        self.process.stdin.flush()
+        pending = memoryview(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+        while pending:
+            self.ready(self.process.stdin, writing=True)
+            try:
+                written = os.write(self.process.stdin.fileno(), pending)
+            except BlockingIOError:
+                continue
+            pending = pending[written:]
+
+    def read(self, count):
+        while len(self.buffer) < count:
+            self.ready(self.process.stdout)
+            data = os.read(self.process.stdout.fileno(), 65536)
+            if not data:
+                raise AssertionError("language server closed its output")
+            self.buffer.extend(data)
+        result = bytes(self.buffer[:count])
+        del self.buffer[:count]
+        return result
 
     def receive(self):
         length = None
         while True:
-            line = self.process.stdout.readline()
-            if not line:
-                raise AssertionError("language server closed its output")
+            line = bytearray()
+            while not line.endswith(b"\n"):
+                line.extend(self.read(1))
             line = line.strip()
             if not line:
                 break
             name, _, value = line.decode().partition(":")
             if name.lower() == "content-length":
+                if length is not None:
+                    raise AssertionError("duplicate language-server Content-Length")
                 length = int(value)
-        return json.loads(self.process.stdout.read(length))
+        if length is None or length < 0:
+            raise AssertionError("invalid language-server Content-Length")
+        return json.loads(self.read(length))
 
     def notify(self, method, params):
         self.send({"method": method, "params": params})
@@ -1879,10 +2365,9 @@ def language_server():
 
         assert "result" in client.request("shutdown", None)
         client.notify("exit", None)
-        assert client.process.wait(timeout=30) == 0
+        assert client.process.wait() == 0
     finally:
-        if client.process.poll() is None:
-            client.process.kill()
+        processes.kill(client.process)
         client.process.communicate()
 
 
@@ -1958,17 +2443,591 @@ def test_json_timeout_and_modules():
     ), doctests
 
 
-CASES = [cyclic_module_macro_definition,
+def driver_output_preserves_imports():
+    directory = packages("driver-contracts/output-alias")
+    main, helper = directory / "main.mt", directory / "helper.mt"
+    original = helper.read_bytes()
+    for flags in (["--no-cache"], []):
+        if not flags:
+            invoke(["build", main, "--emit", "object", "-o",
+                    evidence / "warm.o"])
+        invoke(["build", main, "--emit", "object", "-o", helper, *flags], 1,
+               ["error[io]", "output would overwrite the source"])
+        assert helper.read_bytes() == original
+    linked, ir = directory / "helper.o", directory / "helper.ll"
+    os.link(helper, linked)
+    ir.write_bytes(b"preserved IR output\n")
+    (directory / "package.mettle").write_text(
+        'name: "output-alias"\nversion: "0.1.0"\nentry: "main.mt"\n'
+        'emit: ["object", "llvm"]\n')
+    invoke(["build", directory, "-o", directory / "helper"], 1,
+           ["error[io]", "output would overwrite the source"])
+    assert os.path.samefile(linked, helper)
+    assert helper.read_bytes() == linked.read_bytes() == original
+    assert ir.read_bytes() == b"preserved IR output\n"
+    if os.name == "posix":
+        alias = directory / "alias.o"
+        alias.symlink_to(helper)
+        target = os.readlink(alias)
+        invoke(["build", main, "--emit", "object", "-o", alias], 1,
+               ["error[io]", "output would overwrite the source"])
+        assert alias.is_symlink() and os.readlink(alias) == target
+        assert helper.read_bytes() == original
+    if sys.platform == "darwin":
+        bundle = directory / "preserved"
+        tree = Path(str(bundle) + ".dSYM")
+        tree.mkdir()
+        for source in (main, helper):
+            shutil.copy2(source, tree / source.name)
+        saved = {p.name: p.read_bytes() for p in (tree / main.name,
+                                                 tree / helper.name)}
+        invoke(["build", tree / main.name, "-o", bundle, "-g"], 1,
+               ["error[io]", "output would overwrite the source"])
+        assert {name: (tree / name).read_bytes() for name in saved} == saved
+
+
+def driver_panic_rejects_other_signals():
+    if os.name != "posix":
+        print("SKIP driver_panic_rejects_other_signals: hosted POSIX signals")
+        return
+    directory = packages("driver-contracts/panic-verdict")
+    source = directory / "fatal-signal.mt"
+    original = source.read_text()
+    for number in (11, 4):
+        source.write_text(original.replace("raise(11)", f"raise({number})"))
+        events = invoke_json(["test", source, "--format", "json"], 1)
+        tests = [e for e in events if e["event"] == "test"]
+        assert len(tests) == 1 and tests[0]["outcome"] == "terminated", events
+        assert events[-1]["event"] == "summary", events
+        assert events[-1]["passed"] == 0 and events[-1]["terminated"] == 1
+        assert events[-1]["infrastructure_failures"] == 0
+    events = invoke_json(["test", directory / "expected-abort.mt",
+                          "--format", "json"])
+    assert [e["outcome"] for e in events if e["event"] == "test"] == ["passed"]
+    assert events[-1]["passed"] == 1 and events[-1]["terminated"] == 0
+
+
+def driver_compile_fail_requires_checking():
+    source = packages("driver-contracts/compile-fail-link.mt")
+    events = invoke_json(["test", source, "--doc", "--format", "json"], 1)
+    tests = [e for e in events if e["event"] == "test"]
+    assert len(tests) == 1 and tests[0]["outcome"] == "failed", events
+    assert "expected phase" in tests[0]["message"], tests
+    assert re.search(r"(?m)^[^\n]*error\[link\]:", tests[0]["output"]), tests
+    assert "missing_doctest_symbol" in tests[0]["output"], tests
+    assert "failed to compile as declared" not in tests[0]["message"]
+    controls = evidence / "checking-doctests.mt"
+    arch = os.uname().machine if os.name == "posix" else ""
+    unsupported = ("_mm_aesenc_si128" if arch == "x86_64" else
+                   "vaeseq_u8" if arch in ("aarch64", "arm64") else None)
+    architecture = "x86_64" if arch == "x86_64" else "aarch64"
+    controls_list = [
+            ("compile_fail", "let value: i32 = true", 0),
+            ("compile_fail(type)", 'let value: i32 = "error[internal]"', 0),
+            ("compile_fail(lex)", 'let value = "', 0),
+            ("compile_fail(parse)", "let = ;", 0),
+            ("compile_fail", "let value: i32 = 42", 1)]
+    if unsupported:
+        controls_list.append(("compile_fail",
+            f"unsafe {{ core.arch.{architecture}.{unsupported}() }};", 1))
+    for fence, body, expected in controls_list:
+        controls.write_text(
+            f"/// ```{fence}\n/// {body}\n/// ```\npub fn documented() {{}}\n")
+        events = invoke_json(["test", controls, "--doc", "--format", "json"],
+                             expected)
+        tests = [e for e in events if e["event"] == "test"]
+        assert len(tests) == 1, events
+        assert tests[0]["outcome"] == ("passed" if expected == 0 else "failed")
+        if expected == 0:
+            assert tests[0]["message"] == "failed to compile as declared"
+        elif "core.arch" in body:
+            assert re.search(r"(?m)^[^\n]*error\[feature\]: "
+                             r"unsupported architecture operation",
+                             tests[0]["output"]), tests
+
+
+def driver_feature_backtracks():
+    root = packages("driver-contracts/feature-backtracking")
+    app = root / "app"
+    build_and_run(app)
+    lock = lock_of(app)
+    assert re.search(r'name: "widget"\s+version: "1\.0\.0"', lock), lock
+    assert not re.search(r'name: "widget"\s+version: "2\.0\.0"', lock), lock
+    edit(root / "registry/widget/1.0.0/package.mettle",
+         "features { old_api: [] }", "")
+    (app / "lock.mettle").unlink()
+    invoke(["check", app], 1, ["error[package]", "has no feature 'old_api'"])
+
+
+def driver_git_host_outputs_preserve_package_paths():
+    if os.name != "posix":
+        print("SKIP driver_git_host_outputs_preserve_package_paths: POSIX views")
+        return
+    base = packages("driver-contracts/git-script")
+    host = packages("driver-contracts/git-script-host")
+    shutil.copytree(base, host)
+    for root in (base, host):
+        repository, app = root / "repository", root / "app"
+
+        def git(directory, *arguments):
+            return processes.run(["git", "-C", directory, *arguments],
+                                 check=True, capture_output=True,
+                                 text=True).stdout.strip()
+
+        if root == host:
+            manifest = repository / "package.mettle"
+            manifest.write_text(manifest.read_text() +
+                '"build-dependencies" {\n'
+                ' helper { path: "nested/helper", features: ["host"], '
+                'default_features: false }\n}\n')
+            for name in ("build.mt", "macros/git_value.mt"):
+                edit(repository / name, "fn run(): i32 throws Error {\n",
+                     "fn run(): i32 throws Error {\n"
+                     "    if helper.answer() != 7 { return 1 }\n")
+            output_root = root / "tool-outputs"
+            output_root.mkdir()
+            (app / "target").symlink_to(output_root, target_is_directory=True)
+        alias = root / "selected-checkout"
+        (repository / "absolute-spec.txt").symlink_to(alias / "spec.txt")
+        (repository / "namespace").symlink_to("nested", target_is_directory=True)
+        (repository / "build.mt").chmod(0o755)
+        git(repository, "init")
+        git(repository, "checkout", "-b", "main")
+        git(repository, "config", "user.name", "Mettle package test")
+        git(repository, "config", "user.email", "packages-test@example.invalid")
+        git(repository, "add", ".")
+        git(repository, "commit", "-m", "script and macro inputs")
+        revision = git(repository, "rev-parse", "HEAD")
+        url = repository.as_uri()
+        edit(app / "package.mettle", "__GIT_URL__", url)
+        source_root = (evidence / "cache/sources/git/checkouts" /
+                       hashlib.sha256(url.encode()).hexdigest())
+        checkout = source_root / revision
+        checkout.parent.mkdir(parents=True, exist_ok=True)
+        processes.run(["git", "clone", "--no-hardlinks", "--", repository,
+                       checkout], check=True, capture_output=True)
+        git(checkout, "checkout", "--detach", revision)
+        alias.symlink_to(checkout, target_is_directory=True)
+        outside = source_root / "outside"
+        shutil.copytree(root / "outside", outside)
+        outside_bytes = (outside / "input.txt").read_bytes()
+        names = git(checkout, "ls-files", "-z").rstrip("\0").split("\0")
+
+        def snapshot():
+            return {name: (os.readlink(checkout / name)
+                           if (checkout / name).is_symlink()
+                           else (checkout / name).read_bytes(),
+                           (checkout / name).lstat().st_mode)
+                    for name in names}
+
+        original = snapshot()
+        build_and_run(app)
+        lock = lock_of(app)
+        views = sorted(p.resolve() for p in
+                       (app / "target/mettle/package-work").glob("*/tree"))
+        copies = [view / checkout.relative_to(checkout.anchor)
+                  for view in views]
+        assert copies and all((copy / ".git").is_dir() for copy in copies)
+        for copy in copies:
+            assert Path(git(copy, "rev-parse", "--show-toplevel")).resolve() == copy
+            assert git(copy, "rev-parse", "HEAD") == revision
+            for name in names:
+                selected, staged = checkout / name, copy / name
+                if not selected.is_symlink():
+                    assert staged.read_bytes() == selected.read_bytes(), name
+                    assert staged.stat().st_mode == selected.stat().st_mode, name
+                    assert not os.path.samefile(staged, selected), name
+            assert (copy / "absolute-spec.txt").resolve() == copy / "spec.txt"
+            assert (copy / "namespace").resolve() == copy / "nested"
+        for _ in range(2):
+            text, binary = explained(app, "--offline", "--locked")
+            assert exit_code(binary) == 0
+            for tool in ("build script of 'generated-git'",
+                         "build script of 'helper'", "procedural macro 'git_value!'"):
+                assert any(tool in line and "reused (declared reproducible" in line
+                           for line in text.splitlines()), text
+            assert lock_of(app) == lock
+            assert sorted(p.resolve() for p in
+                          (app / "target/mettle/package-work").glob("*/tree")) == views
+        if root == host:
+            generated = [p.read_text() for copy in copies
+                         if (p := copy / "nested/helper/target/mettle/out/nested.mt").is_file()]
+            assert "pub fn value(): i32 { 7 }\n" in generated, generated
+            assert "pub fn value(): i32 { 42 }\n" in generated, generated
+        copied_input = copies[0] / "spec.txt"
+        copied_input.write_text("invalid private edit\n")
+        build_and_run(app, "--offline", "--locked")
+        assert copied_input.read_bytes() == (checkout / "spec.txt").read_bytes()
+        generated = [p for copy in copies
+                     if (p := copy / "target/mettle/out/generated.mt").is_file()]
+        assert generated
+        generated[0].write_text("invalid generated output\n")
+        text, binary = explained(app, "--offline", "--locked")
+        assert exit_code(binary) == 0
+        assert any("build script of 'generated-git'" in line and "rerun (" in line
+                   for line in text.splitlines()), text
+        assert snapshot() == original and git(checkout, "rev-parse", "HEAD") == revision
+        assert git(checkout, "status", "--porcelain", "--untracked-files=all") == ""
+        assert (outside / "input.txt").read_bytes() == outside_bytes
+        destination = checkout / "attempt.o"
+        invoke(["build", app, "--emit", "object", "-o", destination], 1,
+               ["error[io]", "output would overwrite the source"])
+        assert not destination.exists() and snapshot() == original
+        untracked = checkout / "untracked.mt"
+        untracked.write_text("pub fn injected(): i32 { 0 }\n")
+        invoke(["check", app, "--offline", "--locked"], 1,
+               "cached checkout contains modified or untracked files")
+        untracked.unlink()
+        tracked = checkout / "spec.txt"
+        saved = tracked.read_bytes()
+        tracked.write_bytes(saved + b"// dirty\n")
+        try:
+            invoke(["check", app, "--offline", "--locked"], 1,
+                   "cached checkout contains modified or untracked files")
+        finally:
+            tracked.write_bytes(saved)
+        assert snapshot() == original
+        edit(repository / "spec.txt", "{ 42 }", "{ 43 }")
+        git(repository, "add", "spec.txt")
+        git(repository, "commit", "-m", "changed declared input")
+        changed = git(repository, "rev-parse", "HEAD")
+        assert changed != revision
+        alias.unlink()
+        alias.symlink_to(source_root / changed, target_is_directory=True)
+        text, binary = explained(app)
+        assert exit_code(binary) == 2, text
+        assert changed in lock_of(app) and lock_of(app) != lock
+        assert snapshot() == original
+        assert git(checkout, "rev-parse", "HEAD") == revision
+        assert git(checkout, "status", "--porcelain", "--untracked-files=all") == ""
+        assert (outside / "input.txt").read_bytes() == outside_bytes
+
+
+def driver_host_scripts_consume_generated_context():
+    root = packages("driver-contracts/host-script-order")
+    app = root / "app"
+    build_and_run(app)
+    bridge = root / "bridge"
+    (bridge / "src").mkdir(parents=True)
+    (bridge / "package.mettle").write_text(
+        'name: "bridge"\nversion: "0.1.0"\nkind: "library"\n'
+        'dependencies { helper { path: "../helper" } }\n')
+    (bridge / "src/main.mt").write_text(
+        "pub fn answer(): i32 { helper.answer() }\n")
+    edit(app / "package.mettle", 'helper { path: "../helper" }',
+         'bridge { path: "../bridge" }')
+    edit(app / "build.mt", "helper.answer()", "bridge.answer()")
+    build_and_run(app)
+
+
+def host_dependency_script_uses_host_target():
+    if sys.platform != "linux" or os.uname().machine != "x86_64":
+        return
+    cross = "arm64-apple-macosx15.0"
+    root = packages("driver-contracts/host-script-order")
+    app = root / "app"
+    helper = root / "helper"
+    probe = (
+        'fn main(): i32 {\n'
+        '    match std.env.var_os(std.ffi.os_str_from_text("METTLE_TARGET")) {\n'
+        f'        present(value) => {{ if value.as_os_str().same(std.ffi.os_str_from_text("{cross}")) '
+        '{ return BAD } },\n'
+        '        none => { return 9 }\n'
+        '    }\n'
+        '    std.io.print("mettle:feature=ready\\n")\n'
+        '    0\n'
+        '}\n')
+    (helper / "build.mt").write_text(probe.replace("return BAD", "return 7"))
+    (app / "build.mt").write_text(
+        probe.replace("if value.as_os_str()", "if !value.as_os_str()")
+             .replace("return BAD", "return 8"))
+    invoke(["check", app, "--target", cross])
+
+
+def driver_docs_preserve_target_cfg():
+    app = packages("driver-contracts/doc-target-cfg")
+    source = app / "src/main.mt"
+    original = source.read_text()
+    for index, predicate in enumerate((
+            'target_os = "linux"', 'target_arch = "x86_64"',
+            'target_pointer_width = "64"', 'target_endian = "little"',
+            'target_feature = "sse2"')):
+        source.write_text(original.replace('target_os = "linux"', predicate))
+        flags = ["--target", "x86_64-unknown-linux-gnu"]
+        invoke(["check", app, *flags])
+        output = evidence / f"target-doc-{index}"
+        invoke(["doc", app, *flags, "-o", output])
+        entries = json.loads((output / "search-index.json").read_text())
+        matches = [item for item in entries
+                   if item["name"].split(".")[-2:] == ["platform", "answer"]]
+        assert len(matches) == 1, (predicate, output, entries)
+        entry = matches[0]
+        filename, separator, anchor = entry["href"].partition("#")
+        assert filename and separator and anchor, (predicate, entry)
+        page = (output / filename).read_text()
+        article = re.search(r'<article id="' + re.escape(anchor) +
+                            r'">.*?</article>', page, re.S)
+        assert article, (predicate, entry, page)
+        assert "<pre class=\"sig\"><code>pub fn answer(): i32</code></pre>" in article[0], (
+            predicate, entry, article[0])
+
+
+def driver_inline_doctests_keep_scope():
+    source = packages("driver-contracts/inline-module-doctest.mt")
+    original = source.read_bytes()
+    for selection, count in (([], 2), (["nested"], 1)):
+        events = invoke_json(["test", source, "--doc", "--format", "json",
+                              *selection])
+        tests = [event for event in events if event["event"] == "test"]
+        assert len(tests) == count and all(e["outcome"] == "passed" for e in tests)
+        assert events[-1]["passed"] == count and events[-1]["failed"] == 0
+        if selection:
+            assert "nested" in tests[0]["name"] and events[-1]["filtered"] == 1
+        assert source.read_bytes() == original
+
+
+def package_ownership():
+    app = packages("package-ownership/app")
+    main = app / "src/main.mt"
+    positive = main.read_bytes()
+    invoke(["check", app])
+    try:
+        for name, message in (
+                ("foreign-interface-on-primitive.mt",
+                 "orphan interface implementation has no local owner"),
+                ("foreign-alias-is-not-local.mt",
+                 "orphan interface implementation has no local owner"),
+                ("foreign-reexport-is-not-local.mt",
+                 "orphan interface implementation has no local owner"),
+                ("foreign-unpin-declaration.mt",
+                 "Unpin implementation must belong to the type's package"),
+                ("foreign-negative-transferable.mt",
+                 "Transferable declaration must belong to the type's package")):
+            contents = (app / "cases" / name).read_bytes()
+            main.write_bytes(contents)
+            line, column = next(
+                (number, text.index("extend") + 1)
+                for number, text in enumerate(contents.decode().splitlines(), 1)
+                if text.startswith(("extend ", "unsafe extend ")))
+            text = invoke(["check", app], 1)
+            assert re.search(
+                rf"(?m)^[^\n]*main\.mt:{line}:{column}: error\[type\]: "
+                + re.escape(message) + r"$", text), text
+    finally:
+        main.write_bytes(positive)
+    invoke(["check", app])
+
+
+def lsp_position(text, offset):
+    return {"line": text.count("\n", 0, offset),
+            "character": offset - text.rfind("\n", 0, offset) - 1}
+
+
+def lsp_word_ranges(text, word):
+    return [{"start": lsp_position(text, match.start()),
+             "end": lsp_position(text, match.end())}
+            for match in re.finditer(r"\b" + re.escape(word) + r"\b", text)]
+
+
+def checked_rename(client, path, text, position, ranges, new_name):
+    document = client.checked(path, text)
+    reply = client.request("textDocument/rename", {
+        "textDocument": document, "position": position, "newName": new_name})
+    context = f"{path}: rename at {position} to {new_name!r}\n{text}"
+    assert "result" in reply and "error" not in reply, f"{context}\n{reply}"
+    changes = reply["result"]["changes"]
+    assert set(changes) == {document["uri"]}, changes
+    edits = changes[document["uri"]]
+    key = lambda item: (item["start"]["line"], item["start"]["character"])
+    assert sorted((edit["range"] for edit in edits), key=key) == sorted(ranges, key=key), (
+        context, ranges, edits)
+    assert all(edit["newText"] == new_name for edit in edits), edits
+    lines = text.splitlines(keepends=True)
+    for item in sorted(edits, key=lambda e: key(e["range"]), reverse=True):
+        start, end = item["range"]["start"], item["range"]["end"]
+        first = sum(map(len, lines[:start["line"]])) + start["character"]
+        last = sum(map(len, lines[:end["line"]])) + end["character"]
+        text = text[:first] + item["newText"] + text[last:]
+    renamed = evidence / "renamed.mt"
+    renamed.write_text(text)
+    invoke(["check", renamed])
+    client.close(document)
+    return text
+
+
+def driver_rename_preserves_bindings():
+    root = packages("driver-contracts")
+    with LanguageClient() as client:
+        for name, text in (
+                ("rename-capture.mt", None),
+                ("reverse-capture.mt",
+                 "fn y(): i32 { 2 }\nfn choose(x: i32): i32 { x + y() }\n"
+                 "fn main(): i32 { choose(1) }\n"),
+                ("duplicate-parameter.mt",
+                 "fn choose(x: i32, y: i32): i32 { x + y }\n"
+                 "fn main(): i32 { choose(1, 2) }\n")):
+            path = root / name
+            text = path.read_text() if text is None else text
+            document = client.checked(path, text)
+            reply = client.request("textDocument/rename", {
+                "textDocument": document,
+                "position": lsp_word_ranges(text, "x")[0]["start"],
+                "newName": "y"})
+            assert "error" in reply and "result" not in reply, reply
+            client.close(document)
+        path = root / "rename-safe-shadow.mt"
+        text = path.read_text()
+        ranges = lsp_word_ranges(text, "x")
+        renamed = checked_rename(client, path, text, ranges[0]["start"], ranges, "y")
+        assert "{ let y = 2; y }" in renamed, renamed
+
+
+def driver_conditional_pattern_rename():
+    path = packages("driver-contracts/conditional-pattern-rename.mt")
+    with LanguageClient() as client:
+        for text in (
+                path.read_text(),
+                "fn main(): i32 { var result = 0; var next: i32? = present(42); "
+                "while let present(value) = next { next = none; result = value }; "
+                "result }\n",
+                "fn main(): i32 { if let present(value) = present(42), "
+                "value > 0 { value } else { 0 } }\n"):
+            ranges = lsp_word_ranges(text, "value")
+            checked_rename(client, path, text, ranges[-1]["start"], ranges, "item")
+
+
+def driver_qualified_cross_file_rename():
+    source = evidence / "main.mt"
+    provider = evidence / "provider.mt"
+    source.write_text("module provider;\nfn main(): i32 { provider.answer() - 42 }\n")
+    provider.write_text("pub fn answer(): i32 { 42 }\n")
+    paths = (source, provider)
+    with LanguageClient() as client:
+        documents = [client.checked(path) for path in paths]
+        ranges = [lsp_word_ranges(path.read_text(), "answer")[0] for path in paths]
+        expected = [{"uri": path.as_uri(), "range": span}
+                    for path, span in zip(paths, ranges)]
+        for document, span in zip(documents, ranges):
+            params = {"textDocument": document, "position": span["start"]}
+            refs = client.request("textDocument/references", {
+                **params, "context": {"includeDeclaration": True}})["result"]
+            assert len(refs) == 2 and all(site in refs for site in expected), refs
+            reply = client.request("textDocument/rename", {
+                **params, "newName": "result"})
+            assert "result" in reply and "error" not in reply, reply
+            changes = reply["result"]["changes"]
+            assert set(changes) == {path.as_uri() for path in paths}, changes
+            for path, span in zip(paths, ranges):
+                assert changes[path.as_uri()] == [
+                    {"range": span, "newText": "result"}], changes
+    for path in paths:
+        edit(path, "answer", "result")
+    invoke(["check", source])
+
+
+def driver_checked_methods_disambiguate():
+    path = packages("driver-contracts/checked-method-identity.mt")
+    text = path.read_text() + "fn other(): i32 { B().value() }\n"
+    ranges = lsp_word_ranges(text, "value")
+    with LanguageClient() as client:
+        document = client.checked(path, text)
+        for declaration, call in ((ranges[0], ranges[2]), (ranges[1], ranges[3])):
+            found = client.request("textDocument/definition", {
+                "textDocument": document, "position": call["start"]})["result"]
+            assert found == [{"uri": path.as_uri(), "range": declaration}], found
+            refs = client.request("textDocument/references", {
+                "textDocument": document, "position": declaration["start"],
+                "context": {"includeDeclaration": True}})["result"]
+            expected = [{"uri": path.as_uri(), "range": r}
+                        for r in (declaration, call)]
+            assert len(refs) == len(expected) and all(r in refs for r in expected), refs
+            hover = client.request("textDocument/hover", {
+                "textDocument": document, "position": declaration["start"]})["result"]
+            assert ": i32" in hover["contents"]["value"], hover
+        other = evidence / "overlapping-method-spans.mt"
+        other_text = text.replace("A().value()", "B().value()")
+        client.checked(other, other_text)
+        refs = client.request("textDocument/references", {
+            "textDocument": document, "position": ranges[0]["start"],
+            "context": {"includeDeclaration": True}})["result"]
+        assert all({"uri": path.as_uri(), "range": r} in refs
+                   for r in (ranges[0], ranges[2])), refs
+        assert all({"uri": uri, "range": r} not in refs
+                   for uri, sites in ((path.as_uri(), (ranges[1], ranges[3])),
+                                      (other.as_uri(), ranges[2:]))
+                   for r in sites), refs
+
+
+def driver_generic_parameter_labels():
+    path = packages("driver-contracts/generic-argument-label.mt")
+    original = path.read_text()
+    array = original.replace("identity<i32>(value: 42)",
+                             "identity<[i32; 2]>(value: [21, 21])[0usize]")
+    assert array != original
+    with LanguageClient() as client:
+        for text in (original, array):
+            ranges = lsp_word_ranges(text, "value")
+            checked_rename(client, path, text, ranges[0]["start"], ranges, "argument")
+
+
+def driver_noop_changes_keep_checked_index():
+    path = packages("driver-contracts/noop-checked-index.mt")
+    text = path.read_text()
+    ranges = lsp_word_ranges(text, "value")
+    with LanguageClient() as client:
+        document = client.checked(path, text)
+        params = {"textDocument": document, "position": ranges[-1]["start"]}
+
+        def facts():
+            refs = client.request("textDocument/references", {
+                **params, "context": {"includeDeclaration": True}})["result"]
+            expected = [{"uri": path.as_uri(), "range": r} for r in ranges]
+            assert len(refs) == len(expected) and all(r in refs for r in expected), refs
+            hover = client.request("textDocument/hover", params)["result"]
+            assert "i32" in hover["contents"]["value"], hover
+            return expected, hover
+
+        original = facts()
+        for version, changes in enumerate((
+                [{"text": text}],
+                [{"range": ranges[-1], "text": "value"}],
+                [{"range": ranges[-1], "text": "other"},
+                 {"range": ranges[-1], "text": "value"}]), 2):
+            client.notify("textDocument/didChange", {
+                "textDocument": {**document, "version": version},
+                "contentChanges": changes})
+            assert facts() == original
+
+
+CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
+         driver_compile_fail_requires_checking, driver_feature_backtracks,
+         driver_git_host_outputs_preserve_package_paths,
+         driver_host_scripts_consume_generated_context,
+         host_dependency_script_uses_host_target,
+         driver_docs_preserve_target_cfg, driver_rename_preserves_bindings,
+         driver_conditional_pattern_rename, driver_qualified_cross_file_rename,
+         driver_checked_methods_disambiguate,
+         driver_generic_parameter_labels, driver_inline_doctests_keep_scope,
+         driver_noop_changes_keep_checked_index, package_ownership,
+         cyclic_module_macro_definition,
          path_dependency, restricted_dependency_visibility, nested_dependency_imports,
          configured_entry, mettle_version, library_entries, development_dependencies,
          missing_lock_locked, lock_corruption,
-         registry_resolution, version_conflict, backtracking, offline, features,
-         coexisting_versions, git_source, host_target_separation,
+         registry_resolution, version_conflict, wildcard_version_bounds,
+         backtracking, offline, features,
+         coexisting_versions, git_source, git_concurrent_output, host_target_separation,
          manifest_diagnostics, data_format, lock_structure,
-         package_options_need_package, incremental_reuse,
+         package_options_need_package, incremental_reuse, checked_core_reuse,
+         native_core_object_reuse, checked_alloc_std_reuse,
+         checked_alloc_std_release_reuse,
+         checked_native_macro_reuse,
+         checked_library_diagnostics,
+         linked_archive_changes_invalidate_executable,
          object_cache_integrity,
-         sanitizer_cache_key, edit_invalidation, cache_dedup_and_bound,
-         cache_corruption_and_clean, cache_clean_failure, cache_clean_preserves_sources,
+         sanitizer_cache_key, edit_invalidation, comment_newline_invalidates_cache,
+         cache_dedup_and_bound,
+         cache_corruption_and_clean, cache_corrupt_digest_preserves_other_files,
+         cache_publication_failure_is_reported, cache_clean_failure, cache_clean_preserves_sources,
          cache_compiler_content_identity,
          build_script, build_script_untracked_inputs,
          procedural_macro, procedural_macro_failure,
@@ -1977,7 +3036,8 @@ CASES = [cyclic_module_macro_definition,
          type_id_survives_public_reexport,
          run_forwards_args_and_exit_status,
          test_reports_pass_fail_ignored_and_isolates_panics,
-         test_filter_exact, bench_reports_timing, fmt_normalizes_layout_only,
+         test_filter_exact, harness_quoted_names, bench_reports_timing,
+         fmt_normalizes_layout_only,
          doc_writes_deterministic_html,
          doc_resolves_dependency_links_and_warns,
          doctests_run_isolated_examples,
@@ -1987,10 +3047,11 @@ CASES = [cyclic_module_macro_definition,
 
 # Optional fourth argument: a regular expression selecting cases by name.
 selected = re.compile(sys.argv[4]) if len(sys.argv) > 4 else None
+chosen = [case for case in CASES if not selected or selected.search(case.__name__)]
+if not chosen:
+    sys.exit("no package cases selected")
 failures = []
-for case in CASES:
-    if selected and not selected.search(case.__name__):
-        continue
+for case in chosen:
     reset()
     try:
         case()

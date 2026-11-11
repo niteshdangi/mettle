@@ -12,7 +12,9 @@ struct LoweringLimit : std::runtime_error {
 void callableContracts(ir::Program &program);
 class Builder {
 public:
-  explicit Builder(const CheckedModule &module) : module(module) {}
+  explicit Builder(const CheckedModule &module,
+                   const ImportedBodies *imported = nullptr)
+      : module(module), imported(imported) {}
   ir::Function run(const mettle::Function &source, std::size_t index);
   ir::Function runDefault(const mettle::Function &source, std::size_t index,
                           std::size_t parameter);
@@ -23,6 +25,7 @@ private:
   using Instruction = ir::Instruction;
   using Terminator = ir::Terminator;
   const CheckedModule &module;
+  const ImportedBodies *imported;
   ir::Function function;
   int current = 0, blockScope = 0, temporaryScope = 0, extensionScope = -1;
   std::uint32_t order = 0;
@@ -102,6 +105,7 @@ private:
                                                  : facts.callableSource;
   }
   Value rawExpression(const Node &node, bool consume, bool valueUsed);
+  Value rawValue(const Node &node, bool consume, bool valueUsed);
   Value machineExpression(const Node &node);
   Value assemblyExpression(const Node &node);
   Value callExpression(const Node &node);

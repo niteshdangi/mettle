@@ -11,6 +11,13 @@
 namespace mettle {
 namespace {
 constexpr std::uint32_t builtins = builtinTypeCount;
+std::optional<std::uint64_t> arrayCountValue(const TypeStore &types,
+                                             Type count) {
+  auto value = types.scalarConstantValue(count);
+  if (!value || value->negative || value->magnitude[1])
+    return std::nullopt;
+  return value->magnitude[0];
+}
 } // namespace
 Type TypeStore::declareParameter(std::string name, bool copyRequested,
                                  bool sized) {
@@ -211,12 +218,16 @@ bool TypeStore::isSized(Type type) const {
       return parameter(current).sized;
     if (!isProduct(current))
       return contains(current);
+    const auto &record = product(current);
+    // Opaque declarations promise Sized before hidden storage is finalized.
+    if (record.kind == AggregateKind::Opaque && record.fields.size() == 1 &&
+        record.fields[0].type == Type::Unknown)
+      return true;
     if (auto found = known.find(current); found != known.end())
       return found->second;
-    if (active.size() >= 128 || !active.insert(current).second)
+    if (!active.insert(current).second)
       return false;
     bool sized = true;
-    const auto &record = product(current);
     if (record.kind == AggregateKind::Array && !record.components.empty())
       sized = visit(record.components[0]);
     else
@@ -259,6 +270,9 @@ bool TypeStore::isSymbolic(Type type) const {
     }
     if (isProduct(current)) {
       const auto &record = product(current);
+      if (record.kind == AggregateKind::Array && !record.components.empty() &&
+          symbolic(record.components[0]))
+        return true;
       for (auto argument : record.genericArguments)
         if (symbolic(argument))
           return true;
@@ -366,6 +380,7 @@ Type TypeStore::instantiateProduct(Type origin, std::vector<Type> arguments) {
   display += ">";
   auto result = declareProduct(std::move(display), source.copyRequested);
   auto index = entries.at(result.index() - builtins).index;
+  products[index].package = source.package;
   products[index].genericOrigin = origin;
   products[index].genericArguments = std::move(arguments);
   std::vector<TypeField> fields;
@@ -402,6 +417,7 @@ void TypeStore::refreshProductInstances() {
         instance.kind == AggregateKind::Opaque)
       continue;
     auto source = product(instance.genericOrigin);
+    products[index].package = source.package;
     std::vector<TypeBinding> bindings;
     for (std::size_t j = 0; j < source.genericParameters.size(); ++j)
       bindings.push_back(
@@ -434,25 +450,26 @@ void TypeStore::refreshProductInstances() {
   }
 }
 Type TypeStore::canonicalCount(Type count) {
-  if (auto value = constantValue(count))
-    return constant(*value <= std::numeric_limits<std::int32_t>::max()
-                        ? Type::I32
-                        : Type::I64,
-                    *value);
+  if (auto value = arrayCountValue(*this, count)) {
+    auto type = Type::U64;
+    if (*value <= std::numeric_limits<std::int32_t>::max())
+      type = Type::I32;
+    else if (*value <= std::numeric_limits<std::int64_t>::max())
+      type = Type::I64;
+    return constant(type, *scalarConstantValue(count));
+  }
   return count;
 }
 std::optional<std::uint64_t> TypeStore::arrayLength(Type array) const {
   const auto &record = product(array);
   if (record.arrayCount == Type::Unknown)
     return record.fields.size();
-  if (auto value = constantValue(record.arrayCount))
-    return static_cast<std::uint64_t>(*value);
-  return std::nullopt;
+  return arrayCountValue(*this, record.arrayCount);
 }
 bool TypeStore::compactArray(Type array) const {
   return isProduct(array) && product(array).kind == AggregateKind::Array &&
          product(array).arrayCount != Type::Unknown &&
-         constantValue(product(array).arrayCount).has_value();
+         arrayLength(array).has_value();
 }
 bool TypeStore::compactArrayShape(Type payload, std::uint64_t count) const {
   // Compact arrays have no per-element drop state, so droppable elements keep
@@ -473,12 +490,10 @@ bool TypeStore::compactArrayShape(Type payload, std::uint64_t count) const {
   return count > expandedArrayLimit || total > expandedArrayTotal;
 }
 Type TypeStore::arrayType(Type payload, Type count) {
-  if (scalarConstantValue(count) && !constantValue(count))
+  if (scalarConstantValue(count) && !arrayCountValue(*this, count))
     throw std::length_error("array length exceeds compiler resource limit");
-  if (auto value = constantValue(count)) {
-    if (*value < 0)
-      throw std::length_error("array length exceeds compiler resource limit");
-    auto length = static_cast<std::uint64_t>(*value);
+  if (auto value = arrayCountValue(*this, count)) {
+    auto length = *value;
     if (needsDrop(payload)) {
       // Droppable elements keep a cleanup place each, so their total is
       // bounded.

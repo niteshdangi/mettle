@@ -7,11 +7,14 @@ import std.panic.CatchResult
 
 type Item {
     value: i32
+    drop_bit: usize
     panic_cmp: Arc<core.sync.atomic.AtomicUsize>
     drops: Arc<core.sync.atomic.AtomicUsize>
     drop {
-        let _old = self.drops.get().fetch_add(
-            1usize,
+        // Bit 7 records repeated destruction; lower bits identify individual items.
+        let old = self.drops.get().load(core.sync.atomic.Ordering.SeqCst)
+        self.drops.get().store(
+            if (old & self.drop_bit) != 0usize { 128usize } else { old | self.drop_bit },
             core.sync.atomic.Ordering.SeqCst
         )
     }
@@ -37,10 +40,33 @@ extend Item implements Ord {
 
 fn new_item(
     value: i32,
+    drop_bit: usize,
     take panic_cmp: Arc<core.sync.atomic.AtomicUsize>,
     take drops: Arc<core.sync.atomic.AtomicUsize>
 ): Item {
-    Item(value, panic_cmp, drops)
+    Item(value, drop_bit, panic_cmp, drops)
+}
+
+fn accounted(read items: [Item], read expected: [i32], dropped: usize): bool {
+    var live = 0usize
+    var index = 0usize
+    while index < items.len() {
+        var found = false
+        var identity = 0usize
+        while identity < expected.len() {
+            let bit = 1usize << identity
+            if items[index].drop_bit == bit && items[index].value == expected[identity] {
+                if (live & bit) != 0usize { return false }
+                live |= bit
+                found = true
+                break
+            }
+            identity += 1usize
+        }
+        if !found { return false }
+        index += 1usize
+    }
+    (live & dropped) == 0usize && (live | dropped) == (1usize << expected.len()) - 1usize
 }
 
 fn main(): i32 {
@@ -48,12 +74,12 @@ fn main(): i32 {
     let drops = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
     var left = binary_heap.new<Item>()
     var right = binary_heap.new<Item>()
-    left.push(new_item(10, panic_cmp.retain(), drops.retain()))
-    left.push(new_item(5, panic_cmp.retain(), drops.retain()))
-    left.push(new_item(1, panic_cmp.retain(), drops.retain()))
-    right.push(new_item(9, panic_cmp.retain(), drops.retain()))
-    right.push(new_item(6, panic_cmp.retain(), drops.retain()))
-    right.push(new_item(2, panic_cmp.retain(), drops.retain()))
+    left.push(new_item(10, 1usize, panic_cmp.retain(), drops.retain()))
+    left.push(new_item(5, 2usize, panic_cmp.retain(), drops.retain()))
+    left.push(new_item(1, 4usize, panic_cmp.retain(), drops.retain()))
+    right.push(new_item(9, 8usize, panic_cmp.retain(), drops.retain()))
+    right.push(new_item(6, 16usize, panic_cmp.retain(), drops.retain()))
+    right.push(new_item(2, 32usize, panic_cmp.retain(), drops.retain()))
 
     let _set = panic_cmp.get().store(1usize, core.sync.atomic.Ordering.SeqCst)
     let result = std.panic.catch_panic(fn(): Unit {
@@ -63,12 +89,25 @@ fn main(): i32 {
         CatchResult.Panicked(_) => {},
         CatchResult.Returned(_) => { return 1 }
     }
-    if left.len() != 3usize || right.len() != 3usize { return 2 }
-    if drops.get().load(core.sync.atomic.Ordering.SeqCst) != 0usize {
-        return 3
-    }
+    var items = left.into_vec()
+    var donor_items = right.into_vec()
+    items.append(mut donor_items)
+    let identities = [10, 5, 1, 9, 6, 2]
+    if !accounted(items.as_slice(), read identities,
+        drops.get().load(core.sync.atomic.Ordering.SeqCst)) { return 2 }
+    core.mem.drop(items)
+    if drops.get().load(core.sync.atomic.Ordering.SeqCst) != 63usize { return 3 }
 
+    drops.get().store(0usize, core.sync.atomic.Ordering.SeqCst)
     let _set = panic_cmp.get().store(0usize, core.sync.atomic.Ordering.SeqCst)
+    var left = binary_heap.new<Item>()
+    var right = binary_heap.new<Item>()
+    left.push(new_item(10, 1usize, panic_cmp.retain(), drops.retain()))
+    left.push(new_item(5, 2usize, panic_cmp.retain(), drops.retain()))
+    left.push(new_item(1, 4usize, panic_cmp.retain(), drops.retain()))
+    right.push(new_item(9, 8usize, panic_cmp.retain(), drops.retain()))
+    right.push(new_item(6, 16usize, panic_cmp.retain(), drops.retain()))
+    right.push(new_item(2, 32usize, panic_cmp.retain(), drops.retain()))
     left.append(right)
     if !right.is_empty() || left.len() != 6usize { return 4 }
     let expected_values = [10, 9, 6, 5, 2, 1]
@@ -83,7 +122,7 @@ fn main(): i32 {
         index += 1usize
     }
     if !left.is_empty() ||
-        drops.get().load(core.sync.atomic.Ordering.SeqCst) != 6usize {
+        drops.get().load(core.sync.atomic.Ordering.SeqCst) != 63usize {
         return 7
     }
     0

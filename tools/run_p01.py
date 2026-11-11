@@ -81,7 +81,7 @@ def main():
 
     def run(command, code=0):
         start = time.perf_counter()
-        result = subprocess.run(list(map(str, command)), text=True, capture_output=True, timeout=120)
+        result = subprocess.run(list(map(str, command)), text=True, capture_output=True)
         elapsed = time.perf_counter() - start
         evidence["commands"].append({"command": list(map(str, command)), "seconds": elapsed,
                                     "exit_status": result.returncode, "stdout": result.stdout,

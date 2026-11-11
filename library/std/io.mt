@@ -57,6 +57,27 @@ fn kind_from_index(index: i32): ErrorKind {
         15 => ErrorKind.IsADirectory,
         16 => ErrorKind.NotADirectory,
         17 => ErrorKind.DirectoryNotEmpty,
+        22 => ErrorKind.Unsupported,
+        23 => ErrorKind.ArgumentListTooLong,
+        24 => ErrorKind.CrossesDevices,
+        25 => ErrorKind.Deadlock,
+        26 => ErrorKind.ExecutableFileBusy,
+        27 => ErrorKind.FileTooLarge,
+        28 => ErrorKind.FilesystemLoop,
+        29 => ErrorKind.HostUnreachable,
+        30 => ErrorKind.InProgress,
+        31 => ErrorKind.InputOutputError,
+        32 => ErrorKind.InvalidFilename,
+        33 => ErrorKind.NetworkDown,
+        34 => ErrorKind.NetworkUnreachable,
+        35 => ErrorKind.NotSeekable,
+        36 => ErrorKind.QuotaExceeded,
+        37 => ErrorKind.ReadOnlyFilesystem,
+        38 => ErrorKind.ResourceBusy,
+        39 => ErrorKind.StaleNetworkFileHandle,
+        40 => ErrorKind.StorageFull,
+        41 => ErrorKind.TooManyLinks,
+        42 => ErrorKind.TooManyOpenFiles,
         _ => ErrorKind.Other
     }
 }
@@ -386,8 +407,15 @@ pub interface Reader {
         let total = buf.len()
         while done < total {
             let rest = buf.split_at_mut(done).1
-            let n = try self.read_some(rest)
+            let n = match take capture self.read_some(rest) {
+                success(count) => count,
+                failure(error) => {
+                    if error.kind().is(ErrorKind.Interrupted) { continue }
+                    throw error
+                }
+            }
             if n == 0usize { throw from_kind(ErrorKind.UnexpectedEof) }
+            if n > total - done { throw from_kind(ErrorKind.InvalidData) }
             done += n
         }
     }
@@ -397,7 +425,13 @@ pub interface Reader {
         var chunk = [0u8; 4096]
         var total = 0usize
         while true {
-            let n = try self.read_some(chunk)
+            let n = match take capture self.read_some(chunk) {
+                success(count) => count,
+                failure(error) => {
+                    if error.kind().is(ErrorKind.Interrupted) { continue }
+                    throw error
+                }
+            }
             if n == 0usize { break }
             out.extend_from_slice(chunk.split_at(n).0)
             total += n
@@ -406,21 +440,11 @@ pub interface Reader {
     }
 
     mut fn read_to_string(mut out: String): usize throws Error {
-        let start = out.len()
-        let result = capture self.read_to_end(unsafe { out.as_mut_vec() })
-        let count = match take result {
-            success(n) => n,
-            failure(error) => {
-                out.truncate(start)
-                throw error
-            }
-        }
-        match package.core.text.from_utf8(out.as_bytes().split_at(start).1) {
-            present(_) => count,
-            none => {
-                out.truncate(start)
-                throw from_kind(ErrorKind.InvalidData)
-            }
+        var bytes = vec.new<u8>()
+        let count = try self.read_to_end(mut bytes)
+        match package.core.text.from_utf8(bytes.as_slice()) {
+            success(text) => { out.push_str(text); count },
+            failure(_) => throw from_kind(ErrorKind.InvalidData)
         }
     }
 
@@ -460,8 +484,15 @@ pub interface Writer {
         var done = 0usize
         let total = buf.len()
         while done < total {
-            let n = try self.write_some(buf.split_at(done).1)
+            let n = match take capture self.write_some(buf.split_at(done).1) {
+                success(count) => count,
+                failure(error) => {
+                    if error.kind().is(ErrorKind.Interrupted) { continue }
+                    throw error
+                }
+            }
             if n == 0usize { throw from_kind(ErrorKind.WriteZero) }
+            if n > total - done { throw from_kind(ErrorKind.InvalidData) }
             done += n
         }
     }
@@ -533,7 +564,13 @@ pub interface BufRead {
     mut fn read_until(delimiter: u8, mut out: List<u8>): usize throws Error {
         var total = 0usize
         while true {
-            let available = try self.fill_buf()
+            let available = match take capture self.fill_buf() {
+                success(bytes) => bytes,
+                failure(error) => {
+                    if error.kind().is(ErrorKind.Interrupted) { continue }
+                    throw error
+                }
+            }
             if available.len() == 0usize { break }
             var count = 0usize
             while count < available.len() && available[count] != delimiter {
@@ -551,7 +588,13 @@ pub interface BufRead {
     mut fn skip_until(delimiter: u8): usize throws Error {
         var total = 0usize
         while true {
-            let available = try self.fill_buf()
+            let available = match take capture self.fill_buf() {
+                success(bytes) => bytes,
+                failure(error) => {
+                    if error.kind().is(ErrorKind.Interrupted) { continue }
+                    throw error
+                }
+            }
             if available.len() == 0usize { break }
             var count = 0usize
             while count < available.len() && available[count] != delimiter {
@@ -566,21 +609,11 @@ pub interface BufRead {
     }
 
     mut fn read_line(mut out: String): usize throws Error {
-        let start = out.len()
-        let result = capture self.read_until(10u8, unsafe { out.as_mut_vec() })
-        let count = match take result {
-            success(n) => n,
-            failure(error) => {
-                out.truncate(start)
-                throw error
-            }
-        }
-        match package.core.text.from_utf8(out.as_bytes().split_at(start).1) {
-            present(_) => {},
-            none => {
-                out.truncate(start)
-                throw from_kind(ErrorKind.InvalidData)
-            }
+        var bytes = vec.new<u8>()
+        let count = try self.read_until(10u8, mut bytes)
+        match package.core.text.from_utf8(bytes.as_slice()) {
+            success(text) => out.push_str(text),
+            failure(_) => throw from_kind(ErrorKind.InvalidData)
         }
         count
     }
@@ -668,6 +701,7 @@ extend<B: BufRead> Split<B> implements package.core.iter.Iterator {
 type FormatSink<region r, W: Writer + unsized> { inner: mut W from r; first_error: Error? }
 extend<region r, W: Writer + unsized> FormatSink<region r, W> implements fmt.Write {
     mut fn write_str(read text: Text): Unit throws fmt.Error {
+        if self.first_error.is_present() { throw fmt.Error() }
         let done = capture self.inner.write_all(text.as_bytes())
         match take done {
             success(_) => {},
@@ -679,14 +713,13 @@ extend<region r, W: Writer + unsized> FormatSink<region r, W> implements fmt.Wri
 fn format_to<W: Writer + unsized>(mut writer: W, message: format fmt.Message, newline: bool): Unit throws Error {
     var sink = FormatSink(mut writer, none)
     let outcome = capture message.write_to(mut sink)
+    match take sink.first_error {
+        present(error) => throw error,
+        none => {}
+    }
     match take outcome {
         success(_) => {},
-        failure(_) => {
-            match take sink.first_error {
-                present(e) => { throw e },
-                none => { throw from_kind(ErrorKind.InvalidData) }
-            }
-        }
+        failure(_) => throw from_kind(ErrorKind.InvalidData)
     }
     if newline { try sink.inner.write_all("\n".as_bytes()) }
 }
@@ -720,7 +753,13 @@ pub fn `copy`<R: Reader + unsized, W: Writer + unsized>(mut reader: R, mut write
     var buffer = [0u8; 8192]
     var total = 0u64
     while true {
-        let count = try reader.read_some(buffer)
+        let count = match take capture reader.read_some(buffer) {
+            success(count) => count,
+            failure(error) => {
+                if error.kind().is(ErrorKind.Interrupted) { continue }
+                throw error
+            }
+        }
         if count == 0usize { break }
         try writer.write_all(buffer.split_at(count).0)
         total += count as u64
@@ -1060,8 +1099,9 @@ extend<R: Reader> BufferedReader<R> {
 pub fn buf_reader<R: Reader>(take inner: R): BufferedReader<R> { buf_reader_with_capacity(8192usize, inner) }
 
 pub fn buf_reader_with_capacity<R: Reader>(capacity: usize, take inner: R): BufferedReader<R> {
-    var buf = vec.with_capacity<u8>(capacity)
-    buf.resize(capacity, 0u8)
+    let usable = if capacity == 0usize { 1usize } else { capacity }
+    var buf = vec.with_capacity<u8>(usable)
+    buf.resize(usable, 0u8)
     BufferedReader(inner, buf, 0usize, 0usize)
 }
 
@@ -1082,17 +1122,8 @@ extend<R: Reader> BufferedReader<R> {
     // `buf` empty. An I/O failure also leaves `buf` empty (consumed input is lost).
     pub mut fn read_line_into(mut buf: String): (read Text from buf)? throws Error {
         buf.clear()
-        let read_result = capture self.read_until(10u8, unsafe { buf.as_mut_vec() })
-        let n = match take read_result {
-            success(count) => count,
-            failure(e) => { buf.clear(); throw e }
-        }
+        let n = try self.read_line(mut buf)
         if n == 0usize { return none }
-        let valid = match package.core.text.from_utf8(buf.as_bytes()) {
-            present(_) => true,
-            none => false
-        }
-        if !valid { buf.clear(); throw from_kind(ErrorKind.InvalidData) }
         present(buf.as_text())
     }
 
@@ -1177,8 +1208,9 @@ pub type BufferedWriter<W: Writer> {
     inner: W
     buf: List<u8>
     capacity: usize
+    panicked: bool
     drop {
-        let ignored = capture self.flush_buf()
+        if !self.panicked { let ignored = capture self.flush_buf() }
     }
 }
 
@@ -1192,14 +1224,54 @@ extend<W: Writer> BufferedWriter<W> {
 pub fn buf_writer<W: Writer>(take inner: W): BufferedWriter<W> { buf_writer_with_capacity(8192usize, inner) }
 
 pub fn buf_writer_with_capacity<W: Writer>(capacity: usize, take inner: W): BufferedWriter<W> {
-    BufferedWriter(inner, vec.with_capacity<u8>(capacity), capacity)
+    BufferedWriter(inner, vec.with_capacity<u8>(capacity), capacity, false)
+}
+
+type BufferedDrain<region r> {
+    bytes: mut List<u8> from r
+    written: usize
+    drop {
+        let remaining = self.bytes.len() - self.written
+        var index = 0usize
+        while index < remaining {
+            self.bytes[index] = self.bytes[self.written + index]
+            index += 1usize
+        }
+        self.bytes.truncate(remaining)
+    }
+}
+
+fn tracked_write<W: Writer>(mut inner: W, mut panicked: bool, read bytes: [u8]): usize throws Error {
+    let previous = panicked
+    panicked = true
+    let result = capture inner.write_some(bytes)
+    panicked = previous
+    match take result {
+        success(count) => count,
+        failure(error) => throw error
+    }
 }
 
 extend<W: Writer> BufferedWriter<W> {
     mut fn flush_buf(): Unit throws Error {
-        if self.buf.len() > 0usize {
-            try self.inner.write_all(self.buf.as_slice())
-            self.buf.clear()
+        var drain = BufferedDrain(mut self.buf, 0usize)
+        while drain.written < drain.bytes.len() {
+            let result = capture tracked_write(
+                mut self.inner, mut self.panicked,
+                drain.bytes.as_slice().split_at(drain.written).1
+            )
+            let count = match take result {
+                success(count) => count,
+                failure(error) => {
+                    if error.kind().is(ErrorKind.Interrupted) { continue }
+                    throw error
+                }
+            }
+            if count == 0usize { throw from_kind(ErrorKind.WriteZero) }
+            if count > drain.bytes.len() - drain.written {
+                throw from_kind(ErrorKind.InvalidData)
+            }
+            drain.written += count
         }
     }
     pub fn buffer(): read [u8] from self { self.buf.as_slice() }
@@ -1211,9 +1283,9 @@ extend<W: Writer> BufferedWriter<W> {
 
 extend<W: Writer> BufferedWriter<W> implements Writer {
     mut fn write_some(read buf: [u8]): usize throws Error {
-        if self.buf.len() + buf.len() > self.capacity { try self.flush_buf() }
+        if buf.len() > self.capacity - self.buf.len() { try self.flush_buf() }
         if buf.len() >= self.capacity {
-            return try self.inner.write_some(buf)
+            return try tracked_write(mut self.inner, mut self.panicked, buf)
         }
         self.buf.extend_from_slice(buf)
         buf.len()
@@ -1231,14 +1303,41 @@ extend<W: Writer> IntoInnerError<W> {
     pub take fn into_inner(): BufferedWriter<W> { self.writer }
 }
 
+extend<W: Writer> IntoInnerError<W> implements fmt.Display {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try Error.(fmt.Display).fmt(self.error, mut f)
+    }
+}
+extend<W: Writer> IntoInnerError<W> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try Error.(fmt.Debug).fmt(self.error, mut f)
+    }
+}
 extend<W: Writer> IntoInnerError<W> implements package.core.error.Error {}
 
 extend<W: Writer> Error implements From<IntoInnerError<W>> {
     static fn from(take value: IntoInnerError<W>): Error { value.error }
 }
 
-fn buffered_writer_parts<W: Writer>(take writer: BufferedWriter<W>): (W, List<u8>) {
+pub type WriterPanicked { bytes: List<u8> }
+extend WriterPanicked {
+    pub take fn into_inner(): List<u8> { self.bytes }
+}
+extend WriterPanicked implements fmt.Display {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("writer panicked with unknown output progress")
+    }
+}
+extend WriterPanicked implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("WriterPanicked")
+    }
+}
+extend WriterPanicked implements CoreError {}
+
+fn buffered_writer_parts<W: Writer>(take writer: BufferedWriter<W>): (W, Outcome<List<u8>, WriterPanicked>) {
     var owner = core.mem.ManuallyDrop.new(writer)
+    let panicked = owner.deref_mut().panicked
     // Safety: the suppressed writer drop is replaced by one move of each owned field.
     let inner = unsafe {
         core.ptr.`read`(core.ptr.from_mut(mut owner.deref_mut().inner))
@@ -1246,11 +1345,11 @@ fn buffered_writer_parts<W: Writer>(take writer: BufferedWriter<W>): (W, List<u8
     let buffer = unsafe {
         core.ptr.`read`(core.ptr.from_mut(mut owner.deref_mut().buf))
     }
-    (inner, buffer)
+    if panicked { (inner, failure(WriterPanicked(buffer))) } else { (inner, success(buffer)) }
 }
 
 extend<W: Writer> BufferedWriter<W> {
-    pub take fn into_parts(): (W, List<u8>) {
+    pub take fn into_parts(): (W, Outcome<List<u8>, WriterPanicked>) {
         buffered_writer_parts(self)
     }
 

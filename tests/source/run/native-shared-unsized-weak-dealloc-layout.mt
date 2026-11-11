@@ -15,7 +15,7 @@ extend Tracker implements Clone {
     }
 }
 
-extend Tracker implements Allocator {
+unsafe extend Tracker implements Allocator {
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {
         unsafe {
             *self.size = layout.size()
@@ -24,7 +24,7 @@ extend Tracker implements Allocator {
         var global = Global()
         try global.allocate(layout)
     }
-    mut fn deallocate(p: ptr<mut u8>, layout: Layout): Unit {
+    mut unsafe fn deallocate(p: ptr<mut u8>, layout: Layout): Unit {
         unsafe {
             if layout.size() != *self.size || layout.align() != *self.align {
                 *self.mismatches += 1
@@ -32,15 +32,15 @@ extend Tracker implements Allocator {
             *self.frees += 1
         }
         var global = Global()
-        global.deallocate(p, layout)
+        unsafe { global.deallocate(p, layout) }
     }
-    mut fn grow(p: ptr<mut u8>, old: Layout, size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn grow(p: ptr<mut u8>, old: Layout, size: usize): ptr<mut u8> throws AllocError {
         var global = Global()
-        try global.grow(p, old, size)
+        unsafe { try global.grow(p, old, size) }
     }
-    mut fn shrink(p: ptr<mut u8>, old: Layout, size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn shrink(p: ptr<mut u8>, old: Layout, size: usize): ptr<mut u8> throws AllocError {
         var global = Global()
-        try global.shrink(p, old, size)
+        unsafe { try global.shrink(p, old, size) }
     }
 }
 

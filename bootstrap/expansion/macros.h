@@ -2,6 +2,7 @@
 
 #include "diagnostics/diagnostics.h"
 #include "expansion/expand.h"
+#include "expansion/macro_library.h"
 #include "expansion/procedural.h"
 #include <functional>
 #include <optional>
@@ -16,6 +17,11 @@ struct MacroModuleSource {
   // File-module scope of `source`; trailing path components may be inline
   // modules within that source.
   std::vector<std::string> sourcePath;
+  std::optional<Configuration> configuration{};
+  // Compiled rules bypass source lexing; remapping must register their source
+  // revisions/provenance in the receiving Diagnostics.
+  std::shared_ptr<const MacroLibrary> compiled{};
+  MacroSourceRemap remapSources{};
 };
 using MacroModuleProvider = std::function<std::optional<MacroModuleSource>(
     const std::vector<std::string> &path,
@@ -52,17 +58,24 @@ using MacroModuleProvider = std::function<std::optional<MacroModuleSource>(
 //
 // `declarations`, when supplied, receives the syntax-only declarations removed
 // from this source so name resolution can build their macro namespace.
+// `importModules` overrides module discovery for imports, not declarations.
+// `configuration` removes inactive items before macro discovery and execution;
+// imported sources can supply their own package feature configuration.
+// `exports` captures rules/imports before disposal, using `identify` to name
+// source revisions independently of this compilation's SourceIds.
 // Returns nullopt when the source has no local, imported or qualified macro
-// invocation, no procedural macro, or does not lex (the parser then reports
-// it); otherwise the generated source, which keeps the original path. Its
-// registered provenance maps every generated token back to the template or
-// argument token it came from, with the invocation as the origin, and unchanged
-// text exactly, so diagnostics keep their positions.
-std::optional<Source>
-expandMacros(const Source &source, Diagnostics &diagnostics,
-             const SourceAllocator &allocate,
-             const Procedures *procedural = nullptr,
-             std::vector<std::string> modulePath = {},
-             const MacroModuleProvider &modules = {},
-             std::vector<Module::MacroDeclaration> *declarations = nullptr);
+// invocation, procedural macro or inactive item, or does not lex (the parser
+// then reports it); otherwise the generated source, which keeps the original
+// path. Its registered provenance maps every generated token back to the
+// template or argument token it came from, with the invocation as the origin,
+// and unchanged text exactly, so diagnostics keep their positions.
+std::optional<Source> expandMacros(
+    const Source &source, Diagnostics &diagnostics,
+    const SourceAllocator &allocate, const Procedures *procedural = nullptr,
+    std::vector<std::string> modulePath = {},
+    const MacroModuleProvider &modules = {},
+    std::vector<Module::MacroDeclaration> *declarations = nullptr,
+    const MacroModuleProvider &importModules = {},
+    const Configuration *configuration = nullptr,
+    MacroLibrary *exports = nullptr, const MacroSourceIdentity &identify = {});
 } // namespace mettle::expansion

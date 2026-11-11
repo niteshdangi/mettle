@@ -113,9 +113,9 @@ void Checker::formatArguments(Node &n, const Function &callee,
       continue;
     // Macro expansion may wrap a forwarded f-string in a group or block.
     auto *wrapped = &n.children[i];
-    while (((*wrapped)->kind == Kind::Group ||
-            (*wrapped)->kind == Kind::Block) &&
-           (*wrapped)->children.size() == 1)
+    while (
+        ((*wrapped)->kind == Kind::Group || (*wrapped)->kind == Kind::Block) &&
+        (*wrapped)->children.size() == 1)
       wrapped = &(*wrapped)->children[0];
     if (wrapped != &n.children[i] && (*wrapped)->label == formatRecipeLabel) {
       auto inner = std::move(*wrapped);
@@ -128,7 +128,8 @@ void Checker::formatArguments(Node &n, const Function &callee,
     if (argument.kind == Kind::Name) {
       bool forwarded = false;
       for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope)
-        if (auto found = scope->find(argument.text); found != scope->end()) {
+        if (auto found = scope->find(nameKey(argument.text, argument.context));
+            found != scope->end()) {
           forwarded = formatVariables.contains(found->second.variable);
           break;
         }
@@ -141,7 +142,10 @@ void Checker::formatArguments(Node &n, const Function &callee,
       continue;
     const auto span = argument.span;
     auto label = std::move(argument.name);
+    auto labelContext = std::move(argument.fieldContext);
+    auto labelSpan = argument.fieldSpan;
     argument.name.clear();
+    argument.fieldSpan = {};
     std::vector<std::unique_ptr<Node>> holes, pieces;
     for (int piece = 0; piece < 2; ++piece) {
       auto empty = std::make_unique<Node>();
@@ -153,6 +157,8 @@ void Checker::formatArguments(Node &n, const Function &callee,
     holes.push_back(n.children[i].release());
     auto recipe = formatRecipe(span, std::move(holes), std::move(pieces));
     recipe->name = std::move(label);
+    recipe->fieldContext = std::move(labelContext);
+    recipe->fieldSpan = labelSpan;
     permittedRecipes.insert(recipe.get());
     n.children[i] = NodeOwner(std::move(recipe));
   }
@@ -165,12 +171,14 @@ int Checker::call(Node &n, bool reachable) {
   }
   bool localCallee = false;
   for (const auto &scope : scopes)
-    localCallee |= n.children[0]->kind == Kind::Name &&
-                   n.children[0]->annotation.form != TypeForm::Projection &&
-                   scope.contains(n.children[0]->text);
+    localCallee |=
+        n.children[0]->kind == Kind::Name &&
+        n.children[0]->annotation.form != TypeForm::Projection &&
+        scope.contains(nameKey(n.children[0]->text, n.children[0]->context));
   if (n.children[0]->kind == Kind::Name &&
       n.children[0]->annotation.form != TypeForm::Projection &&
-      staticName(n.children[0]->text, n.children[0]->span))
+      staticName(n.children[0]->text, n.children[0]->span,
+                 n.children[0]->context))
     localCallee = true;
   if (localCallee ||
       (n.children[0]->kind != Kind::Name && n.children[0]->kind != Kind::Field))
@@ -231,7 +239,7 @@ int Checker::call(Node &n, bool reachable) {
             callable = checked.types->view(callable).payload;
           if (!checked.types->isCallable(callable))
             continue;
-          visibleField(type, field, n.span);
+          visibleField(type, field, n.span, member.context);
           facts(member).field = static_cast<int>(field);
           facts(member).dereferences = facts(n).dereferences;
           facts(n).dereferences = 0;
@@ -257,7 +265,7 @@ int Checker::call(Node &n, bool reachable) {
         qualified.elements.size() == 2) {
       auto self = annotation(qualified.elements[0], n.span, current->owner);
       auto interface =
-          interfaceBound(qualified.elements[1], n.span, current->owner);
+          interfaceBound(qualified.elements[1], n.span, current->owner, self);
       if (!interfaceObligation(self, interface, n.span))
         return result;
       const auto &definition =
@@ -276,7 +284,8 @@ int Checker::call(Node &n, bool reachable) {
           static_cast<int>(method - definition.methods.begin());
       name = checked.functions[method->function].canonicalName;
     } else
-      name = callableName(n.children[0]->text, current->owner, n.span);
+      name = callableName(n.children[0]->text, current->owner, n.span,
+                          n.children[0]->context);
     const auto &spelling = n.children[0]->text;
     auto separator = spelling.rfind("::");
     if (separator != std::string::npos &&
@@ -298,9 +307,10 @@ int Checker::call(Node &n, bool reachable) {
   }
   bool shadowed = false;
   for (const auto &scope : scopes)
-    shadowed |= n.children[0]->kind == Kind::Name &&
-                n.children[0]->annotation.form != TypeForm::Projection &&
-                scope.contains(n.children[0]->text);
+    shadowed |=
+        n.children[0]->kind == Kind::Name &&
+        n.children[0]->annotation.form != TypeForm::Projection &&
+        scope.contains(nameKey(n.children[0]->text, n.children[0]->context));
   if (shadowed) {
     error("type", n.span,
           "unresolved or non-callable function '" +
@@ -343,12 +353,8 @@ int Checker::call(Node &n, bool reachable) {
       checked.types->isProduct(constructed->second)) {
     facts(n).constructor = true;
     result = inference.fresh(constructed->second);
-    std::size_t index = 0;
     for (const auto &field :
          checked.types->product(constructed->second).fields) {
-      if (!checked.types->product(constructed->second).layout.unionType)
-        visibleField(constructed->second, index, n.span);
-      ++index;
       signature.push_back({field.name, field.type});
     }
     if (checked.types->product(constructed->second).layout.unionType) {
@@ -365,7 +371,6 @@ int Checker::call(Node &n, bool reachable) {
         return result;
       }
       facts(n).field = selected - signature.begin();
-      visibleField(constructed->second, facts(n).field, n.span);
       auto field = *selected;
       signature = {field};
     }
@@ -380,6 +385,16 @@ int Checker::call(Node &n, bool reachable) {
         return *primitive;
       if (auto primitive = machineCall(n, reachable))
         return *primitive;
+      // Ambiguous glob imports are diagnosed where the name is used.
+      Diagnostics reason;
+      checked.symbols->lookup(nameModule(n.span, n.children[0]->context),
+                              n.children[0]->text, resolution::Namespace::Value,
+                              n.span, &reason);
+      if (!reason.items.empty() &&
+          reason.items.front().message.starts_with("ambiguous import")) {
+        error("name", n.span, reason.items.front().message);
+        return result;
+      }
       error("name", n.span,
             "unresolved or inaccessible function '" +
                 displayPath(n.children[0]->text) + "'" +
@@ -424,8 +439,7 @@ int Checker::call(Node &n, bool reachable) {
     if (facts(n).method && function.receiver == "mut")
       requireMutablePlace(*n.children[0]->children[0]);
     if (facts(n).interfaceMethod < 0 &&
-        !checked.symbols->accessible(function.span,
-                                     checked.symbols->moduleOf(n.span)))
+        !checked.symbols->accessible(function.span, accessModule(n)))
       error("name", n.span,
             "private or restricted function '" + displayPath(function.name) +
                 "' is inaccessible");
@@ -442,7 +456,9 @@ int Checker::call(Node &n, bool reachable) {
       error("ownership", n.span, "cannot invoke a destructor directly");
     facts(n).receiverReservation =
         facts(n).method && function.receiver == "mut";
-    result = functionVariables[&function];
+    result = facts(function).result == Type::Unknown
+                 ? functionVariables[&function]
+                 : inference.fresh(facts(function).result);
     for (const auto &parameter : function.parameters)
       signature.push_back(
           {parameter.name,
@@ -500,6 +516,15 @@ int Checker::call(Node &n, bool reachable) {
       facts(n).argumentOrder.push_back(0);
       continue;
     }
+    if (facts(n).constructor)
+      visibleField(constructed->second,
+                   checked.types->product(constructed->second).layout.unionType
+                       ? facts(n).field
+                       : target,
+                   argument.name.empty() ? n.children[0]->span
+                                         : argument.fieldSpan,
+                   argument.name.empty() ? n.children[0]->context
+                                         : argument.fieldContext);
     if (used[target] && !misordered) {
       misbound = true;
       error("type", argument.span, "duplicate argument");
@@ -574,6 +599,12 @@ void Checker::fields(bool final) {
           error("type", request.node->span,
                 "generic variant '" + request.node->text +
                     "' does not construct the expected type");
+        else {
+          auto *saved = genericEnvironment;
+          genericEnvironment = request.environment;
+          completeGenericUnitVariant(*request.node, base);
+          genericEnvironment = saved;
+        }
         continue;
       }
       if (base == Type::Never) {
@@ -692,7 +723,8 @@ void Checker::fields(bool final) {
         continue;
       }
       facts(*request.node).field = index;
-      visibleField(base, static_cast<std::size_t>(index), request.node->span);
+      visibleField(base, static_cast<std::size_t>(index), request.node->span,
+                   request.node->context);
       inference.equal(request.result,
                       inference.fresh(product.fields[index].type),
                       request.node->span);

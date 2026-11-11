@@ -4,11 +4,11 @@
 namespace mettle {
 void Checker::controlFlow(Function &function) {
   std::vector<Node *> targets;
-  std::set<std::string> lexical;
+  std::set<NameKey> lexical;
   std::function<void(const Pattern &)> bind = [&](const Pattern &pattern) {
     if (pattern.kind == PatternKind::Binding ||
         pattern.kind == PatternKind::At || pattern.kind == PatternKind::Rest)
-      lexical.insert(pattern.text);
+      lexical.insert(nameKey(pattern.text, pattern.context));
     for (const auto &child : pattern.children)
       bind(child);
   };
@@ -16,7 +16,8 @@ void Checker::controlFlow(Function &function) {
   std::function<void(Node &)> visit = [&](Node &node) {
     qualifyDottedPath(node, lexical, &function);
     if (node.kind == Kind::Name)
-      facts(node).lexicallyBound = lexical.contains(node.text);
+      facts(node).lexicallyBound =
+          lexical.contains(nameKey(node.text, node.context));
     if (node.kind == Kind::Block) {
       auto saved = lexical;
       for (auto &child : node.children)
@@ -28,7 +29,7 @@ void Checker::controlFlow(Function &function) {
       for (auto &child : node.children)
         visit(*child);
       if (node.patterns.empty())
-        lexical.insert(node.text);
+        lexical.insert(nameKey(node.text, node.context));
       else
         bind(node.patterns[0]);
       return;
@@ -43,7 +44,7 @@ void Checker::controlFlow(Function &function) {
       auto saved = std::move(targets);
       auto savedLexical = lexical;
       for (const auto &parameter : node.parameters) {
-        lexical.insert(parameter.name);
+        lexical.insert(nameKey(parameter.name, parameter.context));
         if (parameter.pattern)
           bind(*parameter.pattern);
       }
@@ -103,12 +104,12 @@ void Checker::controlFlow(Function &function) {
   for (auto &parameter : function.parameters) {
     if (parameter.defaultValue.get())
       visit(*parameter.defaultValue);
-    lexical.insert(parameter.name);
+    lexical.insert(nameKey(parameter.name, parameter.context));
     if (parameter.pattern)
       bind(*parameter.pattern);
   }
   if (!function.variadicCursor.empty())
-    lexical.insert(function.variadicCursor);
+    lexical.insert(nameKey(function.variadicCursor, function.variadicSpan));
   visit(*function.body);
 }
 
@@ -219,6 +220,7 @@ bool Checker::desugarIteration(Node &n, Type original) {
     result->kind = kind;
     result->span = n.span;
     result->text = std::move(text);
+    result->context = n.context;
     return result;
   };
   auto reference = [&] {

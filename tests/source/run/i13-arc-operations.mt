@@ -357,8 +357,8 @@ fn checks_defaults_and_conversions(): i32 {
     }
     var mutable_text_bytes = [b'o', b'k']
     let mutable_text = match take core.text.from_utf8_mut(mut mutable_text_bytes) {
-        present(value) => value,
-        none => { return 124 }
+        success(value) => value,
+        failure(_) => { return 124 }
     }
     let mutable_text_owner = arc.Arc<core.text.Text>.(From<mut core.text.Text>).from(
         take mutable_text

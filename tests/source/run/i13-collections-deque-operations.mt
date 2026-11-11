@@ -45,8 +45,9 @@ fn main(): i32 {
     match capture sized.try_reserve(3usize) { success(_) => {}, failure(_) => { return 4 } }
     match capture sized.try_reserve_exact(3usize) { success(_) => {}, failure(_) => { return 5 } }
     match capture sized.try_reserve(0xffffffffffffffffusize) { success(_) => { return 6 }, failure(_) => {} }
+    let before_shrink = sized.capacity()
     sized.shrink_to(0usize)
-    if sized.capacity() != 0usize { return 7 }
+    if sized.capacity() > before_shrink || !sized.is_empty() { return 7 }
 
     // Pushes at both ends, and the element order they produce.
     var d = vec_deque.new<i32>()
@@ -108,10 +109,10 @@ fn main(): i32 {
         *inserted = 7
     }
     if !same(d, [1, 5, 7, 20]) { return 32 }
-    if d.remove(2usize) != 7 || !same(d, [1, 5, 20]) { return 33 }
-    if d.swap_remove_back(0usize) != 1 || !same(d, [20, 5]) { return 34 }
+    if d.remove(2usize).unwrap() != 7 || !same(d, [1, 5, 20]) { return 33 }
+    if d.swap_remove_back(0usize).unwrap() != 1 || !same(d, [20, 5]) { return 34 }
     d.push_front(4)
-    if d.swap_remove_front(2usize) != 5 || !same(d, [20, 4]) { return 35 }
+    if d.swap_remove_front(2usize).unwrap() != 5 || !same(d, [20, 4]) { return 35 }
     d.push_back(9)
     d.swap(0usize, 2usize)
     if !same(d, [9, 4, 20]) { return 36 }

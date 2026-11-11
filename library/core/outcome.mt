@@ -36,7 +36,7 @@ extend<T, E> (Outcome<T, E>) {
             failure(error) => failure(read error)
         }
     }
-    pub mut fn as_deref_mut(): (Outcome<(mut T.(DerefMut).Target from self), (mut E from self)>) where T: DerefMut {
+    pub mut fn as_deref_mut(): (Outcome<(mut T.(Deref).Target from self), (mut E from self)>) where T: DerefMut {
         match mut self {
             success(value) => success(value.deref_mut()),
             failure(error) => failure(mut error)
@@ -76,41 +76,41 @@ extend<T, E> (Outcome<T, E>) {
     pub take fn unwrap_or(take fallback: T): T {
         match take self { success(value) => value, failure(error) => fallback }
     }
-    pub take fn unwrap_or_else(fallback: fn(take E): T): T {
+    pub take fn unwrap_or_else<F: take fn(take E): T>(take fallback: F): T {
         match take self { success(value) => value, failure(error) => fallback(error) }
     }
 
-    pub take fn map<U>(f: fn(take T): U): (Outcome<U, E>) {
+    pub take fn map<U, F: take fn(take T): U>(take f: F): (Outcome<U, E>) {
         match take self { success(value) => success(f(value)), failure(error) => failure(error) }
     }
-    pub take fn map_or<U>(take fallback: U, f: fn(take T): U): U {
+    pub take fn map_or<U, F: take fn(take T): U>(take fallback: U, take f: F): U {
         match take self { success(value) => f(value), failure(error) => fallback }
     }
-    pub take fn map_err<F>(f: fn(take E): F): (Outcome<T, F>) {
+    pub take fn map_err<F, G: take fn(take E): F>(take f: G): (Outcome<T, F>) {
         match take self { success(value) => success(value), failure(error) => failure(f(error)) }
     }
     pub take fn and<U>(take other: (Outcome<U, E>)): (Outcome<U, E>) {
         match take self { success(_) => other, failure(error) => failure(error) }
     }
-    pub take fn map_or_else<U>(fallback: fn(take E): U, f: fn(take T): U): U {
+    pub take fn map_or_else<U, F: take fn(take E): U, G: take fn(take T): U>(take fallback: F, take f: G): U {
         match take self { success(value) => f(value), failure(error) => fallback(error) }
     }
-    pub take fn map_or_default<U: Default>(f: fn(take T): U): U {
+    pub take fn map_or_default<U: Default, F: take fn(take T): U>(take f: F): U {
         match take self { success(value) => f(value), failure(_) => U.(Default).default() }
     }
-    pub take fn is_ok_and(test: fn(take T): bool): bool {
+    pub take fn is_ok_and<F: take fn(take T): bool>(take test: F): bool {
         match take self { success(value) => test(value), failure(error) => false }
     }
-    pub take fn is_err_and(test: fn(take E): bool): bool {
+    pub take fn is_err_and<F: take fn(take E): bool>(take test: F): bool {
         match take self { success(value) => false, failure(error) => test(error) }
     }
-    pub take fn inspect(f: fn(read T): Unit): (Outcome<T, E>) {
+    pub take fn inspect<F: take fn(read T): Unit>(take f: F): (Outcome<T, E>) {
         match take self {
             success(value) => { f(read value); success(value) },
             failure(error) => failure(error)
         }
     }
-    pub take fn inspect_err(f: fn(read E): Unit): (Outcome<T, E>) {
+    pub take fn inspect_err<F: take fn(read E): Unit>(take f: F): (Outcome<T, E>) {
         match take self {
             success(value) => success(value),
             failure(error) => { f(read error); failure(error) }
@@ -128,10 +128,10 @@ extend<T, E> (Outcome<T, E>) {
             failure(error) => error
         }
     }
-    pub take fn and_then<U>(f: fn(take T): (Outcome<U, E>)): (Outcome<U, E>) {
+    pub take fn and_then<U, F: take fn(take T): (Outcome<U, E>)>(take f: F): (Outcome<U, E>) {
         match take self { success(value) => f(value), failure(error) => failure(error) }
     }
-    pub take fn or_else<F>(f: fn(take E): (Outcome<T, F>)): (Outcome<T, F>) {
+    pub take fn or_else<F, G: take fn(take E): (Outcome<T, F>)>(take f: G): (Outcome<T, F>) {
         match take self { success(value) => success(value), failure(error) => f(error) }
     }
     pub take fn or<F>(take other: (Outcome<T, F>)): (Outcome<T, F>) {

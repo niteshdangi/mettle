@@ -34,6 +34,7 @@ struct Options {
   std::string sanitizerError;
   // Internal package context for host build programs and procedural macros.
   bool packageContext = false;
+  std::string packageInstance;
   std::set<std::string> injectedFeatures;
   std::vector<resolution::Library::Package> injectedPackages;
   std::vector<std::pair<std::string, std::string>> packageDependencies;

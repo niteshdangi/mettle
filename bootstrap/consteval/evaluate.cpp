@@ -114,7 +114,13 @@ struct Local {
   std::string name;
   Value value;
   bool mutableBinding = false;
+  SyntaxContextPtr context{};
 };
+bool namesLocal(const Local &local, const Node &name) {
+  auto binding = local.context ? local.context->identity : 0;
+  auto reference = name.context ? name.context->identity : 0;
+  return local.name == name.text && binding == reference;
+}
 struct Frame {
   std::deque<Local> locals;
   Shape result;
@@ -310,10 +316,11 @@ private:
     if (node.kind != Kind::Name)
       return Type::Unknown;
     for (const auto &local : frame().locals)
-      if (local.name == node.text)
+      if (namesLocal(local, node))
         return Type::Unknown;
     TypeSyntax syntax;
     syntax.name = node.text;
+    syntax.context = node.context;
     return host.resolveType(syntax, node.span);
   }
 
@@ -442,12 +449,19 @@ private:
     }
   }
   std::optional<std::uint64_t> length(const Node &node) {
-    auto usize = scalarShape(Type::Usize);
-    auto value = eval(node, &usize);
-    if (!value || !coerce(*value, usize, node.span))
+    auto value = eval(node, nullptr);
+    if (!value)
       return std::nullopt;
-    if (value->number.magnitude[1] ||
-        value->number.magnitude[0] > options.stepBudget) {
+    if (value->kind != Value::Kind::Integer) {
+      fail("type", node.span, "an array count must be an integer");
+      return std::nullopt;
+    }
+    if (value->number.negative &&
+        (value->number.magnitude[0] || value->number.magnitude[1])) {
+      fail("constant", node.span, "an array count cannot be negative");
+      return std::nullopt;
+    }
+    if (value->number.magnitude[1]) {
       fail("limit", node.span,
            "constant evaluation exceeded the aggregate size limit");
       return std::nullopt;
@@ -464,6 +478,13 @@ private:
       return false;
     }
     return true;
+  }
+
+  Lookup lookup(const Node &node) {
+    auto remaining = options.stepBudget - steps;
+    auto result = host.lookup(node, remaining);
+    steps = options.stepBudget - remaining;
+    return result;
   }
 
   // Gives an unsuffixed integer its type or checks a typed value against the
@@ -627,7 +648,8 @@ private:
       if (!comparison)
         return fail("type", span,
                     "operator '" + op + "' does not apply to char");
-      return integerOperation(op, Type::Bool, left, right, span);
+      auto result = integerOperation(op, Type::Bool, left, right, span);
+      return result ? Opt(boolValue(truth(*result))) : std::nullopt;
     }
     if (left.kind != Value::Kind::Integer)
       return fail("type", span,
@@ -680,9 +702,25 @@ private:
   // The storage of a place rooted at a local of the current frame.
   struct Place {
     Value *value = nullptr;
+    Value *rootValue = nullptr;
+    std::vector<std::size_t> path;
     bool mutableBinding = false;
     std::string root;
   };
+  bool refresh(Place &place, Span span) {
+    place.value = place.rootValue;
+    for (auto index : place.path) {
+      if ((place.value->kind != Value::Kind::Array &&
+           place.value->kind != Value::Kind::Tuple) ||
+          index >= place.value->elements.size()) {
+        fail("constant", span,
+             "constant place changed while evaluating its index");
+        return false;
+      }
+      place.value = &place.value->elements[index];
+    }
+    return true;
+  }
   Place place(const Node &node) {
     if (failed)
       return {};
@@ -692,8 +730,8 @@ private:
     case Kind::Name: {
       auto &locals = frame().locals;
       for (auto it = locals.rbegin(); it != locals.rend(); ++it)
-        if (it->name == node.text)
-          return {&it->value, it->mutableBinding, it->name};
+        if (namesLocal(*it, node))
+          return {&it->value, &it->value, {}, it->mutableBinding, it->name};
       return {};
     }
     case Kind::Field: {
@@ -709,6 +747,7 @@ private:
       index = std::stoull(node.text);
       if (index >= base.value->elements.size())
         return {};
+      base.path.push_back(static_cast<std::size_t>(index));
       base.value = &base.value->elements[index];
       return base;
     }
@@ -720,6 +759,13 @@ private:
       auto index = eval(*node.children[1], &usize);
       if (!index)
         return {};
+      if (!refresh(base, node.span))
+        return {};
+      if (base.value->kind != Value::Kind::Array) {
+        fail("constant", node.span,
+             "constant place changed while evaluating its index");
+        return {};
+      }
       if (index->kind != Value::Kind::Integer ||
           (index->type != Type::Unknown && index->type != Type::Usize)) {
         fail("type", node.children[1]->span,
@@ -734,6 +780,7 @@ private:
                  " but the index is " + integerLiteralName(index->number));
         return {};
       }
+      base.path.push_back(static_cast<std::size_t>(index->number.magnitude[0]));
       base.value = &base.value->elements[index->number.magnitude[0]];
       return base;
     }
@@ -753,7 +800,8 @@ private:
       name.kind = Kind::Name;
       name.span = pattern.span;
       name.text = pattern.text;
-      auto found = host.lookup(name);
+      name.context = pattern.context;
+      auto found = lookup(name);
       switch (found.kind) {
       case Lookup::Kind::Constant: {
         if (found.value.kind == Value::Kind::Integer ||
@@ -773,13 +821,13 @@ private:
       default:
         break;
       }
-      binds.push_back({pattern.text, value, mutableBinding});
+      binds.push_back({pattern.text, value, mutableBinding, pattern.context});
       return true;
     }
     case PatternKind::At: {
       auto inner = matches(pattern.children[0], value, binds, mutableBinding);
       if (inner && *inner)
-        binds.push_back({pattern.text, value, mutableBinding});
+        binds.push_back({pattern.text, value, mutableBinding, pattern.context});
       return inner;
     }
     case PatternKind::Literal: {
@@ -965,7 +1013,8 @@ private:
     if (!open && !defaultTypes(*value, node.span))
       return std::nullopt;
     if (node.text != "<pattern>") {
-      frame().locals.push_back({node.text, std::move(*value), node.flag});
+      frame().locals.push_back(
+          {node.text, std::move(*value), node.flag, node.context});
       return unitValue();
     }
     std::vector<Local> binds;
@@ -986,17 +1035,43 @@ private:
     return unitValue();
   }
 
+  std::optional<Shape> placeShape(const Node &node) {
+    if (node.kind == Kind::Group)
+      return placeShape(*node.children[0]);
+    if (node.kind == Kind::Name) {
+      for (auto it = frame().locals.rbegin(); it != frame().locals.rend(); ++it)
+        if (namesLocal(*it, node))
+          return shapeOfValue(it->value);
+      return std::nullopt;
+    }
+    if (node.kind != Kind::Field && node.kind != Kind::Index)
+      return std::nullopt;
+    auto base = placeShape(*node.children[0]);
+    if (!base)
+      return std::nullopt;
+    if (node.kind == Kind::Index)
+      return base->kind == Shape::Kind::Array
+                 ? std::optional<Shape>(base->elements.front())
+                 : std::nullopt;
+    if (base->kind != Shape::Kind::Tuple || node.text.empty() ||
+        node.text.size() > 9 ||
+        !std::all_of(node.text.begin(), node.text.end(),
+                     [](char c) { return c >= '0' && c <= '9'; }))
+      return std::nullopt;
+    auto index = std::stoull(node.text);
+    return index < base->elements.size()
+               ? std::optional<Shape>(base->elements[index])
+               : std::nullopt;
+  }
+
   Opt assign(const Node &node) {
     const Node &target = *node.children[0];
-    auto before = place(target);
-    if (failed)
-      return std::nullopt;
-    if (!before.value)
+    auto hint = placeShape(target);
+    if (!hint)
       return fail("constant", target.span,
                   "assignment target is not a local place in a constant "
                   "expression");
-    auto hint = shapeOfValue(*before.value);
-    auto value = eval(*node.children[1], &hint);
+    auto value = eval(*node.children[1], &*hint);
     if (!value)
       return std::nullopt;
     auto target_ = place(target);
@@ -1106,12 +1181,13 @@ private:
   Opt forExpression(const Node &node) {
     const Node &iterable = *node.children[0];
     std::vector<Value> items;
+    Opt current, high;
     if (iterable.kind == Kind::Range && iterable.name.empty()) {
       auto low = eval(*iterable.children[0], nullptr);
       if (!low)
         return std::nullopt;
       auto hint = shapeOfValue(*low);
-      auto high = eval(*iterable.children[1], &hint);
+      high = eval(*iterable.children[1], &hint);
       if (!high || !unify(*low, *high, iterable.span))
         return std::nullopt;
       if (low->kind != Value::Kind::Integer && low->kind != Value::Kind::Char)
@@ -1120,17 +1196,7 @@ private:
           (!coerce(*low, scalarShape(Type::I32), iterable.span) ||
            !coerce(*high, scalarShape(Type::I32), iterable.span)))
         return std::nullopt;
-      auto current = *low;
-      auto bound = iterable.text == "..=" ? 1 : 0;
-      auto kernel = low->kind == Value::Kind::Char ? Type::U32 : low->type;
-      while (compareIntegers(current.number, high->number) < bound) {
-        if (!step(iterable.span))
-          return std::nullopt;
-        items.push_back(current);
-        current.number =
-            evaluateIntegerConstant("+", kernel, current.number,
-                                    integerLiteral(1), options.pointerBits);
-      }
+      current = std::move(low);
     } else if (iterable.kind == Kind::Range) {
       return unsupported(iterable.span, "an unbounded range");
     } else {
@@ -1141,7 +1207,17 @@ private:
         return unsupported(iterable.span, "iteration over " + describe(*array));
       items = std::move(array->elements);
     }
-    for (auto &item : items) {
+    std::size_t position = 0;
+    while (true) {
+      if (current) {
+        auto bound = iterable.text == "..=" ? 1 : 0;
+        if (compareIntegers(current->number, high->number) >= bound)
+          break;
+        if (!step(iterable.span))
+          return std::nullopt;
+      } else if (position == items.size())
+        break;
+      auto item = current ? *current : std::move(items[position++]);
       Scope scope(frame());
       std::vector<Local> binds;
       if (!defaultTypes(item, node.span))
@@ -1164,6 +1240,21 @@ private:
           signal = Signal::None;
           break;
         }
+      }
+      if (current) {
+        if (compareIntegers(current->number, high->number) == 0)
+          break;
+        auto kernel =
+            current->kind == Value::Kind::Char ? Type::U32 : current->type;
+        auto next = integerOperation("+", kernel, *current,
+                                     integerValue(kernel, integerLiteral(1)),
+                                     iterable.span);
+        if (!next)
+          return std::nullopt;
+        current->number = next->number;
+        if (current->kind == Value::Kind::Char &&
+            compareIntegers(current->number, integerLiteral(0xd800)) == 0)
+          current->number = integerLiteral(0xe000);
       }
     }
     return unitValue();
@@ -1227,11 +1318,12 @@ private:
       if (separator != std::string::npos) {
         TypeSyntax syntax;
         syntax.name = callee.text.substr(0, separator);
+        syntax.context = callee.context;
         owner = host.resolveType(syntax, callee.span);
         method = callee.text.substr(separator + 2);
       }
       if (!isFloating(owner))
-        found = host.lookup(callee);
+        found = lookup(callee);
     } else
       return unsupported(callee.span, "this call");
     if (isFloating(owner) && found.kind == Lookup::Kind::Missing) {
@@ -1250,57 +1342,103 @@ private:
       failed = reported = true;
       return std::nullopt;
     }
-    if (found.kind != Lookup::Kind::Function || !found.function)
+    if (found.kind != Lookup::Kind::Function ||
+        (!found.function && !found.checkedFunction))
       return fail("name", callee.span,
                   "unknown function '" + displayPath(callee.text) +
                       "' in a constant expression");
-    const Function &function = *found.function;
-    if (function.unsafeFunction && !unsafeDepth)
+    if (found.function && found.checkedFunction)
+      return fail("internal", callee.span,
+                  "constant function lookup returned conflicting bodies");
+    const bool unsafeFunction = found.checkedFunction
+                                    ? found.checkedFunction->unsafeFunction
+                                    : found.function->unsafeFunction;
+    if (unsafeFunction && !unsafeDepth)
       return fail("unsafe", node.span,
                   "operation requires an unsafe block or unsafe function");
-    if (!function.constFunction)
-      return fail("constant", node.span,
-                  "call to non-const function '" + displayPath(callee.text) +
-                      "' in a constant expression");
-    if (!function.genericParameters.empty() || function.constructor ||
-        (!function.owner.empty() && !receiver) || function.variadic ||
-        function.explicitReceiver || !function.body.get() ||
-        function.destructor || !function.error.empty() ||
-        function.foreignDeclaration)
-      return unsupported(callee.span,
-                         "calling '" + displayPath(callee.text) +
-                             "' (generic, method, variadic or fallible "
-                             "const functions)");
+    CheckedFunction sourceFunction;
+    const auto *declaration =
+        found.function ? found.function : found.declaration;
+    if (declaration) {
+      const Function &function = *declaration;
+      if (!function.constFunction)
+        return fail("constant", node.span,
+                    "call to non-const function '" + displayPath(callee.text) +
+                        "' in a constant expression");
+      if (!function.genericParameters.empty() || function.constructor ||
+          (!function.owner.empty() && !receiver) || function.variadic ||
+          function.explicitReceiver ||
+          (!found.checkedFunction && !function.body.get()) ||
+          function.destructor || !function.error.empty() ||
+          function.foreignDeclaration)
+        return unsupported(callee.span,
+                           "calling '" + displayPath(callee.text) +
+                               "' (generic, method, variadic or fallible "
+                               "const functions)");
+    }
     if (frames.size() > options.callDepth)
       return fail("limit", node.span,
                   "const function call depth exceeded the limit of " +
                       std::to_string(options.callDepth) +
                       " (recursion without a base case?)");
-    std::vector<std::optional<Shape>> parameterShapes;
-    for (const auto &parameter : function.parameters) {
-      if (parameter.mode == "mut" ||
-          (parameter.pattern.has_value() &&
-           parameter.pattern->kind != PatternKind::Binding))
-        return unsupported(callee.span, "this parameter of '" +
-                                            displayPath(callee.text) + "'");
-      auto parameterShape = shape(parameter.annotation, parameter.span);
-      if (!parameterShape)
-        return std::nullopt;
-      parameterShapes.push_back(std::move(parameterShape));
+    if (found.function) {
+      const Function &function = *found.function;
+      sourceFunction.body = function.body.get();
+      sourceFunction.unsafeFunction = function.unsafeFunction;
+      for (const auto &parameter : function.parameters) {
+        if (parameter.mode == "mut" ||
+            (parameter.pattern.has_value() &&
+             parameter.pattern->kind != PatternKind::Binding))
+          return unsupported(callee.span, "this parameter of '" +
+                                              displayPath(callee.text) + "'");
+        auto parameterShape = shape(parameter.annotation, parameter.span);
+        if (!parameterShape)
+          return std::nullopt;
+        sourceFunction.parameters.push_back(
+            {parameter.name, std::move(*parameterShape), parameter.span,
+             parameter.defaultValue.get(), parameter.context});
+      }
+      if (!function.annotation.empty()) {
+        auto resultShape = shape(function.annotation, function.span);
+        if (!resultShape)
+          return std::nullopt;
+        sourceFunction.result = std::move(*resultShape);
+      } else if (auto inferred = host.functionResult(function))
+        sourceFunction.result = std::move(*inferred);
+      else
+        return unsupported(callee.span, "this inferred const function result");
     }
-    Shape result;
-    result.kind = Shape::Kind::Unit;
-    if (!function.annotation.empty()) {
-      auto resultShape = shape(function.annotation, function.span);
-      if (!resultShape)
-        return std::nullopt;
-      result = std::move(*resultShape);
+    if (found.checkedFunction && declaration) {
+      for (const auto &parameter : declaration->parameters) {
+        if (parameter.mode == "mut" ||
+            (parameter.pattern.has_value() &&
+             parameter.pattern->kind != PatternKind::Binding))
+          return unsupported(callee.span, "this parameter of '" +
+                                              displayPath(callee.text) + "'");
+        if (!found.checkedFunction->body &&
+            !shape(parameter.annotation, parameter.span))
+          return std::nullopt;
+      }
+      if (!found.checkedFunction->body) {
+        if (!declaration->annotation.empty()) {
+          if (!shape(declaration->annotation, declaration->span))
+            return std::nullopt;
+        } else if (!host.functionResult(*declaration))
+          return unsupported(callee.span,
+                             "this inferred const function result");
+      }
     }
+    const auto &function =
+        found.checkedFunction ? *found.checkedFunction : sourceFunction;
+    if (!function.body)
+      return fail("internal", callee.span,
+                  "checked constant function has no body");
+    const auto &result = function.result;
     std::vector<Opt> arguments(function.parameters.size());
     std::size_t position = receiver ? 1 : 0;
     if (receiver) {
       if (arguments.empty() ||
-          !coerce(*receiver, *parameterShapes[0], node.span))
+          !coerce(*receiver, function.parameters[0].shape, node.span))
         return std::nullopt;
       arguments[0] = std::move(*receiver);
     }
@@ -1310,7 +1448,7 @@ private:
       if (!argument.name.empty()) {
         auto named =
             std::find_if(function.parameters.begin(), function.parameters.end(),
-                         [&](const Parameter &parameter) {
+                         [&](const CheckedFunction::Parameter &parameter) {
                            return parameter.name == argument.name;
                          });
         if (named == function.parameters.end())
@@ -1323,31 +1461,45 @@ private:
       if (slot >= arguments.size() || arguments[slot])
         return fail("type", argument.span,
                     "wrong arguments for '" + displayPath(callee.text) + "'");
-      auto value = eval(argument, &*parameterShapes[slot]);
-      if (!value || !coerce(*value, *parameterShapes[slot], argument.span))
+      auto value = eval(argument, &function.parameters[slot].shape);
+      if (!value ||
+          !coerce(*value, function.parameters[slot].shape, argument.span))
         return std::nullopt;
       arguments[slot] = std::move(value);
     }
-    for (std::size_t i = 0; i < arguments.size(); ++i)
-      if (!arguments[i])
-        return fail("type", node.span,
-                    "missing argument '" + function.parameters[i].name +
-                        "' in call to '" + displayPath(callee.text) + "'");
     frames.emplace_back();
-    auto callerUnsafeDepth = unsafeDepth;
+    struct RestoreCall {
+      Interpreter &interpreter;
+      unsigned unsafeDepth;
+      ~RestoreCall() {
+        interpreter.unsafeDepth = unsafeDepth;
+        interpreter.frames.pop_back();
+      }
+    } restore{*this, unsafeDepth};
     unsafeDepth = function.unsafeFunction ? 1 : 0;
     frame().inFunction = true;
     frame().result = result;
-    for (std::size_t i = 0; i < arguments.size(); ++i)
-      frame().locals.push_back(
-          {function.parameters[i].name, std::move(*arguments[i]), false});
+    for (std::size_t i = 0; i < arguments.size(); ++i) {
+      if (!arguments[i]) {
+        const auto &parameter = function.parameters[i];
+        if (!parameter.defaultValue)
+          return fail("type", node.span,
+                      "missing argument '" + parameter.name + "' in call to '" +
+                          displayPath(callee.text) + "'");
+        arguments[i] = eval(*parameter.defaultValue, &parameter.shape);
+        if (!arguments[i] ||
+            !coerce(*arguments[i], parameter.shape, parameter.span))
+          return std::nullopt;
+      }
+      frame().locals.push_back({function.parameters[i].name,
+                                std::move(*arguments[i]), false,
+                                function.parameters[i].context});
+    }
     auto value = eval(*function.body, &result);
-    unsafeDepth = callerUnsafeDepth;
     if (!value && !failed && signal == Signal::Return) {
       value = std::move(signalValue);
       signal = Signal::None;
     }
-    frames.pop_back();
     if (!value)
       return std::nullopt;
     if (!coerce(*value, result, node.span))
@@ -1360,6 +1512,9 @@ private:
       return std::nullopt;
     if (!step(node.span))
       return std::nullopt;
+    auto checkedShape = host.expressionShape(node);
+    if (checkedShape)
+      want = &*checkedShape;
     switch (node.kind) {
     case Kind::Integer:
     case Kind::Floating:
@@ -1387,7 +1542,7 @@ private:
     case Kind::Name: {
       auto &locals = frame().locals;
       for (auto it = locals.rbegin(); it != locals.rend(); ++it)
-        if (it->name == node.text) {
+        if (namesLocal(*it, node)) {
           if (want && want->kind == Shape::Kind::Scalar &&
               it->value.kind == Value::Kind::Integer &&
               it->value.type == Type::Unknown &&
@@ -1395,7 +1550,7 @@ private:
             return std::nullopt;
           return it->value;
         }
-      auto found = host.lookup(node);
+      auto found = lookup(node);
       switch (found.kind) {
       case Lookup::Kind::Constant: {
         if (want && want->kind == Shape::Kind::Scalar &&
@@ -1643,6 +1798,20 @@ private:
     }
   }
 
+  std::optional<std::uint64_t> copyCost(const Value &value,
+                                        std::uint64_t remaining) {
+    if (!remaining)
+      return std::nullopt;
+    std::uint64_t cost = 1;
+    for (const auto &element : value.elements) {
+      auto nested = copyCost(element, remaining - cost);
+      if (!nested)
+        return std::nullopt;
+      cost += *nested;
+    }
+    return cost;
+  }
+
   Opt array(const Node &node, const Shape *want) {
     Value result;
     result.kind = Value::Kind::Array;
@@ -1657,11 +1826,14 @@ private:
       auto count = length(*node.children[1]);
       if (!count)
         return std::nullopt;
-      steps += *count;
-      if (steps > options.stepBudget)
+      auto remaining = options.stepBudget - steps;
+      auto cost = *count ? copyCost(*first, remaining / *count)
+                         : std::optional<std::uint64_t>(0);
+      if (!cost)
         return fail("limit", node.span,
                     "constant evaluation exceeded the step budget of " +
                         std::to_string(options.stepBudget) + " steps");
+      steps += *count * *cost;
       result.elements.assign(static_cast<std::size_t>(*count), *first);
       return result;
     }

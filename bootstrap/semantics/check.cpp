@@ -6,6 +6,7 @@
 #include <functional>
 #include <map>
 #include <stdexcept>
+#include <utility>
 
 namespace mettle {
 void Checker::error(std::string phase, Span span, std::string message,
@@ -18,7 +19,200 @@ void Checker::error(std::string phase, Span span, std::string message,
                     std::move(related));
 }
 
+void Checker::prepareFunction(Function &f) {
+  current = &f;
+  if (imported(f.span)) {
+    genericEnvironment = &functionGenerics.at(&f);
+    return;
+  }
+  const auto &parameters = genericBindings(f);
+  if (!preparedFunctions.insert(&f).second)
+    return;
+  facts(f).genericParameters = parameters;
+  inference.equal(functionVariables.at(&f),
+                  inference.fresh(annotation(f.annotation, f.span, f.owner)),
+                  f.span);
+  if (f.asyncDefaultFutureInferred)
+    asyncDefaultBodyVariables[&f] = inference.fresh();
+  facts(f).diverges = inference.value(functionVariables.at(&f)) == Type::Never;
+  if (f.explicitReceiver) {
+    if (f.owner.empty() && f.implementation < 0)
+      error("signature", f.span,
+            "explicit receiver requires an owning type or interface");
+    else {
+      auto self = annotation(f.parameters.front().annotation, f.span, f.owner);
+      while (checked.types->isView(self))
+        self = checked.types->view(self).payload;
+      if (checked.types->isProduct(self) &&
+          checked.types->product(self).kind == AggregateKind::Pin)
+        self = checked.types->view(checked.types->product(self).components[0])
+                   .payload;
+      TypeSyntax expected;
+      expected.name = "Self";
+      if (checked.types->eraseRegions(self) !=
+          checked.types->eraseRegions(annotation(expected, f.span, f.owner)))
+        error("signature", f.span, "explicit receiver must wrap Self");
+    }
+  }
+  if (!f.error.empty())
+    facts(f).error = annotation(f.error, f.span, f.owner);
+  if (f.body.get())
+    controlFlow(f);
+}
+
+std::vector<std::size_t> Checker::functionDependencies(Function &function) {
+  std::vector<std::size_t> result;
+  auto calls = [&](auto &&self, Node &n) -> void {
+    const auto &owner = function.owner;
+    if (n.kind == Kind::Name && !facts(n).lexicallyBound) {
+      auto found = names.find(callableName(n.text, owner, n.span));
+      if (found != names.end())
+        result.push_back(found->second);
+    } else if (n.kind == Kind::Call && n.children[0]->kind == Kind::Name &&
+               !facts(*n.children[0]).lexicallyBound) {
+      auto called = callableName(n.children[0]->text, owner, n.span);
+      auto found = names.find(called);
+      if (found != names.end())
+        result.push_back(found->second);
+      Type calledType = Type::Unknown;
+      if (auto type = typeNames.find(called); type != typeNames.end())
+        calledType = type->second;
+      else if (auto alias = aliases.find(called); alias != aliases.end()) {
+        const auto &syntax = module.aliases[alias->second];
+        auto *saved = genericEnvironment;
+        genericEnvironment = &aliasGenerics.at(&syntax);
+        calledType = annotation(syntax.target, syntax.span);
+        genericEnvironment = saved;
+      }
+      if (checked.types->isProduct(calledType)) {
+        auto origin = checked.types->product(calledType).genericOrigin;
+        if (origin == Type::Unknown)
+          origin = calledType;
+        if (auto candidates = constructors.find(origin);
+            candidates != constructors.end())
+          for (const auto &candidate : candidates->second)
+            result.push_back(candidate.function);
+      }
+    } else if (n.kind == Kind::Call && n.children[0]->kind == Kind::Field) {
+      for (std::size_t i = 0; i < module.functions.size(); ++i)
+        if (module.functions[i].name.ends_with("." + n.children[0]->text))
+          result.push_back(i);
+    }
+    if (auto plan = checked.iterations.find(&n);
+        plan != checked.iterations.end())
+      self(self, *plan->second.elaboration);
+    for (auto &child : n.children)
+      self(self, *child);
+  };
+  if (function.body.get())
+    calls(calls, *function.body);
+  for (auto &parameter : function.parameters)
+    if (parameter.defaultValue.get())
+      calls(calls, *parameter.defaultValue);
+  return result;
+}
+
+void Checker::inferFunctionResult(Function &f) {
+  if (checkedFunctions.contains(&f) || !checkingFunctions.insert(&f).second)
+    return;
+  auto *savedFunction = current;
+  auto *savedEnvironment = genericEnvironment;
+  auto savedDepth = std::exchange(unsafeDepth, 0);
+  auto savedEffects = std::exchange(effectContext, false);
+  auto savedPattern = std::exchange(inOrdinaryMatchPattern, false);
+  auto savedPin = std::exchange(pinAsOwner, false);
+  auto savedScopes = std::move(scopes);
+  auto savedLoops = std::move(loopResults);
+  auto savedFeatures = std::move(guardedFeatures);
+  auto savedClosures = std::move(closureScopes);
+  auto savedRegions = std::move(annotationRegionScopes);
+  scopes.clear();
+  loopResults.clear();
+  guardedFeatures.clear();
+  closureScopes.clear();
+  annotationRegionScopes.clear();
+  prepareFunction(f);
+  for (auto dependency : functionDependencies(f))
+    inferFunctionResult(module.functions[dependency]);
+  if (f.body.get()) {
+    auto value = flow(*f.body, f.owner);
+    if (f.annotation.empty() && !value.normal && !value.returns) {
+      facts(f).diverges = true;
+      inference.set(functionVariables.at(&f), Type::Never);
+    }
+  }
+  function(f);
+  fields(false);
+  facts(f).result = inference.value(functionVariables.at(&f));
+  checkedFunctions.insert(&f);
+  checkingFunctions.erase(&f);
+  current = savedFunction;
+  genericEnvironment = savedEnvironment;
+  unsafeDepth = savedDepth;
+  effectContext = savedEffects;
+  inOrdinaryMatchPattern = savedPattern;
+  pinAsOwner = savedPin;
+  scopes = std::move(savedScopes);
+  loopResults = std::move(savedLoops);
+  guardedFeatures = std::move(savedFeatures);
+  closureScopes = std::move(savedClosures);
+  annotationRegionScopes = std::move(savedRegions);
+}
+
 std::optional<CheckedModule> Checker::run() {
+  auto needsConstantTypeCheck = [&](auto &&self, const Node &node) -> bool {
+    if (node.kind == Kind::If || node.kind == Kind::Match ||
+        node.kind == Kind::Block || node.kind == Kind::While ||
+        node.kind == Kind::Loop || node.kind == Kind::For ||
+        (node.kind == Kind::Binary && (node.text == "&&" || node.text == "||")))
+      return true;
+    return std::any_of(node.children.begin(), node.children.end(),
+                       [&](const auto &child) { return self(self, *child); });
+  };
+  auto sourceFunctionCount = module.functions.size();
+  module.functions.reserve(sourceFunctionCount + module.statics.size());
+  for (auto &storage : module.statics) {
+    if (storage.foreignDeclaration || !storage.initializer.get() ||
+        !needsConstantTypeCheck(needsConstantTypeCheck, *storage.initializer))
+      continue;
+    Function initializer;
+    initializer.name =
+        "<static." + std::to_string(module.functions.size()) + ">";
+    initializer.span = storage.initializer->span;
+    initializer.annotation = storage.annotation;
+    initializer.item.scope = storage.item.scope;
+    initializer.constFunction = true;
+    initializer.body = NodeOwner::borrow(*storage.initializer);
+    module.functions.push_back(std::move(initializer));
+  }
+  checked.functions.resize(module.functions.size());
+  std::unordered_map<std::string, std::size_t> constructorOrdinals;
+  for (std::size_t i = 0; i < module.functions.size(); ++i) {
+    auto &f = module.functions[i];
+    auto name = definitionName(f.span, f.name);
+    facts(f).canonicalName =
+        f.constructor
+            ? name + "$init" + std::to_string(constructorOrdinals[name]++)
+            : name;
+    auto [existing, inserted] = names.emplace(name, i);
+    if (!inserted &&
+        !(f.constructor && module.functions[existing->second].constructor))
+      error("name", f.span, "duplicate function '" + displayPath(f.name) + "'");
+    functionVariables[&f] = inference.fresh();
+  }
+  checked.staticStorage.resize(module.statics.size());
+  staticStates.resize(module.statics.size());
+  staticTypeStates.resize(module.statics.size());
+  for (std::size_t i = 0; i < module.statics.size(); ++i) {
+    auto &storage = checked.staticStorage[i];
+    storage.identity = i;
+    storage.name =
+        definitionName(module.statics[i].span, module.statics[i].name);
+    staticNames.emplace(storage.name, i);
+  }
+  importDeclarations();
+  if (!diagnostics.empty())
+    return std::nullopt;
   interfaceHeaders();
   if (!diagnostics.empty())
     return std::nullopt;
@@ -29,60 +223,32 @@ std::optional<CheckedModule> Checker::run() {
   if (!diagnostics.empty())
     return std::nullopt;
   interfaceSignatures();
-  checked.functions.resize(module.functions.size());
   for (std::size_t i = 0; i < module.functions.size(); ++i) {
     auto &f = module.functions[i];
-    current = &f;
-    facts(f).genericParameters = genericBindings(f);
     auto name = definitionName(f.span, f.name);
-    facts(f).canonicalName =
-        f.constructor ? name + "$init" + std::to_string(i) : name;
-    auto [existing, inserted] = names.emplace(name, i);
-    if (!inserted &&
-        !(f.constructor && module.functions[existing->second].constructor))
-      error("name", f.span, "duplicate function '" + displayPath(f.name) + "'");
     if (auto type = typeNames.find(name);
         type != typeNames.end() && checked.types->isProduct(type->second) &&
         !checked.types->isSum(type->second))
       error("name", f.span,
             "function conflicts with type constructor '" + displayPath(f.name) +
                 "'");
-    functionVariables[&f] =
-        inference.fresh(annotation(f.annotation, f.span, f.owner));
-    if (f.asyncDefaultFutureInferred)
-      asyncDefaultBodyVariables[&f] = inference.fresh();
-    facts(f).diverges = inference.value(functionVariables[&f]) == Type::Never;
-    if (f.explicitReceiver) {
-      if (f.owner.empty() && f.implementation < 0)
-        error("signature", f.span,
-              "explicit receiver requires an owning type or interface");
-      else {
-        auto self =
-            annotation(f.parameters.front().annotation, f.span, f.owner);
-        while (checked.types->isView(self))
-          self = checked.types->view(self).payload;
-        if (checked.types->isProduct(self) &&
-            checked.types->product(self).kind == AggregateKind::Pin)
-          self = checked.types->view(checked.types->product(self).components[0])
-                     .payload;
-        TypeSyntax expected;
-        expected.name = "Self";
-        if (checked.types->eraseRegions(self) !=
-            checked.types->eraseRegions(annotation(expected, f.span, f.owner)))
-          error("signature", f.span, "explicit receiver must wrap Self");
-      }
-    }
-    if (!f.error.empty())
-      facts(f).error = annotation(f.error, f.span, f.owner);
-    if (f.destructor)
+    prepareFunction(f);
+    if (f.destructor && !imported(f.span))
       checked.types->setDestructor(typeNames.at(typeName(f.owner, f.span)),
                                    static_cast<int>(i));
-    if (f.body.get())
-      if (f.body.get())
-        controlFlow(f);
   }
   targetDeclarations();
   staticNamesAndTypes();
+  for (auto &f : module.functions)
+    if (!imported(f.span) && checkedFunctions.contains(&f))
+      for (std::size_t i = 0; i < facts(f).locals.size(); ++i) {
+        const auto &local = facts(f).locals[i];
+        if (local.storage == StorageDuration::Static)
+          inference.equal(
+              localVariables[&f][i],
+              inference.fresh(checked.staticStorage[local.staticIndex].type),
+              local.span);
+      }
   for (const auto *product : deferredLayouts)
     checked.types->setProductLayout(
         typeNames.at(definitionName(product->span, product->name)),
@@ -240,6 +406,8 @@ std::optional<CheckedModule> Checker::run() {
   do {
     changed = false;
     for (auto &f : module.functions) {
+      if (imported(f.span))
+        continue;
       if (!f.body.get())
         continue;
       genericBindings(f);
@@ -268,23 +436,25 @@ std::optional<CheckedModule> Checker::run() {
         [&](const auto &item) { return item.name == function.asyncFuture; });
     std::vector<TypeBinding> typeBindings;
     const auto &environment = functionGenerics.at(&function);
-    auto bindType = [&](std::string_view name, Type target) {
-      auto found = environment.names.find(std::string(name));
+    auto bindType = [&](const NameKey &name, Type target) {
+      auto found = environment.names.find(name);
       if (found != environment.names.end())
         typeBindings.push_back({found->second, target});
     };
-    bindType("Self", definition.self);
+    bindType(nameKey("Self", function.lexicalContext), definition.self);
     std::size_t parameter = 0;
     for (const auto &generic : interfaceSyntax.genericParameters)
       if (generic.kind != GenericParameterKind::Region &&
           parameter < definition.parameters.size())
-        bindType(generic.name, definition.parameters[parameter++]);
+        bindType(nameKey(generic.name, generic.context),
+                 definition.parameters[parameter++]);
     parameter = 0;
     if (familySyntax != interfaceSyntax.associated.end())
       for (const auto &generic : familySyntax->genericParameters)
         if (generic.kind != GenericParameterKind::Region &&
             parameter < family.parameters.size())
-          bindType(generic.name, family.parameters[parameter++]);
+          bindType(nameKey(generic.name, generic.context),
+                   family.parameters[parameter++]);
     future = checked.types->substitute(future, typeBindings);
 
     std::vector<RegionBinding> regionBindings;
@@ -293,7 +463,8 @@ std::optional<CheckedModule> Checker::run() {
     for (const auto &generic : interfaceSyntax.genericParameters)
       if (generic.kind == GenericParameterKind::Region &&
           region < definition.regions.size()) {
-        auto found = functionRegionsValue.names.find(generic.name);
+        auto found = functionRegionsValue.names.find(
+            nameKey(generic.name, generic.context));
         if (found != functionRegionsValue.names.end())
           regionBindings.push_back({found->second, definition.regions[region]});
         ++region;
@@ -303,7 +474,8 @@ std::optional<CheckedModule> Checker::run() {
       for (const auto &generic : familySyntax->genericParameters)
         if (generic.kind == GenericParameterKind::Region &&
             region < family.regions.size()) {
-          auto found = functionRegionsValue.names.find(generic.name);
+          auto found = functionRegionsValue.names.find(
+              nameKey(generic.name, generic.context));
           if (found != functionRegionsValue.names.end())
             regionBindings.push_back({found->second, family.regions[region]});
           ++region;
@@ -383,57 +555,78 @@ std::optional<CheckedModule> Checker::run() {
   };
 
   std::vector<std::vector<std::size_t>> edges(module.functions.size());
-  std::function<void(Node &, std::vector<std::size_t> &, std::string_view)>
-      calls = [&](Node &n, std::vector<std::size_t> &out,
-                  std::string_view owner) {
-        if (n.kind == Kind::Name && !facts(n).lexicallyBound) {
-          auto found = names.find(callableName(n.text, owner, n.span));
-          if (found != names.end())
-            out.push_back(found->second);
-        } else if (n.kind == Kind::Call && n.children[0]->kind == Kind::Name &&
-                   !facts(*n.children[0]).lexicallyBound) {
-          auto called = callableName(n.children[0]->text, owner, n.span);
-          auto found = names.find(called);
-          if (found != names.end())
-            out.push_back(found->second);
-          Type calledType = Type::Unknown;
-          if (auto type = typeNames.find(called); type != typeNames.end())
-            calledType = type->second;
-          else if (auto alias = aliases.find(called); alias != aliases.end()) {
-            const auto &syntax = module.aliases[alias->second];
-            auto *saved = genericEnvironment;
-            genericEnvironment = &aliasGenerics.at(&syntax);
-            calledType = annotation(syntax.target, syntax.span);
-            genericEnvironment = saved;
-          }
-          if (checked.types->isProduct(calledType)) {
-            auto origin = checked.types->product(calledType).genericOrigin;
-            if (origin == Type::Unknown)
-              origin = calledType;
-            if (auto candidates = constructors.find(origin);
-                candidates != constructors.end())
-              for (const auto &candidate : candidates->second)
-                out.push_back(candidate.function);
-          }
-        } else if (n.kind == Kind::Call && n.children[0]->kind == Kind::Field) {
-          for (std::size_t i = 0; i < module.functions.size(); ++i)
-            if (module.functions[i].name.ends_with("." + n.children[0]->text))
-              out.push_back(i);
-        }
-        if (auto plan = checked.iterations.find(&n);
-            plan != checked.iterations.end())
-          calls(*plan->second.elaboration, out, owner);
-        for (auto &child : n.children)
-          calls(*child, out, owner);
-      };
-  for (std::size_t i = 0; i < edges.size(); ++i) {
-    if (module.functions[i].body.get())
-      if (module.functions[i].body.get())
-        calls(*module.functions[i].body, edges[i], module.functions[i].owner);
-    for (auto &parameter : module.functions[i].parameters)
-      if (parameter.defaultValue.get())
-        calls(*parameter.defaultValue, edges[i], module.functions[i].owner);
+  for (std::size_t i = 0; i < edges.size(); ++i)
+    edges[i] = functionDependencies(module.functions[i]);
+  auto futureInterface = std::find_if(
+      checked.interfaceData->definitions.begin(),
+      checked.interfaceData->definitions.end(), [](const auto &definition) {
+        return definition.name == "core::future::Future";
+      });
+  std::uint32_t futureDeclaration = 0;
+  Type outputParameter = Type::Unknown;
+  if (futureInterface != checked.interfaceData->definitions.end()) {
+    futureDeclaration = static_cast<std::uint32_t>(
+        futureInterface - checked.interfaceData->definitions.begin());
+    if (auto output = std::find_if(
+            futureInterface->associated.begin(),
+            futureInterface->associated.end(),
+            [](const auto &associated) { return associated.name == "Output"; });
+        output != futureInterface->associated.end())
+      outputParameter = output->parameter;
   }
+  auto bindOutput = [&](Type interfaceType, Type output) {
+    if (!checked.types->isErased(interfaceType))
+      return interfaceType;
+    auto descriptor = checked.types->erased(interfaceType);
+    if (descriptor.declaration != futureDeclaration)
+      return interfaceType;
+    auto binding =
+        std::find_if(descriptor.associated.begin(), descriptor.associated.end(),
+                     [&](const auto &associated) {
+                       return associated.parameter == outputParameter;
+                     });
+    if (binding == descriptor.associated.end())
+      descriptor.associated.push_back({outputParameter, output});
+    else
+      binding->argument = output;
+    return checked.types->erasedType(std::move(descriptor));
+  };
+  auto updateOpaqueOutput = [&](Type opaque, Type output) {
+    if (!checked.types->isOpaque(opaque))
+      return;
+    auto bounds = checked.types->product(opaque).opaqueBounds;
+    bool changed = false;
+    for (auto &bound : bounds) {
+      auto updated = bindOutput(bound, output);
+      changed |= updated != bound;
+      bound = updated;
+    }
+    if (changed)
+      checked.types->setOpaqueBounds(opaque, std::move(bounds));
+  };
+  // The output an async body inferred, once its coroutine closure is complete.
+  auto asyncBodyOutput = [&](const Function &function) {
+    const Node *future = function.body.get();
+    if (future->kind == Kind::Block && future->children.size() == 1)
+      future = future->children[0].get();
+    if (future->kind != Kind::Call || future->children.size() < 2 ||
+        future->children[1]->kind != Kind::Closure)
+      return Type::Unknown;
+    const auto &closure = *future->children[1];
+    if (facts(closure).closure < 0 ||
+        static_cast<std::size_t>(facts(closure).closure) >=
+            checked.closureBodies.size())
+      return Type::Unknown;
+    return checked.closureBodies[facts(closure).closure]->function.abiResult;
+  };
+  // Callers checked later see an inferred async output as soon as it exists.
+  auto bindInferredAsyncOutput = [&](const Function &function) {
+    if (outputParameter == Type::Unknown || !function.asynchronous ||
+        !function.body.get() || !function.asyncOutput.empty())
+      return;
+    if (auto output = asyncBodyOutput(function); output != Type::Unknown)
+      updateOpaqueOutput(facts(function).opaqueResult, output);
+  };
   std::vector<int> index(edges.size(), -1), low(edges.size());
   std::vector<std::size_t> stack;
   std::vector<bool> active(edges.size());
@@ -460,12 +653,21 @@ std::optional<CheckedModule> Checker::run() {
       if (w == v)
         break;
     }
-    for (auto w : component)
-      function(module.functions[w]);
+    for (auto w : component) {
+      auto &f = module.functions[w];
+      if (!checkedFunctions.contains(&f)) {
+        checkingFunctions.insert(&f);
+        function(f);
+        checkingFunctions.erase(&f);
+        checkedFunctions.insert(&f);
+      }
+    }
     resolveGenericCalls();
     fields();
-    for (auto w : component)
+    for (auto w : component) {
       publishAsyncDefault(module.functions[w]);
+      bindInferredAsyncOutput(module.functions[w]);
+    }
     for (auto w : component) {
       auto &f = module.functions[w];
       facts(f).result = inference.value(functionVariables[&f]);
@@ -484,110 +686,55 @@ std::optional<CheckedModule> Checker::run() {
   resolveGenericCalls();
 
   finishClosures();
-  auto futureInterface = std::find_if(
-      checked.interfaceData->definitions.begin(),
-      checked.interfaceData->definitions.end(), [](const auto &definition) {
-        return definition.name == "core::future::Future";
-      });
-  if (futureInterface != checked.interfaceData->definitions.end()) {
-    const auto futureDeclaration = static_cast<std::uint32_t>(
-        futureInterface - checked.interfaceData->definitions.begin());
-    auto outputItem = std::find_if(
-        futureInterface->associated.begin(), futureInterface->associated.end(),
-        [](const auto &associated) { return associated.name == "Output"; });
-    if (outputItem != futureInterface->associated.end()) {
-      auto bindOutput = [&](Type interfaceType, Type output) {
-        if (!checked.types->isErased(interfaceType))
-          return interfaceType;
-        auto descriptor = checked.types->erased(interfaceType);
-        if (descriptor.declaration != futureDeclaration)
-          return interfaceType;
-        auto binding = std::find_if(
-            descriptor.associated.begin(), descriptor.associated.end(),
-            [&](const auto &associated) {
-              return associated.parameter == outputItem->parameter;
-            });
-        if (binding == descriptor.associated.end())
-          descriptor.associated.push_back({outputItem->parameter, output});
-        else
-          binding->argument = output;
-        return checked.types->erasedType(std::move(descriptor));
-      };
-      auto updateOpaqueOutput = [&](Type opaque, Type output) {
-        if (!checked.types->isOpaque(opaque))
-          return;
-        auto bounds = checked.types->product(opaque).opaqueBounds;
-        bool changed = false;
-        for (auto &bound : bounds) {
-          auto updated = bindOutput(bound, output);
-          changed |= updated != bound;
-          bound = updated;
+  if (outputParameter != Type::Unknown) {
+    for (std::size_t i = 0; i < module.functions.size(); ++i) {
+      const auto &function = module.functions[i];
+      bool outputInferred = function.asyncOutput.empty();
+      if (!function.asynchronous || !function.body.get() ||
+          (!outputInferred && !function.asyncDefaultFutureInferred))
+        continue;
+      auto output = asyncBodyOutput(function);
+      if (output == Type::Unknown)
+        continue;
+      if (outputInferred)
+        updateOpaqueOutput(facts(function).opaqueResult, output);
+      if (function.asyncFuture.empty())
+        continue;
+      auto interfaceName =
+          typeName(function.interfaceOwner, function.span, function.owner);
+      auto interface = interfaceNames.find(interfaceName);
+      if (interface == interfaceNames.end())
+        continue;
+      auto &definition = checked.interfaceData->definitions[interface->second];
+      auto family = std::find_if(
+          definition.associated.begin(), definition.associated.end(),
+          [&](const auto &associated) {
+            return associated.name == function.asyncFuture;
+          });
+      if (family == definition.associated.end())
+        continue;
+      if (outputInferred) {
+        for (auto &bound : family->bounds)
+          if (bound.property == interfaces::Property::Interface)
+            bound.interfaceType = bindOutput(bound.interfaceType, output);
+        updateOpaqueOutput(family->defaultValue, output);
+      }
+      if (function.asyncDefaultFutureInferred) {
+        auto defaultFuture =
+            inference.value(asyncDefaultBodyVariables.at(&function));
+        if (defaultFuture == Type::Unknown) {
+          error("type", function.span,
+                "cannot infer async interface default future");
+          continue;
         }
-        if (changed)
-          checked.types->setOpaqueBounds(opaque, std::move(bounds));
-      };
-      for (std::size_t i = 0; i < module.functions.size(); ++i) {
-        const auto &function = module.functions[i];
-        bool outputInferred = function.asyncOutput.empty();
-        if (!function.asynchronous || !function.body.get() ||
-            (!outputInferred && !function.asyncDefaultFutureInferred))
-          continue;
-        const Node *future = function.body.get();
-        if (future->kind == Kind::Block && future->children.size() == 1)
-          future = future->children[0].get();
-        if (future->kind != Kind::Call || future->children.size() < 2 ||
-            future->children[1]->kind != Kind::Closure)
-          continue;
-        const auto &closure = *future->children[1];
-        if (facts(closure).closure < 0 ||
-            static_cast<std::size_t>(facts(closure).closure) >=
-                checked.closureBodies.size())
-          continue;
-        auto output =
-            checked.closureBodies[facts(closure).closure]->function.abiResult;
-        if (output == Type::Unknown)
-          continue;
-        if (outputInferred)
-          updateOpaqueOutput(facts(function).opaqueResult, output);
-        if (function.asyncFuture.empty())
-          continue;
-        auto interfaceName =
-            typeName(function.interfaceOwner, function.span, function.owner);
-        auto interface = interfaceNames.find(interfaceName);
-        if (interface == interfaceNames.end())
-          continue;
-        auto &definition =
-            checked.interfaceData->definitions[interface->second];
-        auto family = std::find_if(
-            definition.associated.begin(), definition.associated.end(),
-            [&](const auto &associated) {
-              return associated.name == function.asyncFuture;
-            });
-        if (family == definition.associated.end())
-          continue;
-        if (outputInferred) {
-          for (auto &bound : family->bounds)
-            if (bound.property == interfaces::Property::Interface)
-              bound.interfaceType = bindOutput(bound.interfaceType, output);
-          updateOpaqueOutput(family->defaultValue, output);
-        }
-        if (function.asyncDefaultFutureInferred) {
-          auto defaultFuture =
-              inference.value(asyncDefaultBodyVariables.at(&function));
-          if (defaultFuture == Type::Unknown) {
-            error("type", function.span,
-                  "cannot infer async interface default future");
-            continue;
-          }
-          defaultFuture = canonicalAsyncDefault(
-              function, definition, *family,
-              module.interfaces[interface->second], defaultFuture);
-          family->defaultValue = defaultFuture;
-          if (checked.types->isSized(family->parameter) &&
-              !checked.types->isSized(defaultFuture))
-            error("type", function.span,
-                  "async interface default future does not satisfy Sized");
-        }
+        defaultFuture = canonicalAsyncDefault(
+            function, definition, *family, module.interfaces[interface->second],
+            defaultFuture);
+        family->defaultValue = defaultFuture;
+        if (checked.types->isSized(family->parameter) &&
+            !checked.types->isSized(defaultFuture))
+          error("type", function.span,
+                "async interface default future does not satisfy Sized");
       }
     }
   }
@@ -658,6 +805,8 @@ std::optional<CheckedModule> Checker::run() {
       error("type", span,
             "product comparisons require a declared comparison interface");
   for (auto &f : module.functions) {
+    if (imported(f.span))
+      continue;
     facts(f).result = inference.value(functionVariables[&f]);
     std::function<void(Node &)> resolve = [&](Node &n) {
       if (n.kind != Kind::Closure) {
@@ -768,6 +917,20 @@ std::optional<CheckedModule> Checker::run() {
     return entry->second;
   };
   for (const auto &[syntax, resolved] : checked.nodes) {
+    if (resolved.opaqueSource != Type::Unknown &&
+        !checked.types->isSized(resolved.opaqueSource))
+      error("type", syntax->span,
+            "opaque hidden type does not satisfy its Sized contract");
+    if (syntax->kind == Kind::Array && syntax->flag &&
+        (resolved.constantCount != Type::Unknown || resolved.number > 1)) {
+      auto element = nodeVariables.find(syntax->children[0].get());
+      if (element != nodeVariables.end()) {
+        auto type = inference.value(element->second);
+        if (type != Type::Unknown && !checked.types->isCopy(type))
+          error("ownership", syntax->span,
+                "array repetition requires Copy elements");
+      }
+    }
     if (holdsVarArgs(resolved.type) && !checked.types->isView(resolved.type) &&
         !(checked.types->isProduct(resolved.type) &&
           checked.types->product(resolved.type).kind == AggregateKind::VarArgs))
@@ -813,6 +976,9 @@ std::optional<CheckedModule> Checker::run() {
     return std::nullopt;
   finalizeInterfaces();
   exhaustiveness();
+  module.functions.resize(sourceFunctionCount);
+  checked.functions.resize(sourceFunctionCount);
+  retainDeclarations();
   if (!requireEntry)
     return diagnostics.empty()
                ? std::optional<CheckedModule>(std::move(checked))
@@ -850,12 +1016,14 @@ std::optional<CheckedModule> check(Module module, Diagnostics &diagnostics,
 std::optional<CheckedModule>
 check(Module module, Diagnostics &diagnostics,
       std::shared_ptr<const resolution::Resolution> symbols, bool requireEntry,
-      TargetFacts target, NumericEvaluator numericEvaluator) {
+      TargetFacts target, NumericEvaluator numericEvaluator,
+      std::shared_ptr<const ImportedDeclarations> imported) {
   if (!diagnostics.empty() || !symbols)
     return std::nullopt;
   try {
     return Checker(std::move(module), diagnostics, std::move(symbols),
-                   requireEntry, std::move(target), numericEvaluator)
+                   requireEntry, std::move(target), numericEvaluator,
+                   std::move(imported))
         .run();
   } catch (const std::length_error &failure) {
     diagnostics.error("limit", {}, failure.what());

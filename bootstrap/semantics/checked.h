@@ -12,6 +12,14 @@
 #include <utility>
 
 namespace mettle {
+namespace metadata {
+struct EncodeReferences;
+}
+struct ImportedDeclarations;
+struct DeclarationEnvironment;
+struct DeclarationRegions;
+struct LibraryDeclarationExport;
+struct DeclarationInventory;
 struct Flow {
   bool normal = true;
   bool returns = false;
@@ -117,6 +125,7 @@ struct Local {
   StorageDuration storage = StorageDuration::Automatic;
   int staticIndex = -1;
   bool readMatchPattern = false;
+  SyntaxContextPtr context{};
 };
 struct FunctionFacts {
   Type result = Type::Unknown;
@@ -194,6 +203,7 @@ struct ClosureFacts {
   std::vector<ClosureCapture> captures;
   Type type = Type::Unknown;
   bool deferred = false;
+  bool imported = false;
 };
 
 // How a `for` over a user iterator executes: the protocol-selected iterator
@@ -240,15 +250,41 @@ public:
   const interfaces::Database &interfaceDatabase() const {
     return *interfaceData;
   }
+  std::shared_ptr<const interfaces::Database> interfaceStore() const {
+    return interfaceData;
+  }
   const std::vector<std::unique_ptr<ClosureFacts>> &closures() const {
     return closureBodies;
+  }
+  bool imported(std::size_t function) const {
+    return importedFunctions.contains(function);
+  }
+  bool hasBody(std::size_t function) const {
+    return tree.functions.at(function).body.get() ||
+           importedBodies.contains(function);
+  }
+  bool hasDefault(std::size_t function, std::size_t parameter) const {
+    return tree.functions.at(function)
+               .parameters.at(parameter)
+               .defaultValue.get() ||
+           importedDefaults.contains({function, parameter});
   }
 
 private:
   friend class Checker;
+  friend class ConstantHost;
+  friend LibraryDeclarationExport
+  exportLibraryDeclarations(const CheckedModule &,
+                            const metadata::EncodeReferences &,
+                            std::span<const SourceId>);
+  friend DeclarationInventory declarationInventory(const CheckedModule &);
   explicit CheckedModule(Module module,
-                         std::shared_ptr<const resolution::Resolution> symbols)
-      : tree(std::move(module)), symbols(std::move(symbols)) {}
+                         std::shared_ptr<const resolution::Resolution> symbols,
+                         std::shared_ptr<TypeStore> store = nullptr)
+      : tree(std::move(module)), symbols(std::move(symbols)) {
+    if (store)
+      types = std::move(store);
+  }
   Module tree;
   TargetFacts targetDescription{};
   std::vector<Assembly> assemblyItems{};
@@ -262,5 +298,10 @@ private:
   std::shared_ptr<const resolution::Resolution> symbols;
   std::shared_ptr<interfaces::Database> interfaceData =
       std::make_shared<interfaces::Database>();
+  std::shared_ptr<const ImportedDeclarations> importedDeclarations;
+  std::set<std::size_t> importedFunctions;
+  std::set<std::size_t> importedBodies;
+  std::set<std::pair<std::size_t, std::size_t>> importedDefaults;
+  std::shared_ptr<ImportedDeclarations> declarationContracts;
 };
 } // namespace mettle

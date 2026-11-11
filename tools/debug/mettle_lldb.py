@@ -109,7 +109,7 @@ def __lldb_init_module(debugger, _internal_dict):
         r"(.*\.)?Text>?$' -F mettle_lldb.text_summary",
         r"type summary add -w Mettle -x '^\(.*\)\?$' "
         r"-F mettle_lldb.sum_summary",
-        r"type summary add -w Mettle -x '^\(.* throws .*\)$' "
+        r"type summary add -w Mettle -x '^Outcome<.*>$' "
         r"-F mettle_lldb.sum_summary",
         r"type summary add -w Mettle -x "
         r"'^((read|mut) )?(.*\.)?Coroutine(State)?<.*>( \*)?$' "

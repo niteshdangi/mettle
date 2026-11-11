@@ -297,7 +297,10 @@ Builder::Value Builder::matchExpression(const Node &node, bool valueUsed) {
                                                         : mode,
                 arm.flag && mode == ParameterMode::Take);
     if (arm.flag) {
+      temporaryScope = scope();
       auto guard = use(expression(*arm.children[0]));
+      endScope(arm.span);
+      temporaryScope = blockScope;
       int accepted = block(), rejected = block();
       if (live())
         terminate({ir::Exit::Branch, guard, accepted, rejected});
@@ -392,13 +395,22 @@ Builder::Value Builder::conditionalPatternExpression(const Node &node,
         booleanLiteral(*node.children[0]) == false)
       terminate({ir::Exit::Unreachable});
   } else {
-    auto source = place(*node.children[0]);
-    if (!live())
-      return {};
-    patternTest(node.patterns[0], source, yes, no);
-    current = yes;
     blockScope = scope();
     temporaryScope = blockScope;
+    auto source = place(*node.children[0]);
+    if (!live()) {
+      endScope();
+      blockScope = savedBlock;
+      temporaryScope = savedTemporary;
+      return {};
+    }
+    int failed = block();
+    patternTest(node.patterns[0], source, yes, failed);
+    current = failed;
+    emit({Op::ScopeExit, {}, {}, {}, "", {-1, {}}, -1, blockScope, node.span},
+         Type::Unit);
+    jump(no);
+    current = yes;
     patternBind(node.patterns[0], source, ParameterMode::Read);
   }
   auto value = expression(*node.children[1], false, valueUsed);

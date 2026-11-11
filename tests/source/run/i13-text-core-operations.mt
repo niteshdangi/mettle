@@ -5,7 +5,7 @@
 // range indexing, case mapping, and parsing.
 
 import core.option
-import core.text.{Text, from_utf8, from_utf8_mut, from_utf8_unchecked}
+import core.text.{Text, Utf8Error, from_utf8, from_utf8_mut, from_utf8_unchecked}
 import core.cmp.Ordering
 import alloc.string
 
@@ -97,22 +97,48 @@ fn checks_iterators(): i32 {
     0
 }
 
+fn utf8_text_is(take value: (Outcome<read Text, Utf8Error>), read expected: Text): bool {
+    match take value {
+        success(found) => found == expected,
+        failure(_) => false
+    }
+}
+
+fn utf8_error_is(
+    take value: (Outcome<read Text, Utf8Error>),
+    valid: usize,
+    error_len: usize?
+): bool {
+    match take value {
+        success(_) => false,
+        failure(error) => error.valid_up_to() == valid && error.error_len() == error_len
+    }
+}
+
 fn checks_from_utf8(): i32 {
     let valid = [0x61u8, 0xc3u8, 0xa9u8]
-    if !text_is(from_utf8(read valid), "a\u{e9}") { return 50 }
-    if from_utf8(read [0xffu8]).is_present() { return 51 }
-    if from_utf8(read [0xc0u8, 0x80u8]).is_present() { return 52 }
-    if from_utf8(read [0xedu8, 0xa0u8, 0x80u8]).is_present() { return 53 }
-    if from_utf8(read [0xe9u8]).is_present() { return 54 }
-    if from_utf8(read [0x80u8]).is_present() { return 55 }
-    if from_utf8(read [0xf4u8, 0x90u8, 0x80u8, 0x80u8]).is_present() { return 56 }
-    if !text_is(from_utf8(read [0xf4u8, 0x8fu8, 0xbfu8, 0xbfu8]), "\u{10ffff}") { return 57 }
+    if !utf8_text_is(from_utf8(read valid), "a\u{e9}") { return 50 }
+    if !utf8_error_is(from_utf8(read [0xffu8]), 0usize, present(1usize)) { return 51 }
+    if !utf8_error_is(from_utf8(read [0xc0u8, 0x80u8]), 0usize, present(1usize)) { return 52 }
+    if !utf8_error_is(from_utf8(read [0xedu8, 0xa0u8, 0x80u8]), 0usize, present(1usize)) { return 53 }
+    if !utf8_error_is(from_utf8(read [0xe9u8]), 0usize, none) { return 54 }
+    if !utf8_error_is(from_utf8(read [0x80u8]), 0usize, present(1usize)) { return 55 }
+    if !utf8_error_is(from_utf8(read [0xf4u8, 0x90u8, 0x80u8, 0x80u8]), 0usize, present(1usize)) { return 56 }
+    if !utf8_text_is(from_utf8(read [0xf4u8, 0x8fu8, 0xbfu8, 0xbfu8]), "\u{10ffff}") { return 57 }
+    if !utf8_error_is(from_utf8(read [0x61u8, 0xe2u8, 0x82u8, 0x41u8]), 1usize, present(2usize)) { return 62 }
+    if !utf8_error_is(from_utf8(read [0x61u8, 0xf0u8, 0x9fu8, 0x98u8, 0x41u8]), 1usize, present(3usize)) { return 63 }
+    if !utf8_error_is(from_utf8(read [0x61u8, 0xf0u8, 0x9fu8, 0x98u8]), 1usize, none) { return 64 }
     var mutable = [0x61u8, 0xc3u8, 0xa9u8]
-    match from_utf8_mut(mut mutable) {
-        present(view) => { if view != "a\u{e9}" { return 58 } },
-        none => { return 59 }
+    match take from_utf8_mut(mut mutable) {
+        success(view) => { if view != "a\u{e9}" { return 58 } },
+        failure(_) => { return 59 }
     }
-    if from_utf8_mut(mut [0xffu8]).is_present() { return 60 }
+    match take from_utf8_mut(mut [0xffu8]) {
+        success(_) => { return 60 },
+        failure(error) => {
+            if error.valid_up_to() != 0usize || error.error_len() != present(1usize) { return 60 }
+        }
+    }
     let direct = unsafe { from_utf8_unchecked(read valid) }
     if direct != "a\u{e9}" { return 61 }
     0

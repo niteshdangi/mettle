@@ -7,6 +7,9 @@ import package.alloc.vec.List
 extern "C" {
     pub unsafe fn mettle_rt_errno(): i32;
     pub unsafe fn mettle_rt_errno_kind(code: i32): i32;
+    pub unsafe fn mettle_rt_errno_is_range(code: i32): i32;
+    pub unsafe fn mettle_rt_dup(fd: i32): i32;
+    pub unsafe fn mettle_rt_remove_dir_all(path: ptr<read u8>): i32;
     pub unsafe fn mettle_rt_set_errno(code: i32): Unit;
     pub unsafe fn mettle_rt_open(path: ptr<read u8>, flags: i32, mode: u32): i32;
     pub unsafe fn mettle_rt_stat(path: ptr<read u8>, fd: i32, follow: i32, out: ptr<mut i64>): i32;
@@ -21,7 +24,7 @@ extern "C" {
     pub unsafe fn mettle_rt_sock_bind(fd: i32, family: i32, address: ptr<read u8>, address_size: usize, port: u16, flowinfo: u32, scope_id: u32): i32;
     pub unsafe fn mettle_rt_sock_connect(fd: i32, family: i32, address: ptr<read u8>, address_size: usize, port: u16, flowinfo: u32, scope_id: u32): i32;
     pub unsafe fn mettle_rt_sock_connect_timeout(fd: i32, family: i32, address: ptr<read u8>, address_size: usize, port: u16, flowinfo: u32, scope_id: u32, timeout_micros: u64): i32;
-    pub unsafe fn mettle_rt_sock_accept(fd: i32, timeout_millis: i32, family: ptr<mut i32>, address: ptr<mut u8>, address_capacity: usize, port: ptr<mut u16>, flowinfo: ptr<mut u32>, scope_id: ptr<mut u32>): i32;
+    pub unsafe fn mettle_rt_sock_accept(fd: i32, timeout_millis: i32, nonblocking: i32, timed_out: ptr<mut i32>, family: ptr<mut i32>, address: ptr<mut u8>, address_capacity: usize, port: ptr<mut u16>, flowinfo: ptr<mut u32>, scope_id: ptr<mut u32>): i32;
     pub unsafe fn mettle_rt_sock_name(fd: i32, peer: i32, family: ptr<mut i32>, address: ptr<mut u8>, address_capacity: usize, port: ptr<mut u16>, flowinfo: ptr<mut u32>, scope_id: ptr<mut u32>): i32;
     pub unsafe fn mettle_rt_sock_send(fd: i32, data: ptr<read u8>, size: usize): isize;
     pub unsafe fn mettle_rt_sock_sendto(fd: i32, data: ptr<read u8>, size: usize, family: i32, address: ptr<read u8>, address_size: usize, port: u16, flowinfo: u32, scope_id: u32): isize;
@@ -44,6 +47,7 @@ extern "C" {
     pub unsafe fn mettle_rt_reactor_wait(reactor: ptr<mut u8>): i32;
     pub unsafe fn mettle_rt_set_nonblocking(fd: i32): i32;
     pub unsafe fn mettle_rt_set_blocking(fd: i32): i32;
+    pub unsafe fn mettle_rt_sock_is_nonblocking(fd: i32): i32;
     pub unsafe fn mettle_rt_sock_connect_start(fd: i32, family: i32, address: ptr<read u8>, address_size: usize, port: u16, flowinfo: u32, scope_id: u32): i32;
     pub unsafe fn mettle_rt_sock_connect_status(fd: i32): i32;
 

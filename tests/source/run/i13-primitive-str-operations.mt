@@ -42,7 +42,12 @@ fn main(): i32 {
     let bytes = "hi".as_bytes()
     if bytes.len() != 2usize || bytes[0usize] != 104u8 { return 21 }
     let bad = [0xffu8]
-    match from_utf8(read bad) { present(_) => { return 24 }, none => {} }
+    match take from_utf8(read bad) {
+        success(_) => { return 24 },
+        failure(error) => {
+            if error.valid_up_to() != 0usize || error.error_len() != present(1usize) { return 24 }
+        }
+    }
     if !"abc".get(0usize, 9usize).is_none() { return 25 }
     0
 }

@@ -24,6 +24,10 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     }
     facts(call).machineOperation = "slice.len";
     facts(call).dereferences = dereferences;
+    facts(call).method = true;
+    facts(call).machineBorrowModes = {ParameterMode::Read};
+    facts(call).callParameterTypes = {
+        checked.types->viewType(self, ParameterMode::Read)};
     return inference.fresh(Type::Usize);
   }
   if (receiver >= 0) {
@@ -529,6 +533,8 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       const auto &product = checked.types->product(type);
       if (product.layout.conditionalUnpin)
         return true;
+      if (product.kind == AggregateKind::Array && !product.components.empty())
+        return visit(visit, product.components[0]);
       for (const auto &field : product.fields)
         if (visit(visit, field.type))
           return true;

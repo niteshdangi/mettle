@@ -1,6 +1,8 @@
 #include "documentation/doctest.h"
 #include "documentation/markdown.h"
 #include "support/path.h"
+#include <algorithm>
+#include <map>
 #include <string_view>
 
 namespace mettle::documentation {
@@ -52,7 +54,7 @@ std::string unhidden(const std::string &line) {
 
 namespace {
 void fromDoc(const Doc &doc, const std::string &page, const std::string &owner,
-             std::vector<Example> &out) {
+             std::size_t insertion, std::vector<Example> &out) {
   for (const auto &block : blocks(doc)) {
     if (block.kind != Block::Kind::Code)
       continue;
@@ -60,6 +62,7 @@ void fromDoc(const Doc &doc, const std::string &page, const std::string &owner,
     if (!fence.mettle)
       continue;
     Example example;
+    example.insertion = insertion;
     example.mode = fence.mode;
     example.phase = fence.phase;
     example.line = block.numbers.empty() ? 0 : block.numbers.front();
@@ -78,20 +81,23 @@ void fromDoc(const Doc &doc, const std::string &page, const std::string &owner,
 }
 
 void fromItem(const Item &item, const std::string &page,
-              const std::string &prefix, std::vector<Example> &out) {
+              const std::string &prefix, std::size_t insertion,
+              std::vector<Example> &out) {
+  if (item.kind == Kind::Module && item.bodyEnd != std::string::npos)
+    insertion = item.bodyEnd;
   auto owner =
       displayPath(prefix.empty() ? item.name : prefix + "::" + item.name);
-  fromDoc(item.doc, page, owner, out);
+  fromDoc(item.doc, page, owner, insertion, out);
   for (const auto &member : item.members)
-    fromItem(member, page, owner, out);
+    fromItem(member, page, owner, insertion, out);
 }
 } // namespace
 
 std::vector<Example> examples(const Page &page) {
   std::vector<Example> result;
-  fromDoc(page.doc, page.name, "(module)", result);
+  fromDoc(page.doc, page.name, "(module)", std::string::npos, result);
   for (const auto &item : page.items)
-    fromItem(item, page.name, "", result);
+    fromItem(item, page.name, "", std::string::npos, result);
   return result;
 }
 
@@ -102,11 +108,11 @@ std::string testName(std::size_t index) {
 std::string withTests(const std::string &source,
                       const std::vector<Example> &examples,
                       const std::vector<std::size_t> &picks) {
-  std::string result = source;
-  if (!result.empty() && result.back() != '\n')
-    result += '\n';
+  std::map<std::size_t, std::string> additions;
   for (auto index : picks) {
     const auto &example = examples[index];
+    auto &result = additions[std::min(example.insertion, source.size())];
+    result += '\n';
     // A block that declares its own `fn main()` becomes the test itself; the
     // items before it stay at the top level.
     std::size_t entry = 0;
@@ -129,6 +135,9 @@ std::string withTests(const std::string &source,
     else
       result += "fn " + testName(index) + "() {\n" + example.code + "}\n";
   }
+  std::string result = source;
+  for (auto at = additions.rbegin(); at != additions.rend(); ++at)
+    result.insert(at->first, at->second);
   return result;
 }
 } // namespace mettle::documentation

@@ -32,8 +32,12 @@ fn main(): i32 {
         scoped_config.name("scoped worker")
         scoped_config.stack_size(1048576usize)
         let spawned = capture scoped_config.spawn_scoped(scope, fn(): i32 {
+            let named = match take thread.current_thread().name() {
+                present(name) => name.as_text() == "scoped worker",
+                none => false
+            }
             let _released = scoped_worker_gate.get().wait()
-            borrowed
+            if named { borrowed } else { -1 }
         })
         let child = match take spawned {
             success(child) => child,

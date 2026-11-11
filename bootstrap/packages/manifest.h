@@ -23,6 +23,7 @@ struct DependencySpec {
   // The dependency key in the declaring manifest.
   Span span;
 };
+std::string gitSelector(const DependencySpec &dependency);
 
 struct Target {
   std::string name, kind, source;

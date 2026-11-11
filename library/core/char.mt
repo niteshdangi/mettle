@@ -147,7 +147,8 @@ pub unsafe fn from_u32_unchecked(value: u32): char {
 }
 
 pub fn from_digit(value: u32, radix: u32): char? {
-    if radix < 2u32 || radix > 36u32 || value >= radix { return none }
+    if radix > 36u32 { super.panic.panic("radix must be at most 36") }
+    if value >= radix { return none }
     let scalar = if value < 10u32 {
         0x30u32 + value
     } else {
@@ -216,7 +217,7 @@ fn short_escape(value: char): Escape? {
     present(Escape(['\\', escaped, '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0'], 2usize, 0usize))
 }
 
-// Associated constants of the primitive char type (Unicode 16.0.0 tables).
+// Associated constants of the primitive char type (Unicode 17.0.0 tables).
 extend char {
     pub const MAX: char = '\u{10ffff}'
     pub const MIN: char = '\0'
@@ -291,7 +292,7 @@ extend char {
     }
 
     pub fn to_digit(radix: u32): u32? {
-        if radix < 2u32 || radix > 36u32 { return none }
+        if radix < 2u32 || radix > 36u32 { super.panic.panic("radix must be within 2..=36") }
         let value = self as u32
         let digit = if value >= 0x30u32 && value <= 0x39u32 {
             value - 0x30u32
@@ -397,6 +398,7 @@ extend char {
 
     // Printable ASCII stays literal; everything else uses `\u{...}`.
     pub fn escape_default(): Escape {
+        if self == '\0' { return unicode_escape(0u32) }
         match take short_escape(self) {
             present(escaped) => escaped,
             none => {
@@ -410,13 +412,24 @@ extend char {
         }
     }
 
-    // Only control characters are escaped; other scalars stay literal.
-    pub fn escape_debug(): Escape {
+    pub fn escape_debug(): Escape { self.escape_debug_ext(true, true, true) }
+
+    pub(super) fn escape_debug_ext(
+        escape_single_quote: bool,
+        escape_double_quote: bool,
+        escape_grapheme_extend: bool
+    ): Escape {
+        if self == '\'' && !escape_single_quote || self == '"' && !escape_double_quote {
+            return Escape([self, '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0'], 1usize, 0usize)
+        }
         match take short_escape(self) {
             present(escaped) => escaped,
             none => {
-                if self.is_control() {
-                    unicode_escape(self as u32)
+                let value = self as u32
+                let literal = value >= 0x20u32 && value <= 0x7eu32 ||
+                    value == 0xff9eu32 || value == 0xff9fu32
+                if !literal && super.unicode_data.is_debug_escape(value, escape_grapheme_extend) {
+                    unicode_escape(value)
                 } else {
                     Escape([self, '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0'], 1usize, 0usize)
                 }

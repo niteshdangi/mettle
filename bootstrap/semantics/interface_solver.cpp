@@ -112,12 +112,17 @@ Solver::match(Type pattern, Type actual, bool symmetric,
     if ((types.isView(pattern) && types.isView(actual)) ||
         (types.isPointer(pattern) && types.isPointer(actual))) {
       auto source = types.view(pattern), target = types.view(actual);
-      bool compatible = source.region == target.region || symmetric;
+      bool compatible =
+          source.region == target.region || (symmetric && !regions);
       if (!compatible && regions) {
         RegionSolver solver(types.regions());
         if (types.regions().get(source.region).kind == RegionKind::Inference)
           compatible = proven(
               solver.instantiate(source.region, target.region, *regions));
+        else if (symmetric && types.regions().get(target.region).kind ==
+                                  RegionKind::Inference)
+          compatible = proven(
+              solver.instantiate(target.region, source.region, *regions));
         else
           compatible =
               proven(solver.outlives(source.region, target.region, *regions)) &&
@@ -128,6 +133,59 @@ Solver::match(Type pattern, Type actual, bool symmetric,
     }
     if (types.isSlice(pattern) && types.isSlice(actual))
       return unify(types.slice(pattern).element, types.slice(actual).element);
+    if (types.isFunctionPointer(pattern) && types.isFunctionPointer(actual)) {
+      auto source = types.callable(pattern), target = types.callable(actual);
+      if (source.parameters.size() != target.parameters.size() ||
+          source.mode != target.mode ||
+          source.unsafeCall != target.unsafeCall || source.abi != target.abi ||
+          source.variadic != target.variadic ||
+          source.targetFeatures != target.targetFeatures ||
+          source.resultSources != target.resultSources ||
+          source.resultFromEnvironment != target.resultFromEnvironment)
+        return false;
+      auto scope = types.regions().binder(
+          regions ? regions->universe : regionEnvironment.universe, true);
+      if (source.regionParameters.size() != target.regionParameters.size())
+        return false;
+      std::vector<RegionBinding> sourceRegions, targetRegions;
+      std::vector<RegionBinding> erasedRigids;
+      for (std::size_t i = 0; i < source.regionParameters.size(); ++i) {
+        auto rigid = types.regions().rigid(scope, "<implementation-callable>");
+        sourceRegions.push_back({source.regionParameters[i], rigid});
+        targetRegions.push_back({target.regionParameters[i], rigid});
+        erasedRigids.push_back({rigid, RegionId::Unspecified});
+      }
+      auto firstBinding = bindings.size();
+      for (std::size_t i = 0; i < source.parameters.size(); ++i)
+        if (source.parameters[i].mode != target.parameters[i].mode ||
+            !unify(types.substituteRegions(source.parameters[i].type,
+                                           sourceRegions),
+                   types.substituteRegions(target.parameters[i].type,
+                                           targetRegions)))
+          return false;
+      if (!unify(types.substituteRegions(source.result, sourceRegions),
+                 types.substituteRegions(target.result, targetRegions)) ||
+          !unify(types.substituteRegions(source.error, sourceRegions),
+                 types.substituteRegions(target.error, targetRegions)))
+        return false;
+      for (std::size_t i = firstBinding; i < bindings.size(); ++i)
+        if (types.substituteRegions(bindings[i].argument, erasedRigids) !=
+            bindings[i].argument)
+          return false;
+      auto environment = regions ? *regions : regionEnvironment;
+      environment.universe = scope.universe;
+      auto from = types.substitute(pattern, bindings);
+      auto to = types.substitute(actual, bindings);
+      if (symmetric) {
+        from = types.eraseRegions(from);
+        to = types.eraseRegions(to);
+      }
+      RegionSolver solver(types.regions());
+      RegionTypeSolver contracts(types, solver);
+      return proven(contracts.coerce(from, to, environment)) &&
+             proven(contracts.coerce(to, from, environment)) &&
+             proven(solver.leakCheck(environment));
+    }
     // An erased payload's lifetime bound is a region fact, checked by the
     // region relations rather than by shape.
     if (types.isErased(pattern) && types.isErased(actual) &&
@@ -176,13 +234,17 @@ Solver::match(Type pattern, Type actual, bool symmetric,
         for (std::size_t i = 0; sameRegions && i < a.regionArguments.size();
              ++i) {
           auto from = a.regionArguments[i], to = b.regionArguments[i];
-          if (from == to || symmetric)
+          if (from == to || (symmetric && !regions))
             continue;
           if (!regions)
             return false;
           RegionSolver solver(types.regions());
           if (types.regions().get(from).kind == RegionKind::Inference) {
             if (!proven(solver.instantiate(from, to, *regions)))
+              return false;
+          } else if (symmetric &&
+                     types.regions().get(to).kind == RegionKind::Inference) {
+            if (!proven(solver.instantiate(to, from, *regions)))
               return false;
           } else if (!proven(solver.outlives(from, to, *regions)) ||
                      !proven(solver.outlives(to, from, *regions)))
@@ -299,6 +361,145 @@ bool Solver::matchRegions(const ErasedType &provided, const ErasedType &wanted,
   return proven(solver.leakCheck(environment));
 }
 
+bool Solver::wellFormedInterface(Type subject, Type interfaceType, Span span,
+                                 bool report) {
+  if (!database.argumentsReady || !types.isErased(interfaceType))
+    return true;
+  auto key = std::pair(subject, interfaceType);
+  if (!checkingArguments.insert(key).second)
+    return true;
+  struct Scope {
+    std::set<std::pair<Type, Type>> &active;
+    std::pair<Type, Type> key;
+    ~Scope() { active.erase(key); }
+  } scope{checkingArguments, key};
+  const auto descriptor = types.erased(interfaceType);
+  const auto &definition = database.definitions[descriptor.declaration];
+  bool valid = descriptor.arguments.size() == definition.parameters.size() &&
+               descriptor.regionArguments.size() == definition.regions.size();
+  std::vector<TypeBinding> bindings{
+      {definition.self, subject == Type::Unknown ? interfaceType : subject}};
+  std::vector<RegionBinding> regions;
+  for (std::size_t p = 0;
+       p < definition.parameters.size() && p < descriptor.arguments.size();
+       ++p) {
+    auto argument = normalize(descriptor.arguments[p], {}, span);
+    valid &= argument != Type::Unknown &&
+             types.isConstant(definition.parameters[p]) ==
+                 types.isConstant(argument);
+    bindings.push_back({definition.parameters[p], argument});
+  }
+  for (std::size_t r = 0;
+       r < definition.regions.size() && r < descriptor.regionArguments.size();
+       ++r)
+    regions.push_back({definition.regions[r], descriptor.regionArguments[r]});
+  if (valid) {
+    Implementation requirements;
+    requirements.parameters = definition.parameters;
+    requirements.requirements = definition.requirements;
+    requirements.equalities = definition.equalities;
+    valid = constraints(requirements, bindings, span, regions);
+  }
+  RegionSolver regionSolver(types.regions());
+  if (!revealOpaque)
+    for (const auto &requirement : definition.regionRequirements) {
+      auto answer = regionSolver.outlives(
+          types.regions().substitute(requirement.longer, regions),
+          types.regions().substitute(requirement.shorter, regions),
+          regionEnvironment);
+      regionInconclusive |= answer == RegionAnswer::Inconclusive;
+      valid &= answer == RegionAnswer::Proven;
+    }
+  if (!valid && report)
+    diagnostics.error(
+        "type", span,
+        "interface arguments do not satisfy their declared constraints");
+  return valid;
+}
+
+Type Solver::checkedProjection(Type projection, Span span, bool report) {
+  if (!database.argumentsReady || !types.isProjection(projection))
+    return projection;
+  const auto descriptor = types.parameter(projection);
+  auto subject = descriptor.operands[0], interfaceType = descriptor.operands[1];
+  auto key = std::pair(subject, projection);
+  if (!checkingArguments.insert(key).second)
+    return projection;
+  struct Scope {
+    std::set<std::pair<Type, Type>> &active;
+    std::pair<Type, Type> key;
+    ~Scope() { active.erase(key); }
+  } scope{checkingArguments, key};
+  const auto owner = types.erased(interfaceType);
+  const auto &definition = database.definitions[owner.declaration];
+  if (descriptor.value < 0 || static_cast<std::size_t>(descriptor.value) >=
+                                  definition.associated.size())
+    return Type::Unknown;
+  const auto &family = definition.associated[descriptor.value];
+  std::vector<TypeBinding> bindings{{definition.self, subject}};
+  std::vector<RegionBinding> regions;
+  for (std::size_t r = 0;
+       r < definition.regions.size() && r < owner.regionArguments.size(); ++r)
+    regions.push_back({definition.regions[r], owner.regionArguments[r]});
+  for (std::size_t p = 0;
+       p < definition.parameters.size() && p < owner.arguments.size(); ++p)
+    bindings.push_back({definition.parameters[p], owner.arguments[p]});
+  std::vector<Type> arguments(descriptor.operands.begin() + 2,
+                              descriptor.operands.end());
+  for (std::size_t p = 0; p < family.parameters.size(); ++p) {
+    if (p == arguments.size()) {
+      auto value = std::find_if(
+          family.defaults.begin(), family.defaults.end(), [&](auto binding) {
+            return binding.parameter == family.parameters[p];
+          });
+      if (value == family.defaults.end())
+        break;
+      arguments.push_back(types.substitute(value->argument, bindings));
+    }
+    arguments[p] = normalize(arguments[p], {}, span);
+    bindings.push_back({family.parameters[p], arguments[p]});
+  }
+  bool valid = wellFormedInterface(subject, interfaceType, span, false) &&
+               arguments.size() == family.parameters.size() &&
+               descriptor.regionArguments.size() == family.regions.size();
+  for (std::size_t p = 0; p < family.parameters.size() && p < arguments.size();
+       ++p)
+    valid &= arguments[p] != Type::Unknown &&
+             types.isConstant(family.parameters[p]) ==
+                 types.isConstant(arguments[p]);
+  for (std::size_t r = 0;
+       r < family.regions.size() && r < descriptor.regionArguments.size(); ++r)
+    regions.push_back({family.regions[r], descriptor.regionArguments[r]});
+  if (valid) {
+    Implementation requirements;
+    requirements.parameters = family.parameters;
+    requirements.requirements = family.requirements;
+    requirements.equalities = family.equalities;
+    valid = constraints(requirements, bindings, span, regions);
+  }
+  RegionSolver regionSolver(types.regions());
+  if (!revealOpaque)
+    for (const auto &requirement : family.regionRequirements) {
+      auto answer = regionSolver.outlives(
+          types.regions().substitute(requirement.longer, regions),
+          types.regions().substitute(requirement.shorter, regions),
+          regionEnvironment);
+      regionInconclusive |= answer == RegionAnswer::Inconclusive;
+      valid &= answer == RegionAnswer::Proven;
+    }
+  if (!valid) {
+    if (report)
+      diagnostics.error("type", span,
+                        "associated family arguments do not satisfy their "
+                        "declared constraints");
+    return Type::Unknown;
+  }
+  return types.projection(
+      subject, interfaceType, static_cast<std::size_t>(descriptor.value),
+      std::move(arguments), descriptor.valueType, descriptor.copyRequested,
+      descriptor.sized, descriptor.regionArguments);
+}
+
 bool Solver::prove(const Obligation &obligation, Span span, bool report) {
   if (++steps > limits::activeLoans) {
     regionInconclusive = true;
@@ -308,6 +509,10 @@ bool Solver::prove(const Obligation &obligation, Span span, bool report) {
     limitReported = true;
     return false;
   }
+  if (obligation.property == Property::Interface &&
+      !wellFormedInterface(obligation.subject, obligation.interfaceType, span,
+                           report))
+    return false;
   auto available = assumptions;
   if (types.isProjection(obligation.subject)) {
     auto bounds = projectionBounds(obligation.subject, span);
@@ -414,9 +619,14 @@ bool Solver::prove(const Obligation &obligation, Span span, bool report) {
       else if (types.product(origin).layout.unpin != 0 &&
                types.product(subject).kind != AggregateKind::PhantomPinned) {
         valid = true;
-        for (const auto &field : types.product(subject).fields)
-          valid &=
-              prove({field.type, Type::Unknown, Property::Unpin}, span, false);
+        const auto record = types.product(subject);
+        if (record.kind == AggregateKind::Array && !record.components.empty())
+          valid = prove({record.components[0], Type::Unknown, Property::Unpin},
+                        span, false);
+        else
+          for (const auto &field : record.fields)
+            valid &= prove({field.type, Type::Unknown, Property::Unpin}, span,
+                           false);
       }
     }
     provingUnpin.erase(subject);
@@ -683,6 +893,9 @@ Solver::implementedInterface(Type subject, Type interfaceType, Span span) {
 std::vector<Obligation> Solver::projectionBounds(Type projection, Span span) {
   if (!types.isProjection(projection))
     return {};
+  projection = checkedProjection(projection, span);
+  if (projection == Type::Unknown)
+    return {};
   const auto descriptor = types.parameter(projection);
   auto subject = descriptor.operands[0], interface = descriptor.operands[1];
   if (!types.isErased(interface) || !prove({subject, interface}, span, false))
@@ -704,12 +917,16 @@ std::vector<Obligation> Solver::projectionBounds(Type projection, Span span) {
     bindings.push_back({associated.parameters[p], descriptor.operands[p + 2]});
   std::vector<RegionBinding> regions;
   for (std::size_t r = 0;
+       r < definition.regions.size() && r < owner.regionArguments.size(); ++r)
+    regions.push_back({definition.regions[r], owner.regionArguments[r]});
+  for (std::size_t r = 0;
        r < associated.regions.size() && r < descriptor.regionArguments.size();
        ++r)
     regions.push_back({associated.regions[r], descriptor.regionArguments[r]});
   auto result = associated.bounds;
   for (auto &bound : result) {
     bound.subject = types.substitute(bound.subject, bindings);
+    bound.subject = types.substituteRegions(bound.subject, regions);
     bound.interfaceType = types.substitute(bound.interfaceType, bindings);
     bound.interfaceType = types.substituteRegions(bound.interfaceType, regions);
   }
@@ -744,8 +961,13 @@ Solver::implementation(Type self, Type interfaceType, Span span, bool report) {
     if (!matchRegions(provided, wanted, candidate.regions, {}, regions,
                       environment))
       continue;
-    auto bindings = match(types.substituteRegions(candidate.target, regions),
-                          self, false, &environment);
+    auto target = types.substituteRegions(candidate.target, regions);
+    auto actualTarget = self;
+    if (revealOpaque) {
+      target = types.eraseRegions(target);
+      actualTarget = types.eraseRegions(actualTarget);
+    }
+    auto bindings = match(target, actualTarget, false, &environment);
     if (!bindings)
       continue;
     for (auto &binding : regions)
@@ -811,6 +1033,9 @@ Solver::implementation(Type self, Type interfaceType, Span span, bool report) {
     if (!valid)
       continue;
     for (const auto &binding : wanted.associated) {
+      // Not yet inferred (an async body's output): any value satisfies it.
+      if (binding.argument == Type::Unknown)
+        continue;
       auto index = std::find_if(
           database.definitions[wanted.declaration].associated.begin(),
           database.definitions[wanted.declaration].associated.end(),
@@ -914,6 +1139,9 @@ Type Solver::normalize(Type type, std::span<const TypeBinding> bindings,
   type = types.substitute(type, bindings);
   bindings = {};
   type = types.substitute(type, contextualEqualities);
+  type = checkedProjection(type, span);
+  if (type == Type::Unknown)
+    return type;
   if (types.isProduct(type) && !types.isSymbolic(type))
     return type;
   if (types.isErased(type)) {
@@ -974,27 +1202,47 @@ Type Solver::normalize(Type type, std::span<const TypeBinding> bindings,
         normalizing.erase(type);
         return result;
       }
-    if (types.isErased(subject))
-      for (const auto &associated : types.erased(subject).associated)
+    const auto wanted = types.erased(interfaceType);
+    auto fromBound = [&](Type bound) -> std::optional<Type> {
+      if (!types.isErased(bound))
+        return std::nullopt;
+      const auto provided = types.erased(bound);
+      if (provided.declaration != wanted.declaration ||
+          provided.arguments.size() != wanted.arguments.size())
+        return std::nullopt;
+      auto environment = regionEnvironment;
+      std::vector<RegionBinding> regions;
+      if (!matchRegions(provided, wanted, {}, {}, regions, environment))
+        return std::nullopt;
+      for (std::size_t p = 0; p < provided.arguments.size(); ++p) {
+        auto argument = types.substituteRegions(provided.arguments[p], regions);
+        auto equivalent =
+            match(argument, wanted.arguments[p], false, &environment);
+        if (!equivalent ||
+            std::any_of(equivalent->begin(), equivalent->end(), [](auto value) {
+              return value.parameter != value.argument;
+            }))
+          return std::nullopt;
+      }
+      for (const auto &associated : provided.associated)
         if (associated.parameter ==
             definition.associated[projection->associated].parameter) {
-          auto result = normalize(associated.argument, bindings, span);
-          normalizing.erase(type);
+          auto saved = regionEnvironment;
+          regionEnvironment = environment;
+          auto result = normalize(
+              types.substituteRegions(associated.argument, regions), {}, span);
+          regionEnvironment = std::move(saved);
           return result;
         }
+      return std::nullopt;
+    };
     if (types.isErased(subject))
       for (auto bound :
            hierarchy(types, database, subject, subject, span, diagnostics)) {
-        const auto descriptor = types.erased(bound);
-        if (descriptor.declaration != types.erased(interfaceType).declaration)
-          continue;
-        for (const auto &associated : descriptor.associated)
-          if (associated.parameter ==
-              definition.associated[projection->associated].parameter) {
-            auto result = normalize(associated.argument, bindings, span);
-            normalizing.erase(type);
-            return result;
-          }
+        if (auto result = fromBound(bound)) {
+          normalizing.erase(type);
+          return *result;
+        }
       }
     if (types.isOpaque(subject)) {
       const auto declared = types.product(subject).opaqueBounds;
@@ -1005,16 +1253,10 @@ Type Solver::normalize(Type type, std::span<const TypeBinding> bindings,
         bounds.insert(bounds.end(), inherited.begin(), inherited.end());
       }
       for (auto bound : bounds) {
-        const auto descriptor = types.erased(bound);
-        if (descriptor.declaration != types.erased(interfaceType).declaration)
-          continue;
-        for (const auto &associated : descriptor.associated)
-          if (associated.parameter ==
-              definition.associated[projection->associated].parameter) {
-            auto result = normalize(associated.argument, bindings, span);
-            normalizing.erase(type);
-            return result;
-          }
+        if (auto result = fromBound(bound)) {
+          normalizing.erase(type);
+          return *result;
+        }
       }
     }
     for (const auto &assumption : assumptions) {
@@ -1022,17 +1264,10 @@ Type Solver::normalize(Type type, std::span<const TypeBinding> bindings,
           assumption.subject != subject ||
           !types.isErased(assumption.interfaceType))
         continue;
-      const auto descriptor = types.erased(assumption.interfaceType);
-      if (descriptor.declaration != types.erased(interfaceType).declaration ||
-          descriptor.arguments != types.erased(interfaceType).arguments)
-        continue;
-      for (const auto &associated : descriptor.associated)
-        if (associated.parameter ==
-            definition.associated[projection->associated].parameter) {
-          auto result = normalize(associated.argument, bindings, span);
-          normalizing.erase(type);
-          return result;
-        }
+      if (auto result = fromBound(assumption.interfaceType)) {
+        normalizing.erase(type);
+        return *result;
+      }
     }
     // A family projection carries the associated-type bounds declared on the
     // family, instantiated at the projection's region arguments.
@@ -1042,16 +1277,10 @@ Type Solver::normalize(Type type, std::span<const TypeBinding> bindings,
           continue;
         for (auto parent : hierarchy(types, database, subject,
                                      bound.interfaceType, span, diagnostics)) {
-          const auto descriptor = types.erased(parent);
-          if (descriptor.declaration != types.erased(interfaceType).declaration)
-            continue;
-          for (const auto &associated : descriptor.associated)
-            if (associated.parameter ==
-                definition.associated[projection->associated].parameter) {
-              auto result = normalize(associated.argument, bindings, span);
-              normalizing.erase(type);
-              return result;
-            }
+          if (auto result = fromBound(parent)) {
+            normalizing.erase(type);
+            return *result;
+          }
         }
       }
     if (types.isOpaque(subject) && (revealOpaque || types.isConstant(type))) {

@@ -7,7 +7,8 @@
 
 namespace mettle::instances {
 namespace {
-void unrollLoops(ir::Function &function, const TypeStore &types) {
+bool unrollLoops(ir::Function &function, const TypeStore &types) {
+  bool expanded = false;
   std::vector<ir::Function::ArrayLoop> retained;
   for (std::size_t l = 0; l < function.arrayLoops.size(); ++l) {
     auto loop = function.arrayLoops[l];
@@ -18,6 +19,15 @@ void unrollLoops(ir::Function &function, const TypeStore &types) {
       retained.push_back(loop);
       continue;
     }
+    expanded = true;
+    std::vector<ir::Function::ArrayLoop> nested;
+    for (auto it = retained.begin(); it != retained.end();)
+      if (std::find(loop.blocks.begin(), loop.blocks.end(), it->header) !=
+          loop.blocks.end()) {
+        nested.push_back(std::move(*it));
+        it = retained.erase(it);
+      } else
+        ++it;
     auto count = types.product(type).fields.size();
     if (count && loop.blocks.size() >
                      (limits::cfgBlocks - function.blocks.size()) / count)
@@ -52,7 +62,7 @@ void unrollLoops(ir::Function &function, const TypeStore &types) {
         for (const auto &instruction : function.blocks[block].instructions)
           if (instruction.result.id >= 0)
             values.emplace(instruction.result.id, function.values++);
-      ir::Value index{function.values++, Type::I32};
+      ir::Value index{function.values++, loop.index.type};
       values[loop.index.id] = index.id;
       auto remapValue = [&](ir::Value &value) {
         if (auto found = values.find(value.id); found != values.end())
@@ -109,6 +119,18 @@ void unrollLoops(ir::Function &function, const TypeStore &types) {
                                     {}});
         function.blocks[blocks[iteration].at(source)] = std::move(copy);
       }
+      for (auto inner : nested) {
+        inner.header = target(inner.header);
+        inner.body = target(inner.body);
+        inner.step = target(inner.step);
+        inner.done = target(inner.done);
+        for (auto &block : inner.blocks)
+          block = target(block);
+        remapPlace(inner.source);
+        remapValue(inner.index);
+        inner.element = values.at(inner.element);
+        retained.push_back(std::move(inner));
+      }
     }
     for (std::size_t target = 0; target < function.blocks.size(); ++target) {
       if (std::find(loop.blocks.begin(), loop.blocks.end(), target) !=
@@ -158,6 +180,7 @@ void unrollLoops(ir::Function &function, const TypeStore &types) {
     }
   }
   function.arrayLoops = std::move(retained);
+  return expanded;
 }
 void reachableBlocks(ir::Function &function) {
   if (function.blocks.empty())
@@ -176,6 +199,10 @@ void reachableBlocks(ir::Function &function) {
     if (exit.kind == ir::Exit::Branch)
       work.push_back(exit.second);
   }
+  // The cursor proof needs its step even when every body path exits.
+  for (const auto &loop : function.arrayLoops)
+    if (reachable[loop.header])
+      reachable[loop.step] = true;
   std::vector<int> mapping(function.blocks.size(), -1);
   int next = 0;
   for (std::size_t i = 0; i < reachable.size(); ++i)
@@ -231,13 +258,29 @@ void reachableBlocks(ir::Function &function) {
     }
     remap(block.exit.value);
   }
+  std::vector<ir::Function::ArrayLoop> loops;
+  for (auto loop : function.arrayLoops) {
+    if (!reachable[loop.header])
+      continue;
+    loop.header = mapping[loop.header];
+    loop.body = mapping[loop.body];
+    loop.step = mapping[loop.step];
+    loop.done = mapping[loop.done];
+    std::vector<int> region;
+    for (auto block : loop.blocks)
+      if (reachable[block])
+        region.push_back(mapping[block]);
+    loop.blocks = std::move(region);
+    remap(loop.index);
+    loop.element = values.at(loop.element);
+    loops.push_back(std::move(loop));
+  }
+  function.arrayLoops = std::move(loops);
   function.values = static_cast<int>(values.size());
 }
 } // namespace
 void expandArrays(ir::Function &function, const TypeStore &types) {
-  auto before = function.arrayLoops.size();
-  unrollLoops(function, types);
-  bool expanded = function.arrayLoops.size() != before;
+  bool expanded = unrollLoops(function, types);
   if (expanded)
     reachableBlocks(function);
   for (auto &block : function.blocks)

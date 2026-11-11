@@ -187,6 +187,8 @@ public:
       : options(options), plan(plan), store(store), results(results) {
     for (const auto &mount : plan.mounts)
       taken.insert(mount.name);
+    for (const auto &mount : plan.hostMounts)
+      hostTaken.insert(mount.name);
   }
 
   bool run() {
@@ -201,7 +203,7 @@ private:
   const packages::Plan &plan;
   packages::Store *store;
   ScriptResults &results;
-  std::set<std::string> taken;
+  std::set<std::string> taken, hostTaken;
 
   bool fail(const packages::BuildScript &script, const std::string &message) {
     std::cerr << "mettle: error[build]: build script of '" << script.package
@@ -231,21 +233,27 @@ private:
                                 "' names a file the script "
                                 "did not generate: " +
                                 file);
-      if (!taken.insert(name).second)
+      if (!(script.host ? hostTaken : taken).insert(name).second)
         return fail(script,
                     "module '" + name + "' collides with another root module");
       resolution::Library::Package module;
       module.name = name;
       module.source = source.generic_string();
+      module.instanceIdentity = script.identity;
       module.features = features;
-      results.modules.push_back(std::move(module));
+      module.features.insert(declared.features.begin(),
+                             declared.features.end());
+      (script.host ? results.hosts[script.identity].modules : results.modules)
+          .push_back(std::move(module));
     }
     results.features[script.identity].insert(declared.features.begin(),
                                              declared.features.end());
+    auto &libraries = script.host ? results.hosts[script.identity].libraries
+                                  : results.libraries;
     for (const auto &library : declared.libraries)
-      if (std::find(results.libraries.begin(), results.libraries.end(),
-                    library) == results.libraries.end())
-        results.libraries.push_back(library);
+      if (std::find(libraries.begin(), libraries.end(), library) ==
+          libraries.end())
+        libraries.push_back(library);
     return true;
   }
 
@@ -273,18 +281,10 @@ private:
     host.noCache = options.noCache;
     host.explain = options.explain;
     host.packageContext = true;
+    host.packageInstance = script.identity;
     host.injectedFeatures = featuresOf(script);
     host.packageDependencies = script.dependencies;
-    for (const auto &mount : plan.hostMounts) {
-      resolution::Library::Package dependency;
-      dependency.name = mount.name;
-      dependency.source = mount.source;
-      dependency.module = mount.module;
-      dependency.dependencies = mount.dependencies;
-      dependency.features =
-          std::set<std::string>(mount.features.begin(), mount.features.end());
-      host.injectedPackages.push_back(std::move(dependency));
-    }
+    injectHostContext(host, plan.hostMounts, results);
     if (driver::run(host) != 0)
       return fail(script, "compiling the script failed");
 
@@ -296,11 +296,12 @@ private:
     auto binaryHash = packages::hashFile(binary, size);
     if (!binaryHash)
       return fail(script, "cannot read the compiled script");
+    const auto &scriptTarget = script.host ? host.target : options.target;
     packages::Sha256 identity;
     for (const auto &field :
          {std::string("mettle-script-key-1"), compilerIdentity(),
           script.package, script.version, script.directory, *binaryHash,
-          options.target, options.profile, joined}) {
+          scriptTarget, options.profile, joined}) {
       identity.update(field);
       identity.update(std::string_view("\0", 1));
     }
@@ -331,7 +332,7 @@ private:
              {"METTLE_PACKAGE_DIR", script.directory},
              {"METTLE_PACKAGE_NAME", script.package},
              {"METTLE_PACKAGE_VERSION", script.version},
-             {"METTLE_TARGET", options.target},
+             {"METTLE_TARGET", scriptTarget},
              {"METTLE_PROFILE", options.profile},
              {"METTLE_FEATURES", joined}})
       setenv(name, value.c_str(), 1);
@@ -377,6 +378,49 @@ private:
   }
 };
 } // namespace
+
+void injectHostContext(Options &host,
+                       const std::vector<packages::Mount> &mounts,
+                       const ScriptResults &results) {
+  std::map<std::string, const packages::Mount *> available;
+  for (const auto &mount : mounts)
+    available.emplace(mount.module, &mount);
+  std::set<std::string> required;
+  auto visit = [&](auto &self, const std::string &module) -> void {
+    if (!required.insert(module).second)
+      return;
+    if (auto found = available.find(module); found != available.end())
+      for (const auto &[name, dependency] : found->second->dependencies)
+        self(self, dependency);
+  };
+  for (const auto &[name, dependency] : host.packageDependencies)
+    visit(visit, dependency);
+  for (const auto &mount : mounts) {
+    if (!required.contains(mount.module))
+      continue;
+    resolution::Library::Package dependency;
+    dependency.name = mount.name;
+    dependency.source = mount.source;
+    dependency.module = mount.module;
+    dependency.instanceIdentity = mount.identity;
+    dependency.dependencies = mount.dependencies;
+    dependency.features.insert(mount.features.begin(), mount.features.end());
+    if (auto extra = results.features.find(mount.identity);
+        extra != results.features.end())
+      dependency.features.insert(extra->second.begin(), extra->second.end());
+    host.injectedPackages.push_back(std::move(dependency));
+    if (auto generated = results.hosts.find(mount.identity);
+        generated != results.hosts.end()) {
+      host.injectedPackages.insert(host.injectedPackages.end(),
+                                   generated->second.modules.begin(),
+                                   generated->second.modules.end());
+      for (const auto &library : generated->second.libraries)
+        if (std::find(host.extraLibraries.begin(), host.extraLibraries.end(),
+                      library) == host.extraLibraries.end())
+          host.extraLibraries.push_back(library);
+    }
+  }
+}
 
 bool runBuildScripts(const Options &options, const packages::Plan &plan,
                      packages::Store *store, ScriptResults &results) {

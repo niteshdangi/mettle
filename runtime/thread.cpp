@@ -8,6 +8,7 @@
 #include <ctime>
 #include <exception>
 #include <limits.h>
+#include <limits>
 #include <memory>
 #include <new>
 #include <pthread.h>
@@ -23,10 +24,13 @@ namespace {
 struct ParkingState {
   std::uintptr_t identity = 0;
   pthread_t native{};
+  std::string name;
   pthread_mutex_t mutex{};
   pthread_cond_t condition{};
   bool token = false;
   bool registered = false;
+  bool spawned = false;
+  bool named = false;
 };
 
 pthread_mutex_t parkingRegistryMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -69,6 +73,22 @@ struct ParkingStateHolder {
 
 thread_local ParkingStateHolder parkingHolder;
 
+int initializeCondition(pthread_cond_t *condition) {
+#ifdef __APPLE__
+  return pthread_cond_init(condition, nullptr);
+#else
+  pthread_condattr_t attributes;
+  int status = pthread_condattr_init(&attributes);
+  if (status != 0)
+    return status;
+  status = pthread_condattr_setclock(&attributes, CLOCK_MONOTONIC);
+  if (status == 0)
+    status = pthread_cond_init(condition, &attributes);
+  pthread_condattr_destroy(&attributes);
+  return status;
+#endif
+}
+
 ParkingState *newParkingState() {
   auto *state = new (std::nothrow) ParkingState;
   if (!state)
@@ -77,7 +97,7 @@ ParkingState *newParkingState() {
     delete state;
     return nullptr;
   }
-  if (pthread_cond_init(&state->condition, nullptr) != 0) {
+  if (initializeCondition(&state->condition) != 0) {
     pthread_mutex_destroy(&state->mutex);
     delete state;
     return nullptr;
@@ -113,14 +133,12 @@ ParkingState *currentParkingState() {
 struct Start {
   MettleThreadEntry entry;
   void *argument;
-  std::string name;
   ParkingState *parking;
 };
 extern "C" void *threadMain(void *raw) {
   auto *start = static_cast<Start *>(raw);
   auto entry = start->entry;
   auto *argument = start->argument;
-  auto name = std::move(start->name);
   auto *parking = start->parking;
   delete start;
   if (pthread_mutex_lock(&parking->mutex) != 0)
@@ -133,21 +151,19 @@ extern "C" void *threadMain(void *raw) {
   parkingHolder.state = parking;
 #if defined(__APPLE__)
   // pthread name limits include the terminating NUL byte.
-  if (name.size() > 63)
-    name.resize(63);
-  if (!name.empty())
-    (void)pthread_setname_np(name.c_str());
-#else
-  // Linux: the spawner names the thread before spawn returns (see
-  // mettle_rt_thread_spawn_configured), so a name read cannot race this start.
-  (void)name;
+  char name[64]{};
+  const auto length = parking->name.size() < 63 ? parking->name.size() : 63;
+  if (length != 0) {
+    std::memcpy(name, parking->name.data(), length);
+    (void)pthread_setname_np(name);
+  }
 #endif
   entry(argument);
   return nullptr;
 }
 timespec deadline(std::uint64_t nanoseconds) {
   timespec now{};
-  clock_gettime(CLOCK_REALTIME, &now);
+  clock_gettime(CLOCK_MONOTONIC, &now);
   const std::uint64_t billion = 1000000000u;
   std::uint64_t seconds =
       static_cast<std::uint64_t>(now.tv_sec) + nanoseconds / billion;
@@ -156,6 +172,25 @@ timespec deadline(std::uint64_t nanoseconds) {
   seconds += rest / billion;
   return {static_cast<time_t>(seconds), static_cast<long>(rest % billion)};
 }
+int waitUntil(pthread_cond_t *condition, pthread_mutex_t *mutex,
+              const timespec &limit) {
+#ifdef __APPLE__
+  timespec now{};
+  if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+    return errno;
+  timespec remaining{limit.tv_sec - now.tv_sec, limit.tv_nsec - now.tv_nsec};
+  if (remaining.tv_nsec < 0) {
+    --remaining.tv_sec;
+    remaining.tv_nsec += 1000000000;
+  }
+  if (remaining.tv_sec < 0)
+    remaining = {0, 0};
+  return pthread_cond_timedwait_relative_np(condition, mutex, &remaining);
+#else
+  return pthread_cond_timedwait(condition, mutex, &limit);
+#endif
+}
+
 template <typename T, typename Init> void *create(Init init) {
   auto *object = new (std::nothrow) T;
   if (!object)
@@ -330,10 +365,11 @@ std::int32_t mettle_rt_thread_spawn_configured(
     return ENOMEM;
   Start *start = nullptr;
   try {
-    start = new (std::nothrow) Start{
-        entry, argument,
-        name && nameLength != 0 ? std::string(name, nameLength) : std::string{},
-        parking};
+    if (nameLength != 0)
+      parking->name.assign(name, nameLength);
+    parking->spawned = true;
+    parking->named = name != nullptr;
+    start = new (std::nothrow) Start{entry, argument, parking};
   } catch (...) {
     destroyParkingState(parking);
     return ENOMEM;
@@ -363,6 +399,8 @@ std::int32_t mettle_rt_thread_spawn_configured(
   }
   pthread_t thread{};
   if (pthread_mutex_lock(&parkingRegistryMutex) != 0) {
+    if (attributesPointer)
+      pthread_attr_destroy(&attributes);
     delete start;
     destroyParkingState(parking);
     return EINVAL;
@@ -372,6 +410,8 @@ std::int32_t mettle_rt_thread_spawn_configured(
     joinRegistry.reserve(joinRegistry.size() + 1);
   } catch (...) {
     pthread_mutex_unlock(&parkingRegistryMutex);
+    if (attributesPointer)
+      pthread_attr_destroy(&attributes);
     delete start;
     destroyParkingState(parking);
     return ENOMEM;
@@ -386,9 +426,7 @@ std::int32_t mettle_rt_thread_spawn_configured(
     return status;
   }
 #if defined(__linux__)
-  // Name the thread here rather than from the thread itself: Thread.name reads
-  // the OS name, and an unnamed Linux thread reports the process name until
-  // its own start ran. Linux names are limited to 15 bytes plus the NUL.
+  // Linux OS thread names are limited to 15 bytes plus the NUL.
   if (nameLength != 0) {
     char truncated[16]{};
     std::memcpy(truncated, name, nameLength < 15 ? nameLength : 15);
@@ -473,8 +511,7 @@ void mettle_rt_thread_park_timeout(std::uint64_t nanoseconds) {
   if (!state->token) {
     const auto until = deadline(nanoseconds);
     while (!state->token) {
-      const int status =
-          pthread_cond_timedwait(&state->condition, &state->mutex, &until);
+      const int status = waitUntil(&state->condition, &state->mutex, until);
       if (status == ETIMEDOUT || status != 0)
         break;
     }
@@ -500,23 +537,55 @@ void mettle_rt_thread_unpark(std::uintptr_t handle) {
 }
 std::intptr_t mettle_rt_thread_name(std::uintptr_t handle, char *buffer,
                                     std::size_t capacity) {
-  if (!buffer || capacity == 0)
+  if (!buffer && capacity != 0)
     return -EINVAL;
   if (pthread_mutex_lock(&parkingRegistryMutex) != 0)
     return -EINVAL;
   // Exit removes this entry under the same lock before destroying its state.
   // A stale public token can never reach a recycled native pthread handle.
-  int status = ESRCH;
+  std::intptr_t result = -ESRCH;
   for (const auto &entry : parkingRegistry)
     if (entry.first == handle) {
-      status = pthread_getname_np(entry.second->native, buffer, capacity);
+      auto *state = entry.second;
+      char nativeName[64]{};
+      const char *name = nativeName;
+      std::size_t length = 0;
+      if (state->spawned) {
+        if (!state->named) {
+          result = -ENOENT;
+          break;
+        }
+        name = state->name.data();
+        length = state->name.size();
+      } else {
+        const int status =
+            pthread_getname_np(state->native, nativeName, sizeof nativeName);
+        if (status != 0) {
+          result = -status;
+          break;
+        }
+        length = std::strlen(nativeName);
+        if (length == 0) {
+          result = -ENOENT;
+          break;
+        }
+      }
+      if (length >
+          static_cast<std::size_t>(std::numeric_limits<std::intptr_t>::max())) {
+        result = -EOVERFLOW;
+      } else if (buffer && capacity <= length) {
+        result = -ERANGE;
+      } else {
+        if (buffer && length != 0)
+          std::memcpy(buffer, name, length);
+        if (buffer)
+          buffer[length] = '\0';
+        result = static_cast<std::intptr_t>(length);
+      }
       break;
     }
   pthread_mutex_unlock(&parkingRegistryMutex);
-  if (status != 0)
-    return -status;
-  const auto length = std::strlen(buffer);
-  return length == 0 ? -ENOENT : static_cast<std::intptr_t>(length);
+  return result;
 }
 void mettle_rt_thread_yield() { sched_yield(); }
 void mettle_rt_thread_sleep(std::uint64_t nanoseconds) {
@@ -561,8 +630,7 @@ std::int32_t mettle_rt_mutex_unlock(void *mutex) {
 }
 
 void *mettle_rt_cond_new() {
-  return create<pthread_cond_t>(
-      [](pthread_cond_t *cond) { return pthread_cond_init(cond, nullptr); });
+  return create<pthread_cond_t>(initializeCondition);
 }
 void mettle_rt_cond_free(void *cond) {
   auto *object = static_cast<pthread_cond_t *>(cond);
@@ -576,9 +644,8 @@ std::int32_t mettle_rt_cond_wait(void *cond, void *mutex) {
 std::int32_t mettle_rt_cond_wait_timeout(void *cond, void *mutex,
                                          std::uint64_t nanoseconds) {
   auto limit = deadline(nanoseconds);
-  int status =
-      pthread_cond_timedwait(static_cast<pthread_cond_t *>(cond),
-                             static_cast<pthread_mutex_t *>(mutex), &limit);
+  int status = waitUntil(static_cast<pthread_cond_t *>(cond),
+                         static_cast<pthread_mutex_t *>(mutex), limit);
   if (status == ETIMEDOUT)
     return 1;
   return status == 0 ? 0 : -1;

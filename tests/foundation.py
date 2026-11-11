@@ -10,9 +10,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+import processes
+
 
 def run(arguments, expected=0, contains=None):
-    result = subprocess.run(arguments, text=True, capture_output=True, timeout=90)
+    result = processes.run(arguments, text=True, capture_output=True, timeout=90)
     if result.returncode != expected:
         raise AssertionError(
             f"{arguments!r}: expected exit {expected}, got {result.returncode}\n"
@@ -22,12 +24,92 @@ def run(arguments, expected=0, contains=None):
     return result
 
 
+def harness_cases(root, executable):
+    import alloc
+    import std
+    from unittest.mock import patch
+
+    def rejected(action, exception):
+        try:
+            action()
+        except exception:
+            return
+        raise AssertionError(f"expected {exception.__name__}")
+
+    rejected(lambda: std.directives("// expect-stdou: required\n"), ValueError)
+    rejected(lambda: std.directives("// expect-exit: 0\n// expect-exit: 42\n"),
+             ValueError)
+    repeated = std.directives("// expect-stderr: first\n// expect-stderr: second\n")
+    assert repeated["expect-stderr"] == ["first", "second"]
+    empty = root / "empty"
+    empty.mkdir()
+    for runner in (alloc, std):
+        rejected(lambda: runner.main(executable, root / "out", empty), ValueError)
+    source = (root / "profile.mt").resolve()
+    source.write_text("fn main(): i32 { 0 }\n")
+    import processes
+    for runner in (alloc, std):
+        result = subprocess.CompletedProcess([], 0, b"", b"")
+        with patch.object(processes, "run", return_value=result) as invoke:
+            runner.check(executable, source, root, profile="release")
+        build = invoke.call_args_list[0].args[0]
+        assert build[build.index("--profile") + 1] == "release", build
+    source.write_text("// expect-error: type 2:1 unknown name\nmissing\n")
+    for runner in (alloc, std):
+        wrong = f"{source}:2:1: error[type]: other failure\n{source}:9:1: error[type]: unknown name\n"
+        result = subprocess.CompletedProcess([], 1, "", wrong)
+        with patch.object(processes, "run", return_value=result):
+            rejected(lambda: runner.check(executable, source, root), AssertionError)
+        result.stderr = f"{source}:2:1: error[type]: unknown name `missing`\n"
+        with patch.object(processes, "run", return_value=result):
+            runner.check(executable, source, root)
+    packages = Path(__file__).with_name("packages.py")
+    run([sys.executable, str(packages), executable, str(root / "packages"),
+         str(empty), "^definitely-not-a-case$"], expected=1,
+        contains="no package cases selected")
+    machine = Path(__file__).parent / "backend" / "machine.py"
+    run([sys.executable, str(machine), executable, executable, executable,
+         executable, str(root / "machine"), "--case-prefix",
+         "definitely-not-a-case"], expected=1, contains="no machine cases selected")
+    assert json.loads((root / "machine" / "evidence.json").read_text())["status"] == "failed"
+    events = []
+
+    class TimedOut:
+        pid = 12345
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *arguments):
+            return False
+
+        def communicate(self, input=None, timeout=None):
+            events.append("communicate")
+            if timeout is not None:
+                raise subprocess.TimeoutExpired(["mock-child"], timeout)
+            return b"", b""
+
+    with patch.object(processes.subprocess, "Popen", return_value=TimedOut()) as spawn:
+        with patch.object(processes, "kill", side_effect=lambda child: events.append("kill")):
+            rejected(lambda: processes.run(["mock-child"], timeout=1),
+                     subprocess.TimeoutExpired)
+    assert events == ["communicate", "kill", "communicate"], events
+    assert spawn.call_args.kwargs["start_new_session"] == (os.name == "posix")
+    if os.name == "posix":
+        with patch.object(processes.os, "killpg") as terminate:
+            processes.kill(TimedOut())
+        terminate.assert_called_once_with(TimedOut.pid, processes.signal.SIGKILL)
+    print("Harness diagnostic, selection, profile and timeout behavior passed")
+
+
 def main():
     mode, executable, *arguments = sys.argv[1:]
     executable = str(Path(executable).resolve())
     with tempfile.TemporaryDirectory(prefix="mettle-foundation-") as temporary:
         root = Path(temporary)
-        if mode == "cli":
+        if mode == "harnesses":
+            harness_cases(root, executable)
+        elif mode == "cli":
             run([executable, "--version"], contains="I02 scalar source compiler")
             run([executable, "--help"], contains="mettle build")
             source = root / "example.mt"

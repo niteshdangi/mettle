@@ -4,7 +4,7 @@ import package.core.default.Default
 import package.core.cmp.{ Eq, Ord, Ordering, PartialEq, PartialOrd }
 import package.core.hash.{ Hash, Hasher }
 import package.core.fmt
-import package.core.ops.{ Deref, DerefMut, IndexRange, IndexRangeMut }
+import package.core.ops.{ Deref, DerefMut, IndexRange, IndexRangeMut, RangeEnd }
 import package.core.iter.{ Iterator, BidirectionalIterator, ExactSizeIterator, FusedIterator, Bound, RangeBounds, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems }
 import package.core.slice.{ SliceIter, SliceIterMut }
 import package.core.text.Text
@@ -54,7 +54,11 @@ pub fn slice_ptr_mut<T>(p: ptr<mut T>, n: usize): ptr<mut [T]> {
 type DropRun<T> {
     p: ptr<mut T>
     n: usize
-    drop {
+    drop { self.run() }
+}
+
+extend<T> DropRun<T> {
+    mut fn run(): Unit {
         while self.n != 0usize {
             let current = self.p
             self.p = unsafe { self.p.add(1usize) }
@@ -64,8 +68,10 @@ type DropRun<T> {
     }
 }
 
-pub fn drop_run<T>(p: ptr<mut T>, n: usize): Unit {
-    let _guard = DropRun(p, n)
+// Safety: p owns n initialized aligned elements exclusively; the extent remains live through cleanup.
+pub unsafe fn drop_run<T>(p: ptr<mut T>, n: usize): Unit {
+    var guard = DropRun(p, n)
+    guard.run()
 }
 
 // Invariant: `ptr` is non-null even when the list is empty; `init` uses
@@ -81,7 +87,8 @@ pub type List<T, A: Allocator = Global> {
         self.len = 0usize
         let layout = unsafe { layout_unchecked(self.cap * core.mem.size_of<T>(), core.mem.align_of<T>()) }
         let _free = unsafe { free_block(self.ptr.cast<u8>(), layout, core.ptr.from_mut(self.a)) }
-        let _run = DropRun(self.ptr, n)
+        var run = DropRun(self.ptr, n)
+        run.run()
     }
 }
 
@@ -152,7 +159,7 @@ extend<T, A: Allocator> List<T, A> {
         let np = if self.cap == 0usize {
             try self.a.allocate(unsafe { layout_unchecked(bytes, align) })
         } else {
-            try self.a.grow(self.ptr.cast<u8>(), unsafe { layout_unchecked(self.cap * size, align) }, bytes)
+            unsafe { try self.a.grow(self.ptr.cast<u8>(), layout_unchecked(self.cap * size, align), bytes) }
         }
         self.ptr = np.cast<T>()
         self.cap = ncap
@@ -189,7 +196,8 @@ extend<T, A: Allocator> List<T, A> {
         if size == 0usize || self.cap <= target || self.cap == 0usize { return () }
         let align = core.mem.align_of<T>()
         let old = unsafe { layout_unchecked(self.cap * size, align) }
-        match capture self.a.shrink(self.ptr.cast<u8>(), old, target * size) {
+        let outcome = unsafe { capture self.a.shrink(self.ptr.cast<u8>(), old, target * size) }
+        match take outcome {
             success(np) => {
                 self.ptr = np.cast<T>()
                 self.cap = target
@@ -261,7 +269,7 @@ extend<T, A: Allocator> List<T, A> {
         if n >= self.len { return () }
         let old = self.len
         self.len = n
-        drop_run(unsafe { self.ptr.add(n) }, old - n)
+        unsafe { drop_run(self.ptr.add(n), old - n) }
     }
     pub mut fn clear(): Unit { self.truncate(0usize) }
 
@@ -379,7 +387,9 @@ extend<T, A: Allocator> List<T, A> {
         take test: F
     ): ExtractIf<region self, T, A, F> {
         let (start, end) = normalize_range(take range, self.len)
-        ExtractIf(mut self, start, end - start, test)
+        let original_len = self.len
+        self.len = start
+        ExtractIf(mut self, original_len, start, end, 0usize, false, test)
     }
 
     pub mut fn splice<R: RangeBounds<usize>, I: OwnedIterable<Item = T>>(
@@ -397,8 +407,9 @@ extend<T, A: Allocator> List<T, A> {
                 }
             }
         }
+        let pending = new_in<T, A>(self.a.clone())
         let source = replacement.into_iter()
-        Splice(mut self, removed.into_iter(), source, start)
+        Splice(mut self, removed.into_iter(), source, pending, start)
     }
 
     pub mut fn spare_capacity_mut(): mut [core.mem.MaybeUninit<T>] from self {
@@ -518,28 +529,58 @@ pub type Drain<region r, T, A: Allocator> {
     drop {
         let _finish = DrainFinish(core.ptr.from_mut(self.list), self.start,
             self.tail_start, self.tail_len)
-        drop_run(unsafe { self.list.ptr.add(self.front) }, self.back - self.front)
+        unsafe { drop_run(self.list.ptr.add(self.front), self.back - self.front) }
     }
 }
 
+// Safety: owned slots are [0, index-deleted) and [index, original_len); the gap owns nothing.
 pub type ExtractIf<region r, T, A: Allocator, F> {
     list: mut List<T, A> from r
+    original_len: usize
     index: usize
-    remaining: usize
+    end: usize
+    deleted: usize
+    panicked: bool
     test: F
+    drop {
+        unsafe {
+            if self.deleted != 0usize {
+                core.ptr.`copy`(
+                    self.list.ptr.add(self.index).cast_const(),
+                    self.list.ptr.add(self.index - self.deleted),
+                    self.original_len - self.index
+                )
+            }
+            self.list.len = self.original_len - self.deleted
+        }
+    }
 }
 extend<region r, T, A: Allocator, F: mut fn(mut T): bool> ExtractIf<region r, T, A, F> implements Iterator {
     type Item = T
-    fn size_hint(): (usize, usize?) { (0usize, present(self.remaining)) }
+    fn size_hint(): (usize, usize?) {
+        (0usize, present(if self.panicked { 0usize } else { self.end - self.index }))
+    }
     mut fn next(): T? {
-        while self.remaining > 0usize {
-            let remove = match take self.list.get_mut(self.index) {
-                present(value) => self.test(mut *value),
-                none => { return none }
-            }
-            self.remaining -= 1usize
-            if remove { return present(self.list.remove(self.index)) }
+        if self.panicked { return none }
+        while self.index < self.end {
+            let current = unsafe { self.list.ptr.add(self.index) }
+            self.panicked = true
+            let remove = self.test(unsafe { mut *current })
+            self.panicked = false
             self.index += 1usize
+            if remove {
+                self.deleted += 1usize
+                return present(unsafe { core.ptr.`read`(current) })
+            }
+            if self.deleted != 0usize {
+                unsafe {
+                    core.ptr.`copy`(
+                        current.cast_const(),
+                        self.list.ptr.add(self.index - self.deleted - 1usize),
+                        1usize
+                    )
+                }
+            }
         }
         none
     }
@@ -613,6 +654,9 @@ extend<T: Clone, A: Allocator> List<T, A> {
         self.reserve(n - self.len)
         while self.len < n { self.push(value.clone()) }
     }
+}
+
+extend<T, A: Allocator> List<T, A> {
     pub mut fn resize_with<F: mut fn(): T>(n: usize, take generate: F): Unit {
         if n <= self.len { self.truncate(n); return () }
         self.reserve(n - self.len)
@@ -653,23 +697,9 @@ extend<T: PartialEq, A: Allocator> List<T, A> {
     }
     // Removes consecutive duplicates.
     pub mut fn dedup(): Unit {
-        if self.len < 2usize { return () }
-        let n = self.len
-        self.len = 1usize
-        var read_at = 1usize
-        var kept = 1usize
-        while read_at < n {
-            let p = unsafe { self.ptr.add(read_at) }
-            let same = unsafe { read *p } == unsafe { read *self.ptr.add(kept - 1usize) }
-            read_at += 1usize
-            if same {
-                unsafe { core.ptr.drop_in_place(p) }
-            } else {
-                if kept != read_at - 1usize { unsafe { core.ptr.`copy`(p.cast_const(), self.ptr.add(kept), 1usize) } }
-                kept += 1usize
-            }
-        }
-        self.len = kept
+        self.dedup_by(fn(mut current: T, mut previous: T): bool {
+            current.eq(read previous)
+        })
     }
 }
 
@@ -1070,21 +1100,31 @@ extend<T, A: Allocator> List<T, A> implements Deref {
     fn deref(): read [T] from self { self.as_slice() }
 }
 extend<T, A: Allocator> List<T, A> implements DerefMut {
-    type Target = [T]
     mut fn deref_mut(): mut [T] from self { self.as_mut_slice() }
 }
+fn range_index_end(end: RangeEnd, len: usize): usize {
+    match end {
+        RangeEnd.Unbounded => len,
+        RangeEnd.Exclusive(value) => value,
+        RangeEnd.Inclusive(value) => {
+            if value >= len { panic_precondition() }
+            value + 1usize
+        }
+    }
+}
+
 extend<T, A: Allocator> List<T, A> implements IndexRange {
     type Output = [T]
-    fn index_range(start: usize, end: usize): read [T] from self {
-        let stop = if end == 0xffffffffffffffffusize { self.len } else { end }
+    fn index_range(start: usize, end: RangeEnd): read [T] from self {
+        let stop = range_index_end(end, self.len)
         if start > stop || stop > self.len { panic_precondition() }
         unsafe { read *slice_ptr(self.ptr.add(start), stop - start) }
     }
 }
 extend<T, A: Allocator> List<T, A> implements IndexRangeMut {
     type Output = [T]
-    mut fn index_range_mut(start: usize, end: usize): mut [T] from self {
-        let stop = if end == 0xffffffffffffffffusize { self.len } else { end }
+    mut fn index_range_mut(start: usize, end: RangeEnd): mut [T] from self {
+        let stop = range_index_end(end, self.len)
         if start > stop || stop > self.len { panic_precondition() }
         unsafe { mut *slice_ptr_mut(self.ptr.add(start), stop - start) }
     }
@@ -1203,7 +1243,8 @@ pub type IntoIter<T, A: Allocator = Global> {
         self.front = self.back
         let layout = unsafe { layout_unchecked(self.cap * core.mem.size_of<T>(), core.mem.align_of<T>()) }
         let _free = unsafe { free_block(self.buf.cast<u8>(), layout, core.ptr.from_mut(self.a)) }
-        let _run = DropRun(p, rest)
+        var run = DropRun(p, rest)
+        run.run()
     }
 }
 
@@ -1248,17 +1289,35 @@ pub type Splice<region r, T, A: Allocator, I: Iterator<Item = T>> {
     list: mut List<T, A> from r
     removed: IntoIter<T, A>
     replacement: I
+    pending: List<T, A>
     at: usize
     drop {
         while true {
             match take self.replacement.next() {
                 present(value) => {
-                    self.list.insert(self.at, value)
-                    self.at += 1usize
+                    self.pending.push(value)
                 },
                 none => { break }
             }
         }
+        let count = self.pending.len
+        self.list.reserve(count)
+        let original_len = self.list.len
+        // Safety: reservation precedes both moves; pending ownership transfers before any callback.
+        unsafe {
+            core.ptr.`copy`(
+                self.list.ptr.add(self.at).cast_const(),
+                self.list.ptr.add(self.at + count),
+                original_len - self.at
+            )
+            core.ptr.`copy`(
+                self.pending.ptr.cast_const(),
+                self.list.ptr.add(self.at),
+                count
+            )
+        }
+        self.pending.len = 0usize
+        self.list.len = original_len + count
     }
 }
 extend<region r, T, A: Allocator, I: Iterator<Item = T>> Splice<region r, T, A, I> implements Iterator {

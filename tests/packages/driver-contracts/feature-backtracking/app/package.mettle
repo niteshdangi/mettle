@@ -1,0 +1,9 @@
+name: "feature-backtracking"
+version: "0.1.0"
+registry { path: "../registry" }
+dependencies {
+    widget {
+        version: ">=1.0.0, <3.0.0"
+        features: ["old_api"]
+    }
+}

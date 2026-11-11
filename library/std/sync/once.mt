@@ -95,7 +95,7 @@ extend Once {
     pub fn wait_force(): Unit {
         while true {
             let state = self.state.load(core.sync.atomic.Ordering.Acquire)
-            if state == 2u32 || state == 3u32 { return }
+            if state == 2u32 { return }
             unsafe { mettle_rt_thread_yield() }
         }
     }

@@ -22,6 +22,8 @@ void Checker::requireFeatures(const std::set<std::string> &features,
 }
 void Checker::targetDeclarations() {
   for (auto &function : module.functions) {
+    if (imported(function.span))
+      continue;
     for (const auto &attribute : function.item.attributes) {
       if (attribute.name == "target_feature") {
         if (!checked.targetDescription.initialProfile())

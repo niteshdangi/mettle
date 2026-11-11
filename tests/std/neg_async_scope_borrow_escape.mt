@@ -1,4 +1,4 @@
-// expect-error: ownership
+// expect-error: ownership 21:5 access or storage lifetime conflicts with a live read loan
 import core.future.{Context, Future, Poll}
 import std.task
 

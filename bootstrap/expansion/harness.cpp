@@ -5,7 +5,7 @@ namespace {
 std::string call(const Module::TestFunction &entry) {
   std::string path;
   for (const auto &part : entry.path)
-    path += (path.empty() ? "" : ".") + part;
+    path += (path.empty() ? "" : ".") + std::string("`") + part + "`";
   return path + "()";
 }
 

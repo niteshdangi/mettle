@@ -19,7 +19,16 @@ pub copy enum NodeKind {
         GenericApply, GenericParameters, GenericParameter, Bounds, Constraints, Constraint,
         DefaultType, DefaultValue, Visibility, Modifier,
         ModuleDeclaration, ModuleBody, Import, ImportPath, ImportAlias, ImportGroup, ImportName,
-        ImportGlob
+        ImportGlob,
+        Product, Union, Enumeration, VariantDeclaration, Members, FieldDeclaration,
+        Interface, Extension, NegativeExtension, AssociatedType, Constant, Static,
+        Alias, Foreign, Constructor, Destructor, Attribute, TokenTree, MacroDefinition,
+        PatternWildcard, PatternLiteral, PatternTuple, PatternArray, PatternRest,
+        PatternVariant, PatternProduct, PatternField, PatternAt, PatternOr, PatternRange,
+        Match, Arm, Guard, Condition, Conditions, For, Label, LetElse, Closure,
+        NamedArgument, OptionalField, Projection, Unsafe, Await, Try, Capture, Throw,
+        None, Present, Success, Failure, Owner, Interpolation, FormatPiece, FormatHole,
+        MacroInvocation
 }
 extend NodeKind {
     pub fn is(other: NodeKind): bool { (self as u32) == (other as u32) }
@@ -81,6 +90,36 @@ pub fn node_name(kind: NodeKind): read Text from static {
         NodeKind.ModuleDeclaration => "module-declaration", NodeKind.ModuleBody => "module-body",
         NodeKind.Import => "import", NodeKind.ImportPath => "import-path",
         NodeKind.ImportAlias => "import-alias", NodeKind.ImportGroup => "import-group",
-        NodeKind.ImportName => "import-name", NodeKind.ImportGlob => "import-glob"
+        NodeKind.ImportName => "import-name", NodeKind.ImportGlob => "import-glob",
+        NodeKind.Product => "product", NodeKind.Union => "union",
+        NodeKind.Enumeration => "enumeration",
+        NodeKind.VariantDeclaration => "variant-declaration", NodeKind.Members => "members",
+        NodeKind.FieldDeclaration => "field-declaration", NodeKind.Interface => "interface",
+        NodeKind.Extension => "extension", NodeKind.NegativeExtension => "negative-extension",
+        NodeKind.AssociatedType => "associated-type", NodeKind.Constant => "constant",
+        NodeKind.Static => "static",
+        NodeKind.Alias => "alias", NodeKind.Foreign => "foreign",
+        NodeKind.Constructor => "constructor",
+        NodeKind.Destructor => "destructor", NodeKind.Attribute => "attribute",
+        NodeKind.TokenTree => "token-tree",
+        NodeKind.MacroDefinition => "macro-definition",
+        NodeKind.PatternWildcard => "pattern-wildcard",
+        NodeKind.PatternLiteral => "pattern-literal", NodeKind.PatternTuple => "pattern-tuple",
+        NodeKind.PatternArray => "pattern-array", NodeKind.PatternRest => "pattern-rest",
+        NodeKind.PatternVariant => "pattern-variant", NodeKind.PatternProduct => "pattern-product",
+        NodeKind.PatternField => "pattern-field", NodeKind.PatternAt => "pattern-at",
+        NodeKind.PatternOr => "pattern-or", NodeKind.PatternRange => "pattern-range",
+        NodeKind.Match => "match", NodeKind.Arm => "arm", NodeKind.Guard => "guard",
+        NodeKind.Condition => "condition", NodeKind.Conditions => "conditions",
+        NodeKind.For => "for",
+        NodeKind.Label => "label", NodeKind.LetElse => "let-else", NodeKind.Closure => "closure",
+        NodeKind.NamedArgument => "named-argument", NodeKind.OptionalField => "optional-field",
+        NodeKind.Projection => "projection", NodeKind.Unsafe => "unsafe", NodeKind.Await => "await",
+        NodeKind.Try => "try", NodeKind.Capture => "capture", NodeKind.Throw => "throw",
+        NodeKind.None => "none", NodeKind.Present => "present", NodeKind.Success => "success",
+        NodeKind.Failure => "failure", NodeKind.Owner => "owner",
+        NodeKind.Interpolation => "interpolation",
+        NodeKind.FormatPiece => "format-piece", NodeKind.FormatHole => "format-hole",
+        NodeKind.MacroInvocation => "macro-invocation"
     }
 }

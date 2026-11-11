@@ -481,7 +481,7 @@ extend<T: PartialEq> [T] {
 }
 
 fn ascii_space(byte: u8): bool {
-    (byte >= 9u8 && byte <= 13u8) || byte == 32u8
+    byte == 9u8 || byte == 10u8 || byte == 12u8 || byte == 13u8 || byte == 32u8
 }
 
 fn ascii_lower(byte: u8): u8 {
@@ -690,7 +690,14 @@ extend<T> [T] {
         if nth >= n { super.panic.panic("selection index out of bounds") }
         var low = 0usize
         var high = n
+        var budget = n.saturating_mul(4usize)
         while high - low > 1usize {
+            let length = high - low
+            if length > budget {
+                linear_select(mut self, low, high, nth, mut less)
+                break
+            }
+            budget -= length
             let mid = low + (high - low) / 2usize
             let last = high - 1usize
             if less(read self[mid], read self[low]) { self.swap(mid, low) }
@@ -742,6 +749,67 @@ extend<T> [T] {
         self.select_nth_unstable_by(nth, fn(read a: T, read b: T): Ordering {
             key_fn(a).cmp(key_fn(b))
         })
+    }
+}
+
+fn linear_select<T, F: mut fn(read T, read T): bool>(
+    mut xs: [T], start: usize, end: usize, nth: usize, mut less: F
+): Unit {
+    var low = start
+    var high = end
+    while high - low > 1usize {
+        if high - low <= 5usize {
+            var i = low + 1usize
+            while i < high {
+                var j = i
+                while j > low && less(read xs[j], read xs[j - 1usize]) {
+                    xs.swap(j, j - 1usize)
+                    j -= 1usize
+                }
+                i += 1usize
+            }
+            return ()
+        }
+        var group = low
+        var medians = 0usize
+        while group < high {
+            let stop = group + if high - group < 5usize { high - group } else { 5usize }
+            var i = group + 1usize
+            while i < stop {
+                var j = i
+                while j > group && less(read xs[j], read xs[j - 1usize]) {
+                    xs.swap(j, j - 1usize)
+                    j -= 1usize
+                }
+                i += 1usize
+            }
+            xs.swap(low + medians, group + (stop - group) / 2usize)
+            medians += 1usize
+            group = stop
+        }
+        let median = low + medians / 2usize
+        linear_select(mut xs, low, low + medians, median, mut less)
+        let pivot = high - 1usize
+        xs.swap(median, pivot)
+        var lower = low
+        var scan = low
+        var greater = pivot
+        while scan < greater {
+            if less(read xs[scan], read xs[pivot]) {
+                xs.swap(scan, lower)
+                lower += 1usize
+                scan += 1usize
+            } else if less(read xs[pivot], read xs[scan]) {
+                greater -= 1usize
+                xs.swap(scan, greater)
+            } else {
+                scan += 1usize
+            }
+        }
+        xs.swap(greater, pivot)
+        if nth < lower { high = lower }
+        else if nth > greater { low = greater + 1usize }
+        else { return () }
     }
 }
 
@@ -1458,11 +1526,11 @@ extend<T> [T] {
     pub fn split<F: mut fn(read T): bool>(take test: F): SliceSplit<region self, T, F> {
         SliceSplit(read self, test, 0usize, self.len(), 0xffffffffffffffffusize, false, false, false, false)
     }
-    pub fn splitn<F: mut fn(read T): bool>(count: usize, take test: F): SliceSplit<region self, T, F> {
-        SliceSplit(read self, test, 0usize, self.len(), count, false, false, false, false)
+    pub fn splitn<F: mut fn(read T): bool>(count: usize, take test: F): SliceSplitN<region self, T, F> {
+        SliceSplitN(SliceSplit(read self, test, 0usize, self.len(), count, false, false, false, false))
     }
-    pub fn rsplitn<F: mut fn(read T): bool>(count: usize, take test: F): SliceSplit<region self, T, F> {
-        SliceSplit(read self, test, 0usize, self.len(), count, true, false, false, false)
+    pub fn rsplitn<F: mut fn(read T): bool>(count: usize, take test: F): SliceSplitN<region self, T, F> {
+        SliceSplitN(SliceSplit(read self, test, 0usize, self.len(), count, true, false, false, false))
     }
     pub fn rsplit<F: mut fn(read T): bool>(take test: F): super.iter.Reversed<SliceSplit<region self, T, F>> {
         self.split(test).rev()
@@ -1701,6 +1769,12 @@ extend<region r, T> SliceRChunksExactMut<region r, T> {
     }
 }
 
+pub type SliceSplitN<region r, T, F> { inner: SliceSplit<region r, T, F> }
+extend<region r, T, F: mut fn(read T): bool> SliceSplitN<region r, T, F> implements Iterator {
+    type Item = read [T] from r
+    mut fn next(): (read [T] from r)? { self.inner.next() }
+}
+
 pub type SliceSplit<region r, T, F> {
     items: read [T] from r
     test: F
@@ -1718,7 +1792,7 @@ extend<region r, T, F: mut fn(read T): bool> SliceSplit<region r, T, F> implemen
         if self.done || self.remaining == 0usize { return none }
         self.remaining -= 1usize
         if self.front == self.back {
-            if self.inclusive && self.suppress_empty_tail {
+            if self.inclusive {
                 self.done = true
                 return none
             }
@@ -1765,7 +1839,7 @@ extend<region r, T, F: mut fn(read T): bool> SliceSplit<region r, T, F> implemen
         if self.done || self.remaining == 0usize { return none }
         self.remaining -= 1usize
         if self.front == self.back {
-            if self.inclusive && self.suppress_empty_tail {
+            if self.inclusive {
                 self.done = true
                 return none
             }
@@ -1815,7 +1889,7 @@ extend<region r, T, F: mut fn(read T): bool> SliceSplitMut<region r, T, F> imple
         if self.done || self.remaining == 0usize { return none }
         self.remaining -= 1usize
         if self.front == self.back {
-            if self.inclusive && self.suppress_empty_tail {
+            if self.inclusive {
                 self.done = true
                 return none
             }

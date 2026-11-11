@@ -79,8 +79,7 @@ pub fn extend_layout(prefix: Layout, suffix: Layout): (Layout, usize) throws Lay
         )
     }
     let alignment = if prefix.align > suffix.align { prefix.align } else { suffix.align }
-    let size = try padded_size(end, alignment)
-    (try layout_from_size_align(size, alignment), offset)
+    (try layout_from_size_align(end, alignment), offset)
 }
 
 fn resized_layout(old: Layout, new_size: usize): Layout throws AllocError {
@@ -94,16 +93,22 @@ fn resized_layout(old: Layout, new_size: usize): Layout throws AllocError {
 extend Layout {
     pub fn size(): usize { self.size }
     pub fn align(): usize { self.align }
+    pub fn pad_to_align(): Layout {
+        let mask = self.align - 1usize
+        Layout((self.size + mask) & !mask, self.align)
+    }
 }
 
-// Allocator contract. A block must be returned to the allocator value that
-// produced it (or one that is documented to be compatible) with the layout it
-// was allocated with. `grow`/`shrink` keep the original block valid on failure.
-pub interface Allocator {
+// Safety: providers return live, exclusive storage matching its layout; clones
+// remain compatible; resize failure or unwind preserves the original initialized block.
+pub unsafe interface Allocator {
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError;
-    mut fn deallocate(p: ptr<mut u8>, layout: Layout): Unit;
-    mut fn grow(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError;
-    mut fn shrink(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError;
+    // Safety: the block is live, exclusively owned and matches this allocator/layout.
+    mut unsafe fn deallocate(p: ptr<mut u8>, layout: Layout): Unit;
+    // Safety: as for deallocate; new_size >= old.size. Failure preserves the block.
+    mut unsafe fn grow(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError;
+    // Safety: as for deallocate; new_size <= old.size. Failure preserves the block.
+    mut unsafe fn shrink(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError;
 }
 
 // Dangling, well-aligned address used for zero-sized blocks; never dereferenced.
@@ -118,17 +123,17 @@ pub copy type Global {}
 extend Global implements package.core.clone.Clone { fn clone(): Global { Global() } }
 extend Global implements package.core.default.Default { static fn default(): Global { Global() } }
 
-extend Global implements Allocator {
+unsafe extend Global implements Allocator {
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {
         if layout.size == 0usize { return dangling(layout.align) }
         let p = unsafe { mettle_rt_alloc(layout.size, layout.align) }
         if p == core.ptr.null_mut<u8>() { throw AllocError(layout.size, layout.align) }
         p
     }
-    mut fn deallocate(p: ptr<mut u8>, layout: Layout): Unit {
+    mut unsafe fn deallocate(p: ptr<mut u8>, layout: Layout): Unit {
         if layout.size != 0usize { unsafe { mettle_rt_dealloc(p, layout.size, layout.align) } }
     }
-    mut fn grow(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn grow(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
         let new_layout = try resized_layout(old, new_size)
         if old.size == 0usize {
             return try self.allocate(new_layout)
@@ -141,7 +146,7 @@ extend Global implements Allocator {
         if q == core.ptr.null_mut<u8>() { throw AllocError(new_size, old.align) }
         q
     }
-    mut fn shrink(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn shrink(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
         let new_layout = try resized_layout(old, new_size)
         if new_size == 0usize {
             if old.size != 0usize { self.deallocate(p, old) }

@@ -6,6 +6,7 @@
 import std.env
 import std.fs
 import std.io
+import std.io.Writer
 import std.path.PathInput
 import alloc.vec.List
 

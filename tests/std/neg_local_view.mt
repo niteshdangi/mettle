@@ -1,4 +1,4 @@
-// expect-error: type
+// expect-error: region 7:11 borrowed source does not outlive the required region
 import std.thread
 
 fn main(): i32 {

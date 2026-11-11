@@ -2780,7 +2780,7 @@ fn failure_of(kind: IntErrorKind): ParseIntError { ParseIntError(kind) }
 // Parses the magnitude of `text` into at most `limit`; `negative` selects which
 // overflow kind to report. `signed` allows a leading `-`.
 fn parse_magnitude(read text: Text, radix: u32, signed: bool, limit_pos: u128, limit_neg: u128): u128 throws ParseIntError {
-    if radix < 2u32 || radix > 36u32 { throw failure_of(IntErrorKind.InvalidRadix) }
+    if radix < 2u32 || radix > 36u32 { super.panic.panic("radix must be within 2..=36") }
     let bytes = text.as_bytes()
     if bytes.len() == 0usize { throw failure_of(IntErrorKind.Empty) }
     var i = 0usize
@@ -3085,6 +3085,12 @@ macro integer_from {
             extend $target implements From<$source> {
                 static fn from(take value: $source): $target { value as $target }
             }
+            extend $target implements TryFrom<$source> {
+                type Error = Never
+                static fn try_from(take value: $source): Outcome<$target, Never> {
+                    success(value as $target)
+                }
+            }
         )*
     };
 }
@@ -3284,13 +3290,13 @@ macro bool_try_from {
 bool_try_from!(i8, i16, i32, i64, i128, u8, u16, u32, u64, u128)
 
 extend bool {
-    pub fn then<T>(f: fn(): T): T? {
+    pub fn then<T, F: take fn(): T>(take f: F): T? {
         if self { present(f()) } else { none }
     }
     pub fn ok_or<E>(take error: E): (Outcome<Unit, E>) {
         if self { success(()) } else { failure(error) }
     }
-    pub fn ok_or_else<E>(error: fn(): E): (Outcome<Unit, E>) {
+    pub fn ok_or_else<E, F: take fn(): E>(take error: F): (Outcome<Unit, E>) {
         if self { success(()) } else { failure(error()) }
     }
 }

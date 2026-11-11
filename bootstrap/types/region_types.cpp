@@ -2,9 +2,79 @@
 #include <algorithm>
 #include <functional>
 #include <map>
+#include <set>
 #include <stdexcept>
 
 namespace mettle {
+Type TypeStore::declaredRegions(Type type) {
+  std::map<Type, Type> known;
+  std::set<Type> active;
+  std::function<Type(Type)> visit = [&](Type current) -> Type {
+    if (auto found = known.find(current); found != known.end())
+      return found->second;
+    if (!active.insert(current).second)
+      return current;
+    auto result = current;
+    if (isView(current)) {
+      auto view = this->view(current);
+      result = viewType(visit(view.payload), view.mode, view.region);
+    } else if (isPointer(current)) {
+      auto pointer = this->pointer(current);
+      result = pointerType(visit(pointer.payload), pointer.mode);
+    } else if (isSlice(current))
+      result = sliceType(visit(slice(current).element));
+    else if (isFunctionPointer(current)) {
+      auto signature = callable(current);
+      for (auto &parameter : signature.parameters)
+        parameter.type = visit(parameter.type);
+      signature.result = visit(signature.result);
+      signature.error = visit(signature.error);
+      signature.abiResult = visit(signature.abiResult);
+      result = callableType(std::move(signature));
+    } else if (isProduct(current) && !isOpaque(current)) {
+      auto record = product(current);
+      if (record.regionOrigin == Type::Unknown &&
+          record.regionPattern != Type::Unknown) {
+        const auto pattern = product(record.regionPattern);
+        std::vector<TypeBinding> arguments;
+        for (std::size_t p = 0; p < record.genericArguments.size() &&
+                                p < pattern.genericArguments.size();
+             ++p)
+          arguments.push_back(
+              {pattern.genericArguments[p], visit(record.genericArguments[p])});
+        std::vector<RegionBinding> regions;
+        for (std::size_t p = 0; p < pattern.regionArguments.size(); ++p)
+          regions.push_back(
+              {pattern.regionArguments[p], p < record.regionArguments.size()
+                                               ? record.regionArguments[p]
+                                               : RegionId::Unspecified});
+        result = substituteRegions(substitute(record.regionPattern, arguments),
+                                   regions);
+      } else if (record.regionOrigin != Type::Unknown) {
+        auto arguments = record.genericArguments;
+        for (auto &argument : arguments)
+          argument = visit(argument);
+        if (arguments != record.genericArguments)
+          result = regionalShell(current, record.regionArguments,
+                                 std::move(arguments), record.regionPattern);
+      } else if (!record.components.empty() &&
+                 record.kind != AggregateKind::Product &&
+                 record.kind != AggregateKind::Enumeration) {
+        for (auto &component : record.components)
+          component = visit(component);
+        result = record.kind == AggregateKind::Array &&
+                         record.arrayCount != Type::Unknown
+                     ? arrayType(record.components[0], record.arrayCount)
+                     : structural(record.kind, std::move(record.components),
+                                  record.fields.size());
+      }
+    }
+    active.erase(current);
+    known.emplace(current, result);
+    return result;
+  };
+  return visit(type);
+}
 Type TypeStore::eraseRegions(Type type) {
   if (isPointer(type)) {
     auto descriptor = pointer(type);
@@ -79,8 +149,6 @@ Type TypeStore::substituteRegions(Type type,
     Key key{nested, std::move(canonical)};
     if (auto found = products.find(key); found != products.end())
       return found->second;
-    if (active.size() >= 128)
-      throw std::length_error("region substitution nesting limit exceeded");
     if (std::find(active.begin(), active.end(), nested) != active.end())
       return nested;
     active.push_back(nested);
@@ -129,8 +197,24 @@ Type TypeStore::substituteRegions(Type type,
           argument = substituted;
         }
         if (record.regionPattern != Type::Unknown || argumentsChanged) {
-          for (auto &argument : record.regionArguments)
-            argument = regionStore.substitute(argument, substitutions);
+          bool regionsChanged = false;
+          for (auto &argument : record.regionArguments) {
+            auto substituted = regionStore.substitute(argument, substitutions);
+            regionsChanged |= substituted != argument;
+            argument = substituted;
+          }
+          // An unaffected type keeps its identity instead of a fresh shell.
+          if (!regionsChanged && !argumentsChanged) {
+            products.emplace(key, nested);
+            bool fieldsChanged = false;
+            for (const auto &field : record.fields)
+              fieldsChanged |= visit(field.type, substitutions) != field.type;
+            if (!fieldsChanged) {
+              active.pop_back();
+              return nested;
+            }
+            products.erase(key);
+          }
           result = regionalShell(nested, record.regionArguments,
                                  record.genericArguments, record.regionPattern);
           products.emplace(std::move(key), result);

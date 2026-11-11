@@ -103,15 +103,15 @@ fn main(): i32 {
     }
     if unicode.trim_start_matches("a") != "\u{e9}b" ||
         unicode.trim_end_matches("b") != "a\u{e9}" ||
-        "xybodyxy".trim_matches("xy") != "body" { return 40 }
+        "xybodyxy".trim_start_matches("xy").trim_end_matches("xy") != "body" { return 40 }
     if !"\u{e9}ABC".eq_ignore_ascii_case("\u{e9}abc") { return 21 }
-    var matches = "a\u{e9}\u{e9}b".matches("\u{e9}")
+    var matches = "a\u{e9}\u{e9}b".matches('\u{e9}')
     match matches.next() { present(item) => { if item != "\u{e9}" { return 41 } }, none => { return 41 } }
     match matches.next_back() { present(item) => { if item != "\u{e9}" { return 42 } }, none => { return 42 } }
     match matches.next() { present(_) => { return 43 }, none => {} }
     var reverse_matches = "a\u{e9}\u{e9}b".rmatches("\u{e9}")
     match reverse_matches.next() { present(item) => { if item != "\u{e9}" { return 124 } }, none => { return 124 } }
-    var match_indices = "a\u{e9}\u{e9}b".match_indices("\u{e9}")
+    var match_indices = "a\u{e9}\u{e9}b".match_indices('\u{e9}')
     match match_indices.next() {
         present(item) => { if item.0 != 1usize || item.1 != "\u{e9}" { return 44 } },
         none => { return 44 }
@@ -412,9 +412,10 @@ fn main(): i32 {
     if extracted_source.len() != 2usize { return 95 }
         var spare_test = vec.with_capacity<i32>(3usize)
         spare_test.push(1)
+        let spare_count = spare_test.capacity() - spare_test.len()
         {
             var spare = spare_test.spare_capacity_mut()
-            if spare.len() != 2usize { return 122 }
+            if spare.len() != spare_count || spare_count < 2usize { return 122 }
             spare[0] = core.mem.MaybeUninit.new(2)
         }
         unsafe { spare_test.set_len(2usize) }

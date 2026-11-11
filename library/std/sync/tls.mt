@@ -36,8 +36,32 @@ pub type OwnedLocalKey<T> {
 unsafe extend<T> OwnedLocalKey<T> implements Transferable {}
 unsafe extend<T> OwnedLocalKey<T> implements Shareable {}
 
+// Only the owning thread accesses this count; a callback loan forbids replacement.
+type Value<T> { borrows: usize; value: T }
+type ValueBorrow<T> {
+    raw: ptr<mut Value<T>>
+    drop { unsafe { (*self.raw).borrows -= 1usize } }
+}
+
+fn borrow_value<T>(raw: ptr<mut u8>): ValueBorrow<T> {
+    let value = raw.cast<Value<T>>()
+    unsafe {
+        (*value).borrows = match (*value).borrows.checked_add(1usize) {
+            present(next) => next,
+            none => core.intrinsics.abort()
+        }
+    }
+    ValueBorrow(value)
+}
+
+fn check_replace<T>(raw: ptr<mut u8>): Unit {
+    if raw != core.ptr.null_mut<u8>() && unsafe { (*raw.cast<Value<T>>()).borrows != 0usize } {
+        panic("cannot replace a borrowed thread-local value")
+    }
+}
+
 fn drop_value<T>(raw: ptr<mut u8>): Unit {
-    let _owned = unsafe { package.alloc.boxed.from_raw_in(raw.cast<T>(), package.alloc.alloc.Global()) }
+    let _owned = unsafe { package.alloc.boxed.from_raw_in(raw.cast<Value<T>>(), package.alloc.alloc.Global()) }
 }
 
 pub fn new<T>(): OwnedLocalKey<T> {
@@ -61,7 +85,7 @@ extend<T> LocalKey<T> {
         var raw = unsafe { mettle_rt_tls_get(key) }
         if raw == core.ptr.null_mut<u8>() {
             let initialize = self.initialize
-            let value = package.alloc.boxed.new(initialize()).into_raw().0
+            let value = package.alloc.boxed.new(Value(0usize, initialize())).into_raw().0
             raw = value.cast<u8>()
             if unsafe { mettle_rt_tls_set(key, raw) } != 0 {
                 let _owned = unsafe { package.alloc.boxed.from_raw_in(value, package.alloc.alloc.Global()) }
@@ -73,11 +97,12 @@ extend<T> LocalKey<T> {
 
     pub fn set(receiver read self: LocalKey<T> from static, take value: T): Unit {
         let key = self.key()
-        let raw = package.alloc.boxed.new(value).into_raw().0.cast<u8>()
+        let old = unsafe { mettle_rt_tls_get(key) }
+        check_replace<T>(old)
+        let raw = package.alloc.boxed.new(Value(0usize, value)).into_raw().0.cast<u8>()
         unsafe {
-            let old = mettle_rt_tls_get(key)
             if mettle_rt_tls_set(key, raw) != 0 {
-                let _owned = package.alloc.boxed.from_raw_in(raw.cast<T>(), package.alloc.alloc.Global())
+                let _owned = package.alloc.boxed.from_raw_in(raw.cast<Value<T>>(), package.alloc.alloc.Global())
                 panic("failed to set thread-local value")
             }
             if old != core.ptr.null_mut<u8>() { drop_value<T>(old) }
@@ -93,7 +118,8 @@ extend<T> LocalKey<T> {
         take f: fn(read T): R
     ): R? {
         let raw = self.value()
-        present(unsafe { f(read *raw.cast<T>()) })
+        let borrowed = borrow_value<T>(raw)
+        present(unsafe { f(read (*borrowed.raw).value) })
     }
 }
 
@@ -127,7 +153,7 @@ extend<T> OwnedLocalKey<T> {
         if raw == core.ptr.null_mut<u8>() && initialize {
             match self.initialize {
                 present(make) => {
-                    let value = package.alloc.boxed.new(make()).into_raw().0
+                    let value = package.alloc.boxed.new(Value(0usize, make())).into_raw().0
                     raw = value.cast<u8>()
                     if unsafe { mettle_rt_tls_set(key, raw) } != 0 {
                         let _owned = unsafe { package.alloc.boxed.from_raw_in(value, package.alloc.alloc.Global()) }
@@ -142,11 +168,12 @@ extend<T> OwnedLocalKey<T> {
 
     pub fn set(take value: T): Unit {
         let key = self.key()
-        let raw = package.alloc.boxed.new(value).into_raw().0.cast<u8>()
+        let old = unsafe { mettle_rt_tls_get(key) }
+        check_replace<T>(old)
+        let raw = package.alloc.boxed.new(Value(0usize, value)).into_raw().0.cast<u8>()
         unsafe {
-            let old = mettle_rt_tls_get(key)
             if mettle_rt_tls_set(key, raw) != 0 {
-                let _owned = package.alloc.boxed.from_raw_in(raw.cast<T>(), package.alloc.alloc.Global())
+                let _owned = package.alloc.boxed.from_raw_in(raw.cast<Value<T>>(), package.alloc.alloc.Global())
                 panic("failed to set thread-local value")
             }
             if old != core.ptr.null_mut<u8>() { drop_value<T>(old) }
@@ -163,9 +190,10 @@ extend<T> OwnedLocalKey<T> {
         unsafe { mettle_rt_tls_get(state - 1usize) != core.ptr.null_mut<u8>() }
     }
 
-    pub fn with<R>(take f: fn(read T): R): R? {
+    pub fn with<R, F: take fn(read T): R>(take f: F): R? {
         let raw = self.value(true)
         if raw == core.ptr.null_mut<u8>() { return none }
-        present(unsafe { f(read *raw.cast<T>()) })
+        let borrowed = borrow_value<T>(raw)
+        present(unsafe { f(read (*borrowed.raw).value) })
     }
 }

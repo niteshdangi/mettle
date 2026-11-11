@@ -21,10 +21,11 @@ pub interface Iterator: Sized {
     fn size_hint(): (usize, usize?) { (0usize, none) }
     fn by_ref<region r>(receiver mut self: Self from r): mut Self from r { mut self }
 
-    mut fn count(): usize {
+    take fn count(): usize {
+        var source = self
         var total = 0usize
         while true {
-            match take self.next() { present(item) => { total += 1usize }, none => { break } }
+            match take source.next() { present(item) => { total += 1usize }, none => { break } }
         }
         total
     }
@@ -44,11 +45,12 @@ pub interface Iterator: Sized {
         }
         self.next()
     }
-    mut fn fold<B, F: mut fn(take B, take Self.Item): B>(take start: B, take f: F): B {
+    take fn fold<B, F: mut fn(take B, take Self.Item): B>(take start: B, take f: F): B {
+        var source = self
         var callable = f
         var accumulator = start
         while true {
-            match take self.next() {
+            match take source.next() {
                 present(item) => { accumulator = callable(take accumulator, item) },
                 none => { break }
             }
@@ -77,10 +79,11 @@ pub interface Iterator: Sized {
         }
         total
     }
-    mut fn for_each<F: mut fn(take Self.Item): Unit>(take f: F): Unit {
+    take fn for_each<F: mut fn(take Self.Item): Unit>(take f: F): Unit {
+        var source = self
         var callable = f
         while true {
-            match take self.next() { present(item) => { callable(item) }, none => { break } }
+            match take source.next() { present(item) => { callable(item) }, none => { break } }
         }
     }
     mut fn try_fold<B, E, F: mut fn(take B, take Self.Item): B throws E>(
@@ -167,11 +170,13 @@ pub interface Iterator: Sized {
         }
         none
     }
-    mut fn min_by<F: mut fn(read Self.Item, read Self.Item): Ordering>(take compare: F): Self.Item? {
+    take fn min_by<F: mut fn(read Self.Item, read Self.Item): Ordering>(take compare: F): Self.Item? {
+        var source = self
         var comparator = compare
-        var best = self.next()
+        var best = source.next()
+        if best.is_none() { return none }
         while true {
-            match take self.next() {
+            match take source.next() {
                 present(item) => match take best {
                     present(current) => {
                         if comparator(read item, read current).is_lt() {
@@ -187,11 +192,13 @@ pub interface Iterator: Sized {
         }
         best
     }
-    mut fn max_by<F: mut fn(read Self.Item, read Self.Item): Ordering>(take compare: F): Self.Item? {
+    take fn max_by<F: mut fn(read Self.Item, read Self.Item): Ordering>(take compare: F): Self.Item? {
+        var source = self
         var comparator = compare
-        var best = self.next()
+        var best = source.next()
+        if best.is_none() { return none }
         while true {
-            match take self.next() {
+            match take source.next() {
                 present(item) => match take best {
                     present(current) => {
                         if !comparator(read item, read current).is_lt() {
@@ -207,17 +214,18 @@ pub interface Iterator: Sized {
         }
         best
     }
-    mut fn min_by_key<K: Ord, F: mut fn(read Self.Item): K>(take key: F): Self.Item? {
+    take fn min_by_key<K: Ord, F: mut fn(read Self.Item): K>(take key: F): Self.Item? {
+        var source = self
         var key_of = key
-        var best: (Self.Item, K)? = match take self.next() {
+        var best: (Self.Item, K)? = match take source.next() {
             present(item) => {
                 let item_key = key_of(read item)
                 present((item, item_key))
             },
-            none => none
+            none => { return none }
         }
         while true {
-            match take self.next() {
+            match take source.next() {
                 present(item) => {
                     let item_key = key_of(read item)
                     match take best {
@@ -236,17 +244,18 @@ pub interface Iterator: Sized {
         }
         match take best { present((item, _)) => present(item), none => none }
     }
-    mut fn max_by_key<K: Ord, F: mut fn(read Self.Item): K>(take key: F): Self.Item? {
+    take fn max_by_key<K: Ord, F: mut fn(read Self.Item): K>(take key: F): Self.Item? {
+        var source = self
         var key_of = key
-        var best: (Self.Item, K)? = match take self.next() {
+        var best: (Self.Item, K)? = match take source.next() {
             present(item) => {
                 let item_key = key_of(read item)
                 present((item, item_key))
             },
-            none => none
+            none => { return none }
         }
         while true {
-            match take self.next() {
+            match take source.next() {
                 present(item) => {
                     let item_key = key_of(read item)
                     match take best {
@@ -265,11 +274,13 @@ pub interface Iterator: Sized {
         }
         match take best { present((item, _)) => present(item), none => none }
     }
-    mut fn reduce<F: mut fn(take Self.Item, take Self.Item): Self.Item>(take f: F): Self.Item? {
+    take fn reduce<F: mut fn(take Self.Item, take Self.Item): Self.Item>(take f: F): Self.Item? {
+        var source = self
         var callable = f
-        var accumulator = self.next()
+        var accumulator = source.next()
+        if accumulator.is_none() { return none }
         while true {
-            match take self.next() {
+            match take source.next() {
                 present(item) => {
                     match take accumulator {
                         present(value) => { accumulator = present(callable(value, item)) },
@@ -330,6 +341,7 @@ pub interface Iterator: Sized {
     take fn max(): Self.Item? where Self.Item: Ord {
         var source = self
         var best = source.next()
+        if best.is_none() { return none }
         while true {
             match take source.next() {
                 present(item) => match take best {
@@ -344,6 +356,7 @@ pub interface Iterator: Sized {
     take fn min(): Self.Item? where Self.Item: Ord {
         var source = self
         var best = source.next()
+        if best.is_none() { return none }
         while true {
             match take source.next() {
                 present(item) => match take best {
@@ -429,6 +442,7 @@ pub interface Iterator: Sized {
     take fn is_sorted(): bool where Self.Item: PartialOrd {
         var source = self
         var previous = source.next()
+        if previous.is_none() { return true }
         while true {
             match take source.next() {
                 present(item) => {
@@ -447,6 +461,7 @@ pub interface Iterator: Sized {
         var comparator = compare
         var source = self
         var previous = source.next()
+        if previous.is_none() { return true }
         while true {
             match take source.next() {
                 present(item) => {
@@ -643,11 +658,12 @@ pub interface BidirectionalIterator: Iterator {
         }
         none
     }
-    mut fn rfold<B, F: mut fn(take B, take Self.(Iterator).Item): B>(take start: B, take f: F): B {
+    take fn rfold<B, F: mut fn(take B, take Self.(Iterator).Item): B>(take start: B, take f: F): B {
+        var source = self
         var callable = f
         var accumulator = start
         while true {
-            match take self.next_back() {
+            match take source.next_back() {
                 present(item) => { accumulator = callable(take accumulator, item) },
                 none => { break }
             }
@@ -1500,6 +1516,16 @@ extend<I: Iterator> Peekable<I> implements Iterator {
 extend<I: Iterator + BidirectionalIterator> Peekable<I> implements BidirectionalIterator {
     mut fn next_back(): I.(Iterator).Item? {
         if self.filled {
+            match read self.slot {
+                present(held) => {
+                    if held.is_none() {
+                        self.filled = false
+                        let _ = self.slot.take_value()
+                        return none
+                    }
+                },
+                none => { self.filled = false; return none }
+            }
             match take self.iter.next_back() {
                 present(item) => present(item),
                 none => {
@@ -1739,9 +1765,15 @@ pub interface Step: Sized + Copy + Ord {
     fn successor(): Self?;
     fn predecessor(): Self?;
     fn steps_between(read other: Self): (usize, usize?) { (0usize, none) }
+    fn unbounded_successor(): Self {
+        match self.successor() {
+            present(value) => value,
+            none => super.panic.panic("unbounded scalar range overflow")
+        }
+    }
 }
 
-// The unbounded range stops after yielding the scalar maximum.
+// Unbounded integer stepping follows the ordinary arithmetic profile.
 pub type RangeFrom<T> { start: T; done: bool }
 extend<T: Clone> RangeFrom<T> implements Clone {
     fn clone(): RangeFrom<T> { RangeFrom(self.start.clone(), self.done) }
@@ -1751,10 +1783,7 @@ extend<T: Step> RangeFrom<T> implements Iterator {
     mut fn next(): T? {
         if self.done { return none }
         let value = self.start
-        match value.successor() {
-            present(next) => { self.start = next },
-            none => { self.done = true }
-        }
+        self.start = value.unbounded_successor()
         present(value)
     }
 }
@@ -1953,6 +1982,7 @@ fn integer_steps_between(start: u128, end: u128, reversed: bool): (usize, usize?
 pub fn max<I: Iterator>(take items: I): I.Item? where I.Item: Ord {
     var source = items
     var best = source.next()
+    if best.is_none() { return none }
     while true {
         match take source.next() {
             present(item) => {
@@ -1969,6 +1999,7 @@ pub fn max<I: Iterator>(take items: I): I.Item? where I.Item: Ord {
 pub fn min<I: Iterator>(take items: I): I.Item? where I.Item: Ord {
     var source = items
     var best = source.next()
+    if best.is_none() { return none }
     while true {
         match take source.next() {
             present(item) => {
@@ -1984,6 +2015,7 @@ pub fn min<I: Iterator>(take items: I): I.Item? where I.Item: Ord {
 }
 
 extend i8 implements Step {
+    fn unbounded_successor(): i8 { self + 1i8 }
     fn successor(): i8? { self.checked_add(1i8) }
     fn predecessor(): i8? { self.checked_sub(1i8) }
     fn steps_between(read other: i8): (usize, usize?) {
@@ -2000,6 +2032,7 @@ extend i8 implements Product {
 }
 
 extend i16 implements Step {
+    fn unbounded_successor(): i16 { self + 1i16 }
     fn successor(): i16? { self.checked_add(1i16) }
     fn predecessor(): i16? { self.checked_sub(1i16) }
     fn steps_between(read other: i16): (usize, usize?) {
@@ -2016,6 +2049,7 @@ extend i16 implements Product {
 }
 
 extend i32 implements Step {
+    fn unbounded_successor(): i32 { self + 1i32 }
     fn successor(): i32? { self.checked_add(1i32) }
     fn predecessor(): i32? { self.checked_sub(1i32) }
     fn steps_between(read other: i32): (usize, usize?) {
@@ -2032,6 +2066,7 @@ extend i32 implements Product {
 }
 
 extend i64 implements Step {
+    fn unbounded_successor(): i64 { self + 1i64 }
     fn successor(): i64? { self.checked_add(1i64) }
     fn predecessor(): i64? { self.checked_sub(1i64) }
     fn steps_between(read other: i64): (usize, usize?) {
@@ -2048,6 +2083,7 @@ extend i64 implements Product {
 }
 
 extend i128 implements Step {
+    fn unbounded_successor(): i128 { self + 1i128 }
     fn successor(): i128? { self.checked_add(1i128) }
     fn predecessor(): i128? { self.checked_sub(1i128) }
     fn steps_between(read other: i128): (usize, usize?) {
@@ -2056,6 +2092,7 @@ extend i128 implements Step {
 }
 
 extend isize implements Step {
+    fn unbounded_successor(): isize { self + 1isize }
     fn successor(): isize? { self.checked_add(1isize) }
     fn predecessor(): isize? { self.checked_sub(1isize) }
     fn steps_between(read other: isize): (usize, usize?) {
@@ -2072,6 +2109,7 @@ extend isize implements Product {
 }
 
 extend u8 implements Step {
+    fn unbounded_successor(): u8 { self + 1u8 }
     fn successor(): u8? { self.checked_add(1u8) }
     fn predecessor(): u8? { self.checked_sub(1u8) }
     fn steps_between(read other: u8): (usize, usize?) {
@@ -2088,6 +2126,7 @@ extend u8 implements Product {
 }
 
 extend u16 implements Step {
+    fn unbounded_successor(): u16 { self + 1u16 }
     fn successor(): u16? { self.checked_add(1u16) }
     fn predecessor(): u16? { self.checked_sub(1u16) }
     fn steps_between(read other: u16): (usize, usize?) {
@@ -2104,6 +2143,7 @@ extend u16 implements Product {
 }
 
 extend u32 implements Step {
+    fn unbounded_successor(): u32 { self + 1u32 }
     fn successor(): u32? { self.checked_add(1u32) }
     fn predecessor(): u32? { self.checked_sub(1u32) }
     fn steps_between(read other: u32): (usize, usize?) {
@@ -2120,6 +2160,7 @@ extend u32 implements Product {
 }
 
 extend u64 implements Step {
+    fn unbounded_successor(): u64 { self + 1u64 }
     fn successor(): u64? { self.checked_add(1u64) }
     fn predecessor(): u64? { self.checked_sub(1u64) }
     fn steps_between(read other: u64): (usize, usize?) {
@@ -2136,6 +2177,7 @@ extend u64 implements Product {
 }
 
 extend u128 implements Step {
+    fn unbounded_successor(): u128 { self + 1u128 }
     fn successor(): u128? { self.checked_add(1u128) }
     fn predecessor(): u128? { self.checked_sub(1u128) }
     fn steps_between(read other: u128): (usize, usize?) {
@@ -2160,6 +2202,7 @@ extend u128 implements Product {
 }
 
 extend usize implements Step {
+    fn unbounded_successor(): usize { self + 1usize }
     fn successor(): usize? { self.checked_add(1usize) }
     fn predecessor(): usize? { self.checked_sub(1usize) }
     fn steps_between(read other: usize): (usize, usize?) {

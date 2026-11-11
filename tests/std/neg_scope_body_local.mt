@@ -1,4 +1,4 @@
-// expect-error: region
+// expect-error: region 9:13 borrowed source does not outlive the required region
 import std.thread
 
 // The spawned thread may outlive the scope body's locals: the scope joins

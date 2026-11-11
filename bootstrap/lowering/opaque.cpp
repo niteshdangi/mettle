@@ -29,6 +29,22 @@ void opaqueAdapters(ir::Program &program, TypeStore &types,
             call.typeArguments};
     auto [found, inserted] = cache.try_emplace(
         key, static_cast<int>(program.functions.size() + adapters.size()));
+    const auto &definition =
+        database.definitions[types.erased(call.interfaceType).declaration];
+    auto prefix = definition.methods[call.interfaceMethod].implicitParameters;
+    if (inserted)
+      for (const auto &existing : program.opaqueAdapters)
+        if (existing.self == opaque &&
+            existing.interfaceType == call.interfaceType &&
+            existing.method == call.interfaceMethod &&
+            call.typeArguments.size() >= prefix &&
+            existing.methodArguments ==
+                std::vector<Type>(call.typeArguments.begin() + prefix,
+                                  call.typeArguments.end())) {
+          found->second = existing.function;
+          inserted = false;
+          break;
+        }
     if (inserted) {
       ir::Function adapter{"<opaque-adapter." +
                                std::to_string(adapters.size()) + ">",
@@ -59,6 +75,12 @@ void opaqueAdapters(ir::Program &program, TypeStore &types,
       adapter.targetFeatures = declaration.targetFeatures;
       adapter.resultSources = declaration.resultSources;
       adapter.genericResultSources = declaration.genericResultSources;
+      std::vector<TypeBinding> signatureBindings;
+      for (std::size_t p = 0; p < declaration.genericParameters.size(); ++p)
+        signatureBindings.push_back(
+            {declaration.genericParameters[p], call.typeArguments[p]});
+      adapter.regionSignature = solver.normalize(declaration.regionSignature,
+                                                 signatureBindings, call.span);
       std::vector<TypeBinding> reveal{{opaque, hidden}};
       std::vector<ir::Value> operands;
       for (std::size_t p = 0; p < call.operands.size(); ++p) {
@@ -125,9 +147,6 @@ void opaqueAdapters(ir::Program &program, TypeStore &types,
                                    ? ir::Terminator{ir::Exit::Unreachable}
                                    : ir::Terminator{ir::Exit::Return, result};
       adapters.push_back(std::move(adapter));
-      const auto &definition =
-          database.definitions[types.erased(call.interfaceType).declaration];
-      auto prefix = definition.methods[call.interfaceMethod].implicitParameters;
       program.opaqueAdapters.push_back(
           {opaque,
            call.interfaceType,
@@ -137,7 +156,10 @@ void opaqueAdapters(ir::Program &program, TypeStore &types,
     }
     call.callee = found->second;
     call.typeArguments =
-        adapters[found->second - program.functions.size()].genericParameters;
+        found->second < static_cast<int>(program.functions.size())
+            ? program.functions[found->second].genericParameters
+            : adapters[found->second - program.functions.size()]
+                  .genericParameters;
     call.interfaceMethod = -1;
     call.interfaceSelf = call.interfaceType = Type::Unknown;
   };
@@ -252,6 +274,14 @@ void erasedAdapters(ir::Program &program, TypeStore &types,
       const auto ownerType = descriptor.methodOwners[slot];
       const auto &owner = types.erased(ownerType);
       const auto method = descriptor.methodSlots[slot];
+      if (std::any_of(program.opaqueAdapters.begin(),
+                      program.opaqueAdapters.end(), [&](const auto &existing) {
+                        return existing.self == erased &&
+                               existing.interfaceType == ownerType &&
+                               existing.method == static_cast<int>(method) &&
+                               existing.methodArguments.empty();
+                      }))
+        continue;
       const auto &contract =
           database.definitions[owner.declaration].methods[method];
       const auto &declaration = program.functions[contract.function];
@@ -275,6 +305,8 @@ void erasedAdapters(ir::Program &program, TypeStore &types,
       adapter.twoPhaseReceiver = declaration.twoPhaseReceiver;
       adapter.resultSources = declaration.resultSources;
       adapter.genericResultSources = declaration.genericResultSources;
+      adapter.regionSignature =
+          solver.normalize(declaration.regionSignature, bindings, {});
       adapter.blocks.emplace_back();
       auto &instructions = adapter.blocks[0].instructions;
       auto emit = [&](ir::Instruction instruction, Type type,

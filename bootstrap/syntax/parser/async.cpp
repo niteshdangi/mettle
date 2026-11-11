@@ -15,9 +15,9 @@
 //
 //   { var <await-n> = e
 //     loop {
-//       match take core::future::poll_await(mut <await-n>,
+//       match take unsafe { core::future::poll_await(mut <await-n>,
 //                                           core::intrinsics::coroutine_context())
-//                                           {
+//                          } {
 //         present(<ready-n>) => { break <ready-n> },
 //         none => core::intrinsics::coroutine_suspend()
 //       } } }
@@ -57,14 +57,18 @@ std::unique_ptr<Node> Parser::awaitExpression(NodeOwner operand, Span span) {
   std::vector<NodeOwner> arguments;
   arguments.push_back(std::move(place));
   arguments.push_back(call("core::intrinsics::coroutine_context", {}));
-  auto poll = make(Kind::Match, "take");
-  poll->children.push_back(
+  auto pollCall = make(Kind::Unsafe);
+  pollCall->children.push_back(
       call("core::future::poll_await", std::move(arguments)));
+  finish(*pollCall);
+  auto poll = make(Kind::Match, "take");
+  poll->children.push_back(std::move(pollCall));
 
   auto present = make(Kind::Arm);
   present->patterns.push_back({PatternKind::Variant, span, "present"});
   present->patterns.back().children.push_back(
       {PatternKind::Binding, span, ready});
+  present->patterns.back().children.back().context = present->context;
   auto leave = make(Kind::Break);
   leave->children.push_back(make(Kind::Name, ready));
   finish(*leave);

@@ -6,34 +6,46 @@
 namespace mettle {
 void Checker::declarations() {
   for (const auto &product : module.products) {
+    if (imported(product.span))
+      continue;
     auto name = definitionName(product.span, product.name);
     if (typeNames.contains(name))
       error("name", product.span, "duplicate type '" + product.name + "'");
-    else
-      typeNames.emplace(
-          name, checked.types->declareProduct(name, product.copyRequested));
+    else {
+      auto type = checked.types->declareProduct(name, product.copyRequested);
+      auto package = checked.namespaces().packageOf(product.span);
+      checked.types->setProductPackage(type, package.value_or(unknownPackage));
+      typeNames.emplace(name, type);
+    }
   }
   aliasStates.resize(module.aliases.size());
   for (std::size_t i = 0; i < module.aliases.size(); ++i) {
     const auto &alias = module.aliases[i];
-    std::set<std::string> regions{"static"};
+    if (imported(alias.span)) {
+      aliases.emplace(definitionName(alias.span, alias.name), i);
+      aliasStates[i] = 2;
+      continue;
+    }
+    std::set<NameKey> regions;
     for (const auto &parameter : alias.genericParameters)
       if (parameter.kind == GenericParameterKind::Region)
-        regions.insert(parameter.name);
-    std::function<void(const TypeSyntax &, std::set<std::string>)> validate =
-        [&](const TypeSyntax &syntax, std::set<std::string> names) {
-          names.insert(syntax.binders.begin(), syntax.binders.end());
+        regions.insert(nameKey(parameter.name, parameter.context));
+    std::function<void(const TypeSyntax &, std::set<NameKey>)> validate =
+        [&](const TypeSyntax &syntax, std::set<NameKey> names) {
+          for (const auto &binder : syntax.binders)
+            names.insert(nameKey(binder));
           if (syntax.callable) {
-            names.insert(syntax.callable->regions.begin(),
-                         syntax.callable->regions.end());
+            for (const auto &region : syntax.callable->regions)
+              names.insert(nameKey(region));
             for (const auto &parameter : syntax.callable->parameters)
               if (!parameter.name.empty())
-                names.insert(parameter.name);
+                names.insert(
+                    nameKey(parameter.name, parameter.annotation.context));
           }
-          auto reference = [&](const std::string &name) {
-            if (!names.contains(name))
+          auto reference = [&](const LexicalNameSyntax &name) {
+            if (name.spelling != "static" && !names.contains(nameKey(name)))
               error("name", alias.span,
-                    "unknown region argument '" + name + "'");
+                    "unknown region argument '" + name.spelling + "'");
           };
           for (const auto &source : syntax.sources)
             reference(source);
@@ -65,7 +77,9 @@ void Checker::declarations() {
     return;
   prepareGenerics();
   for (std::size_t i = 0; i < module.aliases.size(); ++i)
-    if (aliasGenerics.at(&module.aliases[i]).parameters.empty())
+    if (imported(module.aliases[i].span))
+      continue;
+    else if (aliasGenerics.at(&module.aliases[i]).parameters.empty())
       resolveAlias(i);
     else {
       auto saved = genericEnvironment;

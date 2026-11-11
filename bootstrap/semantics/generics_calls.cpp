@@ -13,8 +13,7 @@ std::optional<int> Checker::genericCall(
     return std::nullopt;
   auto caller = genericEnvironment;
   facts(n).callee = static_cast<int>(callee);
-  if (!checked.symbols->accessible(function.span,
-                                   checked.symbols->moduleOf(n.span)))
+  if (!checked.symbols->accessible(function.span, accessModule(n)))
     error("name", n.span, "generic function is inaccessible");
   if (function.destructor)
     error("ownership", n.span, "cannot invoke a destructor directly");

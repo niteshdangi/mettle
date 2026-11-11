@@ -18,6 +18,7 @@
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
+#include "llvm/Transforms/IPO/GlobalDCE.h"
 #include "llvm/Transforms/Instrumentation/AddressSanitizer.h"
 #include "llvm/Transforms/Instrumentation/ThreadSanitizer.h"
 
@@ -247,7 +248,7 @@ llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
   }
   if (sanitizeAddress || sanitizeThread)
     dropZeroSizedAccesses(module);
-  if (optimize || sanitizeAddress || sanitizeThread) {
+  {
     llvm::LoopAnalysisManager loops;
     llvm::FunctionAnalysisManager functions;
     llvm::CGSCCAnalysisManager calls;
@@ -278,6 +279,8 @@ llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
           builder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
       pipeline.run(module, modules);
     } else {
+      pipeline.addPass(llvm::GlobalDCEPass());
+      pipeline.run(module, modules);
       if (auto error =
               instrumentModule(module, sanitizeAddress, sanitizeThread))
         return error;

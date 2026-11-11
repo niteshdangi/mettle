@@ -18,8 +18,6 @@ inline constexpr std::size_t interfaces = std::size_t{1} << 22;
 inline constexpr std::size_t witnessSlots = std::size_t{1} << 26;
 inline constexpr std::size_t locals = std::size_t{1} << 24;
 inline constexpr std::size_t cfgBlocks = std::size_t{1} << 26;
-// Printed diagnostics only; every further error is counted and summarized.
-inline constexpr std::size_t diagnostics = 100;
 inline constexpr unsigned parserNesting = 128;
 inline constexpr unsigned syntaxDepth = 256;
 inline constexpr unsigned typeDepth = 128;

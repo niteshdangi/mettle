@@ -1,4 +1,4 @@
-// expect-error: type
+// expect-error: type 7:11 unsatisfied interface bound 'Transferable'
 import std.thread
 import alloc.rc
 

@@ -1,9 +1,11 @@
 #pragma once
 #include "source/source.h"
-#include "support/limits.h"
 #include <algorithm>
 #include <optional>
 #include <ostream>
+#include <set>
+#include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -38,6 +40,7 @@ struct Generation {
     // generation's origin and description.
     Span origin{};
     std::string description{};
+    std::optional<SyntaxContextPtr> syntaxContext{};
   };
   SourceId source = 0;
   Span origin;
@@ -80,20 +83,48 @@ public:
       span.source = currentSource;
     // A repeated report of the same fault at the same place adds no
     // information.
-    if (std::any_of(items.begin(), items.end(), [&](const Diagnostic &item) {
-          return item.span.begin == span.begin && item.span.end == span.end &&
-                 item.span.source == span.source && item.phase == phase &&
-                 item.severity == severity && item.message == message;
-        }))
+    if (!reported
+             .emplace(span.source, span.begin, span.end, phase, severity,
+                      message)
+             .second)
       return;
-    if (items.size() < limits::diagnostics)
-      items.push_back({std::move(phase), span, std::move(message),
-                       std::move(severity), std::move(related)});
-    else
-      ++suppressed;
+    items.push_back({std::move(phase), span, std::move(message),
+                     std::move(severity), std::move(related)});
   }
   void generated(Generation generation) {
     generations.push_back(std::move(generation));
+  }
+  SyntaxContextPtr makeSyntaxContext(std::vector<std::string> scope,
+                                     Span definition) {
+    return std::make_shared<const SyntaxContext>(
+        SyntaxContext{std::move(scope), definition, ++syntaxIdentity});
+  }
+  SyntaxContextPtr syntaxContext(Span span) const {
+    for (std::size_t depth = 0; depth < generations.size(); ++depth) {
+      auto generation = std::find_if(
+          generations.begin(), generations.end(),
+          [&](const Generation &entry) { return entry.source == span.source; });
+      if (generation == generations.end())
+        return {};
+      auto mapping = std::upper_bound(
+          generation->mappings.begin(), generation->mappings.end(), span.begin,
+          [](std::size_t offset, const Generation::Mapping &entry) {
+            return offset < entry.begin;
+          });
+      if (mapping == generation->mappings.begin())
+        return {};
+      --mapping;
+      if (span.begin >= mapping->end)
+        return {};
+      if (mapping->syntaxContext)
+        return *mapping->syntaxContext;
+      if (!mapping->exact)
+        return {};
+      auto offset = span.begin - mapping->begin;
+      span = mapping->target;
+      span.begin += offset;
+    }
+    return {};
   }
   // True for the generated source of an attribute or macro expansion.
   bool isGenerated(SourceId id) const {
@@ -102,7 +133,7 @@ public:
         [&](const Generation &entry) { return entry.source == id; });
   }
   bool empty() const { return items.empty(); }
-  std::size_t count() const { return items.size() + suppressed; }
+  std::size_t count() const { return items.size(); }
   void print(const Source &source, std::ostream &out) const {
     for (const auto &item : items) {
       auto generation = std::find_if(generations.begin(), generations.end(),
@@ -139,14 +170,13 @@ public:
         printItem(sourceOf(source, origin), origin.begin, "note",
                   "in generated code for " + description, out);
     }
-    if (suppressed)
-      out << "mettle: " << suppressed
-          << " additional diagnostics suppressed (limit " << limits::diagnostics
-          << ")\n";
   }
   std::vector<Diagnostic> items;
   // Every source whose text was read, for consumers mapping spans to lines.
   const std::vector<Source> &registeredSources() const { return sources; }
+  const std::vector<Generation> &registeredGenerations() const {
+    return generations;
+  }
   // Debug locations use the invocation for macro-produced tokens, while
   // unchanged copied text keeps its original offset.
   Span debugSpan(Span span) const {
@@ -182,7 +212,10 @@ public:
 
 private:
   SourceId currentSource = 0;
-  std::size_t suppressed = 0;
+  std::uint64_t syntaxIdentity = 0;
+  std::set<std::tuple<SourceId, std::size_t, std::size_t, std::string,
+                      std::string, std::string>>
+      reported;
   std::vector<Source> sources;
   std::vector<Generation> generations;
   const Source &sourceOf(const Source &fallback, Span span) const {

@@ -97,6 +97,7 @@ pub fn read_invocation(): Invocation throws Error {
     var name = string.new()
     var tokens = vec.new<Token>()
     var versioned = false
+    var named = false
     let view = raw.as_text()
     var lines = view.lines()
     var more = true
@@ -104,20 +105,40 @@ pub fn read_invocation(): Invocation throws Error {
         match lines.next() {
             present(line) => {
                 if line.starts_with("mettle-macro ") {
+                    if versioned || named { throw invalid() }
                     if !line.starts_with("mettle-macro 1.") { throw invalid() }
+                    let minor = match line.get(15usize, line.len()) {
+                        present(value) => value.as_bytes(),
+                        none => throw invalid()
+                    }
+                    if minor.is_empty() { throw invalid() }
+                    var index = 0usize
+                    while index < minor.len() {
+                        if minor[index] < 48u8 || minor[index] > 57u8 { throw invalid() }
+                        index += 1usize
+                    }
                     versioned = true
                 } else if line.starts_with("name ") {
+                    if !versioned || named { throw invalid() }
                     match line.split_once(" ") {
-                        present(a) => { name = string.from_text(a.1) },
+                        present(a) => {
+                            if a.1.is_empty() { throw invalid() }
+                            name = string.from_text(a.1)
+                        },
                         none => { throw invalid() }
                     }
+                    named = true
                 } else if line.starts_with("tok ") {
+                    if !named { throw invalid() }
                     match line.split_once(" ") {
                         present(a) => match a.1.split_once(" ") {
                             present(b) => match b.1.split_once(" ") {
                                 present(c) => {
+                                    if b.0.is_empty() || (c.0 != "0" && c.0 != "1") {
+                                        throw invalid()
+                                    }
                                     let text = try unescape(c.1)
-                                    tokens.push(Token(string.from_text(b.0), text, c.0.starts_with("1")))
+                                    tokens.push(Token(string.from_text(b.0), text, c.0 == "1"))
                                 },
                                 none => { throw invalid() }
                             },
@@ -125,12 +146,12 @@ pub fn read_invocation(): Invocation throws Error {
                         },
                         none => { throw invalid() }
                     }
-                }
+                } else { throw invalid() }
             },
             none => { more = false }
         }
     }
-    if !versioned { throw invalid() }
+    if !versioned || !named { throw invalid() }
     Invocation(name, tokens)
 }
 

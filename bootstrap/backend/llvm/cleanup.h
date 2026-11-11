@@ -35,9 +35,10 @@ struct LoweringContext {
   llvm::Value *zero(Type type);
   Type fieldType(Type owner, unsigned field);
   std::uint64_t fieldOffset(Type owner, unsigned field);
-  llvm::Value *load(Type type, llvm::Value *address, llvm::Align alignment);
+  llvm::Value *load(Type type, llvm::Value *address, llvm::Align alignment,
+                    bool isVolatile = false);
   void store(Type type, llvm::Value *value, llvm::Value *address,
-             llvm::Align alignment);
+             llvm::Align alignment, bool isVolatile = false);
   llvm::Type *viewType(Type payload);
   llvm::AllocaInst *temporary(llvm::Type *type);
   llvm::AllocaInst *temporary(Type type);

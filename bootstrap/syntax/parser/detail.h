@@ -37,6 +37,8 @@ public:
   void run(Module &module, std::vector<std::string> scope = {},
            bool nested = false);
   const std::vector<Span> &textLiterals() const { return textSpans; }
+  std::optional<std::size_t> fragmentEnd(std::string_view kind,
+                                         std::size_t begin);
 
 private:
   std::vector<Token> tokens;
@@ -216,6 +218,7 @@ private:
     result->kind = kind;
     result->span = span;
     result->text = std::move(text);
+    result->context = diagnostics.syntaxContext(span);
     return result;
   }
   void finish(Node &value) {
@@ -226,8 +229,7 @@ private:
     if (value.depth > limits::syntaxDepth)
       fail("syntax nesting limit exceeded", "limit");
   }
-  Function function(bool allowDeclaration = false,
-                    bool inferAsyncResult = false);
+  Function function(bool allowDeclaration = false);
   void lowerAsync(Function &function, bool inferResult = false);
   // The future expression for an async body; `result` is empty when inferred.
   std::unique_ptr<Node> asyncBody(NodeOwner body, TypeSyntax result, Span span,

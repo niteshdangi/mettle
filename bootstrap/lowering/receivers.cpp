@@ -31,11 +31,7 @@ Place Builder::receiverSource(const Node &node, bool extend) {
       node.kind == Kind::Group ||
       (node.kind == Kind::Unary && node.text == "*"))
     return place(node, extend, false, false);
-  auto value = rawExpression(node, false, true);
-  const auto &facts = module.facts(node);
-  if (live() && (node.kind == Kind::Call || facts.operatorCall) &&
-      facts.effect != Type::Unknown && !facts.optional && callHasFailure(node))
-    value = unwrapOutcome(value, node.span);
+  auto value = rawValue(node, false, true);
   if (!live())
     return {-1, {}};
   return materialize(value, node.span,

@@ -1,6 +1,7 @@
 import alloc.arc
 import alloc.rc
 import alloc.rc.Rc
+import core.clone.Clone
 import core.future.{Context, Future, Poll, Waker}
 import std.task
 import std.thread

@@ -423,7 +423,9 @@ fn parse_ieee(
     }
     if !saw_digit { throw invalid_parse_float_error() }
 
-    var explicit_exponent = 0i64
+    var explicit_exponent = 0i128
+    // Saturation must exceed every cancellation by the input's decimal digits.
+    let exponent_limit = bytes.len() as i128 + 2048i128
     if index < bytes.len() && (bytes[index] == 0x65u8 || bytes[index] == 0x45u8) {
         index += 1usize
         var exponent_negative = false
@@ -435,32 +437,33 @@ fn parse_ieee(
         }
         let exponent_start = index
         while index < bytes.len() && bytes[index] >= 0x30u8 && bytes[index] <= 0x39u8 {
-            let digit = (bytes[index] - 0x30u8) as i64
-            if explicit_exponent < 1000000000i64 {
-                explicit_exponent = explicit_exponent * 10i64 + digit
-                if explicit_exponent > 1000000000i64 {
-                    explicit_exponent = 1000000000i64
+            let digit = (bytes[index] - 0x30u8) as i128
+            if explicit_exponent < exponent_limit {
+                explicit_exponent = explicit_exponent * 10i128 + digit
+                if explicit_exponent > exponent_limit {
+                    explicit_exponent = exponent_limit
                 }
             }
             index += 1usize
         }
         if index == exponent_start { throw invalid_parse_float_error() }
-        if exponent_negative { explicit_exponent = 0i64 - explicit_exponent }
+        if exponent_negative { explicit_exponent = 0i128 - explicit_exponent }
     }
     if index != bytes.len() { throw invalid_parse_float_error() }
     if !significant { return sign_bit }
 
-    let decimal_exponent = explicit_exponent - fractional_digits + dropped_digits
-    let decimal_order = decimal_exponent + significant_digits as i64 - 1i64
+    let decimal_exponent_wide = explicit_exponent - fractional_digits as i128 + dropped_digits as i128
+    let decimal_order = decimal_exponent_wide + significant_digits as i128 - 1i128
     let min_normal_exponent = 1i32 - exponent_bias
     let min_subnormal_exponent = min_normal_exponent - fraction_bits as i32
     let min_decimal_order = log10_floor(min_subnormal_exponent)
-    if decimal_order < (min_decimal_order - 1i32) as i64 { return sign_bit }
+    if decimal_order < (min_decimal_order - 1i32) as i128 { return sign_bit }
     let max_decimal_order = log10_floor(exponent_bias + 1i32) + 2i32
-    if decimal_order > max_decimal_order as i64 {
+    if decimal_order > max_decimal_order as i128 {
         return sign_bit | (exponent_mask << fraction_bits)
     }
 
+    let decimal_exponent = decimal_exponent_wide as i64
     var numerator = mantissa
     var denominator = big_from(1u64)
     if decimal_exponent >= 0i64 {

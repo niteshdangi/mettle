@@ -1,4 +1,4 @@
-// expect-error: type
+// expect-error: region 9:18 borrowed source does not outlive the required region
 // A future capturing a borrow of a local is not Static.
 import std.task
 

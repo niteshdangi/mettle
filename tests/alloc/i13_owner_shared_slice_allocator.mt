@@ -20,7 +20,7 @@ extend Probe implements package.core.clone.Clone {
     fn clone(): Probe { Probe(self.record) }
 }
 
-extend Probe implements Allocator {
+unsafe extend Probe implements Allocator {
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {
         unsafe {
             (*self.record).attempts += 1
@@ -40,7 +40,7 @@ extend Probe implements Allocator {
         pointer
     }
 
-    mut fn deallocate(pointer: ptr<mut u8>, layout: Layout): Unit {
+    mut unsafe fn deallocate(pointer: ptr<mut u8>, layout: Layout): Unit {
         unsafe {
             if (*self.record).size != layout.size() ||
                 (*self.record).align != layout.align() {
@@ -50,14 +50,14 @@ extend Probe implements Allocator {
             (*self.record).frees += 1
         }
         var global = Global()
-        global.deallocate(pointer, layout)
+        unsafe { global.deallocate(pointer, layout) }
     }
 
-    mut fn grow(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn grow(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
         throw AllocError(new_size, old.align())
     }
 
-    mut fn shrink(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn shrink(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
         throw AllocError(new_size, old.align())
     }
 }

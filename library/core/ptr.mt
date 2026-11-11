@@ -135,13 +135,15 @@ extend<T: unsized> NonNull<T> implements Eq {}
 
 extend<T: unsized> NonNull<T> implements PartialOrd {
     fn partial_cmp(read other: NonNull<T>): Ordering? {
-        present(self.pointer.addr().cmp(read other.pointer.addr()))
+        present(self.cmp(read other))
     }
 }
 
 extend<T: unsized> NonNull<T> implements Ord {
     fn cmp(read other: NonNull<T>): Ordering {
-        self.pointer.addr().cmp(read other.pointer.addr())
+        if self.pointer < other.pointer { Ordering.Less }
+        else if self.pointer == other.pointer { Ordering.Equal }
+        else { Ordering.Greater }
     }
 }
 

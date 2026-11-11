@@ -23,7 +23,6 @@ extern "C" {
     unsafe fn flock(fd: i32, operation: i32): i32;
     unsafe fn pread(fd: i32, buffer: ptr<mut u8>, count: usize, offset: i64): isize;
     unsafe fn pwrite(fd: i32, buffer: ptr<read u8>, count: usize, offset: i64): isize;
-    unsafe fn dup(fd: i32): i32;
     unsafe fn fchmod(fd: i32, mode: u32): i32;
     unsafe fn link(old: ptr<read u8>, new: ptr<read u8>): i32;
     unsafe fn symlink(target: ptr<read u8>, link_path: ptr<read u8>): i32;
@@ -128,10 +127,7 @@ fn stat_path(read p: Path, follow: i32): Metadata throws Error {
 pub fn metadata(read input: PathInput): Metadata throws Error { try stat_path(input.as_path(), 1) }
 pub fn symlink_metadata(read input: PathInput): Metadata throws Error { try stat_path(input.as_path(), 0) }
 
-pub fn exists(read input: PathInput): bool {
-    let r = capture metadata(input)
-    r.is_success()
-}
+pub fn exists(read input: PathInput): bool throws Error { try try_exists(input) }
 
 pub fn try_exists(read input: PathInput): bool throws Error {
     let result = capture metadata(input)
@@ -198,8 +194,21 @@ extend OpenOptions {
         if (self.flags & access_modes) == 0 {
             throw io.from_kind(ErrorKind.InvalidInput)
         }
+        let write = (self.flags & sys.open_write()) != 0
+        let append = (self.flags & sys.open_append()) != 0
+        let create_new = (self.flags & sys.open_create_new()) != 0
+        if !write && !append &&
+            (self.flags & (sys.open_create() | sys.open_create_new())) != 0 {
+            throw io.from_kind(ErrorKind.InvalidInput)
+        }
+        if !create_new && (!write || append) && (self.flags & sys.open_truncate()) != 0 {
+            throw io.from_kind(ErrorKind.InvalidInput)
+        }
+        let flags = if create_new {
+            self.flags & (-1 - sys.open_truncate())
+        } else { self.flags }
         let c = try ffi.cstring(input.as_path().as_bytes())
-        let fd = unsafe { sys.mettle_rt_open(c.as_ptr(), self.flags, self.mode) }
+        let fd = unsafe { sys.mettle_rt_open(c.as_ptr(), flags, self.mode) }
         if fd < 0 { throw io.last_os_error() }
         File(fd)
     }
@@ -254,7 +263,7 @@ extend File {
     pub fn try_lock_shared(): Unit throws Error { try file_lock(self.fd, 5) }
     pub fn unlock(): Unit throws Error { try file_lock(self.fd, 8) }
     pub fn try_clone(): File throws Error {
-        let cloned = unsafe { dup(self.fd) }
+        let cloned = unsafe { sys.mettle_rt_dup(self.fd) }
         if cloned < 0 { throw io.last_os_error() }
         File(cloned)
     }
@@ -462,37 +471,15 @@ pub fn remove_dir(read input: PathInput): Unit throws Error { try path_call(inpu
 pub fn create_dir(read input: PathInput): Unit throws Error { try path_call(input.as_path(), 2, 511u32) }
 
 pub fn remove_dir_all(read input: PathInput): Unit throws Error {
-    try remove_tree(input.as_path())
-}
-
-fn remove_tree(read p: Path): Unit throws Error {
-    let details = try symlink_metadata(p)
-    if !details.is_dir() {
-        try remove_file(p)
-        return
-    }
-    var entries = try read_dir(p)
-    while true {
-        match try entries.next_entry() {
-            present(entry) => {
-                let entry_path = entry.path()
-                let kind = try symlink_metadata(entry_path.as_path())
-                if kind.is_dir() {
-                    try remove_tree(entry_path.as_path())
-                } else {
-                    try remove_file(entry_path.as_path())
-                }
-            },
-            none => { break }
-        }
-    }
-    try remove_dir(p)
+    let c = try ffi.cstring(input.as_path().as_bytes())
+    if unsafe { sys.mettle_rt_remove_dir_all(c.as_ptr()) } != 0 { throw io.last_os_error() }
 }
 
 // Creates the path and any missing parents; an existing directory is not an error.
 pub fn create_dir_all(read input: PathInput): Unit throws Error { try create_dirs(input.as_path(), 511u32) }
 
 fn create_dirs(read p: Path, mode: u32): Unit throws Error {
+    if p.is_empty() { return }
     let made = capture path_call(p, 2, mode)
     match take made {
         success(u) => { return },
@@ -510,7 +497,18 @@ fn create_dirs(read p: Path, mode: u32): Unit throws Error {
                 present(parent) => { try create_dirs(parent, mode) },
                 none => { throw e }
             }
-            try path_call(p, 2, mode)
+            match take capture path_call(p, 2, mode) {
+                success(_) => {},
+                failure(error) => {
+                    if error.kind().is(ErrorKind.AlreadyExists) {
+                        match take capture metadata(p) {
+                            success(details) => { if details.is_dir() { return } },
+                            failure(_) => {}
+                        }
+                    }
+                    throw error
+                }
+            }
         }
     }
 }
@@ -611,7 +609,12 @@ extend Path {
     pub fn canonicalize(): PathBuf throws Error { try super.fs.canonicalize(self) }
     pub fn metadata(): Metadata throws Error { try super.fs.metadata(self) }
     pub fn symlink_metadata(): Metadata throws Error { try super.fs.symlink_metadata(self) }
-    pub fn exists(): bool { super.fs.exists(self) }
+    pub fn exists(): bool {
+        match take capture super.fs.exists(self) {
+            success(found) => found,
+            failure(_) => false
+        }
+    }
     pub fn try_exists(): bool throws Error { try super.fs.try_exists(self) }
     pub fn is_file(): bool {
         match capture super.fs.metadata(self) {
@@ -641,7 +644,7 @@ extend PathBuf {
     pub fn symlink_metadata(): Metadata throws Error {
         try super.fs.symlink_metadata(self.as_path())
     }
-    pub fn exists(): bool { super.fs.exists(self.as_path()) }
+    pub fn exists(): bool { self.as_path().exists() }
     pub fn try_exists(): bool throws Error { try super.fs.try_exists(self.as_path()) }
     pub fn is_file(): bool { self.as_path().is_file() }
     pub fn is_dir(): bool { self.as_path().is_dir() }

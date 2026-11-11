@@ -644,10 +644,14 @@ disposition is installed for this convenience policy.
 
 The EPIPE path uses `std.process.exit` immediate-termination cleanup: live
 Mettle destructors do not run, other writers are not flushed, and it is not
-graceful unwinding. It applies only to stdout convenience output; `eprint` and
-non-pipe errors still panic, while fallible Writer methods never request this
-termination and preserve returned error identity. Programs needing controlled
-cleanup use `try out.write_line(...)` and handle broken pipe themselves.
+graceful unwinding. This explicit exit applies only to stdout convenience output.
+Fallible Writer methods never request it and preserve error identity when the
+write returns an error. They do not suppress kernel-generated SIGPIPE: its default
+disposition can terminate a closed-pipe write before any error is returned.
+Programs needing controlled cleanup must first arrange for SIGPIPE to permit
+error return, for example by inheriting an ignored disposition, then handle
+broken pipe through `try out.write_line(...)`. `eprint` and non-pipe convenience
+errors still panic when reported by the sink.
 
 ### 10.3. Implementation status
 

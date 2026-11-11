@@ -67,8 +67,9 @@ fn main(): i32 {
         present(body) => { if body != "/right" { return 31 } },
         none => { return 32 }
     }
-    match mutable.substr_range(0usize..4usize) {
-        present(part) => { if part != "left" { return 33 } },
+    let substring = mutable.as_text().split_at(4usize).0
+    match mutable.substr_range(substring) {
+        present(range) => { if range.start != 0usize || range.end != 4usize { return 33 } },
         none => { return 34 }
     }
     if unsafe { mutable.get_unchecked(0usize, 4usize) } != "left" { return 35 }
@@ -149,11 +150,11 @@ fn main(): i32 {
         success(value) => { if value != 17i32 { return 25 } },
         failure(_) => { return 26 }
     }
-    match capture from_utf16be([0x6100u16]) {
+    match capture from_utf16be([0u8, 0x61u8]) {
         success(value) => { if value.as_text() != "a" { return 16 } },
         failure(_) => { return 17 }
     }
-    match capture from_utf16le([0x0061u16]) {
+    match capture from_utf16le([0x61u8, 0u8]) {
         success(value) => { if value.as_text() != "a" { return 18 } },
         failure(_) => { return 19 }
     }
@@ -162,18 +163,18 @@ fn main(): i32 {
         failure(_) => { return 53 }
     }
     if String.from_utf16_lossy([0x0061u16]).as_text() != "a" { return 54 }
-    match capture String.from_utf16be([0x6100u16]) {
+    match capture String.from_utf16be([0u8, 0x61u8]) {
         success(value) => { if value.as_text() != "a" { return 55 } },
         failure(_) => { return 56 }
     }
-    match capture String.from_utf16le([0x0061u16]) {
+    match capture String.from_utf16le([0x61u8, 0u8]) {
         success(value) => { if value.as_text() != "a" { return 57 } },
         failure(_) => { return 58 }
     }
-    if String.from_utf16be_lossy([0x6100u16]).as_text() != "a" { return 59 }
-    if String.from_utf16le_lossy([0x0061u16]).as_text() != "a" { return 60 }
-    if from_utf16be_lossy([0x00d8u16]).as_text() != "\u{fffd}" { return 20 }
-    if from_utf16le_lossy([0xd800u16, 0x0061u16]).as_text() != "\u{fffd}a" { return 21 }
+    if String.from_utf16be_lossy([0u8, 0x61u8]).as_text() != "a" { return 59 }
+    if String.from_utf16le_lossy([0x61u8, 0u8]).as_text() != "a" { return 60 }
+    if from_utf16be_lossy([0xd8u8, 0u8]).as_text() != "\u{fffd}" { return 20 }
+    if from_utf16le_lossy([0u8, 0xd8u8, 0x61u8, 0u8]).as_text() != "\u{fffd}a" { return 21 }
     var method_utf8 = vec.new<u8>()
     method_utf8.push(0x6fu8)
     method_utf8.push(0x6bu8)

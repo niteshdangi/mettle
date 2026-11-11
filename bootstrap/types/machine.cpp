@@ -129,9 +129,14 @@ machineSignature(const TypeStore &types, std::string_view operation,
       const auto &record = types.product(type);
       bool valid = record.layout.kind != LayoutKind::Native ||
                    record.kind == AggregateKind::Array;
-      for (const auto &field : record.fields)
-        valid &= compatible(field.type) || field.type == Type::Unit ||
-                 field.type == Type::Bool || field.type == Type::Char;
+      if (record.kind == AggregateKind::Array && !record.components.empty()) {
+        auto element = record.components[0];
+        valid &= compatible(element) || element == Type::Unit ||
+                 element == Type::Bool || element == Type::Char;
+      } else
+        for (const auto &field : record.fields)
+          valid &= compatible(field.type) || field.type == Type::Unit ||
+                   field.type == Type::Bool || field.type == Type::Char;
       active.erase(type);
       return valid;
     };

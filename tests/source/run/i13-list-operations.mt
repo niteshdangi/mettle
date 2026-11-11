@@ -18,24 +18,25 @@ type Counted {
     drop { unsafe { *self.drops += 1usize } }
 }
 
-copy type Forwarding { unused: u8 }
+copy type Forwarding { reject_shrink: bool }
 
-extend Forwarding implements Allocator {
+unsafe extend Forwarding implements Allocator {
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {
         var global = Global()
         try global.allocate(layout)
     }
-    mut fn deallocate(pointer: ptr<mut u8>, layout: Layout): Unit {
+    mut unsafe fn deallocate(pointer: ptr<mut u8>, layout: Layout): Unit {
         var global = Global()
-        global.deallocate(pointer, layout)
+        unsafe { global.deallocate(pointer, layout) }
     }
-    mut fn grow(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn grow(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
         var global = Global()
-        try global.grow(pointer, old, new_size)
+        unsafe { try global.grow(pointer, old, new_size) }
     }
-    mut fn shrink(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn shrink(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
+        if self.reject_shrink && new_size != 0usize { throw AllocError(new_size, old.align()) }
         var global = Global()
-        try global.shrink(pointer, old, new_size)
+        unsafe { try global.shrink(pointer, old, new_size) }
     }
 }
 
@@ -60,20 +61,42 @@ fn panics(f: fn(): Unit): bool {
     }
 }
 
-fn main(): i32 {
-    var v = vec.with_capacity<i32>(10usize)
+fn capacity_checks<A: Allocator>(take allocator: A): i32 {
+    var v = vec.with_capacity_in<i32, A>(10usize, allocator)
     if v.capacity() < 10usize || !v.is_empty() { return 1 }
     v.reserve(20usize)
     if v.capacity() < 20usize { return 2 }
+    let before_empty_shrink = v.capacity()
     v.shrink_to(5usize)
-    if v.capacity() < 5usize || v.capacity() >= 20usize { return 3 }
+    if v.capacity() < 5usize || v.capacity() > before_empty_shrink || !v.is_empty() { return 3 }
+    let before_empty_fit = v.capacity()
     v.shrink_to_fit()
-    if v.capacity() != 0usize { return 4 }
+    if v.capacity() > before_empty_fit || !v.is_empty() { return 4 }
     v.reserve_exact(3usize)
     if v.capacity() < 3usize { return 5 }
     match capture v.try_reserve(4usize) { success(_) => {}, failure(_) => { return 6 } }
     match capture v.try_reserve_exact(4usize) { success(_) => {}, failure(_) => { return 7 } }
     match capture v.try_reserve(0xffffffffffffffffusize) { success(_) => { return 8 }, failure(_) => {} }
+
+    for value in [1, 2, 3] { v.push(value) }
+    let before_shrink = v.capacity()
+    v.shrink_to(1usize)
+    if v.capacity() < 3usize || v.capacity() > before_shrink || v.len() != 3usize { return 93 }
+    let before_fit = v.capacity()
+    v.shrink_to_fit()
+    if v.capacity() < 3usize || v.capacity() > before_fit || v.len() != 3usize { return 94 }
+    let before_noop = v.capacity()
+    v.shrink_to(before_noop + 1usize)
+    if v.capacity() != before_noop || v.len() != 3usize { return 95 }
+    if v[0usize] != 1 || v[1usize] != 2 || v[2usize] != 3 { return 96 }
+    0
+}
+
+fn main(): i32 {
+    let global_capacity = capacity_checks(Global())
+    if global_capacity != 0 { return global_capacity }
+    let refused_capacity = capacity_checks(Forwarding(true))
+    if refused_capacity != 0 { return refused_capacity }
 
     var w = filled(5)
     w.insert(2usize, 99)
@@ -196,7 +219,7 @@ fn main(): i32 {
 
     let from_array = List<i32>.(From<[i32; 3]>).from([1, 2, 3])
     let view: read [i32] = List<i32>.(AsRef<[i32]>).as_ref(read from_array)
-    if from_array.capacity() != 3usize || view.len() != 3usize || view[2usize] != 3 { return 52 }
+    if from_array.capacity() < 3usize || view.len() != 3usize || view[2usize] != 3 { return 52 }
     let same = [1, 2, 3]
     let other = [1, 2, 4]
     if !(from_array == same) || from_array == other { return 53 }
@@ -255,7 +278,7 @@ fn main(): i32 {
     let default_list = List<i32>.(Default).default()
     if !default_list.is_empty() || default_list.capacity() != 0usize { return 87 }
 
-    var forwarded = vec.new_in<i32, Forwarding>(Forwarding(0u8))
+    var forwarded = vec.new_in<i32, Forwarding>(Forwarding(false))
     forwarded.push(1)
     forwarded.push(2)
     let plain = filled(3)
@@ -276,7 +299,7 @@ fn main(): i32 {
     let adopted = unsafe { List<i32>.from_parts(raw, raw_len, raw_cap) }
     if adopted.len() != 3usize || adopted[2usize] != 2 { return 85 }
     if NonNull<i32>.new(core.ptr.null_mut<i32>()).is_present() { return 86 }
-    var allocator_parts = vec.new_in<i32, Forwarding>(Forwarding(0u8))
+    var allocator_parts = vec.new_in<i32, Forwarding>(Forwarding(false))
     allocator_parts.push(42)
     let (allocator_pointer, allocator_len, allocator_cap, allocator) =
         allocator_parts.into_parts_with_alloc()

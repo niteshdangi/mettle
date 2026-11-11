@@ -2,10 +2,13 @@
 
 #include "diagnostics/diagnostics.h"
 #include "expansion/expand.h"
+#include "expansion/macros.h"
 #include "expansion/procedural.h"
+#include "resolution/resolve.h"
 #include "source/source.h"
 #include "syntax/ast.h"
 #include <functional>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -38,6 +41,7 @@ struct Library {
     std::vector<std::pair<std::string, std::string>> dependencies;
     // Features the package resolution enabled for this package.
     std::set<std::string> features;
+    std::string instanceIdentity;
   };
   std::vector<Package> packages;
   // Dependency aliases visible from the selected root package.
@@ -52,6 +56,21 @@ struct Library {
   // Host-program macros that every loaded source may invoke; null for none.
   // The host must outlive the load.
   const expansion::Procedures *procedures = nullptr;
+  std::string rootIdentity;
+  struct CompiledModule {
+    std::string root;
+    std::function<std::optional<Module>()> declarations;
+    // Cache-only header probe; a miss must not prepare or check the library.
+    std::function<std::optional<Module>()> declarationIndex{};
+    std::vector<std::string> replaces{};
+  };
+  std::vector<CompiledModule> compiled;
+  expansion::MacroModuleProvider compiledMacros;
+  SourcePackages compiledSourcePackages;
+  std::map<SourceId, std::vector<std::string>> compiledSourceModules;
+  expansion::SourceAllocator allocateSource;
+  std::function<bool(const expansion::MacroLibrary &)> macroExports;
+  expansion::MacroSourceIdentity identifyMacroSource;
 };
 // An original source file and its external-module path. The driver uses these
 // inputs to discover and overlay doctests without changing package files.
@@ -66,8 +85,10 @@ std::optional<Module> load(Source root, const SourceProvider &provider,
                            Diagnostics &diagnostics,
                            const Library &library = {},
                            std::vector<SourceModule> *sourceModules = nullptr,
-                           std::vector<SourceModule> *allSources = nullptr);
+                           std::vector<SourceModule> *allSources = nullptr,
+                           SourcePackages *sourcePackages = nullptr);
 std::optional<Module> load(const std::vector<Source> &sources,
                            Diagnostics &diagnostics,
-                           const Library &library = {});
+                           const Library &library = {},
+                           SourcePackages *sourcePackages = nullptr);
 } // namespace mettle::resolution

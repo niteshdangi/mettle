@@ -88,6 +88,16 @@ not a unique uninitialized-state sentinel.
 
 The accepted native `Allocator` interface has mutable allocator access:
 
+It is declared `pub unsafe interface Allocator` and implemented with
+`unsafe extend`. Its safe `allocate` call relies on the provider to establish
+the returned extent's liveness, exclusivity, size and alignment.
+`deallocate`, `grow` and `shrink` are `mut unsafe fn` methods.
+Allocator clones used for the same allocation must remain compatible.
+Before `grow`/`shrink` returns a replacement, typed failure or unwind must
+preserve the original live allocation and its initialized contents.
+This does not forbid `deallocate` from releasing storage and then panicking.
+Unlike `GlobalAlloc`, generic `Allocator` has no no-unwind requirement.
+
 | Member | Contract |
 | --- | --- |
 | `allocate(layout)` | Return exclusive raw storage satisfying size/alignment or AllocError; initial bytes need not be initialized |

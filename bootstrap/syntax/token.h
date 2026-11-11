@@ -31,6 +31,7 @@ struct Token {
   TokenKind kind;
   Span span;
   std::string text;
+  SyntaxContextPtr context{};
 };
 
 bool isReservedWord(std::string_view word);

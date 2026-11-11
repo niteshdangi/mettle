@@ -96,17 +96,6 @@ Place Builder::rangePlace(const Node &node, Place source, bool exclusive) {
     end = use(expression(*range.children.back()));
     if (!live())
       return {-1, {}};
-    if (range.text == "..=")
-      end = emit({Op::Binary,
-                  {},
-                  {end, constant(Type::Usize, 1)},
-                  {},
-                  "+",
-                  {-1, {}},
-                  -1,
-                  0,
-                  node.span},
-                 Type::Usize);
   }
   const auto &facts = module.facts(node);
   auto view = exclusive ? facts.mutView : facts.readView;
@@ -122,6 +111,30 @@ Place Builder::rangePlace(const Node &node, Place source, bool exclusive) {
   if (!hasEnd)
     end = emit({Op::SliceLength, {}, {}, {}, "", source, -1, 0, node.span},
                Type::Usize);
+  if (hasEnd && range.text == "..=") {
+    auto length =
+        emit({Op::SliceLength, {}, {}, {}, "", source, -1, 0, node.span},
+             Type::Usize);
+    auto valid = emit(
+        {Op::Binary, {}, {end, length}, {}, "<", {-1, {}}, -1, 0, node.span},
+        Type::Bool);
+    auto bounded = block(), invalid = block();
+    terminate({ir::Exit::Branch, valid, bounded, invalid, node.span});
+    current = invalid;
+    emit({Op::Panic, {}, {}, {}, "", {-1, {}}, -1, 2, node.span}, Type::Never);
+    terminate({ir::Exit::Unreachable, {}, -1, -1, node.span});
+    current = bounded;
+    end = emit({Op::Binary,
+                {},
+                {end, constant(Type::Usize, 1)},
+                {},
+                "+",
+                {-1, {}},
+                -1,
+                0,
+                node.span},
+               Type::Usize);
+  }
   auto selected = emit({exclusive ? Op::SliceBorrowMut : Op::SliceBorrowRead,
                         {},
                         {start, end},
@@ -142,8 +155,24 @@ Builder::Value Builder::aggregateExpression(const Node &node, bool valueUsed,
   const auto &facts = module.facts(node);
   auto produced = sourceType(node);
   if (node.kind == Kind::For)
-    if (const auto *plan = module.iteration(node))
-      return expression(*plan->elaboration, valueUsed, consume);
+    if (const auto *plan = module.iteration(node)) {
+      auto sourceEntry = block(), done = block();
+      loops.push_back(
+          {sourceEntry, done, scopes.size(), facts.control, {}, {}});
+      jump(sourceEntry);
+      current = sourceEntry;
+      expression(*plan->elaboration, valueUsed, consume);
+      auto breaks = !loops.back().predecessors.empty();
+      loops.pop_back();
+      auto completes = live();
+      jump(done);
+      current = done;
+      if (!completes && !breaks) {
+        terminate({ir::Exit::Unreachable});
+        return {};
+      }
+      return unit();
+    }
   if (node.kind == Kind::Index) {
     auto source = place(node, false, false, false);
     if (!live())
@@ -244,7 +273,12 @@ Builder::Value Builder::aggregateExpression(const Node &node, bool valueUsed,
     return track(merge(produced, values, predecessors), node.span);
   }
   int savedTemporary = temporaryScope, savedBlock = blockScope;
+  auto initializerDepth = scopes.size();
   temporaryScope = scope();
+  auto sourceEntry = block(), done = block();
+  loops.push_back({sourceEntry, done, initializerDepth, facts.control, {}, {}});
+  jump(sourceEntry);
+  current = sourceEntry;
   Value value;
   auto inputType = module.facts(*node.children[0]).type;
   if (facts.iterationMode != ParameterMode::Take &&
@@ -259,10 +293,16 @@ Builder::Value Builder::aggregateExpression(const Node &node, bool valueUsed,
                facts.readView);
   } else
     value = expression(*node.children[0]);
+  auto breaks = !loops.back().predecessors.empty();
+  loops.pop_back();
   if (!live()) {
-    endScope();
+    current = done;
+    if (!breaks)
+      terminate({ir::Exit::Unreachable});
+    endScope(node.span);
     temporaryScope = savedTemporary;
-    return {};
+    blockScope = savedBlock;
+    return breaks ? unit() : Value{};
   }
   auto source = materialize(value, node.span, temporaryScope);
   auto type = value.type;
@@ -270,7 +310,6 @@ Builder::Value Builder::aggregateExpression(const Node &node, bool valueUsed,
     source.fields.push_back(Projection::dereference());
     type = module.typeStore()->view(type).payload;
   }
-  int done = block();
   auto iteration = [&](const Place &element, int next) {
     loops.push_back({next, done, scopes.size(), facts.control, {}, {}});
     blockScope = scope();
@@ -336,16 +375,16 @@ Builder::Value Builder::aggregateExpression(const Node &node, bool valueUsed,
   if (aggregate.kind == AggregateKind::Array) {
     if (aggregate.arrayCount != Type::Unknown) {
       auto counter =
-          materialize(constant(Type::I32, 0), node.span, temporaryScope);
+          materialize(constant(Type::Usize, 0), node.span, temporaryScope);
       auto header = block(), step = block(), body = block();
       jump(header);
       current = header;
       auto index = emit({Op::Load, {}, {}, {}, "", counter, -1, 0, node.span},
-                        Type::I32);
+                        Type::Usize);
       Instruction length{Op::Constant, {}, {}, {},       "",
                          {-1, {}},     -1, 0,  node.span};
       length.constantParameter = aggregate.arrayCount;
-      auto bound = emit(std::move(length), Type::I32);
+      auto bound = emit(std::move(length), Type::Usize);
       auto test = emit(
           {Op::Binary, {}, {index, bound}, {}, "<", {-1, {}}, -1, 0, node.span},
           Type::Bool);
@@ -381,14 +420,14 @@ Builder::Value Builder::aggregateExpression(const Node &node, bool valueUsed,
       current = step;
       auto next = emit({Op::Binary,
                         {},
-                        {index, constant(Type::I32, 1)},
+                        {index, constant(Type::Usize, 1)},
                         {},
                         "+",
                         {-1, {}},
                         -1,
                         0,
                         node.span},
-                       Type::I32);
+                       Type::Usize);
       emit({Op::Store, {}, {next}, {}, "", counter, -1, 0, node.span},
            Type::Unit);
       jump(header);
@@ -504,13 +543,72 @@ Builder::Value Builder::aggregateExpression(const Node &node, bool valueUsed,
     auto finished = emit(
         {Op::Binary, {}, {last, end}, {}, "==", {-1, {}}, -1, 0, node.span},
         Type::Bool);
+    if (element == Type::Char) {
+      auto exhausted = emit({Op::Binary,
+                             {},
+                             {last, constant(Type::Char, 0x10ffff)},
+                             {},
+                             "==",
+                             {-1, {}},
+                             -1,
+                             0,
+                             node.span},
+                            Type::Bool);
+      finished = emit({Op::Binary,
+                       {},
+                       {finished, exhausted},
+                       {},
+                       "|",
+                       {-1, {}},
+                       -1,
+                       0,
+                       node.span},
+                      Type::Bool);
+    }
     int advance = block();
     terminate({ir::Exit::Branch, finished, done, advance});
     current = advance;
-    auto one = constant(element, 1);
+    auto arithmetic = element == Type::Char ? Type::U32 : element;
+    if (element == Type::Char)
+      last = emit({Op::Cast, {}, {last}, {}, "", {-1, {}}, -1, 0, node.span},
+                  arithmetic);
+    auto one = constant(arithmetic, 1);
     auto next =
         emit({Op::Binary, {}, {last, one}, {}, "+", {-1, {}}, -1, 0, node.span},
-             element);
+             arithmetic);
+    if (element == Type::Char) {
+      auto surrogate = emit({Op::Binary,
+                             {},
+                             {next, constant(Type::U32, 0xd800)},
+                             {},
+                             "==",
+                             {-1, {}},
+                             -1,
+                             0,
+                             node.span},
+                            Type::Bool);
+      int skip = block(), scalar = block();
+      terminate({ir::Exit::Branch, surrogate, skip, scalar});
+      current = skip;
+      emit({Op::Store,
+            {},
+            {constant(Type::Char, 0xe000)},
+            {},
+            "",
+            index,
+            -1,
+            0,
+            node.span},
+           Type::Unit);
+      jump(header);
+      current = scalar;
+      // The terminal-scalar guard and surrogate branch preserve char validity.
+      Instruction convert{Op::Machine, {}, {next}, {},       "mem.transmute",
+                          {-1, {}},    -1, 0,      node.span};
+      convert.typeArguments.push_back(Type::Char);
+      convert.unsafeAllowed = true;
+      next = emit(std::move(convert), element);
+    }
     emit({Op::Store, {}, {next}, {}, "", index, -1, 0, node.span}, Type::Unit);
     jump(header);
   }

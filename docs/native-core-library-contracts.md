@@ -816,7 +816,7 @@ Short-circuit operations consume the decisive item; they do not put it back.
 | `cmp/partial_cmp/eq/ne/lt/le/gt/ge` | Lexicographic comparison to another owned iterable, stopping at first difference/incomparability or length difference |
 | `is_sorted`, `_by`, `_by_key` | Adjacent ascending check, stop at first false, empty/singleton true |
 | `unzip<A: Default + ExtendItems<X>, B: Default + ExtendItems<Y>>` | Consume pairs into independent destinations |
-| `partition<B: Default + ExtendItems<Item>>(test: mut fn(read Item): bool)` | Preserve order within selected/rejected outputs |
+| `partition<B: Default + ExtendItems<Item>>(test: mut fn(read Item): bool)` | Visit inputs in order and extend the corresponding destination |
 | `collect<C: FromItems<Item>>()` | Transfer all items to the selected C implementation |
 | `sum<S: Sum<Item>>`, `product<P: Product<Item>>` | Delegate the selected protocol; numeric empty identities are zero and one |
 
@@ -828,6 +828,8 @@ Lexicographic default comparison uses item interfaces; by-comparison variants
 are covered only where separately selected as stable native members.
 Consumption costs O(visited items); comparisons stop as soon as determined.
 Collected/partitioned outputs retain their container allocation/cost rules.
+Partitioned outputs also retain B's ordering and duplicate-handling semantics;
+insertion-order-preserving destinations retain relative input order.
 
 `FromItems<Item>.from_items<I: OwnedIterable<Item = Item>>(take I)` builds
 an owning result; `ExtendItems<Item>.extend_items(take I)` requires mutable

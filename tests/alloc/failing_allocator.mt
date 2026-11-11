@@ -39,18 +39,20 @@ fn check_zero_layout(): bool throws AllocError {
     let zero = unsafe { layout_unchecked(0usize, 16usize) }
     let empty = try global.allocate(zero)
     if empty.addr() % 16usize != 0usize { return false }
-    global.deallocate(empty, zero)
-    let grown = try global.grow(empty, zero, 16usize)
+    unsafe { global.deallocate(empty, zero) }
+    let placeholder = try global.allocate(zero)
+    let grown = unsafe { try global.grow(placeholder, zero, 16usize) }
     if grown.addr() % 16usize != 0usize { return false }
     let full = unsafe { layout_unchecked(16usize, 16usize) }
-    let empty_from_grow = try global.grow(grown, full, 0usize)
-    if empty_from_grow.addr() % 16usize != 0usize { return false }
-    let grown_again = try global.grow(empty, zero, 16usize)
-    let empty_again = try global.shrink(grown_again, full, 0usize)
+    let empty_from_shrink = unsafe { try global.shrink(grown, full, 0usize) }
+    if empty_from_shrink.addr() % 16usize != 0usize { return false }
+    let grown_again = unsafe { try global.grow(empty_from_shrink, zero, 16usize) }
+    let empty_again = unsafe { try global.shrink(grown_again, full, 0usize) }
+    unsafe { global.deallocate(empty_again, zero) }
     empty_again.addr() % 16usize == 0usize
 }
 
-extend Limited implements Allocator {
+unsafe extend Limited implements Allocator {
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {
         if unsafe { *self.budget } <= 0 { throw AllocError(layout.size(), layout.align()) }
         unsafe { *self.budget -= 1 }
@@ -63,16 +65,16 @@ extend Limited implements Allocator {
         }
         p
     }
-    mut fn deallocate(p: ptr<mut u8>, layout: Layout): Unit {
+    mut unsafe fn deallocate(p: ptr<mut u8>, layout: Layout): Unit {
         unsafe { *self.live -= 1 }
         var g = Global()
-        g.deallocate(p, layout)
+        unsafe { g.deallocate(p, layout) }
     }
-    mut fn grow(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn grow(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
         if unsafe { *self.budget } <= 0 { throw AllocError(new_size, old.align()) }
         unsafe { *self.budget -= 1 }
         var g = Global()
-        let q = try g.grow(p, old, new_size)
+        let q = unsafe { try g.grow(p, old, new_size) }
         if old.size() == 0usize && new_size != 0usize {
             unsafe { *self.live += 1 }
         } else if old.size() != 0usize && new_size == 0usize {
@@ -83,9 +85,9 @@ extend Limited implements Allocator {
         }
         q
     }
-    mut fn shrink(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn shrink(p: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
         var g = Global()
-        let q = try g.shrink(p, old, new_size)
+        let q = unsafe { try g.shrink(p, old, new_size) }
         if old.size() != 0usize && new_size == 0usize {
             unsafe { *self.live -= 1 }
         }

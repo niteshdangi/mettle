@@ -11,24 +11,34 @@ void Checker::interfaceHeaders() {
     return;
   }
   auto &database = *checked.interfaceData;
+  database.definitions.resize(module.interfaces.size());
+  std::size_t declarationIndex = 0;
   for (const auto &syntax : module.interfaces) {
     auto name = definitionName(syntax.span, syntax.name);
-    if (!interfaceNames.emplace(name, database.definitions.size()).second) {
+    const auto index = declarationIndex++;
+    if (!interfaceNames.emplace(name, index).second) {
       error("name", syntax.span,
             "duplicate interface '" + displayPath(syntax.name) + "'");
       continue;
     }
+    if (imported(syntax.span))
+      continue;
     interfaces::Definition definition;
     definition.name = name;
     definition.span = syntax.span;
+    definition.package =
+        checked.namespaces().packageOf(syntax.span).value_or(unknownPackage);
+    definition.unsafeInterface = syntax.unsafeInterface;
     definition.self =
         checked.types->declareParameter(name + ".Self", false, false);
-    database.definitions.push_back(std::move(definition));
+    database.definitions[index] = std::move(definition);
   }
   if (!diagnostics.empty())
     return;
   for (std::size_t index = 0; index < module.interfaces.size(); ++index) {
     const auto &syntax = module.interfaces[index];
+    if (imported(syntax.span))
+      continue;
     auto &definition = database.definitions[index];
     const auto &name = definition.name;
     for (const auto &associated : syntax.associated) {
@@ -78,7 +88,7 @@ bool Checker::intrinsicProperty(const TypeSyntax &bound,
             property == "Shareable" || property == "Static") &&
            bound.name == "core::marker::" + std::string(property))) &&
          bound.arguments.empty() &&
-         !checked.namespaces().lookup(checked.namespaces().moduleOf(span),
+         !checked.namespaces().lookup(nameModule(span, bound.context),
                                       bound.name, resolution::Namespace::Type,
                                       span);
 }
@@ -104,7 +114,7 @@ bool Checker::interfaceProperty(const TypeSyntax &bound,
       [&](const TypeSyntax &current, Span context) {
         if (intrinsicProperty(current, property, context))
           return true;
-        auto canonical = typeName(current.name, context);
+        auto canonical = typeName(current.name, context, {}, current.context);
         auto found = interfaceNames.find(canonical);
         if (found == interfaceNames.end() ||
             !active.insert(found->second).second)
@@ -134,7 +144,7 @@ Type Checker::interfaceBound(const TypeSyntax &bound, Span span,
     unsigned &value;
     ~Depth() { --value; }
   } depth{interfaceDepth};
-  auto canonical = typeName(bound.name, span, owner);
+  auto canonical = typeName(bound.name, span, owner, bound.context);
   auto found = interfaceNames.find(canonical);
   if (found == interfaceNames.end()) {
     error("type", span,
@@ -149,8 +159,10 @@ Type Checker::interfaceBound(const TypeSyntax &bound, Span span,
     for (const auto &name : bound.binders) {
       GenericParameter parameter;
       parameter.kind = GenericParameterKind::Region;
-      parameter.name = name;
-      parameter.span = span;
+      parameter.name = name.spelling;
+      parameter.span = name.span;
+      parameter.nameSpan = name.span;
+      parameter.context = name.context;
       parameters.push_back(std::move(parameter));
     }
     result.regionParameters = pushRegionParameters(parameters, span);
@@ -292,17 +304,45 @@ Type Checker::interfaceBound(const TypeSyntax &bound, Span span,
                    }))
     result.regionUniverse = 0;
   auto identity = checked.types->erasedType(std::move(result));
+  auto key = std::pair(subject, identity);
+  if (!collectingInterfaceAssumptions &&
+      checkingInterfaceArguments.insert(key).second) {
+    auto assumptions = interfaceAssumptions();
+    if (interfacesReady) {
+      interfaces::Solver solver(*checked.types, *checked.interfaceData,
+                                diagnostics, std::move(assumptions),
+                                regionEnvironment());
+      solver.wellFormedInterface(subject, identity, span);
+    } else
+      projectionRequirements.push_back({subject, identity, span,
+                                        std::move(assumptions),
+                                        regionEnvironment()});
+    checkingInterfaceArguments.erase(key);
+  }
   if (!bound.binders.empty())
     popRegionParameters();
   return identity;
 }
 
-std::vector<interfaces::Obligation> Checker::interfaceAssumptions() {
+std::vector<interfaces::Obligation>
+Checker::interfaceAssumptions(const GenericEnvironment *inherited) {
   std::vector<interfaces::Obligation> result;
   if (!genericEnvironment)
     return result;
-  for (const auto &[subject, bounds] : genericEnvironment->bounds)
-    for (const auto &bound : bounds) {
+  struct Restore {
+    bool &flag;
+    bool previous;
+    ~Restore() { flag = previous; }
+  } restore{collectingInterfaceAssumptions, collectingInterfaceAssumptions};
+  collectingInterfaceAssumptions = true;
+  for (const auto &[subject, bounds] : genericEnvironment->bounds) {
+    std::size_t first = 0;
+    if (inherited)
+      if (auto outer = inherited->bounds.find(subject);
+          outer != inherited->bounds.end())
+        first = outer->second.size();
+    for (std::size_t i = first; i < bounds.size(); ++i) {
+      const auto &bound = bounds[i];
       if (bound.form == TypeForm::Callable)
         continue;
       if (bound.name == "unsized")
@@ -320,6 +360,7 @@ std::vector<interfaces::Obligation> Checker::interfaceAssumptions() {
         elaboratingBounds.erase(&bound);
       result.push_back({subject, type, property});
     }
+  }
   expandSuperinterfaces(result);
   return result;
 }
@@ -512,6 +553,8 @@ void Checker::interfaceSignatures() {
   auto *saved = genericEnvironment;
   for (std::size_t i = 0; i < module.interfaces.size(); ++i) {
     const auto &syntax = module.interfaces[i];
+    if (imported(syntax.span))
+      continue;
     auto &definition = checked.interfaceData->definitions[i];
     auto &environment = interfaceGenerics.at(&syntax);
     definition.parameters = environment.parameters;
@@ -530,7 +573,8 @@ void Checker::interfaceSignatures() {
         value->span = parameter.span;
         argument.value = std::move(value);
       } else
-        argument.region = parameter.name;
+        argument.region = {parameter.name, parameter.nameSpan,
+                           parameter.context};
       selfBound.arguments.push_back(std::move(argument));
     }
     environment.bounds[definition.self].push_back(std::move(selfBound));
@@ -545,11 +589,23 @@ void Checker::interfaceSignatures() {
       validateGenericEnvironment(syntax.genericParameters, syntax.constraints,
                                  environment);
     definition.regionRequirements = regionEnvironment().assumptions;
+    definition.requirements = interfaceAssumptions();
+    std::erase_if(definition.requirements, [&](const auto &requirement) {
+      return requirement.subject == definition.self &&
+             checked.types->isErased(requirement.interfaceType) &&
+             checked.types->erased(requirement.interfaceType).declaration == i;
+    });
+    definition.equalities = environment.equalities;
     for (std::size_t associated = 0; associated < syntax.associated.size();
          ++associated) {
       const auto &item = syntax.associated[associated];
-      auto family = makeGenericEnvironment(
-          item.genericParameters, item.constraints, genericEnvironment);
+      auto &family =
+          associatedGenerics
+              .emplace(&item, makeGenericEnvironment(item.genericParameters,
+                                                     item.constraints,
+                                                     genericEnvironment))
+              .first->second;
+      family.declarationSpan = item.span;
       auto *outer = genericEnvironment;
       genericEnvironment = &family;
       auto &compiled = definition.associated[associated];
@@ -559,11 +615,20 @@ void Checker::interfaceSignatures() {
       auto prefix = definition.parameters.size();
       compiled.parameters.assign(family.parameters.begin() + prefix,
                                  family.parameters.end());
-      compiled.requirements = interfaceAssumptions();
       auto outerRequirements = regionEnvironment().assumptions.size();
       compiled.regions =
           pushRegionParameters(item.genericParameters, item.span);
       assumeRegionConstraints(item.constraints, item.span);
+      validateGenericEnvironment(item.genericParameters, item.constraints,
+                                 family);
+      compiled.requirements = interfaceAssumptions(outer);
+      compiled.equalities.assign(family.equalities.begin() +
+                                     outer->equalities.size(),
+                                 family.equalities.end());
+      for (auto parameter : compiled.parameters)
+        if (auto value = family.defaults.find(parameter);
+            value != family.defaults.end())
+          compiled.defaults.push_back({parameter, value->second});
       for (const auto &bound : item.bounds) {
         if (bound.name == "unsized")
           continue;
@@ -644,7 +709,7 @@ void Checker::interfaceSignatures() {
     auto &environment = functionGenerics.at(&function);
     genericEnvironment = &environment;
     if (function.implementation >= 0)
-      environment.names["Self"] =
+      environment.names[nameKey("Self", function.lexicalContext)] =
           annotation(module.implementations[function.implementation].target,
                      function.span);
     // A bare interface parameter accessed through `read` or `mut` is only
@@ -656,8 +721,9 @@ void Checker::interfaceSignatures() {
               type.form == TypeForm::Projection)
             return;
           if (type.form == TypeForm::Named && !type.name.empty() &&
-              !environment.names.contains(type.name)) {
-            auto canonical = typeName(type.name, span, function.owner);
+              !environment.names.contains(nameKey(type.name, type.context))) {
+            auto canonical =
+                typeName(type.name, span, function.owner, type.context);
             auto found = interfaceNames.find(canonical);
             if (found != interfaceNames.end()) {
               auto subject = checked.types->declareParameter(
@@ -739,8 +805,8 @@ Type Checker::interfaceProjection(Type subject, Type interfaceType,
                            std::move(actuals), std::move(regions)});
   auto assumptions = interfaceAssumptions();
   if (!interfacesReady)
-    projectionRequirements.push_back(
-        {subject, interfaceType, span, assumptions, regionEnvironment()});
+    projectionRequirements.push_back({subject, interfaceType, span, assumptions,
+                                      regionEnvironment(), projection});
   interfaces::Solver solver(*checked.types, *checked.interfaceData, diagnostics,
                             std::move(assumptions), regionEnvironment());
   if (interfacesReady && !solver.prove({subject, interfaceType}, span, false)) {
@@ -778,6 +844,8 @@ std::optional<Type> Checker::interfaceAnnotation(const TypeSyntax &syntax,
     auto type = checked.types->opaqueType(
         name + ".<opaque." + std::to_string(opaqueDeclarations.size()) + ">",
         Type::Unknown, {}, copy);
+    checked.types->setProductPackage(
+        type, checked.namespaces().packageOf(span).value_or(unknownPackage));
     opaqueDeclarations.emplace(&syntax, type);
     if (std::any_of(syntax.elements.begin(), syntax.elements.end(),
                     [&](const auto &bound) {
@@ -807,8 +875,8 @@ std::optional<Type> Checker::interfaceAnnotation(const TypeSyntax &syntax,
   if (syntax.form == TypeForm::Named) {
     auto delimiter = syntax.name.rfind("::");
     if (delimiter != std::string::npos && genericEnvironment) {
-      auto subject =
-          genericEnvironment->names.find(syntax.name.substr(0, delimiter));
+      auto subject = genericEnvironment->names.find(
+          nameKey(syntax.name.substr(0, delimiter), syntax.context));
       if (subject != genericEnvironment->names.end()) {
         auto bounds = genericEnvironment->bounds.find(subject->second);
         if (bounds != genericEnvironment->bounds.end()) {

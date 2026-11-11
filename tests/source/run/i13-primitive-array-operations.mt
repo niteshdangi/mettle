@@ -6,6 +6,8 @@ import core.hash.{Fnv1a, Hash, Hasher, fnv1a}
 
 fn make<T: Default>(): T { T.(Default).default() }
 
+type NoDefault { value: i32 }
+
 fn digest<T: Hash>(read value: T): u64 {
     var h = fnv1a()
     value.hash(mut h)
@@ -15,7 +17,9 @@ fn digest<T: Hash>(read value: T): u64 {
 fn main(): i32 {
     let zeros: [i32; 5] = make()
     if zeros != [0i32, 0i32, 0i32, 0i32, 0i32] { return 1 }
-    let wide: [u8; 40] = make()
+    let defaults: [u8; 32] = make()
+    for value in defaults { if value != 0u8 { return 12 } }
+    let wide = [0u8; 40]
     let wide_view: read [u8] = read wide
     if wide[39usize] != 0u8 || wide_view.len() != 40usize { return 2 }
     let flags: [bool; 1] = make()
@@ -38,6 +42,8 @@ fn main(): i32 {
     if [1u8, 2u8].len() != 2usize || [1u8, 2u8].is_empty() { return 9 }
     let empty_local: [u8; 0] = make()
     if empty_local.len() != 0usize || !empty_local.is_empty() { return 10 }
+    let empty_nondefault: [NoDefault; 0] = make()
+    if !empty_nondefault.is_empty() { return 13 }
     if wide.len() != 40usize || flags.is_empty() { return 11 }
     0
 }

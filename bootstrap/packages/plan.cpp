@@ -114,6 +114,7 @@ private:
   std::vector<Source> sources;
   std::map<std::string, std::shared_ptr<const Manifest>> loaded;
   std::vector<fs::path> registries;
+  std::map<std::string, std::pair<std::string, std::string>> gitOrigins;
 
   bool failed() const { return !diagnostics.empty(); }
 
@@ -175,6 +176,16 @@ private:
     candidate.location = directory.generic_string();
     candidate.sourceIdentity =
         "path+" + directory.lexically_relative(rootDirectory).generic_string();
+    std::size_t originLength = 0;
+    for (const auto &[root, git] : gitOrigins) {
+      auto relative = directory.lexically_relative(root);
+      if (!relative.empty() && *relative.begin() != ".." &&
+          root.size() > originLength) {
+        candidate.sourceIdentity =
+            "path+" + git.second + "/" + relative.generic_string();
+        originLength = root.size();
+      }
+    }
     return candidate;
   }
 
@@ -187,18 +198,14 @@ private:
                         "git dependencies require the system git provider");
       return std::nullopt;
     }
-    std::string selector = "HEAD";
-    if (spec.rev)
-      selector = "rev=" + *spec.rev;
-    else if (spec.tag)
-      selector = "tag=" + *spec.tag;
-    else if (spec.branch)
-      selector = "branch=" + *spec.branch;
+    auto selector = gitSelector(spec);
     std::string lockedCommit;
     if (recorded)
       for (const auto &entry : recorded->packages)
         if (entry.name == spec.name &&
-            entry.source.rfind("git+" + *spec.git + "#", 0) == 0) {
+            entry.source.rfind("git+" + *spec.git + "#", 0) == 0 &&
+            std::find(entry.gitSelectors.begin(), entry.gitSelectors.end(),
+                      selector) != entry.gitSelectors.end()) {
           lockedCommit =
               entry.source.substr(std::string("git+" + *spec.git + "#").size());
           break;
@@ -229,6 +236,8 @@ private:
     candidate.git = *spec.git;
     candidate.commit = checkout->commit;
     candidate.sourceIdentity = "git+" + candidate.git + "#" + candidate.commit;
+    gitOrigins[directory.generic_string()] = {candidate.commit,
+                                              candidate.sourceIdentity};
     return candidate;
   }
 
@@ -291,15 +300,12 @@ private:
                 : "; fetching from remote registries is not implemented");
   }
 
-  static std::string sourceOf(const Candidate &candidate,
-                              const fs::path &root) {
+  static std::string sourceOf(const Candidate &candidate) {
     switch (candidate.kind) {
     case SourceKind::Root:
       return "root";
     case SourceKind::Path:
-      return "path+" + fs::path(candidate.location)
-                           .lexically_relative(root)
-                           .generic_string();
+      return candidate.sourceIdentity;
     case SourceKind::Registry:
       return "registry+" + candidate.registry;
     case SourceKind::Git:
@@ -315,10 +321,11 @@ private:
       entry.name = package.name();
       entry.version = toString(package.candidate.manifest->version);
       entry.id = package.identity;
-      entry.source = sourceOf(package.candidate, rootDirectory);
+      entry.source = sourceOf(package.candidate);
       if (package.candidate.kind != SourceKind::Root)
         entry.checksum = checksum(package.candidate.location);
       entry.features = package.features;
+      entry.gitSelectors = package.gitSelectors;
       for (const auto &[name, id] : package.dependencies) {
         (void)name;
         entry.dependencies.push_back(id);
@@ -503,12 +510,44 @@ private:
     plan.version = toString(root->version);
     std::error_code error;
     plan.root = fs::canonical(rootSource, error).generic_string();
+    for (const auto &package : resolution->packages) {
+      Plan::PackageOrigin origin;
+      origin.identity = package.identity;
+      origin.directory = package.candidate.manifest->directory;
+      origin.host = package.candidate.host;
+      for (const auto &[directory, git] : gitOrigins) {
+        auto relative =
+            fs::path(origin.directory).lexically_relative(directory);
+        if (!relative.empty() && *relative.begin() != ".." &&
+            directory.size() > origin.gitRoot.size()) {
+          origin.gitRoot = directory;
+          origin.gitCommit = git.first;
+          origin.gitSourceIdentity = git.second;
+        }
+      }
+      plan.origins.push_back(std::move(origin));
+    }
     std::map<std::string, std::string> modules;
     for (const auto &package : resolution->packages)
       if (package.candidate.kind != SourceKind::Root &&
           package.candidate.manifest->library())
         modules.emplace(package.identity, moduleRoot(package));
-    for (const auto &package : resolution->packages) {
+    std::map<std::string, const ResolvedPackage *> byIdentity;
+    for (const auto &package : resolution->packages)
+      byIdentity.emplace(package.identity, &package);
+    std::set<std::string> visited;
+    std::vector<const ResolvedPackage *> ordered;
+    auto visit = [&](auto &self, const ResolvedPackage &package) -> void {
+      if (!visited.insert(package.identity).second)
+        return;
+      for (const auto &[name, dependency] : package.dependencies)
+        self(self, *byIdentity.at(dependency));
+      ordered.push_back(&package);
+    };
+    for (const auto &package : resolution->packages)
+      visit(visit, package);
+    for (const auto *resolved : ordered) {
+      const auto &package = *resolved;
       const auto &manifest = *package.candidate.manifest;
       if (manifest.buildScript) {
         auto script = fs::path(manifest.directory) / *manifest.buildScript;
@@ -526,6 +565,7 @@ private:
         buildScript.source = fs::canonical(script, error).generic_string();
         buildScript.features = package.features;
         buildScript.root = package.candidate.kind == SourceKind::Root;
+        buildScript.host = package.candidate.host;
         for (const auto &[name, dependency] : package.dependencies)
           if (modules.contains(dependency) &&
               std::find_if(resolution->packages.begin(),
@@ -557,6 +597,7 @@ private:
             }
           Macro plannedMacro;
           plannedMacro.name = macro.name;
+          plannedMacro.identity = package.identity;
           plannedMacro.package = manifest.name;
           plannedMacro.version = toString(manifest.version);
           plannedMacro.directory = manifest.directory;

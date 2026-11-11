@@ -28,6 +28,7 @@ std::uintptr_t mettle_rt_thread_current();
 void mettle_rt_thread_park();
 void mettle_rt_thread_park_timeout(std::uint64_t nanoseconds);
 void mettle_rt_thread_unpark(std::uintptr_t handle);
+// A null buffer queries the byte length; copied names include a trailing NUL.
 std::intptr_t mettle_rt_thread_name(std::uintptr_t handle, char *buffer,
                                     std::size_t capacity);
 void mettle_rt_thread_yield();

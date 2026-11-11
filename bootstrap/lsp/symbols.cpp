@@ -477,8 +477,10 @@ SymbolIndex::SymbolIndex(const std::string &text) {
 
 void SymbolIndex::setFunctionResult(Span functionSpan, const std::string &name,
                                     const std::string &result) {
+  auto dot = name.rfind('.');
+  auto localName = dot == std::string::npos ? name : name.substr(dot + 1);
   for (auto &item : items)
-    if (item.kind == SymbolKind::Function && item.name == name &&
+    if (item.kind == SymbolKind::Function && item.name == localName &&
         functionSpan.begin <= item.nameBegin &&
         item.nameBegin < functionSpan.end) {
       auto throws = item.signature.find(" throws ");
@@ -506,13 +508,13 @@ void SymbolIndex::addBinding(std::string name, Span span,
   items.push_back(std::move(binding));
   auto declaration = static_cast<int>(items.size() - 1);
   for (auto &use : uses) {
-    if (use.name != items.back().name || use.begin < scopeBegin ||
-        use.begin >= scopeEnd)
+    if (use.name != items.back().name)
       continue;
     if (use.begin == span.begin && use.end == span.end) {
       use.role = Role::Declaration;
       use.declaration = declaration;
-    } else if (use.role == Role::Lexical &&
+    } else if (use.begin >= scopeBegin && use.begin < scopeEnd &&
+               use.role == Role::Lexical &&
                (use.declaration < 0 ||
                 items[static_cast<std::size_t>(use.declaration)].scopeBegin <=
                     scopeBegin)) {
@@ -594,6 +596,27 @@ SymbolIndex::argumentLabels(const Occurrence &callee,
                             const std::string &name) const {
   std::vector<const Occurrence *> labels;
   auto open = callee.token + 1;
+  if (open < tokens.size() && symbol(tokens[open], "<")) {
+    int depth = 0;
+    for (; open < tokens.size(); ++open) {
+      if (opener(tokens[open])) {
+        if (match[open] >= tokens.size())
+          return labels;
+        open = match[open];
+        continue;
+      }
+      depth += symbol(tokens[open], "<")    ? 1
+               : symbol(tokens[open], ">")  ? -1
+               : symbol(tokens[open], ">>") ? -2
+                                            : 0;
+      if (depth < 0)
+        return labels;
+      if (depth == 0) {
+        ++open;
+        break;
+      }
+    }
+  }
   if (open >= tokens.size() || !symbol(tokens[open], "(") ||
       match[open] >= tokens.size())
     return labels;

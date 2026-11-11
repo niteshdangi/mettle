@@ -6,7 +6,7 @@ import std.path.path_from_text
 import std.ffi
 
 fn on_disk(read p: std.path.Path, read raw: [u8]): i32 throws Error {
-    if !std.fs.exists(p) { return 3 }
+    if !(try std.fs.exists(p)) { return 3 }
     let text = try std.fs.read_to_string(p)
     if text.len() != 7usize { return 4 }
     // The listing returns the name byte for byte.
@@ -23,7 +23,7 @@ fn on_disk(read p: std.path.Path, read raw: [u8]): i32 throws Error {
     }
     if found != 1 { return 5 }
     try std.fs.rename(p, path_from_text("plain"))
-    if std.fs.exists(p) { return 11 }
+    if try std.fs.exists(p) { return 11 }
     try std.fs.remove_file(path_from_text("plain"))
     0
 }

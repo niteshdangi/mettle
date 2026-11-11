@@ -166,6 +166,28 @@ void TypeStore::defineProduct(Type type, std::vector<TypeField> fields) {
   products.at(entries.at(type.index() - builtins).index).fields =
       std::move(fields);
 }
+void TypeStore::setProductPackage(Type type, std::uint32_t package) {
+  if (!isProduct(type))
+    throw std::invalid_argument("package ownership requires a product type");
+  syncLookup();
+  std::set<Type> visited;
+  std::vector<Type> pending{type};
+  while (!pending.empty()) {
+    auto current = pending.back();
+    pending.pop_back();
+    if (!visited.insert(current).second)
+      continue;
+    products.at(entries.at(current.index() - builtins).index).package = package;
+    for (const auto *candidates : {found(lookup.genericInstances, current),
+                                   found(lookup.regionInstances, current)})
+      if (candidates)
+        for (auto index : *candidates) {
+          const auto &record = products[entries[index].index];
+          if (record.genericOrigin == current || record.regionOrigin == current)
+            pending.push_back(Type(builtins + index));
+        }
+  }
+}
 void TypeStore::setProductLayout(Type type, ProductLayout layout) {
   products.at(entries.at(type.index() - builtinTypeCount).index).layout =
       std::move(layout);
@@ -189,6 +211,12 @@ bool TypeStore::uninhabited(Type type) const {
   if (!isProduct(type))
     return false;
   const auto &aggregate = product(type);
+  if (aggregate.kind == AggregateKind::Uninit)
+    return false;
+  if (aggregate.layout.unionType)
+    return std::all_of(
+        aggregate.fields.begin(), aggregate.fields.end(),
+        [&](const auto &field) { return uninhabited(field.type); });
   if (isSum(type)) {
     for (const auto &variant : aggregate.variants) {
       bool impossible = false;
@@ -198,6 +226,10 @@ bool TypeStore::uninhabited(Type type) const {
         return false;
     }
     return true;
+  }
+  if (aggregate.kind == AggregateKind::Array && !aggregate.components.empty()) {
+    auto length = arrayLength(type);
+    return length && *length && uninhabited(aggregate.components[0]);
   }
   for (const auto &field : aggregate.fields)
     if (uninhabited(field.type))
@@ -482,7 +514,7 @@ bool TypeStore::needsDrop(Type type) const {
       return true;
   return false;
 }
-bool TypeStore::containsViews(Type type) const {
+bool TypeStore::containsViews(Type type, bool includeErasedPayloads) const {
   std::vector<Type> active;
   auto visit = [&](auto &&self, Type nested) -> bool {
     if (isView(nested))
@@ -495,7 +527,7 @@ bool TypeStore::containsViews(Type type) const {
       result = self(self, slice(nested).element);
     else if (isErased(nested)) {
       const auto &descriptor = erased(nested);
-      result = !descriptor.regionArguments.empty() ||
+      result = includeErasedPayloads || !descriptor.regionArguments.empty() ||
                !descriptor.regionParameters.empty();
       for (auto argument : descriptor.arguments)
         result |= self(self, argument);
@@ -816,6 +848,8 @@ bool TypeStore::isUnpin(Type type) const {
   if (record.kind == AggregateKind::PhantomPinned ||
       record.kind == AggregateKind::Coroutine)
     return false;
+  if (record.kind == AggregateKind::Array && !record.components.empty())
+    return isUnpin(record.components[0]);
   for (const auto &field : record.fields)
     if (!isUnpin(field.type))
       return false;

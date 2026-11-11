@@ -1,6 +1,8 @@
 #include "driver/output.h"
 #include "backend/llvm/lower.h"
 #include "backend/llvm/object.h"
+#include "driver/cache.h"
+#include "packages/sha256.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/Verifier.h"
@@ -84,7 +86,135 @@ int ioFailure(const std::string &action, const std::error_code &error) {
             << '\n';
   return 1;
 }
+
+std::string artifactSuffix(const std::string &format,
+                           const llvm::Triple &target) {
+  return format == "static"   ? ".a"
+         : format == "shared" ? (target.isOSDarwin() ? ".dylib" : ".so")
+         : format == "object" ? ".o"
+         : format == "llvm"   ? ".ll"
+         : format == "ir"     ? ".ir"
+                              : "";
+}
 } // namespace
+
+std::optional<PackageObject>
+nativePackageObject(const Options &options, const BuildInputs &inputs,
+                    const ir::VerifiedProgram &program,
+                    const std::string &identity,
+                    const std::vector<std::string> &sources,
+                    const std::string &checkedKey, std::string &error) {
+  error.clear();
+  const auto &ir = program.program();
+  if (options.command != "build" || options.emit != "executable" ||
+      options.emits.size() > 1 || options.library ||
+      (options.profile != "debug" && options.profile != "release") ||
+      options.debugInfo || !options.sanitizers.empty() ||
+      !options.harness.empty() || options.freestanding ||
+      options.packageContext || !ir.globalAssembly.empty() || sources.empty() ||
+      checkedKey.empty() || !inputs.packageObjectsSafe() ||
+      ir.functionPackages.size() != ir.functions.size() ||
+      ir.staticPackages.size() != ir.statics.size())
+    return std::nullopt;
+  auto owned = [](const std::string &owner) {
+    return owner.empty() || owner == "native:core" || owner == "native:alloc" ||
+           owner == "native:std";
+  };
+  if (!std::all_of(ir.functionPackages.begin(), ir.functionPackages.end(),
+                   owned) ||
+      !std::all_of(ir.staticPackages.begin(), ir.staticPackages.end(), owned) ||
+      (std::find(ir.functionPackages.begin(), ir.functionPackages.end(),
+                 identity) == ir.functionPackages.end() &&
+       std::find(ir.staticPackages.begin(), ir.staticPackages.end(),
+                 identity) == ir.staticPackages.end()))
+    return std::nullopt;
+  llvm::LLVMContext context;
+  auto module = mettle::backend::lower(
+      program, context, options.checks.value_or(options.profile != "release"),
+      options.target, false, nullptr, false, false, {true, identity, false});
+  module->setModuleIdentifier(identity);
+  module->setSourceFileName(sources.front());
+  std::string verification;
+  llvm::raw_string_ostream verificationStream(verification);
+  if (llvm::verifyModule(*module, &verificationStream)) {
+    error = "invalid " + identity + " object partition:\n" + verification;
+    return std::nullopt;
+  }
+  // Unreferenced consumer declarations must not change the core partition key.
+  for (auto it = module->begin(); it != module->end();) {
+    auto &function = *it++;
+    if (function.isDeclaration() && function.use_empty())
+      function.eraseFromParent();
+  }
+  for (auto it = module->global_begin(); it != module->global_end();) {
+    auto &global = *it++;
+    if (global.isDeclaration() && global.use_empty())
+      global.eraseFromParent();
+  }
+  auto byName = [](const auto &left, const auto &right) {
+    return left.getName() < right.getName();
+  };
+  module->getFunctionList().sort(byName);
+  std::string partition;
+  llvm::raw_string_ostream stream(partition);
+  module->print(stream, nullptr);
+  packages::Sha256 hash;
+  hash.update(partition);
+  auto key = inputs.packageObjectKey(identity, sources,
+                                     {{"checked:" + identity, checkedKey}}, {},
+                                     options, hash.finish());
+  if (!key)
+    return std::nullopt;
+  return PackageObject{identity, sources.front(), std::move(*key)};
+}
+
+bool outputOverwritesSource(const Options &options, const Source &source,
+                            const Diagnostics &diagnostics) {
+  namespace fs = std::filesystem;
+  const llvm::Triple target(options.target);
+  auto formats = options.emits;
+  if (formats.empty())
+    formats.push_back(options.emit);
+  for (const auto &format : formats) {
+    fs::path destination = options.output;
+    if (formats.size() > 1)
+      destination += artifactSuffix(format, target);
+    auto aliases = [](const std::string &input, const fs::path &destination) {
+      std::error_code error;
+      if (fs::equivalent(input, destination, error))
+        return true;
+      error.clear();
+      auto canonical = fs::weakly_canonical(input, error);
+      if (error)
+        return false;
+      auto output = fs::weakly_canonical(destination, error);
+      if (error)
+        return false;
+      if (canonical == output)
+        return true;
+      if (fs::is_directory(canonical, error)) {
+        auto relative = output.lexically_relative(canonical);
+        if (!relative.empty() && *relative.begin() != "..")
+          return true;
+      }
+      auto relative = canonical.lexically_relative(output);
+      return !relative.empty() && *relative.begin() != "..";
+    };
+    auto conflict = [&](const std::string &input) {
+      return aliases(input, destination) ||
+             (options.debugInfo && target.isOSDarwin() &&
+              (format == "executable" || format == "shared") &&
+              aliases(input, destination.string() + ".dSYM"));
+    };
+    if (conflict(source.path))
+      return true;
+    for (const auto &input : diagnostics.registeredSources())
+      if (!input.path.empty() && conflict(input.path))
+        return true;
+  }
+  return false;
+}
+
 static int emitOne(const Options &options, const Source &source,
                    const ir::VerifiedProgram &program,
                    const Diagnostics &diagnostics,
@@ -244,6 +374,11 @@ static int emitOne(const Options &options, const Source &source,
       std::vector<const PackageObject *> packagesToStore;
       for (std::size_t i = 0; i < packageObjects.size(); ++i) {
         const auto &package = packageObjects[i];
+        const bool native = package.identity.starts_with("native:");
+        const auto cacheLabel =
+            native ? "library object cache " : "package object cache ";
+        const auto cacheIdentity =
+            native ? package.identity.substr(7) : package.identity;
         auto packagePath =
             (directory / ("package-" + std::to_string(i) + ".o")).string();
         bool reused = false;
@@ -252,19 +387,18 @@ static int emitOne(const Options &options, const Source &source,
           if (found == packages::Store::Lookup::Hit) {
             reused = true;
             if (options.explain)
-              std::cerr << "mettle: package object cache hit "
-                        << package.identity << " " << package.key.substr(4, 12)
-                        << '\n';
+              std::cerr << "mettle: " << cacheLabel << "hit " << cacheIdentity
+                        << " " << package.key.substr(4, 12) << '\n';
           } else if (options.explain) {
-            std::cerr << "mettle: package object cache "
+            std::cerr << "mettle: " << cacheLabel
                       << (found == packages::Store::Lookup::Corrupt
                               ? "entry corrupt, rebuilding "
                               : "miss ")
-                      << package.identity << " " << package.key.substr(4, 12)
+                      << cacheIdentity << " " << package.key.substr(4, 12)
                       << '\n';
           }
         } else if (options.explain) {
-          std::cerr << "mettle: package object cache miss " << package.identity
+          std::cerr << "mettle: " << cacheLabel << "miss " << cacheIdentity
                     << " (disabled)\n";
         }
         if (!reused) {
@@ -280,8 +414,9 @@ static int emitOne(const Options &options, const Source &source,
                       << package.identity << '\n';
             return 1;
           }
-          if (auto error = mettle::backend::emitObject(
-                  *dependency, options.target, packagePath, false)) {
+          if (auto error =
+                  mettle::backend::emitObject(*dependency, options.target,
+                                              packagePath, native && release)) {
             std::cerr << "mettle: error[backend]: "
                       << llvm::toString(std::move(error)) << '\n';
             return 1;
@@ -443,10 +578,15 @@ static int emitOne(const Options &options, const Source &source,
         bool stored = store->putMany(packageArtifacts);
         if (options.explain)
           for (const auto *package : packagesToStore)
-            std::cerr << "mettle: package object cache "
+            std::cerr << "mettle: "
+                      << (package->identity.starts_with("native:")
+                              ? "library object cache "
+                              : "package object cache ")
                       << (stored ? "stored " : "could not store ")
-                      << package->identity << " " << package->key.substr(4, 12)
-                      << '\n';
+                      << (package->identity.starts_with("native:")
+                              ? package->identity.substr(7)
+                              : package->identity)
+                      << " " << package->key.substr(4, 12) << '\n';
       }
     }
   }
@@ -463,6 +603,10 @@ int emit(const Options &options, const Source &source,
          const ir::VerifiedProgram &program, const Diagnostics &diagnostics,
          const std::vector<PackageObject> &packageObjects,
          packages::Store *store) {
+  if (outputOverwritesSource(options, source, diagnostics)) {
+    std::cerr << "mettle: error[io]: output would overwrite the source\n";
+    return 1;
+  }
   if (options.emits.size() <= 1)
     return emitOne(options, source, program, diagnostics, packageObjects,
                    store);
@@ -484,13 +628,7 @@ int emit(const Options &options, const Source &source,
   std::vector<Artifact> artifacts;
   const llvm::Triple target(options.target);
   for (const auto &format : options.emits) {
-    const auto suffix = format == "static" ? ".a"
-                        : format == "shared"
-                            ? (target.isOSDarwin() ? ".dylib" : ".so")
-                        : format == "object" ? ".o"
-                        : format == "llvm"   ? ".ll"
-                        : format == "ir"     ? ".ir"
-                                             : "";
+    const auto suffix = artifactSuffix(format, target);
     Artifact artifact;
     artifact.destination = options.output + suffix;
     artifact.staged = directory / "outputs" / artifact.destination.filename();

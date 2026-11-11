@@ -8,8 +8,11 @@ import itertools
 import json
 import os
 import platform
-import subprocess
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import processes
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -101,10 +104,10 @@ def main():
     if args.sysroot:
         flags.append("--sysroot=" + args.sysroot)
 
-    def run(command, expected=0, timeout=60):
+    def run(command, expected=0):
         command = list(map(str, command))
-        result = subprocess.run(command, env=environment, text=True,
-                                capture_output=True, timeout=timeout)
+        result = processes.run(command, env=environment, text=True,
+                                capture_output=True)
         evidence["commands"].append({"command": command, "exit_status": result.returncode,
                                      "stdout": result.stdout, "stderr": result.stderr})
         if result.returncode != expected:
@@ -128,7 +131,7 @@ def main():
             path, program = directory / (name + ".cpp"), directory / name
             path.write_text(source)
             run([args.cxx, "-std=c++20", *flags, path, "-o", program, *args.link_arg])
-            result = run([program], expected=expected, timeout=15)
+            result = run([program], expected=expected)
             if expected and "ThreadSanitizer: data race" not in result.stderr:
                 raise AssertionError("TSan detector did not report the intentional race")
         objects = []

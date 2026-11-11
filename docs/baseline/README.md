@@ -138,7 +138,5 @@ compile all cfg expansions, run the Mettle fixtures, certify target
 support or measure performance. These remain implementation/release gates in
 [specification-status.md](../specification-status.md).
 
-`audit-pages.jsonl` is historical evidence from the earlier partial web pass;
-it is not the current denominator or source of generated classifications.
 Upstream source/docs remain subject to their own licenses; this project has not
 selected a publication license or copied their library implementations.

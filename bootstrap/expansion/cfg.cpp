@@ -1,4 +1,5 @@
 #include "expansion/detail.h"
+#include "support/limits.h"
 #include <set>
 
 namespace mettle::expansion {
@@ -64,7 +65,13 @@ private:
 
   // `all`, `any` and `not` evaluate every operand, so an unknown predicate is
   // diagnosed even where the combinator's result is already decided.
-  bool predicate() {
+  bool predicate(unsigned depth = 0) {
+    if (depth >= limits::parserNesting) {
+      diagnostics.error("limit", here(),
+                        "cfg predicate nesting limit exceeded");
+      failed = true;
+      return false;
+    }
     auto token = peek();
     if (!token || token->kind != TokenKind::Word)
       return fail(here(), "expected a cfg predicate");
@@ -82,7 +89,7 @@ private:
       while (!symbol(")")) {
         if (failed || !peek())
           return fail(here(), "unterminated cfg predicate");
-        operands.push_back(predicate());
+        operands.push_back(predicate(depth + 1));
         if (failed)
           return false;
         if (symbol(","))

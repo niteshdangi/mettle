@@ -9,8 +9,10 @@ std::optional<Type> Checker::machineAnnotation(const TypeSyntax &syntax,
                                                std::string_view owner) {
   if (syntax.form != TypeForm::Named || syntax.nested || !syntax.view.empty())
     return std::nullopt;
-  if (checked.symbols->lookup(checked.symbols->moduleOf(span), syntax.name,
-                              resolution::Namespace::Type, span))
+  const auto scope = nameModule(span, syntax.context, true);
+  if (scope < checked.symbols->modules().size() &&
+      checked.symbols->lookup(scope, syntax.name, resolution::Namespace::Type,
+                              span))
     return std::nullopt;
   if (auto descriptor = targetVector(syntax.name)) {
     if (descriptor->arch != checked.targetDescription.arch ||
@@ -126,8 +128,10 @@ std::optional<Type> Checker::machineAnnotation(const TypeSyntax &syntax,
   return checked.types->structural(family, {payload});
 }
 std::optional<int> Checker::machineValue(const Node &node) {
-  if (checked.symbols->lookup(checked.symbols->moduleOf(node.span), node.text,
-                              resolution::Namespace::Value, node.span))
+  const auto scope = nameModule(node.span, node.context, true);
+  if (scope < checked.symbols->modules().size() &&
+      checked.symbols->lookup(scope, node.text, resolution::Namespace::Value,
+                              node.span))
     return std::nullopt;
   if (node.text == "core::marker::PhantomPinned") {
     facts(node).machineOperation = "marker.phantom_pinned";

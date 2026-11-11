@@ -15,6 +15,88 @@ ParameterMode parameterMode(std::string_view spelling, Type type,
                               : ParameterMode::Read;
 }
 } // namespace
+std::vector<std::size_t> Checker::carriedResultSources(
+    const TypeSyntax &result, const TypeSyntax &error,
+    std::span<const std::pair<NameKey, const TypeSyntax *>> parameters,
+    Span span) {
+  auto names = [](const TypeSyntax &syntax) {
+    std::set<NameKey> result;
+    auto collect = [&](auto &&self, const TypeSyntax &type) -> void {
+      if (type.form == TypeForm::Pointer || type.form == TypeForm::Callable)
+        return;
+      for (const auto &source : type.sources)
+        result.insert(nameKey(source));
+      if (type.nested)
+        self(self, *type.nested);
+      for (const auto &element : type.elements)
+        self(self, element);
+      for (const auto &argument : type.arguments)
+        if (argument.type)
+          self(self, *argument.type);
+    };
+    collect(collect, syntax);
+    return result;
+  };
+  auto required = names(result);
+  auto errors = names(error);
+  required.insert(errors.begin(), errors.end());
+  std::erase_if(required,
+                [](const auto &name) { return name.first == "static"; });
+  std::vector<std::size_t> selected;
+  if (required.empty())
+    return selected;
+  auto region = [&](const NameKey &name) -> std::optional<RegionId> {
+    if (name.first == "static")
+      return RegionId::Static;
+    if (!annotationRegionScopes.empty())
+      if (auto found = annotationRegionScopes.back().names.find(name);
+          found != annotationRegionScopes.back().names.end())
+        return found->second;
+    if (current)
+      if (auto found = functionRegions(*current).names.find(name);
+          found != functionRegions(*current).names.end())
+        return found->second;
+    for (const auto &function : module.functions)
+      if (function.span.source == span.source &&
+          function.span.begin <= span.begin && span.end <= function.span.end)
+        if (auto found = functionRegions(function).names.find(name);
+            found != functionRegions(function).names.end())
+          return found->second;
+    return std::nullopt;
+  };
+  RegionSolver proof(checked.types->regions());
+  for (std::size_t p = 0; p < parameters.size(); ++p) {
+    const auto &[name, annotation] = parameters[p];
+    auto carried = names(*annotation);
+    bool matches = false;
+    for (const auto &wanted : required) {
+      bool named = std::any_of(
+          parameters.begin(), parameters.end(),
+          [&](const auto &parameter) { return parameter.first == wanted; });
+      if (named) {
+        matches |= wanted == name;
+        if (matches)
+          break;
+        continue;
+      }
+      matches |= carried.contains(wanted);
+      if (matches)
+        break;
+      if (auto requiredRegion = region(wanted))
+        for (const auto &source : carried)
+          if (auto sourceRegion = region(source);
+              sourceRegion &&
+              proof.outlives(*sourceRegion, *requiredRegion,
+                             regionEnvironment()) == RegionAnswer::Proven) {
+            matches = true;
+            break;
+          }
+    }
+    if (matches)
+      selected.push_back(p);
+  }
+  return selected;
+}
 Type Checker::callableAnnotation(const TypeSyntax &syntax, Span span,
                                  std::string_view owner) {
   const auto &source = *syntax.callable;
@@ -24,6 +106,9 @@ Type Checker::callableAnnotation(const TypeSyntax &syntax, Span span,
       source.abi != "system")
     error("feature", span,
           "unsupported foreign callable ABI '" + source.abi + "'");
+  if (!source.regions.empty())
+    return callableRegionAnnotation(syntax, span, owner);
+  auto resultSources = resultSourceNames(source.result, source.error);
   CallableType descriptor;
   descriptor.unsafeCall = source.unsafeCall;
   descriptor.abi = source.abi;
@@ -31,7 +116,8 @@ Type Checker::callableAnnotation(const TypeSyntax &syntax, Span span,
   descriptor.mode = source.mode == "mut"    ? ParameterMode::Mut
                     : source.mode == "take" ? ParameterMode::Take
                                             : ParameterMode::Read;
-  descriptor.regions = source.regions;
+  for (const auto &region : source.regions)
+    descriptor.regions.push_back(region.spelling);
   for (const auto &parameter : source.parameters) {
     auto type = annotation(parameter.annotation, span, owner);
     descriptor.parameters.push_back(
@@ -55,25 +141,30 @@ Type Checker::callableAnnotation(const TypeSyntax &syntax, Span span,
           checked.types->containsViews(parameter.type))
         eligible.push_back(i);
     }
-    if (!source.result.sources.empty()) {
-      for (const auto &name : source.result.sources) {
+    if (!resultSources.empty()) {
+      for (const auto &name : resultSources) {
         auto found = std::find_if(
             source.parameters.begin(), source.parameters.end(),
-            [&](const auto &parameter) { return parameter.name == name; });
+            [&](const auto &parameter) {
+              return nameKey(parameter.name, parameter.annotation.context) ==
+                     nameKey(name);
+            });
         if (found == source.parameters.end()) {
           // A bound region names every input carrying that region.
           bool matched = false;
           for (std::size_t i = 0; i < source.parameters.size(); ++i) {
-            const auto &sources = source.parameters[i].annotation.sources;
-            if (std::find(sources.begin(), sources.end(), name) !=
-                sources.end()) {
+            auto sources = resultSourceNames(source.parameters[i].annotation);
+            if (std::find_if(sources.begin(), sources.end(),
+                             [&](const auto &candidate) {
+                               return nameKey(candidate) == nameKey(name);
+                             }) != sources.end()) {
               descriptor.resultSources.push_back(i);
               matched = true;
             }
           }
           if (!matched)
             error("name", span,
-                  "unknown callable result source '" + name + "'");
+                  "unknown callable result source '" + name.spelling + "'");
         } else {
           auto index =
               static_cast<std::size_t>(found - source.parameters.begin());
@@ -89,12 +180,27 @@ Type Checker::callableAnnotation(const TypeSyntax &syntax, Span span,
     else
       error("ownership", span,
             "borrowed callable result requires an unambiguous from contract");
+    std::sort(descriptor.resultSources.begin(), descriptor.resultSources.end());
+    descriptor.resultSources.erase(std::unique(descriptor.resultSources.begin(),
+                                               descriptor.resultSources.end()),
+                                   descriptor.resultSources.end());
+  } else if (checked.types->containsViews(descriptor.abiResult, true)) {
+    std::vector<std::pair<NameKey, const TypeSyntax *>> parameters;
+    for (const auto &parameter : source.parameters)
+      parameters.emplace_back(
+          nameKey(parameter.name, parameter.annotation.context),
+          &parameter.annotation);
+    for (auto p :
+         carriedResultSources(source.result, source.error, parameters, span))
+      if (checked.types->containsViews(descriptor.parameters[p].type, true))
+        descriptor.resultSources.push_back(p);
   }
   return checked.types->callableType(std::move(descriptor));
 }
 Type Checker::callableRegionAnnotation(const TypeSyntax &syntax, Span span,
                                        std::string_view owner) {
   const auto &source = *syntax.callable;
+  auto resultSources = resultSourceNames(source.result, source.error);
   AnnotationRegions scope;
   if (!annotationRegionScopes.empty())
     scope = annotationRegionScopes.back();
@@ -104,8 +210,8 @@ Type Checker::callableRegionAnnotation(const TypeSyntax &syntax, Span span,
   scope.environment.universe = scope.scope.universe;
   scope.parameters.clear();
   for (const auto &name : source.regions) {
-    auto region = checked.types->regions().bound(scope.scope, name);
-    scope.names[name] = region;
+    auto region = checked.types->regions().bound(scope.scope, name.spelling);
+    scope.names[nameKey(name)] = region;
     scope.parameters.push_back(region);
   }
   auto depth = annotationRegionScopes.size();
@@ -122,7 +228,8 @@ Type Checker::callableRegionAnnotation(const TypeSyntax &syntax, Span span,
   descriptor.mode = source.mode == "mut"    ? ParameterMode::Mut
                     : source.mode == "take" ? ParameterMode::Take
                                             : ParameterMode::Read;
-  descriptor.regions = source.regions;
+  for (const auto &region : source.regions)
+    descriptor.regions.push_back(region.spelling);
   for (const auto &parameter : source.parameters) {
     auto activeScope = annotationRegionScopes.back().scope;
     auto region =
@@ -136,7 +243,9 @@ Type Checker::callableRegionAnnotation(const TypeSyntax &syntax, Span span,
     descriptor.parameters.push_back({type, mode, parameter.name});
     descriptor.parameterRegions.push_back(region);
     if (!parameter.name.empty())
-      annotationRegionScopes.back().names[parameter.name] = region;
+      annotationRegionScopes.back()
+          .names[nameKey(parameter.name, parameter.annotation.context)] =
+          region;
     if ((mode == ParameterMode::Read || mode == ParameterMode::Mut ||
          checked.types->containsViews(type)) &&
         checked.types->regions().get(region).kind == RegionKind::Bound &&
@@ -167,9 +276,9 @@ Type Checker::callableRegionAnnotation(const TypeSyntax &syntax, Span span,
           descriptor.parameters[p].mode == ParameterMode::Mut ||
           checked.types->containsViews(descriptor.parameters[p].type))
         eligible.push_back(p);
-    for (const auto &name : source.result.sources) {
+    for (const auto &name : resultSources) {
       bool matched = false;
-      auto region = active.names.find(name);
+      auto region = active.names.find(nameKey(name));
       for (auto p : eligible) {
         std::set<Type> visited;
         std::function<bool(Type)> carries = [&](Type type) {
@@ -196,7 +305,8 @@ Type Checker::callableRegionAnnotation(const TypeSyntax &syntax, Span span,
           }
           return false;
         };
-        if (source.parameters[p].name == name ||
+        if (nameKey(source.parameters[p].name,
+                    source.parameters[p].annotation.context) == nameKey(name) ||
             (region != active.names.end() &&
              descriptor.parameterRegions[p] == region->second) ||
             carries(descriptor.parameters[p].type)) {
@@ -205,9 +315,10 @@ Type Checker::callableRegionAnnotation(const TypeSyntax &syntax, Span span,
         }
       }
       if (!matched)
-        error("name", span, "unknown callable result source '" + name + "'");
+        error("name", span,
+              "unknown callable result source '" + name.spelling + "'");
     }
-    if (source.result.sources.empty()) {
+    if (resultSources.empty()) {
       if (eligible.size() == 1)
         descriptor.resultSources = eligible;
       else
@@ -218,11 +329,22 @@ Type Checker::callableRegionAnnotation(const TypeSyntax &syntax, Span span,
     descriptor.resultSources.erase(std::unique(descriptor.resultSources.begin(),
                                                descriptor.resultSources.end()),
                                    descriptor.resultSources.end());
+  } else if (checked.types->containsViews(descriptor.abiResult, true)) {
+    std::vector<std::pair<NameKey, const TypeSyntax *>> parameters;
+    for (const auto &parameter : source.parameters)
+      parameters.emplace_back(
+          nameKey(parameter.name, parameter.annotation.context),
+          &parameter.annotation);
+    for (auto p :
+         carriedResultSources(source.result, source.error, parameters, span))
+      if (checked.types->containsViews(descriptor.parameters[p].type, true))
+        descriptor.resultSources.push_back(p);
   }
   return checked.types->callableType(std::move(descriptor));
 }
 CallableType Checker::functionSignature(std::size_t index) {
   auto &function = module.functions[index];
+  auto resultSources = resultSourceNames(function.annotation, function.error);
   auto saved = genericEnvironment;
   genericEnvironment = &functionGenerics.at(&function);
   const auto &declaration = facts(function);
@@ -253,18 +375,22 @@ CallableType Checker::functionSignature(std::size_t index) {
   }
   if (result.resultSources.empty() &&
       checked.types->containsViews(result.abiResult)) {
-    for (std::size_t p = 0; p < function.parameters.size(); ++p)
-      for (const auto &source : function.annotation.sources) {
+    for (std::size_t p = 0; p < function.parameters.size(); ++p) {
+      auto parameterSources =
+          resultSourceNames(function.parameters[p].annotation);
+      for (const auto &source : resultSources) {
         const auto &parameter = function.parameters[p];
-        if (source == parameter.name ||
-            std::find(parameter.annotation.sources.begin(),
-                      parameter.annotation.sources.end(),
-                      source) != parameter.annotation.sources.end()) {
+        if (nameKey(source) == nameKey(parameter.name, parameter.context) ||
+            std::any_of(parameterSources.begin(), parameterSources.end(),
+                        [&](const auto &candidate) {
+                          return nameKey(candidate) == nameKey(source);
+                        })) {
           result.resultSources.push_back(p);
           break;
         }
       }
-    if (function.annotation.sources.empty()) {
+    }
+    if (resultSources.empty()) {
       std::vector<std::size_t> eligible;
       for (std::size_t p = 0; p < result.parameters.size(); ++p)
         if (result.parameters[p].mode == ParameterMode::Read ||
@@ -274,6 +400,21 @@ CallableType Checker::functionSignature(std::size_t index) {
       if (eligible.size() == 1)
         result.resultSources = eligible;
     }
+  }
+  if (result.resultSources.empty() &&
+      !checked.types->containsViews(result.abiResult) &&
+      checked.types->containsViews(result.abiResult, true)) {
+    std::vector<std::pair<NameKey, const TypeSyntax *>> parameters;
+    for (const auto &parameter : function.parameters)
+      parameters.emplace_back(nameKey(parameter.name, parameter.context),
+                              &parameter.annotation);
+    annotationRegionScopes.push_back(functionRegions(function));
+    auto sources = carriedResultSources(function.annotation, function.error,
+                                        parameters, function.span);
+    annotationRegionScopes.pop_back();
+    for (auto p : sources)
+      if (checked.types->containsViews(result.parameters[p].type, true))
+        result.resultSources.push_back(p);
   }
   genericEnvironment = saved;
   return result;
@@ -297,8 +438,7 @@ int Checker::functionValue(Node &node, std::size_t index) {
             "a function with a 'format' parameter cannot be used as a value");
       return inference.fresh();
     }
-  if (!checked.symbols->accessible(function.span,
-                                   checked.symbols->moduleOf(node.span)))
+  if (!checked.symbols->accessible(function.span, accessModule(node)))
     error("name", node.span, "function is inaccessible");
   facts(node).callee = static_cast<int>(index);
   return inference.fresh(checked.types->callableType(std::move(signature)));
@@ -308,8 +448,8 @@ bool Checker::compatibleCallable(Type source, Type target) const {
       !checked.types->isCallable(source) ||
       !checked.types->isFunctionPointer(target))
     return false;
-  const auto &actual = checked.types->callable(source);
-  const auto &expected = checked.types->callable(target);
+  const auto actual = checked.types->callable(source);
+  const auto expected = checked.types->callable(target);
   if (actual.variadic != expected.variadic)
     return false;
   if (!std::includes(
@@ -321,8 +461,16 @@ bool Checker::compatibleCallable(Type source, Type target) const {
   if (actual.environment != Type::Unknown &&
       !checked.types->product(actual.environment).fields.empty())
     return false;
+  // RegionPass proves the retained contracts; only shape is decided here.
+  auto sameShape = [&](Type left, Type right) {
+    if (left == right)
+      return true;
+    auto erased = checked.types->eraseRegions(left);
+    return erased == checked.types->eraseRegions(right);
+  };
   if (actual.parameters.size() != expected.parameters.size() ||
-      actual.result != expected.result || actual.error != expected.error ||
+      !sameShape(actual.result, expected.result) ||
+      !sameShape(actual.error, expected.error) ||
       actual.resultSources != expected.resultSources)
     return false;
   if (actual.mode == ParameterMode::Take &&
@@ -331,12 +479,15 @@ bool Checker::compatibleCallable(Type source, Type target) const {
   if (actual.mode == ParameterMode::Mut && expected.mode == ParameterMode::Read)
     return false;
   for (std::size_t i = 0; i < actual.parameters.size(); ++i)
-    if (actual.parameters[i].type != expected.parameters[i].type ||
+    if (!sameShape(actual.parameters[i].type, expected.parameters[i].type) ||
         actual.parameters[i].mode != expected.parameters[i].mode)
       return false;
   return true;
 }
 bool Checker::callableObligation(Type actual, Type contract, Span span) {
+  if (annotationRegionScopes.empty() && checked.types->isCallable(actual))
+    actual = checked.types->eraseRegions(
+        checked.types->callableType(checked.types->callable(actual)));
   if (checked.types->satisfiesCallable(actual, contract))
     return true;
   error("type", span,
@@ -399,8 +550,8 @@ int Checker::indirectCall(Node &node, bool reachable, int calleeVariable) {
       plan.target = step.target;
       plan.steps.push_back(std::move(step));
     }
-    for (unsigned depth = 0; depth < limits::typeDepth &&
-                             !checked.types->isCallable(plan.target);
+    for (unsigned depth = 0;
+         depth < limits::typeDepth && !checked.types->isCallable(plan.target);
          ++depth) {
       auto step = dereferenceStep(plan.target, false, node.span);
       if (!step)
@@ -415,8 +566,7 @@ int Checker::indirectCall(Node &node, bool reachable, int calleeVariable) {
       if (mode == ParameterMode::Mut) {
         requireMutablePlace(*node.children[0]);
         mutableReceiverPlan(plan, node.span);
-      } else if (mode != ParameterMode::Read &&
-                 !checked.types->isCopy(type))
+      } else if (mode != ParameterMode::Read && !checked.types->isCopy(type))
         error("ownership", node.span,
               "cannot move a consuming callable out of a borrowed place");
       facts(node).receiverPlan = std::move(plan);

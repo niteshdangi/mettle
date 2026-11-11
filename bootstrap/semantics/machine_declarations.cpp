@@ -203,6 +203,8 @@ ProductLayout Checker::productLayout(const Module::Product &product) {
 }
 void Checker::machineDeclarations() {
   for (const auto &declaration : module.products) {
+    if (imported(declaration.span))
+      continue;
     auto type =
         typeNames.at(definitionName(declaration.span, declaration.name));
     const auto &record = checked.types->product(type);
@@ -280,6 +282,8 @@ void Checker::machineDeclarations() {
       validateLayout(type, syntax->span);
   }
   for (std::size_t i = 0; i < module.functions.size(); ++i) {
+    if (imported(module.functions[i].span))
+      continue;
     validateLayout(checked.functions[i].result, module.functions[i].span);
     for (const auto &local : checked.functions[i].locals)
       validateLayout(local.type, local.span);
@@ -352,6 +356,18 @@ void Checker::machineDeclarations() {
   std::map<std::string, std::pair<Type, bool>> symbols;
   std::set<std::string> functionSymbols;
   for (auto &function : module.functions) {
+    if (imported(function.span)) {
+      const auto &symbol = facts(function).externalName;
+      if (!symbol.empty()) {
+        functionSymbols.insert(symbol);
+        const auto index =
+            static_cast<std::size_t>(&function - module.functions.data());
+        symbols.emplace(symbol, std::pair{checked.types->callableType(
+                                              functionSignature(index)),
+                                          checked.hasBody(index)});
+      }
+      continue;
+    }
     for (const auto &[scope, policy] : modulePolicies)
       if (function.item.scope.size() >= scope.size() &&
           std::equal(scope.begin(), scope.end(), function.item.scope.begin()))
@@ -484,8 +500,11 @@ void Checker::machineDeclarations() {
         const auto &record = checked.types->product(type);
         bool result = record.layout.kind != LayoutKind::Native ||
                       record.kind == AggregateKind::Array;
-        for (const auto &field : record.fields)
-          result &= compatible(field.type);
+        if (record.kind == AggregateKind::Array && !record.components.empty())
+          result &= compatible(record.components[0]);
+        else
+          for (const auto &field : record.fields)
+            result &= compatible(field.type);
         active.erase(type);
         return result;
       };
@@ -519,7 +538,8 @@ void Checker::machineDeclarations() {
     facts(function).externalName = std::move(symbol);
   }
   for (auto &closure : checked.closureBodies)
-    closure->function.floatingPolicy = facts(*closure->parent).floatingPolicy;
+    if (!closure->imported)
+      closure->function.floatingPolicy = facts(*closure->parent).floatingPolicy;
   for (std::size_t i = 0; i < module.statics.size(); ++i) {
     const auto &storage = checked.staticStorage[i];
     if (storage.externalName.empty())

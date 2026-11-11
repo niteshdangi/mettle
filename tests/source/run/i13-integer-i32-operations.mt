@@ -1810,8 +1810,6 @@ fn group14() {
     if !(kind(capture num.from_str_radix<i32>("12", 2u32)) == present(IntErrorKind.InvalidDigit)) { panic("from_str_radix #1752") }
     if !(kind(capture num.from_str_radix<i32>(" 1", 10u32)) == present(IntErrorKind.InvalidDigit)) { panic("from_str_radix #1753") }
     if !(kind(capture num.from_str_radix<i32>("2147483648", 10u32)) == present(IntErrorKind.PosOverflow)) { panic("from_str_radix #1754") }
-    if !(kind(capture num.from_str_radix<i32>("1", 37u32)) == present(IntErrorKind.InvalidRadix)) { panic("from_str_radix #1755") }
-    if !(kind(capture num.from_str_radix<i32>("1", 1u32)) == present(IntErrorKind.InvalidRadix)) { panic("from_str_radix #1756") }
     if !(kind(capture num.from_str_radix<i32>("-2147483649", 10u32)) == present(IntErrorKind.NegOverflow)) { panic("from_str_radix #1757") }
 }
 

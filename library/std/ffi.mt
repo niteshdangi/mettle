@@ -42,24 +42,8 @@ pub fn os_str_from_encoded_bytes_unchecked(read bytes: [u8]): read OsStr from by
     os_str(bytes)
 }
 
-fn push_replacement(mut out: String): Unit { out.push('\u{fffd}') }
-
-// Decodes `bytes`, replacing each ill-formed byte with U+FFFD.
 pub fn lossy(read bytes: [u8]): String {
-    var out = package.alloc.string.with_capacity(bytes.len())
-    var i = 0usize
-    while i < bytes.len() {
-        var width = 1usize
-        var matched = false
-        while width <= 4usize && i + width <= bytes.len() && !matched {
-            match package.core.text.from_utf8(unsafe { slice.subslice_unchecked(bytes, i, i + width) }) {
-                present(t) => { out.push_str(t); matched = true },
-                none => { width += 1usize }
-            }
-        }
-        if matched { i += width } else { push_replacement(out); i += 1usize }
-    }
-    out
+    package.alloc.string.from_utf8_lossy(bytes)
 }
 
 extend OsStr {
@@ -80,7 +64,12 @@ extend OsStr {
         true
     }
     // The text when the bytes are well-formed UTF-8.
-    pub fn to_str(): (read Text from self)? { package.core.text.from_utf8(read self.bytes) }
+    pub fn to_str(): (read Text from self)? {
+        match package.core.text.from_utf8(read self.bytes) {
+            success(text) => present(text),
+            failure(_) => none
+        }
+    }
     pub fn to_string_lossy(): String { lossy(read self.bytes) }
     pub fn display(): String { self.to_string_lossy() }
     pub fn to_os_string(): OsString { os_string_from_bytes(read self.bytes) }
@@ -196,11 +185,7 @@ extend OsString {
     }
     pub mut fn shrink_to_fit(): Unit { self.v.shrink_to_fit() }
     pub mut fn shrink_to(minimum: usize): Unit {
-        if minimum > self.v.capacity() {
-            self.v.reserve(minimum - self.v.len())
-        } else if minimum <= self.v.len() {
-            self.v.shrink_to_fit()
-        }
+        self.v.shrink_to(minimum)
     }
     pub mut fn make_ascii_lowercase(): Unit {
         var i = 0usize
@@ -366,7 +351,10 @@ extend CStr {
         }
     }
     pub fn to_str(): (read Text from self)? {
-        package.core.text.from_utf8(self.to_bytes())
+        match package.core.text.from_utf8(self.to_bytes()) {
+            success(text) => present(text),
+            failure(_) => none
+        }
     }
     pub fn to_string_lossy(): String { lossy(self.to_bytes()) }
     pub fn to_owned(): CString { CString(clone_bytes(read self.bytes)) }
@@ -447,7 +435,10 @@ extend CString {
         }
     }
     pub fn to_str(): (read Text from self)? {
-        package.core.text.from_utf8(self.as_bytes())
+        match package.core.text.from_utf8(self.as_bytes()) {
+            success(text) => present(text),
+            failure(_) => none
+        }
     }
     pub fn to_string_lossy(): String { lossy(self.as_bytes()) }
     pub take fn into_bytes_with_nul(): List<u8> { self.v }
@@ -828,7 +819,6 @@ extend OsString implements Deref {
 }
 
 extend OsString implements package.core.ops.DerefMut {
-    type Target = OsStr
     mut fn deref_mut(): mut OsStr from self { self.as_mut_os_str() }
 }
 

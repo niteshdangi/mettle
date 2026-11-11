@@ -6,6 +6,7 @@
 #include "resolution/resolve.h"
 #include "support/path.h"
 #include "syntax/parser.h"
+#include "types/target.h"
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -207,8 +208,21 @@ int document(const Options &options) {
       return read(path);
     };
     resolution::Library library;
+    library.rootIdentity = outcome.plan->rootIdentity;
     library.directory = options.libraryDirectory;
     library.freestanding = options.freestanding;
+    auto facts = targetFacts(options.target);
+    library.configuration.os = facts.system == TargetSystem::Linux    ? "linux"
+                               : facts.system == TargetSystem::Darwin ? "macos"
+                                                                      : "";
+    library.configuration.arch = facts.arch == TargetArch::X86_64    ? "x86_64"
+                                 : facts.arch == TargetArch::Aarch64 ? "aarch64"
+                                                                     : "";
+    library.configuration.family =
+        library.configuration.os.empty() ? "" : "unix";
+    library.configuration.endian = facts.littleEndian ? "little" : "big";
+    library.configuration.pointerWidth = facts.pointerBits;
+    library.configuration.targetFeatures = facts.baseline;
     library.configuration.features = std::set<std::string>(
         outcome.plan->features.begin(), outcome.plan->features.end());
     library.packageDependencies = outcome.plan->dependencies;
@@ -219,15 +233,17 @@ int document(const Options &options) {
       dependency.name = mount.name;
       dependency.source = mount.source;
       dependency.module = mount.module;
+      dependency.instanceIdentity = mount.identity;
       dependency.dependencies = mount.dependencies;
       dependency.features = std::move(features);
       library.packages.push_back(std::move(dependency));
     }
     std::vector<resolution::SourceModule> loadedSources;
+    resolution::SourcePackages sourcePackages;
     auto tree = resolution::load(*root, provider, diagnostics, library, nullptr,
-                                 &loadedSources);
+                                 &loadedSources, &sourcePackages);
     if (tree)
-      names = resolution::resolve(*tree, diagnostics);
+      names = resolution::resolve(*tree, diagnostics, sourcePackages);
     if (!tree || !names || !diagnostics.empty()) {
       diagnostics.print(*root, std::cerr);
       return 1;

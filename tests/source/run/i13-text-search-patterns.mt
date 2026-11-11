@@ -1,6 +1,6 @@
 fn without_local_pattern(read text: Text): read Text from text {
     let pattern = alloc.string.from_text("..")
-    text.trim_matches(pattern.as_text())
+    text.trim_start_matches(pattern.as_text()).trim_end_matches(pattern.as_text())
 }
 
 fn main(): i32 {

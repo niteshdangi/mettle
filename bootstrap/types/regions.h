@@ -2,6 +2,7 @@
 
 #include <compare>
 #include <cstdint>
+#include <map>
 #include <span>
 #include <string>
 #include <vector>
@@ -68,11 +69,14 @@ public:
   bool contains(RegionId region) const;
   bool visible(RegionId region, RegionUniverse universe) const;
   bool ancestor(RegionUniverse outer, RegionUniverse inner) const;
+  RegionUniverse universeParent(RegionUniverse universe) const;
+  std::size_t universeCount() const { return parents.size(); }
   RegionId substitute(RegionId region, std::span<const RegionBinding> bindings);
 
 private:
   RegionId add(RegionKind kind, RegionScope scope, std::string name = {});
   std::vector<Region> regions;
+  std::map<std::vector<RegionId>, RegionId> intersections;
   std::vector<RegionUniverse> parents{0};
   RegionBinder nextBinder = 1;
 };

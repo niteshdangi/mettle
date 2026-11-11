@@ -94,16 +94,22 @@ enum class TypeForm {
 };
 enum class OwnerKind { Heap, Shared, LocalShared, Weak, LocalWeak };
 struct TypeSyntax;
+struct LexicalNameSyntax {
+  std::string spelling;
+  Span span{};
+  SyntaxContextPtr context{};
+  bool empty() const { return spelling.empty(); }
+};
 struct GenericArgument {
   std::shared_ptr<const TypeSyntax> type{};
   std::shared_ptr<const Node> value{};
-  std::string region{};
+  LexicalNameSyntax region{};
   Span span{};
   std::string binding{};
 };
 struct TypeSyntax {
   std::string name, view;
-  std::vector<std::string> sources, regions;
+  std::vector<LexicalNameSyntax> sources, regions;
   std::shared_ptr<const TypeSyntax> nested{};
   TypeForm form = TypeForm::Named;
   OwnerKind ownerKind = OwnerKind::Heap;
@@ -112,7 +118,8 @@ struct TypeSyntax {
   std::shared_ptr<const Node> countExpression{};
   std::vector<GenericArgument> arguments{};
   std::shared_ptr<const CallableTypeSyntax> callable{};
-  std::vector<std::string> binders{};
+  std::vector<LexicalNameSyntax> binders{};
+  SyntaxContextPtr context{};
   bool empty() const {
     return name.empty() && !nested && form == TypeForm::Named;
   }
@@ -125,7 +132,7 @@ struct CallableTypeSyntax {
   std::vector<CallableParameterSyntax> parameters;
   TypeSyntax result, error;
   std::string mode{};
-  std::vector<std::string> regions{};
+  std::vector<LexicalNameSyntax> regions{};
   bool unsafeCall = false;
   std::string abi{};
   bool variadic = false;
@@ -138,7 +145,24 @@ struct GenericParameter {
   std::vector<TypeSyntax> bounds{};
   TypeSyntax annotation{}, defaultType{};
   std::shared_ptr<const Node> defaultValue{};
+  SyntaxContextPtr context{};
+  Span nameSpan{};
 };
+inline std::vector<LexicalNameSyntax>
+regionNames(const std::vector<GenericParameter> &parameters,
+            const std::vector<std::string> &legacy = {}, Span span = {},
+            SyntaxContextPtr context = {}, std::size_t first = 0) {
+  std::vector<LexicalNameSyntax> result;
+  for (std::size_t i = first; i < parameters.size(); ++i) {
+    const auto &parameter = parameters[i];
+    if (parameter.kind == GenericParameterKind::Region)
+      result.push_back({parameter.name, parameter.nameSpan, parameter.context});
+  }
+  if (result.empty())
+    for (const auto &name : legacy)
+      result.push_back({name, span, context});
+  return result;
+}
 struct GenericConstraint {
   TypeSyntax subject;
   std::vector<TypeSyntax> bounds{};
@@ -168,6 +192,8 @@ struct Pattern {
   bool inclusive = false;
   bool rest = false;
   TokenKind literalKind = TokenKind::Integer;
+  SyntaxContextPtr context{};
+  SyntaxContextPtr fieldContext{};
 };
 struct ClosureParameter {
   std::string name;
@@ -175,6 +201,7 @@ struct ClosureParameter {
   Span span;
   std::string mode{};
   std::optional<Pattern> pattern{};
+  SyntaxContextPtr context{};
 };
 struct AssemblySyntax {
   std::string variant;
@@ -204,6 +231,9 @@ struct Node {
   std::vector<GenericArgument> genericArguments{};
   std::vector<GenericArgument> ownerGenericArguments{};
   std::optional<AssemblySyntax> assembly{};
+  SyntaxContextPtr context{};
+  SyntaxContextPtr fieldContext{};
+  Span fieldSpan{};
 };
 inline NodeOwner::NodeOwner() = default;
 inline NodeOwner::NodeOwner(std::unique_ptr<Node> node)
@@ -244,6 +274,7 @@ struct ItemSyntax {
   std::vector<std::string> scope;
   VisibilitySyntax visibility{};
   std::vector<Attribute> attributes{};
+  bool checkedImport = false;
 };
 struct Parameter {
   std::string name;
@@ -256,6 +287,9 @@ struct Parameter {
   std::vector<Attribute> attributes{};
   // `format Message`: the argument is a recipe that cannot escape the call.
   bool format = false;
+  std::optional<Span> syntaxSpan{};
+  SyntaxContextPtr context{};
+  bool compiledDefault = false;
 };
 // Hidden interface method that returns the erased future of an
 // `async(heap)` method.
@@ -296,6 +330,7 @@ struct Function {
   bool explicitReceiver = false;
   std::string variadicCursor{};
   Span variadicSpan{};
+  SyntaxContextPtr lexicalContext{};
 };
 struct Module {
   std::vector<Token> tokens;
@@ -353,6 +388,7 @@ struct Module {
     std::vector<TypeSyntax> interfaces{};
     std::vector<Associated> associated{};
     std::vector<std::pair<std::string, Span>> deriveRequests{};
+    SyntaxContextPtr nameContext{};
   };
   std::vector<Product> products;
   struct Alias {
@@ -373,6 +409,8 @@ struct Module {
     std::vector<TypeSyntax> superinterfaces{};
     std::vector<Associated> associated{};
     std::vector<Function> methods{};
+    bool unsafeInterface = false;
+    SyntaxContextPtr nameContext{};
   };
   struct Implementation {
     TypeSyntax target, interface;
@@ -438,6 +476,7 @@ struct Module {
     std::string ignoreReason, panicMessage;
   };
   std::vector<TestFunction> tests;
+  std::vector<Span> inactiveSyntax;
 };
 std::optional<bool> booleanLiteral(const Node &node);
 // The `::`-joined spelling of a plain Name or Field chain (`a.b.c`), or

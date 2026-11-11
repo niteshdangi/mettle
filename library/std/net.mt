@@ -9,6 +9,8 @@ import package.core.slice
 import package.core.text.{FromStr, Text}
 import package.alloc.vec
 import package.alloc.vec.List
+import package.alloc.arc
+import package.alloc.arc.Arc
 import super.io
 import super.io.{Error, ErrorKind, Reader, Writer}
 import super.sys
@@ -17,7 +19,6 @@ import super.time.Duration
 import package.core.clone.Clone
 
 extern "C" {
-    unsafe fn dup(fd: i32): i32;
     unsafe fn recv(fd: i32, buffer: ptr<mut u8>, count: usize, flags: i32): isize;
 }
 
@@ -234,10 +235,6 @@ extend Ipv6Addr {
             i += 1usize
         }
         if !compatible && !mapped { return none }
-        if compatible && self.bytes[12usize] == 0u8 && self.bytes[13usize] == 0u8 &&
-           self.bytes[14usize] == 0u8 && self.bytes[15usize] <= 1u8 {
-            return none
-        }
         present(ipv4(self.bytes[12usize], self.bytes[13usize], self.bytes[14usize], self.bytes[15usize]))
     }
     pub fn to_ipv4_compatible(): Ipv4Addr? {
@@ -330,7 +327,13 @@ extend SocketAddr {
         SocketAddr(IpAddr.V6(addr.ip), addr.port, addr.flowinfo, addr.scope_id)
     }
     pub fn ip(): IpAddr { self.ip }
-    pub mut fn set_ip(ip: IpAddr): Unit { self.ip = ip }
+    pub mut fn set_ip(ip: IpAddr): Unit {
+        if self.ip.is_ipv4() != ip.is_ipv4() {
+            self.flowinfo = 0u32
+            self.scope_id = 0u32
+        }
+        self.ip = ip
+    }
     pub fn port(): u16 { self.port }
     pub mut fn set_port(port: u16): Unit { self.port = port }
     pub fn is_ipv4(): bool { self.ip.is_ipv4() }
@@ -748,9 +751,13 @@ extend SocketAddr implements Debug {
     }
 }
 
-fn net_error(): Error {
-    let e = io.last_os_error()
-    if e.kind().is(ErrorKind.WouldBlock) { return io.with_kind(sys.errno(), ErrorKind.TimedOut) }
+fn net_error(fd: i32): Error {
+    let code = sys.errno()
+    let e = io.from_raw_os_error(code)
+    if e.kind().is(ErrorKind.WouldBlock) &&
+        unsafe { sys.mettle_rt_sock_is_nonblocking(fd) } == 0 {
+        return io.with_kind(code, ErrorKind.TimedOut)
+    }
     e
 }
 
@@ -840,12 +847,12 @@ fn connect_address_timeout(fd: i32, addr: SocketAddr, timeout_micros: u64): Unit
         IpAddr.V4(ip) => {
             let bytes = ip.octets()
             if unsafe { sys.mettle_rt_sock_connect_timeout(fd, 4, slice.data(bytes), 4usize, addr.port, 0u32, 0u32, timeout_micros) } != 0 {
-                throw net_error()
+                throw net_error(fd)
             }
         },
         IpAddr.V6(ip) => {
             if unsafe { sys.mettle_rt_sock_connect_timeout(fd, 6, slice.data(ip.bytes), 16usize, addr.port, addr.flowinfo, addr.scope_id, timeout_micros) } != 0 {
-                throw net_error()
+                throw net_error(fd)
             }
         }
     }
@@ -876,7 +883,7 @@ fn stream_read(fd: i32, mut buf: [u8]): usize throws Error {
     while true {
         let n = unsafe { sys.`read`(fd, sys.data_mut(buf), buf.len()) }
         if n >= 0isize { return n as usize }
-        let e = net_error()
+        let e = net_error(fd)
         if !e.kind().is(ErrorKind.Interrupted) { throw e }
     }
     0usize
@@ -885,7 +892,7 @@ fn stream_read(fd: i32, mut buf: [u8]): usize throws Error {
 fn stream_write(fd: i32, read buf: [u8]): usize throws Error {
     if buf.len() == 0usize { return 0usize }
     let n = unsafe { sys.mettle_rt_sock_send(fd, slice.data(buf), buf.len()) }
-    if n < 0isize { throw net_error() }
+    if n < 0isize { throw net_error(fd) }
     n as usize
 }
 
@@ -894,7 +901,7 @@ fn socket_peek(fd: i32, mut buf: [u8]): usize throws Error {
     while true {
         let count = unsafe { recv(fd, sys.data_mut(buf), buf.len(), 2) }
         if count >= 0isize { return count as usize }
-        let error = net_error()
+        let error = net_error(fd)
         if !error.kind().is(ErrorKind.Interrupted) { throw error }
     }
     0usize
@@ -912,12 +919,19 @@ extend TcpStream implements From<sys.OwnedFd> {
 pub type TcpListener {
     fd: i32
     accept_millis: i32
+    nonblocking: Arc<core.sync.atomic.AtomicBool>
     drop { if self.fd >= 0 { let closed = unsafe { sys.close(self.fd) } } }
 }
 
-extend TcpListener implements From<sys.OwnedFd> {
-    static fn from(take fd: sys.OwnedFd): TcpListener {
-        TcpListener(fd.into_raw_fd(), -1)
+extend TcpListener {
+    // Safety: control all aliases; never clear O_NONBLOCK or independently re-adopt while managed.
+    pub unsafe static fn from_owned_fd(take fd: sys.OwnedFd): TcpListener throws Error {
+        let raw = fd.as_raw_fd()
+        let mode = unsafe { sys.mettle_rt_sock_is_nonblocking(raw) }
+        if mode < 0 { throw io.last_os_error() }
+        let nonblocking = arc.new(core.sync.atomic.AtomicBool.new(mode != 0))
+        if unsafe { sys.mettle_rt_set_nonblocking(raw) } != 0 { throw io.last_os_error() }
+        TcpListener(fd.into_raw_fd(), -1, nonblocking)
     }
 }
 
@@ -974,7 +988,8 @@ pub fn tcp_connect_timeout(addr: SocketAddr, timeout: Duration): TcpStream throw
 
 pub fn tcp_listen(addr: SocketAddr): TcpListener throws Error {
     let fd = try new_socket(0, family_of(addr.ip))
-    let listener = TcpListener(fd, -1)
+    let owned = unsafe { sys.OwnedFd.from_raw_fd(fd) }
+    let listener = unsafe { try TcpListener.from_owned_fd(owned) }
     try bind_address(fd, addr)
     if unsafe { sys.listen(fd, 128) } != 0 { throw io.last_os_error() }
     listener
@@ -1002,13 +1017,13 @@ pub async fn async_tcp_connect(addr: SocketAddr): AsyncTcpStream throws Error {
             )
         }
     }
-    if started < 0 { throw net_error() }
+    if started < 0 { throw net_error(fd) }
     if started == 1 {
         let waited = await task.writable(fd)
         if waited == -1 { throw io.from_kind(ErrorKind.Unsupported) }
         if waited != 0 { throw io.from_raw_os_error(waited) }
         if unsafe { sys.mettle_rt_sock_connect_status(fd) } != 0 {
-            throw net_error()
+            throw net_error(fd)
         }
     }
     stream
@@ -1036,12 +1051,13 @@ extend TcpListener {
 
     pub fn take_error(): Error? throws Error { try take_socket_error(self.fd) }
     pub fn try_clone(): TcpListener throws Error {
-        let cloned = unsafe { dup(self.fd) }
+        let nonblocking = self.nonblocking.clone()
+        let cloned = unsafe { sys.mettle_rt_dup(self.fd) }
         if cloned < 0 { throw io.last_os_error() }
-        TcpListener(cloned, self.accept_millis)
+        TcpListener(cloned, self.accept_millis, nonblocking)
     }
     pub fn set_nonblocking(on: bool): Unit throws Error {
-        try set_nonblocking(self.fd, on)
+        self.nonblocking.get().store(on, core.sync.atomic.Ordering.Release)
     }
     pub fn local_addr(): SocketAddr throws Error { try local_of(self.fd, 0) }
     pub mut fn set_accept_timeout(limit: Duration?): Unit throws Error {
@@ -1058,6 +1074,8 @@ extend TcpListener {
         }
     }
     pub fn accept(): (TcpStream, SocketAddr) throws Error {
+        let nonblocking = self.nonblocking.get().load(core.sync.atomic.Ordering.Acquire)
+        var timed_out = 0i32
         var family = 0i32
         var bytes = [0u8; 16]
         var port = 0u16
@@ -1065,14 +1083,16 @@ extend TcpListener {
         var scope_id = 0u32
         let fd = unsafe {
             sys.mettle_rt_sock_accept(
-                self.fd, self.accept_millis, core.ptr.from_mut(family),
+                self.fd, self.accept_millis, if nonblocking { 1 } else { 0 },
+                core.ptr.from_mut(timed_out), core.ptr.from_mut(family),
                 sys.data_mut(bytes), 16usize, core.ptr.from_mut(port),
                 core.ptr.from_mut(flowinfo), core.ptr.from_mut(scope_id)
             )
         }
         if fd < 0 {
-            if self.accept_millis < 0 { throw io.last_os_error() }
-            throw net_error()
+            let code = sys.errno()
+            if timed_out != 0 { throw io.with_kind(code, ErrorKind.TimedOut) }
+            throw io.from_raw_os_error(code)
         }
         (TcpStream(fd), decode_socket_addr(family, bytes, port, flowinfo, scope_id))
     }
@@ -1095,6 +1115,7 @@ extend AsyncTcpListener {
 
     pub async fn accept(): (AsyncTcpStream, SocketAddr) throws Error {
         while true {
+            var timed_out = 0i32
             var family = 0i32
             var bytes = [0u8; 16]
             var port = 0u16
@@ -1102,15 +1123,17 @@ extend AsyncTcpListener {
             var scope_id = 0u32
             let fd = unsafe {
                 sys.mettle_rt_sock_accept(
-                    self.fd, -1, core.ptr.from_mut(family),
+                    self.fd, -1, 1, core.ptr.from_mut(timed_out),
+                    core.ptr.from_mut(family),
                     sys.data_mut(bytes), 16usize, core.ptr.from_mut(port),
                     core.ptr.from_mut(flowinfo), core.ptr.from_mut(scope_id)
                 )
             }
             if fd >= 0 {
                 if unsafe { sys.mettle_rt_set_nonblocking(fd) } != 0 {
+                    let error = io.last_os_error()
                     let _closed = unsafe { sys.close(fd) }
-                    throw io.last_os_error()
+                    throw error
                 }
                 return (AsyncTcpStream(fd),
                         decode_socket_addr(family, bytes, port, flowinfo, scope_id))
@@ -1140,7 +1163,7 @@ extend TcpStream {
         try socket_peek(self.fd, buf)
     }
     pub fn try_clone(): TcpStream throws Error {
-        let cloned = unsafe { dup(self.fd) }
+        let cloned = unsafe { sys.mettle_rt_dup(self.fd) }
         if cloned < 0 { throw io.last_os_error() }
         TcpStream(cloned)
     }
@@ -1293,7 +1316,7 @@ extend UdpSocket {
     pub fn peer_addr(): SocketAddr throws Error { try local_of(self.fd, 1) }
     pub fn take_error(): Error? throws Error { try take_socket_error(self.fd) }
     pub fn try_clone(): UdpSocket throws Error {
-        let cloned = unsafe { dup(self.fd) }
+        let cloned = unsafe { sys.mettle_rt_dup(self.fd) }
         if cloned < 0 { throw io.last_os_error() }
         UdpSocket(cloned)
     }
@@ -1317,7 +1340,7 @@ extend UdpSocket {
                 sys.mettle_rt_sock_sendto(self.fd, slice.data(buf), buf.len(), 6, slice.data(ip.bytes), 16usize, addr.port, addr.flowinfo, addr.scope_id)
             }
         }
-        if result < 0isize { throw net_error() }
+        if result < 0isize { throw net_error(self.fd) }
         result as usize
     }
 
@@ -1334,13 +1357,27 @@ extend UdpSocket {
                 core.ptr.from_mut(flowinfo), core.ptr.from_mut(scope_id)
             )
         }
-        if result < 0isize { throw net_error() }
+        if result < 0isize { throw net_error(self.fd) }
         (result as usize, decode_socket_addr(family, address, port, flowinfo, scope_id))
     }
 
-    pub fn send(read buf: [u8]): usize throws Error { try stream_write(self.fd, buf) }
-    pub fn recv(mut buf: [u8]): usize throws Error { try stream_read(self.fd, buf) }
-    pub fn peek(mut buf: [u8]): usize throws Error { try socket_peek(self.fd, buf) }
+    pub fn send(read buf: [u8]): usize throws Error {
+        let count = unsafe { sys.mettle_rt_sock_send(self.fd, slice.data(buf), buf.len()) }
+        if count < 0isize { throw net_error(self.fd) }
+        count as usize
+    }
+    pub fn recv(mut buf: [u8]): usize throws Error { try datagram_recv(self.fd, buf, 0) }
+    pub fn peek(mut buf: [u8]): usize throws Error { try datagram_recv(self.fd, buf, 2) }
+}
+
+fn datagram_recv(fd: i32, mut buf: [u8], flags: i32): usize throws Error {
+    while true {
+        let count = unsafe { recv(fd, sys.data_mut(buf), buf.len(), flags) }
+        if count >= 0isize { return count as usize }
+        let error = net_error(fd)
+        if !error.kind().is(ErrorKind.Interrupted) { throw error }
+    }
+    0usize
 }
 
 type ResolveHandle {

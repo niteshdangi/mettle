@@ -25,7 +25,7 @@ type Payload {
 
 type Probe { record: ptr<mut Record> }
 
-extend Probe implements Allocator {
+unsafe extend Probe implements Allocator {
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {
         var global = Global()
         let pointer = try global.allocate(layout)
@@ -43,7 +43,7 @@ extend Probe implements Allocator {
         pointer
     }
 
-    mut fn deallocate(pointer: ptr<mut u8>, layout: Layout): Unit {
+    mut unsafe fn deallocate(pointer: ptr<mut u8>, layout: Layout): Unit {
         unsafe {
             if layout.size() == (*self.record).first_size &&
                 layout.align() == (*self.record).first_align {
@@ -58,14 +58,14 @@ extend Probe implements Allocator {
             (*self.record).live -= 1
         }
         var global = Global()
-        global.deallocate(pointer, layout)
+        unsafe { global.deallocate(pointer, layout) }
     }
 
-    mut fn grow(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn grow(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
         throw AllocError(new_size, old.align())
     }
 
-    mut fn shrink(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
+    mut unsafe fn shrink(pointer: ptr<mut u8>, old: Layout, new_size: usize): ptr<mut u8> throws AllocError {
         throw AllocError(new_size, old.align())
     }
 }

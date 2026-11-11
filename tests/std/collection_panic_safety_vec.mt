@@ -287,7 +287,7 @@ fn main(): i32 {
         CatchResult.Returned(_) => { return 14 }
     }
     if values.len() != 0usize { return 15 }
-    if drop_count.get().load(core.sync.atomic.Ordering.SeqCst) != 1usize {
+    if drop_count.get().load(core.sync.atomic.Ordering.SeqCst) != 2usize {
         return 16
     }
     values.push(DropBomb(drop_count.retain(), false))
@@ -298,7 +298,7 @@ fn main(): i32 {
         }
         if value.panic_on_drop { return 18 }
     }
-    if drop_count.get().load(core.sync.atomic.Ordering.SeqCst) != 2usize {
+    if drop_count.get().load(core.sync.atomic.Ordering.SeqCst) != 3usize {
         return 19
     }
 
@@ -314,7 +314,7 @@ fn main(): i32 {
         CatchResult.Returned(_) => { return 20 }
     }
     if deque.len() != 1usize { return 21 }
-    if drop_count.get().load(core.sync.atomic.Ordering.SeqCst) != 3usize {
+    if drop_count.get().load(core.sync.atomic.Ordering.SeqCst) != 4usize {
         return 22
     }
     {
@@ -324,7 +324,7 @@ fn main(): i32 {
         }
         if value.panic_on_drop { return 24 }
     }
-    if drop_count.get().load(core.sync.atomic.Ordering.SeqCst) != 4usize {
+    if drop_count.get().load(core.sync.atomic.Ordering.SeqCst) != 5usize {
         return 25
     }
 
@@ -340,7 +340,7 @@ fn main(): i32 {
         CatchResult.Returned(_) => { return 26 }
     }
     if linked.len() != 1usize { return 27 }
-    if drop_count.get().load(core.sync.atomic.Ordering.SeqCst) != 5usize {
+    if drop_count.get().load(core.sync.atomic.Ordering.SeqCst) != 6usize {
         return 28
     }
     {
@@ -350,7 +350,7 @@ fn main(): i32 {
         }
         if value.panic_on_drop { return 30 }
     }
-    if drop_count.get().load(core.sync.atomic.Ordering.SeqCst) != 6usize {
+    if drop_count.get().load(core.sync.atomic.Ordering.SeqCst) != 7usize {
         return 31
     }
     0

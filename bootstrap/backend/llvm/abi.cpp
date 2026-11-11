@@ -49,12 +49,16 @@ CAbiValue CAbi::classify(Type type, bool result) {
   if (!layout.size)
     return value;
   std::vector<std::pair<Type, std::uint64_t>> leaves;
+  bool unalignedLeaf = false;
   std::function<void(Type, std::uint64_t)> flatten = [&](Type current,
                                                          std::uint64_t offset) {
     if (!context.program.types->isProduct(current) ||
         context.program.types->product(current).vector) {
-      if (context.layout(current).size)
+      const auto &leafLayout = context.layout(current);
+      if (leafLayout.size) {
         leaves.emplace_back(current, offset);
+        unalignedLeaf |= offset % leafLayout.alignment != 0;
+      }
       return;
     }
     const auto &record = context.program.types->product(current);
@@ -116,7 +120,17 @@ CAbiValue CAbi::classify(Type type, bool result) {
     value.indirect = true;
     return value;
   }
-  if (layout.size > 16 || layout.unaligned) {
+  // SysV permits one SSE vector followed by SSEUP chunks in registers.
+  if (!unalignedLeaf && (layout.size == 32 || layout.size == 64) &&
+      leaves.size() == 1 && leaves[0].second == 0 &&
+      context.program.types->isProduct(leaves[0].first) &&
+      context.program.types->product(leaves[0].first).vector &&
+      context.layout(leaves[0].first).size == layout.size) {
+    value.pieces.push_back(context.type(leaves[0].first));
+    value.offsets.push_back(0);
+    return value;
+  }
+  if (layout.size > 16 || unalignedLeaf) {
     value.indirect = true;
     value.byValue = !result;
     return value;
@@ -230,8 +244,9 @@ void CAbi::attributes(llvm::Function &function,
   unsigned index = 0;
   if (signature.result.indirect) {
     function.addParamAttr(
-        index, llvm::Attribute::getWithStructRetType(
-                   context.context, context.type(signature.result.type)));
+        index,
+        llvm::Attribute::getWithStructRetType(
+            context.context, context.storageType(signature.result.type)));
     function.addParamAttr(
         index, llvm::Attribute::getWithAlignment(
                    context.context,
@@ -247,8 +262,8 @@ void CAbi::attributes(llvm::Function &function,
     if (value.indirect) {
       if (value.byValue)
         function.addParamAttr(
-            index, llvm::Attribute::getWithByValType(context.context,
-                                                     context.type(value.type)));
+            index, llvm::Attribute::getWithByValType(
+                       context.context, context.storageType(value.type)));
       function.addParamAttr(
           index,
           llvm::Attribute::getWithAlignment(
@@ -280,7 +295,7 @@ std::vector<llvm::Value *> CAbi::encode(const CAbiValue &value,
     auto *storage = context.temporary(value.type);
     storage->setAlignment(
         llvm::Align(std::max<std::uint64_t>(8, context.alignment(value.type))));
-    context.builder.CreateStore(source, storage);
+    context.store(value.type, source, storage, storage->getAlign());
     return {storage};
   }
   auto size = context.layout(value.type).size;
@@ -294,7 +309,7 @@ std::vector<llvm::Value *> CAbi::encode(const CAbiValue &value,
   storage->setAlignment(
       llvm::Align(std::max<std::uint64_t>(16, context.alignment(value.type))));
   context.builder.CreateStore(llvm::Constant::getNullValue(buffer), storage);
-  context.builder.CreateStore(source, storage);
+  context.store(value.type, source, storage, storage->getAlign());
   std::vector<llvm::Value *> result;
   for (std::size_t i = 0; i < value.pieces.size(); ++i) {
     auto *pointer =
@@ -312,8 +327,7 @@ llvm::Value *CAbi::decode(const CAbiValue &value,
                ? llvm::Constant::getNullValue(context.type(value.type))
                : pieces[0];
   if (value.indirect)
-    return context.builder.CreateAlignedLoad(context.type(value.type),
-                                             pieces[0], llvm::Align(1));
+    return context.load(value.type, pieces[0], llvm::Align(1));
   auto size = context.layout(value.type).size;
   for (std::size_t i = 0; i < value.pieces.size(); ++i)
     size =
@@ -331,7 +345,7 @@ llvm::Value *CAbi::decode(const CAbiValue &value,
                                   context.builder.getInt64(value.offsets[i]));
     context.builder.CreateAlignedStore(pieces[i], pointer, llvm::Align(1));
   }
-  return context.builder.CreateLoad(context.type(value.type), storage);
+  return context.load(value.type, storage, storage->getAlign());
 }
 void CAbi::callAttributes(llvm::CallBase &call,
                           const CAbiSignature &signature) {
@@ -390,12 +404,15 @@ llvm::Value *CAbi::call(llvm::Value *target, const CAbiSignature &signature,
           ++floats;
         else
           integers += piece->isIntegerTy(128) ? 2 : 1;
-      // SysV unnamed wide vectors are stack arguments. Their LLVM vector type
-      // drives that lowering; they do not consume later aggregates' SSE budget.
-      if (!aarch64 && context.program.types->isProduct(type) &&
-          context.program.types->product(type).vector &&
-          context.layout(type).size > 16)
+      if (!aarch64 && parameter.pieces.size() == 1 &&
+          parameter.pieces[0]->isVectorTy() && context.layout(type).size > 16) {
         floats = 0;
+        if (parameter.aggregate) {
+          parameter.indirect = parameter.byValue = true;
+          parameter.pieces.clear();
+          parameter.offsets.clear();
+        }
+      }
       if (!aarch64 && parameter.aggregate &&
           (callSignature.integerRegisters + integers > 6 ||
            callSignature.floatRegisters + floats > 8)) {
@@ -416,8 +433,10 @@ llvm::Value *CAbi::call(llvm::Value *target, const CAbiSignature &signature,
   auto *call = context.builder.CreateCall(signature.type, target, physical);
   callAttributes(*call, callSignature);
   if (returned)
-    return context.builder.CreateLoad(context.type(signature.result.type),
-                                      returned);
+    return context.indirect(signature.result.type)
+               ? returned
+               : context.builder.CreateLoad(context.type(signature.result.type),
+                                            returned);
   std::vector<llvm::Value *> result;
   if (signature.result.pieces.size() == 1)
     result.push_back(call);
@@ -432,6 +451,7 @@ void CAbi::exportBody(llvm::Function &external, llvm::Function &body,
   context.builder.SetInsertPoint(
       llvm::BasicBlock::Create(context.context, "entry", &external));
   unsigned index = signature.result.indirect ? 1 : 0;
+  const bool indirectResult = context.indirect(signature.result.type);
   std::vector<llvm::Value *> arguments;
   for (const auto &parameter : signature.parameters) {
     std::vector<llvm::Value *> pieces;
@@ -440,11 +460,12 @@ void CAbi::exportBody(llvm::Function &external, llvm::Function &body,
       pieces.push_back(external.getArg(index++));
     arguments.push_back(decode(parameter, pieces));
   }
-  const bool cursor = signature.variadic && body.arg_size() > arguments.size();
-  if (cursor) {
+  llvm::AllocaInst *cursor = nullptr;
+  if (signature.variadic &&
+      body.arg_size() > arguments.size() + (indirectResult ? 1u : 0u)) {
     // This must remain in the physical variadic entry: the logical cleanup
     // wrapper has no access to the caller's incoming argument registers.
-    auto *cursor = context.temporary(
+    cursor = context.temporary(
         llvm::ArrayType::get(context.builder.getInt64Ty(), 3));
     cursor->setAlignment(llvm::Align(8));
     context.builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
@@ -453,7 +474,13 @@ void CAbi::exportBody(llvm::Function &external, llvm::Function &body,
                                {cursor});
     arguments.push_back(cursor);
   }
-  auto *result = context.builder.CreateCall(&body, arguments);
+  llvm::Value *returned = nullptr;
+  if (indirectResult) {
+    returned = context.temporary(signature.result.type);
+    arguments.push_back(returned);
+  }
+  auto *call = context.builder.CreateCall(&body, arguments);
+  llvm::Value *result = returned ? returned : call;
   if (cursor)
     // va_start and va_end stay in this physical entry. An unwinding callee
     // skips this, which is harmless where va_end is a no-op (the supported
@@ -461,9 +488,10 @@ void CAbi::exportBody(llvm::Function &external, llvm::Function &body,
     context.builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
                                    &context.module, llvm::Intrinsic::vaend,
                                    {context.builder.getPtrTy()}),
-                               {arguments.back()});
+                               {cursor});
   if (signature.result.indirect) {
-    context.builder.CreateStore(result, external.getArg(0));
+    context.store(signature.result.type, result, external.getArg(0),
+                  llvm::Align(context.alignment(signature.result.type)));
     context.builder.CreateRetVoid();
   } else {
     auto pieces = encode(signature.result, result);
@@ -506,8 +534,7 @@ llvm::Value *CAbi::variadicArgument(llvm::Value *cursor, Type type) {
         slot);
     if (indirect)
       address = builder.CreateLoad(builder.getPtrTy(), address);
-    return builder.CreateAlignedLoad(context.type(type), address,
-                                     llvm::Align(1));
+    return context.load(type, address, llvm::Align(1));
   };
   if (aarch64)
     return stackArgument(cursor, classified.indirect);

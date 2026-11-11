@@ -266,10 +266,12 @@ or interactive authorization. Windows console byte input/output requires the
 console adapter; invalid Unicode byte input is an I/O error, not invalid Text.
 
 Writer `write`/`write_line` formatting, `write_path`, `print`/`eprint`, message
-lifetimes and stdout-only SIGPIPE/exit-141 behavior are owned by library-surface
-sections 10 and 12. Fallible Writer operations preserve their first full error
-and partial output. This document does not broaden convenience termination to
-stderr, arbitrary sockets or ordinary fallible writers.
+lifetimes and stdout-only EPIPE-to-exit-141 convenience behavior are owned by
+library-surface sections 10 and 12. Fallible Writer operations preserve their
+first full error and partial output when an error is returned. The explicit
+convenience exit does not apply to stderr, arbitrary sockets or ordinary fallible
+writers. Independently, ordinary descriptor writes remain subject to the inherited
+SIGPIPE disposition.
 
 `pipe(): (PipeReader, PipeWriter) throws Error` returns two independent unique
 owners for a one-way byte stream. Reads block while empty with writers alive;
@@ -748,6 +750,11 @@ in every optimization profile; they do not wrap platform timestamps. Duration's
 independent native arithmetic rules still apply. Time comparison/clone/hash do
 not query a fresh clock or refresh a stored reading.
 
+The native `system_time_from_parts(secs: i64, nanos: u32)` constructor carries
+whole seconds from nanos and retains a fractional part below 1_000_000_000.
+That carry is checked: overflow of the signed seconds range panics in every
+optimization profile rather than wrapping the timestamp.
+
 ## 8. Threads, TLS and synchronization
 
 ### 8.1. Thread lifecycle
@@ -759,6 +766,8 @@ Builder name and minimum stack-size requests are owned configuration; actual
 stack size can be rounded up and invalid names containing NUL panic. Launch
 transfers closure ownership to the new thread; a failed launch destroys it
 without calling it.
+The spawned thread and its handles report the full configured name, including
+an empty name; without a configured name they report none.
 
 Thread start publishes the captured state to the child. `join(take handle)`
 waits, then returns owned output or the owned panic payload; completed child
@@ -811,6 +820,11 @@ AccessError, while `with` panics. Initialization reentrancy is not a supported
 way to obtain partially initialized storage and can panic or fail to terminate.
 Process exit/abort/foreign thread teardown do not promise full destructor runs.
 
+Replacing the entire stored T while a `with` callback borrows it must panic
+before mutation or destruction of that T. Callback cleanup releases this access
+on both return and panic. This does not prohibit mutation through a borrowed
+Cell or RefCell under that wrapper's own access rules.
+
 Cell-like key `set` directly installs/replaces without running the default
 initializer; replacement destroys the old initialized value. `get`, `replace`,
 `take`, `update` retain their Copy/default/callback bounds and transfer the
@@ -829,7 +843,7 @@ before ordinary unwinding continues.
 | `RwLockWriteGuard.downgrade(take guard)` | Atomically replace exclusive ownership by a read guard, without an intervening writer acquiring the lock. The old guard is consumed and must not unlock again. |
 | `is_poisoned`, `clear_poison`, `PoisonError.get_ref/get_mut/into_inner` | Query advisory state, explicitly clear it, or inspect/recover the stored acquired guard/value. Clearing does not repair T. A false query is not a guarantee against later poison. |
 | `get_mut(mut lock)`, `into_inner(take lock)` | Obtain exclusive T access or transfer T without locking, using the existing exclusive/owned authority. Poison remains an explicit result carrying the obtainable access/value. |
-| `Condvar.wait(take MutexGuard)` | Atomically release the associated mutex and wait; reacquire it before returning a guard or poison containing that guard. Spurious wakeups are allowed. A condition variable cannot be mixed across unrelated mutexes; this misuse may panic. |
+| `Condvar.wait(take MutexGuard)` | Atomically release the associated mutex and wait; reacquire it before returning a guard or poison containing that guard. Spurious wakeups are allowed. Concurrent waits must use the same mutex; reject a conflicting live association before entering the OS wait. Sequential reuse with another mutex is allowed after all waits finish. |
 | `wait_while`, timeout variants | Recheck predicate while holding the reacquired guard. Timeout status is a clock/wait observation, not proof the predicate is false. Repeated wakeups do not reset the total wait budget of a timeout-while call. |
 | `notify_one`, `notify_all` | Wake eligible current waiters, without accumulating a future notification token and without transferring the mutex. Publish shared data through the mutex, not the notification alone. |
 | `Barrier.new(n)`, `wait` | Reusable generations release participating threads once the generation's count is met; prior participant effects are visible after successful passage. One result per completed generation is designated leader. No cancellation removes a missing participant. |
@@ -889,6 +903,9 @@ receiver's application code has processed the value.
 The native `send_timeout` additionally returns T on expiration; it must not
 report a returned value that has also been accepted by a receiver.
 
+Receipt and reclamation bookkeeping belongs to each individual send attempt:
+a sender cannot reclaim another attempt's T or use its receipt as acknowledgment.
+
 `recv()` moves the oldest queued T or reports disconnection once all senders
 are gone and the queue is drained. `try_recv` distinguishes connected-empty from
 drained-disconnected. `recv_timeout` distinguishes timeout from disconnection.
@@ -904,6 +921,9 @@ values; dropping the final sender wakes blocked receivers. Dropping a failed
 send error drops its still-owned T. Buffered channels retain storage proportional
 to queued messages/capacity; a rendezvous needs synchronization storage but no
 message queue.
+
+Destroy accepted values discarded on receiver close without holding the internal
+queue lock across their user destructors; cleanup may reenter the channel.
 
 The native `Select` behavior remains the one in library-and-abi section 6:
 borrow same-item receivers, wait without polling, report a ready index without
@@ -1035,8 +1055,9 @@ shift or arithmetic operators merely by selecting these interfaces.
 | `try_clone` | Duplicate an owned reference to the same socket; options and traffic queues are shared. It does not create a new TCP connection or UDP port. |
 | `shutdown(Read/Write/Both)` | Disable the requested connection half; write shutdown follows already accepted bytes with end-of-stream where supported. Repeated shutdown can succeed or report a platform error. Dropping one cloned handle need not close the connection while others own it. |
 
-Socket option getters/setters borrow the owner. `set_nonblocking` changes shared
-socket mode; subsequent progress that would wait returns `WouldBlock`.
+Socket option getters/setters borrow the owner. Except for managed TCP listeners
+below, `set_nonblocking` changes shared kernel socket mode; subsequent progress
+that would wait returns `WouldBlock`.
 `set_nodelay` controls TCP's small-write coalescing; TTL/hop-limit setters preserve
 range validation and target errors. UDP broadcast, multicast loopback, TTL and
 join/leave membership operations act on the specified group/interface and can
@@ -1056,6 +1077,43 @@ deadline across an application loop.
 Native socket writes suppress socket-generated SIGPIPE at the socket/call
 boundary and return broken-pipe errors. They do not install a process-wide
 signal disposition or change stdout's selected policy.
+
+#### Managed TCP listeners
+
+Synchronous `TcpListener` keeps its listening socket physically nonblocking.
+`set_nonblocking` changes a logical mode shared by its managed `try_clone`
+family, not `O_NONBLOCK`. Each `accept` snapshots that mode at entry; a mode
+change affects later calls, not an already-running accept. Logical nonblocking
+never waits, even with an accept timeout configured. Logical blocking retries
+readiness loss using one monotonic deadline, or waits without a deadline when
+no timeout is set. Readiness stolen by a clone or raw accepter and interrupted
+syscalls do not restart the budget. Expiration is `TimedOut`; immediate
+nonblocking unavailability is `WouldBlock`, retaining the raw OS error.
+
+`set_accept_timeout` remains a per-handle budget, copied by `try_clone` and
+subsequently independently configurable; it is not a shared kernel option.
+Synchronous accepted `TcpStream` sockets are physically blocking, regardless
+of listener logical mode. Async listeners/streams retain their nonblocking
+readiness-driven behavior; no executor is required for synchronous waiting.
+
+Raw listener access exposes the actual permanently-nonblocking socket, even
+after `set_nonblocking(false)`. Foreign accept may consume connections but does
+not perform logical blocking. The logical mode is in-process clone-family
+state, not kernel state shared with arbitrary duplicates or across fork.
+Raw transfer never restores blocking, including for the last managed handle.
+
+The infallible `From<OwnedFd>` listener conversion is replaced by unsafe,
+fallible `TcpListener.from_owned_fd(take fd): TcpListener throws io.Error`.
+Adoption captures the existing physical mode as initial logical mode, establishes
+physical `O_NONBLOCK`, preserves other flags, and consumes/closes the transferred
+descriptor on failure. The caller must supply a suitable socket, have authority
+over every alias, and ensure no alias clears `O_NONBLOCK` or is independently
+re-adopted into another managed family while any managed listener remains.
+Owning one descriptor alone does not establish those facts. The constructor
+allocates shared mode state before its final flag change; normal allocation
+failure follows the selected allocation policy. Dropping closes each handle
+once and releases its shared state without restoring socket mode. This exception
+does not redesign `TcpStream`, `UdpSocket` or native-domain listeners.
 
 ### 9.3. Async wrappers and cancellation
 

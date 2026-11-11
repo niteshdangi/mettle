@@ -88,9 +88,10 @@ std::optional<std::string> stale(const Record &record,
 ProcedureHost::ProcedureHost(const Options &options,
                              std::vector<packages::Macro> macros,
                              std::vector<packages::Mount> hostPackages,
+                             ScriptResults scriptResults,
                              packages::Store *store, BuildInputs &inputs)
-    : options(options), hostPackages(std::move(hostPackages)), store(store),
-      inputs(inputs) {
+    : options(options), hostPackages(std::move(hostPackages)),
+      scriptResults(std::move(scriptResults)), store(store), inputs(inputs) {
   for (auto &macro : macros) {
     available.names.insert(macro.name);
     programs.push_back({std::move(macro), "", ""});
@@ -127,18 +128,10 @@ bool ProcedureHost::prepare() {
     host.noCache = options.noCache;
     host.explain = options.explain;
     host.packageContext = true;
+    host.packageInstance = macro.identity;
     host.injectedFeatures.insert(macro.features.begin(), macro.features.end());
     host.packageDependencies = macro.dependencies;
-    for (const auto &mount : hostPackages) {
-      resolution::Library::Package dependency;
-      dependency.name = mount.name;
-      dependency.source = mount.source;
-      dependency.module = mount.module;
-      dependency.dependencies = mount.dependencies;
-      dependency.features =
-          std::set<std::string>(mount.features.begin(), mount.features.end());
-      host.injectedPackages.push_back(std::move(dependency));
-    }
+    injectHostContext(host, hostPackages, scriptResults);
     std::uint64_t size = 0;
     auto hash = driver::run(host) == 0
                     ? packages::hashFile(program.binary, size)

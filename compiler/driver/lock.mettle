@@ -23,7 +23,7 @@ packages: [
         version: "0.1.0"
         id: "mettle-syntax@0.1.0|path+../syntax|target"
         source: "path+../syntax"
-        checksum: "sha256:a002637ecb403978fd3ccd11cf01045928478798e4f26661cf77e2853799e415"
+        checksum: "sha256:7cc2ea08171ce925e7db9f432af92c64b622d636957e7eeb48058e4ac8e76fd7"
         features: []
         dependencies: ["mettle-foundation@0.1.0|path+../foundation|target"]
     }

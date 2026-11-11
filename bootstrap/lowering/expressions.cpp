@@ -18,7 +18,7 @@ ir::Value Builder::expression(const Node &node, bool consume, bool valueUsed) {
                   facts.reborrowSource != Type::Unknown);
   auto value = facts.ownerUnsizeSource != Type::Unknown ? ownerCoercion(node)
                : adapted ? viewCoercion(node)
-                         : rawExpression(node, consume, valueUsed);
+                         : rawValue(node, consume, valueUsed);
   if (live() && facts.opaqueSource != Type::Unknown)
     value = track(emit({Op::Construct,
                         {},
@@ -52,13 +52,17 @@ ir::Value Builder::expression(const Node &node, bool consume, bool valueUsed) {
       value = emit(std::move(address), facts.callableCoercion);
     }
   }
-  if (live() && (node.kind == Kind::Call || facts.operatorCall) &&
-      module.facts(node).effect != Type::Unknown &&
-      !module.facts(node).optional && callHasFailure(node))
-    value = unwrapOutcome(value, node.span);
   if (live())
     for (auto type : module.facts(node).injections)
       value = variant(type, 1, {value}, node.span);
+  return value;
+}
+ir::Value Builder::rawValue(const Node &node, bool consume, bool valueUsed) {
+  auto value = rawExpression(node, consume, valueUsed);
+  const auto &facts = module.facts(node);
+  if (live() && (node.kind == Kind::Call || facts.operatorCall) &&
+      facts.effect != Type::Unknown && !facts.optional && callHasFailure(node))
+    value = unwrapOutcome(value, node.span);
   return value;
 }
 // Reading a Copy value through a view copies it; only owned places move.

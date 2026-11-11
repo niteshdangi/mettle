@@ -7,6 +7,14 @@
 import core.option
 import core.char.{from_u32, from_digit, Escape}
 import alloc.string
+import std.panic.CatchResult
+
+fn panics(take action: fn(): Unit): bool {
+    match take std.panic.catch_panic(action) {
+        CatchResult.Panicked(_) => true,
+        CatchResult.Returned(_) => false
+    }
+}
 
 fn digit_is(value: u32?, expected: u32): bool {
     match value {
@@ -46,8 +54,10 @@ fn checks_construction(): i32 {
     if !char_is(from_digit(10u32, 16u32), 'a') { return 9 }
     if !char_is(from_digit(35u32, 36u32), 'z') { return 10 }
     if from_digit(10u32, 10u32).is_present() { return 11 }
-    if from_digit(0u32, 1u32).is_present() { return 12 }
-    if from_digit(0u32, 37u32).is_present() { return 13 }
+    if !char_is(from_digit(0u32, 1u32), '0') { return 12 }
+    if !panics(fn(): Unit { let _ = from_digit(0u32, 37u32) }) { return 13 }
+    if from_digit(0u32, 0u32).is_present() { return 14 }
+    if from_digit(1u32, 1u32).is_present() { return 15 }
     0
 }
 
@@ -56,9 +66,14 @@ fn checks_digits(): i32 {
     if !digit_is('Z'.to_digit(36u32), 35u32) { return 21 }
     if 'g'.to_digit(16u32).is_present() { return 22 }
     if '9'.to_digit(8u32).is_present() { return 23 }
-    if 'z'.to_digit(37u32).is_present() { return 24 }
+    if !panics(fn(): Unit { let _ = 'z'.to_digit(37u32) }) { return 24 }
     if !'7'.is_digit(10u32) || '7'.is_digit(6u32) { return 25 }
     if '\u{0663}'.is_digit(10u32) { return 26 }
+    if !panics(fn(): Unit { let _ = '0'.to_digit(0u32) }) { return 110 }
+    if !panics(fn(): Unit { let _ = '0'.to_digit(1u32) }) { return 111 }
+    if !panics(fn(): Unit { let _ = '?'.is_digit(0u32) }) { return 112 }
+    if !panics(fn(): Unit { let _ = '?'.is_digit(1u32) }) { return 113 }
+    if !panics(fn(): Unit { let _ = '?'.is_digit(37u32) }) { return 114 }
     0
 }
 
@@ -143,7 +158,8 @@ fn checks_escapes(): i32 {
     if escape_text('\n'.escape_default()).as_text() != "\\n" { return 90 }
     if escape_text('\t'.escape_default()).as_text() != "\\t" { return 91 }
     if escape_text('\r'.escape_default()).as_text() != "\\r" { return 92 }
-    if escape_text('\0'.escape_default()).as_text() != "\\0" { return 93 }
+    if escape_text('\0'.escape_default()).as_text() != "\\u{0}" { return 93 }
+    if escape_text('\0'.escape_debug()).as_text() != "\\0" { return 115 }
     if escape_text('\\'.escape_default()).as_text() != "\\\\" { return 94 }
     if escape_text('\''.escape_default()).as_text() != "\\'" { return 95 }
     if escape_text('a'.escape_default()).as_text() != "a" { return 96 }

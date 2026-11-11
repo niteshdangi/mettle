@@ -5,7 +5,7 @@ import std.path.path_from_text
 
 fn run(): i32 throws Error {
     let root = path_from_text("fs-operations-scratch")
-    if std.fs.exists(root) { try std.fs.remove_dir_all(root) }
+    if try std.fs.exists(root) { try std.fs.remove_dir_all(root) }
     try std.fs.create_dir(root)
     let file = path_from_text("fs-operations-scratch/data.txt")
 
@@ -43,7 +43,7 @@ fn run(): i32 throws Error {
 
     try std.fs.rename(copied, path_from_text("fs-operations-scratch/moved.txt"))
     let moved = try std.fs.metadata(path_from_text("fs-operations-scratch/moved.txt"))
-    if moved.len() != 4u64 || std.fs.exists(copied) { return 7 }
+    if moved.len() != 4u64 || (try std.fs.exists(copied)) { return 7 }
 
     var perms = std.fs.permissions_from_mode(420u32)
     if perms.readonly() { return 8 }
@@ -57,7 +57,7 @@ fn run(): i32 throws Error {
     try std.fs.remove_file(path_from_text("fs-operations-scratch/moved.txt"))
     try std.fs.remove_file(file)
     try std.fs.remove_dir(root)
-    if std.fs.exists(root) { return 11 }
+    if try std.fs.exists(root) { return 11 }
     0
 }
 

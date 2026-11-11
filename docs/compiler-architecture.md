@@ -39,6 +39,7 @@ for them.
 | `resolution` | Compilation-local module identities, distinct type/value/module/macro namespaces, item/import scopes, package alias mounting, `pub(path)` visibility boundaries and canonical declaration names; source-provider-driven module assembly | Inference, backend types or filesystem I/O |
 | `packages` | `.mettle` data parsing, `package.mettle`/`lock.mettle` validation, SemVer requirements, dependency solving with features over path, local-registry and Git sources, checksums, the package build plan (mounts, build scripts and macro programs handed to the driver) and the content-addressed build store (`store`) | Source parsing, semantics, network access or artifact publication |
 | `types` | Compiler-owned language type identities/operations, source-oriented diagnostic type display, target facts and target-layout results | Parsed AST, LLVM types/target machines, toolchain state |
+| `metadata` | Versioned logical type/region graph encoding, bounded validation and transactional remapping into consumer stores | Source checking, cache/filesystem policy, executable admission, LLVM |
 | `consteval` | Pure target-aware compile-time interpreter over syntax: scalar/aggregate values at the selected target's integer widths, `const fn` calls, control flow, step/depth budgets (`error[limit]`); names and diagnostics come from a host interface | Name resolution, checker state, LLVM, host-width arithmetic |
 | `places` | Function-local storage roots, typed field paths and structural overlap | AST traversal, CFG control flow, mutability/loan policy |
 | `semantics` | Lexical resolution, module-resolution consumption, inference, flow facts and checked syntax | LLVM, code emission, filesystem/linker side effects |
@@ -48,7 +49,7 @@ for them.
 | `instances` | Canonical concrete function planning, type/const substitution, callable ABI adapters and const-array repeat/iteration expansion | Rechecking source under stronger instantiated ownership rights or selecting LLVM representations |
 | `cleanup` | Static owned-place flag hierarchy, lexical/unwind cleanup plans and ordering | LLVM types, per-object runtime registration, region inference |
 | `lint` | Semantic lints (`mettle lint`) over a checked module's side tables: unused bindings and `var`s, unused imports (recorded by `resolution` lookups), unreachable statements (checker flow summaries) and ignored Outcomes; level selection (flags, function attributes) | Mutating syntax, re-resolving names, LLVM, printing or exit policy |
-| `pipeline` | Backend-independent compilation entry points and stage ordering, including a read-only observer of the checked module before lowering | CLI parsing, output publication, package downloads |
+| `pipeline` | Backend-independent compilation entry points and stage ordering; verified symbolic declaration preparation, specialization and concrete admission; a read-only observer of the checked module before lowering | CLI parsing, output publication, package downloads |
 | `lsp` | `mettle lsp` language server: JSON-RPC/LSP framing over streams (`server.cpp`), a self-contained JSON reader/writer, UTF-16 position mapping, a token-based declaration/occurrence index that works on incomplete source (`symbols.cpp`), completion/signature help (`server.cpp`/`symbols.cpp`) and definition/reference/hover/rename planning (`navigation.cpp`); diagnostics and read-only checked facts come from the real front end (`resolution::load` + `pipeline::compile`) run on in-memory documents | LLVM, file I/O (the host supplies a source provider), process lifetime, checked-IR publication |
 | `backend` | LLVM adapter, target-machine setup, optimization and object emission | Discovering unresolved names/types or deciding ownership |
 | `driver` | CLI, inspection serialization, Git source fetching (system `git`), source loading, build-script and procedural-macro execution (`procedural.cpp`: host build, process run, reproducible-result reuse; `observe.cpp`: declared-input state shared with build scripts), cache-key assembly and lookup, artifact publication and native link invocation, `mettle run`/`test`/`bench` execution (`execute.cpp`: temporary builds, per-test process spawning and optional timeout, human/JSON result reporting, and doctest builds that overlay generated tests on package module sources and judge `compile_fail` examples from captured diagnostics) and `mettle doc` (`document.cpp`: package graph/name-resolution orchestration, path discovery, parse validation, warnings and output files) | Typing, inference, borrow rules or dataflow algorithms |
@@ -57,6 +58,13 @@ Components are build/link units, not processes or public plugin APIs. Public
 headers expose the minimum boundary; algorithm context and mutable state stay
 private. Trivial file splits, line limits and directory counts are not quality
 criteria.
+
+The package planner retains authoritative instance and checkout provenance.
+The driver alone materializes and locks writable host/target package views for
+host-tool execution, preserving relative paths while leaving verified Git
+sources immutable. Physical remapping does not change graph, lock, cache-routing
+or semantic package identities; generated sources inherit the declaring
+instance. No component dependency or public ABI changes are required.
 
 Conditional lists are source-owned `ConditionChain` nodes containing `Condition`
 clauses. Checking owns sequential binding scope, bool/pattern requirements and
@@ -79,6 +87,19 @@ owns contextual types, stable-const admission, source function frames, byte
 arrays and target endianness; semantics owns method/type/variant resolution and
 typed static materialization. IR verification validates the carrier before LLVM
 lowering.
+
+The evaluator's host supplies checked expression shapes and inferred function
+results; evaluation does not independently re-infer integer locals.
+Function and static identities are registered before header elaboration.
+An early constant requesting an inferred result checks the declaration and its
+dependencies through ordinary inference, preserving the caller's checking
+context. Referenced static headers resolve lazily with cycle detection;
+prechecked bodies and resolved signatures are reused by the ordinary pass.
+Static initializers containing lazy control flow are checked through temporary
+function contexts borrowing their existing syntax. These contexts are removed
+before publishing the checked module; the parsed static owns the syntax
+throughout. Type checking visits dead branches, while evaluation remains lazy.
+No component target or dependency changes are required.
 
 ### 1.1. Self-hosted compiler: package and incremental compilation contract
 
@@ -159,9 +180,9 @@ for package sources, outputs, debug data, linker scratch and temporary/cache
 bytes in build-storage measurements even where they are outside the cache cap.
 Clean builds must remain usable without a warm store.
 
-**Bootstrap and acceptance.** The current C++ compiler only reuses eligible
-debug dependency objects after whole-program checking; it cannot yet consume
-these compiled interfaces. It may build the seed compiler from package sources.
+**Bootstrap and acceptance.** The current C++ compiler reuses eligible debug
+dependency objects after whole-program checking and the checked native-library
+units described in section 1.2. It may build the seed compiler from package sources.
 Independent interface loading/query reuse must be implemented in the Mettle
 compiler before its build architecture is declared complete. First validate
 cross-package calls/generics/cleanup and clean-versus-incremental behavior,
@@ -171,6 +192,137 @@ input identities and comparing behavior and reproducible artifacts. Measure
 clean and edited build time, peak memory, total retained bytes and generated
 program runtime separately under the existing performance protocol. Package
 boundaries or self-compilation alone establish no performance or safety claim.
+
+### 1.2. Approved bootstrap compiled-interface work
+
+Status: checked `core`/`alloc`/`std` reuse is implemented. Focused cross-consumer
+interface/native-object, debug/Release, invalidation, macro, coroutine and
+diagnostic-parity checks pass. This is not whole-main qualification.
+The owner permits the C++ bootstrap work needed for this reusable boundary;
+this is not permission for unrelated bootstrap tuning or a test-only cache.
+The first delivery must reuse checked `core` across different consumers.
+`alloc` and `std` follow through the same format and import path. The format
+must remain implementable by the self-hosted compiler; no public metadata ABI
+stability is promised.
+
+Native interfaces are dependency-closed units: `core`, `core` plus `alloc`,
+or the hosted `core`/`alloc`/`std` closure. Each unit keys every included source
+and dependency identity. Loading a larger closure replaces smaller compiled
+headers before resolution; it does not append duplicate declarations or mix
+type stores. User-shadowed dependency roots disable that closure's compiled
+provider. Code generation still partitions eligible objects by native root.
+The same bounded store owns all units; source compilation remains the fallback
+when a closure cannot be snapshotted. This is a bootstrap packaging boundary,
+not a self-hosted package ABI or permission to add OS dependencies to `core`.
+
+The compiler-owned interface model separates exported declarations/contracts
+from verified symbolic IR and referenced private support definitions. Persist
+logical package/definition identities and structural type records, not C++
+objects, pointer graphs or compilation-local IDs. Readers remap references into
+consumer-owned stores and validate lengths, tags, references, compatibility,
+content identity and IR before use. Source revisions and source maps remain
+available for diagnostics. Constants, default arguments, macros, associated
+families, regions, implementation selection and cleanup are dependencies, not
+exceptions to the import contract.
+
+The frontend imports declaration/type/region/effect/implementation information
+without parsing or checking dependency bodies. Interfaces retain separate
+pre-region checking and finalized region implementation databases. Consumer
+body checking imports the former; region validation restores the finalized
+imported prefix while preserving consumer declarations. Regional implementation
+targets must not enter nominal receiver selection before that phase boundary.
+Imported implementation-owned callable bounds still populate consumer region
+context; only target decoration and dependency contract rechecking are skipped.
+The pipeline combines imported
+symbolic IR with newly checked consumer IR, resolves new instantiations and
+performs the required concrete verification. Existing constant evaluation must
+be able to consume imported constant bodies before those exports are eligible
+for reuse. The backend consumes only admitted IR and emits independently
+linkable objects in both profiles; no cross-package optimization is implicit.
+Cache eligibility must not silently erase any of these obligations.
+
+The constant evaluator accepts either an existing source declaration or a
+checked callable descriptor with resolved parameter/result shapes and borrowed
+expression storage. Both paths use the same interpreter, target arithmetic,
+default evaluation, unsafe checks and resource budgets. This removes the
+source-body requirement from constant calls. `semantics/library` owns the
+portable checked-expression arenas, resolved facts, declaration contracts and
+header codec. Imported calls retain the source path's declaration eligibility
+checks; importing a runtime-only declaration does not make it const-callable.
+
+Expansion can export and import complete indexed macro inventories with private
+support rules, imports/reexports, hygiene and token provenance. Logically equal
+overlapping inventories deduplicate; conflicting module inventories reject.
+The loader exports each source inventory to the host, which merges them through
+the same expansion validation instead of replacing earlier modules' exports.
+The host validates compiler/configuration/dependency identities and remaps
+revision-qualified sources into receiving diagnostics, restoring source bytes
+and generation provenance. Compiled rule mounting does not lex dependency
+source. This boundary alone does not establish whole-library reuse eligibility.
+
+`pipeline::prepare` seals symbolic IR only after declaration verification,
+initialization and loans. Its move-only `PreparedProgram` retains the language
+type store and implementation database, not the checked syntax tree.
+`pipeline::compile` consumes this state for specialization and concrete
+admission; ordinary source compilation uses that same path. This in-memory
+boundary does not bypass metadata validation or supply a persistent interface.
+
+`metadata::exportTypeGraph` and `importTypeGraph` encode semantic type/region
+records with logical definition/package/symbol references. Imports stage a
+candidate store and commit only after validation; archive references never
+become cross-build IDs. Structural types remain canonical with existing and
+future consumer-created types, and region ancestry/binders remap consistently.
+The host resolves logical function/interface/package identities without
+mutating the destination during import. Closure ordinals use a separate symbol
+domain from source function IDs; static identities have their own domain.
+The bootstrap metadata component depends on `types`, `source` and `support`,
+not the frontend or LLVM. Declaration/expression encoding belongs to semantics;
+symbolic-body encoding belongs to IR. Their shared references use the same
+artifact-local type roots and logical symbol domains.
+
+The driver-owned library archive retains revision-qualified source snapshots,
+generation mappings, syntax-context binder groups and source-module scopes.
+Wire source references are archive-relative; mounting allocates fresh IDs and
+restores provenance before imported declarations or macros use it. The envelope
+checks format, expected compiler/content/configuration identity and a SHA-256
+checksum; its sections still require their owning semantic decoders.
+Library discovery snapshots source bytes and the module inventory, including
+in-root source links, rather than trusting timestamps. Links outside the
+declared library root make that snapshot ineligible; the driver reports the
+reason with `--explain` and uses ordinary source compilation. Compiler, target,
+profile, checks, features and declared dependency identities participate in its key.
+The checked-library coordinator connects these sections through lazy native
+providers and a post-resolution pipeline importer. Unused native roots are not
+prepared, and user roots retain shadowing priority. Imported declarations and
+bodies still pass ordinary specialization and concrete admission. Native object
+keys include the actual lowered partition and its symbol references; differing
+consumer generic instances remain consumer-owned. Native partition verification
+failures stop compilation rather than silently switching emission paths.
+Coroutine frames use logical body identities. In split emission their body and
+unwind callbacks have hidden external linkage, and only the partition owning
+the coroutine body emits those definitions; layout-only users emit declarations.
+The focused receipts and remaining qualification scope are recorded in I09.
+Cold source failures retain their original phase, source spans, related notes
+and generated-source provenance when forwarded into consumer diagnostics.
+
+Use the existing content-addressed store, lease/publication/corruption handling
+and shared storage budget. Interface/object identities include compiler and
+format compatibility, dependency content/facts, target, features, macro inputs
+and relevant codegen/runtime policy. Visible implementation-set changes and
+failed name lookups participate in invalidation. Unknown dependencies cause a
+reported conservative miss; failed checking never publishes a success artifact.
+Corrupt or incompatible data is reported and rebuilt, never treated as proof
+that a package is valid.
+
+Core-first completion requires two different consumers to reuse one checked
+core interface and eligible native objects. Tests must distinguish that from
+whole-program cache hits and from merely reusing an object after rechecking
+core. Focused acceptance covers clean/warm equivalence, generics, constants,
+regions and cleanup, implementation/API/private-body edits, target/profile/
+feature changes, corruption, eviction and concurrent publication. Reused
+unchanged work and newly required instantiations must be distinguishable in
+the evidence. Record cold/warm time, memory and retained bytes; make no speedup
+claim before measurement. Runner changes alone do not complete this scope.
 
 ## 2. Syntax and checked representations
 
@@ -184,6 +336,13 @@ The Mettle lexer seed stores token kinds and spans into caller-owned UTF-8
 source bytes, without allocating a text string per token. Literal decoding
 consumes slices of that validated source; the source owner retains the bytes
 while syntax consumers use their spans.
+Identifier recognition uses the compiler's pinned Unicode 16.0 XID tables,
+independent of the character library's Unicode version. `Token.identifier`
+returns NFC bytes on demand, stripping backticks while preserving token/source
+spans; the lexer stores no normalized string per token. Canonical decomposition
+is pre-expanded in generated data, Hangul is algorithmic, and out-of-order
+nonstarter runs use stable counting sort before blocked canonical composition.
+`tools/identifier_tables.py` verifies UCD input hashes and reproduces the tables.
 
 The native parser owns the unchanged token list and contiguous node/child-ID
 arenas. Nodes carry source/token ranges, an optional operator-token index and
@@ -216,6 +375,14 @@ copies. External modules have no body; import nodes retain paths, aliases,
 grouped names, glob selection and visibility. Shared item dispatch and visibility
 parsing preserve enclosing spans; source loading and module identities remain
 resolution responsibilities.
+Product/union/enum members, interfaces/extensions and associated items, foreign
+signatures, patterns, condition chains, match arms/guards, closures, owner/error
+forms and interpolations retain dedicated syntax nodes. Slice/group projection
+subjects retain their structural type syntax. Attributes and macros retain
+balanced token trees; expansion owns matcher/schema validation and hygiene.
+The parser does not desugar these forms into library calls or checked facts.
+Bodyless interface signatures preserve their terminating newline. Nested blocks
+and interpolation holes isolate expression-header and generic-boundary state.
 
 Owner type annotations retain an `Owner` syntax form and resolve in semantics to
 the nominal `alloc` library types: `heap T` to `Box<T>`, `shared T` to `Arc<T>`,
@@ -276,6 +443,9 @@ nominal names unless two names in the same diagnostic collide.
 `types/regions` owns compilation-local region identities, declaration binders,
 universe ancestry and intersection regions. Names resolve to identities within
 each declaration; equal source spellings do not equate independent binders.
+Syntax retains each lexical region/source occurrence's span and syntax context.
+Semantics binds its spelling and expansion identity, including nested result
+sources; only resolved `RegionId`s cross into the type store and region solver.
 `semantics/region_solver` proves outlives and structural type-variance obligations
 under an explicit environment. Its cache includes assumptions, substitutions and
 the binder universe. Higher-ranked callable comparison uses fresh rigid target
@@ -304,8 +474,11 @@ Concurrency properties (Transferable/Shareable/Static) are structural proofs in
 `semantics/interface_solver`; immutable statics must be Shareable. Interface
 implementation candidates are indexed by interface declaration.
 Runtime normalization erases regions only after the semantic region checks;
-it never substitutes for those checks. Slice identities describe element-count
-metadata and lower through explicit unsizing, length and checked-index operations.
+it never substitutes for those checks. Early callable applicability may compare
+temporary region-erased type shapes while retaining both semantic operands;
+the regional pass opens their binders and proves the retained contracts before
+publication. Slice identities describe element-count metadata and lower through
+explicit unsizing, length and checked-index operations.
 Recursive region well-formedness that cannot yet be established reports an
 inconclusive limit diagnostic, not an accepted recursive proof.
 
@@ -327,6 +500,11 @@ Parsed declarations retain source spelling, lexical module paths and visibility
 syntax; immutable resolution side tables own canonical names and compilation-local
 module identities. Generic aliases expand under their declaration environment and preserve their
 source/module identities; evaluated const arguments participate in identity.
+The loader separately records each original and generated source's actual
+package-instance identity. The pipeline passes this provenance to resolution,
+which interns compilation-local package owners for semantic locality checks.
+Module/cache labels are not package owners; absent provenance never proves
+locality, and package zero has no special privilege.
 
 Concrete enum, optional and outcome descriptors own their alternatives and active
 payload field maps. Tuples, fixed arrays and ranges are structural identities (a range outside a `for` source is checked as a call of `core.iter.range`/`range_inclusive` when `core` is mounted);
@@ -429,7 +607,15 @@ Symbolic CFG functions retain their declaration interface bounds and equalities
 as proof-only metadata. Private representation normalization can reveal an opaque
 hidden representation after source checking, including associated result types;
 source lookup still exposes only the opaque declaration's public bounds.
+An opaque return publishes its implicit `Sized` contract before its hidden
+storage is known. Checking validates every selected hidden source after closure
+storage finalization and before publishing the checked module; this does not
+make unresolved inference types sized.
 Concrete instances discard declaration-only proof metadata.
+Closure bodies and callable type contracts preserve qualified carried-region
+sources for owned erased values, including owned capture environments; this
+transport inventory does not impose a borrowed-result requirement on static
+producers or turn every potential input into a declared source.
 
 Compact arrays: a concrete array of non-droppable elements with more than 64
 elements (1024 expanded when nested; `TypeStore::compactArrayShape`) is a
@@ -466,6 +652,9 @@ Borrowed slices use a private `{data, count}` representation. Borrowed erased
 interfaces use `{data, count, witness}`; the count is zero for sized implementors.
 The slice `len()` primitive reads element-count metadata through the verified
 `SliceLength` operation, evaluates its receiver once and returns `usize`.
+Array/slice counts and compiler-generated array cursors use target-width unsigned
+values verified against the full constant magnitude without truncation, including
+maximum-length zero-sized arrays.
 Immutable witness tables record the receiver metadata kind and concrete alignment,
 then method entries and verified parent-interface links. Calls reconstruct a
 slice handle when needed, rather than retaining an address into a temporary
@@ -909,7 +1098,10 @@ or a `NonNull` path, not for intrinsic pointer operations alone. Text literals
 reference `core.text`. Detection is lexical and may over-load but never
 under-loads. Mounted roots are ordinary modules with
 their own source identities, so diagnostics point into library files and bodies
-are fully checked. A user root module with the same name shadows the library
+are fully checked. All three builtin tiers, including preseeded macro sources,
+share one standard-library package instance in source ownership metadata; their
+mount names and layer restrictions remain distinct. A user root module with the
+same name shadows the library
 (freestanding and test setups define their own `core`); the intentional
 `core.ptr` source augmentation adds `NonNull` without replacing compiler-owned
 pointer operations. Other library and built-in `core` submodule names do not

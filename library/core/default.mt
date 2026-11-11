@@ -3,6 +3,8 @@
 // implementing type's own constructor does. `@derive(Default)` builds a product
 // from the default of each field.
 
+import super.clone.ArrayInit
+
 pub interface Default: Sized { static fn default(): Self; }
 
 extend i8 implements Default { static fn default(): i8 { 0i8 } }
@@ -32,17 +34,30 @@ extend<A: Default, B: Default, C: Default> (A, B, C) implements Default {
         (A.(Default).default(), B.(Default).default(), C.(Default).default())
     }
 }
-extend<T: Default, const N: usize> [T; N] implements Default {
-    static fn default(): [T; N] {
-        var result = core.mem.MaybeUninit<[T; N]>.uninit()
-        let slots = core.ptr.from_mut(result).cast<core.mem.MaybeUninit<T>>()
-        var i = 0usize
-        // Safety: every slot is in bounds and is written exactly once.
-        while i < N {
-            unsafe { mut *slots.add(i) }.write(T.(Default).default())
-            i += 1usize
-        }
-        // Safety: every element of the result array was initialized above.
-        unsafe { result.assume_init() }
-    }
+extend<T> [T; 0usize] implements Default {
+    static fn default(): [T; 0usize] { [] }
 }
+
+macro array_default {
+    ($($length:literal),*) => {
+        $(
+            extend<T: Default> [T; $length] implements Default {
+                static fn default(): [T; $length] {
+                    var result = ArrayInit<T, $length>.new()
+                    var i = 0usize
+                    while i < $length {
+                        result.push(T.(Default).default())
+                        i += 1usize
+                    }
+                    result.finish()
+                }
+            }
+        )*
+    };
+}
+
+array_default!(
+    1usize, 2usize, 3usize, 4usize, 5usize, 6usize, 7usize, 8usize,
+    9usize, 10usize, 11usize, 12usize, 13usize, 14usize, 15usize, 16usize,
+    17usize, 18usize, 19usize, 20usize, 21usize, 22usize, 23usize, 24usize,
+    25usize, 26usize, 27usize, 28usize, 29usize, 30usize, 31usize, 32usize)

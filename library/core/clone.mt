@@ -1,6 +1,7 @@
 // Explicit duplication. `clone` produces an independent value of the same
 // type; it never aliases the original's resources.
 import super.cmp.Ordering
+import super.slice.drop_values
 
 pub interface Clone: Sized {
     fn clone(): Self;
@@ -63,17 +64,51 @@ extend<T: Clone> T? implements Clone {
         }
     }
 }
+pub(super) type ArrayInit<T, const N: usize> {
+    storage: core.mem.MaybeUninit<[T; N]>
+    initialized: usize
+    drop {
+        let initialized = self.initialized
+        self.initialized = 0usize
+        // Safety: only the still-owned initialized prefix is destroyed.
+        unsafe {
+            drop_values(self.storage.as_mut_ptr().cast<T>(), initialized)
+        }
+    }
+}
+
+extend<T, const N: usize> ArrayInit<T, N> {
+    pub(super) static fn new(): ArrayInit<T, N> {
+        ArrayInit(core.mem.MaybeUninit<[T; N]>.uninit(), 0usize)
+    }
+    pub(super) mut fn push(take value: T): Unit {
+        if self.initialized == N { super.panic.panic("array is already initialized") }
+        // Safety: this is the next in-bounds uninitialized slot.
+        unsafe {
+            core.ptr.write(
+                self.storage.as_mut_ptr().cast<T>().add(self.initialized),
+                value
+            )
+        }
+        self.initialized += 1usize
+    }
+    pub(super) take fn finish(): [T; N] {
+        var guard = self
+        if guard.initialized != N { super.panic.panic("array is not initialized") }
+        guard.initialized = 0usize
+        // Safety: the complete array transfers out and the guard owns no elements.
+        unsafe { core.ptr.`read`(guard.storage.as_ptr()) }
+    }
+}
+
 extend<T: Clone, const N: usize> [T; N] implements Clone {
     fn clone(): [T; N] {
-        var result = core.mem.MaybeUninit<[T; N]>.uninit()
-        let slots = core.ptr.from_mut(result).cast<core.mem.MaybeUninit<T>>()
+        var result = ArrayInit<T, N>.new()
         var i = 0usize
-        // Safety: every slot is in bounds and is written exactly once.
         while i < N {
-            unsafe { mut *slots.add(i) }.write(self[i].clone())
+            result.push(self[i].clone())
             i += 1usize
         }
-        // Safety: every element of the result array was initialized above.
-        unsafe { result.assume_init() }
+        result.finish()
     }
 }

@@ -2,7 +2,7 @@
 module core {
     pub module ops {
         pub interface Deref { type Target; fn deref(): read Self.Target; }
-        pub interface DerefMut { type Target; mut fn deref_mut(): mut Self.Target; }
+        pub interface DerefMut: Deref { mut fn deref_mut(): mut Self.Target; }
     }
 }
 type Inner {
@@ -16,7 +16,6 @@ extend Wrapper implements core.ops.Deref {
     fn deref(): read Inner { read self.inner }
 }
 extend Wrapper implements core.ops.DerefMut {
-    type Target = Inner
     mut fn deref_mut(): mut Inner {
         self.projections += 1
         mut self.inner

@@ -324,25 +324,27 @@ private:
     if (!doc || !changes || !changes->asArray())
       return;
     auto before = doc->lines.contents();
+    LineIndex current(before);
     for (const auto &change : *changes->asArray()) {
       const auto *replacement = text(change.find("text"));
       if (!replacement)
         continue;
       const auto *range = change.find("range");
       if (!range) {
-        doc->replace(*replacement);
+        current = LineIndex(*replacement);
         continue;
       }
-      auto begin = doc->lines.offset(positionOf(range->find("start")));
-      auto end = doc->lines.offset(positionOf(range->find("end")));
+      auto begin = current.offset(positionOf(range->find("start")));
+      auto end = current.offset(positionOf(range->find("end")));
       if (end < begin)
         std::swap(begin, end);
-      auto edited = doc->lines.contents();
+      auto edited = current.contents();
       edited.replace(begin, end - begin, *replacement);
-      doc->replace(std::move(edited));
+      current = LineIndex(std::move(edited));
     }
-    if (doc->analyzed && doc->lines.contents() == before)
+    if (doc->analyzed && current.contents() == before)
       return;
+    doc->replace(current.contents());
     refresh(doc->path, doc);
   }
 
@@ -425,6 +427,8 @@ private:
                                            std::size_t offset, SymbolKind kind,
                                            Span declarationSpan,
                                            const std::string &ownerName) {
+                  if (declarationSpan.source != doc.sourceId)
+                    return;
                   const auto &items = doc.index.declarations();
                   for (std::size_t i = 0; i < items.size(); ++i) {
                     const auto &item = items[i];
@@ -469,7 +473,11 @@ private:
                     auto offset = member.span.end >= member.text.size()
                                       ? member.span.end - member.text.size()
                                       : member.span.begin;
-                    bindDeclaration(function.name, offset, SymbolKind::Function,
+                    auto dot = function.name.rfind('.');
+                    auto name = dot == std::string::npos
+                                    ? function.name
+                                    : function.name.substr(dot + 1);
+                    bindDeclaration(name, offset, SymbolKind::Function,
                                     function.span, {});
                   }
                 }

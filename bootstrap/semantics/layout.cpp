@@ -32,6 +32,28 @@ void Checker::checkBorrowAlignment() {
       if (node.kind == Kind::Unary &&
           (node.text == "read" || node.text == "mut"))
         require(*node.children[0]);
+      if ((resolved.operatorCall || resolved.indexView != Type::Unknown) &&
+          resolved.callee >= 0) {
+        const auto &callee = checked.functions[resolved.callee];
+        std::vector<const Node *> operands;
+        if (node.kind == Kind::Index && node.children[1]->kind == Kind::Range) {
+          const auto &range = *node.children[1];
+          operands.push_back(node.children[0].get());
+          operands.push_back(range.name.empty() || range.name == "from"
+                                 ? range.children.front().get()
+                                 : nullptr);
+          operands.push_back(range.name.empty() || range.name == "to"
+                                 ? range.children.back().get()
+                                 : nullptr);
+        } else
+          for (const auto &child : node.children)
+            operands.push_back(child.get());
+        for (std::size_t i = 0; i < operands.size() && i < callee.locals.size();
+             ++i)
+          if (operands[i] && (callee.locals[i].mode == ParameterMode::Read ||
+                              callee.locals[i].mode == ParameterMode::Mut))
+            require(*operands[i], true);
+      }
       if (node.kind != Kind::Call)
         return;
       if (!resolved.machineOperation.empty()) {

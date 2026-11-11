@@ -30,14 +30,15 @@ struct Example {
   std::size_t line = 0;
   Mode mode = Mode::Run;
   std::string phase, code;
+  std::size_t insertion = std::string::npos;
 };
 // The examples of a page in source order.
 std::vector<Example> examples(const Page &page);
 
 // The name of the generated test function of `examples[index]`.
 std::string testName(std::size_t index);
-// `source` followed by one `@test` function per picked example, so that each
-// runs in its own process of the ordinary test harness.
+// `source` with one `@test` function in each example's enclosing module, so
+// each runs in its own process of the ordinary test harness.
 std::string withTests(const std::string &source,
                       const std::vector<Example> &examples,
                       const std::vector<std::size_t> &picks);

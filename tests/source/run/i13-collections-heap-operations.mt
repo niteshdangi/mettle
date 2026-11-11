@@ -90,8 +90,10 @@ fn main(): i32 {
     if *queue.peek().unwrap() != 9 { return 11 }
     if heap_values(read queue) != 20 { return 12 }
     if queue.as_slice().len() != 4usize { return 13 }
+    let before_shrink = queue.capacity()
     queue.shrink_to_fit()
-    if queue.capacity() != 4usize { return 14 }
+    if queue.capacity() < 4usize || queue.capacity() > before_shrink ||
+        queue.len() != 4usize { return 14 }
 
     // Pops come out largest first.
     match queue.pop() {

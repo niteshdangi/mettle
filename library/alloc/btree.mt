@@ -4,7 +4,7 @@ import package.core.default.Default
 import package.core.cmp.{Eq, PartialEq, PartialOrd}
 import package.core.hash.{Hash, Hasher}
 import package.core.fmt
-import super.alloc.{Allocator, Global, AllocError, layout_unchecked, layout_of, handle_alloc_error, dangling_for}
+import super.alloc.{Allocator, Global, AllocError, layout_unchecked, layout_of, handle_alloc_error, dangling_for, free_block}
 import package.core.cmp.{Ord, Ordering}
 import package.core.borrow.KeyView
 
@@ -49,13 +49,12 @@ pub type SortedMap<K, V, A: Allocator = Global> {
     root: ptr<mut Node<K, V>>
     len: usize
     a: A
-    // Detach before invoking destructors; if one panics, remaining raw nodes
-    // may leak but this map is still empty and safe to drop again.
     drop {
         let root = self.root
+        let len = self.len
         self.root = null_node<K, V>()
         self.len = 0usize
-        unsafe { release_tree<K, V, A>(core.ptr.from_mut(self.a), root, true) }
+        unsafe { drop_tree<K, V, A>(core.ptr.from_mut(self.a), root, len) }
     }
 }
 
@@ -205,26 +204,30 @@ unsafe fn free_array<T, A: Allocator>(a: ptr<mut A>, p: ptr<mut T>, count: usize
 // A fresh empty node; a failed step releases the blocks already taken.
 unsafe fn alloc_node<K, V, A: Allocator>(a: ptr<mut A>, leaf: bool): ptr<mut Node<K, V>> throws AllocError {
     let entries = try alloc_array<Bucket<K, V>, A>(a, max_entries())
+    let entries_free = free_block(
+        entries.cast<u8>(),
+        layout_unchecked(core.mem.size_of<Bucket<K, V>>() * max_entries(), core.mem.align_of<Bucket<K, V>>()),
+        a
+    )
     let links = if leaf {
         core.ptr.null_mut<ptr<mut Node<K, V>>>()
     } else {
-        match capture alloc_array<ptr<mut Node<K, V>>, A>(a, max_entries() + 1usize) {
-            success(p) => p,
-            failure(e) => {
-                free_array<Bucket<K, V>, A>(a, entries, max_entries())
-                throw e
-            }
-        }
+        try alloc_array<ptr<mut Node<K, V>>, A>(a, max_entries() + 1usize)
     }
-    let header = match capture alloc_array<Node<K, V>, A>(a, 1usize) {
-        success(p) => p,
-        failure(e) => {
-            if !leaf { free_array<ptr<mut Node<K, V>>, A>(a, links, max_entries() + 1usize) }
-            free_array<Bucket<K, V>, A>(a, entries, max_entries())
-            throw e
-        }
+    let links_free = if leaf { none } else {
+        present(free_block(
+            links.cast<u8>(),
+            layout_unchecked(
+                core.mem.size_of<ptr<mut Node<K, V>>>() * (max_entries() + 1usize),
+                core.mem.align_of<ptr<mut Node<K, V>>>()
+            ),
+            a
+        ))
     }
+    let header = try alloc_array<Node<K, V>, A>(a, 1usize)
     core.ptr.write(header, Node(entries, links, null_node<K, V>(), 0usize, leaf))
+    core.mem.forget(take links_free)
+    core.mem.forget(take entries_free)
     header
 }
 // Releases the blocks of `n` only; its entries and children are not touched.
@@ -248,6 +251,44 @@ unsafe fn release_tree<K, V, A: Allocator>(a: ptr<mut A>, n: ptr<mut Node<K, V>>
     }
     if !leaf { release_tree<K, V, A>(a, node_child(n, len), drop_entries) }
     free_node<K, V, A>(a, n)
+}
+
+// Safety: the cursor skips dropped entries; all node headers and child links stay live.
+type TreeDrop<K, V, A: Allocator> {
+    a: ptr<mut A>
+    root: ptr<mut Node<K, V>>
+    node: ptr<mut Node<K, V>>
+    index: usize
+    remaining: usize
+    drop { self.run() }
+}
+
+extend<K, V, A: Allocator> TreeDrop<K, V, A> {
+    mut fn run(): Unit {
+        unsafe {
+            while self.remaining != 0usize {
+                let node = self.node
+                let index = self.index
+                self.remaining -= 1usize
+                if self.remaining != 0usize {
+                    let next = successor(node, index)
+                    self.node = next.0
+                    self.index = next.1
+                }
+                core.ptr.drop_in_place(node_entry(node, index))
+            }
+            let root = self.root
+            self.root = null_node<K, V>()
+            release_tree<K, V, A>(self.a, root, false)
+        }
+    }
+}
+
+// Safety: root owns len initialized entries; links stay live until the guard finishes.
+unsafe fn drop_tree<K, V, A: Allocator>(a: ptr<mut A>, root: ptr<mut Node<K, V>>, len: usize): Unit {
+    let first = first_pos(root)
+    var remaining = TreeDrop(a, root, first.0, first.1, len)
+    remaining.run()
 }
 
 // Moves the upper half of the full child `i` of `p` into the empty node
@@ -314,9 +355,10 @@ extend<K, V, A: Allocator> SortedMap<K, V, A> {
 
     pub mut fn clear(): Unit {
         let root = self.root
+        let len = self.len
         self.root = null_node<K, V>()
         self.len = 0usize
-        unsafe { release_tree<K, V, A>(core.ptr.from_mut(self.a), root, true) }
+        unsafe { drop_tree<K, V, A>(core.ptr.from_mut(self.a), root, len) }
     }
 
     // Merges the children `i` and `i + 1` of `p` and the entry between them
@@ -477,12 +519,13 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
         let entry = unsafe { self.take_entry(at.0, at.1) }
         present((entry.key, entry.value))
     }
-    // Entries with `from <= key < to` in ascending key order; empty when
-    // `to` is not above from.
+    // Entries with `from <= key < to`; reversed bounds panic.
     pub fn range(read from: K, read to: K): KeyRange<region self, K, V, A> {
         var start = (null_node<K, V>(), 0usize)
         var stop = (null_node<K, V>(), 0usize)
-        if from.cmp(to).is_lt() {
+        let order = from.cmp(to)
+        if order.is_gt() { super.alloc.panic_precondition() }
+        if order.is_lt() {
             start = unsafe { bound_pos(self.root, from) }
             stop = unsafe { bound_pos(self.root, to) }
         }
@@ -491,7 +534,9 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
     pub mut fn range_mut(read from: K, read to: K): RangeMut<region self, K, V, A> {
         var start = (null_node<K, V>(), 0usize)
         var stop = (null_node<K, V>(), 0usize)
-        if from.cmp(to).is_lt() {
+        let order = from.cmp(to)
+        if order.is_gt() { super.alloc.panic_precondition() }
+        if order.is_lt() {
             start = unsafe { bound_pos(self.root, from) }
             stop = unsafe { bound_pos(self.root, to) }
         }
@@ -545,16 +590,12 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
             } else if (*self.root).len == max_entries() {
                 let old = self.root
                 let right = try alloc_node<K, V, A>(a, (*old).leaf)
-                let top = match capture alloc_node<K, V, A>(a, false) {
-                    success(n) => n,
-                    failure(e) => {
-                        free_node<K, V, A>(a, right)
-                        throw e
-                    }
-                }
+                var right_guard = CloneNodeGuard(a, right, 0usize, 0usize)
+                let top = try alloc_node<K, V, A>(a, false)
                 set_child(top, 0usize, old)
                 split_into(top, 0usize, right)
                 self.root = top
+                right_guard.node = null_node<K, V>()
             }
             var node = self.root
             while true {
@@ -851,39 +892,45 @@ extend<K: Ord, A: Allocator> SortedSet<K, A> {
 }
 
 pub type SortedSetAlgebra<region r, K, A: Allocator> {
-    left: read SortedSet<K, A> from r
-    right: read SortedSet<K, A> from r
     left_iter: Keys<region r, K, Unit, A>
     right_iter: Keys<region r, K, Unit, A>
+    left: (read K from r)?
+    right: (read K from r)?
     mode: u8
-    side: u8
 }
 extend<region r, K: Ord, A: Allocator> SortedSetAlgebra<region r, K, A> implements Iterator {
     type Item = read K from r
     mut fn next(): (read K from r)? {
-        while self.side < 2u8 {
-            if self.mode == 1u8 && self.side == 1u8 { return none }
-            if self.side == 0u8 {
-                match self.left_iter.next() {
-                    present(key) => {
-                        let in_right = self.right.contains(key)
-                        let include = match self.mode {
-                            0u8 => true,
-                            1u8 => in_right,
-                            2u8 => !in_right,
-                            _ => !in_right
+        while true {
+            if self.left.is_none() { self.left = self.left_iter.next() }
+            if self.right.is_none() { self.right = self.right_iter.next() }
+            match self.left {
+                present(left) => match self.right {
+                    present(right) => {
+                        let order = left.cmp(right)
+                        if order.is_lt() {
+                            self.left = none
+                            if self.mode != 1u8 { return present(left) }
+                        } else if order.is_gt() {
+                            self.right = none
+                            if self.mode == 0u8 || self.mode == 3u8 { return present(right) }
+                        } else {
+                            self.left = none
+                            self.right = none
+                            if self.mode == 0u8 || self.mode == 1u8 { return present(left) }
                         }
-                        if include { return present(key) }
                     },
-                    none => { self.side = 1u8 }
-                }
-            } else {
-                match self.right_iter.next() {
-                    present(key) => {
-                        let in_left = self.left.contains(key)
-                        if (self.mode == 0u8 || self.mode == 3u8) && !in_left {
-                            return present(key)
-                        }
+                    none => {
+                        self.left = none
+                        if self.mode != 1u8 { return present(left) }
+                        return none
+                    },
+                },
+                none => match self.right {
+                    present(right) => {
+                        self.right = none
+                        if self.mode == 0u8 || self.mode == 3u8 { return present(right) }
+                        return none
                     },
                     none => { return none }
                 }
@@ -895,16 +942,16 @@ extend<region r, K: Ord, A: Allocator> SortedSetAlgebra<region r, K, A> implemen
 
 extend<K: Ord, A: Allocator> SortedSet<K, A> {
     pub fn `union`(read other: SortedSet<K, A> from self): SortedSetAlgebra<region self, K, A> {
-        SortedSetAlgebra(read self, read other, self.iter(), other.iter(), 0u8, 0u8)
+        SortedSetAlgebra(self.iter(), other.iter(), none, none, 0u8)
     }
     pub fn intersection(read other: SortedSet<K, A> from self): SortedSetAlgebra<region self, K, A> {
-        SortedSetAlgebra(read self, read other, self.iter(), other.iter(), 1u8, 0u8)
+        SortedSetAlgebra(self.iter(), other.iter(), none, none, 1u8)
     }
     pub fn difference(read other: SortedSet<K, A> from self): SortedSetAlgebra<region self, K, A> {
-        SortedSetAlgebra(read self, read other, self.iter(), other.iter(), 2u8, 0u8)
+        SortedSetAlgebra(self.iter(), other.iter(), none, none, 2u8)
     }
     pub fn symmetric_difference(read other: SortedSet<K, A> from self): SortedSetAlgebra<region self, K, A> {
-        SortedSetAlgebra(read self, read other, self.iter(), other.iter(), 3u8, 0u8)
+        SortedSetAlgebra(self.iter(), other.iter(), none, none, 3u8)
     }
     pub fn is_subset(read other: SortedSet<K, A>): bool {
         var iter = self.iter()
@@ -1148,20 +1195,10 @@ pub type MapIntoIter<K, V, A: Allocator> {
     back_idx: usize
     left: usize
     drop {
-        unsafe {
-            while self.left != 0usize {
-                let n = self.node
-                let i = self.idx
-                self.left -= 1usize
-                if self.left != 0usize {
-                    let after = successor(n, i)
-                    self.node = after.0
-                    self.idx = after.1
-                }
-                core.ptr.drop_in_place(node_entry(n, i))
-            }
-            release_tree<K, V, A>(core.ptr.from_mut(self.a), self.root, false)
-        }
+        var remaining = TreeDrop(core.ptr.from_mut(self.a), self.root, self.node, self.idx, self.left)
+        self.root = null_node<K, V>()
+        self.left = 0usize
+        remaining.run()
     }
 }
 extend<K, V, A: Allocator> SortedMap<K, V, A> implements OwnedIterable {
@@ -1621,29 +1658,53 @@ extend<K, V, A: Allocator> SortedMap<K, V, A> {
     }
 }
 
-// Copies the subtree at `n` node for node, giving the copy `parent`.
-// A panicking `clone` leaks the partial copy.
+// Safety: entries and children count exactly the initialized owned prefix of each raw array.
+type CloneNodeGuard<K, V, A: Allocator> {
+    a: ptr<mut A>
+    node: ptr<mut Node<K, V>>
+    entries: usize
+    children: usize
+    drop {
+        if self.node != null_node<K, V>() {
+            unsafe {
+                var index = 0usize
+                while index < self.children {
+                    release_tree<K, V, A>(self.a, node_child(self.node, index), true)
+                    index += 1usize
+                }
+                super.vec.drop_run((*self.node).entries, self.entries)
+                free_node<K, V, A>(self.a, self.node)
+            }
+        }
+    }
+}
+
+// Copies the subtree at n; the guard owns only initialized entries and child links.
 unsafe fn clone_tree<K: Clone, V: Clone, A: Allocator>(a: ptr<mut A>, n: ptr<mut Node<K, V>>, parent: ptr<mut Node<K, V>>): ptr<mut Node<K, V>> {
     let twin = match capture alloc_node<K, V, A>(a, (*n).leaf) {
         success(c) => c,
         failure(_) => handle_alloc_error(layout_of<Node<K, V>>())
     }
+    var guard = CloneNodeGuard(a, twin, 0usize, 0usize)
     (*twin).parent = parent
     let len = (*n).len
     var i = 0usize
     while i < len {
         let e = node_entry(n, i)
         core.ptr.write(node_entry(twin, i), Bucket((*e).key.clone(), (*e).value.clone()))
+        guard.entries += 1usize
         i += 1usize
     }
     if !(*n).leaf {
         var j = 0usize
         while j <= len {
             *(*twin).children.add(j) = clone_tree<K, V, A>(a, node_child(n, j), twin)
+            guard.children += 1usize
             j += 1usize
         }
     }
     (*twin).len = len
+    guard.node = null_node<K, V>()
     twin
 }
 extend<K: Clone, V: Clone, A: Allocator + Clone> SortedMap<K, V, A> implements Clone {

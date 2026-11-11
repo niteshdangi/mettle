@@ -83,12 +83,13 @@ void Checker::parameterDefaults(Function &function) {
     } else if (defaulted)
       error("type", parameter.span,
             "required parameters cannot follow defaulted parameters");
-    if (auto found = parameterScope.find(parameter.name);
+    if (auto found =
+            parameterScope.find(nameKey(parameter.name, parameter.context));
         found != parameterScope.end()) {
-      if (scopes.back().contains(parameter.name))
+      if (scopes.back().contains(nameKey(parameter.name, parameter.context)))
         error("name", parameter.span,
               "duplicate parameter binding '" + parameter.name + "'");
-      scopes.back()[parameter.name] = found->second;
+      scopes.back()[nameKey(parameter.name, parameter.context)] = found->second;
     }
     if (parameter.pattern) {
       auto variable = localVariables[&function][i];
@@ -124,7 +125,8 @@ void Checker::completeArguments(Node &node, Function &function,
   for (std::size_t i = 0; i < function.parameters.size(); ++i) {
     if (i < used.size() && used[i])
       continue;
-    if (function.parameters[i].defaultValue.get())
+    if (checked.hasDefault(
+            static_cast<std::size_t>(&function - module.functions.data()), i))
       facts(node).defaultArguments.push_back(i);
     else if (reportMissing)
       error("type", node.span,

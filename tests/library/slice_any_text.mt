@@ -126,7 +126,14 @@ fn main(): i32 {
     var acc = 0usize
     while true { match ci.next() { present(q) => { acc = acc * 10usize + q.0 }, none => { break } } }
     if acc != 13usize { return 28 }
-    if count("a,b,,c".split(",")) != 4usize || count("".split(",")) != 1usize || count("abc".split("")) != 1usize { return 29 }
+    if count("a,b,,c".split(",")) != 4usize || count("".split(",")) != 1usize || count("abc".split("")) != 5usize { return 29 }
+    if count("".split("")) != 2usize { return 37 }
+    var scalar_fields = "a\u{e9}".split("")
+    match scalar_fields.next() { present(field) => { if field != "" { return 37 } }, none => { return 37 } }
+    match scalar_fields.next() { present(field) => { if field != "a" { return 37 } }, none => { return 37 } }
+    match scalar_fields.next() { present(field) => { if field != "\u{e9}" { return 37 } }, none => { return 37 } }
+    match scalar_fields.next() { present(field) => { if field != "" { return 37 } }, none => { return 37 } }
+    match scalar_fields.next() { present(_) => { return 37 }, none => {} }
     if count("x\ny\r\nz\n".lines()) != 3usize || count("".lines()) != 0usize || count("\n".lines()) != 1usize { return 30 }
     var l2 = "ab\r\ncd".lines()
     match l2.next() { present(q) => { if q != "ab" { return 31 } }, none => { return 31 } }

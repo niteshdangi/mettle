@@ -1,7 +1,28 @@
 #include "syntax/parser/detail.h"
+#include <algorithm>
 #include <charconv>
 
 namespace mettle::parsing {
+namespace {
+unsigned typeDepth(const TypeSyntax &type) {
+  unsigned depth = 0;
+  if (type.nested)
+    depth = typeDepth(*type.nested);
+  for (const auto &element : type.elements)
+    depth = std::max(depth, typeDepth(element));
+  for (const auto &argument : type.arguments)
+    if (argument.type)
+      depth = std::max(depth, typeDepth(*argument.type));
+  if (type.callable) {
+    for (const auto &parameter : type.callable->parameters)
+      depth = std::max(depth, typeDepth(parameter.annotation));
+    depth = std::max(depth, typeDepth(type.callable->result));
+    depth = std::max(depth, typeDepth(type.callable->error));
+  }
+  return depth + 1;
+}
+} // namespace
+
 TypeSyntax Parser::type(bool effect) {
   StateGuard guard(*this);
   if (++nesting > limits::parserNesting)
@@ -14,7 +35,7 @@ TypeSyntax Parser::type(bool effect) {
     feature("'take' is an access mode, not a type qualifier");
   if (is("(") && peek(1).text == ")")
     fail("use Unit in type positions; () is a value");
-  std::vector<std::string> binders;
+  std::vector<LexicalNameSyntax> binders;
   if (is("for")) {
     auto saved = position;
     expect("for");
@@ -27,7 +48,8 @@ TypeSyntax Parser::type(bool effect) {
       for (const auto &parameter : parameters) {
         if (parameter.kind != GenericParameterKind::Region)
           fail("higher-ranked binders may contain only regions");
-        binders.push_back(parameter.name);
+        binders.push_back(
+            {parameter.name, parameter.nameSpan, parameter.context});
       }
     }
   }
@@ -102,6 +124,7 @@ TypeSyntax Parser::type(bool effect) {
   } else {
     if (is("fn"))
       feature("callable types require callable typing");
+    result.context = peek().context;
     auto components = path();
     for (const auto &component : components) {
       if (!result.name.empty())
@@ -128,6 +151,9 @@ TypeSyntax Parser::type(bool effect) {
     }
   }
   result.binders = std::move(binders);
+  auto depth = typeDepth(result);
+  if (depth > limits::parserNesting)
+    fail("type nesting limit exceeded", "limit");
   while (is(".") && peek(1).text == "(") {
     TypeSyntax projection;
     projection.form = TypeForm::Projection;
@@ -143,12 +169,17 @@ TypeSyntax Parser::type(bool effect) {
     if (genericOpen())
       projection.arguments = genericArguments();
     result = std::move(projection);
+    depth = typeDepth(result);
+    if (depth > limits::parserNesting)
+      fail("type nesting limit exceeded", "limit");
   }
   while (is("?") || is("??")) {
-    auto depth = take("??") ? 2 : 1;
-    if (depth == 1)
+    auto wrappers = take("??") ? 2 : 1;
+    if (wrappers == 1)
       expect("?");
-    for (int i = 0; i < depth; ++i) {
+    for (int i = 0; i < wrappers; ++i) {
+      if (++depth > limits::parserNesting)
+        fail("type nesting limit exceeded", "limit");
       TypeSyntax optional;
       optional.form = TypeForm::Optional;
       optional.nested = std::make_shared<const TypeSyntax>(std::move(result));
@@ -156,6 +187,8 @@ TypeSyntax Parser::type(bool effect) {
     }
   }
   if (!view.empty()) {
+    if (++depth > limits::parserNesting)
+      fail("type nesting limit exceeded", "limit");
     TypeSyntax borrowed;
     borrowed.view = std::move(view);
     borrowed.nested = std::make_shared<const TypeSyntax>(std::move(result));
@@ -164,7 +197,9 @@ TypeSyntax Parser::type(bool effect) {
   if (take("from")) {
     bool grouped = take("(");
     do {
-      result.sources.push_back(take("static") ? "static" : name().text);
+      auto token = peek();
+      result.sources.push_back(
+          {take("static") ? "static" : name().text, token.span, token.context});
     } while (grouped && take(","));
     if (grouped)
       expect(")");

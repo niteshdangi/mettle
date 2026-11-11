@@ -62,8 +62,7 @@ std::optional<ObjectLayout> objectLayout(const TypeStore &types, Type type) {
         result.fields = {0, 8, 16};
       return result;
     }
-    if (!types.isProduct(current) || active.size() >= 128 ||
-        !active.insert(current).second)
+    if (!types.isProduct(current) || !active.insert(current).second)
       return std::nullopt;
     const auto &record = types.product(current);
     if (record.vector) {
@@ -96,14 +95,15 @@ std::optional<ObjectLayout> objectLayout(const TypeStore &types, Type type) {
       return hidden;
     }
     if (record.kind == AggregateKind::Array) {
-      if (record.components.empty() ||
-          (record.arrayCount != Type::Unknown &&
-           !types.constantValue(record.arrayCount)))
+      if (record.components.empty())
+        return std::nullopt;
+      auto length = types.arrayLength(current);
+      if (!length)
         return std::nullopt;
       auto element = visit(record.components[0]);
       if (!element)
         return std::nullopt;
-      auto count = *types.arrayLength(current);
+      auto count = *length;
       auto stride = align(element->size, element->alignment);
       if (count && stride > std::numeric_limits<std::uint64_t>::max() / count)
         return std::nullopt;
@@ -173,19 +173,16 @@ std::optional<ObjectLayout> objectLayout(const TypeStore &types, Type type) {
       return complete();
     }
     if (record.layout.kind == LayoutKind::Transparent) {
-      std::size_t nonzero = 0;
+      std::size_t relevant = 0;
       auto first = record.kind == AggregateKind::Enumeration ? 1u : 0u;
       for (std::size_t i = first; i < members.size(); ++i) {
         const auto &member = members[i];
-        if (member.size) {
+        if (member.size || member.alignment != 1) {
           result = member;
-          ++nonzero;
-        } else if (member.alignment != 1) {
-          active.erase(current);
-          return std::nullopt;
+          ++relevant;
         }
       }
-      if (nonzero != 1) {
+      if (relevant > 1) {
         active.erase(current);
         return std::nullopt;
       }
@@ -279,8 +276,11 @@ bool cCompatible(const TypeStore &types, Type type) {
       const auto &record = types.product(current);
       result = record.layout.kind != LayoutKind::Native ||
                record.kind == AggregateKind::Array;
-      for (const auto &field : record.fields)
-        result &= visit(field.type);
+      if (record.kind == AggregateKind::Array && !record.components.empty())
+        result &= visit(record.components[0]);
+      else
+        for (const auto &field : record.fields)
+          result &= visit(field.type);
     }
     active.erase(current);
     return result;

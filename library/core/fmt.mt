@@ -230,12 +230,12 @@ extend<region r> Formatter<region r> {
 
     // Numbers: `digits` has no sign or prefix; zero-padding goes after them.
     pub mut fn pad_integral(non_negative: bool, read prefix: Text, read digits: Text): Unit throws Error {
-        var length = digits.len()
+        var length = prefix_extent(digits, none).0
         var sign: char? = none
         if !non_negative { sign = present('-'); length += 1usize }
         else if self.options.plus { sign = present('+'); length += 1usize }
         let has_prefix = self.options.alternate
-        if has_prefix { length += prefix.len() }
+        if has_prefix { length += prefix_extent(prefix, none).0 }
         let width = match self.options.width { present(w) => w, none => 0usize }
         if self.options.zero && length < width {
             match sign { present(c) => { try self.emit_char(c) }, none => {} }
@@ -407,7 +407,7 @@ pub fn text_field(read value: Text, read prefix: Text): Field {
 // Values that can fill a `{hole}`: any sized `Display` type (integers, floats,
 // `bool`, `char`, `String` and user types) through one blanket implementation,
 // and `Text`, whose unsized view is carried directly.
-pub interface Hole { fn hole(read prefix: Text): Field; }
+interface Hole { fn hole(read prefix: Text): Field; }
 extend<T: Display> T implements Hole {
     fn hole(read prefix: Text): Field { sized(read self, prefix) }
 }
@@ -422,7 +422,7 @@ pub unsafe fn message<region r>(read fields: [Field] from r, read tail: Text): M
     Message(read fields, piece(tail))
 }
 unsafe fn no_fields<region r>(read anchor: Text from r): read [Field] from r {
-    unsafe { slice.from_raw_parts(slice.data(anchor.as_bytes()).cast<Field>(), 0usize) }
+    unsafe { slice.from_raw_parts(core.ptr.NonNull<Field>.dangling().as_ptr().cast_const(), 0usize) }
 }
 pub unsafe fn literal<region r>(read tail: Text from r): Message<region r> {
     unsafe { message(no_fields(tail), tail) }
@@ -470,7 +470,10 @@ extend<region r> BufferWriter<region r> implements Write {
 // which the writer no longer borrows once it is last used.
 pub fn written_text(read buffer: [u8], length: usize): (read Text from buffer)? {
     match slice.subslice(buffer, 0usize, length) {
-        present(bytes) => super.text.from_utf8(bytes),
+        present(bytes) => match super.text.from_utf8(bytes) {
+            success(text) => present(text),
+            failure(_) => none
+        },
         none => none
     }
 }
@@ -510,6 +513,7 @@ fn digit_char(digit: u64, upper: bool): u8 {
 }
 
 pub fn fmt_radix(mut f: Formatter, magnitude: u64, negative: bool, radix: u64, upper: bool, read prefix: Text): Unit throws Error {
+    if radix < 2u64 || radix > 36u64 { super.panic.panic("format radix must be in 2..36") }
     var digits = [0u8; 64]
     var start = 64usize
     var rest = magnitude
@@ -795,11 +799,13 @@ extend char implements Display {
 }
 
 fn escape_char(mut f: Formatter, value: char, quote: char): Unit throws Error {
-    if value == quote || value == '\\' { try f.write_char('\\'); return try f.write_char(value) }
-    if value == '\n' { return try f.write_str("\\n") }
-    if value == '\r' { return try f.write_str("\\r") }
-    if value == '\t' { return try f.write_str("\\t") }
-    try f.write_char(value)
+    var escaped = value.escape_debug_ext(quote == '\'', quote == '"', true)
+    while true {
+        match escaped.next() {
+            present(c) => { try f.write_char(c) },
+            none => { break }
+        }
+    }
 }
 extend Text implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {

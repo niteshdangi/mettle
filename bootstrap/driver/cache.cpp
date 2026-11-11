@@ -23,9 +23,8 @@ std::string digest(const std::string &text) {
   return hash.finish();
 }
 
-// Hash of the lexical content of a source: comments, spaces and runs of
-// newlines do not take part. A source that does not lex cleanly is hashed
-// whole.
+// Hash lexical content with parser-significant line breaks. A source that
+// does not lex cleanly is hashed whole.
 std::string tokenDigest(const Source &source) {
   Diagnostics scratch;
   auto tokens = tokenize(source, scratch);
@@ -35,8 +34,13 @@ std::string tokenDigest(const Source &source) {
   // A run of line breaks counts once, and only between two tokens.
   bool started = false, newline = false;
   for (const auto &token : tokens) {
-    if (token.kind == TokenKind::Space || token.kind == TokenKind::Comment)
+    if (token.kind == TokenKind::Space)
       continue;
+    if (token.kind == TokenKind::Comment) {
+      if (token.text.find_first_of("\r\n") != std::string::npos)
+        newline = started;
+      continue;
+    }
     if (token.kind == TokenKind::Newline) {
       newline = started;
       continue;
@@ -174,7 +178,8 @@ BuildInputs::key(const Options &options,
 std::optional<std::string> BuildInputs::packageObjectKey(
     const std::string &identity, const std::vector<std::string> &sources,
     const std::vector<std::pair<std::string, std::string>> &dependencies,
-    const std::set<std::string> &features, const Options &options) const {
+    const std::set<std::string> &features, const Options &options,
+    const std::string &nativePartition) const {
   if (!packageInputsSafe || identity.empty() || sources.empty())
     return std::nullopt;
   packages::Sha256 hash;
@@ -182,7 +187,7 @@ std::optional<std::string> BuildInputs::packageObjectKey(
     hash.update(field);
     hash.update(std::string_view("\0", 1));
   };
-  add("mettle-package-object-key-1");
+  add("mettle-package-object-key-2");
   add(identity);
   add(compilerIdentity());
   add(options.target);
@@ -218,6 +223,7 @@ std::optional<std::string> BuildInputs::packageObjectKey(
     add("absent:" + path);
   for (const auto &[alias, dependency] : dependencies)
     add("dependency:" + alias + "=" + dependency);
+  add("native-partition:" + nativePartition);
   return "pkg-" + hash.finish();
 }
 } // namespace mettle::driver

@@ -231,10 +231,8 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
             unsafe { *nidx.add(i) = empty() }
             i += 1usize
         }
-        if self.icap != 0usize {
-            let old = unsafe { layout_unchecked(self.icap * 8usize, 8usize) }
-            unsafe { self.entries.allocator_mut().deallocate(self.idx.cast<u8>(), old) }
-        }
+        let old_index = self.idx
+        let old_capacity = self.icap
         self.idx = nidx
         self.icap = ncap
         let mask = ncap - 1usize
@@ -245,6 +243,10 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
             while self.slot(pos) != empty() { pos = (pos + 1usize) & mask }
             self.set_slot(pos, e)
             e += 1usize
+        }
+        if old_capacity != 0usize {
+            let old = unsafe { layout_unchecked(old_capacity * 8usize, 8usize) }
+            unsafe { self.entries.allocator_mut().deallocate(old_index.cast<u8>(), old) }
         }
     }
 
@@ -302,11 +304,12 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
         }
         if target == 0usize && self.icap != 0usize {
             let old = unsafe { layout_unchecked(self.icap * 8usize, 8usize) }
-            unsafe {
-                self.entries.allocator_mut().deallocate(self.idx.cast<u8>(), old)
-            }
+            let old_index = self.idx
             self.idx = core.ptr.null_mut<usize>()
             self.icap = 0usize
+            unsafe {
+                self.entries.allocator_mut().deallocate(old_index.cast<u8>(), old)
+            }
         } else if target < self.icap {
             match capture self.rebuild(target) {
                 success(_) => (),
@@ -380,7 +383,7 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
         match first_index {
             present(i) => match second_index {
                 present(j) => {
-                    if i == j { return none }
+                    if i == j { super.alloc.panic_precondition() }
                     let entries = self.entries.as_mut_ptr()
                     present((
                         unsafe { mut (*entries.add(i)).value },

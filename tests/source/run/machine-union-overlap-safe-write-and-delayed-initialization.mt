@@ -1,4 +1,3 @@
-
 // flags: --sanitize address
 
 @layout(C)

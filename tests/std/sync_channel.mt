@@ -21,7 +21,9 @@ fn main(): i32 {
     }
     0
   })
-  thread.sleep_nanos(50000000u64)
+  while sent.get().load(core.sync.atomic.Ordering.SeqCst) < 2usize {
+    thread.yield_now()
+  }
   if sent.get().load(core.sync.atomic.Ordering.SeqCst) != 2usize { return 1 }
   let first = capture rx.recv()
   match take first { success(v) => { if v != 0 { return 2 } }, failure(e) => { return 3 } }

@@ -54,8 +54,13 @@ std::optional<std::size_t> Checker::receiverCandidate(
   // A pin's own methods (`extend pinned read T`) precede its target's;
   // its builtin methods precede both.
   static const std::set<std::string_view> builtinPinMethods{
-      "as_ref",  "as_mut",           "get_ref",   "get_mut",
-      "get_unchecked_mut", "into_inner", "into_inner_unchecked"};
+      "as_ref",
+      "as_mut",
+      "get_ref",
+      "get_mut",
+      "get_unchecked_mut",
+      "into_inner",
+      "into_inner_unchecked"};
   if (pinned && !builtinPinMethods.contains(name) &&
       !name.starts_with("project_")) {
     pinAsOwner = true;
@@ -178,7 +183,7 @@ std::optional<std::size_t> Checker::receiverCandidate(
           !propertyBound(bound, call.span))
         consider(interfaceBound(bound, call.span, {}, self));
   } else {
-    auto caller = checked.symbols->moduleOf(call.span);
+    auto caller = accessModule(call);
     auto visible = [&](const interfaces::Definition &definition) {
       if (protocol)
         return true;
@@ -207,20 +212,51 @@ std::optional<std::size_t> Checker::receiverCandidate(
       }
       return false;
     };
+    // The nominal head a concrete type must share with an implementation
+    // target for them to match; Unknown when either side is still generic.
+    auto head = [&](Type type) {
+      const auto &types = *checked.types;
+      if (types.isProduct(type)) {
+        while (types.product(type).regionOrigin != Type::Unknown)
+          type = types.product(type).regionOrigin;
+        if (types.product(type).genericOrigin != Type::Unknown)
+          type = types.product(type).genericOrigin;
+        // Built-in aggregates are structural, so only declared types compare.
+        const auto kind = types.product(type).kind;
+        return kind == AggregateKind::Product ||
+                       kind == AggregateKind::Enumeration
+                   ? type
+                   : Type::Unknown;
+      }
+      return types.isParameter(type) || types.isProjection(type) ||
+                     types.isView(type) || types.isPointer(type) ||
+                     types.isSlice(type) || types.isErased(type) ||
+                     types.isFunctionPointer(type) || type == Type::Unknown
+                 ? Type::Unknown
+                 : type;
+    };
+    const auto selfHead = head(self);
+    std::set<std::uint32_t> inferredConversions;
+    std::map<std::uint32_t, bool> visibility;
     const auto &declaring = interfacesDeclaring(std::string(name));
     for (const auto &implementation : checked.interfaceData->implementations) {
       if (!checked.types->isErased(implementation.interfaceType) ||
           !declaring[checked.types->erased(implementation.interfaceType)
                          .declaration])
         continue;
-      std::vector<RegionBinding> regions;
-      auto bindings =
-          solver.applicable(implementation, self, call.span, &regions);
       const auto declaration =
           checked.types->erased(implementation.interfaceType).declaration;
       const auto &definition = checked.interfaceData->definitions[declaration];
-      if (!visible(definition))
+      if (!visibility.try_emplace(declaration, visible(definition))
+               .first->second)
         continue;
+      std::vector<RegionBinding> regions;
+      const auto targetHead = head(implementation.target);
+      auto bindings =
+          selfHead != Type::Unknown && targetHead != Type::Unknown &&
+                  selfHead != targetHead
+              ? std::nullopt
+              : solver.applicable(implementation, self, call.span, &regions);
       if (bindings) {
         auto bound = checked.types->substituteRegions(
             checked.types->substitute(implementation.interfaceType, *bindings),
@@ -234,7 +270,8 @@ std::optional<std::size_t> Checker::receiverCandidate(
       // (Into<U>.into(): U, TryInto<U>.try_into(): (U throws E)) takes that
       // parameter from the type the call's context expects; the blanket's
       // where clause is then proven for that type.
-      if (definition.parameters.size() != 1 || !expectedTypes.contains(&call))
+      if (definition.parameters.size() != 1 || !expectedTypes.contains(&call) ||
+          !inferredConversions.insert(declaration).second)
         continue;
       auto declared =
           std::find_if(definition.methods.begin(), definition.methods.end(),
@@ -362,7 +399,10 @@ Checker::dereferenceStep(Type source, bool exclusive, Span span) {
       !checked.types->isView(result) ||
       checked.types->view(result).mode != mode ||
       (!callee.annotation.sources.empty() &&
-       callee.annotation.sources != std::vector<std::string>{"self"})) {
+       (callee.annotation.sources.size() != 1 ||
+        nameKey(callee.annotation.sources.front()) !=
+            nameKey(callee.parameters[0].name,
+                    callee.parameters[0].context)))) {
     error("type", span,
           "native dereference must return a matching view from its receiver");
     return std::nullopt;

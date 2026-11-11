@@ -1,5 +1,6 @@
 import alloc.arc
 import alloc.arc.Arc
+import core.clone.Clone
 import core.future.{Context, Future, Poll, Waker}
 import std.sync.barrier
 import std.task

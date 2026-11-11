@@ -7,8 +7,9 @@ runtime parity and release-platform qualification are not established.
 
 The compiler builds Mettle programs with ownership checking, generics,
 interfaces, machine/FFI facilities, native `core`/`alloc`/`std` libraries,
-packages, macros, async and developer tools. Correctness repairs and library
-completion remain open. The gated compiler host and target are Linux x86-64
+packages, macros, async and developer tools. The owner accepted the main-branch
+stabilization batch on 2026-11-11; library delivery follows the milestone plan.
+The gated compiler host and target are Linux x86-64
 (native or WSL2); historical macOS evidence does not qualify that host.
 See the [implementation plan](docs/implementation-plan.md#8-delivery-milestones)
 for current obligations and revision-scoped evidence.
@@ -84,6 +85,22 @@ python3 tests/source.py run BUILD/mettle OUTDIR -j 2 --filter REGEX
 python3 tests/source.py fail BUILD/mettle OUTDIR -j 2 --filter REGEX
 ```
 
+Library runners also accept `-j N` and `--filter REGEX` (source stems):
+
+```sh
+python3 tests/alloc.py BUILD/mettle OUTDIR tests/alloc -j 4 --filter REGEX
+python3 tests/std.py BUILD/mettle OUTDIR tests/std debug -j 4 --filter REGEX
+python3 tests/modules.py BUILD/mettle OUTDIR library -j 4 --filter REGEX
+```
+
+Alloc/std run both profiles unless selected explicitly. Without a filter, core
+also runs its supplemental module/panic cases and isolated CPU-scale probe;
+only independent source files run concurrently. CMake cache settings
+`METTLE_LIBRARY_TEST_JOBS` (default 4) and `METTLE_SOURCE_TEST_JOBS` (default
+logical CPU count) control workers and matching CTest processor reservations.
+Lower these for memory-heavy or sanitized compilers; `ctest -j N` alone does not
+lower a suite's internal worker count.
+
 For cross-target Linux execution from an ARM Mac, the optional runner needs
 Lima, QEMU and Lima's x86-64 guest agents:
 
@@ -126,7 +143,7 @@ values. Use `let _ = expression` for intentional discards.
 - [Platforms](docs/platform-contracts.md), [profiles](docs/reference-profiles.md)
   and [toolchain pins](docs/toolchain-pins.json)
 - [Baseline reproduction](docs/baseline/README.md) and [documentation gate](docs/specification-status.md)
-- [Performance protocol](docs/performance.md) and [adoption rationale](docs/adoption-rationale.md)
+- [Performance protocol](docs/performance.md)
 - [Core example expectations](examples/core/expectations.json)
   and [extended expectations](examples/spec/expectations.json)
 

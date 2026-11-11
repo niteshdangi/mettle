@@ -5,9 +5,26 @@ import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import package.core.hash.{Hash, Hasher}
 import package.core.fmt
 
-import super.alloc.{Allocator, Global, AllocError, PushError, layout_unchecked, handle_alloc_error, layout_of, dangling_for}
+import super.alloc.{Allocator, Global, AllocError, PushError, layout_unchecked, handle_alloc_error, layout_of, dangling_for, free_block}
 
 copy type RawSlice<T> { data: ptr<read T>; len: usize }
+
+fn ring_index(head: usize, logical: usize, capacity: usize): usize {
+    let until_wrap = capacity - head
+    if logical >= until_wrap { logical - until_wrap } else { head + logical }
+}
+
+// Safety: slots[start..end] is a live exclusive MaybeUninit<T> extent.
+unsafe fn reverse_slots<T>(slots: ptr<mut core.mem.MaybeUninit<T>>, start: usize, end: usize): Unit {
+    var front = start
+    var back = end
+    while front < back {
+        back -= 1usize
+        if front == back { break }
+        core.ptr.swap(slots.add(front), slots.add(back))
+        front += 1usize
+    }
+}
 
 // Safety: `p` is aligned and valid for reads of `n` initialized elements.
 unsafe fn slice_ptr<T>(p: ptr<mut T>, n: usize): ptr<read [T]> {
@@ -37,7 +54,7 @@ type RetainGuard<T> {
         if self.active {
             var i = self.read_at
             while i < self.total {
-                let dst_index = self.kept + i - self.read_at
+                let dst_index = self.kept + (i - self.read_at)
                 if dst_index != i {
                     let src = unsafe { self.buf.add(self.physical(i)) }
                     let dst = unsafe { self.buf.add(self.physical(dst_index)) }
@@ -46,7 +63,7 @@ type RetainGuard<T> {
                 i += 1usize
             }
             unsafe {
-                core.ptr.write(self.len, self.kept + self.total - self.read_at)
+                core.ptr.write(self.len, self.kept + (self.total - self.read_at))
             }
         }
     }
@@ -54,8 +71,7 @@ type RetainGuard<T> {
 
 extend<T> RetainGuard<T> {
     fn physical(i: usize): usize {
-        let j = self.head + i
-        if j >= self.cap { j - self.cap } else { j }
+        ring_index(self.head, i, self.cap)
     }
 
     mut fn finish(): Unit {
@@ -72,12 +88,31 @@ pub type Deque<T, A: Allocator = Global> {
     len: usize
     a: A
     drop {
-        while self.len != 0usize {
-            let v = self.pop_front()
-        }
-        if self.cap != 0usize && core.mem.size_of<T>() != 0usize {
-            let layout = unsafe { layout_unchecked(self.cap * core.mem.size_of<T>(), core.mem.align_of<T>()) }
-            unsafe { self.a.deallocate(self.buf.cast<u8>(), layout) }
+        let n = self.len
+        self.len = 0usize
+        let layout = unsafe { layout_unchecked(self.cap * core.mem.size_of<T>(), core.mem.align_of<T>()) }
+        let _free = unsafe { free_block(self.buf.cast<u8>(), layout, core.ptr.from_mut(self.a)) }
+        var remaining = DequeDrop(self.buf, self.cap, self.head, n)
+        remaining.run()
+    }
+}
+
+// Safety: remaining initialized ring slots are exclusively owned until the outer free-block guard runs.
+type DequeDrop<T> {
+    buf: ptr<mut T>
+    cap: usize
+    head: usize
+    remaining: usize
+    drop { self.run() }
+}
+
+extend<T> DequeDrop<T> {
+    mut fn run(): Unit {
+        while self.remaining != 0usize {
+            let at = self.head
+            self.head = ring_index(self.head, 1usize, self.cap)
+            self.remaining -= 1usize
+            unsafe { core.ptr.drop_in_place(self.buf.add(at)) }
         }
     }
 }
@@ -136,11 +171,10 @@ type DequeDrainFinish<T> {
                     }
                 }
             }
-            let next_head = self.head + removed
             unsafe {
                 core.ptr.write(
                     self.head_ptr,
-                    if next_head >= self.cap { next_head - self.cap } else { next_head }
+                    ring_index(self.head, removed, self.cap)
                 )
             }
         }
@@ -150,8 +184,7 @@ type DequeDrainFinish<T> {
 
 extend<T> DequeDrainFinish<T> {
     fn physical(logical: usize): usize {
-        let index = self.head + logical
-        if index >= self.cap { index - self.cap } else { index }
+        ring_index(self.head, logical, self.cap)
     }
 
     mut fn drop_remaining(): Unit {
@@ -165,7 +198,7 @@ extend<T> DequeDrainFinish<T> {
 }
 
 pub fn new_in<T, A: Allocator>(take a: A): Deque<T, A> {
-    let cap = if core.mem.size_of<T>() == 0usize { 0x7fffffffffffffffusize } else { 0usize }
+    let cap = if core.mem.size_of<T>() == 0usize { 0xffffffffffffffffusize } else { 0usize }
     Deque(dangling_for<T>(), cap, 0usize, 0usize, a)
 }
 pub fn new<T>(): Deque<T> { new_in(Global()) }
@@ -182,18 +215,19 @@ extend<T, A: Allocator> Deque<T, A> {
     pub fn allocator(): read A from self { read self.a }
 
     fn physical(i: usize): usize {
-        let j = self.head + i
-        if j >= self.cap { j - self.cap } else { j }
+        ring_index(self.head, i, self.cap)
     }
 
     // Moves the elements to the front of a larger block; failure changes nothing.
-    mut fn grow(): Unit throws AllocError {
+    mut fn grow_to(need: usize, exact: bool): Unit throws AllocError {
         let size = core.mem.size_of<T>()
-        if size == 0usize { return () }
-        if self.cap > 0x7fffffffffffffffusize / 2usize {
-            throw AllocError(0xffffffffffffffffusize, core.mem.align_of<T>())
+        if size == 0usize || need <= self.cap { return () }
+        var ncap = need
+        if !exact {
+            let doubled = self.cap.saturating_mul(2usize)
+            if doubled > ncap { ncap = doubled }
+            if ncap < 4usize { ncap = 4usize }
         }
-        let ncap = if self.cap == 0usize { 4usize } else { self.cap * 2usize }
         let align = core.mem.align_of<T>()
         let bytes = match ncap.checked_mul(size) {
             present(b) => b,
@@ -208,19 +242,21 @@ extend<T, A: Allocator> Deque<T, A> {
             unsafe { core.ptr.`copy`(self.buf.add(self.physical(i)).cast_const(), np.add(i), 1usize) }
             i += 1usize
         }
-        if self.cap != 0usize {
-            unsafe { self.a.deallocate(self.buf.cast<u8>(), layout_unchecked(self.cap * size, align)) }
-        }
+        let old_buf = self.buf
+        let old_cap = self.cap
         self.buf = np
         self.cap = ncap
         self.head = 0usize
+        if old_cap != 0usize {
+            unsafe { self.a.deallocate(old_buf.cast<u8>(), layout_unchecked(old_cap * size, align)) }
+        }
     }
     pub mut fn try_reserve(additional: usize): Unit throws AllocError {
         let need = match self.len.checked_add(additional) {
             present(n) => n,
             none => throw AllocError(0xffffffffffffffffusize, core.mem.align_of<T>())
         }
-        while need > self.cap { try self.grow() }
+        try self.grow_to(need, false)
     }
     pub mut fn try_reserve_one(): Unit throws AllocError {
         try self.try_reserve(1usize)
@@ -232,10 +268,17 @@ extend<T, A: Allocator> Deque<T, A> {
         }
     }
     pub mut fn try_reserve_exact(additional: usize): Unit throws AllocError {
-        try self.try_reserve(additional)
+        let need = match self.len.checked_add(additional) {
+            present(n) => n,
+            none => throw AllocError(0xffffffffffffffffusize, core.mem.align_of<T>())
+        }
+        try self.grow_to(need, true)
     }
     pub mut fn reserve_exact(additional: usize): Unit {
-        self.reserve(additional)
+        match capture self.try_reserve_exact(additional) {
+            success(_) => (),
+            failure(_) => handle_alloc_error(layout_of<T>())
+        }
     }
     pub mut fn append(mut other: Deque<T, A>): Unit {
         let count = other.len
@@ -253,12 +296,12 @@ extend<T, A: Allocator> Deque<T, A> {
         if size == 0usize || self.cap <= target { return () }
         let align = core.mem.align_of<T>()
         if target == 0usize {
-            if self.cap != 0usize {
-                unsafe { self.a.deallocate(self.buf.cast<u8>(), layout_unchecked(self.cap * size, align)) }
-            }
+            let old_buf = self.buf
+            let old_cap = self.cap
             self.buf = dangling_for<T>()
             self.cap = 0usize
             self.head = 0usize
+            unsafe { self.a.deallocate(old_buf.cast<u8>(), layout_unchecked(old_cap * size, align)) }
             return ()
         }
         let bytes = match target.checked_mul(size) {
@@ -280,12 +323,12 @@ extend<T, A: Allocator> Deque<T, A> {
             }
             i += 1usize
         }
-        if self.cap != 0usize {
-            unsafe { self.a.deallocate(self.buf.cast<u8>(), layout_unchecked(self.cap * size, align)) }
-        }
+        let old_buf = self.buf
+        let old_cap = self.cap
         self.buf = new_buf
         self.cap = target
         self.head = 0usize
+        unsafe { self.a.deallocate(old_buf.cast<u8>(), layout_unchecked(old_cap * size, align)) }
     }
     pub mut fn try_push_back(take value: T): Unit throws PushError<T> {
         match capture self.try_reserve_one() {
@@ -427,15 +470,31 @@ extend<T, A: Allocator> Deque<T, A> {
         if i == 0usize { self.push_front(value); return () }
         if i == self.len { self.push_back(value); return () }
         self.reserve(1usize)
-        var j = self.len
-        while j > i {
-            let from = self.physical(j - 1usize)
-            let to = self.physical(j)
-            unsafe {
-                let moved = core.ptr.`read`(self.buf.add(from))
-                core.ptr.write(self.buf.add(to), moved)
+        if i < self.len - i {
+            self.head = if self.head == 0usize { self.cap - 1usize } else { self.head - 1usize }
+            var j = 0usize
+            while j < i {
+                unsafe {
+                    core.ptr.`copy`(
+                        self.buf.add(self.physical(j + 1usize)).cast_const(),
+                        self.buf.add(self.physical(j)),
+                        1usize
+                    )
+                }
+                j += 1usize
             }
-            j -= 1usize
+        } else {
+            var j = self.len
+            while j > i {
+                unsafe {
+                    core.ptr.`copy`(
+                        self.buf.add(self.physical(j - 1usize)).cast_const(),
+                        self.buf.add(self.physical(j)),
+                        1usize
+                    )
+                }
+                j -= 1usize
+            }
         }
         unsafe { core.ptr.write(self.buf.add(self.physical(i)), value) }
         self.len += 1usize
@@ -444,36 +503,52 @@ extend<T, A: Allocator> Deque<T, A> {
         self.insert(i, value)
         self.get_mut(i).unwrap()
     }
-    pub mut fn remove(i: usize): T {
-        if i >= self.len { super.alloc.panic_precondition() }
+    pub mut fn remove(i: usize): T? {
+        if i >= self.len { return none }
         let value = unsafe { core.ptr.`read`(self.buf.add(self.physical(i))) }
-        var j = i
-        while j + 1usize < self.len {
-            let from = self.physical(j + 1usize)
-            let to = self.physical(j)
-            unsafe {
-                let moved = core.ptr.`read`(self.buf.add(from))
-                core.ptr.write(self.buf.add(to), moved)
+        if i < self.len - i - 1usize {
+            var j = i
+            while j != 0usize {
+                unsafe {
+                    core.ptr.`copy`(
+                        self.buf.add(self.physical(j - 1usize)).cast_const(),
+                        self.buf.add(self.physical(j)),
+                        1usize
+                    )
+                }
+                j -= 1usize
             }
-            j += 1usize
+            self.head = self.physical(1usize)
+        } else {
+            var j = i
+            while j + 1usize < self.len {
+                unsafe {
+                    core.ptr.`copy`(
+                        self.buf.add(self.physical(j + 1usize)).cast_const(),
+                        self.buf.add(self.physical(j)),
+                        1usize
+                    )
+                }
+                j += 1usize
+            }
         }
         self.len -= 1usize
-        value
+        present(value)
     }
-    pub mut fn swap_remove_front(i: usize): T {
-        if i >= self.len { super.alloc.panic_precondition() }
+    pub mut fn swap_remove_front(i: usize): T? {
+        if i >= self.len { return none }
         if i != 0usize {
             unsafe { core.ptr.swap(self.buf.add(self.head), self.buf.add(self.physical(i))) }
         }
-        self.pop_front().unwrap()
+        self.pop_front()
     }
-    pub mut fn swap_remove_back(i: usize): T {
-        if i >= self.len { super.alloc.panic_precondition() }
+    pub mut fn swap_remove_back(i: usize): T? {
+        if i >= self.len { return none }
         let last = self.len - 1usize
         if i != last {
             unsafe { core.ptr.swap(self.buf.add(self.physical(i)), self.buf.add(self.physical(last))) }
         }
-        self.pop_back().unwrap()
+        self.pop_back()
     }
 
     pub fn as_slices(): (read [T] from self, read [T] from self) {
@@ -502,6 +577,10 @@ extend<T, A: Allocator> Deque<T, A> {
     }
     pub mut fn rotate_left(mid: usize): Unit {
         if mid > self.len { super.alloc.panic_precondition() }
+        if mid > self.len - mid {
+            self.rotate_right(self.len - mid)
+            return ()
+        }
         var i = 0usize
         while i < mid {
             let value = self.pop_front().unwrap()
@@ -511,6 +590,10 @@ extend<T, A: Allocator> Deque<T, A> {
     }
     pub mut fn rotate_right(mid: usize): Unit {
         if mid > self.len { super.alloc.panic_precondition() }
+        if mid > self.len - mid {
+            self.rotate_left(self.len - mid)
+            return ()
+        }
         var i = 0usize
         while i < mid {
             let value = self.pop_back().unwrap()
@@ -533,26 +616,33 @@ extend<T, A: Allocator> Deque<T, A> {
                 mut *slice_ptr_mut(self.buf.add(self.head), self.len)
             }
         }
-        if self.head != 0usize {
-            let align = core.mem.align_of<T>()
-            let layout = unsafe { layout_unchecked(self.cap * size, align) }
-            let new_buf = match capture self.a.allocate(layout) {
-                success(p) => p.cast<T>(),
-                failure(_) => handle_alloc_error(layout)
+        let first = self.cap - self.head
+        let second = self.len - first
+        let free = self.cap - self.len
+        if free >= first {
+            unsafe {
+                core.ptr.`copy`(self.buf.cast_const(), self.buf.add(first), second)
+                core.ptr.`copy`(self.buf.add(self.head).cast_const(), self.buf, first)
             }
-            var i = 0usize
-            while i < self.len {
-                unsafe {
-                    let value = core.ptr.`read`(self.buf.add(self.physical(i)))
-                    core.ptr.write(new_buf.add(i), value)
-                }
-                i += 1usize
+            self.head = 0usize
+        } else if free >= second {
+            let head = self.head - second
+            unsafe {
+                core.ptr.`copy`(self.buf.add(self.head).cast_const(), self.buf.add(head), first)
+                core.ptr.`copy`(self.buf.cast_const(), self.buf.add(self.cap - second), second)
             }
-            unsafe { self.a.deallocate(self.buf.cast<u8>(), layout) }
-            self.buf = new_buf
+            self.head = head
+        } else {
+            // Here cap < 3*len/2; rotating MaybeUninit slots is O(len) and never reads spare bytes as T.
+            let slots = self.buf.cast<core.mem.MaybeUninit<T>>()
+            unsafe {
+                reverse_slots(slots, 0usize, self.head)
+                reverse_slots(slots, self.head, self.cap)
+                reverse_slots(slots, 0usize, self.cap)
+            }
             self.head = 0usize
         }
-        unsafe { mut *slice_ptr_mut(self.buf, self.len) }
+        unsafe { mut *slice_ptr_mut(self.buf.add(self.head), self.len) }
     }
     // The guard compacts the unvisited suffix on unwind. `read_at` excludes a
     // rejected value before its destructor runs; `kept` counts moved owners.

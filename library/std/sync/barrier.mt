@@ -1,6 +1,5 @@
 import super.mutex
 import super.condvar
-import package.core.panic.panic
 import package.core.clone.Clone
 import package.core.fmt.{Debug, Error, Formatter}
 
@@ -34,7 +33,6 @@ unsafe extend Barrier implements Transferable {}
 unsafe extend Barrier implements Shareable {}
 
 pub fn new(parties: usize): Barrier {
-    if parties == 0usize { panic("barrier requires at least one party") }
     Barrier(parties, mutex.new(State(0usize, 0usize)), condvar.new())
 }
 
@@ -56,7 +54,8 @@ extend Barrier {
         }
         guard.get_mut().count = next
         while guard.get().generation == round {
-            guard = self.arrived.wait(guard)
+            let waited = capture self.arrived.wait(guard)
+            guard = match take waited { success(g) => g, failure(e) => e.into_inner() }
         }
         BarrierWaitResult(false)
     }

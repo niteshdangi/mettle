@@ -11,10 +11,93 @@
 #include "semantics/interfaces.h"
 #include "syntax/parser.h"
 #include <map>
+#include <tuple>
 
 namespace mettle::pipeline {
 class Compiler {
 public:
+  static bool mergeImportedMetadata(ir::Program &program,
+                                    const ir::Program &metadata,
+                                    Diagnostics &diagnostics) {
+    auto fail = [&](const char *message) {
+      diagnostics.error("metadata", {}, message);
+      return false;
+    };
+    if (!metadata.functions.empty() || !metadata.statics.empty() ||
+        !metadata.closureFunctions.empty())
+      return fail("imported metadata contains unplaced definitions");
+    const auto &target = program.target;
+    const auto &other = metadata.target;
+    if (target.arch != other.arch || target.system != other.system ||
+        target.pointerBits != other.pointerBits ||
+        target.littleEndian != other.littleEndian ||
+        target.triple != other.triple || target.baseline != other.baseline)
+      return fail("imported library target facts do not match the consumer");
+    std::map<std::tuple<Type, Type, int, std::vector<Type>>, int> adapters;
+    for (const auto &adapter : program.opaqueAdapters)
+      adapters.emplace(std::tuple{adapter.self, adapter.interfaceType,
+                                  adapter.method, adapter.methodArguments},
+                       adapter.function);
+    for (const auto &adapter : metadata.opaqueAdapters) {
+      auto [found, inserted] =
+          adapters.emplace(std::tuple{adapter.self, adapter.interfaceType,
+                                      adapter.method, adapter.methodArguments},
+                           adapter.function);
+      if (!inserted && found->second != adapter.function)
+        return fail("conflicting imported interface adapter definitions");
+      if (inserted)
+        program.opaqueAdapters.push_back(adapter);
+    }
+    auto mergeFunctions = [&](auto &destination, const auto &source) {
+      std::map<Type, int> functions(destination.begin(), destination.end());
+      for (auto [type, function] : source) {
+        auto [found, inserted] = functions.emplace(type, function);
+        if (!inserted && found->second != function)
+          return false;
+        if (inserted)
+          destination.emplace_back(type, function);
+      }
+      return true;
+    };
+    if (!mergeFunctions(program.coroutines, metadata.coroutines) ||
+        !mergeFunctions(program.dynamicDropFunctions,
+                        metadata.dynamicDropFunctions))
+      return fail("conflicting imported coroutine or dynamic-drop definitions");
+    program.globalAssembly.insert(program.globalAssembly.begin(),
+                                  metadata.globalAssembly.begin(),
+                                  metadata.globalAssembly.end());
+    program.libraries.insert(program.libraries.begin(),
+                             metadata.libraries.begin(),
+                             metadata.libraries.end());
+    return true;
+  }
+  static bool proveUnpin(TypeStore &store, const interfaces::Database &database,
+                         Diagnostics &diagnostics, Type subject, Type runtime,
+                         const ir::Function &function, Span span) {
+    std::vector<interfaces::Obligation> assumptions;
+    for (auto [type, bound] : function.interfaceBounds)
+      assumptions.push_back({type, bound});
+    for (auto type : function.unpinBounds)
+      assumptions.push_back({type, Type::Unknown, interfaces::Property::Unpin});
+    RegionEnvironment regions;
+    if (store.isFunctionPointer(function.regionSignature)) {
+      const auto &signature = store.callable(function.regionSignature);
+      regions.universe = signature.regionUniverse;
+      regions.assumptions = signature.regionRequirements;
+    }
+    interfaces::Solver solver(store, database, diagnostics, assumptions,
+                              regions);
+    interfaces::Solver runtimeTypes(store, database, diagnostics,
+                                    std::move(assumptions), std::move(regions),
+                                    true);
+    solver.setEqualities(function.genericEqualities);
+    runtimeTypes.setEqualities(function.genericEqualities);
+    subject = solver.normalize(subject, function.genericEqualities, span);
+    return solver.prove({subject, Type::Unknown, interfaces::Property::Unpin},
+                        span, false) &&
+           store.eraseRegions(runtimeTypes.normalize(
+               subject, function.genericEqualities, span)) == runtime;
+  }
   static std::optional<ir::VerifiedProgram>
   admit(ir::Program program, Diagnostics &diagnostics,
         const ir::UnpinProof &proof = {}) {
@@ -73,56 +156,57 @@ public:
       return std::nullopt;
     return ir::VerifiedProgram(std::move(program));
   }
-  static std::optional<ir::VerifiedProgram>
-  run(Module tree, Diagnostics &diagnostics, bool requireEntry = true,
-      TargetFacts target = {}, const CheckedObserver &observe = {},
-      const PackageOwners &packageOwners = {},
-      NumericEvaluator numericEvaluator = nullptr) {
+  static std::optional<PreparedProgram>
+  prepare(Module tree, Diagnostics &diagnostics, bool requireEntry = true,
+          TargetFacts target = {}, const CheckedObserver &observe = {},
+          const PackageOwners &packageOwners = {},
+          NumericEvaluator numericEvaluator = nullptr,
+          const resolution::SourcePackages &sourcePackages = {},
+          std::shared_ptr<const ImportedDeclarations> imported = nullptr,
+          const lowering::ImportedBodies *importedBodies = nullptr,
+          const LibraryImporter &importLibrary = {}) {
     if (!diagnostics.empty())
       return std::nullopt;
-    auto resolved = resolution::resolve(tree, diagnostics);
+    auto resolved = resolution::resolve(tree, diagnostics, sourcePackages);
     if (!resolved)
       return std::nullopt;
-    auto checked = check(std::move(tree), diagnostics, std::move(resolved),
-                         requireEntry, std::move(target), numericEvaluator);
+    std::optional<ImportedProgram> library;
+    if (importLibrary) {
+      if (imported || importedBodies) {
+        diagnostics.error("internal", {},
+                          "competing compiled-library import providers");
+        return std::nullopt;
+      }
+      library = importLibrary(tree, *resolved, diagnostics);
+      if (!library || !diagnostics.empty()) {
+        if (diagnostics.empty())
+          diagnostics.error("metadata", {}, "compiled library import failed");
+        return std::nullopt;
+      }
+      imported = library->declarations;
+      importedBodies = library->bodies.get();
+    }
+    auto checked =
+        check(std::move(tree), diagnostics, std::move(resolved), requireEntry,
+              std::move(target), numericEvaluator, std::move(imported));
     if (!checked)
       return std::nullopt;
     if (observe)
       observe(*checked);
-    auto program = lowering::lower(*checked, diagnostics);
+    auto program = lowering::lower(*checked, diagnostics, importedBodies);
+    if (!diagnostics.empty())
+      return std::nullopt;
     program.requireEntry = requireEntry;
+    if (library && library->metadata &&
+        !mergeImportedMetadata(program, *library->metadata, diagnostics))
+      return std::nullopt;
     auto types = std::make_shared<TypeStore>(*program.types);
     program.types = types;
-    auto proveUnpin = [&](TypeStore &store, Type subject, Type runtime,
-                          const ir::Function &function, Span span) {
-      std::vector<interfaces::Obligation> assumptions;
-      for (auto [type, bound] : function.interfaceBounds)
-        assumptions.push_back({type, bound});
-      for (auto type : function.unpinBounds)
-        assumptions.push_back(
-            {type, Type::Unknown, interfaces::Property::Unpin});
-      RegionEnvironment regions;
-      if (store.isFunctionPointer(function.regionSignature)) {
-        const auto &signature = store.callable(function.regionSignature);
-        regions.universe = signature.regionUniverse;
-        regions.assumptions = signature.regionRequirements;
-      }
-      interfaces::Solver solver(store, checked->interfaceDatabase(),
-                                diagnostics, assumptions, regions);
-      interfaces::Solver runtimeTypes(store, checked->interfaceDatabase(),
-                                      diagnostics, std::move(assumptions),
-                                      std::move(regions), true);
-      solver.setEqualities(function.genericEqualities);
-      runtimeTypes.setEqualities(function.genericEqualities);
-      subject = solver.normalize(subject, function.genericEqualities, span);
-      return solver.prove({subject, Type::Unknown, interfaces::Property::Unpin},
-                          span, false) &&
-             store.eraseRegions(runtimeTypes.normalize(
-                 subject, function.genericEqualities, span)) == runtime;
-    };
+    auto database = checked->interfaceStore();
     auto declarationProof = [&](Type subject, Type runtime,
                                 const ir::Function &function, Span span) {
-      return proveUnpin(*types, subject, runtime, function, span);
+      return proveUnpin(*types, *database, diagnostics, subject, runtime,
+                        function, span);
     };
     program.functionPackages.resize(program.functions.size());
     for (std::size_t i = 0; i < checked->syntax().functions.size() &&
@@ -213,6 +297,15 @@ public:
     analysis::loans(program, diagnostics);
     if (!diagnostics.empty())
       return std::nullopt;
+    return PreparedProgram(std::move(program), std::move(database));
+  }
+
+  static std::optional<ir::VerifiedProgram>
+  specialize(PreparedProgram prepared, Diagnostics &diagnostics) {
+    if (!diagnostics.empty())
+      return std::nullopt;
+    auto &program = prepared.declarations;
+    const auto &database = *prepared.interfaceData;
     instances::Hooks hooks;
     hooks.validateUnpin = [&](Type subject,
                               std::span<const TypeBinding> bindings,
@@ -224,7 +317,7 @@ public:
         regions.universe = signature.regionUniverse;
         regions.assumptions = signature.regionRequirements;
       }
-      interfaces::Solver solver(store, checked->interfaceDatabase(), errors, {},
+      interfaces::Solver solver(store, database, errors, {},
                                 std::move(regions));
       auto actual = solver.normalize(subject, bindings, span);
       if (!solver.prove({actual, Type::Unknown, interfaces::Property::Unpin},
@@ -234,17 +327,21 @@ public:
     };
     hooks.normalizeType = [&](Type type, std::span<const TypeBinding> bindings,
                               TypeStore &store, Diagnostics &errors) {
-      interfaces::Solver solver(store, checked->interfaceDatabase(), errors, {},
-                                {}, true);
+      interfaces::Solver solver(store, database, errors, {}, {}, true);
       return store.eraseRegions(solver.normalize(type, bindings, {}));
     };
+    hooks.normalizeRegionSignature =
+        [&](Type type, std::span<const TypeBinding> bindings, TypeStore &store,
+            Diagnostics &errors) {
+          interfaces::Solver solver(store, database, errors);
+          return store.declaredRegions(solver.normalize(type, bindings, {}));
+        };
     hooks.selectCall = [&](ir::Instruction &call,
                            std::span<const TypeBinding> bindings,
                            TypeStore &store, Diagnostics &errors) {
       if (call.op == ir::Op::WitnessMethod || call.op == ir::Op::EraseView ||
           call.op == ir::Op::ErasedUpcast) {
-        interfaces::Solver solver(store, checked->interfaceDatabase(), errors,
-                                  {}, {}, true);
+        interfaces::Solver solver(store, database, errors, {}, {}, true);
         call.interfaceType =
             solver.normalize(call.interfaceType, bindings, call.span);
         call.interfaceSelf =
@@ -255,8 +352,7 @@ public:
       }
       if (call.interfaceMethod < 0)
         return true;
-      interfaces::Solver solver(store, checked->interfaceDatabase(), errors, {},
-                                {}, true);
+      interfaces::Solver solver(store, database, errors, {}, {}, true);
       // Semantic analysis checks region contracts; concrete implementation
       // selection is by type identity, not by the caller's region identities.
       std::vector<RegionId> checkedRegions;
@@ -266,8 +362,7 @@ public:
       auto interface =
           solver.normalize(call.interfaceType, bindings, call.span);
       const auto &definition =
-          checked->interfaceDatabase()
-              .definitions[store.erased(interface).declaration];
+          database.definitions[store.erased(interface).declaration];
       auto prefix = definition.methods[call.interfaceMethod].implicitParameters;
       std::vector<Type> methodArguments;
       for (std::size_t i = prefix; i < call.typeArguments.size(); ++i)
@@ -334,11 +429,29 @@ public:
     concrete->types = concreteTypes;
     auto concreteProof = [&](Type subject, Type runtime,
                              const ir::Function &function, Span span) {
-      return proveUnpin(*concreteTypes, subject, runtime, function, span);
+      return proveUnpin(*concreteTypes, database, diagnostics, subject, runtime,
+                        function, span);
     };
     return admit(std::move(*concrete), diagnostics, concreteProof);
   }
 };
+std::optional<PreparedProgram>
+prepare(Module module, Diagnostics &diagnostics, bool requireEntry,
+        TargetFacts target, const CheckedObserver &observe,
+        const PackageOwners &packageOwners, NumericEvaluator numericEvaluator,
+        const resolution::SourcePackages &sourcePackages,
+        std::shared_ptr<const ImportedDeclarations> imported,
+        const lowering::ImportedBodies *importedBodies,
+        const LibraryImporter &importLibrary) {
+  return Compiler::prepare(std::move(module), diagnostics, requireEntry,
+                           std::move(target), observe, packageOwners,
+                           numericEvaluator, sourcePackages,
+                           std::move(imported), importedBodies, importLibrary);
+}
+std::optional<ir::VerifiedProgram> compile(PreparedProgram program,
+                                           Diagnostics &diagnostics) {
+  return Compiler::specialize(std::move(program), diagnostics);
+}
 std::optional<ir::VerifiedProgram> admit(ir::Program program,
                                          Diagnostics &diagnostics) {
   return Compiler::admit(std::move(program), diagnostics);
@@ -350,17 +463,23 @@ std::optional<ir::VerifiedProgram> compile(const Source &source,
 std::optional<ir::VerifiedProgram> compile(const std::vector<Source> &sources,
                                            Diagnostics &diagnostics,
                                            const resolution::Library &library) {
-  auto tree = resolution::load(sources, diagnostics, library);
+  resolution::SourcePackages sourcePackages;
+  auto tree = resolution::load(sources, diagnostics, library, &sourcePackages);
   if (!tree)
     return std::nullopt;
-  return Compiler::run(std::move(*tree), diagnostics);
+  return compile(std::move(*tree), diagnostics, true, {}, {}, {}, nullptr,
+                 sourcePackages);
 }
 std::optional<ir::VerifiedProgram>
 compile(Module module, Diagnostics &diagnostics, bool requireEntry,
         TargetFacts target, const CheckedObserver &observe,
-        const PackageOwners &packageOwners, NumericEvaluator numericEvaluator) {
-  return Compiler::run(std::move(module), diagnostics, requireEntry,
-                       std::move(target), observe, packageOwners,
-                       numericEvaluator);
+        const PackageOwners &packageOwners, NumericEvaluator numericEvaluator,
+        const resolution::SourcePackages &sourcePackages) {
+  auto prepared =
+      prepare(std::move(module), diagnostics, requireEntry, std::move(target),
+              observe, packageOwners, numericEvaluator, sourcePackages);
+  if (!prepared)
+    return std::nullopt;
+  return compile(std::move(*prepared), diagnostics);
 }
 } // namespace mettle::pipeline

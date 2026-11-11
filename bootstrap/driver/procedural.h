@@ -1,5 +1,6 @@
 #pragma once
 
+#include "driver/build_script.h"
 #include "driver/cache.h"
 #include "driver/options.h"
 #include "expansion/procedural.h"
@@ -27,7 +28,8 @@ public:
   // `store` and `inputs` must outlive the host; `store` may be null.
   ProcedureHost(const Options &options, std::vector<packages::Macro> macros,
                 std::vector<packages::Mount> hostPackages,
-                packages::Store *store, BuildInputs &inputs);
+                ScriptResults scriptResults, packages::Store *store,
+                BuildInputs &inputs);
   ProcedureHost(const ProcedureHost &) = delete;
   ProcedureHost &operator=(const ProcedureHost &) = delete;
 
@@ -44,6 +46,7 @@ private:
   const Options &options;
   std::vector<Program> programs;
   std::vector<packages::Mount> hostPackages;
+  ScriptResults scriptResults;
   packages::Store *store;
   BuildInputs &inputs;
   expansion::Procedures available;

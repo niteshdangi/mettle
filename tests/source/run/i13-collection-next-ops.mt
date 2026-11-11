@@ -14,7 +14,7 @@ type AllocationRecord {
 
 copy type TrackingAllocator { record: ptr<mut AllocationRecord> }
 
-extend TrackingAllocator implements Allocator {
+unsafe extend TrackingAllocator implements Allocator {
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {
         var global = Global()
         let pointer = try global.allocate(layout)
@@ -27,9 +27,9 @@ extend TrackingAllocator implements Allocator {
         pointer
     }
 
-    mut fn deallocate(pointer: ptr<mut u8>, layout: Layout): Unit {
+    mut unsafe fn deallocate(pointer: ptr<mut u8>, layout: Layout): Unit {
         var global = Global()
-        global.deallocate(pointer, layout)
+        unsafe { global.deallocate(pointer, layout) }
         if layout.size() != 0usize {
             unsafe {
                 (*self.record).deallocations += 1usize
@@ -38,7 +38,7 @@ extend TrackingAllocator implements Allocator {
         }
     }
 
-    mut fn grow(
+    mut unsafe fn grow(
         pointer: ptr<mut u8>,
         old: Layout,
         new_size: usize
@@ -46,7 +46,7 @@ extend TrackingAllocator implements Allocator {
         throw AllocError(new_size, old.align())
     }
 
-    mut fn shrink(
+    mut unsafe fn shrink(
         pointer: ptr<mut u8>,
         old: Layout,
         new_size: usize
@@ -100,8 +100,9 @@ fn main(): i32 {
             Counted(3, core.ptr.from_mut(flattened_drops)),
             Counted(4, core.ptr.from_mut(flattened_drops))
         ])
+        let array_capacity = arrays.capacity()
         var flattened = arrays.into_flattened()
-        if flattened.len() != 4usize || flattened.capacity() != 4usize ||
+        if flattened.len() != 4usize || flattened.capacity() != array_capacity * 2usize ||
             flattened[0usize].value != 1 || flattened[3usize].value != 4 {
             return 23
         }

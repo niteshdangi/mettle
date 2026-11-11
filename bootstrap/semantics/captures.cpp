@@ -29,6 +29,7 @@ int Checker::closure(Node &syntax, bool reachable) {
   closure.declaration.name =
       "<closure-" + std::to_string(checked.closureBodies.size()) + ">";
   closure.declaration.span = syntax.span;
+  closure.declaration.lexicalContext = syntax.context;
   closure.declaration.owner = current->owner;
   closure.declaration.annotation = syntax.annotation;
   closure.declaration.error = syntax.error;
@@ -91,14 +92,15 @@ int Checker::closure(Node &syntax, bool reachable) {
                     ? context->parameters[p].mode
                 : checked.types->isCopy(type) ? ParameterMode::Value
                                               : ParameterMode::Read;
-    if (scopes.back().contains(parameter.name))
+    if (scopes.back().contains(nameKey(parameter.name, parameter.context)))
       error("name", parameter.span, "duplicate closure parameter");
-    auto slot =
-        local(parameter.name, inference.fresh(type), false, parameter.span);
+    auto slot = local(parameter.name, inference.fresh(type), false,
+                      parameter.span, parameter.context);
     if (slot >= 0)
       closure.function.locals[slot].mode = mode;
     Parameter declaration{parameter.name, parameter.annotation, parameter.span,
                           parameter.mode};
+    declaration.context = parameter.context;
     closure.declaration.parameters.push_back(std::move(declaration));
   }
   for (std::size_t p = 0; p < closure.declaration.parameters.size(); ++p) {
@@ -153,6 +155,7 @@ void Checker::completeClosure(ClosureFacts &closure, bool final) {
   closure.deferred = unresolved;
   closure.captures.clear();
   closure.function.resultSources.clear();
+  closure.function.resultContents.clear();
   if (!unresolved)
     inferCaptures(closure);
   CallableType descriptor;
@@ -226,17 +229,21 @@ void Checker::completeClosure(ClosureFacts &closure, bool final) {
           checked.types->containsViews(parameter.type))
         eligible.push_back(p + 1);
     }
-    if (!syntax.annotation.sources.empty()) {
-      for (const auto &source : syntax.annotation.sources) {
-        bool found = source == "static";
+    auto resultSources = resultSourceNames(syntax.annotation, syntax.error);
+    if (!resultSources.empty()) {
+      for (const auto &source : resultSources) {
+        bool found = source.spelling == "static";
         for (auto p : eligible) {
-          if (p && syntax.parameters[p - 1].name == source) {
+          if (p &&
+              nameKey(syntax.parameters[p - 1].name,
+                      syntax.parameters[p - 1].context) == nameKey(source)) {
             closure.function.resultSources.push_back(p);
             found = true;
           } else if (!p)
             for (const auto &capture : closure.captures)
-              if (facts(*closure.parent).locals[capture.source.root].name ==
-                  source) {
+              if (const auto &local =
+                      facts(*closure.parent).locals[capture.source.root];
+                  nameKey(local.name, local.context) == nameKey(source)) {
                 closure.function.resultSources.push_back(0);
                 found = true;
               }
@@ -249,7 +256,33 @@ void Checker::completeClosure(ClosureFacts &closure, bool final) {
     else if (final && !unresolved)
       error("ownership", syntax.span,
             "borrowed closure result requires an unambiguous from contract");
+  } else if (checked.types->containsViews(closure.function.abiResult, true)) {
+    std::vector<std::pair<NameKey, const TypeSyntax *>> parameters;
+    for (const auto &parameter : syntax.parameters)
+      parameters.emplace_back(nameKey(parameter.name, parameter.context),
+                              &parameter.annotation);
+    for (auto p : carriedResultSources(syntax.annotation, syntax.error,
+                                       parameters, syntax.span))
+      if (checked.types->containsViews(closure.function.locals[p + 1].type,
+                                       true))
+        closure.function.resultSources.push_back(p + 1);
+    if (syntax.annotation.empty() && closure.captures.empty())
+      if (auto context = closureContexts.find(&syntax);
+          context != closureContexts.end() &&
+          checked.types->isCallable(context->second))
+        for (auto p : checked.types->callable(context->second).resultSources)
+          if (p < syntax.parameters.size() &&
+              std::find(closure.function.resultSources.begin(),
+                        closure.function.resultSources.end(),
+                        p + 1) == closure.function.resultSources.end())
+            closure.function.resultSources.push_back(p + 1);
   }
+  std::sort(closure.function.resultSources.begin(),
+            closure.function.resultSources.end());
+  closure.function.resultSources.erase(
+      std::unique(closure.function.resultSources.begin(),
+                  closure.function.resultSources.end()),
+      closure.function.resultSources.end());
   for (auto source : closure.function.resultSources)
     if (source)
       descriptor.resultSources.push_back(source - 1);
@@ -347,6 +380,8 @@ void Checker::finishClosures() {
     }
     changed = false;
     for (auto &closure : checked.closureBodies) {
+      if (closure->imported)
+        continue;
       const auto before = checked.types->callable(closure->type);
       std::vector<std::tuple<Place, ParameterMode, Type>> captures;
       for (const auto &capture : closure->captures)
@@ -367,7 +402,8 @@ void Checker::finishClosures() {
     }
   }
   for (auto &closure : checked.closureBodies)
-    completeClosure(*closure, true);
+    if (!closure->imported)
+      completeClosure(*closure, true);
   checked.types->refreshProductInstances();
   for (const auto &[syntax, node] : checked.nodes)
     if (node.callableCoercion != Type::Unknown &&
@@ -502,149 +538,156 @@ void Checker::inferCaptures(ClosureFacts &closure) {
     record(std::move(place), mode, source.span);
     return true;
   };
-  std::function<void(const Node &, ParameterMode)> visit =
-      [&](const Node &node, ParameterMode use) {
-        const auto &conversion = facts(node);
-        if (conversion.viewConversion) {
-          use = checked.types->view(conversion.conversionView).mode;
-          if (recordReceiver(node, *conversion.viewConversion, use))
-            return;
+  std::function<void(const Node &, ParameterMode)> visit = [&](const Node &node,
+                                                               ParameterMode
+                                                                   use) {
+    const auto &conversion = facts(node);
+    if (conversion.viewConversion) {
+      use = checked.types->view(conversion.conversionView).mode;
+      if (recordReceiver(node, *conversion.viewConversion, use))
+        return;
+    }
+    if (conversion.borrowConversion &&
+        recordReceiver(node, *conversion.borrowConversion, use))
+      return;
+    auto nativeSource =
+        conversion.unsizedSource != Type::Unknown  ? conversion.unsizedSource
+        : conversion.erasedSource != Type::Unknown ? conversion.erasedSource
+                                                   : conversion.reborrowSource;
+    if (nativeSource != Type::Unknown && checked.types->isView(nativeSource)) {
+      ReceiverPlan native{nativeSource, nativeSource, {}};
+      bool firstClass = checked.types->isView(conversion.type);
+      if (firstClass)
+        use = checked.types->view(conversion.type).mode;
+      do {
+        ReceiverStep step;
+        step.source = native.target;
+        step.target = checked.types->view(native.target).payload;
+        native.target = step.target;
+        native.steps.push_back(step);
+      } while (!firstClass && checked.types->isView(native.target));
+      if (recordReceiver(node, native, use))
+        return;
+    }
+    if (node.kind == Kind::Closure) {
+      const auto &nested = *checked.closureBodies.at(facts(node).closure);
+      for (const auto &capture : nested.captures)
+        record(capture.source,
+               node.flag && !checked.types->isCopy(capture.type)
+                   ? ParameterMode::Take
+                   : capture.mode,
+               capture.span);
+      return;
+    }
+    if (facts(node).operatorCall) {
+      const auto signature = functionSignature(facts(node).callee);
+      for (std::size_t i = 0; i < node.children.size(); ++i)
+        visit(*node.children[i], signature.parameters[i].mode);
+      return;
+    }
+    if (node.kind == Kind::Assign) {
+      visit(*node.children[0], ParameterMode::Mut);
+      visit(*node.children[1], ParameterMode::Value);
+      return;
+    }
+    if (node.kind == Kind::Unary &&
+        (node.text == "read" || node.text == "mut" || node.text == "take")) {
+      visit(*node.children[0], node.text == "read"  ? ParameterMode::Read
+                               : node.text == "mut" ? ParameterMode::Mut
+                                                    : ParameterMode::Take);
+      return;
+    }
+    if (node.kind == Kind::Call) {
+      const auto &call = facts(node);
+      if (!call.machineOperation.empty()) {
+        std::size_t operand = 0;
+        if (call.method)
+          visit(*node.children[0]->children[0],
+                call.machineBorrowModes.at(operand++));
+        for (std::size_t i = 1; i < node.children.size(); ++i)
+          visit(*node.children[i], call.machineBorrowModes.at(operand++));
+      } else if (call.indirect) {
+        auto type = facts(*node.children[0]).type;
+        while (checked.types->isView(type))
+          type = checked.types->view(type).payload;
+        if (call.receiverPlan)
+          type = call.receiverPlan->target;
+        const auto signature = checked.types->callable(type);
+        if (call.optional)
+          visit(*node.children[0]->children[0], ParameterMode::Read);
+        else if (call.receiverPlan)
+          visit(*node.children[0], signature.mode == ParameterMode::Mut
+                                       ? ParameterMode::Mut
+                                       : ParameterMode::Read);
+        else
+          visit(*node.children[0], signature.mode);
+        for (std::size_t i = 1; i < node.children.size(); ++i)
+          visit(*node.children[i], i <= signature.parameters.size()
+                                       ? signature.parameters[i - 1].mode
+                                       : ParameterMode::Value);
+      } else if (call.callee < 0) {
+        // Unresolved callee: its diagnostic is already reported.
+        for (std::size_t i = 1; i < node.children.size(); ++i)
+          visit(*node.children[i], ParameterMode::Value);
+      } else {
+        const auto signature = functionSignature(call.callee);
+        if (call.method) {
+          const auto &receiver = *node.children[0]->children[0];
+          if (signature.parameters.empty() && diagnostics.empty())
+            error("internal", node.span,
+                  "missing receiver parameter during capture inference");
+          auto mode = signature.parameters.empty()
+                          ? ParameterMode::Value
+                          : signature.parameters[0].mode;
+          if (!call.receiverPlan ||
+              !recordReceiver(receiver, *call.receiverPlan, mode))
+            visit(receiver, mode);
         }
-        if (conversion.borrowConversion &&
-            recordReceiver(node, *conversion.borrowConversion, use))
-          return;
-        auto nativeSource = conversion.unsizedSource != Type::Unknown
-                                ? conversion.unsizedSource
-                            : conversion.erasedSource != Type::Unknown
-                                ? conversion.erasedSource
-                                : conversion.reborrowSource;
-        if (nativeSource != Type::Unknown &&
-            checked.types->isView(nativeSource)) {
-          ReceiverPlan native{nativeSource, nativeSource, {}};
-          bool firstClass = checked.types->isView(conversion.type);
-          if (firstClass)
-            use = checked.types->view(conversion.type).mode;
-          do {
-            ReceiverStep step;
-            step.source = native.target;
-            step.target = checked.types->view(native.target).payload;
-            native.target = step.target;
-            native.steps.push_back(step);
-          } while (!firstClass && checked.types->isView(native.target));
-          if (recordReceiver(node, native, use))
-            return;
-        }
-        if (node.kind == Kind::Closure) {
-          const auto &nested = *checked.closureBodies.at(facts(node).closure);
-          for (const auto &capture : nested.captures)
-            record(capture.source,
-                   node.flag && !checked.types->isCopy(capture.type)
-                       ? ParameterMode::Take
-                       : capture.mode,
-                   capture.span);
-          return;
-        }
-        if (facts(node).operatorCall) {
-          const auto signature = functionSignature(facts(node).callee);
-          for (std::size_t i = 0; i < node.children.size(); ++i)
-            visit(*node.children[i], signature.parameters[i].mode);
-          return;
-        }
-        if (node.kind == Kind::Assign) {
-          visit(*node.children[0], ParameterMode::Mut);
-          visit(*node.children[1], ParameterMode::Value);
-          return;
-        }
-        if (node.kind == Kind::Unary &&
-            (node.text == "read" || node.text == "mut" ||
-             node.text == "take")) {
-          visit(*node.children[0], node.text == "read"  ? ParameterMode::Read
-                                   : node.text == "mut" ? ParameterMode::Mut
-                                                        : ParameterMode::Take);
-          return;
-        }
-        if (node.kind == Kind::Call) {
-          const auto &call = facts(node);
-          if (!call.machineOperation.empty()) {
-            std::size_t operand = 0;
-            if (call.method)
-              visit(*node.children[0]->children[0],
-                    call.machineBorrowModes.at(operand++));
-            for (std::size_t i = 1; i < node.children.size(); ++i)
-              visit(*node.children[i], call.machineBorrowModes.at(operand++));
-          } else if (call.indirect) {
-            auto type = facts(*node.children[0]).type;
-            while (checked.types->isView(type))
-              type = checked.types->view(type).payload;
-            if (call.receiverPlan)
-              type = call.receiverPlan->target;
-            const auto signature = checked.types->callable(type);
-            if (call.optional)
-              visit(*node.children[0]->children[0], ParameterMode::Read);
-            else if (call.receiverPlan)
-              visit(*node.children[0], signature.mode == ParameterMode::Mut
-                                           ? ParameterMode::Mut
-                                           : ParameterMode::Read);
-            else
-              visit(*node.children[0], signature.mode);
-            for (std::size_t i = 1; i < node.children.size(); ++i)
-              visit(*node.children[i], i <= signature.parameters.size()
-                                           ? signature.parameters[i - 1].mode
-                                           : ParameterMode::Value);
-          } else if (call.callee < 0) {
-            // Unresolved callee: its diagnostic is already reported.
-            for (std::size_t i = 1; i < node.children.size(); ++i)
-              visit(*node.children[i], ParameterMode::Value);
-          } else {
-            if (call.method) {
-              const auto &receiver = *node.children[0]->children[0];
-              auto mode = functionSignature(call.callee).parameters[0].mode;
-              if (!call.receiverPlan ||
-                  !recordReceiver(receiver, *call.receiverPlan, mode))
-                visit(receiver, mode);
-            }
-            for (std::size_t i = 1; i < node.children.size(); ++i) {
-              auto mode = call.constructor
-                              ? ParameterMode::Value
-                              : functionSignature(call.callee)
-                                    .parameters[call.argumentOrder[i - 1]]
-                                    .mode;
-              visit(*node.children[i], mode);
-            }
+        for (std::size_t i = 1; i < node.children.size(); ++i) {
+          auto mode = ParameterMode::Value;
+          if (!call.constructor) {
+            if (i - 1 < call.argumentOrder.size() &&
+                call.argumentOrder[i - 1] < signature.parameters.size())
+              mode = signature.parameters[call.argumentOrder[i - 1]].mode;
+            else if (!module.functions[call.callee].variadic &&
+                     diagnostics.empty())
+              error("internal", node.span,
+                    "invalid call argument mapping during capture inference");
           }
-          return;
+          visit(*node.children[i], mode);
         }
-        if ((node.kind == Kind::Index || node.kind == Kind::Field) &&
-            !facts(node).place) {
-          auto mode = use;
-          if (mode == ParameterMode::Value)
-            mode = checked.types->isCopy(facts(node).type)
-                       ? ParameterMode::Read
-                       : ParameterMode::Take;
-          visit(*node.children[0], mode);
-          if (node.kind == Kind::Index)
-            visit(*node.children[1], ParameterMode::Read);
-          return;
-        }
-        if (facts(node).place) {
-          auto mode = use;
-          if (mode == ParameterMode::Value)
-            mode = checked.types->isCopy(facts(node).type)
-                       ? ParameterMode::Read
-                       : ParameterMode::Take;
-          record(*facts(node).place, mode, node.span);
-          if (node.kind == Kind::Index)
-            visit(*node.children[1], ParameterMode::Read);
-          return;
-        }
-        if (auto plan = checked.iterations.find(&node);
-            plan != checked.iterations.end()) {
-          visit(*plan->second.elaboration, ParameterMode::Value);
-          return;
-        }
-        for (const auto &child : node.children)
-          visit(*child, ParameterMode::Value);
-      };
+      }
+      return;
+    }
+    if ((node.kind == Kind::Index || node.kind == Kind::Field) &&
+        !facts(node).place) {
+      auto mode = use;
+      if (mode == ParameterMode::Value)
+        mode = checked.types->isCopy(facts(node).type) ? ParameterMode::Read
+                                                       : ParameterMode::Take;
+      visit(*node.children[0], mode);
+      if (node.kind == Kind::Index)
+        visit(*node.children[1], ParameterMode::Read);
+      return;
+    }
+    if (facts(node).place) {
+      auto mode = use;
+      if (mode == ParameterMode::Value)
+        mode = checked.types->isCopy(facts(node).type) ? ParameterMode::Read
+                                                       : ParameterMode::Take;
+      record(*facts(node).place, mode, node.span);
+      if (node.kind == Kind::Index)
+        visit(*node.children[1], ParameterMode::Read);
+      return;
+    }
+    if (auto plan = checked.iterations.find(&node);
+        plan != checked.iterations.end()) {
+      visit(*plan->second.elaboration, ParameterMode::Value);
+      return;
+    }
+    for (const auto &child : node.children)
+      visit(*child, ParameterMode::Value);
+  };
   visit(*closure.syntax->children[0], ParameterMode::Value);
   std::stable_sort(
       closure.captures.begin(), closure.captures.end(),

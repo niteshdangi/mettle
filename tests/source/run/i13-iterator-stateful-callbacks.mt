@@ -48,7 +48,7 @@ fn main(): i32 {
             visits += 1
             visits < 3
         })
-        assert(selected.count() == 2usize && selected.next().is_none(), "take_while stops permanently")
+        assert(selected.by_ref().count() == 2usize && selected.next().is_none(), "take_while stops permanently")
     }
     assert(visits == 3, "take_while does not call after rejection")
     visits = 0
