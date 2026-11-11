@@ -623,6 +623,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
   }
   result.points.resize(function.blocks.size());
   result.returns.resize(function.blocks.size());
+  result.storedIn.resize(function.blocks.size());
   result.values.resize(function.values);
   // A view stored through a raw pointer is untracked: the destination is
   // unknown, so every exclusive parameter may now retain the views contained
@@ -864,6 +865,11 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
           }
           join(memory[location], sources);
         }
+      }
+      result.storedIn[b].clear();
+      for (const auto &[location, sources] : memory) {
+        (void)location;
+        join(result.storedIn[b], sources);
       }
       auto resolve = [&](const Place &raw, Origins &uses) {
         std::set<Target> targets{{bases.at(raw.root), {}}};

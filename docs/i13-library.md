@@ -9,12 +9,12 @@ areas remain partial: L003, L005, L009, S005-S014, S019-S021, S024-S025.
 
 ## Handoff (start here in a new session)
 
-Latest operation ledger (2026-11-11): **10,492 evidenced, 401 declared,
+Latest operation ledger (2026-11-11): **10,507 evidenced, 386 declared,
 2,397 missing, 5 not applicable** of 13,295 records. Declared means implemented
 but not behaviorally verified per type/profile. Subset/source-cfg reconciliation
 and Linux applicability review remain open; no area is closed by these batches.
-The declared records comprise the previous 20 conversion-blanket and fifteen
-callable-adapter records, 54 NonNull records with runtime but not stable-const
+The declared records comprise the previous 20 conversion-blanket records,
+54 NonNull records with runtime but not stable-const
 acceptance, and 312 integer power/division records whose earlier runtime
 receipts did not establish their required stable constant-callability.
 
@@ -79,11 +79,9 @@ receipts did not establish their required stable constant-callability.
   (eight units across scoped runs). Array and Cow panic cleanup pass emitted
   ASan with the ASan/UBSan runtime in both profiles (four units). One owning
   array implementation record gains evidence. Borrow-carrying non-Copy
-    flattened inners still expose an ownership-analysis blocker. The reduced
-    optional-iterator retirement defect is repaired by the branch-origin
-    refinement below; shortening library match scopes was ineffective and
-    remains reverted. Named function callbacks also lack the Clone support
-    required by adapter cloning.
+  flattened inners and named function callback cloning remained blocked at
+  this snapshot; the subsequent repairs below supersede those blockers.
+  Shortening library match scopes was ineffective and remains reverted.
 
   ### Buffered IO closure and iterator retirement (2026-11-11)
 
@@ -109,13 +107,47 @@ receipts did not establish their required stable constant-callability.
   targeted clang-tidy pass. Evidence uses the compiler at `1ec6063` plus this
   origin refinement and the native `i13-cleanup-4ae025e` library snapshot.
 
-  The larger borrowed-inner Flatten fixture still fails when moving the outer
-  result: loop-carried derived output loans remain backward-live at that move.
-  Its exact remaining cause/fix is not established; no second speculative repair
-  or operation credit is claimed. Origin and loan analysis sources were unchanged
+  At that revision, the larger borrowed-inner Flatten fixture still failed when
+  moving the outer result. Origin and loan analysis sources were unchanged
   between `4ae025e` and `1ec6063`; that source history is not a clean historical
-  compiler reproduction. The attempted independent closure agents were cancelled
-  without results; the buffered IO batch above was completed directly.
+  compiler reproduction.
+
+  ### Flatten loop origins and callable cloning
+
+  The remaining Flatten failure came from loan availability retaining derived
+  outputs from prior loop iterations after their last holder was retired.
+  Block-entry availability now intersects forward-reaching definitions with
+  origins held by incoming memory or live SSA values and their ancestors.
+  Phi operand liveness follows its recorded predecessor edge. Neither future
+  definitions nor unrelated prior-iteration SSA inputs establish availability.
+  Independent stored aliases and live loop-carried views still prevent conflicts.
+
+  Both previously untracked acceptance fixtures pass debug/release.
+  `i13-iterator-closure-cache-cleanup` verifies non-fused cached absence,
+  cached-item/suffix cleanup, both retained Flatten inners and alternating
+  front/back exhaustion in both starting directions, with exact drop counts.
+  `i13-iterator-closure-callable-clones` verifies independent partially consumed
+  map, filter, take_while, skip_while and flat_map Clone/ToOwned state.
+  These five families account for precisely fifteen declared-to-evidenced
+  records, not fifteen fewer missing records.
+
+  Function-pointer Clone uses a private, compiler-derived closed marker and an
+  ordinary generic library implementation. Direct execution covers clone,
+  clone_from and ToOwned; non-Copy arguments, read/mut access, zero/binary
+  arities, higher-ranked result regions, typed failures, unsafe qualification
+  and C calling convention. This is not a blanket Copy-to-Clone rule.
+  Six focused accepted programs pass both profiles (twelve units); thirteen
+  alias/coherence/unsafe-call negatives and normal/ASan-UBSan boundary/type-graph
+  CTests pass. The ASan/UBSan compiler emits debug objects for the cleanup and
+  direct function-pointer fixtures without reports. Both acceptance fixtures
+  and the direct function-pointer fixture pass emitted ASan with the ASan/UBSan
+  runtime in debug/release (six units). Pinned formatting and targeted
+  clang-tidy pass on the five changed compiler implementations.
+  Receipts and current compiler/runtime/input/binary identities are retained
+  under `i13-complete-blocker-*` and `i13-function-clone-unsafe-negative`;
+  sanitizer artifacts use `i13-cache-cleanup-*`, `i13-function-clone-*` and
+  `i13-callable-clones-*`. These focused Linux x86-64 results do not close I13,
+  LNX or any complete library area.
 
 ### Earlier integration receipt scope
 
@@ -227,7 +259,7 @@ operation statuses are maintained in [the ledger](baseline/v1-operations.csv).
 | --- | --- | --- |
 | Shared unzip | One `Iterator.unzip` over `Default + ExtendItems`, independent of collections in core. `i13-iter-consumers` passes native/emitted-ASan debug/release: empty input, heterogeneous ordered output, non-Copy movement/drops. Only unzip credited. | Destination-specific allocation/destructor-panic contracts. Declaration checking needs `Self: Iterator<Item = (A, B)>`, explicit `Self.(Iterator).next` and explicit output arguments; equality-only `Self.Item` and result-tuple inference remain unsupported. |
 | Conversion blanket | Coherence matches target **and interface arguments** before requirements. Disjoint-destination regression fails old/passes repaired compiler; genuine overlap and unconstrained downstream cases reject. One `TryFrom<U> for T where U: Into<T>` covers direct user Into; TryInto delegates. Ten directly tested rows evidenced; 192 TryFrom + 192 TryInto exposures declared. | Per-type/profile evidence for all 384 exposures; emitted owner-conversion ASan compile hit unchanged 60 s bound and remains unverified. |
-| Adapter Clone | Field-wise Clone for Mapped, Filtered, FilterMapped, MappedWhile, FlatMapped, Flatten, Cloned, Copied, TakenWhile, SkippedWhile, Inspected, Cycled; ToOwned reuses it, phantom outputs gain no Clone bound. Value-trait fixture passes native/emitted-ASan debug/release, checking independent partially consumed Flatten/Cloned/Copied positions, ToOwned and Cycled wraparound. Nine rows evidenced, fifteen callable-adapter rows declared. | Peekable Clone: buffer remains `<associated.0>??` even with `Iterator<Item = T>` or a typed helper. Unbuildable attempt removed; original API unchanged. |
+| Adapter Clone | Field-wise Clone for Mapped, Filtered, FilterMapped, MappedWhile, FlatMapped, Flatten, Cloned, Copied, TakenWhile, SkippedWhile, Inspected, Cycled; ToOwned reuses it, phantom outputs gain no Clone bound. Value-trait fixture passes native/emitted-ASan debug/release, checking independent partially consumed Flatten/Cloned/Copied positions, ToOwned and Cycled wraparound. Callable clones now pass debug/release using function pointers; twenty-four records evidenced. | Peekable Clone/ToOwned cached absence passes in the cache/cleanup fixture; complete cached-present cloning and remaining contract qualification are still open. |
 
 Conversion validation: incremental compiler build, `compiler.boundaries`,
 `compiler.modules-memory`, pinned clang-tidy and generic/inference/float

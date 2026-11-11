@@ -99,6 +99,11 @@ not required. A failed clone need not preserve its old value but must leave
 valid destination storage. Copy implementations must clone as a plain value
 copy and remain eligible only under the language's explicit Copy rules.
 
+Thin function pointers implement Clone by copying the pointer, without cloning
+arguments or results. Cloning preserves parameter access, result regions,
+failure effects, unsafe qualification and calling convention. This does not
+give every Copy type a blanket Clone implementation.
+
 Structural Clone processes fields/elements in declaration/index order, clones
 only the active enum alternative, and cleans partial results on panic.
 Structural Default calls field defaults in declaration order. There is no

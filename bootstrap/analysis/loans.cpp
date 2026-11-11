@@ -69,10 +69,66 @@ void check(const ir::Function &function, const ir::Program &program,
     for (const auto &point : block)
       for (auto id : point.defines)
         external.erase(id);
+  std::vector<std::set<int>> liveValues(count);
+  bool changed;
+  do {
+    changed = false;
+    for (std::size_t b = count; b-- > 0;) {
+      if (!reachable[b])
+        continue;
+      std::set<int> live;
+      auto use = [&](ir::Value value) {
+        if (value.id >= 0 && !info.values[value.id].empty())
+          live.insert(value.id);
+      };
+      for (auto next : successors[b]) {
+        live.insert(liveValues[next].begin(), liveValues[next].end());
+        for (const auto &instruction : function.blocks[next].instructions)
+          if (instruction.op == ir::Op::Phi)
+            for (std::size_t operand = 0; operand < instruction.operands.size();
+                 ++operand)
+              if (instruction.predecessors[operand] == static_cast<int>(b))
+                use(instruction.operands[operand]);
+      }
+      use(function.blocks[b].exit.value);
+      const auto &instructions = function.blocks[b].instructions;
+      for (std::size_t i = instructions.size(); i-- > 0;) {
+        const auto &instruction = instructions[i];
+        live.erase(instruction.result.id);
+        if (instruction.op != ir::Op::Phi)
+          for (auto operand : instruction.operands)
+            use(operand);
+        if (instruction.op == ir::Op::IndirectCall)
+          use(instruction.target);
+      }
+      if (liveValues[b] != live) {
+        liveValues[b] = std::move(live);
+        changed = true;
+      }
+    }
+  } while (changed);
   std::vector<Origins> availableIn(count), availableOut(count), activeIn(count),
       activeOut(count);
+  std::vector<Origins> heldIn(count);
+  for (std::size_t b = 0; b < count; ++b) {
+    auto &held = heldIn[b];
+    held = external;
+    join(held, info.storedIn[b]);
+    for (auto value : liveValues[b])
+      for (const auto &[path, sources] : info.values[value]) {
+        (void)path;
+        join(held, sources);
+      }
+    for (const auto &instruction : function.blocks[b].instructions)
+      if (instruction.op == ir::Op::Phi)
+        for (auto operand : instruction.operands)
+          for (const auto &[path, sources] : info.values[operand.id]) {
+            (void)path;
+            join(held, sources);
+          }
+    held = ancestors(held, info.loans);
+  }
   std::vector<Origins> pendingIn(count), pendingOut(count);
-  bool changed;
   do {
     changed = false;
     for (std::size_t b = 0; b < count; ++b) {
@@ -112,6 +168,16 @@ void check(const ir::Function &function, const ir::Program &program,
       pendingOut[b] = std::move(pending);
     }
   } while (changed);
+  for (std::size_t b = 0; b < count; ++b) {
+    Origins available;
+    std::set_intersection(availableIn[b].begin(), availableIn[b].end(),
+                          heldIn[b].begin(), heldIn[b].end(),
+                          std::inserter(available, available.end()));
+    availableIn[b] = std::move(available);
+    availableOut[b] = availableIn[b];
+    for (const auto &point : info.points[b])
+      join(availableOut[b], point.defines);
+  }
   std::vector<std::vector<Origins>> activeBefore(count);
   std::vector<std::vector<Origins>> pendingBefore(count);
   for (std::size_t b = 0; b < count; ++b) {

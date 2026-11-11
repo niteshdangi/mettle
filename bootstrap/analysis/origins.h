@@ -81,6 +81,7 @@ struct OriginInfo {
   std::vector<std::vector<Point>> points;
   std::vector<ViewOrigins> values;
   std::vector<Origins> returns;
+  std::vector<Origins> storedIn;
   std::map<int, int> externalSources;
   std::map<int, Place> externalPlaces;
   FunctionEffects effects;

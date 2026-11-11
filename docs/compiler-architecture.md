@@ -614,6 +614,12 @@ Potential interface candidates match both the target and interface arguments
 before checking their constraints; a match on the target alone cannot establish
 that a conversion to a different destination exists.
 
+Thin function pointers satisfy the private `core::clone::FunctionPointer`
+marker, whose membership the solver derives and coherence treats as closed.
+Declared implementations of that marker are rejected. The ordinary library
+Clone implementation copies the pointer without changing its complete callable
+type or implying Clone for every Copy type.
+
 The pipeline verifies and analyzes every symbolic body, including unused
 declarations, before requesting concrete instances. The `instances` component
 then substitutes already-checked CFGs and preserves declared parameter modes.
@@ -733,6 +739,11 @@ exclusive views are not. Backend signatures lower borrowed parameters and view
 payloads to addresses, without inventing `noalias`.
 Loan analysis solves backward liveness across CFG branches/back edges, retaining
 declared result-source dependencies separately from precise referent projections.
+Block-entry loan availability intersects reaching definitions with origins held
+in incoming memory or live SSA values, including their ancestor authority.
+Phi operands are SSA uses on their recorded predecessor edges, not ordinary uses
+in the merge block. This retires unheld prior-loop outputs without introducing
+future definitions or discarding independent stored aliases.
 Interprocedural effects include view-storage writes by implicit destructors.
 Possible writes and every-normal-return overwrites are distinct. Only definite,
 uniquely resolved ordinary-call overwrites release an old stored loan; conditional

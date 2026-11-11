@@ -26,6 +26,12 @@ extend bool implements Clone { fn clone(): bool { self } }
 extend char implements Clone { fn clone(): char { self } }
 extend Unit implements Clone { fn clone(): Unit { self } }
 extend Ordering implements Clone { fn clone(): Ordering { self } }
+// The compiler derives this private marker only for thin function pointers.
+interface FunctionPointer: Copy {}
+
+extend<F: FunctionPointer> F implements Clone {
+    fn clone(): F { self }
+}
 // Tuples clone field by field, at every arity up to twelve.
 macro tuple_clone {
     ($($name:ident => $field:literal),*) => {

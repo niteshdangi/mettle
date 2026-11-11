@@ -632,6 +632,11 @@ bool Solver::prove(const Obligation &obligation, Span span, bool report) {
     provingUnpin.erase(subject);
     return valid;
   }
+  if (types.isErased(obligation.interfaceType) &&
+      database.definitions[types.erased(obligation.interfaceType).declaration]
+              .name == "core::clone::FunctionPointer" &&
+      types.isFunctionPointer(normalize(obligation.subject, {}, span)))
+    return true;
   auto selected = implementation(obligation.subject, obligation.interfaceType,
                                  span, report);
   if (selected)

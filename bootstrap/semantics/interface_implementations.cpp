@@ -226,6 +226,9 @@ void Checker::interfaceImplementations() {
       auto interfaceDeclaration =
           checked.types->erased(implementation.interfaceType).declaration;
       const auto &definition = database.definitions[interfaceDeclaration];
+      if (definition.name == "core::clone::FunctionPointer")
+        error("type", syntax.span,
+              "function pointer membership is derived and cannot be declared");
       if (definition.unsafeInterface && !syntax.unsafeImplementation)
         error("unsafe", syntax.span,
               "unsafe interface implementation requires an unsafe extend");

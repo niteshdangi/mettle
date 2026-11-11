@@ -388,6 +388,8 @@ Solver::applicable(const Implementation &implementation, Type self, Span span,
 
 bool Solver::someImplementationCouldApply(Type subject, Type interfaceType) {
   auto declaration = types.erased(interfaceType).declaration;
+  if (database.definitions[declaration].name == "core::clone::FunctionPointer")
+    return types.isFunctionPointer(subject);
   auto key = std::pair(subject, interfaceType);
   // Recursive requirements cannot establish that two implementations are
   // disjoint.
