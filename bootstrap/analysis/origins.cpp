@@ -828,6 +828,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
       predecessors[exit.second].push_back(static_cast<int>(b));
   }
   std::vector<Memory> outputs(function.blocks.size());
+  std::vector<std::optional<Place>> variantPlaces(function.blocks.size());
   bool changed;
   // Result paths some return leaves without any tracked loan (raw storage).
   std::set<ViewPath> untracked;
@@ -836,8 +837,34 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
     untracked.clear();
     for (std::size_t b = 0; b < function.blocks.size(); ++b) {
       Memory memory = b == 0 ? entry : Memory{};
-      for (auto predecessor : predecessors[b])
-        join(memory, outputs[predecessor]);
+      for (auto predecessor : predecessors[b]) {
+        if (!variantPlaces[predecessor]) {
+          join(memory, outputs[predecessor]);
+          continue;
+        }
+        const auto &prior = function.blocks[predecessor];
+        const auto &test = prior.instructions.back();
+        const auto &place = *variantPlaces[predecessor];
+        auto type = *projectedType(types, function.locals[test.place.root].type,
+                                   test.place.fields);
+        const auto &variants = types.product(type).variants;
+        std::set<std::uint32_t> fields;
+        for (std::size_t variant = 0; variant < variants.size(); ++variant)
+          if ((static_cast<std::int64_t>(variant) == test.number) ==
+              (static_cast<int>(b) == prior.exit.first))
+            fields.insert(variants[variant].fields.begin(),
+                          variants[variant].fields.end());
+        for (const auto &[location, sources] : outputs[predecessor]) {
+          if (prefix(place, location) &&
+              location.fields.size() > place.fields.size()) {
+            auto field = location.fields[place.fields.size()];
+            if (field.kind == Projection::Kind::Field &&
+                !fields.contains(field.index))
+              continue;
+          }
+          join(memory[location], sources);
+        }
+      }
       auto resolve = [&](const Place &raw, Origins &uses) {
         std::set<Target> targets{{bases.at(raw.root), {}}};
         auto currentType = function.locals[raw.root].type;
@@ -1997,6 +2024,24 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                 storage.root = function.locals[storage.root].staticIndex;
                 result.effects.staticReturns[path].insert(std::move(storage));
               }
+      }
+      std::optional<Place> variantPlace;
+      const auto &block = function.blocks[b];
+      if (block.exit.kind == ir::Exit::Branch &&
+          block.exit.first != block.exit.second &&
+          !block.instructions.empty()) {
+        const auto &test = block.instructions.back();
+        if (test.op == ir::Op::VariantTest &&
+            test.result.id == block.exit.value.id) {
+          Origins uses;
+          auto targets = resolve(test.place, uses);
+          if (targets.size() == 1 && !imprecise(targets.begin()->place))
+            variantPlace = targets.begin()->place;
+        }
+      }
+      if (variantPlaces[b] != variantPlace) {
+        variantPlaces[b] = std::move(variantPlace);
+        changed = true;
       }
       if (outputs[b] != memory) {
         outputs[b] = std::move(memory);

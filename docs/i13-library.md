@@ -9,8 +9,8 @@ areas remain partial: L003, L005, L009, S005-S014, S019-S021, S024-S025.
 
 ## Handoff (start here in a new session)
 
-Latest operation ledger (2026-11-11): **10,477 evidenced, 401 declared,
-2,412 missing, 5 not applicable** of 13,295 records. Declared means implemented
+Latest operation ledger (2026-11-11): **10,492 evidenced, 401 declared,
+2,397 missing, 5 not applicable** of 13,295 records. Declared means implemented
 but not behaviorally verified per type/profile. Subset/source-cfg reconciliation
 and Linux applicability review remain open; no area is closed by these batches.
 The declared records comprise the previous 20 conversion-blanket and fifteen
@@ -79,13 +79,47 @@ receipts did not establish their required stable constant-callability.
   (eight units across scoped runs). Array and Cow panic cleanup pass emitted
   ASan with the ASan/UBSan runtime in both profiles (four units). One owning
   array implementation record gains evidence. Borrow-carrying non-Copy
-  flattened inners still expose an ownership-analysis blocker: a reduced
-  optional iterator, without any adapter or loop, cannot be cleared in the
-  exhausted branch when its Item owns a mutable view with Drop. Shortening
-  library match scopes does not fix it and was reverted. Named function
-  callbacks also lack the Clone support required by adapter cloning.
+    flattened inners still expose an ownership-analysis blocker. The reduced
+    optional-iterator retirement defect is repaired by the branch-origin
+    refinement below; shortening library match scopes was ineffective and
+    remains reverted. Named function callbacks also lack the Clone support
+    required by adapter cloning.
 
-After the compiler repairs, the four NonNull fixtures and two new networking
+  ### Buffered IO closure and iterator retirement (2026-11-11)
+
+  Fifteen further IO records gain evidence without duplicate implementations:
+  BufferedReader's type and eight members, and BufRead's consume, delimiter,
+  line and splitting operations. `i13_io_closure_reader_state` checks lazy
+  construction, capacity, unread-buffer access, inner access/transfer, logical
+  relative seeking, failed-seek state and zero-capacity requests.
+  `i13_io_closure_delimiter_errors` checks retained byte prefixes and recovery
+  after errors in read_until, skip_until, read_line, lines and split.
+  Both fixtures and the existing buffered, BufRead and text-validity/retry
+  fixtures pass debug/release (ten units). These are native contract checks,
+  not new implementations or full IO qualification.
+
+  The ownership checker now removes impossible payload storage origins on
+  immediate variant-test edges, without removing independent aliases or SSA
+  values. `iterator-exhausted-result-retirement` and owning-array cleanup pass
+  both profiles; three new active-payload/independent-alias/join rejections and
+  three existing exclusive/reborrow rejections pass. The minimal retirement
+  program also passes emitted ASan with the ASan/UBSan runtime in both profiles.
+  Normal and ASan/UBSan compiler boundary CTests pass; the sanitized compiler
+  checks and emits a debug object for that program. Pinned formatting and
+  targeted clang-tidy pass. Evidence uses the compiler at `1ec6063` plus this
+  origin refinement and the native `i13-cleanup-4ae025e` library snapshot.
+
+  The larger borrowed-inner Flatten fixture still fails when moving the outer
+  result: loop-carried derived output loans remain backward-live at that move.
+  Its exact remaining cause/fix is not established; no second speculative repair
+  or operation credit is claimed. Origin and loan analysis sources were unchanged
+  between `4ae025e` and `1ec6063`; that source history is not a clean historical
+  compiler reproduction. The attempted independent closure agents were cancelled
+  without results; the buffered IO batch above was completed directly.
+
+### Earlier integration receipt scope
+
+After the contextual-region compiler repairs, the four NonNull fixtures and two new networking
 fixtures pass both profiles again (12 units); their unsafe-call and retained
 input negatives also pass. The other four Cow fixtures pass both profiles
 on the updated compiler (eight units), supplementing general custom-owner

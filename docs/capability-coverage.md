@@ -50,8 +50,8 @@ still obligations. No executed all-target expansion or per-item native coherence
 check is claimed.
 
 Generate the I13 [worklist](baseline/v1-operations.csv) with
-`python3 tools/v1_operations.py`. Latest ledger (2026-11-11): **10,477 evidenced,
-401 declared, 2,412 missing, 5 not applicable** of 13,295 canonical records,
+`python3 tools/v1_operations.py`. Latest ledger (2026-11-11): **10,492 evidenced,
+401 declared, 2,397 missing, 5 not applicable** of 13,295 canonical records,
 grouped into 2,442 operation and 2,309 implementation families. Subset/source-cfg
 reconciliation and Linux applicability review remain open; the five Windows-only
 exclusions were recorded on Darwin. Missing/unmapped is not proof of absent

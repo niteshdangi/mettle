@@ -756,7 +756,10 @@ dataflow refines possible variants on branch edges and invalidates refinements o
 replacement or mutable calls. A payload cannot be admitted without a compatible
 active tag. SSA projection cannot bypass these place checks. Cleanup flags are set
 only for the active alternative; inactive representation bytes establish no owned
-value or destructor obligation. Default/native enum storage remains private.
+value or destructor obligation. Origin propagation removes impossible payload
+storage on edges of an immediate tag test of uniquely resolved precise storage;
+independent aliases and SSA values retain their origins, and joins union the
+remaining possibilities. Default/native enum storage remains private.
 Explicit C, integer and transparent representations instead use their checked
 layout and physical C ABI; logical alternatives do not become stored tags in a
 transparent single-variant enum.
