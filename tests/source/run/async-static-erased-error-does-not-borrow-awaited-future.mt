@@ -1,5 +1,6 @@
+module source_helpers;
 import alloc.boxed.Box
-import core.future.{Future, Poll, Context, noop_waker}
+import core.future.Future
 
 interface Show { fn value(): i32; }
 type Plain { value: i32 }
@@ -18,15 +19,7 @@ async fn propagate(read input: Input): i32 throws Fault {
     try await compute(input)
 }
 fn drive<F: Future<Output = (Outcome<i32, Fault>)>>(take future: F): (Outcome<i32, Fault>) {
-    let waker = noop_waker()
-    var slot = core.pin.pin(future)
-    loop {
-        var cx = Context.from_waker(read waker)
-        match take slot.as_mut().poll(mut cx) {
-            Poll.Ready(value) => { return value },
-            Poll.Pending => {}
-        }
-    }
+    source_helpers.drive!(future)
 }
 fn main(): i32 {
     let good = Input(42)

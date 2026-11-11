@@ -359,33 +359,25 @@ extend Duration implements Div<u32> {
 
 extend Duration implements AddAssign<Duration> {
     mut fn add_assign(read rhs: Duration): Unit {
-        let sum = add_durations(self, rhs)
-        self.secs = sum.secs
-        self.nanos = sum.nanos
+        self = add_durations(self, rhs)
     }
 }
 
 extend Duration implements SubAssign<Duration> {
     mut fn sub_assign(read rhs: Duration): Unit {
-        let difference = sub_durations(self, rhs)
-        self.secs = difference.secs
-        self.nanos = difference.nanos
+        self = sub_durations(self, rhs)
     }
 }
 
 extend Duration implements MulAssign<u32> {
     mut fn mul_assign(read rhs: u32): Unit {
-        let product = mul_durations(self, rhs)
-        self.secs = product.secs
-        self.nanos = product.nanos
+        self = mul_durations(self, rhs)
     }
 }
 
 extend Duration implements DivAssign<u32> {
     mut fn div_assign(read rhs: u32): Unit {
-        let quotient = div_durations(self, rhs)
-        self.secs = quotient.secs
-        self.nanos = quotient.nanos
+        self = div_durations(self, rhs)
     }
 }
 
@@ -500,17 +492,13 @@ extend SystemTime implements Sub<Duration> {
 
 extend SystemTime implements AddAssign<Duration> {
     mut fn add_assign(read rhs: Duration): Unit {
-        let sum = self + rhs
-        self.secs = sum.secs
-        self.nanos = sum.nanos
+        self = self + rhs
     }
 }
 
 extend SystemTime implements SubAssign<Duration> {
     mut fn sub_assign(read rhs: Duration): Unit {
-        let difference = self - rhs
-        self.secs = difference.secs
-        self.nanos = difference.nanos
+        self = self - rhs
     }
 }
 

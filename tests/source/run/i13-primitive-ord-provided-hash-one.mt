@@ -1,7 +1,7 @@
 // profiles: debug release
+module source_helpers;
 import core.cmp.{Ord, Ordering, Reverse, min, max, clamp}
 import core.default.Default
-import core.fmt
 import core.fmt.Debug
 import core.hash.{BuildHasher, Fnv1a, Hash, Hasher, fnv1a}
 import core.text.Text
@@ -13,18 +13,7 @@ extend FnvFactory implements BuildHasher {
 }
 
 fn debug_is<T: Debug>(read value: T, read expected: Text): bool {
-    var storage = [0u8; 200]
-    var writer = fmt.buffer_writer(mut storage)
-    var formatter = fmt.formatter(mut writer, fmt.spec())
-    match capture T.(Debug).fmt(value, mut formatter) {
-        success(unit) => {},
-        failure(error) => { return false }
-    }
-    let written = writer.len()
-    match fmt.written_text(read storage, written) {
-        present(actual) => actual == expected,
-        none => false
-    }
+    source_helpers.debug_is!(T, value, expected)
 }
 
 fn make<T: Default>(): T { T.(Default).default() }

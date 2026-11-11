@@ -78,6 +78,13 @@ fn run(): i32 throws Error {
 
     // SystemTime arithmetic, equality and elapsed time.
     let epoch = unix_epoch()
+    var shifted = epoch
+    shifted += from_millis(1500u64)
+    if shifted.unix_secs() != 1i64 || shifted.subsec_nanos() != 500000000u32 { return 48 }
+    shifted -= from_millis(2250u64)
+    if shifted.unix_secs() != -1i64 || shifted.subsec_nanos() != 250000000u32 { return 49 }
+    shifted += from_secs(1u64)
+    if shifted.unix_secs() != 0i64 || shifted.subsec_nanos() != 250000000u32 { return 50 }
     let upper = std.time.system_time_from_parts(9223372036854775807i64, 999999999u32)
     let lower = std.time.system_time_from_parts(-9223372036854775808i64, 0u32)
     if upper.checked_add(from_nanos(1u64)).is_present() { return 36 }

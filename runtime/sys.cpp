@@ -789,15 +789,7 @@ extern "C" const char *mettle_rt_argv(std::int32_t index) {
   return index >= 0 && index < args.count ? args.values[index] : nullptr;
 }
 
-extern "C" const char *mettle_rt_environ_at(std::int32_t index) {
-  char **values = environment();
-  if (!values || index < 0)
-    return nullptr;
-  for (std::int32_t i = 0; values[i]; ++i)
-    if (i == index)
-      return values[i];
-  return nullptr;
-}
+extern "C" const char *const *mettle_rt_environ() { return environment(); }
 
 extern "C" std::int32_t
 mettle_rt_spawn(const char *program, const char *const *argv,
@@ -1032,10 +1024,13 @@ mettle_rt_sock_accept(std::int32_t fd, std::int32_t timeoutMillis,
       errno = code;
     }
   } socket{accepted};
+#ifndef __linux__
   const int flags = retry([&] { return fcntl(accepted, F_GETFD); });
   if (flags < 0 ||
-      retry([&] { return fcntl(accepted, F_SETFD, flags | FD_CLOEXEC); }) < 0 ||
-      mettle_rt_set_blocking(accepted) != 0)
+      retry([&] { return fcntl(accepted, F_SETFD, flags | FD_CLOEXEC); }) < 0)
+    return -1;
+#endif
+  if (mettle_rt_set_blocking(accepted) != 0)
     return -1;
 #ifdef SO_NOSIGPIPE
   int on = 1;

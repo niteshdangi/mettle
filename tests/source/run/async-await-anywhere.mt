@@ -1,3 +1,4 @@
+module source_helpers;
 import core.future.{Future, Poll, Context, noop_waker}
 
 // Awaits compose with every statement form: borrows of body locals live across
@@ -78,15 +79,7 @@ async fn hold(counter: ptr<mut i32>): i32 {
 }
 
 fn drive<F: Future>(take future: F): F.Output {
-    let waker = noop_waker()
-    var slot = core.pin.pin(future)
-    loop {
-        var cx = Context.from_waker(read waker)
-        match take slot.as_mut().poll(mut cx) {
-            Poll.Ready(value) => { return value },
-            Poll.Pending => {}
-        }
-    }
+    source_helpers.drive!(future)
 }
 
 fn poll_times<F: Future>(take future: F, times: i32): Unit {

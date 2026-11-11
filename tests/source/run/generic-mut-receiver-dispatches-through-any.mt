@@ -1,4 +1,5 @@
-import core.future.{Future, Poll, Context, noop_waker}
+module source_helpers;
+import core.future.Future
 interface Bump { mut fn bump(by: i32): i32; fn get(): i32; }
 type N { v: i32 }
 extend N implements Bump {
@@ -12,15 +13,7 @@ async fn outer<region r>(read v: i32 from r): i32 {
     await f
 }
 fn drive<F: Future>(take future: F): F.Output {
-    let waker = noop_waker()
-    var slot = core.pin.pin(future)
-    loop {
-        var cx = Context.from_waker(read waker)
-        match take slot.as_mut().poll(mut cx) {
-            Poll.Ready(value) => { return value },
-            Poll.Pending => {}
-        }
-    }
+    source_helpers.drive!(future)
 }
 fn main(): i32 {
     var n = N(1)

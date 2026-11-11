@@ -222,18 +222,13 @@ extend Ipv6Addr {
     }
     pub fn is_unique_local(): bool { (self.bytes[0usize] & 254u8) == 252u8 }
     pub fn to_ipv4(): Ipv4Addr? {
-        var compatible = true
         var i = 0usize
-        while i < 12usize {
-            if self.bytes[i] != 0u8 { compatible = false }
-            i += 1usize
-        }
-        var mapped = self.bytes[10usize] == 255u8 && self.bytes[11usize] == 255u8
-        i = 0usize
         while i < 10usize {
-            if self.bytes[i] != 0u8 { mapped = false }
+            if self.bytes[i] != 0u8 { return none }
             i += 1usize
         }
+        let compatible = self.bytes[10usize] == 0u8 && self.bytes[11usize] == 0u8
+        let mapped = self.bytes[10usize] == 255u8 && self.bytes[11usize] == 255u8
         if !compatible && !mapped { return none }
         present(ipv4(self.bytes[12usize], self.bytes[13usize], self.bytes[14usize], self.bytes[15usize]))
     }
@@ -481,18 +476,11 @@ pub fn parse_ipv6(read text: Text): Ipv6Addr throws Error {
         var right_groups = [0u16; 8]
         let right_count = try parse_ipv6_side(right, 0usize, true, mut right_groups)
         if left_count + right_count >= 8usize { throw invalid_address() }
-        var shifted = [0u16; 8]
         var j = 0usize
-        while j < left_count {
-            shifted[j] = groups[j]
-            j += 1usize
-        }
-        j = 0usize
         while j < right_count {
-            shifted[8usize - right_count + j] = right_groups[j]
+            groups[8usize - right_count + j] = right_groups[j]
             j += 1usize
         }
-        groups = shifted
     }
 
     var address_bytes = [0u8; 16]
@@ -1251,11 +1239,7 @@ pub fn udp_bind(addr: SocketAddr): UdpSocket throws Error {
 
 extend AsyncTcpStream {
     pub async static fn connect(addr: SocketAddr): AsyncTcpStream throws Error {
-        let result = await async_tcp_connect(addr)
-        match take result {
-            success(stream) => stream,
-            failure(error) => throw error
-        }
+        try await async_tcp_connect(addr)
     }
 
     pub async fn read_some(mut buf: [u8]): usize throws Error {
@@ -1297,11 +1281,7 @@ extend AsyncTcpStream {
     pub async fn write_all(read buf: [u8]): Unit throws Error {
         var written = 0usize
         while written < buf.len() {
-            let result = await self.write_some(buf.split_at(written).1)
-            let n = match take result {
-                success(count) => count,
-                failure(error) => throw error
-            }
+            let n = try await self.write_some(buf.split_at(written).1)
             if n == 0usize { throw io.from_kind(ErrorKind.WriteZero) }
             written += n
         }

@@ -211,6 +211,46 @@ class LibraryRunnerTests(unittest.TestCase):
 
 
 class SchedulingTests(unittest.TestCase):
+    def test_source_receipts_track_shared_helper_changes(self):
+        with tempfile.TemporaryDirectory(dir=OUTPUT) as temporary:
+            root = Path(temporary)
+            helpers = root / "source_helpers"
+            helpers.mkdir()
+            module, child = helpers / "module.mt", helpers / "poll.mt"
+            module.write_text("module poll;\n")
+            child.write_text("pub fn value(): i32 { 1 }\n")
+            source = root / "case.mt"
+            source.write_text("module source_helpers;\nfn main(): i32 { 0 }\n")
+
+            def run(command, **kwargs):
+                if command[0] == "compiler":
+                    if kind == "run":
+                        Path(command[command.index("-o") + 1]).write_bytes(b"program")
+                    else:
+                        return subprocess.CompletedProcess(
+                            command, 1, "", f"{source}:2:1: error[name]: rejection\n")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            for kind in ("run", "fail"):
+                case = source_runner.Case(
+                    "case", source, kind, ("debug",), [], None,
+                    exits={"debug": 0}, errors=[("name", 2, 1, "rejection")])
+                records = []
+                with patch.object(source_runner.processes, "run", side_effect=run):
+                    for changed in (None, module, child):
+                        if changed:
+                            changed.write_text(changed.read_text() + "// changed\n")
+                        runner = source_runner.Runner("compiler", case)
+                        getattr(runner, f"execute_{kind}")(root)
+                        records.append(runner.records[0])
+                self.assertEqual(len({record["source_sha256"] for record in records}), 1)
+                self.assertNotEqual(records[0]["helper_sha256"], records[1]["helper_sha256"])
+                self.assertNotEqual(records[1]["helper_sha256"], records[2]["helper_sha256"])
+                self.assertEqual(records[2]["helper_sha256"],
+                                 {str(path): source_runner.digest(path) for path in (module, child)})
+                if kind == "run":
+                    self.assertEqual(len({record["program_sha256"] for record in records}), 1)
+
     def test_longest_first_keeps_failed_work_and_stable_results(self):
         with tempfile.TemporaryDirectory(dir=OUTPUT) as temporary:
             root = Path(temporary)

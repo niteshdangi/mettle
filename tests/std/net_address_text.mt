@@ -65,6 +65,24 @@ fn run(): i32 throws Error {
         success(value) => { return 15 },
         failure(error) => { if !error.kind().is(ErrorKind.InvalidInput) { return 16 } }
     }
+    let middle = try Ipv6Addr.parse("1:2:3::4:5:6:7")
+    if !middle.same(ipv6(1u16, 2u16, 3u16, 0u16, 4u16, 5u16, 6u16, 7u16)) { return 17 }
+    let leading = try Ipv6Addr.parse("::1:2:3:4:5:6:7")
+    if !leading.same(ipv6(0u16, 1u16, 2u16, 3u16, 4u16, 5u16, 6u16, 7u16)) { return 18 }
+    let trailing = try Ipv6Addr.parse("1:2:3:4:5:6:7::")
+    if !trailing.same(ipv6(1u16, 2u16, 3u16, 4u16, 5u16, 6u16, 7u16, 0u16)) { return 19 }
+    match capture Ipv6Addr.parse("1:2:3::4:5:6:7:8") {
+        success(value) => { return 20 },
+        failure(error) => { if !error.kind().is(ErrorKind.InvalidInput) { return 21 } }
+    }
+    match capture Ipv6Addr.parse("1::2::3") {
+        success(value) => { return 22 },
+        failure(error) => { if !error.kind().is(ErrorKind.InvalidInput) { return 23 } }
+    }
+    match capture Ipv6Addr.parse("::1:2:3:4:5:6:7:8:9") {
+        success(value) => { return 24 },
+        failure(error) => { if !error.kind().is(ErrorKind.InvalidInput) { return 25 } }
+    }
     0
 }
 

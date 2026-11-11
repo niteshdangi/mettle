@@ -95,6 +95,14 @@ fn main(): i32 {
         success(value) => value,
         failure(_) => { return 21 }
     }
+    match take task.block_on(std.net.AsyncTcpStream.connect(address)) {
+        success(_) => {},
+        failure(_) => { return 35 }
+    }
+    match take task.block_on(listener.accept()) {
+        success(_) => {},
+        failure(_) => { return 36 }
+    }
 
     // The timer wins; dropping the still-pending accept must unregister it.
     if !task.block_on(accept_timeout(listener.accept(), from_millis(5u64))) {

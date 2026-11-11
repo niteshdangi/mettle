@@ -206,7 +206,6 @@ int main() {
     auto cellView = producer.viewType(cell, ParameterMode::Read, local);
     roots.push_back(producer.structural(AggregateKind::Ref, {cellView}));
     roots.push_back(producer.structural(AggregateKind::RefMut, {cellView}));
-    producer.setNativeCleanup(roots.back(), NativeCleanup::RefMutRelease);
     symbols.definition = [&](Type type) -> std::optional<DefinitionIdentity> {
       auto found = identities.find(type);
       return found == identities.end() ? std::nullopt
@@ -250,6 +249,12 @@ int main() {
   expect(repeated.roots == imported.roots,
          "same logical graph must reuse type and region identities");
   const auto &r = imported.roots;
+  expect(consumer.needsDrop(r[r.size() - 2]) && consumer.needsDrop(r.back()) &&
+             consumer.product(r[r.size() - 2]).nativeCleanup ==
+                 NativeCleanup::RefRelease &&
+             consumer.product(r.back()).nativeCleanup ==
+                 NativeCleanup::RefMutRelease,
+         "imported cell guards must preserve their distinct release actions");
   expect(r[4] == existingArray && r[20] == existingArray &&
              r[5] == existingCount && r[14] == existingView &&
              r[15] == existingSlice && r[16] == existingCallable &&

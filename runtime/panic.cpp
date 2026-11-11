@@ -15,10 +15,6 @@ struct Panic {
   std::int32_t code;
   std::string message;
 };
-struct PanicPayload {
-  std::int32_t code;
-  std::string message;
-};
 thread_local unsigned unwindDepth = 0;
 thread_local bool invokingPanicHook = false;
 std::atomic<MettlePanicHook> panicHook{nullptr};
@@ -134,7 +130,7 @@ mettle_rt_catch_payload(void *context, MettleAction body, void **payload) {
     body(context);
   } catch (const Panic &panic) {
     try {
-      *payload = new PanicPayload{panic.code, panic.message};
+      *payload = new Panic{panic.code, panic.message};
     } catch (...) {
       std::abort();
     }
@@ -148,20 +144,20 @@ mettle_rt_catch_payload(void *context, MettleAction body, void **payload) {
 extern "C" std::int32_t mettle_rt_panic_payload_code(void *raw) {
   if (!raw)
     std::abort();
-  return static_cast<PanicPayload *>(raw)->code;
+  return static_cast<Panic *>(raw)->code;
 }
 
 extern "C" const std::uint8_t *
 mettle_rt_panic_payload_message(void *raw, std::uint64_t *length) {
   if (!raw || !length)
     std::abort();
-  const auto &message = static_cast<PanicPayload *>(raw)->message;
+  const auto &message = static_cast<Panic *>(raw)->message;
   *length = static_cast<std::uint64_t>(message.size());
   return reinterpret_cast<const std::uint8_t *>(message.data());
 }
 
 extern "C" void mettle_rt_panic_payload_free(void *raw) {
-  delete static_cast<PanicPayload *>(raw);
+  delete static_cast<Panic *>(raw);
 }
 
 extern "C" [[noreturn]] void mettle_rt_panic(std::int32_t code) {

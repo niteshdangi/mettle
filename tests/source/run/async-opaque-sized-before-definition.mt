@@ -1,4 +1,5 @@
-import core.future.{Future, Poll, Context, noop_waker}
+module source_helpers;
+import core.future.Future
 
 type Source {}
 type Sink {}
@@ -19,15 +20,7 @@ extend Sink {
 }
 
 fn drive<F: Future<Output = usize>>(take future: F): usize {
-    let waker = noop_waker()
-    var slot = core.pin.pin(future)
-    loop {
-        var cx = Context.from_waker(read waker)
-        match take slot.as_mut().poll(mut cx) {
-            Poll.Ready(value) => { return value },
-            Poll.Pending => {}
-        }
-    }
+    source_helpers.drive!(future)
 }
 
 fn main(): i32 {

@@ -16,7 +16,7 @@ extern "C" {
     pub unsafe fn mettle_rt_readdir(dir: ptr<mut u8>): ptr<read u8>;
     pub unsafe fn mettle_rt_argc(): i32;
     pub unsafe fn mettle_rt_argv(index: i32): ptr<read u8>;
-    pub unsafe fn mettle_rt_environ_at(index: i32): ptr<read u8>;
+    pub unsafe fn mettle_rt_environ(): ptr<read ptr<read u8>>;
     pub unsafe fn mettle_rt_spawn(program: ptr<read u8>, argv: ptr<read ptr<read u8>>, envp: ptr<read ptr<read u8>>, cwd: ptr<read u8>, modes: ptr<read i32>, fds: ptr<mut i32>): i32;
     pub unsafe fn mettle_rt_poll(fd: i32, write: i32, timeout_millis: i32): i32;
     pub unsafe fn mettle_rt_poll_pair(first: i32, second: i32): i32;

@@ -234,7 +234,12 @@ Source cases are one file each in `tests/source/run` (accepted programs, execute
 profile) and `tests/source/fail` (rejected programs); leading `// key: value` lines configure
 the expected exit status, profiles, flags, timeout and diagnostics (`tests/source.py` documents
 them). Standalone runners execute independent source/profile units in parallel (`-j`,
-default every core). CTest registers smaller single-worker shards for source, library,
+default every core). Cases may declare `module source_helpers;` to share exact helper
+bodies through ordinary Mettle macros in the adjacent `source_helpers/module.mt`;
+keep specialized signatures and independent expectations in each case. Source receipts
+hash the case and every `.mt` input beneath that helper directory (including transitive
+helper modules), so changing a helper changes the receipt even when the case is unchanged.
+CTest registers smaller single-worker shards for source, library,
 machine/ABI and package suites, each reserving one processor; `ctest -j N` bounds their
 combined concurrency. Choose N for both CPU and compiler memory use, especially under
 sanitizers. `METTLE_TEST_SHARDS` changes granularity, not the global budget.

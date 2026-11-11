@@ -1,4 +1,5 @@
-import core.future.{Future, Poll, Context, noop_waker}
+module source_helpers;
+import core.future.{Future, Poll, Context}
 type Counter { log: ptr<mut i32>; n: i32; drop { unsafe { *self.log = *self.log + 1 } } }
 type YieldOnce { value: i32; yielded: bool }
 extend YieldOnce implements Future {
@@ -17,15 +18,7 @@ async fn outer(): i32 {
     await f
 }
 fn drive<F: Future>(take future: F): F.Output {
-    let waker = noop_waker()
-    var slot = core.pin.pin(future)
-    loop {
-        var cx = Context.from_waker(read waker)
-        match take slot.as_mut().poll(mut cx) {
-            Poll.Ready(value) => { return value },
-            Poll.Pending => {}
-        }
-    }
+    source_helpers.drive!(future)
 }
 fn main(): i32 {
     var drops = 0

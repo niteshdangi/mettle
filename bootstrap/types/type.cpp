@@ -483,9 +483,6 @@ void TypeStore::setDestructor(Type type, int function) {
   record.hasDestructor = true;
   record.destructor = function;
 }
-void TypeStore::setNativeCleanup(Type type, NativeCleanup action) {
-  products.at(entries.at(type.index() - builtins).index).nativeCleanup = action;
-}
 bool TypeStore::needsDrop(Type type) const {
   if (isErased(type))
     return true;

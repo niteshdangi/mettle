@@ -1,4 +1,5 @@
 // profiles: debug release
+module source_helpers;
 import alloc.boxed
 import alloc.boxed.Box
 import alloc.borrow.Cow
@@ -14,7 +15,7 @@ import core.error.Error
 import core.fmt
 import core.fmt.{Debug, Display}
 import core.hash.{Hash, Hasher, fnv1a}
-import core.future.{Context, Future, Poll, noop_waker}
+import core.future.{Context, Future, Poll}
 import core.iter.{FromItems, Iterator, OwnedIterable}
 import core.ops.{Deref, DerefMut}
 import core.text.Text
@@ -223,15 +224,7 @@ fn main(): i32 {
 
 
 fn drive<F: Future>(take future: F): F.Output {
-    let waker = noop_waker()
-    var slot = core.pin.pin(future)
-    loop {
-        var cx = Context.from_waker(read waker)
-        match take slot.as_mut().poll(mut cx) {
-            Poll.Ready(value) => { return value },
-            Poll.Pending => {}
-        }
-    }
+    source_helpers.drive!(future)
 }
 
 type AddOne {

@@ -1,4 +1,5 @@
-import core.future.{Future, Poll, Context, noop_waker}
+module source_helpers;
+import core.future.Future
 
 // Async bodies and owning closures capture a borrowed non-Copy parameter as a
 // view of the caller's value instead of moving out of the borrowed place.
@@ -16,15 +17,7 @@ fn closure_view(read value: Counter): i32 {
 }
 
 fn drive<F: Future>(take future: F): F.Output {
-    let waker = noop_waker()
-    var slot = core.pin.pin(future)
-    loop {
-        var cx = Context.from_waker(read waker)
-        match take slot.as_mut().poll(mut cx) {
-            Poll.Ready(value) => { return value },
-            Poll.Pending => {}
-        }
-    }
+    source_helpers.drive!(future)
 }
 
 fn main(): i32 {

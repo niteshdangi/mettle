@@ -358,7 +358,6 @@ public:
   void setRegionPattern(Type type, Type pattern);
   Type declaredRegions(Type type);
   void setDestructor(Type type, int function);
-  void setNativeCleanup(Type type, NativeCleanup action);
   // A coroutine state's size and alignment are backend facts: its frame is
   // the lowered body's cleanup frame. The backend installs the resolver for
   // the duration of code generation; it is not part of type identity.

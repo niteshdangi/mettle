@@ -1,4 +1,5 @@
-import core.future.{Future, Poll, Context, noop_waker}
+module source_helpers;
+import core.future.Future
 type Counter { log: ptr<mut i32>; n: i32; drop { unsafe { *self.log = *self.log + 1 } } }
 async fn seven(): i32 { 7 }
 async fn outer(): i32 {
@@ -6,15 +7,7 @@ async fn outer(): i32 {
     await f
 }
 fn drive<F: Future>(take future: F): F.Output {
-    let waker = noop_waker()
-    var slot = core.pin.pin(future)
-    loop {
-        var cx = Context.from_waker(read waker)
-        match take slot.as_mut().poll(mut cx) {
-            Poll.Ready(value) => { return value },
-            Poll.Pending => {}
-        }
-    }
+    source_helpers.drive!(future)
 }
 fn main(): i32 {
     var drops = 0

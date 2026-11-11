@@ -1,4 +1,5 @@
 // profiles: debug release
+module source_helpers;
 import core.cmp.{PartialEq, Eq, PartialOrd, Ord, Ordering}
 import core.default.Default
 import core.hash.{Hash, Hasher, fnv1a}
@@ -9,18 +10,7 @@ import core.fmt.{Debug, Display, Spec}
 import core.text.Text
 
 fn debug_is<T: Debug + unsized>(read value: T, read expected: Text): bool {
-    var storage = [0u8; 200]
-    var writer = fmt.buffer_writer(mut storage)
-    var formatter = fmt.formatter(mut writer, fmt.spec())
-    match capture T.(Debug).fmt(value, mut formatter) {
-        success(unit) => {},
-        failure(error) => { return false }
-    }
-    let written = writer.len()
-    match fmt.written_text(read storage, written) {
-        present(actual) => actual == expected,
-        none => false
-    }
+    source_helpers.debug_is!(T, value, expected)
 }
 
 fn display_is<T: Display + unsized>(read value: T, read expected: Text): bool {

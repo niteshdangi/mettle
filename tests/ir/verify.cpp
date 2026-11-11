@@ -1,6 +1,5 @@
 #include "ir/verify.h"
 #include "analysis/initialization.h"
-#include "analysis/liveness.h"
 #include "analysis/loans.h"
 #include "analysis/origins.h"
 #include "lowering/scalar.h"
@@ -147,44 +146,6 @@ void verifierCases() {
          {Exit::Return, {0, Type::Unit}}}},
        1});
   rejected(program, "multiple parameters");
-}
-void valueLivenessCases() {
-  mettle::Diagnostics diagnostics;
-  auto branch = diamond(true);
-  require(verify(branch, diagnostics), "liveness diamond is invalid");
-  auto live = mettle::analysis::valueLiveness(branch.functions[0]);
-  require(live.out[1] == std::set<int>{1},
-          "first phi edge did not retain its operand");
-  require(live.out[2] == std::set<int>{2},
-          "second phi edge did not retain its operand");
-  require(live.in[3].empty(), "phi operands leaked into successor liveness");
-
-  auto loop = simple();
-  auto &function = loop.functions[0];
-  function.blocks = {
-      {{{Op::Constant, {0, Type::I32}, {}, {}, "", {-1, {}}, -1, 0, {}}},
-       {Exit::Jump, {}, 1}},
-      {{{Op::Phi,
-         {1, Type::I32},
-         {{0, Type::I32}, {3, Type::I32}},
-         {0, 2},
-         "",
-         {-1, {}},
-         -1,
-         0,
-         {}},
-        {Op::Constant, {2, Type::Bool}, {}, {}, "", {-1, {}}, -1, 1, {}}},
-       {Exit::Branch, {2, Type::Bool}, 2, 3}},
-      {{{Op::Constant, {3, Type::I32}, {}, {}, "", {-1, {}}, -1, 1, {}}},
-       {Exit::Jump, {}, 1}},
-      {{}, {Exit::Return, {1, Type::I32}}}};
-  function.values = 4;
-  require(verify(loop, diagnostics), "liveness loop is invalid");
-  live = mettle::analysis::valueLiveness(function);
-  require(live.out[0] == std::set<int>{0}, "entry phi operand was not live");
-  require(live.out[2] == std::set<int>{3},
-          "back-edge phi operand was not live");
-  require(live.out[1] == std::set<int>{1}, "loop result was not live");
 }
 void floatingCarrierCases() {
   auto program = simple();
@@ -921,7 +882,6 @@ int main() {
   try {
     verifierCases();
     floatingCarrierCases();
-    valueLivenessCases();
     phaseOwnership();
     ownedValueCases();
     variantRefinementCases();

@@ -28,9 +28,11 @@ pub type EnvVar { pub name: OsString; pub value: OsString }
 // The environment at the time of the call, in the operating system's order.
 pub fn vars(): List<EnvVar> {
     var out = vec.new<EnvVar>()
-    var i = 0
+    let values = unsafe { sys.mettle_rt_environ() }
+    if values == core.ptr.null<ptr<read u8>>() { return out }
+    var i = 0usize
     while true {
-        let p = unsafe { sys.mettle_rt_environ_at(i) }
+        let p = unsafe { *values.add(i) }
         if p == core.ptr.null<u8>() { break }
         let bytes = unsafe { sys.bytes_from_c(p) }
         var split = 0usize
@@ -40,7 +42,7 @@ pub fn vars(): List<EnvVar> {
             let value = ffi.os_string_from_bytes(bytes.as_slice().split_at(split + 1usize).1)
             out.push(EnvVar(name, value))
         }
-        i += 1
+        i += 1usize
     }
     out
 }
@@ -64,14 +66,9 @@ pub enum VarError { NotPresent, NotUnicode(OsString) }
 pub fn `var`(read name: OsStr): String throws VarError {
     match take var_os(name) {
         present(value) => {
-            let valid = match package.core.text.from_utf8(value.as_bytes()) {
-                success(_) => true,
-                failure(_) => false
-            }
-            if !valid { throw VarError.NotUnicode(value) }
-            match package.core.text.from_utf8(value.as_bytes()) {
-                success(text) => package.alloc.string.from_text(text),
-                failure(_) => package.core.panic.panic("validated environment value is not UTF-8")
+            match take capture value.into_string() {
+                success(text) => text,
+                failure(error) => throw VarError.NotUnicode(ffi.os_string_from_vec(error.bytes))
             }
         },
         none => throw VarError.NotPresent

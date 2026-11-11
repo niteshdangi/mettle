@@ -25,6 +25,14 @@ fn run(): i32 throws Error {
         present(v4) => { if !v4.same(a) { return 11 } },
         none => { return 11 }
     }
+    if compatible.to_ipv4() != present(a) { return 34 }
+    if Ipv6Addr.unspecified().to_ipv4() != present(Ipv4Addr.new(0u8, 0u8, 0u8, 0u8)) { return 35 }
+    if Ipv6Addr.localhost().to_ipv4() != present(Ipv4Addr.new(0u8, 0u8, 0u8, 1u8)) { return 36 }
+    if Ipv6Addr.unspecified().to_ipv4_compatible().is_present() ||
+       Ipv6Addr.localhost().to_ipv4_compatible().is_present() { return 37 }
+    if Ipv6Addr.new(0u16, 0u16, 0u16, 0u16, 1u16, 0xffffu16, 0xc000u16, 0x0211u16).to_ipv4().is_present() { return 38 }
+    if Ipv6Addr.new(0u16, 0u16, 0u16, 0u16, 0u16, 0x00ffu16, 0xc000u16, 0x0211u16).to_ipv4().is_present() { return 39 }
+    if Ipv6Addr.new(0u16, 0u16, 0u16, 0u16, 0u16, 0xff00u16, 0xc000u16, 0x0211u16).to_ipv4().is_present() { return 40 }
 
     let b = Ipv6Addr.new(0x2001u16, 0xdb8u16, 0u16, 0u16, 0u16, 0u16, 0u16, 1u16)
     let segments = b.segments()

@@ -241,13 +241,7 @@ extend<region r> CommandEnvs<region r> implements Iterator {
         while self.index < self.values.len() {
             let current = read self.values[self.index]
             self.index += 1usize
-            var latest = true
-            var next = self.index
-            while next < self.values.len() {
-                if current.name.same(self.values[next].name) { latest = false }
-                next += 1usize
-            }
-            if latest && !current.remove {
+            if !current.remove {
                 return present((current.name.as_os_str(), current.value.as_os_str()))
             }
         }
@@ -301,9 +295,20 @@ extend Command {
     pub fn get_current_dir<region r>(receiver read self: Command from r): (read Path from r)? {
         if self.has_cwd { present(self.cwd.as_path()) } else { none }
     }
+    mut fn change_env(take change: EnvChange): Unit {
+        var index = 0usize
+        while index < self.changes.len() {
+            if self.changes[index].name.same(change.name) {
+                let obsolete = self.changes.remove(index)
+                break
+            }
+            index += 1usize
+        }
+        self.changes.push(change)
+    }
     // Sets `name` for the child only.
     pub mut fn env(read name: OsStr, read value: OsStr): Unit {
-        self.changes.push(EnvChange(name.to_os_string(), value.to_os_string(), false))
+        self.change_env(EnvChange(name.to_os_string(), value.to_os_string(), false))
     }
     pub mut fn envs<region r>(read values: [(OsString, OsString)] from r): Unit {
         var index = 0usize
@@ -314,7 +319,7 @@ extend Command {
     }
     // Removes `name` from the child's environment.
     pub mut fn env_remove(read name: OsStr): Unit {
-        self.changes.push(EnvChange(name.to_os_string(), ffi.new_os_string(), true))
+        self.change_env(EnvChange(name.to_os_string(), ffi.new_os_string(), true))
     }
     // Starts the child with an empty environment (plus later `env` calls).
     pub mut fn env_clear(): Unit { self.clear_env = true; self.changes.clear() }
@@ -328,15 +333,7 @@ extend Command {
 
     // The child's environment as NUL-terminated `name=value` strings.
     fn environment(): List<List<u8>> throws Error {
-        var entries = vec.new<EnvChange>()
-        if !self.clear_env {
-            let current = env.vars()
-            var i = 0usize
-            while i < current.len() {
-                entries.push(EnvChange(current[i].name.as_os_str().to_os_string(), current[i].value.as_os_str().to_os_string(), false))
-                i += 1usize
-            }
-        }
+        var entries = if self.clear_env { vec.new<env.EnvVar>() } else { env.vars() }
         var k = 0usize
         while k < self.changes.len() {
             var m = 0usize
@@ -344,7 +341,7 @@ extend Command {
                 if entries[m].name.same(self.changes[k].name) { let gone = entries.remove(m) } else { m += 1usize }
             }
             if !self.changes[k].remove {
-                entries.push(EnvChange(self.changes[k].name.as_os_str().to_os_string(), self.changes[k].value.as_os_str().to_os_string(), false))
+                entries.push(env.EnvVar(self.changes[k].name.to_os_string(), self.changes[k].value.to_os_string()))
             }
             k += 1usize
         }
@@ -381,19 +378,21 @@ extend Command {
             j += 1usize
         }
         argv.push(core.ptr.null<u8>())
-        let env_pairs = try self.environment()
+        let use_env = self.clear_env || self.changes.len() > 0usize
+        let env_pairs = if use_env { try self.environment() } else { vec.new<List<u8>>() }
         var envp = vec.new<ptr<read u8>>()
-        var e = 0usize
-        while e < env_pairs.len() {
-            envp.push(env_pairs[e].as_ptr())
-            e += 1usize
+        if use_env {
+            var e = 0usize
+            while e < env_pairs.len() {
+                envp.push(env_pairs[e].as_ptr())
+                e += 1usize
+            }
+            envp.push(core.ptr.null<u8>())
         }
-        envp.push(core.ptr.null<u8>())
         var cwd_c = vec.new<u8>()
         if self.has_cwd { cwd_c = try ffi.cstring(self.cwd.as_bytes()) }
         var modes = [stdio_code(stdin), stdio_code(stdout), stdio_code(stderr)]
         var fds = [-1, -1, -1]
-        let use_env = self.clear_env || self.changes.len() > 0usize
         let cwd_ptr = if self.has_cwd { cwd_c.as_ptr() } else { core.ptr.null<u8>() }
         let envp_ptr = if use_env { envp.as_ptr() } else { core.ptr.null<ptr<read u8>>() }
         let pid = unsafe {

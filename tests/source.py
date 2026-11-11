@@ -7,6 +7,8 @@
 Every case is a standalone program whose leading `// key: value` comment lines
 (see directives.py) configure it. The lines stay in the file, so diagnostic
 line numbers count them. The case name is the file name without `.mt`.
+Cases may declare `module source_helpers;` to reuse the adjacent helper module;
+receipts hash its module.mt and all .mt files beneath that directory.
 
 run cases are built and executed once per profile:
   expect-exit          exit status of the program, or `trap` for an abort (default 0)
@@ -141,6 +143,15 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def source_receipt(path):
+    helpers = {}
+    if re.search(r"^module source_helpers;\s*$", path.read_text(), re.MULTILINE):
+        directory = path.parent / "source_helpers"
+        inputs = {directory / "module.mt", *directory.rglob("*.mt")}
+        helpers = {str(helper): digest(helper) for helper in sorted(inputs)}
+    return {"source_sha256": digest(path), "helper_sha256": helpers}
+
+
 class Runner:
     def __init__(self, executable, case):
         self.executable = executable
@@ -165,10 +176,11 @@ class Runner:
         case = self.case
         for profile in case.profiles:
             program = directory / f"{case.name}-{profile}"
+            inputs = source_receipt(case.path)
             self.run([self.executable, "build", case.path, "-o", program,
                       "--profile", profile, *case.flags])
             self.run([program], case.exits[profile])
-            self.records.append({"file": str(case.path), "source_sha256": digest(case.path),
+            self.records.append({"file": str(case.path), **inputs,
                                  "profile": profile, "expected": case.exits[profile],
                                  "program_sha256": digest(program)})
 
@@ -177,6 +189,7 @@ class Runner:
         program = directory / f"{case.name}.out"
         program.write_bytes(PRESERVED)
         for profile in case.profiles:
+            inputs = source_receipt(case.path)
             result = self.run([self.executable, "build", case.path, "-o", program,
                                "--profile", profile, *case.flags], 1)
             if program.read_bytes() != PRESERVED:
@@ -196,7 +209,7 @@ class Runner:
                 raise AssertionError(f"{case.name}: expected exactly {case.count} "
                                      f"diagnostic(s):\n{result.stderr}")
             self.records.append({"file": str(case.path), "phase": case.errors[0][0],
-                                 "profile": profile, "source_sha256": digest(case.path)})
+                                 "profile": profile, **inputs})
 
 
 def run_suite(kind, executable, output, jobs, pattern, shard_index=0, shard_count=1):

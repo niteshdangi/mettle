@@ -1,3 +1,4 @@
+module source_helpers;
 import core.future.{Future, Poll, Context, noop_waker}
 
 type Count { left: i32 }
@@ -148,16 +149,7 @@ async fn while_let(n: i32): i32 {
 
 // Returns the output and the number of Pending polls.
 fn drive<F: Future<Output = i32>>(take future: F): (i32, i32) {
-    let waker = noop_waker()
-    var slot = core.pin.pin(future)
-    var spins = 0
-    loop {
-        var cx = Context.from_waker(read waker)
-        match take slot.as_mut().poll(mut cx) {
-            Poll.Ready(value) => { return (value, spins) },
-            Poll.Pending => { spins = spins + 1 }
-        }
-    }
+    source_helpers.drive_counted!(future)
 }
 
 // Polls twice and drops the unfinished future.
