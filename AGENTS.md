@@ -59,6 +59,9 @@ and dependencies. Update both with architectural changes.
   milestone, target, safety property or speedup without current evidence.
 - Always provide a best-effort ETA when asked, stating assumptions and
   uncertainty; never respond that you have no ETA.
+- At the end of every task that changes repository files, commit and push the
+  task's validated changes to the current branch unless the owner asks otherwise.
+  Exclude unrelated changes and report any commit or push failure.
 - Do not publish, choose a license, initialize/amend Git history or
   configure paid services without the owner's explicit request.
 
