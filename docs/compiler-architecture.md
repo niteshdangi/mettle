@@ -266,6 +266,14 @@ type store and implementation database, not the checked syntax tree.
 `pipeline::compile` consumes this state for specialization and concrete
 admission; ordinary source compilation uses that same path. This in-memory
 boundary does not bypass metadata validation or supply a persistent interface.
+Prepared state also retains successful loan-effect summaries. After
+specialization, exactly unchanged functions reuse initialization results;
+loan results are reused only when the function and its transitive callees
+are unchanged. Static-storage users are conservatively reanalyzed. Type IDs
+retain their analysis meaning across the specialization store copy; destructor
+symbol remapping does not change those facts. New specializations, changed
+bodies and consumer-dependent calls are analyzed again. Concrete structural
+verification and cleanup planning still run for every function.
 
 `metadata::exportTypeGraph` and `importTypeGraph` encode semantic type/region
 records with logical definition/package/symbol references. Imports stage a
@@ -291,12 +299,21 @@ in-root source links, rather than trusting timestamps. Links outside the
 declared library root make that snapshot ineligible; the driver reports the
 reason with `--explain` and uses ordinary source compilation. Compiler, target,
 profile, checks, features and declared dependency identities participate in its key.
+Each native root is scanned and content-hashed once per coordinator snapshot;
+larger closures reuse those captured dependency bytes and keys, not filesystem
+timestamps or process-global source caches. Archive section decoding avoids
+intermediate payload copies, and source mounting remaps provenance without
+copying the immutable source-text inventory.
 The checked-library coordinator connects these sections through lazy native
 providers and a post-resolution pipeline importer. Unused native roots are not
 prepared, and user roots retain shadowing priority. Imported declarations and
-bodies still pass ordinary specialization and concrete admission. Native object
-keys include the actual lowered partition and its symbol references; differing
-consumer generic instances remain consumer-owned. Native partition verification
+bodies still pass ordinary specialization and concrete admission.
+Preparation preserves already-normalized imported bodies when adapter lowering
+has not changed them; imported IR still undergoes structural/type verification,
+initialization and loan analysis before sealing consumer preparation. No
+serialized analysis result is accepted as an executable-admission proof.
+Native object keys include the actual lowered partition and its symbol
+references; differing consumer generic instances remain consumer-owned. Native partition verification
 failures stop compilation rather than silently switching emission paths.
 Coroutine frames use logical body identities. In split emission their body and
 unwind callbacks have hidden external linkage, and only the partition owning

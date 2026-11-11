@@ -13,6 +13,7 @@ struct Span {
   std::size_t begin = 0;
   std::size_t end = 0;
   SourceId source = 0;
+  bool operator==(const Span &) const = default;
 };
 
 struct SyntaxContext {

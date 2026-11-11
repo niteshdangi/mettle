@@ -1,6 +1,7 @@
 #include "ir/verify.h"
 #include "analysis/initialization.h"
 #include "analysis/liveness.h"
+#include "analysis/loans.h"
 #include "analysis/origins.h"
 #include "lowering/scalar.h"
 #include "pipeline/compile.h"
@@ -797,6 +798,38 @@ void contentsOnlyResultPathCases() {
     inspect(other, owned, false);
   }
 }
+void preparedAnalysisReuse() {
+  auto program = simple();
+  program.functions[0].name = "value";
+  auto caller = program.functions[0];
+  caller.name = "main";
+  caller.blocks[0].instructions[0] = {
+      Op::Call, {0, Type::I32}, {}, {}, "", {-1, {}}, 0, 0, {}};
+  program.functions.push_back(std::move(caller));
+  auto unrelated = program.functions[0];
+  unrelated.name = "unrelated";
+  program.functions.push_back(std::move(unrelated));
+  mettle::Diagnostics diagnostics;
+  auto checked = mettle::analysis::loans(program, diagnostics);
+  require(diagnostics.empty(), "valid preparation failed loan analysis");
+  auto reused =
+      mettle::analysis::loans(program, diagnostics, &program, &checked);
+  require(diagnostics.empty() && reused.reusedFunctions == 3,
+          "unchanged preparation did not reuse loan results");
+  auto changed = program;
+  changed.functions[0].blocks[0].instructions[0].number = 42;
+  auto invalidated =
+      mettle::analysis::loans(changed, diagnostics, &program, &checked);
+  require(diagnostics.empty() && invalidated.reusedFunctions == 1,
+          "changed callee did not invalidate its unchanged caller");
+  changed.functions[0].locals.push_back({"x", Type::I32, false, {}});
+  changed.functions[0].blocks[0].instructions[0] = {
+      Op::Load, {0, Type::I32}, {}, {}, "", {0, {}}, -1, 0, {}};
+  mettle::analysis::initialization(changed, diagnostics, &program);
+  require(!diagnostics.empty() && diagnostics.items.back().phase == "type",
+          "changed prepared body bypassed initialization analysis");
+}
+
 void preparedDeclarations() {
   mettle::Diagnostics diagnostics;
   auto tree = mettle::parse({"prepared.mt",
@@ -898,6 +931,7 @@ int main() {
     packageOwnershipPropagation();
     loopSiblingViewCases();
     contentsOnlyResultPathCases();
+    preparedAnalysisReuse();
     preparedDeclarations();
     importedPreparation();
   } catch (const std::exception &error) {

@@ -21,7 +21,11 @@ def main():
     parser.add_argument("--sanitizers", action="store_true", help="enable compiler ASan/UBSan")
     parser.add_argument("--quality", action="store_true",
                         help="check pinned formatting and clang-tidy before CTest")
+    parser.add_argument("--test-jobs", type=int, default=min(os.cpu_count() or 1, 4),
+                        help="global CTest worker budget; lower for memory-heavy compilers")
     arguments = parser.parse_args()
+    if arguments.test_jobs < 1:
+        parser.error("--test-jobs must be positive")
     selected = host_platform()
     items = artifacts(selected)
     prefix = ROOT / ".tools" / selected
@@ -50,7 +54,8 @@ def main():
          f"-DMETTLE_ENABLE_SANITIZERS={'ON' if arguments.sanitizers else 'OFF'}"],
         [str(cmake), "--build", str(build), "--target", "clean"],
         [str(cmake), "--build", str(build), "--parallel", str(min(os.cpu_count() or 1, 4))],
-        [str(ctest), "--test-dir", str(build), "--output-on-failure", "--verbose"],
+        [str(ctest), "--test-dir", str(build), "--output-on-failure", "--verbose",
+         "--parallel", str(arguments.test_jobs)],
         [str(cmake), "--build", str(build), "--target", "clean"],
         [str(cmake), "--build", str(build), "--parallel", str(min(os.cpu_count() or 1, 4))],
     ]

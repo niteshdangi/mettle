@@ -93,13 +93,33 @@ python3 tests/std.py BUILD/mettle OUTDIR tests/std debug -j 4 --filter REGEX
 python3 tests/modules.py BUILD/mettle OUTDIR library -j 4 --filter REGEX
 ```
 
-Alloc/std run both profiles unless selected explicitly. Without a filter, core
-also runs its supplemental module/panic cases and isolated CPU-scale probe;
-only independent source files run concurrently. CMake cache settings
-`METTLE_LIBRARY_TEST_JOBS` (default 4) and `METTLE_SOURCE_TEST_JOBS` (default
-logical CPU count) control workers and matching CTest processor reservations.
-Lower these for memory-heavy or sanitized compilers; `ctest -j N` alone does not
-lower a suite's internal worker count.
+Alloc/std run both profiles unless selected explicitly. Machine/ABI cases and
+profiles also run independently (`tests/backend/machine.py -j N`). Package cases
+use separate worker processes, fixture copies and private caches
+(`tests/packages.py COMPILER OUTDIR tests/packages [REGEX] -j N`); cold-cache and
+eviction checks still run unchanged within each case. Without a filter, core
+also runs its supplemental module/panic cases once.
+
+CTest splits these suites into single-worker shards, rather than reserving all
+cores for an entire suite. `METTLE_TEST_SHARDS` (default twice the logical CPU
+count) controls granularity, not concurrency; it replaces the previous
+`METTLE_LIBRARY_TEST_JOBS` and `METTLE_SOURCE_TEST_JOBS` settings. Use `ctest -j N`
+for the global CPU/memory budget. `tools/build.py --test-jobs N` passes the same
+budget (default at most four); lower it for memory-heavy or sanitized compilers.
+`METTLE_TEST_CACHE_LIMIT_KIB` sets the shared suite cache budget (default 2097152,
+2 GiB). Six checked interfaces alone (core/alloc/std, debug/release) occupied
+794,493,268 bytes in a private baseline cache, exceeding the compiler's default
+512 MiB before objects or sanitizer variants. The suite budget adds headroom;
+it is not a measured full-suite working set. Package workers do not receive this
+override, so cold-cache and eviction tests retain their existing budgets.
+Standalone runners retain `-j N` and accept zero-based `--shard-index I
+--shard-count N`. Each shard writes separate artifacts and evidence.
+
+Runners retain `durations.json` beside their evidence and submit previously
+long-running work first; source runners can also seed estimates from existing
+per-command evidence. Timing history affects order only, never selection or
+pass/fail checks. CTest additionally reuses its own recorded test costs. Keep
+the evidence directories between runs to retain these estimates.
 
 For cross-target Linux execution from an ARM Mac, the optional runner needs
 Lima, QEMU and Lima's x86-64 guest agents:

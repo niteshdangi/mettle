@@ -27,7 +27,6 @@ file untouched, and report every expected diagnostic:
 """
 
 import argparse
-import concurrent.futures
 import hashlib
 import json
 import os
@@ -38,11 +37,12 @@ import shlex
 import signal
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import directives
 import processes
+import scheduling
 
 ROOT = Path(__file__).resolve().parent / "source"
 PROFILES = ("debug", "release")
@@ -98,8 +98,8 @@ def parse_case(path, kind):
     unknown = set(options) - KEYS[kind]
     if unknown:
         raise ValueError(f"{name}: unknown {kind} directive(s) {sorted(unknown)}")
-    profiles = tuple(single(options, "profiles", "debug release" if kind == "run" else "debug",
-                            name).split())
+    profiles = tuple(dict.fromkeys(single(
+        options, "profiles", "debug release" if kind == "run" else "debug", name).split()))
     if not profiles or not set(profiles) <= set(PROFILES):
         raise ValueError(f"{name}: profiles must be a non-empty subset of {PROFILES}")
     if ("truncated" in options) == path.read_bytes().endswith(b"\n"):
@@ -199,13 +199,18 @@ class Runner:
                                  "profile": profile, "source_sha256": digest(case.path)})
 
 
-def run_suite(kind, executable, output, jobs, pattern):
+def run_suite(kind, executable, output, jobs, pattern, shard_index=0, shard_count=1):
     executable = str(Path(executable).resolve())
     directory = Path(output).resolve() / kind
+    if shard_count > 1:
+        directory /= f"shard-{shard_index}"
     directory.mkdir(parents=True, exist_ok=True)
     cases = [case for case in load_cases(kind) if not pattern or re.search(pattern, case.name)]
     if not cases:
         raise SystemExit(f"no {kind} cases selected")
+    cases = scheduling.select(
+        [replace(case, profiles=(profile,)) for case in cases for profile in case.profiles],
+        lambda case: f"{case.name}:{case.profiles[0]}", shard_index, shard_count)
     evidence = {"scope": "Source regressions through the initial I06 machine boundary; "
                          "not full language or release qualification",
                 "status": "in_progress", "mode": kind, "compiler_sha256": digest(executable),
@@ -214,19 +219,39 @@ def run_suite(kind, executable, output, jobs, pattern):
 
     def execute(case):
         runner = Runner(executable, case)
+        target = directory / case.profiles[0]
+        target.mkdir(exist_ok=True)
         try:
-            getattr(runner, f"execute_{kind}")(directory)
+            getattr(runner, f"execute_{kind}")(target)
         except Exception as error:  # noqa: BLE001
-            return runner, str(error)
+            return runner, str(error) or type(error).__name__
         return runner, None
 
     failures = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-        for runner, error in pool.map(execute, cases):
-            evidence["commands"] += runner.commands
-            evidence["cases"] += runner.records
-            if error:
-                failures.append(error)
+    initial = {}
+    try:
+        previous = json.loads((Path(output) / kind / "evidence.json").read_text())
+    except (OSError, ValueError):
+        previous = {}
+    if isinstance(previous, dict) and isinstance(previous.get("commands"), list):
+        for record in previous["commands"]:
+            command = record.get("command", []) if isinstance(record, dict) else []
+            if not isinstance(command, list) or not all(isinstance(arg, str) for arg in command):
+                continue
+            if len(command) > 2 and command[1] == "build" and "--profile" in command[:-1]:
+                profile = command[command.index("--profile") + 1]
+                initial[f"{Path(command[2]).stem}:{profile}"] = record.get("elapsed_seconds", 0)
+    for _, result, scheduling_error, _ in scheduling.run(
+            cases, execute, directory, jobs,
+            lambda case: f"{case.name}:{case.profiles[0]}", initial=initial):
+        if scheduling_error:
+            failures.append(scheduling_error)
+            continue
+        runner, error = result
+        evidence["commands"] += runner.commands
+        evidence["cases"] += runner.records
+        if error:
+            failures.append(error)
     elapsed = time.perf_counter() - begin
     evidence["status"] = "failed" if failures else "passed"
     evidence["elapsed_seconds"] = elapsed
@@ -236,8 +261,8 @@ def run_suite(kind, executable, output, jobs, pattern):
     (directory / "evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
     if failures:
         print("\n\n".join(failures), file=sys.stderr)
-        raise SystemExit(f"{kind}: {len(failures)} of {len(cases)} case(s) failed")
-    print(f"{kind}: passed {len(cases)} cases, {len(evidence['cases'])} retained executions, "
+        raise SystemExit(f"{kind}: {len(failures)} of {len(cases)} source/profile unit(s) failed")
+    print(f"{kind}: passed {len(cases)} source/profile units, {len(evidence['cases'])} retained executions, "
           f"{len(evidence['commands'])} commands in {elapsed:.1f}s with {jobs} jobs")
 
 
@@ -247,8 +272,8 @@ if __name__ == "__main__":
     parser.add_argument("kind", choices=("run", "fail"))
     parser.add_argument("executable")
     parser.add_argument("output")
-    parser.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 1)
+    scheduling.arguments(parser, os.cpu_count() or 1)
     parser.add_argument("--filter", help="only cases whose name matches this regular expression")
     arguments = parser.parse_args()
     run_suite(arguments.kind, arguments.executable, arguments.output, max(arguments.jobs, 1),
-              arguments.filter)
+              arguments.filter, arguments.shard_index, arguments.shard_count)

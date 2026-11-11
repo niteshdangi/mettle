@@ -100,7 +100,8 @@ public:
   }
   static std::optional<ir::VerifiedProgram>
   admit(ir::Program program, Diagnostics &diagnostics,
-        const ir::UnpinProof &proof = {}) {
+        const ir::UnpinProof &proof = {}, const ir::Program *prepared = nullptr,
+        const analysis::LoanResults *previousLoans = nullptr) {
     if (!diagnostics.empty())
       return std::nullopt;
     if (!program.types) {
@@ -148,10 +149,10 @@ public:
     }
     if (!diagnostics.empty())
       return std::nullopt;
-    analysis::initialization(program, diagnostics);
+    analysis::initialization(program, diagnostics, prepared);
     if (!diagnostics.empty())
       return std::nullopt;
-    analysis::loans(program, diagnostics);
+    analysis::loans(program, diagnostics, prepared, previousLoans);
     if (!diagnostics.empty())
       return std::nullopt;
     return ir::VerifiedProgram(std::move(program));
@@ -193,6 +194,19 @@ public:
       return std::nullopt;
     if (observe)
       observe(*checked);
+    std::map<std::string, const ir::Function *> normalizedImports;
+    if (importedBodies) {
+      for (const auto &[index, function] : importedBodies->functions) {
+        (void)index;
+        normalizedImports.emplace(function.name, &function);
+      }
+      for (const auto &[owner, function] : importedBodies->defaults) {
+        (void)owner;
+        normalizedImports.emplace(function.name, &function);
+      }
+      for (const auto &function : importedBodies->support)
+        normalizedImports.emplace(function.name, &function);
+    }
     auto program = lowering::lower(*checked, diagnostics, importedBodies);
     if (!diagnostics.empty())
       return std::nullopt;
@@ -253,6 +267,9 @@ public:
       return normalized;
     };
     for (auto &function : program.functions) {
+      if (auto imported = normalizedImports.find(function.name);
+          imported != normalizedImports.end() && function == *imported->second)
+        continue;
       auto valueType = [&](ir::Value &value) {
         value.type = normalize(value.type, {}, function);
       };
@@ -294,10 +311,11 @@ public:
     analysis::initialization(program, diagnostics);
     if (!diagnostics.empty())
       return std::nullopt;
-    analysis::loans(program, diagnostics);
+    auto loans = analysis::loans(program, diagnostics);
     if (!diagnostics.empty())
       return std::nullopt;
-    return PreparedProgram(std::move(program), std::move(database));
+    return PreparedProgram(std::move(program), std::move(database),
+                           std::move(loans));
   }
 
   static std::optional<ir::VerifiedProgram>
@@ -432,7 +450,10 @@ public:
       return proveUnpin(*concreteTypes, database, diagnostics, subject, runtime,
                         function, span);
     };
-    return admit(std::move(*concrete), diagnostics, concreteProof);
+    // Specialization extends type identities; remapped destructor IDs do not
+    // change initialization or loan facts for otherwise identical functions.
+    return admit(std::move(*concrete), diagnostics, concreteProof, &program,
+                 &prepared.loans);
   }
 };
 std::optional<PreparedProgram>

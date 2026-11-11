@@ -233,10 +233,18 @@ ordinary Mettle development; Rust remains an optional comparator/interop tool.
 Source cases are one file each in `tests/source/run` (accepted programs, executed per
 profile) and `tests/source/fail` (rejected programs); leading `// key: value` lines configure
 the expected exit status, profiles, flags, timeout and diagnostics (`tests/source.py` documents
-them). The runner executes cases in parallel (`-j`, default every core), so `source.run` and
-`source.fail` reserve that many CTest processors; a case timeout bounds each command, and
-`--timeout-scale` stretches it on slow or loaded hosts without editing cases. Case names are
-file names, hence unique. `tests/probes.py` keeps the checks that are not plain programs
+them). Standalone runners execute independent source/profile units in parallel (`-j`,
+default every core). CTest registers smaller single-worker shards for source, library,
+machine/ABI and package suites, each reserving one processor; `ctest -j N` bounds their
+combined concurrency. Choose N for both CPU and compiler memory use, especially under
+sanitizers. `METTLE_TEST_SHARDS` changes granularity, not the global budget.
+Machine/profile artifacts and package worker processes, fixtures and caches are isolated;
+package cold-cache/eviction sequences remain sequential within their owning case.
+Stable shard assignment preserves complete coverage, including supplemental probes once.
+Per-shard duration history schedules long units first without changing acceptance checks;
+source command timings seed estimates when no unit history exists. Failures retain their
+logs and elapsed time, and evidence is merged in stable case/profile order, not completion
+order. Case names are file names, hence unique. `tests/probes.py` keeps the checks that are not plain programs
 (token/syntax inspection, LLVM fast-math flags).
 Negative cases (source and multi-file module) require the intended message, phase and
 exact line and column on one diagnostic, not merely somewhere in the output. Hosted panic expectations

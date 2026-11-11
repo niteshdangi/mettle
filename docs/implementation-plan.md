@@ -1022,6 +1022,40 @@ Coroutine partition support required logical callback names and hidden external
 declarations in non-owning partitions, rather than invalid internal declarations.
 The new header-replacement/dependency-shadow regression passes in
 `compiler.modules-memory`.
+2026-11-11 execution/reuse follow-up (working tree based on `75bcceb`;
+opportunities, not speedup promises):
+
+| Obligation | Implementation and focused evidence |
+| --- | --- |
+| Independent machine/ABI cases and profiles | Isolated work directories and bounded parallel units in `tests/backend/machine.py`; focused runner/native evidence, not full ABI qualification. |
+| Independent package cases | Process-isolated fixture/cache/work directories in `tests/packages.py`; deliberate cold-cache, corruption and eviction semantics are retained. |
+| Smaller scheduling units and early long work | CTest shards and recorded-duration ordering in the existing runners/CMake; coverage is unchanged. |
+| Checked preparation reuse | Unchanged imported bodies retain normalization; sealed preparation retains successful loan effects. Exact function equality and transitive callee invalidation guard reuse after specialization; static-storage loan users, changed bodies and new specializations are reanalyzed. Full structural/type verification and cleanup admission remain. |
+| Test cache working set | Six real `core`/`alloc`/`std` debug/release interfaces retain 794,493,268 logical bytes, already above 512 MiB without objects. Shared tests use a configurable 2 GiB budget; package cache tests and the normal 512 MiB default are unchanged. This is a lower-bound sample, not the complete suite working set. |
+| Library input/archive work | Each native root is snapshotted once per coordinator, reusing captured dependency bytes/keys. Archive payload decoding, hashing and provenance mounting avoid redundant payload copies; content, inventory, checksum and corruption validation remain. |
+
+Baseline compiler SHA-256
+`ae455cd2fc11f8aa6e3cff0d87aa22b19e5261c2f498b90c828abbfb931daf9e`
+was measured on Linux x86-64/WSL with pinned Clang 22.1.3. Two concurrent
+std-profile checks took about 32 seconds cold and 11 seconds warm; these are
+single engineering samples, not controlled comparisons. The baseline and
+final updated Release boundary/declaration/archive CTests pass (3/3,
+0.02 seconds); six changed compiler translation units pass pinned static
+analysis. Changed archive/snapshot and preparation/dataflow code also pass
+targeted ASan/UBSan instrumentation, linked with uninstrumented supporting
+libraries; this is not a full compiler sanitizer qualification.
+Final executable inputs are frozen in `optimization-inputs.json` in the
+private validation build. Compiler SHA-256:
+`4a7a9753c56f5b4970b79cac995a586bcf90b778376aca68d18f8ca358ec3f9e`.
+That binary passes four machine/ABI profile units, three source/profile units,
+the four-invocation cache-environment regression, `checked_core_reuse`,
+`checked_alloc_std_release_reuse` and `checked_library_diagnostics`.
+The runner's nine focused scheduling/isolation regressions also pass.
+These final package cases cover cross-consumer reuse, uncached execution parity,
+dependency-content invalidation, corruption recovery and diagnostic parity.
+No broad qualification matrix, I14 performance gate or milestone closure is
+claimed by this batch.
+
 The 2026-11-11 focused delivery supersedes the earlier missing-integration status:
 `checked_core_reuse`, `native_core_object_reuse`, `checked_alloc_std_reuse` and
 `checked_alloc_std_release_reuse` all pass. They check hits for every included

@@ -20,12 +20,14 @@ struct AssemblyOperand {
   SymbolKind symbolKind = SymbolKind::Function;
   int symbol = -1;
   std::vector<Type> symbolArguments{};
+  bool operator==(const AssemblyOperand &) const = default;
 };
 struct Assembly {
   AssemblyVariant variant = AssemblyVariant::Inline;
   std::vector<std::string> templates{};
   std::vector<AssemblyOperand> operands{};
   std::set<std::string> options{}, clobberAbis{};
+  bool operator==(const Assembly &) const = default;
 };
 // Returns a source diagnostic, never defers ordinary constraint errors to LLVM.
 std::optional<std::string>

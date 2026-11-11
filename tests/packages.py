@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Package manifest, resolution, lock, feature and offline regressions.
 
-Usage: packages.py MettleExecutable EvidenceDir FixturesDir
+Usage: packages.py MettleExecutable EvidenceDir FixturesDir [REGEX] [-j N]
 """
 
+import argparse
 import hashlib
 import json
 import os
@@ -12,11 +13,13 @@ import select
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import processes
+import scheduling
 
-mettle, evidence, fixtures = (Path(a).resolve() for a in sys.argv[1:4])
+COMMANDS = []
 
 
 def reset():
@@ -24,11 +27,19 @@ def reset():
     shutil.copytree(fixtures, evidence)
 
 
-def invoke(arguments, expected=0, contains=()):
-    # Every case owns its build cache so runs never touch the user's.
+def invoke_result(arguments):
     environment = {**os.environ, "METTLE_CACHE_DIR": str(evidence / "cache")}
-    result = processes.run([str(mettle), *map(str, arguments)], text=True,
-                            capture_output=True, env=environment)
+    command = [str(mettle), *map(str, arguments)]
+    begin = time.perf_counter()
+    result = processes.run(command, text=True, capture_output=True, env=environment)
+    COMMANDS.append({"command": command, "exit_status": result.returncode,
+                     "elapsed_seconds": time.perf_counter() - begin,
+                     "stdout": result.stdout, "stderr": result.stderr})
+    return result
+
+
+def invoke(arguments, expected=0, contains=()):
+    result = invoke_result(arguments)
     text = result.stdout + result.stderr
     if result.returncode != expected:
         raise AssertionError(f"{arguments}: expected {expected}, got "
@@ -40,9 +51,7 @@ def invoke(arguments, expected=0, contains=()):
 
 
 def invoke_json(arguments, expected=0):
-    environment = {**os.environ, "METTLE_CACHE_DIR": str(evidence / "cache")}
-    result = processes.run([str(mettle), *map(str, arguments)], text=True,
-                            capture_output=True, env=environment)
+    result = invoke_result(arguments)
     if result.returncode != expected:
         raise AssertionError(f"{arguments}: expected {expected}, got "
                              f"{result.returncode}\n"
@@ -3045,18 +3054,72 @@ CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
          language_server,
          test_json_timeout_and_modules]
 
-# Optional fourth argument: a regular expression selecting cases by name.
-selected = re.compile(sys.argv[4]) if len(sys.argv) > 4 else None
-chosen = [case for case in CASES if not selected or selected.search(case.__name__)]
-if not chosen:
-    sys.exit("no package cases selected")
-failures = []
-for case in chosen:
-    reset()
+def main(argv=None):
+    global mettle, evidence, fixtures
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("compiler", type=Path)
+    parser.add_argument("evidence", type=Path)
+    parser.add_argument("fixtures", type=Path)
+    parser.add_argument("pattern", nargs="?")
+    scheduling.arguments(parser, 4)
+    parser.add_argument("--worker-case", choices=[case.__name__ for case in CASES],
+                        help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+    mettle, evidence, fixtures = (
+        path.resolve() for path in (args.compiler, args.evidence, args.fixtures))
+    if args.worker_case:
+        os.environ["METTLE_CACHE_DIR"] = str(evidence / "cache")
+        return run_case(next(case for case in CASES if case.__name__ == args.worker_case))
+    selected = re.compile(args.pattern) if args.pattern else None
+    chosen = [case.__name__ for case in CASES
+              if selected is None or selected.search(case.__name__)]
+    if not chosen:
+        raise ValueError("no package cases selected")
+    if args.shard_count > 1:
+        evidence /= f"shard-{args.shard_index}"
+    chosen = scheduling.select(chosen, str, args.shard_index, args.shard_count)
+
+    def execute(name):
+        command = [sys.executable, Path(__file__).resolve(), mettle,
+                   evidence / name, fixtures, "--worker-case", name]
+        result = processes.run(list(map(str, command)), text=True, capture_output=True)
+        return {"name": name, "command": list(map(str, command)),
+                "exit_status": result.returncode,
+                "stdout": result.stdout, "stderr": result.stderr}
+
+    records = []
+    for name, result, error, elapsed in scheduling.run(
+            chosen, execute, evidence, args.jobs, str):
+        record = result or {"name": name, "exit_status": 1, "stderr": error, "stdout": ""}
+        record["elapsed_seconds"] = elapsed
+        records.append(record)
+        print(f"{'FAIL' if record['exit_status'] else 'PASS'} {name}")
+        if record["exit_status"]:
+            print(record["stdout"] + record["stderr"], file=sys.stderr)
+    failed = any(record["exit_status"] for record in records)
+    (evidence / "evidence.json").write_text(json.dumps({
+        "status": "failed" if failed else "passed", "cases": records}, indent=2) + "\n")
+    return int(failed)
+
+
+def run_case(case):
+    COMMANDS.clear()
+    record = {"name": case.__name__, "status": "in_progress", "commands": COMMANDS}
     try:
+        reset()
+        os.chdir(evidence)
         case()
-        print(f"PASS {case.__name__}")
-    except (AssertionError, subprocess.SubprocessError) as error:
-        failures.append(case.__name__)
-        print(f"FAIL {case.__name__}: {error}")
-sys.exit(1 if failures else 0)
+        record["status"] = "passed"
+        return 0
+    except Exception as error:
+        record["status"] = "failed"
+        record["error"] = str(error)
+        print(f"FAIL {case.__name__}: {error}", file=sys.stderr)
+        return 1
+    finally:
+        evidence.mkdir(parents=True, exist_ok=True)
+        (evidence / "evidence.json").write_text(json.dumps(record, indent=2) + "\n")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

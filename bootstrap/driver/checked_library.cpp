@@ -38,49 +38,6 @@ CheckedLibrary::CheckedLibrary(const Options &options, packages::Store &store,
     : archive(""), configuration(std::move(configuration)),
       target(std::move(target)), options(options), store(store) {}
 
-std::unique_ptr<CheckedLibrary>
-CheckedLibrary::native(const std::string &root, const Options &options,
-                       const expansion::Configuration &configuration,
-                       packages::Store &store, TargetFacts target,
-                       NumericEvaluator numeric, std::string &error) {
-  error.clear();
-  auto nativeConfiguration = configuration;
-  nativeConfiguration.features.clear();
-  auto result = std::unique_ptr<CheckedLibrary>(new CheckedLibrary(
-      options, store, std::move(nativeConfiguration), std::move(target)));
-  result->numeric = numeric;
-  result->root = root;
-  LibraryCacheConfiguration identity;
-  identity.compiler = compilerIdentity();
-  identity.identity = std::string(nativePackage) + ":" + root;
-  identity.target = options.target;
-  identity.profile = options.profile;
-  identity.cc = options.cc;
-  identity.sysroot = options.sysroot;
-  identity.checks = options.checks.value_or(options.profile != "release");
-  identity.freestanding = options.freestanding;
-  identity.debugInfo = options.debugInfo;
-  identity.targetFeatures = configuration.targetFeatures;
-  identity.sanitizers = options.sanitizers;
-  for (auto dependency : nativeRoots) {
-    identity.identity =
-        std::string(nativePackage) + ":" + std::string(dependency);
-    auto inputs = collectLibraryInputs(
-        std::filesystem::path(options.libraryDirectory) / dependency, identity,
-        error);
-    if (!inputs)
-      return nullptr;
-    result->sourceInputs.merge(inputs->sources);
-    if (dependency == root) {
-      result->archiveKey = std::move(inputs->key);
-      return result;
-    }
-    identity.dependencies.emplace(std::string(dependency), inputs->key);
-  }
-  error = "unknown native library root: " + root;
-  return nullptr;
-}
-
 bool CheckedLibrary::contains(std::string_view name) const {
   for (auto dependency : nativeRoots) {
     if (dependency == name)
@@ -768,18 +725,45 @@ std::unique_ptr<CheckedLibraries> CheckedLibraries::create(
     const Options &options, const expansion::Configuration &configuration,
     packages::Store &store, TargetFacts target, NumericEvaluator numeric) {
   auto result = std::make_unique<CheckedLibraries>();
+  auto nativeConfiguration = configuration;
+  nativeConfiguration.features.clear();
+  LibraryCacheConfiguration identity;
+  identity.compiler = compilerIdentity();
+  identity.target = options.target;
+  identity.profile = options.profile;
+  identity.cc = options.cc;
+  identity.sysroot = options.sysroot;
+  identity.checks = options.checks.value_or(options.profile != "release");
+  identity.freestanding = options.freestanding;
+  identity.debugInfo = options.debugInfo;
+  identity.targetFeatures = configuration.targetFeatures;
+  identity.sanitizers = options.sanitizers;
   for (auto root : nativeRoots) {
     if (root == "std" && options.freestanding)
       break;
     std::string error;
-    auto unit =
-        CheckedLibrary::native(std::string(root), options, configuration, store,
-                               target, numeric, error);
-    if (unit)
-      result->units.push_back(std::move(unit));
-    else if (options.explain)
-      std::cerr << "mettle: checked library interface cache ineligible " << root
-                << ": " << error << "; using source\n";
+    identity.identity = std::string(nativePackage) + ":" + std::string(root);
+    auto inputs = collectLibraryInputs(
+        std::filesystem::path(options.libraryDirectory) / root, identity,
+        error);
+    if (!inputs) {
+      if (options.explain)
+        std::cerr << "mettle: checked library interface cache ineligible "
+                  << root << ": " << error << "; using source\n";
+      break;
+    }
+    auto unit = std::unique_ptr<CheckedLibrary>(
+        new CheckedLibrary(options, store, nativeConfiguration, target));
+    unit->root = root;
+    unit->numeric = numeric;
+    unit->archiveKey = std::move(inputs->key);
+    unit->sourceInputs = std::move(inputs->sources);
+    if (!result->units.empty()) {
+      const auto &dependencies = result->units.back()->sourceInputs;
+      unit->sourceInputs.insert(dependencies.begin(), dependencies.end());
+    }
+    identity.dependencies.emplace(root, unit->archiveKey);
+    result->units.push_back(std::move(unit));
   }
   return result;
 }

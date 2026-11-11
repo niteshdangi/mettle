@@ -226,6 +226,8 @@ output equality and corrupt-object regeneration (Release).
 both whole-build and package-object caches. Storage design: performance.md
 section 5.1.1. Flags: `--cache-dir DIR`, `--no-cache`,
 `--cache-limit-kib N`, `--cache-max-age-days N`, `--explain`;
+`METTLE_CACHE_LIMIT_KIB` overrides the default byte budget in KiB; an explicit
+`--cache-limit-kib` takes precedence. Invalid environment values are errors.
 `METTLE_CACHE_DIR`; `mettle clean [PACKAGE] [--dry-run]`.
 
 ## 1. Manifest and identity

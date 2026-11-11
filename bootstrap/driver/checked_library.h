@@ -12,10 +12,6 @@
 namespace mettle::driver {
 class CheckedLibrary {
 public:
-  static std::unique_ptr<CheckedLibrary>
-  native(const std::string &root, const Options &options,
-         const expansion::Configuration &configuration, packages::Store &store,
-         TargetFacts target, NumericEvaluator numeric, std::string &error);
   bool mount(resolution::Library &library, Diagnostics &diagnostics,
              const expansion::SourceAllocator &allocate, std::string &error);
   pipeline::LibraryImporter importer();

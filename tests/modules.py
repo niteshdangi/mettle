@@ -4,10 +4,10 @@
 import argparse
 import re
 import shutil
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import processes
+import scheduling
 
 TARGET_FILES = {
     "external-inline-alias-group-reexport": {
@@ -53,13 +53,16 @@ def run(arguments, expected=0):
     return result
 
 
-def main(executable, directory, only=None, *, jobs=4, pattern=None):
+def main(executable, directory, only=None, *, jobs=4, pattern=None,
+         shard_index=0, shard_count=1):
     if jobs < 1:
         raise ValueError("jobs must be positive")
     if pattern is not None and only != "library":
         raise ValueError("--filter selects core library source stems; use library mode")
     executable = str(Path(executable).resolve())
     directory = Path(directory).resolve()
+    if shard_count > 1:
+        directory /= f"shard-{shard_index}"
     directory.mkdir(parents=True, exist_ok=True)
 
     def case(name, files, phase=None, message=None, location=None, diagnostic_file="main.mt", options=(), expected_exit=0, expected_stderr=None, count=None, build_only=False):
@@ -103,12 +106,16 @@ def main(executable, directory, only=None, *, jobs=4, pattern=None):
                     if selected is None or selected.search(program.stem)]
         if not programs:
             raise ValueError("no core cases selected")
-        with ThreadPoolExecutor(max_workers=jobs) as pool:
-            results = [pool.submit(case, "library-core-" + program.stem.replace("_", "-"),
-                                   {"main.mt": program.read_text()}) for program in programs]
-        for result in results:
-            result.result()
-        if pattern is not None:
+        programs = scheduling.select(programs, lambda program: program.stem,
+                                     shard_index, shard_count)
+        results = scheduling.run(
+            programs, lambda program: case("library-core-" + program.stem.replace("_", "-"),
+                                           {"main.mt": program.read_text()}),
+            directory, jobs, lambda program: program.stem)
+        failures = [f"{program.stem}: {error}" for program, _, error, _ in results if error]
+        if failures:
+            raise AssertionError("\n".join(failures))
+        if pattern is not None or shard_index != 0:
             return
         case("library-builtin-pointer-does-not-load-core", {
             "lib/core/module.mt": "pub module ptr;\n"
@@ -399,7 +406,8 @@ if __name__ == "__main__":
     parser.add_argument("executable")
     parser.add_argument("directory")
     parser.add_argument("only", nargs="?", choices=("library",))
-    parser.add_argument("-j", "--jobs", type=int, default=4)
+    scheduling.arguments(parser, 4)
     parser.add_argument("--filter", help="select only matching core library source stems")
     args = parser.parse_args()
-    main(args.executable, args.directory, args.only, jobs=args.jobs, pattern=args.filter)
+    main(args.executable, args.directory, args.only, jobs=args.jobs, pattern=args.filter,
+         shard_index=args.shard_index, shard_count=args.shard_count)

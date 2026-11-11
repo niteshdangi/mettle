@@ -4,6 +4,7 @@
 import ast
 import hashlib
 import importlib.util
+import json
 import os
 import random
 import re
@@ -25,6 +26,9 @@ import unicode_tables as unicode
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 import alloc as alloc_runner
 import modules as module_runner
+import packages as package_runner
+import scheduling
+import source as source_runner
 import std as std_runner
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests" / "backend"))
@@ -91,10 +95,57 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(samples["mettle"], [1.0, 1.0])
 
 
+class CacheEnvironmentTests(unittest.TestCase):
+    def test_budget_validation_pruning_and_cli_precedence(self):
+        with tempfile.TemporaryDirectory(dir=OUTPUT) as temporary:
+            root = Path(temporary)
+            core = root / "library/core"
+            core.mkdir(parents=True)
+            (core / "module.mt").write_text("pub fn value(): i32 { 42 }\n")
+            source, output = root / "main.mt", root / "main"
+            source.write_text("fn main(): i32 { core.value() - 42 }\n")
+            output.write_bytes(b"preserve existing artifact")
+            cache = root / "cache"
+
+            def build(limit, *extra, expected=0):
+                result = subprocess.run(
+                    [str(COMPILER), "build", str(source),
+                     "-o", str(output), "--library-dir", str(root / "library"),
+                     "--explain", *extra], text=True, capture_output=True,
+                    env={**os.environ, "METTLE_CACHE_DIR": str(cache),
+                         "METTLE_CACHE_LIMIT_KIB": limit})
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                return result.stdout + result.stderr
+
+            def cache_bytes():
+                return sum(path.stat().st_size for kind in ("entries", "blobs")
+                           for path in (cache / kind).rglob("*") if path.is_file())
+
+            rejected = build("invalid", expected=2)
+            self.assertIn("METTLE_CACHE_LIMIT_KIB must be a non-negative integer", rejected)
+            self.assertEqual(output.read_bytes(), b"preserve existing artifact")
+            self.assertIn("mettle: cache miss", build("2097152"))
+            populated = cache_bytes()
+            self.assertGreater(populated, 0)
+            source.write_text("fn main(): i32 { core.value() - 41 }\n")
+            pruned = build("0")
+            self.assertIn("mettle: cache miss", pruned)
+            self.assertIn("mettle: cache evicted", pruned)
+            self.assertIn("over the 0-byte budget", pruned)
+            remaining = cache_bytes()
+            self.assertLess(remaining, populated)
+            source.write_text("fn main(): i32 { core.value() - 40 }\n")
+            overridden = build("0", "--cache-limit-kib", "2097152")
+            self.assertIn("mettle: cache miss", overridden)
+            self.assertIn("mettle: cache stored", overridden)
+            self.assertNotIn("over the 0-byte budget", overridden)
+            self.assertGreater(cache_bytes(), remaining)
+
+
 class LibraryRunnerTests(unittest.TestCase):
     def test_library_workers_preserve_filtered_profile_coverage(self):
         for runner in (alloc_runner, std_runner):
-            with self.subTest(runner=runner.__name__), tempfile.TemporaryDirectory() as temporary:
+            with self.subTest(runner=runner.__name__), tempfile.TemporaryDirectory(dir=OUTPUT) as temporary:
                 root = Path(temporary)
                 for name in ("alpha", "beta", "gamma"):
                     (root / f"{name}.mt").write_text("fn main() { 0 }\n")
@@ -125,7 +176,7 @@ class LibraryRunnerTests(unittest.TestCase):
 
     def test_library_workers_report_failures_and_reject_invalid_selection(self):
         for runner in (alloc_runner, std_runner):
-            with self.subTest(runner=runner.__name__), tempfile.TemporaryDirectory() as temporary:
+            with self.subTest(runner=runner.__name__), tempfile.TemporaryDirectory(dir=OUTPUT) as temporary:
                 root = Path(temporary)
                 (root / "alpha.mt").write_text("fn main() { 0 }\n")
                 with patch.object(runner, "check", side_effect=AssertionError("broken")):
@@ -137,7 +188,7 @@ class LibraryRunnerTests(unittest.TestCase):
                     runner.main("compiler", root / "out", root, pattern="^missing$")
 
     def test_core_file_cases_overlap_without_running_other_cases(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with tempfile.TemporaryDirectory(dir=OUTPUT) as temporary:
             root = Path(temporary)
             library = root / "library"
             library.mkdir()
@@ -159,7 +210,199 @@ class LibraryRunnerTests(unittest.TestCase):
             self.assertCountEqual(builds, ["library-core-alpha", "library-core-gamma"])
 
 
+class SchedulingTests(unittest.TestCase):
+    def test_longest_first_keeps_failed_work_and_stable_results(self):
+        with tempfile.TemporaryDirectory(dir=OUTPUT) as temporary:
+            root = Path(temporary)
+            (root / "durations.json").write_text(
+                json.dumps({"short": 1, "long": 20, "failed": 10, "bad": "invalid"}))
+            seen = []
+
+            def execute(name):
+                seen.append(name)
+                if name == "failed":
+                    raise AssertionError
+                return name
+
+            results = scheduling.run(["short", "failed", "long"], execute, root, 1, str)
+            self.assertEqual(seen, ["long", "failed", "short"])
+            self.assertEqual([item for item, *_ in results], ["failed", "long", "short"])
+            self.assertEqual(results[0][2], "AssertionError")
+            timings = json.loads((root / "durations.json").read_text())
+            self.assertEqual(set(timings), {"short", "failed", "long"})
+            self.assertTrue(all(value >= 0 for value in timings.values()))
+            with self.assertRaisesRegex(ValueError, "jobs"):
+                scheduling.run([], execute, root, 0, str)
+
+    def test_shards_cover_each_unit_once_independent_of_submission_order(self):
+        units = [f"case-{index}:{profile}" for index in range(25)
+                 for profile in ("debug", "release")]
+        selected = []
+        for index in range(7):
+            shard = scheduling.select(units, str, index, 7)
+            self.assertEqual(set(shard),
+                             set(scheduling.select(reversed(units), str, index, 7)))
+            selected += shard
+        self.assertCountEqual(selected, units)
+        for index, count in ((0, 0), (-1, 2), (2, 2)):
+            with self.assertRaisesRegex(ValueError, "shard"):
+                scheduling.select(units, str, index, count)
+
+    def test_source_profiles_overlap_and_failed_diagnostics_keep_artifacts_and_evidence(self):
+        with tempfile.TemporaryDirectory(dir=OUTPUT) as temporary:
+            root = Path(temporary)
+            compiler = root / "compiler"
+            compiler.write_bytes(b"compiler")
+            repeated = root / "repeated.mt"
+            repeated.write_text("// profiles: debug release debug\nfn main() { 0 }\n")
+            self.assertEqual(source_runner.parse_case(repeated, "run").profiles,
+                             ("debug", "release"))
+            cases = []
+            for name in ("alpha", "beta"):
+                path = root / f"{name}.mt"
+                path.write_text("invalid\n")
+                cases.append(source_runner.Case(
+                    name, path, "fail", ("debug", "release"), [], None,
+                    errors=[("name", 1, 1, "expected rejection")], count=1))
+            barrier = threading.Barrier(4, timeout=5)
+            history = root / "out/fail"
+            history.mkdir(parents=True)
+            (history / "evidence.json").write_text(json.dumps({"commands": [
+                {"command": [str(compiler), "build", str(cases[1].path),
+                             "--profile", "release"], "elapsed_seconds": 30},
+                {"command": ["malformed", "build", "source.mt", "--profile"]}]}))
+
+            def run(command, **kwargs):
+                barrier.wait()
+                path = Path(command[2])
+                profile = command[command.index("--profile") + 1]
+                message = ("wrong rejection" if path.stem == "beta" and profile == "release"
+                           else "expected rejection")
+                return subprocess.CompletedProcess(
+                    command, 1, "", f"{path}:1:1: error[name]: {message}\n")
+
+            with patch.object(source_runner, "load_cases", return_value=cases), \
+                    patch.object(source_runner.processes, "run", side_effect=run), \
+                    patch.object(source_runner.scheduling, "run", wraps=scheduling.run) as schedule:
+                with self.assertRaisesRegex(SystemExit, "1 of 4"):
+                    source_runner.run_suite("fail", compiler, root / "out", 4, None)
+            self.assertEqual(schedule.call_args.kwargs["initial"], {"beta:release": 30})
+            evidence = json.loads((root / "out/fail/evidence.json").read_text())
+            self.assertEqual(evidence["status"], "failed")
+            self.assertEqual(len(evidence["commands"]), 4)
+            self.assertEqual(len(evidence["cases"]), 3)
+            for profile in ("debug", "release"):
+                for name in ("alpha", "beta"):
+                    self.assertEqual((root / "out/fail" / profile / f"{name}.out").read_bytes(),
+                                     source_runner.PRESERVED)
+
+    def test_package_workers_isolate_resets_environments_and_failed_logs(self):
+        with tempfile.TemporaryDirectory(dir=OUTPUT) as temporary:
+            root = Path(temporary)
+            fixtures = root / "fixtures"
+            (fixtures / "path-dependency/app").mkdir(parents=True)
+            compiler = root / "compiler"
+            compiler.write_text("""#!/usr/bin/env python3
+import os, sys, time
+from pathlib import Path
+owner = Path(os.environ["METTLE_CACHE_DIR"]).parent
+if Path.cwd() != owner:
+    sys.exit("working directory escaped case")
+(owner / "owner").write_text(str(os.getppid()))
+arrivals = Path(__file__).parent / "arrivals"
+arrivals.mkdir(exist_ok=True)
+(arrivals / owner.name).touch()
+end = time.monotonic() + 5
+while len(list(arrivals.iterdir())) < 2:
+    if time.monotonic() > end:
+        sys.exit("workers did not overlap")
+    time.sleep(0.01)
+if (Path(__file__).parent / "fail").exists():
+    sys.exit("intentional worker failure")
+lock = Path(sys.argv[2]) / "lock.mettle"
+if "--locked" in sys.argv or (lock.exists() and lock.read_text() != "version: 3\\n"):
+    sys.exit("lock.mettle")
+lock.write_text("version: 3\\n")
+""")
+            compiler.chmod(0o755)
+            selection = "^(missing_lock_locked|lock_corruption)$"
+            output = root / "out"
+            self.assertEqual(package_runner.main(
+                [str(compiler), str(output), str(fixtures), selection, "-j", "2"]), 0)
+            names = ("missing_lock_locked", "lock_corruption")
+            self.assertEqual(len({(output / name / "owner").read_text() for name in names}), 2)
+            self.assertFalse((fixtures / "path-dependency/app/lock.mettle").exists())
+            self.assertFalse((output / names[0] / "path-dependency/app/lock.mettle").exists())
+            self.assertEqual((output / names[1] / "path-dependency/app/lock.mettle").read_text(),
+                             "version: 99\n")
+            (root / "fail").touch()
+            self.assertEqual(package_runner.main(
+                [str(compiler), str(output), str(fixtures), selection, "-j", "2"]), 1)
+            evidence = json.loads((output / "evidence.json").read_text())
+            self.assertEqual(evidence["status"], "failed")
+            self.assertEqual([case["name"] for case in evidence["cases"]], sorted(names))
+            for name in names:
+                child = json.loads((output / name / "evidence.json").read_text())
+                self.assertEqual(child["status"], "failed")
+                self.assertIn("intentional worker failure", child["commands"][0]["stderr"])
+
+
 class MachineOracleTests(unittest.TestCase):
+    def test_machine_cases_and_profiles_overlap_with_private_fixture_objects(self):
+        with tempfile.TemporaryDirectory(dir=OUTPUT) as temporary:
+            root = Path(temporary)
+            compiler, cxx, runtime, callbacks = [root / name for name in
+                                                ("mettle", "clang++", "runtime.a", "callbacks.a")]
+            for path in (compiler, cxx, runtime, callbacks):
+                path.write_bytes(b"fixture")
+            names = ("machine-target-guarded-wide-vector-c-physical-abi",
+                     "machine-target-wide-vector-aggregate-c-abi")
+            barrier = threading.Barrier(4, timeout=5)
+            fixtures = []
+            failing = False
+
+            def run(command, **kwargs):
+                command = list(map(str, command))
+                if command[0] == sys.executable:
+                    try:
+                        machine_runner.main(command[2:])
+                    except AssertionError as error:
+                        return subprocess.CompletedProcess(command, 1, "", str(error))
+                elif "-o" in command:
+                    output = Path(command[command.index("-o") + 1])
+                    output.write_bytes(" ".join(command).encode())
+                    if "-std=c11" in command:
+                        fixtures.append(output)
+                        barrier.wait()
+                    if failing and command[0] == str(compiler) and names[0] in command[2] and \
+                            command[-1] == "debug":
+                        return subprocess.CompletedProcess(command, 1, "", "intentional build failure")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with patch.object(machine_runner, "SOURCES", dict.fromkeys(names, "fn main() { 0 }\n")), \
+                    patch.object(machine_runner.processes, "run", side_effect=run):
+                machine_runner.main([*map(str, (compiler, cxx, runtime, callbacks, root / "out")),
+                                     "--case", names[0], "--case", names[1], "-j", "4"])
+            self.assertEqual(len(set(fixtures)), 4)
+            evidence = json.loads((root / "out/evidence.json").read_text())
+            self.assertEqual(evidence["status"], "passed")
+            self.assertEqual([(case["name"], case["profile"]) for case in evidence["cases"]],
+                             [(name, profile) for name in names
+                              for profile in ("debug", "release")])
+            self.assertTrue(all(path.is_file() for path in fixtures))
+            failing = True
+            with patch.object(machine_runner, "SOURCES", dict.fromkeys(names, "fn main() { 0 }\n")), \
+                    patch.object(machine_runner.processes, "run", side_effect=run):
+                with self.assertRaisesRegex(AssertionError, "intentional build failure"):
+                    machine_runner.main([*map(str, (compiler, cxx, runtime, callbacks, root / "out")),
+                                         "--case", names[0], "--case", names[1], "-j", "4"])
+            evidence = json.loads((root / "out/evidence.json").read_text())
+            self.assertEqual(evidence["status"], "failed")
+            self.assertEqual(len(evidence["workers"]), 4)
+            self.assertEqual(len(evidence["cases"]), 3)
+            self.assertTrue(any("intentional build failure" in command["stderr"]
+                                for command in evidence["commands"]))
+
     def test_large_volatile_probe_tracks_pointer_loaded_from_cleanup_frame(self):
         body = """
   %1 = getelementptr inbounds nuw %frame, ptr %0, i32 0, i32 0

@@ -20,11 +20,11 @@ Use -j N to select workers and --filter REGEX to select source stems.
 import argparse
 import re
 import shutil
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import directives as shared
 import processes
+import scheduling
 
 SINGLETONS = {"expect-exit", "expect-stdout", "args", "stdin", "expect-error"}
 REPEATED = {"expect-stderr", "file", "expect-file"}
@@ -86,11 +86,14 @@ def check(executable, source, output, profile="debug"):
             raise AssertionError(f"{source.name}: file {name} differs from {content!r}")
 
 
-def main(executable, output, sources, profiles=("debug", "release"), *, jobs=4, pattern=None):
+def main(executable, output, sources, profiles=("debug", "release"), *, jobs=4, pattern=None,
+         shard_index=0, shard_count=1):
     if jobs < 1:
         raise ValueError("jobs must be positive")
     executable = str(Path(executable).resolve())
     output = Path(output).resolve()
+    if shard_count > 1:
+        output /= f"shard-{shard_index}"
     output.mkdir(parents=True, exist_ok=True)
     selected = re.compile(pattern) if pattern is not None else None
     files = [source for source in sorted(Path(sources).glob("*.mt"))
@@ -105,14 +108,13 @@ def main(executable, output, sources, profiles=("debug", "release"), *, jobs=4, 
         target = output / profile
         target.mkdir(exist_ok=True)
         cases.extend((source, target, profile) for source in files)
-    with ThreadPoolExecutor(max_workers=jobs) as pool:
-        results = [(source, profile, pool.submit(check, executable, source, target, profile))
-                   for source, target, profile in cases]
+    key = lambda item: f"{item[0].stem}:{item[2]}"
+    cases = scheduling.select(cases, key, shard_index, shard_count)
+    results = scheduling.run(cases, lambda item: check(executable, *item),
+                             output, jobs, key)
     failures = []
-    for source, profile, future in results:
-        try:
-            future.result()
-        except Exception as error:  # noqa: BLE001
+    for (source, _, profile), _, error, _ in results:
+        if error:
             failures.append(f"{source.name} ({profile}): {error}")
     if failures:
         raise AssertionError("\n".join(failures))
@@ -125,8 +127,9 @@ if __name__ == "__main__":
     parser.add_argument("output")
     parser.add_argument("sources")
     parser.add_argument("profiles", nargs="*", choices=("debug", "release"))
-    parser.add_argument("-j", "--jobs", type=int, default=4)
+    scheduling.arguments(parser, 4)
     parser.add_argument("--filter")
     args = parser.parse_args()
     main(args.executable, args.output, args.sources, tuple(args.profiles) or ("debug", "release"),
-         jobs=args.jobs, pattern=args.filter)
+         jobs=args.jobs, pattern=args.filter,
+         shard_index=args.shard_index, shard_count=args.shard_count)

@@ -452,16 +452,55 @@ std::vector<std::size_t> calleeFirstRank(const ir::Program &program) {
   return rank;
 }
 } // namespace
-void loans(const ir::Program &program, Diagnostics &diagnostics) {
+LoanResults loans(const ir::Program &program, Diagnostics &diagnostics,
+                  const ir::Program *prepared, const LoanResults *previous) {
+  LoanResults result;
   try {
     EffectSummaries summaries(program.functions.size());
     std::vector<std::set<std::size_t>> dependents(program.functions.size());
+    std::vector<bool> reusable(program.functions.size(), false);
+    if (prepared && previous &&
+        previous->effects.size() == prepared->functions.size()) {
+      for (std::size_t f = 0; f < program.functions.size(); ++f) {
+        const auto &function = program.functions[f];
+        reusable[f] = f < prepared->functions.size() &&
+                      function == prepared->functions[f] &&
+                      std::none_of(
+                          function.locals.begin(), function.locals.end(),
+                          [](const auto &local) {
+                            return local.storage == StorageDuration::Static;
+                          });
+        for (const auto &block : function.blocks)
+          for (const auto &instruction : block.instructions)
+            if (instruction.callee >= 0)
+              dependents.at(instruction.callee).insert(f);
+      }
+      std::vector<std::size_t> changed;
+      for (std::size_t f = 0; f < reusable.size(); ++f)
+        if (!reusable[f])
+          changed.push_back(f);
+      while (!changed.empty()) {
+        auto f = changed.back();
+        changed.pop_back();
+        for (auto dependent : dependents[f])
+          if (reusable[dependent]) {
+            reusable[dependent] = false;
+            changed.push_back(dependent);
+          }
+      }
+      for (std::size_t f = 0; f < reusable.size(); ++f)
+        if (reusable[f]) {
+          summaries.slot(f) = previous->effects[f];
+          ++result.reusedFunctions;
+        }
+    }
     // Analyzing callees before callers lets most summaries settle on the first
     // visit instead of re-running every caller after each callee changes.
     const auto rank = calleeFirstRank(program);
     std::set<std::pair<std::size_t, std::size_t>> pending;
     for (std::size_t f = 0; f < program.functions.size(); ++f)
-      pending.emplace(rank[f], f);
+      if (!reusable[f])
+        pending.emplace(rank[f], f);
     std::vector<OriginInfo> final(program.functions.size());
     std::size_t steps = 0;
     while (!pending.empty()) {
@@ -486,9 +525,16 @@ void loans(const ir::Program &program, Diagnostics &diagnostics) {
       }
     }
     for (std::size_t f = 0; f < program.functions.size(); ++f)
-      check(program.functions[f], program, final[f], diagnostics);
+      if (!reusable[f])
+        check(program.functions[f], program, final[f], diagnostics);
+    if (diagnostics.empty()) {
+      result.effects.reserve(program.functions.size());
+      for (std::size_t f = 0; f < program.functions.size(); ++f)
+        result.effects.push_back(std::move(summaries.slot(f)));
+    }
   } catch (const std::length_error &error) {
     diagnostics.error("limit", {}, error.what());
   }
+  return result;
 }
 } // namespace mettle::analysis

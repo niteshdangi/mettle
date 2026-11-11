@@ -117,6 +117,7 @@ struct FloatingPolicy {
   bool reassociate = false, contract = false, noNaNs = false;
   bool noInfinities = false, noSignedZeros = false;
   bool reciprocal = false, approximateFunctions = false;
+  bool operator==(const FloatingPolicy &) const = default;
 };
 enum class ParameterMode { Value, Take, Read, Mut };
 struct CallableParameter {
@@ -251,6 +252,7 @@ struct TypeParameter {
 };
 struct TypeBinding {
   Type parameter, argument;
+  bool operator==(const TypeBinding &) const = default;
 };
 struct ErasedType {
   std::string name;

@@ -16,6 +16,7 @@ struct Value {
   int id = -1;
   Type type = Type::Never;
   Access access = Access::Owned;
+  bool operator==(const Value &) const = default;
 };
 struct Local {
   std::string name;
@@ -27,6 +28,7 @@ struct Local {
   std::uint32_t order = 0;
   StorageDuration storage = StorageDuration::Automatic;
   int staticIndex = -1;
+  bool operator==(const Local &) const = default;
 };
 enum class Op {
   Constant,
@@ -99,6 +101,7 @@ struct Instruction {
   struct WitnessEntry {
     Type owner;
     std::size_t method;
+    bool operator==(const WitnessEntry &) const = default;
   };
   std::vector<WitnessEntry> witnessEntries{};
   std::optional<NumericLiteral> numeric{};
@@ -108,6 +111,7 @@ struct Instruction {
   std::optional<Assembly> assembly{};
   // Source lexical scope active when this instruction was lowered.
   int scope = 0;
+  bool operator==(const Instruction &) const = default;
 };
 // `Suspend` ends a coroutine poll; the next poll resumes at `first`. Analyses
 // treat it as a jump because the frame, its places and its loans persist.
@@ -121,10 +125,12 @@ struct Terminator {
   int first = -1;
   int second = -1;
   Span span{};
+  bool operator==(const Terminator &) const = default;
 };
 struct Block {
   std::vector<Instruction> instructions;
   Terminator exit;
+  bool operator==(const Block &) const = default;
 };
 struct Function {
   std::string name;
@@ -135,6 +141,7 @@ struct Function {
   int values = 0;
   struct Scope {
     int parent = -1;
+    bool operator==(const Scope &) const = default;
   };
   std::vector<Scope> scopes{{-1}};
   std::vector<std::size_t> resultSources{};
@@ -174,6 +181,7 @@ struct Function {
     Value index;
     int element;
     ParameterMode mode;
+    bool operator==(const ArrayLoop &) const = default;
   };
   std::vector<ArrayLoop> arrayLoops{};
   // A coroutine body runs inside a `CoroutineState` frame and may suspend.
@@ -182,6 +190,7 @@ struct Function {
   Span span{};
   // Optimization policy only; never changes source-level execution.
   InlineHint inlineHint = InlineHint::Default;
+  bool operator==(const Function &) const = default;
 };
 struct Program {
   struct Static {

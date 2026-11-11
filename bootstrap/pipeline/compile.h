@@ -1,5 +1,6 @@
 #pragma once
 
+#include "analysis/loans.h"
 #include "diagnostics/diagnostics.h"
 #include "ir/verified.h"
 #include "resolution/load.h"
@@ -43,10 +44,13 @@ public:
 private:
   friend class Compiler;
   PreparedProgram(ir::Program program,
-                  std::shared_ptr<const interfaces::Database> database)
-      : declarations(std::move(program)), interfaceData(std::move(database)) {}
+                  std::shared_ptr<const interfaces::Database> database,
+                  analysis::LoanResults loans)
+      : declarations(std::move(program)), interfaceData(std::move(database)),
+        loans(std::move(loans)) {}
   ir::Program declarations;
   std::shared_ptr<const interfaces::Database> interfaceData;
+  analysis::LoanResults loans;
 };
 std::optional<PreparedProgram>
 prepare(Module module, Diagnostics &diagnostics, bool requireEntry = true,

@@ -340,8 +340,13 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
   }
 }
 } // namespace
-void initialization(const ir::Program &program, Diagnostics &diagnostics) {
-  for (const auto &function : program.functions) {
+void initialization(const ir::Program &program, Diagnostics &diagnostics,
+                    const ir::Program *prepared) {
+  for (std::size_t i = 0; i < program.functions.size(); ++i) {
+    const auto &function = program.functions[i];
+    if (prepared && i < prepared->functions.size() &&
+        function == prepared->functions[i])
+      continue;
     valueOwnership(function, *program.types, diagnostics);
     checkFunction(function, *program.types, diagnostics);
   }

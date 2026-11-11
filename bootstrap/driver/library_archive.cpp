@@ -81,8 +81,15 @@ public:
     return result;
   }
   std::vector<std::uint8_t> data() {
-    auto value = text();
-    return {value.begin(), value.end()};
+    auto size = integer();
+    if (!good() || size > remaining()) {
+      fail("truncated section");
+      return {};
+    }
+    const auto *begin =
+        reinterpret_cast<const std::uint8_t *>(bytes.data() + offset);
+    offset += size;
+    return {begin, begin + size};
   }
   Span span(std::size_t sourceCount) {
     auto source = integer();
@@ -124,8 +131,11 @@ std::optional<std::string> LibrarySources::record(const Source &source,
   revision.text(identity);
   revision.integer(static_cast<std::uint32_t>(sources.size()));
   revision.text(source.path);
-  revision.text(source.text);
-  auto name = digest(revision.bytes);
+  revision.integer(static_cast<std::uint32_t>(source.text.size()));
+  packages::Sha256 hash;
+  hash.update(revision.bytes);
+  hash.update(source.text);
+  auto name = hash.finish();
   sourceIndex.emplace(source.id, sources.size());
   revisionIndex.emplace(name, sources.size());
   revisions.push_back(name);
@@ -270,14 +280,12 @@ bool LibrarySources::mount(
     value.source = remap.at(value.source);
     return value;
   };
-  auto candidate = *this;
-  candidate.sourceIndex.clear();
-  for (std::size_t i = 0; i < candidate.sources.size(); ++i) {
-    candidate.sources[i].id = remap.at(candidate.sources[i].id);
-    candidate.sourceIndex.emplace(candidate.sources[i].id, i);
-  }
+  auto mountedGenerations = generations;
+  std::unordered_map<SourceId, std::size_t> mountedIndex;
+  for (std::size_t i = 0; i < sources.size(); ++i)
+    mountedIndex.emplace(remap.at(sources[i].id), i);
   std::unordered_map<std::uint64_t, std::uint64_t> binders;
-  for (auto &generation : candidate.generations) {
+  for (auto &generation : mountedGenerations) {
     generation.source = remap.at(generation.source);
     generation.origin = span(generation.origin);
     for (auto &mapping : generation.mappings) {
@@ -303,12 +311,14 @@ bool LibrarySources::mount(
           SyntaxContext{context.scope, definition, identity});
     }
   }
-  for (const auto &source : candidate.sources) {
+  for (auto &source : sources) {
+    source.id = remap.at(source.id);
     Diagnostics::SourceContext registerSource(diagnostics, source);
   }
-  for (const auto &generation : candidate.generations)
+  for (const auto &generation : mountedGenerations)
     diagnostics.generated(generation);
-  *this = std::move(candidate);
+  sourceIndex = std::move(mountedIndex);
+  generations = std::move(mountedGenerations);
   return true;
 }
 

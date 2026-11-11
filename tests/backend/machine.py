@@ -8,10 +8,12 @@ import os
 import platform
 import re
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import processes
+import scheduling
 
 
 ARM64 = globals().get("TARGET_ARCH", platform.machine()).lower() in ("aarch64", "arm64")
@@ -2021,7 +2023,78 @@ if platform.system() == "Linux":
         Path(__file__).with_name("heap_sorted_no_global_allocation.mt").read_text())
 
 
-def main():
+def run_scheduled(args):
+    directory = args.directory.resolve()
+    if args.shard_count > 1:
+        directory /= f"shard-{args.shard_index}"
+    directory.mkdir(parents=True, exist_ok=True)
+    evidence = {"status": "in_progress", "system": platform.platform(),
+                "compiler_sha256": digest(args.compiler),
+                "runtime_sha256": digest(args.runtime),
+                "callbacks_sha256": digest(args.callbacks),
+                "commands": [], "cases": [], "workers": [], "errors": []}
+    tasks = [(name, profile) for name in SOURCES
+             if (not args.case or name in args.case) and name.startswith(args.case_prefix)
+             for profile in ("debug", "release")]
+    tasks += [(name, None) for name in MACHINE_REJECTIONS
+              if (not args.case or name in args.case) and name.startswith(args.case_prefix)]
+    name = "machine-target-freestanding-no-services"
+    if (not args.case or name in args.case) and name.startswith(args.case_prefix):
+        tasks += [(name, profile) for profile in ("debug", "release")]
+    if not args.case and not args.case_prefix:
+        tasks.append(("supplemental", None))
+    if not tasks:
+        evidence["status"] = "failed"
+        evidence["errors"] = ["no machine cases selected"]
+        (directory / "evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
+        raise ValueError("no machine cases selected")
+    key = lambda task: task[0] + (":" + task[1] if task[1] else "")
+    tasks = scheduling.select(tasks, key, args.shard_index, args.shard_count)
+
+    def execute(task):
+        name, profile = task
+        target = directory / name / (profile or "checks")
+        command = [sys.executable, Path(__file__).resolve(), args.compiler, args.cxx,
+                   args.runtime, args.callbacks, target, "--worker"]
+        command += ["--supplemental"] if name == "supplemental" else ["--case", name]
+        if profile:
+            command += ["--profile", profile]
+        if args.sysroot:
+            command += ["--sysroot", args.sysroot]
+        if args.sanitizers:
+            command += ["--sanitizers"]
+        for argument in args.link_arg:
+            command += ["--link-arg=" + argument]
+        result = processes.run(list(map(str, command)), text=True, capture_output=True)
+        try:
+            child = json.loads((target / "evidence.json").read_text())
+        except (OSError, ValueError):
+            child = {"commands": [], "cases": []}
+        child["worker"] = {"command": list(map(str, command)),
+                           "exit_status": result.returncode,
+                           "stdout": result.stdout, "stderr": result.stderr}
+        if result.returncode:
+            child["error"] = result.stdout + result.stderr
+        return child
+
+    for task, child, error, elapsed in scheduling.run(
+            tasks, execute, directory, args.jobs, key):
+        if child is not None:
+            evidence["commands"] += child["commands"]
+            evidence["cases"] += child["cases"]
+            evidence["workers"].append({"name": key(task), "elapsed_seconds": elapsed,
+                                        **child["worker"]})
+            error = child.get("error", error)
+        if error:
+            evidence["errors"].append(f"{key(task)}: {error}")
+    evidence["status"] = "failed" if evidence["errors"] else "passed"
+    (directory / "evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
+    if evidence["errors"]:
+        raise AssertionError("\n".join(evidence["errors"]))
+    print(f"C interop: {len(tasks)} independent units passed with {args.jobs} workers")
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("compiler", type=Path)
     parser.add_argument("cxx", type=Path)
@@ -2031,9 +2104,20 @@ def main():
     parser.add_argument("--sysroot")
     parser.add_argument("--sanitizers", action="store_true")
     parser.add_argument("--link-arg", action="append", default=[])
-    parser.add_argument("--case", action="append", choices=tuple(SOURCES), default=[])
+    parser.add_argument("--case", action="append",
+                        choices=(*SOURCES, *MACHINE_REJECTIONS,
+                                 "machine-target-freestanding-no-services"), default=[])
     parser.add_argument("--case-prefix", default="")
-    args = parser.parse_args()
+    scheduling.arguments(parser, 4)
+    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--supplemental", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--profile", action="append", choices=("debug", "release"),
+                        help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+    if not args.worker:
+        return run_scheduled(args)
+    if args.supplemental:
+        args.case = ["supplemental"]
     directory = args.directory.resolve()
     directory.mkdir(parents=True, exist_ok=True)
     evidence = {"status": "in_progress", "system": platform.platform(),
@@ -2043,10 +2127,12 @@ def main():
                 "commands": [], "cases": []}
 
     def run(command, expected=0, environment=None):
+        begin = time.perf_counter()
         result = processes.run(list(map(str, command)), text=True, capture_output=True,
                                 env=None if environment is None else {**os.environ, **environment})
         evidence["commands"].append({"command": list(map(str, command)),
                                      "exit_status": result.returncode,
+                                     "elapsed_seconds": time.perf_counter() - begin,
                                      "stdout": result.stdout, "stderr": result.stderr})
         if environment is not None:
             evidence["commands"][-1]["environment_overrides"] = environment
@@ -2085,7 +2171,7 @@ def main():
                 ]
             if name in ("machine-target-guarded-wide-vector-c-physical-abi",
                         "machine-target-wide-vector-aggregate-c-abi"):
-                vector_object = directory / "machine_vectors.o"
+                vector_object = directory / (name + "-fixture.o")
                 fixture = ("machine_wide_aggregate.c"
                            if name == "machine-target-wide-vector-aggregate-c-abi"
                            else "machine_vectors.c")
@@ -2122,7 +2208,7 @@ def main():
                     command.append("-fsanitize=address,undefined")
                 run(command)
                 libraries.insert(0, allocation_object)
-            for profile in ("debug", "release"):
+            for profile in args.profile or ("debug", "release"):
                 obj = directory / (name + "-" + profile + ".o")
                 program = directory / (name + "-" + profile)
                 run([args.compiler, "build", path, "--emit", "object", "-o", obj,
@@ -2183,7 +2269,7 @@ def main():
                     case["c_object_sha256"] = digest(allocation_object)
                 evidence["cases"].append(case)
         for name, source in MACHINE_REJECTIONS.items():
-            if args.case or not name.startswith(args.case_prefix):
+            if (args.case and name not in args.case) or not name.startswith(args.case_prefix):
                 continue
             path = directory / (name + ".mt")
             path.write_text(source)
@@ -2197,7 +2283,8 @@ def main():
                 raise AssertionError("Assembler failure damaged an existing object")
             evidence["cases"].append({"name": name, "phase": "assembly",
                                       "source_sha256": digest(path)})
-        if not args.case and "machine-target-freestanding-no-services".startswith(args.case_prefix):
+        if (not args.case or "machine-target-freestanding-no-services" in args.case) and \
+                "machine-target-freestanding-no-services".startswith(args.case_prefix):
             name = "machine-target-freestanding-no-services"
             path = directory / (name + ".mt")
             path.write_text(MACHINE_FREESTANDING_SOURCE)
@@ -2209,7 +2296,7 @@ def main():
             if args.sysroot:
                 command.append("--sysroot=" + args.sysroot)
             run(command)
-            for profile in ("debug", "release"):
+            for profile in args.profile or ("debug", "release"):
                 obj = directory / (name + "-" + profile + ".o")
                 program = directory / (name + "-" + profile)
                 run([args.compiler, "build", path, "--freestanding", "--emit",
@@ -2230,7 +2317,7 @@ def main():
                                           "object_sha256": digest(obj),
                                           "program_sha256": digest(program),
                                           "undefined_symbols": []})
-        if args.case or args.case_prefix:
+        if not args.supplemental:
             if not evidence["cases"]:
                 raise ValueError("no machine cases selected")
             evidence["status"] = "passed"

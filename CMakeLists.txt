@@ -194,6 +194,22 @@ target_compile_options(mettle PRIVATE -Wall -Wextra -Wpedantic -Werror)
 set(DART_TESTING_TIMEOUT 0)
 include(CTest)
 if(BUILD_TESTING)
+  cmake_host_system_information(RESULT METTLE_HOST_TEST_JOBS QUERY NUMBER_OF_LOGICAL_CORES)
+  math(EXPR METTLE_DEFAULT_TEST_SHARDS "2 * ${METTLE_HOST_TEST_JOBS}")
+  set(METTLE_TEST_SHARDS ${METTLE_DEFAULT_TEST_SHARDS} CACHE STRING
+      "Independent CTest units per fixture suite")
+  if(NOT "${METTLE_TEST_SHARDS}" MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "METTLE_TEST_SHARDS must be a positive integer")
+  endif()
+  function(mettle_add_sharded_test name runner)
+    math(EXPR last_shard "${METTLE_TEST_SHARDS} - 1")
+    foreach(shard RANGE ${last_shard})
+      add_test(NAME "${name}.${shard}"
+               COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/${runner}" ${ARGN}
+                       --shard-index ${shard} --shard-count ${METTLE_TEST_SHARDS} -j 1)
+      set_tests_properties("${name}.${shard}" PROPERTIES PROCESSORS 1)
+    endforeach()
+  endfunction()
   add_executable(mettle-library-declaration-tests tests/semantics/library_test.cpp)
   target_link_libraries(mettle-library-declaration-tests PRIVATE mettle_pipeline mettle_metadata)
   target_compile_options(mettle-library-declaration-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -299,8 +315,7 @@ if(BUILD_TESTING)
     if(METTLE_ENABLE_SANITIZERS)
       list(APPEND METTLE_MACHINE_TEST_FLAGS --sanitizers)
     endif()
-    add_test(NAME backend.machine-interop
-             COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/backend/machine.py"
+    mettle_add_sharded_test(backend.machine-interop tests/backend/machine.py
                      "$<TARGET_FILE:mettle>" "${CMAKE_CXX_COMPILER}"
                      "$<TARGET_FILE:mettle_runtime>" "$<TARGET_FILE:mettle_machine_callbacks>"
                      "${PROJECT_BINARY_DIR}/machine-evidence" ${METTLE_MACHINE_TEST_FLAGS})
@@ -346,42 +361,20 @@ if(BUILD_TESTING)
   add_test(NAME compiler.modules-source
            COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/modules.py"
                    "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/module-evidence")
-  add_test(NAME packages.resolution
-           COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/packages.py"
+  mettle_add_sharded_test(packages.resolution tests/packages.py
                    "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/packages-evidence"
                    "${PROJECT_SOURCE_DIR}/tests/packages")
-  set(METTLE_LIBRARY_TEST_JOBS 4 CACHE STRING "Parallel workers per library suite")
-  cmake_host_system_information(RESULT METTLE_HOST_TEST_JOBS QUERY NUMBER_OF_LOGICAL_CORES)
-  set(METTLE_SOURCE_TEST_JOBS ${METTLE_HOST_TEST_JOBS} CACHE STRING
-      "Parallel workers per source suite")
-  foreach(jobs METTLE_LIBRARY_TEST_JOBS METTLE_SOURCE_TEST_JOBS)
-    if(NOT "${${jobs}}" MATCHES "^[1-9][0-9]*$")
-      message(FATAL_ERROR "${jobs} must be a positive integer")
-    endif()
-  endforeach()
-  add_test(NAME library.alloc
-           COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/alloc.py"
+  mettle_add_sharded_test(library.alloc tests/alloc.py
                    "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/alloc-evidence"
-                   "${PROJECT_SOURCE_DIR}/tests/alloc" -j ${METTLE_LIBRARY_TEST_JOBS})
-  add_test(NAME library.std
-           COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/std.py"
+                   "${PROJECT_SOURCE_DIR}/tests/alloc")
+  mettle_add_sharded_test(library.std tests/std.py
                    "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/std-evidence"
-                   "${PROJECT_SOURCE_DIR}/tests/std" -j ${METTLE_LIBRARY_TEST_JOBS})
-  add_test(NAME library.core
-           COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/modules.py"
-                   "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/library-evidence" library
-                   -j ${METTLE_LIBRARY_TEST_JOBS})
-  set_tests_properties(library.alloc library.std library.core PROPERTIES
-                       PROCESSORS ${METTLE_LIBRARY_TEST_JOBS})
-  # One file per case under tests/source, run by a parallel runner. Each test
-  # reserves its worker count so `ctest -jN` does not oversubscribe the host.
+                   "${PROJECT_SOURCE_DIR}/tests/std")
+  mettle_add_sharded_test(library.core tests/modules.py
+                   "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/library-evidence" library)
   foreach(kind run fail)
-    add_test(NAME source.${kind}
-             COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tests/source.py"
-                     ${kind} "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/source-evidence"
-                     -j ${METTLE_SOURCE_TEST_JOBS})
-    set_tests_properties(source.${kind} PROPERTIES
-                         PROCESSORS ${METTLE_SOURCE_TEST_JOBS})
+    mettle_add_sharded_test(source.${kind} tests/source.py
+                     ${kind} "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/source-evidence")
   endforeach()
   foreach(mode syntax fast-math broken-pipe sanitizers)
     add_test(NAME probe.${mode}
@@ -401,4 +394,13 @@ if(BUILD_TESTING)
   get_property(METTLE_TESTS DIRECTORY PROPERTY TESTS)
   set_property(TEST ${METTLE_TESTS} APPEND PROPERTY ENVIRONMENT
                "METTLE_CACHE_DIR=${PROJECT_BINARY_DIR}/test-cache")
+  set(METTLE_TEST_CACHE_LIMIT_KIB 2097152 CACHE STRING
+      "Shared fixture cache budget in KiB")
+  if(NOT "${METTLE_TEST_CACHE_LIMIT_KIB}" MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "METTLE_TEST_CACHE_LIMIT_KIB must be a positive integer")
+  endif()
+  set(METTLE_SHARED_CACHE_TESTS ${METTLE_TESTS})
+  list(FILTER METTLE_SHARED_CACHE_TESTS EXCLUDE REGEX "^packages\\.resolution\\.")
+  set_property(TEST ${METTLE_SHARED_CACHE_TESTS} APPEND PROPERTY ENVIRONMENT
+               "METTLE_CACHE_LIMIT_KIB=${METTLE_TEST_CACHE_LIMIT_KIB}")
 endif()

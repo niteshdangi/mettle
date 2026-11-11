@@ -3,6 +3,7 @@
 #include "lint/lint.h"
 #include <algorithm>
 #include <charconv>
+#include <cstdlib>
 #include <iostream>
 #include <system_error>
 
@@ -80,6 +81,17 @@ std::optional<Options> options(int argc, char **argv) {
   if (argc < 2)
     return std::nullopt;
   Options result;
+  if (const char *limit = std::getenv("METTLE_CACHE_LIMIT_KIB")) {
+    std::string_view value(limit);
+    auto parsed = std::from_chars(value.data(), value.data() + value.size(),
+                                  result.cacheLimitKib);
+    if (value.empty() || value.size() >= 10 || parsed.ec != std::errc{} ||
+        parsed.ptr != value.data() + value.size()) {
+      std::cerr << "mettle: METTLE_CACHE_LIMIT_KIB must be a non-negative "
+                   "integer of at most 9 digits\n";
+      return std::nullopt;
+    }
+  }
   result.command = argv[1];
   if (result.command != "build" && result.command != "check" &&
       result.command != "tokens" && result.command != "syntax" &&
