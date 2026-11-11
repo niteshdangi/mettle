@@ -44,6 +44,7 @@ bool truth(const Value &value) { return value.number.magnitude[0] != 0; }
 
 Shape shapeOfValue(const Value &value) {
   Shape shape;
+  shape.type = value.type;
   switch (value.kind) {
   case Value::Kind::Unit:
     shape.kind = Shape::Kind::Unit;
@@ -60,6 +61,22 @@ Shape shapeOfValue(const Value &value) {
       shape.elements.push_back(shapeOfValue(value.elements.front()));
     else
       shape.elements.push_back(scalarShape(Type::Unknown));
+    break;
+  case Value::Kind::Product:
+    shape.kind = Shape::Kind::Product;
+    for (const auto &element : value.elements)
+      shape.elements.push_back(shapeOfValue(element));
+    break;
+  case Value::Kind::Variant:
+    shape.kind = Shape::Kind::Variant;
+    break;
+  case Value::Kind::Reference:
+    shape.kind = Shape::Kind::Reference;
+    shape.exclusive = value.exclusive;
+    break;
+  case Value::Kind::Pointer:
+    shape.kind = Shape::Kind::Pointer;
+    shape.exclusive = value.exclusive;
     break;
   default:
     shape.type = value.type;
@@ -93,6 +110,16 @@ std::string describe(const Value &value) {
     return "a tuple";
   case Value::Kind::Array:
     return "an array";
+  case Value::Kind::Product:
+    return "a product";
+  case Value::Kind::Variant:
+    return "a variant";
+  case Value::Kind::Reference:
+    return "a constant view";
+  case Value::Kind::Pointer:
+    return "a constant pointer";
+  case Value::Kind::Uninitialized:
+    return "an uninitialized value";
   }
   return "value";
 }
@@ -106,15 +133,27 @@ std::string describe(const Shape &shape) {
     return "a tuple";
   case Shape::Kind::Array:
     return "an array";
+  case Shape::Kind::Product:
+    return "a product";
+  case Shape::Kind::Variant:
+    return "a variant";
+  case Shape::Kind::Reference:
+    return "a constant view";
+  case Shape::Kind::Pointer:
+    return "a constant pointer";
   }
   return "value";
 }
 
 struct Local {
   std::string name;
-  Value value;
+  std::shared_ptr<Value> value;
   bool mutableBinding = false;
   SyntaxContextPtr context{};
+  Local(std::string name, Value value, bool mutableBinding,
+        SyntaxContextPtr context)
+      : name(std::move(name)), value(std::make_shared<Value>(std::move(value))),
+        mutableBinding(mutableBinding), context(std::move(context)) {}
 };
 bool namesLocal(const Local &local, const Node &name) {
   auto binding = local.context ? local.context->identity : 0;
@@ -125,6 +164,7 @@ struct Frame {
   std::deque<Local> locals;
   Shape result;
   bool inFunction = false;
+  Span callSpan{};
 };
 
 struct Integer {
@@ -202,6 +242,8 @@ public:
       value.reset();
     if (value && !defaultTypes(*value, node.span))
       value.reset();
+    if (value && !exportable(*value, node.span))
+      value.reset();
     if (!value && !failed)
       fail("constant", node.span,
            "'break', 'continue' or 'return' outside a loop or const function");
@@ -218,20 +260,27 @@ private:
     std::string message;
   };
   struct Scope {
-    explicit Scope(Frame &frame) : frame(frame), mark(frame.locals.size()) {}
+    explicit Scope(Interpreter &interpreter, Span span)
+        : interpreter(interpreter), frame(interpreter.frame()),
+          mark(frame.locals.size()), span(span) {}
     ~Scope() {
-      while (frame.locals.size() > mark)
+      while (frame.locals.size() > mark) {
+        interpreter.discard(*frame.locals.back().value, span);
         frame.locals.pop_back();
+      }
     }
     Scope(const Scope &) = delete;
     Scope &operator=(const Scope &) = delete;
+    Interpreter &interpreter;
     Frame &frame;
     std::size_t mark;
+    Span span;
   };
 
   Host &host;
   Options options;
   std::deque<Frame> frames;
+  std::map<int, std::shared_ptr<Value>> staticRoots;
   std::size_t steps = 0;
   unsigned unsafeDepth = 0;
   bool failed = false, symbolic = false, reported = false;
@@ -260,6 +309,13 @@ private:
                 what + " is not supported in constant evaluation");
   }
   Frame &frame() { return frames.back(); }
+  void discard(const Value &value, Span span) {
+    if (!failed && value.kind != Value::Kind::Uninitialized &&
+        value.kind != Value::Kind::Reference &&
+        host.needsDrop(host.valueType(value)))
+      fail("constant", span,
+           "destruction is not permitted during constant evaluation");
+  }
 
   Opt numericOperation(std::string_view operation, Type owner,
                        std::span<const Value> values, Span span) {
@@ -398,6 +454,9 @@ private:
 
   // Type structure of a declared type.
   std::optional<Shape> shape(const TypeSyntax &type, Span span) {
+    if (auto resolved = host.resolveType(type, span); resolved != Type::Unknown)
+      if (auto result = host.typeShape(resolved))
+        return result;
     if (!type.view.empty() || !type.regions.empty() || type.nested ||
         !type.arguments.empty()) {
       unsupported(span, "this type");
@@ -490,6 +549,15 @@ private:
   // Gives an unsuffixed integer its type or checks a typed value against the
   // declared one.
   bool coerce(Value &value, const Shape &want, Span span) {
+    if (value.kind == Value::Kind::Uninitialized)
+      return true;
+    if (value.kind == Value::Kind::Reference &&
+        want.kind != Shape::Kind::Reference) {
+      auto loaded = readAddress(value, span);
+      if (!loaded)
+        return false;
+      value = std::move(*loaded);
+    }
     switch (want.kind) {
     case Shape::Kind::Unit:
       if (value.kind == Value::Kind::Unit)
@@ -530,12 +598,13 @@ private:
         for (std::size_t i = 0; i < value.elements.size(); ++i)
           if (!coerce(value.elements[i], want.elements[i], span))
             return false;
+        value.type = want.type;
         return true;
       }
       break;
     case Shape::Kind::Array:
       if (value.kind == Value::Kind::Array) {
-        if (value.elements.size() != want.count) {
+        if (want.count != UINT64_MAX && value.elements.size() != want.count) {
           fail("type", span,
                "expected an array of " + std::to_string(want.count) +
                    " elements, found " + std::to_string(value.elements.size()));
@@ -544,7 +613,45 @@ private:
         for (auto &element : value.elements)
           if (!coerce(element, want.elements.front(), span))
             return false;
+        value.type = want.type;
         return true;
+      }
+      break;
+    case Shape::Kind::Product:
+      if (value.kind == Value::Kind::Product && value.type == want.type &&
+          value.elements.size() == want.elements.size()) {
+        for (std::size_t i = 0; i < value.elements.size(); ++i)
+          if (!coerce(value.elements[i], want.elements[i], span))
+            return false;
+        return true;
+      }
+      break;
+    case Shape::Kind::Variant:
+      if (value.kind == Value::Kind::Variant &&
+          (value.type == Type::Unknown || value.type == want.type)) {
+        value.type = want.type;
+        if (value.selection < 0 ||
+            std::size_t(value.selection) >= want.variants.size())
+          break;
+        const auto &fields = want.variants[value.selection];
+        if (fields.size() != value.elements.size())
+          break;
+        for (std::size_t i = 0; i < fields.size(); ++i)
+          if (!coerce(value.elements[i], want.elements[fields[i]], span))
+            return false;
+        return true;
+      }
+      break;
+    case Shape::Kind::Reference:
+    case Shape::Kind::Pointer:
+      if (value.kind == (want.kind == Shape::Kind::Reference
+                             ? Value::Kind::Reference
+                             : Value::Kind::Pointer) &&
+          (!want.exclusive || value.exclusive)) {
+        value.type = want.type;
+        value.exclusive = want.exclusive;
+        return value.kind == Value::Kind::Pointer ||
+               validReference(value, span);
       }
       break;
     }
@@ -614,6 +721,28 @@ private:
   }
 
   Opt binary(const std::string &op, Value left, Value right, Span span) {
+    if (left.kind == Value::Kind::Reference) {
+      auto value = readAddress(left, span);
+      if (!value)
+        return std::nullopt;
+      left = std::move(*value);
+    }
+    if (right.kind == Value::Kind::Reference) {
+      auto value = readAddress(right, span);
+      if (!value)
+        return std::nullopt;
+      right = std::move(*value);
+    }
+    if (left.kind == Value::Kind::Pointer &&
+        right.kind == Value::Kind::Pointer && (op == "==" || op == "!=")) {
+      auto sameStorage = !left.storage.owner_before(right.storage) &&
+                         !right.storage.owner_before(left.storage);
+      if (!sameStorage || left.addressOnly != right.addressOnly)
+        return fail("constant", span,
+                    "constant pointer comparison requires common provenance");
+      auto equal = left.offset == right.offset;
+      return boolValue(op == "==" ? equal : !equal);
+    }
     bool comparison = op == "==" || op == "!=" || op == "<" || op == "<=" ||
                       op == ">" || op == ">=";
     if (op == "<<" || op == ">>") {
@@ -699,19 +828,220 @@ private:
                 "cannot cast " + describe(value) + " to " + describe(*target));
   }
 
-  // The storage of a place rooted at a local of the current frame.
+  std::optional<Shape> pointee(const Value &address) {
+    auto shape = host.typeShape(address.type);
+    if (!shape || shape->elements.empty())
+      return std::nullopt;
+    auto result = shape->elements.front();
+    if (auto expanded = host.typeShape(result.type))
+      result = std::move(*expanded);
+    return result;
+  }
+  Value *locate(Value &root, Type type, std::uint64_t offset, Type target) {
+    if (offset == 0 && type == target)
+      return &root;
+    auto shape = host.typeShape(type);
+    auto layout = host.layout(type);
+    if (!shape || !layout)
+      return nullptr;
+    if (shape->kind == Shape::Kind::Array && !shape->elements.empty()) {
+      auto element = host.layout(shape->elements.front().type);
+      if (!element)
+        return nullptr;
+      auto index = element->size ? offset / element->size : 0;
+      if (index >= root.elements.size())
+        return nullptr;
+      return locate(root.elements[index], shape->elements.front().type,
+                    element->size ? offset % element->size : 0, target);
+    }
+    if (root.kind != Value::Kind::Product && root.kind != Value::Kind::Tuple)
+      return nullptr;
+    for (std::size_t i = 0;
+         i < root.elements.size() && i < layout->fields.size() &&
+         i < shape->elements.size();
+         ++i) {
+      auto field = host.layout(shape->elements[i].type);
+      auto start = layout->fields[i];
+      if (field && offset >= start && offset - start <= field->size)
+        if (auto found = locate(root.elements[i], shape->elements[i].type,
+                                offset - start, target))
+          return found;
+    }
+    return nullptr;
+  }
+  std::shared_ptr<Value> rootOf(const Value &address) {
+    if (auto root = address.storage.lock())
+      return root;
+    if (address.symbol < 0)
+      return {};
+    auto &root = staticRoots[address.symbol];
+    if (!root)
+      if (auto value = host.storage(address.symbol))
+        root = std::make_shared<Value>(std::move(*value));
+    return root;
+  }
+  bool addressBounds(const Value &address, Type type, std::uint64_t size,
+                     Span span) {
+    auto root = rootOf(address);
+    auto backing = host.layout(address.storageType);
+    auto target = host.layout(type);
+    if (address.addressOnly && size == 0 && target && address.offset != 0 &&
+        address.offset % target->alignment == 0)
+      return true;
+    if (!root || address.addressOnly || !backing || !target ||
+        address.offset > backing->size ||
+        size > backing->size - address.offset ||
+        address.offset % target->alignment)
+      return fail("constant", span,
+                  "constant pointer is dangling, misaligned or out of bounds"),
+             false;
+    return true;
+  }
+  bool validReference(const Value &address, Span span) {
+    auto target = pointee(address);
+    if (!target)
+      return false;
+    if (target->kind == Shape::Kind::Array && target->count == UINT64_MAX) {
+      auto element = host.layout(target->elements.front().type);
+      if (!element ||
+          (element->size && address.count > UINT64_MAX / element->size))
+        return fail("constant", span, "constant slice extent overflow"), false;
+      return addressBounds(address, target->elements.front().type,
+                           address.count * element->size, span);
+    }
+    auto layout = host.layout(target->type);
+    return layout && addressBounds(address, target->type, layout->size, span);
+  }
+  Opt readObject(const Value &address, const Shape &shape, Span span) {
+    if (!step(span))
+      return std::nullopt;
+    if (shape.kind == Shape::Kind::Array) {
+      auto count = shape.count == UINT64_MAX ? address.count : shape.count;
+      if (shape.elements.empty() || count > options.stepBudget - steps)
+        return fail("limit", span,
+                    "constant aggregate exceeds the step budget");
+      auto element = host.layout(shape.elements.front().type);
+      if (!element || (element->size && count > UINT64_MAX / element->size) ||
+          !addressBounds(address, shape.elements.front().type,
+                         element->size * count, span))
+        return std::nullopt;
+      Value value;
+      value.kind = Value::Kind::Array;
+      value.type = shape.type;
+      for (std::uint64_t i = 0; i < count; ++i) {
+        auto current = address;
+        current.offset += i * element->size;
+        auto item = readObject(current, shape.elements.front(), span);
+        if (!item)
+          return std::nullopt;
+        value.elements.push_back(std::move(*item));
+      }
+      return value;
+    }
+    auto layout = host.layout(shape.type);
+    if (!layout || !addressBounds(address, shape.type, layout->size, span))
+      return std::nullopt;
+    auto root = rootOf(address);
+    if (!root && address.addressOnly && layout->size == 0) {
+      auto value = uninitialized(shape);
+      if (shape.kind == Shape::Kind::Unit)
+        value.kind = Value::Kind::Unit;
+      if (initialized(value, span))
+        return value;
+      return std::nullopt;
+    }
+    auto found = locate(*root, address.storageType, address.offset, shape.type);
+    if (!found || found->kind == Value::Kind::Uninitialized)
+      return fail("constant", span,
+                  "constant read requires an initialized value of its type");
+    return *found;
+  }
+  Opt readAddress(const Value &address, Span span) {
+    auto target = pointee(address);
+    if (!target)
+      return unsupported(span, "this constant pointee");
+    return readObject(address, *target, span);
+  }
+  bool writeObject(const Value &address, const Value &value, Span span) {
+    if (!address.exclusive || !address.writable) {
+      fail("constant", span, "constant write requires exclusive access");
+      return false;
+    }
+    auto type = host.valueType(value);
+    auto layout = host.layout(type);
+    if (!layout || !addressBounds(address, type, layout->size, span))
+      return false;
+    auto root = rootOf(address);
+    if (!root && address.addressOnly && layout->size == 0)
+      return true;
+    if (auto target =
+            locate(*root, address.storageType, address.offset, type)) {
+      *target = value;
+      return true;
+    }
+    auto shape = host.typeShape(type);
+    if (value.kind == Value::Kind::Array && shape && !shape->elements.empty()) {
+      auto element = host.layout(shape->elements.front().type);
+      if (!element)
+        return false;
+      for (std::size_t i = 0; i < value.elements.size(); ++i) {
+        auto current = address;
+        current.offset += i * element->size;
+        if (!writeObject(current, value.elements[i], span))
+          return false;
+      }
+      return true;
+    }
+    fail("constant", span, "constant write has an incompatible storage type");
+    return false;
+  }
+
   struct Place {
     Value *value = nullptr;
     Value *rootValue = nullptr;
     std::vector<std::size_t> path;
     bool mutableBinding = false;
     std::string root;
+    std::shared_ptr<Value> storage;
+    std::uint64_t offset = 0;
+    std::optional<Value> address = std::nullopt;
+    int symbol = -1;
   };
+  Value addressOf(const Place &place, bool exclusive) {
+    if (place.address) {
+      auto result = *place.address;
+      result.kind = Value::Kind::Reference;
+      result.exclusive &= exclusive;
+      if (auto target = pointee(result))
+        result.type = host.referenceType(target->type, result.exclusive, false);
+      return result;
+    }
+    if (place.value->kind == Value::Kind::Reference) {
+      auto result = *place.value;
+      result.exclusive &= exclusive;
+      if (auto target = pointee(result))
+        result.type = host.referenceType(target->type, result.exclusive, false);
+      return result;
+    }
+    Value result;
+    result.kind = Value::Kind::Reference;
+    auto type = host.valueType(*place.value);
+    result.type = host.referenceType(type, exclusive, false);
+    result.storage = place.storage;
+    result.storageType = host.valueType(*place.rootValue);
+    result.offset = place.offset;
+    result.count = place.value->elements.size();
+    result.exclusive = exclusive;
+    result.writable = exclusive;
+    result.symbol = place.symbol;
+    return result;
+  }
   bool refresh(Place &place, Span span) {
     place.value = place.rootValue;
     for (auto index : place.path) {
       if ((place.value->kind != Value::Kind::Array &&
-           place.value->kind != Value::Kind::Tuple) ||
+           place.value->kind != Value::Kind::Tuple &&
+           place.value->kind != Value::Kind::Product) ||
           index >= place.value->elements.size()) {
         fail("constant", span,
              "constant place changed while evaluating its index");
@@ -727,41 +1057,114 @@ private:
     switch (node.kind) {
     case Kind::Group:
       return place(*node.children[0]);
+    case Kind::Unary:
+      if (node.text == "*") {
+        auto pointer = eval(*node.children[0], nullptr);
+        if (!pointer)
+          return {};
+        if (pointer->kind != Value::Kind::Pointer &&
+            pointer->kind != Value::Kind::Reference)
+          return {};
+        if (pointer->kind == Value::Kind::Pointer && !unsafeDepth) {
+          fail("unsafe", node.span,
+               "operation requires an unsafe block or unsafe function");
+          return {};
+        }
+        Place result;
+        result.address = std::move(*pointer);
+        result.mutableBinding = result.address->exclusive;
+        result.root = "constant pointee";
+        return result;
+      }
+      return {};
     case Kind::Name: {
       auto &locals = frame().locals;
       for (auto it = locals.rbegin(); it != locals.rend(); ++it)
         if (namesLocal(*it, node))
-          return {&it->value, &it->value, {}, it->mutableBinding, it->name};
+          return {it->value.get(),
+                  it->value.get(),
+                  {},
+                  it->mutableBinding ||
+                      (it->value->kind == Value::Kind::Reference &&
+                       it->value->exclusive),
+                  it->name,
+                  it->value};
+      auto found = lookup(node);
+      if (found.kind == Lookup::Kind::Constant && found.staticSymbol >= 0) {
+        auto &root = staticRoots[found.staticSymbol];
+        if (!root)
+          root = std::make_shared<Value>(std::move(found.value));
+        Place result{root.get(), root.get(), {}, false, node.text, root};
+        result.symbol = found.staticSymbol;
+        return result;
+      }
       return {};
     }
     case Kind::Field: {
       auto base = place(*node.children[0]);
-      if (!base.value || base.value->kind != Value::Kind::Tuple)
+      if (base.value && base.value->kind == Value::Kind::Reference) {
+        base.address = *base.value;
+        base.mutableBinding = base.address->exclusive;
+        base.value = nullptr;
+      }
+      auto type =
+          base.address
+              ? pointee(*base.address)
+              : (base.value ? host.typeShape(host.valueType(*base.value))
+                            : std::nullopt);
+      if (!type)
         return {};
       std::uint64_t index = 0;
-      if (node.text.empty() ||
-          !std::all_of(node.text.begin(), node.text.end(),
-                       [](char c) { return c >= '0' && c <= '9'; }) ||
-          node.text.size() > 9)
+      if (type->kind == Shape::Kind::Product) {
+        auto field =
+            std::find(type->names.begin(), type->names.end(), node.text);
+        if (field == type->names.end())
+          return {};
+        index = field - type->names.begin();
+      } else if (node.text.empty() ||
+                 !std::all_of(node.text.begin(), node.text.end(),
+                              [](char c) { return c >= '0' && c <= '9'; }) ||
+                 node.text.size() > 9)
         return {};
-      index = std::stoull(node.text);
-      if (index >= base.value->elements.size())
+      else
+        index = std::stoull(node.text);
+      if (index >= type->elements.size())
         return {};
+      auto layout = host.layout(type->type);
+      if (!layout || index >= layout->fields.size())
+        return {};
+      if (base.address) {
+        base.address->offset += layout->fields[index];
+        base.address->type = host.referenceType(type->elements[index].type,
+                                                base.address->exclusive, false);
+        return base;
+      }
+      base.offset += layout->fields[index];
       base.path.push_back(static_cast<std::size_t>(index));
       base.value = &base.value->elements[index];
       return base;
     }
     case Kind::Index: {
       auto base = place(*node.children[0]);
-      if (!base.value || base.value->kind != Value::Kind::Array)
+      if (base.value && base.value->kind == Value::Kind::Reference) {
+        base.address = *base.value;
+        base.mutableBinding = base.address->exclusive;
+        base.value = nullptr;
+      }
+      auto type =
+          base.address
+              ? pointee(*base.address)
+              : (base.value ? host.typeShape(host.valueType(*base.value))
+                            : std::nullopt);
+      if (!type || type->kind != Shape::Kind::Array || type->elements.empty())
         return {};
       auto usize = scalarShape(Type::Usize);
       auto index = eval(*node.children[1], &usize);
       if (!index)
         return {};
-      if (!refresh(base, node.span))
+      if (!base.address && !refresh(base, node.span))
         return {};
-      if (base.value->kind != Value::Kind::Array) {
+      if (!base.address && base.value->kind != Value::Kind::Array) {
         fail("constant", node.span,
              "constant place changed while evaluating its index");
         return {};
@@ -772,14 +1175,27 @@ private:
              "array index must be usize, found " + describe(*index));
         return {};
       }
+      auto count = base.address && type->count == UINT64_MAX
+                       ? base.address->count
+                       : type->count;
       if (index->number.negative || index->number.magnitude[1] ||
-          index->number.magnitude[0] >= base.value->elements.size()) {
+          index->number.magnitude[0] >= count) {
         fail("constant", node.span,
              "index out of bounds in constant expression: the length is " +
-                 std::to_string(base.value->elements.size()) +
-                 " but the index is " + integerLiteralName(index->number));
+                 std::to_string(count) + " but the index is " +
+                 integerLiteralName(index->number));
         return {};
       }
+      auto element = host.layout(type->elements.front().type);
+      if (!element)
+        return {};
+      if (base.address) {
+        base.address->offset += index->number.magnitude[0] * element->size;
+        base.address->type = host.referenceType(type->elements.front().type,
+                                                base.address->exclusive, false);
+        return base;
+      }
+      base.offset += index->number.magnitude[0] * element->size;
       base.path.push_back(static_cast<std::size_t>(index->number.magnitude[0]));
       base.value = &base.value->elements[index->number.magnitude[0]];
       return base;
@@ -898,6 +1314,25 @@ private:
       }
       return true;
     }
+    case PatternKind::Variant: {
+      if (value.kind != Value::Kind::Variant)
+        return false;
+      auto name = pattern.text;
+      auto separator = name.rfind("::");
+      if (separator != std::string::npos)
+        name = name.substr(separator + 2);
+      auto selection = name == "present" || name == "failure" ? 1 : 0;
+      if (value.selection != selection ||
+          value.elements.size() != pattern.children.size())
+        return false;
+      for (std::size_t i = 0; i < pattern.children.size(); ++i) {
+        auto matched = matches(pattern.children[i], value.elements[i], binds,
+                               mutableBinding);
+        if (!matched || !*matched)
+          return matched;
+      }
+      return true;
+    }
     default:
       unsupported(pattern.span, "this pattern");
       return std::nullopt;
@@ -979,13 +1414,15 @@ private:
   }
 
   Opt block(const Node &node, const Shape *want) {
-    Scope scope(frame());
+    Scope scope(*this, node.span);
     Opt last = unitValue();
     for (std::size_t i = 0; i < node.children.size(); ++i) {
       bool tail = i + 1 == node.children.size() && !node.children[i]->semicolon;
       auto value = eval(*node.children[i], tail ? want : nullptr);
       if (!value)
         return std::nullopt;
+      if (!tail)
+        discard(*value, node.children[i]->span);
       last = tail ? std::move(value) : Opt(unitValue());
     }
     return last;
@@ -998,8 +1435,13 @@ private:
       if (!declared)
         return std::nullopt;
     }
-    if (node.children.empty())
-      return unsupported(node.span, "a declaration without an initializer");
+    if (node.children.empty()) {
+      if (!declared)
+        return unsupported(node.span, "an untyped uninitialized declaration");
+      frame().locals.emplace_back(node.text, uninitialized(*declared), true,
+                                  node.context);
+      return unitValue();
+    }
     auto value = eval(*node.children[0], declared ? &*declared : nullptr);
     if (!value)
       return std::nullopt;
@@ -1041,7 +1483,7 @@ private:
     if (node.kind == Kind::Name) {
       for (auto it = frame().locals.rbegin(); it != frame().locals.rend(); ++it)
         if (namesLocal(*it, node))
-          return shapeOfValue(it->value);
+          return shapeOfValue(*it->value);
       return std::nullopt;
     }
     if (node.kind != Kind::Field && node.kind != Kind::Index)
@@ -1067,29 +1509,41 @@ private:
   Opt assign(const Node &node) {
     const Node &target = *node.children[0];
     auto hint = placeShape(target);
-    if (!hint)
-      return fail("constant", target.span,
-                  "assignment target is not a local place in a constant "
-                  "expression");
-    auto value = eval(*node.children[1], &*hint);
+    auto value = eval(*node.children[1], hint ? &*hint : nullptr);
     if (!value)
       return std::nullopt;
     auto target_ = place(target);
-    if (!target_.value)
-      return std::nullopt;
+    if (!target_.value && !target_.address)
+      return fail("constant", target.span,
+                  "assignment target is not a constant place");
     if (!target_.mutableBinding)
       return fail("constant", target.span,
                   "cannot assign to immutable binding '" + target_.root +
                       "' in a constant expression");
     if (node.text != "=") {
       auto op = node.text.substr(0, node.text.size() - 1);
-      auto combined = binary(op, *target_.value, std::move(*value), node.span);
+      auto current = target_.address ? readAddress(*target_.address, node.span)
+                                     : Opt(*target_.value);
+      if (!current)
+        return std::nullopt;
+      auto combined =
+          binary(op, std::move(*current), std::move(*value), node.span);
       if (!combined)
         return std::nullopt;
       value = std::move(combined);
     }
-    if (!coerce(*value, shapeOfValue(*target_.value), node.span))
+    auto shape = target_.address
+                     ? pointee(*target_.address)
+                     : host.typeShape(host.valueType(*target_.value));
+    if (!shape && target_.value)
+      shape = shapeOfValue(*target_.value);
+    if (shape && !coerce(*value, *shape, node.span))
       return std::nullopt;
+    if (target_.address) {
+      if (!writeObject(*target_.address, *value, node.span))
+        return std::nullopt;
+      return unitValue();
+    }
     *target_.value = std::move(*value);
     return unitValue();
   }
@@ -1150,7 +1604,7 @@ private:
   Opt loopExpression(const Node &node) {
     Value result = unitValue();
     while (true) {
-      Scope scope(frame());
+      Scope scope(*this, node.span);
       if (node.kind == Kind::While) {
         auto value =
             condition(*node.children[0],
@@ -1218,7 +1672,7 @@ private:
       } else if (position == items.size())
         break;
       auto item = current ? *current : std::move(items[position++]);
-      Scope scope(frame());
+      Scope scope(*this, node.span);
       std::vector<Local> binds;
       if (!defaultTypes(item, node.span))
         return std::nullopt;
@@ -1266,7 +1720,7 @@ private:
       return std::nullopt;
     for (std::size_t i = 1; i < node.children.size(); ++i) {
       const Node &arm = *node.children[i];
-      Scope scope(frame());
+      Scope scope(*this, node.span);
       std::vector<Local> binds;
       auto matched = matches(arm.patterns[0], *subject, binds, false);
       if (!matched)
@@ -1292,8 +1746,485 @@ private:
                 "no match arm matched the value in constant evaluation");
   }
 
-  Opt call(const Node &node, const Shape *) {
+  Value uninitialized(const Shape &shape) {
+    Value value;
+    value.type = shape.type;
+    value.kind = Value::Kind::Uninitialized;
+    if (shape.kind == Shape::Kind::Product ||
+        shape.kind == Shape::Kind::Tuple) {
+      value.kind = shape.kind == Shape::Kind::Product ? Value::Kind::Product
+                                                      : Value::Kind::Tuple;
+      for (const auto &field : shape.elements)
+        value.elements.push_back(uninitialized(field));
+    }
+    return value;
+  }
+  bool initialized(const Value &value, Span span) {
+    if (value.kind == Value::Kind::Uninitialized) {
+      fail("constant", span, "constant value is not fully initialized");
+      return false;
+    }
+    for (const auto &element : value.elements)
+      if (!initialized(element, span))
+        return false;
+    return true;
+  }
+  bool exportable(const Value &value, Span span) {
+    if ((value.kind == Value::Kind::Reference ||
+         value.kind == Value::Kind::Pointer) &&
+        !value.addressOnly && value.symbol < 0) {
+      fail("constant", span,
+           "constant result cannot retain a pointer or view of local storage");
+      return false;
+    }
+    for (const auto &element : value.elements)
+      if (!exportable(element, span))
+        return false;
+    return true;
+  }
+  std::optional<Type> typeArgument(const Node &callee,
+                                   const Host::Operation &operation) {
+    if (!callee.genericArguments.empty() &&
+        callee.genericArguments.front().type)
+      return host.resolveType(*callee.genericArguments.front().type,
+                              callee.span);
+    if (operation.type != Type::Unknown)
+      return operation.type;
+    return std::nullopt;
+  }
+  Opt intrinsic(const Node &node, const Host::Operation &operation,
+                const Value *receiver, std::span<const Value> arguments) {
+    const auto &callee = *node.children[0];
+    auto argumentType = typeArgument(callee, operation);
+    auto name = operation.name;
+    if (name == "size_of" || name == "align_of" || name == "mem.size_of" ||
+        name == "mem.align_of") {
+      auto layout = argumentType ? host.layout(*argumentType) : std::nullopt;
+      if (!layout)
+        return unsupported(node.span, "this constant layout");
+      return integerValue(Type::Usize, integerLiteral(name.ends_with("align_of")
+                                                          ? layout->alignment
+                                                          : layout->size));
+    }
+    if (name == "slice.len" || (receiver && callee.text == "len" &&
+                                (receiver->kind == Value::Kind::Array ||
+                                 receiver->kind == Value::Kind::Reference))) {
+      if (!arguments.empty())
+        return fail("type", node.span, "len requires no arguments");
+      auto count = receiver->kind == Value::Kind::Array
+                       ? receiver->elements.size()
+                       : receiver->count;
+      if (receiver->kind == Value::Kind::Reference) {
+        auto shape = pointee(*receiver);
+        if (!shape || shape->kind != Shape::Kind::Array)
+          return unsupported(node.span, "this constant length");
+        if (shape->count != UINT64_MAX)
+          count = shape->count;
+      }
+      return integerValue(Type::Usize, integerLiteral(count));
+    }
+    if (name == "ptr.from_ref" || name == "ptr.from_mut") {
+      if (arguments.size() != 1 || arguments[0].kind != Value::Kind::Reference)
+        return fail("constant", node.span,
+                    "constant pointer construction requires a live view");
+      if (name == "ptr.from_mut" &&
+          (!arguments[0].exclusive || !arguments[0].writable))
+        return fail("constant", node.span,
+                    "constant mutable pointer requires writable provenance");
+      auto value = arguments[0];
+      auto target = pointee(value);
+      if (!target)
+        return std::nullopt;
+      value.kind = Value::Kind::Pointer;
+      value.exclusive = name == "ptr.from_mut" && value.exclusive;
+      value.type = host.referenceType(target->type, value.exclusive, true);
+      return value;
+    }
+    if (name == "ptr.null" || name == "ptr.null_mut") {
+      if (!argumentType)
+        return unsupported(node.span, "this constant null pointer type");
+      Value value;
+      value.kind = Value::Kind::Pointer;
+      value.addressOnly = true;
+      value.exclusive = name == "ptr.null_mut";
+      value.type = host.referenceType(*argumentType, value.exclusive, true);
+      return value;
+    }
+    if (receiver && receiver->kind == Value::Kind::Pointer) {
+      auto value = *receiver;
+      auto target = pointee(value);
+      if (!target)
+        return std::nullopt;
+      if (name == "ptr.cast" || name == "ptr.cast_const" ||
+          name == "ptr.cast_mut") {
+        if (name == "ptr.cast_mut")
+          value.exclusive = true;
+        if (name == "ptr.cast_const")
+          value.exclusive = false;
+        value.type = host.referenceType(
+            name == "ptr.cast" && argumentType ? *argumentType : target->type,
+            value.exclusive, true);
+        return value;
+      }
+      if (name == "ptr.add" || name == "ptr.sub") {
+        if (!unsafeDepth)
+          return fail("unsafe", node.span,
+                      "operation requires an unsafe block or unsafe function");
+        if (arguments.size() != 1 || arguments[0].kind != Value::Kind::Integer)
+          return fail("type", node.span, "pointer offset requires usize");
+        auto layout = host.layout(target->type);
+        auto count = arguments[0].number;
+        if (!layout || count.negative || count.magnitude[1] ||
+            (layout->size && count.magnitude[0] > UINT64_MAX / layout->size))
+          return fail("constant", node.span,
+                      "constant pointer offset overflow");
+        auto bytes = count.magnitude[0] * layout->size;
+        if (value.addressOnly && bytes)
+          return fail(
+              "constant", node.span,
+              "constant pointer arithmetic requires allocation provenance");
+        if ((name == "ptr.add" && bytes > UINT64_MAX - value.offset) ||
+            (name == "ptr.sub" && bytes > value.offset))
+          return fail("constant", node.span,
+                      "constant pointer offset overflow");
+        value.offset =
+            name == "ptr.add" ? value.offset + bytes : value.offset - bytes;
+        if (!addressBounds(value, target->type, 0, node.span))
+          return std::nullopt;
+        return value;
+      }
+    }
+    if (name == "mem.transmute") {
+      if (!unsafeDepth)
+        return fail("unsafe", node.span,
+                    "operation requires an unsafe block or unsafe function");
+      auto target = argumentType ? host.typeShape(*argumentType) : std::nullopt;
+      if (!target || arguments.size() != 1)
+        return unsupported(node.span, "this constant transmute");
+      auto value = arguments[0];
+      if (value.kind == Value::Kind::Reference) {
+        auto loaded = readAddress(value, node.span);
+        if (!loaded)
+          return std::nullopt;
+        value = std::move(*loaded);
+      }
+      auto sourceLayout = host.layout(host.valueType(value));
+      auto targetLayout = host.layout(target->type);
+      if (!sourceLayout || !targetLayout ||
+          sourceLayout->size != targetLayout->size)
+        return fail("constant", node.span,
+                    "constant transmute requires equal target layouts");
+      if (target->kind == Shape::Kind::Pointer) {
+        if (value.kind == Value::Kind::Integer && isInteger(value.type) &&
+            integerWidth(value.type, options.pointerBits) ==
+                options.pointerBits) {
+          value.kind = Value::Kind::Pointer;
+          value.addressOnly = true;
+          value.offset = value.number.magnitude[0];
+          value.writable = target->exclusive;
+        } else if (value.kind == Value::Kind::Product &&
+                   value.elements.size() == 2 &&
+                   value.elements[0].kind == Value::Kind::Pointer &&
+                   value.elements[1].kind == Value::Kind::Integer) {
+          auto count = value.elements[1].number;
+          if (count.negative || count.magnitude[1])
+            return fail("constant", node.span,
+                        "constant slice metadata is outside usize");
+          auto data = value.elements[0];
+          data.count = count.magnitude[0];
+          value = std::move(data);
+        } else if (value.kind != Value::Kind::Pointer)
+          return unsupported(node.span, "this constant pointer representation");
+        value.type = target->type;
+        value.exclusive = target->exclusive;
+        return value;
+      }
+      if (target->kind == Shape::Kind::Product &&
+          target->elements.size() == 2 &&
+          target->elements[0].kind == Shape::Kind::Pointer &&
+          target->elements[1].type == Type::Usize &&
+          value.kind == Value::Kind::Pointer) {
+        Value raw;
+        raw.kind = Value::Kind::Product;
+        raw.type = target->type;
+        auto count = integerValue(Type::Usize, integerLiteral(value.count));
+        value.type = target->elements[0].type;
+        value.exclusive = target->elements[0].exclusive;
+        raw.elements = {std::move(value), std::move(count)};
+        return raw;
+      }
+      return unsupported(node.span, "this constant transmute representation");
+    }
+    return unsupported(node.span, "operation '" + name + "'");
+  }
+  Opt aggregateCall(const Node &node, const Shape *want) {
+    const auto &callee = *node.children[0];
+    auto operation = host.operation(node);
+    if (operation.name == "panic" ||
+        (callee.kind == Kind::Name &&
+         (callee.text == "core::panic::panic" ||
+          callee.text == "alloc::alloc::panic_precondition")))
+      return fail("constant", frame().callSpan,
+                  "panic during constant evaluation");
+    std::optional<Value> receiver;
+    Place receiverPlace;
+    if (callee.kind == Kind::Field) {
+      auto converted = host.receiver(node);
+      if (converted)
+        receiver = eval(*converted, nullptr);
+      else
+        receiverPlace = place(*callee.children[0]);
+      if (!converted && receiverPlace.address)
+        receiver = *receiverPlace.address;
+      else if (!converted && receiverPlace.value)
+        receiver = *receiverPlace.value;
+      else if (!converted)
+        receiver = eval(*callee.children[0], nullptr);
+      if (!receiver)
+        return std::nullopt;
+      if (receiver->kind == Value::Kind::Floating) {
+        if (!defaultTypes(*receiver, callee.span))
+          return std::nullopt;
+        if (!constantFloatMethod(callee.text))
+          return fail("constant", callee.span,
+                      "call to non-const or unavailable float method '" +
+                          callee.text + "'");
+        return primitiveCall(node, receiver->type, callee.text, receiver);
+      }
+      if (operation.name.empty()) {
+        if (receiver->kind == Value::Kind::Pointer)
+          operation.name = "ptr." + callee.text;
+        else if (callee.text == "len") {
+          auto target = receiver->kind == Value::Kind::Reference
+                            ? pointee(*receiver)
+                            : host.typeShape(host.valueType(*receiver));
+          if (target && target->kind == Shape::Kind::Array)
+            operation.name = "slice.len";
+        }
+      }
+    }
+    std::vector<Value> arguments;
+    std::vector<Place> places;
+    for (std::size_t i = 1; i < node.children.size(); ++i) {
+      auto where = place(*node.children[i]);
+      Opt value;
+      if (where.address)
+        value = *where.address;
+      else if (where.value)
+        value = *where.value;
+      else
+        value = eval(*node.children[i], nullptr);
+      if (!value)
+        return std::nullopt;
+      if ((operation.name == "ptr.from_ref" ||
+           operation.name == "ptr.from_mut") &&
+          value->kind != Value::Kind::Reference &&
+          (where.value || where.address)) {
+        if (operation.name == "ptr.from_mut" && !where.mutableBinding)
+          return fail("constant", node.span,
+                      "constant mutable pointer requires a mutable place");
+        value = addressOf(where, operation.name == "ptr.from_mut");
+      }
+      arguments.push_back(std::move(*value));
+      places.push_back(std::move(where));
+    }
+    if (!operation.name.empty())
+      return intrinsic(node, operation, receiver ? &*receiver : nullptr,
+                       arguments);
+    auto found =
+        host.prepare(node, receiver ? &*receiver : nullptr, arguments, want);
+    if (found.kind == Lookup::Kind::Missing && callee.kind == Kind::Name)
+      found = lookup(callee);
+    if (found.kind == Lookup::Kind::Symbolic) {
+      symbolic = failed = true;
+      return std::nullopt;
+    }
+    if (found.kind == Lookup::Kind::Failed) {
+      failed = reported = true;
+      return std::nullopt;
+    }
+    if (found.kind == Lookup::Kind::Constant &&
+        found.value.kind == Value::Kind::Product) {
+      auto shape = host.typeShape(found.value.type);
+      if (!shape)
+        return unsupported(node.span, "this constant constructor");
+      auto value = uninitialized(*shape);
+      std::vector<bool> used(shape->elements.size());
+      for (std::size_t i = 0; i < arguments.size(); ++i) {
+        std::size_t slot = i;
+        auto &argument = *node.children[i + 1];
+        if (!argument.name.empty())
+          slot = std::find(shape->names.begin(), shape->names.end(),
+                           argument.name) -
+                 shape->names.begin();
+        if (slot >= value.elements.size() || used[slot])
+          return fail("type", argument.span,
+                      "invalid constant constructor argument");
+        used[slot] = true;
+        if (!coerce(arguments[i], shape->elements[slot], argument.span))
+          return std::nullopt;
+        value.elements[slot] = std::move(arguments[i]);
+      }
+      if (!initialized(value, node.span))
+        return std::nullopt;
+      return value;
+    }
+    auto declaration = found.declaration;
+    auto function = found.checkedFunction;
+    if (!function || !function->body)
+      return unsupported(node.span, "this constant call");
+    if (declaration && !declaration->constFunction)
+      return fail("constant", node.span,
+                  "call to non-const function '" + displayPath(callee.text) +
+                      "' in a constant expression");
+    if (declaration &&
+        (declaration->variadic || declaration->destructor ||
+         declaration->foreignDeclaration || !declaration->error.empty()))
+      return unsupported(node.span, "this constant function effect");
+    if (function->unsafeFunction && !unsafeDepth)
+      return fail("unsafe", node.span,
+                  "operation requires an unsafe block or unsafe function");
+    if (frames.size() > options.callDepth)
+      return fail("limit", node.span,
+                  "const function call depth exceeded the limit of " +
+                      std::to_string(options.callDepth));
+    std::vector<Opt> bound(function->parameters.size());
+    auto bind = [&](std::size_t slot, Value value, const Place &where,
+                    Span span) {
+      if (slot >= bound.size() || bound[slot])
+        return fail("type", span, "invalid constant call argument"), false;
+      const auto &parameter = function->parameters[slot];
+      if (parameter.mode == ParameterMode::Read ||
+          parameter.mode == ParameterMode::Mut) {
+        const bool exclusive = parameter.mode == ParameterMode::Mut;
+        if (value.kind != Value::Kind::Reference) {
+          if (!where.value && !where.address) {
+            frame().locals.emplace_back("<argument>", std::move(value),
+                                        exclusive, nullptr);
+            const auto &local = frame().locals.back();
+            Place temporary{local.value.get(), local.value.get(), {},
+                            exclusive,         local.name,        local.value};
+            value = addressOf(temporary, exclusive);
+          } else {
+            if (exclusive && !where.mutableBinding)
+              return fail("constant", span,
+                          "constant exclusive argument requires a mutable "
+                          "place"),
+                     false;
+            value = addressOf(where, exclusive);
+          }
+        }
+        if (exclusive && !value.exclusive)
+          return fail("constant", span,
+                      "constant exclusive argument requires exclusive access"),
+                 false;
+        auto target = parameter.shape;
+        value.type = host.referenceType(target.type, exclusive, false);
+        value.exclusive = exclusive;
+        if (target.kind == Shape::Kind::Array && target.count == UINT64_MAX) {
+          auto source = pointee(value);
+          if (where.value && where.value->kind == Value::Kind::Array)
+            value.count = where.value->elements.size();
+          (void)source;
+        }
+      } else {
+        if (!coerce(value, parameter.shape, span))
+          return false;
+        if (parameter.mode == ParameterMode::Take && where.value)
+          where.value->kind = Value::Kind::Uninitialized;
+      }
+      bound[slot] = std::move(value);
+      return true;
+    };
+    if (receiver && !bind(0, std::move(*receiver), receiverPlace, callee.span))
+      return std::nullopt;
+    std::size_t position = receiver ? 1 : 0;
+    for (std::size_t i = 0; i < arguments.size(); ++i) {
+      auto slot = position++;
+      const auto &argument = *node.children[i + 1];
+      if (!argument.name.empty())
+        slot = std::find_if(function->parameters.begin(),
+                            function->parameters.end(),
+                            [&](const auto &parameter) {
+                              return parameter.name == argument.name;
+                            }) -
+               function->parameters.begin();
+      if (!bind(slot, std::move(arguments[i]), places[i], argument.span))
+        return std::nullopt;
+    }
+    frames.emplace_back();
+    host.enter(*function);
+    struct Restore {
+      Interpreter &interpreter;
+      unsigned unsafeDepth;
+      Span span;
+      ~Restore() {
+        for (const auto &local : interpreter.frame().locals)
+          interpreter.discard(*local.value, span);
+        interpreter.unsafeDepth = unsafeDepth;
+        interpreter.host.leave();
+        interpreter.frames.pop_back();
+      }
+    } restore{*this, unsafeDepth, node.span};
+    unsafeDepth = function->unsafeFunction ? 1 : 0;
+    frame().inFunction = true;
+    frame().callSpan = node.span;
+    frame().result = function->result;
+    for (std::size_t i = 0; i < bound.size(); ++i) {
+      const auto &parameter = function->parameters[i];
+      if (!bound[i]) {
+        if (!parameter.defaultValue)
+          return fail("type", node.span, "missing constant call argument");
+        bound[i] = eval(*parameter.defaultValue, &parameter.shape);
+        if (!bound[i] || !coerce(*bound[i], parameter.shape, node.span))
+          return std::nullopt;
+      }
+      frame().locals.emplace_back(parameter.name, std::move(*bound[i]), false,
+                                  parameter.context);
+    }
+    std::shared_ptr<Value> self;
+    if (declaration && declaration->constructor) {
+      frame().locals.emplace_back("self", uninitialized(function->result), true,
+                                  declaration->lexicalContext);
+      self = frame().locals.back().value;
+    }
+    auto value = eval(*function->body, declaration && declaration->constructor
+                                           ? nullptr
+                                           : &function->result);
+    if (!value && !failed && signal == Signal::Return) {
+      value = std::move(signalValue);
+      signal = Signal::None;
+    }
+    if (value && self) {
+      value = *self;
+      self->kind = Value::Kind::Uninitialized;
+    }
+    if (!value || !initialized(*value, node.span) ||
+        !coerce(*value, function->result, node.span))
+      return std::nullopt;
+    return value;
+  }
+  Opt call(const Node &node, const Shape *want) {
     const Node &callee = *node.children[0];
+    Type floating = Type::Unknown;
+    if (callee.kind == Kind::Field) {
+      floating = namedType(*callee.children[0]);
+      if (!isFloating(floating)) {
+        auto shape = placeShape(*callee.children[0]);
+        if (shape)
+          floating = shape->type;
+      }
+    } else if (callee.kind == Kind::Name) {
+      auto separator = callee.text.rfind("::");
+      if (separator != std::string::npos) {
+        TypeSyntax syntax;
+        syntax.name = callee.text.substr(0, separator);
+        syntax.context = callee.context;
+        floating = host.resolveType(syntax, callee.span);
+      }
+    }
+    if (!isFloating(floating))
+      return aggregateCall(node, want);
     if (!callee.genericArguments.empty() ||
         !callee.ownerGenericArguments.empty() || callee.flag)
       return unsupported(callee.span, "this call");
@@ -1531,6 +2462,26 @@ private:
     }
     case Kind::Unit:
       return unitValue();
+    case Kind::None:
+    case Kind::Variant: {
+      Value value;
+      value.kind = Value::Kind::Variant;
+      value.type = want ? want->type : Type::Unknown;
+      value.selection =
+          node.kind == Kind::None || node.text == "success" ? 0 : 1;
+      for (std::size_t i = 0; i < node.children.size(); ++i) {
+        const Shape *payload = nullptr;
+        if (want && want->kind == Shape::Kind::Variant &&
+            std::size_t(value.selection) < want->variants.size() &&
+            i < want->variants[value.selection].size())
+          payload = &want->elements[want->variants[value.selection][i]];
+        auto item = eval(*node.children[i], payload);
+        if (!item)
+          return std::nullopt;
+        value.elements.push_back(std::move(*item));
+      }
+      return value;
+    }
     case Kind::Group:
       return eval(*node.children[0], want);
     case Kind::Unsafe: {
@@ -1544,11 +2495,16 @@ private:
       for (auto it = locals.rbegin(); it != locals.rend(); ++it)
         if (namesLocal(*it, node)) {
           if (want && want->kind == Shape::Kind::Scalar &&
-              it->value.kind == Value::Kind::Integer &&
-              it->value.type == Type::Unknown &&
-              !coerce(it->value, *want, node.span))
+              it->value->kind == Value::Kind::Integer &&
+              it->value->type == Type::Unknown &&
+              !coerce(*it->value, *want, node.span))
             return std::nullopt;
-          return it->value;
+          auto result = *it->value;
+          if (want && want->kind != Shape::Kind::Reference &&
+              result.kind != Value::Kind::Reference &&
+              !host.copy(host.valueType(result)))
+            it->value->kind = Value::Kind::Uninitialized;
+          return result;
         }
       auto found = lookup(node);
       switch (found.kind) {
@@ -1576,6 +2532,44 @@ private:
       }
     }
     case Kind::Unary: {
+      if (node.text == "take") {
+        auto where = place(*node.children[0]);
+        if (where.value) {
+          auto value = *where.value;
+          where.value->kind = Value::Kind::Uninitialized;
+          return value;
+        }
+        return eval(*node.children[0], want);
+      }
+      if (node.text == "read" || node.text == "mut") {
+        auto where = place(*node.children[0]);
+        if (!where.value && !where.address)
+          return fail("constant", node.span,
+                      "constant borrow requires a live place");
+        if (node.text == "mut" && !where.mutableBinding)
+          return fail("constant", node.span,
+                      "constant exclusive borrow requires a mutable place");
+        if (node.text == "mut" && where.address && !where.address->writable)
+          return fail("constant", node.span,
+                      "constant exclusive borrow requires writable provenance");
+        auto value = addressOf(where, node.text == "mut");
+        if (!validReference(value, node.span))
+          return std::nullopt;
+        return value;
+      }
+      if (node.text == "*") {
+        auto pointer = eval(*node.children[0], nullptr);
+        if (!pointer)
+          return std::nullopt;
+        if (pointer->kind == Value::Kind::Pointer && !unsafeDepth)
+          return fail("unsafe", node.span,
+                      "operation requires an unsafe block or unsafe function");
+        if (pointer->kind != Value::Kind::Reference &&
+            pointer->kind != Value::Kind::Pointer)
+          return fail("type", node.span,
+                      "constant dereference requires a pointer or view");
+        return readAddress(*pointer, node.span);
+      }
       if (node.text == "-" && (node.children[0]->kind == Kind::Integer ||
                                node.children[0]->kind == Kind::Floating))
         return literal(*node.children[0], true, want);
@@ -1654,7 +2648,7 @@ private:
     case Kind::Block:
       return block(node, want);
     case Kind::If: {
-      Scope scope(frame());
+      Scope scope(*this, node.span);
       auto mark = frame().locals.size();
       auto value =
           condition(*node.children[0],
@@ -1663,7 +2657,10 @@ private:
         return std::nullopt;
       if (truth(*value))
         return eval(*node.children[1], want);
-      frame().locals.resize(mark);
+      while (frame().locals.size() > mark) {
+        discard(*frame().locals.back().value, node.span);
+        frame().locals.pop_back();
+      }
       if (node.children.size() > 2)
         return eval(*node.children[2], want);
       return unitValue();
@@ -1747,6 +2744,8 @@ private:
       auto where = place(node);
       if (failed)
         return std::nullopt;
+      if (where.address)
+        return readAddress(*where.address, node.span);
       if (where.value)
         return *where.value;
       auto base = eval(*node.children[0], nullptr);
@@ -1765,6 +2764,8 @@ private:
       auto where = place(node);
       if (failed)
         return std::nullopt;
+      if (where.address)
+        return readAddress(*where.address, node.span);
       if (where.value)
         return *where.value;
       auto base = eval(*node.children[0], nullptr);

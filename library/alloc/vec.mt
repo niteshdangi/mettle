@@ -40,11 +40,11 @@ fn normalize_range<R: RangeBounds<usize>>(
 
 // Slice pointers carry no region; callers turn them into views anchored to
 // the owner's own storage.
-pub fn slice_ptr<T>(p: ptr<mut T>, n: usize): ptr<read [T]> {
+pub const fn slice_ptr<T>(p: ptr<mut T>, n: usize): ptr<read [T]> {
     let raw = RawSlice(p.cast_const(), n)
     unsafe { core.mem.transmute<ptr<read [T]>>(raw) }
 }
-pub fn slice_ptr_mut<T>(p: ptr<mut T>, n: usize): ptr<mut [T]> {
+pub const fn slice_ptr_mut<T>(p: ptr<mut T>, n: usize): ptr<mut [T]> {
     let raw = RawSlice(p.cast_const(), n)
     unsafe { core.mem.transmute<ptr<mut [T]>>(raw) }
 }
@@ -92,10 +92,37 @@ pub type List<T, A: Allocator = Global> {
     }
 }
 
-pub fn new_in<T, A: Allocator>(take a: A): List<T, A> {
-    List<T, A>(allocator: take a)
+pub const fn new_in<T, A: Allocator>(take a: A): List<T, A> {
+    let result: List<T, A>
+    result.ptr = dangling_for<T>()
+    result.len = 0usize
+    result.cap = if core.mem.size_of<T>() == 0usize { 0xffffffffffffffffusize } else { 0usize }
+    result.a = take a
+    result
 }
-pub fn new<T>(): List<T> { new_in(Global()) }
+pub const fn new<T>(): List<T> { new_in(Global()) }
+
+pub fn from_array<T, const N: usize>(take items: [T; N]): List<T> {
+    List<T>.(From<[T; N]>).from(items)
+}
+
+pub fn from_elem<T: Clone>(take value: T, count: usize): List<T> {
+    var out = with_capacity<T>(count)
+    if count == 0usize { return out }
+    var i = 1usize
+    while i < count {
+        out.push(value.clone())
+        i += 1usize
+    }
+    out.push(value)
+    out
+}
+
+pub macro vec {
+    () => { new() };
+    ($value:expr; $count:expr) => { from_elem($value, $count) };
+    ($($value:expr),+ $(,)?) => { from_array([$($value),*]) };
+}
 
 pub fn try_with_capacity_in<T, A: Allocator>(n: usize, take a: A): List<T, A> throws AllocError {
     var v = new_in<T, A>(a)
@@ -137,8 +164,8 @@ extend<T, A: Allocator> List<T, A> {
     // Safety: `n <= capacity` and the first `n` slots are initialized.
     pub mut unsafe fn set_len(n: usize): Unit { self.len = n }
 
-    pub fn as_slice(): read [T] from self { unsafe { read *slice_ptr(self.ptr, self.len) } }
-    pub mut fn as_mut_slice(): mut [T] from self { unsafe { mut *slice_ptr_mut(self.ptr, self.len) } }
+    pub const fn as_slice(): read [T] from self { unsafe { read *slice_ptr(self.ptr, self.len) } }
+    pub mut const fn as_mut_slice(): mut [T] from self { unsafe { mut *slice_ptr_mut(self.ptr, self.len) } }
 
     // Grows to at least `need` slots; failure leaves the vector unchanged.
     mut fn grow_to(need: usize, exact: bool): Unit throws AllocError {
@@ -1097,10 +1124,10 @@ extend<T, A: Allocator> List<T, A> implements package.core.ops.IndexMut<usize> {
 
 extend<T, A: Allocator> List<T, A> implements Deref {
     type Target = [T]
-    fn deref(): read [T] from self { self.as_slice() }
+    const fn deref(): read [T] from self { self.as_slice() }
 }
 extend<T, A: Allocator> List<T, A> implements DerefMut {
-    mut fn deref_mut(): mut [T] from self { self.as_mut_slice() }
+    mut const fn deref_mut(): mut [T] from self { self.as_mut_slice() }
 }
 fn range_index_end(end: RangeEnd, len: usize): usize {
     match end {

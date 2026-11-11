@@ -364,22 +364,14 @@ void check(const ir::Function &function, const ir::Program &program,
           }
           targets.insert(info.loans.at(id).targets.begin(),
                          info.loans.at(id).targets.end());
+          for (auto target : info.loans.at(id).frozen) {
+            target.authority.insert(id);
+            targets.insert(std::move(target));
+          }
         }
       }
       bool conflict = false;
       bool exclusiveConflict = false;
-      auto disjoint = [&](const Origins &authority, int other) {
-        const auto relatives = ancestors({other}, info.loans);
-        for (auto source : authority) {
-          if (relatives.contains(source))
-            continue;
-          auto parents = ancestors({source}, info.loans);
-          for (auto sibling : info.loans.at(source).disjointOutputs)
-            if (relatives.contains(sibling) && !parents.contains(sibling))
-              return true;
-        }
-        return false;
-      };
       auto dynamicPayload = [&](const Origins &sources) {
         for (auto source : ancestors(sources, info.loans))
           if (info.loans.at(source).interiorPayload)
@@ -423,7 +415,8 @@ void check(const ir::Function &function, const ir::Program &program,
         if ((read || write) && !introduced)
           for (const auto &access : targets) {
             auto authority = ancestors(access.authority, info.loans);
-            if (authority.contains(id) || disjoint(authority, id))
+            if (authority.contains(id) ||
+                disjointLoans(authority, id, info.loans))
               continue;
             auto referents = loan.targets;
             referents.insert(loan.frozen.begin(), loan.frozen.end());
@@ -448,7 +441,8 @@ void check(const ir::Function &function, const ir::Program &program,
               conflict = true;
         for (auto dropped : point.drops) {
           auto authority = ancestors({dropped}, info.loans);
-          if (authority.contains(id) || disjoint(authority, id))
+          if (authority.contains(id) ||
+              disjointLoans(authority, id, info.loans))
             continue;
           const auto &destructorLoan = info.loans.at(dropped);
           for (const auto &access : destructorLoan.targets)

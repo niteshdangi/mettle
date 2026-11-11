@@ -81,7 +81,15 @@ using NumericEvaluator = std::optional<NumericConstant> (*)(
     std::string_view, Type, std::span<const NumericConstant>);
 struct StaticConstant {
   // Repeat is one element constant repeated over a compact array.
-  enum class Kind { Scalar, Aggregate, Address, Function, Text, Repeat };
+  enum class Kind {
+    Scalar,
+    Aggregate,
+    Address,
+    Function,
+    Text,
+    Repeat,
+    Pointer
+  };
   Kind kind = Kind::Scalar;
   Type type = Type::Unknown;
   NumericLiteral scalar{};
@@ -91,6 +99,7 @@ struct StaticConstant {
   int selection = -1;
   // Bytes of a Text or byte-text literal; `type` is its static read view.
   std::string text{};
+  std::uint64_t byteOffset = 0;
 };
 enum class StorageDuration { Automatic, Static };
 bool integerLiteralFits(const NumericLiteral &literal, Type type);

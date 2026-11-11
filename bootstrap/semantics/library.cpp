@@ -411,7 +411,10 @@ private:
     return unsigned(StorageDuration::Static);
   }
   static unsigned maximum(StaticConstant::Kind *) {
-    return unsigned(StaticConstant::Kind::Repeat);
+    return unsigned(StaticConstant::Kind::Pointer);
+  }
+  static unsigned maximum(ReceiverStep::Kind *) {
+    return unsigned(ReceiverStep::Kind::Erase);
   }
   static unsigned maximum(interfaces::Property *) {
     return unsigned(interfaces::Property::Static);
@@ -542,7 +545,7 @@ void wire(Archive &a, StaticConstant &v) {
     a.symbol(metadata::SymbolKind::Function, v.symbol);
   else if (v.kind == StaticConstant::Kind::Address)
     a.symbol(metadata::SymbolKind::Static, v.symbol);
-  a(v.projections, v.selection, v.text);
+  a(v.projections, v.selection, v.text, v.byteOffset);
   if ((v.kind == StaticConstant::Kind::Repeat && v.fields.size() != 1) ||
       v.selection < -1)
     a.fail("invalid checked static constant inventory");
@@ -595,12 +598,18 @@ void wire(Archive &a, interfaces::Database &v) {
   a(v.implementations, v.projections, v.unpinImplementations,
     v.concurrencyDeclarations, v.argumentsReady);
 }
+void wire(Archive &a, ReceiverStep &v) {
+  a(v.kind, v.source, v.target, v.resultView, v.count, v.mode);
+  a.symbol(metadata::SymbolKind::Function, v.callee);
+  a(v.typeArguments, v.interfaceSelf, v.interfaceType, v.interfaceMethod);
+}
+void wire(Archive &a, ReceiverPlan &v) { a(v.source, v.target, v.steps); }
 void wire(Archive &a, NodeFacts &v) {
   a(v.type);
   a.symbol(metadata::SymbolKind::Function, v.callee);
   a(v.slot, v.field, v.variant, v.number, v.numeric, v.machineOperation,
     v.machineType, v.constantParameter, v.constantCount, v.callResult,
-    v.typeArguments, v.lexicallyBound, v.unsafeContext);
+    v.typeArguments, v.lexicallyBound, v.unsafeContext, v.receiverPlan);
 }
 template <typename T> void Archive::record(T &item) {
   constexpr bool recursive =
@@ -978,7 +987,7 @@ exportLibraryDeclarations(const CheckedModule &module,
   }
   result.header = std::move(header.output);
   Archive contracts(references, *module.types, header.hygieneState());
-  contracts.tag("mettle.checked-contracts.2");
+  contracts.tag("mettle.checked-contracts.3");
   auto &value = *module.declarationContracts;
   std::uint64_t count = value.functions.size();
   contracts(count);
@@ -1050,7 +1059,7 @@ importLibraryDeclarations(std::span<const std::uint8_t> bytes,
     return result;
   }
   Archive archive(bytes, references, types.get());
-  archive.tag("mettle.checked-contracts.2");
+  archive.tag("mettle.checked-contracts.3");
   auto value = std::make_shared<ImportedDeclarations>();
   value->types = std::move(types);
   std::uint64_t count = 0;

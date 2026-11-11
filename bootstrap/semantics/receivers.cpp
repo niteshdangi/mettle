@@ -733,7 +733,8 @@ bool Checker::borrowCoercion(Node &node, int actual, Type target,
   if (source == target || source == Type::Unknown || target == Type::Unknown ||
       source == Type::Never ||
       (checked.types->isView(source) &&
-       checked.types->view(source).payload == target))
+       checked.types->view(source).payload == target &&
+       !checked.types->isView(target)))
     return false;
   auto native = checked.types->isView(source)
                     ? checked.types->view(source).payload

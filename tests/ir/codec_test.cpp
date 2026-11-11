@@ -67,7 +67,7 @@ struct Fixture {
   std::vector<std::uint8_t> irBytes, typeBytes;
   std::size_t typeRoots = 0;
 };
-Fixture encodeFixture() {
+Fixture encodeFixture(bool addressOnly = false) {
   auto types = std::make_shared<TypeStore>();
   auto parameter = types->declareParameter("identity.T", true);
   auto product = types->declareProduct("Pair", true);
@@ -192,6 +192,13 @@ Fixture encodeFixture() {
   address.kind = StaticConstant::Kind::Address;
   address.type = types->pointerType(Type::I32, ParameterMode::Read);
   address.symbol = 0;
+  address.byteOffset = 4;
+  if (addressOnly) {
+    address.kind = StaticConstant::Kind::Pointer;
+    address.symbol = -1;
+    address.byteOffset = 0;
+    address.scalar = integerLiteral(16);
+  }
   StaticConstant function;
   function.kind = StaticConstant::Kind::Function;
   function.type = pointer;
@@ -306,6 +313,7 @@ void verifiedRemapping() {
           "type/scope/place/SSA/source/policy metadata changed");
   require(decoded.program.functions[2].locals[0].staticIndex == 2 &&
               decoded.program.statics[1].initializer->symbol == 2 &&
+              decoded.program.statics[1].initializer->byteOffset == 4 &&
               decoded.program.statics[2].initializer->symbol == 6 &&
               decoded.program.globalAssembly[0].operands[0].symbol == 6 &&
               decoded.program.globalAssembly[0].operands[1].symbol == 2,
@@ -344,6 +352,23 @@ void verifiedRemapping() {
     require(false,
             "remapped generic IR failed real structural/type verification");
   }
+  auto malformed = assembled;
+  malformed.statics[0].initializer->byteOffset = 2;
+  Diagnostics misaligned;
+  require(!verify(malformed, misaligned),
+          "misaligned static interior relocation was accepted");
+  malformed.statics[0].initializer->byteOffset = 8;
+  Diagnostics outOfBounds;
+  require(!verify(malformed, outOfBounds),
+          "out-of-bounds static interior relocation was accepted");
+  auto rawFixture = encodeFixture(true);
+  auto rawDecoded = decodeProgram(rawFixture.irBytes, refs);
+  require(bool(rawDecoded), rawDecoded.error.c_str());
+  const auto &rawPointer = *rawDecoded.program.statics[1].initializer;
+  require(rawPointer.kind == StaticConstant::Kind::Pointer &&
+              rawPointer.scalar == integerLiteral(16) &&
+              rawPointer.symbol == -1 && rawPointer.byteOffset == 0,
+          "address-only constant pointer changed during codec round trip");
   auto rejected = [&](const std::vector<std::uint8_t> &bytes,
                       const metadata::DecodeReferences &mapping) {
     auto result = decodeProgram(bytes, mapping);
@@ -361,7 +386,7 @@ void verifiedRemapping() {
   bad.push_back(0);
   rejected(bad, refs);
   bad = fixture.irBytes;
-  bad[4] = 2;
+  bad[4] = 3;
   rejected(bad, refs);
   bad = fixture.irBytes;
   std::fill_n(bad.begin() + 8, 4, 255);

@@ -1,6 +1,6 @@
 import alloc.boxed
 import core.fmt
-import std.io.{BufRead, Cursor, Error, Lines}
+import std.io.{BufRead, Cursor, Error, Lines, Reader, Writer}
 
 fn require_lines_markers<B: BufRead + Transferable + Shareable>(read value: Lines<B>) {}
 fn require_debug<T: fmt.Debug>(read value: T): Unit {}
@@ -93,6 +93,14 @@ fn run(): i32 throws Error {
     if second.len() != 2usize || second[0usize] != 101u8 || second[1usize] != 102u8 {
         return 18
     }
+    var bytes = [0u8; 3]
+    if try deque.read_some(mut bytes) != 2usize ||
+        bytes[0usize] != 101u8 || bytes[1usize] != 102u8 { return 19 }
+    if try deque.read_some(mut bytes) != 0usize { return 20 }
+    if try deque.write_some("gh".as_bytes()) != 2usize { return 21 }
+    if try deque.read_some(mut bytes) != 2usize ||
+        bytes[0usize] != 103u8 || bytes[1usize] != 104u8 { return 22 }
+    try deque.flush()
     0
 }
 

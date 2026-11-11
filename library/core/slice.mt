@@ -114,10 +114,128 @@ pub unsafe fn from_raw_parts_mut<region r, T>(data: ptr<mut T>, len: usize): mut
     unsafe { mut *fat }
 }
 
+// Replacing the holder preserves r while partitioning its original initialized extent.
+pub fn split_off_first<region r, T>(mut view: read [T] from r): (read T from r)? {
+    let n = view.len()
+    if n == 0usize { return none }
+    let data = view.as_ptr()
+    unsafe {
+        view = from_raw_parts(data.add(1usize), n - 1usize)
+        present(read *data)
+    }
+}
+
+pub fn split_off_last<region r, T>(mut view: read [T] from r): (read T from r)? {
+    let n = view.len()
+    if n == 0usize { return none }
+    let data = view.as_ptr()
+    unsafe {
+        view = from_raw_parts(data, n - 1usize)
+        present(read *data.add(n - 1usize))
+    }
+}
+
+// Safety: original is nonempty; both outputs partition its exclusive region.
+unsafe fn split_owned_endpoint<region r, T>(
+    take original: mut [T] from r, front: bool
+): (mut T from r, mut [T] from r) {
+    let n = original.len()
+    let data = original.as_mut_ptr()
+    let index = if front { 0usize } else { n - 1usize }
+    let start = if front { 1usize } else { 0usize }
+    unsafe {
+        (mut *data.add(index), from_raw_parts_mut(data.add(start), n - 1usize))
+    }
+}
+
+// Safety: at <= original.len(); both outputs partition its exclusive region.
+unsafe fn split_owned_at<region r, T>(
+    take original: mut [T] from r, at: usize
+): (mut [T] from r, mut [T] from r) {
+    let n = original.len()
+    let data = original.as_mut_ptr()
+    unsafe { (from_raw_parts_mut(data, at), from_raw_parts_mut(data.add(at), n - at)) }
+}
+
+pub fn split_off_first_mut<region r, T>(mut view: mut [T] from r): (mut T from r)? {
+    let n = view.len()
+    let data = view.as_mut_ptr()
+    unsafe {
+        let original = core.mem.replace(mut view, from_raw_parts_mut(data, 0usize))
+        if n == 0usize {
+            view = take original
+            return none
+        }
+        let parts = split_owned_endpoint(take original, true)
+        view = take parts.1
+        present(take parts.0)
+    }
+}
+
+pub fn split_off_last_mut<region r, T>(mut view: mut [T] from r): (mut T from r)? {
+    let n = view.len()
+    let data = view.as_mut_ptr()
+    unsafe {
+        let original = core.mem.replace(mut view, from_raw_parts_mut(data, 0usize))
+        if n == 0usize {
+            view = take original
+            return none
+        }
+        let parts = split_owned_endpoint(take original, false)
+        view = take parts.1
+        present(take parts.0)
+    }
+}
+
+interface SplitOffRange: super.iter.RangeBounds<usize> {}
+extend super.iter.RangeFrom<usize> implements SplitOffRange {}
+extend super.iter.RangeTo<usize> implements SplitOffRange {}
+extend super.iter.RangeToInclusive<usize> implements SplitOffRange {}
+
+fn split_off_point<R: SplitOffRange>(read range: R, len: usize): (usize, bool)? {
+    match take (range.start_bound(), range.end_bound()) {
+        (super.iter.Bound.Included(start), super.iter.Bound.Unbounded) => {
+            if *start <= len { present((*start, false)) } else { none }
+        },
+        (super.iter.Bound.Unbounded, super.iter.Bound.Excluded(end)) => {
+            if *end <= len { present((*end, true)) } else { none }
+        },
+        (super.iter.Bound.Unbounded, super.iter.Bound.Included(end)) => {
+            if *end < len { present((*end + 1usize, true)) } else { none }
+        },
+        _ => none
+    }
+}
+
+pub fn split_off_mut<region r, T, R: SplitOffRange>(
+    mut view: mut [T] from r, take range: R
+): (mut [T] from r)? {
+    let n = view.len()
+    let split = split_off_point(range, n)
+    let data = view.as_mut_ptr()
+    unsafe {
+        let original = core.mem.replace(mut view, from_raw_parts_mut(data, 0usize))
+        let point = match take split {
+            present(value) => value,
+            none => {
+                view = take original
+                return none
+            }
+        }
+        let parts = split_owned_at(take original, point.0)
+        if point.1 {
+            view = take parts.1
+            return present(take parts.0)
+        }
+        view = take parts.0
+        present(take parts.1)
+    }
+}
+
 copy type RawMut<T> { data: ptr<mut T>; len: usize }
 
 // The fat slice pointer is represented by its data pointer and length here.
-fn mutable_data_pointer<T>(mut xs: [T]): ptr<mut T> {
+const fn mutable_data_pointer<T>(mut xs: [T]): ptr<mut T> {
     let fat = core.ptr.from_mut(xs)
     let raw = unsafe { core.mem.transmute<RawMut<T>>(fat) }
     raw.data
@@ -170,12 +288,35 @@ extend<T> [T] {
         let end = unsafe { raw.data.add(self.len()) }
         super.iter.Range(raw.data, end)
     }
-    pub mut fn as_mut_ptr_range(): super.iter.Range<ptr<mut T>> {
+    pub mut const fn as_mut_ptr_range(): super.iter.Range<ptr<mut T>> {
         let n = self.len()
         let data = mutable_data_pointer(mut self)
         // Safety: the exclusive slice pointer is valid through one-past-end.
         let end = unsafe { data.add(n) }
         super.iter.Range(data, end)
+    }
+    pub fn element_offset(read element: T): usize? {
+        let size = core.mem.size_of<T>()
+        if size == 0usize { super.panic.panic("element_offset requires non-zero-sized elements") }
+        let start = self.as_ptr().addr()
+        let address = core.ptr.from_ref(element).addr()
+        if address < start { return none }
+        let bytes = address - start
+        if bytes % size != 0usize { return none }
+        let index = bytes / size
+        if index < self.len() { present(index) } else { none }
+    }
+    pub fn subslice_range(read part: [T]): (super.iter.Range<usize>)? {
+        let size = core.mem.size_of<T>()
+        if size == 0usize { super.panic.panic("subslice_range requires non-zero-sized elements") }
+        let start = self.as_ptr().addr()
+        let address = part.as_ptr().addr()
+        if address < start { return none }
+        let bytes = address - start
+        if bytes % size != 0usize { return none }
+        let index = bytes / size
+        if index > self.len() || part.len() > self.len() - index { return none }
+        present(super.iter.Range(index, index + part.len()))
     }
     // Safety: middle bytes are initialized valid `U`; source bounds and
     // provenance are retained, and the partition keeps each view in-bounds.
@@ -239,7 +380,7 @@ extend<T> [T] {
 }
 
 extend<T> [T] {
-    pub fn first_chunk<const N: usize>(): (read [T; N] from self)? {
+    pub const fn first_chunk<const N: usize>(): (read [T; N] from self)? {
         if N > self.len() { return none }
         let raw = unsafe {
             core.mem.transmute<RawParts<T>>(core.ptr.from_ref(self))
@@ -248,7 +389,7 @@ extend<T> [T] {
         present(unsafe { read *raw.data.cast<[T; N]>() })
     }
 
-    pub fn last_chunk<const N: usize>(): (read [T; N] from self)? {
+    pub const fn last_chunk<const N: usize>(): (read [T; N] from self)? {
         if N > self.len() { return none }
         let raw = unsafe {
             core.mem.transmute<RawParts<T>>(core.ptr.from_ref(self))
@@ -257,7 +398,7 @@ extend<T> [T] {
         present(unsafe { read *raw.data.add(self.len() - N).cast<[T; N]>() })
     }
 
-    pub fn split_first_chunk<const N: usize>(): ((read [T; N] from self), (read [T] from self))? {
+    pub const fn split_first_chunk<const N: usize>(): ((read [T; N] from self), (read [T] from self))? {
         if N > self.len() { return none }
         let raw = unsafe {
             core.mem.transmute<RawParts<T>>(core.ptr.from_ref(self))
@@ -268,7 +409,7 @@ extend<T> [T] {
         present((first, rest))
     }
 
-    pub fn split_last_chunk<const N: usize>(): ((read [T] from self), (read [T; N] from self))? {
+    pub const fn split_last_chunk<const N: usize>(): ((read [T] from self), (read [T; N] from self))? {
         if N > self.len() { return none }
         let start = self.len() - N
         let raw = unsafe {
@@ -280,7 +421,7 @@ extend<T> [T] {
         present((rest, last))
     }
 
-    pub fn as_array<const N: usize>(): (read [T; N] from self)? {
+    pub const fn as_array<const N: usize>(): (read [T; N] from self)? {
         if self.len() != N { return none }
         let raw = unsafe {
             core.mem.transmute<RawParts<T>>(core.ptr.from_ref(self))
@@ -289,13 +430,13 @@ extend<T> [T] {
         present(unsafe { read *raw.data.cast<[T; N]>() })
     }
 
-    pub mut fn as_mut_array<const N: usize>(): (mut [T; N] from self)? {
+    pub mut const fn as_mut_array<const N: usize>(): (mut [T; N] from self)? {
         if self.len() != N { return none }
         let data = mutable_data_pointer(mut self)
         present(unsafe { mut *data.cast<[T; N]>() })
     }
 
-    pub fn as_chunks<const N: usize>(): (read [[T; N]] from self, read [T] from self) {
+    pub const fn as_chunks<const N: usize>(): (read [[T; N]] from self, read [T] from self) {
         if N == 0usize { super.panic.panic("chunk size must be nonzero") }
         let n = self.len()
         let count = n / N
@@ -312,7 +453,7 @@ extend<T> [T] {
         (unsafe { read *arrays }, remainder)
     }
 
-    pub mut fn as_chunks_mut<const N: usize>(): (mut [[T; N]] from self, mut [T] from self) {
+    pub mut const fn as_chunks_mut<const N: usize>(): (mut [[T; N]] from self, mut [T] from self) {
         if N == 0usize { super.panic.panic("chunk size must be nonzero") }
         let n = self.len()
         let count = n / N
@@ -332,7 +473,7 @@ extend<T> [T] {
         (unsafe { mut *arrays }, unsafe { mut *remainder })
     }
 
-    pub fn as_rchunks<const N: usize>(): (read [T] from self, read [[T; N]] from self) {
+    pub const fn as_rchunks<const N: usize>(): (read [T] from self, read [[T; N]] from self) {
         if N == 0usize { super.panic.panic("chunk size must be nonzero") }
         let n = self.len()
         let remainder_len = n % N
@@ -350,7 +491,7 @@ extend<T> [T] {
         (remainder, unsafe { read *arrays })
     }
 
-    pub mut fn as_rchunks_mut<const N: usize>(): (mut [T] from self, mut [[T; N]] from self) {
+    pub mut const fn as_rchunks_mut<const N: usize>(): (mut [T] from self, mut [[T; N]] from self) {
         if N == 0usize { super.panic.panic("chunk size must be nonzero") }
         let n = self.len()
         let remainder_len = n % N
@@ -371,8 +512,9 @@ extend<T> [T] {
     }
 
     // Safety: N is nonzero and the slice length is divisible by N.
-    pub unsafe fn as_chunks_unchecked<const N: usize>(): read [[T; N]] from self {
+    pub unsafe const fn as_chunks_unchecked<const N: usize>(): read [[T; N]] from self {
         if N == 0usize { super.panic.panic("chunk size must be nonzero") }
+        if self.len() % N != 0usize { super.panic.panic("slice length must be divisible by chunk size") }
         let raw = unsafe {
             core.mem.transmute<RawParts<T>>(core.ptr.from_ref(self))
         }
@@ -385,8 +527,9 @@ extend<T> [T] {
     }
 
     // Safety: N is nonzero and the slice length is divisible by N.
-    pub mut unsafe fn as_chunks_unchecked_mut<const N: usize>(): mut [[T; N]] from self {
+    pub mut unsafe const fn as_chunks_unchecked_mut<const N: usize>(): mut [[T; N]] from self {
         if N == 0usize { super.panic.panic("chunk size must be nonzero") }
+        if self.len() % N != 0usize { super.panic.panic("slice length must be divisible by chunk size") }
         let count = self.len() / N
         let data = mutable_data_pointer(mut self)
         // Safety: the caller guarantees all elements belong to full arrays.
@@ -1050,7 +1193,7 @@ extend [u8] {
 copy type RawRead<T> { data: ptr<read T>; len: usize }
 
 // Safety: start <= end <= xs.len().
-unsafe fn sub<T>(read xs: [T], start: usize, end: usize): read [T] from xs {
+unsafe const fn sub<T>(read xs: [T], start: usize, end: usize): read [T] from xs {
     let fat = core.ptr.from_ref(xs)
     let raw = unsafe { core.mem.transmute<RawRead<T>>(fat) }
     let part = unsafe { core.mem.transmute<ptr<read [T]>>(RawRead(raw.data.add(start), end - start)) }
@@ -1486,21 +1629,21 @@ extend<T> [T] {
 }
 
 extend<T> [T] {
-    pub mut fn first_chunk_mut<const N: usize>(): (mut [T; N] from self)? {
+    pub mut const fn first_chunk_mut<const N: usize>(): (mut [T; N] from self)? {
         if N > self.len() { return none }
         let base = mutable_data_pointer(mut self)
         // Safety: the checked array is in-bounds and the receiver is exclusive.
         present(unsafe { mut *base.cast<[T; N]>() })
     }
 
-    pub mut fn last_chunk_mut<const N: usize>(): (mut [T; N] from self)? {
+    pub mut const fn last_chunk_mut<const N: usize>(): (mut [T; N] from self)? {
         if N > self.len() { return none }
         let base = mutable_data_pointer(mut self)
         // Safety: the checked suffix is in-bounds and the receiver is exclusive.
         present(unsafe { mut *base.add(self.len() - N).cast<[T; N]>() })
     }
 
-    pub mut fn split_first_chunk_mut<const N: usize>(): ((mut [T; N] from self), (mut [T] from self))? {
+    pub mut const fn split_first_chunk_mut<const N: usize>(): ((mut [T; N] from self), (mut [T] from self))? {
         if N > self.len() { return none }
         let n = self.len()
         let base = mutable_data_pointer(mut self)
@@ -1512,7 +1655,7 @@ extend<T> [T] {
         present((unsafe { mut *first }, unsafe { mut *rest }))
     }
 
-    pub mut fn split_last_chunk_mut<const N: usize>(): ((mut [T] from self), (mut [T; N] from self))? {
+    pub mut const fn split_last_chunk_mut<const N: usize>(): ((mut [T] from self), (mut [T; N] from self))? {
         if N > self.len() { return none }
         let n = self.len()
         let start = n - N

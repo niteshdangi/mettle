@@ -145,15 +145,28 @@ std::optional<int> Checker::genericCall(
     auto actual = inference.value(variable);
     if (modes[target] == ParameterMode::Read ||
         modes[target] == ParameterMode::Mut) {
-      auto expected = checked.types->substitute(signature[target], bindings);
+      std::vector<TypeBinding> solved;
+      for (const auto &binding : bindings)
+        if (binding.argument != Type::Unknown)
+          solved.push_back(binding);
+      auto expected = checked.types->eraseRegions(
+          checked.types->substitute(signature[target], solved));
       if (expected != Type::Unknown && !checked.types->isSymbolic(expected) &&
           borrowCoercion(argument, variable, expected, modes[target]))
         actual = expected;
     }
+    auto *written = &argument;
+    while (written->kind == Kind::Group)
+      written = written->children[0].get();
+    const bool borrowedHandle =
+        written->kind == Kind::Unary &&
+        (written->text == "read" || written->text == "mut") &&
+        checked.types->isView(actual) &&
+        checked.types->isView(checked.types->view(actual).payload);
     if ((modes[target] == ParameterMode::Read ||
          modes[target] == ParameterMode::Mut) &&
         checked.types->isView(actual) &&
-        !checked.types->isView(signature[target]))
+        (!checked.types->isView(signature[target]) || borrowedHandle))
       actual = checked.types->view(actual).payload;
     inferGeneric(signature[target], actual, bindings, argument.span);
     actuals.push_back({&argument, variable});

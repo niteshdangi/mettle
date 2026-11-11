@@ -461,6 +461,18 @@ private:
     return global;
   }
   llvm::Constant *staticConstant(const StaticConstant &value) {
+    if (value.kind == StaticConstant::Kind::Pointer) {
+      auto *integer =
+          llvm::ConstantInt::get(module->getDataLayout().getIntPtrType(context),
+                                 value.scalar.magnitude[0]);
+      auto *pointer = llvm::ConstantExpr::getIntToPtr(
+          integer, llvm::PointerType::getUnqual(context));
+      if (value.fields.empty())
+        return pointer;
+      return llvm::ConstantStruct::get(
+          llvm::cast<llvm::StructType>(staticType(value.type)),
+          {pointer, staticConstant(value.fields.front())});
+    }
     if (value.kind == StaticConstant::Kind::Text) {
       auto *global = textGlobal(value.text);
       if (auto *fat = llvm::dyn_cast<llvm::StructType>(staticType(value.type)))
@@ -473,7 +485,7 @@ private:
                                         : functions.at(value.symbol);
     if (value.kind == StaticConstant::Kind::Address) {
       auto type = program.statics.at(value.symbol).type;
-      std::uint64_t offset = 0;
+      std::uint64_t offset = value.byteOffset;
       for (auto field : value.projections) {
         offset += lowering.layout(type).fields.at(field);
         type = program.types->product(type).fields.at(field).type;

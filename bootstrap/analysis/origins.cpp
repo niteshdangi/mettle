@@ -483,6 +483,23 @@ Origins strongAncestors(const Origins &origins,
   return result;
 }
 
+bool disjointLoans(const Origins &authority, int other,
+                   const std::map<int, Loan> &loans) {
+  const auto relatives = ancestors({other}, loans);
+  for (auto source : authority) {
+    for (auto sibling : loans.at(source).disjointReplacements)
+      if (relatives.contains(sibling))
+        return true;
+    if (relatives.contains(source))
+      continue;
+    const auto parents = ancestors({source}, loans);
+    for (auto sibling : loans.at(source).disjointOutputs)
+      if (relatives.contains(sibling) && !parents.contains(sibling))
+        return true;
+  }
+  return false;
+}
+
 namespace {
 // A `Within` bound permits the callee to retain the views contained in the
 // source argument in storage reachable from the target argument.
@@ -1388,6 +1405,11 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
               oldParents != loan.parents.size() ||
               oldFrozen != loan.frozen.size())
             changed = true;
+          if (borrowsPlace && loan.mode == ParameterMode::Mut && !loan.reserved)
+            for (auto target : loan.frozen) {
+              target.authority.insert(id);
+              point.targets.insert(std::move(target));
+            }
           value[{}].insert(id);
           point.defines.insert(id);
         } else if (instruction.op == ir::Op::Construct ||
@@ -1879,6 +1901,28 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
             std::set_difference(shadowed.begin(), shadowed.end(),
                                 retained.begin(), retained.end(),
                                 std::inserter(borrowed, borrowed.end()));
+            for (const auto &[returnedPath, destinations] :
+                 summaries[instruction.callee].disjointWrites)
+              if (returnPath(rebased(returnedPath), paths[path].first))
+                for (const auto &destination : destinations) {
+                  const auto holders = argumentPlace(destination);
+                  for (auto parent = borrowed.begin();
+                       parent != borrowed.end();)
+                    if (holds(*parent, holders)) {
+                      loan.parents.erase(*parent);
+                      parent = borrowed.erase(parent);
+                    } else {
+                      ++parent;
+                    }
+                  std::set<Target> targets;
+                  for (auto target : loan.targets) {
+                    std::erase_if(target.authority, [&](auto parent) {
+                      return holds(parent, holders);
+                    });
+                    targets.insert(std::move(target));
+                  }
+                  loan.targets = std::move(targets);
+                }
             const bool borrowedChanged = borrowed != loan.borrowed;
             loan.borrowed = std::move(borrowed);
             if (!types.isView(paths[path].second) &&
@@ -1947,7 +1991,12 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
             };
             for (const auto &source : sources)
               for (const auto &referent : arguments.at(source)) {
-                loan.targets.insert(referent);
+                auto stored = referent;
+                if (source.root == destination.root)
+                  std::erase_if(stored.authority, [&](auto parent) {
+                    return holds(parent, holders);
+                  });
+                loan.targets.insert(std::move(stored));
                 inherit(source, referent);
               }
             if (auto dependencies =
@@ -1959,6 +2008,9 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                 for (const auto &referent : arguments.at(source))
                   inherit(source, referent);
             const auto &destinations = arguments.at(destination);
+            if (destinations.size() == 1 &&
+                point.overwrites.contains(destinations.begin()->place))
+              point.replacedViews.insert(id);
             for (const auto &target : destinations)
               memory[target.place].insert(id);
             record(destinations, {{{}, {id}}}, instruction.span);
@@ -1967,10 +2019,17 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                 oldParents != loan.parents.size())
               changed = true;
           }
-          for (auto returned : created[b][i]) {
-            auto &loan = result.loans.at(returned);
+          for (std::size_t path = 0; path < created[b][i].size(); ++path) {
+            auto &loan = result.loans.at(created[b][i][path]);
             for (const auto &[destination, written] : effectIds[b][i]) {
-              (void)destination;
+              bool separate = false;
+              for (const auto &[returnedPath, destinations] :
+                   summaries[instruction.callee].disjointWrites)
+                separate |=
+                    returnPath(rebased(returnedPath), paths[path].first) &&
+                    destinations.contains(destination);
+              if (separate)
+                continue;
               const auto &effect = result.loans.at(written);
               bool aliases = false;
               for (const auto &target : loan.targets)
@@ -2064,7 +2123,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
   loopPhis = ancestors(loopPhis, result.loans);
   for (std::size_t b = 0; b < function.blocks.size(); ++b) {
     if (std::none_of(created[b].begin(), created[b].end(),
-                     [](const auto &ids) { return ids.size() > 1; }))
+                     [](const auto &ids) { return !ids.empty(); }))
       continue;
     Origins carried;
     if (cyclic[b]) {
@@ -2080,7 +2139,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
       const auto &instruction = function.blocks[b].instructions[i];
       if ((instruction.op != ir::Op::Call &&
            instruction.op != ir::Op::IndirectCall) ||
-          created[b][i].size() < 2)
+          created[b][i].empty())
         continue;
       // One static output identity can represent different loop epochs.
       // Sibling outputs are disjoint only if no output or derived view can
@@ -2098,8 +2157,79 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                 types.view(paths[other].second).mode == ParameterMode::Mut)))
             result.loans.at(created[b][i][path])
                 .disjointOutputs.insert(created[b][i][other]);
+      if (instruction.op == ir::Op::Call)
+        for (const auto &[returnedPath, destinations] :
+             summaries[instruction.callee].disjointWrites)
+          for (std::size_t path = 0; path < paths.size(); ++path)
+            if (returnPath(returnedPath, paths[path].first))
+              for (const auto &destination : destinations)
+                if (auto written = effectIds[b][i].find(destination);
+                    written != effectIds[b][i].end()) {
+                  auto returned = created[b][i][path];
+                  result.loans.at(returned).disjointOutputs.insert(
+                      written->second);
+                  result.loans.at(written->second)
+                      .disjointOutputs.insert(returned);
+                  if (result.points[b][i].replacedViews.contains(
+                          written->second)) {
+                    result.loans.at(returned).disjointReplacements.insert(
+                        written->second);
+                    result.loans.at(written->second)
+                        .disjointReplacements.insert(returned);
+                  }
+                }
     }
   }
+  std::map<ViewPath, std::size_t> returning;
+  std::map<ViewPath, std::map<Place, std::size_t>> separateWrites;
+  for (std::size_t b = 0; b < function.blocks.size(); ++b) {
+    if (function.blocks[b].exit.kind != ir::Exit::Return)
+      continue;
+    const auto value = function.blocks[b].exit.value;
+    const auto *definition = returnDefinition(value.id);
+    for (const auto &[path, type] : viewPaths(function.result, types)) {
+      (void)type;
+      if (definition && definition->op == ir::Op::VariantConstruct &&
+          !path.empty() && path.front().kind == Projection::Kind::Field) {
+        const auto &fields = types.product(definition->result.type)
+                                 .variants[definition->number]
+                                 .fields;
+        if (std::find(fields.begin(), fields.end(), path.front().index) ==
+            fields.end())
+          continue;
+      }
+      ++returning[path];
+      auto returned = result.values[value.id].find(path);
+      if (returned == result.values[value.id].end() || returned->second.empty())
+        continue;
+      std::map<Place, bool> separateDestinations;
+      for (const auto &[place, written] : outputs[b]) {
+        if (place.root >= 0 || written.empty())
+          continue;
+        auto destination = result.externalPlaces.at(place.root);
+        append(destination, place.fields);
+        if (!result.effects.writes.contains(destination))
+          continue;
+        const bool separate = std::all_of(
+            returned->second.begin(), returned->second.end(), [&](int source) {
+              const auto authority = ancestors({source}, result.loans);
+              return std::all_of(
+                  written.begin(), written.end(), [&](int other) {
+                    return disjointLoans(authority, other, result.loans);
+                  });
+            });
+        separateDestinations.try_emplace(destination, true).first->second &=
+            separate;
+      }
+      for (const auto &[destination, separate] : separateDestinations)
+        if (separate)
+          ++separateWrites[path][destination];
+    }
+  }
+  for (const auto &[path, destinations] : separateWrites)
+    for (const auto &[destination, count] : destinations)
+      if (count == returning.at(path))
+        result.effects.disjointWrites[path].insert(destination);
   // A result built from raw-pointer storage carries no tracked targets, yet its
   // declared regions promise it stays within the declared inputs: back it with
   // every place those inputs borrow so later access through them conflicts.

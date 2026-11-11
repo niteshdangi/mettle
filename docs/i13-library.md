@@ -9,14 +9,132 @@ areas remain partial: L003, L005, L009, S005-S014, S019-S021, S024-S025.
 
 ## Handoff (start here in a new session)
 
-Latest operation ledger (2026-11-11): **10,507 evidenced, 386 declared,
-2,397 missing, 5 not applicable** of 13,295 records. Declared means implemented
+Latest operation ledger (2026-11-12): **8,723 evidenced, 2,583 declared,
+1,984 missing, 5 not applicable** of 13,295 records. Declared means implemented
 but not behaviorally verified per type/profile. Subset/source-cfg reconciliation
 and Linux applicability review remain open; no area is closed by these batches.
 The declared records comprise the previous 20 conversion-blanket records,
 54 NonNull records with runtime but not stable-const
-acceptance, and 312 integer power/division records whose earlier runtime
-receipts did not establish their required stable constant-callability.
+acceptance, and 2,509 integer records whose earlier runtime receipts did not
+establish their required stable constant-callability. The integer audit corrects
+another 2,197 runtime-only records to declared, beyond the previous 312.
+Manifest alias contexts are deduplicated by canonical ID, not counted as
+independent obligations. This correction is not a runtime regression.
+
+### Collection/vector reconciliation (2026-11-11)
+
+The first missing group contains 403 records, not 403 independent functions.
+All **403 records now have scoped evidence**. The final batch establishes
+stable-const acceptance for 34 Vec-derived slice exposures and
+HashSet.with_hasher, plus the three exclusive stored-view split helpers
+(six vector exposures). The same helpers close six additional core-slice
+exposures. No library area or milestone is closed.
+The split helpers must partition/replace a stored view while retaining its
+original region, not shorten List ownership or a temporary receiver loan.
+
+New implementations provide hash/ordered Entry.key and the slice address
+queries element_offset/subslice_range. Tests distinguish stored versus lookup
+keys, address versus value equality, contained/foreign/empty slices and the
+required zero-sized panics. Key views prevent moving their entry. B-tree Entry,
+read/exclusive cursors and consuming cursors gain conditional concurrency
+properties; wrapper cursors inherit them. Read cursors require Shareable
+storage even for transfer. Cell payloads retain exclusive-transfer eligibility
+without gaining shared access; Rc/Cell rejection cases preserve the bounds.
+Cross-thread execution checks shared reads, transferred entry/exclusive loans,
+joined writes and exactly-once partial consuming-iterator cleanup.
+The native declarative `vec` macro supports empty, ordered element-list and
+repetition construction. Repetition evaluates its seed once, moves it for one
+element, drops it for zero elements, and clones it count-minus-one times
+otherwise. A clone panic drops the seed and only initialized copies.
+
+Nineteen existing source programs pass both profiles (38 units), and three
+alloc formatting/traits/iteration programs pass both profiles (six units) on
+the baseline library at f101ef1. Their unchanged behaviors are reused.
+Nine new/changed or newly selected programs pass both profiles (18 units);
+two focused negative programs pass. Iterator Clone/ToOwned checks advance
+independent remaining states and actually format payloads, preserve cursors
+during formatting, and propagate writer failures rather than prove Debug
+bounds alone. CString/Cow conversions and deque Reader/Writer/BufRead execute.
+The older combined i13_io_box_deque fixture still rejects unrelated filesystem
+PathBuf inference; its failure is not counted as deque evidence.
+
+The four changed/new source programs and threaded cursor program pass emitted
+ASan in both profiles (ten units), linked with the ASan/UBSan runtime.
+The threaded program also passes emitted TSan in both profiles (two units),
+after clean startup and intentional-race detector checks. Its unchanged C++
+runtime archive is not TSan-instrumented; this is scoped emitted-code evidence,
+not complete runtime/thread qualification. The ASan/UBSan compiler accepts the
+threaded cursor fixture without reports. These receipts precede the semantic
+repair below; they do not qualify that later compiler revision.
+Receipts use i13-collection-group-source/alloc, i13-collection-new-api-green,
+i13-collection-value-traits-3, i13-collection-trait-closure,
+i13-collection-std/io/negatives, i13-collection-emitted-asan/thread-* and
+i13-vec-construction/asan in the native validation build.
+Whole-source qualification and Linux applicability
+review remain open.
+
+Stored-view calls subsequently exposed a compiler defect: generic inference
+compared the outer borrow of a view holder with its inner view, and omitted
+the native dereference conversion that preserves the inner region.
+The two-file semantic repair preserves unresolved type parameters until
+inference and uses the existing conversion-plan/region-checking path.
+The minimal generic-handle regression, existing borrowed-handle regression and
+vector macro pass both profiles (six units); ten focused negatives and
+compiler.library-declarations CTest pass. Payload invariance, owner escape,
+owner conflicts and rejection of full/two-sided split ranges remain enforced.
+The exclusive split-helper program then exposed missing writeback origin and
+disjoint-output propagation. The sanitized compiler accepts the minimal generic-handle
+regression without reports; emitted ASan passes that regression and the vector
+macro in both profiles (four units).
+An isolated split-first-mut probe initially confirmed that its caller received no
+writeback effect: zero writes, dependencies and overwrites, despite the
+stored view assignment. The returned loan still retains the holder borrow.
+The current candidate consumes the original view through partition helpers,
+restores it on failed selection and exports proven return/writeback disjointness.
+Definite replacements retire the holder authority while preserving the original
+owner lifetime. Loop results use a separate replacement proof only when no
+returned/derived view reaches the same call on a back edge. Borrowing an
+exclusive holder also validates its frozen contents against existing children.
+The complete exclusive fixture passes both profiles, including simultaneous
+endpoints/remainder, range results outliving holders, invalid selection,
+zero-sized elements, non-Copy List payloads and repeated loop consumption.
+The twelve vector/core-slice exposures now have the consolidated receipt below.
+
+The const candidate supports nominal products/options, target-shaped views and
+pointer provenance in evaluator-owned storage, concrete generic/interface call
+preparation and checked static interior relocations. Const receiver projection
+selects the concrete Deref/DerefMut implementation before applying the existing
+const/unsafe/effect admission checks. The collection const fixture passes both
+profiles, including zero/full/short grouping and static interior pointers.
+All 35 records now have the consolidated receipt below. Focused negatives
+cover zero chunk sizes, nondividing unchecked groups, local storage escape,
+non-const concrete projection and live remainder aliases.
+
+Current frozen-batch evidence on Linux x86-64:
+
+- The three affected normal and ASan/UBSan CTests pass:
+  compiler.library-declarations, compiler.consteval-target and ir.codec.
+- Source integration retained 40 passing profile units; after repairing early
+  parameter-type preparation, six targeted units cover the failed array-length
+  case and both acceptance programs. Forty focused negative units pass.
+- The ASan/UBSan compiler checks both complete acceptance programs without
+  reports. Sixteen emitted-ASan source/profile executions and two hosted
+  threaded-cursor executions pass, linked with the ASan/UBSan runtime.
+- Pinned C++ formatting and canonical ledger regeneration pass. Receipts:
+  i13-collection-integration, i13-early-signature-source,
+  i13-collection-integration-negatives, i13-collection-frozen-emitted-asan and
+  i13-collection-frozen-thread-asan in the native validation build.
+
+The earlier TSan receipt is not a requalification of this compiler revision.
+These results close this record group, not LNX, a library area or I13.
+
+Shared `split_off_first/last` have independent debug/release execution and
+emitted-ASan evidence (two units each). The fixture covers original-region
+results outliving temporary holders, complete/empty consumption, List-derived
+views of non-Copy elements and zero-sized elements. The owner-escape negative
+also passes. Eight canonical rows gain evidence: four collection/vector
+exposures and four core-slice exposures. Receipts are
+i13-split-read-closure and i13-split-read-asan.
 
 ### Parallel reconciliation (2026-11-11)
 
@@ -43,10 +161,12 @@ receipts did not establish their required stable constant-callability.
 - Integer power boundaries and zero-divisor panics pass all twelve widths in
   both profiles (four units). These fixtures strengthen runtime coverage, not
   const support. A direct compiler reproduction rejects integer receivers in
-  required constants, and optional constant shapes are unsupported. All 312
-  reviewed power/division records have stable const eligibility in the frozen
-  catalog: their earlier evidenced status is corrected to declared, retaining
-  the runtime receipts. This is corrected accounting, not a runtime regression.
+  required constants. Optional constant shapes are now supported by the
+  collection work, but integer receiver/constructor evaluation remains missing.
+  Canonical-ID-deduplicated review finds 2,509 selected stable-const integer
+  method records, not only the previous 312 power/division records. All remain
+  declared, retaining runtime receipts; direct wrapping_add, checked_add,
+  overflowing_add and wrapping_pow probes still reject constant calls.
 - D31's owner-approved ownership-type/copying separation is specified in the
   native contracts and implemented in core/alloc/hosted owners. All six Cow
   fixtures pass both profiles across scoped integration reruns; general

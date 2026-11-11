@@ -1264,13 +1264,19 @@ Current library implementation, blockers and exact focused receipts are owned by
 [i13-library.md](i13-library.md#handoff-start-here-in-a-new-session); the
 [capability inventory](capability-coverage.md#i13-macos-arm64-acceptance-inventory)
 retains row/fixture ownership. All eighteen library areas remain partial.
-Latest 2026-11-11 operation ledger: **10,507 evidenced, 386 declared,
-2,397 missing, 5 not applicable** (13,295 total, grouped into 2,442 operation
+Latest 2026-11-12 operation ledger: **8,723 evidenced, 2,583 declared,
+1,984 missing, 5 not applicable** (13,295 total, grouped into 2,442 operation
 and 2,309 implementation families; subset/source-cfg reconciliation pending).
 Unzip has focused Linux native/emitted-ASan debug/release evidence; 20
 conversion blanket exposures remain declared. Fifteen callable-adapter
 Clone/ToOwned rows now have debug/release execution evidence. Peekable
 cached-absence cloning passes; complete cache-cloning qualification remains open.
+The first collection/vector group's 403 records now have scoped evidence,
+including its 35 stable-const obligations and six exclusive-split exposures.
+Shared read-view endpoints additionally close four core-slice exposures;
+exclusive splits close six more. Current normal/negative, compiler-ASan/UBSan
+and emitted-ASan receipts are recorded in i13-library.md; this is not complete
+library-area, Linux-host or I13 qualification.
 Minimal NonNull, borrowed chaining, bounds/exact/fused protocols
 and collision-safe Any identity have scoped evidence, not full-area closure;
 Static/unsized Any, synchronization and complete operation coverage remain open.
@@ -1278,10 +1284,12 @@ The [2026-11-11 reconciliation](i13-library.md#parallel-reconciliation-2026-11-1
 adds generic synchronous socket inputs, UDP peek_from and focused NonNull
 signature/alignment repairs. Eleven network and ten non-stable-const pointer
 records gain scoped evidence. Another 54 pointer records retain runtime
-acceptance but lack required stable-const support. The 312 reviewed integer
-power/division records are corrected from evidenced to declared: their prior
-runtime passes did not establish constant-callability, and direct constant
-reproductions remain unsupported. D31's ownership-type separation has focused
+acceptance but lack required stable-const support. Canonical-ID-deduplicated
+review corrects 2,197 further integer records to declared, beyond the earlier
+312 power/division records: their runtime passes did not establish the required
+constant-callability. All 2,509 stable-const integer method records remain
+declared, and direct constant reproductions remain unsupported.
+D31's ownership-type separation has focused
 ordinary and emitted-ASan cleanup acceptance; exact operation mapping remains
 open. Five IO records and one owning-array implementation gain scoped evidence.
 Fifteen further buffered-reader/BufRead records have focused both-profile

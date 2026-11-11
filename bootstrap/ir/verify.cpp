@@ -1384,8 +1384,38 @@ bool verify(const Program &program, Diagnostics &diagnostics,
         if (value.kind != StaticConstant::Kind::Scalar &&
             (value.scalar.floatingBits || !value.scalar.floating.empty()))
           return false;
+        if (value.kind == StaticConstant::Kind::Pointer) {
+          if (!(program.types->isPointer(expected) ||
+                program.types->isView(expected)) ||
+              value.scalar.negative || value.scalar.magnitude[1] ||
+              !integerLiteralFits(value.scalar, Type::Usize,
+                                  program.types->targetPointerBits()) ||
+              value.byteOffset != 0 || !value.projections.empty() ||
+              value.symbol != -1)
+            return false;
+          auto target = program.types->view(expected).payload;
+          auto metadata = program.types->pointerMetadata(target);
+          if (program.types->isPointer(expected) &&
+              metadata == PointerMetadata::None)
+            return value.fields.empty();
+          auto element = program.types->isSlice(target)
+                             ? program.types->slice(target).element
+                             : target;
+          auto extent = objectLayout(*program.types, element);
+          if (!extent || value.scalar.magnitude[0] == 0 ||
+              value.scalar.magnitude[0] % extent->alignment)
+            return false;
+          if (metadata == PointerMetadata::None)
+            return value.fields.empty() && extent->size == 0;
+          return metadata == PointerMetadata::ElementCount &&
+                 value.fields.size() == 1 &&
+                 constant(value.fields.front(), Type::Usize) &&
+                 (value.fields.front().scalar.magnitude[0] == 0 ||
+                  extent->size == 0);
+        }
         if (value.kind == StaticConstant::Kind::Address) {
-          if (value.symbol < 0 ||
+          if (value.scalar.negative || value.scalar.magnitude[1] ||
+              value.symbol < 0 ||
               static_cast<std::size_t>(value.symbol) >=
                   program.statics.size() ||
               !(program.types->isView(expected) ||
@@ -1406,15 +1436,40 @@ bool verify(const Program &program, Diagnostics &diagnostics,
           if (program.types->view(expected).mode == ParameterMode::Mut &&
               !program.statics[value.symbol].mutableBinding)
             return false;
-          if (payload == target)
+          if (payload == target && value.byteOffset == 0)
             return true;
-          return program.types->isSlice(target) &&
-                 program.types->isProduct(payload) &&
-                 program.types->product(payload).kind == AggregateKind::Array &&
-                 program.types->slice(target).element ==
-                     program.types->product(payload).components[0] &&
-                 value.scalar.magnitude[0] ==
-                     program.types->arrayLength(payload);
+          if (value.byteOffset == 0 && program.types->isSlice(target) &&
+              program.types->isProduct(payload) &&
+              program.types->product(payload).kind == AggregateKind::Array &&
+              program.types->slice(target).element ==
+                  program.types->product(payload).components[0] &&
+              value.scalar.magnitude[0] == program.types->arrayLength(payload))
+            return true;
+          auto leaf = [&](Type type) {
+            while (program.types->isProduct(type) &&
+                   program.types->product(type).kind == AggregateKind::Array)
+              type = program.types->product(type).components.front();
+            return type;
+          };
+          auto element = program.types->isSlice(target)
+                             ? program.types->slice(target).element
+                             : target;
+          if (leaf(payload) != leaf(element))
+            return false;
+          auto backing = objectLayout(*program.types, payload);
+          auto extent = objectLayout(*program.types, element);
+          auto unit = objectLayout(*program.types, leaf(element));
+          if (!backing || !extent || !unit ||
+              (unit->size && value.byteOffset % unit->size) ||
+              value.byteOffset > backing->size ||
+              value.byteOffset % extent->alignment)
+            return false;
+          auto remaining = backing->size - value.byteOffset;
+          if (program.types->isSlice(target))
+            return !extent->size ||
+                   value.scalar.magnitude[0] <= remaining / extent->size;
+          return program.types->isPointer(expected) ||
+                 extent->size <= remaining;
         }
         if (value.kind == StaticConstant::Kind::Text) {
           if (!program.types->isView(expected) ||

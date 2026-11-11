@@ -32,7 +32,7 @@ template <class E> constexpr unsigned lastTag() {
   else if constexpr (std::is_same_v<E, Projection::Kind>)
     return static_cast<unsigned>(Projection::Kind::Opaque);
   else if constexpr (std::is_same_v<E, StaticConstant::Kind>)
-    return static_cast<unsigned>(StaticConstant::Kind::Repeat);
+    return static_cast<unsigned>(StaticConstant::Kind::Pointer);
   else if constexpr (std::is_same_v<E, AssemblyVariant>)
     return static_cast<unsigned>(AssemblyVariant::Naked);
   else if constexpr (std::is_same_v<E, AssemblyMode>)
@@ -118,7 +118,7 @@ template <class A, class T> void record(A &a, T &r) {
     a.symbol(r.symbol, r.kind == StaticConstant::Kind::Function
                            ? SymbolKind::Function
                            : SymbolKind::Static);
-    a(r.projections, r.selection, r.text);
+    a(r.projections, r.selection, r.text, r.byteOffset);
     if (((r.kind == StaticConstant::Kind::Address ||
           r.kind == StaticConstant::Kind::Function) &&
          r.symbol < 0) ||
@@ -571,7 +571,7 @@ EncodeResult encodeProgram(const Program &program,
   try {
     Writer writer(references);
     writer.unsignedInteger(0x5249544d, 4);
-    writer.unsignedInteger(1, 4);
+    writer.unsignedInteger(2, 4);
     if ((!program.functionPackages.empty() &&
          program.functionPackages.size() != program.functions.size()) ||
         (!program.staticPackages.empty() &&
@@ -615,7 +615,7 @@ DecodeResult decodeProgram(std::span<const std::uint8_t> bytes,
   try {
     Reader reader(bytes, references);
     if (reader.unsignedInteger(4) != 0x5249544d ||
-        reader.unsignedInteger(4) != 1)
+        reader.unsignedInteger(4) != 2)
       reject("unsupported IR archive format or version");
     DecodeResult result;
     auto records = [&](auto &items, auto &packages, auto &names,

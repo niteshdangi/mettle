@@ -425,34 +425,32 @@ fn main(): i32 {
                         rejectedNames, true, {}, nullptr, imported);
   expect(!rejected && !rejectedDiagnostics.empty(),
          "new consumer cannot bypass imported private visibility");
-  auto rejectsConstant = [&](const std::string &text,
-                             const std::string &message) {
-    Diagnostics rejected;
+  auto constantValue = [&](const std::string &text, std::uint64_t expected) {
+    Diagnostics diagnostics;
     auto module = resolution::load({"unsupported-constant.mt", text}, provider,
-                                   rejected, library);
+                                   diagnostics, library);
     if (!module)
       return false;
-    auto names =
-        resolution::resolve(*module, rejected, library.compiledSourcePackages);
-    auto checked =
-        check(std::move(*module), rejected, names, true, {}, nullptr, imported);
-    return !checked && std::any_of(rejected.items.begin(), rejected.items.end(),
-                                   [&](const auto &item) {
-                                     return item.phase == "feature" &&
-                                            item.message == message;
-                                   });
+    auto names = resolution::resolve(*module, diagnostics,
+                                     library.compiledSourcePackages);
+    auto checked = check(std::move(*module), diagnostics, names, true, {},
+                         nullptr, imported);
+    if (!checked || !diagnostics.empty())
+      return false;
+    const auto &value = checked->statics().back().initializer;
+    return value && value->kind == StaticConstant::Kind::Scalar &&
+           value->scalar == integerLiteral(expected);
   };
   expect(
-      rejectsConstant(
-          "const BAD: i32 = core.constIdentity(1);\nfn main(): i32 { 0 }\n",
-          "calling 'core.constIdentity' (generic, method, variadic or "
-          "fallible const functions) is not supported in constant evaluation"),
-      "imported generic const functions preserve the source rejection");
+      constantValue(
+          "static VALUE: i32 = core.constIdentity(7);\nfn main(): i32 { 0 }\n",
+          7),
+      "imported generic const functions retain the evaluated value");
   expect(
-      rejectsConstant("const BAD: i32 = { let value = core.record(); 0 };\n"
-                      "fn main(): i32 { 0 }\n",
-                      "type 'Number' is not supported in constant evaluation"),
-      "runtime const records import but preserve constexpr rejection");
+      constantValue("static VALUE: i32 = { let value = core.record(); 11 };\n"
+                    "fn main(): i32 { 0 }\n",
+                    11),
+      "imported const records execute with their concrete shapes");
   std::cout << failures << " failures\n";
   return failures ? 1 : 0;
 }

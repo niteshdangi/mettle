@@ -18,6 +18,7 @@ struct FunctionEffects {
   ViewEffects writeDependencies;
   std::set<Place> overwrites;
   std::map<ViewPath, std::set<Place>> returns;
+  std::map<ViewPath, std::set<Place>> disjointWrites;
   // These roots are resolved static identities, not callee-local slots.
   std::map<ViewPath, std::set<Place>> staticReturns;
   bool operator==(const FunctionEffects &) const = default;
@@ -63,6 +64,7 @@ struct Loan {
   // views stored in a borrowed container.
   Origins borrowed;
   Origins disjointOutputs;
+  Origins disjointReplacements;
   int parameter = -1;
   bool reserved = false;
   bool interiorRoot = false;
@@ -75,6 +77,7 @@ struct Point {
   Origins movedViews;
   Origins drops;
   std::set<Place> overwrites;
+  Origins replacedViews;
 };
 struct OriginInfo {
   std::map<int, Loan> loans;
@@ -93,4 +96,6 @@ Origins ancestors(const Origins &origins, const std::map<int, Loan> &loans);
 // Like ancestors, but without the parents a loan only keeps unavailable.
 Origins strongAncestors(const Origins &origins,
                         const std::map<int, Loan> &loans);
+bool disjointLoans(const Origins &authority, int other,
+                   const std::map<int, Loan> &loans);
 } // namespace mettle::analysis

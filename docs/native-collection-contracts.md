@@ -278,9 +278,22 @@ handle after obtaining the new one according to replacement cleanup.
 
 ## 5. List and allocation-backed slice operations
 
+List's selected fixed-array/chunk slice projections and mutable pointer range
+are const-callable through its const Deref/DerefMut projections. Empty List
+construction and `Set.with_hasher` consume their supplied values without
+allocation or invoking the hash builder. Const admission does not permit
+allocation, runtime-only callbacks or arbitrary destructors.
+
 `List<T,A>` owns length initialized elements in contiguous storage of capacity.
 Only [0,len) may be read/dropped as T; spare slots are uninitialized storage.
 `new/new_in` is empty and allocates no element storage.
+`vec![]`, `vec![a, b, ...]` (optional trailing comma) and `vec![value; count]`
+construct a default-allocator List. Element expressions run once in order.
+Repetition evaluates value once and requires Clone even for count zero;
+zero drops the seed, otherwise count-minus-one clones precede moving the seed.
+A clone panic destroys initialized elements and the seed without dropping
+uninitialized storage. `from_array` moves elements; `from_elem` implements
+the repetition contract.
 `with_capacity(n)` guarantees capacity >= n; zero does not allocate element
 storage. `as_slice/as_mut_slice`, get and iteration lend existing storage.
 The complete slice operation groups of core sections 5/5.1/5.2 are also
@@ -631,6 +644,14 @@ and donor V replaces receiver V. Equivalent but distinct donor keys are
 destroyed. Conservative work is O((n+m) log(n+m+1)), with allocation allowed.
 Allocator clones/transferred nodes must remain compatible with their
 original allocations.
+
+Entry handles and exclusive iterators retain the map's exclusive loan;
+consuming iterators own the remaining entries, nodes and allocator. They are
+Transferable when K, V and A are Transferable, and Shareable when those types
+are Shareable. Read iterators, including Keys and Values, retain a shared map
+loan and require Shareable K, V and A for either property. Cursor pointers
+remain private and stable under these loans; advancing requires exclusive
+cursor access, never revisits yielded entries, and does not mutate tree shape.
 
 ## 9. Sets
 

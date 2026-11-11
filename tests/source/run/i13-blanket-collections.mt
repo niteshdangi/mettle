@@ -46,6 +46,8 @@ fn main(): i32 {
     tryfrom_ok<alloc.vec.IntoIter<i32>>()
     tryinto_ok<alloc.vec.IntoIter<i32>>()
     into_ok<alloc.vec.IntoIter<i32>>()
+    send_ok<alloc.vec.IntoIter<i32>>()
+    sync_ok<alloc.vec.IntoIter<i32>>()
 
     // binary_heap::Iter = SliceIter: Any Borrow From Into Send Sync ToOwned
     borrow_ok<core.slice.SliceIter<region static, i32>>()
@@ -73,6 +75,8 @@ fn main(): i32 {
     tryfrom_ok<alloc.btree.Entry<region static, i32, i32, alloc.alloc.Global>>()
     tryinto_ok<alloc.btree.Entry<region static, i32, i32, alloc.alloc.Global>>()
     into_ok<alloc.btree.Entry<region static, i32, i32, alloc.alloc.Global>>()
+    send_ok<alloc.btree.Entry<region static, i32, i32, alloc.alloc.Global>>()
+    sync_ok<alloc.btree.Entry<region static, i32, i32, alloc.alloc.Global>>()
 
     // btree_map::IntoIter = MapIntoIter: Any Borrow From Into Send Sync
     any_ok<alloc.btree.MapIntoIter<i32, i32, alloc.alloc.Global>>()
@@ -81,6 +85,8 @@ fn main(): i32 {
     tryfrom_ok<alloc.btree.MapIntoIter<i32, i32, alloc.alloc.Global>>()
     tryinto_ok<alloc.btree.MapIntoIter<i32, i32, alloc.alloc.Global>>()
     into_ok<alloc.btree.MapIntoIter<i32, i32, alloc.alloc.Global>>()
+    send_ok<alloc.btree.MapIntoIter<i32, i32, alloc.alloc.Global>>()
+    sync_ok<alloc.btree.MapIntoIter<i32, i32, alloc.alloc.Global>>()
 
     // btree_map::Iter = EntryIter: Any Borrow From Into Send Sync ToOwned
     borrow_ok<alloc.btree.EntryIter<region static, i32, i32, alloc.alloc.Global>>()
@@ -88,6 +94,8 @@ fn main(): i32 {
     tryfrom_ok<alloc.btree.EntryIter<region static, i32, i32, alloc.alloc.Global>>()
     tryinto_ok<alloc.btree.EntryIter<region static, i32, i32, alloc.alloc.Global>>()
     into_ok<alloc.btree.EntryIter<region static, i32, i32, alloc.alloc.Global>>()
+    send_ok<alloc.btree.EntryIter<region static, i32, i32, alloc.alloc.Global>>()
+    sync_ok<alloc.btree.EntryIter<region static, i32, i32, alloc.alloc.Global>>()
 
     // btree_map::IterMut: Any Borrow From Into Send Sync
     borrow_ok<alloc.btree.IterMut<region static, i32, i32, alloc.alloc.Global>>()
@@ -95,6 +103,8 @@ fn main(): i32 {
     tryfrom_ok<alloc.btree.IterMut<region static, i32, i32, alloc.alloc.Global>>()
     tryinto_ok<alloc.btree.IterMut<region static, i32, i32, alloc.alloc.Global>>()
     into_ok<alloc.btree.IterMut<region static, i32, i32, alloc.alloc.Global>>()
+    send_ok<alloc.btree.IterMut<region static, i32, i32, alloc.alloc.Global>>()
+    sync_ok<alloc.btree.IterMut<region static, i32, i32, alloc.alloc.Global>>()
 
     // btree_map::Keys: Any Borrow From Into Send Sync ToOwned
     borrow_ok<alloc.btree.Keys<region static, i32, i32, alloc.alloc.Global>>()
@@ -102,6 +112,8 @@ fn main(): i32 {
     tryfrom_ok<alloc.btree.Keys<region static, i32, i32, alloc.alloc.Global>>()
     tryinto_ok<alloc.btree.Keys<region static, i32, i32, alloc.alloc.Global>>()
     into_ok<alloc.btree.Keys<region static, i32, i32, alloc.alloc.Global>>()
+    send_ok<alloc.btree.Keys<region static, i32, i32, alloc.alloc.Global>>()
+    sync_ok<alloc.btree.Keys<region static, i32, i32, alloc.alloc.Global>>()
 
     // btree_map::Values: Any Borrow From Into Send Sync ToOwned
     borrow_ok<alloc.btree.Values<region static, i32, i32, alloc.alloc.Global>>()
@@ -109,6 +121,8 @@ fn main(): i32 {
     tryfrom_ok<alloc.btree.Values<region static, i32, i32, alloc.alloc.Global>>()
     tryinto_ok<alloc.btree.Values<region static, i32, i32, alloc.alloc.Global>>()
     into_ok<alloc.btree.Values<region static, i32, i32, alloc.alloc.Global>>()
+    send_ok<alloc.btree.Values<region static, i32, i32, alloc.alloc.Global>>()
+    sync_ok<alloc.btree.Values<region static, i32, i32, alloc.alloc.Global>>()
 
     // btree_set::BTreeSet = SortedSet: Any Borrow From Into Send Sync ToOwned
     any_ok<alloc.btree.SortedSet<i32>>()
@@ -128,8 +142,15 @@ fn main(): i32 {
     tryfrom_ok<alloc.btree.SetIntoIter<i32, alloc.alloc.Global>>()
     tryinto_ok<alloc.btree.SetIntoIter<i32, alloc.alloc.Global>>()
     into_ok<alloc.btree.SetIntoIter<i32, alloc.alloc.Global>>()
+    send_ok<alloc.btree.SetIntoIter<i32, alloc.alloc.Global>>()
+    sync_ok<alloc.btree.SetIntoIter<i32, alloc.alloc.Global>>()
 
     // btree_set::Iter = Keys<K, Unit>: Any Borrow From Into Send Sync ToOwned
+    send_ok<alloc.btree.Keys<region static, i32, Unit, alloc.alloc.Global>>()
+    sync_ok<alloc.btree.Keys<region static, i32, Unit, alloc.alloc.Global>>()
+    send_ok<alloc.btree.Entry<region static, i32, core.cell.Cell<i32>, alloc.alloc.Global>>()
+    send_ok<alloc.btree.IterMut<region static, i32, core.cell.Cell<i32>, alloc.alloc.Global>>()
+    send_ok<alloc.btree.MapIntoIter<i32, core.cell.Cell<i32>, alloc.alloc.Global>>()
 
     // hash_map::Drain = MapDrain: Any Borrow From Into Send Sync
     borrow_ok<alloc.hash_map.MapDrain<region static, i32, i32, alloc.alloc.Global>>()

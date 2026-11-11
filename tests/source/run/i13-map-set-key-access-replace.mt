@@ -104,6 +104,31 @@ fn noncopy_keys(): Unit {
     assert(drops == 9, "query drops exactly once")
 }
 
+fn entry_keys(): Unit {
+    var hashed = hash_map.new<TaggedKey, i32>()
+    hashed.insert(TaggedKey(1, 10), 100)
+    {
+        let occupied = hashed.entry(TaggedKey(1, 99))
+        assert((*occupied.key()).tag == 10, "occupied hash entry lends stored key")
+    }
+    {
+        let vacant = hashed.entry(TaggedKey(2, 20))
+        assert((*vacant.key()).tag == 20, "vacant hash entry lends pending key")
+    }
+    assert(hashed.len() == 1usize, "reading vacant entry does not insert")
+    var ordered = btree.new<TaggedKey, i32>()
+    ordered.insert(TaggedKey(1, 10), 100)
+    {
+        let occupied = ordered.entry(TaggedKey(1, 99))
+        assert((*occupied.key()).tag == 10, "occupied tree entry lends stored key")
+    }
+    {
+        let vacant = ordered.entry(TaggedKey(2, 20))
+        assert((*vacant.key()).tag == 20, "vacant tree entry lends pending key")
+    }
+    assert(ordered.len() == 1usize, "reading vacant tree entry does not insert")
+}
+
 fn main(): i32 {
     var hashed = hash_map.set_new<TaggedKey>()
     if !hashed.insert(TaggedKey(1, 10)) { return 1 }
@@ -171,5 +196,6 @@ fn main(): i32 {
     }
     if ordered.len() != 1usize { return 30 }
     noncopy_keys()
+    entry_keys()
     0
 }

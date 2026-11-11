@@ -128,8 +128,13 @@ pub fn with_capacity_in<K: Hash + PartialEq, V, A: Allocator>(capacity: usize, t
 pub fn with_capacity<K: Hash + PartialEq, V>(capacity: usize): Map<K, V> {
     with_capacity_in(capacity, Global())
 }
-pub fn with_hasher<K, V, S: BuildHasher>(take builder: S): Map<K, V, Global, S> {
-    Map<K, V, Global, S>(allocator: Global(), builder: take builder)
+pub const fn with_hasher<K, V, S: BuildHasher>(take builder: S): Map<K, V, Global, S> {
+    let result: Map<K, V, Global, S>
+    result.entries = super.vec.new_in<Bucket<K, V>, Global>(Global())
+    result.idx = core.ptr.null_mut<usize>()
+    result.icap = 0usize
+    result.builder = take builder
+    result
 }
 pub fn with_capacity_and_hasher_in<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher>(
     capacity: usize,
@@ -559,7 +564,7 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher, Q: Hash + PartialEq
 // Set of keys backed by a map with unit values.
 pub type Set<K, A: Allocator = Global, S: BuildHasher = DefaultHashBuilder> { map: Map<K, Unit, A, S> }
 
-fn set_from_map<K, A: Allocator, S: BuildHasher>(take map: Map<K, Unit, A, S>): Set<K, A, S> {
+const fn set_from_map<K, A: Allocator, S: BuildHasher>(take map: Map<K, Unit, A, S>): Set<K, A, S> {
     let result: Set<K, A, S>
     result.map = take map
     result
@@ -577,7 +582,7 @@ pub fn set_with_capacity_in<K: Hash + PartialEq, A: Allocator>(capacity: usize, 
 pub fn set_with_capacity<K: Hash + PartialEq>(capacity: usize): Set<K> {
     set_with_capacity_in(capacity, Global())
 }
-pub fn set_with_hasher<K, S: BuildHasher>(take builder: S): Set<K, Global, S> {
+pub const fn set_with_hasher<K, S: BuildHasher>(take builder: S): Set<K, Global, S> {
     set_from_map(with_hasher<K, Unit, S>(take builder))
 }
 pub fn set_with_capacity_and_hasher_in<K: Hash + PartialEq, A: Allocator, S: BuildHasher>(
@@ -1564,6 +1569,12 @@ extend<region r, K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> VacantEnt
 }
 
 extend<region r, K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Entry<region r, K, V, A, S> {
+    pub fn key(): read K from self {
+        match self {
+            Entry.Occupied(entry) => entry.key(),
+            Entry.Vacant(entry) => read entry.key
+        }
+    }
     pub take fn or_insert(take value: V): mut V from r {
         match take self {
             Entry.Occupied(entry) => entry.into_mut(),

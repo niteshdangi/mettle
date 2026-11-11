@@ -734,6 +734,12 @@ extend<region r, K: Ord, V, A: Allocator> VacantEntry<region r, K, V, A> {
 }
 
 extend<region r, K: Ord, V, A: Allocator> Entry<region r, K, V, A> {
+    pub fn key(): read K from self {
+        match self {
+            Entry.Occupied(entry) => entry.key(),
+            Entry.Vacant(entry) => entry.key()
+        }
+    }
     pub take fn or_insert(take value: V): mut V from r {
         match take self {
             Entry.Occupied(entry) => entry.into_mut(),
@@ -1949,6 +1955,19 @@ extend<K: Ord, const N: usize> SortedSet<K> implements package.core.convert.From
 // Owned storage moves or is shared exactly when its elements and allocator do.
 unsafe extend<K: Transferable, V: Transferable, A: Allocator + Transferable> SortedMap<K, V, A> implements Transferable {}
 unsafe extend<K: Shareable, V: Shareable, A: Allocator + Shareable> SortedMap<K, V, A> implements Shareable {}
+
+// Entry handles retain the exclusive map loan that stabilizes their node pointers.
+unsafe extend<region r, K: Transferable, V: Transferable, A: Allocator + Transferable> Entry<region r, K, V, A> implements Transferable {}
+unsafe extend<region r, K: Shareable, V: Shareable, A: Allocator + Shareable> Entry<region r, K, V, A> implements Shareable {}
+// Read cursors share the retained map; transferring one requires shared-safe storage.
+unsafe extend<region r, K: Shareable, V: Shareable, A: Allocator + Shareable> EntryIter<region r, K, V, A> implements Transferable {}
+unsafe extend<region r, K: Shareable, V: Shareable, A: Allocator + Shareable> EntryIter<region r, K, V, A> implements Shareable {}
+// Exclusive cursors retain the map loan and never revisit an already yielded entry.
+unsafe extend<region r, K: Transferable, V: Transferable, A: Allocator + Transferable> IterMut<region r, K, V, A> implements Transferable {}
+unsafe extend<region r, K: Shareable, V: Shareable, A: Allocator + Shareable> IterMut<region r, K, V, A> implements Shareable {}
+// The consuming cursor exclusively owns its remaining entries, nodes and allocator.
+unsafe extend<K: Transferable, V: Transferable, A: Allocator + Transferable> MapIntoIter<K, V, A> implements Transferable {}
+unsafe extend<K: Shareable, V: Shareable, A: Allocator + Shareable> MapIntoIter<K, V, A> implements Shareable {}
 
 extend<K: Ord, V, A: Allocator + Default> SortedMap<K, V, A> implements Default {
     static fn default(): SortedMap<K, V, A> { new_in(A.(Default).default()) }

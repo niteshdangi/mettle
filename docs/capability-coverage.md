@@ -50,21 +50,27 @@ still obligations. No executed all-target expansion or per-item native coherence
 check is claimed.
 
 Generate the I13 [worklist](baseline/v1-operations.csv) with
-`python3 tools/v1_operations.py`. Latest ledger (2026-11-11): **10,507 evidenced,
-386 declared, 2,397 missing, 5 not applicable** of 13,295 canonical records,
+`python3 tools/v1_operations.py`. Latest ledger (2026-11-12): **8,723 evidenced,
+2,583 declared, 1,984 missing, 5 not applicable** of 13,295 canonical records,
 grouped into 2,442 operation and 2,309 implementation families. Subset/source-cfg
 reconciliation and Linux applicability review remain open; the five Windows-only
 exclusions were recorded on Darwin. Missing/unmapped is not proof of absent
 code; declarations/name matches are not behavioral passes.
 
 The declared records comprise 20 conversion-blanket exposures,
-54 NonNull runtime-only records and
-312 integer power/division records lacking stable-const acceptance.
+54 NonNull runtime-only records and 2,509 integer records lacking stable-const
+acceptance. Canonical-ID-deduplicated review corrects another 2,197 integer
+runtime-only records to declared; manifest aliases are not separate obligations.
+The collection/vector group's 403 records now have scoped evidence, including
+its final 35 const obligations and six exclusive-split exposures, in the
+[collection reconciliation](i13-library.md#collectionvector-reconciliation-2026-11-11).
+The shared read-view endpoints also close four core-slice exposures; exclusive
+splits close six more. No complete area or milestone is qualified by this group.
 The fifteen callable-adapter Clone/ToOwned records now have debug/release
 execution evidence for independently advanced map, filter, take_while,
 skip_while and flat_map states using cloneable function pointers.
-The latter were previously evidenced from runtime-only receipts; the corrected
-state preserves those receipts without crediting unimplemented const behavior.
+Integer records retain their runtime receipts without crediting unimplemented
+const behavior.
 Eleven networking records, ten non-stable-const NonNull records, five IO
 records and one owning-array implementation gain scoped
 Linux evidence in the [parallel reconciliation](i13-library.md#parallel-reconciliation-2026-11-11).

@@ -112,10 +112,10 @@ pub unsafe interface Allocator {
 }
 
 // Dangling, well-aligned address used for zero-sized blocks; never dereferenced.
-fn dangling(align: usize): ptr<mut u8> { unsafe { core.mem.transmute<ptr<mut u8>>(align) } }
+const fn dangling(align: usize): ptr<mut u8> { unsafe { core.mem.transmute<ptr<mut u8>>(align) } }
 
 // Well-aligned non-null placeholder for empty storage of `T`; never dereferenced.
-pub fn dangling_for<T>(): ptr<mut T> { dangling(core.mem.align_of<T>()).cast<T>() }
+pub const fn dangling_for<T>(): ptr<mut T> { dangling(core.mem.align_of<T>()).cast<T>() }
 
 // The process-wide allocator. Stateless and freely copyable.
 pub copy type Global {}

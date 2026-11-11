@@ -101,6 +101,16 @@ before publishing the checked module; the parsed static owns the syntax
 throughout. Type checking visits dead branches, while evaluation remains lazy.
 No component target or dependency changes are required.
 
+Constant aggregate views retain evaluator storage provenance, byte offsets and
+slice extents, never host addresses. `semantics` supplies concrete target shapes,
+generic bindings and selected interface implementations, including implicit
+receiver projections; the interpreter preserves parameter access, const/unsafe
+admission and storage lifetime. Views of expired locals cannot become statics.
+`types::StaticConstant` carries static-symbol interior relocations and
+address-only empty/zero-sized pointers. `ir` validates their target alignment,
+extent, metadata and mutability before `backend` lowers them. Library checked
+expression descriptors preserve symbolic shapes for concrete call preparation.
+
 ### 1.1. Self-hosted compiler: package and incremental compilation contract
 
 The self-hosted compiler uses independently compiled Mettle packages in
@@ -749,6 +759,13 @@ Possible writes and every-normal-return overwrites are distinct. Only definite,
 uniquely resolved ordinary-call overwrites release an old stored loan; conditional
 writes and caught calls retain it. Effect inputs are captured before updating
 destinations so self-writeback preserves its original referent.
+Return/writeback disjointness is exported only when tracked partition origins
+prove it on every return carrying that result. Definite replacement removes the
+old holder authority, not the backing owner's lifetime. Proven replacement
+pairs survive derived views within one call epoch; no such proof is applied
+when a returned view reaches the call again through storage or a loop Phi.
+Exclusive holder borrowing checks its frozen contents so an existing live
+child cannot be hidden by replacement.
 Indirect or erased mutable calls conservatively union possible view-storage
 writes. Analysis-only opaque/typed element paths preserve compatible origins
 through unknown aggregate shapes; they are forbidden in executable CFG places.

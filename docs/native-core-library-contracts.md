@@ -559,6 +559,10 @@ Checked chunk grouping panics for N == 0 even on empty input. Zero-length
 endpoint chunks are otherwise valid. Inclusive range end conversion must
 not wrap when the end is usize::MAX. An invalid/reversed range returns none
 or panics according to the selected API, never a forged oversized view.
+Fixed-array projections, checked/unchecked chunk grouping and mutable pointer
+ranges are const-callable on live storage. Their const forms preserve the same
+aliasing, bounds, zero-size and unsafe preconditions; evaluation cannot export
+a view of local storage.
 
 `element_offset(read T)` locates an element by pointer address, not value,
 and returns its index only for an in-range aligned element start.
@@ -577,6 +581,8 @@ endpoint and retain the remainder. Mutable variants partition the original
 exclusive region into disjoint returned/remaining views; they do not lend
 the whole region twice or shorten the returned view to the temporary
 container holding the view.
+These are core.slice functions on mutable view-holder slots, including slice
+views lent by List; they do not split or shorten the List owner.
 
 `get_disjoint_mut<I, const N>(indices: [I; N])` supports homogeneous usize,
 half-open ranges or inclusive ranges. It validates every range and pairwise
