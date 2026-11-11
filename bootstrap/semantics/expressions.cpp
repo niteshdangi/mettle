@@ -196,6 +196,10 @@ int Checker::checkNode(Node &n, bool reachable) {
         result = inference.fresh(checked.types->parameter(*constant).valueType);
         break;
       }
+      if (facts(n).constantValue) {
+        result = inference.fresh(facts(n).constantValue->type);
+        break;
+      }
       if (reportedErrors != errorsBefore) {
         result = inference.fresh();
         break;

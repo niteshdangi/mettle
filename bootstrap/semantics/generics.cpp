@@ -510,6 +510,11 @@ Type Checker::constantType(const Node &node, Type expected) {
     auto errorsBefore = reportedErrors;
     if (auto associated = associatedConstant(node))
       return *associated;
+    if (facts(node).constantValue) {
+      error("constant", node.span,
+            "required integer expression needs a scalar associated constant");
+      return Type::Unknown;
+    }
     if (reportedErrors != errorsBefore)
       return Type::Unknown;
   }
@@ -517,6 +522,11 @@ Type Checker::constantType(const Node &node, Type expected) {
     auto errorsBefore = reportedErrors;
     if (auto associated = associatedConstant(node))
       return *associated;
+    if (facts(node).constantValue) {
+      error("constant", node.span,
+            "required integer expression needs a scalar associated constant");
+      return Type::Unknown;
+    }
     if (reportedErrors != errorsBefore)
       return Type::Unknown;
   }

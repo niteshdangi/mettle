@@ -21,6 +21,50 @@ another 2,197 runtime-only records to declared, beyond the previous 312.
 Manifest alias contexts are deduplicated by canonical ID, not counted as
 independent obligations. This correction is not a runtime regression.
 
+### Current const/compiler integration (2026-11-12)
+
+The integer evaluator now implements the shared target-width integer-method
+kernel, including optional/overflow results, byte-order constructors and mutable
+ASCII writeback. The arithmetic and kernel fixtures pass debug/release and
+exercise 152 of the 153 selected method names. This is not qualification of all
+2,509 canonical exposures: source `from_str_radix`, exact record mapping and
+complete sanitizer/profile acceptance remain open. The older unsupported-call
+receipts below describe earlier compiler revisions.
+
+Required evaluation also propagates typed errors through calls, loops, `try`
+and `capture`; capture does not catch arithmetic faults. Concrete nominal
+associated constants retain typed checked payloads, privacy and cycle checks,
+and freshly materialize independently owned runtime values. Checked-library
+contracts advance to version 4; version-3 archives require rebuilding. Generic
+nominal definitions and required projections that discard non-Copy remainders
+remain explicitly unsupported. Associated product coercions normalize interface
+projections before comparison without relaxing region or payload invariance.
+An integration crash was traced to persistent checked facts being inserted for
+a stack-local constant-pattern probe; missing lookups now remain read-only.
+
+Current focused Linux x86-64 evidence:
+
+- `compiler.consteval-target` and `compiler.library-declarations` pass.
+- Twelve source/profile units pass: both integer fixtures, typed effects and
+  three nominal-constant fixtures, each debug/release.
+- Ten intended negatives pass, covering nominal visibility/cycles/unsupported
+  contexts, uncaught arithmetic faults and region/payload invariance.
+- The ASan/UBSan compiler checks typed effects and required nominal projections
+  without reports. The complete integer fixture has not yet been rerun with
+  this repaired sanitized compiler.
+
+Receipts: `i13-pattern-probe-fix-source`,
+`i13-pattern-probe-fix-negative` and the corresponding normal/sanitized build
+logs in the native validation build. Normal compiler SHA-256:
+`430746a4fc1f2d84c682397705d1ab995a84da944ca0b1fd173c88269ef40738`;
+sanitized compiler:
+`005761f8672f9bdd7be15eee0804bb9a410857ea3288dbbaeeac3e844bb77c1b`.
+These receipts do not promote ledger rows or close an area, LNX or I13.
+Networking acceptance is resuming against this compiler. Text/FFI still needs
+checked-constructor metadata and native Cow-extension region reconciliation.
+The IO/filesystem group has 181 source-implemented, 17 partial and nine missing
+records out of 207; all remain unverified at this snapshot.
+
 ### Collection/vector reconciliation (2026-11-11)
 
 The first missing group contains 403 records, not 403 independent functions.

@@ -4,6 +4,7 @@
 #include "consteval/evaluate.h"
 #include "semantics/check.h"
 #include "syntax/parser.h"
+#include "types/machine.h"
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -121,9 +122,64 @@ void importedConstants() {
              host.message.find("call depth") != std::string::npos,
          "source and imported const calls share the depth budget");
 }
+
+void integerMethods() {
+  using namespace mettle;
+  const std::array fullProduct{integerMaximum(Type::U128),
+                               integerMaximum(Type::U128)};
+  auto result = evaluateIntegerMethod("overflowing_mul", Type::U128,
+                                      fullProduct, 64, true);
+  expect(result && result->value == integerLiteral(1) && result->failed,
+         "full-width multiplication retains wrapped bits and overflow");
+  result =
+      evaluateIntegerMethod("checked_mul", Type::U128, fullProduct, 64, true);
+  expect(result && result->failed,
+         "checked full-width multiplication reports absence");
+  bool overflow = false;
+  try {
+    (void)evaluateIntegerConstant("*", Type::U128, fullProduct[0],
+                                  fullProduct[1]);
+  } catch (const std::invalid_argument &) {
+    overflow = true;
+  }
+  expect(overflow, "ordinary full-width multiplication still rejects overflow");
+
+  const std::array hugePower{integerLiteral(2), integerMaximum(Type::U32)};
+  result =
+      evaluateIntegerMethod("overflowing_pow", Type::U128, hugePower, 64, true);
+  expect(result && result->value == integerLiteral(0) && result->failed,
+         "wrapped-zero powers retain overflow at maximum exponent");
+  const std::array exactPower{integerLiteral(-2), integerLiteral(127)};
+  result = evaluateIntegerMethod("overflowing_pow", Type::I128, exactPower, 64,
+                                 true);
+  expect(result && result->value == integerMinimum(Type::I128) &&
+             !result->failed,
+         "negative powers can exactly produce the signed minimum");
+
+  const std::array maximum{integerMaximum(Type::U128)};
+  result = evaluateIntegerMethod("isqrt", Type::U128, maximum, 64, true);
+  NumericLiteral root;
+  root.magnitude[0] = ~std::uint64_t{0};
+  expect(result && result->value == root,
+         "u128 square root rounds down at the full-width boundary");
+  const std::array logarithm{maximum[0], integerLiteral(2)};
+  result = evaluateIntegerMethod("ilog", Type::U128, logarithm, 64, true);
+  expect(result && result->type == Type::U32 &&
+             result->value == integerLiteral(127),
+         "u128 integer logarithms return their exact u32 result");
+
+  const std::array endian{integerLiteral(0x0102)};
+  result = evaluateIntegerMethod("from_be", Type::U16, endian, 64, true);
+  expect(result && result->value == integerLiteral(0x0201),
+         "big-endian conversion swaps on little-endian targets");
+  result = evaluateIntegerMethod("from_be", Type::U16, endian, 64, false);
+  expect(result && result->value == integerLiteral(0x0102),
+         "big-endian conversion is unchanged on big-endian targets");
+}
 } // namespace
 
 int main() {
+  integerMethods();
   const std::string literal = "const N: usize = 4294967296;\n";
   expect(accepted(literal, 64), "2^32 fits usize on a 64-bit target");
   expect(!accepted(literal, 32), "2^32 exceeds usize on a 32-bit target");

@@ -80,6 +80,9 @@ bool Checker::pathContainer(std::string_view spelling, const Function *function,
   std::string_view owner;
   if (function)
     owner = function->owner;
+  if (spelling == "Self" && genericEnvironment &&
+      genericEnvironment->names.contains(nameKey(spelling, span)))
+    return true;
   if (function && spelling.find("::") == std::string_view::npos) {
     // Outside a type, `Self.x` still reaches the `Self::x` diagnostic.
     if (spelling == "Self")
@@ -125,13 +128,14 @@ void Checker::qualifyDottedPath(Node &node, const std::set<NameKey> &lexical,
   const std::size_t total = chain.size() + 1;
   std::string spelling = root->text;
   std::size_t containers = 0;
-  // Library roots may name compiler intrinsics (`core.mem.forget`) whose
-  // modules are never mounted, so an unshadowed `core`/`alloc`/`std` chain is
-  // a path through its last link, exactly like its `::` spelling.
+  // Unmounted library intrinsics qualify paths only until a known value.
   const bool library =
       root->text == "core" || root->text == "alloc" || root->text == "std";
   while (containers < chain.size() &&
-         (library || pathContainer(spelling, function, root->span))) {
+         (pathContainer(spelling, function, root->span) ||
+          (library && !checked.symbols->lookup(nameModule(root->span), spelling,
+                                               resolution::Namespace::Value,
+                                               root->span)))) {
     ++containers;
     spelling += "::" + chain[containers - 1]->text;
   }

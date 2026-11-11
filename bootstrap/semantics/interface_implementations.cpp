@@ -922,7 +922,7 @@ std::optional<Type> Checker::associatedConstant(const Node &node) {
                ? std::nullopt
                : inherentConstantValue(
                      resolved->second,
-                     inherentConstants[resolved->second].target);
+                     inherentConstants[resolved->second].target, &node);
   }
 
   auto delimiter = node.text.rfind("::");
@@ -961,7 +961,7 @@ std::optional<Type> Checker::associatedConstant(const Node &node) {
       (subject == Type::Unknown || subject == builtin))
     if (auto found = inherentConstantNames.find(prefix + "::" + member);
         found != inherentConstantNames.end())
-      return inherentConstantValue(found->second, builtin);
+      return inherentConstantValue(found->second, builtin, &node);
   if (checked.types->isProduct(subject)) {
     auto ownerType = subject;
     if (checked.types->product(ownerType).genericOrigin != Type::Unknown)
@@ -975,7 +975,7 @@ std::optional<Type> Checker::associatedConstant(const Node &node) {
     auto resolved = canonical ? inherentConstantNames.find(*canonical)
                               : inherentConstantNames.end();
     if (resolved != inherentConstantNames.end())
-      return inherentConstantValue(resolved->second, subject);
+      return inherentConstantValue(resolved->second, subject, &node);
     if (candidate != inherentConstantNames.end()) {
       error("name", node.span,
             "unresolved or inaccessible name '" + displayPath(lookupName) +

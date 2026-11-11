@@ -116,10 +116,12 @@ private:
     Type declaredType = Type::Unknown;
     Type value = Type::Unknown;
     unsigned char state = 0;
+    std::optional<StaticConstant> materialized{};
   };
   std::vector<InherentConstant> inherentConstants;
   std::unordered_map<std::string, std::size_t> inherentConstantNames;
-  std::optional<Type> inherentConstantValue(std::size_t index, Type subject);
+  std::optional<Type> inherentConstantValue(std::size_t index, Type subject,
+                                            const Node *use = nullptr);
   std::vector<const Module::Product *> deferredLayouts;
   std::vector<unsigned char> staticStates;
   std::vector<unsigned char> staticTypeStates;

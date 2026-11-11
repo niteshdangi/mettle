@@ -507,8 +507,16 @@ WIRE(DeclarationEnvironment, v.names, v.bounds, v.parameters, v.defaults,
      v.equalities, v.declarationSpan)
 WIRE(DeclarationRegions, v.names, v.parameters, v.assumptions)
 WIRE(ImportedTypeDeclaration, v.span, v.name, v.type, v.generics)
-WIRE(ImportedInherentConstant, v.implementation, v.declaration, v.name,
-     v.target, v.declaredType, v.value)
+void wire(Archive &a, ImportedInherentConstant &v) {
+  a(v.implementation, v.declaration, v.name, v.target, v.declaredType, v.value,
+    v.materialized);
+  if ((!v.materialized && v.value == Type::Unknown) ||
+      (v.materialized &&
+       (v.value != Type::Unknown || v.materialized->type != v.declaredType ||
+        (v.materialized->kind != StaticConstant::Kind::Aggregate &&
+         v.materialized->kind != StaticConstant::Kind::Repeat))))
+    a.fail("inconsistent checked associated constant value");
+}
 WIRE(interfaces::Obligation, v.subject, v.interfaceType, v.property)
 WIRE(interfaces::Associated, v.name, v.parameter, v.parameters, v.defaultValue,
      v.bounds, v.requirements, v.constant, v.regions, v.regionRequirements,
@@ -608,8 +616,9 @@ void wire(Archive &a, NodeFacts &v) {
   a(v.type);
   a.symbol(metadata::SymbolKind::Function, v.callee);
   a(v.slot, v.field, v.variant, v.number, v.numeric, v.machineOperation,
-    v.machineType, v.constantParameter, v.constantCount, v.callResult,
-    v.typeArguments, v.lexicallyBound, v.unsafeContext, v.receiverPlan);
+    v.machineType, v.constantParameter, v.constantValue, v.constantCount,
+    v.callResult, v.typeArguments, v.lexicallyBound, v.unsafeContext,
+    v.receiverPlan);
 }
 template <typename T> void Archive::record(T &item) {
   constexpr bool recursive =
@@ -987,7 +996,7 @@ exportLibraryDeclarations(const CheckedModule &module,
   }
   result.header = std::move(header.output);
   Archive contracts(references, *module.types, header.hygieneState());
-  contracts.tag("mettle.checked-contracts.3");
+  contracts.tag("mettle.checked-contracts.4");
   auto &value = *module.declarationContracts;
   std::uint64_t count = value.functions.size();
   contracts(count);
@@ -1059,7 +1068,7 @@ importLibraryDeclarations(std::span<const std::uint8_t> bytes,
     return result;
   }
   Archive archive(bytes, references, types.get());
-  archive.tag("mettle.checked-contracts.3");
+  archive.tag("mettle.checked-contracts.4");
   auto value = std::make_shared<ImportedDeclarations>();
   value->types = std::move(types);
   std::uint64_t count = 0;

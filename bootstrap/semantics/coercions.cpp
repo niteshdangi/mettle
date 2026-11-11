@@ -5,6 +5,13 @@
 namespace mettle {
 int Checker::join(Node &left, int a, Node &right, int b, Span span) {
   auto leftType = inference.value(a), rightType = inference.value(b);
+  if (leftType != rightType && checked.types->isProduct(leftType) &&
+      checked.types->isProduct(rightType)) {
+    leftType = normalizeGenericType(leftType, {}, span);
+    rightType = normalizeGenericType(rightType, {}, span);
+    inference.set(a, leftType);
+    inference.set(b, rightType);
+  }
   if (leftType != rightType && checked.types->isView(leftType) &&
       checked.types->isView(rightType)) {
     auto mode =
@@ -60,6 +67,13 @@ int Checker::join(Node &left, int a, Node &right, int b, Span span) {
 void Checker::coerce(Node &expression, int actual, int expected, Span span) {
   auto source = inference.value(actual);
   auto target = inference.value(expected);
+  if (source != target && checked.types->isProduct(source) &&
+      checked.types->isProduct(target)) {
+    source = normalizeGenericType(source, {}, span);
+    target = normalizeGenericType(target, {}, span);
+    inference.set(actual, source);
+    inference.set(expected, target);
+  }
   if (source != target && checked.types->isView(source) &&
       checked.types->isView(target)) {
     auto &conversion = facts(expression);

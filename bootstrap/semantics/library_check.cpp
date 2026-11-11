@@ -147,7 +147,7 @@ void Checker::importDeclarations() {
                                           inherentConstants.size());
             inherentConstants.push_back({&owner, &declaration, constant.target,
                                          constant.declaredType, constant.value,
-                                         2});
+                                         2, constant.materialized});
           }
   for (const auto &[index, facts] : imports->statics) {
     if (index >= module.statics.size()) {
@@ -307,7 +307,8 @@ void Checker::retainDeclarations() {
     const auto &constant = inherentConstants[index];
     result->inherentConstants.push_back(
         {constant.implementation->span, constant.declaration->span, name,
-         constant.target, constant.declaredType, constant.value});
+         constant.target, constant.declaredType, constant.value,
+         constant.materialized});
   }
   std::map<const Function *, std::string> owners;
   for (std::size_t i = 0; i < module.functions.size(); ++i)

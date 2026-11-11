@@ -42,6 +42,20 @@ pub module core {
         type Item<T: Copy>: Copy;
         const FLAG: bool;
     }
+    pub copy type Address { pub bits: u32 }
+    extend Address {
+        pub const ORIGIN: Address = Address(2130706433u32)
+        pub const ALIAS: Address = Self.ORIGIN
+    }
+    pub module network {}
+    pub const fn address(): Address { Address.ORIGIN }
+    pub copy type Address6 { pub octets: [u8;16] }
+    extend Address6 {
+        pub const LOCALHOST: Address6 = Address6([0u8,0u8,0u8,0u8,0u8,0u8,0u8,0u8,
+                      0u8,0u8,0u8,0u8,0u8,0u8,0u8,1u8])
+        pub const UNSPECIFIED: Address6 = Address6([0u8;16usize])
+    }
+    pub const fn address6(): Address6 { Address6.LOCALHOST }
     pub type Number {}
     pub const fn record(): Number { Number() }
     pub copy enum Marker { First, Last }
@@ -85,9 +99,19 @@ pub module core {
 }
 import core as bootstrapOnly;
 )";
+  const Source reexportSource{"reexport.mt", "pub import super.Address;\n", 1};
   Diagnostics diagnostics;
-  auto checked =
-      check(parse({"library.mt", source}, diagnostics), diagnostics, false);
+  auto tree = parse({"library.mt", source}, diagnostics);
+  auto reexports = parse(reexportSource, diagnostics);
+  if (!diagnostics.empty() || reexports.imports.size() != 1) {
+    errors(diagnostics);
+    expect(false, "public reexport fixture parses");
+    return 1;
+  }
+  auto reexport = std::move(reexports.imports.front());
+  reexport.item.scope = {"core", "network"};
+  tree.imports.push_back(std::move(reexport));
+  auto checked = check(std::move(tree), diagnostics, false);
   if (!checked) {
     errors(diagnostics);
     expect(false, "source library checks");
@@ -146,6 +170,11 @@ import core as bootstrapOnly;
     return found->second;
   };
   encode.source = [&](Span span) -> std::optional<metadata::SourceReference> {
+    if (span.source == reexportSource.id &&
+        span.end <= reexportSource.text.size())
+      return metadata::SourceReference{"reexport-revision",
+                                       std::uint32_t(span.begin),
+                                       std::uint32_t(span.end)};
     if (span.source != 0 || span.end > source.size())
       return std::nullopt;
     return metadata::SourceReference{
@@ -198,6 +227,8 @@ import core as bootstrapOnly;
   metadata::DecodeReferences decode;
   decode.source =
       [](const metadata::SourceReference &reference) -> std::optional<Span> {
+    if (reference.revision == "reexport-revision")
+      return Span{reference.begin, reference.end, 43};
     if (reference.revision != "library-revision")
       return std::nullopt;
     return Span{reference.begin, reference.end, 42};
@@ -208,6 +239,9 @@ import core as bootstrapOnly;
     ++headerReads;
     library.compiledSourcePackages.emplace(42, "library");
     library.compiledSourceModules.emplace(42, std::vector<std::string>{"core"});
+    library.compiledSourcePackages.emplace(43, "library");
+    library.compiledSourceModules.emplace(
+        43, std::vector<std::string>{"core", "network"});
     auto header = decodeLibraryHeader(declarations.header, decode);
     if (!header)
       std::cerr << header.error << '\n';
@@ -243,9 +277,14 @@ import core.Cursor;
 type Local { value: i32 }
 extend Local implements core.Value { fn get(): i32 { self.value } }
 const MARKER: core.Marker = core.mark();
+const ADDRESS6: core.Address6 = core.address6();
+const ADDRESS_ALIAS: core.network.Address = core.network.Address.ALIAS;
+const ADDRESS_FUNCTION: core.Address = core.address();
 const RESULT: i32 = core.answer();
 fn main(): i32 {
     let record = core.record();
+    if core.network.Address.ORIGIN.bits != 2130706433u32 { return 1 }
+    if core.Address6.LOCALHOST.octets[15] != 1u8 { return 1 }
     let pair = core.duplicate(RESULT);
     let value = pair.0;
     let borrowed = core.preserve(read value);
@@ -360,6 +399,26 @@ fn main(): i32 {
                        10,
                "imported const/default/private helper/static execute checked "
                "data");
+        for (std::size_t offset : {2u, 3u}) {
+          const auto &address =
+              module.statics()[module.statics().size() - offset];
+          expect(
+              address.initializer &&
+                  address.initializer->kind ==
+                      StaticConstant::Kind::Aggregate &&
+                  address.initializer->type == address.type &&
+                  address.initializer->fields.size() == 1 &&
+                  address.initializer->fields[0].scalar.magnitude[0] ==
+                      2130706433u,
+              "imported and reexported nominal constants retain typed values");
+        }
+        const auto &v6 =
+            module.statics()[module.statics().size() - 4].initializer;
+        expect(
+            v6 && v6->kind == StaticConstant::Kind::Aggregate &&
+                v6->fields.size() == 1 && v6->fields[0].fields.size() == 16 &&
+                v6->fields[0].fields[15].scalar.magnitude[0] == 1,
+            "imported const functions retain nested array constant payloads");
         for (std::size_t i = 0; i < sourceFunctionCount; ++i)
           expect(module.imported(i) && !module.syntax().functions[i].body.get(),
                  "observer sees no parsed dependency bodies");
@@ -401,7 +460,7 @@ fn main(): i32 {
   auto oversized = declarations.contracts;
   const auto inventoryOffset =
       sizeof(std::uint64_t) +
-      std::string_view("mettle.checked-contracts.2").size();
+      std::string_view("mettle.checked-contracts.4").size();
   std::fill_n(oversized.begin() + inventoryOffset, sizeof(std::uint64_t), 0xff);
   expect(!importLibraryDeclarations(oversized, types, decode),
          "oversized function inventories fail before allocation");

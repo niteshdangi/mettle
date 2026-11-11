@@ -104,6 +104,7 @@ private:
     return facts.callableSource == Type::Unknown ? facts.type
                                                  : facts.callableSource;
   }
+  Value constantValue(const StaticConstant &value, Span span);
   Value rawExpression(const Node &node, bool consume, bool valueUsed);
   Value rawValue(const Node &node, bool consume, bool valueUsed);
   Value machineExpression(const Node &node);

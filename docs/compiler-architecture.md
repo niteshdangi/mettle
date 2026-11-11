@@ -88,6 +88,12 @@ arrays and target endianness; semantics owns method/type/variant resolution and
 typed static materialization. IR verification validates the carrier before LLVM
 lowering.
 
+Integer constant methods reuse `types`' 128-bit magnitude arithmetic and native
+machine signatures; `consteval` owns aggregate results, target byte order and
+provenance-checked mutable writeback. Typed throws propagate as interpreter
+control flow through calls and loops. Capture handles only typed errors, never
+evaluation faults; checked semantic facts distinguish Outcome propagation.
+
 The evaluator's host supplies checked expression shapes and inferred function
 results; evaluation does not independently re-infer integer locals.
 Function and static identities are registered before header elaboration.
@@ -110,6 +116,11 @@ admission and storage lifetime. Views of expired locals cannot become statics.
 address-only empty/zero-sized pointers. `ir` validates their target alignment,
 extent, metadata and mutability before `backend` lowers them. Library checked
 expression descriptors preserve symbolic shapes for concrete call preparation.
+
+Concrete nominal associated constants retain typed `StaticConstant` payloads
+through checked library contracts. Each expression constructs a fresh value
+with its own cleanup ownership, rather than moving from shared static storage.
+Required projections preserve field visibility and evaluator storage lifetime.
 
 ### 1.1. Self-hosted compiler: package and incremental compilation contract
 
@@ -1171,6 +1182,9 @@ runtime/link availability for the target before code generation.
 
 Normalization interns derived product records instead of rewriting shared
 nominal definitions under a caller's substitutions or interface assumptions.
+Product coercions and branch joins normalize associated projections before
+strict inference comparison; region relationships and invariance remain
+separately enforced.
 Erasing regions preserves those normalized field identities. Pipeline admission
 also preflights the compiler-owned cleanup plan, so its resource limits are
 source diagnostics during both checking and building, not backend failures.

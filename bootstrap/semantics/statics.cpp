@@ -148,9 +148,17 @@ void Checker::inherentConstantNamesAndTypes() {
         continue;
       if (!isInteger(declaredType) && declaredType != Type::Bool &&
           declaredType != Type::Char) {
-        error("type", item.span,
-              "associated constant requires a supported scalar type");
-        continue;
+        if (!checked.types->isProduct(declaredType)) {
+          error("feature", item.span,
+                "associated constant type is not implemented");
+          continue;
+        }
+        if (!registered->second.parameters.empty() ||
+            checked.types->isSymbolic(declaredType)) {
+          error("feature", item.span,
+                "generic nominal associated constants are not implemented");
+          continue;
+        }
       }
       if (!item.constantValue) {
         error("type", item.span, "associated constant requires a definition");
@@ -327,7 +335,7 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
     result.scalar.magnitude[0] = node.text == "true";
     return result;
   }
-  if (constFunctionCall(node))
+  if (constFunctionCall(node) || node.kind == Kind::Capture)
     return evaluatedStatic(node, type);
   if (isFloating(type) && needsEvaluator(node))
     return evaluatedStatic(node, type);
@@ -360,6 +368,17 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
     result.kind = StaticConstant::Kind::Text;
     result.text = facts(node).text;
     return result;
+  }
+  if (node.kind == Kind::Name && checked.types->isProduct(type)) {
+    auto reported = reportedErrors;
+    (void)associatedConstant(node);
+    if (facts(node).constantValue) {
+      if (facts(node).constantValue->type != type)
+        return fail("required associated constant has an incompatible type");
+      return facts(node).constantValue;
+    }
+    if (reportedErrors != reported)
+      return std::nullopt;
   }
   if (checked.types->isSum(type) &&
       !(node.kind == Kind::Name &&
@@ -498,11 +517,28 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
     auto storage = root->kind == Kind::Name
                        ? staticName(root->text, root->span, root->context)
                        : std::nullopt;
-    if (!storage || module.statics[*storage].mutableBinding)
-      return fail("constant projection requires immutable static storage");
-    auto value = staticValue(*storage);
+    std::optional<StaticConstant> value;
+    if (storage) {
+      if (module.statics[*storage].mutableBinding)
+        return fail("constant projection requires immutable static storage");
+      value = staticValue(*storage);
+      if (!value)
+        return std::nullopt;
+    } else if (root->kind == Kind::Name) {
+      auto reported = reportedErrors;
+      (void)associatedConstant(*root);
+      value = facts(*root).constantValue;
+      if (reportedErrors != reported)
+        return std::nullopt;
+    }
     if (!value)
+      return fail("constant projection requires an immutable constant value");
+    if (!storage && !checked.types->isCopy(value->type)) {
+      error("feature", node.span,
+            "required projection of a non-Copy associated value is not "
+            "implemented");
       return std::nullopt;
+    }
     for (auto projection = projections.rbegin();
          projection != projections.rend(); ++projection) {
       if (!checked.types->isProduct(value->type) ||
@@ -544,7 +580,7 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
     }
     if (value->type != type)
       return fail("constant projection has an incompatible type");
-    if (!checked.types->isCopy(type))
+    if (storage && !checked.types->isCopy(type))
       return fail("required initialization cannot move from static storage");
     return value;
   }

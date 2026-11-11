@@ -65,6 +65,41 @@ ir::Value Builder::rawValue(const Node &node, bool consume, bool valueUsed) {
     value = unwrapOutcome(value, node.span);
   return value;
 }
+Builder::Value Builder::constantValue(const StaticConstant &value, Span span) {
+  if (value.kind == StaticConstant::Kind::Scalar) {
+    Instruction instruction{Op::Constant, {}, {}, {},  "",
+                            {-1, {}},     -1, 0,  span};
+    if (value.type != Type::Unit)
+      instruction.numeric = value.scalar;
+    return emit(std::move(instruction), value.type);
+  }
+  std::vector<Value> fields;
+  const bool sum = module.typeStore()->isSum(value.type);
+  const auto first =
+      sum && module.typeStore()->product(value.type).layout.kind !=
+                  LayoutKind::Transparent
+          ? 1u
+          : 0u;
+  for (std::size_t i = first; i < value.fields.size(); ++i)
+    fields.push_back(constantValue(value.fields[i], span));
+  if (sum)
+    return variant(value.type, value.selection, std::move(fields), span);
+  for (auto &field : fields)
+    field = use(field);
+  return track(
+      emit({value.kind == StaticConstant::Kind::Repeat ? Op::ArrayRepeat
+                                                       : Op::Construct,
+            {},
+            std::move(fields),
+            {},
+            "",
+            {-1, {}},
+            -1,
+            value.selection,
+            span},
+           value.type),
+      span);
+}
 // Reading a Copy value through a view copies it; only owned places move.
 static bool throughView(const Place &place) {
   return std::any_of(place.fields.begin(), place.fields.end(),
@@ -115,6 +150,8 @@ ir::Value Builder::rawExpression(const Node &node, bool consume,
     return expression(*node.children[0], consume, valueUsed);
   case Kind::Name:
   case Kind::Field: {
+    if (facts.constantValue)
+      return constantValue(*facts.constantValue, node.span);
     if (facts.machineOperation == "marker.phantom_pinned")
       return emit({Op::Construct, {}, {}, {}, "", {-1, {}}, -1, 0, node.span},
                   sourceType(node));

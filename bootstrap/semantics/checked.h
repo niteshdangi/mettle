@@ -49,6 +49,7 @@ struct DeferredInterfaceBound {
 };
 struct NodeFacts {
   Type type = Type::Unknown;
+  std::optional<StaticConstant> constantValue{};
   int slot = -1;
   int callee = -1;
   int field = -1;

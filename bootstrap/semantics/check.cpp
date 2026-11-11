@@ -185,6 +185,31 @@ std::optional<CheckedModule> Checker::run() {
     initializer.body = NodeOwner::borrow(*storage.initializer);
     module.functions.push_back(std::move(initializer));
   }
+  for (std::size_t i = 0; i < module.implementations.size(); ++i) {
+    const auto &owner = module.implementations[i];
+    if (!owner.interface.empty() || owner.negative ||
+        !owner.genericParameters.empty())
+      continue;
+    for (const auto &item : owner.associated) {
+      if (!item.constant || !item.constantValue ||
+          !needsConstantTypeCheck(needsConstantTypeCheck, *item.constantValue))
+        continue;
+      Function initializer;
+      initializer.name =
+          "<associated." + std::to_string(module.functions.size()) + ">";
+      initializer.span = item.constantValue->span;
+      initializer.annotation = item.annotation;
+      initializer.item.scope = owner.item.scope;
+      initializer.owner = owner.target.name;
+      initializer.implementation = static_cast<int>(i);
+      initializer.lexicalContext = diagnostics.syntaxContext(item.span);
+      initializer.constraints = owner.constraints;
+      initializer.constFunction = true;
+      initializer.body =
+          NodeOwner::borrow(const_cast<Node &>(*item.constantValue));
+      module.functions.push_back(std::move(initializer));
+    }
+  }
   checked.functions.resize(module.functions.size());
   std::unordered_map<std::string, std::size_t> constructorOrdinals;
   for (std::size_t i = 0; i < module.functions.size(); ++i) {

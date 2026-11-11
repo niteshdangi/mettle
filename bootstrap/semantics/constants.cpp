@@ -25,8 +25,7 @@ bool chargeConstant(const TypeStore &types, const StaticConstant &constant,
         return false;
       budget -= (before - elementBudget) * *length;
     }
-  } else if (constant.kind == StaticConstant::Kind::Aggregate &&
-             !types.isSum(constant.type))
+  } else if (constant.kind == StaticConstant::Kind::Aggregate)
     for (const auto &field : constant.fields)
       if (!chargeConstant(types, field, budget))
         return false;
@@ -91,6 +90,12 @@ public:
   std::optional<evaluation::Shape> typeShape(Type type) override {
     return checker.constantShape(substitute(type));
   }
+  bool project(Type type, std::size_t field, const Node &node) override {
+    if (auto facts = nodeFacts(node); facts && facts->field >= 0)
+      return true;
+    return checker.visibleField(substitute(type), field, node.span,
+                                node.context);
+  }
   Type referenceType(Type type, bool exclusive, bool pointer) override {
     auto mode = exclusive ? ParameterMode::Mut : ParameterMode::Read;
     return pointer ? checker.typeStore().pointerType(type, mode)
@@ -133,6 +138,8 @@ public:
   }
   Operation operation(const Node &node) override {
     if (auto facts = nodeFacts(node)) {
+      if (node.kind == Kind::Try && facts->outcomePropagation)
+        return {"try.outcome"};
       if (!facts->machineOperation.empty())
         return {facts->machineOperation, substitute(facts->machineType),
                 facts->field};
@@ -495,28 +502,36 @@ public:
     Lookup result;
     if (name.kind != Kind::Name)
       return result;
+    auto materialized = [&](const StaticConstant &constant,
+                            bool fresh = false) {
+      Lookup found;
+      auto budget = remaining;
+      if (!chargeConstant(checker.typeStore(), constant, budget)) {
+        checker.error("limit", name.span,
+                      "constant evaluation exceeded the aggregate size limit");
+        found.kind = Lookup::Kind::Failed;
+        return found;
+      }
+      if (auto value = checker.constantValueOf(constant)) {
+        remaining = budget;
+        found.kind = Lookup::Kind::Constant;
+        found.value = std::move(*value);
+        found.freshValue = fresh;
+      }
+      return found;
+    };
     if (auto imported = checker.importedExpressions.find(&name);
         imported != checker.importedExpressions.end()) {
       const auto &expression = *imported->second;
       const auto &facts = expression.facts.at(&name);
       if (auto constant = expression.constants.find(&name);
           constant != expression.constants.end()) {
-        auto budget = remaining;
-        if (!chargeConstant(checker.typeStore(), constant->second, budget)) {
-          checker.error(
-              "limit", name.span,
-              "constant evaluation exceeded the aggregate size limit");
-          result.kind = Lookup::Kind::Failed;
-          return result;
-        }
-        auto value = checker.constantValueOf(constant->second);
-        if (value) {
-          remaining = budget;
-          result.kind = Lookup::Kind::Constant;
-          result.value = std::move(*value);
-          return result;
-        }
+        auto value = materialized(constant->second);
+        if (value.kind != Lookup::Kind::Missing)
+          return value;
       }
+      if (facts.constantValue)
+        return materialized(*facts.constantValue, true);
       if (facts.callee >= 0) {
         const auto &imports = *checker.checked.importedDeclarations;
         auto function = imports.functions.find(facts.callee);
@@ -639,6 +654,8 @@ public:
     auto reported = checker.reportedErrors;
     if (auto associated = checker.associatedConstant(name))
       return carrier(*associated);
+    if (auto facts = checker.checked.find(name); facts && facts->constantValue)
+      return materialized(*facts->constantValue, true);
     if (checker.reportedErrors != reported)
       result.kind = Lookup::Kind::Failed;
     return result;
@@ -1109,7 +1126,8 @@ std::optional<StaticConstant> Checker::evaluatedStatic(const Node &node,
 }
 
 std::optional<Type> Checker::inherentConstantValue(std::size_t index,
-                                                   Type subject) {
+                                                   Type subject,
+                                                   const Node *use) {
   auto &constant = inherentConstants.at(index);
   if (constant.state == 1) {
     error("constant", constant.declaration->span,
@@ -1124,22 +1142,62 @@ std::optional<Type> Checker::inherentConstantValue(std::size_t index,
     genericEnvironment = &implementationGenerics.at(constant.implementation);
     current = nullptr;
     unsafeDepth = 0;
-    auto value = constant.declaration->constantValue
-                     ? constantType(*constant.declaration->constantValue,
-                                    constant.declaredType)
-                     : Type::Unknown;
-    if (value != Type::Unknown &&
-        (!checked.types->isConstant(value) ||
-         checked.types->parameter(value).valueType != constant.declaredType)) {
-      error("type", constant.declaration->span,
-            "associated constant value does not match its declared type");
-      value = Type::Unknown;
+    if (constant.declaration->constantValue)
+      qualifyDottedPaths(
+          const_cast<Node &>(*constant.declaration->constantValue));
+    if (checked.types->isProduct(constant.declaredType)) {
+      if (constant.declaration->constantValue)
+        constant.materialized = staticInitializer(
+            *constant.declaration->constantValue, constant.declaredType);
+      auto supported = [&](auto &&self, const StaticConstant &value) -> bool {
+        if (value.kind == StaticConstant::Kind::Scalar)
+          return value.type == Type::Unit || isNumeric(value.type) ||
+                 value.type == Type::Bool || value.type == Type::Char;
+        if (value.kind != StaticConstant::Kind::Aggregate &&
+            value.kind != StaticConstant::Kind::Repeat)
+          return false;
+        if (!checked.types->isProduct(value.type))
+          return false;
+        const auto &record = checked.types->product(value.type);
+        if (record.layout.unionType || (!checked.types->isSum(value.type) &&
+                                        record.kind != AggregateKind::Product &&
+                                        record.kind != AggregateKind::Tuple &&
+                                        record.kind != AggregateKind::Array))
+          return false;
+        return std::all_of(
+            value.fields.begin(), value.fields.end(),
+            [&](const auto &field) { return self(self, field); });
+      };
+      if (constant.materialized &&
+          !supported(supported, *constant.materialized)) {
+        error("feature", constant.declaration->span,
+              "associated constant payload cannot yet be freshly materialized");
+        constant.materialized.reset();
+      }
+    } else {
+      auto value = constant.declaration->constantValue
+                       ? constantType(*constant.declaration->constantValue,
+                                      constant.declaredType)
+                       : Type::Unknown;
+      if (value != Type::Unknown &&
+          (!checked.types->isConstant(value) ||
+           checked.types->parameter(value).valueType !=
+               constant.declaredType)) {
+        error("type", constant.declaration->span,
+              "associated constant value does not match its declared type");
+        value = Type::Unknown;
+      }
+      constant.value = value;
     }
-    constant.value = value;
     constant.state = 2;
     genericEnvironment = savedEnvironment;
     current = savedFunction;
     unsafeDepth = savedUnsafeDepth;
+  }
+  if (constant.materialized) {
+    if (use)
+      facts(*use).constantValue = constant.materialized;
+    return std::nullopt;
   }
   if (constant.value == Type::Unknown)
     return std::nullopt;

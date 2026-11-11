@@ -226,6 +226,7 @@ public:
       : host(host), options(options) {
     if (!this->options.pointerBits)
       this->options.pointerBits = 64;
+    primitiveTypes.setPointerBits(this->options.pointerBits);
     unsafeDepth = options.unsafeContext ? 1 : 0;
   }
 
@@ -246,14 +247,17 @@ public:
       value.reset();
     if (!value && !failed)
       fail("constant", node.span,
-           "'break', 'continue' or 'return' outside a loop or const function");
+           signal == Signal::Throw
+               ? "uncaught typed error in a constant expression"
+               : "'break', 'continue' or 'return' outside a loop or const "
+                 "function");
     result.value = std::move(value);
     return finish(result);
   }
 
 private:
   using Opt = std::optional<Value>;
-  enum class Signal { None, Break, Continue, Return };
+  enum class Signal { None, Break, Continue, Return, Throw };
   struct Fault {
     std::string phase;
     Span span;
@@ -279,6 +283,7 @@ private:
 
   Host &host;
   Options options;
+  TypeStore primitiveTypes;
   std::deque<Frame> frames;
   std::map<int, std::shared_ptr<Value>> staticRoots;
   std::size_t steps = 0;
@@ -450,6 +455,168 @@ private:
       return array;
     }
     return numericOperation(name, owner, arguments, node.span);
+  }
+
+  Opt integerCall(const Node &node, Type owner, std::vector<Value> values,
+                  const Shape *want) {
+    const auto &callee = *node.children[0];
+    auto name = std::string_view(callee.text);
+    if (auto separator = name.rfind("::"); separator != std::string_view::npos)
+      name.remove_prefix(separator + 2);
+    const auto width = integerWidth(owner, options.pointerBits);
+    const auto byteCount = width / 8;
+    const bool fromBytes = name == "from_be_bytes" || name == "from_le_bytes" ||
+                           name == "from_ne_bytes";
+    const bool toBytes =
+        name == "to_be_bytes" || name == "to_le_bytes" || name == "to_ne_bytes";
+    const bool mutates =
+        name == "make_ascii_lowercase" || name == "make_ascii_uppercase";
+    std::vector<Type> operands;
+    std::vector<NumericLiteral> numbers;
+    for (std::size_t i = 0; i < values.size(); ++i) {
+      auto &value = values[i];
+      if (value.kind == Value::Kind::Reference) {
+        auto target = pointee(value);
+        if (target && (isInteger(target->type) || target->type == Type::Bool ||
+                       (fromBytes && target->kind == Shape::Kind::Array)))
+          if (!coerce(value, *target, callee.span))
+            return std::nullopt;
+      }
+      if (fromBytes && value.kind == Value::Kind::Array) {
+        auto element = scalarShape(Type::U8);
+        for (auto &byte : value.elements)
+          if (!coerce(byte, element, callee.span))
+            return std::nullopt;
+        operands.push_back(primitiveTypes.arrayType(
+            Type::U8, primitiveTypes.constant(
+                          Type::Usize, integerLiteral(value.elements.size()))));
+      } else {
+        auto type = value.type;
+        if (value.kind == Value::Kind::Integer && type == Type::Unknown) {
+          type = owner;
+          if (i == 1 && (name.ends_with("pow") || name.ends_with("shl") ||
+                         name.ends_with("shr") || name == "rotate_left" ||
+                         name == "rotate_right"))
+            type = Type::U32;
+          else if (i == 1 &&
+                   (name.ends_with("_signed") || name.ends_with("_unsigned")) &&
+                   name != "cast_signed" && name != "cast_unsigned") {
+            auto spelling = std::string(typeName(owner));
+            spelling[0] = isSignedInteger(owner) ? 'u' : 'i';
+            type = builtinType(spelling);
+          }
+        }
+        operands.push_back(
+            isNumeric(type) || type == Type::Bool ? type : Type::Unknown);
+      }
+      numbers.push_back(value.number);
+    }
+    Type argument = owner;
+    if (toBytes)
+      argument = primitiveTypes.arrayType(
+          Type::U8,
+          primitiveTypes.constant(Type::Usize, integerLiteral(byteCount)));
+    if (mutates && !operands.empty())
+      operands[0] = primitiveTypes.viewType(owner, ParameterMode::Mut);
+    auto signature = machineSignature(
+        primitiveTypes, "numeric." + std::string(name), operands, argument);
+    if (!signature) {
+      if (!fromBytes && !toBytes) {
+        try {
+          if (!evaluateIntegerMethod(name, owner, numbers, options.pointerBits,
+                                     options.littleEndian))
+            return std::nullopt;
+        } catch (const std::invalid_argument &error) {
+          return fail("type", callee.span, error.what());
+        }
+      }
+      return fail("type", callee.span,
+                  "invalid arguments to integer method '" + std::string(name) +
+                      "'");
+    }
+    if (!callee.genericArguments.empty() ||
+        !callee.ownerGenericArguments.empty())
+      return fail("type", callee.span,
+                  "unexpected integer method type arguments");
+    if (signature->unsafeCall && !unsafeDepth)
+      return fail("constant", callee.span,
+                  "unsafe integer method requires an unsafe context");
+    for (std::size_t i = 0; i < values.size(); ++i)
+      if (values[i].kind != Value::Kind::Array) {
+        auto target = scalarShape(mutates && i == 0 ? owner : operands[i]);
+        if (!coerce(values[i], target, callee.span))
+          return std::nullopt;
+        numbers[i] = values[i].number;
+      }
+    const bool little =
+        name.starts_with("from_le") || name.starts_with("to_le") ||
+        ((name.starts_with("from_ne") || name.starts_with("to_ne")) &&
+         options.littleEndian);
+    if (fromBytes) {
+      NumericLiteral bits;
+      for (std::size_t i = 0; i < byteCount; ++i) {
+        auto position = little ? i : byteCount - i - 1;
+        bits.magnitude[position / 8] |=
+            values.front().elements[i].number.magnitude[0]
+            << ((position % 8) * 8);
+      }
+      return integerValue(owner, castInteger(bits, owner, options.pointerBits));
+    }
+    if (toBytes) {
+      auto bits = castInteger(numbers.front(), Type::U128, options.pointerBits);
+      Value bytes;
+      bytes.kind = Value::Kind::Array;
+      if (want && want->kind == Shape::Kind::Array)
+        bytes.type = want->type;
+      for (std::size_t i = 0; i < byteCount; ++i) {
+        auto position = little ? i : byteCount - i - 1;
+        auto byte =
+            (bits.magnitude[position / 8] >> ((position % 8) * 8)) & 255;
+        bytes.elements.push_back(integerValue(Type::U8, integerLiteral(byte)));
+      }
+      return bytes;
+    }
+    auto operation = mutates ? name == "make_ascii_lowercase"
+                                   ? "to_ascii_lowercase"
+                                   : "to_ascii_uppercase"
+                             : name;
+    std::optional<IntegerMethodResult> calculated;
+    try {
+      calculated = evaluateIntegerMethod(
+          operation, owner, numbers, options.pointerBits, options.littleEndian);
+    } catch (const std::invalid_argument &error) {
+      return fail("constant", callee.span, error.what());
+    }
+    if (!calculated)
+      return unsupported(callee.span,
+                         "integer method '" + std::string(name) + "'");
+    auto value = calculated->type == Type::Bool
+                     ? boolValue(calculated->value.magnitude[0] != 0)
+                     : integerValue(calculated->type, calculated->value);
+    if (mutates)
+      return value;
+    if (calculated->type != signature->value)
+      return fail("internal", callee.span,
+                  "integer constant method result type does not match");
+    if (signature->shape == MachineSignature::Shape::Optional) {
+      Value optional;
+      optional.kind = Value::Kind::Variant;
+      optional.type = want ? want->type : Type::Unknown;
+      optional.selection = calculated->failed ? 0 : 1;
+      if (!calculated->failed)
+        optional.elements.push_back(std::move(value));
+      return optional;
+    }
+    if (signature->shape == MachineSignature::Shape::Overflow) {
+      Value pair;
+      pair.kind = Value::Kind::Tuple;
+      pair.type = want ? want->type : Type::Unknown;
+      pair.elements = {std::move(value), boolValue(calculated->failed)};
+      return pair;
+    }
+    if (signature->shape != MachineSignature::Shape::Value)
+      return unsupported(callee.span, "this integer method result shape");
+    return value;
   }
 
   // Type structure of a declared type.
@@ -1098,6 +1265,19 @@ private:
         result.symbol = found.staticSymbol;
         return result;
       }
+      if (found.kind == Lookup::Kind::Constant && found.freshValue) {
+        if (!host.copy(host.valueType(found.value))) {
+          fail("feature", node.span,
+               "required projection or borrow of a non-Copy associated value "
+               "is not implemented");
+          return {};
+        }
+        frame().locals.emplace_back("<associated>", std::move(found.value),
+                                    true, nullptr);
+        const auto &local = frame().locals.back();
+        return {local.value.get(), local.value.get(), {}, true,
+                node.text,         local.value};
+      }
       return {};
     }
     case Kind::Field: {
@@ -1130,6 +1310,10 @@ private:
         index = std::stoull(node.text);
       if (index >= type->elements.size())
         return {};
+      if (!host.project(type->type, static_cast<std::size_t>(index), node)) {
+        failed = reported = true;
+        return {};
+      }
       auto layout = host.layout(type->type);
       if (!layout || index >= layout->fields.size())
         return {};
@@ -1552,7 +1736,8 @@ private:
   // `escaped` is set when the signal belongs to an outer construct or error.
   bool loopControl(const Node &loop, bool &escaped) {
     escaped = false;
-    if (failed || signal == Signal::Return || signal == Signal::None) {
+    if (failed || signal == Signal::Return || signal == Signal::Throw ||
+        signal == Signal::None) {
       escaped = true;
       return true;
     }
@@ -1968,7 +2153,13 @@ private:
                   "panic during constant evaluation");
     std::optional<Value> receiver;
     Place receiverPlace;
-    if (callee.kind == Kind::Field) {
+    auto primitiveOwner = callee.kind == Kind::Field
+                              ? namedType(*callee.children[0])
+                              : Type::Unknown;
+    if (callee.kind == Kind::Name && operation.name.starts_with("numeric.") &&
+        isInteger(operation.type))
+      primitiveOwner = operation.type;
+    if (callee.kind == Kind::Field && !isInteger(primitiveOwner)) {
       auto converted = host.receiver(node);
       if (converted)
         receiver = eval(*converted, nullptr);
@@ -2028,6 +2219,45 @@ private:
       arguments.push_back(std::move(*value));
       places.push_back(std::move(where));
     }
+    if (receiver && receiver->kind == Value::Kind::Reference) {
+      auto target = pointee(*receiver);
+      if (target && isInteger(target->type))
+        primitiveOwner = target->type;
+    } else if (receiver && receiver->kind == Value::Kind::Integer) {
+      if (!defaultTypes(*receiver, callee.span))
+        return std::nullopt;
+      primitiveOwner = receiver->type;
+    }
+    if (isInteger(primitiveOwner)) {
+      auto values = arguments;
+      if (receiver)
+        values.insert(values.begin(), *receiver);
+      auto value = integerCall(node, primitiveOwner, std::move(values), want);
+      if (failed)
+        return std::nullopt;
+      if (value) {
+        if (callee.text == "make_ascii_lowercase" ||
+            callee.text == "make_ascii_uppercase") {
+          if (!receiver && arguments.empty())
+            return fail("type", callee.span, "missing mutable receiver");
+          auto &where = receiver ? receiverPlace : places.front();
+          auto &original = receiver ? *receiver : arguments.front();
+          if (original.kind == Value::Kind::Reference) {
+            if (!writeObject(original, *value, callee.span))
+              return std::nullopt;
+          } else if (where.address) {
+            if (!writeObject(*where.address, *value, callee.span))
+              return std::nullopt;
+          } else if (where.value && where.mutableBinding)
+            *where.value = std::move(*value);
+          else
+            return fail("constant", callee.span,
+                        "integer mutation requires a mutable place");
+          return unitValue();
+        }
+        return value;
+      }
+    }
     if (!operation.name.empty())
       return intrinsic(node, operation, receiver ? &*receiver : nullptr,
                        arguments);
@@ -2077,9 +2307,8 @@ private:
       return fail("constant", node.span,
                   "call to non-const function '" + displayPath(callee.text) +
                       "' in a constant expression");
-    if (declaration &&
-        (declaration->variadic || declaration->destructor ||
-         declaration->foreignDeclaration || !declaration->error.empty()))
+    if (declaration && (declaration->variadic || declaration->destructor ||
+                        declaration->foreignDeclaration))
       return unsupported(node.span, "this constant function effect");
     if (function->unsafeFunction && !unsafeDepth)
       return fail("unsafe", node.span,
@@ -2300,12 +2529,10 @@ private:
           (!function.owner.empty() && !receiver) || function.variadic ||
           function.explicitReceiver ||
           (!found.checkedFunction && !function.body.get()) ||
-          function.destructor || !function.error.empty() ||
-          function.foreignDeclaration)
-        return unsupported(callee.span,
-                           "calling '" + displayPath(callee.text) +
-                               "' (generic, method, variadic or fallible "
-                               "const functions)");
+          function.destructor || function.foreignDeclaration)
+        return unsupported(callee.span, "calling '" + displayPath(callee.text) +
+                                            "' (generic, method or variadic "
+                                            "const functions)");
     }
     if (frames.size() > options.callDepth)
       return fail("limit", node.span,
@@ -2670,6 +2897,46 @@ private:
       return condition(node);
     case Kind::Match:
       return matchExpression(node, want);
+    case Kind::Throw: {
+      auto value = eval(*node.children[0], nullptr);
+      if (!value)
+        return std::nullopt;
+      signal = Signal::Throw;
+      signalLabel.clear();
+      signalValue = std::move(*value);
+      return std::nullopt;
+    }
+    case Kind::Try: {
+      auto value = eval(*node.children[0], nullptr);
+      if (!value || host.operation(node).name != "try.outcome")
+        return value;
+      if (value->kind != Value::Kind::Variant || value->elements.size() != 1 ||
+          (value->selection != 0 && value->selection != 1))
+        return fail("internal", node.span,
+                    "checked outcome propagation has an invalid value");
+      if (value->selection == 0)
+        return std::move(value->elements.front());
+      signal = Signal::Throw;
+      signalLabel.clear();
+      signalValue = std::move(value->elements.front());
+      return std::nullopt;
+    }
+    case Kind::Capture: {
+      auto value = eval(*node.children[0], nullptr);
+      if (!value && (failed || signal != Signal::Throw))
+        return std::nullopt;
+      if (!want || want->kind != Shape::Kind::Variant ||
+          want->variants.size() != 2)
+        return unsupported(node.span, "this typed capture result");
+      Value captured;
+      captured.kind = Value::Kind::Variant;
+      captured.type = want->type;
+      captured.selection = value ? 0 : 1;
+      captured.elements.push_back(value ? std::move(*value)
+                                        : std::move(signalValue));
+      signal = Signal::None;
+      return captured;
+    }
     case Kind::Binding:
       return binding(node);
     case Kind::Assign:

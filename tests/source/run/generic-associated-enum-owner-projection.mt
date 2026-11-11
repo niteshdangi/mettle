@@ -44,6 +44,16 @@ fn forward<region r>(take value: Storage<region r, Value>): i32 {
     into_owned(value)
 }
 
+fn borrowed<region r>(read source: Value from r): Storage<region r, Value> {
+    Storage<region r, Value>.Borrowed(read source)
+}
+
+fn choose<region r>(
+    read source: Value from r, pick: bool
+): Storage<region r, Value> {
+    if pick { borrowed(read source) } else { Storage<region r, Value>.Owned(11) }
+}
+
 fn forward_slice<region r, T: Copy>(take value: Cow<region r, T>): [T; 1] {
     into_owned(value)
 }
@@ -60,6 +70,9 @@ fn borrowed_option<region r, T>(read value: T from r): (read T from r)? {
 }
 
 fn roundtrip<region r>(read source: Value from r): i32 {
+    let returned: Storage<region r, Value> = borrowed(read source)
+    if forward(returned) != 7 { return 8 }
+    if forward(choose(read source, false)) != 11 { return 9 }
     let forwarded: Storage<region r, Value> = Storage.Borrowed(read source)
     if forward(forwarded) != 7 { return 5 }
     var stored: Storage<region r, Value> = Storage.Borrowed(read source)

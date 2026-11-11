@@ -95,6 +95,7 @@ struct Lookup {
   const Function *declaration = nullptr;
   std::shared_ptr<CheckedFunction> prepared{};
   int staticSymbol = -1;
+  bool freshValue = false;
 };
 
 // Name resolution and diagnostics belong to the caller, so the evaluator
@@ -128,6 +129,7 @@ public:
     return std::nullopt;
   }
   virtual std::optional<Shape> typeShape(Type) { return std::nullopt; }
+  virtual bool project(Type, std::size_t, const Node &) { return true; }
   virtual Type valueType(const Value &value) { return value.type; }
   virtual Type referenceType(Type, bool, bool) { return Type::Unknown; }
   virtual std::optional<Layout> layout(Type) { return std::nullopt; }

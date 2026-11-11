@@ -35,4 +35,13 @@ bool machineResultMatches(const TypeStore &types,
                           const MachineSignature &signature, Type result);
 bool machineCastAllowed(const TypeStore &types, Type source, Type target);
 bool constantFloatMethod(std::string_view name);
+struct IntegerMethodResult {
+  Type type = Type::Unknown;
+  NumericLiteral value{};
+  bool failed = false;
+};
+std::optional<IntegerMethodResult>
+evaluateIntegerMethod(std::string_view method, Type owner,
+                      std::span<const NumericLiteral> operands,
+                      unsigned pointerBits, bool littleEndian);
 } // namespace mettle

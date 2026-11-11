@@ -48,6 +48,7 @@ struct ImportedInherentConstant {
   std::string name;
   Type target = Type::Unknown, declaredType = Type::Unknown,
        value = Type::Unknown;
+  std::optional<StaticConstant> materialized{};
 };
 struct ImportedClosure {
   Span span;
