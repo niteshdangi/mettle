@@ -9,15 +9,15 @@ areas remain partial: L003, L005, L009, S005-S014, S019-S021, S024-S025.
 
 ## Handoff (start here in a new session)
 
-Latest operation ledger (2026-11-12): **8,836 evidenced, 2,583 declared,
+Latest operation ledger (2026-11-12): **11,345 evidenced, 74 declared,
 1,871 missing, 5 not applicable** of 13,295 records. Declared means implemented
 but not behaviorally verified per type/profile. Subset/source-cfg reconciliation
 and Linux applicability review remain open; no area is closed by these batches.
-The declared records comprise the previous 20 conversion-blanket records,
-54 NonNull records with runtime but not stable-const
-acceptance, and 2,509 integer records whose earlier runtime receipts did not
-establish their required stable constant-callability. The integer audit corrects
-another 2,197 runtime-only records to declared, beyond the previous 312.
+The declared records comprise the previous 20 conversion-blanket records and
+54 NonNull records with runtime but not stable-const acceptance.
+The 2,509 integer records now have required-const acceptance as recorded below.
+The earlier integer audit corrected another 2,197 runtime-only records to
+declared, beyond the previous 312, before qualifying their constant-callability.
 Manifest alias contexts are deduplicated by canonical ID, not counted as
 independent obligations. This correction is not a runtime regression.
 
@@ -43,11 +43,26 @@ model. Exact frozen identities and receipts are retained in
 
 The integer evaluator now implements the shared target-width integer-method
 kernel, including optional/overflow results, byte-order constructors and mutable
-ASCII writeback. The arithmetic and kernel fixtures pass debug/release and
-exercise 152 of the 153 selected method names. This is not qualification of all
-2,509 canonical exposures: source `from_str_radix`, exact record mapping and
-complete sanitizer/profile acceptance remain open. The older unsupported-call
-receipts below describe earlier compiler revisions.
+ASCII writeback. All 2,509 selected stable-const integer records now have exact
+canonical-ID mappings to required-constant calls: 1,396 type/method pairs,
+153 method names and twelve integer types. Arithmetic, kernel and source
+`from_str_radix` fixtures execute in debug/release with normal and ASan/UBSan
+compilers; the invalid-radix fixture rejects for the intended diagnostic in
+all four combinations. All sixteen profile units pass (twelve executions and
+four rejections), with no compiler sanitizer reports. Added assertions exercise
+high-bit endian conversions, successful and overflowing arithmetic, signed
+MIN/-1 division/remainder and zero-divisor rejection. Existing runtime evidence
+is retained alongside the required-const fixture mappings.
+
+This acceptance uses frozen Linux x86-64 compiler/library inputs, with only
+`core/num.mt` overlaid on the immutable V15 library; that numeric source matches
+the tracked source. Source, compiler, launcher and library identities were
+checked before and after acceptance. Exact mappings, hashes and commands are in
+`build/i13-integer-const-acceptance-handoff.json`; receipts are
+`build/i13-integer-const-acceptance/{normal,sanitized}/{run,fail}/{run,fail}/evidence.json`
+with matching run/run or fail/fail directories. It does not qualify subsequent
+compiler edits, emitted-program sanitization, a complete numeric area or I13.
+The older unsupported-call receipts below describe earlier compiler revisions.
 
 Required evaluation also propagates typed errors through calls, loops, `try`
 and `capture`; capture does not catch arithmetic faults. Concrete nominal
@@ -68,8 +83,8 @@ Current focused Linux x86-64 evidence:
 - Ten intended negatives pass, covering nominal visibility/cycles/unsupported
   contexts, uncaught arithmetic faults and region/payload invariance.
 - The ASan/UBSan compiler checks typed effects and required nominal projections
-  without reports. The complete integer fixture has not yet been rerun with
-  this repaired sanitized compiler.
+  without reports. The frozen integer acceptance above supersedes the earlier
+  missing full-integer sanitizer run, not the scope of these older receipts.
 
 Receipts: `i13-pattern-probe-fix-source`,
 `i13-pattern-probe-fix-negative` and the corresponding normal/sanitized build
@@ -376,8 +391,9 @@ i13-split-read-closure and i13-split-read-asan.
   collection work, but integer receiver/constructor evaluation remains missing.
   Canonical-ID-deduplicated review finds 2,509 selected stable-const integer
   method records, not only the previous 312 power/division records. All remain
-  declared, retaining runtime receipts; direct wrapping_add, checked_add,
-  overflowing_add and wrapping_pow probes still reject constant calls.
+  declared at that revision, retaining runtime receipts; direct wrapping_add,
+  checked_add, overflowing_add and wrapping_pow probes rejected constant calls.
+  The 2026-11-12 frozen required-const acceptance above supersedes this gap.
 - D31's owner-approved ownership-type/copying separation is specified in the
   native contracts and implemented in core/alloc/hosted owners. All six Cow
   fixtures pass both profiles across scoped integration reruns; general

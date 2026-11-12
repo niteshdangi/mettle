@@ -76,6 +76,22 @@ macro scalar_constants {
                $type.from_le(value.to_le()) != value ||
                value.swap_bytes() != value.wrapping_shl(width - 8u32) ||
                all.swap_bytes() != all { return 10 }
+            var high_big = [0u8; ($type.BITS / 8u32) as usize]
+            var high_little = high_big
+            high_big[0usize] = 0x80u8
+            high_little[bytes - 1usize] = 0x80u8
+            let ones = [255u8; ($type.BITS / 8u32) as usize]
+            if $type.from_be_bytes(high_big) != top ||
+               $type.from_le_bytes(high_little) != top ||
+               $type.from_ne_bytes(ones) != all { return 10 }
+            let top_big = top.to_be_bytes()
+            let top_little = top.to_le_bytes()
+            index = 0usize
+            while index < bytes {
+                if top_big[index] != high_big[index] ||
+                   top_little[index] != high_little[index] { return 10 }
+                index += 1usize
+            }
 
             let fifteen = 15 as $type
             if fifteen.ilog(three) != 2u32 || fifteen.ilog2() != 3u32 ||
@@ -145,6 +161,7 @@ macro scalar_constants {
                 none => { return 21 }
             }
             match nine.checked_rem(zero) { none => {}, present(_) => { return 22 } }
+            match nine.checked_div_euclid(zero) { none => {}, present(_) => { return 22 } }
             match nine.checked_rem_euclid(zero) { none => {}, present(_) => { return 22 } }
             if nine.strict_div(two) != 4 as $type ||
                nine.strict_div_euclid(two) != 4 as $type ||
@@ -168,6 +185,10 @@ macro signed_constants {
                unsafe { negative.unchecked_neg() } != 3 as $type { return 31 }
             match $type.MIN.checked_abs() { none => {}, present(_) => { return 32 } }
             match $type.MIN.checked_neg() { none => {}, present(_) => { return 32 } }
+            match negative.checked_neg() {
+                present(value) => { if value != 3 as $type { return 32 } },
+                none => { return 32 }
+            }
             match negative.checked_abs() {
                 present(value) => { if value != 3 as $type { return 32 } },
                 none => { return 32 }

@@ -45,6 +45,12 @@ macro integer_constants {
                 present(_) => { return false },
                 none => {}
             }
+            match nine.checked_add(two) {
+                present(value) => { if value != 11 as $type { return false } },
+                none => { return false }
+            }
+            let exact_add = nine.overflowing_add(two)
+            if exact_add.0 != 11 as $type || exact_add.1 { return false }
             match nine.checked_div(zero) {
                 present(_) => { return false },
                 none => {}
@@ -59,6 +65,18 @@ macro integer_constants {
                 if $type.MIN.wrapping_div(negative_one) != $type.MIN { return false }
                 if $type.MIN.wrapping_rem(negative_one) != zero { return false }
                 if $type.MIN.saturating_div(negative_one) != $type.MAX { return false }
+                match $type.MIN.checked_div(negative_one) {
+                    none => {}, present(_) => { return false }
+                }
+                match $type.MIN.checked_div_euclid(negative_one) {
+                    none => {}, present(_) => { return false }
+                }
+                match $type.MIN.checked_rem(negative_one) {
+                    none => {}, present(_) => { return false }
+                }
+                match $type.MIN.checked_rem_euclid(negative_one) {
+                    none => {}, present(_) => { return false }
+                }
                 let minimum_div = $type.MIN.overflowing_div(negative_one)
                 let minimum_div_euclid = $type.MIN.overflowing_div_euclid(negative_one)
                 let minimum_rem = $type.MIN.overflowing_rem(negative_one)

@@ -50,17 +50,20 @@ still obligations. No executed all-target expansion or per-item native coherence
 check is claimed.
 
 Generate the I13 [worklist](baseline/v1-operations.csv) with
-`python3 tools/v1_operations.py`. Latest ledger (2026-11-12): **8,723 evidenced,
-2,583 declared, 1,984 missing, 5 not applicable** of 13,295 canonical records,
+`python3 tools/v1_operations.py`. Latest ledger (2026-11-12): **11,345 evidenced,
+74 declared, 1,871 missing, 5 not applicable** of 13,295 canonical records,
 grouped into 2,442 operation and 2,309 implementation families. Subset/source-cfg
 reconciliation and Linux applicability review remain open; the five Windows-only
 exclusions were recorded on Darwin. Missing/unmapped is not proof of absent
 code; declarations/name matches are not behavioral passes.
 
-The declared records comprise 20 conversion-blanket exposures,
-54 NonNull runtime-only records and 2,509 integer records lacking stable-const
-acceptance. Canonical-ID-deduplicated review corrects another 2,197 integer
-runtime-only records to declared; manifest aliases are not separate obligations.
+The declared records comprise 20 conversion-blanket exposures and
+54 NonNull runtime-only records. All 2,509 selected stable-const integer records
+now have exact required-constant mappings and sixteen passing Linux x86-64
+normal/compiler-ASan/UBSan profile units, as recorded in the
+[integer acceptance](i13-library.md#current-constcompiler-integration-2026-11-12).
+The prior correction of runtime-only credit is historical; manifest aliases
+are not separate obligations.
 The collection/vector group's 403 records now have scoped evidence, including
 its final 35 const obligations and six exclusive-split exposures, in the
 [collection reconciliation](i13-library.md#collectionvector-reconciliation-2026-11-11).
@@ -69,8 +72,8 @@ splits close six more. No complete area or milestone is qualified by this group.
 The fifteen callable-adapter Clone/ToOwned records now have debug/release
 execution evidence for independently advanced map, filter, take_while,
 skip_while and flat_map states using cloneable function pointers.
-Integer records retain their runtime receipts without crediting unimplemented
-const behavior.
+Integer records retain their runtime receipts alongside the new required-const
+evidence; this is not complete numeric-area or later compiler qualification.
 Eleven networking records, ten non-stable-const NonNull records, five IO
 records and one owning-array implementation gain scoped
 Linux evidence in the [parallel reconciliation](i13-library.md#parallel-reconciliation-2026-11-11).

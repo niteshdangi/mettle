@@ -1264,8 +1264,8 @@ Current library implementation, blockers and exact focused receipts are owned by
 [i13-library.md](i13-library.md#handoff-start-here-in-a-new-session); the
 [capability inventory](capability-coverage.md#i13-macos-arm64-acceptance-inventory)
 retains row/fixture ownership. All eighteen library areas remain partial.
-Latest 2026-11-12 operation ledger: **8,723 evidenced, 2,583 declared,
-1,984 missing, 5 not applicable** (13,295 total, grouped into 2,442 operation
+Latest 2026-11-12 operation ledger: **11,345 evidenced, 74 declared,
+1,871 missing, 5 not applicable** (13,295 total, grouped into 2,442 operation
 and 2,309 implementation families; subset/source-cfg reconciliation pending).
 Unzip has focused Linux native/emitted-ASan debug/release evidence; 20
 conversion blanket exposures remain declared. Fifteen callable-adapter
@@ -1285,10 +1285,14 @@ adds generic synchronous socket inputs, UDP peek_from and focused NonNull
 signature/alignment repairs. Eleven network and ten non-stable-const pointer
 records gain scoped evidence. Another 54 pointer records retain runtime
 acceptance but lack required stable-const support. Canonical-ID-deduplicated
-review corrects 2,197 further integer records to declared, beyond the earlier
+review corrected 2,197 further integer records to declared, beyond the earlier
 312 power/division records: their runtime passes did not establish the required
-constant-callability. All 2,509 stable-const integer method records remain
-declared, and direct constant reproductions remain unsupported.
+constant-callability. All 2,509 stable-const integer method records now have
+exact required-constant mappings and sixteen passing normal/compiler-ASan/UBSan
+debug/release units on frozen Linux x86-64 inputs (twelve executions and four
+intended invalid-radix rejections). The
+[integer acceptance](i13-library.md#current-constcompiler-integration-2026-11-12)
+records identities and scope; it is not later-compiler or whole-area closure.
 D31's ownership-type separation has focused
 ordinary and emitted-ASan cleanup acceptance; exact operation mapping remains
 open. Five IO records and one owning-array implementation gain scoped evidence.
