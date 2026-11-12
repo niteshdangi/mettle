@@ -1305,11 +1305,11 @@ Bea9206bcbbb2202f8febfee1,impl:io::Cursor:convert::TryFrom,https://doc.rust-lang
 B8c33b9bc641b40176f153be9,impl:io::Cursor:convert::TryInto,https://doc.rust-lang.org/1.99.1/std/io/struct.Cursor.html#impl-TryInto%3CU%3E-for-T,core.convert.TryInto,evidenced,tests/source/run/i13-blanket-behavior-blanket-core.mt;tests/source/run/i13-blanket-behavior-blanket-std.mt;tests/source/run/i13-blanket-cells-pointers.mt;tests/source/run/i13-blanket-collections.mt;tests/source/run/i13-blanket-ffi-fs-io.mt;tests/source/run/i13-blanket-iterators.mt;tests/source/run/i13-blanket-net-path-process.mt;tests/source/run/i13-blanket-primitives.mt;tests/source/run/i13-blanket-sync.mt;tests/source/run/i13-blanket-thread-task-time.mt;tests/source/run/i13-any-static-views.mt
 B5e0bfdcfc99dedcf397cc49d,impl:io::Cursor:default::Default,https://doc.rust-lang.org/1.99.1/std/io/struct.Cursor.html#impl-Default-for-Cursor%3CT%3E,,missing,
 Ba216887e8c53c2a0e9e72cea,impl:io::Cursor:fmt::Debug,https://doc.rust-lang.org/1.99.1/std/io/struct.Cursor.html#impl-Debug-for-Cursor%3CT%3E,,missing,
-B90de3b5cc249a1ff43fc221e,impl:io::Cursor:io::BufRead,https://doc.rust-lang.org/1.99.1/std/io/struct.Cursor.html#impl-BufRead-for-Cursor%3CT%3E,,missing,
-Bcfac213d64181e75a65bad48,impl:io::Cursor:io::Read,https://doc.rust-lang.org/1.99.1/std/io/struct.Cursor.html#impl-Read-for-Cursor%3CT%3E,,missing,
-B244fdf294d86e4852c3463b3,impl:io::Cursor:io::Seek,https://doc.rust-lang.org/1.99.1/std/io/struct.Cursor.html#impl-Seek-for-Cursor%3CT%3E,,missing,
-B3b165d4b02f944b0f11d39f6,impl:io::Cursor:io::Write,https://doc.rust-lang.org/1.99.1/std/io/struct.Cursor.html#impl-Write-for-Cursor%3C%5Bu8;+N%5D%3E,,missing,
-B5cdcbf9ab0039a35efb42564,impl:io::Cursor:io::Write,https://doc.rust-lang.org/1.99.1/std/io/struct.Cursor.html#impl-Write-for-Cursor%3C%26mut+%5Bu8%5D%3E,,missing,
+B90de3b5cc249a1ff43fc221e,impl:io::Cursor:io::BufRead,https://doc.rust-lang.org/1.99.1/std/io/struct.Cursor.html#impl-BufRead-for-Cursor%3CT%3E,std.io.Cursor implements BufRead,declared,tests/std/i13_io_cursor_vectored.mt
+Bcfac213d64181e75a65bad48,impl:io::Cursor:io::Read,https://doc.rust-lang.org/1.99.1/std/io/struct.Cursor.html#impl-Read-for-Cursor%3CT%3E,std.io.Cursor implements Reader,declared,tests/std/i13_io_cursor_vectored.mt
+B244fdf294d86e4852c3463b3,impl:io::Cursor:io::Seek,https://doc.rust-lang.org/1.99.1/std/io/struct.Cursor.html#impl-Seek-for-Cursor%3CT%3E,std.io.Cursor implements Seek,declared,tests/std/i13_io_cursor_vectored.mt
+B3b165d4b02f944b0f11d39f6,impl:io::Cursor:io::Write,https://doc.rust-lang.org/1.99.1/std/io/struct.Cursor.html#impl-Write-for-Cursor%3C%5Bu8;+N%5D%3E,std.io.Cursor implements Writer,evidenced,tests/std/i13_io_cursor_vectored.mt
+B5cdcbf9ab0039a35efb42564,impl:io::Cursor:io::Write,https://doc.rust-lang.org/1.99.1/std/io/struct.Cursor.html#impl-Write-for-Cursor%3C%26mut+%5Bu8%5D%3E,std.io.Cursor implements Writer,evidenced,tests/std/i13_io_cursor_vectored.mt
 B193d71ec24e35ba2dd56bfe5,impl:io::Cursor:marker::Send,https://doc.rust-lang.org/1.99.1/std/io/struct.Cursor.html#impl-Send-for-Cursor%3CT%3E,,missing,
 B36a664efec230fe5192a6564,impl:io::Cursor:marker::Sync,https://doc.rust-lang.org/1.99.1/std/io/struct.Cursor.html#impl-Sync-for-Cursor%3CT%3E,,missing,
 B532838cd4c77f22365365bc0,impl:io::Error:any::Any,https://doc.rust-lang.org/1.99.1/std/io/struct.Error.html#impl-Any-for-T,,evidenced,tests/source/run/i13-blanket-ffi-fs-io.mt;tests/source/run/i13-blanket-sync.mt;tests/source/run/i13-blanket-thread-task-time.mt;tests/source/run/i13-blanket-net-path-process.mt;tests/source/run/i13-blanket-behavior-blanket-std.mt
@@ -7996,7 +7996,7 @@ Bb2af5c8f836468a598458ab7,operation:env::temp_dir,https://doc.rust-lang.org/1.99
 Bc7484f5684392afc6fc8c444,operation:env::var,https://doc.rust-lang.org/1.99.1/std/env/fn.var.html,std.env,evidenced,tests/std/i13_env_var_temp.mt
 Bcfe7af08ffe1c18d1e8103fa,operation:env::vars,https://doc.rust-lang.org/1.99.1/std/env/fn.vars.html,std.env,evidenced,tests/std/i13_env_var_temp.mt
 B209dbbb942715ff0c8294807,operation:eprint,https://doc.rust-lang.org/1.99.1/std/macro.eprint.html,,evidenced,tests/source/run/i13-macro-equivalents-panic-print.mt
-B62ca9d66ae5f49d2029e8493,operation:eprintln,https://doc.rust-lang.org/1.99.1/std/macro.eprintln.html,library/std/macros.mt,declared,tests/source/run/i13-macro-format-output.mt
+B62ca9d66ae5f49d2029e8493,operation:eprintln,https://doc.rust-lang.org/1.99.1/std/macro.eprintln.html,library/std/macros.mt,evidenced,tests/source/run/i13-macro-format-output.mt;tests/source/run/i13-macro-eprintln-write-failure.mt
 Be8cb019f1b06f53633cf0752,operation:error::Error,https://doc.rust-lang.org/1.99.1/core/error/trait.Error.html,,missing,
 Ba3c15b9bc0a9d9bdb754e29e,operation:error::Error::source,https://doc.rust-lang.org/1.99.1/core/error/trait.Error.html#method.source,,evidenced,tests/source/run/i13-coremisc-convert-error-panic.mt
 Bb3144268101be5b130e07d5d,operation:ffi::CStr,https://doc.rust-lang.org/1.99.1/core/ffi/struct.CStr.html,,evidenced,tests/alloc/i13_ffi_cstrings.mt;tests/source/run/i13-core-cstr.mt;tests/source/run/i13-ffi-cstring-traits.mt;tests/std/i13_ffi_cstrings.mt
@@ -8132,7 +8132,7 @@ B7483f18b151477976e1a0290,operation:fmt::Write::write_fmt,https://doc.rust-lang.
 B3a3bbbf9526c9d0bec292b8d,operation:fmt::Write::write_str,https://doc.rust-lang.org/1.99.1/alloc/fmt/trait.Write.html#tymethod.write_str,,evidenced,tests/source/run/i13-string-operations.mt;tests/source/run/i13-fmt-formatter-operations.mt
 Bbe38006f580ac05974056629,operation:fmt::Write::write_str,https://doc.rust-lang.org/1.99.1/core/fmt/trait.Write.html#tymethod.write_str,,evidenced,tests/source/run/i13-string-operations.mt;tests/source/run/i13-fmt-formatter-operations.mt
 B80856c96acc80a3f54081bb7,operation:format,https://doc.rust-lang.org/1.99.1/alloc/macro.format.html,library/std/macros.mt,evidenced,tests/source/run/i13-macro-format-output.mt
-Bc0699c9fb1bfb74fe33c7917,operation:format_args,https://doc.rust-lang.org/1.99.1/core/macro.format_args.html,library/std/macros.mt,declared,tests/source/run/i13-macro-format-output.mt
+Bc0699c9fb1bfb74fe33c7917,operation:format_args,https://doc.rust-lang.org/1.99.1/core/macro.format_args.html,library/std/macros.mt,evidenced,tests/source/run/i13-macro-format-output.mt;tests/source/run/i13-macro-format-args-forward.mt;tests/source/fail/i13-macro-format-args-escape-forward.mt;tests/source/fail/i13-macro-format-args-escape-recipe.mt
 B62eecb5006f1abc92a7f68bf,operation:fs::DirEntry,https://doc.rust-lang.org/1.99.1/std/fs/struct.DirEntry.html,,missing,
 B1575e0b652a68755aa6a12a7,operation:fs::DirEntry::file_name,https://doc.rust-lang.org/1.99.1/std/fs/struct.DirEntry.html#method.file_name,,missing,
 B1481b5648304dc464fb47f74,operation:fs::DirEntry::file_type,https://doc.rust-lang.org/1.99.1/std/fs/struct.DirEntry.html#method.file_type,,missing,

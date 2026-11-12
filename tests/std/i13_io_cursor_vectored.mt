@@ -44,6 +44,37 @@ fn run(): i32 throws Error {
             if !error.kind().is(std.io.ErrorKind.InvalidInput) { return 7 }
         }
     }
+    if cursor.position() != 0xffffffffffffffffu64 { return 21 }
+    var past_end = [0u8; 1]
+    if try cursor.read_some(mut past_end) != 0usize ||
+        (try cursor.fill_buf()).len() != 0usize { return 22 }
+    if cursor.position() != 0xffffffffffffffffu64 { return 23 }
+    if try cursor.seek(SeekFrom.Current(-9223372036854775807i64 - 1i64)) !=
+        9223372036854775807u64 { return 43 }
+    cursor.set_position(0u64)
+    match take capture cursor.seek(SeekFrom.Current(-1i64)) {
+        success(_) => { return 24 },
+        failure(error) => {
+            if !error.kind().is(std.io.ErrorKind.InvalidInput) { return 25 }
+        }
+    }
+    if cursor.position() != 0u64 { return 26 }
+    match take capture cursor.seek(SeekFrom.End(-9223372036854775807i64 - 1i64)) {
+        success(_) => { return 27 },
+        failure(error) => {
+            if !error.kind().is(std.io.ErrorKind.InvalidInput) { return 28 }
+        }
+    }
+    if cursor.position() != 0u64 { return 29 }
+    cursor.set_position(5u64)
+    var too_long = [0u8; 2]
+    match take capture cursor.read_exact(mut too_long) {
+        success(_) => { return 30 },
+        failure(error) => {
+            if !error.kind().is(std.io.ErrorKind.UnexpectedEof) { return 31 }
+        }
+    }
+    if cursor.position() != 6u64 || too_long[0usize] != 102u8 { return 32 }
 
     var vectored_reader = Cursor.new([119u8, 120u8, 121u8, 122u8])
     var empty = [0u8; 0]
@@ -72,6 +103,21 @@ fn run(): i32 throws Error {
     if writer.get_ref()[0usize] != 120u8 || writer.get_ref()[1usize] != 121u8 {
         return 13
     }
+    writer.set_position(3u64)
+    match take capture writer.write_all("zz".as_bytes()) {
+        success(_) => { return 33 },
+        failure(error) => {
+            if !error.kind().is(std.io.ErrorKind.WriteZero) { return 34 }
+        }
+    }
+    if writer.position() != 4u64 || writer.get_ref()[3usize] != 122u8 { return 35 }
+    if try writer.write_some("".as_bytes()) != 0usize || writer.position() != 4u64 {
+        return 41
+    }
+    writer.set_position(0xffffffffffffffffu64)
+    if try writer.write_some("x".as_bytes()) != 0usize ||
+        writer.position() != 0xffffffffffffffffu64 { return 36 }
+    try writer.flush()
     let cloned = writer.clone()
     if cloned != writer || !(try render_debug(read cloned)).as_text().starts_with("Cursor") {
         return 17
@@ -94,8 +140,24 @@ fn run(): i32 throws Error {
         slice_cursor.get_ref()[2usize] != 33u8 {
         return 15
     }
+    slice_cursor.set_position(2u64)
+    match take capture slice_cursor.write_all("xy".as_bytes()) {
+        success(_) => { return 37 },
+        failure(error) => {
+            if !error.kind().is(std.io.ErrorKind.WriteZero) { return 38 }
+        }
+    }
+    if slice_cursor.position() != 3u64 || slice_cursor.get_ref()[2usize] != 120u8 {
+        return 39
+    }
+    if try slice_cursor.write_some("".as_bytes()) != 0usize ||
+        slice_cursor.position() != 3u64 { return 42 }
+    slice_cursor.set_position(0xffffffffffffffffu64)
+    if try slice_cursor.write_some("x".as_bytes()) != 0usize ||
+        slice_cursor.position() != 0xffffffffffffffffu64 { return 40 }
+    try slice_cursor.flush()
     let inner = slice_cursor.into_inner()
-    if inner[0usize] != 111u8 || inner[2usize] != 33u8 { return 19 }
+    if inner[0usize] != 111u8 || inner[2usize] != 120u8 { return 19 }
     0
 }
 
