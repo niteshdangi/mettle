@@ -601,9 +601,10 @@ Builder mutation may allocate proportional to accumulated strings. Spawning
 does not consume the builder, but each returned Child owns distinct process/
 stream resources.
 
-The current Unix builder retains only the latest edit for each environment key,
-including removal markers. An unmodified environment is inherited at launch
-without building a library-owned snapshot.
+The current Unix builder retains only the latest edit for each environment key.
+Removal is represented by a marker when inheriting the parent environment; after
+`env_clear`, removal deletes the configured entry instead. An unmodified
+environment is inherited at launch without building a library-owned snapshot.
 
 `spawn` returns a Child after launch setup, not after successful program exit.
 `status` waits and returns ExitStatus, inheriting standard streams by default.

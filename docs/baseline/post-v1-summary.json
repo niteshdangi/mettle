@@ -56,6 +56,6 @@
   "qualification": "no native declaration, execution or per-profile evidence inferred",
   "stable_canonical_records": 106125,
   "stable_exposures": 159995,
-  "v1_ledger_sha256": "f7a45680024ff8aad4172d02e6ae285784e96b86ada755cb12f65adbe3bf8ba6",
+  "v1_ledger_sha256": "be88954411ac5cf28f7f9e64fde58283b09d043b2eb7128a6829a98d8d3d67a7",
   "work_unit_boundary": "shared implementation code, not shared type/profile evidence"
 }

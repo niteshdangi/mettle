@@ -4,6 +4,8 @@ import std.io.{Error, Reader, Writer}
 import std.process.{Stdio}
 import std.ffi
 import std.path.path_from_text
+import core.iter.Iterator
+import alloc.string.String
 
 fn sh(read script: Text): std.process.Command {
     var c = std.process.command_text("/bin/sh")
@@ -66,6 +68,126 @@ fn run(): i32 throws Error {
     let silent = try sh("exit 0").status()
     if !silent.succeeded() || silent.code() != present(0) { return 13 }
     if std.process.id() <= 0 { return 14 }
+
+    var configured = std.process.command_text("/bin/sh")
+    {
+        var args = configured.get_args()
+        var entries = configured.get_envs()
+        if args.next().is_present() || entries.next().is_present() ||
+           configured.get_current_dir().is_present() { return 15 }
+    }
+    configured.arg_text("-c")
+    configured.arg_text("printf '%s|%s|%s|%s|%s' \"$1\" \"$2\" \"${MT_OLD-unset}\" \"${MT_NEW-unset}\" \"${MT_REMOVED-unset}\"")
+    configured.arg_text("sh")
+    {
+        var arguments = alloc.vec.new<String>()
+        arguments.push(String("two words"))
+        arguments.push(String(""))
+        configured.args<alloc.vec.List<String>, String>(arguments)
+        let directory = String("/")
+        configured.current_dir(path_from_text(directory.as_text()))
+    }
+    {
+        var args = configured.get_args()
+        if args.next().is_none() || args.next().is_none() || args.next().is_none() { return 16 }
+        match args.next() {
+            present(value) => { if !value.same(ffi.os_str_from_text("two words")) { return 17 } },
+            none => { return 17 }
+        }
+        match args.next() {
+            present(value) => { if !value.is_empty() { return 18 } },
+            none => { return 18 }
+        }
+        if args.next().is_present() { return 19 }
+    }
+    match configured.get_current_dir() {
+        present(path) => { if !path.same(path_from_text("/")) { return 20 } },
+        none => { return 20 }
+    }
+    configured.current_dir(path_from_text("."))
+    match configured.get_current_dir() {
+        present(path) => { if !path.same(path_from_text(".")) { return 21 } },
+        none => { return 21 }
+    }
+    configured.env(ffi.os_str_from_text("MT_OLD"), ffi.os_str_from_text("discarded"))
+    configured.env_clear()
+    {
+        var entries = configured.get_envs()
+        if entries.next().is_present() { return 22 }
+    }
+    var environment = alloc.vec.new<(String, String)>()
+    environment.push((String("MT_NEW"), String("old")))
+    environment.push((String("MT_NEW"), String("final")))
+    environment.push((String("MT_REMOVED"), String("discarded")))
+    configured.envs<alloc.vec.List<(String, String)>, String, String>(environment)
+    configured.env_remove(ffi.os_str_from_text("MT_REMOVED"))
+    {
+        var entries = configured.get_envs()
+        var found_new = false
+        while true {
+            match entries.next() {
+                present((name, value)) => {
+                    if name.same(ffi.os_str_from_text("MT_NEW")) {
+                        match value {
+                            present(text) => { if !text.same(ffi.os_str_from_text("final")) { return 24 } },
+                            none => { return 24 }
+                        }
+                        found_new = true
+                    } else { return 23 }
+                },
+                none => { break }
+            }
+        }
+        if !found_new { return 25 }
+    }
+    let built = try configured.output()
+    if !built.status.succeeded() ||
+       !ffi.os_str(built.stdout.as_slice()).same(ffi.os_str_from_text("two words||unset|final|unset")) {
+        return 26
+    }
+    configured.env(ffi.os_str_from_text("MT_REMOVED"), ffi.os_str_from_text("restored"))
+    {
+        var entries = configured.get_envs()
+        var restored = false
+        while true {
+            match entries.next() {
+                present((name, value)) => {
+                    if name.same(ffi.os_str_from_text("MT_REMOVED")) {
+                        match value {
+                            present(text) => { if !text.same(ffi.os_str_from_text("restored")) { return 27 } },
+                            none => { return 27 }
+                        }
+                        restored = true
+                    }
+                },
+                none => { break }
+            }
+        }
+        if !restored { return 27 }
+    }
+    let replaced = try configured.output()
+    if !replaced.status.succeeded() ||
+       !ffi.os_str(replaced.stdout.as_slice()).same(ffi.os_str_from_text("two words||unset|final|restored")) {
+        return 32
+    }
+    configured.env_clear()
+    {
+        var entries = configured.get_envs()
+        if entries.next().is_present() { return 28 }
+    }
+    let cleared_again = try configured.output()
+    if !cleared_again.status.succeeded() ||
+       !ffi.os_str(cleared_again.stdout.as_slice()).same(ffi.os_str_from_text("two words||unset|unset|unset")) {
+        return 29
+    }
+    var invalid_removal = sh("exit 0")
+    invalid_removal.env_clear()
+    invalid_removal.env_remove(ffi.os_str_from_text("BAD=NAME"))
+    {
+        var entries = invalid_removal.get_envs()
+        if entries.next().is_present() { return 30 }
+    }
+    if !(try invalid_removal.status()).succeeded() { return 31 }
     0
 }
 
