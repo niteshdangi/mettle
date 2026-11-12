@@ -1,11 +1,14 @@
 import alloc.alloc.{Allocator, Global, Layout, AllocError}
-import alloc.{boxed, rc}
+import alloc.{arc, boxed, rc}
+import alloc.boxed.Box
 import core.clone.Clone
+import core.convert.From
 import std.panic.{catch_panic, CatchResult}
 
 type Record {
     panic_clone: bool
     panic_deallocate: bool
+    panic_allocate: bool
     payload_drops: i32
     allocator_drops: i32
     frees: i32
@@ -32,6 +35,9 @@ extend Probe implements Clone {
 
 unsafe extend Probe implements Allocator {
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {
+        if unsafe { (*self.record).panic_allocate } {
+            core.panic.panic("allocator allocation")
+        }
         var global = Global()
         try global.allocate(layout)
     }
@@ -54,7 +60,7 @@ unsafe extend Probe implements Allocator {
 }
 
 fn main(): i32 {
-    var extracted = Record(false, true, 0, 0, 0)
+    var extracted = Record(false, true, false, 0, 0, 0)
     {
         let pointer = core.ptr.from_mut(extracted)
         let owner = boxed.new_in(Payload(pointer), Probe(pointer))
@@ -70,7 +76,7 @@ fn main(): i32 {
         return 2
     }
 
-    var upgraded = Record(false, false, 0, 0, 0)
+    var upgraded = Record(false, false, false, 0, 0, 0)
     {
         let pointer = core.ptr.from_mut(upgraded)
         let owner = rc.new_in(Payload(pointer), Probe(pointer))
@@ -92,5 +98,35 @@ fn main(): i32 {
         upgraded.frees != 1 {
         return 6
     }
+
+    var refused = Record(false, false, false, 0, 0, 0)
+    {
+        let pointer = core.ptr.from_mut(refused)
+        let source = boxed.new_in(Payload(pointer), Probe(pointer))
+        refused.panic_allocate = true
+        match take catch_panic(take fn(): Unit {
+            let _ = rc.Rc<Payload, Probe>.(From<Box<Payload, Probe>>).from(source)
+        }) {
+            CatchResult.Panicked(_) => {},
+            CatchResult.Returned(_) => { return 7 }
+        }
+    }
+    if refused.payload_drops != 1 || refused.allocator_drops != 1 ||
+        refused.frees != 1 { return 8 }
+
+    var moved = Record(false, false, false, 0, 0, 0)
+    {
+        let pointer = core.ptr.from_mut(moved)
+        let source = boxed.new_in(Payload(pointer), Probe(pointer))
+        moved.panic_deallocate = true
+        match take catch_panic(take fn(): Unit {
+            let _ = arc.Arc<Payload, Probe>.(From<Box<Payload, Probe>>).from(source)
+        }) {
+            CatchResult.Panicked(_) => {},
+            CatchResult.Returned(_) => { return 9 }
+        }
+    }
+    if moved.payload_drops != 1 || moved.allocator_drops != 1 ||
+        moved.frees != 2 { return 10 }
     0
 }

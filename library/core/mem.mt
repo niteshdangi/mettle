@@ -5,18 +5,13 @@ import super.fmt.{Debug, Error, Formatter}
 import super.hash.{Hash, Hasher}
 import super.ops.{Deref, DerefMut}
 
-// Projections rely on ManuallyDrop's T layout and an initialized payload.
-extend<T> core.mem.ManuallyDrop<T> implements Deref {
+extend<T: unsized> core.mem.ManuallyDrop<T> implements Deref {
     type Target = T
-    fn deref(): read T from self {
-        unsafe { read *core.ptr.from_ref(self).cast<T>() }
-    }
+    fn deref(): read T from self { self.get_ref() }
 }
 
-extend<T> core.mem.ManuallyDrop<T> implements DerefMut {
-    mut fn deref_mut(): mut T from self {
-        unsafe { mut *core.ptr.from_mut(mut self).cast<T>() }
-    }
+extend<T: unsized> core.mem.ManuallyDrop<T> implements DerefMut {
+    mut fn deref_mut(): mut T from self { self.get_mut() }
 }
 
 extend<T> core.mem.ManuallyDrop<T> {
@@ -32,21 +27,21 @@ extend<T: Clone> core.mem.ManuallyDrop<T> implements Clone {
     }
 }
 
-extend<T: PartialEq> core.mem.ManuallyDrop<T> implements PartialEq {
+extend<T: PartialEq + unsized> core.mem.ManuallyDrop<T> implements PartialEq {
     fn eq(read other: core.mem.ManuallyDrop<T>): bool {
         self.deref() == other.deref()
     }
 }
 
-extend<T: Eq> core.mem.ManuallyDrop<T> implements Eq {}
+extend<T: Eq + unsized> core.mem.ManuallyDrop<T> implements Eq {}
 
-extend<T: PartialOrd> core.mem.ManuallyDrop<T> implements PartialOrd {
+extend<T: PartialOrd + unsized> core.mem.ManuallyDrop<T> implements PartialOrd {
     fn partial_cmp(read other: core.mem.ManuallyDrop<T>): Ordering? {
         self.deref().partial_cmp(other.deref())
     }
 }
 
-extend<T: Ord> core.mem.ManuallyDrop<T> implements Ord {
+extend<T: Ord + unsized> core.mem.ManuallyDrop<T> implements Ord {
     fn cmp(read other: core.mem.ManuallyDrop<T>): Ordering {
         self.deref().cmp(other.deref())
     }
@@ -58,13 +53,13 @@ extend<T: Default> core.mem.ManuallyDrop<T> implements Default {
     }
 }
 
-extend<T: Debug> core.mem.ManuallyDrop<T> implements Debug {
+extend<T: Debug + unsized> core.mem.ManuallyDrop<T> implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
         try self.deref().fmt(mut f)
     }
 }
 
-extend<T: Hash> core.mem.ManuallyDrop<T> implements Hash {
+extend<T: Hash + unsized> core.mem.ManuallyDrop<T> implements Hash {
     fn hash<H: Hasher>(mut state: H): Unit {
         self.deref().hash(mut state)
     }
@@ -74,4 +69,64 @@ pub fn `drop`<T>(take value: T): Unit {}
 
 pub fn `take`<T: Default>(mut value: T): T {
     core.mem.replace(mut value, T.(Default).default())
+}
+
+extend<T> [core.mem.MaybeUninit<T>] {
+    // Every element must hold a valid T with the same lifetime and access permissions.
+    pub unsafe const fn assume_init_ref(): read [T] from self {
+        let pointer = unsafe {
+            core.mem.transmute<ptr<read [T]>>(core.ptr.from_ref(self))
+        }
+        unsafe { read *pointer }
+    }
+
+    // Every element must hold a valid T and remain exclusively borrowed.
+    pub mut unsafe const fn assume_init_mut(): mut [T] from self {
+        let pointer = unsafe {
+            core.mem.transmute<ptr<mut [T]>>(core.ptr.from_mut(self))
+        }
+        unsafe { mut *pointer }
+    }
+
+    // Every element is initialized and may be destroyed exactly once.
+    pub mut unsafe fn assume_init_drop(): Unit {
+        let count = self.len()
+        let data = core.ptr.from_mut(self).cast<T>()
+        unsafe { super.slice.drop_values(data, count) }
+    }
+
+    pub mut const fn write_copy_of_slice(read source: [T]): mut [T] from self where T: Copy {
+        if source.len() > self.len() { super.panic.panic("destination slice is too short") }
+        var index = 0usize
+        while index < source.len() {
+            self[index].write(source[index])
+            index += 1usize
+        }
+        let prefix = mut self[..source.len()]
+        unsafe { prefix.assume_init_mut() }
+    }
+
+    pub mut fn write_clone_of_slice(read source: [T]): mut [T] from self where T: Clone {
+        if source.len() > self.len() { super.panic.panic("destination slice is too short") }
+        let data = core.ptr.from_mut(self).cast<T>()
+        var guard = SliceCloneGuard(data, 0usize)
+        while guard.initialized < source.len() {
+            self[guard.initialized].write(source[guard.initialized].clone())
+            guard.initialized += 1usize
+        }
+        guard.initialized = 0usize
+        let prefix = mut self[..source.len()]
+        unsafe { prefix.assume_init_mut() }
+    }
+}
+
+type SliceCloneGuard<T> {
+    data: ptr<mut T>
+    initialized: usize
+    drop {
+        let count = self.initialized
+        self.initialized = 0usize
+        // Only clones committed before a panic are initialized and owned by this guard.
+        unsafe { super.slice.drop_values(self.data, count) }
+    }
 }

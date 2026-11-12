@@ -33,11 +33,11 @@ pub interface Wake: Sized {
     fn wake(read me: Arc<Self>): Unit;
 }
 
-fn waker_table<W: Wake + Transferable + Shareable>(): RawWakerVTable {
+fn waker_table<W: Wake + Transferable + Shareable + Static>(): RawWakerVTable {
     RawWakerVTable(waker_clone<W>, waker_wake<W>, waker_wake_by_ref<W>, waker_release<W>)
 }
 
-fn waker_clone<W: Wake + Transferable + Shareable>(data: ptr<mut u8>): RawWaker {
+fn waker_clone<W: Wake + Transferable + Shareable + Static>(data: ptr<mut u8>): RawWaker {
     unsafe {
         let handle = data.cast<Arc<W>>()
         let dup = boxed.new((*handle).retain())
@@ -45,30 +45,30 @@ fn waker_clone<W: Wake + Transferable + Shareable>(data: ptr<mut u8>): RawWaker 
         RawWaker(parts.0.cast<u8>(), waker_table<W>())
     }
 }
-fn waker_wake<W: Wake + Transferable + Shareable>(data: ptr<mut u8>): Unit {
+fn waker_wake<W: Wake + Transferable + Shareable + Static>(data: ptr<mut u8>): Unit {
     unsafe {
         let owned = boxed.from_raw_in(data.cast<Arc<W>>(), Global())
         owned.get().get().wake(owned.get())
     }
 }
-fn waker_wake_by_ref<W: Wake + Transferable + Shareable>(data: ptr<mut u8>): Unit {
+fn waker_wake_by_ref<W: Wake + Transferable + Shareable + Static>(data: ptr<mut u8>): Unit {
     unsafe {
         let handle = data.cast<Arc<W>>()
         (*handle).get().wake(read *handle)
     }
 }
-fn waker_release<W: Wake + Transferable + Shareable>(data: ptr<mut u8>): Unit {
+fn waker_release<W: Wake + Transferable + Shareable + Static>(data: ptr<mut u8>): Unit {
     unsafe { let _owned = boxed.from_raw_in(data.cast<Arc<W>>(), Global()) }
 }
 
 // A waker owning one reference to `handle`'s payload.
-pub fn waker_from_arc<W: Wake + Transferable + Shareable>(read handle: Arc<W>): Waker {
+pub fn waker_from_arc<W: Wake + Transferable + Shareable + Static>(read handle: Arc<W>): Waker {
     let dup = boxed.new(handle.retain())
     let parts = dup.into_raw()
     unsafe { package.core.future.waker_from_raw(RawWaker(parts.0.cast<u8>(), waker_table<W>())) }
 }
 
-extend<W: Wake + Transferable + Shareable> Waker implements From<Arc<W>> {
+extend<W: Wake + Transferable + Shareable + Static> Waker implements From<Arc<W>> {
     static fn from(take handle: Arc<W>): Waker { waker_from_arc(read handle) }
 }
 

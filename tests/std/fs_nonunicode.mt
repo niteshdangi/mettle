@@ -84,7 +84,7 @@ fn run(): i32 throws Error {
         present(text) => { if text != "plain" { return 19 } },
         none => { return 20 }
     }
-    if text_view.to_string_lossy().len() != 5usize ||
+    if text_view.to_string_lossy().as_ref().len() != 5usize ||
        !ffi.os_string_from_text("plain").as_os_str().same(text_view) {
         return 21
     }

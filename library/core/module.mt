@@ -2,6 +2,7 @@
 // `ptr` augments the compiler's pointer operations with the NonNull type;
 // other compiler built-in modules remain compiler-owned.
 pub module any
+pub module array
 pub module borrow
 pub module cell
 pub module char
@@ -10,6 +11,7 @@ pub module cmp
 pub module convert
 pub module default
 pub module error
+pub module ffi
 pub module float
 pub module fmt
 pub module future

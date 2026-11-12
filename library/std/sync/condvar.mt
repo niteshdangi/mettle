@@ -70,7 +70,7 @@ extend Condvar {
         WaitBinding(read self.binding)
     }
 
-    pub fn wait<T, region r>(
+    pub fn wait<T: unsized, region r>(
         take guard: MutexGuard<T, region r>
     ): MutexGuard<T, region r> throws PoisonError<MutexGuard<T, region r>> {
         let _binding = self.bind(guard.lock.raw)
@@ -79,7 +79,7 @@ extend Condvar {
         if guard.is_poisoned() { throw PoisonError(guard) }
         guard
     }
-    pub fn wait_timeout<T, region r>(
+    pub fn wait_timeout<T: unsized, region r>(
         take guard: MutexGuard<T, region r>,
         duration: time.Duration
     ): (MutexGuard<T, region r>, TimedOut) throws PoisonError<(MutexGuard<T, region r>, TimedOut)> {
@@ -107,7 +107,7 @@ extend Condvar {
             if elapsed >= timeout { return (guard, TimedOut(true)) }
         }
     }
-    pub fn wait_while<T, region r, F: mut fn(mut T): bool>(
+    pub fn wait_while<T: unsized, region r, F: mut fn(mut T): bool>(
         take guard: MutexGuard<T, region r>,
         take predicate: F
     ): MutexGuard<T, region r> throws PoisonError<MutexGuard<T, region r>> {
@@ -118,7 +118,7 @@ extend Condvar {
         }
         current
     }
-    pub fn wait_timeout_while<T, region r, F: mut fn(mut T): bool>(
+    pub fn wait_timeout_while<T: unsized, region r, F: mut fn(mut T): bool>(
         take guard: MutexGuard<T, region r>,
         duration: time.Duration,
         take predicate: F
@@ -142,7 +142,7 @@ extend Condvar {
         }
         (current, TimedOut(false))
     }
-    pub fn wait_timeout_ms<T, region r>(
+    pub fn wait_timeout_ms<T: unsized, region r>(
         take guard: MutexGuard<T, region r>,
         milliseconds: u64
     ): (MutexGuard<T, region r>, TimedOut) throws PoisonError<(MutexGuard<T, region r>, TimedOut)> {

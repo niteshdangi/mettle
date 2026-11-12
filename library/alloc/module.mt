@@ -3,6 +3,7 @@
 pub module alloc
 pub module boxed
 pub module borrow
+pub module ffi
 pub module future
 pub module rc
 pub module arc

@@ -288,8 +288,8 @@ fn scalar_at(read bytes: [u8], i: usize, width: usize): char {
 
 pub copy type Utf8Error { valid: usize; length: usize? }
 extend Utf8Error {
-    pub fn valid_up_to(): usize { self.valid }
-    pub fn error_len(): usize? { self.length }
+    pub const fn valid_up_to(): usize { self.valid }
+    pub const fn error_len(): usize? { self.length }
 }
 extend Utf8Error implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
@@ -306,7 +306,7 @@ extend Utf8Error implements super.fmt.Display {
 }
 extend Utf8Error implements super.error.Error {}
 
-fn validate_utf8(read bytes: [u8]): Utf8Error? {
+const fn validate_utf8(read bytes: [u8]): Utf8Error? {
     var i = 0usize
     while i < bytes.len() {
         let first = bytes[i]
@@ -333,14 +333,14 @@ fn validate_utf8(read bytes: [u8]): Utf8Error? {
     none
 }
 
-pub fn from_utf8(read bytes: [u8]): (Outcome<read Text from bytes, Utf8Error>) {
+pub const fn from_utf8(read bytes: [u8]): (Outcome<read Text from bytes, Utf8Error>) {
     match validate_utf8(bytes) {
         present(error) => failure(error),
         none => success(unsafe { from_utf8_unchecked(bytes) })
     }
 }
 
-pub fn from_utf8_mut(mut bytes: [u8]): (Outcome<mut Text from bytes, Utf8Error>) {
+pub const fn from_utf8_mut(mut bytes: [u8]): (Outcome<mut Text from bytes, Utf8Error>) {
     match validate_utf8(read bytes) {
         present(error) => failure(error),
         none => success(unsafe { from_utf8_unchecked_mut(mut bytes) })
@@ -355,7 +355,7 @@ pub unsafe const fn from_utf8_unchecked(read bytes: [u8]): read Text from bytes 
 }
 
 // Safety: `bytes` is well-formed UTF-8 and stays so while the view is live.
-pub unsafe fn from_utf8_unchecked_mut(mut bytes: [u8]): mut Text from bytes {
+pub unsafe const fn from_utf8_unchecked_mut(mut bytes: [u8]): mut Text from bytes {
     let fat = core.ptr.from_mut(bytes)
     let view = unsafe { core.mem.transmute<ptr<mut Text>>(fat) }
     unsafe { mut *view }
@@ -496,7 +496,7 @@ fn has_cased_after(read text: Text, byte_index: usize): bool {
 }
 
 // Tab, line feed, form feed, carriage return and space: not vertical tab.
-fn is_ascii_whitespace(byte: u8): bool {
+const fn is_ascii_whitespace(byte: u8): bool {
     byte == 0x09u8 || byte == 0x0au8 || byte == 0x0cu8 || byte == 0x0du8 || byte == 0x20u8
 }
 
@@ -1260,7 +1260,7 @@ extend Text {
     pub fn rmatch_indices<P: Pattern>(take pattern: P): RMatchIndices<region self, P> {
         RMatchIndices(self.matches(pattern))
     }
-    pub fn eq_ignore_ascii_case(read other: Text): bool {
+    pub const fn eq_ignore_ascii_case(read other: Text): bool {
         if self.len() != other.len() { return false }
         var i = 0usize
         while i < self.len() {
@@ -1339,21 +1339,21 @@ extend Text {
         }
         match self.get(i, end) { present(part) => part, none => read self }
     }
-    pub fn trim_ascii_start(): read Text from self {
+    pub const fn trim_ascii_start(): read Text from self {
         var start = 0usize
         while start < self.bytes.len() && is_ascii_whitespace(self.bytes[start]) {
             start += 1usize
         }
         match self.get(start, self.bytes.len()) { present(part) => part, none => read self }
     }
-    pub fn trim_ascii_end(): read Text from self {
+    pub const fn trim_ascii_end(): read Text from self {
         var end = self.bytes.len()
         while end > 0usize && is_ascii_whitespace(self.bytes[end - 1usize]) {
             end -= 1usize
         }
         match self.get(0usize, end) { present(part) => part, none => read self }
     }
-    pub fn trim_ascii(): read Text from self {
+    pub const fn trim_ascii(): read Text from self {
         var start = 0usize
         while start < self.bytes.len() && is_ascii_whitespace(self.bytes[start]) {
             start += 1usize
@@ -1387,7 +1387,7 @@ extend Text {
             none => { super.panic.panic("failed to slice string") }
         }
     }
-    pub fn split_at_checked(mid: usize): (read Text from self, read Text from self)? {
+    pub const fn split_at_checked(mid: usize): (read Text from self, read Text from self)? {
         match self.get(0usize, mid) {
             present(head) => match self.get(mid, self.len()) {
                 present(tail) => present((head, tail)),
@@ -1396,13 +1396,13 @@ extend Text {
             none => none
         }
     }
-    pub mut fn split_at_mut(mid: usize): (mut Text from self, mut Text from self) {
+    pub mut const fn split_at_mut(mid: usize): (mut Text from self, mut Text from self) {
         match take self.split_at_mut_checked(mid) {
             present(parts) => parts,
             none => { super.panic.panic("failed to slice string") }
         }
     }
-    pub mut fn split_at_mut_checked(
+    pub mut const fn split_at_mut_checked(
         mid: usize
     ): (mut Text from self, mut Text from self)? {
         if mid > self.len() || !self.is_char_boundary(mid) { return none }
@@ -1529,6 +1529,14 @@ extend Text implements super.ops.IndexRange {
             present(part) => part,
             none => super.panic.panic("text slice is out of bounds or not on a character boundary")
         }
+    }
+}
+
+extend Text implements super.ops.IndexRangeMut {
+    type Output = Text
+    mut fn index_range_mut(start: usize, end: RangeEnd): mut Text from self {
+        let length = Text.(super.ops.IndexRange).index_range(read self, start, end).len()
+        self.get_mut(start, start + length).unwrap()
     }
 }
 

@@ -15,6 +15,7 @@ import package.alloc.vec
 import package.core.text.Text
 import package.core.option
 import package.std.time.Duration
+import package.std.sync.mutex
 import super.sys
 
 extern "C" {
@@ -204,7 +205,8 @@ type Header {
     refs: core.sync.atomic.AtomicU32
     code: i32
     thread: usize
-    joined: core.sync.atomic.AtomicBool
+    joined: core.sync.atomic.AtomicU32 // 0: unjoined, 1: native join in progress, 2: joined.
+    observed: core.sync.atomic.AtomicBool
     finished: core.sync.atomic.AtomicBool
 }
 
@@ -279,7 +281,8 @@ unsafe fn start<T, F: take fn(): T>(
     let packet = package.alloc.boxed.new(Packet<F, T>(core.mem.MaybeUninit.new(f), false, slot)).into_raw().0
     let header = package.alloc.boxed.new(Header(run_packet<T, F>, release_packet<T, F>, packet.cast<u8>(),
                                           core.sync.atomic.AtomicU32.new(2u32), 0,
-                                          0usize, core.sync.atomic.AtomicBool.new(false),
+                                          0usize, core.sync.atomic.AtomicU32.new(0u32),
+                                          core.sync.atomic.AtomicBool.new(false),
                                           core.sync.atomic.AtomicBool.new(false))).into_raw().0
     var thread = 0usize
     let status = mettle_rt_thread_spawn_configured(
@@ -326,9 +329,33 @@ pub fn spawn<T: Transferable + Static, F: take fn(): T + Transferable + Static>(
     }
 }
 
+unsafe fn join_header(header: ptr<mut Header>): Unit {
+    if (*header).thread == mettle_rt_thread_current() { panic("cannot join the current thread") }
+    while (*header).joined.load(core.sync.atomic.Ordering.Acquire) != 2u32 {
+        let claimed = (*header).joined.compare_exchange(
+            0u32, 1u32, core.sync.atomic.Ordering.AcqRel, core.sync.atomic.Ordering.Acquire
+        )
+        if claimed.is_success() {
+            let status = mettle_rt_thread_join((*header).thread)
+            if status != 0 {
+                (*header).joined.store(0u32, core.sync.atomic.Ordering.Release)
+                panic("thread join failed")
+            }
+            (*header).joined.store(2u32, core.sync.atomic.Ordering.Release)
+            return
+        }
+        mettle_rt_thread_yield()
+    }
+}
+
+type HeaderOwner {
+    header: ptr<mut Header>
+    drop { unsafe { release(self.header) } }
+}
+
 unsafe fn finish<T>(header: ptr<mut Header>, slot: ptr<mut Slot<T>>): T throws Panicked {
-    let _joined = mettle_rt_thread_join((*header).thread)
-    (*header).joined.store(true, core.sync.atomic.Ordering.Release)
+    (*header).observed.store(true, core.sync.atomic.Ordering.Release)
+    join_header(header)
     if (*header).code != 0 || !(*slot).filled { throw Panicked((*header).code) }
     (*slot).filled = false
     core.ptr.`read`((*slot).value.as_ptr())
@@ -348,9 +375,8 @@ extend<T> JoinHandle<T> {
         let _thread = unsafe { core.ptr.`read`(core.ptr.from_ref(self.thread)) }
         core.mem.forget(take self)
         unsafe {
-            let outcome = capture finish(header, slot)
-            release(header)
-            match take outcome { success(value) => value, failure(error) => throw error }
+            let _owner = HeaderOwner(header)
+            try finish(header, slot)
         }
     }
     pub fn id(): ThreadId { ThreadId(unsafe { (*self.header).thread }) }
@@ -373,14 +399,13 @@ extend<region r, F> F implements Within<region r> {}
 // Names the scope's region; the cell around it makes that region invariant.
 pub copy type Brand<region s> { pub unused: u8 }
 
-// Threads started inside `scope`. It is neither Transferable nor Shareable
-// (its cell opts out), so every spawn and join happens on the scoping thread.
-// `s` ends when the scope closure returns, so a spawned closure may borrow
-// only what outlives it, never a local of the scope body.
+// Registration is serialized; the invariant brand keeps borrowed environments within the scope.
 pub type Scope<region s> {
-    threads: core.cell.UnsafeCell<package.alloc.vec.List<ptr<mut Header>>>
+    threads: mutex.Mutex<package.alloc.vec.List<ptr<mut Header>>>
     brand: core.cell.Cell<Brand<region s>>
 }
+unsafe extend<region s> Scope<region s> implements Transferable {}
+unsafe extend<region s> Scope<region s> implements Shareable {}
 
 extend<region s> Scope<region s> implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
@@ -397,16 +422,31 @@ type ScopeGuard<region r, region s> {
         let remaining = ScopeGuard(self.scope, false)
         unsafe {
             var failed = false
-            let list = self.scope.threads.get()
+            var index = 0usize
+            while true {
+                let locked = capture self.scope.threads.lock()
+                let list = match take locked { success(g) => g, failure(e) => e.into_inner() }
+                let next = if index < list.get().len() {
+                    present(list.get()[index])
+                } else { none }
+                core.mem.drop(list)
+                match next {
+                    present(header) => { join_header(header) },
+                    none => { break }
+                }
+                index += 1usize
+            }
             var more = true
             while more {
-                let next = (*list).pop()
+                let locked = capture self.scope.threads.lock()
+                var list = match take locked { success(g) => g, failure(e) => e.into_inner() }
+                let next = list.get_mut().pop()
+                core.mem.drop(list)
                 match take next {
                     present(header) => {
-                        if !(*header).joined.load(core.sync.atomic.Ordering.Acquire) {
-                            let _joined = mettle_rt_thread_join((*header).thread)
-                            (*header).joined.store(true, core.sync.atomic.Ordering.Release)
-                            if (*header).code != 0 { failed = true }
+                        if (*header).code != 0 &&
+                           !(*header).observed.load(core.sync.atomic.Ordering.Acquire) {
+                            failed = true
                         }
                         release(header)
                     },
@@ -419,15 +459,15 @@ type ScopeGuard<region r, region s> {
     }
 }
 
-// Owner of a scoped thread's result; confined to the scoping thread.
+// Owns one result; scope registration keeps the state alive through concurrent joins.
 pub type ScopedJoinHandle<T> {
     header: ptr<mut Header>
     slot: ptr<mut Slot<T>>
     thread: Thread
     drop { unsafe { release(self.header) } }
 }
-extend<T> ScopedJoinHandle<T> not Transferable
-extend<T> ScopedJoinHandle<T> not Shareable
+unsafe extend<T: Transferable> ScopedJoinHandle<T> implements Transferable {}
+unsafe extend<T: Transferable> ScopedJoinHandle<T> implements Shareable {}
 
 extend<T> ScopedJoinHandle<T> {
     pub fn thread(): read Thread from self { read self.thread }
@@ -438,9 +478,8 @@ extend<T> ScopedJoinHandle<T> {
         let _thread = unsafe { core.ptr.`read`(core.ptr.from_ref(self.thread)) }
         core.mem.forget(take self)
         unsafe {
-            let outcome = capture finish(header, slot)
-            release(header)
-            match take outcome { success(value) => value, failure(error) => throw error }
+            let _owner = HeaderOwner(header)
+            try finish(header, slot)
         }
     }
     pub fn is_finished(): bool {
@@ -466,7 +505,9 @@ extend<region s> Scope<region s> {
         read config: Builder,
         take f: F
     ): ScopedJoinHandle<T> throws SpawnError {
-        unsafe { (*self.threads.get()).reserve(1usize) }
+        let locked = capture self.threads.lock()
+        var threads = match take locked { success(g) => g, failure(e) => e.into_inner() }
+        threads.get_mut().reserve(1usize)
         let started = match config.name.as_view() {
             present(name) => unsafe {
                 let empty = 0u8
@@ -490,8 +531,9 @@ extend<region s> Scope<region s> {
         unsafe {
             // refs: thread, handle and scope list
             (*header).refs.fetch_add(1u32, core.sync.atomic.Ordering.Relaxed)
-            (*self.threads.get()).push(header.cast<Header>())
+            threads.get_mut().push(header.cast<Header>())
         }
+        core.mem.drop(threads)
         ScopedJoinHandle(
             header,
             slot,
@@ -516,7 +558,7 @@ extend<region s> Scope<region s> {
 }
 
 pub fn scope<R, F: for<region s> fn(read Scope<region s>): R>(take f: F): R {
-    let state = Scope(core.cell.UnsafeCell.new(package.alloc.vec.new<ptr<mut Header>>()), core.cell.Cell.new(Brand(0u8)))
+    let state = Scope(mutex.new(package.alloc.vec.new<ptr<mut Header>>()), core.cell.Cell.new(Brand(0u8)))
     let guard = ScopeGuard(read state, false)
     f(read state)
 }

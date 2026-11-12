@@ -5,6 +5,9 @@
 import package.alloc.vec
 import package.alloc.vec.List
 import package.alloc.boxed.Box
+import package.alloc.arc.Arc
+import package.alloc.rc.Rc
+import package.alloc.borrow.BorrowedOrOwned
 import package.alloc.alloc.AllocError
 import package.alloc.string.String
 import package.alloc.string.FromUtf8Error
@@ -362,7 +365,9 @@ extend Path {
     pub fn same(read other: Path): bool { ffi.bytes_equal(read self.bytes, other.as_bytes()) }
     pub fn to_path_buf(): PathBuf { path_buf_from_bytes(read self.bytes) }
     pub fn into_path_buf(): PathBuf { self.to_path_buf() }
-    pub fn display(): String { self.to_string_lossy() }
+    pub fn display<region r>(receiver read self: Path from r): ffi.Display<region r> {
+        self.as_os_str().display()
+    }
     pub fn components<region r>(
         receiver read self: Path from r
     ): Components<region r> {
@@ -722,7 +727,7 @@ fn last_dot(read name: [u8]): usize? {
 
 pub type PathBuf { v: List<u8> }
 
-pub fn new_path_buf(): PathBuf { PathBuf(vec.new<u8>()) }
+pub const fn new_path_buf(): PathBuf { PathBuf(vec.new<u8>()) }
 pub fn path_buf_with_capacity(capacity: usize): PathBuf {
     PathBuf(vec.with_capacity<u8>(capacity))
 }
@@ -736,7 +741,7 @@ pub fn path_buf_from_bytes(read bytes: [u8]): PathBuf {
 pub fn path_buf_from_text(read text: Text): PathBuf { path_buf_from_bytes(text.as_bytes()) }
 
 extend PathBuf {
-    pub static fn new(): PathBuf { new_path_buf() }
+    pub static const fn new(): PathBuf { new_path_buf() }
     pub static fn with_capacity(capacity: usize): PathBuf {
         path_buf_with_capacity(capacity)
     }
@@ -748,6 +753,11 @@ extend PathBuf {
     }
     pub fn as_os_str(): read OsStr from self { ffi.os_str(self.v.as_slice()) }
     pub mut fn as_mut_os_str(): mut OsStr from self { ffi.os_str_mut(self.v.as_mut_slice()) }
+    pub mut fn as_mut_os_string(): mut OsString from self {
+        // OsString is a single List<u8> field with no additional validity invariant.
+        let pointer = core.ptr.from_mut(self.v).cast<OsString>()
+        unsafe { mut *pointer }
+    }
     pub fn as_bytes(): read [u8] from self { self.v.as_slice() }
     pub fn capacity(): usize { self.v.capacity() }
     pub fn is_empty(): bool { self.v.is_empty() }
@@ -769,7 +779,9 @@ extend PathBuf {
     }
     pub fn to_str(): (read Text from self)? { self.as_path().to_str() }
     pub fn to_string_lossy(): String { self.as_path().to_string_lossy() }
-    pub fn display(): String { self.as_path().display() }
+    pub fn display<region r>(receiver read self: PathBuf from r): ffi.Display<region r> {
+        self.as_path().display()
+    }
     pub fn to_path_buf(): PathBuf { path_buf_from_bytes(self.v.as_slice()) }
     pub take fn into_boxed_path(): Box<Path> {
         let bytes = self.v.into_boxed_slice()
@@ -1064,9 +1076,129 @@ extend PathBuf implements From<Box<Path>> {
         PathBuf(List<u8>.(From<Box<[u8]>>).from(take byte_box))
     }
 }
+extend<region r> read Path from r implements OwnedIterable {
+    type Item = read OsStr from r
+    type IntoIter = Iter<region r>
+    take fn into_iter(): Iter<region r> { self.iter() }
+}
+extend<region r> read PathBuf from r implements OwnedIterable {
+    type Item = read OsStr from r
+    type IntoIter = Iter<region r>
+    take fn into_iter(): Iter<region r> { self.iter() }
+}
+extend<region r> PathBuf implements From<BorrowedOrOwned<region r, Path>> {
+    static fn from(take value: BorrowedOrOwned<region r, Path>): PathBuf {
+        value.into_owned()
+    }
+}
+extend<region r> Path implements PartialEq<BorrowedOrOwned<region r, Path>> {
+    fn eq(read other: BorrowedOrOwned<region r, Path>): bool {
+        Path.(PartialEq<Path>).eq(self, other.as_ref())
+    }
+}
+extend<region r> Path implements PartialOrd<BorrowedOrOwned<region r, Path>> {
+    fn partial_cmp(read other: BorrowedOrOwned<region r, Path>): Ordering? {
+        present(self.cmp(other.as_ref()))
+    }
+}
+extend<region r> PathBuf implements PartialEq<BorrowedOrOwned<region r, Path>> {
+    fn eq(read other: BorrowedOrOwned<region r, Path>): bool {
+        self.as_path() == other.as_ref()
+    }
+}
+extend<region r> PathBuf implements PartialOrd<BorrowedOrOwned<region r, Path>> {
+    fn partial_cmp(read other: BorrowedOrOwned<region r, Path>): Ordering? {
+        present(self.as_path().cmp(other.as_ref()))
+    }
+}
+extend<region r> Path implements PartialEq<BorrowedOrOwned<region r, OsStr>> {
+    fn eq(read other: BorrowedOrOwned<region r, OsStr>): bool {
+        Path.(PartialEq<Path>).eq(self, path_from_os_str(other.as_ref()))
+    }
+}
+extend<region r> Path implements PartialOrd<BorrowedOrOwned<region r, OsStr>> {
+    fn partial_cmp(read other: BorrowedOrOwned<region r, OsStr>): Ordering? {
+        present(self.cmp(path_from_os_str(other.as_ref())))
+    }
+}
+extend<region r> PathBuf implements PartialEq<BorrowedOrOwned<region r, OsStr>> {
+    fn eq(read other: BorrowedOrOwned<region r, OsStr>): bool {
+        self.as_path() == path_from_os_str(other.as_ref())
+    }
+}
+extend<region r> PathBuf implements PartialOrd<BorrowedOrOwned<region r, OsStr>> {
+    fn partial_cmp(read other: BorrowedOrOwned<region r, OsStr>): Ordering? {
+        present(self.as_path().cmp(path_from_os_str(other.as_ref())))
+    }
+}
+extend<region r> OsStr implements PartialEq<BorrowedOrOwned<region r, Path>> {
+    fn eq(read other: BorrowedOrOwned<region r, Path>): bool {
+        path_from_os_str(self) == other.as_ref()
+    }
+}
+extend<region r> OsStr implements PartialOrd<BorrowedOrOwned<region r, Path>> {
+    fn partial_cmp(read other: BorrowedOrOwned<region r, Path>): Ordering? {
+        present(path_from_os_str(self).cmp(other.as_ref()))
+    }
+}
+extend<region r> OsString implements PartialEq<BorrowedOrOwned<region r, Path>> {
+    fn eq(read other: BorrowedOrOwned<region r, Path>): bool {
+        path_from_os_str(self.as_os_str()) == other.as_ref()
+    }
+}
+extend<region r> OsString implements PartialOrd<BorrowedOrOwned<region r, Path>> {
+    fn partial_cmp(read other: BorrowedOrOwned<region r, Path>): Ordering? {
+        present(path_from_os_str(self.as_os_str()).cmp(other.as_ref()))
+    }
+}
 extend Box<Path> implements From<PathBuf> {
     static fn from(take value: PathBuf): Box<Path> {
         value.into_boxed_path()
+    }
+}
+extend<region r> Box<Path> implements From<read Path from r> {
+    static fn from(take value: read Path from r): Box<Path> {
+        value.to_path_buf().into_boxed_path()
+    }
+}
+extend<region r> Box<Path> implements From<mut Path from r> {
+    static fn from(take value: mut Path from r): Box<Path> {
+        value.to_path_buf().into_boxed_path()
+    }
+}
+extend<region r> Box<Path> implements From<BorrowedOrOwned<region r, Path>> {
+    static fn from(take value: BorrowedOrOwned<region r, Path>): Box<Path> {
+        value.into_owned().into_boxed_path()
+    }
+}
+extend Rc<Path> implements From<PathBuf> {
+    static fn from(take value: PathBuf): Rc<Path> {
+        Rc<Path>.(From<Box<Path>>).from(value.into_boxed_path())
+    }
+}
+extend<region r> Rc<Path> implements From<read Path from r> {
+    static fn from(take value: read Path from r): Rc<Path> {
+        Rc<Path>.(From<PathBuf>).from(value.to_path_buf())
+    }
+}
+extend<region r> Rc<Path> implements From<mut Path from r> {
+    static fn from(take value: mut Path from r): Rc<Path> {
+        Rc<Path>.(From<PathBuf>).from(value.to_path_buf())
+    }
+}
+extend Arc<Path> implements From<PathBuf> {
+    static fn from(take value: PathBuf): Arc<Path> {
+        Arc<Path>.(From<Box<Path>>).from(value.into_boxed_path())
+    }
+}
+extend<region r> Arc<Path> implements From<read Path from r> {
+    static fn from(take value: read Path from r): Arc<Path> {
+        Arc<Path>.(From<PathBuf>).from(value.to_path_buf())
+    }
+}
+extend<region r> Arc<Path> implements From<mut Path from r> {
+    static fn from(take value: mut Path from r): Arc<Path> {
+        Arc<Path>.(From<PathBuf>).from(value.to_path_buf())
     }
 }
 extend<region r, T: PathInput + unsized> PathBuf implements From<read T from r> {
@@ -1109,9 +1241,6 @@ extend PathBuf implements Debug {
         try debug.finish()
     }
 }
-extend package.alloc.string.String implements AsRef<OsStr> {
-    fn as_ref(): read OsStr from self { ffi.os_str(self.as_bytes()) }
-}
 extend package.alloc.string.String implements AsRef<Path> {
     fn as_ref(): read Path from self { path(self.as_bytes()) }
 }
@@ -1133,5 +1262,116 @@ extend package.alloc.string.String implements PartialOrd<Path> {
 extend package.alloc.string.String implements PartialOrd<PathBuf> {
     fn partial_cmp(read other: PathBuf): Ordering? {
         present(path_from_text(self.as_text()).cmp(other.as_path()))
+    }
+}
+
+extend<region r> Path implements PartialEq<read OsStr from r> {
+    fn eq(read other: read OsStr from r): bool {
+        Path.(PartialEq<OsStr>).eq(read self, *other)
+    }
+}
+extend<region r> Path implements PartialOrd<read OsStr from r> {
+    fn partial_cmp(read other: read OsStr from r): Ordering? {
+        Path.(PartialOrd<OsStr>).partial_cmp(read self, *other)
+    }
+}
+extend<region r> PathBuf implements PartialEq<read OsStr from r> {
+    fn eq(read other: read OsStr from r): bool {
+        Path.(PartialEq<OsStr>).eq(self.as_path(), *other)
+    }
+}
+extend<region r> PathBuf implements PartialOrd<read OsStr from r> {
+    fn partial_cmp(read other: read OsStr from r): Ordering? {
+        Path.(PartialOrd<OsStr>).partial_cmp(self.as_path(), *other)
+    }
+}
+extend<region r> OsStr implements PartialEq<read Path from r> {
+    fn eq(read other: read Path from r): bool {
+        Path.(PartialEq).eq(path_from_os_str(read self), *other)
+    }
+}
+extend<region r> OsStr implements PartialOrd<read Path from r> {
+    fn partial_cmp(read other: read Path from r): Ordering? {
+        Path.(PartialOrd).partial_cmp(path_from_os_str(read self), *other)
+    }
+}
+extend<region r> OsString implements PartialEq<read Path from r> {
+    fn eq(read other: read Path from r): bool {
+        Path.(PartialEq).eq(path_from_os_str(self.as_os_str()), *other)
+    }
+}
+extend<region r> OsString implements PartialOrd<read Path from r> {
+    fn partial_cmp(read other: read Path from r): Ordering? {
+        Path.(PartialOrd).partial_cmp(path_from_os_str(self.as_os_str()), *other)
+    }
+}
+extend<region r> read Path from r implements PartialEq<OsStr> {
+    fn eq(read other: OsStr): bool { Path.(PartialEq<OsStr>).eq(*self, other) }
+}
+extend<region r> read Path from r implements PartialOrd<OsStr> {
+    fn partial_cmp(read other: OsStr): Ordering? {
+        Path.(PartialOrd<OsStr>).partial_cmp(*self, other)
+    }
+}
+extend<region r> read Path from r implements PartialEq<OsString> {
+    fn eq(read other: OsString): bool { Path.(PartialEq<OsString>).eq(*self, other) }
+}
+extend<region r> read Path from r implements PartialOrd<OsString> {
+    fn partial_cmp(read other: OsString): Ordering? {
+        Path.(PartialOrd<OsString>).partial_cmp(*self, other)
+    }
+}
+extend<region r> read Path from r implements PartialEq<PathBuf> {
+    fn eq(read other: PathBuf): bool { Path.(PartialEq<PathBuf>).eq(*self, other) }
+}
+extend<region r> read Path from r implements PartialOrd<PathBuf> {
+    fn partial_cmp(read other: PathBuf): Ordering? {
+        Path.(PartialOrd<PathBuf>).partial_cmp(*self, other)
+    }
+}
+extend<region r> read OsStr from r implements PartialEq<Path> {
+    fn eq(read other: Path): bool { OsStr.(PartialEq<Path>).eq(*self, other) }
+}
+extend<region r> read OsStr from r implements PartialOrd<Path> {
+    fn partial_cmp(read other: Path): Ordering? {
+        OsStr.(PartialOrd<Path>).partial_cmp(*self, other)
+    }
+}
+extend<region r> read OsStr from r implements PartialEq<PathBuf> {
+    fn eq(read other: PathBuf): bool { OsStr.(PartialEq<PathBuf>).eq(*self, other) }
+}
+extend<region r> read OsStr from r implements PartialOrd<PathBuf> {
+    fn partial_cmp(read other: PathBuf): Ordering? {
+        OsStr.(PartialOrd<PathBuf>).partial_cmp(*self, other)
+    }
+}
+extend<region r, region s> read Path from r implements PartialEq<BorrowedOrOwned<region s, Path>> {
+    fn eq(read other: BorrowedOrOwned<region s, Path>): bool {
+        Path.(PartialEq).eq(*self, other.as_ref())
+    }
+}
+extend<region r, region s> read Path from r implements PartialOrd<BorrowedOrOwned<region s, Path>> {
+    fn partial_cmp(read other: BorrowedOrOwned<region s, Path>): Ordering? {
+        Path.(PartialOrd).partial_cmp(*self, other.as_ref())
+    }
+}
+extend<region r, region s> read Path from r implements PartialEq<BorrowedOrOwned<region s, OsStr>> {
+    fn eq(read other: BorrowedOrOwned<region s, OsStr>): bool {
+        Path.(PartialEq<OsStr>).eq(*self, other.as_ref())
+    }
+}
+extend<region r, region s> read Path from r implements PartialOrd<BorrowedOrOwned<region s, OsStr>> {
+    fn partial_cmp(read other: BorrowedOrOwned<region s, OsStr>): Ordering? {
+        Path.(PartialOrd<OsStr>).partial_cmp(*self, other.as_ref())
+    }
+}
+extend<region r, region s> read OsStr from r implements PartialEq<BorrowedOrOwned<region s, Path>> {
+    fn eq(read other: BorrowedOrOwned<region s, Path>): bool {
+        Path.(PartialEq).eq(path_from_os_str(*self), other.as_ref())
+    }
+}
+extend<region r, region s> read OsStr from r implements PartialOrd<BorrowedOrOwned<region s, Path>> {
+    fn partial_cmp(read other: BorrowedOrOwned<region s, Path>): Ordering? {
+        Path.(PartialOrd).partial_cmp(path_from_os_str(*self), other.as_ref())
     }
 }

@@ -6,7 +6,7 @@ import package.alloc.string.String
 import package.core.text.Text
 import package.core.outcome
 import super.ffi
-import super.ffi.{OsStr, OsString}
+import super.ffi.OsString
 import super.io
 import super.io.{Error, ErrorKind, Reader, Writer}
 pub import super.io.SeekFrom
@@ -16,6 +16,9 @@ import super.time.SystemTime
 import package.core.clone.Clone
 import package.core.cmp.PartialEq
 import package.core.hash.{Hash, Hasher}
+import package.core.convert.From
+import package.core.fmt
+import package.core.error.{Error as CoreError}
 
 extern "C" {
     unsafe fn fsync(fd: i32): i32;
@@ -37,6 +40,39 @@ pub type File {
     fd: i32
     drop {
         if self.fd >= 0 { let closed = unsafe { sys.close(self.fd) } }
+    }
+}
+
+pub enum TryLockError { Error(Error); WouldBlock }
+
+extend TryLockError implements fmt.Display {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        match self {
+            TryLockError.Error(error) => try Error.(fmt.Display).fmt(error, mut f),
+            TryLockError.WouldBlock => try f.write_str("file lock would block")
+        }
+    }
+}
+
+extend TryLockError implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        match self {
+            TryLockError.Error(error) => {
+                var debug = try f.debug_tuple("Error")
+                try debug.field(error)
+                try debug.finish()
+            },
+            TryLockError.WouldBlock => try f.write_str("WouldBlock")
+        }
+    }
+}
+
+extend TryLockError implements CoreError {
+    fn source<region r>(receiver read self: TryLockError from r): (read any CoreError from r)? {
+        match self {
+            TryLockError.Error(error) => present(read error),
+            TryLockError.WouldBlock => none
+        }
     }
 }
 
@@ -94,6 +130,16 @@ pub copy type Metadata {
     mode: u32
     modified_secs: i64
     modified_nanos: u32
+    accessed_time: SystemTime?
+    created_time: SystemTime?
+}
+
+pub copy type FileTimes { accessed: SystemTime?; modified: SystemTime? }
+
+extend FileTimes {
+    pub static fn new(): FileTimes { FileTimes(none, none) }
+    pub take fn set_accessed(time: SystemTime): FileTimes { FileTimes(present(time), self.modified) }
+    pub take fn set_modified(time: SystemTime): FileTimes { FileTimes(self.accessed, present(time)) }
 }
 
 extend Metadata {
@@ -105,20 +151,39 @@ extend Metadata {
     // Permission bits (`st_mode & 0o7777`).
     pub fn permissions(): Permissions { Permissions(self.mode) }
     pub fn modified(): SystemTime { super.time.system_time_from_parts(self.modified_secs, self.modified_nanos) }
+    pub fn accessed(): SystemTime throws Error {
+        match self.accessed_time {
+            present(time) => time,
+            none => throw io.from_kind(ErrorKind.Unsupported)
+        }
+    }
+    pub fn created(): SystemTime throws Error {
+        match self.created_time {
+            present(time) => time,
+            none => throw io.from_kind(ErrorKind.Unsupported)
+        }
+    }
 }
 
 fn file_type_from(code: i64): FileType {
     if code == 0i64 { FileType.File } else if code == 1i64 { FileType.Directory } else if code == 2i64 { FileType.Symlink } else { FileType.Other }
 }
 
-fn metadata_from(read info: [i64; 5]): Metadata {
-    Metadata(info[0usize] as u64, file_type_from(info[1usize]), info[2usize] as u32, info[3usize], info[4usize] as u32)
+fn metadata_from(read info: [i64; 10]): Metadata {
+    let accessed = if (info[9usize] & 1i64) != 0i64 {
+        present(super.time.system_time_from_parts(info[5usize], info[6usize] as u32))
+    } else { none }
+    let created = if (info[9usize] & 4i64) != 0i64 {
+        present(super.time.system_time_from_parts(info[7usize], info[8usize] as u32))
+    } else { none }
+    Metadata(info[0usize] as u64, file_type_from(info[1usize]), info[2usize] as u32,
+        info[3usize], info[4usize] as u32, accessed, created)
 }
 
 fn stat_path(read p: Path, follow: i32): Metadata throws Error {
     let c = try ffi.cstring(p.as_bytes())
-    var info = [0i64; 5]
-    let r = unsafe { sys.mettle_rt_stat(c.as_ptr(), -1, follow, core.ptr.from_mut(info).cast<i64>()) }
+    var info = [0i64; 10]
+    let r = unsafe { sys.mettle_rt_stat_full(c.as_ptr(), -1, follow, core.ptr.from_mut(info).cast<i64>()) }
     if r != 0 { throw io.last_os_error() }
     metadata_from(info)
 }
@@ -255,12 +320,15 @@ pub fn create(read input: PathInput): File throws Error {
 }
 
 extend File {
+    pub static fn open(read input: PathInput): File throws Error { try super.fs.open(input) }
+    pub static fn create(read input: PathInput): File throws Error { try super.fs.create(input) }
+    pub static fn create_new(read input: PathInput): File throws Error { try super.fs.create_new(input) }
     pub static fn options(): OpenOptions { open_options() }
     pub fn as_raw_fd(): i32 { self.fd }
     pub fn lock(): Unit throws Error { try file_lock(self.fd, 2) }
     pub fn lock_shared(): Unit throws Error { try file_lock(self.fd, 1) }
-    pub fn try_lock(): Unit throws Error { try file_lock(self.fd, 6) }
-    pub fn try_lock_shared(): Unit throws Error { try file_lock(self.fd, 5) }
+    pub fn try_lock(): Unit throws TryLockError { try try_file_lock(self.fd, 6) }
+    pub fn try_lock_shared(): Unit throws TryLockError { try try_file_lock(self.fd, 5) }
     pub fn unlock(): Unit throws Error { try file_lock(self.fd, 8) }
     pub fn try_clone(): File throws Error {
         let cloned = unsafe { sys.mettle_rt_dup(self.fd) }
@@ -268,10 +336,34 @@ extend File {
         File(cloned)
     }
     pub fn metadata(): Metadata throws Error {
-        var info = [0i64; 5]
-        let r = unsafe { sys.mettle_rt_stat(core.ptr.null<u8>(), self.fd, 1, core.ptr.from_mut(info).cast<i64>()) }
+        var info = [0i64; 10]
+        let r = unsafe { sys.mettle_rt_stat_full(core.ptr.null<u8>(), self.fd, 1, core.ptr.from_mut(info).cast<i64>()) }
         if r != 0 { throw io.last_os_error() }
         metadata_from(info)
+    }
+    pub fn set_times(take times: FileTimes): Unit throws Error {
+        var mask = 0u32
+        let accessed = match times.accessed {
+            present(time) => { mask |= 1u32; time },
+            none => super.time.unix_epoch()
+        }
+        let modified = match times.modified {
+            present(time) => { mask |= 2u32; time },
+            none => super.time.unix_epoch()
+        }
+        while true {
+            let status = unsafe {
+                sys.mettle_rt_file_set_times(self.fd, mask,
+                    accessed.unix_secs(), accessed.subsec_nanos(),
+                    modified.unix_secs(), modified.subsec_nanos())
+            }
+            if status == 0i32 { return }
+            let error = io.last_os_error()
+            if !error.kind().is(ErrorKind.Interrupted) { throw error }
+        }
+    }
+    pub fn set_modified(time: SystemTime): Unit throws Error {
+        try self.set_times(FileTimes.new().set_modified(time))
     }
     pub mut fn seek(pos: SeekFrom): u64 throws Error { try seek_file(self.fd, pos) }
     pub fn sync_all(): Unit throws Error {
@@ -291,6 +383,19 @@ extend File {
     }
 }
 
+extend File implements From<sys.OwnedFd> {
+    static fn from(take descriptor: sys.OwnedFd): File { File(descriptor.into_raw_fd()) }
+}
+
+extend sys.OwnedFd implements From<File> {
+    static fn from(take file: File): sys.OwnedFd {
+        var owned = file
+        let fd = owned.fd
+        owned.fd = -1
+        unsafe { sys.OwnedFd.from_raw_fd(fd) }
+    }
+}
+
 extend File implements package.core.fmt.Debug {
     fn fmt(mut f: package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
         var debug = try f.debug_struct("File")
@@ -304,6 +409,16 @@ fn file_lock(fd: i32, operation: i32): Unit throws Error {
         if unsafe { flock(fd, operation) } == 0 { return }
         let error = io.last_os_error()
         if !error.kind().is(ErrorKind.Interrupted) { throw error }
+    }
+}
+
+fn try_file_lock(fd: i32, operation: i32): Unit throws TryLockError {
+    match take capture file_lock(fd, operation) {
+        success(_) => {},
+        failure(error) => {
+            if error.kind().is(ErrorKind.WouldBlock) { throw TryLockError.WouldBlock }
+            throw TryLockError.Error(error)
+        }
     }
 }
 
@@ -523,11 +638,11 @@ pub fn rename(read old: PathInput, read new: PathInput): Unit throws Error {
 pub type DirEntry { name: OsString; dir: PathBuf }
 
 extend DirEntry {
-    pub fn file_name(): read OsStr from self { self.name.as_os_str() }
+    pub fn file_name(): OsString { self.name.clone() }
     pub fn file_type(): FileType throws Error {
         try symlink_metadata(self.path()).file_type()
     }
-    pub fn metadata(): Metadata throws Error { try metadata(self.path()) }
+    pub fn metadata(): Metadata throws Error { try symlink_metadata(self.path()) }
     pub fn path(): PathBuf {
         var p = self.dir.as_path().to_path_buf()
         p.push(super.path.path_from_os_str(self.name.as_os_str()))
@@ -554,6 +669,10 @@ pub type ReadDir {
         if self.handle != core.ptr.null_mut<u8>() { let closed = unsafe { sys.closedir(self.handle) } }
     }
 }
+
+// Exclusive iteration and destruction serialize access to the owned DIR cursor.
+unsafe extend ReadDir implements Transferable {}
+unsafe extend ReadDir implements Shareable {}
 
 pub fn read_dir(read input: PathInput): ReadDir throws Error {
     let p = input.as_path()

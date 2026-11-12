@@ -1,5 +1,6 @@
 // Path and PathBuf accessors, iteration, builders and mutators.
 import core.iter.Iterator
+import alloc.string.ToString
 import std.ffi.os_str_from_text
 import std.io.{Error, ErrorKind}
 import std.path.{Path, PathBuf, path_from_text, path_buf_from_text}
@@ -38,7 +39,7 @@ fn run(): i32 throws Error {
     if !extension_is(p, "1") { return 7 }
     if !parent_is(p, "/usr/lib") { return 8 }
     if !p.to_path_buf().as_path().same(p) { return 9 }
-    if p.display().len() != 18usize { return 10 }
+    if p.display().to_string().len() != 18usize { return 10 }
 
     // Ancestors walk the lexical parents down to the root.
     var ancestors = p.ancestors()

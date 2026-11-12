@@ -12,7 +12,7 @@ import package.core.clone.Clone
 // A length of time: whole seconds plus nanoseconds below one second.
 pub copy type Duration { secs: u64; nanos: u32 }
 
-pub fn duration(secs: u64, nanos: u32): Duration {
+pub const fn duration(secs: u64, nanos: u32): Duration {
     let normalized_secs = match secs.checked_add((nanos / 1000000000u32) as u64) {
         present(value) => value,
         none => package.core.panic.panic("overflow when constructing duration")
@@ -25,9 +25,12 @@ pub fn from_micros(micros: u64): Duration { Duration(micros / 1000000u64, ((micr
 pub fn from_nanos(nanos: u64): Duration { Duration(nanos / 1000000000u64, (nanos % 1000000000u64) as u32) }
 
 extend Duration {
-    pub static fn new(secs: u64, nanos: u32): Duration { duration(secs, nanos) }
-    pub fn as_secs(): u64 { self.secs }
-    pub fn subsec_nanos(): u32 { self.nanos }
+    pub const ZERO: Duration = Duration(0u64, 0u32)
+    pub const MAX: Duration = Duration(18446744073709551615u64, 999999999u32)
+
+    pub static const fn new(secs: u64, nanos: u32): Duration { duration(secs, nanos) }
+    pub const fn as_secs(): u64 { self.secs }
+    pub const fn subsec_nanos(): u32 { self.nanos }
     pub fn subsec_millis(): u32 { self.nanos / 1000000u32 }
     pub fn subsec_micros(): u32 { self.nanos / 1000u32 }
     pub fn as_millis(): u128 { self.secs as u128 * 1000u128 + (self.nanos / 1000000u32) as u128 }
@@ -71,21 +74,21 @@ extend Duration {
     }
     pub fn same(other: Duration): bool { self.secs == other.secs && self.nanos == other.nanos }
 
-    pub static fn from_hours(hours: u64): Duration {
+    pub static const fn from_hours(hours: u64): Duration {
         match hours.checked_mul(3600u64) {
             present(secs) => Duration(secs, 0u32),
             none => package.core.panic.panic("overflow when constructing duration")
         }
     }
 
-    pub static fn from_mins(minutes: u64): Duration {
+    pub static const fn from_mins(minutes: u64): Duration {
         match minutes.checked_mul(60u64) {
             present(secs) => Duration(secs, 0u32),
             none => package.core.panic.panic("overflow when constructing duration")
         }
     }
 
-    pub static fn from_nanos_u128(nanos: u128): Duration {
+    pub static const fn from_nanos_u128(nanos: u128): Duration {
         let secs = nanos / 1000000000u128
         if secs > 18446744073709551615u128 {
             package.core.panic.panic("overflow when constructing duration")
@@ -148,8 +151,8 @@ extend Duration {
     pub fn mul_f64(rhs: f64): Duration { Duration.from_secs_f64(self.as_secs_f64() * rhs) }
     pub fn div_f32(rhs: f32): Duration { Duration.from_secs_f32(self.as_secs_f32() / rhs) }
     pub fn div_f64(rhs: f64): Duration { Duration.from_secs_f64(self.as_secs_f64() / rhs) }
-    pub fn div_duration_f32(rhs: Duration): f32 { self.as_secs_f32() / rhs.as_secs_f32() }
-    pub fn div_duration_f64(rhs: Duration): f64 { self.as_secs_f64() / rhs.as_secs_f64() }
+    pub const fn div_duration_f32(rhs: Duration): f32 { self.as_secs_f32() / rhs.as_secs_f32() }
+    pub const fn div_duration_f64(rhs: Duration): f64 { self.as_secs_f64() / rhs.as_secs_f64() }
 }
 
 pub copy type TryFromFloatSecsError {}
@@ -302,8 +305,8 @@ extend Duration {
         if self.before(other) { sub_durations(other, self) } else { sub_durations(self, other) }
     }
 
-    pub fn as_secs_f64(): f64 { (self.secs as f64) + (self.nanos as f64) / 1000000000.0f64 }
-    pub fn as_secs_f32(): f32 { (self.secs as f32) + (self.nanos as f32) / 1000000000.0f32 }
+    pub const fn as_secs_f64(): f64 { (self.secs as f64) + (self.nanos as f64) / 1000000000.0f64 }
+    pub const fn as_secs_f32(): f32 { (self.secs as f32) + (self.nanos as f32) / 1000000000.0f32 }
 }
 
 extend Duration implements PartialEq {

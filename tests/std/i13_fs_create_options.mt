@@ -1,7 +1,7 @@
 import alloc.vec
 import std.io.{Error, ErrorKind, Reader, Seek, Writer}
 import std.path.path_from_text
-import std.fs.{File, FileType, OpenOptions, SeekFrom}
+import std.fs.{File, FileType, OpenOptions, SeekFrom, TryLockError}
 
 fn run(): i32 throws Error {
     if !FileType.File.is_file() || !FileType.Directory.is_dir() ||
@@ -70,13 +70,18 @@ fn run(): i32 throws Error {
     try first_lock.lock()
     match take capture second_lock.try_lock() {
         success(_) => { return 13 },
-        failure(error) => {
-            if !error.kind().is(ErrorKind.WouldBlock) { return 14 }
-        }
+        failure(TryLockError.WouldBlock) => {},
+        failure(_) => { return 14 }
     }
     try first_lock.unlock()
-    try first_lock.try_lock_shared()
-    try second_lock.try_lock_shared()
+    match take capture first_lock.try_lock_shared() {
+        success(_) => {},
+        failure(_) => { return 100 }
+    }
+    match take capture second_lock.try_lock_shared() {
+        success(_) => {},
+        failure(_) => { return 100 }
+    }
     try first_lock.unlock()
     try second_lock.unlock()
     core.mem.drop(take first_lock)

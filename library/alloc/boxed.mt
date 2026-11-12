@@ -9,7 +9,7 @@ import package.core.iter.{BidirectionalIterator, ExactSizeIterator, FusedIterato
 import package.core.iter.{FromItems, Iterable, Iterator, MutableIterable, OwnedIterable}
 import package.core.ops.{Deref, DerefMut}
 import package.core.future.{Future, Context, Poll}
-import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, layout_of_val, layout_array, layout_unchecked, free_block, handle_alloc_error}
+import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, layout_of_val, layout_array, extend_layout, layout_unchecked, free_block, handle_alloc_error}
 import package.core.clone.Clone
 import package.core.default.Default
 import package.core.slice.{SliceIter, SliceIterMut, drop_values}
@@ -331,6 +331,29 @@ extend<T: unsized, A: Allocator> Box<T, A> {
             (p, a)
         }
     }
+    // Safety: use a valid prefix Layout, initialize only that extent, and adopt the aligned payload with the returned padded layout/allocator.
+    // Failure drops the source Box; success transfers both blocks: free source once with its original layout, without dropping the moved payload.
+    pub(super) take unsafe fn try_move_with_prefix(
+        prefix: Layout
+    ): (ptr<mut T>, ptr<mut u8>, Layout, ptr<mut u8>, Layout, A) throws AllocError {
+        var source = self
+        let payload = layout_of_val(source.get())
+        let (combined, offset) = match capture extend_layout(prefix, payload) {
+            success(layout) => layout,
+            failure(error) => throw AllocError(error.size, error.align)
+        }
+        let allocation = combined.pad_to_align()
+        let block = try source.a.allocate(allocation)
+        let data = unsafe { block.add(offset) }
+        var pointer = source.p
+        unsafe {
+            // Thin and metadata-bearing native pointers start with data; retain all metadata and use the new block's provenance.
+            core.ptr.write(core.ptr.from_mut(pointer).cast<ptr<mut u8>>(), data)
+            core.ptr.copy(source.p.cast<u8>(), data, payload.size())
+        }
+        let raw = source.into_raw()
+        (pointer, block, allocation, raw.0.cast<u8>(), payload, raw.1)
+    }
     // The allocator is intentionally retained with the leaked allocation.
     pub take fn leak(): ptr<mut T> {
         let p = self.p
@@ -628,6 +651,34 @@ extend<T, const N: usize, A: Allocator> Box<[T; N], A> implements TryFrom<super.
 extend Box<Text> implements From<super.string.String> {
     static fn from(take value: super.string.String): Box<Text> { from_string(value) }
 }
+extend Box<package.core.ffi.CStr> implements From<super.ffi.CString> {
+    static fn from(take value: super.ffi.CString): Box<package.core.ffi.CStr> {
+        value.into_boxed_c_str()
+    }
+}
+extend<region r> Box<package.core.ffi.CStr> implements From<read package.core.ffi.CStr from r> {
+    static fn from(take value: read package.core.ffi.CStr from r): Box<package.core.ffi.CStr> {
+        value.to_owned().into_boxed_c_str()
+    }
+}
+extend<region r> Box<package.core.ffi.CStr> implements From<mut package.core.ffi.CStr from r> {
+    static fn from(take value: mut package.core.ffi.CStr from r): Box<package.core.ffi.CStr> {
+        value.to_owned().into_boxed_c_str()
+    }
+}
+extend<region r> Box<package.core.ffi.CStr> implements From<super.borrow.BorrowedOrOwned<region r, package.core.ffi.CStr>> {
+    static fn from(
+        take value: super.borrow.BorrowedOrOwned<region r, package.core.ffi.CStr>
+    ): Box<package.core.ffi.CStr> { value.into_owned().into_boxed_c_str() }
+}
+extend<region r> Box<Text> implements From<super.borrow.BorrowedOrOwned<region r, Text>> {
+    static fn from(take value: super.borrow.BorrowedOrOwned<region r, Text>): Box<Text> {
+        match take value {
+            super.borrow.BorrowedOrOwned.Borrowed(view) => copy_text(view),
+            super.borrow.BorrowedOrOwned.Owned(owner) => from_string(owner)
+        }
+    }
+}
 extend<T: unsized + Future + Unpin, A: Allocator> Box<T, A> implements Future {
     type Output = T.(Future).Output
     fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<T.(Future).Output> {
@@ -663,10 +714,15 @@ extend<region r> Box<any Error> implements From<read Text from r> {
         new(BoxTextError(super.string.from_text(value)))
     }
 }
-extend<T: PartialEq, A: Allocator> Box<T, A> implements PartialEq {
+extend<region r> Box<any Error> implements From<super.borrow.BorrowedOrOwned<region r, Text>> {
+    static fn from(take value: super.borrow.BorrowedOrOwned<region r, Text>): Box<any Error> {
+        Box<any Error>.(From<super.string.String>).from(value.into_owned())
+    }
+}
+extend<T: PartialEq + unsized, A: Allocator> Box<T, A> implements PartialEq {
     fn eq(read other: Box<T, A>): bool { self.get().eq(other.get()) }
 }
-extend<T: Eq, A: Allocator> Box<T, A> implements Eq {}
+extend<T: Eq + unsized, A: Allocator> Box<T, A> implements Eq {}
 extend<T: PartialOrd, A: Allocator> Box<T, A> implements PartialOrd {
     fn partial_cmp(read other: Box<T, A>): Ordering? { self.get().partial_cmp(other.get()) }
 }
@@ -757,8 +813,63 @@ extend<T: unsized + Future, A: Allocator> Pinned<T, A> implements Future {
         T.(Future).poll((*owner).as_mut(), mut cx)
     }
 }
-extend<T: fmt.Debug, A: Allocator> Pinned<T, A> implements fmt.Debug {
+extend<T: Clone, A: Allocator + Clone> Pinned<T, A> implements Clone {
+    fn clone(): Pinned<T, A> { new_in(self.get_ref().clone(), self.a.clone()).into_pinned() }
+}
+extend<T: Eq + unsized, A: Allocator> Pinned<T, A> implements Eq {}
+extend<T: Ord + unsized, A: Allocator> Pinned<T, A> implements Ord {
+    fn cmp(read other: Pinned<T, A>): Ordering { self.get_ref().cmp(other.get_ref()) }
+}
+extend<T: Hash + unsized, A: Allocator> Pinned<T, A> implements Hash {
+    fn hash<H: Hasher>(mut state: H): Unit { self.get_ref().hash(mut state) }
+}
+extend<T: fmt.Display + unsized, A: Allocator> Pinned<T, A> implements fmt.Display {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try T.(fmt.Display).fmt(self.get_ref(), mut f) }
+}
+extend<T: fmt.Debug + unsized, A: Allocator> Pinned<T, A> implements fmt.Debug {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try T.(fmt.Debug).fmt(self.get_ref(), mut f) }
+}
+extend<T: PartialEq<U> + unsized, U: unsized, A: Allocator, B: Allocator> Pinned<T, A> implements PartialEq<Pinned<U, B>> {
+    fn eq(read other: Pinned<U, B>): bool { self.get_ref().eq(other.get_ref()) }
+}
+extend<T: PartialOrd<U> + unsized, U: unsized, A: Allocator, B: Allocator> Pinned<T, A> implements PartialOrd<Pinned<U, B>> {
+    fn partial_cmp(read other: Pinned<U, B>): Ordering? { self.get_ref().partial_cmp(other.get_ref()) }
+}
+extend<T: PartialEq<U> + unsized, U: unsized, A: Allocator, B: Allocator> Pinned<T, A> implements PartialEq<super.rc.Pinned<U, B>> {
+    fn eq(read other: super.rc.Pinned<U, B>): bool { self.get_ref().eq(other.get_ref()) }
+}
+extend<T: PartialOrd<U> + unsized, U: unsized, A: Allocator, B: Allocator> Pinned<T, A> implements PartialOrd<super.rc.Pinned<U, B>> {
+    fn partial_cmp(read other: super.rc.Pinned<U, B>): Ordering? { self.get_ref().partial_cmp(other.get_ref()) }
+}
+extend<T: PartialEq<U> + unsized, U: unsized, A: Allocator, B: Allocator> Pinned<T, A> implements PartialEq<super.arc.Pinned<U, B>> {
+    fn eq(read other: super.arc.Pinned<U, B>): bool { self.get_ref().eq(other.get_ref()) }
+}
+extend<T: PartialOrd<U> + unsized, U: unsized, A: Allocator, B: Allocator> Pinned<T, A> implements PartialOrd<super.arc.Pinned<U, B>> {
+    fn partial_cmp(read other: super.arc.Pinned<U, B>): Ordering? { self.get_ref().partial_cmp(other.get_ref()) }
+}
+extend<region r, T: PartialEq<U> + unsized, U: unsized, A: Allocator> Pinned<T, A> implements PartialEq<pinned read U from r> {
+    fn eq(read other: pinned read U from r): bool { self.get_ref().eq(other.get_ref()) }
+}
+extend<region r, T: PartialOrd<U> + unsized, U: unsized, A: Allocator> Pinned<T, A> implements PartialOrd<pinned read U from r> {
+    fn partial_cmp(read other: pinned read U from r): Ordering? { self.get_ref().partial_cmp(other.get_ref()) }
+}
+extend<region r, T: PartialEq<U> + unsized, U: unsized, A: Allocator> Pinned<T, A> implements PartialEq<pinned mut U from r> {
+    fn eq(read other: pinned mut U from r): bool { self.get_ref().eq(other.get_ref()) }
+}
+extend<region r, T: PartialOrd<U> + unsized, U: unsized, A: Allocator> Pinned<T, A> implements PartialOrd<pinned mut U from r> {
+    fn partial_cmp(read other: pinned mut U from r): Ordering? { self.get_ref().partial_cmp(other.get_ref()) }
+}
+extend<region r, T: PartialEq<U> + unsized, U: unsized, A: Allocator> pinned read T from r implements PartialEq<Pinned<U, A>> {
+    fn eq(read other: Pinned<U, A>): bool { self.get_ref().eq(other.get_ref()) }
+}
+extend<region r, T: PartialOrd<U> + unsized, U: unsized, A: Allocator> pinned read T from r implements PartialOrd<Pinned<U, A>> {
+    fn partial_cmp(read other: Pinned<U, A>): Ordering? { self.get_ref().partial_cmp(other.get_ref()) }
+}
+extend<region r, T: PartialEq<U> + unsized, U: unsized, A: Allocator> pinned mut T from r implements PartialEq<Pinned<U, A>> {
+    fn eq(read other: Pinned<U, A>): bool { self.get_ref().eq(other.get_ref()) }
+}
+extend<region r, T: PartialOrd<U> + unsized, U: unsized, A: Allocator> pinned mut T from r implements PartialOrd<Pinned<U, A>> {
+    fn partial_cmp(read other: Pinned<U, A>): Ordering? { self.get_ref().partial_cmp(other.get_ref()) }
 }
 // The handle is movable; pinning is a property of the payload's storage.
 unsafe extend<T: unsized, A: Allocator> Pinned<T, A> implements Unpin {}

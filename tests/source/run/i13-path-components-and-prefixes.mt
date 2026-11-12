@@ -3,6 +3,7 @@
 // stripping, capacity, and lossy conversion.
 
 import core.iter.{BidirectionalIterator, Iterator}
+import alloc.string.ToString
 import std.ffi.os_str_from_text
 import std.path.{Component, Path, PathBuf, StripPrefixError, path, path_from_text, path_buf_from_text}
 
@@ -145,7 +146,7 @@ fn checks_lossy(): i32 {
     let bytes: [u8; 3] = [0x61u8, 0xffu8, 0x62u8]
     let raw = path(bytes)
     if raw.to_string_lossy().as_text() != "a\u{fffd}b" { return 30 }
-    if raw.display().as_text() != "a\u{fffd}b" { return 31 }
+    if raw.display().to_string().as_text() != "a\u{fffd}b" { return 31 }
     if raw.to_str().is_present() { return 32 }
     let owned = raw.into_path_buf()
     if owned.to_string_lossy().as_text() != "a\u{fffd}b" { return 33 }

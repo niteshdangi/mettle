@@ -20,13 +20,13 @@ fn run(): i32 throws Error {
         ffi.os_string_from_text("first"),
         ffi.os_string_from_text("second")
     ]
-    command.args(read arguments)
+    command.args(arguments)
     command.env(ffi.os_str_from_text("MT_I13"), ffi.os_str_from_text("value"))
     let environment = [(
         ffi.os_string_from_text("MT_I13_SECOND"),
         ffi.os_string_from_text("other")
     )]
-    command.envs(read environment)
+    command.envs(environment)
     let program = match command.get_program().to_str() {
         present(value) => value,
         none => { return 2 }
@@ -44,6 +44,7 @@ fn run(): i32 throws Error {
     var envs = command.get_envs()
     match envs.next() {
         present((name, value)) => {
+            let value = match value { present(v) => v, none => { return 7 } }
             if !text_is(name.to_str(), "MT_I13") || !text_is(value.to_str(), "value") {
                 return 7
             }
@@ -60,8 +61,8 @@ fn run(): i32 throws Error {
     command.stderr(Stdio.Piped)
     var child = try command.spawn()
     debug(read child)
-    if child.stdin().is_none() { return 11 }
-    if child.stdout().is_none() || child.stderr().is_none() { return 12 }
+    if child.take_stdin().is_none() { return 11 }
+    if child.take_stdout().is_none() || child.take_stderr().is_none() { return 12 }
     let output = try child.wait_with_output()
     debug(read output)
     let empty = Output(status, alloc.vec.new<u8>(), alloc.vec.new<u8>())
@@ -78,7 +79,7 @@ fn run(): i32 throws Error {
     var waiting = Command.new(ffi.os_str_from_text("/bin/cat"))
     waiting.stdin(Stdio.Piped)
     var blocked_child = try waiting.spawn()
-    let _held_input = match take blocked_child.stdin() {
+    let _held_input = match take blocked_child.take_stdin() {
         present(input) => input,
         none => { return 15 }
     }

@@ -3,8 +3,9 @@
 // them, and `Error` keeps the raw OS error number so it round-trips unchanged.
 import package.alloc.vec
 import package.alloc.vec.List
-import package.alloc.alloc.Allocator
+import package.alloc.alloc.{AllocError, Allocator}
 import package.alloc.boxed.Box
+import package.alloc.arc.Arc
 import package.alloc.collections.Deque
 import package.core.text.Text
 import package.core.cmp.{Eq, PartialEq}
@@ -27,14 +28,15 @@ import package.core.ops.DerefMut
 import package.std.sync.mutex.TryLockError
 
 pub copy enum ErrorKind {
-    NotFound, PermissionDenied, ConnectionRefused, ConnectionReset, ConnectionAborted,
-    NotConnected, AddrInUse, AddrNotAvailable, BrokenPipe, AlreadyExists, WouldBlock,
-    InvalidInput, TimedOut, Interrupted, OutOfMemory, IsADirectory, NotADirectory,
-    DirectoryNotEmpty, Other, InvalidData, WriteZero, UnexpectedEof, Unsupported,
-    ArgumentListTooLong, CrossesDevices, Deadlock, ExecutableFileBusy, FileTooLarge,
-    FilesystemLoop, HostUnreachable, InProgress, InputOutputError, InvalidFilename,
-    NetworkDown, NetworkUnreachable, NotSeekable, QuotaExceeded, ReadOnlyFilesystem,
-    ResourceBusy, StaleNetworkFileHandle, StorageFull, TooManyLinks, TooManyOpenFiles
+    NotFound, PermissionDenied, ConnectionRefused, ConnectionReset, HostUnreachable,
+    NetworkUnreachable, ConnectionAborted, NotConnected, AddrInUse, AddrNotAvailable,
+    NetworkDown, BrokenPipe, AlreadyExists, WouldBlock, NotADirectory, IsADirectory,
+    DirectoryNotEmpty, ReadOnlyFilesystem, FilesystemLoop, StaleNetworkFileHandle,
+    InvalidInput, InvalidData, TimedOut, WriteZero, StorageFull, NotSeekable,
+    QuotaExceeded, FileTooLarge, ResourceBusy, ExecutableFileBusy, Deadlock,
+    CrossesDevices, TooManyLinks, InvalidFilename, ArgumentListTooLong, Interrupted,
+    Unsupported, UnexpectedEof, OutOfMemory, InProgress, TooManyOpenFiles,
+    InputOutputError, Other
 }
 
 fn kind_from_index(index: i32): ErrorKind {
@@ -375,6 +377,25 @@ extend Error implements From<ErrorKind> {
     static fn from(take kind: ErrorKind): Error { from_kind(kind) }
 }
 
+extend Error implements From<AllocError> {
+    static fn from(take error: AllocError): Error { from_kind(ErrorKind.OutOfMemory) }
+}
+
+extend Error implements From<package.alloc.ffi.NulError> {
+    static fn from(take error: package.alloc.ffi.NulError): Error {
+        Error.new(ErrorKind.InvalidInput, error)
+    }
+}
+
+extend Error implements From<super.fs.TryLockError> {
+    static fn from(take error: super.fs.TryLockError): Error {
+        match take error {
+            super.fs.TryLockError.Error(error) => error,
+            super.fs.TryLockError.WouldBlock => from_kind(ErrorKind.WouldBlock)
+        }
+    }
+}
+
 extend<G: Static + Transferable + Shareable> Error implements From<TryLockError<G>> {
     static fn from(take error: TryLockError<G>): Error { Error.other(error) }
 }
@@ -561,7 +582,7 @@ extend<R: Reader> Bytes<R> implements package.core.iter.Iterator {
     }
 }
 
-pub interface BufRead {
+pub interface BufRead: Reader {
     mut fn fill_buf(): read [u8] from self throws Error;
     mut fn consume(n: usize): Unit;
 
@@ -753,6 +774,38 @@ fn fd_write(fd: i32, read buf: [u8]): usize throws Error {
 pub fn read_fd(fd: i32, mut buf: [u8]): usize throws Error { try fd_read(fd, buf) }
 pub fn write_fd(fd: i32, read buf: [u8]): usize throws Error { try fd_write(fd, buf) }
 
+pub type PipeReader { descriptor: sys.OwnedFd }
+pub type PipeWriter { descriptor: sys.OwnedFd }
+
+extend PipeReader implements Reader {
+    mut fn read_some(mut bytes: [u8]): usize throws Error {
+        try read_fd(self.descriptor.as_raw_fd(), bytes)
+    }
+}
+
+extend PipeWriter implements Writer {
+    mut fn write_some(read bytes: [u8]): usize throws Error {
+        try write_fd(self.descriptor.as_raw_fd(), bytes)
+    }
+    mut fn flush(): Unit throws Error {}
+}
+
+extend PipeReader implements From<sys.OwnedFd> {
+    static fn from(take descriptor: sys.OwnedFd): PipeReader { PipeReader(descriptor) }
+}
+
+extend PipeWriter implements From<sys.OwnedFd> {
+    static fn from(take descriptor: sys.OwnedFd): PipeWriter { PipeWriter(descriptor) }
+}
+
+extend sys.OwnedFd implements From<PipeReader> {
+    static fn from(take value: PipeReader): sys.OwnedFd { value.descriptor }
+}
+
+extend sys.OwnedFd implements From<PipeWriter> {
+    static fn from(take value: PipeWriter): sys.OwnedFd { value.descriptor }
+}
+
 pub fn `copy`<R: Reader + unsized, W: Writer + unsized>(mut reader: R, mut writer: W): u64 throws Error {
     var buffer = [0u8; 8192]
     var total = 0u64
@@ -777,6 +830,207 @@ pub copy type Stdin {}
 pub copy type Stdout {}
 pub copy type Stderr {}
 
+extern "C" {
+    unsafe fn atexit(callback: extern "C" fn(): Unit): i32;
+}
+
+// Published mutexes and stream state live until process termination.
+static STDIN_MUTEX: core.sync.atomic.AtomicPtr<u8> = core.sync.atomic.AtomicPtr<u8>.new(core.ptr.null_mut<u8>())
+static STDOUT_MUTEX: core.sync.atomic.AtomicPtr<u8> = core.sync.atomic.AtomicPtr<u8>.new(core.ptr.null_mut<u8>())
+static STDERR_MUTEX: core.sync.atomic.AtomicPtr<u8> = core.sync.atomic.AtomicPtr<u8>.new(core.ptr.null_mut<u8>())
+static STDIN_STATE: core.cell.UnsafeCell<core.cell.RefCell<BufferedReader<RawStdin>>?> = core.cell.UnsafeCell.new(none)
+static STDOUT_STATE: core.cell.UnsafeCell<core.cell.RefCell<BufferedWriter<RawOutput>>?> = core.cell.UnsafeCell.new(none)
+
+type StdioLock {
+    raw: ptr<mut u8>
+    drop {
+        if unsafe { sys.mettle_rt_mutex_unlock(self.raw) } != 0i32 {
+            core.intrinsics.abort()
+        }
+    }
+}
+extend StdioLock not Transferable
+// Sharing the opaque token exposes no operation on its owning-thread lock.
+unsafe extend StdioLock implements Shareable {}
+
+fn stream_lock(read slot: core.sync.atomic.AtomicPtr<u8>): StdioLock {
+    let order = core.sync.atomic.Ordering.Acquire
+    var raw = slot.load(order)
+    if raw == core.ptr.null_mut<u8>() {
+        let candidate = unsafe { sys.mettle_rt_reentrant_mutex_new() }
+        if candidate == core.ptr.null_mut<u8>() { core.intrinsics.abort() }
+        match slot.compare_exchange(core.ptr.null_mut<u8>(), candidate,
+            core.sync.atomic.Ordering.AcqRel, order) {
+            success(_) => { raw = candidate },
+            failure(published) => {
+                unsafe { sys.mettle_rt_mutex_free(candidate) }
+                raw = published
+            }
+        }
+    }
+    if unsafe { sys.mettle_rt_mutex_lock(raw) } != 0i32 { core.intrinsics.abort() }
+    StdioLock(raw)
+}
+
+// Caller holds the stream lock; initialization publishes once without user callbacks.
+fn stream_state<T, F: fn(): T>(
+    read cell: core.cell.UnsafeCell<core.cell.RefCell<T>?>, take initialize: F
+): read core.cell.RefCell<T> from cell {
+    match unsafe { read *cell.get() } {
+        present(state) => { return read state },
+        none => {}
+    }
+    let initialized = core.cell.RefCell.new(initialize())
+    unsafe { *cell.get() = present(initialized) }
+    match unsafe { read *cell.get() } {
+        present(state) => read state,
+        none => { core.intrinsics.abort() }
+    }
+}
+
+type RawStdin {}
+extend RawStdin implements Reader {
+    mut fn read_some(mut bytes: [u8]): usize throws Error { try fd_read(0i32, bytes) }
+}
+type RawOutput { fd: i32 }
+extend RawOutput implements Writer {
+    mut fn write_some(read bytes: [u8]): usize throws Error { try fd_write(self.fd, bytes) }
+    mut fn flush(): Unit throws Error {}
+}
+
+fn input_state(): read core.cell.RefCell<BufferedReader<RawStdin>> from static {
+    stream_state(STDIN_STATE, fn(): BufferedReader<RawStdin> { buf_reader(RawStdin()) })
+}
+
+fn output_state(): read core.cell.RefCell<BufferedWriter<RawOutput>> from static {
+    stream_state(STDOUT_STATE, fn(): BufferedWriter<RawOutput> {
+        let writer = buf_writer(RawOutput(1i32))
+        if unsafe { atexit(stdout_cleanup) } != 0i32 { core.intrinsics.abort() }
+        writer
+    })
+}
+
+extern "C" fn stdout_cleanup(): Unit {
+    let lock = stream_lock(STDOUT_MUTEX)
+    match unsafe { read *STDOUT_STATE.get() } {
+        present(state) => {
+            match take state.try_borrow_mut() {
+                success(guard) => {
+                    var guard = guard
+                    let _ = capture guard.get_mut().flush()
+                },
+                failure(_) => {}
+            }
+        },
+        none => {}
+    }
+}
+
+pub type StdinLock {
+    token: StdioLock
+    loan: (core.cell.Ref<BufferedReader<RawStdin>> from static)?
+    drop { core.mem.drop(self.loan.`take`()) }
+}
+pub type StdoutLock { token: StdioLock }
+pub type StderrLock { token: StdioLock }
+extend StdinLock not Transferable
+extend StdoutLock not Transferable
+extend StderrLock not Transferable
+// Shared guard views expose neither mutable state nor the retained borrow counter.
+unsafe extend StdinLock implements Shareable {}
+unsafe extend StdoutLock implements Shareable {}
+unsafe extend StderrLock implements Shareable {}
+
+extend Stdin {
+    pub fn lock(): StdinLock { StdinLock(stream_lock(STDIN_MUTEX), none) }
+    pub fn read_line(mut out: String): usize throws Error {
+        var locked = self.lock()
+        try locked.read_line(mut out)
+    }
+    pub take fn lines(): Lines<StdinLock> { self.lock().lines() }
+}
+extend Stdout {
+    pub fn lock(): StdoutLock { StdoutLock(stream_lock(STDOUT_MUTEX)) }
+}
+extend Stderr {
+    pub fn lock(): StderrLock { StderrLock(stream_lock(STDERR_MUTEX)) }
+}
+
+extend StdinLock implements Reader {
+    mut fn read_some(mut bytes: [u8]): usize throws Error {
+        core.mem.drop(self.loan.`take`())
+        if bytes.len() == 0usize { return 0usize }
+        var borrowed = input_state().borrow_mut()
+        try borrowed.get_mut().read_some(bytes)
+    }
+    mut fn read_exact(mut bytes: [u8]): Unit throws Error {
+        core.mem.drop(self.loan.`take`())
+        if bytes.len() == 0usize { return }
+        var borrowed = input_state().borrow_mut()
+        try borrowed.get_mut().read_exact(bytes)
+    }
+}
+extend StdinLock implements BufRead {
+    mut fn fill_buf(): read [u8] from self throws Error {
+        core.mem.drop(self.loan.`take`())
+        let available = {
+            var borrowed = input_state().borrow_mut()
+            try borrowed.get_mut().fill_buf().len()
+        }
+        if available == 0usize { return "".as_bytes() }
+        self.loan = present(input_state().borrow())
+        match self.loan.as_ref() {
+            present(borrowed) => borrowed.get_ref().buffer(),
+            none => { core.intrinsics.abort() }
+        }
+    }
+    mut fn consume(count: usize): Unit {
+        core.mem.drop(self.loan.`take`())
+        var borrowed = input_state().borrow_mut()
+        borrowed.get_mut().consume(count)
+    }
+}
+
+extend StdoutLock implements Writer {
+    mut fn write_some(read bytes: [u8]): usize throws Error {
+        var borrowed = output_state().borrow_mut()
+        let writer = borrowed.get_mut()
+        var line_end = 0usize
+        var index = 0usize
+        while index < bytes.len() {
+            if bytes[index] == 10u8 { line_end = index + 1usize }
+            index += 1usize
+        }
+        if line_end == 0usize { return try writer.write_some(bytes) }
+        try writer.flush()
+        let prefix = try writer.get_mut().write_some(bytes.split_at(line_end).0)
+        if prefix > line_end { throw from_kind(ErrorKind.InvalidData) }
+        if prefix < line_end || line_end == bytes.len() { return prefix }
+        match take capture writer.write_some(bytes.split_at(line_end).1) {
+            success(suffix) => line_end + suffix,
+            failure(_) => line_end
+        }
+    }
+    mut fn flush(): Unit throws Error {
+        var borrowed = output_state().borrow_mut()
+        try borrowed.get_mut().flush()
+    }
+}
+extend StderrLock implements Writer {
+    mut fn write_some(read bytes: [u8]): usize throws Error { try fd_write(2i32, bytes) }
+    mut fn flush(): Unit throws Error {}
+}
+
+extend StdinLock implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str("StdinLock") }
+}
+extend StdoutLock implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str("StdoutLock") }
+}
+extend StderrLock implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str("StderrLock") }
+}
+
 extend Stdin implements fmt.Debug {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str("Stdin") }
 }
@@ -791,26 +1045,56 @@ pub fn stdout(): Stdout { Stdout() }
 pub fn stderr(): Stderr { Stderr() }
 
 extend Stdin implements Reader {
-    mut fn read_some(mut buf: [u8]): usize throws Error { try fd_read(0, buf) }
+    mut fn read_some(mut buf: [u8]): usize throws Error {
+        var locked = self.lock()
+        try locked.read_some(buf)
+    }
 }
 extend<region r> read Stdin from r implements Reader {
-    mut fn read_some(mut buf: [u8]): usize throws Error { try fd_read(0, buf) }
+    mut fn read_some(mut buf: [u8]): usize throws Error {
+        var locked = self.lock()
+        try locked.read_some(buf)
+    }
 }
 extend Stdout implements Writer {
-    mut fn write_some(read buf: [u8]): usize throws Error { try fd_write(1, buf) }
-    mut fn flush(): Unit throws Error {}
+    mut fn write_some(read buf: [u8]): usize throws Error {
+        var locked = self.lock()
+        try locked.write_some(buf)
+    }
+    mut fn flush(): Unit throws Error {
+        var locked = self.lock()
+        try locked.flush()
+    }
 }
 extend<region r> read Stdout from r implements Writer {
-    mut fn write_some(read buf: [u8]): usize throws Error { try fd_write(1, buf) }
-    mut fn flush(): Unit throws Error {}
+    mut fn write_some(read buf: [u8]): usize throws Error {
+        var locked = self.lock()
+        try locked.write_some(buf)
+    }
+    mut fn flush(): Unit throws Error {
+        var locked = self.lock()
+        try locked.flush()
+    }
 }
 extend Stderr implements Writer {
-    mut fn write_some(read buf: [u8]): usize throws Error { try fd_write(2, buf) }
-    mut fn flush(): Unit throws Error {}
+    mut fn write_some(read buf: [u8]): usize throws Error {
+        var locked = self.lock()
+        try locked.write_some(buf)
+    }
+    mut fn flush(): Unit throws Error {
+        var locked = self.lock()
+        try locked.flush()
+    }
 }
 extend<region r> read Stderr from r implements Writer {
-    mut fn write_some(read buf: [u8]): usize throws Error { try fd_write(2, buf) }
-    mut fn flush(): Unit throws Error {}
+    mut fn write_some(read buf: [u8]): usize throws Error {
+        var locked = self.lock()
+        try locked.write_some(buf)
+    }
+    mut fn flush(): Unit throws Error {
+        var locked = self.lock()
+        try locked.flush()
+    }
 }
 
 extend<T: Reader + unsized, A: Allocator> Box<T, A> implements Reader {
@@ -829,6 +1113,79 @@ extend<T: Writer + unsized, A: Allocator> Box<T, A> implements Writer {
 extend<T: Seek + unsized, A: Allocator> Box<T, A> implements Seek {
     mut fn seek(pos: SeekFrom): u64 throws Error {
         try self.get_mut().seek(pos)
+    }
+}
+
+extend<T: unsized, A: Allocator> Arc<T, A> implements Reader where read T: Reader {
+    mut fn read_some(mut buf: [u8]): usize throws Error {
+        var view = self.get()
+        try view.read_some(buf)
+    }
+    mut fn read_vectored<region r>(mut bufs: [IoSliceMut<region r>]): usize throws Error {
+        var view = self.get()
+        try view.read_vectored(bufs)
+    }
+    mut fn read_exact(mut buf: [u8]): Unit throws Error {
+        var view = self.get()
+        try view.read_exact(buf)
+    }
+    mut fn read_to_end(mut out: List<u8>): usize throws Error {
+        var view = self.get()
+        try view.read_to_end(out)
+    }
+    mut fn read_to_string(mut out: String): usize throws Error {
+        var view = self.get()
+        try view.read_to_string(out)
+    }
+}
+
+extend<T: unsized, A: Allocator> Arc<T, A> implements Writer where read T: Writer {
+    mut fn write_some(read buf: [u8]): usize throws Error {
+        var view = self.get()
+        try view.write_some(buf)
+    }
+    mut fn write_vectored<region r>(read bufs: [IoSlice<region r>]): usize throws Error {
+        var view = self.get()
+        try view.write_vectored(bufs)
+    }
+    mut fn write_all(read buf: [u8]): Unit throws Error {
+        var view = self.get()
+        try view.write_all(buf)
+    }
+    mut fn flush(): Unit throws Error {
+        var view = self.get()
+        try view.flush()
+    }
+    mut fn write_path(read input: PathInput): Unit throws Error {
+        var view = self.get()
+        try view.write_path(input)
+    }
+    mut fn write(message: format fmt.Message): Unit throws Error {
+        var view = self.get()
+        try view.write(message)
+    }
+    mut fn write_line(message: format fmt.Message): Unit throws Error {
+        var view = self.get()
+        try view.write_line(message)
+    }
+}
+
+extend<T: unsized, A: Allocator> Arc<T, A> implements Seek where read T: Seek {
+    mut fn seek(pos: SeekFrom): u64 throws Error {
+        var view = self.get()
+        try view.seek(pos)
+    }
+    mut fn stream_position(): u64 throws Error {
+        var view = self.get()
+        try view.stream_position()
+    }
+    mut fn rewind(): Unit throws Error {
+        var view = self.get()
+        try view.rewind()
+    }
+    mut fn seek_relative(offset: i64): Unit throws Error {
+        var view = self.get()
+        try view.seek_relative(offset)
     }
 }
 
@@ -954,12 +1311,12 @@ extend<region r> SliceReader<region r> implements fmt.Debug {
 pub type Cursor<T> { inner: T; position: u64 }
 
 extend<T> Cursor<T> {
-    pub static fn new(take inner: T): Cursor<T> { Cursor(inner, 0u64) }
-    pub fn get_ref(): read T from self { read self.inner }
-    pub mut fn get_mut(): mut T from self { mut self.inner }
+    pub static const fn new(take inner: T): Cursor<T> { Cursor(inner, 0u64) }
+    pub const fn get_ref(): read T from self { read self.inner }
+    pub mut const fn get_mut(): mut T from self { mut self.inner }
     pub take fn into_inner(): T { self.inner }
-    pub fn position(): u64 { self.position }
-    pub mut fn set_position(position: u64): Unit { self.position = position }
+    pub const fn position(): u64 { self.position }
+    pub mut const fn set_position(position: u64): Unit { self.position = position }
 }
 
 fn cursor_start(read bytes: [u8], position: u64): usize {
@@ -1181,6 +1538,31 @@ extend<R: Reader + Seek> BufferedReader<R> implements Seek {
         self.filled = 0usize
         position
     }
+
+    mut fn stream_position(): u64 throws Error {
+        let position = try self.inner.stream_position()
+        match position.checked_sub((self.filled - self.pos) as u64) {
+            present(logical) => logical,
+            none => { package.core.panic.panic("buffered reader position precedes its buffer") }
+        }
+    }
+
+    mut fn seek_relative(offset: i64): Unit throws Error {
+        if offset >= 0i64 {
+            let advance = offset as u64
+            if advance <= (self.filled - self.pos) as u64 {
+                self.pos += advance as usize
+                return
+            }
+        } else {
+            let rewind = (-(offset + 1i64)) as u64 + 1u64
+            if rewind <= self.pos as u64 {
+                self.pos -= rewind as usize
+                return
+            }
+        }
+        let _ = try self.seek(SeekFrom.Current(offset))
+    }
 }
 
 extend<R: Reader> BufferedReader<R> implements Reader {
@@ -1362,7 +1744,7 @@ extend<W: Writer> BufferedWriter<W> {
 
     pub take fn into_inner(): W throws IntoInnerError<W> {
         var this = self
-        let flushed = capture this.flush()
+        let flushed = capture this.flush_buf()
         match take flushed {
             success(_) => {
                 let parts = this.into_parts()

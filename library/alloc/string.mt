@@ -3,7 +3,7 @@ import super.alloc.{Allocator, Global, AllocError, panic_precondition}
 import package.core.clone.Clone
 import package.core.default.Default
 import package.core.fmt
-import package.core.ops.{Deref, IndexRange, RangeEnd}
+import package.core.ops.{Deref, IndexRange, IndexRangeMut, RangeEnd}
 import package.core.hash.{Hash, Hasher}
 import package.core.borrow.KeyView
 import package.core.borrow.{AsRef, AsMut, Borrow, OwnedType, ToOwned}
@@ -40,6 +40,7 @@ import package.core.iter.{OwnedIterable, FromItems, ExtendItems}
 import package.core.convert.{From, TryFrom}
 import package.core.text.FromStr
 import package.core.ops.{Add, AddAssign}
+import super.borrow.BorrowedOrOwned
 
 // Owned, growable UTF-8 text: a `List<u8>` whose bytes are always well formed.
 pub type String<A: Allocator = Global> {
@@ -149,16 +150,16 @@ extend<region r, A: Allocator> StringDrain<region r, A> implements Bidirectional
 }
 
 // Callers must provide well-formed UTF-8 bytes.
-fn from_valid_bytes<A: Allocator>(take bytes: List<u8, A>): String<A> {
+const fn from_valid_bytes<A: Allocator>(take bytes: List<u8, A>): String<A> {
     let result: String<A>
     result.v = take bytes
     result
 }
 
-pub fn new_in<A: Allocator>(take a: A): String<A> {
+pub const fn new_in<A: Allocator>(take a: A): String<A> {
     from_valid_bytes(super.vec.new_in<u8, A>(take a))
 }
-pub fn new(): String { new_in(Global()) }
+pub const fn new(): String { new_in(Global()) }
 pub fn try_with_capacity_in<A: Allocator>(n: usize, take a: A): String<A> throws AllocError {
     from_valid_bytes(try super.vec.try_with_capacity_in<u8, A>(n, take a))
 }
@@ -496,8 +497,8 @@ extend<A: Allocator> String<A> {
     pub fn as_ptr(): ptr<read u8> { self.v.as_ptr() }
     pub mut fn as_mut_ptr(): ptr<mut u8> { self.v.as_mut_ptr() }
     // Borrowed text view; while it lives the string cannot change.
-    pub fn as_text(): read Text from self { unsafe { from_utf8_unchecked(self.v.as_slice()) } }
-    pub mut fn as_mut_str(): mut Text from self {
+    pub const fn as_text(): read Text from self { unsafe { from_utf8_unchecked(self.v.as_slice()) } }
+    pub mut const fn as_mut_str(): mut Text from self {
         match take package.core.text.from_utf8_mut(self.v.as_mut_slice()) {
             success(text) => text,
             failure(_) => { panic_precondition() }
@@ -520,12 +521,12 @@ extend<A: Allocator> String<A> {
     ): mut Text from self {
         unsafe { self.as_mut_str().get_unchecked_mut(start, end) }
     }
-    pub mut fn split_at_mut(
+    pub mut const fn split_at_mut(
         mid: usize
     ): (mut Text from self, mut Text from self) {
         self.as_mut_str().split_at_mut(mid)
     }
-    pub mut fn split_at_mut_checked(
+    pub mut const fn split_at_mut_checked(
         mid: usize
     ): (mut Text from self, mut Text from self)? {
         self.as_mut_str().split_at_mut_checked(mid)
@@ -557,7 +558,7 @@ extend<A: Allocator> String<A> {
     }
     // Safety: the bytes must be well-formed UTF-8 again before the string is
     // next observed as text (including on drop-free early exits such as errors).
-    pub mut unsafe fn as_mut_vec(): mut List<u8, A> from self { mut self.v }
+    pub mut unsafe const fn as_mut_vec(): mut List<u8, A> from self { mut self.v }
     pub mut fn try_reserve(extra: usize): Unit throws AllocError { try self.v.try_reserve(extra) }
     pub mut fn reserve(extra: usize): Unit { self.v.reserve(extra) }
     pub mut fn try_reserve_exact(extra: usize): Unit throws AllocError {
@@ -830,14 +831,20 @@ extend<T: fmt.Display + unsized> T implements ToString {
 // with the same boundary checks.
 extend<A: Allocator> String<A> implements Deref {
     type Target = Text
-    fn deref(): read Text from self { self.as_text() }
+    const fn deref(): read Text from self { self.as_text() }
 }
 extend<A: Allocator> String<A> implements package.core.ops.DerefMut {
-    mut fn deref_mut(): mut Text from self { self.as_mut_str() }
+    mut const fn deref_mut(): mut Text from self { self.as_mut_str() }
 }
 extend<A: Allocator> String<A> implements IndexRange {
     type Output = Text
     fn index_range(start: usize, end: RangeEnd): read Text from self { self.as_text().index_range(start, end) }
+}
+extend<A: Allocator> String<A> implements IndexRangeMut {
+    type Output = Text
+    mut fn index_range_mut(start: usize, end: RangeEnd): mut Text from self {
+        self.as_mut_str().index_range_mut(start, end)
+    }
 }
 extend<A: Allocator> String<A> implements fmt.Display {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.pad(self.as_text()) }
@@ -871,7 +878,7 @@ extend<region r, A: Allocator> String<A> implements ExtendItems<read Text from r
 extend<region r> String implements FromItems<read Text from r> {
     static fn from_iter<I: OwnedIterable<Item = read Text from r>>(take items: I): String {
         var result = new()
-        result.extend(items)
+        String.(ExtendItems<read Text from r>).extend(mut result, take items)
         result
     }
 }
@@ -889,7 +896,7 @@ extend<A: Allocator> String<A> implements ExtendItems<char> {
 extend String implements FromItems<char> {
     static fn from_iter<I: OwnedIterable<Item = char>>(take items: I): String {
         var result = new()
-        result.extend(take items)
+        String.(ExtendItems<char>).extend(mut result, take items)
         result
     }
 }
@@ -909,7 +916,7 @@ extend<region r> String implements FromItems<read char from r> {
         take items: I
     ): String {
         var result = new()
-        result.extend(take items)
+        String.(ExtendItems<read char from r>).extend(mut result, take items)
         result
     }
 }
@@ -927,7 +934,7 @@ extend<A: Allocator> String<A> implements ExtendItems<String> {
 extend String implements FromItems<String> {
     static fn from_iter<I: OwnedIterable<Item = String>>(take items: I): String {
         var result = new()
-        result.extend(take items)
+        String.(ExtendItems<String>).extend(mut result, take items)
         result
     }
 }
@@ -938,6 +945,41 @@ extend String implements FromStr {
 }
 extend<region r> String implements From<read Text from r> {
     static fn from(take input: read Text from r): String { from_text(input) }
+}
+extend<region r> String implements From<mut Text from r> {
+    static fn from(take input: mut Text from r): String { from_text(input) }
+}
+extend<region r> String implements From<BorrowedOrOwned<region r, Text>> {
+    static fn from(take input: BorrowedOrOwned<region r, Text>): String {
+        input.into_owned()
+    }
+}
+extend<region r, A: Allocator> String<A> implements PartialEq<BorrowedOrOwned<region r, Text>> {
+    fn eq(read other: BorrowedOrOwned<region r, Text>): bool {
+        self.as_text() == other.as_ref()
+    }
+}
+extend<region r, A: Allocator> String<A> implements ExtendItems<BorrowedOrOwned<region r, Text>> {
+    mut fn extend<I: OwnedIterable<Item = BorrowedOrOwned<region r, Text>>>(
+        take items: I
+    ): Unit {
+        var source = items.into_iter()
+        while true {
+            match take source.next() {
+                present(value) => self.push_str(value.as_ref()),
+                none => { break }
+            }
+        }
+    }
+}
+extend<region r> String implements FromItems<BorrowedOrOwned<region r, Text>> {
+    static fn from_iter<I: OwnedIterable<Item = BorrowedOrOwned<region r, Text>>>(
+        take items: I
+    ): String {
+        var result = new()
+        String.(ExtendItems<BorrowedOrOwned<region r, Text>>).extend(mut result, take items)
+        result
+    }
 }
 extend String implements From<char> {
     static fn from(take value: char): String {
@@ -983,6 +1025,9 @@ extend<A: Allocator> String<A> implements AsRef<[u8]> {
 }
 extend<A: Allocator> String<A> implements PartialEq<Text> {
     fn eq(read other: Text): bool { self.as_text() == other }
+}
+extend<region r, A: Allocator> String<A> implements PartialEq<read Text from r> {
+    fn eq(read other: read Text from r): bool { self.as_text() == *other }
 }
 extend<A: Allocator> String<A> implements PartialOrd<Text> {
     fn partial_cmp(read other: Text): Ordering? {

@@ -1,0 +1,33 @@
+// profiles: debug release
+import core.mem
+import core.cmp.{Ordering, PartialEq, PartialOrd}
+import core.ops.{Deref, DerefMut}
+
+type Counted {
+    drops: ptr<mut i32>
+    value: i32
+    drop { unsafe { *self.drops += self.value } }
+}
+
+fn main(): i32 {
+    var drops = 0i32
+    {
+        var manual = core.mem.ManuallyDrop.new(
+            Counted(core.ptr.from_mut(mut drops), 7i32)
+        )
+        if manual.deref().value != 7i32 { return 1 }
+        manual.deref_mut().value = 11i32
+        let value = unsafe { manual.`take`() }
+        if value.value != 11i32 || drops != 0i32 { return 2 }
+    }
+    if drops != 11i32 { return 3 }
+    var left = core.mem.ManuallyDrop.new(2i32)
+    let right = core.mem.ManuallyDrop.new(5i32)
+    *left.deref_mut() = 5i32
+    if !left.eq(read right) { return 4 }
+    match left.partial_cmp(read right) {
+        present(order) => { if order != Ordering.Equal { return 5 } },
+        none => { return 6 }
+    }
+    0
+}

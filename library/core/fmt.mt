@@ -13,6 +13,11 @@ pub copy type Error {}
 pub interface Write {
     mut fn write_str(read text: Text): Unit throws Error;
 
+    mut fn write_fmt(message: format Message): Unit throws Error {
+        var sink = WriteRef(mut self)
+        try message.write_to(mut sink)
+    }
+
     mut fn write_char(value: char): Unit throws Error {
         var bytes = [0u8, 0u8, 0u8, 0u8]
         let scalar = value as u32
@@ -37,6 +42,14 @@ pub interface Write {
         }
         // The bytes were just encoded from a scalar value.
         try self.write_str(unsafe { from_utf8_unchecked(unsafe { slice.subslice_unchecked(read bytes, 0usize, used) }) })
+    }
+}
+
+// The sized adapter preserves an unsized writer's complete borrowed descriptor.
+type WriteRef<region r, W: Write + unsized> { inner: mut W from r }
+extend<region r, W: Write + unsized> WriteRef<region r, W> implements Write {
+    mut fn write_str(read text: Text): Unit throws Error {
+        try self.inner.write_str(text)
     }
 }
 

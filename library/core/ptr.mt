@@ -15,7 +15,7 @@ copy type RawSlice<T> {
 }
 
 // Safety: ranges must be valid, aligned, and nonoverlapping for `count`.
-pub unsafe fn copy_nonoverlapping<T>(
+pub unsafe const fn copy_nonoverlapping<T>(
     source: ptr<read T>,
     destination: ptr<mut T>,
     count: usize
@@ -28,24 +28,24 @@ pub fn eq<T: unsized>(left: ptr<read T>, right: ptr<read T>): bool {
 }
 
 extend<T: unsized> NonNull<T> {
-    pub static fn new(pointer: ptr<mut T>): NonNull<T>? {
+    pub static const fn new(pointer: ptr<mut T>): NonNull<T>? {
         if pointer.is_null() { none } else { present(NonNull(pointer)) }
     }
 
-    pub static fn from_ref(value: read T): NonNull<T> {
+    pub static const fn from_ref(value: read T): NonNull<T> {
         NonNull(core.ptr.from_ref(value).cast_mut())
     }
 
-    pub static fn from_mut(mut value: T): NonNull<T> {
+    pub static const fn from_mut(mut value: T): NonNull<T> {
         NonNull(core.ptr.from_mut(mut value))
     }
 
     // Safety: the caller must guarantee `pointer` is non-null.
-    pub unsafe static fn new_unchecked(pointer: ptr<mut T>): NonNull<T> {
+    pub unsafe static const fn new_unchecked(pointer: ptr<mut T>): NonNull<T> {
         NonNull(pointer)
     }
 
-    pub fn as_ptr(): ptr<mut T> { self.pointer }
+    pub const fn as_ptr(): ptr<mut T> { self.pointer }
 
     pub fn addr(): core.num.NonZero<usize> {
         unsafe { core.num.NonZero<usize>.new_unchecked(self.pointer.addr()) }
@@ -67,15 +67,15 @@ extend<T: unsized> NonNull<T> {
         self.with_addr(f(self.addr()))
     }
 
-    pub fn cast<U>(): NonNull<U> { NonNull(self.pointer.cast<U>()) }
+    pub const fn cast<U>(): NonNull<U> { NonNull(self.pointer.cast<U>()) }
 
     // Safety: initialized, aligned `T` storage and a legal read loan are required.
-    pub unsafe fn as_ref(): read T from self {
+    pub unsafe const fn as_ref(): read T from self {
         unsafe { read *self.pointer }
     }
 
     // Safety: initialized, aligned `T` storage and an exclusive loan are required.
-    pub unsafe mut fn as_mut(): mut T from self {
+    pub unsafe mut const fn as_mut(): mut T from self {
         unsafe { mut *self.pointer }
     }
 
@@ -232,12 +232,12 @@ extend<T> NonNull<T> {
     }
 
     // Safety: the result must remain within or one past the allocated object.
-    pub unsafe fn add(count: usize): NonNull<T> {
+    pub unsafe const fn add(count: usize): NonNull<T> {
         NonNull(unsafe { self.pointer.add(count) })
     }
 
     // Safety: the result must remain within or one past the allocated object.
-    pub unsafe fn sub(count: usize): NonNull<T> {
+    pub unsafe const fn sub(count: usize): NonNull<T> {
         NonNull(unsafe { self.pointer.sub(count) })
     }
 

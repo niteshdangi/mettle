@@ -58,12 +58,14 @@ fn run(): i32 throws Error {
         var configured = overridden.get_envs()
         match configured.next() {
             present((key, value)) => {
+                let value = match value { present(v) => v, none => { return 9 } }
                 if !key.same(name) || !value.same(ffi.os_str_from_text("child")) { return 9 }
             },
             none => { return 10 }
         }
         match configured.next() {
             present((key, value)) => {
+                let value = match value { present(v) => v, none => { return 11 } }
                 if !key.same(other) || !value.same(ffi.os_str_from_text("last")) { return 11 }
             },
             none => { return 12 }
@@ -77,6 +79,12 @@ fn run(): i32 throws Error {
     removed.env_remove(name)
     {
         var configured = removed.get_envs()
+        match configured.next() {
+            present((key, value)) => {
+                if !key.same(name) || value.is_present() { return 15 }
+            },
+            none => { return 15 }
+        }
         if configured.next().is_present() { return 15 }
     }
     if !(try removed.status()).succeeded() { return 16 }

@@ -16,8 +16,8 @@ import package.core.hash.{Hash, Hasher}
 pub enum Poll<T> { Ready(T); Pending }
 
 extend<T> Poll<T> {
-    pub fn is_ready(): bool { match self { Poll.Ready(value) => true, Poll.Pending => false } }
-    pub fn is_pending(): bool { match self { Poll.Ready(value) => false, Poll.Pending => true } }
+    pub const fn is_ready(): bool { match self { Poll.Ready(value) => true, Poll.Pending => false } }
+    pub const fn is_pending(): bool { match self { Poll.Ready(value) => false, Poll.Pending => true } }
     pub take fn map<U, F: take fn(take T): U>(take f: F): Poll<U> {
         match take self {
             Poll.Ready(value) => Poll.Ready(f(value)),
@@ -113,6 +113,33 @@ extend<T, E> Poll<(Outcome<T, E>)> {
     }
 }
 
+extend<T, E> Poll<(Outcome<T, E>)?> {
+    pub take fn map_ok<U, F: take fn(take T): U>(take f: F): Poll<(Outcome<U, E>)?> {
+        match take self {
+            Poll.Ready(result) => Poll.Ready(match take result {
+                present(outcome) => present(match take outcome {
+                    success(value) => success(f(value)),
+                    failure(error) => failure(error)
+                }),
+                none => none
+            }),
+            Poll.Pending => Poll.Pending
+        }
+    }
+    pub take fn map_err<F, G: take fn(take E): F>(take f: G): Poll<(Outcome<T, F>)?> {
+        match take self {
+            Poll.Ready(result) => Poll.Ready(match take result {
+                present(outcome) => present(match take outcome {
+                    success(value) => success(value),
+                    failure(error) => failure(f(error))
+                }),
+                none => none
+            }),
+            Poll.Pending => Poll.Pending
+        }
+    }
+}
+
 pub interface Future {
     type Output;
     fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Self.Output>;
@@ -184,25 +211,26 @@ extend Waker implements Debug {
 }
 
 extend Waker {
-    pub unsafe static fn from_raw(raw: RawWaker): Waker { waker_from_raw(raw) }
-    pub unsafe static fn new(data: ptr<mut u8>, vtable: RawWakerVTable): Waker {
+    pub unsafe static const fn from_raw(raw: RawWaker): Waker { waker_from_raw(raw) }
+    pub unsafe static const fn new(data: ptr<mut u8>, vtable: RawWakerVTable): Waker {
         waker_from_raw(RawWaker(data, vtable))
     }
-    pub static fn noop(): Waker { noop_waker() }
+    pub static const fn noop(): read Waker from static { read NOOP_WAKER }
     pub fn vtable(): RawWakerVTable { self.raw.vtable }
 }
 
 fn noop_clone(data: ptr<mut u8>): RawWaker { RawWaker(data, noop_table()) }
 fn noop_call(data: ptr<mut u8>): Unit {}
-fn noop_table(): RawWakerVTable { RawWakerVTable(noop_clone, noop_call, noop_call, noop_call) }
+const fn noop_table(): RawWakerVTable { RawWakerVTable(noop_clone, noop_call, noop_call, noop_call) }
+static NOOP_WAKER: Waker = noop_waker()
 
 // Safety: the data and all vtable operations must remain valid and thread-safe
 // for concurrent clone, wake, wake_by_ref and release calls. Each clone owns
 // an independent reference, consumed exactly once by wake or release.
-pub unsafe fn waker_from_raw(raw: RawWaker): Waker { Waker(raw) }
+pub unsafe const fn waker_from_raw(raw: RawWaker): Waker { Waker(raw) }
 
 // A waker that does nothing, for polling without an executor.
-pub fn noop_waker(): Waker {
+pub const fn noop_waker(): Waker {
     Waker(RawWaker(core.ptr.null_mut<u8>(), noop_table()))
 }
 
@@ -212,8 +240,8 @@ pub type Context<region c> {
 }
 
 extend<region c> Context<region c> {
-    pub static fn from_waker(read waker: Waker from c): Context<region c> { Context(read waker) }
-    pub fn waker(): read Waker from self { read *self.waker }
+    pub static const fn from_waker(read waker: Waker from c): Context<region c> { Context(read waker) }
+    pub const fn waker(): read Waker from c { read *self.waker }
 }
 
 extend<region c> Context<region c> implements Debug {

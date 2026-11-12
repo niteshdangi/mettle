@@ -1,5 +1,4 @@
-// Explicit duplication. `clone` produces an independent value of the same
-// type; it never aliases the original's resources.
+// Explicit duplication follows the type's contract, including shared ownership.
 import super.cmp.Ordering
 import super.slice.drop_values
 

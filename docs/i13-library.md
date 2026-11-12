@@ -9,6 +9,22 @@ areas remain partial: L003, L005, L009, S005-S014, S019-S021, S024-S025.
 
 ## Handoff (start here in a new session)
 
+### Unqualified source checkpoint (2026-11-12)
+
+The remaining core/alloc/std source and behavioral fixtures are preserved as
+work in progress, not accepted implementations. Known frozen-probe failures:
+
+- Text FFI constants, compiler `1dd0ad6f`: both profiles of
+  `i13-text-ffi-const` reject constant-view indexing at 8:52, 22:53 and 55:35.
+  Receipt: `i13-text-ffi-const-v19/run/evidence.json` under the optimization build.
+- IO207 V2: the first Debug `i13_io_missing_cursor_const` probe fails in
+  `std/fs.mt:73:13`; `TryLockError.source()` returns `read std.io.Error` where
+  `read any core.error.Error` is required. The remaining 55 normal cases and
+  source sanitizer scope were not run.
+
+These source changes do not promote operation records or close I13. Remaining
+profile, ownership, sanitizer and applicability gates stay open.
+
 Latest operation ledger (2026-11-12): **11,464 evidenced, 74 declared,
 1,752 missing, 5 not applicable** of 13,295 records. Declared means implemented
 but not behaviorally verified per type/profile. Subset/source-cfg reconciliation

@@ -5,16 +5,19 @@
 import package.alloc.vec
 import package.alloc.vec.List
 import package.core.outcome
+import package.core.option
+import package.core.convert.From
 import super.env
 import super.ffi
 import super.ffi.{OsStr, OsString}
 import super.io
 import super.io.{Error, ErrorKind, Reader, Writer}
 import super.path.{Path, PathBuf, PathInput}
-import package.core.iter.Iterator
+import package.core.iter.{ExactSizeIterator, Iterator, OwnedIterable}
 import package.core.text.Text
 import super.sys
 import package.core.clone.Clone
+import package.core.borrow.AsRef
 import package.core.cmp.{Eq, PartialEq}
 import package.core.fmt.{Debug, Formatter}
 
@@ -32,9 +35,20 @@ pub fn abort(): Never { unsafe { sys.abort() } }
 pub fn id(): i32 { unsafe { getpid() } }
 
 // What a child's standard stream is connected to.
-pub copy enum Stdio { Inherit, Piped, Null }
+pub enum Stdio {
+    Inherit, Piped, Null, Descriptor(sys.OwnedFd), StandardOutput, StandardError
+}
 
-fn stdio_code(s: Stdio): i32 { match s { Stdio.Inherit => 0, Stdio.Piped => 1, Stdio.Null => 2 } }
+fn stdio_config(read config: Stdio): (i32, i32) {
+    match config {
+        Stdio.Inherit => (0i32, -1i32),
+        Stdio.Piped => (1i32, -1i32),
+        Stdio.Null => (2i32, -1i32),
+        Stdio.Descriptor(descriptor) => (3i32, descriptor.as_raw_fd()),
+        Stdio.StandardOutput => (3i32, 1i32),
+        Stdio.StandardError => (3i32, 2i32)
+    }
+}
 
 // How a child ended, from the raw wait status.
 pub copy type ExitStatus { raw: i32 }
@@ -106,38 +120,48 @@ extend ExitStatus implements package.core.fmt.Display {
 // Write end of a child's standard input; dropping it closes the stream, which
 // is how a child reading to the end of input learns the input is complete.
 pub type ChildStdin {
-    fd: i32
-    drop { if self.fd >= 0 { let closed = unsafe { sys.close(self.fd) } } }
+    descriptor: sys.OwnedFd
 }
 
 extend ChildStdin implements Writer {
-    mut fn write_some(read buf: [u8]): usize throws Error { try io.write_fd(self.fd, buf) }
+    mut fn write_some(read buf: [u8]): usize throws Error { try io.write_fd(self.descriptor.as_raw_fd(), buf) }
     mut fn flush(): Unit throws Error {}
 }
 
-// Read end of a child's standard output or error.
-pub type ChildOutput {
-    fd: i32
-    drop { if self.fd >= 0 { let closed = unsafe { sys.close(self.fd) } } }
+pub type ChildStdout {
+    descriptor: sys.OwnedFd
 }
 
-extend ChildOutput implements Reader {
-    mut fn read_some(mut buf: [u8]): usize throws Error { try io.read_fd(self.fd, buf) }
+extend ChildStdout implements Reader {
+    mut fn read_some(mut buf: [u8]): usize throws Error { try io.read_fd(self.descriptor.as_raw_fd(), buf) }
+}
+
+pub type ChildStderr {
+    descriptor: sys.OwnedFd
+}
+
+extend ChildStderr implements Reader {
+    mut fn read_some(mut buf: [u8]): usize throws Error { try io.read_fd(self.descriptor.as_raw_fd(), buf) }
+}
+
+extend sys.OwnedFd implements From<ChildStdin> {
+    static fn from(take value: ChildStdin): sys.OwnedFd { value.descriptor }
+}
+extend sys.OwnedFd implements From<ChildStdout> {
+    static fn from(take value: ChildStdout): sys.OwnedFd { value.descriptor }
+}
+extend sys.OwnedFd implements From<ChildStderr> {
+    static fn from(take value: ChildStderr): sys.OwnedFd { value.descriptor }
 }
 
 // A running or finished child. Dropping it neither waits for nor kills the
 // process; its pipe ends close.
 pub type Child {
     pid: i32
-    stdin_fd: i32
-    stdout_fd: i32
-    stderr_fd: i32
+    pub stdin: ChildStdin?
+    pub stdout: ChildStdout?
+    pub stderr: ChildStderr?
     status: ExitStatus?
-    drop {
-        if self.stdin_fd >= 0 { let closed = unsafe { sys.close(self.stdin_fd) } }
-        if self.stdout_fd >= 0 { let closed = unsafe { sys.close(self.stdout_fd) } }
-        if self.stderr_fd >= 0 { let closed = unsafe { sys.close(self.stderr_fd) } }
-    }
 }
 
 // Captured result of `Command.output`.
@@ -160,39 +184,18 @@ extend Child {
 
     // Hands over the pipe to the child's input; none unless it was `Piped`
     // and not already taken.
-    pub mut fn take_stdin(): ChildStdin? {
-        let fd = self.stdin_fd
-        if fd < 0 { return none }
-        self.stdin_fd = -1
-        present(ChildStdin(fd))
-    }
-    pub mut fn take_stdout(): ChildOutput? {
-        let fd = self.stdout_fd
-        if fd < 0 { return none }
-        self.stdout_fd = -1
-        present(ChildOutput(fd))
-    }
-    pub mut fn take_stderr(): ChildOutput? {
-        let fd = self.stderr_fd
-        if fd < 0 { return none }
-        self.stderr_fd = -1
-        present(ChildOutput(fd))
-    }
-    pub mut fn stdin(): ChildStdin? { self.take_stdin() }
-    pub mut fn stdout(): ChildOutput? { self.take_stdout() }
-    pub mut fn stderr(): ChildOutput? { self.take_stderr() }
+    pub mut fn take_stdin(): ChildStdin? { self.stdin.`take`() }
+    pub mut fn take_stdout(): ChildStdout? { self.stdout.`take`() }
+    pub mut fn take_stderr(): ChildStderr? { self.stderr.`take`() }
 
     // Waits for the child to end, closing its input pipe first so it cannot
     // block forever waiting for input this process still holds open.
     pub mut fn wait(): ExitStatus throws Error {
+        core.mem.drop(self.stdin.`take`())
         match self.status { present(s) => { return s }, none => {} }
-        if self.stdin_fd >= 0 {
-            let closed = unsafe { sys.close(self.stdin_fd) }
-            self.stdin_fd = -1
-        }
         match try wait_status(self.pid, 0) {
             present(s) => { self.status = present(s); s },
-            none => ExitStatus(0)
+            none => { throw io.from_kind(ErrorKind.Other) }
         }
     }
 
@@ -226,6 +229,10 @@ type EnvChange { name: OsString; value: OsString; remove: bool }
 pub type CommandArgs<region r> { values: read [OsString] from r; index: usize }
 extend<region r> CommandArgs<region r> implements Iterator {
     type Item = read OsStr from r
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.values.len() - self.index
+        (remaining, present(remaining))
+    }
     mut fn next(): (read OsStr from r)? {
         if self.index == self.values.len() { return none }
         let value = self.values[self.index].as_os_str()
@@ -233,19 +240,52 @@ extend<region r> CommandArgs<region r> implements Iterator {
         present(value)
     }
 }
+extend<region r> CommandArgs<region r> implements ExactSizeIterator {}
+extend<region r> CommandArgs<region r> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+        try f.write_str("CommandArgs(")
+        try fmt_os_strings(self.values.split_at(self.index).1, mut f)
+        try f.write_char(')')
+    }
+}
 
 pub type CommandEnvs<region r> { values: read [EnvChange] from r; index: usize }
 extend<region r> CommandEnvs<region r> implements Iterator {
-    type Item = (read OsStr from r, read OsStr from r)
-    mut fn next(): (read OsStr from r, read OsStr from r)? {
-        while self.index < self.values.len() {
-            let current = read self.values[self.index]
-            self.index += 1usize
-            if !current.remove {
-                return present((current.name.as_os_str(), current.value.as_os_str()))
+    type Item = (read OsStr from r, (read OsStr from r)?)
+    fn size_hint(): (usize, usize?) {
+        let remaining = self.values.len() - self.index
+        (remaining, present(remaining))
+    }
+    mut fn next(): (read OsStr from r, (read OsStr from r)?)? {
+        if self.index == self.values.len() { return none }
+        let current = read self.values[self.index]
+        self.index += 1usize
+        let value = if current.remove { none } else { present(current.value.as_os_str()) }
+        present((current.name.as_os_str(), value))
+    }
+}
+extend<region r> CommandEnvs<region r> implements ExactSizeIterator {}
+extend<region r> CommandEnvs<region r> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+        try f.write_str("CommandEnvs([")
+        var index = self.index
+        while index < self.values.len() {
+            if index != self.index { try f.write_str(", ") }
+            let entry = read self.values[index]
+            try f.write_char('(')
+            try fmt_os_string(entry.name.as_os_str(), mut f)
+            try f.write_str(", ")
+            if entry.remove {
+                try f.write_str("none")
+            } else {
+                try f.write_str("present(")
+                try fmt_os_string(entry.value.as_os_str(), mut f)
+                try f.write_char(')')
             }
+            try f.write_char(')')
+            index += 1usize
         }
-        none
+        try f.write_str("])")
     }
 }
 
@@ -272,16 +312,23 @@ pub fn command(read program: OsStr): Command {
 pub fn command_text(read program: Text): Command { command(ffi.os_str_from_text(program)) }
 
 extend Command {
-    pub static fn new(read program: OsStr): Command { command(program) }
+    pub static fn new<S: AsRef<OsStr> + unsized>(read program: S): Command {
+        command(S.(AsRef<OsStr>).as_ref(program))
+    }
 
     pub mut fn arg(read a: OsStr): Unit { self.args.push(a.to_os_string()) }
     pub mut fn arg_text(read a: Text): Unit { self.args.push(ffi.os_string_from_text(a)) }
-    pub mut fn args<region r>(read values: [OsString] from r): Unit {
-        var index = 0usize
-        while index < values.len() {
-            self.args.push(values[index].as_os_str().to_os_string())
-            index += 1usize
+    pub fn args<region r, I: OwnedIterable<Item = S>, S: AsRef<OsStr>>(
+        receiver mut self: Command from r, take values: I
+    ): mut Command from r {
+        var entries = values.into_iter()
+        while true {
+            match take entries.next() {
+                present(value) => self.args.push(S.(AsRef<OsStr>).as_ref(value).to_os_string()),
+                none => { break }
+            }
         }
+        mut self
     }
     pub fn get_program<region r>(receiver read self: Command from r): read OsStr from r {
         self.program.as_os_str()
@@ -310,32 +357,75 @@ extend Command {
     pub mut fn env(read name: OsStr, read value: OsStr): Unit {
         self.change_env(EnvChange(name.to_os_string(), value.to_os_string(), false))
     }
-    pub mut fn envs<region r>(read values: [(OsString, OsString)] from r): Unit {
-        var index = 0usize
-        while index < values.len() {
-            self.env(values[index].0.as_os_str(), values[index].1.as_os_str())
-            index += 1usize
+    pub fn envs<region r, I: OwnedIterable<Item = (K, V)>, K: AsRef<OsStr>, V: AsRef<OsStr>>(
+        receiver mut self: Command from r, take values: I
+    ): mut Command from r {
+        var entries = values.into_iter()
+        while true {
+            match take entries.next() {
+                present((key, value)) => {
+                    self.env(K.(AsRef<OsStr>).as_ref(key), V.(AsRef<OsStr>).as_ref(value))
+                },
+                none => { break }
+            }
         }
+        mut self
     }
     // Removes `name` from the child's environment.
     pub mut fn env_remove(read name: OsStr): Unit {
+        if self.clear_env {
+            var index = 0usize
+            while index < self.changes.len() {
+                if self.changes[index].name.as_os_str().same(name) {
+                    let removed = self.changes.remove(index)
+                    return
+                }
+                index += 1usize
+            }
+            return
+        }
         self.change_env(EnvChange(name.to_os_string(), ffi.new_os_string(), true))
     }
     // Starts the child with an empty environment (plus later `env` calls).
-    pub mut fn env_clear(): Unit { self.clear_env = true; self.changes.clear() }
+    pub fn env_clear<region r>(receiver mut self: Command from r): mut Command from r {
+        self.clear_env = true
+        self.changes.clear()
+        mut self
+    }
     pub mut fn current_dir(read input: PathInput): Unit {
         self.cwd = input.as_path().to_path_buf()
         self.has_cwd = true
     }
-    pub mut fn stdin(s: Stdio): Unit { self.stdin = s; self.stdio_set = self.stdio_set | 1u8 }
-    pub mut fn stdout(s: Stdio): Unit { self.stdout = s; self.stdio_set = self.stdio_set | 2u8 }
-    pub mut fn stderr(s: Stdio): Unit { self.stderr = s; self.stdio_set = self.stdio_set | 4u8 }
+    pub fn stdin<region r>(receiver mut self: Command from r, take config: Stdio): mut Command from r {
+        self.stdin = config
+        self.stdio_set |= 1u8
+        mut self
+    }
+    pub fn stdout<region r>(receiver mut self: Command from r, take config: Stdio): mut Command from r {
+        self.stdout = config
+        self.stdio_set |= 2u8
+        mut self
+    }
+    pub fn stderr<region r>(receiver mut self: Command from r, take config: Stdio): mut Command from r {
+        self.stderr = config
+        self.stdio_set |= 4u8
+        mut self
+    }
 
     // The child's environment as NUL-terminated `name=value` strings.
     fn environment(): List<List<u8>> throws Error {
         var entries = if self.clear_env { vec.new<env.EnvVar>() } else { env.vars() }
         var k = 0usize
         while k < self.changes.len() {
+            let name = self.changes[k].name.as_bytes()
+            if name.len() == 0usize { throw io.from_kind(ErrorKind.InvalidInput) }
+            var byte = 0usize
+            while byte < name.len() {
+                if name[byte] == 0u8 || name[byte] == 61u8 {
+                    throw io.from_kind(ErrorKind.InvalidInput)
+                }
+                byte += 1usize
+            }
             var m = 0usize
             while m < entries.len() {
                 if entries[m].name.same(self.changes[k].name) { let gone = entries.remove(m) } else { m += 1usize }
@@ -360,10 +450,11 @@ extend Command {
 
     // Starts the child. Piped streams are reachable through the `Child`.
     pub fn spawn(): Child throws Error {
-        try self.spawn_with_stdio(self.stdin, self.stdout, self.stderr)
+        try self.spawn_with_stdio(stdio_config(read self.stdin),
+            stdio_config(read self.stdout), stdio_config(read self.stderr))
     }
 
-    fn spawn_with_stdio(stdin: Stdio, stdout: Stdio, stderr: Stdio): Child throws Error {
+    fn spawn_with_stdio(stdin: (i32, i32), stdout: (i32, i32), stderr: (i32, i32)): Child throws Error {
         var strings = vec.new<List<u8>>()
         strings.push(try ffi.cstring(self.program.as_bytes()))
         var i = 0usize
@@ -391,17 +482,29 @@ extend Command {
         }
         var cwd_c = vec.new<u8>()
         if self.has_cwd { cwd_c = try ffi.cstring(self.cwd.as_bytes()) }
-        var modes = [stdio_code(stdin), stdio_code(stdout), stdio_code(stderr)]
+        var modes = [stdin.0, stdout.0, stderr.0]
+        var sources = [stdin.1, stdout.1, stderr.1]
         var fds = [-1, -1, -1]
         let cwd_ptr = if self.has_cwd { cwd_c.as_ptr() } else { core.ptr.null<u8>() }
         let envp_ptr = if use_env { envp.as_ptr() } else { core.ptr.null<ptr<read u8>>() }
         let pid = unsafe {
-            sys.mettle_rt_spawn(strings[0usize].as_ptr(), argv.as_ptr(), envp_ptr, cwd_ptr,
+            sys.mettle_rt_spawn_with_sources(strings[0usize].as_ptr(), argv.as_ptr(), envp_ptr, cwd_ptr,
                                  core.ptr.from_mut(modes).cast<i32>().cast_const(),
+                                 core.ptr.from_mut(sources).cast<i32>().cast_const(),
                                  core.ptr.from_mut(fds).cast<i32>())
         }
         if pid < 0 { throw io.last_os_error() }
-        Child(pid, fds[0usize], fds[1usize], fds[2usize], none)
+        // Successful spawn transfers only the nonnegative parent pipe ends.
+        let input = if fds[0usize] < 0 { none } else {
+            present(ChildStdin(unsafe { sys.OwnedFd.from_raw_fd(fds[0usize]) }))
+        }
+        let output = if fds[1usize] < 0 { none } else {
+            present(ChildStdout(unsafe { sys.OwnedFd.from_raw_fd(fds[1usize]) }))
+        }
+        let error = if fds[2usize] < 0 { none } else {
+            present(ChildStderr(unsafe { sys.OwnedFd.from_raw_fd(fds[2usize]) }))
+        }
+        Child(pid, input, output, error, none)
     }
 
     // Runs to completion with inherited streams and returns how it ended.
@@ -412,33 +515,40 @@ extend Command {
 
     // Capture/null defaults apply only to streams not explicitly configured.
     pub mut fn output(): Output throws Error {
-        let stdin = if (self.stdio_set & 1u8) == 0u8 { Stdio.Null } else { self.stdin }
-        let stdout = if (self.stdio_set & 2u8) == 0u8 { Stdio.Piped } else { self.stdout }
-        let stderr = if (self.stdio_set & 4u8) == 0u8 { Stdio.Piped } else { self.stderr }
+        let stdin = if (self.stdio_set & 1u8) == 0u8 { (2i32, -1i32) } else { stdio_config(read self.stdin) }
+        let stdout = if (self.stdio_set & 2u8) == 0u8 { (1i32, -1i32) } else { stdio_config(read self.stdout) }
+        let stderr = if (self.stdio_set & 4u8) == 0u8 { (1i32, -1i32) } else { stdio_config(read self.stderr) }
         let child = try self.spawn_with_stdio(stdin, stdout, stderr)
         try child.wait_with_output()
     }
 }
 
 fn collect_output(mut child: Child): Output throws Error {
-    if child.stdin_fd >= 0 {
-        let closed = unsafe { sys.close(child.stdin_fd) }
-        child.stdin_fd = -1
+    core.mem.drop(child.take_stdin())
+    var stdout = child.take_stdout()
+    var stderr = child.take_stderr()
+    var stdout_fd = match stdout.as_ref() {
+        present(pipe) => pipe.descriptor.as_raw_fd(),
+        none => -1i32
+    }
+    var stderr_fd = match stderr.as_ref() {
+        present(pipe) => pipe.descriptor.as_raw_fd(),
+        none => -1i32
     }
     var out = vec.new<u8>()
     var err = vec.new<u8>()
     var chunk = [0u8; 4096]
-    while child.stdout_fd >= 0 || child.stderr_fd >= 0 {
-        let ready = unsafe { sys.mettle_rt_poll_pair(child.stdout_fd, child.stderr_fd) }
+    while stdout_fd >= 0 || stderr_fd >= 0 {
+        let ready = unsafe { sys.mettle_rt_poll_pair(stdout_fd, stderr_fd) }
         if ready < 0 { throw io.last_os_error() }
         if (ready & 1) != 0 {
-            let n = try io.read_fd(child.stdout_fd, chunk)
-            if n == 0usize { let closed = unsafe { sys.close(child.stdout_fd) }; child.stdout_fd = -1 }
+            let n = try io.read_fd(stdout_fd, chunk)
+            if n == 0usize { core.mem.drop(stdout.`take`()); stdout_fd = -1i32 }
             else { out.extend_from_slice(chunk.split_at(n).0) }
         }
         if (ready & 2) != 0 {
-            let n = try io.read_fd(child.stderr_fd, chunk)
-            if n == 0usize { let closed = unsafe { sys.close(child.stderr_fd) }; child.stderr_fd = -1 }
+            let n = try io.read_fd(stderr_fd, chunk)
+            if n == 0usize { core.mem.drop(stderr.`take`()); stderr_fd = -1i32 }
             else { err.extend_from_slice(chunk.split_at(n).0) }
         }
     }
@@ -479,12 +589,58 @@ fn fmt_bytes(read bytes: [u8], mut f: Formatter): Unit throws package.core.fmt.E
 extend Stdio {
     pub static fn inherit(): Stdio { Stdio.Inherit }
 }
+extend Stdio implements From<sys.OwnedFd> {
+    static fn from(take value: sys.OwnedFd): Stdio { Stdio.Descriptor(value) }
+}
+extend Stdio implements From<io.Stdout> {
+    static fn from(take value: io.Stdout): Stdio { Stdio.StandardOutput }
+}
+extend Stdio implements From<io.Stderr> {
+    static fn from(take value: io.Stderr): Stdio { Stdio.StandardError }
+}
+extend Stdio implements From<super.fs.File> {
+    static fn from(take value: super.fs.File): Stdio {
+        Stdio.Descriptor(sys.OwnedFd.(From<super.fs.File>).from(value))
+    }
+}
+extend Stdio implements From<io.PipeReader> {
+    static fn from(take value: io.PipeReader): Stdio {
+        Stdio.Descriptor(sys.OwnedFd.(From<io.PipeReader>).from(value))
+    }
+}
+extend Stdio implements From<io.PipeWriter> {
+    static fn from(take value: io.PipeWriter): Stdio {
+        Stdio.Descriptor(sys.OwnedFd.(From<io.PipeWriter>).from(value))
+    }
+}
+extend Stdio implements From<ChildStdin> {
+    static fn from(take value: ChildStdin): Stdio {
+        Stdio.Descriptor(sys.OwnedFd.(From<ChildStdin>).from(value))
+    }
+}
+extend Stdio implements From<ChildStdout> {
+    static fn from(take value: ChildStdout): Stdio {
+        Stdio.Descriptor(sys.OwnedFd.(From<ChildStdout>).from(value))
+    }
+}
+extend Stdio implements From<ChildStderr> {
+    static fn from(take value: ChildStderr): Stdio {
+        Stdio.Descriptor(sys.OwnedFd.(From<ChildStderr>).from(value))
+    }
+}
 extend Stdio implements Debug {
     fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
         match self {
             Stdio.Inherit => try f.write_str("Inherit"),
             Stdio.Piped => try f.write_str("Piped"),
-            Stdio.Null => try f.write_str("Null")
+            Stdio.Null => try f.write_str("Null"),
+            Stdio.Descriptor(descriptor) => {
+                try f.write_str("Descriptor(")
+                try i32.(Debug).fmt(descriptor.as_raw_fd(), mut f)
+                try f.write_char(')')
+            },
+            Stdio.StandardOutput => try f.write_str("StandardOutput"),
+            Stdio.StandardError => try f.write_str("StandardError")
         }
     }
 }
@@ -500,13 +656,21 @@ extend Child implements Debug {
 extend Command implements Debug {
     fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
         try f.write_str("Command { program: ")
-        match self.program.as_os_str().to_str() {
-            present(text) => try Text.(package.core.fmt.Debug).fmt(text, mut f),
-            none => try f.write_str("\"<non-UTF-8>\"")
-        }
+        try fmt_os_string(self.program.as_os_str(), mut f)
         try f.write_str(", args: ")
         try fmt_os_strings(self.args.as_slice(), mut f)
         try f.write_str(" }")
+    }
+}
+
+fn fmt_os_string(read value: OsStr, mut f: Formatter): Unit throws package.core.fmt.Error {
+    match value.to_str() {
+        present(text) => try Text.(Debug).fmt(text, mut f),
+        none => {
+            try f.write_str("OsStr(")
+            try fmt_bytes(value.as_bytes(), mut f)
+            try f.write_char(')')
+        }
     }
 }
 
@@ -515,10 +679,7 @@ fn fmt_os_strings(read values: [OsString], mut f: Formatter): Unit throws packag
     var i = 0usize
     while i < values.len() {
         if i != 0usize { try f.write_str(", ") }
-        match values[i].as_os_str().to_str() {
-            present(text) => try Text.(package.core.fmt.Debug).fmt(text, mut f),
-            none => try f.write_str("\"<non-UTF-8>\"")
-        }
+        try fmt_os_string(values[i].as_os_str(), mut f)
         i += 1usize
     }
     try f.write_char(']')

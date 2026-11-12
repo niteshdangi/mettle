@@ -487,6 +487,16 @@ extend<T> Receiver<T> implements Iterator {
     }
 }
 
+extend<T, region r> read Receiver<T> from r implements Iterator {
+    type Item = T
+    mut fn next(): T? {
+        match take capture self.recv() {
+            success(value) => present(value),
+            failure(error) => none
+        }
+    }
+}
+
 // Cloning a sender adds another producer, exactly like `duplicate`.
 extend<T> Sender<T> implements Clone {
     fn clone(): Sender<T> { self.duplicate() }

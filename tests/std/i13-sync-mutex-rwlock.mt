@@ -264,6 +264,70 @@ fn checks_rwlock_unique_and_construction(): i32 {
     0
 }
 
+type CleanupLocks<region r> {
+    mutex: read mutex.Mutex<i32> from r
+    rwlock: read rwlock.RwLock<i32> from r
+    nonblocking: bool
+    drop {
+        {
+            var held = if self.nonblocking {
+                match take capture self.mutex.try_lock() {
+                    success(guard) => guard,
+                    failure(_) => core.intrinsics.abort()
+                }
+            } else {
+                match take capture self.mutex.lock() {
+                    success(guard) => guard,
+                    failure(_) => core.intrinsics.abort()
+                }
+            }
+            *held.get_mut() += 1
+        }
+        {
+            var held = if self.nonblocking {
+                match take capture self.rwlock.try_writer() {
+                    success(guard) => guard,
+                    failure(_) => core.intrinsics.abort()
+                }
+            } else {
+                match take capture self.rwlock.writer() {
+                    success(guard) => guard,
+                    failure(_) => core.intrinsics.abort()
+                }
+            }
+            *held.get_mut() += 1
+        }
+    }
+}
+
+fn checks_unwind_cleanup_does_not_poison(): i32 {
+    let mutex = mutex.new(0)
+    let rwlock = rwlock.new(0)
+    var nonblocking = false
+    while true {
+        let result = catch_panic(fn(): Unit {
+            let _cleanup = CleanupLocks(read mutex, read rwlock, nonblocking)
+            panic("cleanup acquires locks after unwinding started")
+        })
+        match take result {
+            CatchResult.Panicked(_) => {},
+            CatchResult.Returned(_) => { return 89 }
+        }
+        if mutex.is_poisoned() || rwlock.is_poisoned() { return 90 }
+        if nonblocking { break }
+        nonblocking = true
+    }
+    match take capture mutex.into_inner() {
+        success(value) => { if value != 2 { return 91 } },
+        failure(_) => { return 92 }
+    }
+    match take capture rwlock.into_inner() {
+        success(value) => { if value != 2 { return 93 } },
+        failure(_) => { return 94 }
+    }
+    0
+}
+
 fn main(): i32 {
     let first = checks_mutex_guards()
     if first != 0 { return first }
@@ -277,5 +341,7 @@ fn main(): i32 {
     if fifth != 0 { return fifth }
     let sixth = checks_rwlock_poison()
     if sixth != 0 { return sixth }
-    checks_rwlock_unique_and_construction()
+    let seventh = checks_rwlock_unique_and_construction()
+    if seventh != 0 { return seventh }
+    checks_unwind_cleanup_does_not_poison()
 }

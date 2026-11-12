@@ -1,4 +1,5 @@
 // profiles: debug release
+module source_helpers;
 import core.borrow.{AsRef, Borrow, ToOwned}
 import core.cmp.{Ord, PartialEq, PartialOrd}
 import core.convert.From
@@ -14,7 +15,9 @@ import alloc.vec.List
 import std.ffi.{OsStr, OsString, os_string_from_text}
 
 fn default_value<T: Default>(): T { T.(Default).default() }
-fn requires_debug<T: Debug + unsized>(read value: T): Unit {}
+fn debug_is<T: Debug + unsized>(read value: T, read expected: Text): bool {
+    source_helpers.debug_is!(T, value, expected)
+}
 fn ord_equal<T: Ord + Copy>(left: T, right: T): bool { left.cmp(right).is_eq() }
 fn view_eq<A: PartialEq<B> + Copy, B: Copy>(left: A, right: B): bool { left.eq(right) }
 fn owned_partial<A: PartialOrd<B>, B: Copy>(read left: A, right: B): bool {
@@ -26,9 +29,9 @@ fn view_partial<A: PartialOrd<B> + Copy, B>(left: A, read right: B): bool {
 
 fn main(): i32 {
     let view = OsStr.new("alpha".as_bytes())
-    requires_debug(view)
+    if !debug_is(view, "\"alpha\"") { return 24 }
     let owned = view.to_owned()
-    requires_debug(owned)
+    if !debug_is(owned, "\"alpha\"") { return 25 }
     if !view.same(owned.as_os_str()) { return 1 }
     if !view.same(OsStr.new("alpha".as_bytes())) { return 21 }
     if !(owned >= view) { return 22 }

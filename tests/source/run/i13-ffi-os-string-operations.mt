@@ -3,6 +3,7 @@
 // operations, lossy and checked conversion, and capacity management.
 
 import core.iter.Iterator
+import alloc.string.ToString
 import std.ffi.{OsStr, OsString, os_str_from_text, os_string_from_text, os_string_from_bytes}
 
 fn str_is(read s: OsStr, read want: Text): bool {
@@ -22,7 +23,7 @@ fn checks_construction(): i32 {
     if borrowed.len() != 1usize { return 3 }
     let slice = os_str_from_text("hello")
     if slice.len() != 5usize || slice.as_bytes()[1usize] != 0x65u8 { return 4 }
-    if !str_is(slice, "hello") || slice.display().as_text() != "hello" { return 5 }
+    if !str_is(slice, "hello") || slice.display().to_string().as_text() != "hello" { return 5 }
     let owned = slice.to_os_string()
     if !owned.as_os_str().same(slice) { return 6 }
     let copied = slice.into_os_string()
@@ -83,7 +84,7 @@ fn checks_conversion(): i32 {
     }
     let invalid = os_string_from_bytes([0x61u8, 0xffu8])
     let lossy = invalid.to_string_lossy()
-    if lossy.as_text() != "a\u{fffd}" { return 32 }
+    if lossy.as_ref() != "a\u{fffd}" || !lossy.is_owned() { return 32 }
     if invalid.to_str().is_present() { return 33 }
     match take capture invalid.into_string() {
         success(_) => { return 34 },
