@@ -1,6 +1,6 @@
 // Root of the native `core` library: no allocator and no operating system.
-// `ptr` augments the compiler's pointer operations with the NonNull type;
-// other compiler built-in modules remain compiler-owned.
+// `ptr` augments the compiler's pointer operations with the NonNull type and
+// `sync` adds interface implementations to the compiler's atomic types; other compiler built-in modules remain compiler-owned.
 pub module any
 pub module array
 pub module borrow
@@ -26,5 +26,6 @@ pub module panic
 pub module pin
 pub module ptr
 pub module slice
+pub module sync
 pub module text
 module unicode_data
