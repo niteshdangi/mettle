@@ -72,15 +72,22 @@ fn main(): i32 {
     let todo_default = catch_panic(fn(): i32 { todo!(); 0 })
     let todo_default_code = panic_message(todo_default, "not yet implemented")
     if todo_default_code != 0 { return 50 + todo_default_code }
-    let todo_custom = catch_panic(fn(): i32 { todo!("later"); 0 })
+    let message_calls = core.cell.Cell.new(0i32)
+    let todo_custom = catch_panic(fn(): i32 {
+        todo!({ message_calls.set(message_calls.get() + 1); "later" })
+        0
+    })
     let todo_custom_code = panic_message(todo_custom, "later")
-    if todo_custom_code != 0 { return 60 + todo_custom_code }
+    if todo_custom_code != 0 || message_calls.get() != 1 { return 60 + todo_custom_code }
 
     let unimplemented_default = catch_panic(fn(): i32 { unimplemented!(); 0 })
     let unimplemented_default_code = panic_message(unimplemented_default, "not implemented")
     if unimplemented_default_code != 0 { return 70 + unimplemented_default_code }
-    let unimplemented_custom = catch_panic(fn(): i32 { unimplemented!("missing"); 0 })
+    let unimplemented_custom = catch_panic(fn(): i32 {
+        unimplemented!({ message_calls.set(message_calls.get() + 1); "missing" })
+        0
+    })
     let unimplemented_custom_code = panic_message(unimplemented_custom, "missing")
-    if unimplemented_custom_code != 0 { return 80 + unimplemented_custom_code }
+    if unimplemented_custom_code != 0 || message_calls.get() != 2 { return 80 + unimplemented_custom_code }
     0
 }

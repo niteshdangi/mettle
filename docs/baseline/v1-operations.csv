@@ -7981,7 +7981,7 @@ Bb1a9da9c9de54f9b558a8037,operation:convert::TryFrom::try_from,https://doc.rust-
 B36116f05c8fdd91167e2ddfe,operation:convert::TryInto,https://doc.rust-lang.org/1.99.1/core/convert/trait.TryInto.html,core.convert.TryInto,evidenced,tests/source/run/i13-coretraits-convert-borrow.mt
 Bfe089ff6c639ca598b885ccb,operation:convert::TryInto::Error,https://doc.rust-lang.org/1.99.1/core/convert/trait.TryInto.html#associatedtype.Error,core.convert.TryInto.Error,evidenced,tests/source/run/i13-coretraits-convert-borrow.mt
 Ba6a82c489ac44a96de6184d6,operation:convert::TryInto::try_into,https://doc.rust-lang.org/1.99.1/core/convert/trait.TryInto.html#tymethod.try_into,core.convert.TryInto.try_into,evidenced,tests/source/run/i13-coretraits-convert-borrow.mt
-Bcbb965304262ed1a6954092c,operation:dbg,https://doc.rust-lang.org/1.99.1/std/macro.dbg.html,,missing,
+Bcbb965304262ed1a6954092c,operation:dbg,https://doc.rust-lang.org/1.99.1/std/macro.dbg.html,library/std/macros.mt,declared,tests/source/run/i13-macro-debug-matches-boundaries.mt
 B3ebb78029a4c8c403d9a2512,operation:debug_assert,https://doc.rust-lang.org/1.99.1/core/macro.debug_assert.html,,missing,
 B812da1b4f34d9e2c0755811c,operation:debug_assert_eq,https://doc.rust-lang.org/1.99.1/core/macro.debug_assert_eq.html,,missing,
 Ba181d2e897c5cd98d3af1da4,operation:debug_assert_ne,https://doc.rust-lang.org/1.99.1/core/macro.debug_assert_ne.html,,missing,
@@ -8490,7 +8490,7 @@ B19b5e3e87a87dedf7e9e76ed,operation:marker::Send,https://doc.rust-lang.org/1.99.
 B1a774335de94739aa0cac2c4,operation:marker::Sized,https://doc.rust-lang.org/1.99.1/std/marker/trait.Sized.html,,missing,
 Bb3b8814773b4d8ce1a7dd36d,operation:marker::Sized,https://doc.rust-lang.org/1.99.1/core/marker/trait.Sized.html,,missing,
 B6a1bf3094ed5a286a0936913,operation:marker::Sync,https://doc.rust-lang.org/1.99.1/core/marker/trait.Sync.html,,missing,
-B1ca0844215af20b87728cf71,operation:matches,https://doc.rust-lang.org/1.99.1/core/macro.matches.html,,missing,
+B1ca0844215af20b87728cf71,operation:matches,https://doc.rust-lang.org/1.99.1/core/macro.matches.html,library/std/macros.mt,evidenced,tests/source/run/i13-macro-equivalents-panic-print.mt;tests/source/run/i13-macro-debug-matches-boundaries.mt
 B1dbdeca50b040e0b222c182d,operation:mem::ManuallyDrop,https://doc.rust-lang.org/1.99.1/std/mem/struct.ManuallyDrop.html,,missing,
 Bef80903cc2f215f7a3736d1f,operation:mem::ManuallyDrop,https://doc.rust-lang.org/1.99.1/core/mem/struct.ManuallyDrop.html,,missing,
 B93b297146359b0cc242afc91,operation:mem::ManuallyDrop::drop,https://doc.rust-lang.org/1.99.1/core/mem/struct.ManuallyDrop.html#method.drop,,evidenced,tests/source/run/i13-prim-mem-manually-drop.mt
@@ -12954,8 +12954,8 @@ B9045052a5b3eecf66439d3a2,operation:time::SystemTime::checked_sub,https://doc.ru
 B96dd035177736c1d2ff26375,operation:time::SystemTime::duration_since,https://doc.rust-lang.org/1.99.1/std/time/struct.SystemTime.html#method.duration_since,,evidenced,tests/std/time-duration.mt
 B5e40b40b0869c3f1379a41a6,operation:time::SystemTime::elapsed,https://doc.rust-lang.org/1.99.1/std/time/struct.SystemTime.html#method.elapsed,std.time,evidenced,tests/std/i13_time_operations.mt
 Be8aea70c3f668ce16f51d64c,operation:time::SystemTime::now,https://doc.rust-lang.org/1.99.1/std/time/struct.SystemTime.html#method.now,std.time,evidenced,tests/std/i13_time_operations.mt
-B07b90c6f0221fb6b6eb05295,operation:todo,https://doc.rust-lang.org/1.99.1/core/macro.todo.html,,missing,
-B0c478a01a39809ec9ea58fcd,operation:unimplemented,https://doc.rust-lang.org/1.99.1/core/macro.unimplemented.html,,missing,
+B07b90c6f0221fb6b6eb05295,operation:todo,https://doc.rust-lang.org/1.99.1/core/macro.todo.html,library/std/macros.mt,declared,tests/source/run/i13-macro-equivalents-panic-print.mt
+B0c478a01a39809ec9ea58fcd,operation:unimplemented,https://doc.rust-lang.org/1.99.1/core/macro.unimplemented.html,library/std/macros.mt,declared,tests/source/run/i13-macro-equivalents-panic-print.mt
 B4e4650ff98575c4f83f00e6c,operation:unreachable,https://doc.rust-lang.org/1.99.1/core/macro.unreachable.html,,evidenced,tests/source/run/i13-macro-equivalents-panic-print.mt
 Bc0a2c3856b86c237885b0032,operation:vec,https://doc.rust-lang.org/1.99.1/alloc/macro.vec.html,alloc.vec.vec,evidenced,tests/source/run/i13-vec-construction-macro.mt
 B2f44e4398f7f4163bc4fbcf6,operation:vec::Drain,https://doc.rust-lang.org/1.99.1/std/vec/struct.Drain.html,alloc.vec.Drain,evidenced,tests/source/run/i13-vec-iterator-ownership.mt
