@@ -67,6 +67,14 @@ fn main(): i32 {
     let flag_from: core.sync.atomic.AtomicBool = from_value<core.sync.atomic.AtomicBool, bool>(true)
     if flag_default.load(relaxed) || !flag_from.load(relaxed) { return 101 }
     if !debug_is(read flag_from, "true") { return 102 }
+    var target = 5i32
+    let base = core.ptr.from_mut(target)
+    let address = base.addr()
+    let pointer: core.sync.atomic.AtomicPtr<i32> = from_value<core.sync.atomic.AtomicPtr<i32>, ptr<mut i32>>(base)
+    if pointer.load(relaxed).addr() != address { return 111 }
+    let empty: core.sync.atomic.AtomicPtr<i32> = default_value<core.sync.atomic.AtomicPtr<i32>>()
+    if !empty.load(relaxed).is_null() { return 112 }
+    if !debug_is(read empty, "AtomicPtr(0)") { return 113 }
     let original = core.sync.atomic.Ordering.SeqCst
     let cloned = core.sync.atomic.Ordering.(Clone).clone(read original)
     core.sync.atomic.fence(cloned)

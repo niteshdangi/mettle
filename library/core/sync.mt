@@ -157,6 +157,20 @@ extend core.sync.atomic.AtomicBool implements Debug {
     }
 }
 
+extend<T> core.sync.atomic.AtomicPtr<T> implements Default {
+    static fn default(): core.sync.atomic.AtomicPtr<T> { core.sync.atomic.AtomicPtr<T>.new(core.ptr.null_mut<T>()) }
+}
+extend<T> core.sync.atomic.AtomicPtr<T> implements From<ptr<mut T>> {
+    static fn from(take value: ptr<mut T>): core.sync.atomic.AtomicPtr<T> { core.sync.atomic.AtomicPtr<T>.new(value) }
+}
+extend<T> core.sync.atomic.AtomicPtr<T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try f.write_str("AtomicPtr(")
+        try usize.(Debug).fmt(self.load(core.sync.atomic.Ordering.Relaxed).addr(), mut f)
+        try f.write_str(")")
+    }
+}
+
 extend core.sync.atomic.AtomicI8 {
     pub fn fetch_update<F: mut fn(i8): (i8)?>(set_order: core.sync.atomic.Ordering, fetch_order: core.sync.atomic.Ordering, take f: F): Outcome<i8, i8> {
         var callback = f

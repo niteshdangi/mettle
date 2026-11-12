@@ -1122,6 +1122,14 @@ Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
                                  : std::min(index, syntax.elements.size() - 1)];
       else if (index < syntax.arguments.size() && syntax.arguments[index].type)
         element = syntax.arguments[index].type.get();
+      // `AtomicPtr<T>` names the pointee, not the pointer payload itself.
+      TypeSyntax pointerPayload;
+      if (record.kind == AggregateKind::Atomic && element &&
+          types.isPointer(record.components[index])) {
+        pointerPayload.form = TypeForm::Pointer;
+        pointerPayload.elements.push_back(*element);
+        element = &pointerPayload;
+      }
       components.push_back(decorate(record.components[index],
                                     element ? *element : TypeSyntax{}, context,
                                     span, fallback, stored));
