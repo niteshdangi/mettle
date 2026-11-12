@@ -144,32 +144,44 @@ void Checker::formatArguments(Node &n, const Function &callee,
           target = j;
     if (target >= callee.parameters.size() || !callee.parameters[target].format)
       continue;
-    // Macro expansion may wrap a forwarded f-string in a group or block.
+    // Macro expansion may wrap a recipe in a group or a value-yielding block.
     auto *wrapped = &n.children[i];
     while (
         ((*wrapped)->kind == Kind::Group || (*wrapped)->kind == Kind::Block) &&
-        (*wrapped)->children.size() == 1)
+        (*wrapped)->children.size() == 1 &&
+        ((*wrapped)->kind != Kind::Block ||
+         !(*wrapped)->children[0]->semicolon))
       wrapped = &(*wrapped)->children[0];
-    if (wrapped != &n.children[i] && (*wrapped)->label == formatRecipeLabel) {
+    bool forwarded = false;
+    if ((*wrapped)->kind == Kind::Name)
+      for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope)
+        if (auto found =
+                scope->find(nameKey((*wrapped)->text, (*wrapped)->context));
+            found != scope->end()) {
+          forwarded = formatVariables.contains(found->second.variable);
+          break;
+        }
+    if (wrapped != &n.children[i] &&
+        ((*wrapped)->label == formatRecipeLabel || forwarded)) {
+      for (auto *discarded = &n.children[i]; discarded != wrapped;
+           discarded = &(*discarded)->children[0])
+        checked.nodes.erase(discarded->get());
+      auto name = std::move(argument.name);
+      auto nameContext = std::move(argument.fieldContext);
+      auto nameSpan = argument.fieldSpan;
       auto inner = std::move(*wrapped);
+      inner->name = std::move(name);
+      inner->fieldContext = std::move(nameContext);
+      inner->fieldSpan = nameSpan;
       n.children[i] = std::move(inner);
     }
     if (n.children[i]->label == formatRecipeLabel) {
       permittedRecipes.insert(n.children[i].get());
       continue;
     }
-    if (argument.kind == Kind::Name) {
-      bool forwarded = false;
-      for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope)
-        if (auto found = scope->find(nameKey(argument.text, argument.context));
-            found != scope->end()) {
-          forwarded = formatVariables.contains(found->second.variable);
-          break;
-        }
-      if (forwarded) {
-        permittedRecipes.insert(&argument);
-        continue;
-      }
+    if (forwarded) {
+      permittedRecipes.insert(n.children[i].get());
+      continue;
     }
     if (!n.children[i].owns())
       continue;

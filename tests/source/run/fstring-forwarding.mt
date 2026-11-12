@@ -5,13 +5,19 @@
 import core.fmt.Message
 import core.fmt.buffer_writer
 
+macro forward_format {
+    ($message:expr) => { $message };
+}
+
 fn emit(message: format Message, mut buffer: [u8]): usize {
     var out = buffer_writer(mut buffer)
     let ignored = capture message.write_to(mut out)
     out.len()
 }
 fn log(message: format Message, mut buffer: [u8]): usize { emit(message, mut buffer) }
-fn relay(message: format Message, mut buffer: [u8]): usize { log(message, mut buffer) }
+fn relay(message: format Message, mut buffer: [u8]): usize {
+    log(message: forward_format!(message), buffer: mut buffer)
+}
 
 fn same(read buffer: [u8], length: usize, read expected: Text): bool {
     let want = expected.as_bytes()
