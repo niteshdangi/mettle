@@ -58,10 +58,15 @@ and dependencies. Update both with architectural changes.
 - Keep changes surgical, preserve other people's work, and do not claim a
   milestone, target, safety property or speedup without current evidence.
 - Always provide a best-effort ETA when asked, stating assumptions and
-  uncertainty; never respond that you have no ETA.
+  uncertainty; never respond that you have no ETA. Cover the whole requested
+  scope, including integration, validation and commit/push; explicitly label
+  estimates that cover only a sub-batch.
 - At the end of every task that changes repository files, commit and push the
   task's validated changes to the current branch unless the owner asks otherwise.
-  Exclude unrelated changes and report any commit or push failure.
+  For long tasks, also commit and push each coherent validated batch rather than
+  accumulating unfinished changes until milestone closure. Exclude unrelated
+  changes and report any commit or push failure. An owner-requested WIP checkpoint
+  must identify known failures and unrun checks without promoting acceptance.
 - Do not publish, choose a license, initialize/amend Git history or
   configure paid services without the owner's explicit request.
 
@@ -108,7 +113,26 @@ weaken the quality standard or authorize dropping a selected contract.
    implementation, implemented-but-unverified work, verified scope and concrete
    blockers separately. Mark the milestone done only after its complete gates
    pass. Do not claim an imminent finish, speedup or ETA without evidence.
+9. Keep one active integration batch by default. Parallelize only
+   dependency-independent work within a shared CPU/memory budget. Resolve shared
+   compiler dependencies with the smallest representative end-to-end acceptance
+   case before expanding dependent source work; that case is not full acceptance.
+10. Finish already-started work before opening new batches. An instruction to
+    finish current work covers all in-progress batches unless the owner explicitly
+    narrows the scope. If blocked, advance independent existing work or report the
+    blocker; do not pile up more work behind the same unresolved dependency.
+11. During long-running work, provide status updates at least every 30 minutes
+    while execution is active: completed scope, remaining scope, current blocker
+    and next action. Use consistent acceptance units; file counts or implemented
+    source are not counts of qualified contracts.
 
-Keep the repository inventory and task ledger synchronized at phase changes and
-after a context reset. These are execution rules, not an automated tool lock;
-checking the gate before a long command remains the executing agent's duty.
+At session start and after a context reset, read the owning milestone's existing
+handoff and task ledger, check the current revision and worktree, and resume the
+recorded next action unless new evidence invalidates it. Do not restart discovery
+or passing checks by default. Keep the existing handoff, repository inventory and
+task ledger synchronized at phase changes: revision, remaining work, blockers,
+reusable evidence/input identities and the exact next command or action. Do not
+create a parallel planning document or record every routine tool call.
+
+These are execution rules, not an automated tool lock; checking the gate before a
+long command remains the executing agent's duty.
