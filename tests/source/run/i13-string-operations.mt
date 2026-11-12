@@ -159,7 +159,7 @@ fn checks_comparison_and_formatting(): i32 {
     let a = String("apple")
     let b = String("banana")
     if !(a < b) || b < a { return 70 }
-    if a.cmp(b) == Ordering.Greater { return 71 }
+    if a.cmp(b) != Ordering.Less { return 71 }
     if String("x") == String("y") { return 72 }
     var target = String("")
     match capture target.write_str("[") {

@@ -72,6 +72,8 @@ fn main(): i32 {
         let m = mut selected
         let parts = take m.select_nth_unstable(2usize)
         if *parts.1 != 5 || parts.0.len() != 2usize || parts.2.len() != 2usize { return 16 }
+        if parts.0[0usize] > *parts.1 || parts.0[1usize] > *parts.1 ||
+            parts.2[0usize] < *parts.1 || parts.2[1usize] < *parts.1 { return 16 }
     }
     var keyed = [9, 1, 7, 3, 5]
     {
@@ -81,6 +83,8 @@ fn main(): i32 {
             fn(read value: i32): i32 { value }
         )
         if *parts.1 != 1 || parts.0.len() != 0usize || parts.2.len() != 4usize { return 17 }
+        if parts.2[0usize] < *parts.1 || parts.2[1usize] < *parts.1 ||
+            parts.2[2usize] < *parts.1 || parts.2[3usize] < *parts.1 { return 17 }
     }
     var ranked = [9, 1, 7, 3, 5]
     {
@@ -89,7 +93,9 @@ fn main(): i32 {
             4usize,
             fn(read a: i32, read b: i32): Ordering { a.cmp(b) }
         )
-        if *parts.1 != 9 || parts.0.len() != 4usize { return 18 }
+        if *parts.1 != 9 || parts.0.len() != 4usize || parts.2.len() != 0usize { return 18 }
+        if parts.0[0usize] > *parts.1 || parts.0[1usize] > *parts.1 ||
+            parts.0[2usize] > *parts.1 || parts.0[3usize] > *parts.1 { return 18 }
     }
 
     // Mutable element access through get_mut / first_mut / last_mut.

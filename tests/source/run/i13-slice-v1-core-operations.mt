@@ -115,37 +115,45 @@ fn main(): i32 {
 
     {
         let mutable = mut values
-        unsafe { *mutable.get_unchecked_mut(0usize) = 1 }
+        unsafe { *mutable.get_unchecked_mut(0usize) = 11 }
+        if mutable[0usize] != 11 { return 20 }
         let chunk = mutable.first_chunk_mut<2usize>()
         match take chunk {
-            present(values) => { values[0usize] = 1 },
+            present(values) => { values[0usize] = 12 },
             none => { return 81 }
         }
+        if mutable[0usize] != 12 || mutable[1usize] != 2 { return 81 }
         let parts = mutable.split_first_chunk_mut<2usize>()
         match take parts {
-            present(values) => { values.0[1usize] = 2; values.1[0usize] = 3 },
+            present(values) => { values.0[1usize] = 22; values.1[0usize] = 33 },
             none => { return 82 }
+        }
+        if mutable[0usize] != 12 || mutable[1usize] != 22 || mutable[2usize] != 33 {
+            return 82
         }
         let last = mutable.last_chunk_mut<2usize>()
         match take last {
-            present(values) => { values[1usize] = 5 },
+            present(values) => { values[1usize] = 55 },
             none => { return 83 }
         }
+        if mutable[3usize] != 4 || mutable[4usize] != 55 { return 83 }
         let tail = mutable.split_last_chunk_mut<2usize>()
         match take tail {
-            present(values) => { values.0[0usize] = 1; values.1[0usize] = 4 },
+            present(values) => { values.0[0usize] = 14; values.1[0usize] = 44 },
             none => { return 84 }
         }
+        if mutable[0usize] != 14 || mutable[2usize] != 33 ||
+            mutable[3usize] != 44 || mutable[4usize] != 55 { return 84 }
         match take mutable.split_first_mut() {
             present(parts) => { *parts.0 = 10; parts.1[0usize] = 20 },
             none => { return 11 }
         }
         mutable.rotate_left(2usize)
-        if mutable[0usize] != 3 || mutable[4usize] != 20 { return 12 }
+        if mutable[0usize] != 33 || mutable[4usize] != 20 { return 12 }
         mutable.rotate_right(2usize)
         if mutable[0usize] != 10 || mutable[1usize] != 20 { return 13 }
         mutable.copy_within(0usize, 3usize, 1usize)
-        if mutable[1usize] != 10 || mutable[3usize] != 3 { return 14 }
+        if mutable[1usize] != 10 || mutable[3usize] != 33 { return 14 }
         mutable.fill_with(fn(): i32 { 7 })
         if mutable[0usize] != 7 || mutable[4usize] != 7 { return 15 }
         {
@@ -173,6 +181,7 @@ fn main(): i32 {
             if remainder.len() != 1usize { return 48 }
             remainder[0usize] = 5
         }
+        if mutable[0usize] != 3 || mutable[4usize] != 5 { return 47 }
         {
             var reverse = mutable.rchunks_mut(2usize)
             match take reverse.next_back() {
@@ -180,12 +189,14 @@ fn main(): i32 {
                 none => { return 49 }
             }
         }
+        if mutable[0usize] != 4 { return 49 }
         {
             var reverse = mutable.rchunks_exact_mut(2usize)
             let remainder = reverse.remainder()
             if remainder.len() != 1usize { return 50 }
             remainder[0usize] = 2
         }
+        if mutable[0usize] != 2 { return 50 }
         var iter = mutable.iter_mut()
         match take iter.next() { present(_) => {}, none => { return 21 } }
         let remaining = take iter.into_slice()
