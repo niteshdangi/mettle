@@ -1,7 +1,9 @@
-import core.borrow.AsMut
+import core.borrow.{AsMut, AsRef}
 import core.clone.Clone
+import core.convert.From
 import core.default.Default
 import core.fmt
+import alloc.{arc, rc, vec}
 import alloc.string.String
 import std.io.{BufRead, Cursor, Error, IoSlice, IoSliceMut, Reader, Seek, SeekFrom, Writer}
 
@@ -19,7 +21,48 @@ fn render_debug<T: fmt.Debug>(read value: T): String throws Error {
     output
 }
 
+fn check_backing<T: AsRef<[u8]>>(take backing: T): bool throws Error {
+    var cursor = Cursor.new(backing)
+    var first = [0u8; 2]
+    if try cursor.read_some(mut first) != 2usize ||
+        first[0usize] != 97u8 || first[1usize] != 98u8 ||
+        cursor.position() != 2u64 { return false }
+    let remaining = try cursor.fill_buf()
+    if remaining.len() != 2usize || remaining[0usize] != 99u8 ||
+        remaining[1usize] != 100u8 { return false }
+    cursor.consume(1usize)
+    if try cursor.seek(SeekFrom.Current(-1i64)) != 2u64 { return false }
+    if try cursor.seek(SeekFrom.End(-1i64)) != 3u64 { return false }
+    if try cursor.read_some(mut first) != 1usize || first[0usize] != 100u8 ||
+        cursor.position() != 4u64 { return false }
+    if try cursor.seek(SeekFrom.Start(8u64)) != 8u64 ||
+        (try cursor.fill_buf()).len() != 0usize ||
+        try cursor.read_some(mut first) != 0usize || cursor.position() != 8u64 {
+        return false
+    }
+    match take capture cursor.seek(SeekFrom.End(-5i64)) {
+        success(_) => { return false },
+        failure(error) => {
+            if !error.kind().is(std.io.ErrorKind.InvalidInput) { return false }
+        }
+    }
+    cursor.position() == 8u64
+}
+
 fn run(): i32 throws Error {
+    if !(try check_backing(vec.from_array([97u8, 98u8, 99u8, 100u8]))) {
+        return 44
+    }
+    if !(try check_backing(alloc.string.from_text("abcd"))) { return 45 }
+    if !(try check_backing(vec.from_array([97u8, 98u8, 99u8, 100u8]).into_boxed_slice())) {
+        return 46
+    }
+    if !(try check_backing(rc.Rc<[u8]>.(From<[u8; 4]>).from([97u8, 98u8, 99u8, 100u8]))) {
+        return 47
+    }
+    if !(try check_backing(arc.Arc<[u8]>.(From<[u8; 4]>).from([97u8, 98u8, 99u8, 100u8]))) {
+        return 48
+    }
     var cursor = Cursor.new([97u8, 98u8, 99u8, 100u8, 101u8, 102u8])
     var first = [0u8; 2]
     if try cursor.read_some(first) != 2usize ||
