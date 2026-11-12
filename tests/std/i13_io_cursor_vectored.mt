@@ -63,6 +63,10 @@ fn run(): i32 throws Error {
     if !(try check_backing(arc.Arc<[u8]>.(From<[u8; 4]>).from([97u8, 98u8, 99u8, 100u8]))) {
         return 48
     }
+    let shared_bytes = [97u8, 98u8, 99u8, 100u8]
+    if !(try check_backing(read shared_bytes[..])) { return 49 }
+    var exclusive = [97u8, 98u8, 99u8, 100u8]
+    if !(try check_backing(mut exclusive[..])) { return 50 }
     var cursor = Cursor.new([97u8, 98u8, 99u8, 100u8, 101u8, 102u8])
     var first = [0u8; 2]
     if try cursor.read_some(first) != 2usize ||

@@ -43,6 +43,14 @@ extend<T: unsized> T implements AsRef<T> {
     fn as_ref(): read T from self { read self }
 }
 
+extend<region r, T: unsized> read T from r implements AsRef<T> {
+    fn as_ref(): read T from self { read *self }
+}
+
+extend<region r, T: unsized> mut T from r implements AsRef<T> {
+    fn as_ref(): read T from self { read *self }
+}
+
 extend<T: unsized> T implements Borrow<T> {
     fn borrow(): read T from self { read self }
 }

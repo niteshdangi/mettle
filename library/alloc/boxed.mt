@@ -431,6 +431,18 @@ extend<T: Hasher + unsized, A: Allocator> Box<T, A> implements Hasher {
     mut fn write(read bytes: [u8]): Unit {
         T.(Hasher).write(self.get_mut(), bytes)
     }
+    mut fn write_u8(value: u8): Unit { T.(Hasher).write_u8(self.get_mut(), value) }
+    mut fn write_u16(value: u16): Unit { T.(Hasher).write_u16(self.get_mut(), value) }
+    mut fn write_u32(value: u32): Unit { T.(Hasher).write_u32(self.get_mut(), value) }
+    mut fn write_u64(value: u64): Unit { T.(Hasher).write_u64(self.get_mut(), value) }
+    mut fn write_u128(value: u128): Unit { T.(Hasher).write_u128(self.get_mut(), value) }
+    mut fn write_usize(value: usize): Unit { T.(Hasher).write_usize(self.get_mut(), value) }
+    mut fn write_i8(value: i8): Unit { T.(Hasher).write_i8(self.get_mut(), value) }
+    mut fn write_i16(value: i16): Unit { T.(Hasher).write_i16(self.get_mut(), value) }
+    mut fn write_i32(value: i32): Unit { T.(Hasher).write_i32(self.get_mut(), value) }
+    mut fn write_i64(value: i64): Unit { T.(Hasher).write_i64(self.get_mut(), value) }
+    mut fn write_i128(value: i128): Unit { T.(Hasher).write_i128(self.get_mut(), value) }
+    mut fn write_isize(value: isize): Unit { T.(Hasher).write_isize(self.get_mut(), value) }
     fn finish(): u64 { T.(Hasher).finish(self.get()) }
 }
 extend<E: Error> Box<E> implements Error {

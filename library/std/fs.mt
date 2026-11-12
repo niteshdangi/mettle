@@ -532,15 +532,8 @@ pub fn write(read input: PathInput, read bytes: [u8]): Unit throws Error {
 }
 
 pub fn `copy`(read from: PathInput, read to: PathInput): u64 throws Error {
-    let source_metadata = try metadata(from)
-    if try try_exists(to) {
-        let from_path = try canonicalize(from)
-        let to_path = try canonicalize(to)
-        if from_path.as_path().same(to_path.as_path()) {
-            throw io.from_kind(ErrorKind.InvalidInput)
-        }
-    }
     var source = try open(from)
+    let source_metadata = try source.metadata()
     var destination = try create(to)
     var buffer = [0u8; 4096]
     var total = 0u64
@@ -549,10 +542,13 @@ pub fn `copy`(read from: PathInput, read to: PathInput): u64 throws Error {
         if count == 0usize { break }
         let bytes = unsafe { package.core.slice.subslice_unchecked(buffer, 0usize, count) }
         try destination.write_all(bytes)
-        total += count as u64
+        total = match total.checked_add(count as u64) {
+            present(next) => next,
+            none => throw io.from_kind(ErrorKind.InvalidData)
+        }
     }
     let target_mode = source_metadata.permissions()
-    try set_permissions(to, target_mode)
+    try destination.set_permissions(target_mode)
     total
 }
 

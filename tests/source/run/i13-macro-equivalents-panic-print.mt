@@ -10,6 +10,18 @@ import std.io
 import std.macros.{dbg, format_args, matches, todo, unimplemented}
 import std.panic.{catch_panic, CatchResult}
 
+type BrokenDisplay {}
+extend BrokenDisplay implements fmt.Display {
+    fn fmt(mut formatter: fmt.Formatter): Unit throws fmt.Error {
+        throw fmt.Error()
+    }
+}
+
+fn next(read count: core.cell.Cell<i32>): i32 {
+    count.set(count.get() + 1)
+    count.get()
+}
+
 fn panic_message(take outcome: CatchResult<i32>, read expected: Text): i32 {
     match take outcome {
         CatchResult.Panicked(info) => {
@@ -74,10 +86,10 @@ fn main(): i32 {
     if todo_default_code != 0 { return 50 + todo_default_code }
     let message_calls = core.cell.Cell.new(0i32)
     let todo_custom = catch_panic(fn(): i32 {
-        todo!({ message_calls.set(message_calls.get() + 1); "later" })
+        todo!({ message_calls.set(message_calls.get() + 1); String("later") })
         0
     })
-    let todo_custom_code = panic_message(todo_custom, "later")
+    let todo_custom_code = panic_message(todo_custom, "not yet implemented: later")
     if todo_custom_code != 0 || message_calls.get() != 1 { return 60 + todo_custom_code }
 
     let unimplemented_default = catch_panic(fn(): i32 { unimplemented!(); 0 })
@@ -87,7 +99,25 @@ fn main(): i32 {
         unimplemented!({ message_calls.set(message_calls.get() + 1); "missing" })
         0
     })
-    let unimplemented_custom_code = panic_message(unimplemented_custom, "missing")
+    let unimplemented_custom_code = panic_message(unimplemented_custom, "not implemented: missing")
     if unimplemented_custom_code != 0 || message_calls.get() != 2 { return 80 + unimplemented_custom_code }
+
+    let todo_formatted = catch_panic(fn(): i32 {
+        todo!(f"step {next(read message_calls)}",)
+        0
+    })
+    if panic_message(todo_formatted, "not yet implemented: step 3") != 0 || message_calls.get() != 3 { return 90 }
+
+    let unimplemented_formatted = catch_panic(fn(): i32 {
+        unimplemented!(format_args!(f"step {next(read message_calls)}: {String("owned")}"),)
+        0
+    })
+    if panic_message(unimplemented_formatted, "not implemented: step 4: owned") != 0 || message_calls.get() != 4 { return 91 }
+
+    let format_failure = catch_panic(fn(): i32 {
+        todo!(f"{BrokenDisplay()}")
+        0
+    })
+    if panic_message(format_failure, "formatting failed") != 0 { return 92 }
     0
 }

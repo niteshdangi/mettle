@@ -113,8 +113,8 @@ Bdce6c49e1b1ebf832aec8bf6,impl:boxed::Box:fmt::Display,"https://doc.rust-lang.or
 Bcbdc6398f68eafa9de00e545,impl:boxed::Box:future::Future,"https://doc.rust-lang.org/1.99.1/std/boxed/struct.Box.html#impl-Future-for-Box%3CF,+A%3E",,evidenced,tests/source/run/i13-box-trait-impls.mt
 B687468a68e15bbc4ddb951a5,impl:boxed::Box:hash::Hash,"https://doc.rust-lang.org/1.99.1/std/boxed/struct.Box.html#impl-Hash-for-Box%3CT,+A%3E",,evidenced,tests/source/run/i13-box-trait-impls.mt
 Bcdeab6915ac27de519826ace,impl:boxed::Box:hash::Hash,"https://doc.rust-lang.org/1.99.1/alloc/boxed/struct.Box.html#impl-Hash-for-Box%3CT,+A%3E",,evidenced,tests/source/run/i13-box-trait-impls.mt
-B65ab083761685441dd70acc8,impl:boxed::Box:hash::Hasher,"https://doc.rust-lang.org/1.99.1/std/boxed/struct.Box.html#impl-Hasher-for-Box%3CT,+A%3E",,missing,
-B685f6d6553a62711a381108b,impl:boxed::Box:hash::Hasher,"https://doc.rust-lang.org/1.99.1/alloc/boxed/struct.Box.html#impl-Hasher-for-Box%3CT,+A%3E",,missing,
+B65ab083761685441dd70acc8,impl:boxed::Box:hash::Hasher,"https://doc.rust-lang.org/1.99.1/std/boxed/struct.Box.html#impl-Hasher-for-Box%3CT,+A%3E",library/alloc/boxed.mt,evidenced,tests/source/run/i13-owner-box-hasher-forwarding.mt
+B685f6d6553a62711a381108b,impl:boxed::Box:hash::Hasher,"https://doc.rust-lang.org/1.99.1/alloc/boxed/struct.Box.html#impl-Hasher-for-Box%3CT,+A%3E",library/alloc/boxed.mt,evidenced,tests/source/run/i13-owner-box-hasher-forwarding.mt
 B70574b9d1bf4e44eb5e57e84,impl:boxed::Box:io::BufRead,https://doc.rust-lang.org/1.99.1/std/boxed/struct.Box.html#impl-BufRead-for-Box%3CB%3E,,missing,
 B7a7624c9369dca67378f6aa7,impl:boxed::Box:io::Read,https://doc.rust-lang.org/1.99.1/std/boxed/struct.Box.html#impl-Read-for-Box%3CR%3E,,missing,
 B7120dfc949c5a648355b6d3e,impl:boxed::Box:io::Seek,https://doc.rust-lang.org/1.99.1/std/boxed/struct.Box.html#impl-Seek-for-Box%3CS%3E,,missing,

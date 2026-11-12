@@ -610,6 +610,9 @@ No ordinary mutable overlapping-windows iterator exists.
 chunk. `rchunks/rchunks_mut` partition from the back with a possible short
 first chunk in the original sequence. Exact variants omit the short chunk
 and expose it through `remainder/into_remainder`, preserving access mode.
+Mutable `into_remainder` consumes the iterator and returns only the originally
+omitted suffix (front chunks) or prefix (reverse chunks), not unvisited full
+chunks. The returned view remains disjoint from previously yielded chunks.
 Zero chunk size panics. These iterators are exact-size, bidirectional and
 fused; alternating ends yields each chunk once.
 

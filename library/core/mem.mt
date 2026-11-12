@@ -14,10 +14,10 @@ extend<T: unsized> core.mem.ManuallyDrop<T> implements DerefMut {
     mut fn deref_mut(): mut T from self { self.get_mut() }
 }
 
-extend<T> core.mem.ManuallyDrop<T> {
+extend<T: unsized> core.mem.ManuallyDrop<T> {
     // The payload must be initialized and neither reused nor dropped again.
     pub unsafe mut fn `drop`(): Unit {
-        unsafe { core.ptr.drop_in_place(core.ptr.from_mut(mut self).cast<T>()) }
+        unsafe { core.ptr.drop_in_place(core.ptr.from_mut(self.get_mut())) }
     }
 }
 

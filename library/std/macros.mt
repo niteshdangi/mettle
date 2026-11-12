@@ -189,7 +189,9 @@ pub fn reproducible(): Unit throws Error {
 fn debug_text<T: Debug>(read value: T): String {
     var output = string.new()
     {
-        var formatter = fmt.formatter(mut output, fmt.spec())
+        var options = fmt.spec()
+        options.alternate = true
+        var formatter = fmt.formatter(mut output, options)
         match capture T.(Debug).fmt(read value, mut formatter) {
             success(_) => {},
             failure(_) => { package.core.panic.panic("debug formatting failed") }
@@ -257,12 +259,21 @@ pub macro eprintln {
     ($message:expr $(,)?) => { eprint_line($message) };
 }
 
+fn panic_with_prefix(read prefix: Text, message: format fmt.Message): Never {
+    var output = string.from_text(prefix)
+    match capture output.write_fmt(message) {
+        success(_) => {},
+        failure(_) => { package.core.panic.panic("formatting failed") }
+    }
+    package.core.panic.panic(output.as_text())
+}
+
 pub macro todo {
     () => { package.core.panic.panic("not yet implemented") };
-    ($message:expr) => { package.core.panic.panic($message) };
+    ($message:expr $(,)?) => { panic_with_prefix("not yet implemented: ", $message) };
 }
 
 pub macro unimplemented {
     () => { package.core.panic.panic("not implemented") };
-    ($message:expr) => { package.core.panic.panic($message) };
+    ($message:expr $(,)?) => { panic_with_prefix("not implemented: ", $message) };
 }

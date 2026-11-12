@@ -457,7 +457,7 @@ extend Path {
     }
 
     // `other` appended with a separator; an absolute `other` replaces `self`.
-    pub fn join(read other: Path): PathBuf {
+    pub fn join(read other: PathInput): PathBuf {
         var out = path_buf_from_bytes(read self.bytes)
         out.push(other)
         out
@@ -500,7 +500,7 @@ extend Path {
         throw StripPrefixError()
     }
 
-    pub fn with_file_name(read name: OsStr): PathBuf {
+    pub fn with_file_name(read name: PathInput): PathBuf {
         var result = self.to_path_buf()
         result.set_file_name(name)
         result
@@ -815,7 +815,8 @@ extend PathBuf {
 
     // Appends a component, adding a separator when needed; an absolute `p`
     // replaces the whole path.
-    pub mut fn push(read p: Path): Unit {
+    pub mut fn push(read input: PathInput): Unit {
+        let p = input.as_path()
         if p.is_absolute() {
             self.v.clear()
         } else if self.v.len() > 0usize && !is_sep(self.v.v[self.v.len() - 1usize]) {
@@ -836,9 +837,9 @@ extend PathBuf {
         }
     }
 
-    pub mut fn set_file_name(read name: OsStr): bool {
+    pub mut fn set_file_name(read name: PathInput): bool {
         if self.as_path().file_name().is_present() { let _ = self.pop() }
-        self.push(path_from_os_str(name))
+        self.push(name)
         true
     }
 
@@ -883,13 +884,13 @@ extend PathBuf {
     pub fn file_prefix(): (read OsStr from self)? { self.as_path().file_prefix() }
     pub fn extension(): (read OsStr from self)? { self.as_path().extension() }
     pub fn parent(): (read Path from self)? { self.as_path().parent() }
-    pub fn join(read other: Path): PathBuf { self.as_path().join(other) }
+    pub fn join(read other: PathInput): PathBuf { self.as_path().join(other) }
     pub fn starts_with(read prefix: Path): bool { self.as_path().starts_with(prefix) }
     pub fn ends_with(read suffix: Path): bool { self.as_path().ends_with(suffix) }
     pub fn strip_prefix(read prefix: Path): read Path from self throws StripPrefixError {
         try self.as_path().strip_prefix(prefix)
     }
-    pub fn with_file_name(read name: OsStr): PathBuf { self.as_path().with_file_name(name) }
+    pub fn with_file_name(read name: PathInput): PathBuf { self.as_path().with_file_name(name) }
     pub fn with_extension(read extension: OsStr): PathBuf { self.as_path().with_extension(extension) }
     pub fn with_added_extension(read extension: OsStr): PathBuf { self.as_path().with_added_extension(extension) }
 }

@@ -1,5 +1,5 @@
 // profiles: debug release
-// expect-stderr: "\"owned\"\n"
+// expect-stderr: "\"owned\"\npretty\n"
 
 import alloc.string.String
 import core.fmt
@@ -13,9 +13,22 @@ extend BrokenDebug implements fmt.Debug {
     }
 }
 
+type DebugProbe { pub value: i32 }
+extend DebugProbe implements fmt.Debug {
+    fn fmt(mut formatter: fmt.Formatter): Unit throws fmt.Error {
+        if formatter.alternate() {
+            try formatter.write_str("pretty")
+        } else {
+            try formatter.write_str("plain")
+        }
+    }
+}
+
 fn main(): i32 {
     let owned = dbg!(String("owned"),)
     if owned.as_text() != "owned" { return 1 }
+    let probe = dbg!(DebugProbe(17))
+    if probe.value != 17 { return 7 }
 
     let skipped = core.cell.Cell.new(0i32)
     let failed = catch_panic(fn(): i32 {

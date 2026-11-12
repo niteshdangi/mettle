@@ -1452,12 +1452,14 @@ pub type SliceChunks<region r, T> {
     front: usize
     back: usize
 }
+fn chunk_count(remaining: usize, size: usize): usize {
+    let full = remaining / size
+    if remaining % size == 0usize { full } else { full + 1usize }
+}
 extend<region r, T> SliceChunks<region r, T> implements Iterator {
     type Item = read [T] from r
     fn size_hint(): (usize, usize?) {
-        let remaining = self.back - self.front
-        let full = remaining / self.size
-        let count = if remaining % self.size == 0usize { full } else { full + 1usize }
+        let count = chunk_count(self.back - self.front, self.size)
         (count, present(count))
     }
     mut fn next(): (read [T] from r)? {
@@ -1544,7 +1546,9 @@ extend<region r, T: fmt.Debug> SliceWindows<region r, T> implements fmt.Debug {
     }
 }
 extend<region r, T> SliceChunks<region r, T> implements super.iter.ExactSizeIterator {}
+extend<region r, T> SliceChunks<region r, T> implements super.iter.FusedIterator {}
 extend<region r, T> SliceWindows<region r, T> implements super.iter.ExactSizeIterator {}
+extend<region r, T> SliceWindows<region r, T> implements super.iter.FusedIterator {}
 
 pub type SliceArrayWindows<region r, T, const N: usize> {
     items: read [T] from r
@@ -1582,6 +1586,10 @@ pub type SliceChunksMut<region r, T> {
 }
 extend<region r, T> SliceChunksMut<region r, T> implements Iterator {
     type Item = mut [T] from r
+    fn size_hint(): (usize, usize?) {
+        let count = chunk_count(self.back - self.front, self.size)
+        (count, present(count))
+    }
     mut fn next(): (mut [T] from r)? {
         if self.front == self.back { return none }
         let start = self.front
@@ -1601,6 +1609,8 @@ extend<region r, T> SliceChunksMut<region r, T> implements BidirectionalIterator
         present(unsafe { sub_mut<T>(mut *self.items, start, start + count) })
     }
 }
+extend<region r, T> SliceChunksMut<region r, T> implements super.iter.ExactSizeIterator {}
+extend<region r, T> SliceChunksMut<region r, T> implements super.iter.FusedIterator {}
 
 extend<T> [T] {
     pub mut fn chunks_mut(size: usize): SliceChunksMut<region self, T> {
@@ -1612,8 +1622,9 @@ extend<T> [T] {
         if size == 0usize { super.panic.panic("chunk size must be nonzero") }
         let n = self.len()
         let remainder = n % size
-        let back = n - remainder
-        SliceChunksExactMut(mut self, size, 0usize, back, back)
+        let parts = self.split_at_mut(n - remainder)
+        let remainder_data = parts.1.as_mut_ptr()
+        SliceChunksExactMut(take parts.0, size, remainder_data, remainder)
     }
     pub mut fn rchunks_mut(size: usize): SliceRChunksMut<region self, T> {
         if size == 0usize { super.panic.panic("chunk size must be nonzero") }
@@ -1624,7 +1635,9 @@ extend<T> [T] {
         if size == 0usize { super.panic.panic("chunk size must be nonzero") }
         let n = self.len()
         let remainder = n % size
-        SliceRChunksExactMut(mut self, size, remainder, n, remainder)
+        let parts = self.split_at_mut(remainder)
+        let remainder_data = parts.0.as_mut_ptr()
+        SliceRChunksExactMut(take parts.1, size, remainder_data, remainder)
     }
 }
 
@@ -1754,6 +1767,10 @@ pub type SliceChunksExact<region r, T> {
 }
 extend<region r, T> SliceChunksExact<region r, T> implements Iterator {
     type Item = read [T] from r
+    fn size_hint(): (usize, usize?) {
+        let count = (self.back - self.front) / self.size
+        (count, present(count))
+    }
     mut fn next(): (read [T] from r)? {
         if self.front == self.back { return none }
         let start = self.front
@@ -1768,6 +1785,8 @@ extend<region r, T> SliceChunksExact<region r, T> implements BidirectionalIterat
         present(unsafe { sub<T>(self.items, self.back, self.back + self.size) })
     }
 }
+extend<region r, T> SliceChunksExact<region r, T> implements super.iter.ExactSizeIterator {}
+extend<region r, T> SliceChunksExact<region r, T> implements super.iter.FusedIterator {}
 extend<region r, T> SliceChunksExact<region r, T> {
     pub fn remainder(): read [T] from r {
         unsafe { sub<T>(self.items, self.remainder_start, self.items.len()) }
@@ -1782,6 +1801,10 @@ pub type SliceRChunks<region r, T> {
 }
 extend<region r, T> SliceRChunks<region r, T> implements Iterator {
     type Item = read [T] from r
+    fn size_hint(): (usize, usize?) {
+        let count = chunk_count(self.back - self.front, self.size)
+        (count, present(count))
+    }
     mut fn next(): (read [T] from r)? {
         if self.front == self.back { return none }
         let count = if self.back - self.front < self.size { self.back - self.front } else { self.size }
@@ -1800,6 +1823,8 @@ extend<region r, T> SliceRChunks<region r, T> implements BidirectionalIterator {
         present(unsafe { sub<T>(self.items, start, self.front) })
     }
 }
+extend<region r, T> SliceRChunks<region r, T> implements super.iter.ExactSizeIterator {}
+extend<region r, T> SliceRChunks<region r, T> implements super.iter.FusedIterator {}
 
 pub type SliceRChunksExact<region r, T> {
     items: read [T] from r
@@ -1810,6 +1835,10 @@ pub type SliceRChunksExact<region r, T> {
 }
 extend<region r, T> SliceRChunksExact<region r, T> implements Iterator {
     type Item = read [T] from r
+    fn size_hint(): (usize, usize?) {
+        let count = (self.back - self.front) / self.size
+        (count, present(count))
+    }
     mut fn next(): (read [T] from r)? {
         if self.front == self.back { return none }
         self.back -= self.size
@@ -1824,6 +1853,8 @@ extend<region r, T> SliceRChunksExact<region r, T> implements BidirectionalItera
         present(unsafe { sub<T>(self.items, start, self.front) })
     }
 }
+extend<region r, T> SliceRChunksExact<region r, T> implements super.iter.ExactSizeIterator {}
+extend<region r, T> SliceRChunksExact<region r, T> implements super.iter.FusedIterator {}
 extend<region r, T> SliceRChunksExact<region r, T> {
     pub fn remainder(): read [T] from r {
         unsafe { sub<T>(self.items, 0usize, self.remainder_end) }
@@ -1833,30 +1864,35 @@ extend<region r, T> SliceRChunksExact<region r, T> {
 pub type SliceChunksExactMut<region r, T> {
     items: mut [T] from r
     size: usize
-    front: usize
-    back: usize
-    remainder_start: usize
+    // The omitted suffix is disjoint from items and kept alive by r.
+    remainder: ptr<mut T>
+    remainder_len: usize
 }
 extend<region r, T> SliceChunksExactMut<region r, T> implements Iterator {
     type Item = mut [T] from r
+    fn size_hint(): (usize, usize?) {
+        let count = self.items.len() / self.size
+        (count, present(count))
+    }
     mut fn next(): (mut [T] from r)? {
-        if self.front == self.back { return none }
-        let start = self.front
-        self.front += self.size
-        present(unsafe { sub_mut<T>(mut *self.items, start, self.front) })
+        let size = self.size
+        split_off_mut(mut self.items, super.iter.range_to(size))
     }
 }
 extend<region r, T> SliceChunksExactMut<region r, T> implements BidirectionalIterator {
     mut fn next_back(): (mut [T] from r)? {
-        if self.front == self.back { return none }
-        self.back -= self.size
-        present(unsafe { sub_mut<T>(mut *self.items, self.back, self.back + self.size) })
+        let n = self.items.len()
+        let size = self.size
+        let start = if n == 0usize { size } else { n - size }
+        split_off_mut(mut self.items, super.iter.range_from(start))
     }
 }
+extend<region r, T> SliceChunksExactMut<region r, T> implements super.iter.ExactSizeIterator {}
+extend<region r, T> SliceChunksExactMut<region r, T> implements super.iter.FusedIterator {}
 extend<region r, T> SliceChunksExactMut<region r, T> {
-    pub mut fn remainder(): mut [T] from r {
-        let n = self.items.len()
-        unsafe { sub_mut<T>(mut *self.items, self.remainder_start, n) }
+    pub fn into_remainder(receiver take self: Self): mut [T] from r {
+        // Safety: the omitted suffix is disjoint from yielded chunks and released only once.
+        unsafe { from_raw_parts_mut(self.remainder, self.remainder_len) }
     }
 }
 
@@ -1868,6 +1904,10 @@ pub type SliceRChunksMut<region r, T> {
 }
 extend<region r, T> SliceRChunksMut<region r, T> implements Iterator {
     type Item = mut [T] from r
+    fn size_hint(): (usize, usize?) {
+        let count = chunk_count(self.back - self.front, self.size)
+        (count, present(count))
+    }
     mut fn next(): (mut [T] from r)? {
         if self.front == self.back { return none }
         let count = if self.back - self.front < self.size { self.back - self.front } else { self.size }
@@ -1886,33 +1926,41 @@ extend<region r, T> SliceRChunksMut<region r, T> implements BidirectionalIterato
         present(unsafe { sub_mut<T>(mut *self.items, start, self.front) })
     }
 }
+extend<region r, T> SliceRChunksMut<region r, T> implements super.iter.ExactSizeIterator {}
+extend<region r, T> SliceRChunksMut<region r, T> implements super.iter.FusedIterator {}
 
 pub type SliceRChunksExactMut<region r, T> {
     items: mut [T] from r
     size: usize
-    front: usize
-    back: usize
-    remainder_end: usize
+    // The omitted prefix is disjoint from items and kept alive by r.
+    remainder: ptr<mut T>
+    remainder_len: usize
 }
 extend<region r, T> SliceRChunksExactMut<region r, T> implements Iterator {
     type Item = mut [T] from r
+    fn size_hint(): (usize, usize?) {
+        let count = self.items.len() / self.size
+        (count, present(count))
+    }
     mut fn next(): (mut [T] from r)? {
-        if self.front == self.back { return none }
-        self.back -= self.size
-        present(unsafe { sub_mut<T>(mut *self.items, self.back, self.back + self.size) })
+        let n = self.items.len()
+        let size = self.size
+        let start = if n == 0usize { size } else { n - size }
+        split_off_mut(mut self.items, super.iter.range_from(start))
     }
 }
 extend<region r, T> SliceRChunksExactMut<region r, T> implements BidirectionalIterator {
     mut fn next_back(): (mut [T] from r)? {
-        if self.front == self.back { return none }
-        let start = self.front
-        self.front += self.size
-        present(unsafe { sub_mut<T>(mut *self.items, start, self.front) })
+        let size = self.size
+        split_off_mut(mut self.items, super.iter.range_to(size))
     }
 }
+extend<region r, T> SliceRChunksExactMut<region r, T> implements super.iter.ExactSizeIterator {}
+extend<region r, T> SliceRChunksExactMut<region r, T> implements super.iter.FusedIterator {}
 extend<region r, T> SliceRChunksExactMut<region r, T> {
-    pub mut fn remainder(): mut [T] from r {
-        unsafe { sub_mut<T>(mut *self.items, 0usize, self.remainder_end) }
+    pub fn into_remainder(receiver take self: Self): mut [T] from r {
+        // Safety: the omitted prefix is disjoint from yielded chunks and released only once.
+        unsafe { from_raw_parts_mut(self.remainder, self.remainder_len) }
     }
 }
 

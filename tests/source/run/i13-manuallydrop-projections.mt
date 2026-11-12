@@ -14,6 +14,10 @@ fn tail(mut value: core.mem.ManuallyDrop<[i32]>): usize {
     value.deref().len()
 }
 
+unsafe fn drop_tail(mut value: core.mem.ManuallyDrop<[Counted]>): Unit {
+    unsafe { value.`drop`() }
+}
+
 fn cell_tail(read value: core.cell.UnsafeCell<[i32]>): usize {
     unsafe { (read *value.get()).len() }
 }
@@ -42,5 +46,20 @@ fn main(): i32 {
     if tail(mut array) != 2usize || array.deref()[1usize] != 9i32 { return 7 }
     let cell = core.cell.UnsafeCell.new([5i32, 6i32, 7i32])
     if cell_tail(read cell) != 3usize { return 8 }
+    {
+        var array = core.mem.ManuallyDrop.new([
+            Counted(core.ptr.from_mut(mut drops), 2i32),
+            Counted(core.ptr.from_mut(mut drops), 3i32)
+        ])
+        if drops != 11i32 { return 9 }
+        unsafe { drop_tail(mut array) }
+        if drops != 16i32 { return 10 }
+    }
+    if drops != 16i32 { return 11 }
+    {
+        var empty: core.mem.ManuallyDrop<[Counted; 0]> = core.mem.ManuallyDrop.new([])
+        unsafe { drop_tail(mut empty) }
+    }
+    if drops != 16i32 { return 12 }
     0
 }

@@ -177,7 +177,7 @@ fn main(): i32 {
                 present(part) => { part[0usize] = 3 },
                 none => { return 47 }
             }
-            let remainder = exact.remainder()
+            let remainder = take exact.into_remainder()
             if remainder.len() != 1usize { return 48 }
             remainder[0usize] = 5
         }
@@ -192,7 +192,7 @@ fn main(): i32 {
         if mutable[0usize] != 4 { return 49 }
         {
             var reverse = mutable.rchunks_exact_mut(2usize)
-            let remainder = reverse.remainder()
+            let remainder = take reverse.into_remainder()
             if remainder.len() != 1usize { return 50 }
             remainder[0usize] = 2
         }
