@@ -575,8 +575,8 @@ Vacant `into_key` consumes the handle and returns its proposed K;
 returns an occupied handle. Lazy initializer panic leaves the entry vacant;
 the handle's key is cleaned normally. Entry interfaces require the actual
 map's key bounds, allocator and hash policy; they do not bypass lookups.
-Vacant insertion rechecks the proposed key rather than trusting a cached
-search across callbacks or interior-state changes.
+Vacant handles do not cache searches: insertion rechecks the proposed key
+after any intervening changes through the key's interior state.
 Raw-entry/cursor interfaces are not implied by this entry contract.
 
 ### 8.3. Hash Map

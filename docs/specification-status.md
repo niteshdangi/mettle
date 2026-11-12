@@ -22,8 +22,8 @@ does not expand grammar or V1 scope.
 | Area | Owner |
 | --- | --- |
 | Architecture and release progression | [decisions](decisions.md), [implementation plan](implementation-plan.md) |
-| Syntax | [core grammar](core-grammar.md), [full grammar](language-grammar.md) |
-| Ownership, typing and cleanup | [core semantics](core-semantics.md), [semantic rules](semantic-rules.md) |
+| Syntax | [grammar](language-grammar.md) |
+| Ownership, typing and cleanup | [semantic rules](semantic-rules.md) |
 | Advanced mechanisms and memory | [advanced contracts](advanced-contracts.md), [annex](specification-annex.md), [memory model](memory-and-concurrency.md) |
 | Libraries and ABI | [library/ABI](library-and-abi.md), [native value contracts](native-value-contracts.md), [mapping authority](baseline-mapping.md#7-native-operation-authority), [surface](library-surface.md) |
 | Core and allocation operation definitions | [native core contracts](native-core-library-contracts.md), [native collection contracts](native-collection-contracts.md) |

@@ -5,7 +5,7 @@ receipt. The member groups explicitly described below have independent Mettle
 semantics. The coverage boundary in section 15 is part of this specification;
 mentioning a module does not assign every declaration in it native authority.
 
-[Core semantics](core-semantics.md), [typing](semantic-rules.md),
+[Core semantics and typing](semantic-rules.md),
 [the memory model](memory-and-concurrency.md), and
 [native signatures](library-surface.md#2-recursive-translation-rules) supply the
 language rules. The names here are native names; source names in parentheses
@@ -673,8 +673,8 @@ the by predicate takes two read elements and returns bool for <=.
 `sort_unstable[_by/_by_key]` gives ascending order without equal-element
 stability, no allocation and O(n log(n+1)) worst-case comparisons.
 By comparison is `mut fn(read T, read T): Ordering`; by-key is
-`mut fn(read T): K` with K: Ord. `select_nth_unstable[_by/_by_key](i)`
-panics unless i < len, partitions around the correctly ranked element, and
+`mut fn(read T): K` with K: Ord. `select_nth_unstable[_by/_by_key]` at
+index `i` panics unless i < len, partitions around the correctly ranked element, and
 returns disjoint exclusive (prefix, element, suffix). Every prefix value is
 <= the element and every suffix value >= it, without sorting either side;
 work is O(n), allocation zero. Comparator/key panic preserves every original

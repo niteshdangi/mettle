@@ -4,7 +4,7 @@ Status: native operation specification. This document defines the listed
 operations without an external language specification. It does not certify
 their implementation, constant evaluation or target execution. The
 [library layers](library-and-abi.md#1-library-layers-and-naming),
-[ownership rules](core-semantics.md) and
+[ownership rules](semantic-rules.md#14-core-semantics-ownership-model-evaluation-and-cleanup) and
 [typing rules](semantic-rules.md) apply throughout.
 
 ## 1. Values, access and effects
@@ -27,7 +27,7 @@ constant work excluding payload operations, user callbacks, formatting and
 destruction. They allocate nothing themselves. User-provided Clone, Default,
 Deref, callbacks and destructors retain their own effects and costs.
 
-Arguments are evaluated under [the call evaluation rules](core-semantics.md#9-evaluation-order)
+Arguments are evaluated under [the call evaluation rules](semantic-rules.md#149-evaluation-order)
 before the method runs. An eager fallback value is evaluated and transferred
 even when the method will not select it. Unused owned arguments are destroyed.
 A lazy callback body runs only on its selected branch, at most once.
@@ -113,7 +113,7 @@ The following require a mutable receiver:
 `take_if` does not call its predicate on absence. Predicate mutation is not
 rolled back on false or panic. Constructor callbacks run before installation:
 if one panics, the absent receiver remains absent. Replacement/destructor panic
-behavior follows [replacement cleanup](core-semantics.md#10-destruction-and-failure-edges);
+behavior follows [replacement cleanup](semantic-rules.md#1410-destruction-and-failure-edges);
 in particular, a recovery boundary must not observe invalidated destination
 storage. Returning an exclusive payload view prevents another mutation until
 that view's loan ends.

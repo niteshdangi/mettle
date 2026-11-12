@@ -92,7 +92,7 @@ def documentation_checks(project):
         failures.append({"problem": "Milestone capability coverage mismatch"})
 
     grammar, production_counts = {}, {}
-    for filename in ("core-grammar.md", "language-grammar.md"):
+    for filename in ("language-grammar.md",):
         text = (project / "docs" / filename).read_text()
         body = "\n".join(re.findall(r"```ebnf\n(.*?)```", text, re.S))
         productions = re.findall(r"^([a-z_]\w*)\s*=\s*(.*?)(?=^[a-z_]\w*\s*=|\Z)", body, re.M | re.S)

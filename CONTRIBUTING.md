@@ -4,7 +4,7 @@ The [code quality standard](docs/code-quality.md) is normative.
 The [compiler architecture](docs/compiler-architecture.md) defines responsibilities,
 representations and future feature placement. CMake declares the current
 component targets and dependencies.
-The [language specifications](docs/core-semantics.md) define behavior;
+The [language specifications](docs/semantic-rules.md) define behavior;
 implementation convenience does not override them.
 
 For milestone work, follow the

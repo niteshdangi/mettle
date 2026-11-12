@@ -451,7 +451,7 @@ std::vector<Signature> signature(const Source &source,
 
 // Wrap at token boundaries where the grammar continues: after list
 // separators and binary operators. A line starting with `.` would not continue
-// the previous expression (core-grammar section 3), so chains stay unbroken.
+// the previous expression (language-grammar section 14.3), so chains stay unbroken.
 // Macro token trees and multiline tokens are left untouched because their
 // trivia matters.
 std::string wrap(const Source &source, const std::vector<Token> &tokens) {

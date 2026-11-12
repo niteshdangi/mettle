@@ -8,7 +8,7 @@ L006,Unicode scalar and byte literals,Native literal forms,core,M3,specified,Inv
 L007,Tuple types and expressions,Native tuples,core,M1,specified,One-element tuple and field cleanup,language-grammar.md#3-type-expressions|semantic-rules.md#12-aggregate-and-iteration-completion,not_implemented
 L008,Array types and expressions,Fixed arrays,core,M3,specified,Zero length and const length,language-grammar.md#10-extended-statement-and-expression-productions,not_implemented
 L009,Slices,Native borrowed sequences,core,M3,specified,Bounds and disjoint splitting,library-surface.md#3-unsized-values-properties-and-explicit-owners|library-surface.md#1-what-specifies-an-operation,not_implemented
-L010,Structs,Types with fields and methods,core,M1,specified,Construction and partial initialization,language-grammar.md#4-types-methods-and-implementations|core-semantics.md#62-bindings-places-and-initialization,not_implemented
+L010,Structs,Types with fields and methods,core,M1,specified,Construction and partial initialization,language-grammar.md#4-types-methods-and-implementations|semantic-rules.md#1462-bindings-places-and-initialization,not_implemented
 L011,Enums,Tagged alternatives,core,M3,specified,Payload layout and active variant cleanup,language-grammar.md#4-types-methods-and-implementations|semantic-rules.md#7-pattern-ownership-and-outcomes,not_implemented
 L012,Unions,Explicit unsafe unions,core,M5,specified,Active field and validity preconditions,library-surface.md#3-unsized-values-properties-and-explicit-owners,not_implemented
 L013,Unit and never,Unit and uninhabited type,core,M1,specified,Divergent control flow typing,language-grammar.md#3-type-expressions|semantic-rules.md#4-control-flow-and-generic-checking,not_implemented
@@ -18,7 +18,7 @@ L016,Zero-sized values,Layout-aware zero-size types,core,M3,specified,Iteration 
 L017,Type aliases,Native aliases,core,M3,specified,Resolution without new nominal identity,language-grammar.md#9-composition-and-list-productions,not_implemented
 L018,Implicit and explicit coercions,Documented conversion rules,core,M3,specified,No hidden retain or type erasure,semantic-rules.md#11-coercion-sites-and-method-selection,not_implemented
 L019,Move semantics,Default ownership transfer,core,M2,specified,Use-after-move rejection,semantic-rules.md#2-value-formation-and-parameter-modes,not_implemented
-L020,Copy semantics,Verified explicit named-type opt-in,core,M2,specified,Reject Copy with destructor or owner field,core-semantics.md#5-accepted-decision-copyability-eligibility,not_implemented
+L020,Copy semantics,Verified explicit named-type opt-in,core,M2,specified,Reject Copy with destructor or owner field,semantic-rules.md#145-accepted-decision-copyability-eligibility,not_implemented
 L021,Read borrowing,Non-owning read access,core,M2,specified,Live view blocks mutation,semantic-rules.md#5-loans-and-two-phase-receivers,not_implemented
 L022,Exclusive borrowing,Conflicting access exclusion,core,M2,specified,Reborrow restoration,semantic-rules.md#5-loans-and-two-phase-receivers,not_implemented
 L023,Field-sensitive borrowing,Proven disjoint places,core,M2,specified,Disjoint field access,semantic-rules.md#1-judgments-and-state|semantic-rules.md#5-loans-and-two-phase-receivers,not_implemented
@@ -26,13 +26,13 @@ L024,Two-phase borrowing,Receiver reservation and activation,core,M2,specified,A
 L025,Lifetime relationships,Named regions and from contracts,core,M3,specified,Multiple independent result sources,semantic-rules.md#6-regions-and-variance,not_implemented
 L026,Higher-ranked lifetimes,Universally quantified region contracts,core,M3,specified,Callbacks cannot capture shorter storage,specification-annex.md#2-higher-ranked-constraints-and-associated-types,not_implemented
 L027,Variance,Type-directed region variance,core,M3,specified,Mutable view invariance,semantic-rules.md#6-regions-and-variance,not_implemented
-L028,Partial moves,Place initialization tracking,core,M2,specified,Remaining fields drop once,semantic-rules.md#1-judgments-and-state|core-semantics.md#62-bindings-places-and-initialization,not_implemented
-L029,Deterministic destruction,Specified scope cleanup,core,M2,specified,Early return and failure traces,core-semantics.md#10-destruction-and-failure-edges|specification-annex.md#3-closures-and-parameter-patterns,not_implemented
+L028,Partial moves,Place initialization tracking,core,M2,specified,Remaining fields drop once,semantic-rules.md#1-judgments-and-state|semantic-rules.md#1462-bindings-places-and-initialization,not_implemented
+L029,Deterministic destruction,Specified scope cleanup,core,M2,specified,Early return and failure traces,semantic-rules.md#1410-destruction-and-failure-edges|specification-annex.md#3-closures-and-parameter-patterns,not_implemented
 L030,Temporary lifetime extension,Explicit syntax-based scope rules,core,M2,specified,Calls versus direct borrowed initializer,semantic-rules.md#9-native-temporary-scope-table,not_implemented
 L031,Interior mutability,Explicit cell and synchronization facilities,core,M5,specified,Read access does not imply deep immutability,memory-and-concurrency.md#3-aliasing-and-access-authority,not_implemented
 L032,Manual destruction and forgetting,Explicit advanced resource control,core,M5,specified,Safe wrappers tolerate forgetting,memory-and-concurrency.md#1-allocations-bytes-and-values|library-surface.md#1-what-specifies-an-operation,not_implemented
 L033,Pinning,Native stable storage and projections,core,M5,specified,No move until destruction,advanced-contracts.md#1-pinning-and-address-sensitive-objects|language-grammar.md#11-receiver-and-pin-projection-rules,not_implemented
-L034,Expressions and precedence,Native expression grammar,core,M1,specified,Ambiguous prefix and separator corpus,language-grammar.md#10-extended-statement-and-expression-productions|core-grammar.md#6-expressions-and-precedence,not_implemented
+L034,Expressions and precedence,Native expression grammar,core,M1,specified,Ambiguous prefix and separator corpus,language-grammar.md#10-extended-statement-and-expression-productions|language-grammar.md#146-expressions-and-precedence,not_implemented
 L035,Pattern destructuring,Unified ownership-sensitive patterns,core,M3,specified,Borrow mutate and consume bindings,language-grammar.md#5-patterns-and-matching|specification-annex.md#3-closures-and-parameter-patterns,not_implemented
 L036,Exhaustive matching,Enum alternatives and guards,core,M3,specified,Missing variant and guard coverage,semantic-rules.md#12-aggregate-and-iteration-completion,not_implemented
 L037,Alternative and range patterns,Native pattern forms,core,M3,specified,Consistent binding types,language-grammar.md#5-patterns-and-matching,not_implemented
@@ -48,7 +48,7 @@ L046,Const generics,Target-aware value parameters,core,M3,specified,Instantiatio
 L047,Trait coherence,Owner-based coherent selection,core,M3,specified,Overlapping implementations rejected,specification-annex.md#7-coherence-erasure-and-opaque-types,not_implemented
 L048,Trait objects,Explicit any interface dispatch,core,M3,specified,Borrowed erasure without allocation,specification-annex.md#7-coherence-erasure-and-opaque-types,not_implemented
 L049,Opaque returns,Hidden concrete implementation type,core,M3,specified,Cross-package identity and captures,specification-annex.md#7-coherence-erasure-and-opaque-types,not_implemented
-L050,Operator traits,Native operator implementation contracts,core,M3,specified,Compound assignment evaluates once,semantic-rules.md#11-coercion-sites-and-method-selection|core-semantics.md#9-evaluation-order,not_implemented
+L050,Operator traits,Native operator implementation contracts,core,M3,specified,Compound assignment evaluates once,semantic-rules.md#11-coercion-sites-and-method-selection|semantic-rules.md#149-evaluation-order,not_implemented
 L051,Method lookup,Explicit disambiguation and receiver access,core,M3,specified,Inherent and interface collision,semantic-rules.md#11-coercion-sites-and-method-selection,not_implemented
 L052,Async functions,Lazy typed state machines,core,M5,specified,No body effects before poll,advanced-contracts.md#2-futures-and-executor-protocol,not_implemented
 L053,Async closures and interfaces,Concrete and explicit erased futures,core,M5,specified,Capture and allocation contract,language-grammar.md#6-expressions-errors-and-control-flow|specification-annex.md#7-coherence-erasure-and-opaque-types,not_implemented
@@ -102,7 +102,7 @@ A009,Optional Rust bridges,C-compatible generated adapters,target,M6,specified,O
 T001,Dependency resolution,Manifest lockfile and resolver,tooling,M4,specified,Conflict offline and target-feature cases,tooling-and-packages.md#1-manifest-and-identity,not_implemented
 T002,Build scripts,Explicit host execution,tooling,M4,specified,Undeclared inputs force conservative rerun,tooling-and-packages.md#2-compilation-and-build-execution,not_implemented
 T003,Incremental builds,Dependency-keyed semantic queries,tooling,M4,specified,Mutation invalidation versus clean build,tooling-and-packages.md#2-compilation-and-build-execution,not_implemented
-T004,Formatter and lint,Canonical source and semantic diagnostics,tooling,M6,specified,Formatting preserves tail and ownership modes,tooling-and-packages.md#3-selected-command-operations|core-grammar.md#3-newlines-semicolons-and-block-values,not_implemented
+T004,Formatter and lint,Canonical source and semantic diagnostics,tooling,M6,specified,Formatting preserves tail and ownership modes,tooling-and-packages.md#3-selected-command-operations|language-grammar.md#143-newlines-semicolons-and-block-values,not_implemented
 T005,Language server,Shared incomplete-source analysis,tooling,M6,specified,Incremental diagnostics and rename,tooling-and-packages.md#5-editors-and-debugging,not_implemented
 T006,Debugger support,Source-level value and state metadata,target,M6,specified,Generic closure and async display,tooling-and-packages.md#5-editors-and-debugging,not_implemented
 T007,Test and benchmark runner,Integrated execution workflow,tooling,M4,specified,Isolation failures and reproducibility,tooling-and-packages.md#4-tests-and-executable-documentation|performance.md#4-decision-rule,not_implemented

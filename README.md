@@ -152,8 +152,8 @@ values. Use `let _ = expression` for intentional discards.
 
 - [Implementation and delivery gates](docs/implementation-plan.md)
 - [Architecture](docs/compiler-architecture.md) and [decisions](docs/decisions.md)
-- [Core semantics](docs/core-semantics.md) and [detailed rules](docs/semantic-rules.md)
-- [Core grammar](docs/core-grammar.md) and [full grammar](docs/language-grammar.md)
+- [Semantic rules](docs/semantic-rules.md)
+- [Grammar](docs/language-grammar.md)
 - [Advanced contracts](docs/advanced-contracts.md), [annex](docs/specification-annex.md)
   and [memory model](docs/memory-and-concurrency.md)
 - [Library/ABI](docs/library-and-abi.md), [native surface](docs/library-surface.md)

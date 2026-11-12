@@ -250,7 +250,7 @@ individual contract review. In particular, a vendor link is not proof that all
 native safety, immediate and feature requirements have been reconciled.
 
 Language copying, retention, evaluation and cleanup are independently specified
-by [core semantics](core-semantics.md) and its owning refinements. Their former
+by [core semantics](semantic-rules.md#14-core-semantics-ownership-model-evaluation-and-cleanup) and its owning refinements. Their former
 external design-source links are not normative fallbacks.
 The [specification gate](specification-status.md) records migration boundaries.
 
