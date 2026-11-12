@@ -211,6 +211,28 @@ fn checks_bounded_and_rendezvous(): i32 {
     0
 }
 
+// A shared receiver view iterates through the same queue as the owner.
+fn checks_borrowed_receiver(): i32 {
+    let pair = mpsc.channel<i32>()
+    let tx = pair.0
+    let rx = pair.1
+    let first = capture tx.send(7)
+    match take first { success(_) => {}, failure(_) => { return 60 } }
+    let second = capture tx.send(8)
+    match take second { success(_) => {}, failure(_) => { return 61 } }
+    core.mem.drop(tx)
+    var view = read rx
+    var total = 0
+    while true {
+        match view.next() {
+            present(value) => { total += value },
+            none => { break }
+        }
+    }
+    if total != 15 { return 62 }
+    0
+}
+
 fn main(): i32 {
     let first = checks_channel_basics()
     if first != 0 { return first }
@@ -218,5 +240,7 @@ fn main(): i32 {
     if second != 0 { return second }
     let third = checks_iterators()
     if third != 0 { return third }
+    let fourth = checks_borrowed_receiver()
+    if fourth != 0 { return fourth }
     checks_bounded_and_rendezvous()
 }

@@ -9,6 +9,8 @@ import core.any.Any
 import core.cmp.{Eq, PartialEq}
 import core.convert.From
 import core.ffi.CStr
+import core.ops.DerefMut
+import alloc.boxed.Box
 import core.text.Text
 import std.ffi.{OsStr, OsString, os_str_from_text, os_str_mut, os_string_from_text}
 import std.path.{Path, PathBuf, path_buf_from_text, path_from_text}
@@ -54,6 +56,9 @@ fn checks_path_conversions(): i32 {
     if owned.get().as_os_str().as_bytes() != "dir/file".as_bytes() { return 30 }
     let borrowed = arc.Arc<Path>.(From<read Path>).from(take path_from_text("a/b"))
     if borrowed.get().as_os_str().as_bytes() != "a/b".as_bytes() { return 31 }
+    var buffer = path_buf_from_text("m/n")
+    let mutable = arc.Arc<Path>.(From<mut Path>).from(take buffer.as_mut_path())
+    if mutable.get().as_os_str().as_bytes() != "m/n".as_bytes() { return 32 }
     0
 }
 
@@ -77,6 +82,13 @@ fn checks_c_string_conversions(): i32 {
     if borrowed.get().to_bytes() != "hi".as_bytes() { return 51 }
     let owned = arc.Arc<CStr>.(From<CString>).from(take source)
     if owned.get().to_bytes() != "hi".as_bytes() { return 52 }
+    let other = match take capture CString.new(vec.from_array([121u8, 111u8])) {
+        success(value) => value,
+        failure(_) => { return 53 }
+    }
+    var boxed = other.into_boxed_c_str()
+    let mutable = arc.Arc<CStr>.(From<mut CStr>).from(take Box<CStr>.(DerefMut).deref_mut(mut boxed))
+    if mutable.get().to_bytes() != "yo".as_bytes() { return 54 }
     0
 }
 
