@@ -270,6 +270,8 @@ pre-region checking and finalized region implementation databases. Consumer
 body checking imports the former; region validation restores the finalized
 imported prefix while preserving consumer declarations. Regional implementation
 targets must not enter nominal receiver selection before that phase boundary.
+Finalization decorates both the implementation target and its interface
+arguments in the same declaration-region context.
 Imported implementation-owned callable bounds still populate consumer region
 context; only target decoration and dependency contract rechecking are skipped.
 The pipeline combines imported
@@ -635,6 +637,10 @@ pointer reinterpretation.
 Generic declarations use rigid, compilation-owned parameter identities. A
 parameter exposes only its declared Copy/Sized, interface and callable rights;
 nominal aggregate queries never treat an abstract parameter as a product.
+Bound candidates do not suppress visible blanket implementations proven from
+those rights; multiple applicable interfaces still require explicit selection.
+Read-argument inference substitutes known generic bindings before stripping a
+borrow layer, so an explicitly view-valued parameter retains its handle type.
 Checking publishes separate call substitutions without rewriting parsed names,
 spans or generic argument spellings. Bounds resolve in the callee declaration's
 namespace but are proved only from the caller's assumptions and coherent

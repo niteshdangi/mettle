@@ -203,7 +203,7 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
             let s = self.slot(pos)
             if s == empty() { return none }
             let hit = match self.entries.get(s) {
-                present(e) => e.hash == hash && e.key.key_view().eq(key),
+                present(e) => e.hash == hash && Q.(PartialEq<Q>).eq(K.(KeyView<Q>).key_view(e.key), key),
                 none => false
             }
             if hit { return present(pos) }

@@ -34,7 +34,7 @@ extend<region r, B: OwnedType + unsized> BorrowedOrOwned<region r, B> {
     pub fn as_ref(): read B from self {
         match self {
             BorrowedOrOwned.Borrowed(value) => value,
-            BorrowedOrOwned.Owned(value) => value.borrow()
+            BorrowedOrOwned.Owned(value) => B.Owned.(Borrow<B>).borrow(value)
         }
     }
 }
@@ -76,7 +76,7 @@ extend<region r, B: ToOwned + unsized> BorrowedOrOwned<region r, B> implements C
     fn clone(): BorrowedOrOwned<region r, B> {
         match self {
             BorrowedOrOwned.Borrowed(value) => BorrowedOrOwned.Borrowed(value),
-            BorrowedOrOwned.Owned(value) => BorrowedOrOwned.Owned(value.borrow().to_owned())
+            BorrowedOrOwned.Owned(value) => BorrowedOrOwned.Owned(B.Owned.(Borrow<B>).borrow(value).to_owned())
         }
     }
 }

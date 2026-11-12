@@ -155,7 +155,7 @@ unsafe fn search_node<K, V, Q: Ord + unsized>(n: ptr<mut Node<K, V>>, read key: 
     while lo < hi {
         let mid = lo + (hi - lo) / 2usize
         let slot = node_entry(n, mid)
-        let order = (*slot).key.key_view().cmp(key)
+        let order = Q.(Ord).cmp(K.(KeyView<Q>).key_view((*slot).key), key)
         if order.is_eq() { return (mid, true) }
         if order.is_lt() { lo = mid + 1usize } else { hi = mid }
     }

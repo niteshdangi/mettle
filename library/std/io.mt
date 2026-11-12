@@ -1000,7 +1000,7 @@ fn cursor_write_some(mut target: [u8], position: u64, read source: [u8]): usize 
 
 extend<T: AsRef<[u8]>> Cursor<T> implements Reader {
     mut fn read_some(mut buf: [u8]): usize throws Error {
-        let bytes = self.inner.as_ref()
+        let bytes = T.(AsRef<[u8]>).as_ref(self.inner)
         let start = cursor_start(bytes, self.position)
         var count = buf.len()
         let remaining = bytes.len() - start
@@ -1017,7 +1017,7 @@ extend<T: AsRef<[u8]>> Cursor<T> implements Reader {
 
 extend<T: AsRef<[u8]>> Cursor<T> implements BufRead {
     mut fn fill_buf(): read [u8] from self throws Error {
-        let bytes = self.inner.as_ref()
+        let bytes = T.(AsRef<[u8]>).as_ref(self.inner)
         bytes.split_at(cursor_start(bytes, self.position)).1
     }
     mut fn consume(n: usize): Unit {
@@ -1031,7 +1031,7 @@ extend<T: AsRef<[u8]>> Cursor<T> implements Seek {
             SeekFrom.Start(position) => position,
             SeekFrom.Current(offset) => try cursor_seek_offset(self.position, offset),
             SeekFrom.End(offset) => {
-                try cursor_seek_offset(self.inner.as_ref().len() as u64, offset)
+                try cursor_seek_offset(T.(AsRef<[u8]>).as_ref(self.inner).len() as u64, offset)
             }
         }
         self.position = next

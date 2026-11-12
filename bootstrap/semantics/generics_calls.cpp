@@ -143,14 +143,15 @@ std::optional<int> Checker::genericCall(
     if (modes[target] == ParameterMode::Mut)
       requireMutablePlace(argument);
     auto actual = inference.value(variable);
+    auto expected = signature[target];
     if (modes[target] == ParameterMode::Read ||
         modes[target] == ParameterMode::Mut) {
       std::vector<TypeBinding> solved;
       for (const auto &binding : bindings)
         if (binding.argument != Type::Unknown)
           solved.push_back(binding);
-      auto expected = checked.types->eraseRegions(
-          checked.types->substitute(signature[target], solved));
+      expected = checked.types->eraseRegions(
+          checked.types->substitute(expected, solved));
       if (expected != Type::Unknown && !checked.types->isSymbolic(expected) &&
           borrowCoercion(argument, variable, expected, modes[target]))
         actual = expected;
@@ -166,7 +167,7 @@ std::optional<int> Checker::genericCall(
     if ((modes[target] == ParameterMode::Read ||
          modes[target] == ParameterMode::Mut) &&
         checked.types->isView(actual) &&
-        (!checked.types->isView(signature[target]) || borrowedHandle))
+        (!checked.types->isView(expected) || borrowedHandle))
       actual = checked.types->view(actual).payload;
     inferGeneric(signature[target], actual, bindings, argument.span);
     actuals.push_back({&argument, variable});

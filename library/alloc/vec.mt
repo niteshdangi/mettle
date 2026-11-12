@@ -733,7 +733,7 @@ extend<T: PartialEq, A: Allocator> List<T, A> {
 extend<V> [V] {
     pub fn concat<T: Clone>(): List<T> where V: Borrow<[T]> {
         var result = with_capacity<T>(0usize)
-        for part in read self { result.extend_from_slice(part.borrow()) }
+        for part in read self { result.extend_from_slice(V.(Borrow<[T]>).borrow(part)) }
         result
     }
     pub fn join<T: Clone>(read sep: [T]): List<T> where V: Borrow<[T]> {
@@ -742,7 +742,7 @@ extend<V> [V] {
         for part in read self {
             if !first { result.extend_from_slice(sep) }
             first = false
-            result.extend_from_slice(part.borrow())
+            result.extend_from_slice(V.(Borrow<[T]>).borrow(part))
         }
         result
     }

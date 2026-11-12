@@ -175,9 +175,30 @@ The reduced mixed Cow collection also executes both profiles with emitted ASan
 and native ASan/UBSan, without reports; emitted UBSan is not claimed.
 Receipts: `i13-regional-refresh/source`; retained next-fixture diagnostics:
 `i13-text-path-cow-v10/run/evidence.json`.
-Ordinary text acceptance now reaches generic Display-to-string method lookup
-and explicit reference-valued comparison argument inference; those failures,
-required-constant obligations and full text qualification remain open.
+Generic method lookup now includes visible blanket implementations proven from
+declared bounds, preserving visibility and ambiguity diagnostics. Read-argument
+inference retains explicitly view-valued generic types. Six focused units pass
+normal and ASan/UBSan compilers; thirteen connected normal units also pass.
+Borrow/KeyView/comparison and Cursor slice-view calls explicitly select their
+intended bounds where identity blankets otherwise compete.
+The next region failure exposed implementation interface arguments left
+undecorated while targets were finalized. Both now use the same region context;
+strict nominal lifetime matching is unchanged. Independent static/local view
+comparisons execute both profiles, and a correlated local-to-static misuse
+rejects at its intended region diagnostic, normal and ASan/UBSan. The existing
+associated-region accept/reject cases also pass four normal profile units.
+Receipts: `i13-generic-integration/{normal,sanitized,connected,connected-staged}`
+and `i13-generic-integration/regions`. Latest normal compiler:
+`5e5747ad118cda93d3839ba320a2efec7a64b7c44d88ab8ed25dc31d64a51856`;
+sanitized compiler:
+`25fbf77b6e7060d2307686cb52ec07eae2d712906f4c698fab2cdf343816b066`.
+These binaries also include the separate, not-yet-qualified atomic bitwise
+candidate; these receipts do not qualify those operations.
+The unchanged ordinary Path/Cow fixture now executes both profiles against the
+frozen V15 library (`i13-text-path-cow-v16/run/evidence.json`). The next CString
+fixture stops on unqualified equality-method ambiguity; its intended comparison
+selection and remaining text acceptance are not yet qualified.
+Required-constant obligations and full text qualification remain open.
 
 ### Collection/vector reconciliation (2026-11-11)
 

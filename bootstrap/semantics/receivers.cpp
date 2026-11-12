@@ -182,7 +182,8 @@ std::optional<std::size_t> Checker::receiverCandidate(
       if (bound.form != TypeForm::Callable && bound.name != "unsized" &&
           !propertyBound(bound, call.span))
         consider(interfaceBound(bound, call.span, {}, self));
-  } else {
+  }
+  if (!checked.types->isErased(self)) {
     auto caller = accessModule(call);
     auto visible = [&](const interfaces::Definition &definition) {
       if (protocol)

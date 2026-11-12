@@ -4026,6 +4026,8 @@ void RegionPass::run() {
     // arguments, so projections substitute family regions into them.
     if (!types.isErased(rule.interfaceType))
       return;
+    rule.interfaceType =
+        decorate(rule.interfaceType, syntax.interface, context, syntax.span);
     const auto &definition =
         interfaceData.definitions[types.erased(rule.interfaceType).declaration];
     for (auto &[ordinal, value] : rule.associated) {
