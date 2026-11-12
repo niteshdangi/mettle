@@ -28,7 +28,8 @@ bool accepted(const std::string &text, unsigned pointerBits,
     if (statics.empty() || !statics.front().initializer)
       return false;
     const auto &value = *statics.front().initializer;
-    if (value.kind != mettle::StaticConstant::Kind::Scalar ||
+    if ((value.kind != mettle::StaticConstant::Kind::Scalar &&
+         value.kind != mettle::StaticConstant::Kind::Pointer) ||
         value.scalar.negative || value.scalar.magnitude[1] != 0)
       return false;
     *firstStatic = value.scalar.magnitude[0];
@@ -182,6 +183,41 @@ void integerMethods() {
 int main() {
   integerMethods();
   std::uint64_t indexed = 0;
+  expect(accepted("enum Event<T> { Ready(T); Pending }\n"
+                  "extend<T> Event<T> { const fn is_ready(): bool { "
+                  "match self { Event.Ready(value) => true, "
+                  "Event.Pending => false } } }\n"
+                  "const VALUE: bool = Event<i32>.Ready(3).is_ready() && "
+                  "!Event<i32>.Pending.is_ready();\n",
+                  64, nullptr, &indexed) &&
+             indexed == 1,
+         "generic enum constants retain owner arguments through method calls");
+  expect(accepted("type Payload { value: i32 }\n"
+                  "enum Event<T> { Ready(T); Pending }\n"
+                  "const fn inspect(read event: Event<Payload>): i32 { "
+                  "match event { Event.Ready(payload) => payload.value, "
+                  "Event.Pending => 0 } }\n"
+                  "const fn run(): i32 { "
+                  "let event = Event<Payload>.Ready(Payload(42)); "
+                  "inspect(read event) }\n"
+                  "const VALUE: i32 = run();\n",
+                  64, nullptr, &indexed) &&
+             indexed == 42,
+         "constant read matches retain borrowed non-Copy variant payloads");
+  expect(accepted("copy type Callbacks { callback: unsafe fn(i32): i32 }\n"
+                  "unsafe fn raw(value: i32): i32 { value }\n"
+                  "const fn table(): Callbacks { Callbacks(raw) }\n"
+                  "static TABLE: Callbacks = table();\n",
+                  64),
+         "constant aggregate calls retain unsafe callback relocations");
+  std::string callbackError;
+  expect(!accepted("copy type Callbacks { callback: fn(i32): i32 }\n"
+                   "unsafe fn raw(value: i32): i32 { value }\n"
+                   "const fn table(): Callbacks { Callbacks(raw) }\n"
+                   "static TABLE: Callbacks = table();\n",
+                   64, &callbackError) &&
+             callbackError.find("unsafe fn") != std::string::npos,
+         "constant callback aggregates cannot erase unsafe-call requirements");
   expect(accepted("enum Tag { First, Last }\n"
                   "const N: u8 = Tag.Last as u8;\n",
                   64, nullptr, &indexed) &&
@@ -242,6 +278,24 @@ int main() {
       "unsafe { core.ptr.read_unaligned(p.add(1usize).cast<u32>()) } }\n"
       "const VALUE: u32 = bytes();\n";
   for (auto width : {32u, 64u}) {
+    const std::string pointerBits =
+        "const fn from_bits(value: isize): ptr<read u8> { "
+        "unsafe { core.mem.transmute<ptr<read u8>>(value) } }\n"
+        "const VALUE: ptr<read u8> = from_bits(";
+    for (auto input : {-42, -1, 0, 42}) {
+      auto expected = static_cast<std::uint64_t>(input);
+      if (width == 32)
+        expected = static_cast<std::uint32_t>(input);
+      expect(accepted(pointerBits + std::to_string(input) + "isize);\n", width,
+                      nullptr, &value) &&
+                 value == expected,
+             "integer-to-pointer constant transmute retains target-width bits");
+    }
+    auto minimum = width == 32 ? "-2147483648" : "-9223372036854775808";
+    expect(
+        accepted(pointerBits + minimum + "isize);\n", width, nullptr, &value) &&
+            value == (std::uint64_t{1} << (width - 1)),
+        "signed-minimum pointer transmute retains the target sign bit");
     expect(accepted(memory, width, nullptr, &value) && value == 0x05040302,
            "unaligned constant loads use little-endian target bytes");
     expect(accepted(memory, width, nullptr, &value, false) &&

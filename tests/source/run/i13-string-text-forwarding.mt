@@ -47,7 +47,7 @@ fn checks_split(): i32 {
 fn checks_trim_and_case(): i32 {
     let s = String("  Hi  ")
     if s.trim() != "Hi" || s.trim_start() != "Hi  " || s.trim_end() != "  Hi" { return 20 }
-    if String("xxhixx").trim_matches("x") != "hi" { return 21 }
+    if String("xxhixx").trim_matches('x') != "hi" { return 21 }
     if String("\u{e9}t\u{e9}").to_uppercase().as_text() != "\u{c9}T\u{c9}" { return 22 }
     if String("ABC").to_lowercase().as_text() != "abc" { return 23 }
     if String("ab").repeat(3usize).as_text() != "ababab" { return 24 }
@@ -81,30 +81,34 @@ fn checks_boundaries(): i32 {
 fn checks_remaining_forwarding(): Unit {
     let value = String("a\u{e9},b\u{e9},")
     var matches = value.match_indices('\u{e9}')
-    assert(matches.next() == present((1usize, "\u{e9}")) &&
-        matches.next_back() == present((5usize, "\u{e9}")) && matches.next().is_none(),
+    let front = matches.next().unwrap()
+    let back = matches.next_back().unwrap()
+    assert(front.0 == 1usize && front.1 == "\u{e9}" &&
+        back.0 == 5usize && back.1 == "\u{e9}" && matches.next().is_none(),
         "forwarded match indices retain original byte offsets")
     var reverse = value.rmatch_indices('\u{e9}')
-    assert(reverse.next() == present((5usize, "\u{e9}")) &&
-        reverse.next() == present((1usize, "\u{e9}")) && reverse.next().is_none(),
+    let back = reverse.next().unwrap()
+    let front = reverse.next().unwrap()
+    assert(back.0 == 5usize && back.1 == "\u{e9}" &&
+        front.0 == 1usize && front.1 == "\u{e9}" && reverse.next().is_none(),
         "reverse match indices visit from the back")
     assert(value.rmatches('\u{e9}').count() == 2usize &&
-        value.strip_suffix(",") == present("a\u{e9},b\u{e9}"), "reverse matches and suffix views use text forwarding")
+        value.strip_suffix(",").unwrap() == "a\u{e9},b\u{e9}", "reverse matches and suffix views use text forwarding")
     var split = value.rsplit(',')
-    assert(split.next() == present("") && split.next() == present("b\u{e9}") &&
-        split.next() == present("a\u{e9}") && split.next().is_none(), "reverse split preserves trailing empties")
-    var limited = value.rsplitn(2usize, ',')
-    assert(limited.next() == present("") && limited.next() == present("a\u{e9},b\u{e9}") &&
+    assert(split.next().unwrap() == "" && split.next().unwrap() == "b\u{e9}" &&
+        split.next().unwrap() == "a\u{e9}" && split.next().is_none(), "reverse split preserves trailing empties")
+    var limited = value.rsplitn(2usize, ",")
+    assert(limited.next().unwrap() == "" && limited.next().unwrap() == "a\u{e9},b\u{e9}" &&
         limited.next().is_none(), "limited reverse splitting preserves the untouched prefix")
-    var terminator = value.split_terminator(',')
-    assert(terminator.next() == present("a\u{e9}") && terminator.next() == present("b\u{e9}") &&
+    var terminator = value.split_terminator(",")
+    assert(terminator.next().unwrap() == "a\u{e9}" && terminator.next().unwrap() == "b\u{e9}" &&
         terminator.next().is_none(), "terminator split omits the trailing empty part")
-    var reverse_terminator = value.rsplit_terminator(',')
-    assert(reverse_terminator.next() == present("b\u{e9}") &&
-        reverse_terminator.next() == present("a\u{e9}") && reverse_terminator.next().is_none(),
+    var reverse_terminator = value.rsplit_terminator(",")
+    assert(reverse_terminator.next().unwrap() == "b\u{e9}" &&
+        reverse_terminator.next().unwrap() == "a\u{e9}" && reverse_terminator.next().is_none(),
         "reverse terminator splitting preserves direction")
-    var inclusive = value.split_inclusive(',')
-    assert(inclusive.next() == present("a\u{e9},") && inclusive.next() == present("b\u{e9},") &&
+    var inclusive = value.split_inclusive(",")
+    assert(inclusive.next().unwrap() == "a\u{e9}," && inclusive.next().unwrap() == "b\u{e9}," &&
         inclusive.next().is_none(), "inclusive split retains delimiters")
     let trimmed = String(" \tA\u{2003}B\n")
     assert(trimmed.trim_ascii() == "A\u{2003}B" && trimmed.trim_ascii_start() == "A\u{2003}B\n" &&
@@ -113,20 +117,24 @@ fn checks_remaining_forwarding(): Unit {
         trimmed.to_ascii_lowercase().as_text() == " \ta\u{2003}b\n" &&
         trimmed.to_ascii_uppercase().as_text() == " \tA\u{2003}B\n", "ASCII case forwarding leaves Unicode unchanged")
     var whitespace = trimmed.split_ascii_whitespace()
-    assert(whitespace.next() == present("A\u{2003}B") && whitespace.next().is_none(),
+    assert(whitespace.next().unwrap() == "A\u{2003}B" && whitespace.next().is_none(),
         "ASCII splitting does not treat Unicode-only whitespace as a separator")
     assert(String("xxbodyxx").trim_start_matches('x') == "bodyxx" &&
         String("xxbodyxx").trim_end_matches('x') == "xxbody", "one-sided trimming keeps the opposite boundary")
+    let checked = value.split_at_checked(3usize).unwrap()
     assert(value.split_at_checked(2usize).is_none() &&
-        value.split_at_checked(3usize) == present(("a\u{e9}", ",b\u{e9},")),
+        checked.0 == "a\u{e9}" && checked.1 == ",b\u{e9},",
         "checked splitting rejects interior UTF-8 bytes")
-    var mutable = String("ab")
+    var mutable = String("aB")
     {
         let parts = mutable.split_at_mut(1usize)
+        assert(parts.0 == "a" && parts.1 == "B", "exclusive split preserves half order")
         parts.0.make_ascii_uppercase()
-        parts.1.make_ascii_uppercase()
+        assert(parts.0 == "A" && parts.1 == "B", "first split mutation leaves the second half unchanged")
+        parts.1.make_ascii_lowercase()
+        assert(parts.0 == "A" && parts.1 == "b", "second split mutation leaves the first half unchanged")
     }
-    assert(mutable.as_text() == "AB", "exclusive split results update disjoint source regions")
+    assert(mutable.as_text() == "Ab", "exclusive split results update disjoint source regions")
     var indexed = String("a\u{e9}b")
     {
         let middle = mut indexed[1usize..3usize]

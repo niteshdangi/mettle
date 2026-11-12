@@ -1,8 +1,8 @@
 // profiles: debug release
 import core.future.{Context, Poll, RawWaker, RawWakerVTable, Waker}
 
-fn clone_raw(data: ptr<mut u8>): RawWaker { RawWaker(data, table()) }
-fn noop(data: ptr<mut u8>): Unit {}
+unsafe fn clone_raw(data: ptr<mut u8>): RawWaker { RawWaker(data, table()) }
+unsafe fn noop(data: ptr<mut u8>): Unit {}
 const fn table(): RawWakerVTable { RawWakerVTable(clone_raw, noop, noop, noop) }
 
 const READY: bool = Poll<i32>.Ready(3).is_ready()

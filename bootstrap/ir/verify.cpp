@@ -64,6 +64,76 @@ bool arrayCount(const Instruction &length, Type array, const TypeStore &types) {
   return actual && expected && *actual == *expected;
 }
 
+bool functionAddress(const Program &program, const Instruction &address,
+                     const TypeNormalizer &normalize = {},
+                     const Function *context = nullptr) {
+  auto result = address.result.type;
+  if (!program.types->isFunctionPointer(result) || address.callee < 0 ||
+      static_cast<std::size_t>(address.callee) >= program.functions.size())
+    return false;
+  const auto &signature = program.types->callable(result);
+  const auto &callee = program.functions[address.callee];
+  if (callee.indirectContract ||
+      (callee.declarationOnly &&
+       !(address.erasedDispatch && address.interfaceMethod >= 0)) ||
+      address.typeArguments.size() != callee.genericParameters.size() ||
+      callee.parameters > callee.locals.size() ||
+      signature.parameters.size() != callee.parameters ||
+      (callee.unsafeFunction && !signature.unsafeCall) ||
+      signature.abi != callee.abi || signature.variadic != callee.variadic ||
+      !std::includes(
+          signature.targetFeatures.begin(), signature.targetFeatures.end(),
+          callee.targetFeatures.begin(), callee.targetFeatures.end()))
+    return false;
+  bool pinnedDispatch = false;
+  if (address.erasedDispatch) {
+    auto receiver = signature.parameters.empty() ? Type::Unknown
+                                                 : signature.parameters[0].type;
+    auto erased = erasedReceiver(*program.types, receiver);
+    pinnedDispatch = erased != Type::Unknown && erased != receiver;
+    if (erased == Type::Unknown ||
+        (pinnedDispatch
+             ? signature.parameters[0].mode != ParameterMode::Take
+             : signature.parameters[0].mode != ParameterMode::Read &&
+                   signature.parameters[0].mode != ParameterMode::Mut))
+      return false;
+  }
+  std::vector<TypeBinding> bindings;
+  for (std::size_t p = 0; p < address.typeArguments.size(); ++p)
+    bindings.push_back({callee.genericParameters[p], address.typeArguments[p]});
+  auto matches = [&](Type pattern, Type actual) {
+    return normalize && context
+               ? normalize(pattern, bindings, *context) ==
+                     normalize(actual, {}, *context)
+               : program.types->matchesSubstitution(pattern, actual, bindings);
+  };
+  if (!matches(callee.result, signature.abiResult) ||
+      (signature.resultSources != callee.resultSources &&
+       !(address.erasedDispatch &&
+         std::all_of(callee.resultSources.begin(), callee.resultSources.end(),
+                     [&](auto source) {
+                       return std::find(signature.resultSources.begin(),
+                                        signature.resultSources.end(),
+                                        source) !=
+                              signature.resultSources.end();
+                     }))))
+    return false;
+  for (std::size_t p = 0; p < callee.parameters; ++p) {
+    if (signature.parameters[p].mode != callee.locals[p].mode)
+      return false;
+    if (address.erasedDispatch && p == 0 && pinnedDispatch) {
+      auto payload = pinnedViewPayload(*program.types, callee.locals[p].type);
+      if (!payload || !matches(*payload, address.interfaceSelf))
+        return false;
+    } else if (!matches(callee.locals[p].type,
+                        address.erasedDispatch && p == 0
+                            ? address.interfaceSelf
+                            : signature.parameters[p].type))
+      return false;
+  }
+  return true;
+}
+
 bool function(const Function &f, const Program &program,
               Diagnostics &diagnostics, const TypeNormalizer &normalize,
               const UnpinProof &unpinProof) {
@@ -291,6 +361,8 @@ bool function(const Function &f, const Program &program,
         }
         return true;
       };
+      if ((n.place.root != -1 || !n.place.fields.empty()) && !slot())
+        continue;
       bool borrow = n.op == Op::BorrowRead || n.op == Op::BorrowMut ||
                     n.op == Op::ReserveMut || n.op == Op::OpaqueRepack;
       if (!borrow)
@@ -626,72 +698,8 @@ bool function(const Function &f, const Program &program,
         break;
       case Op::FunctionAddress:
         arity(0);
-        require(program.types->isFunctionPointer(result));
-        if (n.callee < 0 ||
-            static_cast<std::size_t>(n.callee) >= program.functions.size()) {
+        if (!functionAddress(program, n, normalize, &f))
           fail(n.span, "invalid function address");
-          break;
-        }
-        if (program.types->isFunctionPointer(result)) {
-          const auto &signature = program.types->callable(result);
-          bool pinnedDispatch = false;
-          if (n.erasedDispatch) {
-            auto receiver = signature.parameters.empty()
-                                ? Type::Unknown
-                                : signature.parameters[0].type;
-            auto erased = erasedReceiver(*program.types, receiver);
-            pinnedDispatch = erased != Type::Unknown && erased != receiver;
-            require(
-                erased != Type::Unknown &&
-                (pinnedDispatch
-                     ? signature.parameters[0].mode == ParameterMode::Take
-                     : signature.parameters[0].mode == ParameterMode::Read ||
-                           signature.parameters[0].mode == ParameterMode::Mut));
-          }
-          const auto &callee = program.functions[n.callee];
-          require(!callee.indirectContract &&
-                  (!callee.declarationOnly ||
-                   (n.erasedDispatch && n.interfaceMethod >= 0)));
-          std::vector<TypeBinding> bindings;
-          require(n.typeArguments.size() == callee.genericParameters.size());
-          for (std::size_t p = 0; p < n.typeArguments.size() &&
-                                  p < callee.genericParameters.size();
-               ++p)
-            bindings.push_back(
-                {callee.genericParameters[p], n.typeArguments[p]});
-          auto matches = [&](Type pattern, Type actual) {
-            return normalize ? normalize(pattern, bindings, f) ==
-                                   normalize(actual, {}, f)
-                             : program.types->matchesSubstitution(
-                                   pattern, actual, bindings);
-          };
-          require(matches(callee.result, signature.abiResult) &&
-                  signature.parameters.size() == callee.parameters &&
-                  (signature.resultSources == callee.resultSources ||
-                   (n.erasedDispatch &&
-                    std::all_of(callee.resultSources.begin(),
-                                callee.resultSources.end(), [&](auto source) {
-                                  return std::find(
-                                             signature.resultSources.begin(),
-                                             signature.resultSources.end(),
-                                             source) !=
-                                         signature.resultSources.end();
-                                }))));
-          if (signature.parameters.size() == callee.parameters)
-            for (std::size_t p = 0; p < callee.parameters; ++p)
-              require((n.erasedDispatch && p == 0 && pinnedDispatch
-                           ? ([&] {
-                               auto payload = pinnedViewPayload(
-                                   *program.types, callee.locals[p].type);
-                               return payload &&
-                                      matches(*payload, n.interfaceSelf);
-                             })()
-                           : matches(callee.locals[p].type,
-                                     n.erasedDispatch && p == 0
-                                         ? n.interfaceSelf
-                                         : signature.parameters[p].type)) &&
-                      signature.parameters[p].mode == callee.locals[p].mode);
-        }
         break;
       case Op::Constant:
         arity(0);
@@ -1477,11 +1485,13 @@ bool verify(const Program &program, Diagnostics &diagnostics,
         if (value.kind == StaticConstant::Kind::Text) {
           return textConstantCount(*program.types, value).has_value();
         }
-        if (value.kind == StaticConstant::Kind::Function)
-          return program.types->isFunctionPointer(expected) &&
-                 value.symbol >= 0 &&
-                 static_cast<std::size_t>(value.symbol) <
-                     program.functions.size();
+        if (value.kind == StaticConstant::Kind::Function) {
+          Instruction address;
+          address.op = Op::FunctionAddress;
+          address.result.type = expected;
+          address.callee = value.symbol;
+          return functionAddress(program, address);
+        }
         if (value.kind == StaticConstant::Kind::Repeat)
           return program.types->compactArray(expected) &&
                  value.fields.size() == 1 &&

@@ -1339,6 +1339,8 @@ extend Text {
         }
         match self.get(i, end) { present(part) => part, none => read self }
     }
+    pub mut fn make_ascii_lowercase(): Unit { self.bytes.make_ascii_lowercase() }
+    pub mut fn make_ascii_uppercase(): Unit { self.bytes.make_ascii_uppercase() }
     pub const fn trim_ascii_start(): read Text from self {
         var start = 0usize
         while start < self.bytes.len() && is_ascii_whitespace(self.bytes[start]) {

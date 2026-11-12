@@ -7,16 +7,15 @@ import core.future.{Context, Future, Poll, Waker}
 import core.hash.hash_one
 import core.convert.From
 import core.outcome
-import core.sync.atomic.{AtomicUsize, Ordering}
 import alloc.arc.Arc
 import std.task.Wake
 
 fn debug<T: Debug>(read value: T): Unit {}
 
-type WakeTarget { wakes: AtomicUsize }
+type WakeTarget { wakes: core.sync.atomic.AtomicUsize }
 extend WakeTarget implements Wake {
     fn wake(read me: Arc<WakeTarget>): Unit {
-        let _ = self.wakes.fetch_add(1usize, Ordering.Relaxed)
+        let _ = self.wakes.fetch_add(1usize, core.sync.atomic.Ordering.Relaxed)
     }
 }
 unsafe extend WakeTarget implements Transferable {}
@@ -71,7 +70,7 @@ fn main(): i32 {
     let raw = waker.clone().into_raw()
     let restored = unsafe { Waker.from_raw(raw) }
     if !waker.will_wake(read restored) { return 9 }
-    let release_target = alloc.arc.new(WakeTarget(AtomicUsize.new(0usize)))
+    let release_target = alloc.arc.new(WakeTarget(core.sync.atomic.AtomicUsize.new(0usize)))
     let release_observer = release_target.retain()
     {
         let drop_probe: Waker =
@@ -90,20 +89,20 @@ fn main(): i32 {
         Poll.Ready(value) => { if value != 7u8 { return 11 } },
         Poll.Pending => { return 11 }
     }
-    let target = alloc.arc.new(WakeTarget(AtomicUsize.new(0usize)))
+    let target = alloc.arc.new(WakeTarget(core.sync.atomic.AtomicUsize.new(0usize)))
     let observer = target.retain()
     let owned_waker: Waker = Waker.(From<Arc<WakeTarget>>).from(target)
     let cloned_waker = owned_waker.clone()
     if observer.strong_count() != 3usize { return 20 }
     owned_waker.wake_by_ref()
-    if observer.get().wakes.load(Ordering.Relaxed) != 1usize ||
+    if observer.get().wakes.load(core.sync.atomic.Ordering.Relaxed) != 1usize ||
         observer.strong_count() != 3usize { return 21 }
     cloned_waker.wake()
-    if observer.get().wakes.load(Ordering.Relaxed) != 2usize ||
+    if observer.get().wakes.load(core.sync.atomic.Ordering.Relaxed) != 2usize ||
         observer.strong_count() != 2usize { return 22 }
     debug(read owned_waker)
     owned_waker.wake()
-    if observer.get().wakes.load(Ordering.Relaxed) != 3usize ||
+    if observer.get().wakes.load(core.sync.atomic.Ordering.Relaxed) != 3usize ||
         observer.strong_count() != 1usize { return 23 }
     0
 }

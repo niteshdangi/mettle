@@ -118,6 +118,8 @@ std::string describe(const Value &value) {
     return "a constant view";
   case Value::Kind::Pointer:
     return "a constant pointer";
+  case Value::Kind::Function:
+    return "a function address";
   case Value::Kind::Uninitialized:
     return "an uninitialized value";
   }
@@ -743,6 +745,10 @@ private:
         return realizeFloating(value, want.type, span);
       } else if (value.kind == Value::Kind::Enum && value.type == want.type) {
         return true;
+      } else if (value.kind == Value::Kind::Function &&
+                 host.callableCoercion(value.type, want.type)) {
+        value.type = want.type;
+        return true;
       } else if (value.kind == Value::Kind::Integer) {
         if (value.type == want.type)
           return true;
@@ -1033,16 +1039,24 @@ private:
       return locate(root.elements[index], shape->elements.front().type,
                     element->size ? offset % element->size : 0, target);
     }
-    if (root.kind != Value::Kind::Product && root.kind != Value::Kind::Tuple)
+    if (root.kind != Value::Kind::Product && root.kind != Value::Kind::Tuple &&
+        root.kind != Value::Kind::Variant)
       return nullptr;
-    for (std::size_t i = 0;
-         i < root.elements.size() && i < layout->fields.size() &&
-         i < shape->elements.size();
-         ++i) {
-      auto field = host.layout(shape->elements[i].type);
-      auto start = layout->fields[i];
+    for (std::size_t i = 0; i < root.elements.size(); ++i) {
+      auto index = i;
+      if (root.kind == Value::Kind::Variant) {
+        if (root.selection < 0 ||
+            std::size_t(root.selection) >= shape->variants.size() ||
+            i >= shape->variants[root.selection].size())
+          return nullptr;
+        index = shape->variants[root.selection][i];
+      }
+      if (index >= layout->fields.size() || index >= shape->elements.size())
+        return nullptr;
+      auto field = host.layout(shape->elements[index].type);
+      auto start = layout->fields[index];
       if (field && offset >= start && offset - start <= field->size)
-        if (auto found = locate(root.elements[i], shape->elements[i].type,
+        if (auto found = locate(root.elements[i], shape->elements[index].type,
                                 offset - start, target))
           return found;
     }
@@ -1724,6 +1738,51 @@ private:
   // Matches a pattern; bindings go to `binds`. Empty on error.
   std::optional<bool> matches(const Pattern &pattern, const Value &value,
                               std::vector<Local> &binds, bool mutableBinding) {
+    if (value.kind == Value::Kind::Reference &&
+        pattern.kind != PatternKind::Wildcard) {
+      auto target = pointee(value);
+      if (!target)
+        return unsupported(pattern.span, "this borrowed constant pattern");
+      bool binding = pattern.kind == PatternKind::Binding ||
+                     pattern.kind == PatternKind::At;
+      if (!binding || host.copy(target->type)) {
+        auto loaded = readAddress(value, pattern.span);
+        if (!loaded)
+          return std::nullopt;
+        auto layout = host.layout(target->type);
+        for (std::size_t i = 0; i < loaded->elements.size(); ++i) {
+          auto type = host.valueType(loaded->elements[i]);
+          if (host.copy(type))
+            continue;
+          auto projected = value;
+          if (target->kind == Shape::Kind::Array) {
+            auto element = host.layout(type);
+            if (!element)
+              return unsupported(pattern.span,
+                                 "this borrowed constant pattern");
+            projected.offset += i * element->size;
+          } else {
+            auto field = i;
+            if (loaded->kind == Value::Kind::Variant) {
+              if (loaded->selection < 0 ||
+                  std::size_t(loaded->selection) >= target->variants.size() ||
+                  i >= target->variants[loaded->selection].size())
+                return fail("type", pattern.span,
+                            "invalid constant enum variant");
+              field = target->variants[loaded->selection][i];
+            }
+            if (!layout || field >= layout->fields.size())
+              return unsupported(pattern.span,
+                                 "this borrowed constant pattern");
+            projected.offset += layout->fields[field];
+          }
+          projected.type = host.referenceType(type, false, false);
+          projected.exclusive = false;
+          loaded->elements[i] = std::move(projected);
+        }
+        return matches(pattern, *loaded, binds, mutableBinding);
+      }
+    }
     switch (pattern.kind) {
     case PatternKind::Wildcard:
       return true;
@@ -2710,7 +2769,9 @@ private:
                 options.pointerBits) {
           value.kind = Value::Kind::Pointer;
           value.addressOnly = true;
-          value.offset = value.number.magnitude[0];
+          value.offset =
+              castInteger(value.number, Type::Usize, options.pointerBits)
+                  .magnitude[0];
           value.writable = target->exclusive;
         } else if (value.kind == Value::Kind::Product &&
                    value.elements.size() == 2 &&
@@ -3413,6 +3474,8 @@ private:
         failed = reported = true;
         return std::nullopt;
       case Lookup::Kind::Function:
+        if (found.value.kind == Value::Kind::Function)
+          return std::move(found.value);
         return unsupported(node.span, "a function used as a value");
       default:
         return fail("name", node.span,

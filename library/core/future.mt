@@ -148,11 +148,12 @@ pub interface Future {
 // Table of the four waker operations over an executor-owned data pointer.
 // `clone` returns an independent waker for the same task; `wake` consumes one
 // waker; `wake_by_ref` does not; `release` releases one waker.
+// Raw calls require live matching data; consuming calls also require ownership.
 pub copy type RawWakerVTable {
-    pub clone: fn(ptr<mut u8>): RawWaker
-    pub wake: fn(ptr<mut u8>): Unit
-    pub wake_by_ref: fn(ptr<mut u8>): Unit
-    pub release: fn(ptr<mut u8>): Unit
+    pub clone: unsafe fn(ptr<mut u8>): RawWaker
+    pub wake: unsafe fn(ptr<mut u8>): Unit
+    pub wake_by_ref: unsafe fn(ptr<mut u8>): Unit
+    pub release: unsafe fn(ptr<mut u8>): Unit
 }
 
 pub copy type RawWaker {
@@ -164,7 +165,7 @@ pub copy type RawWaker {
 // unit of the executor's data is held until `wake` or drop.
 pub type Waker {
     raw: RawWaker
-    drop { (self.raw.vtable.release)(self.raw.data) }
+    drop { unsafe { (self.raw.vtable.release)(self.raw.data) } }
 }
 
 // All raw-waker constructors must provide thread-safe data and operations.
@@ -175,9 +176,9 @@ extend Waker {
     pub take fn wake(): Unit {
         let raw = self.raw
         core.mem.forget(self)
-        (raw.vtable.wake)(raw.data)
+        unsafe { (raw.vtable.wake)(raw.data) }
     }
-    pub fn wake_by_ref(): Unit { (self.raw.vtable.wake_by_ref)(self.raw.data) }
+    pub fn wake_by_ref(): Unit { unsafe { (self.raw.vtable.wake_by_ref)(self.raw.data) } }
     pub fn will_wake(read other: Waker): bool {
         self.raw.data == other.raw.data && self.uses_vtable(other.raw.vtable)
     }
@@ -201,7 +202,7 @@ extend Waker {
 }
 
 extend Waker implements Clone {
-    fn clone(): Waker { Waker((self.raw.vtable.clone)(self.raw.data)) }
+    fn clone(): Waker { Waker(unsafe { (self.raw.vtable.clone)(self.raw.data) }) }
 }
 
 extend Waker implements Debug {
@@ -219,8 +220,8 @@ extend Waker {
     pub fn vtable(): RawWakerVTable { self.raw.vtable }
 }
 
-fn noop_clone(data: ptr<mut u8>): RawWaker { RawWaker(data, noop_table()) }
-fn noop_call(data: ptr<mut u8>): Unit {}
+unsafe fn noop_clone(data: ptr<mut u8>): RawWaker { RawWaker(data, noop_table()) }
+unsafe fn noop_call(data: ptr<mut u8>): Unit {}
 const fn noop_table(): RawWakerVTable { RawWakerVTable(noop_clone, noop_call, noop_call, noop_call) }
 static NOOP_WAKER: Waker = Waker(RawWaker(
     core.ptr.null_mut<u8>(),

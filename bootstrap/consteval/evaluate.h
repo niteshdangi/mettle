@@ -35,6 +35,7 @@ struct Value {
     Variant,
     Reference,
     Pointer,
+    Function,
     Uninitialized
   };
   Kind kind = Kind::Unit;
@@ -140,6 +141,10 @@ public:
   virtual Type valueType(const Value &value) { return value.type; }
   virtual Type referenceType(Type, bool, bool) { return Type::Unknown; }
   virtual bool pointerCastAllowed(Type, Type) { return false; }
+  // Preserve callable types, result sources, safety, ABI and target features.
+  virtual bool callableCoercion(Type source, Type target) {
+    return source == target;
+  }
   virtual std::optional<Layout> layout(Type) { return std::nullopt; }
   virtual bool needsDrop(Type) { return false; }
   virtual bool copy(Type) { return true; }

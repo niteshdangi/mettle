@@ -115,6 +115,9 @@ public:
     return machineCastAllowed(checker.typeStore(), substitute(source),
                               substitute(target));
   }
+  bool callableCoercion(Type source, Type target) override {
+    return checker.compatibleCallable(substitute(source), substitute(target));
+  }
   Type valueType(const Value &value) override {
     if (value.type != Type::Unknown)
       return substitute(value.type);
@@ -250,6 +253,7 @@ public:
     Context context;
     context.previous = checker.genericEnvironment;
     context.bindings = function.bindings;
+    context.declaration = function.declaration;
     if (function.declaration) {
       auto found = checker.functionGenerics.find(function.declaration);
       if (found != checker.functionGenerics.end())
@@ -336,6 +340,8 @@ public:
       auto found = lookup(callee, remaining);
       declaration = found.function ? found.function : found.declaration;
       if (found.kind == Lookup::Kind::Failed)
+        return found;
+      if (found.kind == Lookup::Kind::Constant)
         return found;
       if (!declaration) {
         TypeSyntax syntax;
@@ -628,6 +634,23 @@ public:
         imported != checker.importedExpressions.end()) {
       const auto &expression = *imported->second;
       const auto &facts = expression.facts.at(&name);
+      if (facts.slot >= 0 && !contexts.empty() && contexts.back().declaration) {
+        const auto &locals = checker.facts(*contexts.back().declaration).locals;
+        if (static_cast<std::size_t>(facts.slot) < locals.size() &&
+            locals[facts.slot].storage == StorageDuration::Static) {
+          const auto &local = locals[facts.slot];
+          if (local.mutableBinding) {
+            checker.error(
+                "constant", name.span,
+                "required initialization cannot read mutable storage");
+            result.kind = Lookup::Kind::Failed;
+            return result;
+          }
+          auto found = storage(local.staticIndex, remaining);
+          found.staticSymbol = local.staticIndex;
+          return found;
+        }
+      }
       if (auto constant = expression.constants.find(&name);
           constant != expression.constants.end()) {
         auto value = materialized(constant->second);
@@ -640,6 +663,7 @@ public:
         const auto &imports = *checker.checked.importedDeclarations;
         auto function = imports.functions.find(facts.callee);
         result.kind = Lookup::Kind::Function;
+        result.value = functionValue(facts.callee);
         if (function != imports.functions.end() && function->second.body) {
           result.checkedFunction = &function->second.evaluation;
           result.declaration = &checker.module.functions.at(facts.callee);
@@ -688,6 +712,7 @@ public:
       TypeSyntax syntax;
       syntax.name = name.text.substr(0, separator);
       syntax.context = name.context;
+      syntax.arguments = name.ownerGenericArguments;
       auto type = resolveType(syntax, name.span);
       if (checker.typeStore().isSum(type))
         return variant(type, name.text.substr(separator + 2), name.span);
@@ -747,6 +772,7 @@ public:
     if (auto function = checker.names.find(canonical);
         !canonical.empty() && function != checker.names.end()) {
       result.kind = Lookup::Kind::Function;
+      result.value = functionValue(function->second);
       if (checker.checked.importedDeclarations) {
         auto imported = checker.checked.importedDeclarations->functions.find(
             function->second);
@@ -775,12 +801,21 @@ private:
     Checker::GenericEnvironment environment;
     Checker::GenericEnvironment *previous = nullptr;
     std::vector<TypeBinding> bindings;
+    const Function *declaration = nullptr;
   };
   std::deque<Context> contexts;
   std::map<const Node *, NodeFacts> syntheticFacts;
   std::deque<NodeOwner> receiverExpressions;
   // Host ownership keeps literal roots live through checked serialization.
   std::map<std::string, std::shared_ptr<Value>, std::less<>> literalRoots;
+  Value functionValue(std::size_t index) {
+    Value value;
+    value.kind = Value::Kind::Function;
+    value.type =
+        checker.typeStore().callableType(checker.functionSignature(index));
+    value.symbol = static_cast<int>(index);
+    return value;
+  }
   // A constant parameter or associated constant is concrete once its generic
   // arguments are bound.
   Lookup carrier(Type identity) {
@@ -905,7 +940,8 @@ std::optional<evaluation::Shape> Checker::constantShape(Type type) {
     shape.elements.push_back(std::move(element));
     return shape;
   }
-  if (isNumeric(type) || type == Type::Bool || type == Type::Char) {
+  if (isNumeric(type) || type == Type::Bool || type == Type::Char ||
+      checked.types->isFunctionPointer(type)) {
     shape.type = type;
     return shape;
   }
@@ -981,6 +1017,16 @@ std::optional<evaluation::Shape> Checker::constantShape(Type type) {
 std::optional<Value> Checker::constantValueOf(const StaticConstant &constant,
                                               evaluation::Host &host) {
   Value value;
+  if (constant.kind == StaticConstant::Kind::Function) {
+    if (!checked.types->isFunctionPointer(constant.type) ||
+        constant.symbol < 0 ||
+        static_cast<std::size_t>(constant.symbol) >= module.functions.size())
+      return std::nullopt;
+    value.kind = Value::Kind::Function;
+    value.type = constant.type;
+    value.symbol = constant.symbol;
+    return value;
+  }
   if (constant.kind == StaticConstant::Kind::Text) {
     auto count = textConstantCount(*checked.types, constant);
     if (!count)
@@ -1116,6 +1162,14 @@ std::optional<StaticConstant> Checker::staticFromValue(const Value &value,
     return std::nullopt;
   };
   switch (value.kind) {
+  case Value::Kind::Function:
+    if (!checked.types->isFunctionPointer(type) || value.symbol < 0 ||
+        static_cast<std::size_t>(value.symbol) >= module.functions.size() ||
+        !compatibleCallable(value.type, type))
+      return mismatch();
+    result.kind = StaticConstant::Kind::Function;
+    result.symbol = value.symbol;
+    return result;
   case Value::Kind::Unit:
     if (type != Type::Unit)
       return mismatch();

@@ -4,15 +4,15 @@ import core.future.{RawWaker, RawWakerVTable, Waker}
 static LEFT: core.sync.atomic.AtomicUsize = core.sync.atomic.AtomicUsize.new(0usize)
 static RIGHT: core.sync.atomic.AtomicUsize = core.sync.atomic.AtomicUsize.new(0usize)
 
-fn release(data: ptr<mut u8>): Unit {}
-fn wake_left(data: ptr<mut u8>): Unit {
+unsafe fn release(data: ptr<mut u8>): Unit {}
+unsafe fn wake_left(data: ptr<mut u8>): Unit {
     let _ = LEFT.fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
 }
-fn wake_right(data: ptr<mut u8>): Unit {
+unsafe fn wake_right(data: ptr<mut u8>): Unit {
     let _ = RIGHT.fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
 }
-fn clone_left(data: ptr<mut u8>): RawWaker { RawWaker(data, left_table()) }
-fn clone_right(data: ptr<mut u8>): RawWaker { RawWaker(data, right_table()) }
+unsafe fn clone_left(data: ptr<mut u8>): RawWaker { RawWaker(data, left_table()) }
+unsafe fn clone_right(data: ptr<mut u8>): RawWaker { RawWaker(data, right_table()) }
 fn left_table(): RawWakerVTable {
     RawWakerVTable(clone_left, wake_left, wake_left, release)
 }

@@ -527,6 +527,8 @@ char iteration has valid size bounds but not an exact byte-derived scalar
 count. Escaping traverses scalars under section 3.2. Text comparison, ASCII
 tests and ASCII case operations do not allocate; conversion to owned case-
 mapped text is an alloc operation.
+Text `make_ascii_lowercase/make_ascii_uppercase` require exclusive access and
+delegate to byte-slice ASCII mapping, preserving length and non-ASCII UTF-8 bytes.
 
 ## 5. Slices and arrays
 
@@ -1203,7 +1205,9 @@ or one-poll-per-wake guarantee. `will_wake` true guarantees the same task;
 false may be conservative. `clone_from` may reuse an equivalent capability.
 The no-op waker has no scheduling effects.
 
-RawWaker contains a data pointer and clone/wake/wake_by_ref/drop table.
+RawWaker contains a data pointer and clone/wake/wake_by_ref/release table.
+All four raw callbacks are unsafe: each requires live matching data and table;
+wake/release additionally require an owned capability that they consume.
 RawWaker.new and RawWakerVTable.new store the supplied data/function entries
 without calling them or acquiring an ownership unit. Unsafe Waker.new/from_raw
 claim one such ownership unit under the following obligations.
@@ -1211,8 +1215,9 @@ Unsafe construction must establish live data/table, matching callback ABI,
 thread-safe calls for a transferable Waker, one independently owned capability
 per clone, and exactly one consuming wake or drop for each owned capability.
 Wake-by-ref cannot consume that capability. Raw accessors and equality do not
-acquire ownership; reconstructing a Waker from borrowed raw parts without
-acquiring another capability is invalid. No automatic allocator is supplied.
+acquire ownership or authorize consuming callbacks; reconstructing a Waker from
+borrowed raw parts without acquiring another capability is invalid. No automatic
+allocator is supplied.
 Static no-op access lends a Waker with static backing and no wake/drop effects;
 it does not allocate or arrange a task poll.
 

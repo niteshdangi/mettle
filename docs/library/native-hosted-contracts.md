@@ -1175,7 +1175,12 @@ Future construction alone does not execute its deferred async body, although
 an explicitly synchronous constructor can allocate/create its resource.
 
 Dropping a pending I/O/timer future synchronously unregisters its reactor token
-and releases its loans. Notification metadata may outlive it but cannot
+and releases its loans. Each registration independently retains the reactor
+until cancellation or repoll, even after delivery consumes its waker and all
+executor/task handles are dropped. This owner does not retain the task or its
+waker; cancellation precedes releasing the reactor owner. Repoll cancels the
+old token before any replacement registration on the current waker's reactor.
+Notification metadata may outlive it but cannot
 dereference freed future/buffer storage. Cancellation cannot leave an OS operation
 using a borrowed buffer after the loan ends: a completion-based adapter must
 quiesce it or own separate storage until completion. Cancelling an accepted/

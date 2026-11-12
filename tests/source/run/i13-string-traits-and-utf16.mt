@@ -28,6 +28,10 @@ fn byte_view_len<T: AsRef<[u8]>>(read value: T): usize {
     T.(AsRef<[u8]>).as_ref(value).len()
 }
 
+fn copy_string<region r>(take value: read String from r): String {
+    String.(From<read String from r>).from(value)
+}
+
 fn main(): i32 {
     let defaulted = String.(Default).default()
     if !defaulted.is_empty() { return 1 }
@@ -37,8 +41,7 @@ fn main(): i32 {
     if String.(Borrow<Text>).borrow(owned).len() != 5usize ||
         String.(AsRef<Text>).as_ref(owned).len() != 5usize { return 3 }
     if byte_view_len(owned) != 5usize { return 45 }
-    let duplicate: String =
-        String.(From<read String from static>).from(read owned)
+    let duplicate = copy_string(read owned)
     if duplicate.as_text() != "owned" { return 46 }
     if debug_text(owned).is_empty() || owned.to_string().as_text() != "owned" { return 4 }
     if hash_one(owned) != hash_one(owned.as_text()) { return 5 }
@@ -76,12 +79,12 @@ fn main(): i32 {
     if unsafe { mutable.get_unchecked_mut(0usize, 4usize) } != "left" { return 36 }
     unsafe {
         let bytes = mutable.as_bytes_mut()
-        bytes[0usize] = 108u8
+        bytes[0usize] = 76u8
     }
-    if mutable.as_text() != "left/right!" { return 37 }
+    if mutable.as_text() != "Left/right!" { return 37 }
     {
         var drained = mutable.drain(0usize, 4usize)
-        if drained.as_str() != "left" || byte_view_len(drained) != 4usize ||
+        if drained.as_str() != "Left" || byte_view_len(drained) != 4usize ||
             debug_text(drained).is_empty() { return 24 }
     }
 
@@ -94,7 +97,7 @@ fn main(): i32 {
     var more = vec.new<read Text from static>()
     more.push("a")
     more.push("b")
-    extended.extend(take more)
+    String.(ExtendItems<read Text from static>).extend(mut extended, take more)
     if extended.as_text() != "start:ab" { return 9 }
     var characters = vec.new<char>()
     characters.push('c')

@@ -88,6 +88,19 @@ void verifierCases() {
   rejected(program, "callee");
   program = simple();
   program.functions[0].locals.push_back({"x", Type::I32, false, {}});
+  program.functions[0].blocks[0].instructions[0].place = {0, {}};
+  require(verify(program, diagnostics), "valid attached place rejected");
+  program.functions[0].blocks[0].instructions[0].place.fields = {
+      mettle::Projection::field(0)};
+  rejected(program, "projected place");
+  program.functions[0].blocks[0].instructions[0].place.root = -1;
+  rejected(program, "local slot");
+  program.functions[0].blocks[0].instructions[0].place = {99, {}};
+  rejected(program, "local slot");
+  program.functions[0].blocks[0].instructions[0].place.root = -2;
+  rejected(program, "local slot");
+  program = simple();
+  program.functions[0].locals.push_back({"x", Type::I32, false, {}});
   program.functions[0].blocks[0].instructions[0] = {
       Op::Load, {0, Type::I32}, {}, {}, "", {0, {}}, -1, 0, {}};
   require(verify(program, diagnostics),
@@ -146,6 +159,123 @@ void verifierCases() {
          {Exit::Return, {0, Type::Unit}}}},
        1});
   rejected(program, "multiple parameters");
+}
+void functionAddressCases() {
+  auto program = simple();
+  program.target = mettle::targetFacts("x86_64-unknown-linux-gnu");
+  auto types = std::make_shared<mettle::TypeStore>();
+  program.types = types;
+  Function callee{
+      "target", Type::I32, 1, {{"value", Type::I32, false, {}}}, {}};
+  callee.externalName = "target";
+  program.functions.push_back(std::move(callee));
+  mettle::CallableType signature;
+  signature.result = signature.abiResult = Type::I32;
+  signature.parameters.push_back({Type::I32});
+  mettle::StaticConstant initializer;
+  initializer.kind = mettle::StaticConstant::Kind::Function;
+  initializer.symbol = 1;
+  program.statics.push_back(
+      {"callback", "", "", Type::Unknown, false, false, {}, initializer});
+  Instruction address;
+  address.op = Op::FunctionAddress;
+  address.callee = 1;
+  address.result.id = 1;
+  program.functions[0].blocks[0].instructions.push_back(address);
+  program.functions[0].values = 2;
+  auto pointer = [&](const mettle::CallableType &contract) {
+    auto type = types->callableType(contract);
+    program.statics[0].type = type;
+    program.statics[0].initializer->type = type;
+    program.functions[0].blocks[0].instructions[1].result.type = type;
+  };
+  auto accepted = [&] {
+    mettle::Diagnostics diagnostics;
+    require(verify(program, diagnostics),
+            diagnostics.empty() ? "valid function address rejected"
+                                : diagnostics.items.front().message.c_str());
+  };
+  auto invalid = [&] {
+    rejected(program, "static initializer");
+    auto instructionOnly = program;
+    instructionOnly.statics.clear();
+    rejected(instructionOnly, "function address");
+  };
+  pointer(signature);
+  accepted();
+  auto mismatch = signature;
+  mismatch.result = mismatch.abiResult = Type::Bool;
+  pointer(mismatch);
+  invalid();
+  mismatch = signature;
+  mismatch.parameters[0].type = Type::Bool;
+  pointer(mismatch);
+  invalid();
+  mismatch = signature;
+  mismatch.parameters[0].mode = mettle::ParameterMode::Read;
+  pointer(mismatch);
+  invalid();
+  mismatch.parameters.clear();
+  pointer(mismatch);
+  invalid();
+  pointer(signature);
+  auto &target = program.functions[1];
+  target.unsafeFunction = true;
+  invalid();
+  signature.unsafeCall = true;
+  pointer(signature);
+  accepted();
+  target.unsafeFunction = false;
+  accepted();
+  target.abi = "C";
+  invalid();
+  signature.abi = "C";
+  pointer(signature);
+  accepted();
+  target.variadic = true;
+  invalid();
+  signature.variadic = true;
+  pointer(signature);
+  accepted();
+  target.targetFeatures = {"sse2"};
+  invalid();
+  signature.targetFeatures = {"sse2"};
+  pointer(signature);
+  accepted();
+  signature.targetFeatures.insert("avx");
+  pointer(signature);
+  accepted();
+  target.genericParameters = {types->declareParameter("T", true)};
+  invalid();
+  target.genericParameters.clear();
+  target.indirectContract = true;
+  invalid();
+  target.indirectContract = false;
+  target.declarationOnly = true;
+  invalid();
+  target.declarationOnly = false;
+  target.parameters = 2;
+  invalid();
+  target.parameters = 1;
+
+  auto view = types->viewType(Type::I32, mettle::ParameterMode::Read);
+  target.result = view;
+  target.resultSources = {0};
+  target.locals[0].mode = mettle::ParameterMode::Read;
+  signature.result = signature.abiResult = view;
+  signature.resultSources = {0};
+  signature.parameters[0].mode = mettle::ParameterMode::Read;
+  pointer(signature);
+  accepted();
+  mismatch = signature;
+  mismatch.resultSources.clear();
+  pointer(mismatch);
+  invalid();
+  mismatch = signature;
+  mismatch.result = mismatch.abiResult = types->viewType(
+      Type::I32, mettle::ParameterMode::Read, mettle::RegionId::Static);
+  pointer(mismatch);
+  invalid();
 }
 void floatingCarrierCases() {
   auto program = simple();
@@ -975,6 +1105,7 @@ void importedPreparation() {
 int main() {
   try {
     verifierCases();
+    functionAddressCases();
     floatingCarrierCases();
     staticConsumptionCases();
     phaseOwnership();
