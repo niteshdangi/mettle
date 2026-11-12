@@ -1,13 +1,29 @@
 import core.convert.From
-import core.fmt.Debug
+import core.fmt.{Debug, buffer_writer, formatter, spec}
 import core.iter.Iterator
 import core.outcome
-import std.io.{Error, Reader, Writer}
+import std.io.{Error, ErrorKind, Reader, Writer}
 import std.net.{TcpListener, TcpStream, UdpSocket}
 import std.sys
 import std.time.from_millis
 
-fn debug<T: Debug>(read value: T): Unit {}
+fn debug<T: Debug>(read value: T): Unit {
+    var bytes = [0u8; 128]
+    var writer = buffer_writer(mut bytes)
+    var output = formatter(mut writer, spec())
+    match take capture value.fmt(mut output) {
+        success(_) => {},
+        failure(_) => { panic("socket debug formatting failed") }
+    }
+    if writer.len() == 0usize { panic("socket debug formatting was empty") }
+    var empty = [0u8; 0]
+    var full = buffer_writer(mut empty)
+    var failing = formatter(mut full, spec())
+    match take capture value.fmt(mut failing) {
+        success(_) => { panic("socket debug ignored sink failure") },
+        failure(_) => {}
+    }
+}
 
 fn raw_socket(kind: i32): sys.OwnedFd? {
     let fd = unsafe { sys.mettle_rt_sock_new(kind, 4) }
@@ -39,6 +55,31 @@ fn run(): i32 throws Error {
     try client.set_nonblocking(false)
     let client_copy = try client.try_clone()
     if !(try client_copy.peer_addr()).same(address) { return 5 }
+    try client_copy.set_nodelay(true)
+    if !(try client.nodelay()) { return 21 }
+    try client_copy.set_nodelay(false)
+    if try client.nodelay() { return 22 }
+    try client_copy.set_nonblocking(true)
+    var idle = [0u8; 1]
+    match take capture client.peek(mut idle) {
+        success(_) => { return 23 },
+        failure(error) => {
+            if !error.kind().is(ErrorKind.WouldBlock) || !error.is_os() { return 24 }
+        }
+    }
+    try client_copy.set_nonblocking(false)
+    match take capture client.set_read_timeout(present(from_millis(0u64))) {
+        success(_) => { return 25 },
+        failure(error) => {
+            if !error.kind().is(ErrorKind.InvalidInput) { return 26 }
+        }
+    }
+    match take capture client.set_write_timeout(present(from_millis(0u64))) {
+        success(_) => { return 27 },
+        failure(error) => {
+            if !error.kind().is(ErrorKind.InvalidInput) { return 28 }
+        }
+    }
     if (try client.take_error()).is_present() { return 6 }
     var accepted = try listener.accept()
     var server = accepted.0
@@ -50,6 +91,8 @@ fn run(): i32 throws Error {
         return 1
     }
     try client.shutdown(1)
+    try server.set_read_timeout(present(from_millis(1000u64)))
+    if try server.read_some(mut idle) != 0usize { return 29 }
     var server_writer = read server
     try server_writer.write_all("view".as_bytes())
     var stream_peek = [0u8; 4]

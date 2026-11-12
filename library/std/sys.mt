@@ -30,6 +30,11 @@ extern "C" {
     pub unsafe fn mettle_rt_sock_sendto(fd: i32, data: ptr<read u8>, size: usize, family: i32, address: ptr<read u8>, address_size: usize, port: u16, flowinfo: u32, scope_id: u32): isize;
     pub unsafe fn mettle_rt_sock_recvfrom(fd: i32, data: ptr<mut u8>, size: usize, peek: i32, family: ptr<mut i32>, address: ptr<mut u8>, address_capacity: usize, port: ptr<mut u16>, flowinfo: ptr<mut u32>, scope_id: ptr<mut u32>): isize;
     pub unsafe fn mettle_rt_sock_timeout(fd: i32, send: i32, micros: u64): i32;
+    pub unsafe fn mettle_rt_sock_get_timeout(fd: i32, send: i32, seconds: ptr<mut u64>, nanos: ptr<mut u32>): i32;
+    pub unsafe fn mettle_rt_sock_set_option(fd: i32, option: i32, value: u32): i32;
+    pub unsafe fn mettle_rt_sock_get_option(fd: i32, option: i32, value: ptr<mut u32>): i32;
+    pub unsafe fn mettle_rt_sock_membership_v4(fd: i32, group: ptr<read u8>, interface_addr: ptr<read u8>, join: i32): i32;
+    pub unsafe fn mettle_rt_sock_membership_v6(fd: i32, group: ptr<read u8>, interface_index: u32, join: i32): i32;
     pub unsafe fn mettle_rt_sock_set_nodelay(fd: i32, enabled: i32): i32;
     pub unsafe fn mettle_rt_sock_get_nodelay(fd: i32, enabled: ptr<mut i32>): i32;
     pub unsafe fn mettle_rt_sock_error(fd: i32, error: ptr<mut i32>): i32;

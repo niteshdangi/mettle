@@ -56,6 +56,21 @@ fn run(): i32 throws Error {
         },
         none => { return 13 }
     }
+    var next_client = try TcpStream.connect_timeout(address, from_millis(1000u64))
+    try next_client.write_all(payload)
+    var next_server = match take incoming.next() {
+        present(success(stream)) => stream,
+        present(failure(_)) => { return 28 },
+        none => { return 29 }
+    }
+    try next_server.set_read_timeout(present(from_millis(1000u64)))
+    var next_payload = [0u8; 5]
+    try next_server.read_exact(mut next_payload)
+    var next_index = 0usize
+    while next_index < 5usize {
+        if next_payload[next_index] != payload[next_index] { return 30 }
+        next_index += 1usize
+    }
 
     var udp_receiver = try std.net.udp_bind(
         std.net.socket_addr(std.net.localhost(), 0u16)

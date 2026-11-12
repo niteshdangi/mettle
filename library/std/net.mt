@@ -227,6 +227,9 @@ extend SocketAddrV6 {
 
 extend Ipv4Addr {
     pub const BITS: u32 = 32u32
+    pub const BROADCAST: Ipv4Addr = Ipv4Addr(4294967295u32)
+    pub const LOCALHOST: Ipv4Addr = Ipv4Addr(2130706433u32)
+    pub const UNSPECIFIED: Ipv4Addr = Ipv4Addr(0u32)
 
     pub static fn new(a: u8, b: u8, c: u8, d: u8): Ipv4Addr { ipv4(a, b, c, d) }
     pub static fn from_bits(bits: u32): Ipv4Addr { Ipv4Addr(bits) }
@@ -268,6 +271,11 @@ extend Ipv4Addr {
 
 extend Ipv6Addr {
     pub const BITS: u32 = 128u32
+    pub const LOCALHOST: Ipv6Addr = Ipv6Addr([
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8
+    ])
+    pub const UNSPECIFIED: Ipv6Addr = Ipv6Addr([0u8; 16])
 
     pub static fn new(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u16, h: u16): Ipv6Addr {
         ipv6(a, b, c, d, e, f, g, h)
@@ -886,6 +894,36 @@ fn set_timeout(fd: i32, send: i32, limit: Duration?): Unit throws Error {
     if unsafe { sys.mettle_rt_sock_timeout(fd, send, micros) } != 0 { throw io.last_os_error() }
 }
 
+fn get_timeout(fd: i32, send: i32): Duration? throws Error {
+    var seconds = 0u64
+    var nanos = 0u32
+    if unsafe { sys.mettle_rt_sock_get_timeout(fd, send, core.ptr.from_mut(seconds), core.ptr.from_mut(nanos)) } != 0 {
+        throw io.last_os_error()
+    }
+    if seconds == 0u64 && nanos == 0u32 { none }
+    else { present(super.time.duration(seconds, nanos)) }
+}
+
+const OPTION_TTL: i32 = 0
+const OPTION_BROADCAST: i32 = 1
+const OPTION_MULTICAST_LOOP_V4: i32 = 2
+const OPTION_MULTICAST_LOOP_V6: i32 = 3
+const OPTION_MULTICAST_TTL_V4: i32 = 4
+
+fn set_socket_option(fd: i32, option: i32, value: u32): Unit throws Error {
+    if unsafe { sys.mettle_rt_sock_set_option(fd, option, value) } != 0 {
+        throw io.last_os_error()
+    }
+}
+
+fn get_socket_option(fd: i32, option: i32): u32 throws Error {
+    var value = 0u32
+    if unsafe { sys.mettle_rt_sock_get_option(fd, option, core.ptr.from_mut(value)) } != 0 {
+        throw io.last_os_error()
+    }
+    value
+}
+
 fn set_nonblocking(fd: i32, on: bool): Unit throws Error {
     var status = 0
     if on {
@@ -1177,6 +1215,9 @@ pub fn async_tcp_listen(addr: SocketAddr): AsyncTcpListener throws Error {
 extend TcpListener {
     pub static fn bind<A: ToSocketAddrs + unsized>(read addr: A): TcpListener throws Error { try tcp_listen(addr) }
 
+    pub fn set_ttl(ttl: u32): Unit throws Error { try set_socket_option(self.fd, OPTION_TTL, ttl) }
+    pub fn ttl(): u32 throws Error { try get_socket_option(self.fd, OPTION_TTL) }
+
     pub fn incoming<region r>(
         receiver read self: TcpListener from r
     ): Incoming<region r> {
@@ -1321,6 +1362,10 @@ extend TcpStream {
     pub fn take_error(): Error? throws Error { try take_socket_error(self.fd) }
     pub fn set_read_timeout(limit: Duration?): Unit throws Error { try set_timeout(self.fd, 0, limit) }
     pub fn set_write_timeout(limit: Duration?): Unit throws Error { try set_timeout(self.fd, 1, limit) }
+    pub fn read_timeout(): Duration? throws Error { try get_timeout(self.fd, 0) }
+    pub fn write_timeout(): Duration? throws Error { try get_timeout(self.fd, 1) }
+    pub fn set_ttl(ttl: u32): Unit throws Error { try set_socket_option(self.fd, OPTION_TTL, ttl) }
+    pub fn ttl(): u32 throws Error { try get_socket_option(self.fd, OPTION_TTL) }
     pub fn wait_readable(limit: Duration): bool throws Error {
         let started = package.std.time.now()
         loop {
@@ -1466,6 +1511,48 @@ extend UdpSocket {
     }
     pub fn set_read_timeout(limit: Duration?): Unit throws Error { try set_timeout(self.fd, 0, limit) }
     pub fn set_write_timeout(limit: Duration?): Unit throws Error { try set_timeout(self.fd, 1, limit) }
+    pub fn read_timeout(): Duration? throws Error { try get_timeout(self.fd, 0) }
+    pub fn write_timeout(): Duration? throws Error { try get_timeout(self.fd, 1) }
+    pub fn set_ttl(ttl: u32): Unit throws Error { try set_socket_option(self.fd, OPTION_TTL, ttl) }
+    pub fn ttl(): u32 throws Error { try get_socket_option(self.fd, OPTION_TTL) }
+    pub fn set_broadcast(on: bool): Unit throws Error {
+        try set_socket_option(self.fd, OPTION_BROADCAST, if on { 1u32 } else { 0u32 })
+    }
+    pub fn broadcast(): bool throws Error { (try get_socket_option(self.fd, OPTION_BROADCAST)) != 0u32 }
+    pub fn set_multicast_loop_v4(on: bool): Unit throws Error {
+        try set_socket_option(self.fd, OPTION_MULTICAST_LOOP_V4, if on { 1u32 } else { 0u32 })
+    }
+    pub fn multicast_loop_v4(): bool throws Error { (try get_socket_option(self.fd, OPTION_MULTICAST_LOOP_V4)) != 0u32 }
+    pub fn set_multicast_loop_v6(on: bool): Unit throws Error {
+        try set_socket_option(self.fd, OPTION_MULTICAST_LOOP_V6, if on { 1u32 } else { 0u32 })
+    }
+    pub fn multicast_loop_v6(): bool throws Error { (try get_socket_option(self.fd, OPTION_MULTICAST_LOOP_V6)) != 0u32 }
+    pub fn set_multicast_ttl_v4(ttl: u32): Unit throws Error { try set_socket_option(self.fd, OPTION_MULTICAST_TTL_V4, ttl) }
+    pub fn multicast_ttl_v4(): u32 throws Error { try get_socket_option(self.fd, OPTION_MULTICAST_TTL_V4) }
+    pub fn join_multicast_v4(read group: Ipv4Addr, read interface_addr: Ipv4Addr): Unit throws Error {
+        let group_bytes = group.octets()
+        let interface_bytes = interface_addr.octets()
+        if unsafe { sys.mettle_rt_sock_membership_v4(self.fd, slice.data(group_bytes), slice.data(interface_bytes), 1) } != 0 {
+            throw io.last_os_error()
+        }
+    }
+    pub fn leave_multicast_v4(read group: Ipv4Addr, read interface_addr: Ipv4Addr): Unit throws Error {
+        let group_bytes = group.octets()
+        let interface_bytes = interface_addr.octets()
+        if unsafe { sys.mettle_rt_sock_membership_v4(self.fd, slice.data(group_bytes), slice.data(interface_bytes), 0) } != 0 {
+            throw io.last_os_error()
+        }
+    }
+    pub fn join_multicast_v6(read group: Ipv6Addr, interface_index: u32): Unit throws Error {
+        if unsafe { sys.mettle_rt_sock_membership_v6(self.fd, slice.data(group.bytes), interface_index, 1) } != 0 {
+            throw io.last_os_error()
+        }
+    }
+    pub fn leave_multicast_v6(read group: Ipv6Addr, interface_index: u32): Unit throws Error {
+        if unsafe { sys.mettle_rt_sock_membership_v6(self.fd, slice.data(group.bytes), interface_index, 0) } != 0 {
+            throw io.last_os_error()
+        }
+    }
 
     pub fn connect<A: ToSocketAddrs + unsized>(read addr: A): Unit throws Error {
         var addresses = try addr.to_socket_addrs()
