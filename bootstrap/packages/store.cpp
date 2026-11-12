@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <cstdlib>
 #include <fcntl.h>
 #include <fstream>
 #include <limits>
@@ -511,20 +512,36 @@ Store::Lookup Store::materialize(const std::string &key,
     fs::remove(path, error);
     return Lookup::Corrupt;
   }
-  auto temporary = destination;
-  temporary += ".mettle-cache-" + std::to_string(getpid());
-  fs::copy_file(blob, temporary, fs::copy_options::overwrite_existing, error);
-  if (!error) {
-    using fs::perms;
-    auto mode = perms::owner_read | perms::owner_write | perms::group_read |
-                perms::others_read;
-    if (entry->executable)
-      mode |= perms::owner_exec | perms::group_exec | perms::others_exec;
-    fs::permissions(temporary, mode, fs::perm_options::replace, error);
+  std::string temporary = destination.string() + ".mettle-cache-XXXXXX";
+  int descriptor = mkstemp(temporary.data());
+  if (descriptor < 0)
+    return Lookup::Miss;
+  std::ifstream source(blob, std::ios::binary);
+  char buffer[1 << 16];
+  bool copied = static_cast<bool>(source);
+  while (copied && source.read(buffer, sizeof buffer).gcount() != 0) {
+    auto size = source.gcount();
+    std::streamsize written = 0;
+    while (written < size) {
+      auto count = ::write(descriptor, buffer + written, size - written);
+      if (count < 0 && errno == EINTR)
+        continue;
+      if (count <= 0) {
+        copied = false;
+        break;
+      }
+      written += count;
+    }
   }
-  if (!error)
+  copied = copied && source.eof();
+  mode_t mode = entry->executable ? 0755 : 0644;
+  if (fchmod(descriptor, mode) != 0)
+    copied = false;
+  if (close(descriptor) != 0)
+    copied = false;
+  if (copied)
     fs::rename(temporary, destination, error);
-  if (error) {
+  if (!copied || error) {
     fs::remove(temporary, error);
     return Lookup::Miss;
   }

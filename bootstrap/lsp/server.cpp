@@ -29,6 +29,7 @@ constexpr int parseError = -32700, invalidRequest = -32600,
               methodNotFound = -32601, internalError = -32603,
               notInitialized = -32002, requestFailed = -32803;
 constexpr std::size_t maxMessage = 64u << 20;
+constexpr std::size_t maxHeaders = 8u << 10;
 
 std::string normalize(const std::string &path) {
   return std::filesystem::path(path).lexically_normal().generic_string();
@@ -160,6 +161,7 @@ private:
   const Configuration &config;
   std::map<std::string, std::unique_ptr<Document>> documents;
   std::map<std::string, std::unique_ptr<Document>> sourceDocuments;
+  std::size_t openBytes = 0;
   bool initialized = false, shutdownSeen = false, exited = false;
 
   struct Workspace {
@@ -172,7 +174,14 @@ private:
     std::size_t length = 0;
     bool framed = false;
     std::string line;
-    while (std::getline(in, line)) {
+    std::size_t headerBytes = 0;
+    for (char byte; in.get(byte);) {
+      if (++headerBytes > maxHeaders)
+        return std::nullopt;
+      if (byte != '\n') {
+        line += byte;
+        continue;
+      }
       if (!line.empty() && line.back() == '\r')
         line.pop_back();
       if (line.empty()) {
@@ -192,6 +201,7 @@ private:
         length = static_cast<std::size_t>(value);
         framed = true;
       }
+      line.clear();
     }
     if (!framed)
       return std::nullopt;
@@ -310,11 +320,17 @@ private:
     const auto *contents = text(member(item, "text"));
     if (!uri || !contents)
       return;
+    auto found = documents.find(*uri);
+    auto previous =
+        found == documents.end() ? 0 : found->second->lines.contents().size();
+    if (contents->size() > maxMessage - (openBytes - previous))
+      return;
     auto &slot = documents[*uri];
     if (slot)
       slot->replace(*contents);
     else
       slot = std::make_unique<Document>(*uri, *contents);
+    openBytes = openBytes - previous + contents->size();
     refresh(slot->path, slot.get());
   }
 
@@ -331,6 +347,8 @@ private:
         continue;
       const auto *range = change.find("range");
       if (!range) {
+        if (replacement->size() > maxMessage - (openBytes - before.size()))
+          return;
         current = LineIndex(*replacement);
         continue;
       }
@@ -339,11 +357,15 @@ private:
       if (end < begin)
         std::swap(begin, end);
       auto edited = current.contents();
+      if (replacement->size() > maxMessage - (openBytes - before.size() +
+                                              edited.size() - (end - begin)))
+        return;
       edited.replace(begin, end - begin, *replacement);
       current = LineIndex(std::move(edited));
     }
     if (doc->analyzed && current.contents() == before)
       return;
+    openBytes = openBytes - before.size() + current.contents().size();
     doc->replace(current.contents());
     refresh(doc->path, doc);
   }
@@ -354,6 +376,7 @@ private:
       return;
     auto uri = doc->uri;
     auto path = doc->path;
+    openBytes -= doc->lines.contents().size();
     documents.erase(uri);
     notify("textDocument/publishDiagnostics",
            Json::object(

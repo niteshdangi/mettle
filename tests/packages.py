@@ -323,6 +323,14 @@ def registry_resolution():
     edit(new / "src/main.mt", "13", "99")
     build_and_run(app, "--locked")
     assert lock_of(app) == lock
+    data = packages("registry/util/1.3.0/spec.txt")
+    data.write_text("changed build input\n")
+    invoke(["check", app, "--locked"], 1, "checksum mismatch")
+    data.unlink()
+    linked = packages("registry/util/1.3.0/linked")
+    linked.symlink_to(evidence, target_is_directory=True)
+    invoke(["check", app, "--locked"], 1, "source link outside")
+    linked.unlink()
     # Tampering with a locked registry package is always rejected.
     edit(packages("registry/util/1.3.0/src/main.mt"), "13", "13 + 0")
     invoke(["check", app], 1, "checksum mismatch")
@@ -1192,6 +1200,35 @@ def cache_clean_preserves_sources():
     assert (cache / "VERSION").is_file()
     invoke(["clean"])
     assert source.is_file()
+
+
+def security_output_paths():
+    sentinel = evidence / "sentinel.txt"
+    sentinel.write_text("keep")
+    source = evidence / "format.mt"
+    source.write_text("fn main():i32{0}\n")
+    temporary = Path(str(source) + ".mettle-fmt.tmp")
+    temporary.symlink_to(sentinel)
+    invoke(["fmt", source])
+    assert sentinel.read_text() == "keep"
+    assert temporary.is_symlink()
+
+    output = evidence / "docs"
+    output.mkdir()
+    (output / "index.html").symlink_to(sentinel)
+    invoke(["doc", source, "-o", output])
+    assert sentinel.read_text() == "keep"
+    assert not (output / "index.html").is_symlink()
+
+    linked = evidence / "linked-docs"
+    linked.symlink_to(output, target_is_directory=True)
+    invoke(["doc", source, "-o", linked], 1, "contains a symlink")
+
+    app = packages("build-script/app")
+    target = app / "target"
+    target.symlink_to(output, target_is_directory=True)
+    invoke(["clean", app], 1, "package target is a symlink")
+    assert sentinel.read_text() == "keep"
 
 
 def cache_compiler_content_identity():
@@ -3095,6 +3132,7 @@ CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
          cache_dedup_and_bound,
          cache_corruption_and_clean, cache_corrupt_digest_preserves_other_files,
          cache_publication_failure_is_reported, cache_clean_failure, cache_clean_preserves_sources,
+         security_output_paths,
          cache_compiler_content_identity,
          build_script, build_script_untracked_inputs,
          procedural_macro, procedural_macro_failure,

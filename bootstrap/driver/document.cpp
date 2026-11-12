@@ -8,6 +8,8 @@
 #include "syntax/parser.h"
 #include "types/target.h"
 #include <algorithm>
+#include <cerrno>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -15,6 +17,7 @@
 #include <map>
 #include <set>
 #include <string_view>
+#include <unistd.h>
 #include <utility>
 
 namespace mettle::driver {
@@ -73,10 +76,29 @@ bool gather(const std::string &argument, std::vector<Input> &inputs) {
 }
 
 bool write(const fs::path &path, const std::string &content) {
-  std::ofstream out(path, std::ios::binary | std::ios::trunc);
-  out << content;
-  out.flush();
-  return static_cast<bool>(out);
+  std::string temporary = path.string() + ".XXXXXX";
+  int descriptor = mkstemp(temporary.data());
+  if (descriptor < 0)
+    return false;
+  std::size_t written = 0;
+  while (written < content.size()) {
+    auto count =
+        ::write(descriptor, content.data() + written, content.size() - written);
+    if (count < 0 && errno == EINTR)
+      continue;
+    if (count <= 0)
+      break;
+    written += static_cast<std::size_t>(count);
+  }
+  bool complete = written == content.size();
+  if (close(descriptor) != 0)
+    complete = false;
+  std::error_code error;
+  if (complete)
+    fs::rename(temporary, path, error);
+  if (!complete || error)
+    fs::remove(temporary, error);
+  return complete && !error;
 }
 
 bool packageInput(const std::string &argument) {
@@ -431,6 +453,20 @@ int document(const Options &options) {
     directory = base / "target" / "mettle" / "doc";
   }
   std::error_code error;
+  directory = fs::absolute(directory, error).lexically_normal();
+  if (error)
+    return 1;
+  fs::path prefix;
+  for (const auto &part : directory) {
+    prefix /= part;
+    if (fs::is_symlink(fs::symlink_status(prefix, error))) {
+      std::cerr
+          << "mettle: error[io]: documentation output contains a symlink: "
+          << prefix.string() << '\n';
+      return 1;
+    }
+    error.clear();
+  }
   fs::create_directories(directory, error);
   if (error) {
     std::cerr << "mettle: error[io]: cannot create " << directory.string()

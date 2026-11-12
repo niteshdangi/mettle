@@ -24,37 +24,81 @@ std::optional<std::string> readFile(const fs::path &path) {
     return std::nullopt;
   std::ostringstream text;
   text << stream.rdbuf();
+  if (stream.bad() || text.bad())
+    return std::nullopt;
   return text.str();
 }
 
-// Package inputs exclude generated locks, hidden directories and build output.
-std::string checksum(const fs::path &directory) {
-  std::vector<std::pair<std::string, fs::path>> files;
-  for (fs::recursive_directory_iterator it(directory), end; it != end; ++it) {
-    const auto name = it->path().filename().string();
-    if (it->is_directory()) {
-      if (name.rfind('.', 0) == 0 || name == "target" || name == "build")
-        it.disable_recursion_pending();
-      continue;
+// Package inputs exclude generated locks and build output.
+std::optional<std::string> checksum(const fs::path &directory,
+                                    std::string &problem, bool legacy = false) {
+  try {
+    std::vector<std::pair<std::string, fs::path>> files;
+    std::vector<std::pair<std::string, std::string>> links;
+    auto root = fs::canonical(directory);
+    std::set<fs::path> visited{root};
+    for (fs::recursive_directory_iterator
+             it(directory,
+                legacy ? fs::directory_options::none
+                       : fs::directory_options::follow_directory_symlink),
+         end;
+         it != end; ++it) {
+      const auto name = it->path().filename().string();
+      if (!legacy && it->is_symlink()) {
+        auto target = fs::canonical(it->path()).lexically_relative(root);
+        if (target.empty() || *target.begin() == "..") {
+          problem = "source link outside its directory: " +
+                    it->path().generic_string();
+          return std::nullopt;
+        }
+        links.emplace_back(
+            it->path().lexically_relative(directory).generic_string(),
+            target.generic_string());
+      }
+      if (it->is_directory()) {
+        if ((legacy && name.starts_with('.')) || name == ".git" ||
+            (legacy && (name == "target" || name == "build")) ||
+            (!legacy && name == "target" && it.depth() == 0) ||
+            (!legacy && !visited.insert(fs::canonical(it->path())).second))
+          it.disable_recursion_pending();
+        continue;
+      }
+      if (it->is_regular_file() && name != "lock.mettle" &&
+          (legacy ? it->path().extension() == ".mt" ||
+                        it->path().extension() == ".mettle"
+                  : name != "YANKED" || it.depth() != 0)) {
+        files.emplace_back(
+            it->path().lexically_relative(directory).generic_string(),
+            it->path());
+      }
     }
-    if (it->is_regular_file() &&
-        (it->path().extension() == ".mt" ||
-         (it->path().extension() == ".mettle" && name != "lock.mettle")))
-      files.emplace_back(
-          it->path().lexically_relative(directory).generic_string(),
-          it->path());
+    std::sort(files.begin(), files.end());
+    std::sort(links.begin(), links.end());
+    Sha256 hash;
+    for (const auto &[relative, path] : files) {
+      auto content = readFile(path);
+      if (!content && !legacy) {
+        problem = "cannot read package input " + path.generic_string();
+        return std::nullopt;
+      }
+      const auto &text = content.value_or("");
+      hash.update(relative);
+      hash.update(std::string_view("\0", 1));
+      hash.update(std::to_string(text.size()));
+      hash.update(std::string_view("\0", 1));
+      hash.update(text);
+    }
+    for (const auto &[relative, target] : links) {
+      hash.update("link:");
+      hash.update(relative);
+      hash.update(std::string_view("\0", 1));
+      hash.update(target);
+    }
+    return std::string(legacy ? "sha256:" : "sha256-tree-2:") + hash.finish();
+  } catch (const fs::filesystem_error &error) {
+    problem = "cannot inspect package inputs: " + std::string(error.what());
+    return std::nullopt;
   }
-  std::sort(files.begin(), files.end());
-  Sha256 hash;
-  for (const auto &[relative, path] : files) {
-    auto text = readFile(path).value_or("");
-    hash.update(relative);
-    hash.update(std::string_view("\0", 1));
-    hash.update(std::to_string(text.size()));
-    hash.update(std::string_view("\0", 1));
-    hash.update(text);
-  }
-  return "sha256:" + hash.finish();
 }
 
 std::string moduleRoot(const ResolvedPackage &package) {
@@ -317,7 +361,7 @@ private:
     return {};
   }
 
-  Lock lockOf(const Resolution &resolution) const {
+  std::optional<Lock> lockOf(const Resolution &resolution) {
     Lock lock;
     for (const auto &package : resolution.packages) {
       LockedPackage entry;
@@ -325,8 +369,16 @@ private:
       entry.version = toString(package.candidate.manifest->version);
       entry.id = package.identity;
       entry.source = sourceOf(package.candidate);
-      if (package.candidate.kind != SourceKind::Root)
-        entry.checksum = checksum(package.candidate.location);
+      if (package.candidate.kind != SourceKind::Root) {
+        std::string problem;
+        auto value = checksum(package.candidate.location, problem);
+        if (!value) {
+          diagnostics.error("package", {},
+                            "package '" + package.name() + "': " + problem);
+          return std::nullopt;
+        }
+        entry.checksum = *value;
+      }
       entry.features = package.features;
       entry.gitSelectors = package.gitSelectors;
       for (const auto &[name, id] : package.dependencies) {
@@ -456,7 +508,10 @@ private:
     if (!resolution || failed() || !validate(*resolution))
       return std::nullopt;
 
-    auto fresh = lockOf(*resolution);
+    auto freshLock = lockOf(*resolution);
+    if (!freshLock)
+      return std::nullopt;
+    auto &fresh = *freshLock;
     // Where the lock records `id`, else the start of the lock.
     auto at = [&](const std::string &id) {
       Span span{0, 0, lockSource};
@@ -473,6 +528,19 @@ private:
              now.source.rfind("git+", 0) == 0) &&
             then->source == now.source && then->version == now.version &&
             then->checksum != now.checksum) {
+          bool oldFormat = then->checksum.starts_with("sha256:");
+          bool validMigration = false;
+          if (oldFormat) {
+            auto package = std::find_if(
+                resolution->packages.begin(), resolution->packages.end(),
+                [&](const auto &item) { return item.identity == now.id; });
+            std::string problem;
+            auto previous =
+                checksum(package->candidate.location, problem, true);
+            validMigration = previous && *previous == then->checksum;
+          }
+          if (validMigration)
+            continue;
           diagnostics.error(
               "lock", at(now.id),
               "checksum mismatch for immutable package '" + now.name + "' " +

@@ -620,6 +620,10 @@ int clean(const Options &options) {
     std::error_code error;
     auto directory =
         fs::is_directory(input, error) ? input : input.parent_path();
+    if (fs::is_symlink(fs::symlink_status(directory / "target", error))) {
+      std::cerr << "mettle: error[io]: package target is a symlink\n";
+      return 1;
+    }
     PackageWorkCopies workCopies;
     if (!options.dryRun && !workCopies.lock(directory, problem)) {
       std::cerr << "mettle: error[io]: " << problem << '\n';
@@ -699,22 +703,36 @@ int formatFiles(const Options &options) {
                 << lineAt(*formatted, line) << '\n';
       continue;
     }
-    auto temporary = fs::path(input + ".mettle-fmt.tmp");
-    {
-      std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
-      out << *formatted;
-      out.flush();
-      if (!out) {
-        std::cerr << "mettle: error[io]: cannot write " << input << '\n';
-        status = 1;
-        std::error_code ignored;
-        fs::remove(temporary, ignored);
+    std::string temporary = input + ".mettle-fmt.XXXXXX";
+    int descriptor = mkstemp(temporary.data());
+    if (descriptor < 0) {
+      std::cerr << "mettle: error[io]: cannot stage " << input << '\n';
+      status = 1;
+      continue;
+    }
+    std::size_t written = 0;
+    while (written < formatted->size()) {
+      auto count = ::write(descriptor, formatted->data() + written,
+                           formatted->size() - written);
+      if (count < 0 && errno == EINTR)
         continue;
-      }
+      if (count <= 0)
+        break;
+      written += static_cast<std::size_t>(count);
     }
     std::error_code error;
-    fs::permissions(temporary, fs::status(input, error).permissions(), error);
-    error.clear();
+    auto permissions = fs::status(input, error).permissions();
+    bool staged =
+        written == formatted->size() && !error &&
+        fchmod(descriptor, static_cast<mode_t>(permissions) & 07777) == 0;
+    if (close(descriptor) != 0)
+      staged = false;
+    if (!staged) {
+      std::cerr << "mettle: error[io]: cannot write " << input << '\n';
+      status = 1;
+      fs::remove(temporary, error);
+      continue;
+    }
     fs::rename(temporary, input, error);
     if (error) {
       std::cerr << "mettle: error[io]: cannot replace " << input << ": "
