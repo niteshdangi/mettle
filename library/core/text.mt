@@ -1500,6 +1500,14 @@ extend Text {
     pub fn bytes(): Bytes<region self> { Bytes(read self.bytes, 0usize, self.bytes.len()) }
 }
 
+extend<region r, region s> (read Text from r)? implements PartialEq<(read Text from s)?> {
+    fn eq(read other: (read Text from s)?): bool {
+        match self {
+            present(left) => match other { present(right) => left == right, none => false },
+            none => match other { present(_) => false, none => true }
+        }
+    }
+}
 extend Text implements PartialEq {
     fn eq(read other: Text): bool {
         if self.bytes.len() != other.bytes.len() { return false }

@@ -23,10 +23,12 @@ Builder::Value Builder::operatorExpression(const Node &node) {
           value.type, ir::Access::Read);
     }
     if (mode == ParameterMode::Read || mode == ParameterMode::Mut) {
+      const auto sourceType = module.facts(source).type;
       auto dereferences =
           index == 0 ? facts.dereferences
-                     : static_cast<unsigned>(module.facts(source).type !=
-                                             facts.callParameterTypes[index]);
+                     : static_cast<unsigned>(
+                           module.typeStore()->isView(sourceType) &&
+                           sourceType != facts.callParameterTypes[index]);
       return borrow(source, mode, index == 0 && facts.receiverReservation,
                     false, Type::Unknown, dereferences);
     }
