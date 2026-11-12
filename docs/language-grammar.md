@@ -906,12 +906,8 @@ fn inferred_unit() {
 named type does not become copyable because all its fields happen to be scalars.
 Generic opt-in must establish field eligibility using declared constraints.
 
-Function results use `: Type`; omitting the annotation infers the result from
-the body, not from callers. Reachable explicit returns and normal block-tail
-values constrain one result type. A bare return or reachable fallthrough without
-a value contributes `Unit`; incompatible types or unresolved inference require
-a diagnostic, not an implicit conversion or a guessed result.
-semantic-rules section 14.8 defines recursion, divergence and contract limits.
+Function results use `: Type`, or are inferred from the body under
+semantic-rules section 14.8.1.
 Parameter types remain explicit. `->` is not a Mettle result delimiter.
 An explicit parameter access mode precedes the binding, as in
 `fn update(mut item: Item)`. The type after `:` describes the value itself;

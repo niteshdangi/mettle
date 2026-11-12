@@ -124,16 +124,8 @@ Return first constructs its result then traverses cleanup edges. A result view
 must refer to storage valid beyond cleanup. Break/continue traverse the scopes
 they leave, not necessarily every enclosing scope.
 
-For an omitted function result, introduce one result variable for the
-declaration, not one per call. Constrain it from reachable explicit returns and
-normal body completion. Bare returns/fallthrough contribute `Unit`; established
-divergence contributes `Never`. Use the existing joins and coercions, not an
-automatic union or numeric conversion. An explicit `: T` instead fixes the
-expected result. `Unit` is the type and `()` its value, never a type spelling.
-Solve recursive result components together; unresolved cycles require
-annotations rather than a `Unit`/`Never` default. Call-site context cannot supply
-a missing declaration result. Error effects and ambiguous returned-view sources
-remain explicit contracts under section 14.8.
+Omitted function results are inferred once per declaration under section 14.8.1;
+call-site context never supplies a missing result.
 
 Check generic bodies once against declarations. Solve type equalities,
 capability bounds and region obligations separately from code generation.
