@@ -3343,13 +3343,13 @@ extend<T: Copy + Default + PartialEq> NonZero<T> {
     pub static fn new(value: T): NonZero<T>? {
         if value == T.(Default).default() { none } else { present(NonZero(value)) }
     }
-    pub static unsafe fn new_unchecked(value: T): NonZero<T> { NonZero(value) }
+    pub static unsafe const fn new_unchecked(value: T): NonZero<T> { NonZero(value) }
 }
 
 macro nonzero_common {
     ($type:ident) => {
         extend NonZero<$type> {
-            pub fn get(): $type { self.value }
+            pub const fn get(): $type { self.value }
             pub fn leading_zeros(): u32 { self.value.leading_zeros() }
             pub fn trailing_zeros(): u32 { self.value.trailing_zeros() }
             pub fn count_ones(): NonZero<u32> { NonZero(self.value.count_ones()) }

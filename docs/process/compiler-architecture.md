@@ -96,6 +96,13 @@ evaluation faults; checked semantic facts distinguish Outcome propagation.
 Nominal error construction and patterns select the active variant's fields,
 including named payloads and empty variants in payload-bearing enums.
 
+Constant pointer operations use target layouts and allocation-relative offsets,
+not host addresses. Raw byte transfers retain initialization and pointer
+provenance; typed reads validate the reconstructed value. Unaligned operations
+relax only alignment, overlapping copies snapshot their input, and writes require
+exclusive writable provenance. Empty accesses still enforce alignment; a
+zero-sized operation does not manufacture allocation authority.
+
 The evaluator's host supplies checked expression shapes and inferred function
 results; evaluation does not independently re-infer integer locals.
 Function and static identities are registered before header elaboration.

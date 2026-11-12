@@ -902,12 +902,13 @@ private:
     }
     if (left.kind == Value::Kind::Pointer &&
         right.kind == Value::Kind::Pointer && (op == "==" || op == "!=")) {
-      auto sameStorage = !left.storage.owner_before(right.storage) &&
-                         !right.storage.owner_before(left.storage);
-      if (!sameStorage || left.addressOnly != right.addressOnly)
+      if (!sameAllocation(left, right))
         return fail("constant", span,
                     "constant pointer comparison requires common provenance");
-      auto equal = left.offset == right.offset;
+      auto layout = host.layout(left.type);
+      auto equal = left.offset == right.offset &&
+                   (!layout || layout->size <= options.pointerBits / 8 ||
+                    left.count == right.count);
       return boolValue(op == "==" ? equal : !equal);
     }
     bool comparison = op == "==" || op == "!=" || op == "<" || op == "<=" ||
@@ -1065,21 +1066,293 @@ private:
     return root;
   }
   bool addressBounds(const Value &address, Type type, std::uint64_t size,
-                     Span span) {
+                     Span span, bool aligned = true) {
     auto root = rootOf(address);
     auto backing = host.layout(address.storageType);
     auto target = host.layout(type);
     if (address.addressOnly && size == 0 && target && address.offset != 0 &&
-        address.offset % target->alignment == 0)
+        (!aligned || address.offset % target->alignment == 0))
       return true;
     if (!root || address.addressOnly || !backing || !target ||
         address.offset > backing->size ||
         size > backing->size - address.offset ||
-        target->alignment > backing->alignment ||
-        address.offset % target->alignment)
+        (aligned && (target->alignment > backing->alignment ||
+                     address.offset % target->alignment)))
       return fail("constant", span,
                   "constant pointer is dangling, misaligned or out of bounds"),
              false;
+    return true;
+  }
+  bool sameAllocation(const Value &left, const Value &right) {
+    return left.addressOnly == right.addressOnly &&
+           left.symbol == right.symbol &&
+           !left.storage.owner_before(right.storage) &&
+           !right.storage.owner_before(left.storage);
+  }
+  Value::Byte *storageByte(Value &value, Type type, std::uint64_t offset,
+                           Span span) {
+    if (!step(span))
+      return nullptr;
+    auto shape = host.typeShape(type);
+    auto layout = host.layout(type);
+    if (!shape || !layout || offset >= layout->size)
+      return nullptr;
+    if (shape->kind == Shape::Kind::Array && !shape->elements.empty()) {
+      auto element = host.layout(shape->elements.front().type);
+      if (!element || !element->size ||
+          offset / element->size >= value.elements.size())
+        return nullptr;
+      return storageByte(value.elements[offset / element->size],
+                         shape->elements.front().type, offset % element->size,
+                         span);
+    }
+    if (shape->kind == Shape::Kind::Product ||
+        shape->kind == Shape::Kind::Tuple) {
+      for (std::size_t i = 0;
+           i < shape->elements.size() && i < layout->fields.size() &&
+           i < value.elements.size();
+           ++i) {
+        auto field = host.layout(shape->elements[i].type);
+        if (field && offset >= layout->fields[i] &&
+            offset - layout->fields[i] < field->size)
+          return storageByte(value.elements[i], shape->elements[i].type,
+                             offset - layout->fields[i], span);
+      }
+    } else if (isInteger(type) || isFloating(type) || type == Type::Bool ||
+               type == Type::Char) {
+      if (value.bytes.empty()) {
+        value.bytes.resize(layout->size);
+        if (value.kind != Value::Kind::Uninitialized) {
+          auto bits = isInteger(type) ? castInteger(value.number, Type::U128,
+                                                    options.pointerBits)
+                                      : value.number;
+          if (isFloating(type) && value.number.floatingBits) {
+            bits = integerLiteral(0);
+            bits.magnitude[0] = *value.number.floatingBits;
+          }
+          for (std::uint64_t i = 0; i < layout->size; ++i) {
+            auto shift = options.littleEndian ? i : layout->size - i - 1;
+            value.bytes[i].value = static_cast<std::uint8_t>(
+                bits.magnitude[shift / 8] >> (shift % 8 * 8));
+          }
+        }
+      }
+      return &value.bytes[offset];
+    } else if (value.bytes.empty()) {
+      if (layout->size > options.stepBudget - steps) {
+        fail("limit", span, "constant byte storage exceeds the step budget");
+        return nullptr;
+      }
+      auto provenance = value.kind == Value::Kind::Uninitialized
+                            ? std::shared_ptr<const Value>{}
+                            : std::make_shared<const Value>(value);
+      value.bytes.resize(layout->size);
+      for (std::size_t i = 0; i < value.bytes.size(); ++i)
+        value.bytes[i] = {{}, provenance, i};
+    }
+    if (value.bytes.empty()) {
+      if (layout->size > options.stepBudget - steps) {
+        fail("limit", span, "constant byte storage exceeds the step budget");
+        return nullptr;
+      }
+      value.bytes.resize(layout->size);
+    }
+    return &value.bytes[offset];
+  }
+  void materializeBytes(Value &value, Type type, std::uint64_t start = 0,
+                        std::uint64_t size = UINT64_MAX) {
+    auto shape = host.typeShape(type);
+    auto layout = host.layout(type);
+    if (!shape || !layout || start > layout->size)
+      return;
+    size = std::min(size, layout->size - start);
+    if (shape->kind == Shape::Kind::Array && !shape->elements.empty()) {
+      auto element = host.layout(shape->elements.front().type);
+      if (!element || !element->size || !size)
+        return;
+      auto first = start / element->size;
+      auto last = (start + size - 1) / element->size;
+      for (auto i = first; i <= last && i < value.elements.size(); ++i) {
+        auto offset = i * element->size;
+        auto begin = std::max(start, offset);
+        auto end = std::min(start + size, offset + element->size);
+        materializeBytes(value.elements[i], shape->elements.front().type,
+                         begin - offset, end - begin);
+      }
+    } else if (shape->kind == Shape::Kind::Product ||
+               shape->kind == Shape::Kind::Tuple) {
+      for (std::size_t i = 0;
+           i < shape->elements.size() && i < value.elements.size() &&
+           i < layout->fields.size();
+           ++i) {
+        auto field = host.layout(shape->elements[i].type);
+        auto offset = layout->fields[i];
+        if (field && offset < start + size && start < offset + field->size) {
+          auto begin = std::max(start, offset);
+          auto end = std::min(start + size, offset + field->size);
+          materializeBytes(value.elements[i], shape->elements[i].type,
+                           begin - offset, end - begin);
+        }
+      }
+    } else if (!value.bytes.empty()) {
+      auto provenance = value.bytes.front().provenance;
+      bool preserved =
+          provenance && (((shape->kind == Shape::Kind::Pointer ||
+                           shape->kind == Shape::Kind::Reference) &&
+                          (provenance->kind == Value::Kind::Pointer ||
+                           provenance->kind == Value::Kind::Reference)) ||
+                         provenance->type == type);
+      for (std::size_t i = 0; preserved && i < value.bytes.size(); ++i)
+        preserved = value.bytes[i].provenance == provenance &&
+                    value.bytes[i].index == i;
+      if (preserved) {
+        auto bytes = std::move(value.bytes);
+        value = *provenance;
+        value.type = type;
+        value.bytes = std::move(bytes);
+        if (shape->kind == Shape::Kind::Pointer ||
+            shape->kind == Shape::Kind::Reference) {
+          value.kind = shape->kind == Shape::Kind::Pointer
+                           ? Value::Kind::Pointer
+                           : Value::Kind::Reference;
+          value.exclusive = shape->exclusive;
+        }
+        return;
+      }
+      if ((shape->kind == Shape::Kind::Pointer ||
+           shape->kind == Shape::Kind::Reference) &&
+          std::all_of(
+              value.bytes.begin(), value.bytes.end(),
+              [](const auto &byte) { return byte.value.has_value(); })) {
+        auto wordSize = options.pointerBits / 8;
+        auto word = [&](std::size_t offset) {
+          std::uint64_t result = 0;
+          for (std::size_t i = 0; i < wordSize; ++i) {
+            auto shift = options.littleEndian ? i : wordSize - i - 1;
+            result |= std::uint64_t{*value.bytes[offset + i].value}
+                      << (8 * shift);
+          }
+          return result;
+        };
+        auto bytes = std::move(value.bytes);
+        value = Value{};
+        value.type = type;
+        value.bytes = std::move(bytes);
+        value.kind = shape->kind == Shape::Kind::Pointer
+                         ? Value::Kind::Pointer
+                         : Value::Kind::Reference;
+        value.addressOnly = value.writable = true;
+        value.exclusive = shape->exclusive;
+        value.offset = word(0);
+        if (value.bytes.size() > wordSize)
+          value.count = word(wordSize);
+        return;
+      }
+      if (!isInteger(type) && !isFloating(type) && type != Type::Bool &&
+          type != Type::Char) {
+        value.kind = Value::Kind::Uninitialized;
+        return;
+      }
+      NumericLiteral bits;
+      bool valid = true;
+      for (std::size_t i = 0; i < value.bytes.size(); ++i) {
+        if (!value.bytes[i].value) {
+          valid = false;
+          break;
+        }
+        auto shift = options.littleEndian ? i : value.bytes.size() - i - 1;
+        bits.magnitude[shift / 8] |= std::uint64_t{*value.bytes[i].value}
+                                     << (shift % 8 * 8);
+      }
+      value.kind = Value::Kind::Uninitialized;
+      if (!valid)
+        return;
+      if (isInteger(type)) {
+        value.number = castInteger(bits, type, options.pointerBits);
+        value.kind = Value::Kind::Integer;
+      } else if (isFloating(type)) {
+        bits.floatingBits = bits.magnitude[0];
+        bits.magnitude = {};
+        value.number = bits;
+        value.kind = Value::Kind::Floating;
+      } else if (type == Type::Bool && bits.magnitude[0] <= 1) {
+        value.number = bits;
+        value.kind = Value::Kind::Bool;
+      } else if (type == Type::Char && bits.magnitude[0] <= 0x10ffff &&
+                 (bits.magnitude[0] < 0xd800 || bits.magnitude[0] > 0xdfff)) {
+        value.number = bits;
+        value.kind = Value::Kind::Char;
+      }
+    }
+  }
+  Opt readMemory(const Value &address, const Shape &shape, Span span,
+                 bool aligned = true, bool raw = false) {
+    auto layout = host.layout(shape.type);
+    if (!layout ||
+        !addressBounds(address, shape.type, layout->size, span, aligned))
+      return std::nullopt;
+    auto root = rootOf(address);
+    if (!root)
+      return readObject(address, shape, span);
+    if (auto found =
+            locate(*root, address.storageType, address.offset, shape.type)) {
+      if (!raw && !initialized(*found, span))
+        return std::nullopt;
+      return *found;
+    }
+    auto result = uninitialized(shape);
+    if (layout->size > options.stepBudget - steps)
+      return fail("limit", span, "constant read exceeds the step budget");
+    for (std::uint64_t i = 0; i < layout->size; ++i) {
+      auto byte =
+          storageByte(*root, address.storageType, address.offset + i, span);
+      auto destination = storageByte(result, shape.type, i, span);
+      if (!byte || !destination)
+        return std::nullopt;
+      *destination = *byte;
+    }
+    materializeBytes(result, shape.type);
+    if (!raw && !initialized(result, span))
+      return std::nullopt;
+    if (!raw && result.kind == Value::Kind::Reference &&
+        !validReference(result, span))
+      return std::nullopt;
+    return result;
+  }
+  bool writableMemory(const Value &address, Span span) {
+    auto root = rootOf(address);
+    if (!address.exclusive || !address.writable ||
+        (root && root->immutableLiteral)) {
+      fail("constant", span,
+           "constant write requires exclusive writable provenance");
+      return false;
+    }
+    return true;
+  }
+  bool writeMemory(const Value &address, const Value &value, Type type,
+                   Span span, bool aligned = true) {
+    auto layout = host.layout(type);
+    if (!layout || !writableMemory(address, span) ||
+        !addressBounds(address, type, layout->size, span, aligned))
+      return false;
+    auto root = rootOf(address);
+    if (!root)
+      return layout->size == 0;
+    if (auto target =
+            locate(*root, address.storageType, address.offset, type)) {
+      *target = value;
+      return true;
+    }
+    auto copy = value;
+    for (std::uint64_t i = 0; i < layout->size; ++i) {
+      auto from = storageByte(copy, type, i, span);
+      auto to =
+          storageByte(*root, address.storageType, address.offset + i, span);
+      if (!from || !to)
+        return false;
+      *to = *from;
+    }
+    materializeBytes(*root, address.storageType, address.offset, layout->size);
     return true;
   }
   bool validReference(const Value &address, Span span) {
@@ -1163,7 +1436,7 @@ private:
     auto target = pointee(address);
     if (!target)
       return unsupported(span, "this constant pointee");
-    return readObject(address, *target, span);
+    return readMemory(address, *target, span);
   }
   bool writeObject(const Value &address, const Value &value, Span span) {
     if (!address.exclusive || !address.writable) {
@@ -2084,6 +2357,35 @@ private:
     const auto &callee = *node.children[0];
     auto argumentType = typeArgument(callee, operation);
     auto name = operation.name;
+    std::optional<Value> pointerReceiver;
+    std::vector<Value> pointerArguments;
+    if (name.starts_with("ptr.") && name != "ptr.from_ref" &&
+        name != "ptr.from_mut") {
+      auto loadPointer = [&](const Value &value) -> Opt {
+        auto shape = value.kind == Value::Kind::Reference ? pointee(value)
+                                                          : std::nullopt;
+        return shape && shape->kind == Shape::Kind::Pointer
+                   ? readAddress(value, node.span)
+                   : Opt{value};
+      };
+      if (receiver) {
+        pointerReceiver = loadPointer(*receiver);
+        if (!pointerReceiver)
+          return std::nullopt;
+        receiver = &*pointerReceiver;
+      }
+      pointerArguments.assign(arguments.begin(), arguments.end());
+      for (std::size_t i = 0; i < pointerArguments.size(); ++i)
+        if (i == 0 || (i == 1 && (name == "ptr.copy" ||
+                                  name == "ptr.copy_nonoverlapping" ||
+                                  name == "ptr.swap"))) {
+          auto loaded = loadPointer(pointerArguments[i]);
+          if (!loaded)
+            return std::nullopt;
+          pointerArguments[i] = std::move(*loaded);
+        }
+      arguments = pointerArguments;
+    }
     if (name == "storage.new" || name == "storage.into_inner") {
       if (name == "storage.new") {
         auto target = host.typeShape(operation.type);
@@ -2163,25 +2465,39 @@ private:
       value.kind = Value::Kind::Pointer;
       value.exclusive = name == "ptr.from_mut" && value.exclusive;
       value.type = host.referenceType(target->type, value.exclusive, true);
+      value.bytes.clear();
       return value;
     }
-    if (name == "ptr.null" || name == "ptr.null_mut") {
+    if (name == "ptr.null" || name == "ptr.null_mut" ||
+        name == "ptr.without_provenance") {
       if (!argumentType)
         return unsupported(node.span, "this constant null pointer type");
       Value value;
       value.kind = Value::Kind::Pointer;
       value.addressOnly = true;
       value.exclusive = name == "ptr.null_mut";
+      value.writable = true;
+      if (name == "ptr.without_provenance") {
+        if (arguments.size() != 1 ||
+            arguments.front().kind != Value::Kind::Integer)
+          return fail("type", node.span, "pointer address requires usize");
+        value.offset = arguments.front().number.magnitude[0];
+      }
       value.type = host.referenceType(*argumentType, value.exclusive, true);
       return value;
     }
     if (receiver && receiver->kind == Value::Kind::Pointer) {
       auto value = *receiver;
+      value.bytes.clear();
       auto target = pointee(value);
       if (!target)
         return std::nullopt;
+      if (name == "ptr.is_null")
+        return boolValue(value.addressOnly && value.offset == 0);
       if (name == "ptr.cast" || name == "ptr.cast_const" ||
           name == "ptr.cast_mut") {
+        if (name == "ptr.cast")
+          value.count = 0;
         if (name == "ptr.cast_mut")
           value.exclusive = true;
         if (name == "ptr.cast_const")
@@ -2191,16 +2507,21 @@ private:
             value.exclusive, true);
         return value;
       }
-      if (name == "ptr.add" || name == "ptr.sub") {
+      if (name == "ptr.add" || name == "ptr.sub" || name == "ptr.offset" ||
+          name == "ptr.byte_add" || name == "ptr.byte_sub" ||
+          name == "ptr.byte_offset") {
         if (!unsafeDepth)
           return fail("unsafe", node.span,
                       "operation requires an unsafe block or unsafe function");
         if (arguments.size() != 1 || arguments[0].kind != Value::Kind::Integer)
           return fail("type", node.span, "pointer offset requires usize");
-        auto layout = host.layout(target->type);
+        auto layout = host.layout(name.starts_with("ptr.byte_") ? Type::U8
+                                                                : target->type);
         auto count = arguments[0].number;
-        if (!layout || count.negative || count.magnitude[1] ||
-            (layout->size && count.magnitude[0] > UINT64_MAX / layout->size))
+        auto limit =
+            integerMaximum(Type::Isize, options.pointerBits).magnitude[0];
+        if (!layout || count.magnitude[1] ||
+            (layout->size && count.magnitude[0] > limit / layout->size))
           return fail("constant", node.span,
                       "constant pointer offset overflow");
         auto bytes = count.magnitude[0] * layout->size;
@@ -2208,16 +2529,151 @@ private:
           return fail(
               "constant", node.span,
               "constant pointer arithmetic requires allocation provenance");
-        if ((name == "ptr.add" && bytes > UINT64_MAX - value.offset) ||
-            (name == "ptr.sub" && bytes > value.offset))
+        bool subtract =
+            count.negative != (name == "ptr.sub" || name == "ptr.byte_sub");
+        if ((!subtract && bytes > UINT64_MAX - value.offset) ||
+            (subtract && bytes > value.offset))
           return fail("constant", node.span,
                       "constant pointer offset overflow");
-        value.offset =
-            name == "ptr.add" ? value.offset + bytes : value.offset - bytes;
-        if (!addressBounds(value, target->type, 0, node.span))
+        value.offset = subtract ? value.offset - bytes : value.offset + bytes;
+        if (!addressBounds(value, Type::U8, 0, node.span, false))
           return std::nullopt;
         return value;
       }
+      if (name == "ptr.offset_from" || name == "ptr.offset_from_unsigned" ||
+          name == "ptr.byte_offset_from" ||
+          name == "ptr.byte_offset_from_unsigned") {
+        if (!unsafeDepth)
+          return fail("unsafe", node.span,
+                      "operation requires an unsafe block or unsafe function");
+        if (arguments.size() != 1 ||
+            arguments.front().kind != Value::Kind::Pointer)
+          return fail("type", node.span, "pointer distance requires an origin");
+        const auto &origin = arguments.front();
+        auto layout = host.layout(name.starts_with("ptr.byte_") ? Type::U8
+                                                                : target->type);
+        if (!layout || !layout->size)
+          return fail(
+              "constant", node.span,
+              "constant pointer distance requires a nonzero-sized type");
+        if (!sameAllocation(value, origin) ||
+            (value.addressOnly && value.offset != origin.offset))
+          return fail("constant", node.span,
+                      "constant pointer distance requires common provenance");
+        if (!addressBounds(value, Type::U8, 0, node.span, false) ||
+            !addressBounds(origin, Type::U8, 0, node.span, false))
+          return std::nullopt;
+        bool negative = value.offset < origin.offset;
+        auto bytes = negative ? origin.offset - value.offset
+                              : value.offset - origin.offset;
+        auto limit =
+            integerMaximum(Type::Isize, options.pointerBits).magnitude[0];
+        if (bytes > limit || bytes % layout->size ||
+            (name.ends_with("_unsigned") && negative))
+          return fail("constant", node.span,
+                      "constant pointer distance is outside its result domain");
+        auto result = integerLiteral(bytes / layout->size);
+        result.negative = negative && bytes != 0;
+        return integerValue(
+            name.ends_with("_unsigned") ? Type::Usize : Type::Isize, result);
+      }
+    }
+    if (name == "ptr.read" || name == "ptr.read_unaligned" ||
+        name == "ptr.write" || name == "ptr.write_unaligned" ||
+        name == "ptr.copy" || name == "ptr.copy_nonoverlapping" ||
+        name == "ptr.swap" || name == "ptr.write_bytes") {
+      if (!unsafeDepth)
+        return fail("unsafe", node.span,
+                    "operation requires an unsafe block or unsafe function");
+      auto operands = std::vector<Value>(arguments.begin(), arguments.end());
+      if (receiver)
+        operands.insert(operands.begin(), *receiver);
+      if (operands.empty() || operands.front().kind != Value::Kind::Pointer)
+        return fail("type", node.span, "memory operation requires a pointer");
+      auto address = operands.front();
+      auto target = pointee(address);
+      auto layout = target ? host.layout(target->type) : std::nullopt;
+      if (!target || !layout)
+        return unsupported(node.span, "this constant memory layout");
+      if (name == "ptr.read" || name == "ptr.read_unaligned")
+        return readMemory(address, *target, node.span, name == "ptr.read");
+      if (name == "ptr.write" || name == "ptr.write_unaligned") {
+        if (operands.size() != 2)
+          return fail("type", node.span, "pointer write requires one value");
+        return writeMemory(address, operands[1], target->type, node.span,
+                           name == "ptr.write")
+                   ? Opt{unitValue()}
+                   : std::nullopt;
+      }
+      if (name == "ptr.swap") {
+        if (operands.size() != 2)
+          return fail("type", node.span, "pointer swap requires two pointers");
+        auto first = readMemory(address, *target, node.span, true, true);
+        auto second = readMemory(operands[1], *target, node.span, true, true);
+        if (!first || !second ||
+            !writeMemory(address, *second, target->type, node.span) ||
+            !writeMemory(operands[1], *first, target->type, node.span))
+          return std::nullopt;
+        return unitValue();
+      }
+      if (operands.size() != 3 || operands[2].kind != Value::Kind::Integer)
+        return fail("type", node.span, "memory operation requires a count");
+      const auto count = operands[2].number;
+      if (count.negative || count.magnitude[1] ||
+          (layout->size &&
+           count.magnitude[0] >
+               integerMaximum(Type::Isize, options.pointerBits).magnitude[0] /
+                   layout->size))
+        return fail("constant", node.span, "constant memory extent overflow");
+      const auto size = count.magnitude[0] * layout->size;
+      auto destination = name == "ptr.write_bytes" ? address : operands[1];
+      if (!addressBounds(address, target->type, size, node.span) ||
+          !addressBounds(destination, target->type, size, node.span) ||
+          !writableMemory(destination, node.span))
+        return std::nullopt;
+      if (!size)
+        return unitValue();
+      if (name == "ptr.write_bytes") {
+        auto root = rootOf(destination);
+        for (std::uint64_t i = 0; i < size; ++i) {
+          auto to = storageByte(*root, destination.storageType,
+                                destination.offset + i, node.span);
+          if (!to)
+            return std::nullopt;
+          *to = {static_cast<std::uint8_t>(operands[1].number.magnitude[0]),
+                 {},
+                 0};
+        }
+        materializeBytes(*root, destination.storageType, destination.offset,
+                         size);
+        return unitValue();
+      }
+      if (name == "ptr.copy_nonoverlapping" &&
+          sameAllocation(address, destination) &&
+          (address.offset < destination.offset
+               ? destination.offset - address.offset < size
+               : address.offset - destination.offset < size))
+        return fail("constant", node.span,
+                    "constant nonoverlapping copy has overlapping ranges");
+      if (count.magnitude[0] > options.stepBudget - steps)
+        return fail("limit", node.span,
+                    "constant copy exceeds the step budget");
+      std::vector<Value> copied;
+      for (std::uint64_t i = 0; i < count.magnitude[0]; ++i) {
+        auto source = address;
+        source.offset += i * layout->size;
+        auto item = readMemory(source, *target, node.span, true, true);
+        if (!item)
+          return std::nullopt;
+        copied.push_back(std::move(*item));
+      }
+      for (std::size_t i = 0; i < copied.size(); ++i) {
+        auto to = destination;
+        to.offset += i * layout->size;
+        if (!writeMemory(to, copied[i], target->type, node.span))
+          return std::nullopt;
+      }
+      return unitValue();
     }
     if (name == "mem.transmute") {
       if (!unsafeDepth)
@@ -2262,6 +2718,7 @@ private:
           return unsupported(node.span, "this constant pointer representation");
         value.type = target->type;
         value.exclusive = target->exclusive;
+        value.bytes.clear();
         return value;
       }
       if (target->kind == Shape::Kind::Product &&
@@ -2275,6 +2732,7 @@ private:
         auto count = integerValue(Type::Usize, integerLiteral(value.count));
         value.type = target->elements[0].type;
         value.exclusive = target->elements[0].exclusive;
+        value.bytes.clear();
         raw.elements = {std::move(value), std::move(count)};
         return raw;
       }

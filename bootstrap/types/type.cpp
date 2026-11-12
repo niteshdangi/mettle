@@ -428,10 +428,17 @@ Type TypeStore::regionalProduct(Type origin, std::vector<TypeField> fields,
   auto record = product(origin);
   normalizedFields |= record.normalizedFields;
   if (record.kind == AggregateKind::Cell ||
-      record.kind == AggregateKind::RefCell ||
-      record.kind == AggregateKind::Ref || record.kind == AggregateKind::RefMut)
+      record.kind == AggregateKind::RefCell)
     return structural(record.kind,
                       {fields.at(cellPayloadField(record.kind)).type});
+  if (record.kind == AggregateKind::Ref ||
+      record.kind == AggregateKind::RefMut) {
+    auto authority = view(record.components.at(0));
+    auto region = view(fields.at(0).type).region;
+    auto payload = pointer(fields.at(1).type).payload;
+    auto cell = structural(AggregateKind::RefCell, {payload});
+    return structural(record.kind, {viewType(cell, authority.mode, region)});
+  }
   if (record.kind == AggregateKind::Tuple) {
     record.components.clear();
     for (const auto &field : fields)

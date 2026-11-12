@@ -17,6 +17,11 @@ namespace mettle::evaluation {
 // A compile-time value. Integers carry 128-bit magnitudes; `type` is Unknown
 // for an unsuffixed literal that has not met a typed operand yet.
 struct Value {
+  struct Byte {
+    std::optional<std::uint8_t> value{};
+    std::shared_ptr<const Value> provenance{};
+    std::uint64_t index = 0;
+  };
   enum class Kind {
     Integer,
     Floating,
@@ -36,6 +41,7 @@ struct Value {
   Type type = Type::Unit;
   NumericLiteral number{};
   std::vector<Value> elements{};
+  std::vector<Byte> bytes{};
   std::weak_ptr<Value> storage{};
   Type storageType = Type::Unknown;
   std::uint64_t offset = 0, count = 0;

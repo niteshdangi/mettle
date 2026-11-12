@@ -80,29 +80,29 @@ extend<T: unsized> NonNull<T> {
     }
 
     // Safety: the result must remain within or one past the allocated object.
-    pub unsafe fn byte_add(count: usize): NonNull<T> {
+    pub unsafe const fn byte_add(count: usize): NonNull<T> {
         NonNull(unsafe { self.pointer.byte_add(count) })
     }
 
     // Safety: the result must remain within or one past the allocated object.
-    pub unsafe fn byte_sub(count: usize): NonNull<T> {
+    pub unsafe const fn byte_sub(count: usize): NonNull<T> {
         NonNull(unsafe { self.pointer.byte_sub(count) })
     }
 
     // Safety: the result must remain within or one past the allocated object.
-    pub unsafe fn byte_offset(count: isize): NonNull<T> {
+    pub unsafe const fn byte_offset(count: isize): NonNull<T> {
         NonNull(unsafe { self.pointer.byte_offset(count) })
     }
 
     // Safety: pointers must share an allocation and their byte distance fit `isize`.
-    pub unsafe fn byte_offset_from<U: unsized>(origin: NonNull<U>): isize {
+    pub unsafe const fn byte_offset_from<U: unsized>(origin: NonNull<U>): isize {
         unsafe {
             self.pointer.cast<u8>().byte_offset_from(origin.pointer.cast<u8>())
         }
     }
 
     // Safety: same-allocation byte distance must be nonnegative and fit `isize`.
-    pub unsafe fn byte_offset_from_unsigned<U: unsized>(origin: NonNull<U>): usize {
+    pub unsafe const fn byte_offset_from_unsigned<U: unsized>(origin: NonNull<U>): usize {
         unsafe {
             self.pointer.cast<u8>().byte_offset_from_unsigned(origin.pointer.cast<u8>())
         }
@@ -171,13 +171,13 @@ extend<T> NonNull<T> {
         NonNull(core.ptr.with_exposed_provenance<T>(address.get()).cast_mut())
     }
 
-    pub static fn without_provenance(
+    pub static const fn without_provenance(
         address: core.num.NonZero<usize>
     ): NonNull<T> {
         NonNull(core.ptr.without_provenance<T>(address.get()).cast_mut())
     }
 
-    pub static fn dangling(): NonNull<T> {
+    pub static const fn dangling(): NonNull<T> {
         let address = unsafe {
             core.num.NonZero<usize>.new_unchecked(core.mem.align_of<T>())
         }
@@ -225,7 +225,7 @@ extend<T> NonNull<T> {
         target.wrapping_mul(inverse) % modulus
     }
 
-    pub static fn slice_from_raw_parts(data: NonNull<T>, length: usize): NonNull<[T]> {
+    pub static const fn slice_from_raw_parts(data: NonNull<T>, length: usize): NonNull<[T]> {
         let raw = RawSlice(data.pointer, length)
         // The transmute relies on slice-pointer metadata being a trailing element count.
         NonNull(unsafe { core.mem.transmute<ptr<mut [T]>>(raw) })
@@ -242,27 +242,27 @@ extend<T> NonNull<T> {
     }
 
     // Safety: the result must remain within or one past the allocated object.
-    pub unsafe fn offset(count: isize): NonNull<T> {
+    pub unsafe const fn offset(count: isize): NonNull<T> {
         NonNull(unsafe { self.pointer.offset(count) })
     }
 
     // Safety: pointers must share an allocation and their distance fit `isize`.
-    pub unsafe fn offset_from(origin: NonNull<T>): isize {
+    pub unsafe const fn offset_from(origin: NonNull<T>): isize {
         unsafe { self.pointer.offset_from(origin.pointer) }
     }
 
     // Safety: same-allocation element distance must be nonnegative and fit `isize`.
-    pub unsafe fn offset_from_unsigned(origin: NonNull<T>): usize {
+    pub unsafe const fn offset_from_unsigned(origin: NonNull<T>): usize {
         unsafe { self.pointer.offset_from_unsigned(origin.pointer) }
     }
 
     // Safety: the pointer must address initialized, aligned storage for `T`.
-    pub unsafe fn `read`(): T {
+    pub unsafe const fn `read`(): T {
         unsafe { core.ptr.`read`(self.pointer.cast_const()) }
     }
 
     // Safety: the pointer must address initialized storage for `T`.
-    pub unsafe fn read_unaligned(): T {
+    pub unsafe const fn read_unaligned(): T {
         unsafe { core.ptr.read_unaligned(self.pointer.cast_const()) }
     }
 
@@ -272,12 +272,12 @@ extend<T> NonNull<T> {
     }
 
     // Safety: aligned writable `T` storage is required; any old value must be handled.
-    pub unsafe fn write(take value: T): Unit {
+    pub unsafe const fn write(take value: T): Unit {
         unsafe { core.ptr.write(self.pointer, value) }
     }
 
     // Safety: writable `T` storage is required; any old value must be handled.
-    pub unsafe fn write_unaligned(take value: T): Unit {
+    pub unsafe const fn write_unaligned(take value: T): Unit {
         unsafe { core.ptr.write_unaligned(self.pointer, value) }
     }
 
@@ -287,41 +287,41 @@ extend<T> NonNull<T> {
     }
 
     // Safety: range must be aligned and writable; each resulting `T` must be valid.
-    pub unsafe fn write_bytes(value: u8, count: usize): Unit {
+    pub unsafe const fn write_bytes(value: u8, count: usize): Unit {
         unsafe { self.pointer.write_bytes(value, count) }
     }
 
     // Safety: the pointer must address initialized, aligned storage for `T`.
-    pub unsafe fn replace(take value: T): T {
+    pub unsafe const fn replace(take value: T): T {
         let previous = unsafe { core.ptr.`read`(self.pointer.cast_const()) }
         unsafe { core.ptr.write(self.pointer, value) }
         previous
     }
 
     // Safety: both pointers must address initialized, aligned writable `T` storage.
-    pub unsafe fn swap(other: NonNull<T>): Unit {
+    pub unsafe const fn swap(other: NonNull<T>): Unit {
         unsafe { core.ptr.swap(self.pointer, other.pointer) }
     }
 
     // Safety: valid aligned ranges; caller must preserve initialization/drop ownership.
-    pub unsafe fn copy_from(source: NonNull<T>, count: usize): Unit {
+    pub unsafe const fn copy_from(source: NonNull<T>, count: usize): Unit {
         unsafe { core.ptr.`copy`(source.pointer.cast_const(), self.pointer, count) }
     }
 
     // Safety: valid aligned disjoint ranges; preserve initialization/drop ownership.
-    pub unsafe fn copy_from_nonoverlapping(source: NonNull<T>, count: usize): Unit {
+    pub unsafe const fn copy_from_nonoverlapping(source: NonNull<T>, count: usize): Unit {
         unsafe {
             core.ptr.copy_nonoverlapping(source.pointer.cast_const(), self.pointer, count)
         }
     }
 
     // Safety: valid aligned ranges; caller must preserve initialization/drop ownership.
-    pub unsafe fn copy_to(destination: NonNull<T>, count: usize): Unit {
+    pub unsafe const fn copy_to(destination: NonNull<T>, count: usize): Unit {
         unsafe { core.ptr.`copy`(self.pointer.cast_const(), destination.pointer, count) }
     }
 
     // Safety: valid aligned disjoint ranges; preserve initialization/drop ownership.
-    pub unsafe fn copy_to_nonoverlapping(destination: NonNull<T>, count: usize): Unit {
+    pub unsafe const fn copy_to_nonoverlapping(destination: NonNull<T>, count: usize): Unit {
         unsafe {
             core.ptr.copy_nonoverlapping(self.pointer.cast_const(), destination.pointer, count)
         }
@@ -329,10 +329,10 @@ extend<T> NonNull<T> {
 }
 
 extend<T> NonNull<[T]> {
-    pub fn len(): usize {
+    pub const fn len(): usize {
         let raw = unsafe { core.mem.transmute<RawSlice<T>>(self.pointer) }
         raw.length
     }
 
-    pub fn is_empty(): bool { self.len() == 0usize }
+    pub const fn is_empty(): bool { self.len() == 0usize }
 }

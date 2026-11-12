@@ -14,11 +14,12 @@
 namespace {
 bool accepted(const std::string &text, unsigned pointerBits,
               std::string *message = nullptr,
-              std::uint64_t *firstStatic = nullptr) {
+              std::uint64_t *firstStatic = nullptr, bool littleEndian = true) {
   mettle::Diagnostics diagnostics;
   auto parsed = mettle::parse({"constants.mt", text}, diagnostics);
   mettle::TargetFacts target;
   target.pointerBits = pointerBits;
+  target.littleEndian = littleEndian;
   auto checked = mettle::check(std::move(parsed), diagnostics, false, target);
   if (message && !diagnostics.items.empty())
     *message = diagnostics.items[0].message;
@@ -235,5 +236,17 @@ int main() {
   expect(accepted(cast, 32, nullptr, &value) && value == 1,
          "u64 to usize truncates on 32 bits");
   importedConstants();
+  const std::string memory =
+      "const fn bytes(): u32 { var data = [1u8, 2u8, 3u8, 4u8, 5u8]; "
+      "let p = core.ptr.from_mut(mut data).cast<u8>(); "
+      "unsafe { core.ptr.read_unaligned(p.add(1usize).cast<u32>()) } }\n"
+      "const VALUE: u32 = bytes();\n";
+  for (auto width : {32u, 64u}) {
+    expect(accepted(memory, width, nullptr, &value) && value == 0x05040302,
+           "unaligned constant loads use little-endian target bytes");
+    expect(accepted(memory, width, nullptr, &value, false) &&
+               value == 0x02030405,
+           "unaligned constant loads use big-endian target bytes");
+  }
   return failures == 0 ? 0 : 1;
 }
