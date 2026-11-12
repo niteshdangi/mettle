@@ -1346,27 +1346,3 @@ The following are concrete limits to complete core/alloc retirement:
   compiler-facility coverage is not established by this document.
   Unsupported target/compiler features remain implementation gaps rather
   than changing the language or library contracts.
-
-### 15.3. Observed reconciliation work
-
-Source inspection, not execution, found these mismatches requiring separate
-implementation/acceptance work:
-
-- `library/core/unicode_data.mt` declares Unicode 16.0.0; the selected property
-  and case contract here requires Unicode 17.0.0.
-- `library/core/cmp.mt` clamp does not check reversed bounds before selection.
-  Its `Ordering.then_with` uses a read-callable signature where the contract
-  must accept a consume-callable one-shot callback.
-- Several iterator terminal methods in `library/core/iter.mt` use mutable
-  rather than consuming receiver declarations; review their public access
-  contract rather than treating currently accepted calls as authority.
-- `library/core/future.mt` Waker.will_wake compares only data addresses;
-  unrelated vtables can share an address, so true needs stronger task-identity
-  evidence. Source Poll mapping callbacks likewise need one-shot capability
-  review.
-- `library/core/hash.mt` describes a fixed zero-key default hash and portable
-  integer encoding. That is not evidence of randomized collision protection
-  for Map, nor closure of prefix-separated structural hashing.
-
-These observations do not redefine a contract to match current bodies.
-No build, execution, sanitizer, constant or profile qualification is claimed.

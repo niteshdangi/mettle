@@ -239,9 +239,6 @@ boundaries or self-compilation alone establish no performance or safety claim.
 
 ### 1.2. Approved bootstrap compiled-interface work
 
-Status: checked `core`/`alloc`/`std` reuse is implemented. Focused cross-consumer
-interface/native-object, debug/Release, invalidation, macro, coroutine and
-diagnostic-parity checks pass. This is not whole-main qualification.
 The owner permits the C++ bootstrap work needed for this reusable boundary;
 this is not permission for unrelated bootstrap tuning or a test-only cache.
 The first delivery must reuse checked `core` across different consumers.
@@ -366,7 +363,6 @@ failures stop compilation rather than silently switching emission paths.
 Coroutine frames use logical body identities. In split emission their body and
 unwind callbacks have hidden external linkage, and only the partition owning
 the coroutine body emits those definitions; layout-only users emit declarations.
-The focused receipts and remaining qualification scope are recorded in I09.
 Cold source failures retain their original phase, source spans, related notes
 and generated-source provenance when forwarded into consumer diagnostics.
 
@@ -1045,8 +1041,8 @@ Pinned `Future.poll` through `any Future<Output = T>` requires a fixed associate
 output. Borrowed dispatch is distinct from the explicit Static heap owner
 `alloc.future.Erased<T>` with typed poll/release callbacks and from
 `Box<any Future>`'s general unsizing/drop path. Erased async-interface returns
-still need an explicit source future-storage contract. Verification and open
-items are in implementation-plan section 8.4.
+still need an explicit source future-storage contract. Open items are tracked
+in implementation-plan section 8.4.
 
 The shared interfaces must be implemented together, not enabled one at a time
 for source programs:
@@ -1306,8 +1302,8 @@ initialization, checked-tree lifetime/moves, immutable spelling, in-memory UTF-8
 and rejection before verified publication. Frontend/IR/analysis compilation
 receives no LLVM includes; the standalone boundary executable has no LLVM
 symbol dependency. The separate historical dependency checker is retired.
-Revision-bound I03/I05 qualification is recorded once in implementation-plan
-section 8.2, not inferred from component counts.
+Qualification is revision-bound evidence (implementation-plan section 9), not
+inferred from component counts.
 
 ## F-string lowering
 

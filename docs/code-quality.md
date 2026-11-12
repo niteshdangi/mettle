@@ -146,7 +146,7 @@ ASan/UBSan compiler runs are required for new memory/unsafe work and before
 ownership-milestone closure. They instrument project C++ code, not the prebuilt
 LLVM libraries or automatically every emitted Mettle program. The driver now
 has opt-in `--sanitize address|thread` instrumentation for emitted Mettle
-programs, verified on macOS arm64 by `probe.sanitizers`.
+programs.
 The emitted-IR backend does not yet provide UBSan instrumentation:
 `--sanitize undefined` is rejected rather than promising checks that are not
 emitted. ThreadSanitizer, race/model checks and target-specific probes are
@@ -157,36 +157,10 @@ tests expecting ordinary exit status 1 cannot count a report as a passing case.
 Sanitizer startup must pass before analysis/test execution; a failed startup is
 a failed sanitizer gate, never an exemption or evidence of memory safety.
 
-`tests/backend/memory.py` checks the emitted atomic code with the pinned TSan
-runtime. It first requires a clean startup and an actual intentional-race report
-with exit status 99. A test-only copy of emitted LLVM receives `sanitize_thread`
-function attributes and is instrumented at `-O1`; original IR and source hashes
-are retained. Independent C++ thread cases exercise release/acquire publication,
-acquiring failed CAS and a sequential-consistency store-buffering litmus, with
-an enumerated SC model excluding the forbidden outcome. This is not a complete
-memory-model proof or blanket TSan coverage of the compiler, libraries or
-uninstrumented emitted programs. Native thread implementation still requires
-its own race/failure validation when it lands.
+Memory-model checks use independent models and the pinned TSan runtime; they are
+not a complete memory-model proof or blanket TSan coverage. Native thread
+implementations need their own race and failure validation.
 
-Historical I06 ASan/UBSan requalification found and repaired an erased-type-store
-reference invalidated by interning in `checkInterfaceContracts`;
-`generic-iteration-through-family-bounded-protocols` guards that failure.
-The 26-suite run, 15,000 mutation runs and emitted threaded checks are historical
-macOS evidence, not current qualification. Retired `mutex_poison.mt` recovery
-checks now reside in `tests/std/i13-sync-mutex-rwlock.mt`.
-
-LLVM 21.1.8 ASan stalled before `main` on macOS 27.0.1 during dyld/malloc
-initialization. The matching
-[upstream fix](https://github.com/llvm/llvm-project/pull/182943) was
-[backported to LLVM 22](https://github.com/llvm/llvm-project/pull/188913).
-LLVM/Clang/compiler-rt are now pinned together to 22.1.3, which includes that
-backport; CMake/Ninja and language contracts are unchanged.
-The historical compatibility gate passed nine suites, including actual ASan
-heap-overflow and UBSan signed-overflow detector reports with exit status 99.
-`abort_on_error=0` selects that exit behavior on Darwin; `halt_on_error=1` and
-nonrecovering instrumentation remain enabled. The 15-second startup guard and
-ordinary negative-test expectations remain unchanged.
-Clean-build/tool/runtime hashes and logs are recorded by `tools/build.py`.
 Do not silently substitute host runtimes, disable ASan, inject a private dyld
 shim, or change toolchain pins without an explicit compatibility decision.
 

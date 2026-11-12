@@ -9,6 +9,11 @@ nondeprecated stable records of `baseline/operations.jsonl.gz`; behavioral rules
 are native here. Reexports in `prelude`, `unix.io` and `wasi.io` preserve identity,
 not independent resource types.
 
+V1 gate: only Linux (and the portable core of each family) is exercised for V1.
+Sections specific to Windows, macOS, Android, WASI or other profiles are
+post-V1 obligations ([post-v1-worklist.md](post-v1-worklist.md)); they define
+contracts but are not V1 acceptance requirements.
+
 ## 1. Platform applicability and common rules
 
 Unix families apply to the selected Linux, macOS and Android profiles only where
@@ -446,24 +451,12 @@ The bounded adapter follow-up additionally fixes the contract of:
   section 7.3 native join/detach obligation versus separately cleaned Mettle
   result/panic packet.
 
-Primary OS authorities for platform effects include
+Primary OS authorities for platform effects are the
 [POSIX system interfaces](https://pubs.opengroup.org/onlinepubs/9799919799/functions/contents.html),
 the [Linux man-pages](https://www.kernel.org/doc/man-pages/),
 [Win32 file handling](https://learn.microsoft.com/en-us/windows/win32/fileio/file-management-functions),
 [CreateProcessW](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw)
 and the
 [WASI Preview 1 interface](https://github.com/WebAssembly/WASI/blob/main/legacy/preview1/docs.md).
-They supply OS effects under the selected SDK/runtime, not replacement Mettle
-signatures or ownership rules. Migration evidence also includes targeted HTML
-from the verified 1.99.1 documentation archive: Unix/Windows FileExt/OpenOptionsExt,
-CommandExt, OS strings and descriptor families. No external implementation bug
-or current Mettle implementation limitation overrides the native safety rules.
-The adapter follow-up used archived `std/os/fd/owned.rs`,
-`std/os/unix/thread.rs`, `std/thread/lifecycle.rs`, `std/sys/thread/unix.rs`,
-`std/sys/process/unix/unix.rs`, `std/sys/fs/unix.rs` and WASI extension pages.
-Windows-only internal source missing from that Linux documentation bundle was
-read at the matching pinned revision `58cf8f9c3`, specifically
-`library/std/src/os/windows/io/{handle.rs,raw.rs,socket.rs}` and
-`library/std/src/sys/{process/windows.rs,fs/windows.rs,net/connection/socket/windows.rs}`.
-No current-head source or broad target-family assumption fills a source-specific
-precondition.
+They supply OS effects under the selected SDK/runtime, not Mettle signatures,
+ownership rules or safety rules.

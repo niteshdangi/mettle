@@ -290,22 +290,8 @@ partial mutation on failure, returned-view regions and zero-or-one iteration.
 Include non-Copy payloads, destructor/callback panics and required-constant
 pass/fail cases. An implementation lacking these contracts remains partial.
 
-Existing source fixtures include
-[optional operations](../tests/source/run/i13-option-operations.mt) and
-[outcome operations](../tests/source/run/i13-outcome-operations.mt).
-They are candidate acceptance inputs, not a newly executed receipt.
-Current method bodies alone do not establish callable-capability, Debug-bound,
-both-view-variant or constant-evaluation closure.
-
-Source review identifies concrete reconciliation work:
-[core.option](../library/core/option.mt) declares several callbacks using
-read-callable function types and provides optional duplication declarations for
-read views, without separate exclusive-view declarations.
-[core.outcome](../library/core/outcome.mt) checked extraction bodies currently
-report fixed text or the supplied message without the rejected payload's Debug
-formatting or explicit Debug bounds. Verify accepted callback/view adaptations
-and complete the selected extraction contracts before claiming operation closure.
-No compiler/library execution was performed by this specification change.
+Candidate acceptance inputs: [optional operations](../tests/source/run/i13-option-operations.mt)
+and [outcome operations](../tests/source/run/i13-outcome-operations.mt).
 
 The contract covers only operations listed here. Named iterator types and the
 explicitly described protocol/collection implementations have separate

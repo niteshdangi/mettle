@@ -474,8 +474,8 @@ library-enum variants; user and library enums require qualification.
 
 ### 13.4. Constructor selection
 
-`List<T, A = Global>` is contiguous and growable; `Map<K,V,A = Global>` and
-`Set<T,A = Global>` are hash-based with unspecified iteration order;
+`List<T, A = Global>` is contiguous and growable; `Map<K,V,S,A = Global>` and
+`Set<T,S,A = Global>` (hash builder S defaults per D30) are hash-based with unspecified iteration order;
 `SortedMap`, `SortedSet`, `LinkedList` and `Deque` remain explicit
 alternatives. Empty ordinary construction allocates no storage.
 

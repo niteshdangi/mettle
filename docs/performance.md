@@ -170,27 +170,20 @@ The user build cache is built to retain less than Cargo's `target/` directory:
 Accounting uses logical file sizes; allocated bytes are at least as large, so
 the gate comparison must use allocated bytes per the definition above.
 The driver leases its active whole-build key; pruning preserves leased entries
-and `clean` refuses live leases. macOS ARM64 behavioral receipts for leases and
-dependency-object reuse are in implementation-plan section 8.4; current Linux
-requalification remains separate.
+and `clean` refuses live leases.
 
-For eligible debug executable builds, the loader and IR preserve package
-ownership through specialization. Each dependency object contains only
-non-generic, owner-unambiguous package functions/statics; generic instances,
-synthesized helpers, ambiguous ownership and the executable wrapper remain in
-the root object. Cross-object references are external and use stable
-package-instance symbols. Release and non-executable builds, debug-info,
-sanitizer, harness, freestanding or package-context builds, global assembly
-and uncertain/generated inputs use the single-object path. Package keys
-include exact source checksums, resolved dependency object keys, compiler
-identity, target, profile, features and codegen options. Package artifacts are
-staged and hashed outside the store lock, then batch-published and pruned
-under one store lock per build; lookup does not hold a per-package lease, so
-concurrent pruning can only cause a safe cache miss. Corrupt blobs fail
-checksum verification and are rebuilt. The new `object_cache_integrity` case
-covers dependency-object reuse after a root-only edit, clean/incremental output
-equivalence and corruption recovery. Parsing/later front-end phases still run
-whole-program; retained-byte and compile-time advantages require measurement.
+For eligible debug executable builds, dependency objects contain only
+non-generic, owner-unambiguous package functions and statics. Generic instances,
+synthesized helpers, ambiguous ownership and the executable wrapper stay in the
+root object, and cross-object references use stable package-instance symbols.
+Release, non-executable, debug-info, sanitizer, harness, freestanding,
+package-context, global-assembly and uncertain/generated-input builds use the
+single-object path. Package keys include exact source checksums, resolved
+dependency object keys, compiler identity, target, profile, features and codegen
+options. Artifacts are staged and hashed outside the store lock and published in
+one batch per build; concurrent pruning can only cause a safe miss, and corrupt
+blobs are rebuilt. Parsing and later front-end phases still run whole-program;
+retained-byte and compile-time advantages require measurement.
 
 ### 5.2. Compiler-work regression guard
 
@@ -212,75 +205,38 @@ development machine.
 
 ### 5.3. D17 comparison harness
 
-Status: implemented, not run; no comparison result.
-`tools/bench_compare.py` builds each paired workload with
+`tools/bench_compare.py` builds each paired workload from `benchmarks/<name>/`
+(Mettle `main.mt` and Rust `Cargo.toml`/`src/main.rs`) with
 `mettle build --profile release --overflow-checks off --cache-dir <fresh>` and
-`cargo build --release --offline` (fresh `CARGO_TARGET_DIR` and `CARGO_HOME`,
-no dependencies, `CARGO_INCREMENTAL=0`):
+`cargo build --release --offline` (fresh `CARGO_TARGET_DIR` and `CARGO_HOME`, no
+dependencies, `CARGO_INCREMENTAL=0`). Options and output format are documented
+by the tool's `--help`. Workloads cover the P01-P06 subsets the compiler
+supports; P07-P12 are added when comparable. Programs return a 7-bit checksum
+as exit status; the harness requires equal status and stdout from both
+languages for the clean and the semantically edited build.
 
-```
-python3 tools/bench_compare.py --compiler build/macos-arm64/Release/mettle
-```
+Rust profile: `opt-level=3`, `debug=false`, `lto=false`, `codegen-units=16`,
+`panic=abort`, `overflow-checks=false`, `incremental=false`, edition 2024, host
+`target-cpu`. Per workload and repetition (randomized order) it records wall
+time of a clean build, a no-op rebuild, a comment-only edit, a semantic edit
+and check-only; compiler peak RSS; binary size; and allocated bytes
+(`st_blocks`) after the clean build and the edit sequence. Mettle's retained
+bytes are its cache store plus package-local `target/mettle` plus the output
+executable; Cargo's are the whole `target/`. Time endpoints use section 4
+(paired log ratios, Student-t, alpha = 0.05/K for K = workloads x six time
+endpoints); runtime passes on a win or a precise tie, compile-time metrics need
+a win; byte metrics compare medians and require stability within one percent.
+Without a qualified runner, 30 pairs and the frozen Rust toolchain the report is
+an engineering signal only. The section 5.2 instruction counters are not
+collected by this harness.
 
-Options: `--pairs N` (default 5; a release sample needs at least 30 plus a
-registered plan), `--runs`, `--warmup`, `--workloads a,b`,
-`--scale-modules 4,8,16,32 --scale-functions 50 [--scale-generic]`, `--seed`,
-`--keep-work`, `--qualified-runner` (operator assertion) and `--fail-on-gate`.
-Output goes to `build/bench-compare/` as `results.json` (raw samples, decisions)
-and `results.md`.
+### 5.4. Debug-build compile-time work
 
-Workloads live in `benchmarks/<name>/main.mt` with `rust/{Cargo.toml,src/main.rs}`
-and cover P01-P06 subsets that the current compiler supports: integer loops
-(`p01_int_loops`), floating point (`p02_float_kernel`), byte scanning
-(`p03_text_scan`), struct-heavy Rust `Vec` / Mettle `List` (`p04_struct_vec`), hash map
-(`p05_hash_map`) and generic monomorphization (`p06_generic_dispatch`). P07-P12
-need capabilities not yet comparable and are not included. Programs return a
-7-bit checksum as the exit status; the harness requires equal status and stdout
-from both languages, for the clean and the semantically edited build.
-Arithmetic is kept free of overflow so the explicit "overflow checks off"
-settings are identical in effect; Rust's default hasher differs from Mettle's.
-
-Rust profile: `opt-level=3`, `debug=false`, `lto=false`, `codegen-units=16`
-(Cargo's release defaults for LTO and units), `panic=abort`,
-`overflow-checks=false`, `incremental=false`, edition 2024, host
-`target-cpu`. Mettle release is the compiler default. Mettle workloads
-that are single crates make thin/fat LTO irrelevant; revisit if multi-crate
-corpora are added. The synthetic family generates N modules of M functions
-(plain call chains, or with `--scale-generic` one generic function monomorphized
-for M types per module) as a Mettle package and a Cargo crate.
-
-Per workload and repetition (Mettle and Rust in randomized order) it records
-wall time of a clean build, a no-op rebuild, a comment-only edit, a semantic
-edit (the literal on the `bench-edit-point` line is incremented) and
-`check`/`cargo check`; compiler peak RSS (`wait4`), binary size and allocated
-bytes (`st_blocks`) after the clean build and the edit sequence. Mettle's
-retained bytes are its `--cache-dir` store plus package-local `target/mettle`
-plus the output executable; Cargo's are the whole `target/`. Run time is the
-median of `--runs` executions per paired block after warmup, interleaved
-randomly. Time endpoints use section 4 (paired log ratios, Student-t,
-alpha = 0.05/K for K = workloads x six time endpoints); runtime passes on a win
-or a precise tie, compile-time metrics need a win; byte metrics compare
-medians and require stability within one percent. Without `--qualified-runner`
-and 30 pairs on the frozen Rust 1.99.1 the report states it is an engineering
-signal. Mettle caches whole programs, so its edit rebuilds are hits or full
-rebuilds rather than partial recompilation; peak scratch bytes and the
-section 5.2 instruction counters are not collected here.
-
-### 5.4. Loan-analysis compile-time work
-
-Implemented, unmeasured and unverified: `bootstrap/analysis/loans.cpp`
-reconstructs availability backward from fixed-point block output and filters live
-sets in place instead of retaining per-instruction `availableAfter` snapshots.
-Ownership results must be unchanged; no build/regression/timing receipt exists
-for this change.
-
-The reported debug/sanitizer compile-time baseline (~37 seconds versus 2.7
-seconds for Release) was not reproduced here. Debug object emission currently
-uses `CodeGenOptLevel::None` and does not run LLVM's per-module O2 pipeline.
-The compiler does not explicitly select FastISel or GlobalISel, and sanitizer
-instrumentation still runs in debug emission. No selector change was made
-without measured evidence across supported targets.
-Every symbolic body, including unused declarations, must still be checked.
+Debug object emission uses `CodeGenOptLevel::None` and does not run LLVM's
+per-module O2 pipeline; the compiler does not select FastISel or GlobalISel, and
+sanitizer instrumentation still runs in debug emission. Selector changes need
+measured evidence across supported targets. Every symbolic body, including
+unused declarations, must still be checked.
 
 ## 6. V1 / V1.1 / V1.2 evidence
 

@@ -5,6 +5,11 @@ qualification evidence. V1 executes on `linux-x64`. The other seven selected
 profiles remain obligations after V1; absence of a service on a profile does not
 remove that profile or make a valid operation invalid on another profile.
 
+V1 gate: only Linux (and the portable core of each family) is exercised for V1.
+Sections specific to Windows, macOS, Android, WASI or other profiles are
+post-V1 obligations ([post-v1-worklist.md](post-v1-worklist.md)); they define
+contracts but are not V1 acceptance requirements.
+
 ## 1. Scope, signatures and effects
 
 This document owns the hosted behavior of `std.io`, OS strings, paths, files,
@@ -80,7 +85,7 @@ cross-version byte-string compatibility promise. Payload formatters retain
 their own effects and costs. This does not weaken separately specified Display
 forms, such as numeric socket-address text, or the reversible native OS-string
 conversions. No additional Debug-text migration gate is required for these
-hosted types merely because their diagnostic rendering differs from upstream.
+hosted types merely because their diagnostic rendering is not a compatibility surface.
 
 ## 2. Hosted prerequisites
 
@@ -1260,25 +1265,4 @@ Address selectors apply to the canonical `core::net` definitions and matching
 | Hosted-type implementations of `core.fmt.Debug.fmt`, including address/time types | Section 1 diagnostic-format rules; no output-byte compatibility obligation |
 
 The parent authority register must link these sections before retiring any
-reference-owned fallback. No build, execution, sanitizer, implementation
-completeness or all-profile parity result is asserted by this specification.
-
-### Evidence used to author this contract
-
-The frozen operation catalog supplies declaration identities and eligibility.
-Targeted semantic inspection used the checksum-verified 1.99.1 documentation
-archive, specifically Reader/BufRead, BufferedWriter recovery, File locking and
-cloning, recursive deletion/copy, encoded OS strings, file-prefix parsing,
-environment mutation/path lists, thread/TLS access, Once, TCP timeouts, anonymous
-pipes and Unix/Windows file/process extensions. These are migration evidence;
-the native rules above, not an external language implementation or current
-Mettle implementation accident, define the assigned behavior.
-The bounded IP/path/thread follow-up inspected archived
-`src/core/net/ip_addr.rs.html`, `src/std/path.rs.html`,
-`src/std/thread/lifecycle.rs.html`, `src/std/sys/thread/unix.rs.html`,
-`src/std/sys/process/unix/unix.rs.html`, and the Windows process/prefix pages.
-Target-specific internal Windows source absent from the Linux documentation
-bundle was inspected at its same pinned source revision, `58cf8f9c3`:
-`library/std/src/sys/{args/windows.rs,process/windows.rs,path/windows.rs,path/windows_prefix.rs}`.
-Those source facts support the translated native rules; current upstream heads
-are not an alternative authority.
+reference-owned fallback.

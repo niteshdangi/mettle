@@ -575,6 +575,8 @@ Vacant `into_key` consumes the handle and returns its proposed K;
 returns an occupied handle. Lazy initializer panic leaves the entry vacant;
 the handle's key is cleaned normally. Entry interfaces require the actual
 map's key bounds, allocator and hash policy; they do not bypass lookups.
+Vacant insertion rechecks the proposed key rather than trusting a cached
+search across callbacks or interior-state changes.
 Raw-entry/cursor interfaces are not implied by this entry contract.
 
 ### 8.3. Hash Map
@@ -611,6 +613,9 @@ the table scans empty buckets; no O(len)-only requirement is weakened for
 ordered containers. A denser native implementation may be faster.
 `drain` empties entries while preserving allocation and yields owned pairs;
 dropping the drain destroys unyielded entries.
+Hash/equality callback counts are not stable API guarantees. Set union yields
+left-side keys without a membership lookup; difference never scans the right
+set after exhausting the left. Callback panics on necessary lookups propagate.
 
 `get_disjoint_mut<Q,const N>(keys: [read Q;N])` validates duplicates/overlap
 before returning independent optional exclusive value views.
@@ -910,24 +915,3 @@ inventory. In particular, full retirement still needs:
 - Full source-cfg applicability and target ABI/allocator/thread evidence
   on the seven non-V1 profiles. No platform coverage follows from portable
   prose alone.
-
-Concrete source reconciliation findings, not executed failures:
-
-- `library/alloc/alloc.mt` layout validation embeds a 64-bit isize maximum;
-  layout_from_size_align must use target isize::MAX. extend_layout currently
-  pads its final size, unlike the unpadded extend result specified in section
-  2; callers needing padding must request it explicitly.
-- The same file's Allocator.deallocate/grow/shrink declarations do not mark
-  their raw ownership preconditions unsafe, and grow does not enforce the
-  grow-only direction. A public safe caller must not be able to free arbitrary
-  storage by merely passing a raw pointer and a Layout.
-- `library/alloc/hash_map.mt` chooses a zero-key hash helper and exposes a
-  smaller generic policy shape than Map's full source-family builder surface.
-  Treat policy/constructor coverage as partial, not as an implicit random
-  default or missing-key guarantee under mismatched KeyView hashes.
-- `library/alloc/borrow.mt` supplies only slice Cow, is_borrowed, as_ref and
-  into_owned; BorrowedOrOwned/to_mut and its other member assignments remain
-  implementation/reconciliation work.
-
-No build, runtime, constant-evaluation, complexity benchmark, sanitizer or
-target qualification was performed while authoring these contracts.

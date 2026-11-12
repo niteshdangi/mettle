@@ -402,7 +402,7 @@ Its counts are inventory scope, not implementation or target-qualification
 receipts. Source-cfg applicability still requires review on each profile.
 
 A record from the pinned inventory is in the V1 subset when it is stable, not
-deprecated, applicable to the Darwin ARM64 target and not under `arch` or a
+deprecated, applicable to the gated `linux-x64` profile and not under `arch` or a
 non-Unix `os` module, and one of the following holds:
 
 - It is the declaration of a selected type or trait, or a selected free

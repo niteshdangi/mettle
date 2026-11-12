@@ -1,8 +1,9 @@
 # Packages, tools and development contracts
 
-Selected package/tool contracts and implemented subsets are distinguished below.
-Recorded verification is macOS arm64 unless stated otherwise; it does not
-qualify the gated Linux host. An installed toolchain remains unavailable.
+Package, tool and development-workflow contracts. Items described as limits are
+unsupported today and are not implied by the contract.
+
+## Implementation notes
 
 ### Unicode table generation (I07)
 
@@ -19,7 +20,7 @@ mapping: those mappings come from `UnicodeData.txt` and unconditional
 
 ### Emitted-program sanitizers (I10/I11)
 
-Implemented (`probe.sanitizers`): `mettle build`, `mettle run`
+`mettle build`, `mettle run`
 and `mettle test` accept `--sanitize address` or `--sanitize thread` for
 single-file and package inputs. The driver instruments emitted LLVM/object
 code, links the matching instrumented `alloc`, `panic`, `sys` and `thread`
@@ -34,7 +35,7 @@ itself, and this backend does not yet emit UBSan checks for other undefined
 operations; linking the UBSan runtime alone would not instrument emitted code.
 The emitted backend does not provide UBSan or cross-target qualification.
 
-### 1.1. Implemented subset (I09 T001)
+### Package planning subset (I09 T001)
 
 `mettle check|build DIR_OR_package.mettle` plans the package in the `packages`
 component, then compiles the selected entry with each resolved
@@ -92,8 +93,6 @@ bindings take precedence; `package.name` remains an optional root qualifier.
   their build-script outputs use separate writable package views. Optional build-dependencies are
   rejected. Compiled Mettle interface output (`emit: "package"`) requires the
   self-hosted compiler and reports `error[feature]`; source libraries work today.
-  Evidence: `tests/packages.py` cases `coexisting_versions`, `git_source`,
-  `host_target_separation` (Release); T002/T003 passed Debug and Release.
 
 ### Build scripts (T002)
 
@@ -129,9 +128,6 @@ Reuse follows section 2's host-execution contract, including the script binary,
 target/profile/features, declared input hashes/variables and generated-file hashes.
 
 ### Procedural macros (L056)
-
-Implemented; evidence: `procedural_macro` and `procedural_macro_failure` in
-`tests/packages.py`.
 
 A package declares host-program macros in `package.mettle`:
 
@@ -220,8 +216,6 @@ can therefore turn a lookup into a safe miss, but cannot change build output.
 The whole-build key retains its existing live lease; `clean` refuses to remove
 a store with live leases.
 
-Evidence: `object_cache_integrity` covers root-only edits, clean/incremental
-output equality and corrupt-object regeneration (Release).
 `--no-cache` disables
 both whole-build and package-object caches. Storage design: performance.md
 section 5.1.1. Flags: `--cache-dir DIR`, `--no-cache`,
@@ -424,7 +418,7 @@ recorded verification; the expanded wrapping described below remains unverified.
 Indentation is 4 spaces per bracket level (a continuation after a comma or
 trailing operator, or starting with `.`, gets one more level where applicable);
 spacing is
-normalized after `,` `;` `:`, around `=`, comparison/compound-assignment/`=>`/`->`/`??`,
+normalized after `,` `;` `:`, around `=`, comparison/compound-assignment/`=>`/`??`,
 inside one-line `{ }` and removed around `.` and inside `()`/`[]`; other
 gaps (`<`, `-`, `&`, ...) keep one space or none as written. Trailing whitespace
 goes, blank-line runs collapse to one (none after `{` or before `}`), the file
@@ -439,8 +433,7 @@ changes the parse it falls back to the unwrapped layout. Comments, text
 literals and macro gaps remain intact. Each result is re-lexed and re-parsed and must have
 the same token sequence, the same syntax-tree fingerprint and be a fixed point;
 otherwise the file is reported and left untouched. Files that define
-declarative macros are parsed after expansion for both fingerprints. Prior source-corpus checks preserved run results and fail phases/messages/lines
-(columns may move). Expanded wrapping has not been built or tested.
+declarative macros are parsed after expansion for both fingerprints. Wrapping must preserve run results and fail phases, messages and lines.
 `--check` prints each file
 that would change with its first differing line and exits 1 without writing;
 otherwise changed files are replaced atomically (temporary file and rename).
@@ -508,7 +501,7 @@ reports pass/fail/ignored, process termination and infrastructure failure
 separately. Test ordering is not a language guarantee. `--jobs` selects test
 concurrency; a deterministic seed option is not yet provided.
 
-Evidence: `test_json_timeout_and_modules`. `@test` marks a function in any
+`@test` marks a function in any
 module of the selected package with no
 parameters and result `Unit`, or `Outcome<Unit, E>` (returning the failure fails
 the test). Inline and file modules (`module name`) are included; displayed
@@ -572,9 +565,6 @@ Cleanup/cancellation tests observe completed teardown, not merely a request.
 Benchmark runners do not weaken the performance protocol's registered metrics.
 
 ### 4.1. Documentation comments, `mettle doc` and doctests
-
-Evidence: package cases `doc_writes_deterministic_html`,
-`doctests_run_isolated_examples` and `doc_resolves_dependency_links_and_warns`.
 
 `///` documents the item that follows it (before or between its attributes) and
 `//!` the enclosing file or inline module. The lexer already keeps comments as
@@ -655,7 +645,7 @@ analysis reports that state rather than guessing a result from callers.
 
 `mettle lsp [--library-dir DIR] [--target TRIPLE] [--freestanding]` runs the
 language server (LSP 3.17, JSON-RPC with `Content-Length` framing on standard
-input/output; UTF-16 positions). Evidence: `language_server`. It supports full
+input/output; UTF-16 positions). It supports full
 and ranged text synchronization with
 `publishDiagnostics` (each open document is analyzed by the compiler front end
 on its in-memory text; editing a document re-analyzes the open documents that
@@ -701,8 +691,7 @@ Moved/uninitialized values must not be presented as live valid values.
 Optimization may eliminate values; report optimized-out rather than inventing
 their contents. Static region analysis does not require runtime region objects.
 
-I12/T006 evidence: `debug_info` (DWARF) and `debugger_workflow` (batch LLDB,
-Release). `mettle build -g`
+Debug-information implementation: `mettle build -g`
 emits DWARF 4 through `llvm::DIBuilder` in the LLVM adapter
 (`backend/llvm/debug.*`): a compile unit and file per source, a subprogram per
 source function (source name; linkage name is the symbol), a line-table

@@ -28,7 +28,7 @@ contextual type; the signed-minimum literal case is handled before rejection.
 
 Text uses `"..."`; scalar characters use `'...'`; byte text/scalars use a `b`
 prefix. Escapes: backslash, matching quote, n, r, t, 0, and Unicode scalar
-`\\u{hex}` in Unicode literals; byte escapes use `\\xHH`. Byte scalar literals
+`\u{hex}` in Unicode literals; byte escapes use `\xHH`. Byte scalar literals
 must produce one byte; character literals exactly one valid scalar.
 Raw text uses `r"..."` or matched hash fences `r#"..."#`; raw byte text uses `br`.
 Interpolated text uses `f"..."`, with `{ expression }` holes and doubled braces
