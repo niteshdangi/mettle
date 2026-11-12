@@ -102,7 +102,7 @@ fn run(): i32 throws Error {
     if !ffi.bytes_equal(upper.as_encoded_bytes(), upper_bytes) { return 25 }
     var encoded_bytes = alloc.vec.new<u8>()
     encoded_bytes.extend_from_slice("plain".as_bytes())
-    let encoded = unsafe { ffi.OsString.from_encoded_bytes_unchecked(encoded_bytes) }
+    let encoded = ffi.OsString.from_encoded_bytes_unchecked(encoded_bytes)
     let decoded = capture encoded.into_string()
     match take decoded {
         success(text) => { if text.as_text() != "plain" { return 28 } },

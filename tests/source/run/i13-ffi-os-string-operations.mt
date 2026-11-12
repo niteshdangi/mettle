@@ -133,10 +133,10 @@ fn checks_conversion(): i32 {
     }
     let raw = os_string_from_bytes([0x61u8, 0x62u8]).into_encoded_bytes()
     if raw.len() != 2usize || raw[1usize] != 0x62u8 { return 35 }
-    let rebuilt = unsafe { OsString.from_encoded_bytes_unchecked(raw) }
+    let rebuilt = OsString.from_encoded_bytes_unchecked(raw)
     if !string_is(rebuilt, "ab") { return 36 }
     let z: [u8; 1] = [0x7au8]
-    let view = unsafe { OsStr.from_encoded_bytes_unchecked(z) }
+    let view = OsStr.from_encoded_bytes_unchecked(z)
     if !str_is(view, "z") || view.is_empty() { return 37 }
     0
 }
